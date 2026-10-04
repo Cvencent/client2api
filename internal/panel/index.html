@@ -764,6 +764,22 @@ html { scrollbar-gutter: stable; }
 .acc th, .acc td { padding: 9px 12px; }
 #view-accounts table.acc th, #view-accounts table.acc td { padding: 8px 7px; }
 #view-accounts table.acc .mark { width: 7px; min-width: 7px; padding: 0; }
+#view-accounts table.acc { table-layout: fixed; width: 100%; }
+#view-accounts table.acc .col-mark { width: 10px; }
+#view-accounts table.acc .col-account { width: auto; min-width: 190px; }
+#view-accounts table.acc .col-state { width: 76px; }
+#view-accounts table.acc .col-prio { width: 64px; }
+#view-accounts table.acc .col-bal { width: 96px; }
+#view-accounts table.acc .col-rate { width: 96px; }
+#view-accounts table.acc .col-inflight { width: 58px; }
+#view-accounts table.acc .col-usage { width: 112px; }
+#view-accounts table.acc .col-last { width: 82px; }
+#view-accounts table.acc .col-expiry { width: 92px; }
+#view-accounts table.acc .col-note { width: 128px; }
+#view-accounts table.acc .col-fields { width: 104px; }
+#view-accounts table.acc .col-acts { width: 132px; }
+#view-accounts table.acc .accPrio { width: 52px; min-width: 52px; padding: 4px 5px; text-align: center; }
+#view-accounts table.acc td.c-prio, #view-accounts table.acc th.c-prio { text-align: center; }
 #view-accounts table.acc td > .name,
 #view-accounts table.acc td > .hint { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
 #view-accounts table.acc td > .hint { font-size: 11px; }
@@ -1129,6 +1145,11 @@ input[type=checkbox] { width: 14px; height: 14px; padding: 0; accent-color: var(
         </header>
         <div class="tbl-wrap">
         <table class="acc">
+          <colgroup>
+            <col class="col-mark"><col class="col-account"><col class="col-state"><col class="col-prio">
+            <col class="col-bal"><col class="col-rate"><col class="col-inflight"><col class="col-usage">
+            <col class="col-last"><col class="col-expiry"><col class="col-note"><col class="col-fields"><col class="col-acts">
+          </colgroup>
           <thead><tr>
             <th class="mark" aria-hidden="true"></th>
             <th>账号</th><th>状态</th><th>优先级</th><th class="c-bal">余额</th><th>成功 / 失败</th><th>在途</th><th>用量</th><th>最近成功</th><th>到期</th><th>备注</th><th>字段</th><th class="c-acts"></th>
@@ -2190,10 +2211,26 @@ function renderStats() {
   $("#sSticky").textContent = (sticky == null) ? "-" : sticky;
 }
 
+function accountState(a) {
+  const raw = String((a && a.state) || "unknown").toLowerCase();
+  const disabled = !(a && a.enabled);
+  // 冷却中 = 链路/凭据本身是好的，只是额度或限流导致暂时不可调度；
+  // 禁用   = 人工停用或凭据已失效，需要重新登录/处理。
+  if (raw === "cooling" || raw === "exhausted" || raw === "low_credit" || raw === "quota_exceeded" || raw === "rate_limited") {
+    return { key: "cooling", label: "冷却中", cls: "warn" };
+  }
+  if (raw === "invalid" || raw === "expired" || raw === "unauthorized" || raw === "banned" || raw === "disabled") {
+    return { key: "disabled", label: "禁用", cls: "err" };
+  }
+  if (disabled) return { key: "disabled", label: "禁用", cls: "err" };
+  if (raw === "ready") return { key: "ready", label: "可用", cls: "ok" };
+  return { key: raw || "unknown", label: "未知", cls: "" };
+}
+
 function stateChip(a) {
-  const s = !a.enabled ? "disabled" : (a.state || "unknown");
-  const cls = s === "ready" ? "ok" : (s === "cooling" ? "warn" : (s === "invalid" || s === "exhausted" || s === "disabled" || s === "expired" ? "err" : ""));
-  return '<span class="chip ' + cls + '">' + esc(s) + '</span>';
+  const st = accountState(a);
+  return '<span class="chip ' + st.cls + '" title="' + esc(st.label) + '">' + esc(st.label) + '</span>';
+}
 }
 
 // realmTag names the vendor service an account belongs to.  Only modules with
@@ -2478,7 +2515,7 @@ function renderAccounts() {
     const st = accGroupStat(g);
     const open = accIsOpen(CUR, g.key);
     return '<tr class="acc-grp" data-grp="' + esc(g.key) + '" aria-expanded="' + (open ? "true" : "false") + '" tabindex="0">' +
-        '<td class="mark"><span class="caret" aria-hidden="true">' + (open ? "▾" : "▸") + '</span><span class="pulse" style="background:' + (st.enabled && st.state === "ready" ? "var(--ok)" : "var(--bad)") + '"></span></td>' +
+        '<td class="mark"><span class="caret" aria-hidden="true">' + (open ? "▾" : "▸") + '</span><span class="pulse" style="background:' + (accountState(st).key === "ready" ? "var(--ok)" : (accountState(st).key === "cooling" ? "var(--warn)" : "var(--bad)")) + '"></span></td>' +
         '<td><div class="name">' + esc(g.identity) + ' <span class="chip">' + g.rows.length + ' 个通道</span></div>' +
           '<div class="hint">' + esc(g.rows[0].client || CUR) + ' · 同一账号的不同登录方式</div></td>' +
         '<td>' + stateChip(st) + '</td>' +
@@ -2584,7 +2621,7 @@ function accRowHTML(a, caps, acts, showBal, chan, open, groupKey) {
     ? ' class="acc-chan" data-chan="' + esc(groupKey) + '"' + (open ? "" : " hidden")
     : '';
   return '<tr' + trAttrs + '>' +
-    '<td class="mark"><span class="pulse" style="background:' + (a.enabled && a.state === "ready" ? "var(--ok)" : "var(--bad)") + '"></span></td>' +
+    '<td class="mark"><span class="pulse" style="background:' + (accountState(a).key === "ready" ? "var(--ok)" : (accountState(a).key === "cooling" ? "var(--warn)" : "var(--bad)")) + '"></span></td>' +
     '<td><div class="name">' + (chan ? '<span class="branch">└</span> ' : '') + esc(a.label || a.id) + realmTag(a) + '</div><div class="hint">' + esc(a.client || CUR) + ' · ' + esc(String(a.id).slice(0, 40)) + '</div></td>' +
     '<td>' + stateChip(a) + '</td>' +
     '<td class="num c-prio">' + accPriorityCell(a, caps) + '</td>' +

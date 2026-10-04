@@ -115,7 +115,10 @@ func TestPoolStatsUIReadsTheKeysTheGoStructsSend(t *testing.T) {
 // accountsHeaderCells 数出账号表的表头列数。
 func accountsHeaderCells(t *testing.T, src string) int {
 	t.Helper()
-	m := regexp.MustCompile(`(?s)<table class="acc">\s*<thead><tr>(.*?)</tr></thead>`).FindStringSubmatch(src)
+	// The accounts table carries a <colgroup> for its fixed-width columns, so
+	// the header-cell counter has to step over it instead of falling through
+	// to the next .acc table on the page (the tasks table).
+	m := regexp.MustCompile(`(?s)<table class="acc">\s*(?:<colgroup>.*?</colgroup>\s*)?<thead><tr>(.*?)</tr></thead>`).FindStringSubmatch(src)
 	if m == nil {
 		t.Fatal(`找不到账号表的 <table class="acc"> <thead>`)
 	}

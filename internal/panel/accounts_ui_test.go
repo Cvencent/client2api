@@ -179,6 +179,28 @@ func TestAccountGroupIsHealthyWhenAnyChannelIsHealthy(t *testing.T) {
 // TestAccountGroupHeaderHasNoActionButtons 钉住组头那一行是纯信息行。每个通道
 // 单独启停、单独测试是需求本身；组头再挂一个批量按钮会把两份凭据的状态混在
 // 一起，而且没有明显正确的语义。
+func TestAccountStateLabelsAreChinese(t *testing.T) {
+	src := string(indexHTML)
+	for _, want := range []string{`label: "可用"`, `label: "冷却中"`, `label: "禁用"`} {
+		if !strings.Contains(src, want) {
+			t.Errorf("account state label is missing %s", want)
+		}
+	}
+}
+
+func TestAccountPriorityColumnStaysNarrow(t *testing.T) {
+	src := string(indexHTML)
+	for _, want := range []string{
+		`<col class="col-prio">`,
+		`#view-accounts table.acc .col-prio { width: 64px; }`,
+		`#view-accounts table.acc .accPrio { width: 52px; min-width: 52px;`,
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("account priority column sizing is missing %s", want)
+		}
+	}
+}
+
 func TestAccountPriorityIsEditableFromThePoolPage(t *testing.T) {
 	src := string(indexHTML)
 	for _, want := range []string{
