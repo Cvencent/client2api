@@ -1,0 +1,25 @@
+{
+  "base_url": "http://127.0.0.1:50124",
+  "api_key": "sk-tabbit-local",
+  "manage": false,
+  "command": "",
+  "args": [],
+  "workdir": "",
+  "health_path": "/health",
+  "models_path": "/v1/models",
+  "chat_path": "/v1/chat/completions",
+  "web_host": "web.tabbit.com",
+  "model_prefix": "tabbit/",
+  "extra_models": [],
+  "extra_headers": {},
+  "include_usage": true,
+  "timeouts": {
+    "status_seconds": 0.9,
+    "health_seconds": 1.5,
+    "models_seconds": 10,
+    "request_seconds": 900,
+    "start_seconds": 20,
+    "cache_seconds": 5,
+    "models_cache_seconds": 60
+  }
+}

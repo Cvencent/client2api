@@ -1,0 +1,173 @@
+name: go-binaries
+
+# 可运行二进制构建/发布：
+#   - PR / push main → 测试 + 五平台编译验证（产物仅存 artifact，不发布）
+#   - push v* tag    → 同上 + 打包上传到 GitHub Release（zip/tar.gz + checksums）
+#
+# 固化的发布纪律：-s -w 剥离符号；二进制版本串必须等于 tag（源码 version 是唯一真源，
+# 由 -X main.version 注入，注入后还要回读二进制断言一次）；带 -ci 后缀的演练 tag 豁免。
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - "go.mod"
+      - "go.sum"
+      - "cmd/**"
+      - "clients/**"
+      - "internal/**"
+      - "configs/client2api.example.json"
+      - ".github/workflows/go-binaries.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # ---- 门禁：这些以前都没有，靠人肉记得跑 ----
+      # docs/MODULE-CONTRACT.md 早就让贡献者本地跑 go vet，但没有任何东西强制它；
+      # 于是 SoftCooldownSeconds（只写不读）、trae 里那份失效的 PoolTuning 副本
+      # 这类问题能一直留在树里。格式同理：gofmt 一直是干净的，值得保住。
+      - name: gofmt
+        run: |
+          UNFORMATTED=$(gofmt -l .)
+          if [ -n "$UNFORMATTED" ]; then
+            echo "::error::gofmt needed on:"; echo "$UNFORMATTED"
+            exit 1
+          fi
+      - name: go vet
+        run: go vet ./...
+
+      # 全量套件里 workbuddy 单包就要一分半左右（池状态机 + 排程 + 面板 shell 守卫），
+      # 默认 10m 够但没余量，显式抬到 15m。
+      - name: go test
+        run: go test -count=1 -timeout 15m ./...
+
+      # 竞态检测单独一个 job：-race 需要 cgo，比普通测试慢一个量级，不该拖住
+      # 上面那条快速反馈。1727 个测试串行跑在共享的 Pool/Guard/Affinity 单例上，
+      # 这正是竞态最容易藏身的地方。ubuntu 上 CGO_ENABLED 默认就是 1，不需要装编译器。
+      - name: go test -race
+        run: go test -race -count=1 -timeout 30m ./...
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: windows, goarch: amd64, ext: .zip }
+          - { goos: linux, goarch: amd64, ext: .tar.gz }
+          - { goos: linux, goarch: arm64, ext: .tar.gz }
+          - { goos: darwin, goarch: amd64, ext: .tar.gz }
+          - { goos: darwin, goarch: arm64, ext: .tar.gz }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: 取源码版本号
+        id: ver
+        run: echo "v=$(grep -oP 'var version = "\K[^"]+' cmd/client2api/main.go)" >> "$GITHUB_OUTPUT"
+
+      - name: 构建（注入版本串并剥离符号，对齐本地发布口径）
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          # 纯 Go 依赖（utls、golang.org/x/net），静态链接即可，交叉编译不需要工具链。
+          CGO_ENABLED: 0
+        run: |
+          go build -trimpath \
+            -ldflags "-s -w -X main.version=${{ steps.ver.outputs.v }}${{ matrix.goos == 'windows' && ' -H=windowsgui' || '' }}" \
+            -o "client2api${{ matrix.goos == 'windows' && '.exe' || '' }}" ./cmd/client2api
+
+      # 版本串断言：二进制必须含注入的版本（防交叉编译矩阵里编错树或漏掉 -X）
+      - name: 断言二进制版本串
+        run: |
+          BIN="client2api${{ matrix.goos == 'windows' && '.exe' || '' }}"
+          if ! grep -qa "${{ steps.ver.outputs.v }}" "$BIN"; then
+            echo "::error::binary missing version string ${{ steps.ver.outputs.v }}"
+            exit 1
+          fi
+          echo "version assert OK: ${{ steps.ver.outputs.v }}"
+
+      - name: 打包（windows=zip，其余=tar.gz）
+        run: |
+          V="${{ steps.ver.outputs.v }}"
+          case "${{ matrix.goos }}" in
+            windows)
+              NAME="client2api-v${V}-windows-amd64.zip"
+              zip -q "$NAME" client2api.exe configs/client2api.example.json README.md
+              ;;
+            *)
+              NAME="client2api-v${V}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz"
+              tar czf "$NAME" client2api configs/client2api.example.json README.md
+              ;;
+          esac
+          echo "name=$NAME" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.name }}
+          path: ${{ env.name }}
+          retention-days: 7
+
+  # 仅 tag 触发：校验 tag == 源码版本（-ci 演练 tag 豁免）→ 汇总资产 → 建 Release
+  publish:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # 取历史 tag 算 compare 链接
+      - name: tag 与源码版本一致性断言
+        run: |
+          SRC=$(grep -oP 'var version = "\K[^"]+' cmd/client2api/main.go)
+          TAG="${GITHUB_REF_NAME#v}"
+          if [[ "$GITHUB_REF_NAME" != *-ci ]]; then
+            if [[ "$TAG" != "$SRC" ]]; then
+              echo "::error::tag $GITHUB_REF_NAME 与源码 version=$SRC 不一致（先提交版本号再打 tag）"
+              exit 1
+            fi
+          else
+            echo "演练 tag（-ci 后缀）跳过一致性断言：tag=$TAG src=$SRC"
+          fi
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: checksums
+        run: cd dist && sha256sum *.zip *.tar.gz > checksums.txt && ls -la
+      - name: 上一版 tag（compare 链接用）
+        id: prev
+        run: |
+          PREV=$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)
+          echo "prev=${PREV}" >> "$GITHUB_OUTPUT"
+      - uses: softprops/action-gh-release@v2
+        with:
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          body: |
+            CI 自动构建发布（五平台二进制 + checksums）。
+
+            解包后把 `configs/client2api.example.json` 复制成 `configs/client2api.json`
+            再启动；**启动前先填 `api_key`** —— 留空等于网关与面板都不鉴权。
+
+            完整变更：https://github.com/${{ github.repository }}/compare/${{ steps.prev.outputs.prev }}...${{ github.ref_name }}
+          files: dist/*

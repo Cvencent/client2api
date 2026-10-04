@@ -1,0 +1,2 @@
+# Placeholder so //go:embed all:payload resolves in a fresh checkout.
+# installer/build.ps1 stages the real payload here and leaves this file alone.

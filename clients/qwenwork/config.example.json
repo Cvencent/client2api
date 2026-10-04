@@ -1,0 +1,45 @@
+{
+  "base_url": "",
+  "user_agent": "",
+
+  "max_attempts": 3,
+
+  "models_ttl": "5m",
+  "models_timeout": "20s",
+  "chat_timeout": "10m",
+  "idle_timeout": "2m",
+
+  "cooldown": "60s",
+  "short_cooldown": "15s",
+  "quota_cooldown": "24h",
+  "refresh_margin": "30m",
+
+  "max_tokens": 32000,
+
+  "login": false,
+  "client_id": "",
+  "redirect_uri": "",
+  "device_auth_url": "",
+  "poll_interval": "3s",
+  "login_timeout": "10m",
+
+  "access_token": "",
+  "uid": "",
+  "nickname": "",
+  "email": "",
+  "refresh_token": "",
+  "expires_at": "",
+
+  "accounts": [
+    {
+      "label": "personal",
+      "uid": "",
+      "nickname": "",
+      "email": "",
+      "access_token": "",
+      "refresh_token": "",
+      "expires_at": "",
+      "disabled": false
+    }
+  ]
+}

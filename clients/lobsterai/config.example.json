@@ -1,0 +1,57 @@
+{
+  "portal_url": "https://lobsterai.youdao.com",
+  "base_url": "https://lobsterai-server.youdao.com",
+  "version_url": "https://api-overmind.youdao.com/openapi/get/luna/hardware/lobsterai/prod/update",
+
+  "client_version": "",
+  "client_capabilities": "kimi-k3-agentic-v1",
+  "user_agent": "LobsterAI/0.1.0",
+
+  "login_port": 0,
+  "callback_path": "/auth/callback",
+
+  "include_usage": false,
+  "extra_models": [],
+  "extra_headers": {},
+
+  "login_timeout": "10m",
+  "chat_timeout": "10m",
+  "models_timeout": "20s",
+  "checkin_timeout": "30s",
+  "version_timeout": "10s",
+
+  "models_ttl": "1h",
+  "version_ttl": "6h",
+
+  "cooldown": "60s",
+  "quota_cooldown": "12h",
+  "refresh_margin": "30m",
+
+  "max_in_flight": 2,
+
+  "access_token": "",
+  "refresh_token": "",
+  "uid": "",
+  "user_id": "",
+  "uuid": "",
+  "nickname": "",
+  "expires_at": "",
+  "first_keyfrom": "",
+  "latest_keyfrom": "",
+
+  "accounts": [
+    {
+      "label": "personal",
+      "uid": "",
+      "user_id": "",
+      "uuid": "",
+      "nickname": "",
+      "access_token": "",
+      "refresh_token": "",
+      "expires_at": "",
+      "first_keyfrom": "",
+      "latest_keyfrom": "",
+      "disabled": false
+    }
+  ]
+}

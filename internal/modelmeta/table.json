@@ -1,0 +1,335 @@
+{
+  "_comment": [
+    "Static model metadata table, keyed by client -> model id.",
+    "Every number here is ported verbatim from an authoritative source; an empty field",
+    "means 'no source', which is a correct value. A guessed field is a bug.",
+    "context_length/max_output_tokens are realm-independent (the reference keeps ONE",
+    "context table for both realms because the same model id has the same window).",
+    "efforts are realm-split on purpose (see efforts_by_realm + effort_origin).",
+    "`origin` says where context_length/max_output_tokens came from;",
+    "`effort_origin` says where efforts/default_effort came from."
+  ],
+  "workbuddy": {
+    "notes": "Ported from workbuddy2api-panel: internal/upstream/model.json (27 entries, all source=seed) and internal/upstream/effort_catalog.go.",
+    "models": {
+      "glm-5.2": {
+        "context_length": 1000000,
+        "max_output_tokens": 131072,
+        "origin": "model.json",
+        "efforts_by_realm": {
+          "cn": { "efforts": ["high", "xhigh"], "default_effort": "high" },
+          "global": { "efforts": ["high", "xhigh"], "default_effort": "high" }
+        },
+        "effort_origin": "effort_catalog.go"
+      },
+      "glm-5.1": {
+        "context_length": 200000,
+        "max_output_tokens": 131072,
+        "origin": "model.json",
+        "efforts_by_realm": {
+          "cn": { "efforts": ["medium"] }
+        },
+        "effort_origin": "effort_catalog.go:cnEffortFallback"
+      },
+      "glm-5.3": {
+        "context_length": 1000000,
+        "max_output_tokens": 131072,
+        "origin": "model.json",
+        "efforts_by_realm": {
+          "cn": { "efforts": ["low", "high", "max"], "default_effort": "high" },
+          "global": { "efforts": ["low", "high", "max"], "default_effort": "high" }
+        },
+        "effort_origin": "effort_catalog.go"
+      },
+      "glm-5.3-flash": {
+        "context_length": 1000000,
+        "max_output_tokens": 131072,
+        "origin": "model.json",
+        "efforts_by_realm": {
+          "cn": { "efforts": ["low", "high", "max"], "default_effort": "high" }
+        },
+        "effort_origin": "effort_catalog.go:cnEffortFallback"
+      },
+      "glm-5v-turbo": {
+        "context_length": 200000,
+        "max_output_tokens": 131072,
+        "origin": "model.json",
+        "efforts_by_realm": {
+          "cn": { "efforts": ["medium"] }
+        },
+        "effort_origin": "effort_catalog.go:cnEffortFallback"
+      },
+      "kimi-k2.7": {
+        "context_length": 256000,
+        "max_output_tokens": 65536,
+        "origin": "model.json",
+        "efforts_by_realm": {
+          "cn": { "efforts": ["medium"] }
+        },
+        "effort_origin": "effort_catalog.go:cnEffortFallback"
+      },
+      "kimi-k2.6": {
+        "context_length": 256000,
+        "max_output_tokens": 262144,
+        "origin": "model.json",
+        "efforts_by_realm": {
+          "cn": { "efforts": ["medium"] },
+          "global": { "efforts": ["medium"] }
+        },
+        "effort_origin": "effort_catalog.go"
+      },
+      "kimi-k2.5": {
+        "context_length": 164000,
+        "max_output_tokens": 262144,
+        "origin": "model.json"
+      },
+      "kimi-k3": {
+        "context_length": 1048576,
+        "max_output_tokens": 131072,
+        "origin": "model.json",
+        "efforts_by_realm": {
+          "global": { "efforts": ["medium"] }
+        },
+        "effort_origin": "effort_catalog.go:globalEffortFallback"
+      },
+      "kimi-k2.8-preview": {
+        "context_length": 1048576,
+        "origin": "model.json",
+        "_note": "model.json has no max_output_tokens key for this id; output limit stays empty."
+      },
+      "kimi-k3-1": {
+        "efforts_by_realm": {
+          "cn": { "efforts": ["medium"] }
+        },
+        "effort_origin": "effort_catalog.go:cnEffortFallback",
+        "_note": "Effort-only id: no context_length/max_output_tokens in model.json or context_catalog.go."
+      },
+      "minimax-m3": {
+        "context_length": 512000,
+        "max_output_tokens": 512000,
+        "origin": "model.json",
+        "efforts_by_realm": {
+          "cn": { "efforts": ["medium"] }
+        },
+        "effort_origin": "effort_catalog.go:cnEffortFallback"
+      },
+      "hy3": {
+        "context_length": 192000,
+        "max_output_tokens": 64000,
+        "origin": "model.json",
+        "efforts_by_realm": {
+          "cn": { "efforts": ["low", "high"], "default_effort": "high" },
+          "global": { "efforts": ["low", "high"], "default_effort": "high" }
+        },
+        "effort_origin": "effort_catalog.go"
+      },
+      "hy3-preview": {
+        "context_length": 262144,
+        "max_output_tokens": 64000,
+        "origin": "model.json"
+      },
+      "hy3-x": {
+        "efforts_by_realm": {
+          "cn": { "efforts": ["low", "high"], "default_effort": "high" }
+        },
+        "effort_origin": "effort_catalog.go:cnEffortFallback",
+        "_note": "Effort-only id: no context_length/max_output_tokens in model.json or context_catalog.go."
+      },
+      "hy4-preview": {
+        "context_length": 1000000,
+        "max_output_tokens": 64000,
+        "origin": "model.json",
+        "efforts_by_realm": {
+          "cn": { "efforts": ["high"], "default_effort": "high" }
+        },
+        "effort_origin": "effort_catalog.go:cnEffortFallback"
+      },
+      "hy4-preview-x": {
+        "context_length": 1000000,
+        "max_output_tokens": 64000,
+        "origin": "model.json",
+        "efforts_by_realm": {
+          "cn": { "efforts": ["high"] }
+        },
+        "effort_origin": "effort_catalog.go:cnEffortFallback"
+      },
+      "hy4-preview-f": {
+        "efforts_by_realm": {
+          "global": { "efforts": ["high"], "default_effort": "high" }
+        },
+        "effort_origin": "effort_catalog.go:globalEffortFallback",
+        "_note": "Effort-only id: no context_length/max_output_tokens in model.json or context_catalog.go."
+      },
+      "deepseek-v4-pro": {
+        "context_length": 1000000,
+        "max_output_tokens": 384000,
+        "origin": "model.json",
+        "efforts_by_realm": {
+          "cn": { "efforts": ["low", "high", "xhigh"], "default_effort": "high" }
+        },
+        "effort_origin": "effort_catalog.go:cnEffortFallback"
+      },
+      "deepseek-v4-flash": {
+        "context_length": 1000000,
+        "max_output_tokens": 384000,
+        "origin": "model.json",
+        "efforts_by_realm": {
+          "cn": { "efforts": ["low", "high", "max"] }
+        },
+        "effort_origin": "effort_catalog.go:cnEffortFallback"
+      },
+      "deepseek-v4.1-flash": {
+        "context_length": 1000000,
+        "max_output_tokens": 384000,
+        "origin": "model.json",
+        "efforts_by_realm": {
+          "cn": { "efforts": ["low", "high", "max"], "default_effort": "high" },
+          "global": { "efforts": ["high"] }
+        },
+        "effort_origin": "effort_catalog.go",
+        "_note": "The international realm accepts ONLY [high]; sending low/max there is an HTTP 400. Kept realm-split on purpose."
+      },
+      "gpt-6-astra": {
+        "context_length": 1050000,
+        "max_output_tokens": 128000,
+        "origin": "model.json",
+        "efforts_by_realm": {
+          "global": { "efforts": ["low", "medium", "high", "xhigh", "max"], "default_effort": "high" }
+        },
+        "effort_origin": "effort_catalog.go:globalEffortFallback"
+      },
+      "gpt-5.6-sol": {
+        "context_length": 1050000,
+        "max_output_tokens": 128000,
+        "origin": "model.json",
+        "efforts_by_realm": {
+          "global": { "efforts": ["low", "medium", "high", "xhigh", "max"], "default_effort": "high" }
+        },
+        "effort_origin": "effort_catalog.go:globalEffortFallback"
+      },
+      "gpt-5.6-terra": {
+        "context_length": 1050000,
+        "max_output_tokens": 128000,
+        "origin": "model.json",
+        "efforts_by_realm": {
+          "global": { "efforts": ["low", "medium", "high", "xhigh", "max"], "default_effort": "high" }
+        },
+        "effort_origin": "effort_catalog.go:globalEffortFallback"
+      },
+      "gpt-5.6-luna": {
+        "context_length": 1050000,
+        "max_output_tokens": 128000,
+        "origin": "model.json",
+        "efforts_by_realm": {
+          "global": { "efforts": ["low", "medium", "high", "xhigh", "max"], "default_effort": "high" }
+        },
+        "effort_origin": "effort_catalog.go:globalEffortFallback"
+      },
+      "gpt-5.5": {
+        "context_length": 1050000,
+        "max_output_tokens": 128000,
+        "origin": "model.json",
+        "efforts_by_realm": {
+          "global": { "efforts": ["low", "medium", "high", "xhigh"], "default_effort": "high" }
+        },
+        "effort_origin": "effort_catalog.go:globalEffortFallback"
+      },
+      "gpt-5.4": {
+        "context_length": 1050000,
+        "max_output_tokens": 128000,
+        "origin": "model.json",
+        "efforts_by_realm": {
+          "global": { "efforts": ["low", "medium", "high", "xhigh"], "default_effort": "high" }
+        },
+        "effort_origin": "effort_catalog.go:globalEffortFallback"
+      },
+      "gpt-5.3-codex": {
+        "context_length": 400000,
+        "max_output_tokens": 128000,
+        "origin": "model.json",
+        "efforts_by_realm": {
+          "global": { "efforts": ["medium"] }
+        },
+        "effort_origin": "effort_catalog.go:globalEffortFallback"
+      },
+      "gemini-3.5-flash": {
+        "context_length": 1048576,
+        "max_output_tokens": 65536,
+        "origin": "model.json",
+        "efforts_by_realm": {
+          "global": { "efforts": ["medium"] }
+        },
+        "effort_origin": "effort_catalog.go:globalEffortFallback"
+      },
+      "auto": {
+        "context_length": 168000,
+        "origin": "model.json",
+        "_note": "model.json has no max_output_tokens key for this id; output limit stays empty."
+      },
+      "fast-model": {
+        "efforts_by_realm": {
+          "global": { "efforts": ["medium"] }
+        },
+        "effort_origin": "effort_catalog.go:globalEffortFallback",
+        "_note": "Effort-only id: no context_length/max_output_tokens in model.json or context_catalog.go."
+      },
+      "balanced-model": {
+        "efforts_by_realm": {
+          "global": { "efforts": ["medium"] }
+        },
+        "effort_origin": "effort_catalog.go:globalEffortFallback",
+        "_note": "Effort-only id: no context_length/max_output_tokens in model.json or context_catalog.go."
+      },
+      "primary-model": {
+        "efforts_by_realm": {
+          "global": { "efforts": ["high"] }
+        },
+        "effort_origin": "effort_catalog.go:globalEffortFallback",
+        "_note": "Effort-only id: no context_length/max_output_tokens in model.json or context_catalog.go."
+      }
+    }
+  },
+  "kimi": {
+    "notes": [
+      "Deliberately EMPTY. The kimi module's builtin ids are kimi, kimi-k2, k3-agent,",
+      "k3-agent-ultra and k2d6-agent. None of them appears in model.json, in",
+      "context_catalog.go, in docs/upstream/kimi.md, or in a captured response, so there is",
+      "no source for a context window or an output limit. k3-agent is documented as 'K3'",
+      "but the id does not match the reference's kimi-k3 entry, and a cross-id inference is",
+      "a guess, not a source. Nothing goes in the table until a real response says so."
+    ],
+    "models": {}
+  },
+  "tabbit": {
+    "notes": [
+      "Only ids whose model name matches a reference table id exactly (case-insensitively,",
+      "because tabbit lists them capitalised) are filled. The numbers come from the same",
+      "public models.dev consensus the reference records for that model; they are NOT",
+      "verified against tabbit's own responses, so treat them as a best-effort fallback.",
+      "Claude-Opus-4.7, Claude-Sonnet-4.6, Gemini-3.1-Pro, 'priority' (a virtual router",
+      "alias) and 'Default' have no sourced entry and stay absent."
+    ],
+    "models": {
+      "GPT-5.5": {
+        "context_length": 1050000,
+        "max_output_tokens": 128000,
+        "origin": "reference model.json gpt-5.5 (unverified for tabbit)"
+      },
+      "GPT-5.4": {
+        "context_length": 1050000,
+        "max_output_tokens": 128000,
+        "origin": "reference model.json gpt-5.4 (unverified for tabbit)"
+      },
+      "DeepSeek-V4-Pro": {
+        "context_length": 1000000,
+        "max_output_tokens": 384000,
+        "origin": "reference model.json deepseek-v4-pro (unverified for tabbit)"
+      },
+      "GLM-5.1": {
+        "context_length": 200000,
+        "max_output_tokens": 131072,
+        "origin": "reference model.json glm-5.1 (unverified for tabbit)"
+      }
+    }
+  }
+}

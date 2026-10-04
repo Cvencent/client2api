@@ -1,0 +1,35 @@
+{
+  "auto_discover": true,
+  "models": ["GLM-5.3", "GLM-5.3-Flash"],
+  "max_tokens_default": 4096,
+  "max_account_attempts": 5,
+  "cooldown_seconds": 300,
+  "timeout_seconds": 600,
+  "inject_system_blocks": true,
+  "inject_cache_control": true,
+  "accounts": [
+    {
+      "id": "bigmodel-main",
+      "label": "BigModel coding plan",
+      "provider": "bigmodel",
+      "mode": "api_key",
+      "api_key": "PUT-A-32-HEX-BIGMODEL-KEY-HERE",
+      "enabled": true
+    }
+  ],
+  "captcha_command": "",
+  "captcha_args": [],
+  "captcha_region": "",
+  "identity": {
+    "app_version": "3.14.4",
+    "agent": "glm",
+    "platform": "win32-x64",
+    "os_category": "windows",
+    "os_version": "10.0.22631",
+    "release_channel": "stable",
+    "language": "zh-CN",
+    "timezone": "Asia/Shanghai",
+    "title": "Z Code@electron",
+    "referer": "https://zcode.z.ai/"
+  }
+}

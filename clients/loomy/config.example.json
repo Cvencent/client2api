@@ -1,0 +1,41 @@
+{
+  "clients": {
+    "loomy": {
+      "api_base": "https://loomyad.xunfei.cn/api/v1",
+      "account_base": "https://account.xfinfr.com",
+      "access_key_id": "2thryby66wxi53sk",
+      "access_key_secret": "zsak6eadrbawz683wf5r3m2snrwj868r",
+      "app_id": "GM3LOOMY",
+
+      "accounts": [
+        {
+          "id": "loomy-123456789012345678",
+          "label": "operator",
+          "access_token": "0123456789abcdef0123456789abcdef",
+          "userid": "123456789012345678",
+          "phone": "13800000000",
+          "nickname": "",
+          "expires_at": "2026-10-10T00:00:00Z",
+          "enabled": true
+        }
+      ],
+
+      "access_token": "",
+      "userid": "",
+      "phone": "",
+      "nickname": "",
+      "expires_at": "",
+
+      "request_timeout": "60s",
+      "models_timeout": "20s",
+      "chat_timeout": "10m",
+      "idle_timeout": "2m",
+      "first_byte_timeout": "2m",
+      "models_ttl": "30m",
+      "probe_timeout": "30s",
+      "cooldown": "60s",
+      "auth_cooldown": "24h",
+      "max_attempts": 3
+    }
+  }
+}

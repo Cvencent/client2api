@@ -1,0 +1,57 @@
+{
+  "base_url": "",
+  "chat_url": "",
+  "models_url": "",
+  "sts_url": "",
+  "gateway_url": "",
+  "ticket_url": "",
+  "user_agent": "",
+
+  "max_attempts": 3,
+
+  "models_ttl": "2h",
+  "models_timeout": "20s",
+  "chat_timeout": "30m",
+
+  "idle_timeout": "",
+  "first_token_timeout": "",
+  "chunk_timeout": "",
+
+  "cooldown": "60s",
+  "short_cooldown": "15s",
+  "quota_cooldown": "24h",
+  "refresh_margin": "30m",
+
+  "queue_poll_interval": "10s",
+  "queue_max_wait": "30m",
+
+  "max_tokens": 65536,
+  "reasoning_effort": "",
+
+  "models": [],
+  "login": false,
+
+  "access_key_id": "",
+  "secret_access_key": "",
+  "security_token": "",
+  "refresh_token": "",
+  "expires_at": "",
+  "domain_id": "",
+  "user_id": "",
+  "user_name": "",
+
+  "accounts": [
+    {
+      "label": "personal",
+      "access_key_id": "",
+      "secret_access_key": "",
+      "security_token": "",
+      "refresh_token": "",
+      "expires_at": "",
+      "domain_id": "",
+      "user_id": "",
+      "user_name": "",
+      "disabled": false
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+services:
+  client2api:
+    build: .
+    container_name: client2api
+    restart: unless-stopped
+    # 容器内以 app 用户（uid 10001）运行。宿主机挂载目录属主不同会导致
+    # 「写 /app/configs/client2api.json.tmp 失败 permission denied」，三种解法任选：
+    #   1) 非 root · 让容器以你自己的 uid 运行（挂载目录本来就是你建的）：
+    #      PUID=$(id -u) PGID=$(id -g) docker compose up -d
+    #      或写进 .env 文件：PUID=1000 / PGID=1000
+    #   2) sudo chown -R 10001:10001 ./configs ./data
+    #   3) user: "0:0" 以 root 运行（省事但容器逃逸面更大，自担）
+    user: "${PUID:-10001}:${PGID:-10001}"
+    environment:
+      - TZ=Asia/Shanghai
+    ports:
+      - "8788:8788"
+    volumes:
+      # 挂目录而不是单个文件：首启时 client2api.json 还不存在，程序要生成随机 api_key
+      # 并写进来，之后面板「配置」页的保存也落在同一个文件上。
+      # 注意：宿主机必须先有可写目录（mkdir -p configs data && chown 10001:10001 …），
+      # 否则 Docker 会以 root 建出它，容器里的 app 用户写不进去。
+      - ./configs:/app/configs
+      # 账号池状态、用量汇总、模型缓存、日志环都在这里。
+      - ./data:/app/data
+    # 镜像的 ENTRYPOINT 已带 -listen 0.0.0.0:8788（内建默认是 127.0.0.1:8788，容器里
+    # 那样只监听自己的回环）。想让面板「监听地址」字段说了算，就把它去掉，
+    # 同时把 configs/client2api.json 里的 listen 改成 0.0.0.0:8788：
+    # command: ["-config", "/app/configs/client2api.json"]

@@ -1,0 +1,30 @@
+{
+  "auto_discover": true,
+  "models": [
+    "MiniMax-M3.1-Flash-Preview",
+    "MiniMax-M3",
+    "MiniMax-M2.7-highspeed",
+    "MiniMax-M2.7"
+  ],
+  "max_tokens_default": 8192,
+  "max_account_attempts": 3,
+  "cooldown_seconds": 120,
+  "timeout_seconds": 120,
+  "refresh_enabled": true,
+  "oauth_token_url": "https://account.minimax.cn/oauth2/token",
+  "oauth_client_id": "",
+  "base_url": "",
+  "auth_dir": "",
+  "config_yaml": "",
+  "accounts": [
+    {
+      "id": "minimax-main",
+      "label": "MiniMax Code",
+      "access_token": "mmoat_PUT-YOUR-ACCESS-TOKEN-HERE",
+      "base_url": "",
+      "enabled": true
+    }
+  ],
+  "tls_profile": "chrome",
+  "tls_protocol": "http/1.1"
+}

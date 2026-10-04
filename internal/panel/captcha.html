@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>人机验证</title>
+<!--
+  这个文档唯一的职责是把厂商要求的验证码跑起来。它被 /panel/ 的页面用同源
+  iframe 嵌进来，配置从查询串读（都是公开值，不是凭据），结果用 postMessage
+  回给父页面。CSP 由 captchaPolicy() 单独发：这里必须放行阿里云的域名，而
+  面板外壳（拿着 API key、能改配置）的 CSP 保持 'self' + 内联脚本哈希不变。
+-->
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    font: 13px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    background: #14161a; color: #d7dbe0;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #wrap { padding: 16px 20px; text-align: center; max-width: 420px; }
+  #hint { margin: 0 0 10px; color: #8b939e; }
+  #hint.err { color: #e5534b; }
+  #hint.ok { color: #3fb950; }
+  #capHolder { min-height: 0; }
+  #capBtn {
+    margin-top: 10px; padding: 8px 18px; border-radius: 6px; cursor: pointer;
+    border: 1px solid #2f81f7; background: #1f6feb; color: #fff; font: inherit;
+  }
+  #capBtn[hidden] { display: none; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <p id="hint">正在向厂商申请验证…</p>
+  <div id="capHolder"></div>
+  <button id="capBtn" type="button" hidden>点此完成验证</button>
+</div>
+<script>
+(function () {
+  "use strict";
+  // 厂商官方 SDK。无痕验证（startTracelessVerification）通常不需要人工操作，
+  // 但阿里云 FAQ Q13 明确说：WebView 里如果只有验证码、没有业务操作，无痕
+  // 形态会被全量拦截。所以交互式兜底是一等公民，不是异常分支。
+  var SDK_URL = "https://o.alicdn.com/captcha-frontend/aliyunCaptcha/AliyunCaptcha.js";
+  var TRACELESS_MS = 8000;
+
+  var q = new URLSearchParams(location.search);
+  var ACTION = q.get("action") || "";
+  var SCENE_ID = q.get("scene_id") || "";
+  var REGION = q.get("region") || "";
+  var PREFIX = q.get("prefix") || "";
+
+  var settled = false;
+  var timer = 0;
+  var hint = document.getElementById("hint");
+  var btn = document.getElementById("capBtn");
+
+  function say(text, kind) {
+    hint.textContent = text;
+    hint.className = kind || "";
+  }
+
+  function report(msg) {
+    if (settled) return;
+    settled = true;
+    if (timer) { clearTimeout(timer); timer = 0; }
+    msg.type = "c2a-captcha";
+    msg.action = ACTION;
+    try { parent.postMessage(msg, location.origin); } catch (e) { }
+  }
+
+  function interactive(why) {
+    if (settled) return;
+    btn.hidden = false;
+    say(why || "需要手动完成一次验证，请点击下方按钮。");
+  }
+
+  function fail(text) {
+    say(text, "err");
+    report({ ok: false, message: text });
+  }
+
+  function init() {
+    if (typeof window.initAliyunCaptcha !== "function") {
+      fail("验证码脚本已加载，但没有 initAliyunCaptcha，厂商 SDK 可能已经变更。");
+      return;
+    }
+    try {
+      window.initAliyunCaptcha({
+        SceneId: SCENE_ID,
+        mode: "popup",
+        // FAQ Q15：button 是必填项，缺了它无痕验证可能失效，所以永远传。
+        element: "#capHolder",
+        button: "#capBtn",
+        language: "zh-CN",
+        showErrorTip: false,
+        getInstance: function (instance) {
+          if (instance && typeof instance.startTracelessVerification === "function") {
+            instance.startTracelessVerification();
+            say("正在无感验证…");
+            timer = setTimeout(function () {
+              interactive("无感验证没通过，请点下面的按钮完成一次验证。");
+            }, TRACELESS_MS);
+          } else {
+            interactive("请点下面的按钮完成验证。");
+          }
+        },
+        success: function (param) {
+          var p = typeof param === "string" ? param : (param && param.captchaVerifyParam);
+          // FAQ Q17：初始化失败时 SDK 的容灾机制同样会回调 success，所以空
+          // 参数不算成功，退回交互，绝不把空值当成验证通过。
+          if (!p) { interactive("没有拿到验证参数，请再试一次。"); return; }
+          say("验证通过。", "ok");
+          report({ ok: true, param: p, region: REGION });
+        },
+        fail: function () { interactive("验证未通过，请再试一次。"); },
+        onError: function () { interactive("验证出错，请再试一次。"); }
+      });
+    } catch (e) {
+      fail("初始化验证码失败：" + (e && e.message ? e.message : String(e)));
+    }
+  }
+
+  if (!SCENE_ID) {
+    fail("厂商没有给出验证场景号（sceneId），没法在这里完成验证。");
+    return;
+  }
+
+  // 阿里云要求 AliyunCaptchaConfig 在 SDK 脚本加载之前就存在。
+  window.AliyunCaptchaConfig = { region: REGION, prefix: PREFIX };
+
+  var sdk = document.createElement("script");
+  sdk.src = SDK_URL;
+  sdk.async = true;
+  sdk.onload = init;
+  sdk.onerror = function () {
+    fail("验证码脚本加载失败（访问不了 o.alicdn.com）。检查一下网络或代理设置。");
+  };
+  document.head.appendChild(sdk);
+})();
+</script>
+</body>
+</html>

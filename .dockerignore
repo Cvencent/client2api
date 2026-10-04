@@ -1,0 +1,25 @@
+# 构建上下文只留编译真正需要的东西。
+# 根目录下的 .exe 有 18MB，不排除的话每次 build 都要把它传进 daemon 一遍。
+.git/
+.github/
+docs/
+data/
+data-lab/
+run/
+# logs/ 装的是运行期探针留下的真实聊天 payload，既不该进版本库也不该进镜像层
+# （镜像里有它们就等于把用户对话烤进可分发的包里）。
+logs/
+*.exe
+*.exe~
+*.log
+# Makefile 的构建产物目录（make build 默认写这里）。
+bin/
+# 下划线开头的目录（internal/panel/_ref 是移植时留下的参考副本，Go 本来就不编译它）。
+_*
+# 本机真实配置不进镜像（含真实 api_key 与本机 proxy）。镜像不带配置，
+# 首启自己生成随机 api_key，见 Dockerfile 尾注。
+/configs/client2api.json
+/client2api.json
+# README 不参与编译，镜像里也没有它的位置（发布的压缩包会单独带上）。
+# 锚定到根目录：clients/*/README.md 是模块文档，不该被这条规则连带排掉。
+/README.md

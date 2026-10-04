@@ -1,0 +1,35 @@
+{
+  "base_url": "https://opencode.ai/zen/v1",
+
+  "api_key": "",
+
+  "extra_models": [],
+  "extra_headers": {},
+
+  "chat_timeout": "10m",
+  "models_timeout": "20s",
+  "models_ttl": "1h",
+  "idle_timeout": "2m",
+
+  "cooldown": "60s",
+  "quota_cooldown": "12h",
+
+  "max_in_flight": 4,
+
+  "include_usage": false,
+  "disable_auth_json_discovery": false,
+
+  "test_model": "gpt-5-nano",
+
+  "auth_base_url": "",
+  "default_realm": "",
+  "free_models": [],
+
+  "accounts": [
+    {
+      "label": "personal",
+      "api_key": "",
+      "disabled": false
+    }
+  ]
+}

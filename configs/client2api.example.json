@@ -1,0 +1,118 @@
+{
+  "listen": "127.0.0.1:8788",
+  "api_key": "",
+  "data_dir": "data",
+  "proxy": "",
+  "aliases": {
+    "claude-sonnet-4": "workbuddy/claude-sonnet-4",
+    "glm-5.3": "zcode/GLM-5.3",
+    "gpt-4o": "trae/custom_model_gpt-5"
+  },
+  "disabled": [],
+  "platforms": {
+    "zcode": {
+      "priority": 10,
+      "disabled_models": []
+    },
+    "tabbit": {
+      "max_in_flight": 1,
+      "max_in_flight_per_account": 1
+    }
+  },
+  "features": {
+    "sanitize_blacklist_fingerprints": true
+  },
+  "cooldown": {
+    "soft_rate": "600s",
+    "soft_rate_max": "2h"
+  },
+  "prompt": {
+    "mode": "passthrough",
+    "file": ""
+  },
+  "pool": {
+    "max_in_flight": 3,
+    "max_in_flight_global": 2,
+    "breaker_threshold": 3,
+    "breaker_cooldown": "30m",
+    "breaker_cooldown_max": "6h",
+    "degrade_threshold": 5,
+    "degrade_cooldown": "10m",
+    "degrade_cooldown_max": "2h",
+    "idle_weight_per_hour": 0.5,
+    "idle_weight_max": 5.0,
+    "prefer_expiring": true,
+    "expiring_soon": "168h",
+    "cost_explore_interval": "30m"
+  },
+  "session_sticky": {
+    "enabled": true,
+    "ttl": "30m",
+    "gc_interval": "5m"
+  },
+  "panel": {
+    "package_detail_limit": 5
+  },
+  "schedule": {
+    "enabled": false,
+    "checkin_hours": [9, 21],
+    "travel_hours": [9, 21],
+    "activity_hours": [10],
+    "keepalive_hours": [22],
+    "blackcat_hours": [23],
+    "growth_hours": [1],
+    "checkin_enabled": true,
+    "growth_enabled": true,
+    "travel_enabled": true,
+    "activity_enabled": true,
+    "keepalive_enabled": true,
+    "blackcat_enabled": true,
+    "balance_refresh_enabled": true,
+    "balance_refresh_minutes": 5
+  },
+  "clients": {
+    "cline": {
+      "tls_profile": "chrome",
+      "tls_protocol": "http/1.1"
+    },
+    "codearts": {},
+    "kimi": {
+      "tls_profile": "node",
+      "tls_protocol": "http/1.1"
+    },
+    "lobsterai": {
+      "tls_profile": "chrome",
+      "tls_protocol": "http/1.1"
+    },
+    "loomy": {
+      "tls_profile": "chrome",
+      "tls_protocol": "http/1.1"
+    },
+    "minimaxcode": {
+      "tls_profile": "chrome",
+      "tls_protocol": "http/1.1"
+    },
+    "opencode": {},
+    "openrouter": {
+      "free_only": true
+    },
+    "qwenwork": {},
+    "raccoon": {
+      "tls_profile": "chrome",
+      "tls_protocol": "http/1.1"
+    },
+    "tabbit": {
+      "tls_profile": "chrome",
+      "tls_protocol": "http/1.1"
+    },
+    "trae": {
+      "tls_profile": "trae",
+      "tls_protocol": "http/1.1"
+    },
+    "workbuddy": {},
+    "zcode": {
+      "tls_profile": "chrome",
+      "tls_protocol": "http/1.1"
+    }
+  }
+}

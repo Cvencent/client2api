@@ -1,0 +1,21 @@
+{
+  "accounts_dir": "",
+  "global_enabled": true,
+  "passthrough_ip": false,
+  "timeout_seconds": 120,
+  "header_timeout_seconds": 60,
+  "idle_timeout_seconds": 300,
+  "max_attempts": 3,
+  "refresh_window_seconds": 300,
+  "sanitize_fingerprints": true,
+
+  "sms_token": "",
+  "sms_keyword": "",
+  "sms_polls": 12,
+  "sms_interval_seconds": 5,
+  "dup_retries": 6,
+
+  "browser_path": "",
+  "browser_headless": true,
+  "auto_login_timeout_seconds": 300
+}

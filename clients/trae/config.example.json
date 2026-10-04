@@ -1,0 +1,43 @@
+{
+  "_comment": "The object that goes under \"clients\".\"trae\" in configs/client2api.json. Every key is optional: an empty object {} is the recommended configuration, because the module discovers the Trae CN credential on this machine automatically. Values shown are the built-in defaults.",
+
+  "storage_path": "",
+  "storage_paths": [],
+  "auto_discover": true,
+  "access_token": "",
+  "refresh_token": "",
+  "user_id": "",
+  "access_token_expiry": "",
+  "machine_id": "",
+  "device_id": "",
+  "account_host": "",
+  "region": "CN",
+
+  "chat_host": "https://trae-api-cn.mchost.guru",
+  "function": "solo_work_lite",
+  "model": "glm-5.2",
+  "models": [],
+  "max_tokens": 0,
+
+  "user_agent": "",
+  "app_id": "6eefa01c-1036-4c7e-9ca5-d891f63bfcd8",
+  "app_version": "default",
+  "ide_version": "0.1.52",
+  "ide_version_code": "20260811",
+  "ide_version_type": "stable",
+  "device_type": "windows",
+  "os_version": "Windows 11 Pro",
+  "device_brand": "83DG",
+  "device_cpu": "Intel",
+  "request_traffic_type": "prod",
+  "client_id": "en1oxy7wnw8j9n",
+  "extra_headers": {},
+
+  "self_renew": false,
+  "timeout_sec": 120,
+  "idle_timeout_sec": 300,
+  "cooldown_sec": 60,
+  "refresh_skew_sec": 300,
+  "attempts": 3,
+  "extra_body": {}
+}

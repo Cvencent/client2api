@@ -1,0 +1,48 @@
+{
+  "base_url": "",
+  "user_agent": "",
+  "client_platform": "desktop-windows",
+  "client_version": "v1.0.35",
+
+  "max_attempts": 3,
+
+  "models_ttl": "5m",
+  "models_timeout": "20s",
+  "chat_timeout": "10m",
+  "idle_timeout": "2m",
+  "first_token_timeout": "120s",
+
+  "cooldown": "60s",
+  "short_cooldown": "15s",
+  "quota_cooldown": "24h",
+  "refresh_margin": "300s",
+  "store_flush": "5s",
+  "login_timeout": "5m",
+
+  "credential_paths": [],
+
+  "access_token": "",
+  "refresh_token": "",
+  "expires_at": "",
+  "office_identity": "personal",
+  "user_id": "",
+  "nickname": "",
+  "phone": "",
+  "device_id": "",
+  "label": "",
+
+  "accounts": [
+    {
+      "label": "personal",
+      "access_token": "",
+      "refresh_token": "",
+      "expires_at": "",
+      "office_identity": "personal",
+      "user_id": "",
+      "nickname": "",
+      "phone": "",
+      "device_id": "",
+      "disabled": false
+    }
+  ]
+}

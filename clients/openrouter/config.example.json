@@ -1,0 +1,25 @@
+{
+  "base_url": "https://openrouter.ai/api/v1",
+  "api_key": "sk-or-v1-REPLACE-ME",
+  "accounts": [],
+  "http_referer": "https://github.com/deepseek-harness/client2api",
+  "x_title": "client2api",
+  "user_agent": "client2api/1.0 (+openrouter)",
+  "extra_headers": {},
+  "extra_models": [],
+  "free_only": true,
+  "chat_timeout": "10m",
+  "models_timeout": "30s",
+  "stream_idle_timeout": "90s",
+  "models_ttl": "10m",
+  "cooldown": "60s",
+  "rate_cooldown": "2m",
+  "quota_cooldown": "30m",
+  "auth_cooldown": "30m",
+  "max_in_flight": 4,
+  "max_tokens_field": "max_completion_tokens",
+  "test_model": "openai/gpt-4o-mini"
+,
+  "auth_url": "",
+  "login_timeout": "5m"
+}
