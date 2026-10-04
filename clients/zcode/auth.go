@@ -196,18 +196,47 @@ func credentialSecrets(path string, logf func(string, ...any)) providerSecrets {
 			continue
 		}
 		id = strings.TrimSpace(id)
-		out.byID[id] = secret
+		mergeProviderSecret(&out, id, secret, userIDForName(name))
 		// The key name carries the account the credential was minted for.  A
 		// name that does not spell one out leaves the account unknown, which is
 		// the honest answer, so it is simply not recorded.
-		if _, _, userID, ok := splitProviderAccountKey(name); ok && strings.TrimSpace(userID) != "" {
-			if out.identity == nil {
-				out.identity = make(map[string]string)
-			}
-			out.identity[id] = strings.TrimSpace(userID)
-		}
+
 	}
 	return out
+}
+
+// userIDForName extracts the vendor account id from a credential-store key
+// when the key spells one out, and returns "" otherwise.
+func userIDForName(name string) string {
+	if _, _, userID, ok := splitProviderAccountKey(name); ok {
+		return strings.TrimSpace(userID)
+	}
+	return ""
+}
+
+// mergeProviderSecret records one credential-store secret, preferring the
+// complete id.secret form over the truncated id-only copy the desktop client
+// writes into config.json.  Both carry the same id half, so first-wins would
+// discard the only usable credential.
+func mergeProviderSecret(out *providerSecrets, id, secret, userID string) {
+	id = strings.TrimSpace(id)
+	secret = strings.TrimSpace(secret)
+	if out == nil || id == "" || secret == "" {
+		return
+	}
+	if out.byID == nil {
+		out.byID = make(map[string]string)
+	}
+	if prev := out.byID[id]; strings.Contains(prev, ".") && !strings.Contains(secret, ".") {
+		return
+	}
+	out.byID[id] = secret
+	if strings.TrimSpace(userID) != "" {
+		if out.identity == nil {
+			out.identity = make(map[string]string)
+		}
+		out.identity[id] = strings.TrimSpace(userID)
+	}
 }
 
 // readJSONMap reads a JSON object, reporting a parse failure instead of

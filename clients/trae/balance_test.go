@@ -12,7 +12,7 @@ import (
 
 // balance_test.go drives the Trae entitlement read entirely offline.
 
-func TestTraeAccountBalanceAggregatesEntitlementPacks(t *testing.T) {
+func TestTraeAccountBalanceUsesVendorUsageSummary(t *testing.T) {
 	var rec rtRecorder
 	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		rec.record(req)
@@ -21,11 +21,11 @@ func TestTraeAccountBalanceAggregatesEntitlementPacks(t *testing.T) {
 		}
 		return jsonResponse(http.StatusOK, `{
 			"is_credits_billing": true,
+			"usage_summary": {"consumed_amount": 1859.74, "total_amount": 4500},
 			"user_entitlement_pack_list": [
-				{"entitlement_base_info":{"quota":{"credits_limit":2000,"enable_solo_lite":true}},"usage":{"credits_amount":125.5}},
-				{"entitlement_base_info":{"quota":{"credits_limit":500,"enable_solo_coder":true}},"usage":{"credits_amount":0}},
-				{"entitlement_base_info":{"quota":{"credits_limit":9999}},"usage":{"credits_amount":0}},
-				{"entitlement_base_info":{"quota":{"credits_limit":0,"enable_solo_web":true}},"usage":{"credits_amount":99}}
+				{"entitlement_base_info":{"quota":{"credits_limit":4000}},"usage":{"credits_amount":1359.7396}},
+				{"entitlement_base_info":{"quota":{"enable_solo_lite":true}},"usage":{}},
+				{"entitlement_base_info":{"quota":{"credits_limit":500,"enable_solo_lite":true}},"usage":{"credits_amount":500}}
 			]
 		}`), nil
 	})
@@ -35,8 +35,8 @@ func TestTraeAccountBalanceAggregatesEntitlementPacks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AccountBalance: %v", err)
 	}
-	if bal.Credits != 2374 || bal.Total != 2500 || bal.Used != 125.5 {
-		t.Fatalf("balance = %+v, want 2374/2500 used 125.5", bal)
+	if bal.Credits != 2640 || bal.Total != 4500 || bal.Used != 1859.74 {
+		t.Fatalf("balance = %+v, want 2640/4500 used 1859.74", bal)
 	}
 	if bal.Unit != traeBalanceUnit {
 		t.Fatalf("unit = %q, want %q", bal.Unit, traeBalanceUnit)
@@ -81,19 +81,43 @@ func TestTraeAccountBalanceRejectsUnknownAccount(t *testing.T) {
 	}
 }
 
-func TestTraeAccountBalanceRefusesWorkOnlyPacks(t *testing.T) {
+func TestTraeAccountBalanceFallsBackToPackTotals(t *testing.T) {
 	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		return jsonResponse(http.StatusOK, `{
 			"user_entitlement_pack_list": [
-				{"entitlement_base_info":{"quota":{"credits_limit":2000}},"usage":{"credits_amount":0}}
+				{"entitlement_base_info":{"quota":{"credits_limit":2000}},"usage":{"credits_amount":125.5}},
+				{"entitlement_base_info":{"quota":{"credits_limit":500}},"usage":{"credits_amount":0}}
 			]
 		}`), nil
 	})
 	c := testClient(t, nil, []*Auth{testAuth("u1", "TOK_1")}, rt)
 
-	_, err := c.AccountBalance(context.Background(), "u1", 0)
-	if err == nil || !strings.Contains(err.Error(), "SOLO") {
-		t.Fatalf("Work-only packs must be refused, got err=%v", err)
+	bal, err := c.AccountBalance(context.Background(), "u1", 0)
+	if err != nil {
+		t.Fatalf("AccountBalance: %v", err)
+	}
+	if bal.Credits != 2374 || bal.Total != 2500 || bal.Used != 125.5 {
+		t.Fatalf("balance = %+v, want 2374/2500 used 125.5", bal)
+	}
+}
+
+func TestTraeAccountBalanceReportsUnlimited(t *testing.T) {
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, `{
+			"usage_summary": {"consumed_amount": 123.25, "total_amount": -1},
+			"user_entitlement_pack_list": [
+				{"entitlement_base_info":{"quota":{"credits_limit":-1}},"usage":{"credits_amount":123.25}}
+			]
+		}`), nil
+	})
+	c := testClient(t, nil, []*Auth{testAuth("u1", "TOK_1")}, rt)
+
+	bal, err := c.AccountBalance(context.Background(), "u1", 0)
+	if err != nil {
+		t.Fatalf("AccountBalance: %v", err)
+	}
+	if !bal.Unlimited || bal.Credits != 0 || bal.Total != 0 || bal.Used != 123.25 {
+		t.Fatalf("balance = %+v, want unlimited with used 123.25", bal)
 	}
 }
 

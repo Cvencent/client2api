@@ -359,6 +359,7 @@ func (p *pool) pick(skip map[string]bool) *entry {
 	if len(candidates) == 0 {
 		return nil
 	}
+	candidates = core.LowestPriorityTier("cline", candidates, func(e *entry) string { return e.acct.id() })
 	sortEntriesByLastUsed(candidates)
 	e := candidates[0]
 	e.acct.LastUsed = now.Unix()

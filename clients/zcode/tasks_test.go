@@ -235,8 +235,8 @@ func TestTasksWithoutAPlanAccountSaysSo(t *testing.T) {
 }
 
 func TestTasksForAnAPIKeyAccountSaysSo(t *testing.T) {
-	// Plan billing is a JWT-only channel, so an api_key account must be told
-	// apart from "no account": they need different fixes.
+	// Plan billing is a JWT-only channel.  An api_key account with no JWT
+	// sibling must be told apart from "no account": they need different fixes.
 	env := newPanelEnv(t, `{"auto_discover":false}`)
 	c := env.client(t, routeTransport(t, previewRoutes()))
 	rec, err := c.AddAccount(context.Background(), core.AccountSpec{
@@ -418,9 +418,9 @@ func TestRunTaskTreatsAnAlreadyClaimedPlanAsSuccess(t *testing.T) {
 }
 
 func TestRunTaskNamesTheReasonAnAccountCannotClaim(t *testing.T) {
-	// A scheduled batch runs over every enabled account, including the api_key
-	// ones that can never serve plan billing.  Those are refusals with a reason,
-	// not errors, and the reason has to survive into Message because that is the
+	// A scheduled batch runs over every enabled account, including an api_key
+	// account with no JWT sibling.  That is a refusal with a reason, not an
+	// error, and the reason has to survive into Message because that is the
 	// only field the scheduler logs.
 	env := newPanelEnv(t, `{"auto_discover":false}`)
 	c := env.client(t, routeTransport(t, previewRoutes()))

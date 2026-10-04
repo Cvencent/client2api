@@ -68,6 +68,10 @@ type server struct {
 	// accountLimiters is the second brake, keyed by (platform, account): the
 	// operator's per-account ceiling.  limMu also guards this map.
 	accountLimiters map[accountKey]*platformLimiter
+	// sessionPlatforms keeps a bare-model conversation on the platform that
+	// last served it, so failover does not ping-pong between a healthy and a
+	// broken sibling on every turn.
+	sessionPlatforms *sessionPlatforms
 }
 
 // NewServer builds the gateway's http.Server.  It is deliberately transport
@@ -82,7 +86,12 @@ func NewServer(opts Options) *http.Server {
 	if opts.Service == "" {
 		opts.Service = DefaultService
 	}
-	s := &server{opts: opts, started: time.Now(), stats: opts.Stats}
+	s := &server{
+		opts:             opts,
+		started:          time.Now(),
+		stats:            opts.Stats,
+		sessionPlatforms: newSessionPlatforms(),
+	}
 	if s.opts.Logger == nil {
 		s.opts.Logger = log.Default()
 	}
@@ -414,6 +423,26 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "invalid_request_error", err.Error())
 		return
 	}
+	// A bare model may have several platforms.  Once one has served this
+	// conversation, keep it first: trying the higher-priority sibling first
+	// would make every turn pay for a platform that already failed.  The
+	// binding never removes candidates, so a dead platform still fails over.
+	conversationKey := core.ConversationKeyOf(req)
+	if s.opts.Live != nil {
+		s.sessionPlatforms.setTTL(s.opts.Live.Load().AffinityTTL)
+	}
+	if len(candidates) > 1 {
+		if platform, ok := s.sessionPlatforms.resolve(conversationKey, func(name string) bool {
+			for _, c := range candidates {
+				if c.Client != nil && c.Client.Name() == name {
+					return true
+				}
+			}
+			return false
+		}); ok {
+			candidates = prioritizeStickyPlatform(candidates, platform)
+		}
+	}
 	client, upstreamModel := candidates[0].Client, candidates[0].Model
 	rec.Candidate = 1
 	req.Model = upstreamModel
@@ -482,6 +511,17 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 		}
 		skippable := candidateUnavailable(err)
 		if (retryable || skippable) && len(candidates) > 1 && (s.opts.Guard == nil || !s.opts.Guard.IP.Active()) {
+			s.opts.Usage.RecordAttempt(UsageRecord{
+				At:        time.Now(),
+				StartedAt: rec.StartedAt,
+				Client:    client.Name(),
+				Realm:     rec.Realm,
+				Account:   rec.Account,
+				Model:     client.Name() + "/" + upstreamModel,
+				Candidate: rec.Candidate,
+				Failed:    true,
+				Attempt:   true,
+			})
 			s.opts.Logger.Printf("chat: platform %s model %s failed (%v), trying the next platform", client.Name(), upstreamModel, err)
 			var handled bool
 			client, hintCtx, err, handled = s.serveRemainingCandidates(w, r, &wire, candidates[1:], 2, &rec, stat, req, maxTokensExplicit)
@@ -503,6 +543,7 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 		stat.uid = servedBy
 	}
 	s.opts.Registry.NoteModelSuccess(client.Name(), upstreamModel, time.Now())
+	s.sessionPlatforms.bind(conversationKey, client.Name())
 	defer stream.Close()
 
 	if wire.Stream {
@@ -550,6 +591,7 @@ func (s *server) serveRemainingCandidates(w http.ResponseWriter, r *http.Request
 		stream, err := s.openStream(r.Context(), client, attemptReq)
 		if err == nil {
 			s.opts.Registry.NoteModelSuccess(client.Name(), upstreamModel, time.Now())
+			s.sessionPlatforms.bind(core.ConversationKeyOf(baseReq), client.Name())
 			if servedBy != "" {
 				rec.Account = servedBy
 				stat.uid = servedBy
@@ -568,6 +610,20 @@ func (s *server) serveRemainingCandidates(w http.ResponseWriter, r *http.Request
 			rec.Account = servedBy
 		}
 		stat.uid = rec.Account
+		// Record the failed candidate in the recent list without counting it as
+		// another inbound request.  The alert is evidence this happened; the
+		// usage page must show the same evidence.
+		s.opts.Usage.RecordAttempt(UsageRecord{
+			At:        time.Now(),
+			StartedAt: rec.StartedAt,
+			Client:    client.Name(),
+			Realm:     rec.Realm,
+			Account:   rec.Account,
+			Model:     client.Name() + "/" + upstreamModel,
+			Candidate: rec.Candidate,
+			Failed:    true,
+			Attempt:   true,
+		})
 		lastClient, lastHint, lastErr = client, hintCtx, err
 
 		f, classified := core.AsFailure(err)

@@ -358,6 +358,21 @@ func validateConfig(cfg map[string]any) error {
 					return fmt.Errorf("platform %q reserve_credits must be a whole number >= -1 (-1 turns the guard off)", name)
 				}
 			}
+			if aps, ok := em["account_priorities"]; ok && aps != nil {
+				m, ok := aps.(map[string]any)
+				if !ok {
+					return fmt.Errorf("platform %q account_priorities must be an object keyed by account id", name)
+				}
+				for id, raw := range m {
+					if raw == nil {
+						continue
+					}
+					f, ok := raw.(float64)
+					if !ok || f != float64(int(f)) {
+						return fmt.Errorf("platform %q account priority for %q must be a whole number", name, id)
+					}
+				}
+			}
 		}
 	}
 	if v, ok := cfg["clients"]; ok && v != nil {

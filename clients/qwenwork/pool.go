@@ -444,7 +444,7 @@ func (p *pool) ready() bool {
 func (p *pool) pick(skip map[string]bool) *entry {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	for _, e := range p.usableLocked() {
+	for _, e := range core.LowestPriorityTier("qwenwork", p.usableLocked(), func(e *entry) string { return e.acct.id() }) {
 		if skip != nil && skip[e.acct.id()] {
 			continue
 		}

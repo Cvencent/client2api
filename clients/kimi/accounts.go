@@ -319,6 +319,24 @@ func (c *Client) boundBinding() (bindingRecord, bool) {
 			return b, true
 		}
 	}
+	best, found := 0, false
+	for _, b := range st.Bindings {
+		if b.Kind != bindingKindBinary || st.explicitlyDisabled(b.ID) || !c.selectable(b.ID) || !isRegularFile(b.Path) {
+			continue
+		}
+		prio := core.AccountPriority("kimi", b.ID)
+		if !found || prio < best {
+			best, found = prio, true
+		}
+	}
+	for _, b := range st.Bindings {
+		if b.Kind != bindingKindBinary || st.explicitlyDisabled(b.ID) || !c.selectable(b.ID) || !isRegularFile(b.Path) {
+			continue
+		}
+		if core.AccountPriority("kimi", b.ID) == best {
+			return b, true
+		}
+	}
 	return bindingRecord{}, false
 }
 

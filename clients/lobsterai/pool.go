@@ -224,14 +224,17 @@ func (p *pool) acquire(now time.Time, limit int) (*accountRecord, error) {
 	}
 
 	var chosen *accountRecord
+	chosenPriority := 0
 	for i := 0; i < len(p.accts); i++ {
 		idx := (p.rr + i) % len(p.accts)
 		a := p.accts[idx]
 		if !p.selectable(a, now, limit) {
 			continue
 		}
-		if chosen == nil || a.lastUsed.Before(chosen.lastUsed) {
+		priority := core.AccountPriority("lobsterai", a.ID)
+		if chosen == nil || priority < chosenPriority || (priority == chosenPriority && a.lastUsed.Before(chosen.lastUsed)) {
 			chosen = a
+			chosenPriority = priority
 		}
 	}
 	if chosen == nil {

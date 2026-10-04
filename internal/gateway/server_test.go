@@ -815,8 +815,20 @@ func TestChatFailsOverToTheNextPlatform(t *testing.T) {
 		t.Fatal("the second platform never received the request")
 	}
 	got := usage.Snapshot()
-	if len(got) != 1 || got[0].Failed || got[0].Client != "beta" || got[0].Account != "b1" {
-		t.Fatalf("usage = %+v, want one successful beta/b1 record", got)
+	var final *UsageRecord
+	var sawAlphaAttempt bool
+	for i := range got {
+		if got[i].Attempt {
+			sawAlphaAttempt = sawAlphaAttempt || (got[i].Client == "alpha" && got[i].Failed)
+			continue
+		}
+		final = &got[i]
+	}
+	if !sawAlphaAttempt {
+		t.Fatalf("usage = %+v, want the failed alpha candidate attempt", got)
+	}
+	if final == nil || final.Failed || final.Client != "beta" || final.Account != "b1" {
+		t.Fatalf("final usage = %+v, want the successful beta/b1 record", final)
 	}
 }
 

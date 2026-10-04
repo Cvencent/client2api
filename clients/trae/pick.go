@@ -189,6 +189,7 @@ func (p *Pool) PickForModel(skip map[string]bool, model string) (*Auth, bool) {
 		}
 		cands = append(cands, scoredEntry{e: e, idx: idx})
 	}
+	cands = core.LowestPriorityTier("trae", cands, func(c scoredEntry) string { return c.e.auth.ID() })
 	if len(cands) == 0 {
 		if cooling > 0 {
 			p.log("trae: every usable account is cooling down for model %s; falling back to the model-agnostic pick", model)

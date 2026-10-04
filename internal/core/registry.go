@@ -119,6 +119,10 @@ type PlatformConfig struct {
 	// value disables the guard.  A module that has never read a balance keeps
 	// the account usable: "never measured" is not "empty".
 	ReserveCredits int
+	// AccountPriorities is the operator's per-account routing priority.  The
+	// key is the account id exposed by the module.  Lower values are tried
+	// first; accounts at the same value keep the module's existing rotation.
+	AccountPriorities map[string]int
 }
 
 // platformPolicy is the normalised form stored in the registry.
@@ -128,6 +132,7 @@ type platformPolicy struct {
 	maxInFlight           int
 	maxInFlightPerAccount int
 	reserveCredits        int
+	accountPriorities     map[string]int
 }
 
 // normalizeModelID is the key form for blacklist matching.
@@ -153,6 +158,14 @@ func (r *Registry) SetPlatformConfigs(cfgs map[string]PlatformConfig) {
 	next := make(map[string]platformPolicy, len(cfgs))
 	for name, cfg := range cfgs {
 		pol := platformPolicy{priority: cfg.Priority, reserveCredits: cfg.ReserveCredits}
+		if len(cfg.AccountPriorities) > 0 {
+			pol.accountPriorities = make(map[string]int, len(cfg.AccountPriorities))
+			for id, priority := range cfg.AccountPriorities {
+				if id != "" {
+					pol.accountPriorities[id] = priority
+				}
+			}
+		}
 		if cfg.MaxInFlight > 0 {
 			pol.maxInFlight = cfg.MaxInFlight
 		}
@@ -172,6 +185,14 @@ func (r *Registry) SetPlatformConfigs(cfgs map[string]PlatformConfig) {
 	r.mu.Lock()
 	r.platforms = next
 	r.mu.Unlock()
+
+	priorities := make(map[string]map[string]int, len(next))
+	for name, pol := range next {
+		if len(pol.accountPriorities) > 0 {
+			priorities[name] = pol.accountPriorities
+		}
+	}
+	SetAccountPriorities(priorities)
 }
 
 // MaxInFlightFor reports the operator's per-platform in-flight ceiling, or 0
@@ -208,6 +229,17 @@ func (r *Registry) ReserveCreditsFor(name string) int {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.platforms[name].reserveCredits
+}
+
+// AccountPriority reports the operator's priority for one account on one
+// platform.  Lower values are tried first; a missing entry is zero.
+func (r *Registry) AccountPriority(platform, id string) int {
+	if r == nil {
+		return 0
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.platforms[platform].accountPriorities[id]
 }
 
 // ModelAllowed reports whether the named platform may be given the model.

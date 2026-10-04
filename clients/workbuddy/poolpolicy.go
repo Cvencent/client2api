@@ -602,6 +602,25 @@ func (p *Pool) applyReserveLocked(e *poolEntry, now time.Time) bool {
 	return true
 }
 
+// SetExpiringSoon installs the window used to compute each account's
+// expiring-credit snapshot.  A changed window invalidates every stored
+// snapshot; an unchanged reload leaves the pool alone.
+func (p *Pool) SetExpiringSoon(d time.Duration) bool {
+	if p == nil {
+		return false
+	}
+	p.mu.Lock()
+	changed := p.expiringSoon != d
+	if changed {
+		p.expiringSoon = d
+	}
+	p.mu.Unlock()
+	if changed {
+		p.ClearExpiringSnapshots()
+	}
+	return changed
+}
+
 // ClearExpiringSnapshots drops every account's expiry detail.
 //
 // The window the detail was computed against is a configuration value, so a
@@ -851,6 +870,12 @@ func (c *Client) applyPoolTuning(t *core.PoolTuning) {
 			c.logf("workbuddy: cost exploration is off")
 		}
 	}
+	if t.ExpiringSoon != nil {
+		if c.pool.SetExpiringSoon(*t.ExpiringSoon) {
+			c.logf("workbuddy: expiring-credit window moved to %s; cached expiry snapshots cleared", t.ExpiringSoon.String())
+		}
+	}
+
 }
 
 // ApplyPlatformPolicy implements core.PlatformPolicyApplier: the operator's

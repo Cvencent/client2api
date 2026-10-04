@@ -34,6 +34,13 @@ type Snapshot struct {
 	// restart; <=0 means "use the built-in default".
 	MaxRotate         int           `json:"max_rotate"`
 	RotateBackoffBase time.Duration `json:"rotate_backoff_base"`
+	// AffinityTTL is the session_sticky.ttl window.  The modules use it for
+	// account stickiness; the gateway uses the same value for platform
+	// stickiness, so a reload moves both tables together.
+	// ExpiringSoon is the balance/expiry window shared by the panel and the
+	// WorkBuddy pool. A reload must move both together.
+	ExpiringSoon time.Duration `json:"expiring_soon"`
+	AffinityTTL  time.Duration `json:"affinity_ttl"`
 }
 
 // AuthEnabled reports whether inbound auth is enforced.

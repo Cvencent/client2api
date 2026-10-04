@@ -179,6 +179,21 @@ func TestAccountGroupIsHealthyWhenAnyChannelIsHealthy(t *testing.T) {
 // TestAccountGroupHeaderHasNoActionButtons 钉住组头那一行是纯信息行。每个通道
 // 单独启停、单独测试是需求本身；组头再挂一个批量按钮会把两份凭据的状态混在
 // 一起，而且没有明显正确的语义。
+func TestAccountPriorityIsEditableFromThePoolPage(t *testing.T) {
+	src := string(indexHTML)
+	for _, want := range []string{
+		"<th>优先级</th>",
+		"function accPriorityCell(",
+		"accPrio",
+		"async function saveAccountPriority(",
+		"account_priorities",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("account priority UI is missing %q", want)
+		}
+	}
+}
+
 func TestAccountGroupHeaderHasNoActionButtons(t *testing.T) {
 	src := poolStatsUISource(t)
 	head := groupHeaderTemplate(t, src)
@@ -200,8 +215,8 @@ func TestAccountGroupHeaderHasNoActionButtons(t *testing.T) {
 	// 组头就会错位，而错位只在有多通道账号时看得见。
 	// 组头本身是 3 格（标记、账号名、状态）；余额列存在时再多一格，其余宽度
 	// 靠 colspan 吃掉。列数一变组头就会错位，而错位只在有多通道账号时看得见。
-	if !strings.Contains(head, `colspan="' + (showBal ? cols - 4 : cols - 3) + '"`) {
-		t.Error("组头的 colspan 没有跟着表头列数走（showBal ? cols - 4 : cols - 3）")
+	if !strings.Contains(head, `colspan="' + (showBal ? cols - 5 : cols - 4) + '"`) {
+		t.Error("组头的 colspan 没有跟着表头列数走（showBal ? cols - 5 : cols - 4）")
 	}
 	// 收起时也要看得到余额：同一个账号只有部分通道能报余额（ZCode 只有 JWT
 	// 通道能报计划余额），只看第一条通道会让余额永远显示不出来。

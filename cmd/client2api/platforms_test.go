@@ -34,12 +34,12 @@ func TestPlatformConfigsProjectsTheFileBlock(t *testing.T) {
 
 // The config file carries two ceilings per platform: the platform-wide one
 // and the per-account one.  Both have to survive the projection onto the
-// router's policy type, and a platform that omits the per-account knob keeps
-// the documented default of no ceiling (0).
+// router's policy type.  A missing key takes the documented default of 2; an
+// explicit 0 still means "no ceiling".
 func TestPlatformConfigsProjectsBothInFlightCeilings(t *testing.T) {
 	cfg := &fileConfig{Platforms: map[string]platformConfig{
-		"tabbit": {MaxInFlight: 5, MaxInFlightPerAccount: 3},
-		"cline":  {MaxInFlight: 2},
+		"tabbit": {MaxInFlight: intPtr(5), MaxInFlightPerAccount: intPtr(3)},
+		"cline":  {MaxInFlight: intPtr(2)},
 	}}
 
 	got := cfg.platformConfigs()
@@ -47,7 +47,7 @@ func TestPlatformConfigsProjectsBothInFlightCeilings(t *testing.T) {
 		t.Errorf("tabbit ceilings = (%d, %d), want (5, 3)",
 			got["tabbit"].MaxInFlight, got["tabbit"].MaxInFlightPerAccount)
 	}
-	if got["cline"].MaxInFlightPerAccount != 0 {
-		t.Errorf("cline per-account ceiling = %d, want 0 (unset)", got["cline"].MaxInFlightPerAccount)
+	if got["cline"].MaxInFlightPerAccount != 2 {
+		t.Errorf("cline per-account ceiling = %d, want the default 2", got["cline"].MaxInFlightPerAccount)
 	}
 }

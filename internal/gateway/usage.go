@@ -88,21 +88,25 @@ func (s *Stats) addFailure() { s.failures.Add(1) }
 // UsageRecord is one completed chat request.  It is deliberately tiny: the
 // panel aggregates it, nothing else reads it.
 type UsageRecord struct {
-	At               time.Time `json:"at"`
-	StartedAt        time.Time `json:"started_at,omitempty"` // optional; Record derives latency/TPS from it
-	Client           string    `json:"client,omitempty"`
-	Realm            string    `json:"realm,omitempty"`
-	Account          string    `json:"account,omitempty"`
-	Model            string    `json:"model,omitempty"`
-	Candidate        int       `json:"candidate,omitempty"` // 1-based position in a bare-model route
-	Failed           bool      `json:"failed,omitempty"`
-	PromptTokens     int       `json:"prompt_tokens,omitempty"`
-	CompletionTokens int       `json:"completion_tokens,omitempty"`
-	TotalTokens      int       `json:"total_tokens,omitempty"`
-	LatencyMs        int64     `json:"latency_ms,omitempty"`
-	HasLatency       bool      `json:"has_latency,omitempty"`
-	TokensPerSecond  float64   `json:"tokens_per_second,omitempty"`
-	HasTPS           bool      `json:"has_tps,omitempty"`
+	At        time.Time `json:"at"`
+	StartedAt time.Time `json:"started_at,omitempty"` // optional; Record derives latency/TPS from it
+	Client    string    `json:"client,omitempty"`
+	Realm     string    `json:"realm,omitempty"`
+	Account   string    `json:"account,omitempty"`
+	Model     string    `json:"model,omitempty"`
+	Candidate int       `json:"candidate,omitempty"` // 1-based position in a bare-model route
+	Failed    bool      `json:"failed,omitempty"`
+	// Attempt marks a candidate that failed before the request moved on.
+	// It is a recent-list row, not an extra inbound request, so it must not
+	// inflate the aggregate totals.
+	Attempt          bool    `json:"attempt,omitempty"`
+	PromptTokens     int     `json:"prompt_tokens,omitempty"`
+	CompletionTokens int     `json:"completion_tokens,omitempty"`
+	TotalTokens      int     `json:"total_tokens,omitempty"`
+	LatencyMs        int64   `json:"latency_ms,omitempty"`
+	HasLatency       bool    `json:"has_latency,omitempty"`
+	TokensPerSecond  float64 `json:"tokens_per_second,omitempty"`
+	HasTPS           bool    `json:"has_tps,omitempty"`
 }
 
 // setUsage copies the module-reported token counts onto the record.  It is
@@ -403,6 +407,30 @@ func (s *UsageStore) Record(rec UsageRecord) {
 	rec.HasTPS = hasTPS
 	s.appendLocked(rec)
 	s.addLocked(at, rec.Client, rec.Realm, rec.Account, rec.Model, d, !rec.Failed)
+}
+
+// RecordAttempt stores one failed candidate attempt in the recent-call ring
+// without touching the aggregate buckets.  The inbound request is counted once
+// by the final Record; this method exists so failover is visible in the
+// per-request view without turning one caller request into several.
+func (s *UsageStore) RecordAttempt(rec UsageRecord) {
+	if s == nil {
+		return
+	}
+	if rec.At.IsZero() {
+		rec.At = time.Now()
+	}
+	rec.Attempt = true
+	rec.Failed = true
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.count == s.max {
+		s.recs[s.start] = rec
+		s.start = (s.start + 1) % s.max
+	} else {
+		s.recs[(s.start+s.count)%s.max] = rec
+		s.count++
+	}
 }
 
 // appendLocked adds one record to the bounded recent-request ring.

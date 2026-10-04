@@ -36,11 +36,16 @@ type Store struct {
 	mu      sync.Mutex
 	alerts  []Alert // oldest first
 	lastErr error
+	// readAt is the timestamp of the newest alert the operator has marked
+	// read.  It is a watermark rather than a per-row flag so the file format
+	// stays small and a new alert is unread by construction.
+	readAt time.Time
 }
 
 type alertFile struct {
 	Version int       `json:"version"`
 	Saved   time.Time `json:"saved"`
+	ReadAt  time.Time `json:"read_at,omitempty"`
 	Alerts  []Alert   `json:"alerts"`
 }
 
@@ -94,6 +99,48 @@ func (s *Store) List() []Alert {
 	return out
 }
 
+// Unread reports how many alerts arrived after the operator's read watermark.
+func (s *Store) Unread() int {
+	if s == nil {
+		return 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for _, a := range s.alerts {
+		if s.readAt.IsZero() || a.At.After(s.readAt) {
+			n++
+		}
+	}
+	return n
+}
+
+// MarkAllRead advances the read watermark past the newest alert and persists
+// it.  History is kept; only the unread count changes.
+func (s *Store) MarkAllRead() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	mark := s.readAt
+	for _, a := range s.alerts {
+		if a.At.After(mark) {
+			mark = a.At
+		}
+	}
+	s.readAt = mark
+	path := s.path
+	raw := s.marshalLocked()
+	s.mu.Unlock()
+	if path != "" {
+		if err := core.WriteFileAtomic(path, raw); err != nil {
+			s.mu.Lock()
+			s.lastErr = err
+			s.mu.Unlock()
+		}
+	}
+}
+
 // LastError is the most recent persistence error, if any.
 func (s *Store) LastError() error {
 	if s == nil {
@@ -129,7 +176,7 @@ func (s *Store) Save() error {
 }
 
 func (s *Store) marshalLocked() []byte {
-	f := alertFile{Version: 1, Saved: time.Now().UTC(), Alerts: make([]Alert, len(s.alerts))}
+	f := alertFile{Version: 1, Saved: time.Now().UTC(), ReadAt: s.readAt, Alerts: make([]Alert, len(s.alerts))}
 	copy(f.Alerts, s.alerts)
 	raw, err := json.MarshalIndent(f, "", "  ")
 	if err != nil {
@@ -174,6 +221,7 @@ func (s *Store) Load() error {
 	}
 	s.mu.Lock()
 	s.alerts = append([]Alert(nil), f.Alerts...)
+	s.readAt = f.ReadAt
 	s.lastErr = nil
 	s.mu.Unlock()
 	return nil

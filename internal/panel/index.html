@@ -1131,7 +1131,7 @@ input[type=checkbox] { width: 14px; height: 14px; padding: 0; accent-color: var(
         <table class="acc">
           <thead><tr>
             <th class="mark" aria-hidden="true"></th>
-            <th>账号</th><th>状态</th><th class="c-bal">余额</th><th>成功 / 失败</th><th>在途</th><th>用量</th><th>最近成功</th><th>到期</th><th>备注</th><th>字段</th><th class="c-acts"></th>
+            <th>账号</th><th>状态</th><th>优先级</th><th class="c-bal">余额</th><th>成功 / 失败</th><th>在途</th><th>用量</th><th>最近成功</th><th>到期</th><th>备注</th><th>字段</th><th class="c-acts"></th>
           </tr></thead>
           <tbody id="accBody"></tbody>
         </table>
@@ -2364,6 +2364,15 @@ function accBalanceCell(a) {
   const total = Number(b.credits_total) || 0;
   const u = st.unit ? '<span class="u">' + esc(st.unit) + '</span>' : "";
   const used = Number(b.used) || 0;
+  if (b.unlimited) {
+    let tip = "无限额度";
+    if (used > 0) tip += "，已用 " + numf(used);
+    if (b.expiring > 0) tip += "，其中 " + b.expiring + " 即将过期";
+    if (b.earliest_at) tip += "（最早到期 " + b.earliest_at + (b.earliest_remaining != null ? "，剩 " + b.earliest_remaining : "") + "）";
+    let html = '<span title="' + esc(tip) + '">无限' + u + '</span>';
+    if (used > 0) html += '<span class="bal-used">已用 ' + numf(used) + '</span>';
+    return html;
+  }
   let tip = "剩余 " + numf(left) + (total > 0 ? " / 总量 " + numf(total) : "");
   if (used > 0) tip += "，已用 " + numf(used);
   if (b.expiring > 0) tip += "，其中 " + b.expiring + " 即将过期";
@@ -2407,7 +2416,7 @@ function renderAccounts() {
   const showBal = !!caps.balance;
   document.body.classList.toggle("hide-bal", !showBal);
   $("#btnBalanceAll").hidden = !showBal;
-  const cols = showBal ? 12 : 11;
+  const cols = showBal ? 13 : 12;
   if (!CUR) { tb.innerHTML = '<tr><td colspan="' + cols + '" class="hint">没有已注册的客户端</td></tr>'; $("#accNote").textContent = ""; return; }
   // accNote 是当前客户端的注解：模块说不可服务时原样带上它给的理由
   // （health.note），只要有账号在途占满就在末尾追加一句；为 0 时一个字不动。
@@ -2473,6 +2482,7 @@ function renderAccounts() {
         '<td><div class="name">' + esc(g.identity) + ' <span class="chip">' + g.rows.length + ' 个通道</span></div>' +
           '<div class="hint">' + esc(g.rows[0].client || CUR) + ' · 同一账号的不同登录方式</div></td>' +
         '<td>' + stateChip(st) + '</td>' +
+        '<td class="num c-prio">' + accGroupPriorityCell(g.rows) + '</td>' +
         // 分组行上只有「展开/收起」这一个动作：启用、停用、测试都按通道走，一个
         // "整组操作"的按钮会把两个不同凭据的状态搅在一起，操作员也说不清刚才改的
         // 是哪一个。收起时这里也顺带说明为什么还有几行没显示。
@@ -2480,7 +2490,7 @@ function renderAccounts() {
         // （ZCode 的计划余额只认 JWT，而组里第一条往往是 api-key），收起
         // 时不显示的话，操作员看到的永远是「-」。展开后每行照旧各报各的。
         (showBal ? '<td class="num c-bal">' + accGroupBalanceCell(g.rows) + '</td>' : '') +
-        '<td colspan="' + (showBal ? cols - 4 : cols - 3) + '" class="hint">' + esc(st.on + "/" + st.of + " 个通道已启用" + (open ? "；每一行可以单独启用、停用和测试" : "；点这一行展开")) + '</td>' +
+        '<td colspan="' + (showBal ? cols - 5 : cols - 4) + '" class="hint">' + esc(st.on + "/" + st.of + " 个通道已启用" + (open ? "；每一行可以单独启用、停用和测试" : "；点这一行展开")) + '</td>' +
       '</tr>' +
       g.rows.map(a => accRowHTML(a, caps, acts, showBal, true, open, g.key)).join("");
   }).join("");
@@ -2508,6 +2518,19 @@ function needsRelogin(a) {
 // 带一个拐角符号，免得看起来像一个独立的账号。open/groupKey 只在 chan 为真时有
 // 意义：收起时给通道行加 hidden，并用 data-chan 记住它属于哪一组，这样即使以后
 // 改成只渲染展开的行，也不用靠 DOM 顺序去猜归属。
+function accPriorityCell(a, caps) {
+  const raw = a.priority == null ? "" : String(a.priority);
+  const value = Number(raw) === 0 ? "" : raw;
+  const dis = caps && caps.manage ? "" : " disabled";
+  return '<input class="cfgtext accPrio" type="number" step="1" value="' + esc(value) + '" placeholder="0" data-id="' + esc(a.id) + '" title="数字越小越优先；同优先级继续轮询。留空恢复默认 0"' + dis + '>';
+}
+
+function accGroupPriorityCell(rows) {
+  const values = Array.from(new Set(rows.map(a => Number(a.priority) || 0)));
+  if (values.length !== 1) return '<span class="hint">按通道</span>';
+  return values[0] === 0 ? '<span class="hint">-</span>' : '<span>' + esc(String(values[0])) + '</span>';
+}
+
 function accRowHTML(a, caps, acts, showBal, chan, open, groupKey) {
   const btns = [];
   if (caps.manage) {
@@ -2564,6 +2587,7 @@ function accRowHTML(a, caps, acts, showBal, chan, open, groupKey) {
     '<td class="mark"><span class="pulse" style="background:' + (a.enabled && a.state === "ready" ? "var(--ok)" : "var(--bad)") + '"></span></td>' +
     '<td><div class="name">' + (chan ? '<span class="branch">└</span> ' : '') + esc(a.label || a.id) + realmTag(a) + '</div><div class="hint">' + esc(a.client || CUR) + ' · ' + esc(String(a.id).slice(0, 40)) + '</div></td>' +
     '<td>' + stateChip(a) + '</td>' +
+    '<td class="num c-prio">' + accPriorityCell(a, caps) + '</td>' +
     (showBal ? '<td class="num c-bal">' + accBalanceCell(a) + '</td>' : '') +
     '<td class="num">' + accRateCell(a) + '</td>' +
     '<td class="num">' + inflightCell(CUR, a) + '</td>' +
@@ -2586,6 +2610,35 @@ function applyAccounts(n, res) {
   // 会集体变回 "-"，看起来像网关刚把所有历史丢了。
   if (res.stats) patch.stats = res.stats;
   if (Object.keys(patch).length) ACCTS[n] = Object.assign({}, ACCTS[n], patch);
+}
+
+async function saveAccountPriority(id, raw) {
+  const value = String(raw == null ? "" : raw).trim();
+  const priority = value === "" ? null : Number(value);
+  if (value !== "" && (!Number.isFinite(priority) || !Number.isInteger(priority))) {
+    toast("账号优先级必须是整数", "err");
+    renderAccounts();
+    return;
+  }
+  const body = { platforms: {} };
+  body.platforms[CUR] = { account_priorities: {} };
+  body.platforms[CUR].account_priorities[id] = priority;
+  const saved = await api("/panel/api/config", { method: "PATCH", body });
+  if (!saved.ok) {
+    toast("保存账号优先级失败：" + saved.err, "err");
+    renderAccounts();
+    return;
+  }
+  const reloaded = await api("/panel/api/reload", { method: "POST" });
+  if (!reloaded.ok) {
+    toast("优先级已写入配置，但热加载失败：" + reloaded.err, "err");
+    renderAccounts();
+    return;
+  }
+  const list = ((ACCTS[CUR] || {}).accounts) || [];
+  list.forEach(a => { if (a.id === id) a.priority = priority == null ? 0 : priority; });
+  renderAccounts();
+  toast("账号优先级已保存");
 }
 
 /* ── 人机验证 ─────────────────────────────────────────────────────────── */
@@ -2715,6 +2768,7 @@ async function act(btn) {
         const u = b.unit ? " " + b.unit : "";
         let msg = b.credits + u;
         if (b.credits_total > 0) msg += " / " + b.credits_total + u;
+        if (b.unlimited) msg = "无限" + u;
         if (b.used > 0) msg += "，已用 " + b.used;
         if (b.expiring > 0) {
           msg += "（即将过期 " + b.expiring + (b.earliest_at ? "，最早 " + b.earliest_at : "") + "）";
@@ -2978,7 +3032,7 @@ function renderRecentRows() {
     return true;
   });
   body.innerHTML = rows.map(function (x) {
-    const state = x.failed ? '<span class="recent-bad">失败</span>' : '<span class="recent-ok">成功</span>';
+    const state = x.failed ? '<span class="recent-bad">' + (x.attempt ? "候选失败" : "失败") + '</span>' : '<span class="recent-ok">成功</span>';
     return '<tr><td class="hint">' + esc(fmtCallTime(x.at)) + '</td>' +
       '<td>' + esc(x.client || "-") + '</td><td>' + esc(x.model || "-") + '</td>' +
       '<td>' + esc(x.account || "-") + '</td><td>' + state + '</td>' +
@@ -3005,8 +3059,11 @@ async function renderAlerts() {
     return;
   }
   const rows = (r.data && r.data.alerts) || [];
-  updateAlertBadge(rows.length);
+  updateAlertBadge(0);
   $("#alertNote").textContent = rows.length + " 条" + (r.data && r.data.last_error ? " · 写入异常：" + r.data.last_error : "");
+  api("/panel/api/alerts", { method: "POST" }).then(function (ack) {
+    if (ack && ack.ok) updateAlertBadge(0);
+  }).catch(function () {});
   $("#alertBody").innerHTML = rows.map(function (x) {
     return '<tr><td class="hint">' + esc(fmtCallTime(x.at)) + '</td>' +
       '<td>' + esc(x.client || "-") + '</td><td>' + esc(x.model || "-") + '</td>' +
@@ -3017,7 +3074,7 @@ async function renderAlerts() {
 
 async function refreshAlertBadge() {
   const r = await api("/panel/api/alerts");
-  if (r.ok) updateAlertBadge(((r.data && r.data.alerts) || []).length);
+  if (r.ok) updateAlertBadge(Number((r.data && r.data.unread) || 0));
 }
 
 function yn(b) { return b ? '<span class="chip ok">是</span>' : '<span class="hint">-</span>'; }
@@ -3480,8 +3537,8 @@ async function renderPlatforms() {
       '<button class="xs pfToggle" type="button" aria-expanded="false" title="展开 / 收起模型清单">▸</button>' +
       '<span class="pfname">' + esc(n) + '</span>' +
       '<label class="sel-note">优先级 <input class="cfgtext pfPrio" type="number" value="' + esc(prio) + '" placeholder="0" style="width:76px"></label>' +
-      '<label class="sel-note" title="同时向该平台发出的最大请求数；留空或 0 = 不限制">并发 <input class="cfgtext pfMif" type="number" min="0" value="' + esc(mif) + '" placeholder="不限" style="width:76px"></label>' +
-      '<label class="sel-note" title="该平台内每个账号自身的最大并发；留空或 0 = 不限制">单账号并发 <input class="cfgtext pfMifAcct" type="number" min="0" value="' + esc(mifAcct) + '" placeholder="不限" style="width:76px"></label>' +
+      '<label class="sel-note" title="同时向该平台发出的最大请求数；留空默认 2，填 0 = 不限制">并发 <input class="cfgtext pfMif" type="number" min="0" value="' + esc(mif) + '" placeholder="2" style="width:76px"></label>' +
+      '<label class="sel-note" title="该平台内每个账号自身的最大并发；留空默认 2，填 0 = 不限制">单账号并发 <input class="cfgtext pfMifAcct" type="number" min="0" value="' + esc(mifAcct) + '" placeholder="2" style="width:76px"></label>' +
       '<label class="sel-note" title="账号余额低于或等于这个数就暂停（不再参与路由），直到余额回升；留空或 0 = 零余额即暂停；-1 = 关闭这个保护">最低余额 <input class="cfgtext pfReserve" type="number" min="-1" value="' + esc(res) + '" placeholder="0" style="width:76px"></label>' +
       '<span class="pfcount">' + list.length + " 个模型 · 禁用 " + off.length + '</span>' +
       '<span class="grow"></span>' +
@@ -6337,6 +6394,11 @@ $("#clientChips").addEventListener("click", ev => {
   const b = ev.target.closest && ev.target.closest("[data-client]");
   if (!b) return;
   CUR = b.dataset.client; renderAccounts();
+});
+$("#accBody").addEventListener("change", ev => {
+  const el = ev.target && ev.target.closest ? ev.target.closest(".accPrio") : null;
+  if (!el) return;
+  saveAccountPriority(el.dataset.id, el.value);
 });
 $("#accBody").addEventListener("click", ev => {
   // 空态里那些「别的客户端有 N 个匹配」的徽章：切过去，搜索框里的关键词留着。

@@ -760,6 +760,7 @@ func (c *Client) buildManagedAccount(spec core.AccountSpec) (managedAccount, err
 			return managedAccount{}, fmt.Errorf("field %q %s", fieldAPIKey, err)
 		}
 		m.APIKey = key
+		m.UserID = userIDFromAPIKey(key)
 	}
 
 	if base := spec.Field(fieldBaseURL); base != "" {
@@ -1095,6 +1096,28 @@ func (c *Client) Import(ctx context.Context, paths []string, all bool) ([]core.A
 // ---------------------------------------------------------------------------
 // Validation and small helpers
 // ---------------------------------------------------------------------------
+
+// userIDFromAPIKey extracts the account id from the vendor's dotted API-key
+// form (<user-id>.<secret>).  The vendor's coding-plan keys are built that
+// way, and the prefix is what lets a pasted key be grouped with the plan JWT
+// for the same account.
+func userIDFromAPIKey(key string) string {
+	key = strings.TrimSpace(key)
+	i := strings.IndexByte(key, '.')
+	if i <= 0 {
+		return ""
+	}
+	id := strings.TrimSpace(key[:i])
+	if len(id) < 6 {
+		return ""
+	}
+	for _, r := range id {
+		if r < '0' || r > '9' {
+			return ""
+		}
+	}
+	return id
+}
 
 func parseKind(v string) (string, bool) {
 	switch strings.ToLower(strings.TrimSpace(v)) {

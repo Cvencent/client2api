@@ -63,6 +63,9 @@ func TestConfigPatchRejectsMalformedPlatformPolicy(t *testing.T) {
 		{"reserve_credits not a number", `{"platforms":{"cline":{"reserve_credits":"lots"}}}`},
 		{"reserve_credits not whole", `{"platforms":{"cline":{"reserve_credits":1.5}}}`},
 		{"reserve_credits below -1", `{"platforms":{"cline":{"reserve_credits":-2}}}`},
+		{"account_priorities not an object", `{"platforms":{"cline":{"account_priorities":[]}}}`},
+		{"account priority not a number", `{"platforms":{"cline":{"account_priorities":{"a":"high"}}}}`},
+		{"account priority not whole", `{"platforms":{"cline":{"account_priorities":{"a":1.5}}}}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -72,6 +75,24 @@ func TestConfigPatchRejectsMalformedPlatformPolicy(t *testing.T) {
 				t.Fatalf("HTTP %d, want 400: %s", w.Code, w.Body.String())
 			}
 		})
+	}
+}
+
+func TestConfigPatchAcceptsAccountPriorities(t *testing.T) {
+	path := configFile(t, baseConfig)
+	out := mustSave(t, configPanel(path),
+		`{"platforms":{"workbuddy":{"account_priorities":{"acct-1":-2,"acct-2":5}}}}`)
+
+	changed, _ := out["changed"].([]any)
+	if len(changed) != 1 || changed[0] != "platforms" {
+		t.Fatalf("changed = %v, want [platforms]", out["changed"])
+	}
+	got := onDisk(t, path)
+	pl, _ := got["platforms"].(map[string]any)
+	wb, _ := pl["workbuddy"].(map[string]any)
+	aps, _ := wb["account_priorities"].(map[string]any)
+	if aps["acct-1"] != float64(-2) || aps["acct-2"] != float64(5) {
+		t.Fatalf("account_priorities = %v, want acct-1=-2 acct-2=5", aps)
 	}
 }
 

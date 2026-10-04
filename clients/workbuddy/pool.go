@@ -335,6 +335,7 @@ type Pool struct {
 	mu            sync.Mutex
 	entries       []*poolEntry
 	cursor        int
+	expiringSoon  time.Duration
 	refreshWindow time.Duration
 	now           func() time.Time
 
@@ -578,6 +579,25 @@ func (p *Pool) pickLockedRealm(skip map[string]bool, realm string, now time.Time
 	if n == 0 {
 		return nil, false
 	}
+	best, found := 0, false
+	for _, e := range p.entries {
+		if e == nil || e.auth == nil || !e.usable(now) || !realmMatches(e, realm) {
+			continue
+		}
+		if p.fullLocked(e) {
+			continue
+		}
+		if skip[e.auth.ID()] {
+			continue
+		}
+		prio := core.AccountPriority("workbuddy", e.auth.ID())
+		if !found || prio < best {
+			best, found = prio, true
+		}
+	}
+	if !found {
+		return nil, false
+	}
 	for i := 0; i < n; i++ {
 		idx := (p.cursor + i) % n
 		e := p.entries[idx]
@@ -585,6 +605,9 @@ func (p *Pool) pickLockedRealm(skip map[string]bool, realm string, now time.Time
 			continue
 		}
 		if !realmMatches(e, realm) {
+			continue
+		}
+		if core.AccountPriority("workbuddy", e.auth.ID()) != best {
 			continue
 		}
 		// A full account is skipped like an unusable one: the rotation has to
@@ -943,6 +966,7 @@ func (p *Pool) PickForModelInRealm(skip map[string]bool, model, realm string) (*
 		}
 		cands = append(cands, scoredEntry{e: e, idx: idx})
 	}
+	cands = core.LowestPriorityTier("workbuddy", cands, func(c scoredEntry) string { return c.e.auth.ID() })
 	if len(cands) == 0 {
 		// Only the model-scoped path has anything to warn about: with an empty
 		// model the plain rotation below is the intended answer, not a fallback.

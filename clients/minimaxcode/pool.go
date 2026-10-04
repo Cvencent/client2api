@@ -458,6 +458,22 @@ func (p *pool) next(exclude map[string]bool) *Account {
 
 	now := time.Now()
 	n := len(p.accounts)
+	best, found := 0, false
+	for _, a := range p.accounts {
+		if exclude != nil && exclude[a.ID] {
+			continue
+		}
+		if !p.selectableLocked(a, now) {
+			continue
+		}
+		prio := core.AccountPriority("minimaxcode", a.ID)
+		if !found || prio < best {
+			best, found = prio, true
+		}
+	}
+	if !found {
+		return nil
+	}
 	for i := 0; i < n; i++ {
 		idx := (p.cursor + i) % n
 		a := p.accounts[idx]
@@ -465,6 +481,9 @@ func (p *pool) next(exclude map[string]bool) *Account {
 			continue
 		}
 		if !p.selectableLocked(a, now) {
+			continue
+		}
+		if core.AccountPriority("minimaxcode", a.ID) != best {
 			continue
 		}
 		p.cursor = (idx + 1) % n

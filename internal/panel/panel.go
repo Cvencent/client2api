@@ -641,6 +641,7 @@ func (p *panel) accounts(w http.ResponseWriter, r *http.Request, c core.Client) 
 			writeErr(w, http.StatusBadGateway, err.Error())
 			return
 		}
+		p.decorateAccountPriorities(c.Name(), list)
 		out := map[string]any{
 			"client":       c.Name(),
 			"accounts":     redactAccounts(list),
@@ -1121,7 +1122,17 @@ func (p *panel) relistErr(ctx context.Context, am core.AccountManager) ([]core.A
 	if err != nil {
 		return []core.AccountRecord{}, err
 	}
+	p.decorateAccountPriorities(am.Name(), list)
 	return redactAccounts(list), nil
+}
+
+func (p *panel) decorateAccountPriorities(platform string, list []core.AccountRecord) {
+	if p == nil || p.opts.Registry == nil {
+		return
+	}
+	for i := range list {
+		list[i].Priority = p.opts.Registry.AccountPriority(platform, list[i].ID)
+	}
 }
 
 func redactAccounts(in []core.AccountRecord) []core.AccountRecord {

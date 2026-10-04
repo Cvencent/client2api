@@ -296,7 +296,21 @@ func (s *store) candidates(now time.Time) []account {
 	byAge(stale)
 
 	out := make([]account, 0, len(fresh)+len(stale))
-	for _, a := range append(fresh, stale...) {
+	ordered := append(fresh, stale...)
+	best, found := 0, false
+	for _, a := range ordered {
+		prio := core.AccountPriority("loomy", a.ID)
+		if !found || prio < best {
+			best, found = prio, true
+		}
+	}
+	if !found {
+		return nil
+	}
+	for _, a := range ordered {
+		if core.AccountPriority("loomy", a.ID) != best {
+			continue
+		}
 		out = append(out, *a)
 	}
 	return out

@@ -135,6 +135,12 @@ func (c *Client) planAccount(id string) (*Account, error) {
 		if acct == nil {
 			return nil, fmt.Errorf("zcode: account %q not found", id)
 		}
+		if resolved, err := c.claimChannelFor(acct); err == nil {
+			return resolved, nil
+		}
+		// Keep the selected row's identity when it has no JWT sibling.  The
+		// caller renders that as "this credential cannot claim" instead of
+		// pretending the whole module has no account.
 		return acct, nil
 	}
 	for _, a := range c.pool.planAccounts() {
@@ -156,11 +162,11 @@ func (c *Client) Tasks(ctx context.Context, accountID string) ([]core.TaskInfo, 
 		return nil, err
 	}
 	if acct == nil {
-		return []core.TaskInfo{claimRow("没有可用的 ZCode 计划 (jwt) 账号；活动套餐只走 jwt 通道")}, nil
+		return []core.TaskInfo{claimRow("娌℃湁鍙敤鐨?ZCode 璁″垝 (jwt) 璐﹀彿锛涙椿鍔ㄥ椁愬彧璧?jwt 閫氶亾")}, nil
 	}
 	if acct.Mode != modeJWT {
 		return []core.TaskInfo{claimRow(fmt.Sprintf(
-			"计划计费需要 ZCode 计划 (jwt) 凭证；%s 是 %s",
+			"plan billing needs a ZCode plan (jwt) credential; %s is %s",
 			acct.ID, firstNonEmpty(acct.Mode, "unknown")))}, nil
 	}
 	if !c.pool.captchaReady() {
@@ -268,6 +274,9 @@ func (c *Client) RunTask(ctx context.Context, accountID, code string) (core.Task
 	c.forgetBoard()
 	if err != nil {
 		return core.TaskResult{}, err
+	}
+	if !res.OK && res.Error != "" && res.Message == "" {
+		res.Message = res.Error
 	}
 	// CheckinResult splits "the action did not run" (Error) from "here is what
 	// the vendor said" (Message); the scheduler only logs Message, so a refusal

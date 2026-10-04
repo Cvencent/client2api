@@ -198,6 +198,23 @@ what is wrong, and `Chat` returns `core.ErrNotConfigured` (HTTP 503).  When
 credentials exist but none is usable — every token expired while `self_renew` is
 off — the terminal answer is a classified `auth` failure instead.
 
+## Balance
+
+The panel balance comes from `POST /trae/api/v2/pay/ide_user_ent_usage`.
+Trae returns two layers in that response:
+
+- `usage_summary.total_amount` / `consumed_amount` is the vendor's aggregate.
+  The official client uses this value for the account-level balance.
+- `user_entitlement_pack_list[]` is the per-grant breakdown.  A pack without
+  `enable_solo_*` flags is not automatically unusable: the live account has a
+  4000-credit welfare grant without those flags and a fully spent 500-credit
+  monthly grant with them.  Reading only the flagged packs reports 0/500 while
+  the account can still spend the hidden 4000-credit grant.
+
+`credits_limit=-1` or `total_amount=-1` means unlimited and is rendered as
+such in the panel.  A missing `usage_summary` falls back to summing every
+positive `credits_limit`.
+
 ## Status
 
 `GET /v1/status` → `clients.trae`:

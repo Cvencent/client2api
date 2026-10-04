@@ -272,10 +272,27 @@ func (p *pool) acquire(now time.Time, limit int) (*accountRecord, error) {
 	}
 
 	n := len(p.accts)
+	best, found := 0, false
+	for _, a := range p.accts {
+		if !selectable(a, now, limit) {
+			continue
+		}
+		prio := core.AccountPriority("opencode", a.ID)
+		if !found || prio < best {
+			best, found = prio, true
+		}
+	}
+	if !found {
+		return nil, fmt.Errorf(
+			"%w: every OpenCode Zen account is cooling down or at its in-flight ceiling", core.ErrBusy)
+	}
 	for i := 0; i < n; i++ {
 		idx := (p.rr + i) % n
 		a := p.accts[idx]
 		if !selectable(a, now, limit) {
+			continue
+		}
+		if core.AccountPriority("opencode", a.ID) != best {
 			continue
 		}
 		a.inFlight++

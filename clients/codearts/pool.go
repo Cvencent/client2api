@@ -347,6 +347,7 @@ func (p *pool) pick(skip map[string]bool) *entry {
 	defer p.mu.Unlock()
 	now := time.Now()
 	var best *entry
+	bestPriority := 0
 	for _, e := range p.entries {
 		if skip[e.id()] {
 			continue
@@ -354,8 +355,10 @@ func (p *pool) pick(skip map[string]bool) *entry {
 		if !p.availableLocked(e, now) {
 			continue
 		}
-		if best == nil || e.lastUsed < best.lastUsed {
+		priority := core.AccountPriority("codearts", e.id())
+		if best == nil || priority < bestPriority || (priority == bestPriority && e.lastUsed < best.lastUsed) {
 			best = e
+			bestPriority = priority
 		}
 	}
 	return best

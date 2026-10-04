@@ -7,13 +7,14 @@ package trae
 //
 //	POST /trae/api/v2/pay/ide_user_ent_usage
 //
-// It returns user_entitlement_pack_list[].  The response mixes entitlement
-// packs for more than one product: the live capture on 2026-10-04 shows packs
-// carrying enable_solo_* quota flags alongside packs without them (for example
-// "签到奖励" sign-in rewards).  This gateway only reverse proxies the SOLO
-// channel, so only packs the vendor marks as SOLO-capable may be reported as
-// usable credit.  Counting every pack would display Work/other credits as if
-// SOLO could spend them.
+// It returns user_entitlement_pack_list[] plus usage_summary.  The official
+// Trae clients render usage_summary as the aggregate position and use the
+// pack list for the per-grant breakdown.  The live capture on 2026-10-04
+// shows why the enable_solo_* flags cannot be used as an eligibility filter:
+// a usable welfare grant has credits_limit=4000 without those flags, while a
+// fully spent monthly bonus carries all of them.  Filtering on the flags
+// therefore reports 0/500 while the vendor still serves requests against the
+// hidden 4000-credit grant.
 //
 // The endpoint speaks the light CN "ug" identity, not the SOLO chat fingerprint
 // set: api.trae.cn, Cloud-IDE-JWT, X-User-Region and the device id.
@@ -53,8 +54,16 @@ func (q ugEntQuota) soloCapable() bool {
 	return q.EnableSoloLite || q.EnableSoloCoder || q.EnableSoloAgent || q.EnableSoloBuilder || q.EnableSoloWeb
 }
 
+// ugEntUsageSummary is the vendor's aggregate view.  Pointers distinguish an
+// absent summary from a literal zero.
+type ugEntUsageSummary struct {
+	TotalAmount    *float64 `json:"total_amount"`
+	ConsumedAmount *float64 `json:"consumed_amount"`
+}
+
 // ugEntUsageReply is the subset of the entitlement response this module needs.
 type ugEntUsageReply struct {
+	UsageSummary            ugEntUsageSummary `json:"usage_summary"`
 	UserEntitlementPackList []struct {
 		EntitlementBaseInfo struct {
 			Quota ugEntQuota `json:"quota"`
@@ -68,9 +77,9 @@ type ugEntUsageReply struct {
 // AccountBalance implements core.BalanceProvider.
 //
 // A vendor error is returned as an error: the panel has no honest number to
-// display when the upstream refused the read.  A successful response with no
-// SOLO-capable pack is also an error: reporting a zero or a Work total would
-// misstate what this gateway can actually spend.
+// display when the upstream refused the read.  A successful response with a
+// missing summary falls back to the packs, and a genuinely zero balance is a
+// valid answer rather than an error.
 func (c *Client) AccountBalance(ctx context.Context, id string, soon time.Duration) (core.Balance, error) {
 	if c == nil {
 		return core.Balance{}, fmt.Errorf("trae: no client")
@@ -106,16 +115,38 @@ func (c *Client) AccountBalance(ctx context.Context, id string, soon time.Durati
 		total int64
 		used  float64
 	)
-	for _, pack := range reply.UserEntitlementPackList {
-		quota := pack.EntitlementBaseInfo.Quota
-		if quota.CreditsLimit <= 0 || !quota.soloCapable() {
-			continue
+	unlimited := false
+	if reply.UsageSummary.TotalAmount != nil {
+		totalAmount := *reply.UsageSummary.TotalAmount
+		if totalAmount < 0 {
+			unlimited = true
+		} else {
+			total = int64(math.Round(totalAmount))
 		}
-		total += quota.CreditsLimit
-		used += pack.Usage.CreditsAmount
+		if reply.UsageSummary.ConsumedAmount != nil {
+			used = *reply.UsageSummary.ConsumedAmount
+		}
+	} else {
+		for _, pack := range reply.UserEntitlementPackList {
+			limit := pack.EntitlementBaseInfo.Quota.CreditsLimit
+			switch {
+			case limit < 0:
+				unlimited = true
+			case limit > 0:
+				total += limit
+			}
+			used += pack.Usage.CreditsAmount
+		}
 	}
-	if total == 0 {
-		return core.Balance{}, fmt.Errorf("trae: the vendor returned no SOLO-capable credit pack; refusing to report Work credits as SOLO credit")
+	if used < 0 {
+		used = 0
+	}
+	if unlimited {
+		return core.Balance{
+			Used:      used,
+			Unlimited: true,
+			Unit:      traeBalanceUnit,
+		}, nil
 	}
 
 	// Round consumption up when the vendor reports a fraction: the panel's

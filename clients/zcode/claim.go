@@ -43,9 +43,11 @@ import (
 // unchanged: the panel's manual button and the scheduler call the same
 // Checkin.
 const (
-	planPreviewPath = "/api/v1/zcode-plan/billing/preview"
-	planClaimPath   = "/api/v1/zcode-plan/billing/claim"
-	planBalancePath = "/api/v1/zcode-plan/billing/balance"
+	planPreviewPath  = "/api/v1/zcode-plan/billing/preview"
+	planClaimPath    = "/api/v1/zcode-plan/billing/claim"
+	planBalancePath  = "/api/v1/zcode-plan/billing/balance"
+	monitorQuotaPath = "/api/monitor/usage/quota/limit"
+	subscriptionPath = "/api/biz/subscription/list"
 
 	// eventReportPath is the vendor's client-telemetry endpoint.  The claim
 	// flow depends on it -- see reportActivation.
@@ -617,9 +619,17 @@ func (c *Client) AccountBalance(ctx context.Context, id string, soon time.Durati
 	if acct == nil {
 		return core.Balance{}, fmt.Errorf("zcode: account %q not found", id)
 	}
-	doc, err := c.planBalanceOf(ctx, acct)
+	doc, monitor, err := c.planBalanceWithMonitor(ctx, acct)
 	if err != nil {
 		return core.Balance{}, err
+	}
+	if doc == nil {
+		doc = &planBalances{}
+	}
+	if monitor != nil {
+		if mb, ok := monitorBalance(monitor); ok {
+			return mb, nil
+		}
 	}
 
 	now := time.Now()
@@ -659,9 +669,12 @@ func (c *Client) AccountPackages(ctx context.Context, id string) (core.PackageRe
 	if acct == nil {
 		return core.PackageReport{}, fmt.Errorf("zcode: account %q not found", id)
 	}
-	doc, err := c.planBalanceOf(ctx, acct)
+	doc, monitor, err := c.planBalanceWithMonitor(ctx, acct)
 	if err != nil {
 		return core.PackageReport{}, err
+	}
+	if doc == nil {
+		doc = &planBalances{}
 	}
 
 	out := core.PackageReport{Packages: make([]core.CreditPackage, 0, len(doc.Balances))}
@@ -697,6 +710,10 @@ func (c *Client) AccountPackages(ctx context.Context, id string) (core.PackageRe
 	sort.SliceStable(out.Packages, func(i, j int) bool {
 		return out.Packages[i].Remain > out.Packages[j].Remain
 	})
+	if monitor != nil {
+		subs := c.subscriptionOf(ctx, c.monitorTokenFor(c.monitorChannelFor(acct)))
+		out = mergePackageReports(out, core.PackageReport{Packages: monitorPackages(monitor, subs)})
+	}
 	return out, nil
 }
 
@@ -751,9 +768,9 @@ func (c *Client) Checkin(ctx context.Context, id, action string) (core.CheckinRe
 		res.Error = fmt.Sprintf("account %q not found", id)
 		return done()
 	}
-	if acct.Mode != modeJWT {
-		res.Error = fmt.Sprintf("plan billing needs a ZCode plan (jwt) credential; %s is %s",
-			acct.ID, firstNonEmpty(acct.Mode, "unknown"))
+	acct, err := c.claimChannelFor(acct)
+	if err != nil {
+		res.Error = err.Error()
 		return done()
 	}
 

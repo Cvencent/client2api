@@ -56,10 +56,22 @@ func TestChatSkipsUnavailablePlatformDuringFailover(t *testing.T) {
 	}
 
 	got := usage.Snapshot()
-	if len(got) != 1 || got[0].Failed || got[0].Client != "gamma" || got[0].Account != "g1" {
-		t.Fatalf("usage = %+v, want one successful gamma/g1 record", got)
+	var final *UsageRecord
+	var sawUnavailableAttempt bool
+	for i := range got {
+		if got[i].Attempt {
+			sawUnavailableAttempt = sawUnavailableAttempt || (got[i].Client == "unavailable" && got[i].Failed)
+			continue
+		}
+		final = &got[i]
 	}
-	if got[0].Candidate != 3 {
-		t.Fatalf("candidate = %d, want 3 after skipping the unavailable platform", got[0].Candidate)
+	if !sawUnavailableAttempt {
+		t.Fatalf("usage = %+v, want the unavailable candidate attempt", got)
+	}
+	if final == nil || final.Failed || final.Client != "gamma" || final.Account != "g1" {
+		t.Fatalf("final usage = %+v, want the successful gamma/g1 record", final)
+	}
+	if final.Candidate != 3 {
+		t.Fatalf("candidate = %d, want 3 after skipping the unavailable platform", final.Candidate)
 	}
 }

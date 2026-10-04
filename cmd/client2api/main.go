@@ -39,7 +39,7 @@ import (
 )
 
 // version is overridable with -ldflags "-X main.version=...".
-var version = "0.1.3"
+var version = "0.1.4"
 
 // restartHandoffEnv marks the replacement half of a panel restart.  It tells a
 // starting process to keep retrying the listen address instead of failing fast,
@@ -81,20 +81,25 @@ type fileConfig struct {
 type platformConfig struct {
 	Priority       int      `json:"priority"`
 	DisabledModels []string `json:"disabled_models"`
-	// MaxInFlight caps concurrent requests against this platform; 0 means no
-	// ceiling.  It is the operator's brake for vendors that rate-limit per
-	// session before their quota is exhausted.
-	MaxInFlight int `json:"max_in_flight"`
+	// MaxInFlight caps concurrent requests against this platform.  Absent
+	// means the default of 2; an explicit 0 means no ceiling.  A pointer is
+	// required so the two cases stay distinguishable in JSON.
+	MaxInFlight *int `json:"max_in_flight"`
 	// MaxInFlightPerAccount caps concurrent requests against any one account
-	// of this platform; 0 means no ceiling.  When one account is full the
-	// request moves to another account, and only when every account is full
-	// does the platform report busy.
-	MaxInFlightPerAccount int `json:"max_in_flight_per_account"`
+	// of this platform.  Absent means the default of 2; an explicit 0 means
+	// no ceiling.  When one account is full the request moves to another
+	// account, and only when every account is full does the platform report
+	// busy.
+	MaxInFlightPerAccount *int `json:"max_in_flight_per_account"`
 	// ReserveCredits is the low-balance guard: an account whose last known
 	// balance is at or below it is parked until the balance rises again.
 	// 0 (the default) parks a known zero balance; a negative value disables
 	// the guard for this platform.
 	ReserveCredits int `json:"reserve_credits"`
+	// AccountPriorities maps account id -> routing priority.  Lower numbers
+	// are tried first.  Accounts in the same tier keep their normal
+	// round-robin/weighted rotation.
+	AccountPriorities map[string]int `json:"account_priorities,omitempty"`
 }
 
 // platformConfigs projects the file's platforms block onto the router's own
@@ -102,12 +107,40 @@ type platformConfig struct {
 // and would only be a dead blacklist entry.  A missing block projects an empty
 // map, which installs the documented default everywhere.
 func (c *fileConfig) platformConfigs() map[string]core.PlatformConfig {
-	out := make(map[string]core.PlatformConfig, len(c.Platforms))
+	return c.platformConfigsFor(nil)
+}
+
+// platformConfigsFor is platformConfigs plus the set of live clients.  A
+// platform the file never mentions still receives the documented default
+// ceilings; passing nil (unit tests, callers with no registry yet) keeps the
+// original file-only projection.
+func (c *fileConfig) platformConfigsFor(clients []core.Client) map[string]core.PlatformConfig {
+	out := make(map[string]core.PlatformConfig, len(c.Platforms)+len(clients))
+	for _, client := range clients {
+		if client == nil || strings.TrimSpace(client.Name()) == "" {
+			continue
+		}
+		name := client.Name()
+		if _, ok := out[name]; !ok {
+			out[name] = core.PlatformConfig{
+				MaxInFlight:           defaultPlatformMaxInFlight,
+				MaxInFlightPerAccount: defaultPlatformMaxInFlightPerAccount,
+			}
+		}
+	}
 	for name, p := range c.Platforms {
 		cfg := core.PlatformConfig{Priority: p.Priority}
-		cfg.MaxInFlight = p.MaxInFlight
-		cfg.MaxInFlightPerAccount = p.MaxInFlightPerAccount
+		cfg.MaxInFlight = intOr(p.MaxInFlight, defaultPlatformMaxInFlight)
+		cfg.MaxInFlightPerAccount = intOr(p.MaxInFlightPerAccount, defaultPlatformMaxInFlightPerAccount)
 		cfg.ReserveCredits = p.ReserveCredits
+		if len(p.AccountPriorities) > 0 {
+			cfg.AccountPriorities = make(map[string]int, len(p.AccountPriorities))
+			for id, priority := range p.AccountPriorities {
+				if strings.TrimSpace(id) != "" {
+					cfg.AccountPriorities[id] = priority
+				}
+			}
+		}
 		for _, m := range p.DisabledModels {
 			if strings.TrimSpace(m) != "" {
 				cfg.DisabledModels = append(cfg.DisabledModels, m)
@@ -230,6 +263,11 @@ type sessionStickyConfig struct {
 const (
 	defaultMaxInFlight       = 3
 	defaultMaxInFlightGlobal = 2
+	// The platform-level brakes are absent-by-default in the file, so the
+	// projection applies these when the key is missing.  An explicit 0 still
+	// means "no ceiling" and is preserved by intOr.
+	defaultPlatformMaxInFlight           = 2
+	defaultPlatformMaxInFlightPerAccount = 2
 	// defaultPackageDetailLimit is how many credit batches the credits view
 	// shows per account before collapsing the rest.  It is the reference's
 	// panel.package_detail_limit default.
@@ -635,6 +673,7 @@ func (c *fileConfig) poolTuning() *core.PoolTuning {
 		IdleWeightMax:       ptrF64(c.Pool.IdleWeightMax),
 		PreferExpiring:      c.Pool.PreferExpiring,
 		CostExploreInterval: ptrDur(durAllowZero(c.Pool.CostExploreInterval, 30*time.Minute)),
+		ExpiringSoon:        ptrDur(dur(c.Pool.ExpiringSoon, 168*time.Hour)),
 	}
 }
 
@@ -689,6 +728,8 @@ func (c *fileConfig) liveSnapshot() livecfg.Snapshot {
 		SanitizeFingerprints: boolOr(c.Features.SanitizeBlacklistFingerprints, true),
 		PromptMode:           c.Prompt.Mode,
 		PromptFile:           c.Prompt.File,
+		AffinityTTL:          dur(c.SessionSticky.TTL, core.DefaultAffinityTTL),
+		ExpiringSoon:         dur(c.Pool.ExpiringSoon, 168*time.Hour),
 	}
 }
 
@@ -893,7 +934,7 @@ func run() error {
 	// The per-platform routing policy is installed before the server starts
 	// accepting, so the very first request already honours priority and the
 	// blacklist.  An absent platforms block installs the default everywhere.
-	platCfgs := cfg.platformConfigs()
+	platCfgs := cfg.platformConfigsFor(registry.All())
 	registry.SetPlatformConfigs(platCfgs)
 	// A module that owns an account pool reads its own policy from the push, so
 	// the low-balance guard is armed before the first request too.
@@ -924,7 +965,11 @@ func run() error {
 			// account.  The second refreshes the model lists, where the vendors
 			// that do expose credits put them.  Modules without a capability
 			// are skipped by the type assertion.
-			refreshBalances(ctx, registry, dur(cfg.Pool.ExpiringSoon, 168*time.Hour), logger)
+			soon := dur(cfg.Pool.ExpiringSoon, 168*time.Hour)
+			if d := live.Load().ExpiringSoon; d > 0 {
+				soon = d
+			}
+			refreshBalances(ctx, registry, soon, logger)
 			// An idle credential never reaches the chat path's proactive
 			// refresh, so the same sweep window also renews the accounts whose
 			// own expiry has crept inside their module's refresh margin.
@@ -984,7 +1029,7 @@ func run() error {
 		n := core.ApplyLive(registry, next.liveSettings())
 		// Routing policy is hot too: a platform's priority or blacklist must
 		// take effect on the next request, not only after a restart.
-		nextPlat := next.platformConfigs()
+		nextPlat := next.platformConfigsFor(registry.All())
 		registry.SetPlatformConfigs(nextPlat)
 		core.ApplyPlatformPolicies(registry, nextPlat)
 		// Aliases are hot too.  They used to be treated as a startup-only setting

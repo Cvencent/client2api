@@ -14,10 +14,14 @@ import (
 // routing, and a module that can compute them is worth more than one that only
 // reports the total.
 type Balance struct {
-	Credits  int64   // credits left right now
-	Used     float64 // what the vendor reports as consumed; fractional for credit meters
-	Total    int64   // the account's capacity
-	Expiring int64   // the part of Credits that expires before the caller's window ends
+	Credits int64   // credits left right now
+	Used    float64 // what the vendor reports as consumed; fractional for credit meters
+	Total   int64   // the account's capacity
+	// Unlimited is the vendor's own statement that Credits is not finite.
+	// Credits and Total are then advisory and must not be rendered as a
+	// running balance; Trae uses credits_limit=-1 for this case.
+	Unlimited bool
+	Expiring  int64 // the part of Credits that expires before the caller's window ends
 	// EarliestAt is when the soonest-expiring tranche ends, zero when unknown.
 	EarliestAt time.Time
 	// EarliestRemaining is what is left in that tranche.

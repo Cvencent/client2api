@@ -244,6 +244,19 @@ func (p *Pool) Pick(skip map[string]bool) (*Auth, bool) {
 // pickLocked walks the rotation.  The caller holds p.mu.
 func (p *Pool) pickLocked(skip map[string]bool, now time.Time) (*Auth, bool) {
 	n := len(p.entries)
+	best, found := 0, false
+	for _, e := range p.entries {
+		if e == nil || e.auth == nil || skip[e.auth.ID()] || !e.usable(now) {
+			continue
+		}
+		prio := core.AccountPriority("trae", e.auth.ID())
+		if !found || prio < best {
+			best, found = prio, true
+		}
+	}
+	if !found {
+		return nil, false
+	}
 	for i := 0; i < n; i++ {
 		idx := (p.cursor + i) % n
 		e := p.entries[idx]
@@ -251,6 +264,9 @@ func (p *Pool) pickLocked(skip map[string]bool, now time.Time) (*Auth, bool) {
 			continue
 		}
 		if !e.usable(now) {
+			continue
+		}
+		if core.AccountPriority("trae", e.auth.ID()) != best {
 			continue
 		}
 		// The pick path is the one place every account is walked, so it is

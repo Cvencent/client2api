@@ -71,6 +71,15 @@ func TestBalanceWireShape(t *testing.T) {
 	assertKeySet(t, "minimal balance", min, "ok", "credits", "credits_total", "accounts")
 }
 
+func TestBalanceWireShapeReportsUnlimited(t *testing.T) {
+	c := quotaClient("trae", core.AccountRecord{ID: "a1"})
+	c.balances["a1"] = core.Balance{Unlimited: true, Used: 123.25, Unit: "积分"}
+	_, out := doTask(t, taskPanel(t, c), http.MethodPost, "/panel/api/clients/trae/accounts/a1/balance", "")
+	if out["unlimited"] != true {
+		t.Fatalf("unlimited = %#v, want true", out["unlimited"])
+	}
+}
+
 func TestPackagesWireShape(t *testing.T) {
 	c := quotaClient("wb", core.AccountRecord{ID: "a1", Label: "一号", State: "ready"})
 	c.packages["a1"] = core.PackageReport{

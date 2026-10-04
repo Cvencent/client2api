@@ -91,6 +91,10 @@ type PoolTuning struct {
 	// request -- it only changes which account carries one the caller was
 	// making anyway -- which is what makes probing affordable.  0 turns the
 	// exploration off.
+	// ExpiringSoon is the "expiring soon" window used to compute each
+	// account's expiring-credit snapshot. Changing it invalidates any
+	// snapshot computed under the previous window.
+	ExpiringSoon        *time.Duration
 	CostExploreInterval *time.Duration
 }
 

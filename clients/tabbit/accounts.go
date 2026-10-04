@@ -184,11 +184,28 @@ func (f *endpointFile) index(id string) int {
 // the operator added one.  Web-token accounts are skipped: their BaseURL is the
 // vendor's own host, which is emphatically not a sidecar to probe.
 func (c *Client) firstEnabledStored() (storedEndpoint, bool) {
-	for _, ep := range c.endpointsSnapshot() {
+	eps := c.endpointsSnapshot()
+	best, found := 0, false
+	for _, ep := range eps {
+		if epKind(ep) != kindSidecar || !ep.Enabled || strings.TrimSpace(ep.BaseURL) == "" {
+			continue
+		}
+		prio := core.AccountPriority("tabbit", ep.ID)
+		if !found || prio < best {
+			best, found = prio, true
+		}
+	}
+	if !found {
+		return storedEndpoint{}, false
+	}
+	for _, ep := range eps {
 		if epKind(ep) != kindSidecar {
 			continue
 		}
 		if ep.Enabled && strings.TrimSpace(ep.BaseURL) != "" {
+			if core.AccountPriority("tabbit", ep.ID) != best {
+				continue
+			}
 			return ep, true
 		}
 	}

@@ -2,6 +2,7 @@ package panel
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -32,6 +33,29 @@ func TestAlertsEndpointReturnsNewestFirst(t *testing.T) {
 	}
 }
 
+func TestAlertsReadEndpointClearsTheBadge(t *testing.T) {
+	store := alerts.NewStore(10, "")
+	store.Add(alerts.Alert{At: time.Unix(1, 0), Kind: "older", Client: "cline"})
+	store.Add(alerts.Alert{At: time.Unix(2, 0), Kind: "newer", Client: "trae"})
+	h := New(Options{Alerts: store, Started: time.Now()})
+
+	got := decodeMap(t, get(t, h, "/panel/api/alerts"))
+	if n := usageNum(t, got, "unread"); n != 2 {
+		t.Fatalf("unread = %v, want 2", got["unread"])
+	}
+	req := httptest.NewRequest(http.MethodPost, "/panel/api/alerts", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST status = %d, body %s", rec.Code, rec.Body.String())
+	}
+	if got := store.Unread(); got != 0 {
+		t.Fatalf("unread after POST = %d, want 0", got)
+	}
+	if got := len(store.List()); got != 2 {
+		t.Fatalf("history length = %d, want the two alerts kept", got)
+	}
+}
 func TestAlertsEndpointWithoutStoreReturnsEmptyArray(t *testing.T) {
 	rec := get(t, New(Options{Started: time.Now()}), "/panel/api/alerts")
 	if rec.Code != http.StatusOK {

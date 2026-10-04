@@ -265,6 +265,21 @@ This is defence in depth, not the primary control: a module is expected not to p
 a credential in `Status` at all. It exists because a module whose account carries
 no stable user id may fall back to a token prefix as its id.
 
+### ZCode 账号与额度
+
+ZCode 的一个 Zhipu 账号可能同时拥有计划 JWT、coding-plan API key 和 OAuth 派生 key。
+面板按账号身份把这三类凭证聚合为“一个账号、多条通道”，不会把它们当成三个独立账号。
+
+额度来自两套上游接口并合并展示：
+
+- `open.bigmodel.cn/api/monitor/usage/quota/limit`：5 小时滚动窗口、每日 Token 窗口、
+  当前用量、剩余量和重置时间；`subscription/list` 补充套餐等级与到期时间。
+- `zcode.z.ai/api/v1/zcode-plan/billing/balance`：活动套餐、Start Plan 等一次性或周期
+  Token 额度。
+
+活动套餐领取会解析同账号的 sibling 通道：从 API-key 行或 JWT 行点击都可以领取。
+如果厂商返回“当前用户不存在coding plan”，说明该 key 本身不属于 coding-plan 套餐，
+不是面板漏显示；请在 ZCode 客户端登录对应套餐账号后重新导入。
 ## Model routing
 
 Three accepted forms:
@@ -410,6 +425,13 @@ even when the master switch is on. Accounts are walked serially with a 45 s
 gap, because the vendors' anti-abuse checks roll back chores whose events
 burst.
 
+`session_sticky` has two levels.  Inside a module it pins a conversation to the
+account that last served it.  At the gateway it also pins the **platform**: when
+a bare model id is served by several platforms, the platform that last answered
+stays first for the next turn, and the other candidates remain as failover.  A
+failed platform is replaced by whichever platform then succeeds, so a broken
+sibling is not retried on every turn.  `session_sticky.ttl` retunes both levels
+on a live reload; `session_sticky.enabled=false` turns both off.
 `schedule.balance_refresh_enabled` (default **on**, as in the reference) adds a
 tick of its own every `schedule.balance_refresh_minutes` (default **5**) — it asks
 every module that can report a balance for one, which is how a credit park lifts
@@ -433,9 +455,9 @@ with `Retry-After: 1`. The live counters are visible in `/v1/status`
 implements neither is simply reported without those keys.
 
 Each platform can also carry two gateway-level ceilings in the `platforms`
-section. `max_in_flight` caps all requests in flight against that platform;
-`max_in_flight_per_account` caps requests in flight against any one account
-inside it. Both are live, and `0` means no ceiling. The platform ceiling is
+section. `max_in_flight` (default **2**) caps all requests in flight against that platform;
+`max_in_flight_per_account` (default **2**) caps requests in flight against any one account
+inside it. Both are live; leave the key absent for the default of 2, and set it to `0` to mean no ceiling. The platform ceiling is
 checked first, so a platform at its limit answers `429` without invoking a
 module. A full account is skipped by the module's account rotation; if every
 usable account is full, the platform also answers `429`. For example,
@@ -458,6 +480,19 @@ WorkBuddy accounts out of routing and shows them as paused instead of green.
 The guard currently has a pool-side implementation in workbuddy, the reference's
 credit-parking model; a module without a balance-aware pool ignores it.
 
+`account_priorities` is the per-account routing order inside one platform.
+It maps the account id shown by that module to an integer; lower numbers
+are tried first. Accounts at the same value keep the module's normal
+round-robin, weighted rotation or LRU policy. This is therefore a tiered
+preference, not a permanent pin: when every preferred account is cooling,
+disabled or at its concurrency ceiling, the next tier is used. The account
+pool page edits this value inline and saves it through the same live config
+path as the other platform settings.
+
+```json
+{"platforms":{"workbuddy":{"account_priorities":{"account-id-1":-1,"account-id-2":10}}}}
+```
+
 `pool.breaker_threshold` (default **3**) is how many consecutive failures park an
 account on the breaker axis; the parking time doubles per trip, starting from
 `pool.breaker_cooldown` (default **30m**) and capped by
@@ -478,6 +513,9 @@ expiry among their credits, which is what stops an expiring grant from being
 wasted behind a long-lived one; it only applies when that batch falls inside
 `pool.expiring_soon` (default **168h** — an empty or zero value switches the
 preference off). `pool.cost_explore_interval` (default **30m**) is the cost-tier
+Changing `pool.expiring_soon` is hot: the new window is projected into the live
+snapshot and every cached WorkBuddy expiry classification is discarded, so the
+pool, balance refresh and panel all use the new window on the next read.
 exploration window: once a model is known to be free on some account, accounts
 with no observation for that model are normally passed over, and this window is
 how often one of them is allowed through instead. The exploration is a

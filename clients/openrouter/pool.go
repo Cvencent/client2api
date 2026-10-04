@@ -194,12 +194,15 @@ func (p *pool) firstReady(now time.Time, limit int) (accountRecord, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	var best *accountRecord
+	bestPriority := 0
 	for _, a := range p.accts {
 		if !p.selectableLocked(a, now, limit) {
 			continue
 		}
-		if best == nil || a.lastUsed.Before(best.lastUsed) {
+		priority := core.AccountPriority("openrouter", a.ID)
+		if best == nil || priority < bestPriority || (priority == bestPriority && a.lastUsed.Before(best.lastUsed)) {
 			best = a
+			bestPriority = priority
 		}
 	}
 	if best != nil {

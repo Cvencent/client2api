@@ -15,6 +15,20 @@ import (
 // refresh into a burst.
 const packageFanout = 3
 
+// expiringSoon prefers the live window so a config reload moves the panel and
+// the pools together; the startup value is only a fallback for embedders.
+func (p *panel) expiringSoon() time.Duration {
+	if p != nil && p.opts.Live != nil {
+		if d := p.opts.Live.Load().ExpiringSoon; d > 0 {
+			return d
+		}
+	}
+	if p == nil {
+		return 0
+	}
+	return p.opts.ExpiringSoon
+}
+
 // accountBalance implements POST <base>/accounts/<id>/balance.
 //
 // The reference answers {ok, credits, credits_total} and hands the extra
@@ -36,7 +50,7 @@ func (p *panel) accountBalance(w http.ResponseWriter, r *http.Request, c core.Cl
 	ctx, cancel := p.ctx(r, 60*time.Second)
 	defer cancel()
 
-	bal, err := bp.AccountBalance(ctx, id, p.opts.ExpiringSoon)
+	bal, err := bp.AccountBalance(ctx, id, p.expiringSoon())
 	if err != nil {
 		// Same split as revive: a stale id is "not found", a live account that
 		// the vendor refused is an upstream failure (the reference's 502).
@@ -52,6 +66,9 @@ func (p *panel) accountBalance(w http.ResponseWriter, r *http.Request, c core.Cl
 		"ok":            true,
 		"credits":       bal.Credits,
 		"credits_total": bal.Total,
+	}
+	if bal.Unlimited {
+		out["unlimited"] = true
 	}
 	if bal.Used > 0 {
 		out["used"] = bal.Used
@@ -88,6 +105,7 @@ type balanceRow struct {
 	Credits           int64   `json:"credits"`
 	Used              float64 `json:"used,omitempty"`
 	Total             int64   `json:"credits_total"`
+	Unlimited         bool    `json:"unlimited,omitempty"`
 	Expiring          int64   `json:"expiring,omitempty"`
 	EarliestAt        string  `json:"earliest_at,omitempty"`
 	EarliestRemaining int64   `json:"earliest_remaining,omitempty"`
@@ -146,7 +164,7 @@ func (p *panel) balances(w http.ResponseWriter, r *http.Request, c core.Client) 
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			row := balanceRow{ID: rec.ID, Label: rec.Label, State: rec.State}
-			bal, err := bp.AccountBalance(ctx, rec.ID, p.opts.ExpiringSoon)
+			bal, err := bp.AccountBalance(ctx, rec.ID, p.expiringSoon())
 			if err != nil {
 				row.Error = core.Redact(err.Error())
 				rows[i] = row
@@ -154,6 +172,7 @@ func (p *panel) balances(w http.ResponseWriter, r *http.Request, c core.Client) 
 			}
 			row.Credits, row.Total, row.Expiring = bal.Credits, bal.Total, bal.Expiring
 			row.Used = bal.Used
+			row.Unlimited = bal.Unlimited
 			if !bal.EarliestAt.IsZero() {
 				row.EarliestAt = bal.EarliestAt.Format(time.RFC3339)
 				row.EarliestRemaining = bal.EarliestRemaining

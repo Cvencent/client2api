@@ -234,8 +234,25 @@ func (c *Client) webAccounts() []storedEndpoint {
 // firstEnabledWeb returns the web account this module should use: the first
 // enabled one, in store order.
 func (c *Client) firstEnabledWeb() (storedEndpoint, bool) {
-	for _, ep := range c.endpointsSnapshot() {
+	eps := c.endpointsSnapshot()
+	best, found := 0, false
+	for _, ep := range eps {
+		if epKind(ep) != kindWebToken || !ep.Enabled || strings.TrimSpace(ep.Token) == "" {
+			continue
+		}
+		prio := core.AccountPriority("tabbit", ep.ID)
+		if !found || prio < best {
+			best, found = prio, true
+		}
+	}
+	if !found {
+		return storedEndpoint{}, false
+	}
+	for _, ep := range eps {
 		if epKind(ep) == kindWebToken && ep.Enabled && strings.TrimSpace(ep.Token) != "" {
+			if core.AccountPriority("tabbit", ep.ID) != best {
+				continue
+			}
 			return ep, true
 		}
 	}
@@ -247,8 +264,25 @@ func (c *Client) firstEnabledWeb() (storedEndpoint, bool) {
 // rate-limit, so a gateway retry rotates to the next account instead of
 // walking back into the same 429.
 func (c *Client) firstAvailableWeb() (storedEndpoint, bool) {
-	for _, ep := range c.endpointsSnapshot() {
+	eps := c.endpointsSnapshot()
+	best, found := 0, false
+	for _, ep := range eps {
+		if epKind(ep) != kindWebToken || !c.endpointUsable(ep, true) {
+			continue
+		}
+		prio := core.AccountPriority("tabbit", ep.ID)
+		if !found || prio < best {
+			best, found = prio, true
+		}
+	}
+	if !found {
+		return storedEndpoint{}, false
+	}
+	for _, ep := range eps {
 		if epKind(ep) == kindWebToken && c.endpointUsable(ep, true) {
+			if core.AccountPriority("tabbit", ep.ID) != best {
+				continue
+			}
 			return ep, true
 		}
 	}

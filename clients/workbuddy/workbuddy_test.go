@@ -926,6 +926,22 @@ func TestPoolPickRoundRobinAndCooldown(t *testing.T) {
 	}
 }
 
+func TestPoolPickHonoursAccountPriority(t *testing.T) {
+	a := &Auth{AccessToken: "at-111111111111", UID: "u1"}
+	b := &Auth{AccessToken: "at-222222222222", UID: "u2"}
+	c := &Auth{AccessToken: "at-333333333333", UID: "u3"}
+	p := NewPool([]*Auth{a, b, c}, 0)
+	core.SetAccountPriorities(map[string]map[string]int{"workbuddy": {"u2": -1}})
+	t.Cleanup(func() { core.SetAccountPriorities(nil) })
+
+	for i := 0; i < 4; i++ {
+		got, ok := p.Pick(nil)
+		if !ok || got.ID() != "u2" {
+			t.Fatalf("pick %d = %v/%v, want the priority account u2", i, got, ok)
+		}
+	}
+}
+
 func TestPoolSkipsRequestedAccounts(t *testing.T) {
 	a := &Auth{AccessToken: "at-111111111111", UID: "u1"}
 	b := &Auth{AccessToken: "at-222222222222", UID: "u2"}
