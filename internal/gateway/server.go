@@ -644,7 +644,14 @@ func (s *server) serveRemainingCandidates(w http.ResponseWriter, r *http.Request
 // candidateUnavailable reports whether a candidate can be skipped without
 // treating its refusal as an upstream answer.  The router may still have a
 // healthy platform behind this one.
+//
+// ErrPlatformExhausted is the module's explicit statement that it has already
+// walked its own account pool.  Re-entering that platform would only repeat the
+// same exhausted rotation, so the gateway moves on.
 func candidateUnavailable(err error) bool {
+	if errors.Is(err, core.ErrPlatformExhausted) {
+		return true
+	}
 	return errors.Is(err, core.ErrNotConfigured) || errors.Is(err, core.ErrBusy)
 }
 
@@ -746,6 +753,13 @@ func (s *server) openStream(ctx context.Context, client core.Client, req *core.C
 		release()
 		req.ReleaseAccountSlot()
 		lastErr = err
+
+		// The module has already walked its whole account pool.  Re-running
+		// it here would repeat the same exhausted rotation; move to the next
+		// platform instead.
+		if errors.Is(err, core.ErrPlatformExhausted) {
+			return nil, err
+		}
 
 		f, classified := core.AsFailure(err)
 		if !classified {

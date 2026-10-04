@@ -942,6 +942,21 @@ func TestPoolPickHonoursAccountPriority(t *testing.T) {
 	}
 }
 
+func TestUsableForModelRespectsAccountPriorityTier(t *testing.T) {
+	low := &Auth{AccessToken: "at-111111111111", UID: "low"}
+	high := &Auth{AccessToken: "at-222222222222", UID: "high"}
+	p := NewPool([]*Auth{low, high}, 0)
+	core.SetAccountPriorities(map[string]map[string]int{"workbuddy": {"high": -1}})
+	t.Cleanup(func() { core.SetAccountPriorities(nil) })
+
+	if p.UsableForModel("low", "model-x") {
+		t.Fatal("a lower-priority account must not satisfy a sticky binding while a higher-priority account is usable")
+	}
+	if !p.UsableForModel("high", "model-x") {
+		t.Fatal("the highest-priority usable account must be allowed as a sticky binding")
+	}
+}
+
 func TestPoolSkipsRequestedAccounts(t *testing.T) {
 	a := &Auth{AccessToken: "at-111111111111", UID: "u1"}
 	b := &Auth{AccessToken: "at-222222222222", UID: "u2"}

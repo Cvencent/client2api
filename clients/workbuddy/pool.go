@@ -880,6 +880,16 @@ func (p *Pool) UsableForModelInRealm(accountID, model, realm string) bool {
 	now := p.now()
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	best, found := 0, false
+	for _, e := range p.entries {
+		if e == nil || e.auth == nil || !e.usable(now) || !realmMatches(e, realm) {
+			continue
+		}
+		prio := core.AccountPriority("workbuddy", e.auth.ID())
+		if !found || prio < best {
+			best, found = prio, true
+		}
+	}
 	for _, e := range p.entries {
 		if e == nil || e.auth == nil || e.auth.ID() != accountID {
 			continue
@@ -888,6 +898,9 @@ func (p *Pool) UsableForModelInRealm(accountID, model, realm string) bool {
 			return false
 		}
 		if !realmMatches(e, realm) {
+			return false
+		}
+		if core.AccountPriority("workbuddy", e.auth.ID()) != best {
 			return false
 		}
 		e.pruneModelCool(now)

@@ -40,6 +40,12 @@ var ErrUnsupported = errors.New("unsupported by this client")
 // in_flight_full.
 var ErrBusy = errors.New("client is at its in-flight limit")
 
+// ErrPlatformExhausted reports that a module has already tried every usable
+// account on its platform for this request.  The gateway must then move to the
+// next platform instead of re-running the same platform's account rotation.
+// Modules that do not return it keep the previous retry behaviour.
+var ErrPlatformExhausted = errors.New("every usable account on this platform failed")
+
 // ---------------------------------------------------------------------------
 // Canonical request types.  These are deliberately vendor-neutral: the gateway
 // translates the OpenAI wire format into them, and each module translates them

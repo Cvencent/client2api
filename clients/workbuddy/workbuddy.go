@@ -889,6 +889,13 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 
 	skip := map[string]bool{}
 	attempts := c.cfg.maxAttempts()
+	// Try every account the platform currently holds before declaring the
+	// platform itself exhausted.  max_attempts is a floor, not a ceiling:
+	// an install with eight accounts must not stop after three just because
+	// the historical default was three.
+	if n := c.pool.Len(); n > attempts {
+		attempts = n
+	}
 	var lastErr error
 	// busy records that the gateway's per-account ceiling (which can be
 	// tighter than the pool's own) refused an account we had already taken.
@@ -946,7 +953,7 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 		}
 	}
 	if lastErr != nil {
-		return nil, lastErr
+		return nil, errors.Join(core.ErrPlatformExhausted, lastErr)
 	}
 	// Nothing was attempted because every usable account is at its ceiling:
 	// that is backpressure, not a configuration problem, and saying so is what
