@@ -175,13 +175,26 @@ jobs:
           echo "prev=${PREV}" >> "$GITHUB_OUTPUT"
       - uses: softprops/action-gh-release@v2
         with:
+          name: client2api ${{ github.ref_name }}
           prerelease: ${{ contains(github.ref_name, '-') }}
           body: |
-            CI 自动构建发布（五平台二进制 + checksums）。
+            ## 下载
 
-            解包后把 `configs/client2api.example.json` 复制成 `configs/client2api.json`
-            再启动；**启动前先填 `api_key`** —— 留空等于网关与面板都不鉴权。
+            - Windows 安装升级包：由维护者在发布后附加到下方 `Assets`。
+            - 五平台便携版与校验文件：见下方 `Assets`。
 
-            完整变更：https://github.com/${{ github.repository }}/compare/${{ steps.prev.outputs.prev }}...${{ github.ref_name }}
+            ## 本版变更
+
+            - 该版本由 GitHub Actions 自动构建，包含 Windows、Linux、macOS 共五个平台产物和 `checksums.txt`。
+            - 完整版本记录见 [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/CHANGELOG.md)。
+
+            ## 升级说明
+
+            - 便携版解包后，将 `configs/client2api.example.json` 复制为 `configs/client2api.json`。
+            - 启动前必须设置 `api_key`，留空等于网关与面板都不鉴权。
+            - Windows 安装升级包会保留现有 `configs/client2api.json`、`data/`、账号池、用量和任务数据；安装失败会拒绝覆盖并回滚。
+
+            ## 完整变更
+
+            https://github.com/${{ github.repository }}/compare/${{ steps.prev.outputs.prev }}...${{ github.ref_name }}
           files: dist/*
-          append_body: true
