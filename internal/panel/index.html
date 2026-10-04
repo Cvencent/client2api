@@ -2182,9 +2182,13 @@ function renderChips() {
   box.innerHTML = NAMES.map(n => {
     const c = clientInfo(n), ok = c && c.ready;
     // 徽章数和表里的行数必须是同一个口径：表按账号分组，徽章也得数账号。
-    const cnt = accGroups(ACCTS[n] && ACCTS[n].accounts).length;
-    return '<button class="xs chip' + (n === CUR ? " on" : "") + '" data-client="' + esc(n) + '" title="' + esc(ok ? "就绪" : ((c && c.detail) || "未就绪")) + '">' +
-      '<span class="pulse" style="background:' + (ok ? "var(--ok)" : "var(--bad)") + '"></span>' + esc(n) + ' <b>' + cnt + '</b></button>';
+    // 前面是可用账号数，后面是账号总数（可用只算绿色 ready，不含冷却/禁用）。
+    const groups = accGroups(ACCTS[n] && ACCTS[n].accounts);
+    const cnt = groups.length;
+    const usable = groups.filter(g => { const st = accGroupStat(g); return st.enabled && st.state === "ready"; }).length;
+    const label = usable + "/" + cnt;
+    return '<button class="xs chip' + (n === CUR ? " on" : "") + '" data-client="' + esc(n) + '" title="' + esc((ok ? "就绪" : ((c && c.detail) || "未就绪")) + " · " + label + " 个账号可用") + '">' +
+      '<span class="pulse" style="background:' + (ok ? "var(--ok)" : "var(--bad)") + '"></span>' + esc(n) + ' <b>' + esc(label) + '</b></button>';
   }).join("");
 }
 

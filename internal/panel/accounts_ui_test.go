@@ -55,7 +55,9 @@ func accountGroupingWiring(t *testing.T, src string) []string {
 		// accGroups 必须真的读 a.identity，否则分组永远只有一个「未知」桶。
 		{"accGroups 没有读 a.identity", "a.identity"},
 		// 三处计数：导航角标、统计磁贴、accNote 的行数。
-		{"renderChips 的角标没有按账号数", "accGroups(ACCTS[n] && ACCTS[n].accounts).length"},
+		// The chip badge is now "usable/total", but both halves must still come
+		// from the grouped account list rather than the raw credential rows.
+		{"renderChips 的角标没有按账号数分组", "const groups = accGroups(ACCTS[n] && ACCTS[n].accounts);"},
 		{"renderStats 没有按账号数统计", "accGroups(ACCTS[n] && ACCTS[n].accounts).forEach"},
 		{"renderAccounts 没有按账号分组", "const groups = accGroups(list);"},
 		// 单通道的账号走同一条行模板，且标记为「不是通道」——这样另外五个模块
@@ -179,6 +181,21 @@ func TestAccountGroupIsHealthyWhenAnyChannelIsHealthy(t *testing.T) {
 // TestAccountGroupHeaderHasNoActionButtons 钉住组头那一行是纯信息行。每个通道
 // 单独启停、单独测试是需求本身；组头再挂一个批量按钮会把两份凭据的状态混在
 // 一起，而且没有明显正确的语义。
+func TestClientChipsShowUsableOverTotalAccounts(t *testing.T) {
+	src := string(indexHTML)
+	body := poolStatsFuncBody(t, src, "renderChips")
+	for _, want := range []string{
+		`const groups = accGroups(ACCTS[n] && ACCTS[n].accounts);`,
+		`const usable = groups.filter(g => { const st = accGroupStat(g); return st.enabled && st.state === "ready"; }).length;`,
+		`const label = usable + "/" + cnt;`,
+		`esc(n) + ' <b>' + esc(label) + '</b>`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("client chip account ratio is missing %s", want)
+		}
+	}
+}
+
 func TestAccountStateLabelsAreChinese(t *testing.T) {
 	src := string(indexHTML)
 	for _, want := range []string{`label: "可用"`, `label: "冷却中"`, `label: "禁用"`} {
