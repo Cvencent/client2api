@@ -7247,12 +7247,36 @@ async function refreshVisible() {
   visBusy = true;
   try { await refreshAll(false); } finally { visBusy = false; }
 }
+/* The release smoke test asserts this marker in a real browser.  A syntax
+   error or an exception during boot leaves it unset, so a broken panel cannot
+   pass the packaging gate.  panelBootError also turns later uncaught errors
+   into a visible bar instead of a silently dead page. */
+function panelBootError(err) {
+  const msg = String((err && (err.stack || err.message)) || err || "未知错误");
+  try { console.error("[client2api] panel error:", msg); } catch (e) {}
+  if (document.documentElement.dataset.c2aBootError) return;
+  document.documentElement.dataset.c2aBootError = "1";
+  const bar = document.createElement("div");
+  bar.id = "c2aBootError";
+  bar.textContent = "控制台发生错误：" + msg;
+  bar.style.cssText = "position:fixed;left:12px;right:12px;bottom:12px;z-index:2147483647;background:#c45656;color:#fff;padding:10px 14px;border-radius:6px;font:13px/1.5 ui-monospace,Consolas,monospace;white-space:pre-wrap;box-shadow:0 4px 20px rgba(0,0,0,.35)";
+  (document.body || document.documentElement).appendChild(bar);
+}
+window.addEventListener("error", ev => {
+  if (ev.error || ev.message) panelBootError(ev.error || ev.message);
+});
+window.addEventListener("unhandledrejection", ev => panelBootError(ev.reason));
 (async function boot() {
-  go((location.hash || "#accounts").slice(1));
-  await refreshAll();
-  refreshAlertBadge().catch(() => {});
-  setInterval(() => { if (VIEW === "logs") renderLogs(); }, 4000);
-  setInterval(refreshVisible, 5000);
+  try {
+    go((location.hash || "#accounts").slice(1));
+    await refreshAll();
+    refreshAlertBadge().catch(() => {});
+    setInterval(() => { if (VIEW === "logs") renderLogs(); }, 4000);
+    setInterval(refreshVisible, 5000);
+    document.documentElement.dataset.c2aReady = "1";
+  } catch (e) {
+    panelBootError(e);
+  }
 })();
 </script>
 </body>

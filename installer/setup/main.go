@@ -17,6 +17,7 @@
 //
 //	client2api.exe          the gateway
 //	probe.exe               the diagnostic probe
+//	panelsmoke.exe          the panel self-check (run before and after an install)
 //	uninstall.exe           this same binary, re-run with --uninstall
 //	client2api-panel.url    internet shortcut to the web panel
 //	client2api.ico          shortcut icon
@@ -38,7 +39,7 @@ import (
 // version is the packaging default; build.ps1 injects the authoritative value
 // from cmd/client2api/main.go with -X main.version=... .  installer's guard
 // test fails if this literal ever drifts from the source of truth.
-var version = "0.1.6"
+var version = "0.1.7"
 
 const (
 	appName      = "client2api"
@@ -60,6 +61,11 @@ type options struct {
 	uninstall bool
 	fromTemp  bool
 	parentPID int
+	// skipSelfCheck turns off the real-browser panel check that normally runs
+	// before and after an upgrade.  It exists for machines with no Chrome or
+	// Edge at all; the recommended answer when a check fails is to fix the
+	// package, not to skip the check.
+	skipSelfCheck bool
 	// report receives coarse progress from install so a front-end (the GUI
 	// wizard) can drive a progress bar.  A nil report means console only.
 	report func(percent int, status string)
@@ -105,6 +111,7 @@ func parseFlags() options {
 	flag.BoolVar(&opt.noLaunch, "no-launch", false, "安装完成后不启动网关")
 	flag.BoolVar(&opt.noDesktop, "no-desktop", false, "不创建桌面快捷方式")
 	flag.BoolVar(&opt.startup, "startup", false, "创建开机自启快捷方式")
+	flag.BoolVar(&opt.skipSelfCheck, "skip-self-check", false, "跳过安装前后的真实浏览器面板自检（仅在机器没有浏览器时使用，不推荐）")
 	flag.BoolVar(&opt.uninstall, "uninstall", false, "卸载 client2api")
 	flag.BoolVar(&opt.fromTemp, "from-temp", false, "内部使用：卸载器已由 %TEMP% 中的副本接管")
 	flag.IntVar(&opt.parentPID, "parent-pid", 0, "内部使用：先等该进程退出，再删除安装目录")

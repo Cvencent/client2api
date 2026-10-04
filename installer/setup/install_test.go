@@ -217,3 +217,131 @@ func read(t *testing.T, dir, rel string) string {
 	}
 	return string(b)
 }
+
+// TestSnapshotPathsMatchesWhatTheInstallCanWrite pins the rollback file list:
+// the payload files (minus the .gitkeep placeholder), the uninstaller and the
+// panel shortcut the installer writes itself, and no data/ file when the
+// package is a program-only build.
+func TestSnapshotPathsMatchesWhatTheInstallCanWrite(t *testing.T) {
+	fake := fstest.MapFS{
+		"client2api.exe":                  {Data: []byte("x")},
+		"configs/client2api.example.json": {Data: []byte("x")},
+		"data/.gitkeep":                   {Data: nil},
+		"data/cline/accounts.json":        {Data: []byte("x")},
+	}
+
+	full, err := snapshotPaths(fake, ".", true)
+	if err != nil {
+		t.Fatalf("snapshotPaths(includeData=true): %v", err)
+	}
+	for _, want := range []string{"client2api.exe", "configs/client2api.example.json", "data/cline/accounts.json", uninstallExe, panelLNK} {
+		if !hasPath(full, want) {
+			t.Errorf("full snapshot is missing %q: %v", want, full)
+		}
+	}
+	if hasPath(full, "data/.gitkeep") {
+		t.Errorf("the .gitkeep placeholder must not enter the rollback log: %v", full)
+	}
+
+	noData, err := snapshotPaths(fake, ".", false)
+	if err != nil {
+		t.Fatalf("snapshotPaths(includeData=false): %v", err)
+	}
+	if hasPath(noData, "data/cline/accounts.json") {
+		t.Errorf("-no-data rollback log must not contain the account pool: %v", noData)
+	}
+}
+
+// TestSnapshotRollbackRestoresThePreviousVersion is the promise the upgrade path
+// makes: when a build fails after the new files are already on disk, the
+// previous program files come back and anything the install created is removed.
+// Operator state is deliberately outside that set -- the installer copies it to
+// the side of neither direction, and this pins that.
+func TestSnapshotRollbackRestoresThePreviousVersion(t *testing.T) {
+	fake := fstest.MapFS{
+		"client2api.exe":                  {Data: []byte("new exe")},
+		"panelsmoke.exe":                  {Data: []byte("new smoke")},
+		"configs/client2api.example.json": {Data: []byte("new example")},
+		"configs/client2api.json":         {Data: []byte("packaged config")},
+		"data/usage.json":                 {Data: []byte("packaged usage")},
+	}
+
+	dir := t.TempDir()
+	seed(t, dir, "client2api.exe", "old exe")
+	seed(t, dir, "configs/client2api.example.json", "old example")
+	seed(t, dir, "configs/client2api.json", "live config")
+	seed(t, dir, "data/usage.json", "live usage")
+
+	snap, err := takeSnapshot(fake, ".", dir, true)
+	if err != nil {
+		t.Fatalf("takeSnapshot: %v", err)
+	}
+	defer snap.discard()
+
+	// The install got as far as writing its files before the post-check said no.
+	seed(t, dir, "client2api.exe", "broken new exe")
+	seed(t, dir, "panelsmoke.exe", "broken new smoke")
+	seed(t, dir, "configs/client2api.example.json", "new example")
+
+	if err := snap.restore(); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+
+	if got := read(t, dir, "client2api.exe"); got != "old exe" {
+		t.Errorf("client2api.exe = %q, want the previous version back", got)
+	}
+	if got := read(t, dir, "configs/client2api.example.json"); got != "old example" {
+		t.Errorf("example config = %q, want the previous version back", got)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "panelsmoke.exe")); !os.IsNotExist(err) {
+		t.Errorf("panelsmoke.exe was created by the failed install and must be removed, stat err = %v", err)
+	}
+	// Operator state was never the installer's to overwrite, and the rollback
+	// must not have copied the packaged copy of either over the live one.
+	if got := read(t, dir, "configs/client2api.json"); got != "live config" {
+		t.Errorf("live config = %q, want it untouched", got)
+	}
+	if got := read(t, dir, "data/usage.json"); got != "live usage" {
+		t.Errorf("usage history = %q, want it untouched", got)
+	}
+}
+
+// TestSnapshotRollbackOnFreshInstallRemovesEverything covers the other shape:
+// with nothing on disk there is no previous version, so a failed first install
+// has to leave the directory empty rather than half-populated.
+func TestSnapshotRollbackOnFreshInstallRemovesEverything(t *testing.T) {
+	fake := fstest.MapFS{
+		"client2api.exe":          {Data: []byte("new exe")},
+		"configs/client2api.json": {Data: []byte("packaged config")},
+	}
+	dir := t.TempDir()
+
+	snap, err := takeSnapshot(fake, ".", dir, true)
+	if err != nil {
+		t.Fatalf("takeSnapshot: %v", err)
+	}
+	defer snap.discard()
+
+	seed(t, dir, "client2api.exe", "new exe")
+	seed(t, dir, "configs/client2api.json", "packaged config")
+	seed(t, dir, uninstallExe, "installer")
+
+	if err := snap.restore(); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	for _, rel := range []string{"client2api.exe", "configs/client2api.json", uninstallExe} {
+		if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(rel))); !os.IsNotExist(err) {
+			t.Errorf("%s survived a fresh-install rollback (stat err = %v)", rel, err)
+		}
+	}
+}
+
+func hasPath(paths []string, want string) bool {
+	want = filepath.FromSlash(want)
+	for _, p := range paths {
+		if p == want {
+			return true
+		}
+	}
+	return false
+}

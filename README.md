@@ -41,7 +41,8 @@ client2api 把多个 AI 客户端/平台的账号能力聚合成一个 OpenAI �
 - 平台级模型白名单/黑名单、路由优先级、并发上限和账号余额保护。
 - 账号登录、导入、导出、签到、余额刷新、定时任务和运行记录。
 - 免费模型优先、失败重试、限流冷却、账号/平台熔断与自动恢复。
-- Windows 安装器支持覆盖升级，配置、账号池和用量数据原地保留。
+- Windows 安装器支持覆盖升级：配置、账号池和用量数据原地保留，并在覆盖前后各跑
+  一次真实浏览器面板自检，失败就拒绝安装或自动回滚。
 
 ## 快速开始
 
@@ -244,6 +245,14 @@ The version is never typed twice: it is read from `var version` in
 `cmd/client2api/main.go` and injected into both binaries with `-X`, and
 `go test ./installer/...` fails if `installer/setup/main.go` drifts from it.
 Bump that one literal before cutting a new setup .exe.
+
+The build refuses to produce an installer whose control panel does not boot.
+`cmd/panelsmoke` starts the staged gateway on a random loopback port and loads
+`/panel/` in headless Chrome or Edge, asserting the shell's own
+`<html data-c2a-ready="1">` marker. The same check runs on the target machine
+before the existing service is stopped, and again on the files that landed -- a
+failure there restores the previous version from a snapshot. `-SkipSmoke` exists
+only for machines with no browser at all.
 
 Installing over an existing install is an upgrade, not a reset. The program
 files are replaced, while `configs/client2api.json` and everything under

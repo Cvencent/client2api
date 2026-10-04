@@ -29,6 +29,13 @@
     tokens and configs/client2api.json holds your settings; restore both on
     the target machine with the panel's import feature.
 
+.PARAMETER SkipSmoke
+    Skip the panel smoke test.  The default is to refuse the build when the
+    staged gateway cannot boot its /panel/ in a real browser, which is what
+    caught the 0.1.5 dead-panel regression.  Only pass this when no browser is
+    available and you accept that the installer will still self-check on the
+    target machine before replacing anything.
+
 .PARAMETER OutputDirectory
     Where the finished setup .exe is written.  Defaults to <repo>\dist.
 
@@ -48,6 +55,7 @@
 [CmdletBinding()]
 param(
     [switch] $NoData,
+    [switch] $SkipSmoke,
     [string] $OutputDirectory,
     [string] $PayloadDirectory
 )
@@ -155,6 +163,13 @@ Write-Step 'building probe.exe'
 & $go build -trimpath -ldflags $ldflags -o (Join-Path $PayloadDirectory 'probe.exe') ./cmd/probe
 if ($LASTEXITCODE -ne 0) { throw "go build ./cmd/probe failed ($LASTEXITCODE)" }
 
+Write-Step 'building panelsmoke.exe'
+# panelsmoke is a console program on purpose: it must print why a candidate
+# failed.  The installer also ships it, so the same gate runs on the target
+# machine before an upgrade touches the existing files.
+& $go build -trimpath -ldflags '-s -w' -o (Join-Path $PayloadDirectory 'panelsmoke.exe') ./cmd/panelsmoke
+if ($LASTEXITCODE -ne 0) { throw "go build ./cmd/panelsmoke failed ($LASTEXITCODE)" }
+
 Copy-Item -Force (Join-Path $repoRoot 'README.md') $PayloadDirectory
 Copy-Item -Force (Join-Path $repoRoot 'LICENSE')   $PayloadDirectory
 Copy-Item -Force (Join-Path $installerDir 'client2api.ico') $PayloadDirectory
@@ -180,6 +195,23 @@ if ($NoData) {
     if (-not (Test-Path $liveData)) { throw "data/ not found at $liveData; pass -NoData to build without it." }
     Copy-Item -Recurse -Force $liveData (Join-Path $PayloadDirectory 'data')
     Write-Warning 'data/ included: this setup .exe contains your live account credentials. Do not share it.'
+}
+
+# --- panel smoke test --------------------------------------------------------
+
+# The packaging gate.  Nothing else in this build ever executes the panel's
+# JavaScript: the server can answer 200 with the same bytes while a stray brace
+# leaves every button dead.  0.1.5 shipped exactly that.  Starting the staged
+# binary and loading /panel/ in a real browser is the only check that catches
+# it, so the build refuses to produce an installer when the panel does not boot.
+if ($SkipSmoke) {
+    Write-Warning '-SkipSmoke: the panel smoke test was skipped; the installer will still self-check on the target machine.'
+} else {
+    Write-Step 'running the panel smoke test against the staged binary'
+    & (Join-Path $PayloadDirectory 'panelsmoke.exe') -exe (Join-Path $PayloadDirectory 'client2api.exe')
+    if ($LASTEXITCODE -ne 0) {
+        throw "panel smoke test failed ($LASTEXITCODE); refusing to build an installer whose panel cannot boot"
+    }
 }
 
 # --- icon + version resource ------------------------------------------------

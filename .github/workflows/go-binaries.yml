@@ -52,6 +52,15 @@ jobs:
         run: |
           node -e 'const fs=require("fs"),vm=require("vm");const html=fs.readFileSync("internal/panel/index.html","utf8");const m=html.match(/<script>([\s\S]*?)<\/script>/);if(!m)throw new Error("panel: inline script not found");new vm.Script(m[1],{filename:"internal/panel/index.html"});console.log("panel JS syntax OK")'
 
+      # 门禁升级：上面的 node 检查只看那段文本，服务端也照样 200，0.1.5 的
+      # 死面板就是钻了这个空子。这里真的起网关 + 无头浏览器打开 /panel/，
+      # 断言 <html data-c2a-ready="1"> 出现且没有 data-c2a-boot-error。
+      - name: panel smoke test (real browser)
+        run: |
+          go build -o /tmp/client2api ./cmd/client2api
+          go build -o /tmp/panelsmoke ./cmd/panelsmoke
+          /tmp/panelsmoke -exe /tmp/client2api
+
       - name: go vet
         run: go vet ./...
 

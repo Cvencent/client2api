@@ -156,3 +156,34 @@ func TestSavebarSticksToTheViewport(t *testing.T) {
 		}
 	}
 }
+
+// TestShellAnnouncesBootCompletion 钉住 cmd/panelsmoke 依赖的启动契约。
+//
+// 打包脚本和安装器都用无头浏览器打开 /panel/，然后找
+// <html data-c2a-ready="1">。那段契约就在下面：boot() 必须在 refreshAll()
+// 成功之后才打标记，并把启动抛错、未捕获异常、未处理的 Promise 拒绝都变成
+// data-c2a-boot-error，这样 0.1.5 那种「服务端 200、页面全死」在打包阶段
+// 就会失败，而不是等用户装完才发现。
+func TestShellAnnouncesBootCompletion(t *testing.T) {
+	src := string(indexHTML)
+	for _, want := range []string{
+		`document.documentElement.dataset.c2aReady = "1"`,
+		`document.documentElement.dataset.c2aBootError = "1"`,
+		`window.addEventListener("error"`,
+		`window.addEventListener("unhandledrejection"`,
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("面板不再声明启动契约 %q；cmd/panelsmoke 和安装器自检都依赖它", want)
+		}
+	}
+
+	// The ready marker has to come after the first data load: a panel that
+	// throws while rendering its first view must not look healthy.
+	refresh := strings.Index(src, "await refreshAll();")
+	if refresh < 0 {
+		t.Fatal("boot() 不再等待第一次 refreshAll()")
+	}
+	if ready := strings.Index(src, `document.documentElement.dataset.c2aReady = "1"`); ready < refresh {
+		t.Error("c2aReady 标记必须在第一次 refreshAll() 之后才设置")
+	}
+}
