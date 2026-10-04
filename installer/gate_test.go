@@ -39,6 +39,7 @@ func TestBuildRunsThePanelSmokeTestBeforePacking(t *testing.T) {
 		"./cmd/panelsmoke",
 		"'panelsmoke.exe'",
 		"-exe (Join-Path $PayloadDirectory 'client2api.exe')",
+		"'.smoke-ok'",
 		"$SkipSmoke",
 	} {
 		if !strings.Contains(ps, want) {
@@ -57,6 +58,9 @@ func TestBuildRunsThePanelSmokeTestBeforePacking(t *testing.T) {
 	if smoke > installer {
 		t.Error("the panel smoke test must run before the installer is built, not after")
 	}
+	if marker := strings.Index(ps, "recorded build smoke hash"); marker < 0 || marker > installer {
+		t.Error("the smoke-gated payload hash must be recorded before the installer is built")
+	}
 }
 
 // TestInstallSelfChecksBeforeAndAfterWriting pins the ordering inside
@@ -70,11 +74,11 @@ func TestInstallSelfChecksBeforeAndAfterWriting(t *testing.T) {
 		name string
 		text string
 	}{
-		{"pre-install self-check", "if err := smokeTestPanel(candidate); err != nil {"},
+		{"pre-install self-check", "warning, smokeErr := smokeTestPanel(candidate)"},
 		{"stop the gateway", "stopRunningApp()"},
 		{"rollback snapshot", "takeInstallSnapshot(dir, !opt.noData)"},
 		{"write program files", "writePayload(dir, !opt.noData)"},
-		{"post-install self-check", "err = smokeTestPanel(filepath.Join(dir, appExe))"},
+		{"post-install self-check", "warning, err = smokeTestPanel(filepath.Join(dir, appExe))"},
 		{"rollback helper", "func rollbackInstall("},
 	}
 	idx := map[string]int{}

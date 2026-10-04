@@ -3,12 +3,65 @@
 package main
 
 import (
+	"crypto/sha256"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"testing/fstest"
 )
+
+func TestVerifyFileHash(t *testing.T) {
+	path := filepath.Join(t.TempDir(), appExe)
+	data := []byte("smoke-gated-candidate")
+	if err := os.WriteFile(path, data, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	want := fmt.Sprintf("%x", sha256.Sum256(data))
+	if err := verifyFileHash(path, want); err != nil {
+		t.Fatalf("verifyFileHash(correct hash): %v", err)
+	}
+	if err := verifyFileHash(path, strings.Repeat("0", sha256.Size*2)); err == nil {
+		t.Fatal("verifyFileHash accepted a mismatched candidate")
+	}
+}
+
+// TestSmokeTestPanelHashFallback exercises the real embedded payload and a
+// deliberately invalid browser.  On a clean checkout the payload is absent and
+// the test skips; after installer/build.ps1 has staged a smoke-gated payload it
+// proves that a browser-environment failure falls back to the recorded hash
+// instead of blocking the install.
+func TestSmokeTestPanelHashFallback(t *testing.T) {
+	if _, err := fs.Stat(payload, "payload/"+appExe); err != nil {
+		t.Skip("staged installer payload is not present")
+	}
+	candidate, err := extractPayloadFile("payload/" + appExe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(candidate)
+
+	root := os.Getenv("SystemRoot")
+	if root == "" {
+		root = `C:\Windows`
+	}
+	t.Setenv("C2A_BROWSER", filepath.Join(root, "System32", "cmd.exe"))
+	t.Setenv("CHROME_BIN", "")
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("ProgramFiles", "")
+	t.Setenv("ProgramFiles(x86)", "")
+	t.Setenv("LOCALAPPDATA", "")
+
+	warning, err := smokeTestPanel(candidate)
+	if err != nil {
+		t.Fatalf("smokeTestPanel did not use the build-gated hash fallback: %v", err)
+	}
+	if warning == "" {
+		t.Fatal("smokeTestPanel returned no warning when the browser check failed")
+	}
+}
 
 // TestOperatorStatePaths pins the rule that decides what an upgrade may
 // overwrite.  Getting this wrong is how an operator loses the platform routing

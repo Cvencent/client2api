@@ -39,7 +39,7 @@ import (
 // version is the packaging default; build.ps1 injects the authoritative value
 // from cmd/client2api/main.go with -X main.version=... .  installer's guard
 // test fails if this literal ever drifts from the source of truth.
-var version = "0.1.8"
+var version = "0.1.9"
 
 const (
 	appName      = "client2api"
@@ -202,6 +202,7 @@ func warn(opt options, format string, args ...any) {
 }
 
 func fail(opt options, title string, err error) {
+	writeInstallErrorLog(title, err.Error())
 	fmt.Fprintf(os.Stderr, "%s: %v\n", title, err)
 	if !opt.silent {
 		messageBox(title, fmt.Sprintf("%v", err))

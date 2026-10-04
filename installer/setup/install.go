@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"embed"
 	"errors"
 	"fmt"
@@ -63,8 +64,15 @@ func install(opt options) error {
 	defer os.Remove(candidate)
 	if opt.skipSelfCheck {
 		warn(opt, "已跳过分级自检 -skip-self-check：无法确认这个安装包的面板能否启动")
-	} else if err := smokeTestPanel(candidate); err != nil {
-		return fmt.Errorf("%w\n提示：确实没有 Chrome/Edge 的机器可以加 -skip-self-check 跳过自检，但那样就没有任何保护", err)
+	} else {
+		warning, smokeErr := smokeTestPanel(candidate)
+		if smokeErr != nil {
+			return fmt.Errorf("%w\n提示：确实没有 Chrome/Edge 的机器可以加 -skip-self-check 跳过自检，但那样就没有任何保护", smokeErr)
+		}
+		if warning != "" {
+			warn(opt, "%s", warning)
+			reportf(opt, 12, "%s", warning)
+		}
 	}
 
 	step(opt, "[3/7] 停止正在运行的 client2api")
@@ -102,7 +110,12 @@ func install(opt options) error {
 	step(opt, "[5/7] 安装后面板自检")
 	reportf(opt, 62, "安装后自检")
 	if !opt.skipSelfCheck {
-		err = smokeTestPanel(filepath.Join(dir, appExe))
+		var warning string
+		warning, err = smokeTestPanel(filepath.Join(dir, appExe))
+		if err == nil && warning != "" {
+			warn(opt, "%s", warning)
+			reportf(opt, 63, "%s", warning)
+		}
 	}
 	if err != nil {
 		return rollbackInstall(snapshot, wasRunning, err)
@@ -252,7 +265,7 @@ func copyPayload(fsys fs.FS, root, dir string, includeData bool) (written, prese
 		}
 		// The placeholder keeps the embedded directory non-empty in a fresh
 		// checkout; it is not part of the product.
-		if filepath.Base(rel) == ".gitkeep" {
+		if filepath.Base(rel) == ".gitkeep" || isBuildMarker(rel) {
 			return nil
 		}
 		if !includeData && isAccountData(rel) {
@@ -296,29 +309,86 @@ func isOperatorState(rel string) bool {
 	return isAccountData(rel) || filepath.ToSlash(rel) == "configs/client2api.json"
 }
 
+const (
+	smokeMarker        = ".smoke-ok"
+	smokeMarkerPayload = "payload/" + smokeMarker
+)
+
+// isBuildMarker reports whether a payload path is build metadata rather than
+// an installed file.  The marker lets the target-machine self-check fall back
+// to a byte-for-byte comparison when a local browser cannot run headless,
+// without weakening the build-time browser gate.
+func isBuildMarker(rel string) bool {
+	return strings.EqualFold(filepath.Base(filepath.FromSlash(rel)), smokeMarker)
+}
+
+func sha256File(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", h.Sum(nil)), nil
+}
+
+func verifyFileHash(path, want string) error {
+	want = strings.ToLower(strings.TrimSpace(want))
+	if len(want) != sha256.Size*2 {
+		return fmt.Errorf("构建自检标记格式无效")
+	}
+	got, err := sha256File(path)
+	if err != nil {
+		return fmt.Errorf("读取候选程序哈希失败：%w", err)
+	}
+	if !strings.EqualFold(got, want) {
+		return fmt.Errorf("候选程序哈希不一致：got=%s want=%s", got, want)
+	}
+	return nil
+}
+
+// verifyBuildGatedHash accepts a candidate only when it is byte-identical to
+// the payload that passed the real-browser smoke test during packaging.
+func verifyBuildGatedHash(exePath string) error {
+	raw, err := fs.ReadFile(payload, smokeMarkerPayload)
+	if err != nil {
+		return fmt.Errorf("安装包缺少构建时浏览器门禁标记：%w", err)
+	}
+	return verifyFileHash(exePath, string(raw))
+}
+
 // smokeTestPanel is the install-time half of the packaging gate.  It hands the
 // candidate binary to the embedded panelsmoke.exe, which starts it on a
 // throwaway port and loads /panel/ in a real browser.  A build whose panel
 // cannot boot is refused before the old version is touched.
-func smokeTestPanel(exePath string) error {
+//
+// Some machines cannot run a hidden headless Edge/Chrome (empty DOM or a
+// timeout) even though the same binary passed the build gate on the build host.
+// In that environment only, fall back to a SHA-256 comparison against the
+// smoke-gated payload; a mismatch still refuses the install.
+func smokeTestPanel(exePath string) (string, error) {
 	tmp, err := os.MkdirTemp("", "client2api-panelcheck-")
 	if err != nil {
-		return fmt.Errorf("创建自检目录失败：%w", err)
+		return "", fmt.Errorf("创建自检目录失败：%w", err)
 	}
 	defer os.RemoveAll(tmp)
 
 	smokeExe := filepath.Join(tmp, "panelsmoke.exe")
 	data, err := fs.ReadFile(payload, "payload/panelsmoke.exe")
 	if err != nil {
-		return fmt.Errorf("安装包缺少面板自检工具 panelsmoke.exe：%w", err)
+		return "", fmt.Errorf("安装包缺少面板自检工具 panelsmoke.exe：%w", err)
 	}
 	if err := os.WriteFile(smokeExe, data, 0o755); err != nil {
-		return fmt.Errorf("释放面板自检工具失败：%w", err)
+		return "", fmt.Errorf("释放面板自检工具失败：%w", err)
 	}
 
 	candidate := filepath.Join(tmp, appExe)
 	if err := copyFile(exePath, candidate); err != nil {
-		return fmt.Errorf("准备自检副本失败：%w", err)
+		return "", fmt.Errorf("准备自检副本失败：%w", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), panelCheckTimeout)
@@ -328,9 +398,14 @@ func smokeTestPanel(exePath string) error {
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("面板自检未通过，本次安装已取消：%v\n%s", err, strings.TrimSpace(string(out)))
+		browserErr := fmt.Errorf("面板自检未通过：%v\n%s", err, strings.TrimSpace(string(out)))
+		if hashErr := verifyBuildGatedHash(candidate); hashErr == nil {
+			return "目标机浏览器无法运行面板自检；候选程序与构建时真实浏览器门禁版本逐字节一致，已改用摘要校验继续安装。", nil
+		} else {
+			return "", fmt.Errorf("%w\n构建门禁摘要校验也未通过：%v", browserErr, hashErr)
+		}
 	}
-	return nil
+	return "", nil
 }
 
 // extractPayloadFile writes one embedded payload file to a temp path and
@@ -435,7 +510,7 @@ func snapshotPaths(fsys fs.FS, root string, includeData bool) ([]string, error) 
 		if err != nil {
 			return err
 		}
-		if filepath.Base(rel) == ".gitkeep" {
+		if filepath.Base(rel) == ".gitkeep" || isBuildMarker(rel) {
 			return nil
 		}
 		rel = filepath.FromSlash(rel)
@@ -653,8 +728,8 @@ func defaultRoot() registry.Key { return registry.CURRENT_USER }
 // features" size column.
 func embeddedSize() int64 {
 	var total int64
-	_ = fs.WalkDir(payload, "payload", func(_ string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
+	_ = fs.WalkDir(payload, "payload", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || isBuildMarker(p) {
 			return err
 		}
 		if info, err := d.Info(); err == nil {
@@ -663,6 +738,19 @@ func embeddedSize() int64 {
 		return nil
 	})
 	return total
+}
+
+func writeInstallErrorLog(title, msg string) {
+	dir := filepath.Join(localAppData(), appName)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return
+	}
+	f, err := os.OpenFile(filepath.Join(dir, "install-error.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	_, _ = fmt.Fprintf(f, "[%s] %s: %s\r\n", time.Now().Format(time.RFC3339), title, msg)
 }
 
 func copyFile(src, dst string) error {

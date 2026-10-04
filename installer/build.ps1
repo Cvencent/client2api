@@ -212,6 +212,10 @@ if ($SkipSmoke) {
     if ($LASTEXITCODE -ne 0) {
         throw "panel smoke test failed ($LASTEXITCODE); refusing to build an installer whose panel cannot boot"
     }
+    $candidateHash = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $PayloadDirectory 'client2api.exe')).Hash.ToLowerInvariant()
+    $markerPath = Join-Path $PayloadDirectory '.smoke-ok'
+    [IO.File]::WriteAllText($markerPath, $candidateHash + "`n", (New-Object Text.UTF8Encoding($false)))
+    Write-Step "recorded build smoke hash $candidateHash"
 }
 
 # --- icon + version resource ------------------------------------------------

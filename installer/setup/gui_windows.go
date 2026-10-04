@@ -336,6 +336,7 @@ func (w *wizard) tick() {
 		guiStatusMu.Lock()
 		msg := guiErr
 		guiStatusMu.Unlock()
+		writeInstallErrorLog("安装失败", msg)
 		w.setText(w.pageTitle, "安装失败")
 		w.setText(w.status, "安装没有完成。")
 		w.setText(w.info, msg)
