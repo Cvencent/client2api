@@ -48,6 +48,10 @@ jobs:
             echo "::error::gofmt needed on:"; echo "$UNFORMATTED"
             exit 1
           fi
+      - name: panel JS syntax
+        run: |
+          node -e 'const fs=require("fs"),vm=require("vm");const html=fs.readFileSync("internal/panel/index.html","utf8");const m=html.match(/<script>([\s\S]*?)<\/script>/);if(!m)throw new Error("panel: inline script not found");new vm.Script(m[1],{filename:"internal/panel/index.html"});console.log("panel JS syntax OK")'
+
       - name: go vet
         run: go vet ./...
 
@@ -171,3 +175,4 @@ jobs:
 
             完整变更：https://github.com/${{ github.repository }}/compare/${{ steps.prev.outputs.prev }}...${{ github.ref_name }}
           files: dist/*
+          append_body: true

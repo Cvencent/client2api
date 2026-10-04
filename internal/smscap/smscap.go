@@ -262,9 +262,9 @@ func CleanProvinces(pool []string) []string {
 // just used so two consecutive rents never land in the same province.  An empty
 // pool means "let the platform choose".  It is safe for concurrent use.
 type Rotator struct {
-	mu     sync.Mutex
-	pool   []string
-	last   string
+	mu   sync.Mutex
+	pool []string
+	last string
 }
 
 // Next returns the next province, or "" when the pool is empty.
