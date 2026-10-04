@@ -1291,7 +1291,7 @@ input[type=checkbox] { width: 14px; height: 14px; padding: 0; accent-color: var(
     <!-- 平台告警 -->
     <section class="view" id="view-alerts" hidden>
       <div class="box">
-        <header><h3>平台告警</h3><span class="grow"></span><span class="note" id="alertNote"></span><button class="xs" id="btnAlerts">刷新</button></header>
+        <header><h3>平台告警</h3><span class="grow"></span><span class="note" id="alertNote"></span><button class="xs danger" id="btnAlertsClear">清空</button><button class="xs" id="btnAlerts">刷新</button></header>
         <div class="tbl-wrap">
         <table class="acc md">
           <thead><tr><th>时间</th><th>平台</th><th>模型</th><th>账号</th><th>说明</th><th>连续失败</th></tr></thead>
@@ -3107,6 +3107,18 @@ async function renderAlerts() {
       '<td>' + esc(x.account || "-") + '</td><td>' + esc(x.detail || x.kind || "-") + '</td>' +
       '<td class="num">' + numf(x.count || 0) + '</td></tr>';
   }).join("") || '<tr><td colspan="6" class="hint">暂无平台告警</td></tr>';
+}
+
+async function clearAlerts() {
+  if (!confirm("确定清空全部平台告警？此操作不可恢复。")) return;
+  const r = await api("/panel/api/alerts", { method: "DELETE" });
+  if (!r.ok) {
+    toast("清空告警失败：" + r.err, "err");
+    return;
+  }
+  updateAlertBadge(0);
+  toast("平台告警已清空");
+  renderAlerts();
 }
 
 async function refreshAlertBadge() {
@@ -6553,6 +6565,7 @@ $("#btnPk").addEventListener("click", renderClients);
   $("#usWindow").addEventListener("change", renderUsage);
   $("#usRecentFilter").addEventListener("change", renderRecentRows);
   $("#btnAlerts").addEventListener("click", renderAlerts);
+  $("#btnAlertsClear").addEventListener("click", clearAlerts);
   $("#btnAlertCenter").addEventListener("click", () => { location.hash = "#alerts"; if (VIEW === "alerts") renderAlerts(); });
   $("#btnModels").addEventListener("click", () => renderModels(true));
 $("#btnCfgReload").addEventListener("click", async () => {

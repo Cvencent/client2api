@@ -18,6 +18,12 @@ func (p *panel) handleAlerts(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 		return
+	case http.MethodDelete:
+		if p.opts.Alerts != nil {
+			p.opts.Alerts.Clear()
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "cleared": true})
+		return
 	case http.MethodGet:
 	default:
 		writeErr(w, http.StatusMethodNotAllowed, "use GET or POST")

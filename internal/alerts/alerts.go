@@ -141,6 +141,28 @@ func (s *Store) MarkAllRead() {
 	}
 }
 
+// Clear drops every retained alert and persists the empty journal.  The read
+// watermark is cleared too, so a later alert starts from a clean slate.
+func (s *Store) Clear() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.alerts = nil
+	s.readAt = time.Time{}
+	path := s.path
+	raw := s.marshalLocked()
+	s.mu.Unlock()
+	if path == "" {
+		return
+	}
+	if err := core.WriteFileAtomic(path, raw); err != nil {
+		s.mu.Lock()
+		s.lastErr = err
+		s.mu.Unlock()
+	}
+}
+
 // LastError is the most recent persistence error, if any.
 func (s *Store) LastError() error {
 	if s == nil {
