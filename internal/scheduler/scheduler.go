@@ -871,7 +871,18 @@ func (r *Runner) runBatchAs(ctx context.Context, clientName, batchName, trigger 
 // account "" -- core.TaskProvider documents that as "whichever account you
 // would use anyway".  When the manager does hold records, only the enabled
 // ones run; deciding all of them off means running nothing.
+//
+// Check-in is the one deliberate exception.  An exhausted account is exactly
+// the one a daily reward is meant to revive, so the check-in batch includes
+// cooling/exhausted records even when the module reports Enabled=false for
+// them.  It still excludes an account the operator parked (Fields["disabled"]
+// true) and credentials the vendor declared invalid/expired/unauthorized.
+// This policy is keyed on the check-in batch, not on one vendor.
 func accountsOf(ctx context.Context, c core.Client) ([]string, error) {
+	return accountsOfForBatch(ctx, c, false)
+}
+
+func accountsOfForBatch(ctx context.Context, c core.Client, checkin bool) ([]string, error) {
 	am, ok := core.AsAccountManager(c)
 	if !ok {
 		return []string{""}, nil
@@ -885,11 +896,26 @@ func accountsOf(ctx context.Context, c core.Client) ([]string, error) {
 	}
 	ids := make([]string, 0, len(recs))
 	for _, rec := range recs {
-		if rec.Enabled {
-			ids = append(ids, rec.ID)
+		if !rec.Enabled && !(checkin && checkinAccount(rec)) {
+			continue
 		}
+		ids = append(ids, rec.ID)
 	}
 	return ids, nil
+}
+
+func checkinAccount(rec core.AccountRecord) bool {
+	if rec.Fields != nil {
+		if v, ok := rec.Fields["disabled"].(bool); ok && v {
+			return false
+		}
+	}
+	switch strings.ToLower(strings.TrimSpace(rec.State)) {
+	case "ready", "cooling", "exhausted", "low_credit", "quota_exceeded", "rate_limited":
+		return true
+	default:
+		return false
+	}
 }
 
 // gateOpen reports whether the batch's gate is present and still incomplete.
@@ -1083,7 +1109,7 @@ func (r *Runner) runCheckinBatchAs(ctx context.Context, c core.Client, b core.Ba
 		r.record(rep, trigger)
 		return rep
 	}
-	accounts, err := accountsOf(ctx, c)
+	accounts, err := accountsOfForBatch(ctx, c, true)
 	if err != nil {
 		rep.Failed++
 		rep.Errors = append(rep.Errors, err.Error())

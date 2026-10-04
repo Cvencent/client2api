@@ -6,6 +6,14 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [Unreleased] - 2026-10-04
+
+### Fixed
+
+- 修复任务中心的自动签到会跳过“额度耗尽”账号的问题。签到批次现在会扫描
+  `ready` / `cooling` / `exhausted` 等可恢复状态的账号，只排除人工停用和
+  凭据已失效（invalid/expired/unauthorized）的账号。
+
 ## [0.1.4] - 2026-10-04
 
 ### Fixed

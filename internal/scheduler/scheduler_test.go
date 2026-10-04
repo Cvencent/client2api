@@ -1450,6 +1450,35 @@ func TestCheckinOnlyClientIsScheduled(t *testing.T) {
 	}
 }
 
+func TestSyntheticCheckinIncludesExhaustedButNotOperatorDisabled(t *testing.T) {
+	logs := &recorder{}
+	clk := newFakeClock(cstMidnight, logs)
+	c := &checkinOnly{
+		name: "trae",
+		accounts: []core.AccountRecord{
+			{ID: "ready", Enabled: true, State: "ready"},
+			{ID: "exhausted", Enabled: false, State: "exhausted"},
+			{ID: "parked", Enabled: false, State: "exhausted", Fields: map[string]any{"disabled": true}},
+			{ID: "invalid", Enabled: false, State: "invalid"},
+		},
+		rec: logs,
+	}
+	r := New(deps(registryOf(c), clk, logs))
+	r.Reconfigure(Config{})
+
+	rep, ok := r.RunBatchNow(context.Background(), "trae", core.CheckinBatchName)
+	if !ok {
+		t.Fatal("RunBatchNow: ok = false, want true")
+	}
+	if rep.Accounts != 2 || rep.Ran != 2 {
+		t.Fatalf("report = %+v, want only ready+exhausted", rep)
+	}
+	want := []string{"checkin:ready/", "sleep", "checkin:exhausted/", "sleep"}
+	if got := logs.all(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("events = %v, want %v", got, want)
+	}
+}
+
 func TestRunBatchNowRunsTheSyntheticCheckin(t *testing.T) {
 	logs := &recorder{}
 	clk := newFakeClock(cstMidnight, logs)
