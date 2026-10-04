@@ -168,6 +168,52 @@ func reloginSource(t *testing.T) string {
 }
 
 // TestAddDialogTabFollowsCapabilities: 「浏览器登录」那个 tab 其实是「不导入、不手填」
+// TestAutoAddBatchControls pins the operator-facing knobs: a desired account count
+// and a maximum attempt count, plus the progress line that reports both.  The
+// panel owns the loop; the module interface stays one-attempt-per-job.
+func TestAutoAddBatchControls(t *testing.T) {
+	src := reloginSource(t)
+	for _, want := range []string{
+		`id="autoWant"`,
+		`id="autoTries"`,
+		`期望账号数`,
+		`最大尝试次数`,
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("auto-add batch controls are missing %s", want)
+		}
+	}
+	// The loop must stop on either condition, and must reuse the single-job route.
+	start := poolStatsFuncBody(t, src, "autoStart")
+	if !strings.Contains(start, `ADD.autoBatch = { want: autoInt("#autoWant"`) ||
+		!strings.Contains(start, `autoInt("#autoTries"`) {
+		t.Error("autoStart does not read the batch controls")
+	}
+	if !strings.Contains(start, `ADD.mode !== "restore"`) {
+		t.Error("re-login must stay a single attempt, not a batch")
+	}
+	done := poolStatsFuncBody(t, src, "autoBatchDone")
+	if !strings.Contains(done, "b.added >= b.want") || !strings.Contains(done, "b.attempted >= b.tries") {
+		t.Error("autoBatchDone does not stop on both the target and the attempt cap")
+	}
+	next := poolStatsFuncBody(t, src, "autoNextAttempt")
+	if !strings.Contains(next, "const res = await autoStartRun(n)") {
+		t.Error("autoNextAttempt does not start the next single-job attempt")
+	}
+	// A failed start is one failed attempt, not the end of the batch, and the
+	// loop must not recurse into itself for every failure.
+	if !strings.Contains(next, "while (!autoBatchDone())") || strings.Contains(next, "autoNextAttempt();") {
+		t.Error("autoNextAttempt must loop over failed starts, not end the batch or recurse")
+	}
+	// A duplicate terminal poll must not double-count the same job.
+	if !strings.Contains(src, "ADD.autoDone === job.id") {
+		t.Error("renderAutoJob does not guard against counting the same job twice")
+	}
+	if !strings.Contains(src, `api(cbase(n) + "/auto-login"`) {
+		t.Error("the batch lost the single-job start route")
+	}
+}
+
 // 的入口，自动添加和接码都挂在它下面。只实现 AutoLoginProvider/SMSProvider 的模块
 // （loomy）必须落在这个 tab 上并改名为「自动登录」，而不是被推进「手动添加」；三块
 // 都没有的模块（minimaxcode）则要把这个 tab 藏掉，免得出现一个点开是空的按钮。

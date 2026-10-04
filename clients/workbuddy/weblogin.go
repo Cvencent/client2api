@@ -59,8 +59,6 @@ const (
 	loginCancelledMessage = "cancelled"
 	// loginWaitingMessage is the pending text when the vendor says nothing useful.
 	loginWaitingMessage = "waiting for the vendor to confirm the sign-in"
-	// loginAlreadyUsableMessage is returned by StartLogin when the pool is fine.
-	loginAlreadyUsableMessage = "an account is already usable; remove it before signing in again"
 )
 
 // loginOutcome classifies one poll of the token endpoint.
@@ -447,9 +445,12 @@ func (c *Client) LoginRealms(context.Context) []core.LoginRealm {
 // StartLogin passes -- so an operator who never touches the picker sees the
 // behaviour this module had before the picker existed.
 func (c *Client) StartLoginRealm(ctx context.Context, want string) (core.LoginState, error) {
-	if c.pool != nil && c.pool.Ready() {
-		return core.LoginState{State: core.LoginSuccess, Message: loginAlreadyUsableMessage}, nil
-	}
+	// Adding a second account is a legitimate operation: the pool being usable
+	// says nothing about whether the operator wants another credential.  The
+	// old short circuit returned success without an authorisation URL, which the
+	// panel rendered as a bogus "open this link" step.  Always start a real
+	// session; AddAccount de-duplicates by uid, so re-signing into an existing
+	// account updates it rather than creating a duplicate.
 	realm := c.loginRealm()
 	if strings.TrimSpace(want) != "" {
 		realm = normalizeLoginRealm(want)

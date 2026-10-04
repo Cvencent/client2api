@@ -193,6 +193,15 @@ func TestScheduleViewFallsBackToTheSharedHours(t *testing.T) {
 	})
 	p.opts.Registry = registryOf(c)
 
+	// 全局默认区需要的余额刷新字段必须随 payload 下发，否则迁移后任务中心会丢掉
+	// 这一项（以前它在配置页，现在唯一入口在这里）。
+	out := scheduleView(t, p)
+	if out["balance_refresh_enabled"] != false {
+		t.Errorf("balance_refresh_enabled = %v, want the config's false", out["balance_refresh_enabled"])
+	}
+	if out["balance_refresh_minutes"] != float64(0) {
+		t.Errorf("balance_refresh_minutes = %v, want 0 when disabled", out["balance_refresh_minutes"])
+	}
 	rows, _ := scheduleView(t, p)["rows"].([]any)
 	if len(rows) != 1 {
 		t.Fatalf("rows = %v, want one", rows)

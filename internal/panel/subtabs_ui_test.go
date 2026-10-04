@@ -90,7 +90,7 @@ func TestUsagePageHasThreeSecondaryTabs(t *testing.T) {
 		ids   []string
 	}{
 		{"usage-overview", []string{`id="usStats"`, `id="usChart"`}},
-		{"usage-recent", []string{`id="usRecentFilter"`, `id="usRecentBody"`}},
+		{"usage-recent", []string{`id="usRecentFilter"`, `id="usRecentBody"`, `id="btnUsageRecentRefresh"`}},
 		{"usage-stats", []string{`id="usClientBody"`, `id="usAccBody"`, `id="usModelBody"`, `id="usRealmBody"`}},
 	} {
 		panel := subtabPanelHTML(t, src, tc.panel)
@@ -181,6 +181,7 @@ func TestSecondaryTabsKeepTheExistingRefreshHooks(t *testing.T) {
 	for _, want := range []string{
 		`setupSubtabs("usage"`,
 		`setupSubtabs("taskscenter"`,
+		`$("#btnUsageRecentRefresh").addEventListener("click", () => renderUsage())`,
 		"renderUsage()",
 		"renderSchedule()",
 		"renderQC()",

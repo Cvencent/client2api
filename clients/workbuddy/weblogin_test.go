@@ -928,21 +928,23 @@ func TestWebLoginAlreadyUsable(t *testing.T) {
 	files := map[string]string{
 		panelFileName("uid-existing"): credJSON("access-existing-1", "refresh-existing", realmCN, "codebuddy.cn", "uid-existing", 0),
 	}
-	v := &fakeVendor{}
+	v := &fakeVendor{stateBody: stateFixture("state-second", "https://example.test/auth")}
 	c, _ := loginClient(t, v, files)
 
 	st, err := c.StartLogin(context.Background())
 	if err != nil {
 		t.Fatalf("StartLogin: %v", err)
 	}
-	if st.State != core.LoginSuccess {
-		t.Fatalf("state = %q (%s), want success", st.State, st.Message)
+	// A usable pool must not block adding a second account: the operator gets
+	// a real authorisation URL instead of a success state with no link.
+	if st.State != core.LoginPending {
+		t.Fatalf("state = %q (%s), want pending", st.State, st.Message)
 	}
-	if st.Message != loginAlreadyUsableMessage {
-		t.Fatalf("message = %q", st.Message)
+	if strings.TrimSpace(st.URL) == "" || strings.TrimSpace(st.SessionID) == "" {
+		t.Fatalf("StartLogin returned no usable session: %+v", st)
 	}
-	if n := v.count("/v2/plugin/auth/state"); n != 0 {
-		t.Fatalf("the vendor was contacted %d times despite a usable account", n)
+	if n := v.count("/v2/plugin/auth/state"); n != 1 {
+		t.Fatalf("the vendor was contacted %d times, want one login start", n)
 	}
 }
 

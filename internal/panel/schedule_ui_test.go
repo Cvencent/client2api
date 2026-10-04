@@ -40,16 +40,16 @@ var scheduleFormKeys = []string{
 
 // scheduleFormIDs 是自动排程区声明的元素 id；后半段是 saveConfig 要用 $()
 // 逐个读回来的输入控件。
-var scheduleFormIDs = []string{
-	"cfgSchState", "cfgSchNext",
-	"cfgSchEnabled",
-	"cfgSchCheckinEnabled", "cfgSchCheckinHours",
-	"cfgSchKeepaliveEnabled", "cfgSchKeepaliveHours",
-	"cfgSchTravelEnabled", "cfgSchTravelHours",
-	"cfgSchActivityEnabled", "cfgSchActivityHours",
-	"cfgSchBlackcatEnabled", "cfgSchBlackcatHours",
-	"cfgSchGrowthEnabled", "cfgSchGrowthHours",
-	"cfgSchBalanceEnabled", "cfgSchBalanceMinutes",
+// scheduleDefaultIDs 是任务中心「全局默认」区在运行时拼出的元素 id。它们不出现在
+// 静态标记里，所以 shell 的 id 守卫看不到；这里单独钉住，防止拼错后保存静默丢字段。
+var scheduleDefaultIDs = []string{
+	"scDefCheckinEnabled", "scDefCheckinHours",
+	"scDefKeepaliveEnabled", "scDefKeepaliveHours",
+	"scDefTravelEnabled", "scDefTravelHours",
+	"scDefActivityEnabled", "scDefActivityHours",
+	"scDefBlackcatEnabled", "scDefBlackcatHours",
+	"scDefGrowthEnabled", "scDefGrowthHours",
+	"scDefBalanceEnabled", "scDefBalanceMinutes",
 }
 
 func scheduleShellSource(t *testing.T) string {
@@ -77,29 +77,25 @@ func scheduleFuncBody(t *testing.T, src, name string) string {
 	return ""
 }
 
-// 一个 id 只要满足 shell_test.go 的两条"定义"规则之一，守卫就认它。
-func scheduleIDDeclared(src, id string) bool {
-	return strings.Contains(src, `id="`+id+`"`) || strings.Contains(src, `cfgText("`+id+`"`)
-}
 
 func TestScheduleFormIDsAreDeclaredAndRead(t *testing.T) {
 	src := scheduleShellSource(t)
-	var declareOnly []string
-	for _, id := range scheduleFormIDs {
-		if !scheduleIDDeclared(src, id) {
-			t.Errorf("自动排程区的 %s 没有任何 id= 或 cfgText() 声明（shell id 守卫会漏，因为没人引用它）", id)
-		}
-		if id == "cfgSchState" || id == "cfgSchNext" {
-			declareOnly = append(declareOnly, id)
-			continue
-		}
-		// 输入控件必须真的被 saveConfig 读回去，否则"画了框但不保存"。
-		if !strings.Contains(src, `$("#`+id+`")`) {
-			t.Errorf("自动排程区的 %s 声明了却没人 $() 读它：保存时这个字段会被丢掉", id)
+	// 全局默认区由 scDefaultHTML 在运行时拼出，控件 id 是拼接字符串；saveConfig 只
+	// 负责渲染，写入在 scSave。这里检查拼出来的每个 id 都被 scSave 读回去。
+	defaults := scheduleFuncBody(t, src, "scDefaultHTML")
+	for _, id := range scheduleDefaultIDs {
+		if !strings.Contains(defaults, `"`+id+`"`) && !strings.Contains(defaults, `+ id +`) {
+			t.Errorf("全局默认区没有拼出 %s", id)
 		}
 	}
-	if len(declareOnly) != 2 {
-		t.Fatalf("状态条应当只有两个只读元素（cfgSchState/cfgSchNext），实际算了 %d 个", len(declareOnly))
+	save := scheduleFuncBody(t, src, "scSave")
+	if !strings.Contains(save, `$("#scDef" + id + "Enabled")`) ||
+		!strings.Contains(save, `$("#scDef" + id + "Hours")`) {
+		t.Error("scSave 没有把全局默认区的开关/时点读回去")
+	}
+	if !strings.Contains(save, `$("#scDefBalanceEnabled")`) ||
+		!strings.Contains(save, `$("#scDefBalanceMinutes")`) {
+		t.Error("scSave 没有把余额刷新设置读回去")
 	}
 }
 
@@ -151,15 +147,12 @@ func TestScheduleStatusRendersTheThreeStates(t *testing.T) {
 			t.Errorf("状态条缺少 %q 这一态", want)
 		}
 	}
-	// 字段来自 GET /panel/api/status 的 schedule（overview 里没有），三态是三条分支。
-	for _, want := range []string{
-		`api("/panel/api/status")`,
-		`if (sched == null) {`,
-		`if (!sched.enabled) {`,
-		`sched.next`,
-	} {
-		if !strings.Contains(src, want) {
-			t.Errorf("状态条里找不到 %q：三态渲染不完整", want)
+	// 三态现在由任务中心的 scStateHTML / scRenderDefaults 渲染，不再读 status 的
+	// schedule 字段（它已经在 /panel/api/schedule 的 wired/enabled 里）。
+	state := scheduleFuncBody(t, src, "scStateHTML")
+	for _, want := range []string{"没有接入调度器", "总开关是关的", "调度器在跑"} {
+		if !strings.Contains(state, want) {
+			t.Errorf("scStateHTML 缺少 %q 这一态", want)
 		}
 	}
 }
@@ -254,8 +247,10 @@ func TestScheduleHoursParsingRules(t *testing.T) {
 			t.Errorf("parseSchedHours 缺少 %q", want)
 		}
 	}
-	if !strings.Contains(src, "const schedChecked = v => (v === undefined || v === null || !!v) ? \" checked\" : \"\";") {
-		t.Error("schedChecked 不再把「文件里没有这个键」当成勾选：Go 侧组开关缺省是开，不改会静默关掉默认开着的组")
+	// 「缺键 = 开」的默认值现在由服务端算好并经 groups[].enabled 下发，面板不再自己
+	// 猜测缺键语义，所以这里改成钉住全局默认区的渲染直接使用服务端值。
+	if !strings.Contains(scheduleFuncBody(t, src, "scDefaultHTML"), "g.enabled ?") {
+		t.Error("全局默认区没有使用服务端下发的 group.enabled")
 	}
 }
 
@@ -263,9 +258,9 @@ func TestScheduleHoursParsingRules(t *testing.T) {
 // 上面那堆 strings.Contains 可能是"总能匹配到"的自证。
 func TestScheduleIDChecksCatchAMissingField(t *testing.T) {
 	src := scheduleShellSource(t)
-	broken := strings.Replace(src, `$("#cfgSchEnabled")`, `$("#cfgSchRenamed")`, -1)
+	broken := strings.Replace(src, `$("#scDefBalanceEnabled")`, `$("#scDefRenamed")`, -1)
 	if broken == src {
-		t.Fatal("测试自己失效了：源码里没有可替换的 $(\"#cfgSchEnabled\")")
+		t.Fatal("测试自己失效了：源码里没有可替换的 $(\"#scDefBalanceEnabled\")")
 	}
 	var dangling []string
 	declared := map[string]bool{}
@@ -274,7 +269,7 @@ func TestScheduleIDChecksCatchAMissingField(t *testing.T) {
 			declared[m[1]] = true
 		}
 	}
-	if declared["cfgSchRenamed"] {
+	if declared["scDefRenamed"] {
 		t.Error("改名后的 id 不该还算已声明")
 	}
 	for _, re := range shellRefs {

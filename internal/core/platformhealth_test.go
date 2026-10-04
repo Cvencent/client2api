@@ -34,6 +34,47 @@ func TestPlatformHealthAlertsOnceAndSuppresses(t *testing.T) {
 	}
 }
 
+// A platform that is merely unable to serve right now -- every account busy or
+// cooling, no usable account at all -- is not a failed platform.  It must be
+// demoted for a short window without raising the failure alert, and a success
+// must clear that demotion immediately.
+func TestPlatformHealthDemotesUnavailableWithoutAlerting(t *testing.T) {
+	h := NewPlatformHealth()
+	now := time.Date(2026, 10, 4, 23, 36, 0, 0, time.Local)
+
+	h.NoteUnavailable("workbuddy", "cn:deepseek-v4.1-flash", now)
+	if h.Suppressed("workbuddy", "cn:deepseek-v4.1-flash", now.Add(time.Second)) {
+		t.Fatal("an unavailable platform must not enter the failure cooldown")
+	}
+	if !h.Degraded("workbuddy", "cn:deepseek-v4.1-flash", now.Add(time.Second)) {
+		t.Fatal("an unavailable platform was not demoted")
+	}
+	if h.Degraded("workbuddy", "cn:deepseek-v4.1-flash", now.Add(PlatformUnavailableCooldown+time.Second)) {
+		t.Fatal("the demotion outlived its short window")
+	}
+
+	h.NoteUnavailable("workbuddy", "cn:deepseek-v4.1-flash", now)
+	h.NoteSuccess("workbuddy", "cn:deepseek-v4.1-flash", now.Add(time.Second))
+	if h.Degraded("workbuddy", "cn:deepseek-v4.1-flash", now.Add(2*time.Second)) {
+		t.Fatal("a success must clear the demotion")
+	}
+}
+
+// A real failure is stronger evidence than a busy signal: it must take over the
+// entry and start the full failure cooldown rather than inheriting a demotion.
+func TestPlatformHealthFailureSupersedesUnavailable(t *testing.T) {
+	h := NewPlatformHealth()
+	now := time.Date(2026, 10, 4, 23, 36, 0, 0, time.Local)
+
+	h.NoteUnavailable("tabbit", "m", now)
+	h.NoteFailure("tabbit", "m", now.Add(time.Second))
+	h.NoteFailure("tabbit", "m", now.Add(2*time.Second))
+	tripped := h.NoteFailure("tabbit", "m", now.Add(3*time.Second))
+	if !tripped.Alert || !tripped.Suppressed {
+		t.Fatalf("third real failure = %+v, want an alert and suppression", tripped)
+	}
+}
+
 func TestPlatformHealthWindowExpiresAndSuccessClears(t *testing.T) {
 	h := NewPlatformHealth()
 	start := time.Date(2026, 10, 3, 12, 0, 0, 0, time.Local)

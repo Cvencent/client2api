@@ -290,6 +290,19 @@ func (r *Registry) NoteModelSuccess(client, model string, now time.Time) {
 	r.platformHealth().NoteSuccess(client, model, now)
 }
 
+// NoteModelUnavailable records that a platform cannot serve a model right now
+// without treating that as an upstream failure.  The pair is demoted briefly
+// so the next request prefers a healthy candidate, then retried.
+func (r *Registry) NoteModelUnavailable(client, model string, now time.Time) HealthEvent {
+	return r.platformHealth().NoteUnavailable(client, model, now)
+}
+
+// ModelDegraded reports whether a platform/model pair is in the short
+// "cannot serve right now" demotion.
+func (r *Registry) ModelDegraded(client, model string, now time.Time) bool {
+	return r.platformHealth().Degraded(client, model, now)
+}
+
 // ModelSuppressed reports whether a platform/model pair is cooling down.
 func (r *Registry) ModelSuppressed(client, model string, now time.Time) bool {
 	return r.platformHealth().Suppressed(client, model, now)
@@ -472,8 +485,20 @@ func (r *Registry) ResolveCandidates(ctx context.Context, model string) ([]Candi
 		model = alias
 	}
 
+	// Auto/<model> is the gateway's virtual routing name: strip the prefix
+	// and resolve the rest exactly like a bare model id, so platform
+	// priority, health and failover stay in one implementation.
+	auto := false
+	if len(model) >= len("auto/") && strings.EqualFold(model[:len("auto/")], "auto/") {
+		model = strings.TrimSpace(model[len("auto/"):])
+		if model == "" {
+			return nil, fmt.Errorf("model is required after Auto/")
+		}
+		auto = true
+	}
+
 	prefix, rest, qualified := strings.Cut(model, "/")
-	if qualified && prefix != "" && rest != "" {
+	if !auto && qualified && prefix != "" && rest != "" {
 		if c, found := r.Get(prefix); found {
 			upstream := rest
 			if models, err := c.Models(ctx); err == nil {
@@ -544,7 +569,8 @@ func (r *Registry) ResolveCandidates(ctx context.Context, model string) ([]Candi
 		ranked[i] = scored{
 			Candidate:  o,
 			usable:     r.usableNow(ctx, o.Client),
-			suppressed: r.ModelSuppressed(o.Client.Name(), o.Model, now),
+			suppressed: r.ModelSuppressed(o.Client.Name(), o.Model, now) ||
+				r.ModelDegraded(o.Client.Name(), o.Model, now),
 			priority:   r.priority(o.Client.Name()),
 		}
 	}

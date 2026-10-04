@@ -61,6 +61,23 @@ func smsPanel(t *testing.T, clients ...core.Client) http.Handler {
 	return loginPanel(t, clients...)
 }
 
+// TestSMSBlockOffersTheInviteSignupLink pins the operator-facing signup entry
+// to the invite URL: without an account and a token the rest of this block
+// cannot be used, so the path has to be discoverable in the dialog itself.
+func TestSMSBlockOffersTheInviteSignupLink(t *testing.T) {
+	src := string(indexHTML)
+	for _, want := range []string{
+		`id="addSms"`,
+		`href="https://eomsg.com/appweb/signUp.html?inviter=36couhpl"`,
+		`target="_blank" rel="noopener noreferrer"`,
+		`没有账号？注册`,
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("sms signup link is missing %s", want)
+		}
+	}
+}
+
 // TestSMSStatusIsReportedThroughTheCapability: the panel draws the 接码 block
 // from this route, so the module's own status must come back verbatim.
 func TestSMSStatusIsReportedThroughTheCapability(t *testing.T) {

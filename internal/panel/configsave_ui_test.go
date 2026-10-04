@@ -34,9 +34,13 @@ func TestSaveConfigSendsOnlyWhatTheOperatorChanged(t *testing.T) {
 	save := poolStatsFuncBody(t, ui, "saveConfig")
 	prune := poolStatsFuncBody(t, ui, "pruneUnchanged")
 
+	// 自动排程已迁到任务中心：配置页不再渲染这一块，否则两边会各写一半。
+	if strings.Contains(render, "cfgSchEnabled") || strings.Contains(render, "自动排程") {
+		t.Error("配置页又渲染了自动排程块：它已经迁到任务中心，重复的入口会互相覆盖")
+	}
+
 	// ① 基线登记齐了。画默认值的每一处都得有对应登记，漏掉一处就退回幻象改动。
 	for _, site := range []string{
-		"schedChecked(",                           // 6 个排程组开关
 		"sticky.enabled == null",                  // 会话粘性
 		"sanitize_blacklist_fingerprints == null", // 出站指纹清洗
 		"pnl.package_detail_limit != null ? pnl.package_detail_limit : pnlEff.package_detail_limit", // 面板
@@ -54,17 +58,10 @@ func TestSaveConfigSendsOnlyWhatTheOperatorChanged(t *testing.T) {
 		`"session_sticky.enabled"`,
 		`"features.sanitize_blacklist_fingerprints"`,
 		`"panel.package_detail_limit"`,
-		`"schedule.enabled"`,
-		`"schedule.balance_refresh_enabled"`,
-		`"schedule.balance_refresh_minutes"`,
 	} {
 		if !strings.Contains(render, "setBase("+path) {
 			t.Errorf("渲染基线漏了 %s：这个控件缺键时会画默认值，保存时会被当成一次改动", path)
 		}
-	}
-	if !strings.Contains(render, `setBase("schedule." + g + "_enabled"`) ||
-		!strings.Contains(render, `setBase("schedule." + g + "_hours"`) {
-		t.Error("渲染基线漏了排程组开关/时点：缺键时画的是「开」和空串")
 	}
 	if !strings.Contains(render, `setBase("clients." + n, cl[n] == null ? {} : cl[n])`) {
 		t.Error("渲染基线漏了模块配置节：缺失的节画成 {}，保存时会凭空多出空节")

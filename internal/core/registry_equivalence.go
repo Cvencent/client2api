@@ -2,6 +2,38 @@ package core
 
 import "strings"
 
+// modelDisplayID strips the vendor namespace from a model id while preserving
+// the vendor's spelling.  Cline's `cline-free/deepseek-v4.1-flash`,
+// OpenRouter's `deepseek/deepseek-v4.1-flash` and WorkBuddy's
+// `cn:deepseek-v4.1-flash` all become `deepseek-v4.1-flash`; a bare id is
+// returned unchanged.
+func modelDisplayID(model string) string {
+	name := strings.TrimSpace(model)
+	s := strings.ToLower(name)
+	if i := strings.IndexByte(s, ':'); i > 0 {
+		switch {
+		case s[:i] == "cn", s[:i] == "global":
+			name = strings.TrimSpace(name[i+1:])
+		case s[i+1:] == "free":
+			name = strings.TrimSpace(name[:i])
+		}
+	}
+	if i := strings.LastIndexByte(strings.ToLower(name), '/'); i >= 0 {
+		name = strings.TrimSpace(name[i+1:])
+	}
+	return name
+}
+
+// ModelDisplayID is modelDisplayID for the gateway's Auto/ catalogue.  It is
+// exported so the catalogue groups vendor-namespaced ids exactly the way the
+// router does instead of growing a second, drifting copy of the rule.
+func ModelDisplayID(model string) string { return modelDisplayID(model) }
+
+// CanonicalModelID is the exported routing key used by the Auto/ catalogue.
+// It is deliberately the lowercase form: one vendor's `DeepSeek-V4.1-Flash`
+// and another's `deepseek-v4.1-flash` must collapse to one Auto entry.
+func CanonicalModelID(model string) string { return canonicalModelID(model) }
+
 // canonicalModelID is the routing key used when an operator asks for a bare
 // model id and every vendor publishes its own namespace around it.  The
 // vendor prefix is not part of the model identity for routing: Cline's
@@ -9,19 +41,7 @@ import "strings"
 // `deepseek/deepseek-v4.1-flash` and WorkBuddy's `cn:deepseek-v4.1-flash`
 // all name the same underlying model.
 func canonicalModelID(model string) string {
-	s := normalizeModelID(model)
-	if i := strings.IndexByte(s, ':'); i > 0 {
-		switch {
-		case s[:i] == "cn", s[:i] == "global":
-			s = s[i+1:]
-		case s[i+1:] == "free":
-			s = s[:i]
-		}
-	}
-	if i := strings.LastIndexByte(s, '/'); i >= 0 {
-		s = s[i+1:]
-	}
-	return strings.TrimSpace(s)
+	return normalizeModelID(modelDisplayID(model))
 }
 
 // selectCatalogModel picks the entry a platform should receive for a request.

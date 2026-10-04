@@ -3,6 +3,7 @@ package panel
 import (
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -225,12 +226,46 @@ func TestAccountPriorityColumnStaysNarrow(t *testing.T) {
 	src := string(indexHTML)
 	for _, want := range []string{
 		`<col class="col-prio">`,
-		`#view-accounts table.acc .col-prio { width: 64px; }`,
+		`#view-accounts table.acc .col-prio { width: 6.5%; }`,
 		`#view-accounts table.acc .accPrio { width: 52px; min-width: 52px;`,
 	} {
 		if !strings.Contains(src, want) {
 			t.Errorf("account priority column sizing is missing %s", want)
 		}
+	}
+}
+
+func TestAccountColumnsSplitTheTableEvenly(t *testing.T) {
+	src := string(indexHTML)
+	for _, want := range []string{
+		`#view-accounts table.acc .col-account { width: 10%; }`,
+		`#view-accounts table.acc .col-usage { width: 14%; }`,
+		`#view-accounts table.acc .col-last { width: 8%; }`,
+		`#view-accounts table.acc .col-acts { width: 11%; }`,
+		`#view-accounts table.acc td.c-usage,`,
+		`#view-accounts table.acc td.c-last { overflow: hidden; }`,
+		`<td class="c-usage">' + accUsageCell(a) + '</td>`,
+		`<td class="c-last">' + accLastCell(a) + '</td>`,
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("account column sizing is missing %s", want)
+		}
+	}
+
+	widths := regexp.MustCompile(`#view-accounts table\.acc \.col-[a-z]+ \{ width: ([0-9.]+)%; \}`).FindAllStringSubmatch(src, -1)
+	if len(widths) != 13 {
+		t.Fatalf("expected 13 account column widths, got %d", len(widths))
+	}
+	total := 0.0
+	for _, m := range widths {
+		v, err := strconv.ParseFloat(m[1], 64)
+		if err != nil {
+			t.Fatalf("parse column width %q: %v", m[1], err)
+		}
+		total += v
+	}
+	if total < 99.9 || total > 100.1 {
+		t.Errorf("account column widths total %.1f%%, want 100%%", total)
 	}
 }
 

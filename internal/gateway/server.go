@@ -240,6 +240,29 @@ func (s *server) handleNotFound(w http.ResponseWriter, r *http.Request) {
 	writeError(w, http.StatusNotFound, "invalid_request_error", "no such endpoint: "+r.URL.Path)
 }
 
+// autoModelPick is the display spelling chosen for one Auto/<model> entry.
+// raw records the vendor id so a platform with an already-bare id wins over
+// one whose id carries a vendor namespace.
+type autoModelPick struct {
+	display string
+	raw     string
+}
+
+// betterAutoDisplay keeps the Auto/ catalogue stable regardless of the
+// registration order of platforms.  A bare upstream id is the clearest
+// spelling; otherwise the shorter, lexicographically earlier one wins.
+func betterAutoDisplay(next, old autoModelPick) bool {
+	nextBare := strings.EqualFold(next.raw, next.display)
+	oldBare := strings.EqualFold(old.raw, old.display)
+	if nextBare != oldBare {
+		return nextBare
+	}
+	if len(next.display) != len(old.display) {
+		return len(next.display) < len(old.display)
+	}
+	return next.display < old.display
+}
+
 func (s *server) handleModels(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
@@ -249,6 +272,11 @@ func (s *server) handleModels(w http.ResponseWriter, r *http.Request) {
 	// Upstream catalogues are not guaranteed unique: the live Trae catalogue
 	// really does return the same id twice, so de-duplicate before serving.
 	seen := make(map[string]struct{}, 64)
+	// Auto/<model> is a gateway-level virtual model, not an upstream id.
+	// Aggregate vendor catalogues under one stable display name so a caller
+	// can ask the gateway to choose the platform.  Keep every platform-
+	// qualified id below untouched: Auto/ is additive, never a replacement.
+	auto := map[string]autoModelPick{} // canonical routing key -> display name
 	for _, c := range s.opts.Registry.All() {
 		models, err := c.Models(ctx)
 		if err != nil {
@@ -266,6 +294,15 @@ func (s *server) handleModels(w http.ResponseWriter, r *http.Request) {
 			if !s.opts.Registry.ModelAllowed(c.Name(), m.ID) {
 				continue
 			}
+			if key := core.CanonicalModelID(m.ID); key != "" {
+				pick := autoModelPick{display: core.ModelDisplayID(m.ID), raw: m.ID}
+				if pick.display == "" {
+					pick.display = m.ID
+				}
+				if old, ok := auto[key]; !ok || betterAutoDisplay(pick, old) {
+					auto[key] = pick
+				}
+			}
 			seen[id] = struct{}{}
 			owned := m.OwnedBy
 			if owned == "" {
@@ -281,6 +318,21 @@ func (s *server) handleModels(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	sort.Slice(out.Data, func(i, j int) bool { return out.Data[i].ID < out.Data[j].ID })
+
+	for key, display := range auto {
+		id := "Auto/" + display.display
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		out.Data = append(out.Data, modelEntry{
+			ID:      id,
+			Object:  "model",
+			Created: created,
+			OwnedBy: "auto",
+			Extra:   map[string]any{"target": key},
+		})
+	}
 
 	// The alias table is part of what this gateway serves, so it belongs in the
 	// catalogue.  Without this a caller that lists models and then requests the
@@ -435,6 +487,12 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 		if platform, ok := s.sessionPlatforms.resolve(conversationKey, func(name string) bool {
 			for _, c := range candidates {
 				if c.Client != nil && c.Client.Name() == name {
+					// A platform that cannot serve right now must not keep a
+					// sticky conversation pinned to it; the binding is only an
+					// optimisation and the healthy candidate should win.
+					if s.opts.Registry.ModelDegraded(c.Client.Name(), c.Model, time.Now()) {
+						return false
+					}
 					return true
 				}
 			}
@@ -522,6 +580,9 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 				Failed:    true,
 				Attempt:   true,
 			})
+			if skippable {
+				s.opts.Registry.NoteModelUnavailable(client.Name(), upstreamModel, time.Now())
+			}
 			s.opts.Logger.Printf("chat: platform %s model %s failed (%v), trying the next platform", client.Name(), upstreamModel, err)
 			var handled bool
 			client, hintCtx, err, handled = s.serveRemainingCandidates(w, r, &wire, candidates[1:], 2, &rec, stat, req, maxTokensExplicit)
@@ -603,6 +664,14 @@ func (s *server) serveRemainingCandidates(w http.ResponseWriter, r *http.Request
 				s.bufferCompletion(w, r, client, wire.Model, stream, rec, stat, hintCtx)
 			}
 			return client, hintCtx, nil, true
+		}
+
+		// A candidate that cannot serve right now is demoted briefly, so the
+		// next request does not pay for it again before trying a healthy
+		// platform.  It stays in the list and is retried once the window
+		// expires.
+		if candidateUnavailable(err) {
+			s.opts.Registry.NoteModelUnavailable(client.Name(), upstreamModel, time.Now())
 		}
 
 		rec.Account = core.ErrorAccountID(err)

@@ -298,6 +298,7 @@ Three accepted forms:
 | `zcode/GLM-5.3` | explicit: module `zcode`, model `GLM-5.3` |
 | `GLM-5.3` | the unique module whose catalog lists it (ambiguous → 400 listing the owners) |
 | `gpt-4o` | whatever the `aliases` table in the config says |
+| `Auto/GLM-5.3` | aggregate every platform that serves the model, ordered by platform priority |
 
 A module always receives the **bare** model name, never the qualified one.
 
@@ -310,6 +311,11 @@ Both spellings work: `nvidia/nemotron-3.5-lightning:free` and
 `openrouter/nvidia/nemotron-3.5-lightning:free` reach the same model, and the
 module receives its own id either way. A module name always wins over a catalog
 id that happens to start with the same word.
+
+`Auto/<model>` is additive: the gateway still lists every platform-specific id
+unchanged, and also exposes one aggregated name per model.  That name resolves
+through the same platform-priority, health, cooldown, and failover path as a
+bare request.  Use a qualified id when the request must stay on one platform.
 
 ## Configuration
 
@@ -441,6 +447,12 @@ stays first for the next turn, and the other candidates remain as failover.  A
 failed platform is replaced by whichever platform then succeeds, so a broken
 sibling is not retried on every turn.  `session_sticky.ttl` retunes both levels
 on a live reload; `session_sticky.enabled=false` turns both off.
+
+Independent of stickiness, the gateway demotes a platform that cannot serve
+**right now** -- every account busy or cooling, or no usable account at all --
+behind the healthy candidates for 30 seconds.  This is backpressure, not a
+failure: it raises no alert, and the platform stays in the candidate list as a
+last resort.  Repeated upstream failures still take the full 10-minute cooldown.
 `schedule.balance_refresh_enabled` (default **on**, as in the reference) adds a
 tick of its own every `schedule.balance_refresh_minutes` (default **5**) — it asks
 every module that can report a balance for one, which is how a credit park lifts
@@ -654,6 +666,11 @@ original WorkBuddy dashboard: a left sidebar carrying nine views (账号池 / �
 title, a theme switch (dark → light → auto), refresh, and 添加账号. Above the
 account table sits a row of counters derived from the data — total / ready /
 cooling / disabled / clients / models — not a hardcoded number.
+
+Automation lives in one place: the 任务中心 view owns the master switch, the
+global default hours per batch (including the balance-refresh interval), the
+per-platform overrides, and the run journal. The 配置 view no longer duplicates
+those controls, so `schedule.*` has a single editing surface.
 
 The panel is an administrative surface: it holds credentials and can rewrite the
 config, so every response it produces carries a policy, including the shell and

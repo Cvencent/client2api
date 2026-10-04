@@ -513,6 +513,7 @@ func TestFetchModelsReadsTheExtraBlockThisGatewayPublishes(t *testing.T) {
 			{"id":"loomy/deepseek-v4-flash-0731","object":"model","owned_by":"loomy",
 			 "extra":{"context_length":1048576,"max_output_tokens":384000,"display_name":"DeepSeek V4 Flash 0731 · x3.0"}},
 			{"id":"zcode/glm-5.3","object":"model","owned_by":"zcode","extra":{"display_name":"GLM-5.3"}},
+			{"id":"Auto/GLM-5.3","object":"model","owned_by":"auto","extra":{"target":"glm-5.3"}},
 			{"id":"flat/top-level","max_output_tokens":65536}
 		]}`)
 	}))
@@ -524,6 +525,11 @@ func TestFetchModelsReadsTheExtraBlockThisGatewayPublishes(t *testing.T) {
 	}
 	if len(got) != 3 {
 		t.Fatalf("got %d models, want 3: %+v", len(got), got)
+	}
+	for _, m := range got {
+		if strings.HasPrefix(m.ID, "Auto/") {
+			t.Errorf("fetchModels kept the gateway virtual model %q", m.ID)
+		}
 	}
 	if got[0].ClaimedOutput == nil || *got[0].ClaimedOutput != 384000 {
 		t.Errorf("extra.max_output_tokens was not read: %+v", got[0])

@@ -181,6 +181,12 @@ func fetchModels(client *http.Client, base, key string) ([]modelTarget, error) {
 		if id == "" {
 			continue
 		}
+		// Auto/<model> is a gateway virtual model that fans out to the same
+		// upstream ids already listed per platform.  Probing it would repeat
+		// every real model through a second name.
+		if strings.EqualFold(strings.TrimSpace(firstString(obj, "owned_by")), "auto") {
+			continue
+		}
 		t := modelTarget{ID: id}
 		t.ClaimedOutput = firstInt(obj, "max_output_tokens", "max_completion_tokens")
 		t.ClaimedCtx = firstInt(obj, "context_length", "max_input_tokens")

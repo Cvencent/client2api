@@ -54,6 +54,7 @@ body {
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 
+
 /* ── 壳层：左侧导航 + 主区 ─────────────────────────────────────────── */
 .shell { display: grid; grid-template-columns: 208px 1fr; min-height: 100vh; }
 .nav {
@@ -277,6 +278,8 @@ label.fld > .hint { display: block; font-size: 11.5px; color: var(--ink-3); marg
 .sms-box .row { gap: 8px; padding: 5px 0; }
 .sms-box .sms-head { border-bottom: 1px solid var(--line-soft); }
 .sms-box .sms-head .k { font-weight: 600; color: var(--ink-2); }
+.sms-box .sms-head a { color: var(--accent); font-size: 11.5px; text-decoration: none; white-space: nowrap; }
+.sms-box .sms-head a:hover { text-decoration: underline; }
 .sms-box select, .sms-box input { min-width: 0; padding: 5px 8px; font-size: 12.5px; }
 .sms-box #smsProvince { flex: 0 0 108px; }
 .sms-box #smsCard { flex: 0 0 86px; }
@@ -286,6 +289,7 @@ label.fld > .hint { display: block; font-size: 11.5px; color: var(--ink-3); marg
 .auto-box { border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--line-soft)); border-radius: 9px; padding: 6px 12px 10px; margin: 2px 0 12px; background: var(--accent-soft); }
 .auto-box .row { gap: 8px; padding: 5px 0; }
 .auto-box .auto-head .k { font-weight: 600; color: var(--ink-2); }
+.auto-box .auto-head input.cfgtext { min-width: 0; padding: 4px 7px; font-size: 12.5px; }
 .auto-box .hint { font-size: 11.5px; color: var(--ink-3); }
 /* 用自己的 Key：模块声明了 capabilities.direct_key 时，登录 tab 里多一条直通车道。 */
 .ownkey { border: 1px solid color-mix(in srgb, var(--ok) 34%, var(--line-soft)); border-radius: 9px; padding: 8px 12px 10px; margin: 2px 0 12px; background: var(--surface-2); }
@@ -760,41 +764,42 @@ html { scrollbar-gutter: stable; }
 
 /* 四、账号表。12 列在 1280px 窗口下实测要 1431px、容器只有 1012px，而列数被
    回归测试钉住不能删。于是把长文本压成省略号、把内边距和按钮收回来，让常见
-   窗口不再需要横向拖动。规则限定在 #view-accounts，模型表/任务表/积分表不受影响。 */
+  窗口不再需要横向拖动。规则限定在 #view-accounts，模型表/任务表/积分表不受影响。 */
 .acc th, .acc td { padding: 9px 12px; }
 #view-accounts table.acc th, #view-accounts table.acc td { padding: 8px 7px; }
 #view-accounts table.acc .mark { width: 7px; min-width: 7px; padding: 0; }
 #view-accounts table.acc { table-layout: fixed; width: 100%; }
-#view-accounts table.acc .col-mark { width: 10px; }
-#view-accounts table.acc .col-account { width: auto; min-width: 190px; }
-#view-accounts table.acc .col-state { width: 76px; }
-#view-accounts table.acc .col-prio { width: 64px; }
-#view-accounts table.acc .col-bal { width: 96px; }
-#view-accounts table.acc .col-rate { width: 96px; }
-#view-accounts table.acc .col-inflight { width: 58px; }
-#view-accounts table.acc .col-usage { width: 112px; }
-#view-accounts table.acc .col-last { width: 82px; }
-#view-accounts table.acc .col-expiry { width: 92px; }
-#view-accounts table.acc .col-note { width: 128px; }
-#view-accounts table.acc .col-fields { width: 104px; }
-#view-accounts table.acc .col-acts { width: 132px; }
+#view-accounts table.acc .col-mark { width: 1%; }
+#view-accounts table.acc .col-account { width: 10%; }
+#view-accounts table.acc .col-state { width: 6.5%; }
+#view-accounts table.acc .col-prio { width: 6.5%; }
+#view-accounts table.acc .col-bal { width: 7%; }
+#view-accounts table.acc .col-rate { width: 7%; }
+#view-accounts table.acc .col-inflight { width: 5%; }
+#view-accounts table.acc .col-usage { width: 14%; }
+#view-accounts table.acc .col-last { width: 8%; }
+#view-accounts table.acc .col-expiry { width: 8%; }
+#view-accounts table.acc .col-note { width: 9%; }
+#view-accounts table.acc .col-fields { width: 7%; }
+#view-accounts table.acc .col-acts { width: 11%; }
 #view-accounts table.acc .accPrio { width: 52px; min-width: 52px; padding: 4px 5px; text-align: center; }
 #view-accounts table.acc td.c-prio, #view-accounts table.acc th.c-prio { text-align: center; }
 #view-accounts table.acc td > .name,
 #view-accounts table.acc td > .hint { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
 #view-accounts table.acc td > .hint { font-size: 11px; }
+#view-accounts table.acc td.c-usage,
+#view-accounts table.acc td.c-last { overflow: hidden; }
+#view-accounts table.acc td.c-usage > span,
+#view-accounts table.acc td.c-last > span { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #view-accounts table.acc td .note { display: inline-block; max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
 /* 字段列只放一个「还有细节」的入口：整颗 chip 限宽省略，完整键值对仍在 title 里。
    状态 chip 也命中这条规则，但它本来就只有几个字符，限宽对它没有影响。 */
 #view-accounts table.acc td > .chip { display: inline-block; max-width: 96px; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
 /* 单元格里的数字/时间/余额都是一个不拆行的整体，拆开反而更难读。 */
 .acc td > span[title] { white-space: nowrap; }
-/* 操作列。行内按钮最多能到六七个（测试/启用/删除/签到/恢复/余额/任务），一排
-   铺开要 250px 以上。固定 132px 让它换行，按钮本身也收窄：短标签三颗一排，
-   长标签（模块给的签到名可能是一整句话）限宽省略，全文留在 title 里。 */
-/* min-width 是给窄窗口的：表格装不下时会整体收缩，光写 width 会被压到 35px
-   （按钮一列排到底、行高翻倍），钉住 132px 让它至少保持两排的宽度。 */
-#view-accounts table.acc .c-acts { width: 132px; min-width: 132px; white-space: normal; }
+/* 操作列跟着百分比列宽伸缩；按钮仍靠 flex-wrap 换行，窄窗口不会撑破表格。
+   长标签（模块给的签到名可能是一整句话）保持限宽省略，全文留在 title 里。 */
+#view-accounts table.acc .c-acts { white-space: normal; }
 #view-accounts table.acc .c-acts .actwrap { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 3px; }
 #view-accounts table.acc .c-acts button { padding: 2px 5px; font-size: 11.5px; margin: 0; max-width: 74px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .acc thead th { background: var(--surface); }
@@ -1239,6 +1244,7 @@ input[type=checkbox] { width: 14px; height: 14px; padding: 0; accent-color: var(
       <div class="box">
         <header><h3>最近调用</h3><span class="grow"></span><span class="note" id="usRecentNote"></span>
           <select id="usRecentFilter"><option value="">全部结果</option><option value="ok">仅成功</option><option value="fail">仅失败</option></select>
+          <button class="xs" id="btnUsageRecentRefresh" title="重新读取用量与最近调用">刷新</button>
         </header>
         <div class="tbl-wrap">
         <table class="acc md">
@@ -1348,6 +1354,17 @@ input[type=checkbox] { width: 14px; height: 14px; padding: 0; accent-color: var(
         <button class="chip subtab" type="button" id="tasks-tab-board" role="tab" aria-selected="false" aria-controls="tasks-panel-board" data-subtab="board" tabindex="-1">任务看板</button>
       </div>
       <div class="subtab-panel" data-subtab-panel="tasks-schedule" id="tasks-panel-schedule" role="tabpanel" aria-labelledby="tasks-tab-schedule">
+     <div class="box">
+       <header>
+         <h3>全局默认 <span class="hint">所有平台未自定义时使用</span></h3>
+         <span class="grow"></span>
+         <button class="xs" id="btnScDefaultsReload">重新载入</button>
+       </header>
+       <div class="pad">
+         <div class="cfghelp" id="scDefaultsState"></div>
+         <div id="scDefaults"></div>
+       </div>
+     </div>
      <div class="box">
        <header>
          <h3>定时任务 <span class="hint" id="scNote">-</span></h3>
@@ -1673,6 +1690,11 @@ input[type=checkbox] { width: 14px; height: 14px; padding: 0; accent-color: var(
             <button class="xs" id="btnAutoStop" hidden>停止</button>
             <button class="xs primary" id="btnAutoStart">一键自动添加</button>
           </div>
+          <div class="row auto-head">
+            <label class="k">期望账号数 <input id="autoWant" class="cfgtext" type="number" min="1" max="50" value="1" style="width:64px"></label>
+            <label class="k">最大尝试次数 <input id="autoTries" class="cfgtext" type="number" min="1" max="100" value="5" style="width:64px"></label>
+            <span class="hint">每次尝试可能成功或失败，达到期望账号数即停止</span>
+          </div>
           <pre id="autoLog" class="auto-log" hidden></pre>
         </div>
         <!-- 接码：只有实现 core.SMSProvider 的模块才有。租号、取码、释放都在
@@ -1680,6 +1702,7 @@ input[type=checkbox] { width: 14px; height: 14px; padding: 0; accent-color: var(
         <div id="addSms" class="sms-box" hidden>
           <div class="row sms-head">
             <span class="k">接码平台</span>
+            <a href="https://eomsg.com/appweb/signUp.html?inviter=36couhpl" target="_blank" rel="noopener noreferrer">没有账号？注册</a>
             <span class="grow"></span>
             <span id="smsStatus" class="hint"></span>
             <button class="xs" id="btnSmsToken">设置 token</button>
@@ -2631,12 +2654,12 @@ function accRowHTML(a, caps, acts, showBal, chan, open, groupKey) {
     (showBal ? '<td class="num c-bal">' + accBalanceCell(a) + '</td>' : '') +
     '<td class="num">' + accRateCell(a) + '</td>' +
     '<td class="num">' + inflightCell(CUR, a) + '</td>' +
-    '<td>' + accUsageCell(a) + '</td>' +
-    '<td>' + accLastCell(a) + '</td>' +
+    '<td class="c-usage">' + accUsageCell(a) + '</td>' +
+    '<td class="c-last">' + accLastCell(a) + '</td>' +
     '<td class="num">' + accExpiryCell(a) + '</td>' +
     '<td>' + noteCell(a) + '</td>' +
     '<td>' + fieldSummary(a) + '</td>' +
-    // 按钮包一层 .actwrap：132px 的窄列里靠 flex-wrap 自动排成两排，不用手动分组。
+    // 按钮包一层 .actwrap：操作列靠 flex-wrap 自动换行，不用手动分组。
     '<td class="c-acts"><div class="actwrap">' + btns.join("") + '</div></td>' +
     '</tr>';
 }
@@ -3496,23 +3519,6 @@ function durLabel(id) {
   return (lb && lb.textContent.trim()) || id;
 }
 
-/* ── 自动排程（原版配置页的「定时任务」盒）────────────────────────────────
-   字段名、占位符与中文标签照抄原版 _ref/body.html:251-301，路径沿用原版
-   app.js:411-434 的 CFG_MAP 映射，即全部落在 schedule.* 下；本仓库的 schedule
-   块比原版多一组 blackcat（configs/client2api.json:23-33）。
-
-   两条容易踩的默认值：
-   · 组开关在 Go 侧缺省是「开」（cmd/client2api/main.go:111-113 的
-     boolOr(enabled, true)），所以文件里没有 *_enabled 这个键时必须画成已勾选，
-     否则操作员随手保存一次就会把「默认开」悄悄写成「关」。
-   · hours 在文件里是 []int（不是字符串），空数组 = 这组永不跑。            */
-const SCHED_BATCH_LABELS = {
-  checkin: "自动签到", keepalive: "Token 保活", travel: "猫猫旅行",
-  activity: "活跃上报", blackcat: "黑猫巡检", growth: "成长任务",
-  balance_refresh: "余额刷新",
-};
-const schedHours = v => Array.isArray(v) ? v.join(", ") : (v == null ? "" : String(v));
-const schedChecked = v => (v === undefined || v === null || !!v) ? " checked" : "";
 
 // 逗号分隔的 0-23 整数；空串是合法的「这组永不跑」。非法输入返回 null。
 function parseSchedHours(raw) {
@@ -3542,32 +3548,6 @@ function schedClock(ts) {
   return today ? hm : (p(t.getMonth() + 1) + "-" + p(t.getDate()) + " " + hm);
 }
 
-/* 状态条的三态。来源是 GET /panel/api/status 的 schedule 字段（由
-   internal/panel/panel.go:98-100 声明、:219-221 从 Scheduler.Status() 填），
-   没有接入调度器时这个字段整个缺席（omitempty），而不是空对象——所以判 null：
-     ① 没有 schedule 字段：本进程没接调度器，时间表能存但没人按它跑；
-     ② schedule.enabled === false：接了，但总开关是关的；
-     ③ enabled === true：在跑，用 schedule.next 报下一跳，并把没排期的组点名。 */
-function schedStateHTML(sched) {
-  if (sched == null) {
-    return '<div class="cfghelp" id="cfgSchState">本进程<b>没有接入调度器</b>（status 里没有 <code>schedule</code> 字段）：时间表照样可以编辑和保存，但不会有任何东西按它触发。</div>' +
-      '<div class="cfghelp" id="cfgSchNext" hidden></div>';
-  }
-  if (!sched.enabled) {
-    return '<div class="cfghelp" id="cfgSchState">调度器已接入，但<b>总开关是关的</b>（<code>schedule.enabled: false</code>）：下面这些时点已经写进配置文件，运行中的进程不会按它触发任何批次；打开总开关再重载后生效。</div>' +
-      '<div class="cfghelp" id="cfgSchNext" hidden></div>';
-  }
-  const next = sched.next || {};
-  const names = Object.keys(next).sort();
-  let line = names.length
-    ? "下一跳（本地时间）：" + names.map(k => (SCHED_BATCH_LABELS[k] || k) + " " + schedClock(next[k])).join(" · ")
-    : "没有任何已排期的批次：每个组的时点都是空的，或者没有客户端声明对应能力。";
-  // 余额 tick 不在 SCHED_BATCH_LABELS 之外单独判：它缺席是正常的（默认关）。
-  const idle = Object.keys(SCHED_BATCH_LABELS).filter(k => k !== "balance_refresh" && !next[k]);
-  if (idle.length) line += "；未排期：" + idle.map(k => SCHED_BATCH_LABELS[k]).join("、");
-  return '<div class="cfghelp" id="cfgSchState">调度器在跑。</div>' +
-    '<div class="cfghelp" id="cfgSchNext">' + esc(line) + "</div>";
-}
 
 /* ── 平台配置 ────────────────────────────────────────────────────────────
    聚合 API 的模型路由：每个平台一份 {priority, disabled_models}。优先级数字
@@ -3783,7 +3763,7 @@ async function renderConfig() {
   $("#cfgPath").textContent = d.path || "（网关未提供配置路径）";
   // 到底哪个键要重启，saveConfig 保存后按实际改动逐个说；这里只说默认那条规则。
   $("#cfgNote").textContent = editable
-	? ("保存到 " + d.path + "。账号池 / 会话粘性 / 提示词 / 指纹清洗 / 自动排程 / 入站 Key 保存后立即生效；" +
+	? ("保存到 " + d.path + "。账号池 / 会话粘性 / 提示词 / 指纹清洗 / 入站 Key 保存后立即生效；" +
 	   "监听地址、数据目录、上游代理、停用客户端与模块配置需要重启进程。")
 	: "本进程启动时没有指定 -config，没有可写入的配置文件，只能查看。";
   $("#btnCfgSave").disabled = !editable;
@@ -3865,43 +3845,6 @@ async function renderConfig() {
     "每个账号只展开最早到期的 N 个在用批次，其余与「已用完」折在可点的组头后面；0 或留空回到默认 5。"));
   out.push('</div>');
 
-  // 自动排程：标签与占位符逐字照抄原版 _ref/body.html:251-301，只多一组 blackcat。
-  const stp = await api("/panel/api/status");
-  const sched = (stp.ok && stp.data) ? stp.data.schedule : undefined;
-  const sc = c.schedule || {};
-  out.push('<div class="cfgsec"><div class="cfghd">自动排程</div>');
-  out.push(schedStateHTML(sched));
-  out.push('<label class="cfgrow"><span class="k">总开关</span><input type="checkbox" id="cfgSchEnabled"' +
-    (sc.enabled ? " checked" : "") + dis + '><span class="cfghelp">原版 <code>schedule.enabled</code>。关掉后下面所有时点都不再触发。</span></label>');
-  out.push('<label class="cfgrow"><span class="k">自动签到</span><input type="checkbox" id="cfgSchCheckinEnabled"' +
-    schedChecked(sc.checkin_enabled) + dis + '></label>');
-  out.push(cfgText("cfgSchCheckinHours", "签到时点（小时，逗号分隔）", schedHours(sc.checkin_hours), "9, 21"));
-  out.push('<label class="cfgrow"><span class="k">Token 保活</span><input type="checkbox" id="cfgSchKeepaliveEnabled"' +
-    schedChecked(sc.keepalive_enabled) + dis + '></label>');
-  out.push(cfgText("cfgSchKeepaliveHours", "保活时点（小时，逗号分隔）", schedHours(sc.keepalive_hours), "22"));
-  out.push('<label class="cfgrow"><span class="k">猫猫旅行</span><input type="checkbox" id="cfgSchTravelEnabled"' +
-    schedChecked(sc.travel_enabled) + dis + '></label>');
-  out.push(cfgText("cfgSchTravelHours", "旅行时点（小时，逗号分隔）", schedHours(sc.travel_hours), "9, 21",
-    "一趟派出 + 一趟领奖闭环"));
-  out.push('<label class="cfgrow"><span class="k">活跃上报</span><input type="checkbox" id="cfgSchActivityEnabled"' +
-    schedChecked(sc.activity_enabled) + dis + '></label>');
-  out.push(cfgText("cfgSchActivityHours", "上报时点（小时，逗号分隔）", schedHours(sc.activity_hours), "10",
-    "点亮连登 + 解锁领养前置"));
-  out.push('<label class="cfgrow"><span class="k">黑猫巡检</span><input type="checkbox" id="cfgSchBlackcatEnabled"' +
-    schedChecked(sc.blackcat_enabled) + dis + '></label>');
-  out.push(cfgText("cfgSchBlackcatHours", "黑猫时点（小时，逗号分隔）", schedHours(sc.blackcat_hours), "23",
-    "这一组原版没有，是本仓库 <code>schedule.blackcat_hours</code> 新增的。"));
-  out.push('<label class="cfgrow"><span class="k">后台刷新余额</span><input type="checkbox" id="cfgSchBalanceEnabled"' +
-    (sc.balance_refresh_enabled ? " checked" : "") + dis + '></label>');
-  out.push('<label class="cfgrow"><span class="k">刷新间隔（分钟）</span><input class="cfgtext" id="cfgSchBalanceMinutes" type="number" min="1" spellcheck="false" value="' +
-    esc(sc.balance_refresh_minutes == null ? "" : String(sc.balance_refresh_minutes)) + '" placeholder="5"' + dis +
-    '><span class="cfghelp">后台刷新余额是唯一默认关闭的一组（它每个账号各打一次上游）；间隔为 0 也会关掉它。</span></label>');
-  out.push('<label class="cfgrow"><span class="k">成长任务自动执行</span><input type="checkbox" id="cfgSchGrowthEnabled"' +
-    schedChecked(sc.growth_enabled) + dis + '></label>');
-  out.push(cfgText("cfgSchGrowthHours", "执行时点（小时，逗号分隔）", schedHours(sc.growth_hours), "1",
-    "每日到点自动「扫描 + 执行全部待办」（Sequential 任务链零点解锁后自动推进，建议零点后）"));
-  out.push('<div class="cfghelp">组开关的文件默认值是「开」——这里没勾的组才会往文件里写 <code>false</code>；时点留空 = 这组永不跑。保存后要点上面的「从磁盘重新载入」或重启进程才生效。</div>');
-  out.push('</div>');
 
   out.push('<div class="cfgsec"><div class="cfghd">模型别名' +
     '<button class="xs" id="btnCfgAddAlias" type="button"' + dis + '>添加别名</button></div>');
@@ -3962,15 +3905,6 @@ async function renderConfig() {
     fts.sanitize_blacklist_fingerprints == null ? true : !!fts.sanitize_blacklist_fingerprints);
   setBase("panel.package_detail_limit",
     pnl.package_detail_limit != null ? pnl.package_detail_limit : pnlEff.package_detail_limit);
-  setBase("schedule.enabled", !!sc.enabled);
-  setBase("schedule.balance_refresh_enabled", !!sc.balance_refresh_enabled);
-  setBase("schedule.balance_refresh_minutes",
-    sc.balance_refresh_minutes == null ? 0 : sc.balance_refresh_minutes);
-  // 与 schedChecked / schedHours 同一口径：缺键 = 勾选、时点空串 = 空数组。
-  ["checkin", "keepalive", "travel", "activity", "blackcat", "growth"].forEach(g => {
-    setBase("schedule." + g + "_enabled", sc[g + "_enabled"] == null ? true : !!sc[g + "_enabled"]);
-    setBase("schedule." + g + "_hours", parseSchedHours(schedHours(sc[g + "_hours"])) || []);
-  });
   (NAMES.length ? NAMES : Object.keys(cl)).forEach(n => {
     setBase("clients." + n, cl[n] == null ? {} : cl[n]);
   });
@@ -4148,41 +4082,6 @@ async function saveConfig() {
     if (Object.keys(panel).length) patch.panel = panel;
   }
 
-  // 自动排程：hours 在文件里是 []int，输入框是逗号分隔；空 = 这组永不跑。
-  // 组开关一律显式回写（含 *_enabled），因为 Go 侧缺省是「开」，不回写就等于没改。
-  if ($("#cfgSchEnabled")) {
-    const sch = {
-      enabled: $("#cfgSchEnabled").checked,
-      checkin_enabled: $("#cfgSchCheckinEnabled").checked,
-      keepalive_enabled: $("#cfgSchKeepaliveEnabled").checked,
-      travel_enabled: $("#cfgSchTravelEnabled").checked,
-      activity_enabled: $("#cfgSchActivityEnabled").checked,
-      blackcat_enabled: $("#cfgSchBlackcatEnabled").checked,
-      growth_enabled: $("#cfgSchGrowthEnabled").checked,
-      balance_refresh_enabled: $("#cfgSchBalanceEnabled").checked,
-    };
-    const hoursEls = {
-      checkin_hours: $("#cfgSchCheckinHours"),
-      keepalive_hours: $("#cfgSchKeepaliveHours"),
-      travel_hours: $("#cfgSchTravelHours"),
-      activity_hours: $("#cfgSchActivityHours"),
-      blackcat_hours: $("#cfgSchBlackcatHours"),
-      growth_hours: $("#cfgSchGrowthHours"),
-    };
-    for (const key of Object.keys(hoursEls)) {
-      const v = parseSchedHours(hoursEls[key].value);
-      if (v === null) {
-        toast("「" + key + "」只能是 0-23 的整数，用逗号分隔（例如 9, 21）", "err");
-        hoursEls[key].focus();
-        return;
-      }
-      sch[key] = v;
-    }
-    const mins = parseInt($("#cfgSchBalanceMinutes").value, 10);
-    // 0 或非法 = 关掉余额 tick（Go 侧要求 minutes > 0 才启用）。
-    sch.balance_refresh_minutes = Number.isFinite(mins) && mins > 0 ? mins : 0;
-    patch.schedule = sch;
-  }
 
   const clients = {}, mods = document.querySelectorAll(".cfgmod");
   for (const t of mods) {
@@ -4303,14 +4202,46 @@ async function renderLogs() {
    POST /panel/api/reload，和平台配置页同一条热加载路径——schedule.*
    只有一个来源，配置页与这里不会各写一半、互相覆盖。
 
-   三态与配置页的 schedStateHTML 一样：wired 为假 = 本进程没接调度器；
+   三态（wired/enabled）：wired 为假 = 本进程没接调度器；
    enabled 为假 = 接了但总开关是关的；其余 = 在跑。               */
 const SC = { data: null, rows: {}, dirty: {}, removed: {}, timer: null };
 const SC_BATCH_LABELS = {
   checkin: "自动签到", travel: "猫猫旅行", activity: "活跃上报",
   keepalive: "Token 保活", blackcat: "黑猫巡检", growth: "成长任务",
 };
+const SC_GROUPS = ["checkin", "keepalive", "travel", "activity", "blackcat", "growth"];
 const scLabel = b => SC_BATCH_LABELS[b] || b;
+// scDefaultHTML 渲染「全局默认」区：每个 batch 一组开关 + 时点，外加余额刷新。
+// 缺键默认值由服务端算好（groups / balance_refresh_*），面板不重复判断默认。
+function scDefaultHTML(d) {
+  const byName = {};
+  ((d || {}).groups || []).forEach(g => { byName[g.name] = g; });
+  const out = [];
+  SC_GROUPS.forEach(name => {
+    const g = byName[name] || { enabled: false, hours: [] };
+    const label = SC_BATCH_LABELS[name] || name;
+    const id = name.charAt(0).toUpperCase() + name.slice(1);
+    out.push('<label class="cfgrow"><span class="k">' + esc(label) + '</span>' +
+      '<input type="checkbox" id="scDef' + id + 'Enabled"' + (g.enabled ? " checked" : "") + '></label>');
+    out.push('<label class="cfgrow"><span class="k">' + esc(label) + '时点</span>' +
+      '<input class="cfgtext" id="scDef' + id + 'Hours" spellcheck="false" autocomplete="off" value="' +
+      esc(scHoursText(g.hours)) + '" placeholder="小时，逗号分隔（空 = 不跑）"></label>');
+  });
+  out.push('<label class="cfgrow"><span class="k">后台刷新余额</span>' +
+    '<input type="checkbox" id="scDefBalanceEnabled"' + ((d || {}).balance_refresh_enabled ? " checked" : "") + '></label>');
+  out.push('<label class="cfgrow"><span class="k">刷新间隔（分钟）</span>' +
+    '<input class="cfgtext" id="scDefBalanceMinutes" type="number" min="1" spellcheck="false" value="' +
+    esc(((d || {}).balance_refresh_minutes) || "") + '" placeholder="5">' +
+    '<span class="cfghelp">每个账号各打一次上游；0 或取消勾选都表示关闭。</span></label>');
+  return out.join("");
+}
+
+function scRenderDefaults(d) {
+  $("#scDefaultsState").textContent = d.wired
+    ? (d.enabled ? "调度器已启用：下面这些是各平台未自定义时使用的默认时点。" : "总开关当前关闭：时点可以编辑保存，但不会触发。")
+    : "本进程没有接入调度器：时点可以编辑保存，但不会有任何东西按它触发。";
+  $("#scDefaults").innerHTML = scDefaultHTML(d);
+}
 const scKey = (c, b) => c + "\u0000" + b;
 const scHoursText = h => (h || []).join(", ");
 
@@ -4490,6 +4421,7 @@ async function renderSchedule() {
   $("#btnScSave").disabled = !d.wired;
   $("#scState").innerHTML = scStateHTML(d);
   $("#scCount").textContent = ((d.rows || []).length) + " 条规则";
+  scRenderDefaults(d);
   scRenderRows();
   scRenderRuns(d.runs || []);
 }
@@ -4521,6 +4453,30 @@ async function scSave() {
   const sch = {};
   const wantMaster = $("#scMaster").checked;
   if (wantMaster !== !!d.enabled) sch.enabled = wantMaster;
+  // 全局默认：每个 batch 一组开关 + 时点，加余额刷新。只提交与当前生效值不同的
+  // 项，免得一次只改平台覆盖的保存把整套默认值也写进文件。
+  SC_GROUPS.forEach(name => {
+    const id = name.charAt(0).toUpperCase() + name.slice(1);
+    const onEl = $("#scDef" + id + "Enabled"), hrEl = $("#scDef" + id + "Hours");
+    if (!onEl || !hrEl) return;
+    const hours = parseSchedHours(hrEl.value);
+    if (hours === null) { bad = hrEl; return; }
+    const was = scShared(name);
+    if (onEl.checked !== !!was.enabled) sch[name + "_enabled"] = onEl.checked;
+    if (hours.join(",") !== (was.hours || []).join(",")) sch[name + "_hours"] = hours;
+  });
+  if (bad) {
+    toast("时点只能是 0-23 的整数，用逗号分隔（例如 9, 21）", "err");
+    bad.focus();
+    return;
+  }
+  const balOn = $("#scDefBalanceEnabled"), balMin = $("#scDefBalanceMinutes");
+  if (balOn && balMin) {
+    const mins = parseInt(balMin.value, 10);
+    const nextMin = Number.isFinite(mins) && mins > 0 ? mins : 0;
+    if (balOn.checked !== !!d.balance_refresh_enabled) sch.balance_refresh_enabled = balOn.checked;
+    if (nextMin !== (d.balance_refresh_minutes || 0)) sch.balance_refresh_minutes = nextMin;
+  }
   const changedClients = Object.keys(clients).filter(n => Object.keys(clients[n]).length > 0);
   if (changedClients.length) sch.clients = clients;
   if (!Object.keys(sch).length) { toast("没有改动"); return; }
@@ -5832,7 +5788,7 @@ $("#btnKey").addEventListener("click", async () => {
 });
 
 /* ── 添加账号弹层 ─────────────────────────────────────────────────────── */
-const ADD = { tab: "login", session: null, timer: null, creds: [], realm: "", sms: null, smsTimer: null, mode: "add", restore: null, auto: null, autoTimer: null, autoSeen: 0 };
+const ADD = { tab: "login", session: null, timer: null, creds: [], realm: "", sms: null, smsTimer: null, mode: "add", restore: null, auto: null, autoTimer: null, autoSeen: 0, autoBatch: null, autoDone: "" };
 function openAdd() {
   // 重登复用这个弹层，所以每次打开都先把标题和那句说明擦干净；openReloginTarget
   // 会在 openAdd 之后再按需要改写它们。
@@ -5896,11 +5852,48 @@ function renderAddAuto(n) {
 function stopAutoPoll() { if (ADD.autoTimer) { clearInterval(ADD.autoTimer); ADD.autoTimer = null; } }
 function resetAuto() {
   stopAutoPoll();
-  ADD.auto = null; ADD.autoSeen = 0;
+  ADD.auto = null; ADD.autoSeen = 0; ADD.autoBatch = null; ADD.autoDone = "";
   $("#autoLog").textContent = ""; $("#autoLog").hidden = true;
   $("#autoStatus").textContent = "用接码平台自动完成整个登录";
   $("#btnAutoStart").disabled = false;
   $("#btnAutoStop").hidden = true;
+}
+
+// autoInt 读取一个整数输入框并夹到 [min,max]；空值/非法值用 fallback。
+function autoInt(sel, min, max, fallback) {
+  const raw = ($(sel) && $(sel).value || "").trim();
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+}
+
+// autoBatchText 是批次进度的一行摘要：已添加 / 期望账号数 · 已尝试 / 最大尝试次数。
+function autoBatchText() {
+  const b = ADD.autoBatch;
+  if (!b) return "";
+  return "已添加 " + b.added + "/" + b.want + " · 已尝试 " + b.attempted + "/" + b.tries;
+}
+
+// autoBatchDone 判断批次是否应该结束：达到期望数，或者尝试次数用完。
+function autoBatchDone() {
+  const b = ADD.autoBatch;
+  return !b || b.added >= b.want || b.attempted >= b.tries;
+}
+
+function autoBatchFinish() {
+  const b = ADD.autoBatch;
+  if (!b) return;
+  stopAutoPoll();
+  ADD.auto = null;
+  $("#btnAutoStart").disabled = false;
+  $("#btnAutoStop").hidden = true;
+  if (b.added >= b.want) {
+    $("#autoStatus").textContent = "完成：" + autoBatchText();
+    toast("自动添加完成：共添加 " + b.added + " 个账号");
+  } else {
+    $("#autoStatus").textContent = "已停止：" + autoBatchText() + (b.lastErr ? " · 最后一次：" + b.lastErr : "");
+    toast("自动添加结束：添加 " + b.added + " 个，尝试 " + b.attempted + " 次", "err");
+  }
 }
 function autoBody() {
   const b = {
@@ -5913,27 +5906,51 @@ function autoBody() {
   if (ADD.mode === "restore" && ADD.restore) b.phone = ADD.restore.phone;
   return b;
 }
+// autoStartRun 发起一次登录尝试，并把轮询接到这个 job 上。
+async function autoStartRun(n) {
+  const r = await api(cbase(n) + "/auto-login", { method: "POST", body: autoBody() });
+  if (!r.ok) {
+    return { ok: false, err: r.err || "启动失败" };
+  }
+  const job = r.data || {};
+  ADD.auto = job.id || null;
+  ADD.autoSeen = 0;
+  renderAutoJob(job);
+  if (ADD.auto) ADD.autoTimer = setInterval(autoPoll, 1500);
+  return { ok: true, job: job };
+}
+
 async function autoStart() {
   const n = $("#addClient").value;
   if (!autoOn(n)) return;
   stopAutoPoll();
+  // 重登一次只针对一个账号，所以只有普通添加才走批量。
+  const batch = ADD.mode !== "restore";
   ADD.autoSeen = 0;
   $("#autoLog").textContent = ""; $("#autoLog").hidden = false;
-  $("#autoStatus").textContent = "正在启动…";
   $("#btnAutoStart").disabled = true;
   $("#btnAutoStop").hidden = false;
-  const r = await api(cbase(n) + "/auto-login", { method: "POST", body: autoBody() });
-  if (!r.ok) {
+  if (batch) {
+    ADD.autoBatch = { want: autoInt("#autoWant", 1, 50, 1), tries: autoInt("#autoTries", 1, 100, 5), added: 0, attempted: 0, lastErr: "" };
+    $("#autoStatus").textContent = "正在启动…（" + autoBatchText() + "）";
+  } else {
+    ADD.autoBatch = null;
+    $("#autoStatus").textContent = "正在启动…";
+  }
+  const res = await autoStartRun(n);
+  if (res.ok) return; // the poll drives the batch from here
+  if (batch) {
+    const b = ADD.autoBatch;
+    b.attempted++; b.lastErr = res.err;
+    $("#autoStatus").textContent = "启动失败：" + res.err + " · " + autoBatchText();
+    toast("自动添加启动失败：" + res.err, "err");
+    autoNextAttempt();
+  } else {
+    $("#autoStatus").textContent = "启动失败：" + res.err;
+    toast("自动添加启动失败：" + res.err, "err");
     $("#btnAutoStart").disabled = false;
     $("#btnAutoStop").hidden = true;
-    $("#autoStatus").textContent = "启动失败：" + r.err;
-    toast("自动添加启动失败：" + r.err, "err");
-    return;
   }
-  const job = r.data || {};
-  ADD.auto = job.id || null;
-  renderAutoJob(job);
-  if (ADD.auto) ADD.autoTimer = setInterval(autoPoll, 1500);
 }
 async function autoPoll() {
   const n = $("#addClient").value;
@@ -5948,6 +5965,29 @@ async function autoPoll() {
     return;
   }
   renderAutoJob(r.data || {});
+}
+
+// autoNextAttempt 在一个尝试结束后决定要不要继续：批次没完成就再发一次，
+// 否则收尾。单账号模式（重登）直接收尾。
+async function autoNextAttempt() {
+  const b = ADD.autoBatch;
+  if (!b) return;
+  if (autoBatchDone()) { autoBatchFinish(); return; }
+  const n = $("#addClient").value;
+  await refreshAll();
+  $("#autoStatus").textContent = "继续下一次尝试…（" + autoBatchText() + "）";
+  ADD.autoSeen = 0;
+  // Keep looping when the start itself fails: each failure counts as one
+  // attempt, so a long run cannot grow the stack by recursing.
+  while (!autoBatchDone()) {
+    const res = await autoStartRun(n);
+    if (res.ok) return; // the poll drives the rest of the batch
+    b.attempted++; b.lastErr = res.err;
+    $("#autoStatus").textContent = "启动失败：" + res.err + " · " + autoBatchText();
+    toast("自动添加启动失败：" + res.err, "err");
+    await refreshAll();
+  }
+  autoBatchFinish();
 }
 async function autoStop() {
   const n = $("#addClient").value;
@@ -5977,25 +6017,46 @@ function renderAutoJob(job) {
   }
   if (job.phone) $("#autoStatus").textContent = "号码 " + job.phone + " …";
   if (job.state === "running") {
-    $("#autoStatus").textContent = (AUTO_STEPS[job.step] || job.step || "进行中") + "…";
+    const step = AUTO_STEPS[job.step] || job.step || "进行中";
+    const tail = ADD.autoBatch ? "（" + autoBatchText() + "）" : "";
+    $("#autoStatus").textContent = step + "…" + tail;
     return;
   }
+  // A poll already in flight when the job finished can deliver the same
+  // terminal snapshot twice; count each job once.
+  if (job.id && ADD.autoDone === job.id) return;
+  if (job.id) ADD.autoDone = job.id;
   stopAutoPoll();
-  $("#btnAutoStart").disabled = false;
-  $("#btnAutoStop").hidden = true;
+  const b = ADD.autoBatch;
   if (job.state === "success") {
-    $("#autoStatus").textContent = "成功" + (job.account_id ? "：" + job.account_id : "");
-    toast("自动添加成功" + (job.account_id ? "：" + job.account_id : ""));
     releaseSms("ok", true);
-    // 重登是一次性模式：跑完就回到普通添加，免得下一次「一键自动添加」还拿着
-    // 上一个账号的号码。自动重登成功后凭据是就地覆盖的，不需要额外复苏。
-    ADD.mode = "add"; ADD.restore = null;
-    refreshAll();
+    if (b) {
+      b.added++; b.attempted++; b.lastErr = "";
+      $("#autoStatus").textContent = "已添加" + (job.account_id ? " " + job.account_id : "") + " · " + autoBatchText();
+      toast("自动添加成功" + (job.account_id ? "：" + job.account_id : "") + "（" + autoBatchText() + "）");
+      autoNextAttempt();
+    } else {
+      $("#autoStatus").textContent = "成功" + (job.account_id ? "：" + job.account_id : "");
+      toast("自动添加成功" + (job.account_id ? "：" + job.account_id : ""));
+      // 重登是一次性模式：跑完就回到普通添加，免得下一次「一键自动添加」还拿着
+      // 上一个账号的号码。自动重登成功后凭据是就地覆盖的，不需要额外复苏。
+      ADD.mode = "add"; ADD.restore = null;
+      refreshAll();
+    }
   } else if (job.state === "cancelled") {
-    $("#autoStatus").textContent = "已停止";
+    $("#autoStatus").textContent = b ? "已停止：" + autoBatchText() : "已停止";
+    if (b) autoBatchFinish();
   } else {
-    $("#autoStatus").textContent = "失败：" + (job.message || "未知错误");
-    toast("自动添加失败：" + (job.message || ""), "err");
+    const msg = job.message || "未知错误";
+    if (b) {
+      b.attempted++; b.lastErr = msg;
+      $("#autoStatus").textContent = "本次失败：" + msg + " · " + autoBatchText();
+      toast("自动添加失败：" + msg, "err");
+      autoNextAttempt();
+    } else {
+      $("#autoStatus").textContent = "失败：" + msg;
+      toast("自动添加失败：" + msg, "err");
+    }
   }
 }
 /* ── 接码（一次性短信平台）───────────────────────────────────────────
@@ -6223,7 +6284,10 @@ async function startLogin() {
     $("#btnCopyUrl").hidden = false; $("#btnOpenUrl").hidden = false;
   }
   if (st.code) { $("#addCodeWrap").hidden = false; $("#addCode").textContent = st.code; }
-  if (st.message) { $("#addReady").hidden = false; $("#addPoll").innerHTML = esc(st.message); }
+  // Pending is the only state that belongs next to the authorisation link.  A
+  // terminal message there reads as "open this link and log in" even when the
+  // flow never produced one; terminal states are rendered by the branches below.
+  if (st.state === "pending" && st.message) { $("#addPoll").innerHTML = '<span class="dots">' + esc(st.message) + '</span>'; }
   if (st.state === "success") return loginDone(st);
   if (st.state === "failed") { $("#addErr").hidden = false; $("#addErr").textContent = st.message || "登录失败"; return; }
   if (!st.session_id) { $("#addErr").hidden = false; $("#addErr").textContent = st.message || "模块未返回会话 ID"; return; }
@@ -6574,6 +6638,7 @@ $("#tbBody").addEventListener("click", e => {
 });
 // 定时任务：规则表与运行记录。搜索/过滤只重画规则表，运行记录单独重拉。
 $("#btnScReload").addEventListener("click", () => renderSchedule());
+$("#btnScDefaultsReload").addEventListener("click", () => renderSchedule());
 $("#btnScRunsReload").addEventListener("click", () => renderSchedule());
 $("#btnScSave").addEventListener("click", scSave);
 $("#scSearch").addEventListener("input", scRenderRows);
@@ -6949,11 +7014,9 @@ window.addEventListener("keydown", ev => {
 // usage、finish_reason 全部原样展示。
 const CHAT = { models: [], key: "", msgs: [], busy: false, ctrl: null };
 
-// /v1/models 里其实有两类条目：带斜杠的 "客户端/模型"，和不带斜杠的别名
-// （owned_by=alias，例如 gpt-4o → trae/custom_model_gpt-5，来自配置里的 aliases）。
-// 别名不是客户端，所以不能一律按第一个斜杠切分——那样别名 id 会被整个当成一个
-// 客户端名塞进下拉框。这里把两类分开：带斜杠的取前缀当组名，不带斜杠的归到
-// CHAT_ALIAS 一组；无论哪类，发给网关的都还是原始 id（别名由网关自己解析）。
+// /v1/models 里有三类条目：带斜杠的 "客户端/模型"、虚拟的 "Auto/模型"，以及
+// 不带斜杠的别名（owned_by=alias，例如 gpt-4o → trae/custom_model_gpt-5，来自
+// 配置里的 aliases）。Auto/ 的组名就是 Auto，调用时仍原样发给网关。
 const CHAT_ALIAS = "（别名）";
 
 function chatEntry(m) {
@@ -7200,6 +7263,7 @@ $("#chatInput").addEventListener("keydown", ev => {
 const USAGE_SUBTABS = setupSubtabs("usage", () => {
   if (VIEW === "usage") renderUsage();
 });
+$("#btnUsageRecentRefresh").addEventListener("click", () => renderUsage());
 const TASKS_SUBTABS = setupSubtabs("taskscenter", name => {
   if (VIEW !== "taskscenter") return;
   if (name === "schedule") renderSchedule();

@@ -525,8 +525,8 @@ func TestModelsCarriesTheModuleExtraFields(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("decode: %v (%s)", err, rec.Body.String())
 	}
-	if out.Object != "list" || len(out.Data) != 2 {
-		t.Fatalf("envelope = %q with %d entries, want a two-entry list", out.Object, len(out.Data))
+	if out.Object != "list" {
+		t.Fatalf("envelope = %q, want a list", out.Object)
 	}
 
 	entry := map[string]map[string]any{}
@@ -581,14 +581,23 @@ func TestModelsListsTheAliasTable(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("decode: %v (%s)", err, rec.Body.String())
 	}
-	if len(out.Data) != 2 {
-		t.Fatalf("catalogue = %d entries, want the model plus its alias: %s", len(out.Data), rec.Body.String())
+	if len(out.Data) < 3 {
+		// One module model, its alias, and the aggregated Auto/ entry.
+		t.Fatalf("catalogue has too few entries: %s", rec.Body.String())
 	}
 	// Sorted by id: "glm-5.3" (lowercase g) sorts before "wb/GLM-5.3".
-	if out.Data[0].ID != "glm-5.3" {
-		t.Fatalf("first entry = %q, want the alias glm-5.3", out.Data[0].ID)
+	var alias, upstream *modelEntry
+	for i := range out.Data {
+		switch out.Data[i].ID {
+		case "glm-5.3":
+			alias = &out.Data[i]
+		case "wb/GLM-5.3":
+			upstream = &out.Data[i]
+		}
 	}
-	alias := out.Data[0]
+	if alias == nil || upstream == nil {
+		t.Fatalf("catalogue is missing the alias or its upstream model: %s", rec.Body.String())
+	}
 	if alias.OwnedBy != "alias" {
 		t.Errorf("alias owned_by = %q, want \"alias\" so a UI can tell it from a real id", alias.OwnedBy)
 	}
@@ -596,8 +605,8 @@ func TestModelsListsTheAliasTable(t *testing.T) {
 		t.Errorf("alias extra.target = %v, want wb/GLM-5.3", alias.Extra["target"])
 	}
 	// The alias must not shadow a real entry if the same string is both.
-	if out.Data[1].ID != "wb/GLM-5.3" || out.Data[1].OwnedBy == "alias" {
-		t.Errorf("second entry = %+v, want the untouched upstream model", out.Data[1])
+	if upstream.OwnedBy == "alias" {
+		t.Errorf("upstream entry = %+v, want the untouched upstream model", upstream)
 	}
 }
 
