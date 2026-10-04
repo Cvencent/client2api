@@ -3006,6 +3006,39 @@ function usageChartSVG(series) {
 // 只认单列 b.name 的 usageRows。均延迟 / 均速率两列只有账号表带：参考的 usRow 把
 // 这件事做成显式参数 withPerf，因为模型表与域表的表头没有这两列，多输出一格就会
 // 让整行从那一格起全部错位。
+// accountDisplayName turns a recent-call account id into something an operator
+// can recognise.  Phone numbers and operator labels win over vendor ids; the
+// raw id is the last resort so a row is never blank just because the account
+// has been removed from the pool.
+function accountDisplayName(id) {
+  const key = String(id == null ? "" : id).trim();
+  if (!key) return "";
+  let best = "", bestRank = 99;
+  const consider = (v, rank) => {
+    const s = String(v == null ? "" : v).trim();
+    if (!s || rank >= bestRank) return;
+    best = s; bestRank = rank;
+  };
+  NAMES.forEach(n => {
+    ((ACCTS[n] || {}).accounts || []).forEach(a => {
+      if (String(a.id) !== key && String(a.identity || "") !== key) return;
+      const f = a.fields || {};
+      const label = String(a.label || "").trim();
+      const digits = label.replace(/\D/g, "");
+      consider(f.phone || f.mobile, 0);
+      if (digits.length >= 6 && digits.length <= 15 && /\d/.test(label)) consider(label, 1);
+      consider(label, 2);
+      consider(f.nickname, 3);
+      consider(f.username, 3);
+      consider(f.email, 4);
+      consider(f.user_id, 5);
+      consider(a.identity, 6);
+      consider(a.id, 7);
+    });
+  });
+  return best || key;
+}
+
 function usageAccountRows(list) {
   return (list || []).map(b =>
     '<tr><td>' + esc(b.name || "(未路由)") + '</td>' +
@@ -3076,7 +3109,7 @@ function renderRecentRows() {
     const state = x.failed ? '<span class="recent-bad">' + (x.attempt ? "候选失败" : "失败") + '</span>' : '<span class="recent-ok">成功</span>';
     return '<tr><td class="hint">' + esc(fmtCallTime(x.at)) + '</td>' +
       '<td>' + esc(x.client || "-") + '</td><td>' + esc(x.model || "-") + '</td>' +
-      '<td>' + esc(x.account || "-") + '</td><td>' + state + '</td>' +
+      '<td title="' + esc(x.account || "") + '">' + esc(accountDisplayName(x.account) || "-") + '</td><td>' + state + '</td>' +
       '<td class="num">' + (x.candidate ? "#" + esc(String(x.candidate)) : "-") + '</td>' +
       '<td class="num">' + numf(x.prompt_tokens || 0) + '</td><td class="num">' + numf(x.completion_tokens || 0) + '</td>' +
       '<td class="num">' + numf(x.total_tokens || 0) + '</td><td class="num">' + fmtMs(x.latency_ms) + '</td>' +

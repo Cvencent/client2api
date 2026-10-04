@@ -181,6 +181,22 @@ func TestAccountGroupIsHealthyWhenAnyChannelIsHealthy(t *testing.T) {
 // TestAccountGroupHeaderHasNoActionButtons 钉住组头那一行是纯信息行。每个通道
 // 单独启停、单独测试是需求本身；组头再挂一个批量按钮会把两份凭据的状态混在
 // 一起，而且没有明显正确的语义。
+func TestRecentCallAccountPrefersHumanReadableName(t *testing.T) {
+	src := string(indexHTML)
+	for _, want := range []string{
+		`function accountDisplayName(id) {`,
+		`consider(f.phone || f.mobile, 0);`,
+		`consider(label, 2);`,
+		`consider(f.user_id, 5);`,
+		`return best || key;`,
+		`esc(accountDisplayName(x.account) || "-")`,
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("recent-call account display is missing %s", want)
+		}
+	}
+}
+
 func TestClientChipsShowUsableOverTotalAccounts(t *testing.T) {
 	src := string(indexHTML)
 	body := poolStatsFuncBody(t, src, "renderChips")
