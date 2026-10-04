@@ -641,17 +641,17 @@ func TestDegradedConstantMatchesReference(t *testing.T) {
 }
 
 // TestEmbeddedDefaultPromptMatchesReferenceBytes defaultprompt.md 被 //go:embed
-// 读到，且与参照文件逐字节一致（sha256 锁定）+ 行数/字节数一致。
+// 读到，且规范化换行后与参照文件逐字节一致（sha256 锁定）+ 行数/字节数一致。
 func TestEmbeddedDefaultPromptMatchesReferenceBytes(t *testing.T) {
 	if defaultPrompt == "" {
 		t.Fatal("embed 的 defaultPrompt 为空")
 	}
-	const wantSHA = "384c2b10ada8c7bcf14772a72f563d7f77c3852f278a110283f568e2838d809c"
+	const wantSHA = "140150d658e967866566333f57b332101b8aedd207fbfdb2c1b96b77376c22a6"
 	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(defaultPrompt))); got != wantSHA {
 		t.Errorf("defaultPrompt sha256=%s want %s（与参照 defaultprompt.md 不一致）", got, wantSHA)
 	}
-	if len(defaultPrompt) != 2172 {
-		t.Errorf("len(defaultPrompt)=%d want 2172", len(defaultPrompt))
+	if len(defaultPrompt) != 2134 {
+		t.Errorf("len(defaultPrompt)=%d want 2134", len(defaultPrompt))
 	}
 	if n := strings.Count(defaultPrompt, "\n"); n != 38 {
 		t.Errorf("defaultPrompt 换行数=%d want 38", n)
@@ -661,6 +661,9 @@ func TestEmbeddedDefaultPromptMatchesReferenceBytes(t *testing.T) {
 	}
 	if strings.ContainsRune(defaultPrompt, '\uFFFD') {
 		t.Error("defaultPrompt 含替换字符 U+FFFD（编码已损坏）")
+	}
+	if strings.ContainsRune(defaultPrompt, '\r') {
+		t.Error("defaultPrompt 仍含 CR，换行规范化失效")
 	}
 	nonASCII := 0
 	for _, r := range defaultPrompt {
@@ -676,8 +679,9 @@ func TestEmbeddedDefaultPromptMatchesReferenceBytes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read defaultprompt.md: %v", err)
 	}
-	if string(onDisk) != defaultPrompt {
-		t.Errorf("embed 内容与磁盘文件不一致：disk=%d bytes embed=%d bytes", len(onDisk), len(defaultPrompt))
+	normalizedOnDisk := strings.ReplaceAll(string(onDisk), "\r\n", "\n")
+	if normalizedOnDisk != defaultPrompt {
+		t.Errorf("embed 内容与磁盘文件不一致：disk=%d bytes embed=%d bytes", len(normalizedOnDisk), len(defaultPrompt))
 	}
 	if !strings.HasPrefix(defaultPrompt, "# ") {
 		t.Errorf("首行不是一级标题：%q", strings.SplitN(defaultPrompt, "\n", 2)[0])

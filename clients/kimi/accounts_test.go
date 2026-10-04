@@ -92,7 +92,7 @@ func stubInWorkBin(t *testing.T, fixture string) string {
 	if runtime.GOOS == "windows" {
 		return writeScript(t, dir, stubCLIName(), "@echo off\r\ntype \""+fp+"\"\r\nexit /b 0\r\n")
 	}
-	return writeScript(t, dir, stubCLIName(), "#!/bin/sh\ncat \""+fp+"\"\nexit 0\n")
+	return writeScript(t, dir, stubCLIName(), "#!/bin/sh\n/bin/cat \""+fp+"\"\nexit 0\n")
 }
 
 func findAccount(t *testing.T, recs []core.AccountRecord, id string) core.AccountRecord {

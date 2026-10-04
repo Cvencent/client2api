@@ -12,10 +12,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 )
 
 //go:embed defaultprompt.md
-var defaultPrompt string
+var embeddedDefaultPrompt string
+
+// Keep embedded prompt bytes identical regardless of the checkout line
+// endings used by the host platform.
+var defaultPrompt = strings.ReplaceAll(embeddedDefaultPrompt, "\r\n", "\n")
 
 // Degraded 降级提示词：误报处理用，刻意极简中性。
 //

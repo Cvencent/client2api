@@ -6,6 +6,20 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.1.8] - 2026-10-04
+
+### Fixed
+
+- 统一内置系统提示词的换行符为 LF，并锁定规范化后的固定字节，修复 Windows 与
+  Linux 构建使用不同默认提示词、Linux CI 断言失败的问题。
+- 修复 Kimi 离线测试脚本在清空 `PATH` 后仍调用 `cat`/`sleep`，导致 Linux CI
+  拿不到桩输出而失败的问题；非 Windows 脚本改用 `/bin/cat` 与 `/bin/sleep`。
+
+### Changed
+
+- 保留 0.1.7 的事务式安装器、安装前后自检和失败回滚，本版用于恢复 GitHub Actions
+  的完整五平台构建、校验和与 Release 产物发布。
+
 ## [0.1.7] - 2026-10-04
 
 ### Added

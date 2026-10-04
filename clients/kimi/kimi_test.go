@@ -105,7 +105,7 @@ func stubEmitting(t *testing.T, fixture string) string {
 	if runtime.GOOS == "windows" {
 		return writeScript(t, dir, "kimi.cmd", "@echo off\r\ntype \""+fp+"\"\r\nexit /b 0\r\n")
 	}
-	return writeScript(t, dir, "kimi", "#!/bin/sh\ncat \""+fp+"\"\nexit 0\n")
+	return writeScript(t, dir, "kimi", "#!/bin/sh\n/bin/cat \""+fp+"\"\nexit 0\n")
 }
 
 // stubSleeping prints the fixture and then blocks, so cancellation and the
@@ -119,7 +119,7 @@ func stubSleeping(t *testing.T, fixture string) string {
 		return writeScript(t, dir, "kimi.cmd",
 			"@echo off\r\ntype \""+fp+"\"\r\nping -n 30 127.0.0.1 >nul 2>nul\r\nexit /b 0\r\n")
 	}
-	return writeScript(t, dir, "kimi", "#!/bin/sh\ncat \""+fp+"\"\nsleep 30\n")
+	return writeScript(t, dir, "kimi", "#!/bin/sh\n/bin/cat \""+fp+"\"\n/bin/sleep 30\n")
 }
 
 // stubFailing writes to stderr and exits non-zero.
