@@ -37,6 +37,10 @@ import (
 // Source values recorded in Meta.Source and Meta.FieldSources. Provenance matters
 // as much as the number: an operator must be able to tell where a value came from.
 const (
+	// SourceManual means an operator explicitly overrode the value in the panel.
+	// It is stronger than every discovered value because the operator is the
+	// final authority for this deployment.
+	SourceManual = "manual"
 	// SourceVendor means the value came from the live vendor response.
 	SourceVendor = "vendor"
 	// SourceStatic means the value came from this package's embedded table.
@@ -214,16 +218,18 @@ func strongestSource(sources map[string]string) string {
 // rather than silently rewritten.
 func sourceRank(src string) int {
 	switch src {
-	case SourceVendor:
+	case SourceManual:
 		return 0
-	case SourceStatic:
+	case SourceVendor:
 		return 1
-	case SourceModelsDev:
+	case SourceStatic:
 		return 2
-	case SourceCache:
+	case SourceModelsDev:
 		return 3
-	case SourceFallback:
+	case SourceCache:
 		return 4
+	case SourceFallback:
+		return 5
 	}
 	return 50
 }

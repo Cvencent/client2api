@@ -138,6 +138,14 @@ type modelEntry struct {
 	Object  string `json:"object"`
 	Created int64  `json:"created"`
 	OwnedBy string `json:"owned_by"`
+	// ContextLength is the resolved input window in tokens, if any layer knows
+	// it. OpenAI's own object has no such field, but OpenRouter, vLLM and most
+	// self-hosted gateways publish it top-level, and that is the field an
+	// OpenAI-compatible client reads to size its context instead of guessing.
+	ContextLength int64 `json:"context_length,omitempty"`
+	// MaxOutputTokens is the resolved per-response output cap, if any layer
+	// knows it. Zero means unknown and the key is omitted.
+	MaxOutputTokens int64 `json:"max_output_tokens,omitempty"`
 	// Extra carries the module's per-model facts that have no home in the
 	// OpenAI model object: the credit multiplier, the currently effective
 	// promotion, the effort ladder, the capability flags.  It is omitted

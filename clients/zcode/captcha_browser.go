@@ -65,9 +65,17 @@ type captchaParam struct {
 // a credential, so a rotated or rejected token has to replace it rather than
 // sit beside it.  Mutex-guarded because Chat is called concurrently.
 type captchaCache struct {
-	mu  sync.Mutex
-	cur captchaParam
+	mu     sync.Mutex
+	cur    captchaParam
+	mintMu sync.Mutex
 }
+
+// mintMu serializes browser mints for one client.  Without it, concurrent
+// requests that arrive after the cache expires can each start a throwaway
+// browser, even though only one minted parameter is needed.  The mutex is
+// separate from mu so cache reads never wait behind a browser launch.
+func (c *captchaCache) lockMint()   { c.mintMu.Lock() }
+func (c *captchaCache) unlockMint() { c.mintMu.Unlock() }
 
 func (c *captchaCache) get(now time.Time) (captchaParam, bool) {
 	c.mu.Lock()
@@ -295,6 +303,10 @@ func (b *browserSolver) mintOnce(ctx context.Context, info regionInfo) (string, 
 	kid = cmd.Process.Pid
 	waited := make(chan struct{})
 	go func() { _ = cmd.Wait(); close(waited) }()
+	// Chromium clamps its initial window placement onto the desktop even
+	// with --window-position set, so the window has to be moved again from
+	// outside once it exists.  See guardBrowserWindow.
+	guardBrowserWindow(kid, waited, b.logf)
 	defer func() {
 		killBrowserTree(kid, b.logf)
 		select {

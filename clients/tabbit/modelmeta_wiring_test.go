@@ -19,6 +19,9 @@ func TestFallbackModelsCarriesOnlySourcedMetadata(t *testing.T) {
 	}{
 		{"DeepSeek-V4-Pro", 1000000, 384000},
 		{"GLM-5.1", 200000, 131072},
+		{"MiMo-V2.6-Pro", 1048576, 131072},
+		{"Kimi-K3", 1048576, 131072},
+		{"LongCat-2.0", 1048576, 131072},
 	}
 	for _, tc := range sourced {
 		extra, ok := byID[tc.id]
@@ -35,7 +38,7 @@ func TestFallbackModelsCarriesOnlySourcedMetadata(t *testing.T) {
 
 	// Ids the static table cannot prove must stay bare.  These four are real
 	// vendor display names, so they are in the catalogue without numbers.
-	unsourced := []string{"Default", "MiMo-V2.6-Pro", "Kimi-K3", "Qwen3.5-Plus", "LongCat-2.0"}
+	unsourced := []string{"Default", "Qwen3.5-Plus"}
 	for _, id := range unsourced {
 		extra, ok := byID[id]
 		if !ok {

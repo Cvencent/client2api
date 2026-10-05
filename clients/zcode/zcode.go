@@ -526,6 +526,14 @@ func (c *Client) solveCaptcha(ctx context.Context) (param, region string, err er
 	}
 
 	if c.mintBrowser != nil {
+		c.captcha.lockMint()
+		defer c.captcha.unlockMint()
+		if cached, ok := c.captcha.get(time.Now()); ok {
+			return cached.param, cached.region, nil
+		}
+		if err := ctx.Err(); err != nil {
+			return "", "", err
+		}
 		info := c.pool.sceneFor(ctx)
 		param, err := c.mintBrowser(ctx, info)
 		if err != nil {

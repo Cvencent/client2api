@@ -290,24 +290,26 @@
     }
   },
   "kimi": {
-    "notes": [
-      "Deliberately EMPTY. The kimi module's builtin ids are kimi, kimi-k2, k3-agent,",
-      "k3-agent-ultra and k2d6-agent. None of them appears in model.json, in",
-      "context_catalog.go, in docs/upstream/kimi.md, or in a captured response, so there is",
-      "no source for a context window or an output limit. k3-agent is documented as 'K3'",
-      "but the id does not match the reference's kimi-k3 entry, and a cross-id inference is",
-      "a guess, not a source. Nothing goes in the table until a real response says so."
-    ],
-    "models": {}
+    "notes": "The K3 agent ids map to Kimi K3, whose public window is 1M context / 128K output. kimi, kimi-k2 and k2d6-agent have no public source and stay unknown.",
+    "models": {
+      "k3-agent": {
+        "context_length": 1048576,
+        "max_output_tokens": 131072,
+        "origin": "platform.kimi.ai docs: K3 1M context / 128K output"
+      },
+      "k3-agent-ultra": {
+        "context_length": 1048576,
+        "max_output_tokens": 131072,
+        "origin": "platform.kimi.ai docs: K3 1M context / 128K output"
+      }
+    }
   },
   "tabbit": {
     "notes": [
-      "Only ids whose model name matches a reference table id exactly (case-insensitively,",
-      "because tabbit lists them capitalised) are filled. The numbers come from the same",
-      "public models.dev consensus the reference records for that model; they are NOT",
-      "verified against tabbit's own responses, so treat them as a best-effort fallback.",
-      "Claude-Opus-4.7, Claude-Sonnet-4.6, Gemini-3.1-Pro, 'priority' (a virtual router",
-      "alias) and 'Default' have no sourced entry and stay absent."
+      "Official vendor presets (z.ai, DeepSeek, Kimi, MiniMax, Qwen, Volcengine,",
+      "StepFun, MiMo, LongCat) for the ids whose upstream model is documented, plus",
+      "the reference-derived GPT/DeepSeek/GLM rows. Router aliases (Default, priority)",
+      "and ids with no public window stay absent."
     ],
     "models": {
       "GPT-5.5": {
@@ -329,6 +331,451 @@
         "context_length": 200000,
         "max_output_tokens": 131072,
         "origin": "reference model.json glm-5.1 (unverified for tabbit)"
+      },
+      "MiMo-V2.6-Pro": {
+        "context_length": 1048576,
+        "max_output_tokens": 131072,
+        "origin": "mimo.mi.com docs: 1M context / 128K output"
+      },
+      "MiMo-V2.6-Flash": {
+        "context_length": 1048576,
+        "max_output_tokens": 131072,
+        "origin": "mimo.mi.com docs: 1M context / 128K output"
+      },
+      "GLM-5.3-FlashX": {
+        "context_length": 1048576,
+        "max_output_tokens": 131072,
+        "origin": "z.ai docs: 1M context / 128K output"
+      },
+      "DeepSeek-V4.1-Flash": {
+        "context_length": 1048576,
+        "max_output_tokens": 384000,
+        "origin": "api-docs.deepseek.com: 1M context / 384K output"
+      },
+      "DeepSeek-V4-Flash": {
+        "context_length": 1048576,
+        "max_output_tokens": 384000,
+        "origin": "api-docs.deepseek.com: 1M context / 384K output"
+      },
+      "GLM-5.3-Flash": {
+        "context_length": 1048576,
+        "max_output_tokens": 131072,
+        "origin": "z.ai docs: 1M context / 128K output"
+      },
+      "GLM-5.3": {
+        "context_length": 1048576,
+        "max_output_tokens": 131072,
+        "origin": "z.ai docs: 1M context / 128K output"
+      },
+      "Qwen3.8-Max": {
+        "context_length": 1000000,
+        "max_output_tokens": 131072,
+        "origin": "Alibaba Cloud Model Studio: 1M context / 128K output"
+      },
+      "Kimi-K3": {
+        "context_length": 1048576,
+        "max_output_tokens": 131072,
+        "origin": "platform.kimi.ai docs: K3 1M context / 128K output"
+      },
+      "LongCat-2.0": {
+        "context_length": 1048576,
+        "max_output_tokens": 131072,
+        "origin": "longcat.chat docs: 1M context / 128K output"
+      },
+      "Qwen3.7-Max": {
+        "context_length": 1000000,
+        "max_output_tokens": 131072,
+        "origin": "Alibaba Cloud Model Studio: 1M context / 128K output"
+      },
+      "Kimi-K2.7-Code": {
+        "context_length": 262144,
+        "max_output_tokens": 32768,
+        "origin": "platform.kimi.ai docs: K3 1M context / 128K output"
+      },
+      "Doubao-Seed-2.1-Pro": {
+        "context_length": 262144,
+        "max_output_tokens": 262144,
+        "origin": "Volcengine Ark docs: 256K context / 256K output"
+      },
+      "Doubao-Seed-2.1-Turbo": {
+        "context_length": 262144,
+        "max_output_tokens": 262144,
+        "origin": "Volcengine Ark docs: 256K context / 256K output"
+      },
+      "MiniMax-M3": {
+        "context_length": 1048576,
+        "max_output_tokens": 131072,
+        "origin": "MiniMax platform docs"
+      },
+      "Kimi-K2.6": {
+        "context_length": 262144,
+        "max_output_tokens": 65536,
+        "origin": "platform.kimi.ai docs: K3 1M context / 128K output"
+      },
+      "GLM-5.2": {
+        "context_length": 1048576,
+        "max_output_tokens": 131072,
+        "origin": "z.ai docs: 1M context / 128K output"
+      },
+      "GLM-5V-Turbo": {
+        "context_length": 204800,
+        "max_output_tokens": 131072,
+        "origin": "z.ai docs: 200K context / 128K output"
+      }
+    }
+  },
+  "codearts": {
+    "notes": "Official GLM preset used when the module reports no window.",
+    "models": {
+      "GLM-5.2": {
+        "context_length": 1048576,
+        "max_output_tokens": 131072,
+        "origin": "z.ai docs: 1M context / 128K output"
+      }
+    }
+  },
+  "opencode": {
+    "notes": "Official presets for the ids whose upstream model is publicly documented; obscure free ids stay unknown.",
+    "models": {
+      "deepseek-v4-flash-free": {
+        "context_length": 1048576,
+        "max_output_tokens": 384000,
+        "origin": "api-docs.deepseek.com: 1M context / 384K output"
+      },
+      "mimo-v2.6-flash-free": {
+        "context_length": 1048576,
+        "max_output_tokens": 131072,
+        "origin": "mimo.mi.com docs: 1M context / 128K output"
+      },
+      "longcat-2.5-preview-free": {
+        "context_length": 1048576,
+        "max_output_tokens": 131072,
+        "origin": "longcat.chat docs: 1M context / 128K output"
+      }
+    }
+  },
+  "lobsterai": {
+    "notes": "Official vendor presets for the hosted models.",
+    "models": {
+      "deepseek-flash": {
+        "context_length": 1048576,
+        "max_output_tokens": 384000,
+        "origin": "api-docs.deepseek.com: 1M context / 384K output"
+      },
+      "deepseek-v4-pro": {
+        "context_length": 1048576,
+        "max_output_tokens": 384000,
+        "origin": "api-docs.deepseek.com: 1M context / 384K output"
+      },
+      "deepseek-v4-flash": {
+        "context_length": 1048576,
+        "max_output_tokens": 384000,
+        "origin": "api-docs.deepseek.com: 1M context / 384K output"
+      },
+      "deepseek-v4-flash-vision-exp": {
+        "context_length": 1048576,
+        "max_output_tokens": 384000,
+        "origin": "api-docs.deepseek.com: 1M context / 384K output"
+      },
+      "glm-5.3-flashx": {
+        "context_length": 1048576,
+        "max_output_tokens": 131072,
+        "origin": "z.ai docs: 1M context / 128K output"
+      },
+      "glm-5.3-flash": {
+        "context_length": 1048576,
+        "max_output_tokens": 131072,
+        "origin": "z.ai docs: 1M context / 128K output"
+      },
+      "glm-5.3": {
+        "context_length": 1048576,
+        "max_output_tokens": 131072,
+        "origin": "z.ai docs: 1M context / 128K output"
+      },
+      "glm-5.2": {
+        "context_length": 1048576,
+        "max_output_tokens": 131072,
+        "origin": "z.ai docs: 1M context / 128K output"
+      },
+      "glm-5.1": {
+        "context_length": 204800,
+        "max_output_tokens": 131072,
+        "origin": "z.ai docs: 200K context / 128K output"
+      },
+      "glm-5v-turbo": {
+        "context_length": 204800,
+        "max_output_tokens": 131072,
+        "origin": "z.ai docs: 200K context / 128K output"
+      },
+      "glm-5": {
+        "context_length": 204800,
+        "max_output_tokens": 131072,
+        "origin": "z.ai docs: 200K context / 128K output"
+      },
+      "MiniMax-M3.1-Flash-Preview": {
+        "context_length": 1000000,
+        "max_output_tokens": 131072,
+        "origin": "MiniMax platform docs"
+      },
+      "MiniMax-M3": {
+        "context_length": 1048576,
+        "max_output_tokens": 131072,
+        "origin": "MiniMax platform docs"
+      },
+      "MiniMax-M2.7": {
+        "context_length": 204800,
+        "max_output_tokens": 131072,
+        "origin": "MiniMax platform docs"
+      },
+      "qwen3.8-max": {
+        "context_length": 1000000,
+        "max_output_tokens": 131072,
+        "origin": "Alibaba Cloud Model Studio: 1M context / 128K output"
+      },
+      "qwen3.7-max": {
+        "context_length": 1000000,
+        "max_output_tokens": 131072,
+        "origin": "Alibaba Cloud Model Studio: 1M context / 128K output"
+      },
+      "qwen3.7-plus": {
+        "context_length": 1000000,
+        "max_output_tokens": 65536,
+        "origin": "Alibaba Cloud Model Studio: 1M context / 128K output"
+      },
+      "kimi-k3": {
+        "context_length": 1048576,
+        "max_output_tokens": 131072,
+        "origin": "platform.kimi.ai docs: K3 1M context / 128K output"
+      },
+      "kimi-k2.7-code": {
+        "context_length": 262144,
+        "max_output_tokens": 32768,
+        "origin": "platform.kimi.ai docs: K3 1M context / 128K output"
+      },
+      "kimi-k2.7-code-highspeed": {
+        "context_length": 262144,
+        "max_output_tokens": 32768,
+        "origin": "platform.kimi.ai docs: K3 1M context / 128K output"
+      },
+      "kimi-k2.6": {
+        "context_length": 262144,
+        "max_output_tokens": 65536,
+        "origin": "platform.kimi.ai docs: K3 1M context / 128K output"
+      },
+      "kimi-k2.5": {
+        "context_length": 262144,
+        "max_output_tokens": 262144,
+        "origin": "platform.kimi.ai docs: K3 1M context / 128K output"
+      },
+      "doubao-seed-2-1-pro-260915": {
+        "context_length": 262144,
+        "max_output_tokens": 262144,
+        "origin": "Volcengine Ark docs: 256K context / 256K output"
+      },
+      "doubao-seed-2-1-turbo-260628": {
+        "context_length": 262144,
+        "max_output_tokens": 262144,
+        "origin": "Volcengine Ark docs: 256K context / 256K output"
+      }
+    }
+  },
+  "minimaxcode": {
+    "notes": "MiniMax platform presets.",
+    "models": {
+      "MiniMax-M2.7-highspeed": {
+        "context_length": 204800,
+        "max_output_tokens": 131072,
+        "origin": "MiniMax platform docs"
+      },
+      "MiniMax-M2.7": {
+        "context_length": 204800,
+        "max_output_tokens": 131072,
+        "origin": "MiniMax platform docs"
+      },
+      "MiniMax-M3": {
+        "context_length": 1048576,
+        "max_output_tokens": 131072,
+        "origin": "MiniMax platform docs"
+      },
+      "MiniMax-M3.1-Flash-Preview": {
+        "context_length": 1000000,
+        "max_output_tokens": 131072,
+        "origin": "MiniMax platform docs"
+      }
+    }
+  },
+  "qwenwork": {
+    "notes": "Alibaba Cloud Model Studio presets.",
+    "models": {
+      "pro": {
+        "context_length": 1000000,
+        "max_output_tokens": 131072,
+        "origin": "Alibaba Cloud Model Studio: 1M context / 128K output"
+      },
+      "flash": {
+        "context_length": 1000000,
+        "max_output_tokens": 131072,
+        "origin": "Alibaba Cloud Model Studio: 1M context / 128K output"
+      },
+      "qwen3.8-max-preview": {
+        "context_length": 1000000,
+        "max_output_tokens": 131072,
+        "origin": "Alibaba Cloud Model Studio: 1M context / 128K output"
+      }
+    }
+  },
+  "trae": {
+    "notes": "Official presets for the documented ids; sub-agents, custom_model_* and router aliases stay unknown.",
+    "models": {
+      "step-5-preview": {
+        "context_length": 1048576,
+        "max_output_tokens": 65536,
+        "origin": "platform.stepfun.com docs: 1M context / 64K output"
+      },
+      "glm-5.3": {
+        "context_length": 1048576,
+        "max_output_tokens": 131072,
+        "origin": "z.ai docs: 1M context / 128K output"
+      },
+      "glm-5.2": {
+        "context_length": 1048576,
+        "max_output_tokens": 131072,
+        "origin": "z.ai docs: 1M context / 128K output"
+      },
+      "glm-5-turbo": {
+        "context_length": 202752,
+        "max_output_tokens": 131072,
+        "origin": "z.ai docs: 200K context / 128K output"
+      },
+      "glm-5": {
+        "context_length": 204800,
+        "max_output_tokens": 131072,
+        "origin": "z.ai docs: 200K context / 128K output"
+      },
+      "deepseek-v4.1-flash": {
+        "context_length": 1048576,
+        "max_output_tokens": 384000,
+        "origin": "api-docs.deepseek.com: 1M context / 384K output"
+      },
+      "DeepSeek-V4-Flash-Official": {
+        "context_length": 1048576,
+        "max_output_tokens": 384000,
+        "origin": "api-docs.deepseek.com: 1M context / 384K output"
+      },
+      "DeepSeek-V4-Flash": {
+        "context_length": 1048576,
+        "max_output_tokens": 384000,
+        "origin": "api-docs.deepseek.com: 1M context / 384K output"
+      },
+      "DeepSeek-V4-Pro-Official": {
+        "context_length": 1048576,
+        "max_output_tokens": 384000,
+        "origin": "api-docs.deepseek.com: 1M context / 384K output"
+      },
+      "DeepSeek-V4-Pro": {
+        "context_length": 1048576,
+        "max_output_tokens": 384000,
+        "origin": "api-docs.deepseek.com: 1M context / 384K output"
+      },
+      "kimi-k3": {
+        "context_length": 1048576,
+        "max_output_tokens": 131072,
+        "origin": "platform.kimi.ai docs: K3 1M context / 128K output"
+      },
+      "kimi-k2.7-code": {
+        "context_length": 262144,
+        "max_output_tokens": 32768,
+        "origin": "platform.kimi.ai docs: K3 1M context / 128K output"
+      },
+      "kimi-k2.6": {
+        "context_length": 262144,
+        "max_output_tokens": 65536,
+        "origin": "platform.kimi.ai docs: K3 1M context / 128K output"
+      },
+      "minimax-m3": {
+        "context_length": 1048576,
+        "max_output_tokens": 131072,
+        "origin": "MiniMax platform docs"
+      },
+      "qwen3.8-max": {
+        "context_length": 1000000,
+        "max_output_tokens": 131072,
+        "origin": "Alibaba Cloud Model Studio: 1M context / 128K output"
+      },
+      "qwen-3.7-plus": {
+        "context_length": 1000000,
+        "max_output_tokens": 65536,
+        "origin": "Alibaba Cloud Model Studio: 1M context / 128K output"
+      },
+      "Doubao-Seed-2.1-Pro": {
+        "context_length": 262144,
+        "max_output_tokens": 262144,
+        "origin": "Volcengine Ark docs: 256K context / 256K output"
+      },
+      "Doubao-Seed-2.1-Turbo": {
+        "context_length": 262144,
+        "max_output_tokens": 262144,
+        "origin": "Volcengine Ark docs: 256K context / 256K output"
+      }
+    }
+  },
+  "zcode": {
+    "notes": "GLM family presets from z.ai docs.",
+    "models": {
+      "glm-4.5": {
+        "context_length": 131072,
+        "max_output_tokens": 98304,
+        "origin": "z.ai docs: 128K context / 96K output"
+      },
+      "glm-4.5-air": {
+        "context_length": 131072,
+        "max_output_tokens": 98304,
+        "origin": "z.ai docs: 128K context / 96K output"
+      },
+      "glm-4.6": {
+        "context_length": 204800,
+        "max_output_tokens": 131072,
+        "origin": "z.ai docs: 200K context / 128K output"
+      },
+      "glm-4.7": {
+        "context_length": 204800,
+        "max_output_tokens": 131072,
+        "origin": "z.ai docs: 200K context / 128K output"
+      },
+      "glm-5": {
+        "context_length": 204800,
+        "max_output_tokens": 131072,
+        "origin": "z.ai docs: 200K context / 128K output"
+      },
+      "glm-5-turbo": {
+        "context_length": 202752,
+        "max_output_tokens": 131072,
+        "origin": "z.ai docs: 200K context / 128K output"
+      },
+      "glm-5.1": {
+        "context_length": 204800,
+        "max_output_tokens": 131072,
+        "origin": "z.ai docs: 200K context / 128K output"
+      },
+      "glm-5.2": {
+        "context_length": 1048576,
+        "max_output_tokens": 131072,
+        "origin": "z.ai docs: 1M context / 128K output"
+      },
+      "glm-5.3": {
+        "context_length": 1048576,
+        "max_output_tokens": 131072,
+        "origin": "z.ai docs: 1M context / 128K output"
+      },
+      "glm-5.3-flash": {
+        "context_length": 1048576,
+        "max_output_tokens": 131072,
+        "origin": "z.ai docs: 1M context / 128K output"
+      },
+      "glm-5.3-flashx": {
+        "context_length": 1048576,
+        "max_output_tokens": 131072,
+        "origin": "z.ai docs: 1M context / 128K output"
       }
     }
   }

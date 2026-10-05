@@ -11,6 +11,10 @@ type Options struct {
 	// Client selects this client's slice of the static table ("workbuddy", "kimi",
 	// "tabbit", ...). An unknown client simply has no static entries.
 	Client string
+	// Overrides is the operator's manually edited model metadata. It is applied
+	// last and therefore wins over both the live vendor value and the static
+	// table.
+	Overrides *OverrideStore
 	// Realm selects the reasoning-effort vocabulary. Empty means the CN table,
 	// matching the reference, which treats every realm except "global" as CN.
 	Realm string
@@ -40,6 +44,7 @@ type Provider struct {
 	client     string
 	realm      string
 	contextCap int64
+	overrides  *OverrideStore
 	store      *Store
 	remote     *remoteCache
 }
@@ -55,6 +60,7 @@ func New(opts Options) *Provider {
 		client:     strings.TrimSpace(opts.Client),
 		realm:      NormalizeRealm(opts.Realm),
 		contextCap: opts.ContextCap,
+		overrides:  opts.Overrides,
 		remote:     newRemote(opts.Remote),
 	}
 	if dir := strings.TrimSpace(opts.CacheDir); dir != "" {
@@ -119,6 +125,11 @@ func (p *Provider) resolve(model string, vendor Meta) (Meta, bool) {
 		return vendor.Clone(), !vendor.IsZero()
 	}
 	out := vendor.Clone()
+	if p.overrides != nil && model != "" {
+		if o, ok := p.overrides.Get(p.client, model); ok {
+			out = applyOverride(out, o)
+		}
+	}
 	model = strings.TrimSpace(model)
 	if model != "" {
 		if e, ok := static().entry(p.client, model); ok {

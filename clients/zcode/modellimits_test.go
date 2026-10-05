@@ -6,26 +6,29 @@ import (
 	"testing"
 )
 
-// TestModelMaxOutputTokensReadsTheCachedCatalogue pins the contract the gateway
-// relies on when a caller omits max_tokens: the module answers with the budget
-// the vendor published for the model it is about to call, or says it cannot say.
+// TestModelMaxOutputTokensUsesBuiltinSpecsAndTheCachedCatalogue pins the
+// contract the gateway relies on when a caller omits max_tokens: the module
+// answers with the budget published for the model it is about to call, or
+// says it cannot say.
 //
-// It drives the real path -- the catalogue is fetched and cached by Models() --
-// because the interesting failure is not the lookup itself (core.OutputLimitFor
-// has its own tests) but whether this method reads the same cache Models serves
-// from.  A method wired to the wrong accessor answers "cannot say" forever,
-// which looks exactly like a module that has no numbers at all.
-func TestModelMaxOutputTokensReadsTheCachedCatalogue(t *testing.T) {
+// A known plan model must answer before the first metadata refresh too: a cold
+// start must not truncate GLM-5.3-Flash at the module's fallback default just
+// because /v1/models has not answered yet.  The cached vendor entry still wins
+// when it carries a number.
+func TestModelMaxOutputTokensUsesBuiltinSpecsAndTheCachedCatalogue(t *testing.T) {
 	srv, _ := modelServer(t, func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, anthropicList)
 	})
 	c := newModelTestClient(t, apiKeyConfig(t, srv.URL+"/api/anthropic"))
 	ctx := context.Background()
 
-	// Before the catalogue has ever been read there is nothing to answer from,
+	// The builtin table answers even before the catalogue has ever been read,
 	// and a metadata fetch must NOT happen here: this runs inside a chat turn.
-	if n, ok := c.ModelMaxOutputTokens(ctx, "glm-4.6"); ok {
-		t.Fatalf("ModelMaxOutputTokens on a cold cache = %d, true; want ok=false", n)
+	if n, ok := c.ModelMaxOutputTokens(ctx, "glm-4.6"); !ok || n != 131072 {
+		t.Fatalf("ModelMaxOutputTokens on a cold cache = %d, %v; want 131072, true", n, ok)
+	}
+	if n, ok := c.ModelMaxOutputTokens(ctx, "GLM-5.3-Flash"); !ok || n != 131072 {
+		t.Fatalf("case-insensitive builtin lookup = %d, %v; want 131072, true", n, ok)
 	}
 
 	if _, err := c.Models(ctx); err != nil {

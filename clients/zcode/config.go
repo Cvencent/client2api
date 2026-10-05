@@ -27,7 +27,14 @@ const (
 	defaultReferer    = "https://zcode.z.ai/"
 	defaultUserAgent  = "ZCode/" + defaultAppVersion
 
-	defaultMaxTokens      = 4096
+	// defaultMaxTokens is the last resort for a model builtinModelSpecs does
+	// not know: the gateway normally fills max_tokens from the catalogue, and
+	// every model this plan publishes supports at least 96K output, so a low
+	// number here only ever truncates a caller that asked for no cap.  32K
+	// stays well under the smallest published budget while leaving room for a
+	// real answer; an operator who wants a different floor sets
+	// max_tokens_default.
+	defaultMaxTokens      = 32768
 	defaultAttempts       = 5
 	defaultCooldownSec    = 300
 	defaultConcurrCoolSec = 15
@@ -52,10 +59,29 @@ const (
 	defaultOAuthExchangeBase = "https://api.z.ai"
 )
 
-// defaultModels are the model ids the upstream accepted at recon time.  The
-// upstream is the authority on this list; 3006 ("model not allowed") is the
-// only signal we get for a wrong id, so the list stays small and configurable.
-var defaultModels = []string{"GLM-5.3", "GLM-5.3-Flash"}
+// defaultModels is the catalogue the module advertises when the upstream
+// cannot answer.  It mirrors the model ids the ZCode plan publishes today, so
+// a cold start or a temporary vendor outage still shows the full picker and
+// still gives the gateway the published context/output budgets from
+// builtinModelSpecs.  The upstream remains the authority: a 3006 ("model not
+// allowed") is still classified as an unsupported model when a plan does not
+// include one of these ids.
+//
+// Newest first, so the default account probe and any UI that shows the list in
+// order lead with the current generation instead of the oldest id.
+var defaultModels = []string{
+	"GLM-5.3",
+	"GLM-5.3-Flash",
+	"GLM-5.3-FlashX",
+	"GLM-5.2",
+	"GLM-5.1",
+	"GLM-5",
+	"GLM-5-Turbo",
+	"GLM-4.7",
+	"GLM-4.6",
+	"GLM-4.5",
+	"GLM-4.5-Air",
+}
 
 // accountConfig is one entry of the "accounts" array in the module config.
 type accountConfig struct {

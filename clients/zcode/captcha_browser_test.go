@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -163,6 +165,44 @@ func TestSolveCaptchaFallsBackToTheBrowserAndCachesIt(t *testing.T) {
 	}
 	if calls != 2 {
 		t.Fatalf("mint calls = %d, want a fresh mint after invalidate", calls)
+	}
+}
+
+func TestSolveCaptchaCollapsesConcurrentBrowserMints(t *testing.T) {
+	env := newPanelEnv(t, `{"auto_discover":false,"captcha_browser":true}`)
+	ft := routeTransport(t, captchaRoutes(captchaConfigFixture, nil))
+	c := env.client(t, ft)
+
+	var calls int32
+	c.mintBrowser = func(context.Context, regionInfo) (string, error) {
+		atomic.AddInt32(&calls, 1)
+		time.Sleep(30 * time.Millisecond)
+		return "browser-token", nil
+	}
+
+	const workers = 8
+	start := make(chan struct{})
+	errs := make(chan error, workers)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, _, err := c.solveCaptcha(context.Background())
+			errs <- err
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("solveCaptcha: %v", err)
+		}
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Fatalf("browser mint calls = %d, want one shared mint", got)
 	}
 }
 

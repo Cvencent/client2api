@@ -22,6 +22,7 @@ import (
 	"client2api/internal/core"
 	"client2api/internal/gateway"
 	"client2api/internal/livecfg"
+	"client2api/internal/modelmeta"
 	"client2api/internal/scheduler"
 )
 
@@ -87,7 +88,11 @@ type Options struct {
 	// Live, when non-nil, carries the settings the panel may change while the
 	// process runs.  The panel reads the API key from it (to authenticate
 	// management calls) and writes back the fields the config page owns.
-	Live *livecfg.Holder
+	// ModelOverrides is the operator's persisted model metadata. It is shared
+	// with the gateway so edits made in the panel take effect on the next
+	// request without a restart.
+	ModelOverrides *modelmeta.OverrideStore
+	Live           *livecfg.Holder
 	// Guard exposes the process-level egress-IP and degraded-prompt state.
 	Guard *core.Guard
 	// Stats, Usage and Logs are the gateway's instrumentation, shared by
@@ -188,6 +193,7 @@ func New(opts Options) http.Handler {
 	api("/panel/api/logs", p.handleLogs)
 	api("/panel/api/models", p.handleModelsList)
 	api("/panel/api/models/refresh", p.handleModelsRefresh)
+	api("/panel/api/model_context", p.handleModelContext)
 	api("/panel/api/usage", p.handleUsage)
 	api("/panel/api/usage/save", p.handleUsageSave)
 	api("/panel/api/alerts", p.handleAlerts)

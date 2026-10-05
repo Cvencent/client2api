@@ -1081,6 +1081,24 @@ bare multiplier (`display_multiplier`, which is what tabbit publishes). A model
 with none of them renders `—`. What each module puts in `Extra` is its own
 business — see the per-client READMEs.
 
+Every `/v1/models` entry also carries a resolved `context_length` and
+`max_output_tokens`, and the same two numbers are mirrored into `extra`. The
+resolution order is operator override > the value the module reported > the
+official preset in `internal/modelmeta/table.json`; an unknown field is omitted
+rather than guessed. This is what lets an OpenAI-compatible client (Codex, Claude
+Code, …) size its context from the catalogue instead of falling back to a tiny
+built-in default when a vendor reports nothing. When a chat request arrives with
+no `max_tokens` / `max_completion_tokens`, the gateway fills the same resolved
+output cap; a caller that supplied its own number is never second-guessed.
+
+The 模型与档位 page turns both columns into number inputs, labels each field's
+source (`手动` / `上游` / `预设` / `未公开`), and saves through
+`POST /panel/api/model_context`. Manual values live in
+`<data_dir>/model_context.json` (written atomically, `0600`), survive an upgrade
+with the rest of `data/`, and are removed — falling back to the upstream value or
+the preset — when the field is cleared and saved, or when the row's
+「恢复官方默认」 button is used.
+
 The panel is protected by the gateway's top-level `api_key`
 (`configs/client2api.json:3`). Empty — the default — leaves it unauthenticated,
 which is a supported single-operator deployment. When it is set, every

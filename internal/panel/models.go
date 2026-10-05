@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"client2api/internal/core"
+	"client2api/internal/modelmeta"
 )
 
 // Per-client budget for a catalogue call.  The overall request budget below is
@@ -18,9 +19,20 @@ const (
 )
 
 type modelInfo struct {
-	ID      string         `json:"id"`
-	OwnedBy string         `json:"owned_by"`
-	Extra   map[string]any `json:"extra"`
+	ID                string         `json:"id"`
+	OwnedBy           string         `json:"owned_by"`
+	Extra             map[string]any `json:"extra"`
+	ContextLength     int64          `json:"context_length,omitempty"`
+	MaxOutputTokens   int64          `json:"max_output_tokens,omitempty"`
+	ContextSource     string         `json:"context_source,omitempty"`
+	MaxOutputSource   string         `json:"max_output_source,omitempty"`
+	ContextEditable   bool           `json:"context_editable"`
+	MaxOutputEditable bool           `json:"max_output_editable"`
+	// ContextDefault / MaxOutputDefault is the value that would apply with no
+	// manual override (upstream value, else the official preset). It is what the
+	// row's "restore default" button writes back, and zero means unknown.
+	ContextDefault   int64 `json:"context_default,omitempty"`
+	MaxOutputDefault int64 `json:"max_output_default,omitempty"`
 }
 
 type clientModels struct {
@@ -89,6 +101,10 @@ func (p *panel) serveModels(w http.ResponseWriter, r *http.Request, refresh bool
 
 func (p *panel) modelsFor(ctx context.Context, c core.Client, refresh bool) clientModels {
 	row := clientModels{Name: c.Name(), Models: []modelInfo{}}
+	provider := modelmeta.New(modelmeta.Options{Client: c.Name(), Overrides: p.opts.ModelOverrides})
+	// plain resolves the same chain without the operator's overrides, so a row
+	// can offer "restore default" and show what the value falls back to.
+	plain := modelmeta.New(modelmeta.Options{Client: c.Name()})
 
 	refresher, canRefresh := core.AsModelRefresher(c)
 	row.CanRefresh = canRefresh
@@ -123,10 +139,21 @@ func (p *panel) modelsFor(ctx context.Context, c core.Client, refresh bool) clie
 		if owned == "" {
 			owned = c.Name()
 		}
+		vendor := modelmeta.FromExtra(extra, modelmeta.KeysCanonical, "")
+		meta := provider.Merge(m.ID, vendor)
+		base := plain.Merge(m.ID, vendor)
 		row.Models = append(row.Models, modelInfo{
-			ID:      core.Redact(m.ID),
-			OwnedBy: core.Redact(owned),
-			Extra:   extra,
+			ID:                core.Redact(m.ID),
+			OwnedBy:           core.Redact(owned),
+			Extra:             extra,
+			ContextLength:     meta.ContextLength,
+			MaxOutputTokens:   meta.MaxOutputTokens,
+			ContextSource:     meta.SourceOf(modelmeta.FieldContextLength),
+			MaxOutputSource:   meta.SourceOf(modelmeta.FieldMaxOutputTokens),
+			ContextDefault:    base.ContextLength,
+			MaxOutputDefault:  base.MaxOutputTokens,
+			ContextEditable:   p.opts.ModelOverrides != nil,
+			MaxOutputEditable: p.opts.ModelOverrides != nil,
 		})
 	}
 	return row

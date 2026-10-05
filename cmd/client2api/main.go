@@ -29,6 +29,7 @@ import (
 	"client2api/internal/gateway"
 	"client2api/internal/livecfg"
 	"client2api/internal/logfile"
+	"client2api/internal/modelmeta"
 	"client2api/internal/panel"
 	"client2api/internal/scheduler"
 	"client2api/internal/tray"
@@ -39,7 +40,7 @@ import (
 )
 
 // version is overridable with -ldflags "-X main.version=...".
-var version = "0.1.15"
+var version = "0.1.16"
 
 // restartHandoffEnv marks the replacement half of a panel restart.  It tells a
 // starting process to keep retrying the listen address instead of failing fast,
@@ -1130,6 +1131,12 @@ func run() error {
 		return nil
 	}
 
+	modelOverrides, err := modelmeta.OpenOverrideStore(filepath.Join(cfg.DataDir, "model_context.json"), logger.Printf)
+	if err != nil {
+		logger.Printf("model metadata overrides unavailable: %v", err)
+		modelOverrides, _ = modelmeta.OpenOverrideStore("")
+	}
+
 	panelHandler := panel.New(panel.Options{
 		Registry:   registry,
 		Version:    version,
@@ -1140,15 +1147,16 @@ func run() error {
 		ConfigPath: absConfigPath,
 		// Where the modules keep their credential stores, so the panel can
 		// export them and restore them into another instance.
-		DataDir:     cfg.DataDir,
-		AuthEnabled: cfg.APIKey != "",
-		Live:        live,
-		Guard:       guard,
-		Stats:       stats,
-		Usage:       usage,
-		Logs:        logs,
-		Alerts:      alertStore,
-		Scheduler:   sched,
+		DataDir:        cfg.DataDir,
+		AuthEnabled:    cfg.APIKey != "",
+		Live:           live,
+		Guard:          guard,
+		Stats:          stats,
+		Usage:          usage,
+		Logs:           logs,
+		Alerts:         alertStore,
+		Scheduler:      sched,
+		ModelOverrides: modelOverrides,
 		// Same rule as the usage file: the probe results live in the data
 		// directory, so the probe tool and the panel agree without a second
 		// path setting.  Missing file = no annotation, never an error.
@@ -1165,17 +1173,18 @@ func run() error {
 	})
 
 	srv := gateway.NewServer(gateway.Options{
-		Addr:        cfg.Listen,
-		APIKey:      cfg.APIKey,
-		Live:        live,
-		Registry:    registry,
-		Version:     version,
-		Logger:      logger,
-		Guard:       guard,
-		Panel:       panelHandler,
-		Stats:       stats,
-		Usage:       usage,
-		NotifyAlert: notifyAlert,
+		Addr:           cfg.Listen,
+		APIKey:         cfg.APIKey,
+		Live:           live,
+		Registry:       registry,
+		Version:        version,
+		Logger:         logger,
+		Guard:          guard,
+		Panel:          panelHandler,
+		Stats:          stats,
+		Usage:          usage,
+		NotifyAlert:    notifyAlert,
+		ModelOverrides: modelOverrides,
 	})
 
 	errCh := make(chan error, 1)

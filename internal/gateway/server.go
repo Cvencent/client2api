@@ -17,6 +17,7 @@ import (
 	"client2api/internal/core"
 	"client2api/internal/hint"
 	"client2api/internal/livecfg"
+	"client2api/internal/modelmeta"
 )
 
 const maxBodyBytes = 64 << 20 // 64 MiB, generous for long agent transcripts
@@ -53,7 +54,9 @@ type Options struct {
 	Usage *UsageStore
 	// NotifyAlert receives operator-facing platform health alerts.  It is
 	// called synchronously and may be nil.
-	NotifyAlert func(alerts.Alert)
+	// ModelOverrides is the operator-edited model metadata shared with the panel.
+	ModelOverrides *modelmeta.OverrideStore
+	NotifyAlert    func(alerts.Alert)
 }
 
 type server struct {
@@ -272,6 +275,9 @@ func (s *server) handleModels(w http.ResponseWriter, r *http.Request) {
 	// Upstream catalogues are not guaranteed unique: the live Trae catalogue
 	// really does return the same id twice, so de-duplicate before serving.
 	seen := make(map[string]struct{}, 64)
+	// resolved caches each advertised id's context/output so the alias table
+	// below can reuse the target's numbers instead of re-resolving them.
+	resolved := make(map[string]modelmeta.Meta, 64)
 	// Auto/<model> is a gateway-level virtual model, not an upstream id.
 	// Aggregate vendor catalogues under one stable display name so a caller
 	// can ask the gateway to choose the platform.  Keep every platform-
@@ -308,12 +314,41 @@ func (s *server) handleModels(w http.ResponseWriter, r *http.Request) {
 			if owned == "" {
 				owned = c.Name()
 			}
+			// Resolve the window/output from override > vendor > official preset so
+			// a caller can size its context even when the vendor reported nothing.
+			meta := s.resolvedModelMeta(c, m.ID, m.Extra)
+			resolved[id] = meta
+			// Mirror the resolved numbers into Extra as well: some clients read the
+			// OpenAI top-level field, others look inside extra. Fill only what the
+			// vendor left empty so the vendor's own numbers are never overwritten.
+			// Clone before adding: the map belongs to the module's catalogue and
+			// mutating it here would leak resolved values back into the module.
+			var extra map[string]any
+			if len(m.Extra) > 0 {
+				extra = make(map[string]any, len(m.Extra)+2)
+				for k, v := range m.Extra {
+					extra[k] = v
+				}
+			}
+			if meta.ContextLength > 0 || meta.MaxOutputTokens > 0 {
+				if extra == nil {
+					extra = map[string]any{}
+				}
+				if _, ok := extra["context_length"]; !ok && meta.ContextLength > 0 {
+					extra["context_length"] = meta.ContextLength
+				}
+				if _, ok := extra["max_output_tokens"]; !ok && meta.MaxOutputTokens > 0 {
+					extra["max_output_tokens"] = meta.MaxOutputTokens
+				}
+			}
 			out.Data = append(out.Data, modelEntry{
-				ID:      id,
-				Object:  "model",
-				Created: created,
-				OwnedBy: owned,
-				Extra:   m.Extra,
+				ID:              id,
+				Object:          "model",
+				Created:         created,
+				OwnedBy:         owned,
+				ContextLength:   meta.ContextLength,
+				MaxOutputTokens: meta.MaxOutputTokens,
+				Extra:           extra,
 			})
 		}
 	}
@@ -352,12 +387,22 @@ func (s *server) handleModels(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		seen[alias] = struct{}{}
+		meta := resolved[target]
+		aliasExtra := map[string]any{"target": target}
+		if meta.ContextLength > 0 {
+			aliasExtra["context_length"] = meta.ContextLength
+		}
+		if meta.MaxOutputTokens > 0 {
+			aliasExtra["max_output_tokens"] = meta.MaxOutputTokens
+		}
 		out.Data = append(out.Data, modelEntry{
-			ID:      alias,
-			Object:  "model",
-			Created: created,
-			OwnedBy: "alias",
-			Extra:   map[string]any{"target": target},
+			ID:              alias,
+			Object:          "model",
+			Created:         created,
+			OwnedBy:         "alias",
+			ContextLength:   meta.ContextLength,
+			MaxOutputTokens: meta.MaxOutputTokens,
+			Extra:           aliasExtra,
 		})
 	}
 
@@ -521,10 +566,8 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 	// correct for a module with no published number -- rather than the gateway
 	// inventing a cap from a table it does not own.
 	if req.MaxTokens == nil {
-		if limits, ok := core.AsModelLimits(client); ok {
-			if n, ok := limits.ModelMaxOutputTokens(r.Context(), upstreamModel); ok && n > 0 {
-				req.MaxTokens = &n
-			}
+		if n, ok := s.resolveMaxOutputTokens(r.Context(), client, upstreamModel); ok {
+			req.MaxTokens = &n
 		}
 	}
 	rec.Client = client.Name()
@@ -636,10 +679,8 @@ func (s *server) serveRemainingCandidates(w http.ResponseWriter, r *http.Request
 		attemptReq.Model = upstreamModel
 		if !maxTokensExplicit {
 			attemptReq.MaxTokens = nil
-			if limits, ok := core.AsModelLimits(client); ok {
-				if n, ok := limits.ModelMaxOutputTokens(r.Context(), upstreamModel); ok && n > 0 {
-					attemptReq.MaxTokens = &n
-				}
+			if n, ok := s.resolveMaxOutputTokens(r.Context(), client, upstreamModel); ok {
+				attemptReq.MaxTokens = &n
 			}
 		}
 		rec.Client = client.Name()

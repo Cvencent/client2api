@@ -94,6 +94,23 @@ func TestTwoCredentialsForOneAccountShareAnIdentity(t *testing.T) {
 	}
 }
 
+// TestTheJWTAccountLabelNamesTheLogin pins the readable handle the panel shows
+// in the recent-calls account column.  The credential store keys the token by
+// channel ("zcodejwttoken"), so a bare "ZCode plan JWT" cannot tell two Zhipu
+// logins apart; the vendor user id suffix can.
+func TestTheJWTAccountLabelNamesTheLogin(t *testing.T) {
+	const userID = "61161790588087632"
+	if got := jwtAccountLabel(userID); got != "ZCode plan JWT ...88087632" {
+		t.Errorf("jwtAccountLabel(%q) = %q, want the user id suffix", userID, got)
+	}
+	if got := jwtAccountLabel(""); got != "ZCode plan JWT" {
+		t.Errorf("jwtAccountLabel(\"\") = %q, want the plain channel label", got)
+	}
+	if got := jwtAccountLabel("12345678"); got != "ZCode plan JWT 12345678" {
+		t.Errorf("an eight-character id must not be elided: %q", got)
+	}
+}
+
 // TestRecordForPublishesTheIdentity pins the projection: the panel can only
 // group on what the record carries, so the account's user id has to survive the
 // trip.  A credential that knows no account must report none rather than an

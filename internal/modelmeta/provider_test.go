@@ -281,7 +281,9 @@ func TestProviderGlobalOnlyModelIsAbsentInCN(t *testing.T) {
 
 func TestProviderKimiAndTabbitHaveNoInventedNumbers(t *testing.T) {
 	kimi := New(Options{Client: "kimi"})
-	for _, id := range []string{"kimi", "kimi-k2", "k3-agent", "k3-agent-ultra", "k2d6-agent"} {
+	// k3-agent/k3-agent-ultra carry a documented Kimi K3 window; the remaining
+	// builtin ids have no public source and must stay unresolved.
+	for _, id := range []string{"kimi", "kimi-k2", "k2d6-agent"} {
 		if m, ok := kimi.Lookup(id); ok {
 			t.Errorf("kimi %q resolved to %+v; no authoritative source covers this id", id, m)
 		}

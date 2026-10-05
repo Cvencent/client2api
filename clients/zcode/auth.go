@@ -376,6 +376,25 @@ func discoverFromProviderConfig(path string, secrets providerSecrets, logf func(
 	return out
 }
 
+// jwtAccountLabel names the plan JWT by the account it signs in as.
+//
+// The credential store keys the token by channel ("zcodejwttoken"), so the
+// bare channel name says which secret was used but not which login it belongs
+// to; a pool holding more than one ZCode login cannot be read from the call
+// log that way.  The vendor user id inside the token is the handle that can,
+// and its last eight characters are enough to tell logins apart without
+// widening the account column.
+func jwtAccountLabel(userID string) string {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return "ZCode plan JWT"
+	}
+	if len(userID) > 8 {
+		userID = "..." + userID[len(userID)-8:]
+	}
+	return "ZCode plan JWT " + userID
+}
+
 func discoverFromCredentials(path string, logf func(string, ...any)) []credentialSource {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -392,16 +411,17 @@ func discoverFromCredentials(path string, logf func(string, ...any)) []credentia
 	if v, ok := doc["zcodejwttoken"].(string); ok {
 		token := strings.TrimSpace(v)
 		if token != "" && !strings.HasPrefix(token, encryptedValuePrefix) {
+			userID := jwtUserID(token)
 			out = append(out, credentialSource{
 				Account: Account{
 					ID:       "zcode-credentials:zcodejwttoken",
-					Label:    "ZCode plan JWT",
+					Label:    jwtAccountLabel(userID),
 					Provider: providerZai,
 					Mode:     modeJWT,
 					BaseURL:  baseZaiPlan,
 					Enabled:  true,
 					Source:   "~/.zcode/v2/credentials.json#zcodejwttoken",
-					UserID:   jwtUserID(token),
+					UserID:   userID,
 					jwt:      token,
 				},
 				Path:       path + "#zcodejwttoken",

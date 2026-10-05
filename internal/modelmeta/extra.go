@@ -50,13 +50,13 @@ func FromExtra(extra map[string]any, keys ExtraKeys, source string) Meta {
 	}
 	m := Meta{Source: source, FieldSources: map[string]string{}}
 	if keys.ContextLength != "" {
-		if v := extraInt(extra[keys.ContextLength]); v > 0 {
+		if v := extraIntKeys(extra, keys.ContextLength, "context_window", "max_input_tokens"); v > 0 {
 			m.ContextLength = v
 			m.FieldSources[FieldContextLength] = source
 		}
 	}
 	if keys.MaxOutputTokens != "" {
-		if v := extraInt(extra[keys.MaxOutputTokens]); v > 0 {
+		if v := extraIntKeys(extra, keys.MaxOutputTokens, "max_output_tokens", "max_tokens", "max_completion_tokens"); v > 0 {
 			m.MaxOutputTokens = v
 			m.FieldSources[FieldMaxOutputTokens] = source
 		}

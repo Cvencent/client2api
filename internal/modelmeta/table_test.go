@@ -12,8 +12,8 @@ func TestStaticTableEntryCounts(t *testing.T) {
 		why    string
 	}{
 		{"workbuddy", 33, "27 ids ported verbatim from model.json plus 6 effort-only ids"},
-		{"tabbit", 4, "only ids whose name matches a reference table id"},
-		{"kimi", 0, "no authoritative source names any of the kimi module's builtin ids"},
+		{"tabbit", 22, "official upstream presets plus the reference-derived gpt/deepseek/glm rows"},
+		{"kimi", 2, "the K3 agent ids carry a documented Kimi K3 window"},
 		{"nosuchclient", 0, "an unknown client has no static entries"},
 	}
 	for _, c := range cases {
@@ -22,7 +22,11 @@ func TestStaticTableEntryCounts(t *testing.T) {
 		}
 	}
 	clients := Clients()
-	want := map[string]bool{"workbuddy": true, "tabbit": true}
+	want := map[string]bool{
+		"workbuddy": true, "tabbit": true, "kimi": true, "codearts": true,
+		"opencode": true, "lobsterai": true, "minimaxcode": true,
+		"qwenwork": true, "trae": true, "zcode": true,
+	}
 	if len(clients) != len(want) {
 		t.Fatalf("Clients() = %v, want %v", clients, want)
 	}
@@ -217,21 +221,25 @@ func TestStaticUnknownModelsAreNotFound(t *testing.T) {
 			t.Errorf("tabbit/%q resolved to %+v, want not-found", model, m)
 		}
 	}
-	// The kimi section is deliberately empty; see the note in table.json.
-	for _, model := range []string{"kimi", "kimi-k2", "k3-agent", "k3-agent-ultra", "k2d6-agent"} {
+	// Only the K3 agent ids have a public source. The rest of the kimi module's
+	// builtin ids must stay unresolved rather than borrow the K3 window.
+	if m, ok := StaticMeta("kimi", RealmCN, "k3-agent"); !ok || m.ContextLength != 1048576 {
+		t.Errorf("kimi/k3-agent = %+v ok=%v, want the documented 1M window", m, ok)
+	}
+	for _, model := range []string{"kimi", "kimi-k2", "k2d6-agent"} {
 		if m, ok := StaticMeta("kimi", RealmCN, model); ok {
 			t.Errorf("kimi/%q resolved to %+v, but no source exists for it", model, m)
 		}
 	}
-	if ids := StaticModelIDs("kimi"); len(ids) != 0 {
-		t.Errorf("StaticModelIDs(kimi) = %v, want none", ids)
+	if ids := StaticModelIDs("kimi"); len(ids) != 2 {
+		t.Errorf("StaticModelIDs(kimi) = %v, want the two K3 agent ids", ids)
 	}
 }
 
 func TestStaticModelIDsAreSortedCopies(t *testing.T) {
 	ids := StaticModelIDs("tabbit")
-	if len(ids) != 4 {
-		t.Fatalf("StaticModelIDs(tabbit) = %v, want 4 entries", ids)
+	if len(ids) != 22 {
+		t.Fatalf("StaticModelIDs(tabbit) = %v, want 22 entries", ids)
 	}
 	for i := 1; i < len(ids); i++ {
 		if ids[i-1] > ids[i] {

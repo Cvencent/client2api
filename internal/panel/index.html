@@ -261,6 +261,14 @@ label.fld > .hint { display: block; font-size: 11.5px; color: var(--ink-3); marg
 /* 模型表：紧凑一些，7 列在常见窗口下尽量免横向滚动 */
 .acc.md { min-width: 700px; }
 .acc.md th, .acc.md td { padding: 10px 9px; }
+/* 上下文 / 最大输出是可编辑数字框：值来自服务端解析结果，来源用中文标注。 */
+.acc.md .mdedit { white-space: nowrap; }
+.acc.md .mdedit input { width: 92px; padding: 4px 6px; font-size: 12px; text-align: right; }
+.acc.md .mdedit input.dirty { border-color: var(--accent); }
+.acc.md .mdedit .mdsrc { display: block; margin-top: 3px; font-size: 10.5px; color: var(--ink-3); }
+.acc.md .mdedit .mdsrc.manual { color: var(--accent); font-weight: 600; }
+.acc.md .mdacts { white-space: nowrap; }
+.acc.md .mdacts button { padding: 3px 7px; font-size: 11.5px; }
 .who { min-width: 118px; max-width: 200px; }
 #taskTable .who { max-width: 360px; }
 #taskTable .who .nm, #taskTable .who .id { white-space: normal; word-break: break-all; }
@@ -1662,6 +1670,8 @@ input[type=checkbox] { width: 14px; height: 14px; padding: 0; accent-color: var(
           <h3>模型能力 <span class="hint">模型由各客户端模块从上游实时拉取；拉取失败时保留上一份可用目录</span></h3>
           <span class="grow"></span>
           <span class="note" id="mdNote">实时查询上游</span>
+          <span class="note" id="mdDirty"></span>
+          <button class="xs" id="btnMdSave" disabled>保存修改</button>
           <button class="xs" id="btnModels">重新获取</button>
         </header>
         <!-- 这张表动辄八百行：没有搜索就只能靠眼睛扫。筛选完全在浏览器里做，
@@ -1677,7 +1687,7 @@ input[type=checkbox] { width: 14px; height: 14px; padding: 0; accent-color: var(
         <div class="tbl-wrap">
         <table class="acc md">
           <thead><tr>
-            <th>模型</th><th>客户端</th><th>来源</th><th>倍率</th><th>默认档</th><th>思考档位</th><th>上下文</th><th>最大输出</th><th>所属</th>
+            <th>模型</th><th>客户端</th><th>来源</th><th>倍率</th><th>默认档</th><th>思考档位</th><th>上下文</th><th>最大输出</th><th>操作</th><th>所属</th>
           </tr></thead>
           <tbody id="mdBody"></tbody>
         </table>
@@ -4037,6 +4047,106 @@ function capBadges(ex) {
   return caps.length ? '<div class="hint" style="margin-top:2px">' + caps.join(" ") + "</div>" : "";
 }
 
+/* 上下文 / 最大输出改成可编辑数字框。值来自服务端解析后的结果，来源用中文标出；
+   改动先记在 MD_EDITS 里，点「保存修改」才一次性提交。清空某个框再保存 =
+   删掉该字段的手动值，回落到上游值或官方预设。 */
+const MD_SRC_LABEL = { manual: "手动", vendor: "上游", static: "预设", "models-dev": "模型库", cache: "缓存", fallback: "策略" };
+function mdSrcText(s) { return MD_SRC_LABEL[s] || "未公开"; }
+// 探测结果是可选增强：有实测就补一行小字，没有就不画。
+function mdProbeHint(pr) {
+  if (!pr) return "";
+  const days = probeDays(pr.tested_at);
+  const stale = days !== null && days > 30 ? " · " + days + " 天前" : "";
+  const tip = "声称 " + (pr.claimed ? fmtK(pr.claimed) : "?") + " · 实测 " + (pr.measured ? fmtK(pr.measured) : "?") +
+    (pr.note ? " · " + pr.note : "") + (pr.tested_at ? " · 探测于 " + pr.tested_at : "");
+  let label = "未测出";
+  if (pr.verdict === "clamped" && pr.measured) {
+    if (pr.claimed && pr.measured < pr.claimed) {
+      const x = pr.claimed / pr.measured;
+      label = "钳制 " + (x >= 10 ? Math.round(x) : Math.round(x * 10) / 10) + "×";
+    } else {
+      label = "实测 " + fmtK(pr.measured) + (pr.claimed && pr.measured > pr.claimed ? " ↑" : " ✓");
+    }
+  } else if (pr.verdict === "at_least" && pr.measured) {
+    label = "实测 ≥" + fmtK(pr.measured);
+  }
+  return '<div class="hint" title="' + esc(tip) + '">' + esc(label + stale) + "</div>";
+}
+function mdNumCell(field, value, source, def, probe) {
+  const v = value > 0 ? String(value) : "";
+  const d = def > 0 ? String(def) : "";
+  const hint = field === "output" ? mdProbeHint(probe) : "";
+  return '<td class="num mdedit" data-field="' + field + '">' +
+    '<input class="mdnum" type="number" min="0" step="1024" inputmode="numeric" data-field="' + field + '"' +
+    ' value="' + esc(v) + '" data-initial="' + esc(v) + '" data-default="' + esc(d) + '">' +
+    '<div class="mdsrc' + (source === "manual" ? " manual" : "") + '">' + esc(mdSrcText(source)) + '</div>' + hint + "</td>";
+}
+let MD_EDITS = {};
+function mdKey(client, model) { return client + "\u0000" + model; }
+function mdRowKey(tr) { return mdKey(tr.dataset.client, tr.dataset.model); }
+function mdInputs(tr) {
+  return { ctx: tr.querySelector('input[data-field="context"]'), out: tr.querySelector('input[data-field="output"]') };
+}
+function mdSyncDirty() {
+  const n = Object.keys(MD_EDITS).length;
+  const btn = $("#btnMdSave");
+  if (btn) btn.disabled = n === 0;
+  const note = $("#mdDirty");
+  if (note) note.textContent = n ? n + " 项未保存" : "";
+  document.querySelectorAll("#mdBody tr[data-client]").forEach(tr => {
+    const { ctx, out } = mdInputs(tr);
+    if (!ctx || !out) return;
+    if (ctx.value !== ctx.dataset.initial) ctx.classList.add("dirty"); else ctx.classList.remove("dirty");
+    if (out.value !== out.dataset.initial) out.classList.add("dirty"); else out.classList.remove("dirty");
+  });
+}
+// restore=true 表示「恢复官方默认」：保存时提交 0，服务端据此删掉手动值。
+function mdRecord(tr, restore) {
+  const { ctx, out } = mdInputs(tr);
+  if (!ctx || !out) return;
+  const key = mdRowKey(tr);
+  if (ctx.value !== ctx.dataset.initial || out.value !== out.dataset.initial) {
+    MD_EDITS[key] = { ctx: ctx.value, out: out.value, restore: !!restore };
+  } else {
+    delete MD_EDITS[key];
+  }
+  mdSyncDirty();
+}
+// 过滤会重建 tbody，所以每次重建后要把还没保存的编辑贴回去。
+function mdReapplyEdits() {
+  document.querySelectorAll("#mdBody tr[data-client]").forEach(tr => {
+    const e = MD_EDITS[mdRowKey(tr)];
+    if (!e) return;
+    const { ctx, out } = mdInputs(tr);
+    if (ctx && ctx.value !== e.ctx) ctx.value = e.ctx;
+    if (out && out.value !== e.out) out.value = e.out;
+  });
+  mdSyncDirty();
+}
+async function mdSave() {
+  const clients = {};
+  let n = 0;
+  MD_ITEMS.forEach(it => {
+    const e = MD_EDITS[it.key];
+    if (!e) return;
+    n++;
+    // 恢复默认 = 清掉这一对模型的手动值，回落到上游值或官方预设。
+    if (e.restore) { (clients[it.client] || (clients[it.client] = {}))[it.model] = { context_length: 0, max_output_tokens: 0 }; return; }
+    const ctxChanged = e.ctx !== it.ctxStr;
+    const outChanged = e.out !== it.outStr;
+    // 没改的那一半如果本来就是手动值，要原样带上，否则会被这次提交清掉。
+    const ctxManual = ctxChanged ? (parseInt(e.ctx, 10) || 0) : (it.ctxSrc === "manual" ? it.ctx : 0);
+    const outManual = outChanged ? (parseInt(e.out, 10) || 0) : (it.outSrc === "manual" ? it.out : 0);
+    (clients[it.client] || (clients[it.client] = {}))[it.model] = { context_length: ctxManual, max_output_tokens: outManual };
+  });
+  if (!n) return;
+  const r = await api("/panel/api/model_context", { method: "POST", body: { clients: clients } });
+  if (!r.ok) { toast("保存失败：" + r.err, "err"); return; }
+  toast("已保存 " + n + " 个模型的上下文设置", "ok");
+  MD_EDITS = {};
+  await renderModels(false);
+}
+
 // MD_ITEMS 是模型表已经渲染好的行：{ client, up, text, html }。筛选只在这个数组上
 // 重排，永远不重新请求上游 —— 800 多行每次输入都去问一遍厂商是不可接受的。
 let MD_ITEMS = [];
@@ -4049,7 +4159,7 @@ async function renderModels(refresh) {
     refresh ? api("/panel/api/models/refresh", { method: "POST" }) : api("/panel/api/models"),
     api("/panel/api/model_probes"),
   ]);
-  if (!r.ok) { $("#mdNote").textContent = "获取失败：" + r.err; $("#mdBody").innerHTML = '<tr><td colspan="9" class="hint">' + esc(r.err) + '</td></tr>'; return; }
+  if (!r.ok) { $("#mdNote").textContent = "获取失败：" + r.err; $("#mdBody").innerHTML = '<tr><td colspan="10" class="hint">' + esc(r.err) + '</td></tr>'; return; }
   // 探测数据是可选增强：未配置 / 工具还没跑过 / 读取失败，都退化为无标注，
   // 绝不让它影响模型列表本身（与 /panel/api/model_probes 的空集语义一致）。
   const probes = (pr.ok && pr.data && pr.data.probes) || {};
@@ -4095,10 +4205,18 @@ async function renderModels(refresh) {
       // 条件都只是在这个数组上过滤，不会再问一次上游。
       items.push({
         client: c.name,
+        key: mdKey(c.name, m.id),
+        model: m.id,
+        ctx: m.context_length || 0,
+        ctxStr: m.context_length > 0 ? String(m.context_length) : "",
+        ctxSrc: m.context_source || "",
+        out: m.max_output_tokens || 0,
+        outStr: m.max_output_tokens > 0 ? String(m.max_output_tokens) : "",
+        outSrc: m.max_output_source || "",
         up: !isFallback,
         free: free,
         text: haystack([c.name, m.id, nm, m.owned_by, ex]).join(" "),
-        html: '<tr><td><b>' + esc(m.id) + '</b>' + (nm ? '<div class="hint">' + esc(nm) + '</div>' : '') +
+        html: '<tr data-client="' + esc(c.name) + '" data-model="' + esc(m.id) + '"><td><b>' + esc(m.id) + '</b>' + (nm ? '<div class="hint">' + esc(nm) + '</div>' : '') +
           (free ? '<span class="chip ok" title="' + esc(freeTitle) + '">免费</span>' : '') + capBadges(ex) + '</td>' +
           '<td>' + esc(c.name) + '</td>' +
           '<td>' + (isFallback
@@ -4107,8 +4225,9 @@ async function renderModels(refresh) {
           rateCell(ex) +
           defaultEffortCell(ex) +
           effortsCell(ex) +
-          '<td class="num">' + (ctx ? esc(fmtK(ctx)) : "-") + '</td>' +
-          outCell(ex, probe) +
+          mdNumCell("context", m.context_length, m.context_source, m.context_default) +
+          mdNumCell("output", m.max_output_tokens, m.max_output_source, m.max_output_default, probe) +
+          '<td class="mdacts"><button class="xs mdRestore" type="button" title="清掉手动值，回到上游值或官方预设">恢复官方默认</button></td>' +
           // 所属和客户端是同一个名字时留一个破折号：大部分行都这样，重复一遍
           // 只是把这一列变成噪音。两边真的不一样（上游自报的归属不同）才显示。
           '<td>' + (m.owned_by && m.owned_by !== c.name ? esc(m.owned_by) : '<span class="hint">—</span>') + '</td></tr>',
@@ -4117,6 +4236,10 @@ async function renderModels(refresh) {
   });
   MODELS = cls;
   MD_ITEMS = items;
+  // 刷新后模型可能增删：丢掉指向已消失模型的历史编辑，避免保存时提交幽灵行。
+  const liveKeys = {};
+  items.forEach(it => { liveKeys[it.key] = true; });
+  Object.keys(MD_EDITS).forEach(k => { if (!liveKeys[k]) delete MD_EDITS[k]; });
   // 客户端下拉只列这次真的返回了模型的模块，并按名字排序。已经选中的值跨刷新保留，
   // 否则每按一次「重新获取」都要重新选一遍。
   const names = cls.filter(c => (c.models || []).length).map(c => c.name).sort();
@@ -4148,8 +4271,9 @@ function mdApply() {
     (!cl || it.client === cl) && (!upOnly || it.up) && (!freeOnly || it.free) &&
     words.every(w => it.text.indexOf(w) >= 0));
   $("#mdBody").innerHTML = rows.map(it => it.html).join("") ||
-    '<tr class="filtered"><td colspan="9" class="hint">' +
+    '<tr class="filtered"><td colspan="10" class="hint">' +
     (MD_ITEMS.length ? "没有模型匹配当前筛选条件，清空搜索框即可回到全量" : "没有任何模块返回模型") + '</td></tr>';
+  mdReapplyEdits();
   // 计数只在真的筛掉了东西时才着色：否则这个数字会一直在抢注意力。
   const filtered = MD_ITEMS.length > 0 && rows.length < MD_ITEMS.length;
   $("#mdCount").textContent = MD_ITEMS.length
@@ -7596,6 +7720,23 @@ $("#btnPk").addEventListener("click", renderClients);
   $("#btnAlertsClear").addEventListener("click", clearAlerts);
   $("#btnAlertCenter").addEventListener("click", () => { location.hash = "#alerts"; if (VIEW === "alerts") renderAlerts(); });
   $("#btnModels").addEventListener("click", () => renderModels(true));
+// 上下文 / 最大输出的编辑是委托式的：过滤会重建 tbody，绑定在行上会随行一起丢。
+$("#mdBody").addEventListener("input", ev => {
+  const tr = ev.target.closest("tr[data-client]");
+  if (tr && ev.target.classList.contains("mdnum")) mdRecord(tr, false);
+});
+$("#mdBody").addEventListener("click", ev => {
+  const btn = ev.target.closest(".mdRestore");
+  if (!btn) return;
+  const tr = btn.closest("tr[data-client]");
+  if (!tr) return;
+  const { ctx, out } = mdInputs(tr);
+  if (!ctx || !out) return;
+  ctx.value = ctx.dataset.default;
+  out.value = out.dataset.default;
+  mdRecord(tr, true);
+});
+$("#btnMdSave").addEventListener("click", mdSave);
 $("#btnCfgRestart").addEventListener("click", restartProcess);
 
 // 一键重启。POST 之后这个进程会退出并换一个新的起来，所以期间的请求必定会断;

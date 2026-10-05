@@ -43,3 +43,8 @@ func killBrowserTree(pid int, logf func(string, ...any)) {
 		_ = proc.Signal(syscall.SIGKILL)
 	}
 }
+
+// guardBrowserWindow is a no-op off Windows: the off-screen placement comes
+// from --window-position, and there is no equivalent of the Win32 clamp that
+// makes it necessary to re-assert the position there.
+func guardBrowserWindow(int, <-chan struct{}, func(string, ...any)) {}

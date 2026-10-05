@@ -21,8 +21,17 @@ decodes the Anthropic SSE stream (or the non-streaming JSON document) back into
 
 | Model | Notes |
 | --- | --- |
-| `GLM-5.3` | accepted by the upstream at recon time |
-| `GLM-5.3-Flash` | accepted by the upstream at recon time |
+| `GLM-5.3` | 1M context, 128K max output |
+| `GLM-5.3-Flash` | 1M context, 128K max output |
+| `GLM-5.3-FlashX` | 1M context, 128K max output |
+| `GLM-5.2` | 1M context, 128K max output |
+| `GLM-5.1` | 200K context, 128K max output |
+| `GLM-5` | 200K context, 128K max output |
+| `GLM-5-Turbo` | 200K context, 128K max output |
+| `GLM-4.7` | 200K context, 128K max output |
+| `GLM-4.6` | 200K context, 128K max output |
+| `GLM-4.5` | 128K context, 96K max output |
+| `GLM-4.5-Air` | 128K context, 96K max output |
 
 The upstream is the authority on this list. A model it refuses answers with the
 envelope code `3006` ("model not allowed"), which this module maps to
@@ -30,8 +39,9 @@ envelope code `3006` ("model not allowed"), which this module maps to
 `models` if your account is provisioned differently — but note that a wrong id is
 rejected by the *upstream*, not by us, so `models` only changes what we advertise.
 
-`Models()` never makes a network call: the gateway calls it on every `/v1/models`
-request and the panel calls it on every refresh.
+`Models()` answers from a five-minute cache. The gateway calls it on every
+`/v1/models` request and the panel calls it on every refresh; only an expired
+cache reaches the vendor, and a failed refresh keeps the last good list.
 
 ---
 
@@ -48,8 +58,12 @@ key is optional; an absent or malformed object degrades to the defaults below
       "accounts": [ /* see below */ ],
       "upstream_base": "",
       "auto_discover": true,
-      "models": ["GLM-5.3", "GLM-5.3-Flash"],
-      "max_tokens_default": 4096,
+      "models": [
+        "GLM-5.3", "GLM-5.3-Flash", "GLM-5.3-FlashX", "GLM-5.2",
+        "GLM-5.1", "GLM-5", "GLM-5-Turbo", "GLM-4.7",
+        "GLM-4.6", "GLM-4.5", "GLM-4.5-Air"
+      ],
+      "max_tokens_default": 32768,
       "max_account_attempts": 5,
       "cooldown_seconds": 300,
       "timeout_seconds": 600,
@@ -73,8 +87,8 @@ key is optional; an absent or malformed object degrades to the defaults below
 | `accounts` | array | `[]` | Explicit credentials, tried before discovered ones. |
 | `upstream_base` | string | `""` | **Explicit, off-by-default** override: send *every* request to `<upstream_base>/v1/messages` with **no credentials at all**. Intended for proving the translation layer against a locally running Anthropic-wire gateway. Never used as a silent fallback. |
 | `auto_discover` | bool | `true` | Read credentials already on the machine (see *Credential discovery*). |
-| `models` | array | `["GLM-5.3","GLM-5.3-Flash"]` | Model ids advertised by `Models()`. |
-| `max_tokens_default` | int | `4096` | `max_tokens` when the caller sends none. |
+| `models` | array | the 11 GLM ids in [Model ids](#model-ids) | Model ids advertised by `Models()`. The built-in list is used when the upstream catalogue cannot be read. |
+| `max_tokens_default` | int | `32768` | `max_tokens` when the caller sends none and the catalogue has no published budget. The known plan models are filled from the vendor's docs instead (see `builtinModelSpecs`). |
 | `max_account_attempts` | int | `5` | Upper bound on upstream attempts per `Chat` call (one per account at most). |
 | `cooldown_seconds` | int | `300` | How long an account is parked after `3012` risk control / `429`. |
 | `timeout_seconds` | int | `600` | Per-attempt deadline. `0` uses the default; a **negative** value means "no extra deadline". |

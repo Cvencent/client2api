@@ -230,23 +230,31 @@ func (c *Client) configuredModels() []core.Model {
 		if id == "" {
 			continue
 		}
-		out = append(out, core.Model{ID: id, OwnedBy: c.Name()})
+		out = append(out, applyBuiltinSpec(core.Model{ID: id, OwnedBy: c.Name()}))
 	}
 	return out
 }
 
 // ModelMaxOutputTokens implements core.ModelLimitsProvider.  When the caller
 // omits max_tokens the gateway asks what the vendor advertises for this model,
-// rather than letting the module's flat defaultMaxTokens (4096) decide for a
-// model that advertises far more.
+// rather than letting the module's flat defaultMaxTokens decide for a model
+// that advertises far more.
 //
-// Only the vendor's own list carries the number, so this reads the cache and
-// does not fall back to configuredModels() -- an operator-typed id has no
-// published budget, and answering with the flat default here would defeat the
-// point.  A cold cache answers "cannot say" and the request keeps its old
-// behaviour.
+// The vendor's /v1/models list carries no budget at all, so every catalogue
+// entry is filled from builtinModelSpecs on the way in (see modelFromEntry).
+// The same table also answers before the first upstream refresh, which matters
+// on a cold start: a known plan model must not be truncated just because the
+// metadata cache has not warmed up yet.  An operator-typed id the table does
+// not know still answers "cannot say"; it never gets an invented budget.
 func (c *Client) ModelMaxOutputTokens(ctx context.Context, model string) (int, bool) {
-	return core.OutputLimitFor(c.models.snapshot(), model)
+	if n, ok := core.OutputLimitFor(c.models.snapshot(), model); ok {
+		return n, true
+	}
+	spec, ok := builtinModelSpecs[strings.ToLower(strings.TrimSpace(model))]
+	if !ok || spec.maxOutputTokens <= 0 {
+		return 0, false
+	}
+	return spec.maxOutputTokens, true
 }
 
 // refreshModels performs one upstream refresh and updates the cache.  A burst
@@ -538,6 +546,58 @@ func decodeModelEntries(raw json.RawMessage) []modelEntry {
 	return nil
 }
 
+// builtinModelSpec is what the vendor publishes for one model id.
+//
+// The ZCode plan's /v1/models list answers with ids and display names and
+// nothing else, so without this table every model reached the gateway with no
+// advertised budget and fell back to the module's flat defaultMaxTokens.
+// A caller that omitted max_tokens was then cut off mid-answer with
+// finish_reason "length" and nothing in the response naming who chose the
+// number.  The values below are the ones docs.z.ai publishes for each id.
+type builtinModelSpec struct {
+	displayName     string
+	contextLength   int
+	maxOutputTokens int
+}
+
+// builtinModelSpecs is keyed by the upstream model id in lower case.  It is a
+// fallback, never an override: a number the vendor sent always wins.
+var builtinModelSpecs = map[string]builtinModelSpec{
+	"glm-4.5":        {"GLM-4.5", 131072, 98304},
+	"glm-4.5-air":    {"GLM-4.5-Air", 131072, 98304},
+	"glm-4.6":        {"GLM-4.6", 204800, 131072},
+	"glm-4.7":        {"GLM-4.7", 204800, 131072},
+	"glm-5":          {"GLM-5", 204800, 131072},
+	"glm-5-turbo":    {"GLM-5-Turbo", 202752, 131072},
+	"glm-5.1":        {"GLM-5.1", 204800, 131072},
+	"glm-5.2":        {"GLM-5.2", 1048576, 131072},
+	"glm-5.3":        {"GLM-5.3", 1048576, 131072},
+	"glm-5.3-flash":  {"GLM-5.3-Flash", 1048576, 131072},
+	"glm-5.3-flashx": {"GLM-5.3-FlashX", 1048576, 131072},
+}
+
+// applyBuiltinSpec fills the gaps a vendor record left open.  A value the
+// vendor actually published is never overwritten.
+func applyBuiltinSpec(m core.Model) core.Model {
+	spec, ok := builtinModelSpecs[strings.ToLower(strings.TrimSpace(m.ID))]
+	if !ok {
+		return m
+	}
+	if m.Extra == nil {
+		m.Extra = make(map[string]any, 3)
+	}
+	if _, ok := m.Extra["display_name"]; !ok {
+		m.Extra["display_name"] = spec.displayName
+	}
+	if _, ok := m.Extra["context_length"]; !ok {
+		m.Extra["context_length"] = spec.contextLength
+	}
+	if _, ok := m.Extra["max_output_tokens"]; !ok {
+		m.Extra["max_output_tokens"] = spec.maxOutputTokens
+	}
+	return m
+}
+
 // modelFromEntry projects one vendor record.  Values the vendor did not send
 // are not invented: Extra stays nil unless the record actually carried one.
 func modelFromEntry(e modelEntry, ownedBy string) (core.Model, bool) {
@@ -564,7 +624,7 @@ func modelFromEntry(e modelEntry, ownedBy string) (core.Model, bool) {
 		set("max_output_tokens", n)
 	}
 	m.Extra = extra
-	return m, true
+	return applyBuiltinSpec(m), true
 }
 
 // toInt64 coerces a numeric field the vendor may have sent as a number or as a

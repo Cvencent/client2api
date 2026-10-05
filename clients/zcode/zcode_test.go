@@ -198,8 +198,14 @@ func TestConfigDefaults(t *testing.T) {
 	if cfg.UpstreamBase != "" {
 		t.Errorf("upstream_base must default to empty, got %q", cfg.UpstreamBase)
 	}
-	if got := cfg.modelIDs(); len(got) != 2 || got[0] != "GLM-5.3" || got[1] != "GLM-5.3-Flash" {
-		t.Errorf("modelIDs = %v", got)
+	got := cfg.modelIDs()
+	if len(got) != len(defaultModels) {
+		t.Errorf("modelIDs = %v, want %v", got, defaultModels)
+	}
+	for i := range defaultModels {
+		if got[i] != defaultModels[i] {
+			t.Errorf("modelIDs[%d] = %q, want %q", i, got[i], defaultModels[i])
+		}
 	}
 }
 
@@ -308,7 +314,7 @@ func TestBuildBodySimpleConversation(t *testing.T) {
 	got := marshalBody(t, req, mappingConfig(), nil)
 	want := `{
 	  "model": "GLM-5.3",
-	  "max_tokens": 4096,
+	  "max_tokens": 32768,
 	  "system": [{"type": "text", "text": "be terse"}],
 	  "messages": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]
 	}`
@@ -329,7 +335,7 @@ func TestBuildBodyToolRoundTrip(t *testing.T) {
 	got := marshalBody(t, req, mappingConfig(), nil)
 	want := `{
 	  "model": "GLM-5.3",
-	  "max_tokens": 4096,
+	  "max_tokens": 32768,
 	  "messages": [
 	    {"role": "user", "content": [{"type": "text", "text": "weather in SF?"}]},
 	    {"role": "assistant", "content": [
@@ -355,7 +361,7 @@ func TestBuildBodyAssistantTextAndToolUse(t *testing.T) {
 	got := marshalBody(t, req, mappingConfig(), nil)
 	want := `{
 	  "model": "GLM-5.3",
-	  "max_tokens": 4096,
+	  "max_tokens": 32768,
 	  "messages": [{"role": "assistant", "content": [
 	    {"type": "text", "text": "let me check"},
 	    {"type": "tool_use", "id": "call_9", "name": "lookup", "input": {"q": "x"}}
@@ -391,7 +397,7 @@ func TestBuildBodyContentParts(t *testing.T) {
 	got := marshalBody(t, req, mappingConfig(), nil)
 	want := `{
 	  "model": "GLM-5.3",
-	  "max_tokens": 4096,
+	  "max_tokens": 32768,
 	  "messages": [{"role": "user", "content": [
 	    {"type": "text", "text": "what is this"},
 	    {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "AAAA"}}
@@ -1677,9 +1683,7 @@ func TestModels(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Models: %v", err)
 	}
-	if len(models) != 2 || models[0].ID != "GLM-5.3" || models[1].ID != "GLM-5.3-Flash" {
-		t.Fatalf("models = %+v", models)
-	}
+	assertIDs(t, models, defaultModels...)
 	if c.Name() != "zcode" {
 		t.Errorf("Name() = %q", c.Name())
 	}
@@ -1703,8 +1707,8 @@ func TestStatusIsCheapAndHonest(t *testing.T) {
 	if st.Name != "zcode" {
 		t.Errorf("Name = %q", st.Name)
 	}
-	if len(st.Models) != 2 {
-		t.Errorf("Models = %v", st.Models)
+	if len(st.Models) != len(defaultModels) {
+		t.Errorf("Models = %v, want %v", st.Models, defaultModels)
 	}
 	if len(st.Accounts) != 1 {
 		t.Fatalf("Accounts = %+v", st.Accounts)

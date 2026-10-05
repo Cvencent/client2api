@@ -144,8 +144,10 @@ func jwtConfig(t *testing.T, base, jwt string) string {
 		`"jwt":%q,"base_url":%q}]}`, jwt, base)
 }
 
-// configuredIDs is the fallback catalogue: the configured list.
-func configuredIDs() []string { return []string{"GLM-5.3", "GLM-5.3-Flash"} }
+// configuredIDs is the fallback catalogue: the built-in default list.
+func configuredIDs() []string {
+	return append([]string(nil), defaultModels...)
+}
 
 func assertConfigured(t *testing.T, models []core.Model) {
 	t.Helper()
@@ -920,5 +922,70 @@ func TestModelsRefresherInterfaceIsSatisfied(t *testing.T) {
 	c := newModelTestClient(t, `{"auto_discover":false}`)
 	if !core.CapabilitiesOf(context.Background(), c).Refresh {
 		t.Error("Capabilities.Refresh = false for a module implementing ModelRefresher")
+	}
+}
+
+// TestBuiltinSpecsFillTheVendorsSilentBudget pins the fix for the silent
+// truncation: the plan's /v1/models list names each model and nothing else, so
+// a catalogue entry has to pick the published budget up from
+// builtinModelSpecs, or every caller that omitted max_tokens is cut off at
+// the module's flat default.
+func TestBuiltinSpecsFillTheVendorsSilentBudget(t *testing.T) {
+	models, err := parseModelList([]byte(`{"data":[{"id":"glm-5.3-flash"},{"id":"GLM-4.6"}]}`), "zcode")
+	if err != nil {
+		t.Fatalf("parseModelList: %v", err)
+	}
+	if got, ok := core.ModelOutputLimit(models[0]); !ok || got != 131072 {
+		t.Errorf("glm-5.3-flash max output = %d (ok=%v), want 131072", got, ok)
+	}
+	if got := models[0].Extra["context_length"]; got != 1048576 {
+		t.Errorf("glm-5.3-flash context = %v, want 1048576", got)
+	}
+	// The lookup is case-insensitive: a vendor that capitalises an id still
+	// gets the published budget.
+	if got, ok := core.ModelOutputLimit(models[1]); !ok || got != 131072 {
+		t.Errorf("GLM-4.6 max output = %d (ok=%v), want 131072", got, ok)
+	}
+	// A number the vendor published always beats the table.
+	override, err := parseModelList([]byte(`{"data":[{"id":"glm-5.3-flash","max_output_tokens":8192}]}`), "zcode")
+	if err != nil {
+		t.Fatalf("parseModelList: %v", err)
+	}
+	if got, _ := core.ModelOutputLimit(override[0]); got != 8192 {
+		t.Errorf("the vendor's own budget was overwritten: %d, want 8192", got)
+	}
+	// An id the table does not know keeps its old behaviour: nothing invented.
+	unknown, err := parseModelList([]byte(`{"data":[{"id":"glm-9.9"}]}`), "zcode")
+	if err != nil {
+		t.Fatalf("parseModelList: %v", err)
+	}
+	if unknown[0].Extra != nil {
+		t.Errorf("unknown id Extra = %v, want nil", unknown[0].Extra)
+	}
+}
+
+// TestConfiguredModelsCarryTheBuiltinBudget covers the floor the catalogue
+// falls back to when upstream has never answered: an operator-typed id that
+// matches a plan model still reaches the gateway with a usable budget.
+func TestConfiguredModelsCarryTheBuiltinBudget(t *testing.T) {
+	c := newModelTestClient(t, `{"auto_discover":false,"models":["GLM-5.3-Flash"]}`)
+	models := c.configuredModels()
+	if len(models) != 1 {
+		t.Fatalf("configuredModels = %v, want one entry", modelIDsOf(models))
+	}
+	if got, ok := core.ModelOutputLimit(models[0]); !ok || got != 131072 {
+		t.Errorf("configured max output = %d (ok=%v), want 131072", got, ok)
+	}
+}
+
+// TestEveryDefaultModelHasBuiltinSpec keeps the advertised fallback catalogue
+// and the published metadata table from drifting apart.  A model without a
+// spec would be shown to callers but would silently fall back to
+// defaultMaxTokens when max_tokens is omitted.
+func TestEveryDefaultModelHasBuiltinSpec(t *testing.T) {
+	for _, id := range defaultModels {
+		if _, ok := builtinModelSpecs[strings.ToLower(id)]; !ok {
+			t.Errorf("default model %q has no builtinModelSpec", id)
+		}
 	}
 }
