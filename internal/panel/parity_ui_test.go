@@ -135,10 +135,11 @@ func TestDurationFieldsAreValidatedWhileTyping(t *testing.T) {
 	}
 	// 反向：名单里的每个 id 都必须真的被 renderConfig 渲染出来，否则这个
 	// 校验守着一个不存在的输入框，永远返回 false。
-	cfg := poolStatsFuncBody(t, src, "renderConfig")
+	// 号池字段在平台配置页的 WorkBuddy 卡片里，全局粘性仍在配置页。
+	cfg := poolStatsFuncBody(t, src, "renderConfig") + poolStatsFuncBody(t, src, "pfWorkBuddyPoolHTML")
 	for _, id := range want {
 		if !strings.Contains(cfg, `"`+id+`"`) {
-			t.Errorf("renderConfig 不渲染 %s，但 DUR_FIELDS 在守它", id)
+			t.Errorf("没有渲染 %s，但 DUR_FIELDS 在守它", id)
 		}
 	}
 
@@ -190,18 +191,26 @@ func TestDurationFieldsAreValidatedWhileTyping(t *testing.T) {
 
 	// 保存路径必须与即时校验同口径，且用可见中文标签点名（参考取 .fld .lb，
 	// 本仓的字段行是 .cfgrow .k）。
-	save := poolStatsFuncBody(t, src, "saveConfig")
-	if !strings.Contains(save, "DUR_RE.test(raw)") {
-		t.Error("saveConfig 没有复用共享的 DUR_RE：输入时和保存时会分叉成两套口径")
+	// 号池盒与全局粘性共用 readDurField：先钉住这段共用的读值与校验，
+	// 再确认两个保存入口都真的走它。
+	read := poolStatsFuncBody(t, src, "readDurField")
+	if !strings.Contains(read, "DUR_RE.test(raw)") {
+		t.Error("时长读值没有复用共享的 DUR_RE：输入时和保存时会分叉成两套口径")
 	}
-	if strings.Contains(save, "const DUR_RE") {
-		t.Error("saveConfig 又声明了一份局部 DUR_RE：迟早与即时校验分叉")
+	if strings.Contains(read, "const DUR_RE") {
+		t.Error("时长读值又声明了一份局部 DUR_RE：迟早与即时校验分叉")
 	}
-	if !strings.Contains(save, "durLabel(id)") {
-		t.Error("saveConfig 报错用的是内部键名，而不是可见中文标签")
+	if !strings.Contains(read, "durLabel(id)") {
+		t.Error("时长报错用的是内部键名，而不是可见中文标签")
 	}
-	if !strings.Contains(save, "markDurationFields()") {
-		t.Error("saveConfig 拦下脏值时没有同步标红")
+	if !strings.Contains(read, "markDurationFields()") {
+		t.Error("时长读值拦下脏值时没有同步标红")
+	}
+	for _, fn := range []string{"savePlatforms", "saveConfig"} {
+		body := poolStatsFuncBody(t, src, fn)
+		if !strings.Contains(body, "readDurField(") {
+			t.Errorf("%s 没有走共享的时长读值 helper", fn)
+		}
 	}
 
 	label := poolStatsFuncBody(t, src, "durLabel")

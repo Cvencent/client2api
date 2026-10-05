@@ -489,6 +489,16 @@ with `Retry-After: 1`. The live counters are visible in `/v1/status`
 (`in_flight`, `in_flight_full`, `sticky_sessions`) and `health`; a module that
 implements neither is simply reported without those keys.
 
+`pool.max_in_flight` is the internal pool ceiling for a module that keeps its
+own account pool. WorkBuddy is the main consumer and reads the whole `pool.*` /
+`cooldown.*` block; OpenRouter's single-key pool honours `pool.max_in_flight`,
+`pool.breaker_threshold` and `pool.breaker_cooldown`. A WorkBuddy request takes
+an internal pool slot first and a gateway `platforms.workbuddy.*` slot second, so
+the two ceilings stack and the tighter one governs in practice. The panel now
+keeps the root-level `pool.*` / `cooldown.*` controls inside the WorkBuddy card
+on 平台配置 rather than on 配置; the labels there should not be confused with
+the two gateway ceilings below. The JSON keys are unchanged.
+
 Each platform can also carry two gateway-level ceilings in the `platforms`
 section. `max_in_flight` (default **2**) caps all requests in flight against that platform;
 `max_in_flight_per_account` (default **2**) caps requests in flight against any one account

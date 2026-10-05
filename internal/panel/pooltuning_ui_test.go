@@ -7,7 +7,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// 配置页「账号池与流量治理」盒的回归测试。
+// 平台配置页 WorkBuddy 卡片里「账号池与流量治理」的回归测试。
 //
 // 这一盒的价值全在「改一个数字，池子的行为真的变了」上。而它要穿过四层：
 //
@@ -20,12 +20,13 @@ import (
 // 这里逐层静态钉住。
 // ---------------------------------------------------------------------------
 
-// poolTuningField 是这一盒里每一个可编辑的键，连同它在这四层里的四个名字。
+// poolTuningField 是 WorkBuddy 卡片里每一个可编辑的键，连同它在这四层里的
+// 四个名字。
 //
 //	el       index.html 里 input 的 id
-//	section  fileConfig 里的顶层节（pool / cooldown / session_sticky）
+//	section  fileConfig 里的顶层节（pool / cooldown）
 //	key      配置文件里的 JSON 键
-//	goField  对应的 Go 字段名（TTL 这类缩写不能靠 snake→Camel 推出来）
+//	goField  对应的 Go 字段名
 //	tuning   true = 经 core.PoolTuning 进池；false = 经 core.LiveSettings 直供
 type poolTuningField struct {
 	el      string
@@ -50,56 +51,80 @@ var poolTuningFields = []poolTuningField{
 	{"cfgPoolIdleMax", "pool", "idle_weight_max", "IdleWeightMax", true},
 	{"cfgPoolCostExplore", "pool", "cost_explore_interval", "CostExploreInterval", true},
 	{"cfgPoolExpiringSoon", "pool", "expiring_soon", "ExpiringSoon", false},
-	{"cfgStickyTTL", "session_sticky", "ttl", "TTL", false},
 	{"cfgPoolPreferExpiring", "pool", "prefer_expiring", "PreferExpiring", true},
 }
 
-// TestConfigPageRendersAndSavesEveryPoolTuningKnob 钉住第一、二层：
-// 每个键都要有输入框（渲染），并且在 saveConfig 里被读走（组装 patch）。
-// 「渲染了但没保存」是这一盒最容易犯的错——输入框看着好好的，按保存无效。
-func TestConfigPageRendersAndSavesEveryPoolTuningKnob(t *testing.T) {
+// TestWorkBuddyCardRendersAndSavesEveryPoolTuningKnob 钉住第一、二层：
+// 每个键都只能在 WorkBuddy 平台卡片里渲染，并且在 savePlatforms 里被读走
+// （组装 patch）。「渲染了但没保存」是这一盒最容易犯的错——输入框看着好好的，
+// 按保存无效。
+func TestWorkBuddyCardRendersAndSavesEveryPoolTuningKnob(t *testing.T) {
 	src := poolStatsUISource(t)
-	save := poolStatsFuncBody(t, src, "saveConfig")
+	host := poolStatsFuncBody(t, src, "renderPlatforms")
+	render := poolStatsFuncBody(t, src, "pfWorkBuddyPoolHTML")
+	save := poolStatsFuncBody(t, src, "savePlatforms")
 
+	if !strings.Contains(host, `if (n === "workbuddy") out.push(pfWorkBuddyPoolHTML(c))`) {
+		t.Error("renderPlatforms 没有把号池设置放进 WorkBuddy 卡片")
+	}
+	if !strings.Contains(host, `push("workbuddy")`) {
+		t.Error("renderPlatforms 没有保证 WorkBuddy 卡片始终存在：模块停用后号池设置会失联")
+	}
 	for _, f := range poolTuningFields {
 		rendered := false
-		for _, h := range []string{`cfgText("`, `cfgNum("`, `cfgCheck("`} {
-			if strings.Contains(src, h+f.el+`"`) {
+		for _, h := range []string{`pfWBText("`, `pfWBNum("`, `pfWBCheck("`} {
+			if strings.Contains(render, h+f.el+`"`) {
 				rendered = true
 				break
 			}
 		}
 		if !rendered {
-			t.Errorf("配置页没有渲染 %s：这个键操作员改不到", f.el)
+			t.Errorf("WorkBuddy 卡片没有渲染 %s：这个键操作员改不到", f.el)
 		}
-		// 数字/时长行把整条选择器交给 helper（num("#id", …)），开关行才直接
+		// 数字/时长行把整条选择器交给 helper（num("id", …)），开关行才直接
 		// 查表（$("#id")）。三种写法都算「读了这个输入框」。
 		used := false
-		for _, h := range []string{`$("#`, `num("#`, `dur("#`} {
+		for _, h := range []string{`$("#`, `readNumField("`, `readDurField("`} {
 			if strings.Contains(save, h+f.el+`"`) {
 				used = true
 				break
 			}
 		}
 		if !used {
-			t.Errorf("saveConfig 没有读 %s：输入框能改，但保存时被丢掉", f.el)
+			t.Errorf("savePlatforms 没有读 %s：输入框能改，但保存时被丢掉", f.el)
 		}
 	}
 
-	// 三节都要真的写进 patch。漏掉某一节，那一节的输入框全是摆设。
-	for _, want := range []string{"patch.pool = pool", "patch.cooldown = cool", "patch.session_sticky = sticky"} {
+	// 两节都要真的写进同一个 PATCH。漏掉某一节，那一节的输入框全是摆设。
+	for _, want := range []string{"patch.platforms = changed", "patch.pool = pool", "patch.cooldown = cool"} {
 		if !strings.Contains(save, want) {
-			t.Errorf("saveConfig 里找不到 %q：这一节的输入框保存不到磁盘", want)
+			t.Errorf("savePlatforms 里找不到 %q：这一节的输入框保存不到磁盘", want)
 		}
 	}
-	// prefer_expiring 是 *bool：勾与不勾都要回写，否则勾掉之后关不掉。
-	if !strings.Contains(save, `pool.prefer_expiring = $("#cfgPoolPreferExpiring").checked`) {
-		t.Error("prefer_expiring 没有无条件回写：取消勾选后关不掉这个路由")
+	// prefer_expiring 是 *bool：勾与不勾都要能回写，否则勾掉之后关不掉。
+	if !strings.Contains(save, `pool.prefer_expiring = now`) {
+		t.Error("prefer_expiring 没有回写：取消勾选后关不掉这个路由")
 	}
 	// 空串 = 删键回默认，但 0 是合法值（max_in_flight 的 0 = 不限制，
 	// cost_explore_interval 的 0 = 关停探索）。把 0 当空会把它们抹成默认值。
-	if !strings.Contains(save, `if (raw === "") { if (key in base) obj[key] = null; return true; }`) {
+	read := poolStatsFuncBody(t, src, "readNumField")
+	if !strings.Contains(read, `if (raw === "") { if (key in base) obj[key] = null; return true; }`) {
 		t.Error("留空回默认的判据变了：必须只认空字符串，不能把 0 当空")
+	}
+}
+
+// Session sticky is global rather than WorkBuddy-specific, so its TTL stays on
+// the gateway config page even though the pool controls moved into a platform.
+func TestGlobalConfigStillEditsSessionStickyTTL(t *testing.T) {
+	src := poolStatsUISource(t)
+	render := poolStatsFuncBody(t, src, "renderConfig")
+	save := poolStatsFuncBody(t, src, "saveConfig")
+
+	if !strings.Contains(render, `cfgText("cfgStickyTTL"`) {
+		t.Error("网关配置页没有渲染全局 session_sticky.ttl")
+	}
+	if !strings.Contains(save, `readDurField("cfgStickyTTL", "ttl", sticky, bSticky)`) || !strings.Contains(save, `patch.session_sticky = sticky`) {
+		t.Error("saveConfig 没有保存全局 session_sticky.ttl")
 	}
 }
 
@@ -115,9 +140,8 @@ func TestEveryPoolTuningKnobReachesTheConfigStruct(t *testing.T) {
 	src := string(b)
 
 	section := map[string]string{
-		"pool":           "Pool",
-		"cooldown":       "Cooldown",
-		"session_sticky": "SessionSticky",
+		"pool":     "Pool",
+		"cooldown": "Cooldown",
 	}
 	for _, f := range poolTuningFields {
 		if !strings.Contains(src, `json:"`+f.key+`"`) {

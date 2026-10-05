@@ -24,7 +24,7 @@ var (
 	// the attribute and the rule above cannot see it.  Every helper that mints
 	// an element must be listed here -- a new one that is not would make its
 	// rows look dangling, which is the guard doing its job.
-	shellMinted = regexp.MustCompile(`(?:cfgText|cfgNum|cfgCheck)\("([A-Za-z0-9_-]+)"`)
+	shellMinted = regexp.MustCompile(`(?:cfgText|cfgNum|cfgCheck|pfWBText|pfWBNum|pfWBCheck)\("([A-Za-z0-9_-]+)"`)
 )
 
 // shellRefs are the ways the script looks an element up.  Each captures only an

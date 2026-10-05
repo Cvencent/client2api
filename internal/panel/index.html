@@ -848,6 +848,16 @@ button.primary:active:not(:disabled) { filter: brightness(.94); }
 .pfmodels .pfFilter { width: 260px; max-width: 100%; padding: 5px 10px; font-size: 12.5px; border-radius: 6px; margin-bottom: 8px; }
 .pfmodels .hint { font-size: 12px; color: var(--ink-3); }
 .pfmodels .pfNoMatch { margin-top: 6px; }
+/* WorkBuddy 是唯一有内置账号池的平台，号池配置只在它的展开区里出现。 */
+.pfwbset { margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--line-soft); }
+.pfwbhd { display: flex; align-items: baseline; gap: 8px; margin-bottom: 3px; color: var(--ink-2); font-size: 12.5px; font-weight: 600; }
+.pfwbhd .hint { font-weight: 400; }
+.pfwbgrid { display: grid; grid-template-columns: repeat(2, minmax(280px, 1fr)); gap: 2px 22px; }
+.pfwbset .cfgrow { padding: 4px 0; }
+.pfwbset .cfgrow > .k { flex-basis: 132px; }
+.pfwbset .cfgrow .cfghelp { margin-left: 142px; }
+.pfwbnote { color: var(--ink-3); font-size: 11.5px; line-height: 1.65; margin-top: 6px; }
+@media (max-width: 760px) { .pfwbgrid { grid-template-columns: 1fr; } }
 .pfgrid { display: flex; flex-wrap: wrap; gap: 5px 12px; max-height: 260px; overflow: auto; padding: 2px; }
 .pfm { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--ink-2); background: var(--surface-2); border: 1px solid var(--line-soft); border-radius: 6px; padding: 3px 7px; cursor: pointer; }
 .pfm input { margin: 0; accent-color: var(--accent); }
@@ -1501,7 +1511,7 @@ input[type=checkbox] { width: 14px; height: 14px; padding: 0; accent-color: var(
     <section class="view" id="view-platforms" hidden>
       <div class="box">
         <header>
-          <h3>平台路由配置 <span class="hint">按平台设置模型黑名单与路由优先级</span></h3>
+          <h3>平台路由配置 <span class="hint">按平台设置路由优先级、模型黑名单、并发与最低余额；WorkBuddy 还带账号池治理</span></h3>
           <span class="grow"></span>
           <span class="note" id="pfNote">-</span>
           <button class="xs" id="btnPfReload">重新载入</button>
@@ -1517,7 +1527,7 @@ input[type=checkbox] { width: 14px; height: 14px; padding: 0; accent-color: var(
         </div>
         <div class="pad" id="pfBody"><div class="hint">正在读取平台与模型…</div></div>
         <div class="savebar">
-          <span class="hint">勾选 = 允许调用，取消勾选即把该模型加入此平台黑名单；优先级数字越小越先路由。保存后立即热加载生效，无需重启。</span>
+          <span class="hint">勾选 = 允许调用，取消勾选即加入该平台黑名单；优先级数字越小越先路由。「平台总并发 / 网关单账号并发」与「最低余额」在平台头部，WorkBuddy 卡片里额外有账号池治理。保存后立即热加载生效，无需重启。</span>
           <span class="grow"></span>
           <button class="primary" id="btnPfSave">保存并生效</button>
         </div>
@@ -3693,6 +3703,37 @@ function durLabel(id) {
   return (lb && lb.textContent.trim()) || id;
 }
 
+/* 数字 / 时长字段的统一读值口径：平台配置的 WorkBuddy 号池盒与配置页的全局
+   粘性共用。留空 = 删键回默认（基线里真有这个键时才写 null），0 是合法值
+   （max_in_flight 的 0 = 不限制，cost_explore_interval 的 0 = 关停）。
+   非法值当场弹错并聚焦，返回 false，调用方直接 return。 */
+function readNumField(id, key, obj, base, isInt) {
+  const el = $("#" + id);
+  const raw = el ? el.value.trim() : "";
+  if (raw === "") { if (key in base) obj[key] = null; return true; }
+  const n = isInt ? parseInt(raw, 10) : parseFloat(raw);
+  if (!Number.isFinite(n) || n < 0) {
+    toast("「" + durLabel(id) + "」必须是非负" + (isInt ? "整数" : "数字"), "err");
+    if (el) el.focus();
+    return false;
+  }
+  if (!(key in base) || Number(base[key]) !== n) obj[key] = n;
+  return true;
+}
+function readDurField(id, key, obj, base) {
+  const el = $("#" + id);
+  const raw = el ? el.value.trim() : "";
+  if (raw === "") { if (key in base) obj[key] = null; return true; }
+  if (raw !== "0" && !DUR_RE.test(raw)) {
+    markDurationFields();
+    toast("「" + durLabel(id) + "」" + DUR_TIP, "err");
+    if (el) el.focus();
+    return false;
+  }
+  if (String(base[key] == null ? "" : base[key]) !== raw) obj[key] = raw;
+  return true;
+}
+
 
 // 逗号分隔的 0-23 整数；空串是合法的「这组永不跑」。非法输入返回 null。
 function parseSchedHours(raw) {
@@ -3735,6 +3776,67 @@ function pfDisabledOf(policy, name) {
   return (entry.disabled_models || []).map(m => String(m).trim().toLowerCase()).filter(Boolean);
 }
 
+// WorkBuddy 是唯一带内置账号池的平台。这里的字段仍写回根级 pool.* /
+// cooldown.*，磁盘格式不变，只是把操作入口收回它真正作用的位置。
+function pfCfgRow(id, label, input, help) {
+  return '<label class="cfgrow"><span class="k">' + esc(label) + '</span>' + input +
+    (help ? '<span class="cfghelp">' + help + '</span>' : '') + '</label>';
+}
+
+function pfWBNum(id, label, value, ph, help, step) {
+  const input = '<input class="cfgtext" id="' + id + '" type="number" min="0"' +
+    (step ? ' step="' + step + '"' : '') + ' spellcheck="false" value="' +
+    esc(cfgFieldText(value)) + '" placeholder="' + esc(ph || "") + '">';
+  return pfCfgRow(id, label, input, help);
+}
+
+function pfWBText(id, label, value, ph, help) {
+  const input = '<input class="cfgtext" id="' + id + '" type="text" spellcheck="false" value="' +
+    esc(cfgFieldText(value)) + '" placeholder="' + esc(ph || "") + '">';
+  return pfCfgRow(id, label, input, help);
+}
+
+function pfWBCheck(id, label, checked, help) {
+  const input = '<input type="checkbox" id="' + id + '"' + (checked ? " checked" : "") + '>';
+  return pfCfgRow(id, label, input, help);
+}
+
+function pfWorkBuddyPoolHTML(c) {
+  const pool = c.pool || {}, cool = c.cooldown || {};
+  return '<div class="pfwbset">' +
+    '<div class="pfwbhd">WorkBuddy 账号池与流量治理' +
+    '<span class="hint">WorkBuddy 全部生效；其他自带号池的模块复用其中三项</span></div>' +
+    '<div class="pfwbgrid">' +
+    pfWBNum("cfgPoolMaxInFlight", "号池单账号在途", pool.max_in_flight, "3",
+      "模块内部每账号并发；<code>0</code> = 不限制。") +
+    pfWBNum("cfgPoolMaxInFlightGlobal", "国际版号池在途", pool.max_in_flight_global, "2",
+      "国际版 realm 风控更紧，默认 2。") +
+    pfWBNum("cfgPoolBreakerThreshold", "连续失败熔断阈值", pool.breaker_threshold, "3",
+      "连续 N 次权威失败后熔断。") +
+    pfWBText("cfgCoolSoftRate", "软限流冷却基数", cool.soft_rate, "600s",
+      "账号级软冷却基数，按次数指数退避。") +
+    pfWBText("cfgCoolSoftRateMax", "软冷却退避上限", cool.soft_rate_max, "2h") +
+    pfWBText("cfgPoolBreakerCooldown", "熔断基础时长", pool.breaker_cooldown, "30m") +
+    pfWBText("cfgPoolBreakerCooldownMax", "熔断退避上限", pool.breaker_cooldown_max, "6h") +
+    pfWBNum("cfgPoolDegradeThreshold", "连败降权阈值", pool.degrade_threshold, "5",
+      "未知错误连败 N 次后临时出池。") +
+    pfWBText("cfgPoolDegradeCooldown", "连败降权时长", pool.degrade_cooldown, "10m") +
+    pfWBText("cfgPoolDegradeCooldownMax", "连败降权上限", pool.degrade_cooldown_max, "2h") +
+    pfWBNum("cfgPoolIdlePerHour", "闲置补偿 / 小时", pool.idle_weight_per_hour, "0.5", "", "0.1") +
+    pfWBNum("cfgPoolIdleMax", "闲置补偿上限", pool.idle_weight_max, "5", "", "0.1") +
+    pfWBText("cfgPoolCostExplore", "成本探索窗口", pool.cost_explore_interval, "30m",
+      "免费层垄断时定期探索未知号；<code>0</code> 关停。") +
+    pfWBText("cfgPoolExpiringSoon", "快过期路由窗口", pool.expiring_soon, "168h",
+      "窗口内按最早到期优先；<code>0</code> 关闭。") +
+    pfWBCheck("cfgPoolPreferExpiring", "快过期积分优先", !!pool.prefer_expiring,
+      "关闭后完全不使用到期信息选号。") +
+    '</div>' +
+    '<div class="pfwbnote">「号池单账号在途」「连续失败熔断阈值」「熔断基础时长」对 OpenRouter' +
+    ' 等自带号池的模块同样生效，其余项只作用于 WorkBuddy。WorkBuddy 请求会先取这里的号池槽位，' +
+    '再取上方的「网关单账号并发」，两层同时生效、通常取更小值。留空表示删除该键、回到内置默认值。</div>' +
+    '</div>';
+}
+
 async function renderPlatforms() {
   const [cfg, md] = await Promise.all([api("/panel/api/config"), api("/panel/api/models")]);
   const body = $("#pfBody");
@@ -3756,9 +3858,19 @@ async function renderPlatforms() {
   ((cfg.data && cfg.data.clients) || []).forEach(push);
   Object.keys(policy).forEach(push);
   Object.keys(models).forEach(push);
+  // 号池设置住在 WorkBuddy 卡片里，OpenRouter 也复用其中三项；所以这张卡
+  // 始终可达：模块没在跑或从没配过时也渲染（模型清单为空）。
+  push("workbuddy");
   names.sort();
 
-  PF = { policy: policy, models: models, names: names, baseline: JSON.parse(JSON.stringify(policy)) };
+  PF = {
+    policy: policy,
+    models: models,
+    names: names,
+    baseline: JSON.parse(JSON.stringify(policy)),
+    poolBaseline: JSON.parse(JSON.stringify(c.pool || {})),
+    cooldownBaseline: JSON.parse(JSON.stringify(c.cooldown || {})),
+  };
 
   let totalOff = 0;
   const out = [];
@@ -3773,11 +3885,11 @@ async function renderPlatforms() {
     const res = entry.reserve_credits == null || entry.reserve_credits === 0 ? "" : String(entry.reserve_credits);
     out.push('<div class="pfplat" data-client="' + esc(n) + '">');
     out.push('<div class="pfhead">' +
-      '<button class="xs pfToggle" type="button" aria-expanded="false" title="展开 / 收起模型清单">▸</button>' +
+      '<button class="xs pfToggle" type="button" aria-expanded="false" title="展开 / 收起详情与模型清单">▸</button>' +
       '<span class="pfname">' + esc(n) + '</span>' +
       '<label class="sel-note">优先级 <input class="cfgtext pfPrio" type="number" value="' + esc(prio) + '" placeholder="0" style="width:76px"></label>' +
-      '<label class="sel-note" title="同时向该平台发出的最大请求数；留空默认 2，填 0 = 不限制">并发 <input class="cfgtext pfMif" type="number" min="0" value="' + esc(mif) + '" placeholder="2" style="width:76px"></label>' +
-      '<label class="sel-note" title="该平台内每个账号自身的最大并发；留空默认 2，填 0 = 不限制">单账号并发 <input class="cfgtext pfMifAcct" type="number" min="0" value="' + esc(mifAcct) + '" placeholder="2" style="width:76px"></label>' +
+      '<label class="sel-note" title="网关层跨账号总上限；留空默认 2，填 0 = 不限制">平台总并发 <input class="cfgtext pfMif" type="number" min="0" value="' + esc(mif) + '" placeholder="2" style="width:76px"></label>' +
+      '<label class="sel-note" title="网关层每账号上限；留空默认 2，填 0 = 不限制">网关单账号并发 <input class="cfgtext pfMifAcct" type="number" min="0" value="' + esc(mifAcct) + '" placeholder="2" style="width:76px"></label>' +
       '<label class="sel-note" title="账号余额低于或等于这个数就暂停（不再参与路由），直到余额回升；留空或 0 = 零余额即暂停；-1 = 关闭这个保护">最低余额 <input class="cfgtext pfReserve" type="number" min="-1" value="' + esc(res) + '" placeholder="0" style="width:76px"></label>' +
       '<span class="pfcount">' + list.length + " 个模型 · 禁用 " + off.length + '</span>' +
       '<span class="grow"></span>' +
@@ -3785,6 +3897,8 @@ async function renderPlatforms() {
       '<button class="xs pfNone" type="button">全禁用</button>' +
       '</div>');
     out.push('<div class="pfmodels" hidden>');
+    if (n === "workbuddy") out.push(pfWorkBuddyPoolHTML(c));
+    if (list.length) out.push('<div class="pfwbhd" style="margin-top:10px">模型清单</div>');
     if (!list.length) {
       out.push('<div class="hint">这个平台没有可调用的模型（模块未上报目录）。</div>');
     } else {
@@ -3899,23 +4013,56 @@ async function savePlatforms() {
     if (Object.keys(entry).length) changed[name] = entry;
   }
   if (bad) {
-    toast("「" + bad + "」的优先级 / 并发 / 单账号并发必须是非负整数，最低余额必须是 -1 或更大的整数", "err");
+    toast("「" + bad + "」的优先级 / 平台总并发 / 网关单账号并发必须是非负整数，最低余额必须是 -1 或更大的整数", "err");
     return;
   }
-  if (!Object.keys(changed).length) {
+
+  const pool = {}, cool = {};
+  const wb = document.querySelector('#pfBody .pfplat[data-client="workbuddy"]');
+  if (wb) {
+    const bPool = (PF && PF.poolBaseline) || {};
+    const bCool = (PF && PF.cooldownBaseline) || {};
+    const ok =
+      readNumField("cfgPoolMaxInFlight", "max_in_flight", pool, bPool, true) &&
+      readNumField("cfgPoolMaxInFlightGlobal", "max_in_flight_global", pool, bPool, true) &&
+      readNumField("cfgPoolBreakerThreshold", "breaker_threshold", pool, bPool, true) &&
+      readNumField("cfgPoolDegradeThreshold", "degrade_threshold", pool, bPool, true) &&
+      readNumField("cfgPoolIdlePerHour", "idle_weight_per_hour", pool, bPool, false) &&
+      readNumField("cfgPoolIdleMax", "idle_weight_max", pool, bPool, false) &&
+      readDurField("cfgCoolSoftRate", "soft_rate", cool, bCool) &&
+      readDurField("cfgCoolSoftRateMax", "soft_rate_max", cool, bCool) &&
+      readDurField("cfgPoolBreakerCooldown", "breaker_cooldown", pool, bPool) &&
+      readDurField("cfgPoolBreakerCooldownMax", "breaker_cooldown_max", pool, bPool) &&
+      readDurField("cfgPoolDegradeCooldown", "degrade_cooldown", pool, bPool) &&
+      readDurField("cfgPoolDegradeCooldownMax", "degrade_cooldown_max", pool, bPool) &&
+      readDurField("cfgPoolCostExplore", "cost_explore_interval", pool, bPool) &&
+      readDurField("cfgPoolExpiringSoon", "expiring_soon", pool, bPool);
+    if (!ok) return;
+    const pref = $("#cfgPoolPreferExpiring");
+    if (pref) {
+      const now = !!pref.checked;
+      if (now !== !!bPool.prefer_expiring) pool.prefer_expiring = now;
+    }
+  }
+
+  const patch = {};
+  if (Object.keys(changed).length) patch.platforms = changed;
+  if (Object.keys(pool).length) patch.pool = pool;
+  if (Object.keys(cool).length) patch.cooldown = cool;
+  if (!Object.keys(patch).length) {
     toast("已保存，内容没有变化");
     return;
   }
   const btn = $("#btnPfSave");
   btn.disabled = true;
   try {
-    const r = await api("/panel/api/config", { method: "PATCH", body: { platforms: changed } });
+    const r = await api("/panel/api/config", { method: "PATCH", body: patch });
     if (!r.ok) { toast("保存失败：" + r.err, "err"); return; }
     const rel = await api("/panel/api/reload", { method: "POST" });
     if (!rel.ok) {
       toast("配置已保存，但热加载失败（" + rel.err + "）：重启后生效", "err");
     } else {
-      toast("已保存并立即生效：" + Object.keys(changed).join("、"));
+      toast("已保存并立即生效：" + Object.keys(patch).join("、"));
     }
     await renderPlatforms();
   } finally {
@@ -3958,46 +4105,14 @@ async function renderConfig() {
   out.push(cfgText("cfgProxy", "上游代理", c.proxy, "http://127.0.0.1:8080"));
   out.push('</div>');
 
-  // 账号池与流量治理：字段、中文标签与占位符逐字照抄原版
-  // _ref/app.html:748-800 的「账号池与流量治理」盒，只是把原版的 grid3 换成
-  // 本页统一的 cfgrow。原版还有一组「上游与高级」（timeout_seconds /
-  // header_timeout_seconds / idle_timeout_seconds）落在每个 client 自己的配置里，
-  // 本仓库由「模块配置」的 JSON 编辑框覆盖，故不在这里重复渲染。
-  const pool = c.pool || {}, cool = c.cooldown || {}, sticky = c.session_sticky || {};
-  out.push('<div class="cfgsec"><div class="cfghd">账号池与流量治理</div>');
-  out.push(cfgNum("cfgPoolMaxInFlight", "单账号最大在途", cfgFieldText(pool.max_in_flight), "3",
-    "0 = 不限制。"));
-  out.push(cfgNum("cfgPoolMaxInFlightGlobal", "国际版在途上限", cfgFieldText(pool.max_in_flight_global), "2",
-    "global 域风控更紧，默认 2。"));
-  out.push(cfgNum("cfgPoolBreakerThreshold", "连续失败熔断阈值", cfgFieldText(pool.breaker_threshold), "3",
-    "只喂权威失败（5xx、被拒的 token 刷新）；连续 N 次后熔断，退避按次数翻倍并封顶于「熔断退避上限」。"));
-  out.push(cfgText("cfgCoolSoftRate", "软限流冷却基数", cfgFieldText(cool.soft_rate), "600s",
-    "账号级软冷却基数，指数退避封顶于「软冷却退避上限」。"));
-  out.push(cfgText("cfgCoolSoftRateMax", "软冷却退避上限", cfgFieldText(cool.soft_rate_max), "2h"));
-  out.push(cfgText("cfgPoolBreakerCooldown", "熔断基础时长", cfgFieldText(pool.breaker_cooldown), "30m"));
-  out.push(cfgText("cfgPoolBreakerCooldownMax", "熔断退避上限", cfgFieldText(pool.breaker_cooldown_max), "6h"));
-  out.push(cfgNum("cfgPoolDegradeThreshold", "连败降权阈值", cfgFieldText(pool.degrade_threshold), "5",
-    "未知错误连败 N 次临时出池。"));
-  out.push(cfgText("cfgPoolDegradeCooldown", "连败降权时长", cfgFieldText(pool.degrade_cooldown), "10m"));
-  out.push(cfgText("cfgPoolDegradeCooldownMax", "连败降权上限", cfgFieldText(pool.degrade_cooldown_max), "2h"));
-  out.push(cfgNum("cfgPoolIdlePerHour", "闲置补偿 / 小时", cfgFieldText(pool.idle_weight_per_hour), "0.5", "", "0.1"));
-  out.push(cfgNum("cfgPoolIdleMax", "闲置补偿上限", cfgFieldText(pool.idle_weight_max), "5", "", "0.1"));
-  out.push(cfgText("cfgPoolCostExplore", "成本探索窗口", cfgFieldText(pool.cost_explore_interval), "30m",
-    "垄断破除：免费层垄断时定期搭车探索未知号；<code>0</code> 关停。"));
-  out.push(cfgText("cfgPoolExpiringSoon", "快过期路由窗口", cfgFieldText(pool.expiring_soon), "168h",
-    "窗口内按最早到期优先；<code>0</code> 关闭。"));
-  out.push(cfgText("cfgStickyTTL", "会话粘性 TTL", cfgFieldText(sticky.ttl), "30m"));
-  out.push(cfgCheck("cfgPoolPreferExpiring", "快过期积分优先", !!pool.prefer_expiring,
-    "关闭后完全不使用到期信息选号。"));
-  out.push('<div class="cfghelp">熔断、降权、软冷却三条惩罚轴并存时取更晚的截止时间（不叠加）。留空表示删掉该键、回到内置默认值。</div>');
-  out.push('</div>');
-
   // 会话粘性与提示词：参考的 CFG_MAP 把 session_sticky_enabled / prompt_mode /
   // prompt_file / sanitize_blacklist_fingerprints 列成独立一组。目标此前只暴露了
   // session_sticky.ttl，其余三项在文件里一直可写、页面却看不见，等于「只能手改
   // JSON 才用得上」。补上之后配置页的功能面才与参考一致。
   const prm = c.prompt || {}, fts = c.features || {};
   out.push('<div class="cfgsec"><div class="cfghd">会话粘性与提示词</div>');
+  const sticky = c.session_sticky || {};
+  out.push(cfgText("cfgStickyTTL", "会话粘性 TTL", cfgFieldText(sticky.ttl), "30m"));
   out.push(cfgCheck("cfgStickyEnabled", "会话粘性路由", sticky.enabled == null ? true : !!sticky.enabled,
     "关闭后完全不做粘性：每次请求都重新选号，而不是把粘性窗口设为 0。"));
   out.push(cfgText("cfgPromptMode", "提示词模式", cfgFieldText(prm.mode), "passthrough",
@@ -4159,67 +4274,16 @@ async function saveConfig() {
   document.querySelectorAll("#cfgDisabled .cfgdis").forEach(i => { if (i.checked) disabled.push(i.value); });
   patch.disabled = disabled;
 
-  // 账号池与流量治理：留空 = 删掉该键（null），回到内置默认值；0 是合法值
-  // （max_in_flight 的 0 = 不限制，cost_explore_interval 的 0 = 关停探索），
-  // 所以只有空字符串才当删除，不能把 0 当空。时长原样回写，服务端自己解析；
-  // 这里先拦一道格式，免得打错的值被服务端的「解析失败即回落默认」静默吞掉。
-  if ($("#cfgPoolMaxInFlight")) {
+  // 号池字段已经在平台配置页的 WorkBuddy 卡片里保存；配置页这里只剩
+  // 对所有平台都生效的会话粘性 TTL 与开关。
+  if ($("#cfgStickyTTL")) {
     const onDisk = CFG.config || {};
-    const bPool = onDisk.pool || {}, bCool = onDisk.cooldown || {}, bSticky = onDisk.session_sticky || {};
-    const pool = {}, cool = {}, sticky = {};
-    const num = (id, key, obj, base, isInt) => {
-      const el = $(id);
-      const raw = el ? el.value.trim() : "";
-      if (raw === "") { if (key in base) obj[key] = null; return true; }
-      const n = isInt ? parseInt(raw, 10) : parseFloat(raw);
-      if (!Number.isFinite(n) || n < 0) {
-        toast("「" + key + "」必须是非负" + (isInt ? "整数" : "数字"), "err");
-        el.focus();
-        return false;
-      }
-      obj[key] = n;
-      return true;
-    };
-    const dur = (id, key, obj, base) => {
-      const el = $(id);
-      const raw = el ? el.value.trim() : "";
-      if (raw === "") { if (key in base) obj[key] = null; return true; }
-      if (raw !== "0" && !DUR_RE.test(raw)) {
-        // 与输入时的即时标红同一口径：先点亮字段，再用可见标签点名。
-        markDurationFields();
-        toast("「" + durLabel(id) + "」" + DUR_TIP, "err");
-        el.focus();
-        return false;
-      }
-      obj[key] = raw;
-      return true;
-    };
-    const ok =
-      num("#cfgPoolMaxInFlight", "max_in_flight", pool, bPool, true) &&
-      num("#cfgPoolMaxInFlightGlobal", "max_in_flight_global", pool, bPool, true) &&
-      num("#cfgPoolBreakerThreshold", "breaker_threshold", pool, bPool, true) &&
-      num("#cfgPoolDegradeThreshold", "degrade_threshold", pool, bPool, true) &&
-      num("#cfgPoolIdlePerHour", "idle_weight_per_hour", pool, bPool, false) &&
-      num("#cfgPoolIdleMax", "idle_weight_max", pool, bPool, false) &&
-      dur("#cfgCoolSoftRate", "soft_rate", cool, bCool) &&
-      dur("#cfgCoolSoftRateMax", "soft_rate_max", cool, bCool) &&
-      dur("#cfgPoolBreakerCooldown", "breaker_cooldown", pool, bPool) &&
-      dur("#cfgPoolBreakerCooldownMax", "breaker_cooldown_max", pool, bPool) &&
-      dur("#cfgPoolDegradeCooldown", "degrade_cooldown", pool, bPool) &&
-      dur("#cfgPoolDegradeCooldownMax", "degrade_cooldown_max", pool, bPool) &&
-      dur("#cfgPoolCostExplore", "cost_explore_interval", pool, bPool) &&
-      dur("#cfgPoolExpiringSoon", "expiring_soon", pool, bPool) &&
-      dur("#cfgStickyTTL", "ttl", sticky, bSticky);
-    if (!ok) return;
-    // prefer_expiring 是 *bool：勾选与否都要显式回写，否则勾掉之后关不掉。
-    pool.prefer_expiring = $("#cfgPoolPreferExpiring").checked;
-    // session_sticky.enabled 同样是 *bool，同一个道理：不显式回写就关不掉粘性。
+    const bSticky = onDisk.session_sticky || {};
+    const sticky = {};
+    if (!readDurField("cfgStickyTTL", "ttl", sticky, bSticky)) return;
     sticky.enabled = $("#cfgStickyEnabled").checked;
-    if (Object.keys(pool).length) patch.pool = pool;
-    if (Object.keys(cool).length) patch.cooldown = cool;
     if (Object.keys(sticky).length) patch.session_sticky = sticky;
   }
-
   // 会话粘性与提示词：提示词模式/文件是文本，空串 = 删键回到内置默认；两个开关
   // 一律显式回写（Go 侧缺省是「开」，不回写就等于没改）。
   if ($("#cfgPromptMode")) {
@@ -7073,6 +7137,7 @@ $("#pfBody").addEventListener("change", ev => {
   pfApply();
 });
 $("#pfBody").addEventListener("input", ev => {
+  if (ev.target && DUR_FIELDS.indexOf(ev.target.id) >= 0) markDurationFields();
   if (ev.target.closest(".pfFilter")) pfApply();
 });
 $("#pfBody").addEventListener("keydown", ev => {
