@@ -467,6 +467,11 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 	// a module that aggregates its upstream calls per turn honours it verbatim
 	// instead of deriving one.
 	req.ConversationRequestID = strings.TrimSpace(r.Header.Get("X-Conversation-Request-ID"))
+	// The usage journal answers "which session made this call", so it records
+	// the caller's own session identifier, exactly the one the router pins a
+	// conversation to.  It is set here, once, so failover attempts below can
+	// copy it onto their own rows without re-deriving it.
+	rec.SessionID = sessionIDFor(req)
 
 	candidates, err := s.opts.Registry.ResolveCandidates(r.Context(), wire.Model)
 	if err != nil {
@@ -575,6 +580,7 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 				Client:    client.Name(),
 				Realm:     rec.Realm,
 				Account:   rec.Account,
+				SessionID: rec.SessionID,
 				Model:     client.Name() + "/" + upstreamModel,
 				Candidate: rec.Candidate,
 				Failed:    true,
@@ -688,6 +694,7 @@ func (s *server) serveRemainingCandidates(w http.ResponseWriter, r *http.Request
 			Client:    client.Name(),
 			Realm:     rec.Realm,
 			Account:   rec.Account,
+			SessionID: rec.SessionID,
 			Model:     client.Name() + "/" + upstreamModel,
 			Candidate: rec.Candidate,
 			Failed:    true,

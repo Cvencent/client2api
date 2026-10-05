@@ -669,7 +669,7 @@ func TestUsageRecentRecordsPersistAcrossReload(t *testing.T) {
 	started := time.Date(2026, 10, 3, 12, 0, 0, 0, time.Local)
 
 	s := NewPersistentUsageStore(10, path)
-	s.Record(UsageRecord{At: started, StartedAt: started, Client: "alpha", Account: "a1", Model: "alpha/m", PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15, LatencyMs: 250, HasLatency: true})
+	s.Record(UsageRecord{At: started, StartedAt: started, Client: "alpha", Account: "a1", SessionID: "conv-alpha-1", Model: "alpha/m", PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15, LatencyMs: 250, HasLatency: true})
 	s.Record(UsageRecord{At: started.Add(time.Second), Client: "beta", Account: "b1", Model: "beta/m", Failed: true})
 	if err := s.Save(); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -688,6 +688,12 @@ func TestUsageRecentRecordsPersistAcrossReload(t *testing.T) {
 	}
 	if got[0].Client != "alpha" || got[0].Account != "a1" || got[0].TotalTokens != 15 || !got[0].HasLatency {
 		t.Fatalf("first recent record = %+v, want the successful alpha call", got[0])
+	}
+	if got[0].SessionID != "conv-alpha-1" {
+		t.Errorf("first recent record session = %q, want conv-alpha-1: the 会话ID column must survive a reload", got[0].SessionID)
+	}
+	if got[1].SessionID != "" {
+		t.Errorf("second recent record session = %q, want empty", got[1].SessionID)
 	}
 	if got[1].Client != "beta" || !got[1].Failed {
 		t.Fatalf("second recent record = %+v, want the failed beta call", got[1])
@@ -1079,5 +1085,33 @@ func TestUsageStoreConcurrentAddsAndSaves(t *testing.T) {
 	}
 	if got := reloaded.UsageReport(0).Totals; got != rep.Totals {
 		t.Errorf("reloaded totals = %+v, want %+v", got, rep.Totals)
+	}
+}
+
+// TestSessionIDForRecordsOnlyWhatTheCallerNamed pins the source of the
+// 会话ID column: the conversation id the gateway resolved, then the option
+// spellings the router also accepts, then the per-turn header.  The request's
+// user field is deliberately not a session: writing it would claim an identity
+// the caller never sent as a conversation.
+func TestSessionIDForRecordsOnlyWhatTheCallerNamed(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		req  *core.ChatRequest
+		want string
+	}{
+		{"nil", nil, ""},
+		{"resolved conversation id", &core.ChatRequest{ConversationID: "conv-1"}, "conv-1"},
+		{"resolved id is trimmed", &core.ChatRequest{ConversationID: "  conv-1  "}, "conv-1"},
+		{"option spelling", &core.ChatRequest{Options: map[string]any{"conversation_id": "conv-opt"}}, "conv-opt"},
+		{"prompt cache key", &core.ChatRequest{Options: map[string]any{"prompt_cache_key": "cache-9"}}, "cache-9"},
+		{"turn id is the last resort", &core.ChatRequest{ConversationRequestID: "turn-7"}, "turn-7"},
+		{"a user id is not a session", &core.ChatRequest{User: "u-1"}, ""},
+		{"resolved id beats everything", &core.ChatRequest{ConversationID: "conv-1", Options: map[string]any{"prompt_cache_key": "cache-9"}, ConversationRequestID: "turn-7"}, "conv-1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sessionIDFor(tc.req); got != tc.want {
+				t.Fatalf("sessionIDFor = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

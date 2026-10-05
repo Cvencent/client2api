@@ -1258,7 +1258,7 @@ input[type=checkbox] { width: 14px; height: 14px; padding: 0; accent-color: var(
         </header>
         <div class="tbl-wrap">
         <table class="acc md">
-          <thead><tr><th>时间</th><th>平台</th><th>模型</th><th>账号</th><th>结果</th><th>候选</th><th>输入</th><th>输出</th><th>合计</th><th>耗时</th><th>速率</th></tr></thead>
+          <thead><tr><th>时间</th><th>平台</th><th>模型</th><th>会话ID</th><th>账号</th><th>结果</th><th>候选</th><th>输入</th><th>输出</th><th>合计</th><th>耗时</th><th>速率</th></tr></thead>
           <tbody id="usRecentBody"></tbody>
         </table>
         </div>
@@ -1781,6 +1781,7 @@ input[type=checkbox] { width: 14px; height: 14px; padding: 0; accent-color: var(
       <!-- 手动添加 -->
       <div id="addTabManual" class="tab-panel" hidden>
         <div id="manFields"></div>
+        <div id="manKeyLink" class="hint" hidden></div>
         <div class="fld"><label class="lb" for="manLabel">备注（可选）</label><input id="manLabel" type="text" placeholder="给这个账号起个名字"></div>
         <div id="manErr" class="state err" hidden></div>
       </div>
@@ -3212,10 +3213,24 @@ function usageChartSVG(series) {
 // 只认单列 b.name 的 usageRows。均延迟 / 均速率两列只有账号表带：参考的 usRow 把
 // 这件事做成显式参数 withPerf，因为模型表与域表的表头没有这两列，多输出一格就会
 // 让整行从那一格起全部错位。
+// accountLookup returns the account record behind a usage row, searched across
+// every platform, so the row can be named the way the accounts view names it.
+function accountLookup(id) {
+  const key = String(id == null ? "" : id).trim();
+  if (!key) return null;
+  for (const n of NAMES) {
+    const hit = ((ACCTS[n] || {}).accounts || []).find(a => String(a.id) === key || String(a.identity || "") === key);
+    if (hit) return hit;
+  }
+  return null;
+}
+
 // accountDisplayName turns a recent-call account id into something an operator
-// can recognise.  Phone numbers and operator labels win over vendor ids; the
-// raw id is the last resort so a row is never blank just because the account
-// has been removed from the pool.
+// can recognise.  It follows the same order as the accounts view: the note the
+// operator recorded for the account (phone / e-mail, the thing a re-login needs)
+// first, then a phone the module published, then the module's own label, then
+// the vendor identity.  The raw id is the last resort, so a row is never blank
+// just because the account has been removed from the pool.
 function accountDisplayName(id) {
   const key = String(id == null ? "" : id).trim();
   if (!key) return "";
@@ -3231,6 +3246,7 @@ function accountDisplayName(id) {
       const f = a.fields || {};
       const label = String(a.label || "").trim();
       const digits = label.replace(/\D/g, "");
+      consider(a.operator_note, -1);
       consider(f.phone || f.mobile, 0);
       if (digits.length >= 6 && digits.length <= 15 && /\d/.test(label)) consider(label, 1);
       consider(label, 2);
@@ -3246,14 +3262,20 @@ function accountDisplayName(id) {
 }
 
 function usageAccountRows(list) {
-  return (list || []).map(b =>
-    '<tr><td>' + esc(b.name || "(未路由)") + '</td>' +
-    '<td>' + esc(b.realm || "-") + '</td>' +
-    US_COLS.map(c => '<td class="num">' + numf(b[c]) + '</td>').join("") +
-    '<td class="num">' + fmtMs(b.avg_latency_ms) + '</td>' +
-    '<td class="num">' + fmtRate(b.avg_tokens_per_second) + '</td>' +
-    '<td class="hint" title="' + esc(b.last_success || "") + '">' +
-      (b.last_success ? esc(ago(b.last_success)) : "-") + '</td></tr>').join("") ||
+  return (list || []).map(b => {
+    // 账号列和「最近调用」用同一个名字：操作员备注（手机号/邮箱）优先，其次才是
+    // 模块的 label，实在没有账号记录才退回裸 id。raw id 放进 title 以便对账。
+    const raw = String((b && b.name) || "").trim();
+    const shown = raw ? (accountDisplayName(raw) || b.extra || raw) : "(未路由)";
+    const tip = [raw, b.extra && b.extra !== shown ? b.extra : ""].filter(Boolean).join(" · ");
+    return '<tr><td title="' + esc(tip) + '">' + esc(shown) + '</td>' +
+      '<td>' + esc(b.realm || "-") + '</td>' +
+      US_COLS.map(c => '<td class="num">' + numf(b[c]) + '</td>').join("") +
+      '<td class="num">' + fmtMs(b.avg_latency_ms) + '</td>' +
+      '<td class="num">' + fmtRate(b.avg_tokens_per_second) + '</td>' +
+      '<td class="hint" title="' + esc(b.last_success || "") + '">' +
+        (b.last_success ? esc(ago(b.last_success)) : "-") + '</td></tr>';
+  }).join("") ||
     '<tr><td colspan="10" class="hint">窗口内没有记录</td></tr>';
 }
 function usageRealmRows(list) {
@@ -3302,6 +3324,14 @@ function fmtCallTime(s) {
   return isNaN(t.getTime()) ? "-" : t.toLocaleString("zh-CN", { hour12: false });
 }
 
+// sessionCell keeps the newly added 会话ID column narrow: the full value stays
+// in the cell's title, so one long conversation id cannot widen the table.
+function sessionCell(id) {
+  const s = String(id == null ? "" : id).trim();
+  if (!s) return "-";
+  return s.length > 24 ? s.slice(0, 24) + "…" : s;
+}
+
 function renderRecentRows() {
   const body = $("#usRecentBody");
   if (!body) return;
@@ -3313,14 +3343,25 @@ function renderRecentRows() {
   });
   body.innerHTML = rows.map(function (x) {
     const state = x.failed ? '<span class="recent-bad">' + (x.attempt ? "候选失败" : "失败") + '</span>' : '<span class="recent-ok">成功</span>';
+    const accName = accountDisplayName(x.account) || "-";
+    const acc = accountLookup(x.account);
+    // hover 时把这一栏的原始信息都留全：裸 id、模块 label、厂商 identity（面板下发前已脱敏），
+    // 已经显示在上面的那个不重复。
+    const accParts = [String(x.account || "")];
+    [acc && acc.label, acc && acc.identity].forEach(v => {
+      const s = String(v == null ? "" : v).trim();
+      if (s && s !== accName && accParts.indexOf(s) < 0) accParts.push(s);
+    });
+    const accTip = accParts.filter(Boolean).join(" · ");
     return '<tr><td class="hint">' + esc(fmtCallTime(x.at)) + '</td>' +
       '<td>' + esc(x.client || "-") + '</td><td>' + esc(x.model || "-") + '</td>' +
-      '<td title="' + esc(x.account || "") + '">' + esc(accountDisplayName(x.account) || "-") + '</td><td>' + state + '</td>' +
+      '<td class="hint" title="' + esc(x.session_id || "") + '">' + esc(sessionCell(x.session_id)) + '</td>' +
+      '<td title="' + esc(accTip) + '">' + esc(accName) + '</td><td>' + state + '</td>' +
       '<td class="num">' + (x.candidate ? "#" + esc(String(x.candidate)) : "-") + '</td>' +
       '<td class="num">' + numf(x.prompt_tokens || 0) + '</td><td class="num">' + numf(x.completion_tokens || 0) + '</td>' +
       '<td class="num">' + numf(x.total_tokens || 0) + '</td><td class="num">' + fmtMs(x.latency_ms) + '</td>' +
       '<td class="num">' + fmtRate(x.tokens_per_second) + '</td></tr>';
-  }).join("") || '<tr><td colspan="11" class="hint">暂无调用记录</td></tr>';
+  }).join("") || '<tr><td colspan="12" class="hint">暂无调用记录</td></tr>';
   if ($("#usRecentNote")) $("#usRecentNote").textContent = rows.length + " / " + US_RECENT.length + " 条";
 }
 
@@ -5370,10 +5411,10 @@ function pkSummaryCards(list, now) {
     const who = '<div class="who"><span class="nm">' +
       esc(a.label || String(a.id || "").slice(0, 8)) + "</span>" +
       (a.state ? '<span class="realm">' + esc(a.state) + "</span>" : "") + "</div>";
-    // 行级失败：只让这一张卡说失败，其它账号照常显示。
-    if (a.error) {
-      return '<div class="pk-card">' + who + '<div class="err">查询失败：' + esc(a.error) + "</div></div>";
-    }
+    // 行级失败：只让这一张卡说失败，其它账号照常显示。合并组里某条通道挂了、
+    // 另一条还有数时，错误退到卡片底部，不再把健康的余额藏掉。
+    const cardErr = a.error && (Number(a.remain) || 0) <= 0
+      ? '<div class="err">查询失败：' + esc(a.error) + "</div>" : "";
     const srcs = pkBySource(a.packages || []);
     const total = Math.max(1, Number(a.size) || 0);
     const mix = srcs.map(s => {
@@ -5403,6 +5444,7 @@ function pkSummaryCards(list, now) {
       (mix ? '<div class="mixbar">' + mix + "</div>" : "") +
       (ebar ? '<div class="expirybar">' + ebar + "</div>" : "") +
       (legend ? '<div class="pk-legend">' + legend + "</div>" : "") +
+      cardErr +
       "</div>";
   }).join("");
   return '<div class="pk-grid">' + cards + "</div>";
@@ -5410,6 +5452,62 @@ function pkSummaryCards(list, now) {
 
 const CR = { client: null };
 function crClients() { return NAMES.filter(n => capsOf(n).packages); }
+/* crIdentityName 是分组头显示的人话名字：操作员备注优先（和账号池的账号列
+   同一优先级），没有备注再退回模块的 label。分组键是模块报的 identity，
+   identity 为空的账号各算一个，绝不猜。 */
+function crIdentityName(rows) {
+  for (const a of rows) {
+    const own = String((a && a.operator_note) || "").trim();
+    if (own) return own;
+  }
+  for (const a of rows) {
+    const label = String((a && a.label) || "").trim();
+    if (label) return label;
+  }
+  return String((rows[0] && rows[0].id) || "");
+}
+
+/* crGroups 把积分构成按「厂商账号」归并，和账号池的 accGroups 同一规则：
+   同一 identity 的几行是同一账号的不同通道。行内数据照旧按通道渲染——
+   卡片、到期图、明细表都只出一份，别让同一个账号的 1 亿额度被数两遍。 */
+function crGroups(list) {
+  const out = [], byKey = new Map();
+  (list || []).forEach(a => {
+    const id = String((a && a.identity) || "").trim();
+    const key = id ? "i:" + id : "r:" + (a && a.id);
+    let g = byKey.get(key);
+    if (!g) { g = { key: key, identity: id, rows: [] }; byKey.set(key, g); out.push(g); }
+    g.rows.push(a);
+  });
+  return out;
+}
+
+/* crMerge 把一个分组的多条通道行并成一个视图对象：数值相加、批次拼接、
+   失败信息保留（带行 id，看得清是哪条通道挂了）。分组的 state 取第一条有值的。 */
+/* crChanName 是通道行的小字：优先用模块的 label（「ZCode plan JWT」这种
+   正是操作员想看的信息），没有才退回截短的 id。 */
+function crChanName(a) {
+  const label = String((a && a.label) || "").trim();
+  if (label) return label;
+  return String((a && a.id) || "").slice(0, 28);
+}
+function crMerge(g) {
+  const out = { id: g.identity || (g.rows[0] && g.rows[0].id) || "", label: crIdentityName(g.rows), state: "" };
+  out.packages = [];
+  out.errors = [];
+  if (g.rows.length > 1) out.grouped = true;
+  out.chan = g.rows.length > 1 ? "包含通道：" + g.rows.map(crChanName).join("、") : "";
+  const seen = new Set();
+  g.rows.forEach(a => {
+    out.remain = (Number(out.remain) || 0) + (Number(a.remain) || 0);
+    out.size = (Number(out.size) || 0) + (Number(a.size) || 0);
+    (a.packages || []).forEach(p => out.packages.push(p));
+    if (a.error && !seen.has(a.error)) { seen.add(a.error); out.errors.push({ id: a.id, error: a.error }); }
+    if (!out.state && a.state) out.state = a.state;
+  });
+  if (out.errors.length) out.error = out.errors.map(e => e.error).join("；");
+  return out;
+}
 function crPick() {
   const list = crClients();
   if (!list.length) return null;
@@ -5459,6 +5557,7 @@ function crAcctRow(a, limit) {
   let out = '<tr class="pk-group-summary"><td colspan="5">' +
     "<b>" + esc(a.label || a.id) + "</b> " +
     '<span class="hint">' + esc(String(a.id).slice(0, 48)) + (a.state ? " · " + esc(a.state) : "") + "</span>" +
+    (a.chan ? '<div class="hint">' + esc(a.chan) + "</div>" : "") +
     " · 剩余 <b>" + numf(a.remain) + "</b> / " + numf(a.size) +
     " · " + pk.length + " 个批次" +
     (collapsed ? " · 默认展示最早到期 " + pkDetailLimitValue(limit) + " 条" : "") + err +
@@ -5507,26 +5606,32 @@ async function renderCredits() {
   const cfgResp = await cfgP;
   const limit = pkDetailLimit(cfgResp && cfgResp.ok ? cfgResp.data : null);
   const list = (r.data && r.data.accounts) || [];
+  // 同一厂商账号的多条通道先并成一行再画：卡片、到期图、明细表都只出一份，
+  // 合计也不再被同一账号数两遍。分组规则与账号池一致（identity）。
+  const merged = crGroups(list).map(crMerge);
   let remain = 0, size = 0, pkgs = 0, errs = 0;
-  list.forEach(a => {
+  merged.forEach(a => {
     remain += Number(a.remain) || 0;
     size += Number(a.size) || 0;
     pkgs += (a.packages || []).length;
-    if (a.error) errs++;
+    errs += a.errors.length;
   });
-  $("#crNote").textContent = n + " · " + list.length + " 个账号 · 合计 " + numf(remain) + " / " + numf(size) +
-    " · " + pkgs + " 个批次" + (errs ? " · " + errs + " 行失败" : "");
+  const chans = list.length - merged.length;
+  $("#crNote").textContent = n + " · " + merged.length + " 个账号" +
+    (chans > 0 ? "（合并了 " + chans + " 条通道）" : "") +
+    " · 合计 " + numf(remain) + " / " + numf(size) +
+    " · " + pkgs + " 个批次" + (errs ? " · " + errs + " 个批次查询失败" : "");
   if (!list.length) {
     $("#pkExpiry").innerHTML = "";
     body.innerHTML = '<div class="hint">该模块还没有账号。</div>';
     return;
   }
   const now = Date.now();
-  $("#pkExpiry").innerHTML = renderExpiryDistribution(list, now);
-  body.innerHTML = pkSummaryCards(list, now) +
+  $("#pkExpiry").innerHTML = renderExpiryDistribution(merged, now);
+  body.innerHTML = pkSummaryCards(merged, now) +
     '<div class="tbl-wrap"><table class="acc md"><thead><tr>' +
     "<th>批次 / 名称</th><th>剩余</th><th>总量</th><th>已用</th><th>到期</th>" +
-    "</tr></thead><tbody>" + list.map(a => crAcctRow(a, limit)).join("") + "</tbody></table></div>";
+    "</tr></thead><tbody>" + merged.map(a => crAcctRow(a, limit)).join("") + "</tbody></table></div>";
 }
 $("#btnCr").addEventListener("click", renderCredits);
 /* 展开/收起：只翻同组的 data-pk-row 行。按钮文案同步换，aria-expanded 也跟着
@@ -6764,6 +6869,30 @@ function renderManual() {
     else inp = '<input id="' + id + '" data-key="' + esc(f.key) + '" type="' + (f.type === "number" ? "number" : (f.type === "password" ? "password" : "text")) + '" placeholder="' + esc(f.placeholder || "") + '" value="' + esc(f.default || "") + '">';
     return '<div class="fld">' + lb + inp + (f.help ? '<div class="hint">' + esc(f.help) + '</div>' : "") + '</div>';
   }).join("") || '<div class="hint">该客户端没有声明可填字段</div>';
+  wireManualKeyLink(n);
+}
+
+function manualFieldByKey(key) {
+  const hit = $$("#manFields [data-key]").find(el => el.dataset.key === key);
+  return hit || null;
+}
+function renderManualKeyLink() {
+  const k = capsOf($("#addClient").value) || {};
+  const pages = k.key_pages || {};
+  const box = $("#manKeyLink");
+  if (!box) return;
+  const sel = manualFieldByKey("provider");
+  const url = sel ? (pages[sel.value] || "") : "";
+  if (!url) { box.hidden = true; box.innerHTML = ""; return; }
+  box.hidden = false;
+  box.innerHTML = '到 <b>' + esc(sel.value) + '</b> 控制台创建一把 API Key：' +
+    '<a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">打开获取链接</a>';
+}
+function wireManualKeyLink(n) {
+  const sel = manualFieldByKey("provider"), k = capsOf(n) || {};
+  const has = sel && k.key_pages && Object.keys(k.key_pages).length;
+  if (has) sel.addEventListener("change", renderManualKeyLink);
+  renderManualKeyLink();
 }
 async function doManual() {
   const n = $("#addClient").value;

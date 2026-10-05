@@ -814,6 +814,22 @@ the whole 按账号 table into a single `(未路由)` row. A failure still prefe
 account its own error names and falls back to the slot only when the error names
 none. A module that never writes the slot is not wrong, merely unattributed.
 
+**用量 → 最近调用** is the per-request journal (`recent.json`), which
+`GET /panel/api/usage` returns as `recent`. Each row carries the caller's own
+**session id**: the conversation id the gateway already resolved
+(`metadata.conversation_id` / `conversationId`, or the top-level spelling), then
+the option spellings the router also accepts (`conversation_id`,
+`conversationId`, `prompt_cache_key`), and only when the caller named none of
+those the `X-Conversation-Request-ID` header. The request's `user` field is
+deliberately never used: an end-user id is not a conversation, and writing it
+into a column called 会话ID would claim a session the caller never named. The
+account column resolves the recorded account id the way the 账号 page does: the
+operator's own note (the phone number or e-mail kept for a re-login) wins, then
+the module's label, and the raw id is the last resort so a row never goes blank
+after an account is deleted. The hover title keeps the raw id, the module label
+and the vendor identity, so a label that only names the credential ("ZCode plan
+JWT") is still traceable to the account behind the channel.
+
 **用量** is a real chart rather than a row of bars. `GET /panel/api/usage` returns
 `series` — one `UsagePoint` per bucket, carrying `t`, `scope` (`hour` or `day`),
 `prompt_tokens`, `completion_tokens`, `requests`, `failures` and `total_tokens` —

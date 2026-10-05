@@ -162,6 +162,28 @@ func TestUsageEndpointReportsEveryDimension(t *testing.T) {
 // TestUsageEndpointOmitsUnmeasuredAverages: when nothing measured a request,
 // the averages must be absent rather than present as 0 — the frontend renders
 // what it is given, and a 0 ms average is a claim about the upstream.
+// TestUsageEndpointRecentCallsCarryTheSessionID: 「最近调用」现在多了一列会话ID，
+// 它的值必须原样走到 JSON，否则面板那一列永远是空的；调用方没给会话的行不能凭空
+// 生成一个值。
+func TestUsageEndpointRecentCallsCarryTheSessionID(t *testing.T) {
+	store := gateway.NewUsageStore(8)
+	at := time.Now().Add(-time.Minute)
+	store.Record(gateway.UsageRecord{At: at, Client: "trae", Model: "trae/m", Account: "a1", SessionID: "conv-42"})
+	store.Record(gateway.UsageRecord{At: at.Add(time.Second), Client: "trae", Model: "trae/m", Account: "a1"})
+	h := New(Options{Registry: registryOf(), Usage: store, Started: time.Now()})
+
+	recent := usageRows(t, decodeMap(t, get(t, h, "/panel/api/usage")), "recent")
+	if len(recent) != 2 {
+		t.Fatalf("recent has %d rows, want 2", len(recent))
+	}
+	if _, ok := usageRow(t, recent, 0)["session_id"]; ok {
+		t.Errorf("recent[0] claims a session_id it never had: %v", usageRow(t, recent, 0))
+	}
+	if got := usageRow(t, recent, 1)["session_id"]; got != "conv-42" {
+		t.Errorf("recent[1].session_id = %v, want conv-42", got)
+	}
+}
+
 func TestUsageEndpointIncludesNewestRecentCallsFirst(t *testing.T) {
 	store := gateway.NewUsageStore(16)
 	base := time.Now().Add(-time.Minute)

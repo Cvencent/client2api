@@ -6,6 +6,31 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+
+## [0.1.14] - 2026-10-05
+
+### Added
+
+- openai-compat 在面板里可以直接从平台拿到 API Key：手动添加表单的 provider 下拉
+  下面新增一条「到该平台控制台创建一把 API Key」的跳转链接，随选择的供应商切换。
+  groq / cerebras / siliconflow / mistral / nvidia / together / fireworks / deepinfra /
+  chutes / huggingface 都配好了申请页；模块通过新的 `core.KeyPageProvider` 能力把这张
+  表交给面板，新增供应商仍然只改一处。
+- 「用量 → 最近调用」新增「会话ID」列：记录调用方自己带来的会话标识（`metadata.conversation_id`
+  / 顶层 `conversation_id` / 选项里的 `conversation_id`、`conversationId`、`prompt_cache_key`），
+  都没有时退回 `X-Conversation-Request-ID`；请求里的 `user` 字段不会被当成会话。列里的值太长
+  会截断，完整值放在单元格 title 里。
+
+### Fixed
+
+- 积分构成视图按厂商账号合并多条通道：此前 zcode 同一账号的 API key 与 JWT 通道
+  在该视图分成两行，看起来像两个账号，1 亿额度只在其中一行可见。现在分组规则与
+  账号池一致（identity），组头显示操作员备注或账号名，卡片、到期分布和批次明细
+  各只出一份；组内通道名以小字列出，单通道账号的显示完全不变。
+- 「用量 → 最近调用」的账号列不再只显示凭据类型名（例如 zcode 的 `ZCode plan JWT`）：
+  账号名改成和账号池的账号列同一口径——操作员备注（手机号/邮箱）优先，其次模块 label，
+  最后裸 id；鼠标悬停还能看到裸 id、label 与厂商 identity。这条对所有平台生效。
+
 ## [0.1.13] - 2026-10-05
 
 ### Fixed

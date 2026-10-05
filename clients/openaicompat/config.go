@@ -196,6 +196,28 @@ func builtinBaseURL(id string) string {
 	return ""
 }
 
+// keyPages maps a provider id to the vendor page where an API key is created.
+// It is advisory metadata for the panel: a provider missing from this table
+// simply renders no "get a key" link.  Keep it next to builtinProviders so
+// adding a source is still a one-file change.
+var keyPages = map[string]string{
+	"groq":        "https://console.groq.com/keys",
+	"cerebras":    "https://cloud.cerebras.ai/",
+	"siliconflow": "https://cloud.siliconflow.cn/account/ak",
+	"mistral":     "https://console.mistral.ai/api-keys/",
+	"nvidia":      "https://build.nvidia.com/",
+	"together":    "https://api.together.ai/settings/api-keys",
+	"fireworks":   "https://fireworks.ai/account/api-keys",
+	"deepinfra":   "https://deepinfra.com/dash/api_keys",
+	"chutes":      "https://chutes.ai/app/api-keys",
+	"huggingface": "https://huggingface.co/settings/tokens",
+}
+
+// builtinKeyPage resolves a provider id to its key-creation page.
+func builtinKeyPage(id string) string {
+	return keyPages[strings.ToLower(strings.TrimSpace(id))]
+}
+
 // builtinModels are the cold-start model tables per provider.  They are the
 // models a fresh process can serve before any live listing succeeds; they are
 // deliberately modest lists of the ids the vendor documents, not exhaustive.

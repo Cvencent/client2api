@@ -98,3 +98,24 @@ func TestAccountNoteModalSavesThroughTheConfig(t *testing.T) {
 		t.Error("saveAccountNote 把空字符串直接写进了配置")
 	}
 }
+
+// TestCreditsViewGroupsByIdentity 钉住积分构成视图的合并逻辑：它和账号池
+// 用同一套 identity 分组，卡片、到期分布和明细表都渲染合并后的行。这全是
+// 字符串拼接，Go 编译器管不到，所以静态钉住调用链；分组函数被改名或没接
+// 上时这里会红。
+func TestCreditsViewGroupsByIdentity(t *testing.T) {
+	src := string(indexHTML)
+	for _, want := range []string{
+		"function crGroups(list)",
+		"function crMerge(g)",
+		"function crIdentityName(rows)",
+		"const merged = crGroups(list).map(crMerge);",
+		"renderExpiryDistribution(merged, now)",
+		"pkSummaryCards(merged, now)",
+		"merged.map(a => crAcctRow(a, limit))",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("credits view missing %q; grouping was likely unwired", want)
+		}
+	}
+}

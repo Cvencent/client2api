@@ -3,6 +3,7 @@ package openaicompat
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"client2api/internal/core"
@@ -134,6 +135,38 @@ func TestAccountFieldsDeclareProviderAndKey(t *testing.T) {
 	for _, want := range []string{"provider", "api_key"} {
 		if !keys[want] {
 			t.Errorf("AccountFields missing %q", want)
+		}
+	}
+}
+
+// The add form's provider picker is only half the operator's job; the other
+// half is getting a key from that vendor.  Every provider the field spec
+// offers must therefore have a key page, or the panel's "go get a key" link
+// silently disappears for an option the operator can still select.
+func TestKeyPagesCoverEveryOfferedProvider(t *testing.T) {
+	c := newTestClient(t, t.TempDir())
+	ctx := context.Background()
+	pages := c.KeyPageURLs(ctx)
+	if len(pages) == 0 {
+		t.Fatal("KeyPageURLs is empty, so the panel has nothing to link to")
+	}
+	var offered []string
+	for _, f := range c.AccountFields(ctx) {
+		if f.Key == "provider" {
+			offered = f.Options
+		}
+	}
+	if len(offered) == 0 {
+		t.Fatal("the provider field offers no options")
+	}
+	for _, id := range offered {
+		if strings.TrimSpace(pages[id]) == "" {
+			t.Errorf("provider %q has no key page", id)
+		}
+	}
+	for id, u := range pages {
+		if !strings.HasPrefix(u, "https://") {
+			t.Errorf("key page for %q is not an https URL: %q", id, u)
 		}
 	}
 }

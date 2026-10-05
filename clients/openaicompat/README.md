@@ -113,6 +113,12 @@ enable/disable, test and refresh providers. Each account is one provider row:
 - **Add** collects `provider`, `api_key`, and optionally `base_url`, `models`
   and `label`. Rows added here are written to this module's own
   `data/openai-compat/accounts.json`, never to the main config.
+- **Get a key** points the operator at each vendor's key page.  The module
+  implements `core.KeyPageProvider`, so the panel renders a "create an API
+  key" link under the provider picker and follows the selection.  That is the
+  whole add flow: no browser login tab, because a key pasted here is the
+  operator's own account and is the only credential these vendors issue for
+  a third-party tool.
 - **Remove** and **enable/disable** only act on panel-owned rows. A provider
   written into `clients.openai-compat.providers` is shown but reported as
   unremovable, because the durable copy lives in the config file the panel must

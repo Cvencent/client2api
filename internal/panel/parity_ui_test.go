@@ -31,8 +31,8 @@ func TestCreditCardsAreMountedAndFed(t *testing.T) {
 	// 卡片必须真的被 renderCredits 用上，而且要排在明细表之前：卡片回答
 	// 「谁还剩多少」，表回答「具体是哪些批次」。
 	cr := poolStatsFuncBody(t, src, "renderCredits")
-	if !strings.Contains(cr, "pkSummaryCards(list, now)") {
-		t.Error("renderCredits 没有渲染逐账号积分卡片")
+	if !strings.Contains(cr, "pkSummaryCards(merged, now)") {
+		t.Error("renderCredits 没有渲染逐账号积分卡片（应使用合并后的列表）")
 	}
 	if i, j := strings.Index(cr, "pkSummaryCards"), strings.Index(cr, "crAcctRow"); i < 0 || j < 0 || i > j {
 		t.Error("积分卡片没有排在批次明细表之前")
@@ -65,7 +65,9 @@ func TestCreditCardsAreMountedAndFed(t *testing.T) {
 
 	// 行级失败只让那一张卡说失败，其它账号照常显示——与后端 packages 的
 	// 行级 error 语义一致（一个账号挂了不该让整页空白）。
-	if !strings.Contains(body, "if (a.error)") || !strings.Contains(body, "查询失败") {
+	// 合并后，同组某条通道挂了、另一条还有数时，错误退到卡片底部而不藏掉余额；
+	// 整组余额为零且挂了才渲染成整卡失败。
+	if !strings.Contains(body, "查询失败") {
 		t.Error("pkSummaryCards 没有把行级 error 渲染成单张卡的失败态")
 	}
 

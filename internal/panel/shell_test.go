@@ -25,6 +25,10 @@ var (
 	// an element must be listed here -- a new one that is not would make its
 	// rows look dangling, which is the guard doing its job.
 	shellMinted = regexp.MustCompile(`(?:cfgText|cfgNum|cfgCheck|pfWBText|pfWBNum|pfWBCheck)\("([A-Za-z0-9_-]+)"`)
+	// A manual-add field is minted as "mf_" + its AccountFields key, so the
+	// id is data (mf_provider ...) rather than a literal in the markup.  The
+	// script may look one up for the fields it knows by key.
+	shellDynamicID = regexp.MustCompile(`"mf_"\s*\+\s*f\.key`)
 )
 
 // shellRefs are the ways the script looks an element up.  Each captures only an

@@ -713,6 +713,40 @@ func TestChatCarriesTheCallersConversationIdentity(t *testing.T) {
 	}
 }
 
+// TestChatRecordsTheCallersSessionOnTheUsageRow: 「最近调用」的会话ID列取的就是
+// 调用方自己带来的会话标识，和路由粘性用同一个键；没带会话的请求留空，绝不能
+// 拿请求里的 user 字段冒充会话。
+func TestChatRecordsTheCallersSessionOnTheUsageRow(t *testing.T) {
+	usage := NewUsageStore(8)
+	srv := newTestServer(t, &testClient{name: "t", events: usageEvents(1, 1)}, NewStats(), usage)
+
+	body := `{"model":"m1","messages":[{"role":"user","content":"hi"}],"metadata":{"conversation_id":"conv-1"}}`
+	if rec := chatWithHeader(t, srv, body, "X-Conversation-Request-ID", "turn-7"); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
+	}
+	got := usage.Snapshot()
+	if len(got) != 1 {
+		t.Fatalf("recorded %d usage records, want 1", len(got))
+	}
+	if got[0].SessionID != "conv-1" {
+		t.Errorf("usage session = %q, want conv-1", got[0].SessionID)
+	}
+
+	// "user" is an end-user id, not a conversation: the row must stay blank
+	// rather than claim a session the caller never named.
+	plain := chatWithHeader(t, srv, `{"model":"m1","user":"u-1","messages":[{"role":"user","content":"hi"}]}`, "", "")
+	if plain.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", plain.Code, plain.Body.String())
+	}
+	got = usage.Snapshot()
+	if len(got) != 2 {
+		t.Fatalf("recorded %d usage records, want 2", len(got))
+	}
+	if got[1].SessionID != "" {
+		t.Errorf("usage session = %q, want empty — a user id is not a session", got[1].SessionID)
+	}
+}
+
 func TestChatLeavesTheConversationEmptyWhenTheCallerSentNone(t *testing.T) {
 	c := &testClient{name: "t", events: usageEvents(1, 1)}
 	srv := newTestServer(t, c, NewStats(), NewUsageStore(4))

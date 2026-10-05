@@ -93,9 +93,16 @@ type UsageRecord struct {
 	Client    string    `json:"client,omitempty"`
 	Realm     string    `json:"realm,omitempty"`
 	Account   string    `json:"account,omitempty"`
-	Model     string    `json:"model,omitempty"`
-	Candidate int       `json:"candidate,omitempty"` // 1-based position in a bare-model route
-	Failed    bool      `json:"failed,omitempty"`
+	// SessionID names the conversation that produced this call, when the
+	// caller named one: the conversation id the gateway resolved, else the
+	// option spellings the router accepts, else the turn id the caller handed
+	// over.  It is deliberately not derived from message content and never
+	// borrows the request's user field, so a row can only claim a session the
+	// client actually named.  See sessionIDFor.
+	SessionID string `json:"session_id,omitempty"`
+	Model     string `json:"model,omitempty"`
+	Candidate int    `json:"candidate,omitempty"` // 1-based position in a bare-model route
+	Failed    bool   `json:"failed,omitempty"`
 	// Attempt marks a candidate that failed before the request moved on.
 	// It is a recent-list row, not an extra inbound request, so it must not
 	// inflate the aggregate totals.
@@ -127,6 +134,27 @@ func (rec *UsageRecord) setUsage(u *core.Usage) {
 // ---------------------------------------------------------------------------
 // Buckets
 // ---------------------------------------------------------------------------
+
+// sessionIDFor resolves the session id a usage row records.  The order mirrors
+// what the router already treats as a conversation: the id the gateway
+// resolved from metadata or the top level, then the option spellings
+// (conversation_id / conversationId / prompt_cache_key), then the per-turn id
+// the caller handed over in X-Conversation-Request-ID.  The request's user
+// field is deliberately not consulted -- an end-user id is not a conversation,
+// and writing it into a column called 会话ID would claim a session the caller
+// never named.
+func sessionIDFor(req *core.ChatRequest) string {
+	if req == nil {
+		return ""
+	}
+	if id := strings.TrimSpace(req.ConversationID); id != "" {
+		return id
+	}
+	if id := core.ConversationKey(req.Options, ""); id != "" {
+		return id
+	}
+	return strings.TrimSpace(req.ConversationRequestID)
+}
 
 // usageBucket is one (time scope, client, realm, account, model) accumulator.
 // The JSON tags are short because the number of buckets grows with time.

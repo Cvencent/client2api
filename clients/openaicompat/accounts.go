@@ -61,6 +61,19 @@ func (c *Client) AccountFields(ctx context.Context) []core.FieldSpec {
 
 var _ core.AccountManager = (*Client)(nil)
 
+// KeyPageURLs implements core.KeyPageProvider.  The panel shows the link for
+// whichever provider is selected in the add form, which is the difference
+// between "paste a key" and "go get a key and paste it".
+func (c *Client) KeyPageURLs(ctx context.Context) map[string]string {
+	out := make(map[string]string, len(keyPages))
+	for id, u := range keyPages {
+		out[id] = u
+	}
+	return out
+}
+
+var _ core.KeyPageProvider = (*Client)(nil)
+
 // Accounts lists every provider the module knows about.  It never fails just
 // because the pool is empty.
 func (c *Client) Accounts(ctx context.Context) ([]core.AccountRecord, error) {

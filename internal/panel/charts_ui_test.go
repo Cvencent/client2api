@@ -204,8 +204,8 @@ func TestExpiryDistributionIsMountedAndFed(t *testing.T) {
 	if !strings.Contains(body, "const now = Date.now()") {
 		t.Error("renderCredits 没有取一次 now 给图和卡片共用")
 	}
-	if !strings.Contains(body, "renderExpiryDistribution(list, now)") {
-		t.Error("renderCredits 没有把账号列表交给 renderExpiryDistribution")
+	if !strings.Contains(body, "renderExpiryDistribution(merged, now)") {
+		t.Error("renderCredits 没有把合并后的账号列表交给 renderExpiryDistribution")
 	}
 	// 空态必须清空：只 return 会把上一个客户端的图留在原地。
 	if !strings.Contains(body, `$("#pkExpiry").innerHTML = ""`) {

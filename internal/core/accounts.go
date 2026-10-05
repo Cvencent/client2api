@@ -207,6 +207,12 @@ type Capabilities struct {
 	// realm picker from it, and hides the picker entirely when it is empty.
 	Realms []LoginRealm `json:"realms,omitempty"`
 
+	// KeyPages is the provider->console map a KeyPageProvider returns.  The
+	// panel shows the matching link as the operator moves through the add
+	// form's provider options, so a multi-source module can point at each
+	// vendor's key page without hard-coding the table in JavaScript.
+	KeyPages map[string]string `json:"key_pages,omitempty"`
+
 	// DirectKey is the AccountFields key a module accepts the operator's OWN
 	// credential in (DirectKeyProvider).  It is the panel's licence to render a
 	// "paste your own key" control beside the browser login, and it names the
@@ -364,6 +370,23 @@ type DirectKeyProvider interface {
 	DirectKeyField(ctx context.Context) string
 }
 
+// KeyPageProvider lets a module that stores several upstreams at once (one
+// account per provider, as openai-compat does) tell the panel where the
+// operator goes to create a key for a given provider.  The panel renders the
+// link when the add form's provider selection changes, so the operator is one
+// click from the vendor's console instead of guessing the URL.
+//
+// This is deliberately separate from AccountFields: a module with a single
+// provider still gets its form built from the field specs alone, while a
+// multi-provider module can answer the same question for every id it lists.
+// An empty or missing map leaves the panel with no link, exactly as before.
+type KeyPageProvider interface {
+	Client
+	// KeyPageURLs maps a provider id (the value the operator picks in the
+	// account form) to the page where that provider's key is created.
+	KeyPageURLs(ctx context.Context) map[string]string
+}
+
 // RealmLoginProvider is a LoginProvider whose flow branches on which upstream
 // realm the account is being added to.  It is a separate interface on purpose:
 // the shared machinery is opt-in, so a module with a single realm keeps
@@ -440,6 +463,9 @@ func CapabilitiesOf(ctx context.Context, c Client) Capabilities {
 	}
 	if dk, ok := c.(DirectKeyProvider); ok {
 		caps.DirectKey = dk.DirectKeyField(ctx)
+	}
+	if kp, ok := c.(KeyPageProvider); ok {
+		caps.KeyPages = kp.KeyPageURLs(ctx)
 	}
 	if rl, ok := c.(RealmLoginProvider); ok {
 		caps.Realms = rl.LoginRealms(ctx)

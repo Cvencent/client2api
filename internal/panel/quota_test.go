@@ -275,6 +275,46 @@ func TestPackagesAggregatesAndSorts(t *testing.T) {
 	}
 }
 
+func TestPackagesCarriesIdentityAndOperatorNote(t *testing.T) {
+	// 积分构成视图要按「厂商账号」合并多条通道，所以每行必须带上 identity
+	// 和操作员备注：这是账号池同一套分组规则在 packages 上的复制。
+	r := core.NewRegistry()
+	r.SetPlatformConfigs(map[string]core.PlatformConfig{
+		"wb": {AccountNotes: map[string]string{"jwt": " 13800138000 "}},
+	})
+	c := quotaClient("wb",
+		core.AccountRecord{ID: "jwt", Label: "ZCode plan JWT", Identity: "61161790588087632"},
+		core.AccountRecord{ID: "key", Label: "BigModel - Coding Plan", Identity: "61161790588087632"},
+	)
+	c.packages["jwt"] = core.PackageReport{Remain: 99, Size: 100}
+	r.Add(c) // the route resolves "wb" through the registry; without this it 404s
+	h := New(Options{Registry: r, Started: time.Now()})
+
+	rec := get(t, h, "/panel/api/clients/wb/packages")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	rows := rowsOf(t, decodeMap(t, rec)["accounts"])
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2", len(rows))
+	}
+	for _, row := range rows {
+		if row["identity"] != "61161790588087632" {
+			t.Errorf("%v identity = %v, want the vendor's user id", row["id"], row["identity"])
+		}
+	}
+	byID := map[string]map[string]any{}
+	for _, row := range rows {
+		byID[msgString(row["id"])] = row
+	}
+	if got := byID["jwt"]["operator_note"]; got != "13800138000" {
+		t.Errorf("jwt operator_note = %v, want the trimmed note", got)
+	}
+	if _, has := byID["key"]["operator_note"]; has {
+		t.Errorf("key row carried a note the config never set: %v", byID["key"])
+	}
+}
+
 func TestPackagesBoundsTheFanOut(t *testing.T) {
 	// The reference caps this at 3 concurrent vendor calls; a fleet refresh must
 	// not turn into a burst.  Six accounts is enough to see a bound of 3.

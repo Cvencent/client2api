@@ -228,13 +228,19 @@ func (p *panel) balancesRefresh(w http.ResponseWriter, r *http.Request, c core.C
 // uid/nickname/realm, because in a multi-client panel "which module" is a
 // column too and the browser already addresses accounts by "id".
 type packageRow struct {
-	ID       string               `json:"id"`
-	Label    string               `json:"label,omitempty"`
-	State    string               `json:"state,omitempty"`
-	Remain   int64                `json:"remain"`
-	Size     int64                `json:"size"`
-	Packages []core.CreditPackage `json:"packages"`
-	Error    string               `json:"error,omitempty"`
+	ID    string `json:"id"`
+	Label string `json:"label,omitempty"`
+	// Identity and OperatorNote let the credits view merge the rows that are
+	// really one vendor account reached through several credentials.  The
+	// accounts view has grouped on these for a while; the packages view served
+	// the same account once per channel, which is where "多个 Zcode" came from.
+	Identity     string               `json:"identity,omitempty"`
+	OperatorNote string               `json:"operator_note,omitempty"`
+	State        string               `json:"state,omitempty"`
+	Remain       int64                `json:"remain"`
+	Size         int64                `json:"size"`
+	Packages     []core.CreditPackage `json:"packages"`
+	Error        string               `json:"error,omitempty"`
 }
 
 // packages implements GET <base>/packages: the per-tranche breakdown of every
@@ -269,6 +275,10 @@ func (p *panel) packages(w http.ResponseWriter, r *http.Request, c core.Client) 
 
 	rows := make([]packageRow, len(recs))
 	sem := make(chan struct{}, packageFanout)
+	// The group keys travel with the rows: identity is the module's own answer
+	// about who owns the credential, and the operator note is the human name
+	// the accounts view already shows for it.
+	p.decorateAccountNotes(c.Name(), recs)
 	var wg sync.WaitGroup
 	for i, rec := range recs {
 		wg.Add(1)
@@ -276,7 +286,7 @@ func (p *panel) packages(w http.ResponseWriter, r *http.Request, c core.Client) 
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			row := packageRow{ID: rec.ID, Label: rec.Label, State: rec.State}
+			row := packageRow{ID: rec.ID, Label: rec.Label, State: rec.State, Identity: rec.Identity, OperatorNote: rec.OperatorNote}
 			rep, err := pp.AccountPackages(ctx, rec.ID)
 			if err != nil {
 				row.Error = core.Redact(err.Error())

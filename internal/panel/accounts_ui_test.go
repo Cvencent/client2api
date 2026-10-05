@@ -184,17 +184,28 @@ func TestAccountGroupIsHealthyWhenAnyChannelIsHealthy(t *testing.T) {
 // 一起，而且没有明显正确的语义。
 func TestRecentCallAccountPrefersHumanReadableName(t *testing.T) {
 	src := string(indexHTML)
+	body := poolStatsFuncBody(t, src, "accountDisplayName")
 	for _, want := range []string{
-		`function accountDisplayName(id) {`,
+		`consider(a.operator_note, -1);`,
 		`consider(f.phone || f.mobile, 0);`,
 		`consider(label, 2);`,
 		`consider(f.user_id, 5);`,
+		`consider(a.identity, 6);`,
 		`return best || key;`,
-		`esc(accountDisplayName(x.account) || "-")`,
 	} {
-		if !strings.Contains(src, want) {
+		if !strings.Contains(body, want) {
 			t.Errorf("recent-call account display is missing %s", want)
 		}
+	}
+	// 备注（手机号 / 邮箱）必须在模块 label 之前被考虑：重登时要认的就是它，
+	// 排在 label 后面会被凭据类型名（如 ZCode plan JWT）盖掉。
+	note := strings.Index(body, "consider(a.operator_note")
+	label := strings.Index(body, "consider(label, 2)")
+	if note < 0 || label < 0 || note > label {
+		t.Error("账号列没有把操作员备注排在模块 label 前面")
+	}
+	if !strings.Contains(src, `const accName = accountDisplayName(x.account) || "-";`) {
+		t.Error("最近调用的账号列没有用 accountDisplayName 渲染")
 	}
 }
 
@@ -505,5 +516,34 @@ func TestOwnKeyShortcutIsGatedOnTheModuleCapability(t *testing.T) {
 	}
 	if !strings.Contains(src, `$("#ownKeyOthers").addEventListener("click"`) {
 		t.Error("the other-key disable control has no handler")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 多平台源（openai-compat）的「选中平台 → 给获取 Key 的链接」。
+//
+// 模块用 capabilities.key_pages 把「平台 id → 控制台申请页」交给面板；面板在
+// 手动添加表单里渲染一条链接，并随 provider 下拉的 change 重画。缺了它，操作员
+// 只能自己猜 groq / cerebras 的 Key 页面在哪。同样是字符串拼接，静态钉住。
+// ---------------------------------------------------------------------------
+func TestManualFormLinksToTheProviderKeyPage(t *testing.T) {
+	src := poolStatsUISource(t)
+	if !strings.Contains(src, `id="manKeyLink"`) {
+		t.Error(`the manual add tab has no key-page link anchor (id="manKeyLink")`)
+	}
+
+	render := poolStatsFuncBody(t, src, "renderManualKeyLink")
+	for _, want := range []string{"key_pages", "manualFieldByKey(\"provider\")", "box.hidden = true", "target=\"_blank\""} {
+		if !strings.Contains(render, want) {
+			t.Errorf("renderManualKeyLink does not mention %q", want)
+		}
+	}
+	wire := poolStatsFuncBody(t, src, "wireManualKeyLink")
+	if !strings.Contains(wire, `addEventListener("change"`) {
+		t.Error("the provider picker does not refresh the key-page link on change")
+	}
+	manual := poolStatsFuncBody(t, src, "renderManual")
+	if !strings.Contains(manual, "wireManualKeyLink(n)") {
+		t.Error("renderManual does not wire the key-page link after painting the form")
 	}
 }
