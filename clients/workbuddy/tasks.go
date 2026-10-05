@@ -65,21 +65,51 @@ const (
 	reportPath       = "/v2/report"
 	appearanceSetPth = "/v2/user-asset/appearance/set"
 
-	// Anti-abuse timing.  Do not tighten these without re-measuring: the
-	// reference lost an entire batch of sequential chat events to 2s spacing.
-	mpChatEventGap = 45 * time.Second
-	mpChatJitter   = 10 * time.Second
-	// reportGap matches the ~1.05s cadence the vendor's own script uses between
-	// consecutive CLI activity reports.
-	reportGap = 1050 * time.Millisecond
-	// claimPollGap/claimPollTries cover the asynchronous scorer: an immediate
-	// re-read still shows 0/1 for several seconds.
-	claimPollGap   = 3 * time.Second
+	// claimPollTries counts how many times the reward claim is re-read.
 	claimPollTries = 4
-	// mpActionGap is the pause between accepting a miniprogram chore and reading
-	// it back; the accept call can answer 200 before it has registered.
-	mpActionGap = 2 * time.Second
+)
 
+// Production pacing.  These are the values the module ships with and the ones
+// the vendor was actually measured against -- do not tighten them without
+// re-measuring: the reference lost an entire batch of sequential chat events to
+// 2s spacing.
+//
+// They are named constants rather than literals buried in the vars below so the
+// anti-abuse guard can assert on what production runs without depending on the
+// test binary's restore ordering.
+const (
+	// defaultMPChatEventGap spaces consecutive miniprogram chat events.
+	defaultMPChatEventGap = 45 * time.Second
+	// defaultMPChatJitter is the random extra delay on top of that gap.
+	defaultMPChatJitter = 10 * time.Second
+	// defaultReportGap matches the ~1.05s cadence the vendor's own script uses
+	// between consecutive CLI activity reports.
+	defaultReportGap = 1050 * time.Millisecond
+	// defaultClaimPollGap covers the asynchronous scorer: an immediate re-read
+	// still shows 0/1 for several seconds.
+	defaultClaimPollGap = 3 * time.Second
+	// defaultMPActionGap is the pause between accepting a miniprogram chore and
+	// reading it back; the accept call can answer 200 before it has registered.
+	defaultMPActionGap = 2 * time.Second
+)
+
+// The pacing the runners actually sleep on. These are vars rather than consts
+// for exactly one reason: they are the module's wall-clock cost, and a test that
+// walks a paced path would otherwise spend 45-50s per run proving something it
+// could prove in milliseconds -- which made `go test ./clients/workbuddy` the
+// slowest package in the tree by 3x. The test binary shrinks them once in
+// TestMain and restores them on the way out; production always runs the defaults
+// above, and TestWorkbuddyTaskAntiAbuseGapIsRespected pins those so nobody can
+// quietly ship a tighter gap.
+var (
+	mpChatEventGap = defaultMPChatEventGap
+	mpChatJitter   = defaultMPChatJitter
+	reportGap      = defaultReportGap
+	claimPollGap   = defaultClaimPollGap
+	mpActionGap    = defaultMPActionGap
+)
+
+const (
 	taskTimeout  = 30 * time.Second
 	taskCacheTTL = 20 * time.Second
 

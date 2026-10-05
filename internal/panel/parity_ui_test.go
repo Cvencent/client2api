@@ -328,12 +328,46 @@ func TestUsageViewShowsTheWindowAverageLatency(t *testing.T) {
 		t.Fatal("index.html has no fmtMs：这一行会渲染成 undefined")
 	}
 	body := poolStatsFuncBody(t, src, "renderUsage")
-	if !strings.Contains(body, `row("平均延迟", fmtMs(t.avg_latency_ms))`) {
-		t.Error("renderUsage 没有渲染窗口平均延迟：参考 usStat 的六格里少一格")
-	}
-	// 读的必须是窗口合计 t.*，不是某一行的 b.*：这六格的口径是「所选窗口的合计」，
+	// 读的必须是窗口合计 t.*，不是某一行的 b.*：这几格的口径是「所选窗口的合计」，
 	// 用错对象会在表里取到 undefined 而不报错。
 	if !strings.Contains(body, "d.totals") {
 		t.Error("renderUsage 没有取 d.totals")
+	}
+	// 总览改版以后，平均延迟画在指标磁贴里（renderUsageTiles），不在 renderUsage
+	// 函数体内了。要守的是「这个数有出口」——它曾经在 Go 侧齐了、JSON 发了、
+	// 页面没画，两边都不报错。断言跟着搬家，但不放松：磁贴里必须仍然读
+	// t.avg_latency_ms（而不是退回读某一行的 b.*）。
+	tiles := poolStatsFuncBody(t, src, "renderUsageTiles")
+	if !strings.Contains(tiles, "fmtMs(t.avg_latency_ms)") {
+		t.Error("指标磁贴没有渲染窗口平均延迟：参考 usStat 的六格里少一格")
+	}
+	// 参考的六格必须都在：请求数、失败、输入、输出、合计、平均延迟。少了任何一格
+	// 都是「数字躺在 totals 里没人画」。
+	//
+	// 磁贴里为了算「占合计百分之几」把三个 token 值先取成了局部变量，所以这里钉
+	// 两件事：局部变量确实是从窗口合计 t.* 上取的，以及三个值都被画了出来。
+	// 两段都要有 —— 只查其中一段的话，把 pt 改成一个写死的数也能全绿。
+	for _, want := range []string{
+		"const total = Number(t.total_tokens || 0);",
+		"const pt = Number(t.prompt_tokens || 0);",
+		"const ct = Number(t.completion_tokens || 0);",
+	} {
+		if !strings.Contains(tiles, want) {
+			t.Errorf("指标磁贴没有从窗口合计取 %q：口径错了就成了某一行的数", want)
+		}
+	}
+	for _, want := range []string{
+		`k: "输入 tokens", v: numf(pt)`,
+		`k: "输出 tokens", v: numf(ct)`,
+		`k: "合计 tokens", v: numf(total)`,
+		`k: "平均延迟", v: fmtMs(t.avg_latency_ms)`,
+	} {
+		if !strings.Contains(tiles, want) {
+			t.Errorf("指标磁贴没有渲染 %q：数字躺在 totals 里没人画", want)
+		}
+	}
+	// 失败数也要有出口：成功率那一格的副标题就是它。
+	if !strings.Contains(tiles, "numf(t.failures)") {
+		t.Error("指标磁贴没有渲染失败次数：成功率 99% 本身不说明坏了几个")
 	}
 }

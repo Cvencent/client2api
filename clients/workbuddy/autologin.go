@@ -40,17 +40,11 @@ const (
 	// defaultAutoLoginTimeout bounds one whole run.  wb-auto's --timeout was
 	// 300s, and the same ceiling fits a browser flow that may wait for an SMS.
 	defaultAutoLoginTimeout = 5 * time.Minute
-	// defaultSMSPolls and defaultSMSInterval are wb-auto's --sms-polls /
-	// --sms-interval defaults.
-	defaultSMSPolls    = 12
-	defaultSMSInterval = 5 * time.Second
+	// defaultSMSPolls is wb-auto's --sms-polls default.
+	defaultSMSPolls = 12
 	// defaultDupRetries is wb-auto's --dup-retries default: how many extra
 	// numbers to draw when the platform keeps handing back one already in use.
 	defaultDupRetries = 6
-	// autoPollInterval is how often this module's own login session is polled
-	// after the code has been submitted.  The reference panel's frontend polls
-	// the same way every 3s, so this matches it.
-	autoPollInterval = 3 * time.Second
 	// autoJobTTL is how long a finished job stays readable, so a poller that was
 	// asleep across the transition still sees the outcome.
 	autoJobTTL = 30 * time.Minute
@@ -58,6 +52,47 @@ const (
 	// response without bound.
 	autoMaxLogLines = 400
 )
+
+// Settle pauses: how long to give the vendor's SPA after each click before
+// touching the next control. They are wall-clock only -- the code path, the
+// order of the clicks and the selectors are the same at 1ms or 2s -- so the
+// test binary shrinks them along with the polling cadences above.
+const (
+	defaultAgreeGateSettle = 2 * time.Second
+	defaultPhoneTabSettle  = time.Second
+	// defaultCodeButtonSettle gives the vendor time to actually send the SMS
+	// before the page is re-read for an inline error.
+	defaultCodeButtonSettle = 2500 * time.Millisecond
+)
+
+var (
+	agreeGateSettle  = defaultAgreeGateSettle
+	phoneTabSettle   = defaultPhoneTabSettle
+	codeButtonSettle = defaultCodeButtonSettle
+)
+
+// defaultSMSInterval is wb-auto's --sms-interval default: the pause between two
+// checks for the texted code.
+const defaultSMSIntervalValue = 5 * time.Second
+
+// defaultSMSInterval is that pause as the poller uses it.  It is a var only so
+// the test binary can shrink it: the login tests really do wait out this
+// interval between polls of a stub that answers immediately, so the package
+// spent 13s of a run proving "the poller retries". Production always runs
+// defaultSMSIntervalValue. The poll count (defaultSMSPolls) is deliberately not
+// made mutable -- how many times we look is behaviour, how long we wait is not.
+var defaultSMSInterval = defaultSMSIntervalValue
+
+// defaultAutoPollInterval is how often this module's own login session is polled
+// after the code has been submitted.  The reference panel's frontend polls the
+// same way every 3s, so this matches it.
+const defaultAutoPollInterval = 3 * time.Second
+
+// autoPollInterval is that cadence as the runners use it.  It is a var only so
+// the test binary can shorten it: the login tests spend a real 3s per poll tick
+// waiting for a session the stub resolves immediately, which is wall-clock
+// spent proving nothing. Production always runs defaultAutoPollInterval.
+var autoPollInterval = defaultAutoPollInterval
 
 // The vendor's authorisation page.  Ported from wb_add_account.py's SEL_*.
 const (
@@ -463,7 +498,7 @@ func (c *Client) openPhoneLogin(ctx context.Context, job *autoJob, page pageDriv
 		return fmt.Errorf("协议闸门点击失败：%w", err)
 	} else if ok {
 		job.logf("已过协议闸门")
-		sleepCtx(ctx, 2*time.Second)
+		sleepCtx(ctx, agreeGateSettle)
 	}
 	// Switch to the phone-code tab.  A page that already defaults to it has no
 	// such tab, which is not an error.
@@ -471,7 +506,7 @@ func (c *Client) openPhoneLogin(ctx context.Context, job *autoJob, page pageDriv
 		return fmt.Errorf("切换手机号标签失败：%w", err)
 	} else if ok {
 		job.logf("已切到手机验证码登录")
-		sleepCtx(ctx, time.Second)
+		sleepCtx(ctx, phoneTabSettle)
 	}
 	if !waitSelector(ctx, page, selPhoneInput, 15*time.Second) {
 		return errors.New("找不到手机号输入框，厂商登录页可能已改版")
@@ -506,7 +541,7 @@ func (c *Client) requestSMSCode(ctx context.Context, job *autoJob, page pageDriv
 		return errors.New("「获取验证码」按钮点击失败")
 	}
 	job.logf("已点击「获取验证码」")
-	sleepCtx(ctx, 2500*time.Millisecond)
+	sleepCtx(ctx, codeButtonSettle)
 	if bad := firstText(pageBody(ctx, page), pageErrorTexts); bad != "" {
 		return fmt.Errorf("页面提示：%s", bad)
 	}

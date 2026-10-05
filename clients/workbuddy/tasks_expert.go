@@ -162,11 +162,16 @@ func runSequential4(ctx context.Context, c *Client, a *Auth, t *growthTask) (str
 	return "automation create reported (provisional miniprogram criteria)", nil
 }
 
-// expertSummonGap is the pause between two experts in a batch chain.  The
+// defaultExpertSummonGap is the pause between two experts in a batch chain.  The
 // reference measured 8s as a 100% success rate and settled on 6s; a chain is
 // scored on the summon AND the real chat that follows it, and five of those back
 // to back read as automation rather than use.
-const expertSummonGap = 6 * time.Second
+const defaultExpertSummonGap = 6 * time.Second
+
+// expertSummonGap is a var only so the test binary can shrink it. The chain
+// still runs every step in the same order against the same stub; only the
+// measured pause between steps moves. Production always runs the default above.
+var expertSummonGap = defaultExpertSummonGap
 
 // runExpertUse is expert_5: five live platform experts summoned and really used.
 func runExpertUse(ctx context.Context, c *Client, a *Auth, t *growthTask) (string, error) {

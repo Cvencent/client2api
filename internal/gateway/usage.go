@@ -143,6 +143,17 @@ func (rec *UsageRecord) setUsage(u *core.Usage) {
 // field is deliberately not consulted -- an end-user id is not a conversation,
 // and writing it into a column called 会话ID would claim a session the caller
 // never named.
+//
+// When the caller names nothing at all, fall back to the content-derived key
+// instead of leaving the cell empty.  An empty cell was not a neutral "unknown":
+// the same conversation showed up as some rows named and some not depending on
+// which of the several entry points that turn came in through, so one conversation
+// read as several.  DeriveConversationKey is the same key the router already uses
+// for stickiness, so the id in this column and the conversation the gateway
+// actually kept together cannot drift apart.  It carries core.DerivedKeyPrefix so
+// a reader can still tell a derived id from one the caller sent, and a request
+// with nothing signable to derive from still degrades to empty rather than
+// inventing a session.
 func sessionIDFor(req *core.ChatRequest) string {
 	if req == nil {
 		return ""
@@ -153,7 +164,22 @@ func sessionIDFor(req *core.ChatRequest) string {
 	if id := core.ConversationKey(req.Options, ""); id != "" {
 		return id
 	}
-	return strings.TrimSpace(req.ConversationRequestID)
+	if id := strings.TrimSpace(req.ConversationRequestID); id != "" {
+		return id
+	}
+	return derivedSessionID(req)
+}
+
+// derivedSessionID is the last resort of sessionIDFor: the caller's request
+// names no session anywhere, so the conversation is identified by what it said.
+// It is a thin wrapper so the derivation rule lives in exactly one place: core,
+// where the stickiness key is derived.  Re-deriving it here would let the usage
+// journal and the router disagree about which calls belong to one conversation.
+func derivedSessionID(req *core.ChatRequest) string {
+	if req == nil {
+		return ""
+	}
+	return core.DeriveConversationKey(req.Messages)
 }
 
 // usageBucket is one (time scope, client, realm, account, model) accumulator.

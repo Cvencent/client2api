@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -382,22 +383,123 @@ func TestWorkbuddyTaskBoardIsCachedForTheTTL(t *testing.T) {
 	}
 }
 
+// TestMain shrinks this module's wall-clock pacing for the whole test binary.
+//
+// The chore runners genuinely sleep between upstream calls: mpChatEventGap is
+// 45s because the vendor rolls the entire batch back at tighter spacing, and
+// that value is real, not decorative. But the tests here are about *which*
+// events get reported and *what shape* the calls have, and they were paying
+// 45-50s of real sleeping per run to prove it -- which made this package the
+// slowest in the tree by 3x (147s against a 44s runner-up) and the dominant
+// cost of `go test ./...`.
+//
+// Shrinking the durations costs no coverage: the same code runs, the same calls
+// are counted, the same order is asserted. Only the clock moves.
+//
+// It is done here rather than per-test on purpose. Roughly thirty tests reach a
+// paced path, and annotating each one is easy to get wrong -- a new test would
+// silently inherit the 45s wait again. internal/gateway already uses this same
+// TestMain approach, for this same reason.
+//
+// Nothing here weakens the shipped values. They are the defaults* above, and
+// TestWorkbuddyTaskAntiAbuseGapIsRespected asserts on those constants directly,
+// so tuning the real gap down still fails the suite.
+//
+// mpChatJitter goes to 0 rather than something small because the runners guard
+// it with `if mpChatJitter > 0` before calling rand.Int64N, which panics on 0.
+func TestMain(m *testing.M) {
+	savedGap, savedJitter := mpChatEventGap, mpChatJitter
+	savedReport, savedPoll, savedAction := reportGap, claimPollGap, mpActionGap
+	savedAutoPoll := autoPollInterval
+	savedSMSInterval := defaultSMSInterval
+	savedAgree, savedTab := agreeGateSettle, phoneTabSettle
+	savedExpertGap := expertSummonGap
+	savedCodeSettle := codeButtonSettle
+
+	mpChatEventGap = time.Millisecond
+	mpChatJitter = 0
+	reportGap = time.Millisecond
+	claimPollGap = time.Millisecond
+	mpActionGap = time.Millisecond
+	autoPollInterval = time.Millisecond
+	defaultSMSInterval = time.Millisecond
+	agreeGateSettle = time.Millisecond
+	phoneTabSettle = time.Millisecond
+	expertSummonGap = time.Millisecond
+	codeButtonSettle = time.Millisecond
+
+	code := m.Run()
+
+	// Restore production timing for anything that runs after the suite.
+	mpChatEventGap, mpChatJitter = savedGap, savedJitter
+	reportGap, claimPollGap, mpActionGap = savedReport, savedPoll, savedAction
+	autoPollInterval = savedAutoPoll
+	defaultSMSInterval = savedSMSInterval
+	agreeGateSettle, phoneTabSettle = savedAgree, savedTab
+	expertSummonGap = savedExpertGap
+	codeButtonSettle = savedCodeSettle
+	os.Exit(code)
+}
+
 // TestWorkbuddyTaskAntiAbuseGapIsRespected is a spec guard rather than a
 // behavioural test: the whole miniprogram batch is rolled back at tighter
 // spacing, so the constant must not be tuned down casually.
+//
+// It reads the production constants rather than the mutable vars, because
+// TestMain has those shrunk for the whole run: asserting on them would only
+// prove the test binary is fast, not that production is safe.
 func TestWorkbuddyTaskAntiAbuseGapIsRespected(t *testing.T) {
-	if mpChatEventGap < 45*time.Second {
-		t.Fatalf("mpChatEventGap = %v, want at least 45s", mpChatEventGap)
+	// These read the production constants, not the vars: TestMain shrinks the
+	// vars for the whole run, so asserting on them here would only prove the
+	// test binary is fast. What must not move is what production ships.
+	if defaultMPChatEventGap < 45*time.Second {
+		t.Fatalf("defaultMPChatEventGap = %v, want at least 45s", defaultMPChatEventGap)
 	}
-	if mpChatJitter <= 0 {
-		t.Fatalf("mpChatJitter = %v, want a non-zero jitter", mpChatJitter)
+	if defaultMPChatJitter <= 0 {
+		t.Fatalf("defaultMPChatJitter = %v, want a non-zero jitter", defaultMPChatJitter)
 	}
-	if reportGap < time.Second {
-		t.Fatalf("reportGap = %v, want at least 1s", reportGap)
+	if defaultReportGap < time.Second {
+		t.Fatalf("defaultReportGap = %v, want at least 1s", defaultReportGap)
 	}
-	if claimPollTries < 2 || claimPollGap < time.Second {
+	// mpActionGap is the pause between accepting a chore and reading it back.
+	// The accept call can answer 200 before the chore has registered, so this
+	// one is load-bearing: at 0 the re-read races the registration and the batch
+	// silently does less work than it claims.
+	if defaultMPActionGap < time.Second {
+		t.Fatalf("defaultMPActionGap = %v, want at least 1s", defaultMPActionGap)
+	}
+	if claimPollTries < 2 || defaultClaimPollGap < time.Second {
 		t.Fatalf("claim polling = %d tries / %v, too coarse for the asynchronous scorer",
-			claimPollTries, claimPollGap)
+			claimPollTries, defaultClaimPollGap)
+	}
+	// The login poll cadence is the same kind of contract: it mirrors the vendor
+	// panel's own 3s refresh, and dropping it to zero would turn a real wait
+	// into a busy loop against the upstream login endpoint.
+	if defaultAutoPollInterval < time.Second {
+		t.Fatalf("defaultAutoPollInterval = %v, want at least 1s", defaultAutoPollInterval)
+	}
+	// Same contract for the SMS retry pause: 5s is what the platform needs
+	// between checks, and the poll count is the part that carries behaviour.
+	if defaultSMSIntervalValue < time.Second {
+		t.Fatalf("defaultSMSIntervalValue = %v, want at least 1s", defaultSMSIntervalValue)
+	}
+	if defaultExpertSummonGap < time.Second {
+		t.Fatalf("defaultExpertSummonGap = %v, want at least 1s: the vendor reads a faster chain as automation",
+			defaultExpertSummonGap)
+	}
+	if defaultCodeButtonSettle <= 0 {
+		t.Fatalf("defaultCodeButtonSettle = %v, want positive", defaultCodeButtonSettle)
+	}
+	if defaultAgreeGateSettle <= 0 || defaultPhoneTabSettle <= 0 {
+		t.Fatalf("SPA settle pauses = %v / %v, want both positive",
+			defaultAgreeGateSettle, defaultPhoneTabSettle)
+	}
+	// The vars must still start from the production defaults, so a package that
+	// forgets TestMain's restore (or another test that forgets to restore after
+	// shrinking them) cannot quietly leave the real runners slow -- or fast.
+	if mpChatEventGap != defaultMPChatEventGap && mpChatEventGap != time.Millisecond {
+		t.Errorf("mpChatEventGap = %v, want either the production default %v or the test value",
+			mpChatEventGap, defaultMPChatEventGap)
 	}
 	// Every code the brief requires must actually have a runner.
 	for _, code := range []string{

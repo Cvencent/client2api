@@ -460,9 +460,115 @@ legend { font-size: 12px; color: var(--ink-3); font-weight: 600; padding-bottom:
   .uschart-body .gl { stroke: var(--line-soft); stroke-width: 1; stroke-dasharray: 2 3; opacity: .7; }
   .uschart-body .tk { fill: var(--ink-3); font: 10px var(--mono); }
   .uschart-body .us-empty { padding: 28px 0; text-align: center; color: var(--ink-3); font-size: 12.5px; }
+
+  /* 指标磁贴。原来是一列灰底 list（成功率 / 输入 / 输出 / 合计 / 延迟），
+     五个盒子长得一模一样，看不出哪个是主角。这里让每块带上自己的身份色和
+     副标题，扫一眼就知道该看哪儿。 */
+  .ustiles {
+    display: grid; gap: 10px; margin-bottom: 12px;
+    grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+  }
+  .ustile {
+    position: relative; overflow: hidden;
+    padding: 13px 15px 14px; border-radius: var(--radius-lg);
+    border: 1px solid var(--line-soft); background: var(--surface-2);
+    transition: border-color .16s, transform .16s, box-shadow .16s;
+  }
+  /* 顶部一条 2px 的身份色，是这块磁贴唯一的装饰 —— 卡片之间靠它区分，
+     不靠底色（底色一变就和整个面板的配色打架了）。 */
+  .ustile::before {
+    content: ""; position: absolute; inset: 0 0 auto; height: 2px;
+    background: var(--tint, var(--accent)); opacity: .85;
+  }
+  .ustile:hover {
+    border-color: var(--line); transform: translateY(-1px); box-shadow: var(--shadow-sm);
+  }
+  .ustile .k {
+    display: flex; align-items: center; gap: 6px;
+    color: var(--ink-3); font-size: 11.5px; letter-spacing: .02em;
+  }
+  /* 磁贴上的小圆点：和顶部那条身份色同一个色，一眼把磁贴和它的色对上。 */
+  .ustile .dot {
+    width: 7px; height: 7px; border-radius: 50%; flex: none;
+    background: var(--tint, var(--accent));
+  }
+  .ustile .v {
+    margin-top: 7px; font: 600 23px/1.15 var(--mono);
+    font-variant-numeric: tabular-nums; letter-spacing: -.01em;
+  }
+  .ustile .sub {
+    margin-top: 6px; min-height: 17px;
+    color: var(--ink-3); font-size: 11.5px; line-height: 1.45;
+  }
+  /* 副标题里那块带底色的小标签（成功率那条的「6 次失败」）。 */
+  .ustile .sub em {
+    font-style: normal; padding: 1px 5px; border-radius: var(--radius-sm);
+    background: var(--tint-soft, var(--accent-soft)); color: var(--tint-text, var(--accent-text));
+    white-space: nowrap; vertical-align: baseline;
+  }
+
+  /* 成功率那一格自带一条进度条：磁贴是静态的，给它一点会动的东西，
+     这块才不是「又是一张卡」。 */
+  .ustile .meter {
+    margin-top: 8px; height: 4px; border-radius: 2px;
+    background: var(--raise); overflow: hidden;
+  }
+  .ustile .meter i {
+    display: block; height: 100%; border-radius: 2px;
+    background: var(--tint, var(--accent));
+    /* 宽度由 renderUsage 写成行内 style，动画让它从 0 长到目标值。 */
+    animation: usgrow .7s cubic-bezier(.2,.7,.3,1) both;
+  }
+  @keyframes usgrow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+  .ustile .meter i { transform-origin: left center; }
+
+  /* 图表上方的读数条。鼠标停在某根柱子上时，这里报出那个时间点的输入 / 输出 /
+     次数 —— 原来只能靠 <title> 的原生提示，要等一秒才弹、样式也和各平台不一样。 */
+  .usread {
+    display: flex; align-items: center; gap: 12px;
+    padding: 7px 12px; border-bottom: 1px solid var(--line-soft);
+    font-size: 12px; color: var(--ink-2);
+    background: var(--surface-2);
+  }
+  .usread[hidden] { display: none; }
+  .usread .usread-t { color: var(--ink-3); font-variant-numeric: tabular-nums; }
+  .usread-i { display: inline-flex; align-items: center; gap: 5px; font-variant-numeric: tabular-nums; }
+  .usread .sw { margin-left: 0; }
+  .usread-q { color: var(--ink-3); }
+
+  /* 柱子。命中区是一整列（比柱子宽），细柱也能轻松指到。 */
+  .uschart-body .uscol { cursor: crosshair; }
+  .uschart-body .uscol .hit { fill: transparent; }
+  /* 默认给柱子一点透明度：144 根柱子并排时全不透明会糊成一片，
+     眼睛分不出哪根是哪根。 */
+  /* 柱子的类名是 usbar 而不是 bar：文件里有一条全局 `.bar { height: 3px; ... }`
+     是给账号池积分条用的，class="bar" 的 SVG 元素也会被它命中，CSS 的 height
+     压过 SVG 属性 height，height=89 的柱子就渲染成 3px 的一条线。 */
+  .uschart-body .uscol rect.usbar { opacity: .82; transition: opacity .12s, filter .12s; }
+  .uschart-body .uscol:hover rect.usbar,
+  .uschart-body .uscol.on rect.usbar { opacity: 1; filter: brightness(1.18); }
+  .uschart-body .uscol .cursor { stroke: var(--ink-3); stroke-width: 1; stroke-dasharray: 2 3; opacity: 0; }
+  .uschart-body .uscol:hover .cursor, .uschart-body .uscol.on .cursor { opacity: .55; }
+  /* 柱子生长的揭示动画。
+     先试过给每根柱子加 transform-box: fill-box + transform-origin: bottom +
+     scaleY，结果整张图被压成横条 —— <g class="uscol"> 里除了两根柱子还有
+     <title>、命中区和游标线，fill-box 取的是这一堆子元素的包围盒，参照原点
+     和柱子的底边对不上，scaleY 之后全糊在一起。
+     改成在包住 svg 的 .usreveal 上做一道自下而上的扫光：不碰任何 SVG 几何，
+     不依赖 transform-box，各家浏览器行为一致。144 根柱子逐根数其实没人看，
+     扫光一次给的是「这张图刚画出来」的观感。 */
+  .uschart-body .usreveal { display: block; animation: usbar .5s cubic-bezier(.2,.7,.3,1) both; }
+  .uschart-body .usreveal > svg { display: block; width: 100%; height: auto; }
+  @keyframes usbar { from { clip-path: inset(100% 0 0 0); } to { clip-path: inset(0 0 0 0); } }
+  @media (prefers-reduced-motion: reduce) {
+    .uschart-body .usreveal { animation: none; }
+    .ustile .meter i { animation: none; }
+  }
   /* 用量表内的 prompt/completion 小条。必须限定在 .us-wrapbar 内：账号池积分条
      也叫 .bar（块级容器 + 百分比内条），同优先级下这里的全局 .bar 会覆盖它，
-     把积分条塌成 min-width 的一个小点（v1.9.0 回归）。 */
+     把积分条塌成 min-width 的一个小点（v1.9.0 回归）。
+     注意这条对 SVG 元素同样成立：class="bar" 的 <rect> 也会被全局 .bar 的
+     height: 3px 命中，SVG 属性 height 打不过 CSS。所以图表柱子的类名是 usbar。 */
   .us-wrapbar .bar { display: inline-block; height: 6px; border-radius: 3px; min-width: 2px; vertical-align: middle; }
   .us-wrapbar .bar-p { background: var(--accent); }
   .us-wrapbar .bar-c { background: var(--ok); }
@@ -713,6 +819,30 @@ details.cfg summary { cursor: pointer; color: var(--ink-3); font-size: 12.5px; }
 .acc.md tbody td:first-child { position: sticky; left: 0; z-index: 2; background: var(--surface); box-shadow: inset -1px 0 0 var(--line-soft); }
 .acc.md tbody tr:hover td:first-child { background: var(--surface-2); }
 
+/* 分页条。放在表格下面、贴着 .tbl-wrap 的下沿：翻页时它始终在视野里，不用
+   滚回表尾去找。样式沿用 .tblbar 的那一套（同样的描边、同样的 note 灰度），
+   所以它看起来是同一条工具栏的延续，而不是另一个零件。 */
+.pager {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px;
+  padding: 9px 16px; border-top: 1px solid var(--line-soft); background: var(--surface);
+}
+.pager[hidden] { display: none; }
+.pager .grow { flex: 1; }
+.pager .note { color: var(--ink-3); font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.pager .sel-note { font-size: 12px; color: var(--ink-3); display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.pager .sel-note select { padding: 3px 6px; font-size: 12px; border-radius: 6px; }
+.pager .pgbtns { display: inline-flex; align-items: center; gap: 4px; }
+.pager .pgbtns button { min-width: 28px; padding: 3px 7px; font-size: 13px; line-height: 1.2; }
+.pager .pgnum {
+  min-width: 52px; text-align: center; font-size: 12.5px; color: var(--ink-2);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+@media (max-width: 760px) {
+  .pager { padding: 10px 12px; }
+  .pager .note { flex: 1 1 100%; }
+  .pager .pgbtns { flex: 1 1 100%; justify-content: center; }
+}
+
 /* 二、表格工具条：搜索、筛选、结果计数。钉在表头下面、表格上面，滚动表格时不动。 */
 .tblbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; padding: 10px 16px; border-bottom: 1px solid var(--line-soft); background: var(--surface); }
 .tblbar input, .tblbar select { width: auto; flex: none; padding: 5px 10px; font-size: 12.5px; border-radius: 6px; }
@@ -798,10 +928,13 @@ html { scrollbar-gutter: stable; }
 /* 单元格里的数字/时间/余额都是一个不拆行的整体，拆开反而更难读。 */
 .acc td > span[title] { white-space: nowrap; }
 /* 操作列跟着百分比列宽伸缩；按钮仍靠 flex-wrap 换行，窄窗口不会撑破表格。
-   长标签（模块给的签到名可能是一整句话）保持限宽省略，全文留在 title 里。 */
+   限宽 74px 是为「模块给的签到名可能是一整句话」留的，按钮一多就被省略号
+   截断（zcode 那种）。签到文案统一翻成中文之后，最长的也就「领取每日签到积分」
+   七个字，74px 装得下，所以放宽到 96px：省掉一整列省略号。万一模块将来又给一个
+   长标签，flex-wrap 会把它换到下一行，而不是切掉半个字。 */
 #view-accounts table.acc .c-acts { white-space: normal; }
 #view-accounts table.acc .c-acts .actwrap { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 3px; }
-#view-accounts table.acc .c-acts button { padding: 2px 5px; font-size: 11.5px; margin: 0; max-width: 74px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#view-accounts table.acc .c-acts button { padding: 2px 5px; font-size: 11.5px; margin: 0; max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .acc thead th { background: var(--surface); }
 /* 横向滚动时把「账号」钉在左边：表往右一拖，行首的账号名不会跟着消失。
    粘性单元格必须自己带不透明底色，否则后面的列会从它下面穿过去。 */
@@ -864,6 +997,26 @@ button.primary:active:not(:disabled) { filter: brightness(.94); }
 .pfm.off { color: var(--bad); border-color: var(--bad); }
 .pfm .pfmname { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* 十之一、任务中心「全局默认」。以前六个 batch 各自两行 .cfgrow、时点框
+   width:100%，十三行铺满一屏才表达完六个开关；现在一张卡一个 batch，开关在左、
+   时点框在右，按可用宽度排成 2–3 列。卡片的浅底只在勾选后才出现，关着的 batch
+   一眼能和开着的分开。 */
+#scDefaults { display: grid; grid-template-columns: repeat(auto-fill, minmax(258px, 1fr)); gap: 8px; }
+.scdef {
+  display: flex; align-items: center; gap: 10px; padding: 7px 11px;
+  border: 1px solid var(--line-soft); border-radius: var(--radius); background: var(--surface);
+}
+.scdef.on { background: var(--accent-soft); border-color: transparent; }
+.scdefsw {
+  display: flex; align-items: center; gap: 7px; flex: 1 1 auto; min-width: 0;
+  font-size: 13px; color: var(--ink-2); cursor: pointer; white-space: nowrap;
+}
+.scdefsw input { margin: 0; flex: none; }
+.scdef.on .scdefsw { color: var(--accent-text); }
+/* 时点框给一个稳定的下限，操作员一眼知道这里填的是「几点」而不是任意文本。 */
+.scdefh { flex: 0 1 116px; width: auto; min-width: 84px; padding: 5px 9px; font-size: 12.5px; text-align: center; }
+#scDefaultsState { margin-bottom: 9px; }
+
 /* 十、任务中心 · 定时任务与运行记录。这两张表列多而每列窄：宽屏按表看，窄屏
    （桌面应用的内嵌浏览器侧栏常见 500px 上下）折叠成一张张卡片，免得“操作”列
    要横向拖动才看得到。规则限定在 .acc.sc / .acc.stk，账号表和模型表不受影响。 */
@@ -878,6 +1031,10 @@ button.primary:active:not(:disabled) { filter: brightness(.94); }
 .acc.sc .sc-c-acts button { margin: 2px 0 2px 4px; }
 .acc.sc .scTag { white-space: nowrap; }
 
+.acc.sc .sc-c-tag { text-align: center; }
+.acc.sc .scTagNone { color: var(--ink-3); opacity: .5; }
+#view-taskscenter .scHint { padding: 9px 16px; border-bottom: 1px solid var(--line-soft); background: var(--surface); }
+#view-taskscenter .scMaster { font-size: 12.5px; color: var(--ink-2); }
 /* 窄屏卡片。定时任务行排成两列网格：第一行「平台 / 自定义」，第二行任务，
    第三行时点 · 启用 · 下一跳，第四行操作。表头此时隐藏，行内用 ::before 补标签。 */
 @media (max-width: 820px) {
@@ -1130,7 +1287,8 @@ input[type=checkbox] { width: 14px; height: 14px; padding: 0; accent-color: var(
       <button class="icon ghost" id="btnTheme" title="切换明暗（深色 → 浅色 → 跟随系统）" aria-label="切换主题">
         <svg id="icoTheme" viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M13.2 9.6A5.6 5.6 0 0 1 6.4 2.8a5.6 5.6 0 1 0 6.8 6.8z"/></svg>
       </button>
-      <button id="btnRefresh">刷新</button>
+      <!-- 统一的刷新入口：任何视图都在这个位置，按当前视图分派到真正干活的函数。 -->
+      <button id="btnRefresh" title="重新读取当前页面的数据">刷新</button>
       <button class="primary" id="btnAdd">添加账号</button>
     </div>
 
@@ -1171,6 +1329,23 @@ input[type=checkbox] { width: 14px; height: 14px; padding: 0; accent-color: var(
           </tr></thead>
           <tbody id="accBody"></tbody>
         </table>
+        </div>
+        <div class="pager" id="accPager" hidden>
+          <span class="grow"></span>
+          <span class="note" id="accPageInfo"></span>
+<label class="sel-note">每页 <select id="accPageSize">
+<option value="20">20</option>
+<option value="50" selected>50</option>
+            <option value="100">100</option>
+            <option value="200">200</option>
+          </select></label>
+          <span class="pgbtns">
+            <button class="xs" id="accPageFirst" title="第一页">«</button>
+            <button class="xs" id="accPagePrev" title="上一页">‹</button>
+            <span class="pgnum" id="accPageNow"></span>
+            <button class="xs" id="accPageNext" title="下一页">›</button>
+            <button class="xs" id="accPageLast" title="最后一页">»</button>
+          </span>
         </div>
       </div>
     </section>
@@ -1240,11 +1415,23 @@ input[type=checkbox] { width: 14px; height: 14px; padding: 0; accent-color: var(
               <option value="0">全部</option>
             </select>
           </label>
-          <button class="xs" id="btnUsage">刷新</button>
         </header>
         <div class="pad">
+          <div class="ustiles" id="usTiles"></div>
           <div class="uschart">
-            <div class="uschart-hd"><span class="k">请求 / 失败</span><span class="legend"><span class="sw sw-p"></span>输入<span class="sw sw-c"></span>输出</span><span class="grow"></span><span class="v" id="usStats">-</span></div>
+            <div class="uschart-hd">
+              <span class="k">用量走势</span>
+              <span class="legend"><span class="sw sw-p"></span>输入<span class="sw sw-c"></span>输出</span>
+              <span class="grow"></span>
+              <span class="v" id="usStats">-</span>
+            </div>
+            <div class="usread" id="usRead" aria-live="polite" hidden>
+              <span class="usread-t" id="usReadT"></span>
+              <span class="grow"></span>
+              <span class="usread-i"><span class="sw sw-p"></span><span id="usReadP">-</span></span>
+              <span class="usread-i"><span class="sw sw-c"></span><span id="usReadC">-</span></span>
+              <span class="usread-i usread-q" id="usReadQ"></span>
+            </div>
             <div class="uschart-body" id="usChart"></div>
           </div>
         </div>
@@ -1254,11 +1441,10 @@ input[type=checkbox] { width: 14px; height: 14px; padding: 0; accent-color: var(
       <div class="box">
         <header><h3>最近调用</h3><span class="grow"></span><span class="note" id="usRecentNote"></span>
           <select id="usRecentFilter"><option value="">全部结果</option><option value="ok">仅成功</option><option value="fail">仅失败</option></select>
-          <button class="xs" id="btnUsageRecentRefresh" title="重新读取用量与最近调用">刷新</button>
         </header>
         <div class="tbl-wrap">
         <table class="acc md">
-          <thead><tr><th>时间</th><th>平台</th><th>模型</th><th>会话ID</th><th>账号</th><th>结果</th><th>候选</th><th>输入</th><th>输出</th><th>合计</th><th>耗时</th><th>速率</th></tr></thead>
+          <thead><tr><th>时间</th><th>平台</th><th>模型</th><th>会话ID <span class="hint">调用方报的就原样显示，没报则按消息内容推一个</span></th><th>账号</th><th>结果</th><th>候选</th><th>输入</th><th>输出</th><th>合计</th><th>耗时</th><th>速率</th></tr></thead>
           <tbody id="usRecentBody"></tbody>
         </table>
         </div>
@@ -1307,7 +1493,7 @@ input[type=checkbox] { width: 14px; height: 14px; padding: 0; accent-color: var(
     <!-- 平台告警 -->
     <section class="view" id="view-alerts" hidden>
       <div class="box">
-        <header><h3>平台告警</h3><span class="grow"></span><span class="note" id="alertNote"></span><button class="xs danger" id="btnAlertsClear">清空</button><button class="xs" id="btnAlerts">刷新</button></header>
+        <header><h3>平台告警</h3><span class="grow"></span><span class="note" id="alertNote"></span><button class="xs danger" id="btnAlertsClear">清空</button></header>
         <div class="tbl-wrap">
         <table class="acc md">
           <thead><tr><th>时间</th><th>平台</th><th>模型</th><th>账号</th><th>说明</th><th>连续失败</th></tr></thead>
@@ -1325,7 +1511,6 @@ input[type=checkbox] { width: 14px; height: 14px; padding: 0; accent-color: var(
           <span class="grow"></span>
           <div class="chips" id="crChips"></div>
           <span class="note" id="crNote">-</span>
-          <button class="xs" id="btnCr">刷新</button>
         </header>
         <div class="pad" id="pkExpiry"></div>
         <div class="pad" id="crBody">
@@ -1366,10 +1551,9 @@ input[type=checkbox] { width: 14px; height: 14px; padding: 0; accent-color: var(
       <div class="subtab-panel" data-subtab-panel="tasks-schedule" id="tasks-panel-schedule" role="tabpanel" aria-labelledby="tasks-tab-schedule">
      <div class="box">
        <header>
-         <h3>全局默认 <span class="hint">所有平台未自定义时使用</span></h3>
-         <span class="grow"></span>
-         <button class="xs" id="btnScDefaultsReload">重新载入</button>
-       </header>
+          <h3>全局默认 <span class="hint">所有平台未自定义时使用</span></h3>
+          <span class="grow"></span>
+        </header>
        <div class="pad">
          <div class="cfghelp" id="scDefaultsState"></div>
          <div id="scDefaults"></div>
@@ -1379,8 +1563,7 @@ input[type=checkbox] { width: 14px; height: 14px; padding: 0; accent-color: var(
        <header>
          <h3>定时任务 <span class="hint" id="scNote">-</span></h3>
           <span class="grow"></span>
-          <label class="chk"><input type="checkbox" id="scMaster"> 总开关</label>
-          <button class="xs" id="btnScReload">重新载入</button>
+          <label class="chk scMaster"><input type="checkbox" id="scMaster"> 总开关</label>
           <button class="xs primary" id="btnScSave">保存并生效</button>
         </header>
         <div class="cfghelp" id="scState"></div>
@@ -1390,17 +1573,14 @@ input[type=checkbox] { width: 14px; height: 14px; padding: 0; accent-color: var(
           <span class="grow"></span>
           <span class="note" id="scCount"></span>
         </div>
+        <div class="cfghelp scHint">时点按北京时间、逗号分隔 0-23（例如 <code>9, 21</code>）；留空 = 该平台此任务永不跑。改了任一行就按右上角「保存并生效」提交，热加载即时生效。</div>
         <div id="scBody"></div>
-        <div class="savebar">
-          <span class="hint">时点按北京时间、逗号分隔 0-23（例如 <code>9, 21</code>）；一行留空 = 该平台此任务永不跑。「跟随全局」表示回到共享时点。保存后立即热加载生效。</span>
-        </div>
       </div>
 
       <div class="box">
         <header>
           <h3>运行记录 <span class="hint" id="scRunsNote">-</span></h3>
           <span class="grow"></span>
-          <button class="xs" id="btnScRunsReload">刷新</button>
         </header>
         <div id="scRunsBody"></div>
       </div>
@@ -1468,7 +1648,6 @@ input[type=checkbox] { width: 14px; height: 14px; padding: 0; accent-color: var(
           <h3>任务看板 <span class="hint" id="tbNote">-</span></h3>
           <span class="grow"></span>
           <div class="chips" id="tbChips"></div>
-          <button class="xs" id="btnTbReload">刷新</button>
           <button class="xs primary" id="btnTbRunAll">执行全部可自动任务</button>
         </header>
         <div id="tbBody"></div>
@@ -1514,7 +1693,6 @@ input[type=checkbox] { width: 14px; height: 14px; padding: 0; accent-color: var(
           <h3>平台路由配置 <span class="hint">按平台设置路由优先级、模型黑名单、并发与最低余额；WorkBuddy 还带账号池治理</span></h3>
           <span class="grow"></span>
           <span class="note" id="pfNote">-</span>
-          <button class="xs" id="btnPfReload">重新载入</button>
           <button class="xs" id="btnPfExport">导出</button>
           <button class="xs" id="btnPfImport">导入</button>
         </header>
@@ -1540,7 +1718,6 @@ input[type=checkbox] { width: 14px; height: 14px; padding: 0; accent-color: var(
           <h3>网关配置</h3>
           <span class="grow"></span>
           <span class="note" id="cfgPath">-</span>
-          <button class="xs" id="btnCfgReload">从磁盘重新载入</button>
           <button class="xs" id="btnCfgRestart" hidden>重启进程</button>
         </header>
         <div class="pad" id="cfgForm"></div>
@@ -2096,12 +2273,10 @@ function go(v) {
   $$(".nav a").forEach(a => a.classList.toggle("on", a.dataset.view === v));
   $$(".view").forEach(s => { s.hidden = s.id !== "view-" + v; });
   $("#ttl").textContent = TITLES[v];
-  // 顶栏那两个按钮是账号池专属动作（刷新全量数据 / 添加账号）。别的视图里它们
-  // 什么也做不了，却一直占着最显眼的位置，还会让人以为点了能刷新当前这一页 ——
-  // 每个视图自己都有对应的重新载入按钮。所以只在账号池显示。
+  // 顶栏「添加账号」只对账号池有意义，别处隐藏。刷新则相反：它现在是全站统一
+  // 入口，任何视图都要能点，所以不再按视图隐藏。
   const onAccounts = v === "accounts";
   $("#btnAdd").hidden = !onAccounts;
-  $("#btnRefresh").hidden = !onAccounts;
   if (v === "accounts") renderAccounts();
   if (v === "chat") renderChat();
   if (v === "usage") renderUsage();
@@ -2115,6 +2290,28 @@ function go(v) {
   if (v === "taskscenter") { renderSchedule(); renderQC(); renderTaskBoard(); reattachQueueView(); }
 }
 window.addEventListener("hashchange", () => go((location.hash || "#accounts").slice(1)));
+
+/* 顶栏那个刷新按钮的落点表。刷新原本散落在各卡片 header 里，位置不统一、有几个
+   页面（对话测试、运行日志）还根本没有；现在统一到顶栏一处，按当前视图分派到下面
+   这些真正干活的函数，而不是笼统地 refreshAll 一次。
+   任务中心有三个子面板，一个视图键要刷新全部三块，所以那个分支带函数体。 */
+const REFRESH_BY_VIEW = {
+  "accounts": () => refreshAll(true),
+  "chat": () => renderChat(true),
+  "usage": () => renderUsage(),
+  "alerts": () => renderAlerts(),
+  "credits": () => renderCredits(),
+  "packages": () => renderClients(),
+  "taskscenter": () => { renderSchedule(); renderQC(); renderTaskBoard(); },
+  "models": () => renderModels(false),
+  "platforms": () => renderPlatforms(),
+  "config": () => renderConfig(),
+  "logs": () => renderLogs(),
+};
+function refreshCurrentView() {
+  const fn = REFRESH_BY_VIEW[VIEW] || REFRESH_BY_VIEW.accounts;
+  fn();
+}
 
 /* ── 账号池 ───────────────────────────────────────────────────────────── */
 async function loadAccounts(n, quiet) {
@@ -2222,6 +2419,16 @@ function accToggleOpen(n, key) {
 // 表现为「有筛选的时候怎么点都收不起来」。只在关键词真的变了（或换了客户端）时展开
 // 一次；之后收不收由用户自己点。
 let ACC_EXPANDED_FOR = "";
+
+// ── 账号表分页 ──────────────────────────────────────────────────────────
+// 一个池子几百个账号时整张表拉下来，扫不到底也找不到要操作的那一行。分页按
+// **账号**切，不是按行切：一个账号的多条凭据收在一个组里，切在组与组之间，
+// 永远不会把「组头 + 它的子行」劈到两页去。
+//
+// ACC_PAGE 是当前页（1 起），ACC_PAGE_SIZE 是每页多少个账号，切客户端时归位到
+// 第 1 页——留着上一页的页码切到另一个池子会直接落在一张空表上。
+let ACC_PAGE = 1;
+let ACC_PAGE_SIZE = 50;
 
 // elsewhereClients 在当前客户端之外找命中的账号，返回 [{ name, n }]。账号池一次只
 // 显示一个客户端，搜索框又只过滤当前这张表，所以搜不到的时候要告诉用户东西在别的
@@ -2582,7 +2789,7 @@ function renderAccounts() {
   document.body.classList.toggle("hide-bal", !showBal);
   $("#btnBalanceAll").hidden = !showBal;
   const cols = showBal ? 13 : 12;
-  if (!CUR) { tb.innerHTML = '<tr><td colspan="' + cols + '" class="hint">没有已注册的客户端</td></tr>'; $("#accNote").textContent = ""; return; }
+  if (!CUR) { tb.innerHTML = '<tr><td colspan="' + cols + '" class="hint">没有已注册的客户端</td></tr>'; $("#accNote").textContent = ""; hideAccPager(); return; }
   // accNote 是当前客户端的注解：模块说不可服务时原样带上它给的理由
   // （health.note），只要有账号在途占满就在末尾追加一句；为 0 时一个字不动。
   // 两条追加都按当前客户端口径：这张表、这个 "N 个账号" 都是 CUR 的，
@@ -2605,7 +2812,7 @@ function renderAccounts() {
   // fields / extra 里所有标量都摊平成一串文本），所以模块以后加字段这里不用跟着改。
   const qRaw = ($("#accSearch").value || "").trim();
   const q = qRaw.toLowerCase();
-  const shown = q ? groups.filter(g => g.rows.some(a => matchText(a, q))) : groups;
+  const shown = accShownGroups();
   // 搜索命中的账号顺手展开一次：matchText 匹配整条账号记录，命中可能落在某条通道
   // 行上，收着的话用户只看到一个账号、看不出它为什么算命中。展开写进 ACC_OPEN，
   // 所以清空搜索框之后它仍然是展开的（用户刚看过它），点标题可以再收起。
@@ -2617,13 +2824,26 @@ function renderAccounts() {
     shown.forEach(g => { if (g.rows.length > 1) ACC_OPEN.add(accOpenKey(CUR, g.key)); });
   }
   if (q) accText += " · 匹配 " + shown.length + " 个";
+
+  // ── 分页 ──────────────────────────────────────────────────────────────
+  // 切在组与组之间，一个账号的多条凭据永远在同一页。页数变化（搜索把结果从
+  // 300 个筛到 5 个）时把页码夹回合法范围，否则会停在一张空表上。
+  const total = shown.length;
+  const pages = Math.max(1, Math.ceil(total / ACC_PAGE_SIZE));
+  if (ACC_PAGE > pages) ACC_PAGE = pages;
+  if (ACC_PAGE < 1) ACC_PAGE = 1;
+  const from = (ACC_PAGE - 1) * ACC_PAGE_SIZE;
+  const pageRows = shown.slice(from, from + ACC_PAGE_SIZE);
+  if (pages > 1) accText += " · 第 " + ACC_PAGE + "/" + pages + " 页";
   $("#accNote").textContent = accText;
+  renderAccPager(total, pages, from, pageRows.length);
   if (!list.length) {
     // 首帧：第一次 refreshAll 还没回来，ACCTS 是空的。直接画空态会先闪一句
     // 「还没有账号」再被真实行顶掉，所以首轮用一行占位。数据到了（不论有没有
     // 账号）BOOTING 都已经翻回 false，下面那句空态就是真的了。
     const empty = rec.unsupported ? "该模块不支持账号管理" : "还没有账号，点右上角「添加账号」";
     tb.innerHTML = '<tr><td colspan="' + cols + '" class="hint">' + (rec.unsupported ? empty : (BOOTING ? "正在加载账号…" : empty)) + '</td></tr>';
+    hideAccPager();
     return;
   }
   // 有账号、只是被搜索框筛掉了：给一句看得懂的空态，而不是一张空白表。别的客户端
@@ -2634,10 +2854,11 @@ function renderAccounts() {
       ? "其他客户端里有匹配：" + hits.map(h => '<button class="xs chip" data-goto="' + esc(h.name) + '">' + esc(h.name) + ' <b>' + h.n + '</b></button>').join(" ")
       : "换个关键词试试";
     tb.innerHTML = '<tr class="filtered"><td colspan="' + cols + '" class="hint">' + esc("没有账号匹配「" + qRaw + "」") + " · " + tail + '</td></tr>';
+    hideAccPager();
     return;
   }
   if (showBal) ensureBalances(CUR);
-  tb.innerHTML = shown.map(g => {
+  tb.innerHTML = pageRows.map(g => {
     // 只有一个通道的账号照旧渲染成原来那一行：其余五个模块看起来没有任何变化。
     if (g.rows.length === 1) return accRowHTML(g.rows[0], caps, acts, showBal, false);
     const st = accGroupStat(g);
@@ -2662,6 +2883,58 @@ function renderAccounts() {
   // 账号列的 hint 在 168px 列宽下会被省略号截断（id 又先截到 40 字符）。把截断后
   // 的全文回填进 title，鼠标停一下就能看全；这里统一补一次，不在行模板里再拼一遍。
   tb.querySelectorAll("td:nth-child(2) .hint").forEach(el => { el.title = el.textContent; });
+}
+
+// hideAccPager 把分页条收起来。池子小到一页放得下时它不该出现——一个永远点不
+// 动的分页器看着像个坏了的控件。
+//
+// 连里面的字一起清掉：只是 hidden 的话，上一个池子的「共 138 个账号」会停在
+// DOM 里，而这个池子只有一个——切过去的那一瞬间读到的数字是错的。
+function hideAccPager() {
+  const pg = $("#accPager");
+  if (!pg) return;
+  pg.hidden = true;
+  $("#accPageInfo").textContent = "";
+  $("#accPageNow").textContent = "";
+}
+
+// renderAccPager 画分页条。只在真的有多页时显示；每页条数与页码都写在条上，
+// 操作员不用回头数表格就知道自己在第几页、还剩多少。
+function renderAccPager(total, pages, from, shownCount) {
+  const pg = $("#accPager");
+  if (!pg) return;
+  // 收条子统一走 hideAccPager：这里自己 pg.hidden = true 的话，条子藏了而
+  // 上面那两行字还留着上一个池子的数字。
+  if (pages <= 1) { hideAccPager(); return; }
+  pg.hidden = false;
+  $("#accPageNow").textContent = ACC_PAGE + " / " + pages;
+  $("#accPageInfo").textContent = "第 " + (from + 1) + "-" + (from + shownCount) + " 个，共 " + total + " 个账号";
+  // 到头了就禁用对应的那一侧，而不是让操作员点一下发现没反应。
+  $("#accPageFirst").disabled = ACC_PAGE <= 1;
+  $("#accPagePrev").disabled = ACC_PAGE <= 1;
+  $("#accPageNext").disabled = ACC_PAGE >= pages;
+  $("#accPageLast").disabled = ACC_PAGE >= pages;
+}
+
+// accGoPage 翻到某一页并重画。夹在 [1, pages] 里，所以按钮禁用只是省一次点击，
+// 不是正确性依赖——键盘或脚本直接调它也不会翻出界。
+function accGoPage(p) {
+  const pages = Math.max(1, Math.ceil(accShownGroups().length / ACC_PAGE_SIZE));
+  const next = Math.min(pages, Math.max(1, p));
+  if (next === ACC_PAGE) return;
+  ACC_PAGE = next;
+  renderAccounts();
+}
+
+// accShownGroups 是「当前这一页应该显示哪些账号组」的唯一算法：先按客户端的
+// identity 把凭据收成组，再按搜索框筛掉没命中的组。渲染（renderAccounts）和翻页
+// （accGoPage）都调它——两处各算一遍的话，以后改了筛选条件只改一处，翻页就会翻到
+// 一张和当前筛选条件对不上的表上。
+function accShownGroups() {
+  const rec = ACCTS[CUR] || { accounts: [] };
+  const groups = accGroups(rec.accounts || []);
+  const q = ($("#accSearch").value || "").trim().toLowerCase();
+  return q ? groups.filter(g => g.rows.some(a => matchText(a, q))) : groups;
 }
 
 // accountIdentity 是账号列上让人认人的那行字。操作员自己记的备注（手机号/邮箱）
@@ -2718,6 +2991,56 @@ function accGroupPriorityCell(rows) {
   return values[0] === 0 ? '<span class="hint">-</span>' : '<span>' + esc(String(values[0])) + '</span>';
 }
 
+// accToggleButton 是操作列里唯一的「能不能用」开关：启用中的账号显示「停用」，
+// 其余（人工停用、凭据失效、冷却、熔断）显示「恢复」。
+//
+// 「启用」和「恢复」合并成一个按钮，是因为它们对操作员是同一个意图：让我能用
+// 这个账号。core.Reviver 的契约（internal/core/revive.go）也写明了 revive 会连同人工
+// 停用的凭据一起重新启用：zcode / loomy 直接把 Enabled 置回 true，qwenwork / raccoon
+// 清 Disabled，trae / workbuddy / kimi 先调 SetAccountEnabled(id, true) 再清惩罚。
+// 以前一行上摆着两个都在说"让它能用"的按钮，点错一个只是白等一次往返。
+//
+// 走哪条路由由现状决定：
+//   · 启用中 → POST /enabled {enabled:false}，只翻开关，不惊动任何惩罚状态；
+//   · 没启用 → POST /revive，连开开关带清冷却/熔断/失效标记一起做（比只翻开关
+//     顺手，所以「恢复」只在模块真持有惩罚状态、也就是 caps.revive 时才这么叫；
+//     没有 Reviver 的模块退回单纯的「启用」，别叫一个它做不到的名字）。
+function accToggleButton(a, caps) {
+  const id = esc(a.id);
+  if (a.enabled) {
+    return '<button class="xs" data-do="toggle" data-id="' + id + '" data-on="1" title="池子不再轮询这个账号，凭据和冷却状态都原样留着">' + "停用" + '</button>';
+  }
+  if (caps.revive) {
+    return '<button class="xs" data-do="revive" data-id="' + id + '" title="重新启用这个账号，并清除它的冷却/熔断/失效状态，让池子立刻再试一次">' + "恢复" + '</button>';
+  }
+  return '<button class="xs" data-do="toggle" data-id="' + id + '" data-on="0" title="把这个账号放回轮询">' + "启用" + '</button>';
+}
+
+// 签到按钮的文案由各模块自己给（core.CheckinAction.Label），模块写英文面板就照着
+// 显示英文——账号池这一列是中文的，夹一个英文按钮进去就像漏一条。面板在这里统一
+// 翻一次：模块写中文就原样透传，写英文就查表翻好，表里没有的原样留着（模块将来
+// 加一个新动作，面板不该把它藏起来，title 里还能看到原话）。
+const CHECKIN_LABELS = {
+  "Daily sign-in": "每日签到",
+  "Daily check-in": "每日签到",
+  "Daily check-in (CN)": "每日签到",
+  "Daily activity (international)": "每日活跃",
+  "Claim the daily gift allowance": "领取每日赠送额度",
+  "领取活动套餐 (claim a promotion)": "领取活动套餐",
+};
+function checkinActionLabel(x) {
+  const raw = String((x && x.label) || "").trim() || String((x && x.id) || "") || "签到";
+  return CHECKIN_LABELS[raw] || raw;
+}
+// title 放模块自己的原话：既保留 help 里的操作说明，也让操作员在按钮被截断时
+// 看得到没被翻掉的那部分。
+function checkinActionTitle(x) {
+  const help = String((x && x.help) || "").trim();
+  const raw = String((x && x.label) || "").trim() || String((x && x.id) || "");
+  const cn = checkinActionLabel(x);
+  return [cn, raw && raw !== cn ? raw : "", help].filter(Boolean).join(" · ");
+}
+
 function accRowHTML(a, caps, acts, showBal, chan, open, groupKey) {
   const btns = [];
   // 「备注」记的是这个账号登录用的手机号/邮箱，存在网关配置里（不是模块里），
@@ -2725,8 +3048,10 @@ function accRowHTML(a, caps, acts, showBal, chan, open, groupKey) {
   btns.push('<button class="xs" data-do="note" data-id="' + esc(a.id) + '" title="记下这个账号登录用的手机号或邮箱，重登时用来认人">' + (a.operator_note ? "备注 ✓" : "备注") + '</button>');
   if (caps.manage) {
     btns.push('<button class="xs" data-do="test" data-id="' + esc(a.id) + '">测试</button>');
-    btns.push('<button class="xs" data-do="toggle" data-id="' + esc(a.id) + '" data-on="' + (a.enabled ? "1" : "0") + '">' + (a.enabled ? "停用" : "启用") + '</button>');
-    btns.push('<button class="xs" data-do="del" data-id="' + esc(a.id) + '">删除</button>');
+    btns.push(accToggleButton(a, caps));
+    // 删除是这一行唯一不可逆的动作，给它 danger 色：不用仔细读字就知道它和
+    // 旁边那堆随时可撤销的按钮不是一回事。
+    btns.push('<button class="xs danger" data-do="del" data-id="' + esc(a.id) + '">删除</button>');
   }
   // 行内签到按钮必须看 checkin_ready，不能看 checkin。
   // checkin 回答的是「这个模块有没有签到能力」（客户端级问题，能力矩阵读它），
@@ -2735,18 +3060,13 @@ function accRowHTML(a, caps, acts, showBal, chan, open, groupKey) {
   // 所以 checkin 为真而 actions 为空是正常状态，那种情况下不该渲染按钮。
   if (caps.checkin_ready) {
     if (acts.length > 1) {
-      acts.forEach(x => btns.push('<button class="xs chip" data-do="checkin" data-act="' + esc(x.id) + '" data-id="' + esc(a.id) + '" title="' + esc(x.help || "") + '">' + esc(x.label || x.id) + '</button>'));
+      acts.forEach(x => btns.push('<button class="xs chip" data-do="checkin" data-act="' + esc(x.id) + '" data-id="' + esc(a.id) + '" title="' + esc(checkinActionTitle(x)) + '">' + esc(checkinActionLabel(x)) + '</button>'));
     } else {
-      // 单一签到动作的标签由模块给，可能是一整句话（zcode 的「领取活动套餐」）。
-      // 窄列里它会被省略号截断，所以把全文放进 title。
-      btns.push('<button class="xs primary" data-do="checkin" data-act="' + esc(acts[0] ? acts[0].id : "") + '" data-id="' + esc(a.id) + '" title="' + esc((acts[0] && acts[0].label) || "签到") + '">' + esc(acts[0] ? acts[0].label : "签到") + '</button>');
+      // 单一签到动作：中文标签在窄列里也可能被省略号截断，所以 title 里留
+      // 模块自己的原话。
+      const one = acts[0] || { id: "", label: "签到", help: "" };
+      btns.push('<button class="xs primary" data-do="checkin" data-act="' + esc(one.id || "") + '" data-id="' + esc(a.id) + '" title="' + esc(checkinActionTitle(one)) + '">' + esc(checkinActionLabel(one)) + '</button>');
     }
-  }
-  // Only modules that hold runtime penalties expose this.  The module decides
-  // (core.Reviver); the panel must not offer a button that cannot do anything,
-  // so an unimplemented capability means no button rather than a 501 on click.
-  if (caps.revive) {
-    btns.push('<button class="xs" data-do="revive" data-id="' + esc(a.id) + '" title="清除该账号的冷却/熔断/停用状态，让池子立刻重新尝试">恢复</button>');
   }
   // 重登：比「恢复」多一步真实的重新登录，因为 session-dead 的账号光清
   // 标记是活不过来的。两条路，同一排只出一个按钮：
@@ -2963,7 +3283,8 @@ async function act(btn) {
       r = await api(cbase(n) + "/accounts/" + aid(id) + "/enabled", { method: "POST", body: { enabled: btn.dataset.on !== "1" } });
       if (!r.ok) toast("切换失败：" + r.err, "err");
     } else if (doIt === "del") {
-      if (!confirm("删除账号 " + id + " ？")) return;
+      // 说清楚删掉的是什么：凭据文件一起没了，光点错了没法在面板里找回来。
+      if (!confirm("删除账号 " + id + " ？\n\n它的凭据文件会一起删掉，删了就找不回来了。")) return;
       r = await api(cbase(n) + "/accounts/" + aid(id), { method: "DELETE" });
       if (!r.ok) toast("删除失败：" + r.err, "err");
     } else if (doIt === "checkin") {
@@ -3166,16 +3487,35 @@ function usageChartSVG(series) {
     out += '<text class="tk" x="' + (PL - 6) + '" y="' + (y + 3.5).toFixed(1) + '" text-anchor="end">' +
       fmtTok(max * i / 4) + '</text>';
   }
-  pts.forEach(p => {
-    const x = xOf(p.t) - bw / 2, hTot = ih * (p.tt / max);
+  // 命中区不能只盖住柱子本身：72 小时窗口下 bw 常常只有 3-4px 宽，中间还夹着
+  // 没数据的空档，指针很难落准。所以命中区固定取「相邻柱间距」那么宽，一格一根，
+  // 眼睛看到哪根就一定能指到哪根。柱体本身画在命中区正中。
+  const slot = Math.max(bw, pts.length > 1 ? (iw / (pts.length - 1)) : bw);
+  const stamp = new Date().toISOString().slice(0, 16);
+  pts.forEach((p, i) => {
+    const cx = xOf(p.t), x = cx - bw / 2, hTot = ih * (p.tt / max);
     const hP = p.tt ? hTot * (p.pt / p.tt) : 0;
     const hC = Math.max(p.ct ? 1 : 0, hTot - hP);
-    out += '<g><title>' + esc(p.raw) + '  ' + fmtTok(p.pt) + ' prompt / ' + fmtTok(p.ct) +
-      ' completion / ' + p.req + ' 次</title>';
-    out += '<rect x="' + x.toFixed(2) + '" y="' + (yBase - hP).toFixed(2) + '" width="' + bw.toFixed(2) +
-      '" height="' + hP.toFixed(2) + '" fill="var(--accent)" rx="1.5"/>';
-    out += '<rect x="' + x.toFixed(2) + '" y="' + (yBase - hP - hC).toFixed(2) + '" width="' + bw.toFixed(2) +
-      '" height="' + hC.toFixed(2) + '" fill="var(--ok)" rx="1.5"/></g>';
+    const label = p.scope === "day"
+      ? new Date(p.t).toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" })
+      : new Date(p.t).toLocaleString("zh-CN", { hour12: false, month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    out += '<g class="uscol" data-us-i="' + i + '" data-us-t="' + esc(label) +
+      '" data-us-p="' + fmtTok(p.pt) + '" data-us-c="' + fmtTok(p.ct) +
+      '" data-us-q="' + p.req + '" data-us-v="' + esc(stamp) + '">' +
+      '<title>' + esc(p.raw) + '  ' + fmtTok(p.pt) + ' prompt / ' + fmtTok(p.ct) +
+      ' completion / ' + p.req + ' 次</title>' +
+      '<rect class="hit" x="' + (cx - slot / 2).toFixed(2) + '" y="' + PT + '" width="' + slot.toFixed(2) +
+      '" height="' + ih + '"/>' +
+      '<line class="cursor" x1="' + cx.toFixed(2) + '" y1="' + PT + '" x2="' + cx.toFixed(2) + '" y2="' + yBase + '"/>' +
+      // 不设 rx：柱子只有 6-7 像素宽，viewBox 760 撑到 1200+ 时圆角会被放大到
+      // 宽度�� 20% 以上，Chrome 把这种「窄柱 + 大圆角」退化成近似椭圆，椭圆被
+      // 夹在 min(w,h) 的框里 —— 于是 height=89 的柱子渲染出来只有 5px 高。
+      // 6px 宽的柱子本来也看不出圆角，去掉没有视觉损失。
+      '<rect class="usbar" x="' + x.toFixed(2) + '" y="' + (yBase - hP).toFixed(2) + '" width="' + bw.toFixed(2) +
+      '" height="' + hP.toFixed(2) + '" fill="var(--accent)"/>' +
+      '<rect class="usbar" x="' + x.toFixed(2) + '" y="' + (yBase - hP - hC).toFixed(2) + '" width="' + bw.toFixed(2) +
+      '" height="' + hC.toFixed(2) + '" fill="var(--ok)"/>' +
+      '</g>';
   });
   let prevDay = -1;
   pts.forEach(p => {
@@ -3205,7 +3545,71 @@ function usageChartSVG(series) {
     out += '<text class="tk" x="' + Math.max(PL, Math.min(W - PR, cx)).toFixed(1) + '" y="' + (yBase + 15) +
       '" text-anchor="' + anchor + '">' + label + '</text>';
   }
-  return out + '</svg>';
+  return '<div class="usreveal">' + out + '</svg></div>';
+}
+
+// usageChartWiring 把读数条接到图表容器上。
+//
+// 用事件委托而不是给每根柱子单独 addEventListener：柱子集合每次刷新都被
+// innerHTML 整体换掉，逐根绑定的监听器会随旧节点一起消失，交互就只生效第一帧。
+// 委托给 #usChart 一个监听器，换多少次 HTML 都还在。
+function usageChartWiring() {
+  const box = $("#usChart");
+  if (!box || box.dataset.usWired) return;
+  box.dataset.usWired = "1";
+  box.addEventListener("mouseover", ev => {
+    const col = ev.target.closest ? ev.target.closest(".uscol") : null;
+    if (col) usageChartHover(col);
+  });
+  box.addEventListener("mouseleave", () => {
+    box.querySelectorAll(".uscol.on").forEach(n => n.classList.remove("on"));
+    const read = $("#usRead");
+    if (read) read.hidden = true;
+  });
+}
+
+// usageChartKeys 让方向键在柱子上左右移动。
+//
+// 144 根柱子各挂一个 tabindex 的话，键盘用户要按 144 次 Tab 才能穿过这张图，
+// 比没有还糟。所以只让图表本身是一个 tab 站点，进去以后用左右方向键在时间点上
+// 移动，Home / End 跳到两端。读数条在 #usRead 上 aria-live，焦点一移动就朗读。
+function usageChartKeys() {
+  const box = $("#usChart");
+  if (!box || box.dataset.usKeys) return;
+  box.dataset.usKeys = "1";
+  box.tabIndex = 0;
+  box.setAttribute("role", "application");
+  box.setAttribute("aria-label", "用量时间序列，用左右方向键查看各时间点");
+  let at = -1;
+  const cols = () => Array.prototype.slice.call(box.querySelectorAll(".uscol"));
+  const go = i => {
+    const list = cols();
+    if (!list.length) return;
+    const n = Math.max(0, Math.min(list.length - 1, i));
+    if (at >= 0 && list[at]) list[at].classList.remove("on");
+    at = n;
+    usageChartHover(list[at]);
+  };
+  box.addEventListener("keydown", ev => {
+    const list = cols();
+    if (!list.length) return;
+    if (ev.key === "ArrowRight") { go(at < 0 ? 0 : at + 1); ev.preventDefault(); }
+    else if (ev.key === "ArrowLeft") { go(at < 0 ? list.length - 1 : at - 1); ev.preventDefault(); }
+    else if (ev.key === "Home") { go(0); ev.preventDefault(); }
+    else if (ev.key === "End") { go(list.length - 1); ev.preventDefault(); }
+    else if (ev.key === "Escape") {
+      list.forEach(n => n.classList.remove("on"));
+      at = -1;
+      const read = $("#usRead");
+      if (read) read.hidden = true;
+    }
+  });
+  box.addEventListener("blur", () => {
+    cols().forEach(n => n.classList.remove("on"));
+    at = -1;
+    const read = $("#usRead");
+    if (read) read.hidden = true;
+  });
 }
 
 // usageAccountRows / usageRealmRows 是 usageRows 的两列表亲。前导文本格不止一个
@@ -3285,12 +3689,100 @@ function usageRealmRows(list) {
     '</tr>').join("") ||
     '<tr><td colspan="6" class="hint">窗口内没有记录</td></tr>';
 }
+// renderUsageTiles 画总览顶部那排指标磁贴。
+//
+// 原来是五行「标签 …… 数字」的灰底 list，五个盒子长得一模一样：成功率、输入、
+// 输出、合计、延迟平级摆着，操作员扫一眼看不出哪个是这次要看的数。现在每块带上
+// 自己的身份色和一句副标题（副标题说的是「这个数是怎么来的」，不是重复数字）：
+//
+//   成功率    副标题是失败次数 —— 99% 这个数本身不说明「坏了几个」
+//   输入/输出 副标题是各自占合计的百分比 —— 一眼看出这轮是长输入还是长输出
+//   合计      副标题是平均速率
+//   平均延迟  副标题是时间窗口（和标题栏那个下拉框对得上）
+function renderUsageTiles(d, t, rate) {
+  const total = Number(t.total_tokens || 0);
+  const pt = Number(t.prompt_tokens || 0);
+  const ct = Number(t.completion_tokens || 0);
+  const share = n => (total ? Math.round(n / total * 100) : 0);
+  const tiles = [
+    {
+      k: "成功率", v: rate + "%", tint: "ok", tintText: "ok-text",
+      sub: t.failures
+        ? '<em>' + numf(t.failures) + " 次失败</em>"
+        : '<em>没有失败</em>',
+      meter: rate,
+    },
+    {
+      k: "输入 tokens", v: numf(pt), tint: "accent", tintText: "accent-text",
+      sub: "占合计 " + share(pt) + "%",
+    },
+    {
+      k: "输出 tokens", v: numf(ct), tint: "accent", tintText: "accent-text",
+      sub: "占合计 " + share(ct) + "%",
+    },
+    {
+      k: "合计 tokens", v: numf(total), tint: "ok", tintText: "ok-text",
+      sub: "平均 " + fmtRate(t.avg_tokens_per_second),
+    },
+    {
+      k: "平均延迟", v: fmtMs(t.avg_latency_ms), tint: "warn", tintText: "warn-text",
+      sub: (d.window_hours ? d.window_hours + " 小时窗口" : "全部保留记录"),
+    },
+  ];
+  const host = $("#usTiles");
+  if (!host) return;
+  host.innerHTML = tiles.map(x =>
+    '<div class="ustile" style="--tint:var(--' + x.tint + ');--tint-soft:var(--' + x.tint + '-soft);--tint-text:var(--' + x.tintText + ')">' +
+      '<div class="k"><span class="dot"></span>' + esc(x.k) + '</div>' +
+      '<div class="v">' + esc(x.v) + '</div>' +
+      '<div class="sub">' + x.sub + '</div>' +
+      (x.meter == null ? '' : '<div class="meter"><i style="width:' + x.meter + '%"></i></div>') +
+    '</div>'
+  ).join("");
+}
+
+// usageChartHover 是图表的交互层：鼠标停在某根柱子上时，把那个时间点的输入 /
+// 输出 / 次数报到图表上方的读数条里。
+//
+// 原来只有 SVG <title> 的原生提示：等一秒才弹、样式跟着操作系统走、和面板里
+// 其他提示完全不是一套，而且窄柱子很难指中。所以柱子的命中区做成「整列都比柱子
+// 宽」的一根透明 rect，指哪根都有反应。
+function usageChartHover(el) {
+  const d = el.getAttribute("data-us-i");
+  if (d === null) return;
+  const box = $("#usChart");
+  if (!box) return;
+  if (d === null) return;
+  const read = $("#usRead");
+  if (!read) return;
+  // 柱子上带着画它那一刻的时间戳（data-us-v）。用量页 5 秒轮询一次，innerHTML
+  // 换过之后旧的 .on 会连着 highlight 样式一起消失，但上一次 hover 的读数还留在
+  // 读数条上 —— 那时它报的是一个已经不在这张图里的时间点。所以先对一下时间戳。
+  if (!el.getAttribute("data-us-v")) {
+    box.querySelectorAll(".uscol.on").forEach(n => n.classList.remove("on"));
+    read.hidden = true;
+    return;
+  }
+  box.querySelectorAll(".uscol").forEach(n => n.classList.toggle("on", n === el));
+  $("#usReadT").textContent = el.getAttribute("data-us-t") || "";
+  $("#usReadP").textContent = el.getAttribute("data-us-p") || "-";
+  $("#usReadC").textContent = el.getAttribute("data-us-c") || "-";
+  $("#usReadQ").textContent = (el.getAttribute("data-us-q") || "0") + " 次请求";
+  read.hidden = false;
+}
+
 async function renderUsage() {
   const win = Number($("#usWindow") ? $("#usWindow").value : 72) || 0;
   const r = await api("/panel/api/usage?window=" + win);
   if (!r.ok) {
     $("#usNote").textContent = "获取失败：" + r.err;
     $("#usChart").innerHTML = '<div class="state err">' + esc(r.err) + '</div>';
+    // 磁贴和读数条也要一起收掉：只把图换成错误态的话，上一帧的数字还留在屏幕上，
+    // 读起来像「这次拉取是好的，只是没数据」。
+    const tiles = $("#usTiles");
+    if (tiles) tiles.innerHTML = "";
+    const read = $("#usRead");
+    if (read) read.hidden = true;
     return;
   }
   const d = r.data || {}, t = d.totals || {};
@@ -3298,12 +3790,14 @@ async function renderUsage() {
   const rate = req ? Math.round((req - fail) / req * 100) : 100;
   $("#usNote").textContent = (d.window_hours ? "窗口 " + d.window_hours + " 小时" : "全部保留记录") + " · 保留 " + ((OVER && OVER.log_lines) || "-") + " 条";
   $("#usStats").textContent = numf(req) + " / " + numf(fail);
-  $("#usChart").innerHTML =
-    row("成功率", rate + "%") +
-    '<div class="qbar" style="margin:7px 0"><i style="width:' + rate + '%"></i></div>' +
-    row("输入 tokens", numf(t.prompt_tokens)) + row("输出 tokens", numf(t.completion_tokens)) +
-    row("合计 tokens", numf(t.total_tokens)) + row("平均延迟", fmtMs(t.avg_latency_ms));
-  $("#usChart").innerHTML += usageChartSVG(d.series);
+  renderUsageTiles(d, t, rate);
+  // 每次换掉 innerHTML，柱子的 .usreveal 都是新元素，扫光动画自然重播一次。
+  // 用量页 5 秒轮询一次，但这层动画只有半秒、且揭示后就是完整的图，重播不会晃眼；
+  // 真正需要避免的是「操作员正看着某根柱子，它忽然缩回去」—— 那已经由
+  // usageChartHover 里的 data-us-v 时间戳挡住了。
+  $("#usChart").innerHTML = usageChartSVG(d.series);
+  usageChartWiring();
+  usageChartKeys();
   $("#usClientBody").innerHTML = usageRows(d.by_client, US_COLS);
   $("#usAccBody").innerHTML = usageAccountRows(d.by_account);
   $("#usModelBody").innerHTML = usageRows(d.by_model, US_COLS);
@@ -3324,13 +3818,33 @@ function fmtCallTime(s) {
   return isNaN(t.getTime()) ? "-" : t.toLocaleString("zh-CN", { hour12: false });
 }
 
-// sessionCell keeps the newly added 会话ID column narrow: the full value stays
-// in the cell's title, so one long conversation id cannot widen the table.
+// sessionCell renders the 会话ID column and keeps it narrow.
+//
+// The value has two possible origins and they are not equally trustworthy, so the
+// cell says which one it is.  A "d-" prefix is the gateway's own marker (see
+// core.DerivedKeyPrefix): the caller named no session, and the gateway matched the
+// turn to a conversation by its content.  That is a good grouping key, but it is
+// an inference, so the cell must not present it as if the client had declared it.
+// Everything else is the caller's own id, shown verbatim.
+//
+// The full value stays in the title either way, so one long id cannot widen the
+// table, and a truncated one is still copyable.
 function sessionCell(id) {
   const s = String(id == null ? "" : id).trim();
-  if (!s) return "-";
-  return s.length > 24 ? s.slice(0, 24) + "…" : s;
+  if (!s) return '<span class="hint" title="调用方没有报会话标识，消息内容里也没有可推的会话">无会话标识</span>';
+  // 推导出来的会话：列里去掉 d- 前缀（它只是给机器看的标记），前缀留在 title 里。
+  if (s.startsWith("d-")) {
+    const short = s.slice(2);
+    const shown = short.length > 12 ? short.slice(0, 12) + "…" : short;
+    return '<span class="hint" title="' + esc(s) + '（网关按消息内容推导，调用方没有报会话）">推 ' + esc(shown) + '</span>';
+  }
+  // 调用方自己报的 id：短到能整显示就光秃秃地显示（每行都挂 title 会让鼠标扫过
+  // 整张表都是提示框，很吵）；被截断了才把全文挂上去，不然省略号后面藏的正是
+  // 操作员真正想复制的那一串。
+  if (s.length > 24) return '<span title="' + esc(s) + '">' + esc(s.slice(0, 24)) + "…</span>";
+  return s;
 }
+
 
 function renderRecentRows() {
   const body = $("#usRecentBody");
@@ -3355,7 +3869,7 @@ function renderRecentRows() {
     const accTip = accParts.filter(Boolean).join(" · ");
     return '<tr><td class="hint">' + esc(fmtCallTime(x.at)) + '</td>' +
       '<td>' + esc(x.client || "-") + '</td><td>' + esc(x.model || "-") + '</td>' +
-      '<td class="hint" title="' + esc(x.session_id || "") + '">' + esc(sessionCell(x.session_id)) + '</td>' +
+      '<td>' + sessionCell(x.session_id) + '</td>' +
       '<td title="' + esc(accTip) + '">' + esc(accName) + '</td><td>' + state + '</td>' +
       '<td class="num">' + (x.candidate ? "#" + esc(String(x.candidate)) : "-") + '</td>' +
       '<td class="num">' + numf(x.prompt_tokens || 0) + '</td><td class="num">' + numf(x.completion_tokens || 0) + '</td>' +
@@ -4229,7 +4743,10 @@ async function renderConfig() {
     }
     o[parts[parts.length - 1]] = value;
   };
-  setBase("pool.prefer_expiring", !!pool.prefer_expiring);
+  // pool.prefer_expiring 的表单早在 0.1.13 就搬去了「平台配置 · WorkBuddy 卡片」，
+  // 这条渲染基线却留在了本函数里：pool 只在 pfWorkBuddyPoolHTML 和 savePlatforms 声明过，
+  // renderConfig 读它就是 ReferenceError，整张配置页直接白屏、连保存按钮都点不到。
+  // savePlatforms 自己用 PF.poolBaseline 剪掉没改动的字段，这里不需要再记一次。
   setBase("session_sticky.enabled", sticky.enabled == null ? true : !!sticky.enabled);
   setBase("features.sanitize_blacklist_fingerprints",
     fts.sanitize_blacklist_fingerprints == null ? true : !!fts.sanitize_blacklist_fingerprints);
@@ -4500,18 +5017,21 @@ function scDefaultHTML(d) {
     const g = byName[name] || { enabled: false, hours: [] };
     const label = SC_BATCH_LABELS[name] || name;
     const id = name.charAt(0).toUpperCase() + name.slice(1);
-    out.push('<label class="cfgrow"><span class="k">' + esc(label) + '</span>' +
-      '<input type="checkbox" id="scDef' + id + 'Enabled"' + (g.enabled ? " checked" : "") + '></label>');
-    out.push('<label class="cfgrow"><span class="k">' + esc(label) + '时点</span>' +
-      '<input class="cfgtext" id="scDef' + id + 'Hours" spellcheck="false" autocomplete="off" value="' +
-      esc(scHoursText(g.hours)) + '" placeholder="小时，逗号分隔（空 = 不跑）"></label>');
+    // 一张卡一行：开关 + 时点输入并排。以前是两行铺满全宽的 .cfgrow，十三个
+    // 满屏拉下来只为表达六个开关。控件 id 一字未改，scSave 与回归测试照旧。
+    out.push('<div class="scdef' + (g.enabled ? " on" : "") + '">' +
+      '<label class="scdefsw"><input type="checkbox" id="scDef' + id + 'Enabled"' + (g.enabled ? " checked" : "") + '>' +
+      '<span>' + esc(label) + '</span></label>' +
+      '<input class="cfgtext scdefh" id="scDef' + id + 'Hours" spellcheck="false" autocomplete="off" value="' +
+      esc(scHoursText(g.hours)) + '" placeholder="时点，留空 = 不跑" aria-label="' + esc(label) + '时点">' +
+      '</div>');
   });
-  out.push('<label class="cfgrow"><span class="k">后台刷新余额</span>' +
-    '<input type="checkbox" id="scDefBalanceEnabled"' + ((d || {}).balance_refresh_enabled ? " checked" : "") + '></label>');
-  out.push('<label class="cfgrow"><span class="k">刷新间隔（分钟）</span>' +
-    '<input class="cfgtext" id="scDefBalanceMinutes" type="number" min="1" spellcheck="false" value="' +
-    esc(((d || {}).balance_refresh_minutes) || "") + '" placeholder="5">' +
-    '<span class="cfghelp">每个账号各打一次上游；0 或取消勾选都表示关闭。</span></label>');
+  out.push('<div class="scdef' + ((d || {}).balance_refresh_enabled ? " on" : "") + '">' +
+    '<label class="scdefsw"><input type="checkbox" id="scDefBalanceEnabled"' +
+    ((d || {}).balance_refresh_enabled ? " checked" : "") + '><span>刷新余额</span></label>' +
+    '<input class="cfgtext scdefh" id="scDefBalanceMinutes" type="number" min="1" spellcheck="false" value="' +
+    esc(((d || {}).balance_refresh_minutes) || "") + '" placeholder="间隔（分钟）" aria-label="余额刷新间隔（分钟）">' +
+    '</div>');
   return out.join("");
 }
 
@@ -4555,8 +5075,14 @@ function scRowHTML(r) {
     '<td class="sc-c-hours"><input class="cfgtext scHours" spellcheck="false" autocomplete="off" value="' + esc(hours) + '" placeholder="' + esc(scHoursText(shared.hours)) + '"></td>' +
     '<td class="sc-c-on"><input type="checkbox" class="scOn"' + (on ? " checked" : "") + "></td>" +
     '<td class="sc-c-next">' + esc(next) + "</td>" +
-    '<td class="sc-c-tag"><span class="chip scTag"></span></td>' +
-    '<td class="sc-c-acts"><button class="xs" data-scfollow>跟随全局</button> <button class="xs primary" data-scrun>立即执行</button></td>' +
+    '<td class="sc-c-tag">' +
+    (scOwned(scKey(r.client, r.batch), r) ? '<span class="chip scTag on">自定义</span>' : '<span class="scTagNone">—</span>') +
+    '</td>' +
+    '<td class="sc-c-acts">' +
+    // 已经是「跟随全局」的行不再画那颗灰按钮：全表十几行都挂着一个点不动的按钮，
+    // 看着像坏了，而不是像「这里不用改」。
+    (scOwned(scKey(r.client, r.batch), r) ? '<button class="xs" data-scfollow>跟随全局</button> ' : "") +
+    '<button class="xs primary" data-scrun>立即执行</button></td>' +
     "</tr>";
 }
 
@@ -4570,12 +5096,22 @@ function scOwned(key, row) {
 function scUpdateBadges() {
   Object.keys(SC.rows).forEach(k => {
     const row = SC.rows[k];
-    const tag = row.el.querySelector(".scTag");
     const own = scOwned(k, row);
-    tag.textContent = own ? "自定义" : "跟随全局";
-    tag.className = "chip scTag" + (own ? " on" : "");
+    // chip 与「跟随全局」按钮同生共死：这一行算自定义时才出现，不算时留一个
+    // 破折号占位，免得整列全是同一个词、扫不出哪几行真的改过。
+    const cell = row.el.querySelector(".sc-c-tag");
     const btn = row.el.querySelector("[data-scfollow]");
-    if (btn) btn.disabled = !own;
+    if (cell) {
+      cell.innerHTML = own ? '<span class="chip scTag on">自定义</span>' : '<span class="scTagNone">—</span>';
+    }
+    // 行不再算自定义时把按钮撤掉，而不是留一颗点不动的灰按钮；反过来又编辑回
+    // 自定义时补回来，所以这里改的是 cell 的 innerHTML 而不是 disabled。
+    if (btn && !own) btn.remove();
+    if (!btn && own) {
+      const acts = row.el.querySelector(".sc-c-acts");
+      if (acts) acts.insertAdjacentHTML("afterbegin",
+        '<button class="xs" data-scfollow>跟随全局</button> ');
+    }
   });
 }
 
@@ -4613,7 +5149,12 @@ function scRenderRows() {
     box.innerHTML = '<div class="pad hint">没有匹配的规则。</div>';
     return;
   }
-  box.innerHTML = '<div class="tbl-wrap"><table class="acc sc"><thead><tr>' +
+  // colgroup 把列宽钉死：七列全靠内容撑宽时，「时点」和「下一跳」两列宽度随
+  // 每行内容跳动，扫一列扫不到底。
+  box.innerHTML = '<div class="tbl-wrap"><table class="acc sc">' +
+    '<colgroup><col style="width:22%"><col style="width:21%"><col style="width:118px">' +
+    '<col style="width:54px"><col style="width:88px"><col style="width:70px"><col style="width:132px"></colgroup>' +
+    "<thead><tr>" +
     "<th>平台</th><th>任务</th><th>时点（北京时间）</th><th>启用</th><th>下一跳</th><th>自定义</th>" +
     "<th>操作</th></tr></thead><tbody>" + shown.map(scRowHTML).join("") + "</tbody></table></div>";
   box.querySelectorAll(".scrow").forEach(el => {
@@ -5633,7 +6174,6 @@ async function renderCredits() {
     "<th>批次 / 名称</th><th>剩余</th><th>总量</th><th>已用</th><th>到期</th>" +
     "</tr></thead><tbody>" + merged.map(a => crAcctRow(a, limit)).join("") + "</tbody></table></div>";
 }
-$("#btnCr").addEventListener("click", renderCredits);
 /* 展开/收起：只翻同组的 data-pk-row 行。按钮文案同步换，aria-expanded 也跟着
    变，读屏器与肉眼看到的是同一件事。 */
 $("#crBody").addEventListener("click", ev => {
@@ -6909,7 +7449,8 @@ async function doManual() {
 $("#clientChips").addEventListener("click", ev => {
   const b = ev.target.closest && ev.target.closest("[data-client]");
   if (!b) return;
-  CUR = b.dataset.client; renderAccounts();
+  // 换池子就回到第 1 页：上一页的页码在另一个池子里通常没有意义。
+  CUR = b.dataset.client; ACC_PAGE = 1; renderAccounts();
 });
 $("#accBody").addEventListener("change", ev => {
   const el = ev.target && ev.target.closest ? ev.target.closest(".accPrio") : null;
@@ -6919,7 +7460,7 @@ $("#accBody").addEventListener("change", ev => {
 $("#accBody").addEventListener("click", ev => {
   // 空态里那些「别的客户端有 N 个匹配」的徽章：切过去，搜索框里的关键词留着。
   const go = ev.target.closest && ev.target.closest("button[data-goto]");
-  if (go) { CUR = go.dataset.goto; renderAccounts(); return; }
+  if (go) { CUR = go.dataset.goto; ACC_PAGE = 1; renderAccounts(); return; }
   const b = ev.target.closest && ev.target.closest("button[data-do]");
   if (b) { act(b); return; }
   // 多通道账号的分组行整行可点，展开/收起它下面的通道行。只重画这张表，不重新
@@ -6942,11 +7483,36 @@ $("#accBody").addEventListener("keydown", ev => {
 let accSearchTick = 0;
 $("#accSearch").addEventListener("input", () => {
   if (accSearchTick) return;
-  accSearchTick = requestAnimationFrame(() => { accSearchTick = 0; renderAccounts(); });
+  accSearchTick = requestAnimationFrame(() => { accSearchTick = 0; ACC_PAGE = 1; renderAccounts(); });
 });
 $("#accSearch").addEventListener("keydown", ev => {
   if (ev.key !== "Escape" || !ev.target.value) return;
   ev.target.value = "";
+  ACC_PAGE = 1;
+  renderAccounts();
+});
+
+// ── 账号池分页 ──────────────────────────────────────────────────────────
+// accTurn 是翻页的唯一入口：夹好页码、重画，然后把表格滚回顶部。不滚的话操作员
+// 点完「下一页」看到的还是半屏上一页的行，会以为没翻动。
+function accTurn(p) {
+  const prev = ACC_PAGE;
+  accGoPage(p);
+  if (ACC_PAGE === prev) return;
+  const wrap = $("#accounts .tbl-wrap") || $("#accBody").closest(".tbl-wrap");
+  if (wrap) wrap.scrollTop = 0;
+}
+$("#accPageFirst").addEventListener("click", () => accTurn(1));
+$("#accPagePrev").addEventListener("click", () => accTurn(ACC_PAGE - 1));
+$("#accPageNext").addEventListener("click", () => accTurn(ACC_PAGE + 1));
+$("#accPageLast").addEventListener("click", () => accTurn(1e9));
+// 每页条数一改，页码按旧尺寸算出来的就没意义了；先跳回第 1 页再按新尺寸渲染，
+// 免得停在第 7 页、第 3 页那种并不存在的位置上。
+$("#accPageSize").addEventListener("change", ev => {
+  const n = parseInt(ev.target.value, 10);
+  if (!n || n < 1) return;
+  ACC_PAGE_SIZE = n;
+  ACC_PAGE = 1;
   renderAccounts();
 });
 // 模型表的三个筛选条件都只是 mdApply()：它只过滤 MD_ITEMS，从不发请求。
@@ -6975,7 +7541,6 @@ $("#btnScanAll").addEventListener("click", qcScan);
 $("#btnRunQueue").addEventListener("click", qcRun);
 $("#btnCkScan").addEventListener("click", ckScan);
 $("#btnCkRun").addEventListener("click", ckRun);
-$("#btnTbReload").addEventListener("click", () => renderTaskBoard());
 $("#btnTbRunAll").addEventListener("click", runAllTasks);
 // 两个 chips 行共用 TB.client：点任一处，两边一起跟着换。
 $("#qcChips").addEventListener("click", e => {
@@ -7004,9 +7569,6 @@ $("#tbBody").addEventListener("click", e => {
   if (b) runOneTask(b.dataset.run);
 });
 // 定时任务：规则表与运行记录。搜索/过滤只重画规则表，运行记录单独重拉。
-$("#btnScReload").addEventListener("click", () => renderSchedule());
-$("#btnScDefaultsReload").addEventListener("click", () => renderSchedule());
-$("#btnScRunsReload").addEventListener("click", () => renderSchedule());
 $("#btnScSave").addEventListener("click", scSave);
 $("#scSearch").addEventListener("input", scRenderRows);
 $("#scOnlyOwn").addEventListener("change", scRenderRows);
@@ -7029,17 +7591,11 @@ $("#scBody").addEventListener("click", e => {
   if (run) scRunNow(run);
 });
 $("#btnPk").addEventListener("click", renderClients);
-  $("#btnUsage").addEventListener("click", renderUsage);
   $("#usWindow").addEventListener("change", renderUsage);
   $("#usRecentFilter").addEventListener("change", renderRecentRows);
-  $("#btnAlerts").addEventListener("click", renderAlerts);
   $("#btnAlertsClear").addEventListener("click", clearAlerts);
   $("#btnAlertCenter").addEventListener("click", () => { location.hash = "#alerts"; if (VIEW === "alerts") renderAlerts(); });
   $("#btnModels").addEventListener("click", () => renderModels(true));
-$("#btnCfgReload").addEventListener("click", async () => {
-  await renderConfig();
-  toast("已从磁盘重新读取配置");
-});
 $("#btnCfgRestart").addEventListener("click", restartProcess);
 
 // 一键重启。POST 之后这个进程会退出并换一个新的起来，所以期间的请求必定会断;
@@ -7223,10 +7779,6 @@ $("#btnBundleImport").addEventListener("click", bundlePick);
 $("#btnPfExport").addEventListener("click", bundleExport);
 $("#btnPfImport").addEventListener("click", bundlePick);
 $("#btnPfSave").addEventListener("click", savePlatforms);
-$("#btnPfReload").addEventListener("click", async () => {
-  await renderPlatforms();
-  toast("已重新读取平台配置");
-});
 $("#btnPfExpand").addEventListener("click", () => pfSetAll(true));
 $("#btnPfCollapse").addEventListener("click", () => pfSetAll(false));
 $("#pfSearch").addEventListener("input", pfApply);
@@ -7346,7 +7898,7 @@ $("#btnImportSel").addEventListener("click", () => doImport(false));
 $("#btnImportAll").addEventListener("click", () => doImport(true));
 $("#btnImportBundle").addEventListener("click", () => doImportBundle());
 $("#btnManual").addEventListener("click", doManual);
-$("#btnRefresh").addEventListener("click", () => refreshAll(true));
+$("#btnRefresh").addEventListener("click", refreshCurrentView);
 $("#btnCapClose").addEventListener("click", () => { if (CAP.resolve) capSettle(false, new Error("已取消人机验证")); });
 $("#capVeil").addEventListener("click", ev => { if (ev.target === $("#capVeil") && CAP.resolve) capSettle(false, new Error("已取消人机验证")); });
 // Esc 只关最上面那一层弹窗，而且要走各自的收尾函数：#addVeil / #taskVeil 直接
@@ -7637,7 +8189,6 @@ $("#chatInput").addEventListener("keydown", ev => {
 const USAGE_SUBTABS = setupSubtabs("usage", () => {
   if (VIEW === "usage") renderUsage();
 });
-$("#btnUsageRecentRefresh").addEventListener("click", () => renderUsage());
 const TASKS_SUBTABS = setupSubtabs("taskscenter", name => {
   if (VIEW !== "taskscenter") return;
   if (name === "schedule") renderSchedule();

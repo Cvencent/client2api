@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -54,7 +55,6 @@ func TestSaveConfigSendsOnlyWhatTheOperatorChanged(t *testing.T) {
 		t.Error("renderConfig 没有把渲染基线记到 CFG.baseline")
 	}
 	for _, path := range []string{
-		`"pool.prefer_expiring"`,
 		`"session_sticky.enabled"`,
 		`"features.sanitize_blacklist_fingerprints"`,
 		`"panel.package_detail_limit"`,
@@ -62,6 +62,14 @@ func TestSaveConfigSendsOnlyWhatTheOperatorChanged(t *testing.T) {
 		if !strings.Contains(render, "setBase("+path) {
 			t.Errorf("渲染基线漏了 %s：这个控件缺键时会画默认值，保存时会被当成一次改动", path)
 		}
+	}
+	// pool.prefer_expiring 的输入框在 0.1.13 就搬去了「平台配置 · WorkBuddy 卡片」，
+	// savePlatforms 用 PF.poolBaseline 自己剪枝，配置页不再渲染它。这条 setBase 却
+	// 一直留在 renderConfig 里，而 pool 只在 pfWorkBuddyPoolHTML / savePlatforms 里
+	// 声明过 —— renderConfig 一跑到就抛 ReferenceError，整张配置页白屏，保存按钮
+	// 也点不到。这条断言就是钉住它别被搬回来。
+	if codeRefs(render, "pool.prefer_expiring") {
+		t.Error("renderConfig 又引用了 pool.prefer_expiring：这个输入框早已搬去平台配置页，本函数里根本没有 pool 变量，引用它会让整张配置页抛 ReferenceError 白屏")
 	}
 	if !strings.Contains(render, `setBase("clients." + n, cl[n] == null ? {} : cl[n])`) {
 		t.Error("渲染基线漏了模块配置节：缺失的节画成 {}，保存时会凭空多出空节")
@@ -111,4 +119,14 @@ func TestSaveConfigSendsOnlyWhatTheOperatorChanged(t *testing.T) {
 	if strings.Contains(prune, "out[k] = {}") {
 		t.Error("pruneUnchanged 又把「清成 {}」当成一次重置了：空对象合进非空节是空操作，发出去只会换来一句「已保存」而磁盘不动")
 	}
+}
+
+// codeRefs reports whether body mentions name in actual code, ignoring comments.
+// Static "does the script still reference X" checks are only meaningful if an
+// explanatory comment about X cannot pass for a real reference; without this,
+// documenting the bug you just fixed immediately re-breaks the test.
+func codeRefs(body, name string) bool {
+	body = regexp.MustCompile(`(?s)/\*.*?\*/`).ReplaceAllString(body, " ")
+	body = regexp.MustCompile(`(?m)//[^\n]*`).ReplaceAllString(body, " ")
+	return strings.Contains(body, name)
 }

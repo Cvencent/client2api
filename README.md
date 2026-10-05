@@ -722,6 +722,29 @@ global default hours per batch (including the balance-refresh interval), the
 per-platform overrides, and the run journal. The 配置 view no longer duplicates
 those controls, so `schedule.*` has a single editing surface.
 
+The 用量 总览 subtab reports the window through a row of metric tiles rather
+than a stack of identical grey rows: 成功率 / 输入 / 输出 / 合计 / 平均延迟 each
+carry their own accent and a subtitle that says where the number came from (the
+failure count under the success rate, each side's share of the total under the
+token counts, the average rate under the total, the window under the latency) —
+so a glance says which figure is the one being looked for. The chart under them
+is interactive: hovering a column reports that hour's input / output / request
+count in a readout above the plot, and the arrow keys walk the same points
+(Home / End jump to the ends). The column hit area is wider than the column
+itself, because at a 72-hour window the columns are three or four pixels wide
+with empty gaps between them. The reveal animation and the success-rate meter
+both stand down under `prefers-reduced-motion`.
+
+The 定时任务 subtab is laid out so that the defaults do not cost a screen to
+read: each batch is one card in a responsive grid — toggle on the left, hours
+box on the right, ticked cards tinted — instead of a stack of full-width rows
+with a `width:100%` input each. In the rules table the 自定义 chip and the
+跟随全局 button appear only on rows that actually override the shared hours,
+so a table where nothing is customized reads as a column of quiet dashes
+instead of the same grey button repeated fifteen times; both are created and
+removed together as the row is edited. The hour-syntax explainer sits with the
+table toolbar it describes rather than in a full-width sticky banner.
+
 The panel is an administrative surface: it holds credentials and can rewrite the
 config, so every response it produces carries a policy, including the shell and
 the 401s. `Content-Security-Policy` starts from `default-src 'none'` and names the
@@ -823,6 +846,13 @@ the option spellings the router also accepts (`conversation_id`,
 those the `X-Conversation-Request-ID` header. The request's `user` field is
 deliberately never used: an end-user id is not a conversation, and writing it
 into a column called 会话ID would claim a session the caller never named. The
+row falls back, when the caller named none of them, to `core.DeriveConversationKey` —
+the same content-derived key the router uses for stickiness — so a conversation that
+arrived without an id reads as one conversation instead of a run of blank cells. That
+key carries the `d-` prefix (`core.DerivedKeyPrefix`) and the panel renders such a value
+as `推 …`, so an inferred session is never mistaken for one the client declared; a
+request with nothing signable to derive from still shows 无会话标识. The derived key
+never enters `ChatRequest.ConversationID` or `Options`, so routing is unchanged. The
 account column resolves the recorded account id the way the 账号 page does: the
 operator's own note (the phone number or e-mail kept for a re-login) wins, then
 the module's label, and the raw id is the last resort so a row never goes blank
@@ -874,6 +904,25 @@ say" is a different statement from "these are the same account". Modules that
 report no identity (which is most of them) render exactly as before. The
 account and channel counts both appear in the view header, and the sidebar
 badge counts accounts, not credentials.
+
+A pool of a few dozen accounts is taller than any screen, so the table pages.
+The default is 50 accounts per page with 20/50/100/200 selectable, and the
+pager collapses entirely when everything fits on one page — a control that can
+never do anything reads as a broken one. Two details matter:
+
+- **Paging cuts between groups, never inside one.** The unit is the account
+  group, so a multi-channel account keeps its header and all of its channel
+  rows on the same page. Slicing the credential rows instead would make one
+  vendor account look like two accounts.
+- **The counts stay whole.** The header still reports the full pool, and the
+  pager adds `第 N-M 个，共 X 个账号`; both count the filtered list, not the
+  current page. Paging is for the eye, the numbers still answer "how many
+  accounts do I manage".
+
+Switching client, typing in the search box, and changing the page size all
+return to page 1: a page number that was meaningful for the previous set has no
+meaning for the new one, and a search that narrows 138 accounts to 5 would
+otherwise leave the operator staring at an empty table.
 
 Discovering credentials on this machine is not the only way in. A module can also
 accept a **document the operator supplies** — an export produced by another tool

@@ -202,6 +202,35 @@ actually talk to is reported by `Status()` instead.
   `sidecar.log`. Nothing else is written anywhere.
 * Everything is standard library only. No dependency was added.
 
+## Daily sign-in (每日签到)
+
+`tabbit` implements `core.CheckinProvider` for the vendor's daily sign-in, which hands a
+slice of the account's quota back once per day. The endpoint pair was read off the
+vendor's own web bundle, not guessed:
+
+```
+POST /api/commerce/activity/v1/sign-in         body: {"scene_code":"desktop_pet"}
+GET  /api/commerce/activity/v1/sign-in/status  ?scene_codes=desktop_pet
+```
+
+* **The reward is quota, not credits.** The vendor's own i18n table files it under the usage
+  ledger as "Sign-in Reward", next to "Usage Restored" and "Usage Reset Coupon". Since the
+  quota endpoint reports a *percentage* of the cycle's allowance, a claim shows up as
+  `usage_percentage` dropping — which the panel's balance column already renders. Press
+  **余额** afterwards to read the new number.
+* **No amount is hard-coded.** The bundle carries no figure, so the reply's own
+  `rewarded` is what the panel reports. Nor does the module claim a window (calendar day
+  vs rolling 24h vs cycle): the vendor decides and the reply is the only authority.
+* **HTTP 200 is not a grant.** A `granted:false` reply is reported as a refusal
+  (`OK=false`, nil error) — the normal answer for "already signed in today" — so the
+  operator is never shown a success toast over an unchanged balance. A Go error is
+  reserved for "could not even be attempted" (no such id).
+* **Web-token accounts only.** A `sidecar` endpoint is a local bridge with no vendor
+  session behind it, so `CheckinActions` reports no action at all when only sidecar
+  accounts exist — the button would be a guaranteed 401.
+* A dead cookie surfaces the shared web-transport wording, including the 导入凭据 fix.
+  `sign-in/status` is implemented as the read side; it is not yet surfaced by the panel.
+
 ## Signing in
 
 `tabbit` implements `core.LoginProvider`, but the module performs **no login of its own**,

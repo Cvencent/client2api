@@ -26,8 +26,12 @@ func TestExampleConfigParsesAndMatchesTheDocumentedDefaults(t *testing.T) {
 	if got := cfg.smsPolls(); got != defaultSMSPolls {
 		t.Errorf("sms_polls = %d, want %d", got, defaultSMSPolls)
 	}
-	if got := cfg.smsInterval(); got != defaultSMSInterval {
-		t.Errorf("sms_interval = %v, want %v", got, defaultSMSInterval)
+	// defaultSMSIntervalValue, not defaultSMSInterval: this test is about what
+	// the shipped example config agrees with, and TestMain shrinks the mutable
+	// var to 1ms for the whole binary. The var only exists so the login tests
+	// stop waiting out a real 5s pause; the value that ships is the constant.
+	if got := cfg.smsInterval(); got != defaultSMSIntervalValue {
+		t.Errorf("sms_interval = %v, want %v", got, defaultSMSIntervalValue)
 	}
 	if got := cfg.dupRetries(); got != defaultDupRetries {
 		t.Errorf("dup_retries = %d, want %d", got, defaultDupRetries)

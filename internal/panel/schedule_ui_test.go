@@ -232,6 +232,53 @@ func TestBatchButtonsAreGatedOnTheCapabilityBit(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// 「定时任务」盒的版式。这几块全是运行时拼出来的字符串，Go 侧除了 id 守卫以外
+// 什么都看不见，所以用静态断言把「为什么长这样」钉住：下面每一条都对应一次真实
+// 的退化——
+//  1. 全局默认区退回满屏 .cfgrow：十三个铺满宽度的行只为表达六个开关，时点框
+//     还要跟着拉到 100% 宽，一屏放不下。
+//  2. 每一行都挂一颗点不动的「跟随全局」按钮：十几行同一个灰按钮，看起来像坏
+//     了，而不是像「这里不用改」。
+//  3. 「自定义」列整列重复同一个词：那列信息量为零，却占掉一列宽度。
+//
+// ---------------------------------------------------------------------------
+func TestScheduleDefaultsAndTableLayout(t *testing.T) {
+	src := scheduleShellSource(t)
+	defaults := scheduleFuncBody(t, src, "scDefaultHTML")
+	row := scheduleFuncBody(t, src, "scRowHTML")
+
+	// ① 全局默认区是网格里的卡片，不是满宽的 .cfgrow。
+	// 卡片的 class 是拼出来的（后面还要接 " on"），所以匹配片段而不是整串。
+	if !strings.Contains(defaults, `class="scdef`) {
+		t.Error("全局默认区没有画出 .scdef 卡片：退回满屏 .cfgrow 会让六个开关占掉一整屏")
+	}
+	if strings.Contains(defaults, `class="cfgrow"`) {
+		t.Error("全局默认区又用回了满宽的 .cfgrow：那正是这次要消掉的版式")
+	}
+	if !strings.Contains(src, "#scDefaults { display: grid;") {
+		t.Error("#scDefaults 不是网格：卡片不会并排，还是会竖着堆一屏")
+	}
+	// 控件 id 一个都不能少——scSave 逐个读回它们，少一个就静默丢一个设置。
+	for _, id := range scheduleDefaultIDs {
+		if !strings.Contains(defaults, `"`+id+`"`) && !strings.Contains(defaults, `+ id +`) {
+			t.Errorf("改成卡片之后，全局默认区没有拼出 %s", id)
+		}
+	}
+
+	// ② 「跟随全局」只在真的自定义时才出现。
+	if !strings.Contains(row, "scOwned(scKey(r.client, r.batch), r) ?") {
+		t.Error("操作列没有按是否自定义来决定画不画「跟随全局」按钮")
+	}
+	// ③ 「自定义」列不再整列重复同一个词。
+	if strings.Contains(row, `<span class="chip scTag"></span>`) {
+		t.Error("「自定义」列又变回每行都空挂一个 chip：整列重复同一个词，信息量为零")
+	}
+	if !strings.Contains(src, "scTagNone") {
+		t.Error("「自定义」列没有占位符：非自定义的行会留下一格空白，看起来像加载失败")
+	}
+}
+
+// ---------------------------------------------------------------------------
 // 帮助函数自身的行为（它们在浏览器里跑，Go 侧只能拿源码做静态检查；这里至少把
 // 两个容易写错的语义钉住：hours 的解析规则和"缺键 = 开"的默认值）。
 // ---------------------------------------------------------------------------

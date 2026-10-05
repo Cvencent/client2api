@@ -121,9 +121,16 @@ func TestUsageChartReplacesTheBarBandInsteadOfAddingToIt(t *testing.T) {
 	if body := poolStatsFuncBody(t, src, "renderUsage"); !strings.Contains(body, "usageChartSVG(d.series)") {
 		t.Error("renderUsage 没有把 series 交给 usageChartSVG")
 	}
-	// 图是「追加」，因为 #usChart 上面还有成功率与三行合计：整体赋值会把它们冲掉。
-	if body := poolStatsFuncBody(t, src, "renderUsage"); !strings.Contains(body, `$("#usChart").innerHTML +=`) {
-		t.Error("renderUsage 覆盖了 #usChart：成功率与三行合计会被图冲掉")
+	// #usChart 现在只装图本身——成功率与四行合计搬去了 #usTiles 磁贴（见
+	// renderUsageTiles），所以这里是整体赋值而不是追加。用 += 的话，换窗口重新
+	// 拉数据时会把上一次的图留在 #usChart 里，两张图叠在一起。
+	if body := poolStatsFuncBody(t, src, "renderUsage"); !strings.Contains(body, `$("#usChart").innerHTML = usageChartSVG(d.series);`) {
+		t.Error(`renderUsage 没有整体赋值 #usChart：+= 会把上一次的图留在里面`)
+	}
+	// 磁贴必须在图之前画，且是独立容器：成功率 / 输入 / 输出 / 合计 / 延迟这五项
+	// 搬出 #usChart 就是为了让它们不被图冲掉，散落的容器容易在下次改版里退回去。
+	if body := poolStatsFuncBody(t, src, "renderUsage"); !strings.Contains(body, "renderUsageTiles(d, t, rate);") {
+		t.Error("renderUsage 没有画指标磁贴：成功率 / 输入 / 输出 / 合计 / 延迟没有出口")
 	}
 }
 
@@ -149,8 +156,16 @@ func TestUsageChartClassesMatchTheStylesheet(t *testing.T) {
 		}
 	}
 	// 图例本身：hd 里必须真的有三个元素（两个色块 + 文案），否则那三条 CSS 又变回死的。
-	hd := src[strings.Index(src, `class="uschart-hd"`):]
-	hd = hd[:strings.Index(hd, "\n")]
+	// 取整个 uschart-hd 块而不是它的第一行：总览改版把这个 header 拆成了多行
+	// （标题 / 图例 / 右侧汇总），按行截断会把图例漏掉，测试就白报了。
+	hdAt := strings.Index(src, `class="uschart-hd"`)
+	if hdAt < 0 {
+		t.Fatal("index.html has no .uschart-hd")
+	}
+	hd := src[hdAt:]
+	if end := strings.Index(hd, "</div>"); end > 0 {
+		hd = hd[:end]
+	}
 	for _, want := range []string{`class="legend"`, `class="sw sw-p"`, `class="sw sw-c"`} {
 		if !strings.Contains(hd, want) {
 			t.Errorf("uschart-hd 里缺少 %q：图例仍然是死的", want)

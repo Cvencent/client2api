@@ -90,7 +90,8 @@ func TestUsagePageHasThreeSecondaryTabs(t *testing.T) {
 		ids   []string
 	}{
 		{"usage-overview", []string{`id="usStats"`, `id="usChart"`}},
-		{"usage-recent", []string{`id="usRecentFilter"`, `id="usRecentBody"`, `id="btnUsageRecentRefresh"`}},
+		// btnUsageRecentRefresh 已经并入顶栏的统一刷新，这里只钉住面板自己的内容。
+		{"usage-recent", []string{`id="usRecentFilter"`, `id="usRecentBody"`, `id="usRecentNote"`}},
 		{"usage-stats", []string{`id="usClientBody"`, `id="usAccBody"`, `id="usModelBody"`, `id="usRealmBody"`}},
 	} {
 		panel := subtabPanelHTML(t, src, tc.panel)
@@ -131,9 +132,10 @@ func TestTasksCenterHasThreeSecondaryTabs(t *testing.T) {
 		panel string
 		ids   []string
 	}{
-		{"tasks-schedule", []string{`id="scBody"`, `id="scRunsBody"`, `id="btnScRunsReload"`}},
+		// btnScRunsReload / btnTbReload 同样并入了顶栏统一刷新。
+		{"tasks-schedule", []string{`id="scBody"`, `id="scRunsBody"`, `id="scRunsNote"`}},
 		{"tasks-batch", []string{`id="qcList"`, `id="ckList"`, `id="btnScanAll"`, `id="btnCkRun"`}},
-		{"tasks-board", []string{`id="tbBody"`, `id="btnTbReload"`}},
+		{"tasks-board", []string{`id="tbBody"`, `id="tbNote"`}},
 	} {
 		panel := subtabPanelHTML(t, src, tc.panel)
 		for _, id := range tc.ids {
@@ -181,7 +183,9 @@ func TestSecondaryTabsKeepTheExistingRefreshHooks(t *testing.T) {
 	for _, want := range []string{
 		`setupSubtabs("usage"`,
 		`setupSubtabs("taskscenter"`,
-		`$("#btnUsageRecentRefresh").addEventListener("click", () => renderUsage())`,
+		// 刷新不再挂在各子面板 header 上，而是统一走顶栏的 refreshCurrentView，
+		// 所以这里钉的是"各子面板仍然会重新拉数据"，而不是某个按钮的 id。
+		`"usage": () => renderUsage()`,
 		"renderUsage()",
 		"renderSchedule()",
 		"renderQC()",

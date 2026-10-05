@@ -714,7 +714,8 @@ func TestChatCarriesTheCallersConversationIdentity(t *testing.T) {
 }
 
 // TestChatRecordsTheCallersSessionOnTheUsageRow: 「最近调用」的会话ID列取的就是
-// 调用方自己带来的会话标识，和路由粘性用同一个键；没带会话的请求留空，绝不能
+// 调用方自己带来的会话标识，和路由粘性用同一个键；没带会话的请求改用按内容推
+// 出来的键（带 "d-" 前缀），但绝不能
 // 拿请求里的 user 字段冒充会话。
 func TestChatRecordsTheCallersSessionOnTheUsageRow(t *testing.T) {
 	usage := NewUsageStore(8)
@@ -733,7 +734,9 @@ func TestChatRecordsTheCallersSessionOnTheUsageRow(t *testing.T) {
 	}
 
 	// "user" is an end-user id, not a conversation: the row must stay blank
-	// rather than claim a session the caller never named.
+	// rather than claim a session the caller never named.  The row is no longer
+	// blank in that case — it carries the derived key instead — but that key must be
+	// the content-derived one, never the end-user id echoed back.
 	plain := chatWithHeader(t, srv, `{"model":"m1","user":"u-1","messages":[{"role":"user","content":"hi"}]}`, "", "")
 	if plain.Code != http.StatusOK {
 		t.Fatalf("status = %d, body %s", plain.Code, plain.Body.String())
@@ -742,8 +745,11 @@ func TestChatRecordsTheCallersSessionOnTheUsageRow(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("recorded %d usage records, want 2", len(got))
 	}
-	if got[1].SessionID != "" {
+	if got[1].SessionID == "u-1" {
 		t.Errorf("usage session = %q, want empty — a user id is not a session", got[1].SessionID)
+	}
+	if !strings.HasPrefix(got[1].SessionID, core.DerivedKeyPrefix) {
+		t.Errorf("usage session = %q, want a %q-derived key", got[1].SessionID, core.DerivedKeyPrefix)
 	}
 }
 
