@@ -567,7 +567,7 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 			ev := s.opts.Registry.NoteModelFailure(client.Name(), upstreamModel, time.Now())
 			s.publishPlatformAlert(client.Name(), upstreamModel, rec.Account, ev)
 		}
-		skippable := candidateUnavailable(err)
+		skippable := candidateUnavailable(err) || (!explicitPlatformRequest(wire.Model, client.Name()) && modelRefusal(err))
 		if (retryable || skippable) && len(candidates) > 1 && (s.opts.Guard == nil || !s.opts.Guard.IP.Active()) {
 			s.opts.Usage.RecordAttempt(UsageRecord{
 				At:        time.Now(),
@@ -701,7 +701,7 @@ func (s *server) serveRemainingCandidates(w http.ResponseWriter, r *http.Request
 			ev := s.opts.Registry.NoteModelFailure(client.Name(), upstreamModel, time.Now())
 			s.publishPlatformAlert(client.Name(), upstreamModel, rec.Account, ev)
 		}
-		skippable := candidateUnavailable(err)
+		skippable := candidateUnavailable(err) || (!explicitPlatformRequest(wire.Model, client.Name()) && modelRefusal(err))
 		if (!retryable && !skippable) || (s.opts.Guard != nil && s.opts.Guard.IP.Active()) {
 			return lastClient, lastHint, lastErr, false
 		}
@@ -714,6 +714,23 @@ func (s *server) serveRemainingCandidates(w http.ResponseWriter, r *http.Request
 // treating its refusal as an upstream answer.  The router may still have a
 // healthy platform behind this one.
 //
+// modelRefusal reports whether the upstream answered that this model id does
+// not exist on this platform.  A bare-name/Auto request did not choose the
+// platform, so the router may move on to a candidate that does serve it; the
+// account is not at fault, so nothing is parked.
+func modelRefusal(err error) bool {
+	f, ok := core.AsFailure(err)
+	return ok && f.Kind == core.FailureOther && f.Status == http.StatusNotFound
+}
+
+// explicitPlatformRequest reports whether the caller named this platform in
+// the model string ("cline/<id>").  An explicit choice is answered honestly:
+// the gateway must not hide the refusal behind a different platform.
+func explicitPlatformRequest(model, client string) bool {
+	prefix, rest, ok := strings.Cut(strings.TrimSpace(model), "/")
+	return ok && rest != "" && strings.EqualFold(prefix, client)
+}
+
 // ErrPlatformExhausted is the module's explicit statement that it has already
 // walked its own account pool.  Re-entering that platform would only repeat the
 // same exhausted rotation, so the gateway moves on.

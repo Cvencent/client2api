@@ -35,6 +35,24 @@ import (
 // buildWireBody converts a core.ChatRequest into the OpenAI-shaped JSON the
 // upstream expects.
 func buildWireBody(req *core.ChatRequest) ([]byte, error) {
+	return buildWireBodyFor(req, reqModel(req))
+}
+
+// reqModel reports a request's model id, tolerating a nil request.
+func reqModel(req *core.ChatRequest) string {
+	if req == nil {
+		return ""
+	}
+	return req.Model
+}
+
+// buildWireBodyFor is buildWireBody with the model id overridden.  WorkBuddy
+// addresses models with a gateway-only realm prefix ("cn:..."), which the
+// vendor must never see.  Taking the bare id as an argument lets Chat strip
+// the prefix without shallow-copying the request: a copy would duplicate the
+// gateway's unexported per-account lease, so the slot taken on the copy would
+// never be released and the account would fill up for good.
+func buildWireBodyFor(req *core.ChatRequest, model string) ([]byte, error) {
 	if req == nil {
 		return nil, errors.New("nil chat request")
 	}
@@ -48,7 +66,7 @@ func buildWireBody(req *core.ChatRequest) ([]byte, error) {
 		obj[k] = v
 	}
 
-	obj["model"] = req.Model
+	obj["model"] = model
 	obj["messages"] = wireMessages(req.Messages)
 	if len(req.Tools) > 0 {
 		obj["tools"] = wireTools(req.Tools)

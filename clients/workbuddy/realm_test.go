@@ -418,3 +418,41 @@ func TestWorkbuddyChatNamesTheServedAccount(t *testing.T) {
 		})
 	}
 }
+
+// TestWorkbuddyChatKeepsTheAccountLeaseOnTheCallerRequest is the regression
+// guard for a leaked gateway slot.  Chat used to shallow-copy the request to
+// strip the realm prefix; the copy carried the gateway's unexported per-account
+// lease, so AcquireAccountSlot filled the copy while the gateway released the
+// original.  Every success leaked one slot, and after max_in_flight_per_account
+// successes the account answered 429 forever even with nothing in flight.
+func TestWorkbuddyChatKeepsTheAccountLeaseOnTheCallerRequest(t *testing.T) {
+	rt := &fakeRT{handler: func(req *http.Request) (*http.Response, error) {
+		if strings.HasSuffix(req.URL.Path, "/chat/completions") {
+			return sseResponse(200, realmSSE, nil), nil
+		}
+		return jsonResponse(http.StatusNotFound, `{}`), nil
+	}}
+	c, _ := panelClient(t, rt, cnAccountFiles())
+
+	var released []string
+	req := &core.ChatRequest{
+		Model:    "cn:glm-5.2",
+		Messages: []core.Message{{Role: "user", Content: "hi"}},
+	}
+	req.SetAccountAcquirer(func(accountID string) (func(), error) {
+		return func() { released = append(released, accountID) }, nil
+	})
+
+	st, err := c.Chat(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	defer func() { _ = st.Close() }()
+
+	// The gateway releases through the request it passed in.  If Chat took the
+	// slot on a copy, this releases nothing and the slot leaks.
+	req.ReleaseAccountSlot()
+	if len(released) != 1 {
+		t.Fatalf("released = %v, want exactly the account Chat leased", released)
+	}
+}

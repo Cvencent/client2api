@@ -348,10 +348,11 @@ func TestMissingDataEnvelopeIsRejected(t *testing.T) {
 
 // --- the catalogue --------------------------------------------------------
 
-// TestCatalogueMergesThreeSources is the subtle one: /api/v1/models lists no
-// cline-free/* ids at all, so a module that read only that endpoint would show
-// no free model.  The free ids come from the recommended endpoint's free array
-// and from the built-in table.
+// TestCatalogueMergesThreeSources pins the authoritative-refresh rule: once a
+// live source answers, the built-in table may only fill in entries the vendor
+// still advertises.  /api/v1/models lists no cline-free/* ids at all, so the
+// free array is what keeps a free id in the catalogue -- and what removes it
+// again once the vendor retires the model.
 func TestCatalogueMergesThreeSources(t *testing.T) {
 	f := newFakeServer(t)
 	// The metered list: no cline-free/* ids anywhere.
@@ -366,7 +367,7 @@ func TestCatalogueMergesThreeSources(t *testing.T) {
 			{"id":"cline-free/gemini-3.8-flash","name":"Gemini 3.8 Flash","description":"x","tags":["free"]},
 			{"id":"stealth/space-bunny-alpha","name":"Space Bunny Alpha","description":"y","tags":["free"]}
 		],
-		"free":["cline-free/gemini-3.8-flash","stealth/space-bunny-alpha","cline-free/muse-spark-1.3-contributor"]
+		"free":["cline-free/gemini-3.8-flash","stealth/space-bunny-alpha","cline-free/mimo-v2.6-flash","cline-free/muse-spark-1.3-contributor"]
 	}`)
 
 	c := newTestClient(t, f, `"access_token":"workos:t"`)
@@ -380,7 +381,6 @@ func TestCatalogueMergesThreeSources(t *testing.T) {
 	}
 	for _, want := range []string{
 		"cline-free/mimo-v2.6-flash",
-		"cline-free/deepseek-v4.1-flash",
 		"cline-free/gemini-3.8-flash",
 		"cline-free/muse-spark-1.3-contributor",
 		"stealth/space-bunny-alpha",
@@ -391,12 +391,15 @@ func TestCatalogueMergesThreeSources(t *testing.T) {
 			t.Errorf("merged catalogue is missing %q", want)
 		}
 	}
-	// The metered sibling must be free=false while the cline-free one is true.
+	if _, ok := ids["cline-free/deepseek-v4.1-flash"]; ok {
+		t.Error("a free id the vendor no longer advertises survived the refresh via the built-in table")
+	}
+	// The metered sibling must be free=false while the surviving free id is true.
 	if got := ids["deepseek/deepseek-v4.1-flash"].Extra["free"]; got != false {
 		t.Errorf("deepseek/deepseek-v4.1-flash free = %v, want false", got)
 	}
-	if got := ids["cline-free/deepseek-v4.1-flash"].Extra["free"]; got != true {
-		t.Errorf("cline-free/deepseek-v4.1-flash free = %v, want true", got)
+	if got := ids["cline-free/mimo-v2.6-flash"].Extra["free"]; got != true {
+		t.Errorf("cline-free/mimo-v2.6-flash free = %v, want true", got)
 	}
 	// The list endpoint really did not carry the free ids.
 	if f.count(modelsPath) != 1 {
@@ -1387,5 +1390,35 @@ func TestCredentialFieldsFallsBackToTheTokenWalk(t *testing.T) {
 	}
 	if fields["account_id"] != "usr-from-jwt" {
 		t.Fatalf("account_id = %q, want usr-from-jwt (read from the JWT claim)", fields["account_id"])
+	}
+}
+
+// TestBuiltinCatalogueSurvivesACompleteOutage guards the other half of the
+// rule: when no live source answers, the built-in table is the catalogue and
+// may keep ids a later vendor change has not been observed to remove yet.
+func TestBuiltinCatalogueSurvivesACompleteOutage(t *testing.T) {
+	f := newFakeServer(t)
+	f.json(modelsPath, http.StatusInternalServerError, `{}`)
+	f.json(recommendedPath, http.StatusInternalServerError, `{}`)
+
+	c := newTestClient(t, f, ` "access_token":"workos:t" `)
+	models, err := c.RefreshModels(context.Background())
+	if err == nil {
+		t.Fatal("RefreshModels reported success with no catalogue source answering")
+	}
+	ids := map[string]bool{}
+	for _, m := range models {
+		ids[m.ID] = true
+	}
+	for _, want := range []string{
+		"cline-free/deepseek-v4.1-flash",
+		"cline-free/mimo-v2.6-flash",
+		"cline-free/gemini-3.8-flash",
+		"cline-free/muse-spark-1.3-contributor",
+		"stealth/space-bunny-alpha",
+	} {
+		if !ids[want] {
+			t.Errorf("offline catalogue is missing %q", want)
+		}
 	}
 }

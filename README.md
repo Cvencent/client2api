@@ -317,6 +317,12 @@ unchanged, and also exposes one aggregated name per model.  That name resolves
 through the same platform-priority, health, cooldown, and failover path as a
 bare request.  Use a qualified id when the request must stay on one platform.
 
+When a router-chosen candidate (a bare name or `Auto/`) answers `404 model not
+found`, the gateway demotes that platform/model pair briefly and tries the next
+candidate instead of returning the 404: the caller did not choose the platform,
+so one vendor retiring an id must not fail the request.  An explicitly
+qualified id is not rescued -- there the 404 is the honest answer.
+
 ## Configuration
 
 `configs/client2api.json` — the seven keys the gateway needs, plus the optional

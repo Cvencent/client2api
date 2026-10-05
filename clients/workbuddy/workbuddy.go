@@ -843,11 +843,6 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 	if route.bare == "" {
 		return nil, core.ErrUnsupported
 	}
-	if route.bare != model {
-		clone := *req
-		clone.Model = route.bare
-		req = &clone
-	}
 
 	c.refreshAccounts(false)
 	if c.pool.Len() == 0 {
@@ -877,7 +872,11 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 	// caller's own id wins when it sent one.
 	meta.ConversationRequestID = conversationRequestID(req.ConversationRequestID, convKey, req)
 
-	body, err := buildWireBody(req)
+	// The realm prefix is this gateway's addressing scheme, not something the
+	// vendor knows, so it has to come off the wire body.  Pass the bare id
+	// instead of copying the request: a shallow copy would carry the gateway's
+	// per-account lease, and the slot taken on the copy would never be freed.
+	body, err := buildWireBodyFor(req, route.bare)
 	if err != nil {
 		return nil, err
 	}

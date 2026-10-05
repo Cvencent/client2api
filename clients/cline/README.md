@@ -34,15 +34,26 @@ source wins because it is the only one that carries a display name and the free
 verdict. `Extra["free"]` is written unconditionally by the `/api/v1/models` pass,
 so a lower-precedence guess can never survive a higher-precedence answer.
 
+The built-in table is a fallback for a total outage, not a permanent skeleton.
+Once any live source answers, a built-in entry survives only when that source
+still corroborates its id, so a free model the vendor retires disappears on the
+next refresh instead of being resurrected on every poll.
+
 ### Free models
+
+The built-in seed, used only while no live source answers:
 
 | id | name | context | max output | images |
 | --- | --- | --- | --- | --- |
 | `stealth/space-bunny-alpha` | Space Bunny Alpha | 1 000 000 | 524 288 | yes |
 | `cline-free/mimo-v2.6-flash` | MiMo-V2.6-Flash | 1 048 576 | 131 072 | yes |
-| `cline-free/deepseek-v4.1-flash` | DeepSeek V4.1 Flash | 1 048 576 | 131 072 | yes |
 | `cline-free/gemini-3.8-flash` | Gemini 3.8 Flash | 1 048 576 | **65 536** | yes |
 | `cline-free/muse-spark-1.3-contributor` | Muse Spark 1.3 Contributor | 1 048 576 | 943 718 | yes |
+
+The live `free` array is authoritative. On 2026-10-04 the vendor moved
+`deepseek-v4.1-flash` out of the free array and into `cline-pass/*`; the next
+catalogue refresh removes the free id, and a request that still names it is
+refused with a 404.
 
 **Freeness is never decided from the model name.** The rule is the union of four
 independent signals:
@@ -56,20 +67,22 @@ The distinction is not academic: `cline-free/deepseek-v4.1-flash` (free) and
 `deepseek/deepseek-v4.1-flash` (metered) are two *different* entries with the same
 model name, and a name-based rule would mark the metered one free.
 
-**The `cline-free/*` ids are product-surface-only and cannot be served to a plain
-API caller.** They are listed by the vendor's own `GET /api/v1/models`, so the
-catalogue advertises them, but a request for one is refused:
+**An id the vendor has retired from the free array is refused.** The vendor
+answers a request for such an id with a 403 when no client header is present, and
+with the less obvious 404 when the official header is:
 
 | request | answer |
 | --- | --- |
-| `POST /api/v1/chat/completions`, no `X-CLIENT-TYPE` | `403` `Error 403: cline-free/gemini-3.8-flash is only available via Cline product surfaces. If you are using an old version of Cline, please update to the latest version` |
+| `POST /api/v1/chat/completions`, no `X-CLIENT-TYPE` | `403` `... is only available via Cline product surfaces ...` |
 | the same request with `X-CLIENT-TYPE: cline-sdk` (the header this module sends, as the official client does) | `404` `{"error":"model not found","success":false}` |
 
-The header is what the official client sends, so the module keeps sending it; the
-consequence is the less obvious of the two messages. Metered ids such as
-`anthropic/claude-haiku-4.5` work either way and are the ones to use. A `404`/`400`
-is classified `kindClient`, which names the **request** as the problem, so the
-account is not parked — see
+The header is what the official client sends, so the module keeps sending it.
+Ids the vendor still lists in the free array -- `cline-free/mimo-v2.6-flash` is
+the live example -- do answer through the same API path, so this is a retirement
+signal, not a blanket ban on the `cline-free/` namespace. Metered ids such as
+`anthropic/claude-haiku-4.5` work regardless. A `404`/`400` is classified
+`kindClient`, which names the **request** as the problem, so the account is not
+parked — see
 [Account pool, cooldowns and errors](#account-pool-cooldowns-and-errors).
 
 ### Output limits

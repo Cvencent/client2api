@@ -858,3 +858,81 @@ func TestChatDoesNotFailOverAContentBlock(t *testing.T) {
 		t.Fatal("content policy refusal was retried on another platform")
 	}
 }
+
+// TestBareModelSkipsAPlatformThatCannotServeTheModel is the Auto/ guarantee:
+// the caller did not choose cline, the router did, so a 404 "model not found"
+// from one platform must not be the caller's final answer while another
+// platform holds the same model.
+func TestBareModelSkipsAPlatformThatCannotServeTheModel(t *testing.T) {
+	cline := &testClient{
+		name:    "cline",
+		chatErr: core.Fail("cline", "c1", core.FailureOther, http.StatusNotFound, errors.New("upstream returned HTTP 404: model not found")),
+		catalogue: []core.Model{
+			{ID: "cline-free/deepseek-v4.1-flash", OwnedBy: "cline", Extra: map[string]any{"free": true}},
+			{ID: "deepseek/deepseek-v4.1-flash", OwnedBy: "deepseek"},
+		},
+	}
+	workbuddy := &testClient{
+		name:      "workbuddy",
+		servedBy:  "w1",
+		events:    usageEvents(1, 1),
+		catalogue: []core.Model{{ID: "cn:deepseek-v4.1-flash", OwnedBy: "workbuddy"}},
+	}
+	reg := core.NewRegistry()
+	reg.Add(cline)
+	reg.Add(workbuddy)
+	reg.SetPlatformConfigs(map[string]core.PlatformConfig{"cline": {Priority: 1}, "workbuddy": {Priority: 2}})
+	usage := NewUsageStore(10)
+	srv := NewServer(Options{
+		Registry: reg,
+		Version:  "test",
+		Logger:   log.New(io.Discard, "", 0),
+		Stats:    NewStats(),
+		Usage:    usage,
+		Live:     livecfg.New(livecfg.Snapshot{MaxRotate: 1, RotateBackoffBase: time.Nanosecond}),
+	})
+
+	rec := chat(t, srv, `{"model":"DeepSeek-V4.1-Flash","messages":[{"role":"user","content":"hi"}]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
+	}
+	if cline.seen == nil {
+		t.Fatal("the first candidate was never tried")
+	}
+	if workbuddy.seen == nil {
+		t.Fatal("the model-not-found candidate did not fail over to the next platform")
+	}
+	if got := usage.Snapshot(); len(got) == 0 {
+		t.Fatal("no usage recorded")
+	}
+}
+
+// TestModelRefusalForANamedPlatformIsNotHidden pins the other half: when the
+// caller names the platform, the gateway is not choosing for them, so the
+// upstream's 404 is the honest answer and must surface.
+func TestModelRefusalForANamedPlatformIsNotHidden(t *testing.T) {
+	cline := &testClient{
+		name:      "cline",
+		chatErr:   core.Fail("cline", "c1", core.FailureOther, http.StatusNotFound, errors.New("upstream returned HTTP 404: model not found")),
+		catalogue: []core.Model{{ID: "cline-free/deepseek-v4.1-flash", OwnedBy: "cline", Extra: map[string]any{"free": true}}},
+	}
+	workbuddy := &testClient{
+		name:      "workbuddy",
+		servedBy:  "w1",
+		events:    usageEvents(1, 1),
+		catalogue: []core.Model{{ID: "cn:deepseek-v4.1-flash", OwnedBy: "workbuddy"}},
+	}
+	reg := core.NewRegistry()
+	reg.Add(cline)
+	reg.Add(workbuddy)
+	reg.SetPlatformConfigs(map[string]core.PlatformConfig{"cline": {Priority: 1}, "workbuddy": {Priority: 2}})
+	srv := NewServer(Options{Registry: reg, Version: "test", Logger: log.New(io.Discard, "", 0), Stats: NewStats(), Usage: NewUsageStore(10)})
+
+	rec := chat(t, srv, `{"model":"cline/cline-free/deepseek-v4.1-flash","messages":[{"role":"user","content":"hi"}]}`)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
+	}
+	if workbuddy.seen != nil {
+		t.Fatal("an explicitly named platform's refusal was retried elsewhere")
+	}
+}

@@ -347,7 +347,15 @@ func parseRecommended(raw []byte) ([]modelEntry, map[string]bool, error) {
 //
 // A model present in more than one source keeps the highest-precedence
 // metadata, and the free set is the union across every source.
-func mergeCatalog(builtin []builtinModel, listed []core.Model, recommended []modelEntry, freeIDs map[string]bool) []core.Model {
+//
+// The built-in table is a fallback for a total outage, not a permanent
+// skeleton.  When the recommended endpoint answers, its free array is the
+// complete truth for free ids: a built-in free entry it no longer lists is
+// dropped, so a model retired upstream disappears on the next refresh instead
+// of being resurrected as a permanent 404 for Auto/ routing.  If that endpoint
+// failed, the built-in free entries are kept so a partial outage does not make
+// free models flap.
+func mergeCatalog(builtin []builtinModel, listed []core.Model, recommended []modelEntry, freeIDs map[string]bool, freeAuthoritative bool) []core.Model {
 	order := make([]string, 0, len(builtin)+len(listed)+len(recommended))
 	byID := map[string]core.Model{}
 	free := map[string]bool{}
@@ -355,6 +363,24 @@ func mergeCatalog(builtin []builtinModel, listed []core.Model, recommended []mod
 		free[id] = true
 	}
 
+	// liveIDs is the set of ids at least one live source knows about.  The
+	// built-in table is filtered against it only when freeAuthoritative is set --
+	// that flag means the recommended endpoint answered, and its free array is
+	// the complete truth for free ids.  If that endpoint failed we keep the
+	// built-in free entries rather than making free models flap during a partial
+	// outage.
+	liveIDs := make(map[string]bool, len(listed)+len(recommended)+len(freeIDs))
+	for _, m := range listed {
+		liveIDs[m.ID] = true
+	}
+	for _, e := range recommended {
+		if id := strings.TrimSpace(e.ID); id != "" {
+			liveIDs[id] = true
+		}
+	}
+	for id := range freeIDs {
+		liveIDs[id] = true
+	}
 	put := func(id string, m core.Model, isFree bool) {
 		if _, seen := byID[id]; !seen {
 			order = append(order, id)
@@ -366,6 +392,9 @@ func mergeCatalog(builtin []builtinModel, listed []core.Model, recommended []mod
 	}
 
 	for _, b := range builtin {
+		if freeAuthoritative && len(liveIDs) > 0 && !liveIDs[b.ID] {
+			continue
+		}
 		m, ok := modelFromEntry(modelEntry{
 			ID:            b.ID,
 			Name:          b.Name,
@@ -410,7 +439,7 @@ func mergeCatalog(builtin []builtinModel, listed []core.Model, recommended []mod
 
 // fallbackCatalog renders the built-in table alone.
 func fallbackCatalog() []core.Model {
-	return mergeCatalog(builtinModels, nil, nil, nil)
+	return mergeCatalog(builtinModels, nil, nil, nil, false)
 }
 
 // modelIDs lists the ids in catalogue order.
@@ -570,7 +599,7 @@ func (c *Client) fetchModels(ctx context.Context) ([]core.Model, error) {
 	if listErr != nil && recErr != nil {
 		return nil, fmt.Errorf("cline: no catalogue source answered: %v; %v", scrubError(listErr), scrubError(recErr))
 	}
-	merged := mergeCatalog(builtinModels, listed, recommended, freeIDs)
+	merged := mergeCatalog(builtinModels, listed, recommended, freeIDs, recErr == nil)
 	if len(merged) == 0 {
 		return nil, errNoCatalog
 	}
