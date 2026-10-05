@@ -482,6 +482,27 @@ func TestErrorInsideHTTP200(t *testing.T) {
 	}
 }
 
+// A 401 is the vendor refusing the credential, not a transient blip.  The
+// body may still carry the auth business code (1001/4010); parking it as
+// "cooling for 60s" was what kept re-selecting a dead token every minute
+// (37 failures against one live account).  It has to end up invalid, and the
+// picker must stop offering it.
+func TestHTTP401ParksTheCredentialAsInvalid(t *testing.T) {
+	u := newUpstream(t, fixedReply(401, `{"code":1001,"message":"auth failed"}`))
+	c := chatClient(t, u, 1, []*Auth{testAuth("A", "token-A")})
+
+	_, err := c.Chat(context.Background(), chatReq())
+	assertFailure(t, err, core.FailureSessionDead, "A")
+
+	snap := c.pool.Snapshot()
+	if len(snap) != 1 || snap[0].State != stateInvalid {
+		t.Fatalf("401 must park the credential as invalid, got %#v", snap)
+	}
+	if a, ok := c.pool.Pick(map[string]bool{}); ok {
+		t.Fatalf("the pool still offers the rejected credential %q", a.ID())
+	}
+}
+
 // ---- error classification / failover set ----------------------------------
 
 func TestClassifyAndFailoverSet(t *testing.T) {
@@ -494,6 +515,10 @@ func TestClassifyAndFailoverSet(t *testing.T) {
 		{200, `{"code":4008,"message":"quota"}`, ErrQuota},
 		{200, `{"code":1001,"message":"auth"}`, ErrAuth},
 		{200, `{"code":4010,"message":"token"}`, ErrAuth},
+		// A 401 rejects the credential at the transport-auth layer; the body's
+		// 1001/4010 must not turn it back into a mere rotatable auth blip.
+		{401, `{"code":1001,"message":"auth"}`, ErrSessionDead},
+		{401, `{"code":4010,"message":"token"}`, ErrSessionDead},
 		{200, `{"code":4001,"message":"cannot unmarshal string into LLMRawMessageContent"}`, ErrParam},
 		{200, `{"code":4011,"message":"rate"}`, ErrSoftRate},
 		{200, `{"code":9074,"message":"checkin"}`, ErrRetryLater},
@@ -671,8 +696,10 @@ func TestChatFailsOverOnAuthError(t *testing.T) {
 	for _, s := range snap {
 		states[s.ID] = s.State
 	}
-	if states["A"] != stateCooling {
-		t.Errorf("account A should be cooling after 1001, got %q", states["A"])
+	if states["A"] != stateInvalid {
+		// The upstream answered HTTP 401, so the credential itself is dead:
+		// the pool must park it as invalid rather than re-try it in 60s.
+		t.Errorf("account A should be invalid after a 401, got %q", states["A"])
 	}
 	if states["B"] != stateReady {
 		t.Errorf("account B should be ready, got %q", states["B"])

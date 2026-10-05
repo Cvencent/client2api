@@ -48,6 +48,11 @@ type pool struct {
 	// advertises, so the module does not keep claiming to be a build the
 	// vendor has stopped offering promotions to.  See version.go.
 	ver versionCache
+
+	// browser mints a captcha parameter with the machine's own Edge or
+	// Chrome.  It is resolved once, at construction, so captchaReady stays
+	// cheap and side-effect free; nil means no browser is available.
+	browser *browserSolver
 }
 
 type regionCache struct {
@@ -318,7 +323,10 @@ func (p *pool) deviceMid() string {
 
 // captchaReady reports whether the JWT channel can be used at all.
 func (p *pool) captchaReady() bool {
-	return strings.TrimSpace(p.cfg.CaptchaCommand) != ""
+	if strings.TrimSpace(p.cfg.CaptchaCommand) != "" {
+		return true
+	}
+	return p.browser != nil
 }
 
 // selectableLocked applies the lifecycle state machine.
@@ -522,7 +530,7 @@ func (p *pool) accountsForStatus() []core.AccountStatus {
 		}
 		note := a.Note
 		if a.Mode == modeJWT && !p.captchaReady() && note == "" {
-			note = "JWT channel needs a captcha solver (captcha_command not configured)"
+			note = "JWT channel needs a captcha solver (no captcha_command and no Edge/Chrome found)"
 		}
 		if a.LastError != "" {
 			if note != "" {
@@ -589,7 +597,12 @@ func (p *pool) summary() (ready bool, detail string) {
 		return false, "no zcode credentials found (looked in config, ~/.zcode/v2/config.json, ~/.zcode/v2/credentials.json)"
 	}
 
-	detail = itoa(len(p.accounts)) + " account(s): " + itoa(apiKeys) + " api-key, " + itoa(jwts) + " jwt"
+	// Count the way the panel renders: credentials that share a vendor account
+	// (an API key and a plan JWT for the same Zhipu id, say) are one account
+	// with several channels, not several accounts.  Leading with the raw
+	// credential count here is what made one sign-in look like three.
+	detail = itoa(len(p.accounts)) + " credential(s) across " + itoa(countAccounts(p.accounts)) + " account(s): " +
+		itoa(apiKeys) + " api-key, " + itoa(jwts) + " jwt"
 	detail += "; usable=" + itoa(readyN)
 	if cooling > 0 {
 		detail += ", cooling=" + itoa(cooling)
@@ -601,12 +614,27 @@ func (p *pool) summary() (ready bool, detail string) {
 		detail += ", invalid=" + itoa(invalid)
 	}
 	if jwts > 0 && !p.captchaReady() {
-		detail += "; jwt channel disabled (captcha_command not configured)"
+		detail += "; jwt channel disabled (no captcha_command and no Edge/Chrome found)"
 	}
 	if p.lastErr != "" {
 		detail += "; last error: " + p.lastErr
 	}
 	return readyN > 0, detail
+}
+
+// countAccounts groups credentials the way the panel does (see accGroups in
+// internal/panel/index.html): a credential with no vendor identity of its own
+// is its own account, and the rest collapse by identity.
+func countAccounts(list []*Account) int {
+	seen := make(map[string]bool, len(list))
+	for _, a := range list {
+		key := strings.TrimSpace(a.UserID)
+		if key == "" {
+			key = a.ID
+		}
+		seen[key] = true
+	}
+	return len(seen)
 }
 
 func (p *pool) setLastErr(msg string) {

@@ -39,10 +39,16 @@ type FieldSpec struct {
 // secret: the panel is served over plain HTTP on loopback and its output is
 // cached by browsers.
 type AccountRecord struct {
-	ID      string `json:"id"`
-	Label   string `json:"label,omitempty"`
-	Enabled bool   `json:"enabled"`
-	State   string `json:"state"` // ready|cooling|exhausted|invalid|unknown
+	ID    string `json:"id"`
+	Label string `json:"label,omitempty"`
+	// OperatorNote is the panel's own label for this account: the phone
+	// number or e-mail the operator recorded for it.  Modules must leave it
+	// empty -- the panel fills it in from the gateway config before serving
+	// the account list -- and it exists so a row, and the re-login it offers,
+	// can name the identity that credential signs in as.
+	OperatorNote string `json:"operator_note,omitempty"`
+	Enabled      bool   `json:"enabled"`
+	State        string `json:"state"` // ready|cooling|exhausted|invalid|unknown
 	// Priority is the operator's routing priority for this account.  Lower
 	// numbers are tried first; zero is the default.
 	Priority  int            `json:"priority,omitempty"`

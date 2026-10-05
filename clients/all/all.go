@@ -11,6 +11,7 @@ import (
 	_ "client2api/clients/lobsterai"
 	_ "client2api/clients/loomy"
 	_ "client2api/clients/minimaxcode"
+	_ "client2api/clients/openaicompat"
 	_ "client2api/clients/opencode"
 	_ "client2api/clients/openrouter"
 	_ "client2api/clients/qwenwork"

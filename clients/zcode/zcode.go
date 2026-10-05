@@ -42,6 +42,15 @@ type Client struct {
 	affinity *core.Affinity
 	// board is the TTL cache behind the task board's claim preview (tasks.go).
 	board claimBoard
+
+	// captcha caches the Aliyun verify parameter the JWT channel needs, so a
+	// burst of turns does not start a browser for every request.  See
+	// captcha_browser.go.
+	captcha captchaCache
+	// mintBrowser is the built-in solver, nil when no browser is installed.
+	// A field rather than a direct call so a test can substitute one without
+	// launching Edge.
+	mintBrowser func(context.Context, regionInfo) (string, error)
 }
 
 // New builds the module.  It never returns an error for a bad config: a
@@ -75,14 +84,27 @@ func New(deps core.Deps) (core.Client, error) {
 	// The affinity table is built with the shared default window and its sweep
 	// started here; a live config change retunes it through ApplyLive
 	// (affinity.go) without a restart.
+	//
+	// The pool resolves the built-in captcha browser here, once.  captchaReady
+	// has to answer without launching anything -- the panel asks it every few
+	// seconds -- and a machine with no browser must report the JWT channel as
+	// unusable up front instead of failing at the first request.
+	p := newPool(deps.DataDir, cfg, hc, deps.Logf)
+	p.browser = newBrowserSolver(cfg, deps.Logf)
+	if p.browser != nil {
+		deps.Log("zcode: the jwt captcha will be minted with %s", p.browser.exe)
+	}
 	c := &Client{
 		deps:     deps,
 		cfg:      cfg,
 		http:     hc,
-		pool:     newPool(deps.DataDir, cfg, hc, deps.Logf),
+		pool:     p,
 		models:   newModelCache(),
 		logins:   &loginSessions{},
 		affinity: core.NewAffinity(0),
+	}
+	if p.browser != nil {
+		c.mintBrowser = p.browser.solve
 	}
 	c.affinity.StartGC()
 	return c, nil
@@ -217,6 +239,9 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 				// A fresh verification parameter was already fetched for this
 				// attempt; give the same account one more chance on the next
 				// loop iteration by un-excluding it.
+				// The parameter this attempt carried was refused, so it is not
+				// reusable: drop it, then give the same account another go.
+				c.captcha.invalidate()
 				delete(exclude, acct.ID)
 			}
 			// Risk control is judged from the egress IP, not the credential:
@@ -306,9 +331,7 @@ func (c *Client) attempt(ctx context.Context, req *core.ChatRequest, acct *Accou
 
 	region, verifyParam := "", ""
 	if acct.Mode == modeJWT {
-		info := c.pool.regionFor(ctx)
-		region = c.captchaRegion(ctx)
-		verifyParam, err = c.solveCaptcha(ctx, info)
+		verifyParam, region, err = c.solveCaptcha(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -460,26 +483,75 @@ func setHeader(h http.Header, key, value string) {
 	h.Set(key, value)
 }
 
-// solveCaptcha produces the Aliyun verify param for one call.
+// solveCaptcha produces the Aliyun verify param for one call, together with the
+// region that has to be echoed back beside it.
 //
-// The order is the whole point.  A param the operator's own browser just minted
-// wins over anything this process can arrange: they watched it succeed, against
-// the real risk engine, on this exact network.  Only when there is no such
-// param does the operator-supplied solver run.
+// The order is the whole point:
 //
-// No solver ships with this module and no Node runtime is required: without
-// either source the JWT channel simply stays unavailable, which is reported as
-// ErrNotConfigured rather than as a vendor failure.
-func (c *Client) solveCaptcha(ctx context.Context, info regionInfo) (string, error) {
+//  1. A param the operator's own browser just minted (the panel's claim button)
+//     wins over anything this process can arrange: they watched it succeed,
+//     against the real risk engine, on this exact network.
+//  2. A parameter minted a moment ago is reused for captchaParamTTL.  The
+//     vendor accepts one for a window, and starting a browser per turn would
+//     add seconds to every request.
+//  3. captcha_command, when the operator pointed at a solver.
+//  4. The built-in browser mint (captcha_browser.go), which is what lets an
+//     ordinary install use the JWT channel with no setup at all.
+//
+// A local failure to mint is reported as ErrNotConfigured, not as a vendor
+// failure: rotating accounts cannot conjure a captcha, so the gateway should
+// say what is actually missing instead of blaming a credential.
+func (c *Client) solveCaptcha(ctx context.Context) (param, region string, err error) {
 	if sol, ok := core.CaptchaSolutionFrom(ctx); ok {
-		return sol.Param, nil
+		region = sol.Region
+		if region == "" {
+			region = c.pool.regionFor(ctx).Region
+		}
+		c.captcha.put(sol.Param, region, time.Now())
+		return sol.Param, region, nil
 	}
 
-	name := strings.TrimSpace(c.cfg.CaptchaCommand)
-	if name == "" {
-		return "", fmt.Errorf("%w: the jwt channel needs an Aliyun captcha solver; set captcha_command, or claim from the panel so the browser can solve it", core.ErrNotConfigured)
+	if cached, ok := c.captcha.get(time.Now()); ok {
+		return cached.param, cached.region, nil
 	}
 
+	if name := strings.TrimSpace(c.cfg.CaptchaCommand); name != "" {
+		info := c.pool.regionFor(ctx)
+		param, err := c.solveCaptchaCommand(ctx, name, info)
+		if err != nil {
+			return "", "", err
+		}
+		c.captcha.put(param, info.Region, time.Now())
+		return param, info.Region, nil
+	}
+
+	if c.mintBrowser != nil {
+		info := c.pool.sceneFor(ctx)
+		param, err := c.mintBrowser(ctx, info)
+		if err != nil {
+			if ctx.Err() != nil {
+				return "", "", ctx.Err()
+			}
+			return "", "", fmt.Errorf("%w: %v", core.ErrNotConfigured, err)
+		}
+		c.captcha.put(param, info.Region, time.Now())
+		return param, info.Region, nil
+	}
+
+	return "", "", fmt.Errorf("%w: the jwt channel needs an Aliyun captcha solver: %s", core.ErrNotConfigured, c.captchaHint())
+}
+
+// captchaHint explains which knob is missing, so the panel's note points at the
+// one an operator can actually turn.
+func (c *Client) captchaHint() string {
+	if c.cfg.captchaBrowser() {
+		return "no Edge or Chrome was found; set captcha_command, or claim from the panel so a browser can solve it"
+	}
+	return "captcha_browser is off; set captcha_command, or claim from the panel so a browser can solve it"
+}
+
+// solveCaptchaCommand runs the operator-supplied solver.
+func (c *Client) solveCaptchaCommand(ctx context.Context, name string, info regionInfo) (string, error) {
 	solveCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
 
@@ -504,19 +576,6 @@ func captchaArgs(cfg *Config, info regionInfo) []string {
 		args = append(args, a)
 	}
 	return args
-}
-
-// captchaRegion reports the region to echo back beside the verify param.
-//
-// The solution's own region wins, because it describes where the token was
-// actually minted; the resolved config is only a fallback for the solver path.
-// An empty answer means "send no region header", which is what the vendor does
-// when it has nothing to say.
-func (c *Client) captchaRegion(ctx context.Context) string {
-	if sol, ok := core.CaptchaSolutionFrom(ctx); ok && strings.TrimSpace(sol.Region) != "" {
-		return strings.TrimSpace(sol.Region)
-	}
-	return c.pool.regionFor(ctx).Region
 }
 
 // parseVerifyParam extracts the solver's VERIFY_PARAM=<value> output line.

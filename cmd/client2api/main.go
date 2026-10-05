@@ -39,7 +39,7 @@ import (
 )
 
 // version is overridable with -ldflags "-X main.version=...".
-var version = "0.1.11"
+var version = "0.1.12"
 
 // restartHandoffEnv marks the replacement half of a panel restart.  It tells a
 // starting process to keep retrying the listen address instead of failing fast,
@@ -100,6 +100,11 @@ type platformConfig struct {
 	// are tried first.  Accounts in the same tier keep their normal
 	// round-robin/weighted rotation.
 	AccountPriorities map[string]int `json:"account_priorities,omitempty"`
+	// AccountNotes maps account id -> the operator's own label for that
+	// account (the phone number or e-mail it signs in with).  The panel
+	// shows it beside the account so a broken credential can be signed in
+	// again as the right identity.  It is display metadata, not routing.
+	AccountNotes map[string]string `json:"account_notes,omitempty"`
 }
 
 // platformConfigs projects the file's platforms block onto the router's own
@@ -138,6 +143,14 @@ func (c *fileConfig) platformConfigsFor(clients []core.Client) map[string]core.P
 			for id, priority := range p.AccountPriorities {
 				if strings.TrimSpace(id) != "" {
 					cfg.AccountPriorities[id] = priority
+				}
+			}
+		}
+		if len(p.AccountNotes) > 0 {
+			cfg.AccountNotes = make(map[string]string, len(p.AccountNotes))
+			for id, note := range p.AccountNotes {
+				if strings.TrimSpace(id) != "" && strings.TrimSpace(note) != "" {
+					cfg.AccountNotes[id] = strings.TrimSpace(note)
 				}
 			}
 		}
@@ -1229,6 +1242,7 @@ func run() error {
 		}
 		icon := tray.Start(tray.Options{
 			Title:           fmt.Sprintf("client2api %s %s", version, link),
+			Version:         version,
 			PanelURL:        link,
 			DataDir:         dataDir,
 			OnRestart:       restart,

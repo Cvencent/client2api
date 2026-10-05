@@ -2,7 +2,6 @@ package zcode
 
 import (
 	"context"
-	"strings"
 
 	"client2api/internal/core"
 )
@@ -13,9 +12,9 @@ import (
 // Why this module needs one at all.  The claim endpoint wants a token in
 // X-Aliyun-Captcha-Verify-Param, and that token is minted by Aliyun's own
 // JavaScript against the caller's real browser fingerprint.  A Go process
-// cannot mint one; the reference implementation gets away with it only because
-// it is a desktop app with an embedded WebView.  The panel is a browser, so it
-// can run the same SDK -- this method is what tells it which scene to run.
+// cannot mint one without a browser.  The built-in browser solver normally
+// handles that in the background; when it cannot, the panel can run the same
+// SDK interactively -- this method is what tells it which scene to run.
 //
 // Only the claim action is gated.  Reading the plan preview needs no token (the
 // module does that with a plain GET), and nothing else here touches the billing
@@ -27,11 +26,11 @@ import (
 //   - No scene id means the widget cannot start at all.  Saying "required"
 //     would only produce a dead popup, so the module keeps its old behaviour
 //     and reports the gap in Note instead.
-//   - A configured captcha_command means the server can already mint the token
-//     itself, unattended, including from the scheduler.  Interrupting the
-//     operator with a browser window in that case would be a regression, so the
-//     browser step stays out of the way.  (The token is still preferred over
-//     the solver if the panel ever does send one -- see solveCaptcha.)
+//   - When the server can already mint the token itself, either with a
+//     configured captcha_command or with the built-in browser solver,
+//     interrupting the operator with a popup would be a regression.  The
+//     browser step stays out of the way, while the panel path remains a
+//     fallback for machines where neither is available.
 //
 // The vendor's own enabled flag is reported, not obeyed.  It says whether the
 // vendor currently thinks a captcha is needed; it is not a statement that the
@@ -51,7 +50,7 @@ func (c *Client) CaptchaScene(ctx context.Context, action string) (core.CaptchaS
 	scene.SceneID = info.SceneID
 	scene.Region = info.Region
 	scene.Prefix = info.Prefix
-	scene.Required = info.SceneID != "" && strings.TrimSpace(c.cfg.CaptchaCommand) == ""
+	scene.Required = info.SceneID != "" && !c.pool.captchaReady()
 
 	switch {
 	case !info.Known:

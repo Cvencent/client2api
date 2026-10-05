@@ -27,7 +27,7 @@ func reviveClientAt(t *testing.T, dir string, transport *fakeTransport) *Client 
 	t.Helper()
 	c, err := New(core.Deps{
 		DataDir:    dir,
-		Config:     json.RawMessage(accountsConfigJSON(1)),
+		Config:     json.RawMessage(testConfigWithoutBrowser(accountsConfigJSON(1))),
 		HTTPClient: &http.Client{Transport: transport},
 	})
 	if err != nil {

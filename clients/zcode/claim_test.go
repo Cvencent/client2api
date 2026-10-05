@@ -431,7 +431,7 @@ func TestClaimDailyQuotaRefusalCarriesTheNextWindow(t *testing.T) {
 	c.cfg.CaptchaRegion = "cn"
 	installSolver(t, c, "token-from-solver")
 
-	_, _, err := c.claimPlanOnce(context.Background(), c.pool.find(id), "p1", "token-from-solver")
+	_, _, err := c.claimPlanOnce(context.Background(), c.pool.find(id), "p1", "token-from-solver", "cn")
 	ce := asClaimError(err)
 	if ce == nil {
 		t.Fatalf("err = %v, want a claimError", err)

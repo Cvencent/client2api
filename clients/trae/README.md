@@ -235,17 +235,24 @@ positive `credits_limit`.
 ## Error handling
 
 `Classify` reads the business `code` out of the body first, then the HTTP
-status:
+status — with one precedence rule that overrides that order: an HTTP **401
+wins over the body's code**.
+The vendor sends `1001`/`4010` inside a 401 as well, and letting the
+code decide demoted a dead credential to `ErrAuth`'s 60-second cooling — the
+pool then re-selected the same rejected token every minute (one live account
+had 37 failures and was still marked `ready`).  The numeric code is still
+parsed and kept on the `*Error`, so the operator keeps the number to grep
+for; it just no longer decides the park.
 
 | Signal | Kind | Cooldown | Another account? |
 | --- | --- | --- | --- |
 | 1005 `plan_limit` | `ErrPlanLimit` | 12 h, `exhausted` | **no** |
 | 4008 quota | `ErrQuota` | 6 h, `exhausted` | yes |
-| 1001 / 4010 auth | `ErrAuth` | 60 s, `cooling` | yes |
+| 1001 / 4010 on a non-401 answer | `ErrAuth` | 60 s, `cooling` | yes |
 | 4001 / 4023 bad request | `ErrParam` | 5 min, `cooling` | no |
 | 4011 / 429 | `ErrSoftRate` | 60 s, `cooling` | yes |
 | 9074 check-in contention | `ErrRetryLater` | 5 min, `cooling` | yes |
-| 401 | `ErrSessionDead` | 1 h, `invalid` | yes |
+| 401 (any body) | `ErrSessionDead` | parked `invalid` until 重登/恢复 | yes |
 | 404 | `ErrNotFound` | 60 s, `cooling` | no |
 | ≥ 500 | `ErrServer` | 30 s, `cooling` | yes |
 | other 4xx | `ErrClient` | 5 min, `cooling` | no |
@@ -260,6 +267,28 @@ switch accounts. The stricter reading is implemented and tested.
 A business failure can also arrive as `event:error` **inside an HTTP 200 SSE
 stream**; that path is parsed and classified, not inferred from the status
 code.
+
+### Re-login from the panel
+
+`ErrAuth` (1001/4010) and `ErrSessionDead` (401) both mean the token material
+itself is gone: waiting out the cooldown re-sends the same rejected credential.
+`Accounts()` therefore sets `fields.relogin = true` on such a record
+(`credentialDead`), and the panel renders that row's 「重登」 button. It runs
+the web login below against the *same* account id, so the credential is
+overwritten in place rather than added as a second account. Quota, plan-limit
+and rate-limit parks deliberately do not raise the flag — those are conditions
+the same credential recovers from.
+
+A 401 parks the account `invalid` rather than cooling it, so the row keeps its
+「重登」 button and the pool stops selecting it until the credential is
+replaced — hitting 「恢复」 on a 401 without a fresh login only re-arms the
+same dead token for one more attempt.
+
+The vendor's `userInfo` reply carries only `UserID`/`ScreenName` (a nickname),
+so the panel cannot tell which phone number or e-mail an account signs in
+with. The operator records that themselves with the row's 「备注」 button; it
+lives in the gateway config (`platforms.<platform>.account_notes`) and is what
+the account row and the re-login dialog show.
 
 ### The shared failure contract
 

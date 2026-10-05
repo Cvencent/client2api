@@ -32,6 +32,10 @@ type Options struct {
 	Title string
 	// PanelURL is opened by a double click and by the menu's first item.
 	PanelURL string
+	// Version is what the About dialog reports.  Empty means "unknown",
+	// and the dialog says so rather than showing a blank line where a
+	// version belongs.
+	Version string
 	// DataDir adds an "open data directory" item when it is not empty.
 	DataDir string
 	// OnRestart restarts the process.  It adds a "restart" menu item, and
@@ -169,6 +173,25 @@ func sameListenPort(a, b string) bool {
 	_, ap, aerr := net.SplitHostPort(a)
 	_, bp, berr := net.SplitHostPort(b)
 	return aerr == nil && berr == nil && ap != "" && ap == bp
+}
+
+// aboutText is the body of the tray's About dialog.  It is a pure function of
+// the Options so the version line is testable without a window station.
+func aboutText(opts Options) string {
+	version := strings.TrimSpace(opts.Version)
+	if version == "" {
+		version = "未知"
+	}
+	var b strings.Builder
+	b.WriteString("client2api " + version + "\n")
+	b.WriteString("一个把多个 AI 平台账号聚合成 OpenAI 兼容网关的本地服务。\n")
+	if url := strings.TrimSpace(opts.PanelURL); url != "" {
+		b.WriteString("\n面板：" + url + "\n")
+	}
+	if dir := strings.TrimSpace(opts.DataDir); dir != "" {
+		b.WriteString("数据目录：" + dir + "\n")
+	}
+	return b.String()
 }
 
 // Icon is a live notification-area icon.  A nil *Icon is usable and means "no

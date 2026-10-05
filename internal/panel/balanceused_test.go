@@ -12,7 +12,8 @@ import (
 func TestBalancesCarryUsedWhenTheModuleReportsIt(t *testing.T) {
 	c := quotaClient("codearts", core.AccountRecord{ID: "a1"})
 	c.balances["a1"] = core.Balance{Credits: 5499, Total: 5500, Used: 0.08, Unit: "CodeArts credit"}
-	h := New(Options{Registry: registryOf(c), Started: time.Now()})
+	p, h := balanceHandler(Options{Registry: registryOf(c), Started: time.Now()})
+	seedBalances(t, p, c)
 
 	rec := get(t, h, "/panel/api/clients/codearts/balances")
 	if rec.Code != http.StatusOK {

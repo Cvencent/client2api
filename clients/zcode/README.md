@@ -58,6 +58,8 @@ key is optional; an absent or malformed object degrades to the defaults below
       "captcha_command": "",
       "captcha_args": [],
       "captcha_region": "",
+      "captcha_browser": true,
+      "captcha_browser_path": "",
       "identity": { /* see below */ }
     }
   }
@@ -78,9 +80,11 @@ key is optional; an absent or malformed object degrades to the defaults below
 | `timeout_seconds` | int | `600` | Per-attempt deadline. `0` uses the default; a **negative** value means "no extra deadline". |
 | `inject_system_blocks` | bool | `true` | Prepend the official CLI/agent/environment system blocks. Required by the upstream; turn it off only to reproduce a failure. |
 | `inject_cache_control` | bool | `true` | Mark the last message block with an ephemeral cache marker. |
-| `captcha_command` | string | `""` | Executable that prints a `VERIFY_PARAM=<value>` line. Empty ⇒ JWT accounts and unattended claims are unusable, but the panel's browser path still works. |
-| `captcha_args` | array | `[]` | Arguments; `{scene}`, `{region}`, `{prefix}` are substituted from the runtime region document. |
-| `captcha_region` | string | `""` | Force the Aliyun region instead of reading it from the endpoint. Does not suppress the scene read — see [The browser captcha path](#the-browser-captcha-path). |
+| `captcha_command` | string | `""` | Optional executable that prints a `VERIFY_PARAM=<value>` line. Used after a context token and before the built-in browser; a headless fallback when no browser can run. |
+| `captcha_args` | array | `[]` | Arguments for `captcha_command`; `{scene}`, `{region}`, `{prefix}` are substituted from the runtime region document. |
+| `captcha_region` | string | `""` | Force the Aliyun region instead of reading it from the endpoint. Does not suppress the scene read — see [Captcha paths](#captcha-paths). |
+| `captcha_browser` | bool | `true` | Mint the Aliyun parameter with the machine's Edge or Chrome in a throwaway off-screen window. Requires a desktop session; set `false` on a headless server. |
+| `captcha_browser_path` | string | `""` | Pin the browser executable when auto-detection picks the wrong one or finds none. Ignored when `captcha_browser` is false. |
 | `identity` | object | see below | Header identity of the companion desktop client. |
 
 ### `accounts[]` entries
@@ -90,7 +94,7 @@ key is optional; an absent or malformed object degrades to the defaults below
 | `id` | string | Stable identifier used in `Status()` and for persisted state. Generated if omitted. |
 | `label` | string | Human label for the panel. Falls back to `id`. |
 | `provider` | string | `zai` or `bigmodel`. |
-| `mode` | string | `api_key` (preferred, no captcha) or `jwt` (start-plan channel, captcha required). |
+| `mode` | string | `api_key` (no captcha) or `jwt` (start-plan channel, captcha required). The JWT channel uses the built-in browser solver by default, so it is usable on an ordinary desktop install. |
 | `api_key` | string | The 32-hex API key. Sent as `x-api-key`. |
 | `jwt` | string | The start-plan JWT. Sent as `Authorization: Bearer`. |
 | `base_url` | string | Endpoint family override; defaults per provider/mode (see below). |
@@ -225,7 +229,8 @@ mutex, so it is safe for the panel's 10-second refresh.
 
 * `Ready` — true when the `upstream_base` override is set, or at least one
   account is selectable right now.
-* `Detail` — one line: account counts split by mode, `usable=`, plus
+* `Detail` — one line: credential and account counts (credentials sharing a
+  vendor identity are one account), a split by mode, `usable=`, plus
   `cooling=` / `exhausted=` / `invalid=` when non-zero, a note when the JWT
   channel is disabled for lack of a solver, and the last upstream error.
   With no accounts at all it reads
@@ -235,7 +240,7 @@ mutex, so it is safe for the panel's 10-second refresh.
   `ExpiresAt` (RFC 3339, empty when unknown), `Note`, and
   `Extra{provider, mode, source}`. A cooldown whose deadline has passed reads as
   `ready`. A JWT account with no solver configured carries the note
-  `JWT channel needs a captcha solver (captcha_command not configured)`.
+  `JWT channel needs a captcha solver (no captcha_command and no Edge/Chrome found)`.
 * `Models[]` — the bare ids from `models`.
 
 **Secrets never appear in `Status()`.** Accounts carry their credential in an
@@ -260,7 +265,7 @@ The module implements nine of the optional panel capabilities:
 | `core.PackageProvider` | **yes** | the same buckets as package rows |
 | `core.TaskProvider` | **yes** | the task board's `claim` row; see [Tasks and scheduling](#tasks-and-scheduling) |
 | `core.BatchPlanner` | **yes** | one batch, `checkin`, so the claim can run on the scheduler's timetable |
-| `core.CaptchaProvider` | **yes** | reports the Aliyun scene the panel runs; see [The browser captcha path](#the-browser-captcha-path) |
+| `core.CaptchaProvider` | **yes** | reports the Aliyun scene the panel runs; see [Captcha paths](#captcha-paths) |
 
 ### Field schema
 
@@ -326,7 +331,7 @@ merged on a guess.
 | `POST .../accounts/refresh` | with no `id`, refreshes every account. |
 | `GET .../discover` | `~/.zcode/v2/config.json#provider.<name>`, `~/.zcode/v2/credentials.json#zcodejwttoken`, and the `%APPDATA%\ZCode` profile directory. |
 | `POST .../import` | `paths` (or `all: true`); a bare file path imports every credential in that file, a `#fragment` path imports one. Already-present credentials are skipped, not errors. |
-| `POST .../accounts/<id>/checkin` | the single `claim` action: preview the claimable plans, then claim the highest-priority one. Needs a `jwt` account and a captcha token — from the panel's browser, or from `captcha_command`; see [The browser captcha path](#the-browser-captcha-path). The scheduler's `checkin` batch calls the same action — see [Tasks and scheduling](#tasks-and-scheduling). |
+| `POST .../accounts/<id>/checkin` | the single `claim` action: preview the claimable plans, then claim the highest-priority one. Needs a `jwt` account and a captcha token — from the built-in browser solver, the panel's browser, or `captcha_command`; see [Captcha paths](#captcha-paths). The scheduler's `checkin` batch calls the same action — see [Tasks and scheduling](#tasks-and-scheduling). |
 | `POST .../accounts/<id>/balance` | token balances per entitlement, from `zcode-plan/billing/balance`. A vendor refusal is a real error (the panel answers 502), because a balance with no number is worse than no balance. |
 | `GET .../packages` | the same buckets as package rows, named `<plan> · <entitlement>` and sorted by remaining tokens. |
 
@@ -340,7 +345,7 @@ this is the point of the action:
 | a normal completion | `OK: true`, `Model`, `Reply` (truncated to 400 characters), `ElapsedMS` |
 | `401` / expired key (e.g. `令牌已过期或验证不正确`) | `OK: false`, `Error` carrying the classified upstream error |
 | `429`, `402`, risk-control, concurrency, captcha | `OK: false`, `Error` |
-| `kind=jwt` with no `captcha_command` | `OK: false`, and **no request is sent** — the channel is disabled, not broken |
+| `kind=jwt` with no local solver (`captcha_browser` off/failed and no `captcha_command`) | `OK: false`, and **no request is sent** — the channel is disabled, not broken |
 | unknown or empty `id` | a real Go error; the network is never touched |
 
 A probe is a genuine observation, so it moves the account's state like any other
@@ -370,14 +375,11 @@ that way in `Status()` and in the panel list.
 
 ### Not implemented
 
-* **A captcha solver that ships with the module.** The `jwt` channel needs a
-  fresh Aliyun traceless-verification parameter per request, and so does `claim`.
-  Two ways to get one, neither of which is a bundled binary: point
-  `captcha_command` at a solver that prints `VERIFY_PARAM=<value>`, or let the
-  panel's browser run the vendor's own SDK — see
-  [The browser captcha path](#the-browser-captcha-path). With neither, the
-  channel and the claim action report that they are not configured rather than
-  guessing at a token.
+* **A standalone solver binary.** The module now ships a browser-driven
+  solver, but that still needs Edge or Chrome and a desktop session — there is
+  no pure-Go/Node-free signed binary to point `captcha_command` at. A headless
+  server needs either an installed Chromium-family browser it can run or its
+  own `captcha_command`.
 * **Writing to the desktop client's stores.** Discovery and import are read-only
   by design; `managed_accounts.json` is the only thing this module writes.
 * **Quota in `RefreshAccount`.** That renews a credential, not a usage figure;
@@ -413,7 +415,7 @@ a request:
 | Situation | The row says |
 | --- | --- |
 | no `jwt` account at all | 没有可用的 ZCode 计划 (jwt) 账号；活动套餐只走 jwt 通道 |
-| a `jwt` account but no solver | 这个看板的领取按钮没有浏览器可用；请在账号列表里点「领取」，那一步会用你自己的浏览器过验证码 |
+| a `jwt` account but no local solver (built-in browser unavailable and no `captcha_command`) | 这个看板的领取按钮没有浏览器可用；请在账号列表里点「领取」，那一步会用你自己的浏览器过验证码 |
 | the vendor offers nothing | 厂商当前没有可领取的活动套餐 |
 
 `Tasks` caches its preview for ten seconds (`claimBoardTTL`), because the panel
@@ -432,7 +434,7 @@ Two deliberate omissions in the result mapping:
 in the config, `[9, 21]` by default — not on the reference's ten-minute
 frontend timer. A refusal is a `TaskResult{OK: false}`, which the scheduler
 counts as *refused*, not *failed*, so an unattended run cannot manufacture an
-outage out of a missing solver.
+outage out of a missing local solver.
 
 **Liveness reporting.** The claim endpoints are the one place the vendor decides
 from activity whether to offer a plan at all, so every `claimPreview` first POSTs
@@ -456,15 +458,43 @@ indistinguishable from an accepted one.
 
 ---
 
-## The browser captcha path
+## Captcha paths
+
+There are three sources for the Aliyun parameter, tried in this order:
+
+1. A token attached to the request context by the panel. The operator just
+   watched it succeed in their own browser, so it wins.
+2. A cached parameter minted by the built-in browser solver. One parameter
+   is reused for 45 seconds; a vendor `3007` drops it immediately and the same
+   account is retried once.
+3. `captcha_command`, then the built-in browser solver. The command is the
+   headless escape hatch; the browser solver is the no-setup default.
+
+### Built-in browser solver
+
+`captcha_browser.go` starts the machine's Edge or Chrome in a throwaway
+profile, loads a local page that runs Aliyun's own SDK, waits for
+`startTracelessVerification()`, and closes the browser tree. The window is
+real and positioned off-screen: headless Chromium and a jsdom shim were both
+refused with `F001 verifyResult:false` against the live scene, while a normal
+windowed browser passed in about two seconds.
+
+The solver is on by default. It resolves to unavailable when
+`captcha_browser` is false or no Edge/Chrome is installed, and the JWT
+channel then reports `ErrNotConfigured` instead of sending a doomed request.
+Use `captcha_browser_path` to pin a non-standard browser executable.
+
+### Panel browser fallback
 
 The claim endpoint wants a token in `X-Aliyun-Captcha-Verify-Param` that only
 Aliyun's own JavaScript can mint, against the caller's real browser fingerprint.
-A Go process cannot produce one. The reference implementation gets away with it
-only because it is a desktop app with an embedded WebView — and the panel is
-already a browser, so it can run the same SDK.
+The built-in solver does that in the background; the panel is also a browser,
+so it can run the same SDK when the operator needs an interactive fallback.
 
-The flow is split across two packages:
+The built-in solver above is the default; the panel path below is the
+interactive fallback.
+
+The panel flow is split across two packages:
 
 | Step | Where | What happens |
 | --- | --- | --- |
@@ -472,16 +502,17 @@ The flow is split across two packages:
 | 2 | `GET /panel/api/clients/zcode/captcha?action=claim` | the panel asks for that scene, only when the operator clicks 领取 |
 | 3 | `/panel/captcha` (`internal/panel/captcha.html`) | a standalone document frames the vendor's SDK, runs `startTracelessVerification()`, and posts `{type:"c2a-captcha", ok, param, region}` back to the shell |
 | 4 | `POST .../accounts/<id>/checkin` | the shell re-sends the click with `captcha_param` / `captcha_region`, which the panel turns into `core.WithCaptchaSolution(ctx, …)` |
-| 5 | `solveCaptcha` (`zcode.go`) | the context token wins over `captcha_command`; the claim goes out carrying it |
+| 5 | `solveCaptcha` (`zcode.go`) | the context token wins over the cache, `captcha_command` and the built-in browser; the claim goes out carrying it |
 
 Three properties worth knowing:
 
 * **`Required` is keyed on the scene id and on there being no local solver.**
   No scene id means the widget cannot start, so saying "required" would only
-  produce a dead popup; a configured `captcha_command` means the server already
-  mints tokens unattended, including from the scheduler, so interrupting the
-  operator with a browser window would be a regression. The context token is
-  still preferred if one ever arrives.
+  produce a dead popup; a local solver (the built-in browser or
+  `captcha_command`) means the server already mints tokens unattended,
+  including from the scheduler, so popping a second browser window at the
+  operator would be a regression. The context token is still preferred if one
+  ever arrives.
 * **The vendor's `enabled` flag is reported, not obeyed.** It says whether the
   vendor currently thinks a captcha is needed; it is not a promise that the
   claim endpoint will accept a tokenless request, and getting that wrong in the
@@ -492,9 +523,10 @@ Three properties worth knowing:
   endpoint, so `sceneFor` fetches regardless. `regionFor` (the solver path)
   keeps the no-network guarantee, `sceneFor` (the browser path) does not.
 
-The scheduler cannot use this path: an unattended run has no browser attached,
-so its `claim` reports `ErrNotConfigured` — a refusal, not a failure. Wiring a
-solver into `captcha_command` is what makes the timetable able to claim.
+The scheduler cannot use the panel path: an unattended run has no operator to
+click through a popup. It can still claim through the built-in browser solver
+or `captcha_command`; with neither, its `claim` reports `ErrNotConfigured` —
+a refusal, not a failure.
 
 ---
 
@@ -585,22 +617,21 @@ not copied.
 
 ## Known gaps
 
-* **The JWT ("start-plan") channel is not usable out of the box.** Every request
-  on it needs a fresh Aliyun traceless-verification parameter, and no solver
-  ships with this module. Point `captcha_command` at one that prints
-  `VERIFY_PARAM=<value>`; until then JWT accounts are reported as unusable rather
-  than silently attempted. The `api_key` channel needs no captcha and is the
-  supported path. The `claim` action is the exception: the panel can mint the
-  token in the operator's own browser, so a claim works with no solver at all —
-  see [The browser captcha path](#the-browser-captcha-path).
+* **The JWT ("start-plan") channel needs a real browser.** Every request on it
+  needs a fresh Aliyun traceless-verification parameter. The built-in solver
+  mints it with the machine's Edge or Chrome and is on by default, so a normal
+  desktop install can use the channel out of the box. A headless server, or a
+  machine without a Chromium-family browser, is reported as unavailable rather
+  than silently attempted; `captcha_command` is the escape hatch. See
+  [Captcha paths](#captcha-paths).
 * **Captcha solving is fragile by nature.** The reference notes roughly a 2/3
   success rate and breakage on any Aliyun fingerprint change; a Node + jsdom
-  solver is required upstream. This module deliberately does not depend on Node.
-  The browser path is the more robust half for the same reason: the token is
-  minted by the vendor's own SDK, in a real browser, on the operator's own
-  network. Aliyun's FAQ (Q13) still warns that traceless verification can be
-  intercepted on a bare page, in which case the widget falls back to one
-  interactive click — which the dialog supports.
+  solver is required upstream. This module deliberately does not depend on
+  Node. The browser-driven path mints the token with the vendor's own SDK in a
+  real browser, on the operator's own network. Aliyun's FAQ (Q13) still warns
+  that traceless verification can be intercepted on a bare page, in which case
+  the widget falls back to an interactive click — the panel dialog supports
+  that, but the built-in off-screen window does not.
 * **Risk-control (`3012`) accumulates.** A block is treated as an account-level
   cooldown, but the underlying risk score may persist server-side; the reference
   recommends a throwaway account when experimenting.
@@ -621,8 +652,8 @@ not copied.
   deliberately non-existent plan id still answers `3007 captcha verify failed`,
   which proves the vendor checks the Aliyun parameter *before* the plan, so
   there is no dry-run and no pure-HTTP path. `claim` therefore needs a real
-  token: either from the panel's browser or from `captcha_command`, exactly like
-  the JWT chat channel. What needs no token is the *preview* — a plain GET that
+  token: the built-in browser solver, the panel's browser, or `captcha_command`,
+  exactly like the JWT chat channel. What needs no token is the *preview* — a plain GET that
   reports whether anything is claimable at all.
 * **No signature handshake.** The upstream can advertise an Ed25519
   `codingPlanSignature` requirement via `agent/configs`; if it does, requests on

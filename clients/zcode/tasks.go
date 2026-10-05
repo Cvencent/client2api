@@ -170,13 +170,11 @@ func (c *Client) Tasks(ctx context.Context, accountID string) ([]core.TaskInfo, 
 			acct.ID, firstNonEmpty(acct.Mode, "unknown")))}, nil
 	}
 	if !c.pool.captchaReady() {
-		// No local solver, so nothing THIS board can do runs unattended: its
-		// 领取 button goes through RunTask with no browser attached.  The claim
-		// is still possible from the panel, though -- the accounts list has its
-		// own 领取 button, and that path runs the vendor's SDK in the
-		// operator's browser (see captcha.go).  So the note points there rather
-		// than at the config file, and the row stays locked because the button
-		// this row would render genuinely cannot work.
+		// No local solver means the built-in browser is unavailable and
+		// captcha_command is empty, so RunTask cannot mint a token.  The claim
+		// is still possible from the accounts list, whose 领取 button runs the
+		// vendor's SDK in the operator's browser (see captcha.go), so the note
+		// points there and the row stays locked.
 		return []core.TaskInfo{claimRow(
 			"这个看板的领取按钮没有浏览器可用；请在账号列表里点「领取」，那一步会用你自己的浏览器过验证码")}, nil
 	}

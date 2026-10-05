@@ -20,6 +20,8 @@
   "captcha_command": "",
   "captcha_args": [],
   "captcha_region": "",
+  "captcha_browser": true,
+  "captcha_browser_path": "",
   "identity": {
     "app_version": "3.14.4",
     "agent": "glm",

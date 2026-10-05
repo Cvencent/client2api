@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"context"
 	"net/http"
 	"sort"
 	"sync"
@@ -62,6 +63,13 @@ func (p *panel) accountBalance(w http.ResponseWriter, r *http.Request, c core.Cl
 		return
 	}
 
+	// A successful on-demand read is also the freshest thing the column can
+	// show, so keep it for the next page load instead of immediately
+	// forgetting a number we already asked the vendor for.
+	if p.balanceCache != nil {
+		p.balanceCache.put(c.Name(), id, bal)
+	}
+
 	out := map[string]any{
 		"ok":            true,
 		"credits":       bal.Credits,
@@ -102,7 +110,7 @@ type balanceRow struct {
 	ID                string  `json:"id"`
 	Label             string  `json:"label,omitempty"`
 	State             string  `json:"state,omitempty"`
-	Credits           int64   `json:"credits"`
+	Credits           *int64  `json:"credits,omitempty"`
 	Used              float64 `json:"used,omitempty"`
 	Total             int64   `json:"credits_total"`
 	Unlimited         bool    `json:"unlimited,omitempty"`
@@ -110,27 +118,26 @@ type balanceRow struct {
 	EarliestAt        string  `json:"earliest_at,omitempty"`
 	EarliestRemaining int64   `json:"earliest_remaining,omitempty"`
 	Error             string  `json:"error,omitempty"`
-
-	// unit is the module's own label for Credits, collected here rather than on
-	// the wire: it is a property of the module, not of a row, so the handler
-	// hoists the first one it saw into the response's "unit" key.
-	unit string
+	FetchedAt         int64   `json:"fetched_at,omitempty"`
+	Unit              string  `json:"unit,omitempty"`
 }
 
-// balances implements GET <base>/balances: the live credit position of every
-// account this module holds, which is what the accounts page renders in its
-// 余额 column.
+// balances implements GET <base>/balances: the last known credit position of
+// every account this module holds, which is what the accounts page renders in
+// its 余额 column.
 //
 // It is a GET while the per-account route is a POST, and the asymmetry is
 // deliberate.  The per-account button is an explicit "ask the vendor now" and
-// must not be replayed by a browser or a proxy; this one is the accounts view's
-// own read -- the column the operator asked to see -- and it is fetched when
-// the view is opened, exactly like the account list beside it.  Both cost the
-// same vendor calls, so the fan-out is bounded by the same packageFanout and
-// one account failing is a row-level error, never a failed request.
+// must not be replayed by a browser or a proxy.  This read, by contrast, is
+// served from the cache so that opening the page does not fan out over the
+// whole pool every time; it schedules one paced background pass instead.
+//
+// A module without BalanceProvider still answers 501, so the column stays
+// hidden.  A row that has never been read has no "credits" key at all rather
+// than a zero, because zero is a real balance and the shell must not show it
+// for an account the vendor has not answered about yet.
 func (p *panel) balances(w http.ResponseWriter, r *http.Request, c core.Client) {
-	bp, ok := core.AsBalanceProvider(c)
-	if !ok {
+	if _, ok := core.AsBalanceProvider(c); !ok {
 		writeErr(w, http.StatusNotImplemented, c.Name()+" cannot read an account balance")
 		return
 	}
@@ -145,7 +152,7 @@ func (p *panel) balances(w http.ResponseWriter, r *http.Request, c core.Client) 
 		writeErr(w, http.StatusNotImplemented, c.Name()+" cannot list accounts")
 		return
 	}
-	ctx, cancel := p.ctx(r, 120*time.Second)
+	ctx, cancel := p.ctx(r, 30*time.Second)
 	defer cancel()
 
 	recs, err := am.Accounts(ctx)
@@ -154,46 +161,66 @@ func (p *panel) balances(w http.ResponseWriter, r *http.Request, c core.Client) 
 		return
 	}
 
-	rows := make([]balanceRow, len(recs))
-	sem := make(chan struct{}, packageFanout)
-	var wg sync.WaitGroup
-	for i, rec := range recs {
-		wg.Add(1)
-		p.safeGo("panel balances", func() {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			row := balanceRow{ID: rec.ID, Label: rec.Label, State: rec.State}
-			bal, err := bp.AccountBalance(ctx, rec.ID, p.expiringSoon())
-			if err != nil {
-				row.Error = core.Redact(err.Error())
-				rows[i] = row
-				return
-			}
-			row.Credits, row.Total, row.Expiring = bal.Credits, bal.Total, bal.Expiring
-			row.Used = bal.Used
-			row.Unlimited = bal.Unlimited
-			if !bal.EarliestAt.IsZero() {
-				row.EarliestAt = bal.EarliestAt.Format(time.RFC3339)
-				row.EarliestRemaining = bal.EarliestRemaining
-			}
-			row.unit = bal.Unit
-			rows[i] = row
-		})
+	snapshot := map[string]balanceEntry{}
+	if p.balanceCache != nil {
+		snapshot = p.balanceCache.snapshot(c.Name())
 	}
-	wg.Wait()
+
+	rows := make([]balanceRow, 0, len(recs))
+	for _, rec := range recs {
+		e, known := snapshot[rec.ID]
+		row := balanceRow{ID: rec.ID, Label: rec.Label, State: rec.State}
+		if known {
+			row.FetchedAt = e.FetchedAt
+			row.Unit = e.Unit
+			row.Error = e.Error
+			if e.Error == "" {
+				credits := e.Credits
+				row.Credits = &credits
+				row.Total = e.Total
+				row.Used = e.Used
+				row.Unlimited = e.Unlimited
+				row.Expiring = e.Expiring
+				row.EarliestAt = e.EarliestAt
+				row.EarliestRemaining = e.EarliestRemaining
+			}
+		}
+		rows = append(rows, row)
+	}
 
 	out := map[string]any{"accounts": rows}
-	// The unit comes from the first row that named one, and a module whose every
-	// read failed reports none -- the shell then prints a bare number rather
-	// than a label it guessed.
-	for _, row := range rows {
-		if row.unit != "" {
-			out["unit"] = row.unit
-			break
-		}
+	if unit := unitOf(snapshot); unit != "" {
+		out["unit"] = unit
+	}
+	if p.balanceCache != nil {
+		// Fire and forget from a context that outlives this request: the
+		// vendor calls must not be cancelled the moment the GET returns.
+		p.balanceCache.refresh(context.WithoutCancel(r.Context()), balanceRefreshBatch, false)
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// balancesRefresh implements POST <base>/balances/refresh, the explicit
+// "刷新余额" toolbar action.  It answers with the cache immediately and
+// asks the vendor for a small, spaced batch in the background.
+func (p *panel) balancesRefresh(w http.ResponseWriter, r *http.Request, c core.Client) {
+	if _, ok := core.AsBalanceProvider(c); !ok {
+		writeErr(w, http.StatusNotImplemented, c.Name()+" cannot read an account balance")
+		return
+	}
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "use POST")
+		return
+	}
+	if _, ok := core.AsAccountManager(c); !ok {
+		writeErr(w, http.StatusNotImplemented, c.Name()+" cannot list accounts")
+		return
+	}
+	started := false
+	if p.balanceCache != nil {
+		started = p.balanceCache.refresh(context.WithoutCancel(r.Context()), balanceRefreshBatch, true)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "started": started, "batch": balanceRefreshBatch})
 }
 
 // packageRow is one account's line in the packages view.  The key names follow
@@ -212,7 +239,7 @@ type packageRow struct {
 
 // packages implements GET <base>/packages: the per-tranche breakdown of every
 // account this module holds, biggest balance first.  One account failing is a
-// row-level error, never a failed request — the reference behaves the same way,
+// row-level error, never a failed request; the reference behaves the same way,
 // because the interesting comparison is between the accounts that answered.
 func (p *panel) packages(w http.ResponseWriter, r *http.Request, c core.Client) {
 	pp, ok := core.AsPackageProvider(c)

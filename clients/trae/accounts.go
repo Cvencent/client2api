@@ -430,11 +430,16 @@ func (c *Client) Accounts(ctx context.Context) ([]core.AccountRecord, error) {
 			State:   state,
 			Note:    note,
 			Fields: map[string]any{
-				"origin":            "discovered",
-				"managed":           false,
-				"product":           a.Product,
-				"source":            a.Source,
-				"user_id":           a.UserID,
+				"origin":  "discovered",
+				"managed": false,
+				"product": a.Product,
+				"source":  a.Source,
+				"user_id": a.UserID,
+				// The vendor only hands an e-mail back with a credential it issued
+				// to the desktop app; a panel web login gets a nickname instead.
+				// Surface it when it is there -- it is what lets the operator tell
+				// two accounts apart before re-logging one of them in.
+				"email":             a.Email,
 				"region":            a.Region,
 				"host":              a.Host,
 				"has_refresh_token": a.RefreshTokenValue() != "",
@@ -453,6 +458,12 @@ func (c *Client) Accounts(ctx context.Context) ([]core.AccountRecord, error) {
 			if sa.AddedAt != "" {
 				rec.Fields["added_at"] = sa.AddedAt
 			}
+		}
+		if credentialDead(state, note) {
+			// The panel turns this into the row's 「重登」 button.  A dead
+			// credential is not a cooldown to wait out: the token material
+			// itself was rejected, so only signing in again revives it.
+			rec.Fields["relogin"] = true
 		}
 		out = append(out, rec)
 	}
@@ -499,6 +510,25 @@ func (c *Client) Accounts(ctx context.Context) ([]core.AccountRecord, error) {
 
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
+}
+
+// credentialDead reports whether the pool's last verdict on an account says
+// the credential itself is unusable, so the operator has to sign in again.
+//
+// ErrAuth (1001/4010) means the upstream rejected the token -- including the
+// refresh path, which answers "re-login required" -- and ErrSessionDead (401)
+// means the session is gone.  Every other parked state (quota, rate limit,
+// 5xx) is a temporary condition that the same credential can recover from,
+// so those deliberately do not raise the flag.
+func credentialDead(state, note string) bool {
+	if state == stateInvalid {
+		return true
+	}
+	switch note {
+	case ErrAuth.String(), ErrSessionDead.String():
+		return true
+	}
+	return false
 }
 
 // AddAccount validates and stores one hand-entered credential.

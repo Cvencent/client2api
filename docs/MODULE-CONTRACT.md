@@ -617,6 +617,15 @@ Rules that apply to all optional interfaces:
 6. **Adding a panel surface needs no core edit.** If you find yourself editing
    `internal/` or another `clients/` package, the module boundary has been
    violated — fix the module, not the core.
+7. **Say when a credential is dead instead of making the panel guess.** If the
+   pool can tell that the vendor rejected the token itself — as opposed to a
+   quota cooldown or an upstream 5xx — set `AccountRecord.Fields["relogin"] =
+   true`. The panel reads it in `needsRelogin()` (`internal/panel/index.html`)
+   and renders that row's 「重登」 button, which re-runs the vendor's own login
+   in place instead of only clearing the cooldown. Without it the operator is
+   left with the 「恢复」 path, which cannot bring back a credential the vendor
+   has already revoked. trae is the reference implementation
+   (`clients/trae/accounts.go`, `credentialDead`).
 
 ### Which optional mechanisms each module actually implements
 

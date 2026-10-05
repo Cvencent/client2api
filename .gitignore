@@ -34,6 +34,7 @@ bin/
 # IDE
 .idea/
 .vscode/
+.cursor/
 
 # Windows 安装器的构建产物。payload/ 是 build.ps1 把二进制和（可能的）
 # 账号数据暂存进去的地方，.gitkeep 是 //go:embed 在空仓里能编译的唯一保障；
@@ -45,6 +46,9 @@ bin/
 /dist/
 # Local agent state and Windows smoke-test leftovers.
 .omo/
+# CodeGraph's tree-sitter index is a ~40MB generated cache; rebuild it
+# locally with `codegraph init -i`, never commit it.
+.codegraph/
 /$null
 client2api.pid
 *.log.prev

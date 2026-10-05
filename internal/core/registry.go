@@ -123,6 +123,12 @@ type PlatformConfig struct {
 	// key is the account id exposed by the module.  Lower values are tried
 	// first; accounts at the same value keep the module's existing rotation.
 	AccountPriorities map[string]int
+	// AccountNotes is the operator's own label for one account -- the phone
+	// number or e-mail that credential was issued to.  The key is the account
+	// id exposed by the module.  It is panel metadata rather than routing
+	// policy: the registry only carries it so the panel can show it beside
+	// the account and name the identity a re-login is about to sign in as.
+	AccountNotes map[string]string
 }
 
 // platformPolicy is the normalised form stored in the registry.
@@ -133,6 +139,7 @@ type platformPolicy struct {
 	maxInFlightPerAccount int
 	reserveCredits        int
 	accountPriorities     map[string]int
+	accountNotes          map[string]string
 }
 
 // normalizeModelID is the key form for blacklist matching.
@@ -164,6 +171,18 @@ func (r *Registry) SetPlatformConfigs(cfgs map[string]PlatformConfig) {
 				if id != "" {
 					pol.accountPriorities[id] = priority
 				}
+			}
+		}
+		if len(cfg.AccountNotes) > 0 {
+			pol.accountNotes = make(map[string]string, len(cfg.AccountNotes))
+			for id, note := range cfg.AccountNotes {
+				if id == "" {
+					continue
+				}
+				if note = strings.TrimSpace(note); note == "" {
+					continue
+				}
+				pol.accountNotes[id] = note
 			}
 		}
 		if cfg.MaxInFlight > 0 {
@@ -240,6 +259,18 @@ func (r *Registry) AccountPriority(platform, id string) int {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.platforms[platform].accountPriorities[id]
+}
+
+// AccountNote reports the operator's own label for one account -- the phone
+// number or e-mail it signs in with -- or "" when none was recorded.  It is
+// display metadata only: routing never reads it.
+func (r *Registry) AccountNote(platform, id string) string {
+	if r == nil {
+		return ""
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.platforms[platform].accountNotes[id]
 }
 
 // ModelAllowed reports whether the named platform may be given the model.

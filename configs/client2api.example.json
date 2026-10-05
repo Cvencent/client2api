@@ -111,6 +111,8 @@
     },
     "workbuddy": {},
     "zcode": {
+      "captcha_browser": true,
+      "captcha_browser_path": "",
       "tls_profile": "chrome",
       "tls_protocol": "http/1.1"
     }

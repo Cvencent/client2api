@@ -66,6 +66,8 @@ func TestConfigPatchRejectsMalformedPlatformPolicy(t *testing.T) {
 		{"account_priorities not an object", `{"platforms":{"cline":{"account_priorities":[]}}}`},
 		{"account priority not a number", `{"platforms":{"cline":{"account_priorities":{"a":"high"}}}}`},
 		{"account priority not whole", `{"platforms":{"cline":{"account_priorities":{"a":1.5}}}}`},
+		{"account_notes not an object", `{"platforms":{"cline":{"account_notes":[]}}}`},
+		{"account note not a string", `{"platforms":{"cline":{"account_notes":{"a":5}}}}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -93,6 +95,39 @@ func TestConfigPatchAcceptsAccountPriorities(t *testing.T) {
 	aps, _ := wb["account_priorities"].(map[string]any)
 	if aps["acct-1"] != float64(-2) || aps["acct-2"] != float64(5) {
 		t.Fatalf("account_priorities = %v, want acct-1=-2 acct-2=5", aps)
+	}
+}
+
+// The operator's own per-account label (the phone number or e-mail a credential
+// signs in with) rides the same config object as the routing policy, so a PATCH
+// has to store it verbatim.
+func TestConfigPatchAcceptsAccountNotes(t *testing.T) {
+	path := configFile(t, baseConfig)
+	out := mustSave(t, configPanel(path),
+		`{"platforms":{"trae":{"account_notes":{"acct-1":"13800138000","acct-2":"ops@example.com"}}}}`)
+
+	changed, _ := out["changed"].([]any)
+	if len(changed) != 1 || changed[0] != "platforms" {
+		t.Fatalf("changed = %v, want [platforms]", out["changed"])
+	}
+	got := onDisk(t, path)
+	pl, _ := got["platforms"].(map[string]any)
+	tr, _ := pl["trae"].(map[string]any)
+	notes, _ := tr["account_notes"].(map[string]any)
+	if notes["acct-1"] != "13800138000" || notes["acct-2"] != "ops@example.com" {
+		t.Fatalf("account_notes = %v, want acct-1=13800138000 acct-2=ops@example.com", notes)
+	}
+}
+
+// The note is rendered verbatim in the account table, so an unbounded string
+// must be refused at save time rather than bloating the config and the layout.
+func TestConfigPatchRejectsOverlongAccountNote(t *testing.T) {
+	path := configFile(t, baseConfig)
+	long := strings.Repeat("x", maxAccountNoteRunes+1)
+	w, _ := doConfig(t, configPanel(path), http.MethodPatch,
+		`{"platforms":{"trae":{"account_notes":{"a":"`+long+`"}}}}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("HTTP %d, want 400: %s", w.Code, w.Body.String())
 	}
 }
 

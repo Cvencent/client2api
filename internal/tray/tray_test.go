@@ -218,3 +218,32 @@ func TestCheckListenAvailableFindsAClaimedPort(t *testing.T) {
 		t.Fatalf("checkListenAvailable(%q) accepted a port that is in use", addr)
 	}
 }
+
+// TestAboutTextCarriesTheVersion is the guard that matters: the About dialog
+// exists so an operator can read the running version, so the version has to
+// be the first line rather than something the caller has to hunt for.
+func TestAboutTextCarriesTheVersion(t *testing.T) {
+	got := aboutText(Options{
+		Version:  "0.1.11",
+		PanelURL: "http://127.0.0.1:8790/panel/",
+		DataDir:  `D:\client2api\data`,
+	})
+	if !strings.Contains(got, "client2api 0.1.11") {
+		t.Fatalf("about text does not name the version:\n%s", got)
+	}
+	if !strings.Contains(got, "http://127.0.0.1:8790/panel/") {
+		t.Errorf("about text lost the panel URL:\n%s", got)
+	}
+	if !strings.Contains(got, `D:\client2api\data`) {
+		t.Errorf("about text lost the data directory:\n%s", got)
+	}
+}
+
+// TestAboutTextSaysUnknownRatherThanBlank keeps a build with no -ldflags
+// version from rendering "client2api " with a blank where the number belongs.
+func TestAboutTextSaysUnknownRatherThanBlank(t *testing.T) {
+	got := aboutText(Options{})
+	if strings.Contains(got, "client2api \n") {
+		t.Fatalf("about text has a blank version line:\n%s", got)
+	}
+}

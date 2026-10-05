@@ -10,11 +10,10 @@ package zcode
 //   - core.CredentialImporter: report the credential stores found on this
 //     machine and import selected ones into the module's own store.
 //
-// core.LoginProvider is deliberately NOT implemented.  The only login flow the
-// desktop client has for the jwt channel drives an Aliyun captcha, which needs
-// an out-of-process solver supplied by the operator (captcha_command); without
-// one there is nothing to drive, so advertising a login capability would be a
-// lie.  See README § Panel account management.
+// core.LoginProvider is implemented by weblogin.go: the panel can start the
+// vendor's OAuth flow and store the API key or JWT it returns.  The JWT
+// channel's per-request captcha is a separate concern, handled by the built-in
+// browser solver or captcha_command; see README § Panel account management.
 //
 // Operator-supplied credentials are persisted in the module's own data dir, in
 // managed_accounts.json, never in the gateway's config file.  That file is the
@@ -497,7 +496,7 @@ func recordFor(a *Account, now time.Time, captchaReady bool) core.AccountRecord 
 	}
 	note := a.Note
 	if a.Mode == modeJWT && !captchaReady && note == "" {
-		note = "JWT channel needs a captcha solver (captcha_command not configured)"
+		note = "JWT channel needs a captcha solver (no captcha_command and no Edge/Chrome found)"
 	}
 	if a.LastError != "" {
 		if note != "" {
@@ -661,7 +660,7 @@ func (c *Client) AccountFields(ctx context.Context) []core.FieldSpec {
 		{
 			Key: fieldKind, Label: "Credential kind", Type: "select", Required: true,
 			Options: []string{kindAPIKey, kindJWT}, Default: kindAPIKey,
-			Help: "api-key sends the vendor key header; jwt is a ZCode plan token and needs captcha_command.",
+			Help: "api-key sends the vendor key header; jwt is a ZCode plan token and uses the built-in browser captcha (captcha_command is the fallback).",
 		},
 		{
 			Key: fieldAPIKey, Label: "API key", Type: "password",
@@ -857,7 +856,7 @@ func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, e
 
 	res := core.TestResult{AccountID: id, Model: model}
 	if acct.Mode == modeJWT && !c.pool.captchaReady() {
-		res.Error = "the jwt channel is disabled: set captcha_command so the Aliyun captcha can be solved"
+		res.Error = "the jwt channel is disabled: set captcha_command or install Edge/Chrome for the built-in captcha solver"
 		return res, nil
 	}
 

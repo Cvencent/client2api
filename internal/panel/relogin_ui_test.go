@@ -27,7 +27,9 @@ func TestReloginButtonIsWiredToTheCapabilityMatrix(t *testing.T) {
 	}
 
 	for _, want := range []string{
-		`const phoneAcct = /^\d{6,15}$/.test(String(a.label || "").trim());`,
+		// 手机号优先取操作员自己记的备注，其次才是模块的 label；账号 id 不参与，
+		// 否则 trae 这种纯数字 id 会被错当成手机号而走错重登分支。
+		`const phoneAcct = /^\d{6,15}$/.test(String(a.operator_note || a.label || "").trim());`,
 		"if (caps.sms && phoneAcct) {",
 		"} else if (caps.login && needsRelogin(a)) {",
 	} {
@@ -53,6 +55,7 @@ func TestNeedsReloginCoversTheThreeCredentialSignals(t *testing.T) {
 	for _, want := range []string{
 		`st === "invalid" || st === "expired" || st === "unauthorized"`,
 		`f.expired === true`,
+		`f.relogin === true`,
 		"login_required",
 		"expired",
 		"unauthorized",

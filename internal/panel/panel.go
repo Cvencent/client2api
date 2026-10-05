@@ -164,6 +164,7 @@ type snapshot struct {
 func New(opts Options) http.Handler {
 	mux := http.NewServeMux()
 	p := &panel{opts: opts, runs: newTaskRuns(), sweeps: newBatchRuns(), chores: newTaskQueues(), taskLocks: newAccountLocks()}
+	p.initBalanceCache()
 	p.queue = newBatchQueue(p.sweeps)
 	p.queue.run = p.execSweep
 	p.queue.report = p.panicReport()
@@ -240,6 +241,10 @@ func New(opts Options) http.Handler {
 
 type panel struct {
 	opts Options
+	// balances is the last-known balance of every account plus the gentle
+	// refresh that moves the column forward a few accounts at a time.
+	// Created in New; nil when the panel has no registry (some tests).
+	balanceCache *balanceCache
 	// runs journals asynchronous task-board runs.  Created in New so a panel
 	// built in a test never sees a nil store.
 	runs *taskRuns
@@ -268,6 +273,40 @@ type panel struct {
 
 func (p *panel) ctx(r *http.Request, d time.Duration) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(r.Context(), d)
+}
+
+// initBalanceCache wires the last-known-balance store.  Split out of New so a
+// test can build the same panel and seed the cache before the first request.
+func (p *panel) initBalanceCache() {
+	if p == nil || p.opts.Registry == nil {
+		return
+	}
+	cachePath := ""
+	if p.opts.DataDir != "" {
+		cachePath = filepath.Join(p.opts.DataDir, filepath.FromSlash(DefaultBalanceCacheFileName))
+	}
+	p.balanceCache = newBalanceCache(p.opts.Registry, p.expiringSoon, cachePath)
+}
+
+// balanceHandler builds a panel usable from a test: same wiring as New, but
+// the *panel stays addressable so a case can seed the balance cache.
+func balanceHandler(opts Options) (*panel, http.Handler) {
+	mux := http.NewServeMux()
+	p := &panel{opts: opts, runs: newTaskRuns(), sweeps: newBatchRuns(), chores: newTaskQueues(), taskLocks: newAccountLocks()}
+	p.initBalanceCache()
+	p.queue = newBatchQueue(p.sweeps)
+	p.queue.run = p.execSweep
+	p.queue.report = p.panicReport()
+	api := func(pattern string, h http.HandlerFunc) { mux.HandleFunc(pattern, p.authed(h)) }
+	api("/panel/api/clients/", p.handleClientScoped)
+	return p, mux
+}
+
+// seedBalanceCache stores an already-known balance without asking the vendor,
+// so tests can model "this number was read on an earlier visit" -- the state
+// the /balances read is designed to serve.
+func seedBalanceCache(p *panel, client, id string, bal core.Balance) {
+	p.balanceCache.put(client, id, bal)
 }
 
 // ---------------------------------------------------------------------------
@@ -477,6 +516,12 @@ func (p *panel) handleClientScoped(w http.ResponseWriter, r *http.Request) {
 	case len(segs) == 1 && segs[0] == "balances":
 		p.balances(w, r, client)
 
+	// The explicit "refresh the column now" action behind the toolbar button.
+	// It answers from the cache immediately and moves the vendor calls to a
+	// paced background pass, so a click never becomes a fleet-wide burst.
+	case len(segs) == 2 && segs[0] == "balances" && segs[1] == "refresh":
+		p.balancesRefresh(w, r, client)
+
 	case len(segs) == 1 && segs[0] == "packages":
 		p.packages(w, r, client)
 
@@ -642,6 +687,7 @@ func (p *panel) accounts(w http.ResponseWriter, r *http.Request, c core.Client) 
 			return
 		}
 		p.decorateAccountPriorities(c.Name(), list)
+		p.decorateAccountNotes(c.Name(), list)
 		out := map[string]any{
 			"client":       c.Name(),
 			"accounts":     redactAccounts(list),
@@ -1123,6 +1169,7 @@ func (p *panel) relistErr(ctx context.Context, am core.AccountManager) ([]core.A
 		return []core.AccountRecord{}, err
 	}
 	p.decorateAccountPriorities(am.Name(), list)
+	p.decorateAccountNotes(am.Name(), list)
 	return redactAccounts(list), nil
 }
 
@@ -1132,6 +1179,21 @@ func (p *panel) decorateAccountPriorities(platform string, list []core.AccountRe
 	}
 	for i := range list {
 		list[i].Priority = p.opts.Registry.AccountPriority(platform, list[i].ID)
+	}
+}
+
+// decorateAccountNotes attaches the operator's own label for each account --
+// the phone number or e-mail they recorded so a re-login can sign back in as
+// the right identity.  It is display metadata: the module's own Label is left
+// untouched and the frontend decides which of the two to show.
+func (p *panel) decorateAccountNotes(platform string, list []core.AccountRecord) {
+	if p == nil || p.opts.Registry == nil {
+		return
+	}
+	for i := range list {
+		if note := strings.TrimSpace(p.opts.Registry.AccountNote(platform, list[i].ID)); note != "" {
+			list[i].OperatorNote = note
+		}
 	}
 }
 

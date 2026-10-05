@@ -41,7 +41,29 @@ func newPanelEnv(t *testing.T, configJSON string) *panelEnv {
 	home := isolateHome(t)
 	appdata := t.TempDir()
 	t.Setenv("APPDATA", appdata)
-	return &panelEnv{home: home, appdata: appdata, dataDir: t.TempDir(), cfg: configJSON}
+	return &panelEnv{home: home, appdata: appdata, dataDir: t.TempDir(), cfg: testConfigWithoutBrowser(configJSON)}
+}
+
+// testConfigWithoutBrowser turns the built-in browser solver off unless a test
+// asks for it explicitly.  Most tests predate the solver and assume a JWT
+// credential is unusable; leaving the machine's Edge installation visible would
+// make those tests launch a real browser and become machine-dependent.
+func testConfigWithoutBrowser(configJSON string) string {
+	if strings.Contains(configJSON, `"captcha_browser"`) {
+		return configJSON
+	}
+	trimmed := strings.TrimSpace(configJSON)
+	if trimmed == "" {
+		return `{"captcha_browser":false}`
+	}
+	if !strings.HasPrefix(trimmed, "{") {
+		return configJSON
+	}
+	rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "{"))
+	if rest == "" || rest == "}" {
+		return `{"captcha_browser":false}`
+	}
+	return `{"captcha_browser":false,` + rest
 }
 
 func (e *panelEnv) client(t *testing.T, transport *fakeTransport) *Client {

@@ -46,10 +46,12 @@ func captchaRoutes(body string, extra map[string]func(*http.Request) (*http.Resp
 }
 
 // captchaEnv builds a client with no solver and no pinned region: exactly the
-// state this deployment ships in, so the scene has to come from the vendor.
+// panel fallback is required and the scene has to come from the vendor.  The
+// built-in browser solver is explicitly disabled so these tests never launch a
+// real browser; its own coverage lives in captcha_browser_test.go.
 func captchaEnv(t *testing.T, body string) (*Client, *fakeTransport) {
 	t.Helper()
-	env := newPanelEnv(t, `{"auto_discover":false}`)
+	env := newPanelEnv(t, `{"auto_discover":false,"captcha_browser":false}`)
 	ft := routeTransport(t, captchaRoutes(body, nil))
 	return env.client(t, ft), ft
 }
@@ -250,12 +252,12 @@ func TestSolveCaptchaPrefersTheBrowserToken(t *testing.T) {
 	installSolver(t, c, "token-from-solver")
 
 	ctx := core.WithCaptchaSolution(context.Background(), core.CaptchaSolution{Param: "token-from-browser", Region: "cn"})
-	got, err := c.solveCaptcha(ctx, regionInfo{Region: "cn"})
+	got, region, err := c.solveCaptcha(ctx)
 	if err != nil {
 		t.Fatalf("solveCaptcha: %v", err)
 	}
-	if got != "token-from-browser" {
-		t.Fatalf("param = %q, want the browser's token", got)
+	if got != "token-from-browser" || region != "cn" {
+		t.Fatalf("solveCaptcha = (%q,%q), want the browser's token and region", got, region)
 	}
 }
 
@@ -264,7 +266,7 @@ func TestSolveCaptchaPrefersTheBrowserToken(t *testing.T) {
 func TestSolveCaptchaWithoutASolverPointsAtThePanel(t *testing.T) {
 	c, _ := captchaEnv(t, captchaConfigFixture)
 
-	_, err := c.solveCaptcha(context.Background(), regionInfo{Region: "cn"})
+	_, _, err := c.solveCaptcha(context.Background())
 	if !errors.Is(err, core.ErrNotConfigured) {
 		t.Fatalf("err = %v, want core.ErrNotConfigured", err)
 	}
@@ -277,17 +279,23 @@ func TestSolveCaptchaWithoutASolverPointsAtThePanel(t *testing.T) {
 // was actually minted, so it travels with the token rather than being resolved
 // again from config.
 func TestCaptchaRegionPrefersTheBrowserToken(t *testing.T) {
-	env := newPanelEnv(t, `{"auto_discover":false,"captcha_region":"sgp"}`)
+	env := newPanelEnv(t, `{"auto_discover":false,"captcha_browser":false,"captcha_region":"sgp"}`)
 	ft := routeTransport(t, captchaRoutes(captchaConfigFixture, nil))
 	c := env.client(t, ft)
 
 	ctx := core.WithCaptchaSolution(context.Background(), core.CaptchaSolution{Param: "tok", Region: "cn"})
-	if got := c.captchaRegion(ctx); got != "cn" {
-		t.Fatalf("region = %q, want the token's own region", got)
+	if param, region, err := c.solveCaptcha(ctx); err != nil {
+		t.Fatalf("solveCaptcha: %v", err)
+	} else if param != "tok" || region != "cn" {
+		t.Fatalf("solveCaptcha = (%q,%q), want the token's own region", param, region)
 	}
 	// No token: fall back to the resolved config, which is the pinned override.
-	if got := c.captchaRegion(context.Background()); got != "sgp" {
-		t.Fatalf("region = %q, want the pinned override", got)
+	c.captcha.invalidate()
+	installSolver(t, c, "from-solver")
+	if param, region, err := c.solveCaptcha(context.Background()); err != nil {
+		t.Fatalf("solveCaptcha: %v", err)
+	} else if param != "from-solver" || region != "sgp" {
+		t.Fatalf("solveCaptcha = (%q,%q), want the pinned override", param, region)
 	}
 }
 

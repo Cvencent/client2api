@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 // TestPlatformConfigsProjectsTheFileBlock pins the one translation between the
 // config file's "platforms" object and the router's policy type.  A blank model
@@ -29,6 +32,34 @@ func TestPlatformConfigsProjectsTheFileBlock(t *testing.T) {
 
 	if empty := (&fileConfig{}).platformConfigs(); len(empty) != 0 {
 		t.Errorf("a file with no platforms block should project nothing, got %v", empty)
+	}
+}
+
+// The operator's per-account identity note (the phone number or e-mail a
+// credential signs in with) rides the platforms block too.  The panel serves it
+// verbatim, so it has to survive the projection; a blank id or a blank note is
+// dropped there so the registry never carries a meaningless entry.
+func TestPlatformConfigsProjectsAccountNotes(t *testing.T) {
+	cfg := &fileConfig{Platforms: map[string]platformConfig{
+		"trae": {AccountNotes: map[string]string{
+			"3595881099822378": " 13800138000 ",
+			"":                 "drop me",
+			"blank":            "   ",
+		}},
+	}}
+	got := cfg.platformConfigs()
+	notes := got["trae"].AccountNotes
+	if len(notes) != 1 || notes["3595881099822378"] != "13800138000" {
+		t.Fatalf("account notes = %v, want only the trimmed 3595881099822378 entry", notes)
+	}
+
+	// The JSON tag is the contract with both the config file and the panel PATCH.
+	var parsed fileConfig
+	if err := json.Unmarshal([]byte(`{"platforms":{"trae":{"account_notes":{"a":"ops@example.com"}}}}`), &parsed); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if parsed.Platforms["trae"].AccountNotes["a"] != "ops@example.com" {
+		t.Errorf("account_notes did not round-trip: %+v", parsed.Platforms["trae"])
 	}
 }
 

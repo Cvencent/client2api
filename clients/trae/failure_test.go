@@ -132,8 +132,12 @@ func TestTerminalErrorIsClassified(t *testing.T) {
 		{"1005 plan limit", 403, `{"code":1005,"message":"plan_limit"}`, core.FailureQuota, ErrPlanLimit, 403, 1005},
 		{"4008 quota exhausted", 402, `{"code":4008,"message":"quota exhausted"}`, core.FailureQuota, ErrQuota, 402, 4008},
 		// Auth: the credential itself is no good.
-		{"1001 auth failed", 401, `{"code":1001,"message":"auth failed"}`, core.FailureAuth, ErrAuth, 401, 1001},
-		{"4010 credential rejected", 401, `{"code":4010,"message":"token rejected"}`, core.FailureAuth, ErrAuth, 401, 4010},
+		// A 401 rejects the credential at the transport-auth layer.  The body
+		// still carries the vendor's 1001/4010 and that code is kept for the
+		// operator, but the kind is session_dead: the token cannot serve until
+		// it is replaced, so it must be parked rather than 60s-cooled.
+		{"1001 auth failed", 401, `{"code":1001,"message":"auth failed"}`, core.FailureSessionDead, ErrSessionDead, 401, 1001},
+		{"4010 credential rejected", 401, `{"code":4010,"message":"token rejected"}`, core.FailureSessionDead, ErrSessionDead, 401, 4010},
 		// A dead vendor session survives the trip to the gateway so the pool
 		// can park it for an hour.  The body carries no code, so there is none
 		// to report: 0 means "the body had none", not "HTTP-level".
@@ -360,7 +364,7 @@ func TestCancelledContextStopsTheRetryLoop(t *testing.T) {
 	if got := calls.Load(); got != 1 {
 		t.Errorf("a cancelled context must stop the loop: %d attempts", got)
 	}
-	assertFailure(t, err, core.FailureAuth, "A")
+	assertFailure(t, err, core.FailureSessionDead, "A")
 	if elapsed > time.Second {
 		t.Errorf("a cancelled context waited %v: the backoff must be abortable", elapsed)
 	}

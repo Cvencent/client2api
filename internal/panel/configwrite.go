@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"client2api/internal/core"
 )
@@ -20,6 +21,12 @@ import (
 // would destroy a working credential.  Anything the operator *does* type, be it
 // a new secret or the empty string, is written verbatim.
 const redactedPlaceholder = "<redacted>"
+
+// maxAccountNoteRunes bounds the operator's own per-account label (the phone
+// number or e-mail a credential signs in with).  The value is shown verbatim
+// in the account table, so an unbounded string would let one careless paste
+// bloat the config and wreck the layout.
+const maxAccountNoteRunes = 120
 
 // configWriteMu serialises read-modify-write cycles on the config file.  The
 // panel is a single instance per process, but the panel is not the only writer
@@ -370,6 +377,24 @@ func validateConfig(cfg map[string]any) error {
 					f, ok := raw.(float64)
 					if !ok || f != float64(int(f)) {
 						return fmt.Errorf("platform %q account priority for %q must be a whole number", name, id)
+					}
+				}
+			}
+			if notes, ok := em["account_notes"]; ok && notes != nil {
+				m, ok := notes.(map[string]any)
+				if !ok {
+					return fmt.Errorf("platform %q account_notes must be an object keyed by account id", name)
+				}
+				for id, raw := range m {
+					if raw == nil {
+						continue
+					}
+					s, ok := raw.(string)
+					if !ok {
+						return fmt.Errorf("platform %q account note for %q must be a string", name, id)
+					}
+					if utf8.RuneCountInString(s) > maxAccountNoteRunes {
+						return fmt.Errorf("platform %q account note for %q is longer than %d characters", name, id, maxAccountNoteRunes)
 					}
 				}
 			}

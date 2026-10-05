@@ -1,6 +1,6 @@
 # client2api
 
-One OpenAI-compatible gateway in front of fourteen AI backends:
+One OpenAI-compatible gateway in front of fifteen AI backends:
 
 | route | client | what it wraps |
 |---|---|---|
@@ -18,6 +18,7 @@ One OpenAI-compatible gateway in front of fourteen AI backends:
 | `raccoon/…` | Raccoon | 商汤小浣熊 Raccoon Work (SenseTime) |
 | `openrouter/…` | OpenRouter | OpenRouter (openrouter.ai) — multi-vendor router whose ids contain a slash; free models only by default (`free_only`) |
 | `opencode/…` | OpenCode Zen | OpenCode Zen (opencode.ai) — one OpenAI-shaped façade in front of Anthropic-, Google- and OpenAI-native models |
+| `openai-compat/…` | OpenAI-compatible sources | One config-driven module over many OpenAI-shaped free tiers: Groq, Cerebras, SiliconFlow, Mistral, NVIDIA NIM, Together, Fireworks, DeepInfra, Chutes, HuggingFace; route as `openai-compat/<provider>/<model>` |
 
 Everything is served from **one** HTTP surface — `POST /v1/chat/completions`,
 `GET /v1/models`, `GET /v1/status`, `GET /healthz`, plus a web panel at
@@ -40,6 +41,8 @@ client2api 把多个 AI 客户端/平台的账号能力聚合成一个 OpenAI �
 - OpenAI 兼容 API，支持流式和非流式请求。
 - 平台级模型白名单/黑名单、路由优先级、并发上限和账号余额保护。
 - 账号登录、导入、导出、签到、余额刷新、定时任务和运行记录。
+- 账号池每行可以「重登」：凭据被上游拒了（失效 / 401 之类）时直接为这一行重走一次厂商登录，就地覆盖旧凭据，不新增一条。
+- 每个账号可以记一条「备注」——登录用的手机号或邮箱。模块的厂商接口常常只回昵称，记下这个才认得出重登该用哪个号。
 - 免费模型优先、失败重试、限流冷却、账号/平台熔断与自动恢复。
 - Windows 安装器支持覆盖升级：配置、账号池和用量数据原地保留，并在覆盖前后各跑
   一次真实浏览器面板自检，失败就拒绝安装或自动回滚。
@@ -467,6 +470,11 @@ without it credits go stale and a balance-recovered account stays parked until
 the next chore. Set the minutes to `0` to drop the tick without touching the
 switch. It is still gated by `schedule.enabled`, like every other batch.
 
+The accounts page does not wait for that sweep. Its 余额 column reads a
+persistent cache (`data/panel/balance_cache.json`) and only ever nudges a few
+accounts at a time (3 per pass, 2s apart, at most one pass per 45s), so
+opening the page cannot turn into a fleet-wide burst against the vendor.
+
 `pool.max_in_flight` (default **3**) caps how many requests one account may have
 in flight at once; `pool.max_in_flight_global` (default **2**) is the tighter cap
 for `global`-realm accounts, which is where the reference ever only saw its WAF
@@ -518,6 +526,21 @@ path as the other platform settings.
 
 ```json
 {"platforms":{"workbuddy":{"account_priorities":{"account-id-1":-1,"account-id-2":10}}}}
+```
+
+`account_notes` is the operator's own label for one account inside a platform:
+the phone number or e-mail that credential signs in with. It maps the account
+id shown by that module to free text, is display metadata only (routing never
+reads it), and is edited from the 「备注」 button on the account row through
+the same live config path as `account_priorities`. It exists because most
+vendors' user-info replies carry a nickname rather than the identity the
+credential was issued to, so the panel cannot derive it — and without it an
+expired account cannot be told apart from its siblings before a re-login.
+When set, the note takes the account row's headline and the module's own
+label moves down to the hint line; a re-login names the same identity.
+
+```json
+{"platforms":{"trae":{"account_notes":{"3595881099822378":"13800138000"}}}}
 ```
 
 `pool.breaker_threshold` (default **3**) is how many consecutive failures park an
@@ -659,6 +682,7 @@ configuration), and the panel says so instead of implying a Redis mirror.
 | raccoon | MIT upstream, ported (wire protocol only) | see `clients/raccoon/README.md` |
 | openrouter | public REST API, no upstream code read | see `clients/openrouter/README.md` |
 | opencode | public REST API; the gateway's own server source is open and was read | see `clients/opencode/README.md` |
+| openai-compat | public REST API, no upstream code read | see `clients/openaicompat/README.md` |
 
 Provenance matters here: `zcode` and `qwenwork` are written from observed
 protocol behaviour only, and `tabbit` never links GPL code. Each module's README
@@ -672,6 +696,16 @@ original WorkBuddy dashboard: a left sidebar carrying nine views (账号池 / �
 title, a theme switch (dark → light → auto), refresh, and 添加账号. Above the
 account table sits a row of counters derived from the data — total / ready /
 cooling / disabled / clients / models — not a hardcoded number.
+
+Each account row carries its own controls. 「备注」 records the phone number or
+e-mail that account signs in with (see `account_notes` below); 「恢复」 clears the
+runtime penalties a module holds for that credential, and 「重登」 goes one step
+further and re-runs the vendor's own login for that one row, overwriting the
+credential in place. The re-login button only appears where it can help: a
+module that implements `core.LoginProvider`/`core.SMSProvider`, and an account
+the module itself flagged as dead (`fields.relogin`, or a state/note that says
+expired, invalid or unauthorized). A module without login cannot offer one, and
+a healthy row stays clean.
 
 Automation lives in one place: the 任务中心 view owns the master switch, the
 global default hours per batch (including the balance-refresh interval), the
@@ -848,7 +882,7 @@ renderer never calls it either — so there is nothing honest to implement from.
 |---|---|---|---|---|
 | workbuddy | yes | yes | yes — polls `/v2/plugin/auth/state` → `/token` and opens `copilot.tencent.com/login` | yes — `daily-checkin` (CN) and `daily-activity` (intl) |
 | trae | yes | yes | yes — loopback redirect on `127.0.0.1`, opens `www.trae.cn/authorization` | yes — `daily-checkin` (CN only) |
-| zcode | yes | yes | yes — polls `POST {api}/oauth/cli/init` → `GET …/poll/{flow_id}` | no — only activation events; the claim path needs a captcha solver |
+| zcode | yes | yes | yes — polls `POST {api}/oauth/cli/init` → `GET …/poll/{flow_id}` | yes — claims the promotion via the built-in Edge/Chrome captcha solver; `captcha_command` is the headless fallback |
 | kimi | yes | yes | yes — RFC 8628 device grant against `auth.kimi.com`; the CLI is not required | no — no such endpoint exists |
 | qwenwork | yes | no — nothing on disk holds a usable token | yes — PKCE device flow | yes — `daily`, against the Sash check-in API |
 | tabbit | yes | yes | yes — browser hand-off: opens the Tabbit web sign-in, then confirms it from the sidecar's model list | no — the module only talks to a local sidecar |
@@ -860,6 +894,7 @@ renderer never calls it either — so there is nothing honest to implement from.
 | raccoon | yes | yes | yes — loopback QR/SMS page with a stdlib QR encoder; WeChat scan or SMS, phone encrypted host-side | yes — `login-points`, the desktop login grant (the 300 daily credits still have no endpoint) |
 | opencode | yes | yes — the `opencode` entry of `~/.local/share/opencode/auth.json`, plus every `*.json` in `<data_dir>/import/` | yes — two realms: anonymous free (`x-api-key: public`) and Console device-code OAuth | no — Zen has no check-in and no task API |
 | openrouter | yes | yes — `OPENROUTER_API_KEY`, the conventional credential files, an `env:NAME` reference, or a pasted key | yes — browser PKCE; the issued key is stored like a pasted one | no — the vendor has no check-in |
+| openai-compat | yes | no — a bare API key is pasted, not discovered on disk | no — the operator pastes one key per provider | no — a generic OpenAI-shaped endpoint has no check-in |
 
 Of the **original seven** modules, six expose a login and were verified against
 the live vendor endpoints from a running gateway, not just from tests: each
@@ -899,6 +934,19 @@ a secret*.
 Panel state stays inside each module's own `data/<client>/` directory. The
 `clients.<name>` blocks in `configs/client2api.json` are operator-owned and the
 panel never edits them.
+
+**Balances** are cached, not live. The accounts page's 余额 column is served
+from `data/panel/balance_cache.json` — the last number each vendor gave for
+each account — so opening the page shows the previous values immediately and
+costs no upstream calls. A page open also schedules one background pass over
+the **3** accounts whose cached value is oldest (spaced 2s apart), throttled to
+one pass per 45s; the explicit `POST …/balances/refresh` schedules the same
+pass at a 5s throttle. Rows that have never been read render `-` rather than
+`0`, because zero is a real balance. The per-account
+`POST …/accounts/<id>/balance` button is still a live vendor read, and it
+updates the cache too. The scheduled `schedule.balance_refresh_minutes` sweep
+also refills the cache, so the column converges without anyone pressing a
+button. The file lives under `data/`, which an installer upgrade preserves.
 
 **Check-in** is per-account: each `core.CheckinAction` the module advertises
 becomes its own button, so workbuddy shows two (the two realms are two different
@@ -1001,6 +1049,15 @@ POST   /panel/api/clients/<name>/accounts/<id>/checkin {"action":"…",
 GET    /panel/api/clients/<name>/captcha?action=…       (optional; the browser scene)
 POST   /panel/api/clients/<name>/accounts/<id>/revive   (optional)
 POST   /panel/api/clients/<name>/accounts/<id>/balance  (optional; one vendor call)
+GET    /panel/api/clients/<name>/balances               (optional; last-known
+                                                        balances from the cache,
+                                                        never a vendor call; a read
+                                                        does schedule one paced
+                                                        batch)
+POST   /panel/api/clients/<name>/balances/refresh       (optional; starts one
+                                                        paced batch of at most 3
+                                                        accounts and answers
+                                                        immediately)
 GET    /panel/api/clients/<name>/accounts/<id>/tasks    (optional)
 POST   /panel/api/clients/<name>/accounts/<id>/tasks/accept     {"task_codes":[…]} (optional)
 POST   /panel/api/clients/<name>/accounts/<id>/tasks/accept_all (optional)

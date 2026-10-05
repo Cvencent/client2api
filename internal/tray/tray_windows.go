@@ -60,6 +60,7 @@ const (
 	cmdQuit     = 3
 	cmdRestart  = 4
 	cmdSettings = 5
+	cmdAbout    = 6
 )
 
 // ---- Win32 procs -----------------------------------------------------------
@@ -447,9 +448,8 @@ func (s *service) showMenu() {
 	if s.opts.LoadSettings != nil && s.opts.SaveSettings != nil {
 		appendMenuItem(menu, cmdSettings, "设置…")
 	}
-	if s.opts.OnRestart != nil || (s.opts.LoadSettings != nil && s.opts.SaveSettings != nil) {
-		procAppendMenuW.Call(menu, mfSeparator, 0, 0)
-	}
+	appendMenuItem(menu, cmdAbout, "关于")
+	procAppendMenuW.Call(menu, mfSeparator, 0, 0)
 	appendMenuItem(menu, cmdQuit, "退出")
 
 	var pt point
@@ -474,9 +474,19 @@ func (s *service) showMenu() {
 		// Off the UI thread: the dialog runs its own message loop, and
 		// nesting it inside the menu's would wedge the menu.
 		go s.showSettings()
+	case cmdAbout:
+		// Same rule as the settings dialog: MessageBoxW pumps its own
+		// loop, so showing it from the menu's would wedge the menu.
+		go s.showAbout()
 	case cmdQuit:
 		s.quit()
 	}
+}
+
+// showAbout opens the native About dialog with the running version and the
+// two paths an operator is most likely to want next.
+func (s *service) showAbout() {
+	s.infoBox("关于 client2api", aboutText(s.opts))
 }
 
 func appendMenuItem(menu, id uintptr, label string) {

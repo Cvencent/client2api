@@ -172,7 +172,20 @@ func classifyBody(status int, body []byte) (ErrKind, int64) {
 }
 
 // Classify maps an HTTP status plus response body to an ErrKind.
+//
+// The HTTP status wins over the body's business code when it is a 401.  The
+// vendor sends its auth code (1001/4010) inside a 401 too, and those codes
+// normally mean "rotate to another account, this one may recover".  On a 401
+// the credential was refused at the transport-auth layer instead: no amount
+// of waiting brings it back, only a re-login does.  Letting the code win
+// demoted that to ErrAuth's 60-second cooling, so the pool re-selected a dead
+// token every minute (one live account had 37 failures and was still marked
+// ready).  The numeric code is still parsed by classifyBody and kept on the
+// *Error, so the operator keeps the number to grep for.
 func Classify(status int, body []byte) ErrKind {
+	if status == http.StatusUnauthorized {
+		return ErrSessionDead
+	}
 	text := string(body)
 	if code, ok := businessCode(text); ok {
 		if k := ClassifyCode(code); k != ErrClient {
@@ -180,8 +193,6 @@ func Classify(status int, body []byte) ErrKind {
 		}
 	}
 	switch {
-	case status == 401:
-		return ErrSessionDead
 	case status == 429:
 		return ErrSoftRate
 	case status == 404:

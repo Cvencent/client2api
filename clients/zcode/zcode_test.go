@@ -1276,7 +1276,7 @@ func newTestClient(t *testing.T, configJSON string, transport *fakeTransport) *C
 	t.Helper()
 	c, err := New(core.Deps{
 		DataDir:    t.TempDir(),
-		Config:     json.RawMessage(configJSON),
+		Config:     json.RawMessage(testConfigWithoutBrowser(configJSON)),
 		HTTPClient: &http.Client{Transport: transport},
 	})
 	if err != nil {
@@ -1560,9 +1560,9 @@ func TestApplyHeadersAPIKeyChannel(t *testing.T) {
 
 func TestSolveCaptchaWithoutCommand(t *testing.T) {
 	isolateHome(t)
-	c := newTestClient(t, `{"auto_discover":false}`, &fakeTransport{})
+	c := newTestClient(t, `{"auto_discover":false,"captcha_browser":false}`, &fakeTransport{})
 
-	_, err := c.solveCaptcha(t.Context(), regionInfo{Region: "cn"})
+	_, _, err := c.solveCaptcha(t.Context())
 	if !errors.Is(err, core.ErrNotConfigured) {
 		t.Fatalf("err = %v, want core.ErrNotConfigured", err)
 	}
@@ -1629,11 +1629,11 @@ func TestSolveCaptchaRunsTheConfiguredCommand(t *testing.T) {
 		args = []string{"/c", script}
 	}
 
-	c := newTestClient(t, `{"auto_discover":false}`, &fakeTransport{})
+	c := newTestClient(t, `{"auto_discover":false,"captcha_browser":false}`, &fakeTransport{})
 	c.cfg.CaptchaCommand = command
 	c.cfg.CaptchaArgs = args
 
-	param, err := c.solveCaptcha(t.Context(), regionInfo{Region: "cn"})
+	param, _, err := c.solveCaptcha(t.Context())
 	if err != nil {
 		t.Fatalf("solveCaptcha: %v", err)
 	}
@@ -1644,10 +1644,10 @@ func TestSolveCaptchaRunsTheConfiguredCommand(t *testing.T) {
 
 func TestSolveCaptchaReportsAFailingCommand(t *testing.T) {
 	isolateHome(t)
-	c := newTestClient(t, `{"auto_discover":false}`, &fakeTransport{})
+	c := newTestClient(t, `{"auto_discover":false,"captcha_browser":false}`, &fakeTransport{})
 	c.cfg.CaptchaCommand = filepath.Join(t.TempDir(), "does-not-exist")
 
-	if _, err := c.solveCaptcha(t.Context(), regionInfo{}); err == nil {
+	if _, _, err := c.solveCaptcha(t.Context()); err == nil {
 		t.Fatal("a missing solver should be reported")
 	} else if errors.Is(err, core.ErrNotConfigured) {
 		t.Fatal("a broken solver is an operational failure, not a configuration gap")

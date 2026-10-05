@@ -39,7 +39,7 @@ func newFailureClient(t *testing.T, guard *core.Guard, n int, transport *fakeTra
 	isolateHome(t)
 	c, err := New(core.Deps{
 		DataDir:    t.TempDir(),
-		Config:     json.RawMessage(accountsConfigJSON(n)),
+		Config:     json.RawMessage(testConfigWithoutBrowser(accountsConfigJSON(n))),
 		HTTPClient: &http.Client{Transport: transport},
 		Guard:      guard,
 	})

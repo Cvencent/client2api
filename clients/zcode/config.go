@@ -105,12 +105,23 @@ type Config struct {
 	InjectCacheControl *bool `json:"inject_cache_control"`
 
 	// Captcha: the JWT ("start-plan") channel needs a fresh Aliyun traceless
-	// verification parameter on every request.  We do not ship a solver; an
-	// operator may point at one.  Empty command == JWT accounts are unusable
-	// and are reported as such.
+	// verification parameter on every request.  The built-in browser solver
+	// handles this by default; captcha_command is an optional escape hatch for
+	// machines where the operator already has a solver.
 	CaptchaCommand string   `json:"captcha_command"`
 	CaptchaArgs    []string `json:"captcha_args"`
 	CaptchaRegion  string   `json:"captcha_region"`
+
+	// CaptchaBrowser mints the parameter with the machine's own Edge or
+	// Chrome instead of running captcha_command.  It defaults to on, because
+	// the whole point of the channel is that an ordinary Windows install can
+	// use it without setup; captcha_command still wins when both are set.
+	// A machine with no browser, or a headless server, reports the JWT channel
+	// as unusable rather than failing at request time.
+	CaptchaBrowser *bool `json:"captcha_browser"`
+	// CaptchaBrowserPath pins the executable to run when auto-detection picks
+	// the wrong browser, or finds none.
+	CaptchaBrowserPath string `json:"captcha_browser_path"`
 
 	// Panel login (Z.AI "OAuth CLI" flow).  The three endpoints below are the
 	// only knobs; the flow itself is fixed by the vendor.
@@ -152,6 +163,17 @@ func (c *Config) autoDiscover() bool {
 		return true
 	}
 	return *c.AutoDiscover
+}
+
+// captchaBrowser reports whether the built-in browser solver may be used.
+// It defaults to on: the browser is only started when a JWT request actually
+// needs a parameter, and a machine without Edge or Chrome resolves to no
+// solver at all (see newBrowserSolver).
+func (c *Config) captchaBrowser() bool {
+	if c.CaptchaBrowser == nil {
+		return true
+	}
+	return *c.CaptchaBrowser
 }
 
 func (c *Config) injectSystemBlocks() bool {

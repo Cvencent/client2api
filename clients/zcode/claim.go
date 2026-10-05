@@ -22,11 +22,11 @@ import (
 // only a real browser can mint.
 //
 // This file ports the zcode-switch reference's claim flow -- preview, pick,
-// claim, map the vendor's business codes.  Two ways to obtain the token are
-// wired in: the operator's browser, via the panel (see captcha.go), and the
-// captcha_command seam the JWT chat channel already needs.  Neither ships with
-// this module and nothing here invents one: with neither available the action
-// reports that it is not configured instead of guessing at a token.
+// claim, map the vendor's business codes.  Three ways to obtain the token are
+// wired in: the built-in browser solver (captcha_browser.go), the operator's
+// browser via the panel (captcha.go), and the captcha_command seam.  With none
+// available the action reports that it is not configured instead of guessing
+// at a token.
 //
 // Two things are deliberately NOT ported from the reference.  It keeps a
 // server-side idempotency key; the vendor has none, so the guard here is the
@@ -291,7 +291,7 @@ func (e *planEnvelope) open(path string) (json.RawMessage, error) {
 // the live vendor -- and adds the plan JWT.  It deliberately does NOT send the
 // start-plan trace trio: those three are what the chat channel needs, and the
 // billing endpoints answered live without them.
-func (c *Client) planDo(ctx context.Context, method, path string, acct *Account, verifyParam string, body any, out any) error {
+func (c *Client) planDo(ctx context.Context, method, path string, acct *Account, verifyParam, verifyRegion string, body any, out any) error {
 	var rdr io.Reader
 	if body != nil {
 		raw, err := json.Marshal(body)
@@ -321,8 +321,8 @@ func (c *Client) planDo(ctx context.Context, method, path string, acct *Account,
 		// Without the matching region header the upstream answers 3007.  The
 		// region that comes back with a browser-minted param wins: it says
 		// where the token was actually minted.
-		if region := c.captchaRegion(ctx); region != "" {
-			setHeader(req.Header, "X-Aliyun-Captcha-Verify-Region", region)
+		if verifyRegion != "" {
+			setHeader(req.Header, "X-Aliyun-Captcha-Verify-Region", verifyRegion)
 		}
 	}
 
@@ -406,7 +406,7 @@ func (c *Client) reportActivation(ctx context.Context) {
 		// No credential: this endpoint is unauthenticated, and a nil account is
 		// how planDo says so.  The identity headers -- including the
 		// X-Device-Mid the vendor checks -- are still installed.
-		if err := c.planDo(ctx, http.MethodPost, eventReportPath, nil, "", body, nil); err != nil {
+		if err := c.planDo(ctx, http.MethodPost, eventReportPath, nil, "", "", body, nil); err != nil {
 			c.pool.log("zcode: %s event report failed: %v", event, err)
 			return
 		}
@@ -447,7 +447,7 @@ func (c *Client) previewOnce(ctx context.Context, acct *Account) ([]claimPlan, e
 	q.Set("platform", c.cfg.Identity.Platform)
 
 	var env planEnvelope
-	if err := c.planDo(ctx, http.MethodGet, planPreviewPath+"?"+q.Encode(), acct, "", nil, &env); err != nil {
+	if err := c.planDo(ctx, http.MethodGet, planPreviewPath+"?"+q.Encode(), acct, "", "", nil, &env); err != nil {
 		return nil, err
 	}
 	data, err := env.open(planPreviewPath)
@@ -484,10 +484,10 @@ func (c *Client) previewOnce(ctx context.Context, acct *Account) ([]claimPlan, e
 
 // claimPlanOnce posts one claim.  It returns the vendor's own start/end stamps
 // on success.
-func (c *Client) claimPlanOnce(ctx context.Context, acct *Account, planID, verifyParam string) (startsAt, endsAt int64, err error) {
+func (c *Client) claimPlanOnce(ctx context.Context, acct *Account, planID, verifyParam, verifyRegion string) (startsAt, endsAt int64, err error) {
 	var env planEnvelope
 	body := map[string]string{"plan_id": planID}
-	if err := c.planDo(ctx, http.MethodPost, planClaimPath, acct, verifyParam, body, &env); err != nil {
+	if err := c.planDo(ctx, http.MethodPost, planClaimPath, acct, verifyParam, verifyRegion, body, &env); err != nil {
 		return 0, 0, err
 	}
 	data, err := env.open(planClaimPath)
@@ -576,7 +576,7 @@ func (c *Client) balanceOnce(ctx context.Context, acct *Account) (*planBalances,
 	q.Set("app_version", c.appVersion())
 
 	var env planEnvelope
-	if err := c.planDo(ctx, http.MethodGet, planBalancePath+"?"+q.Encode(), acct, "", nil, &env); err != nil {
+	if err := c.planDo(ctx, http.MethodGet, planBalancePath+"?"+q.Encode(), acct, "", "", nil, &env); err != nil {
 		return nil, err
 	}
 	data, err := env.open(planBalancePath)
@@ -734,9 +734,9 @@ func (c *Client) CheckinActions(ctx context.Context) []core.CheckinAction {
 		ID:    claimAction,
 		Label: "领取活动套餐 (claim a promotion)",
 		Help: "Reads the vendor's claimable plans and claims the highest-priority one. " +
-			"The claim endpoint requires a live Aliyun captcha. In the panel that runs in your own browser " +
-			"(the module reports the scene and the page runs the vendor's SDK); headless it needs " +
-			"captcha_command configured. With neither the action reports that it is not configured.",
+			"The built-in browser solver normally mints the Aliyun captcha for this automatically; " +
+			"the panel can also run the vendor's SDK in your own browser, and captcha_command remains " +
+			"the headless fallback. With none available the action reports that it is not configured.",
 	}}
 }
 
@@ -799,13 +799,13 @@ func (c *Client) Checkin(ctx context.Context, id, action string) (core.CheckinRe
 	// already is not a failure of the action, it is the next plan's turn.
 	var last *claimError
 	for _, plan := range plans {
-		verifyParam, err := c.solveCaptcha(ctx, c.pool.regionFor(ctx))
+		verifyParam, verifyRegion, err := c.solveCaptcha(ctx)
 		if err != nil {
 			// No solver is a configuration fact, not a vendor refusal.
 			c.claimFailure(&res, err)
 			return done()
 		}
-		startsAt, endsAt, err := c.claimPlanOnce(ctx, acct, plan.id(), verifyParam)
+		startsAt, endsAt, err := c.claimPlanOnce(ctx, acct, plan.id(), verifyParam, verifyRegion)
 		if err == nil {
 			res.OK = true
 			res.Code = 0
