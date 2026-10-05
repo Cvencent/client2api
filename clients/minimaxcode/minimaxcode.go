@@ -449,10 +449,15 @@ func (c *Client) ensureFresh(ctx context.Context, id string) Account {
 		}
 		return acct
 	}
-	if werr := writeBackCredential(acct.AuthPath, acct.RecordKey, access, refresh, expiresAt, acct.Generation+1); werr != nil {
-		// The token is still usable in memory for this process; only the
-		// desktop client misses out.  Say so rather than pretending it worked.
-		c.logf("minimaxcode: refreshed %s but could not write it back: %v", acct.ID, werr)
+	// A discovered row writes the rotated pair back into the desktop client's
+	// store.  A row the panel signed in has no such file; its durable home is
+	// managed_accounts.json, rewritten below.
+	if acct.AuthPath != "" {
+		if werr := writeBackCredential(acct.AuthPath, acct.RecordKey, access, refresh, expiresAt, acct.Generation+1); werr != nil {
+			// The token is still usable in memory for this process; only the
+			// desktop client misses out.  Say so rather than pretending it worked.
+			c.logf("minimaxcode: refreshed %s but could not write it back: %v", acct.ID, werr)
+		}
 	}
 	c.pool.mark(acct.ID, func(a *Account) {
 		a.Token = access
@@ -463,7 +468,21 @@ func (c *Client) ensureFresh(ctx context.Context, id string) Account {
 			a.ExpiresAt = expiresAt
 		}
 		a.Generation++
+		// A successful exchange proves the credential works again; a penalty
+		// left over from the lapsed token must not keep the row unselectable.
+		a.State = stateReady
+		a.CooldownUntil = time.Time{}
+		a.Failures = 0
+		a.LastError = ""
 	})
+	if acct.Managed {
+		// MiniMax retires the old refresh token the moment it is exchanged, so
+		// a rotated pair that is not on disk before the process ends is a
+		// credential the vendor has already spent.
+		if err := c.pool.persistManaged(); err != nil {
+			c.logf("minimaxcode: refreshed %s but could not store the rotated token: %v", acct.ID, err)
+		}
+	}
 	c.logf("minimaxcode: refreshed the access token for %s", acct.ID)
 
 	// Return the credential as it now stands rather than re-reading the pool:
@@ -483,7 +502,15 @@ func (c *Client) ensureFresh(ctx context.Context, id string) Account {
 // renew it from.  A credential that recorded no expiry counts as lapsed: the
 // store's own field is advisory, and trying is cheaper than failing.
 func renewable(a Account) bool {
-	if strings.TrimSpace(a.AuthPath) == "" || strings.TrimSpace(a.RefreshToken) == "" {
+	if strings.TrimSpace(a.RefreshToken) == "" {
+		return false
+	}
+	// The rotated pair has to land somewhere durable: a credential discovered
+	// in the desktop client's store writes back into that store, while a row
+	// the panel signed in itself owns its refresh token in this module's
+	// managed_accounts.json.  A bare typed token has neither home, so it cannot
+	// be renewed and the panel's re-login is the only honest remedy.
+	if strings.TrimSpace(a.AuthPath) == "" && !a.Managed {
 		return false
 	}
 	return a.ExpiresAt.IsZero() || !a.ExpiresAt.After(time.Now().Add(refreshLeeway))

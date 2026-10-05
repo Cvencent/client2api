@@ -180,8 +180,11 @@ Explicit `accounts` are always tried first; discovered ones fill in behind them.
 
 ## Credential renewal
 
-The desktop client and this module share one token file, and MiniMax rotates the
-refresh token on every use, so renewal is deliberately narrow:
+MiniMax rotates the refresh token on every use, so renewal is deliberately
+narrow. A row can renew when it holds a refresh token **and** a durable home for
+the rotated pair: a credential discovered in the desktop client's store writes
+back into that store, while a row the panel signed in itself owns its pair in
+`managed_accounts.json`.
 
 * It only fires when the stored `expiresAtMs` is within 60 seconds of now (or
   already past). A healthy token is never re-rotated.
@@ -192,7 +195,14 @@ refresh token on every use, so renewal is deliberately narrow:
 * On success the new `accessToken` / `refreshToken` / `expiresAtMs` /
   `generation` are written back **atomically to the same `auth.json`**, as an
   edit of one record inside a decoded `map[string]any` — every other field, every
-  other record, and the NUL-bearing keys survive.
+  other record, and the NUL-bearing keys survive. A panel-signed-in row has no
+  `auth.json`, so its rotated pair is rewritten to `managed_accounts.json`
+  instead: MiniMax has already retired the old refresh token by then, and a pair
+  lost at exit is a manual re-login later.
+* A panel-signed-in row never inherits the runtime state file's verdict for the
+  same id (`accounts.json` deliberately does not record managed rows), and an
+  empty desktop store does not park it either: the panel's own sign-in is the
+  authority on that row.
 * A failed renewal is logged and the request proceeds with the old token; it
   never fails the chat.
 * Before spending its own copy of the refresh token, the module re-reads the

@@ -229,7 +229,10 @@ func (p *pool) ensureLocked() {
 	// The remembered note is whatever the last live attempt said; for a
 	// row whose store is gone the honest note is the remedy, not the 401.
 	for _, id := range signedOut {
-		if a := p.accountLocked(id); a != nil {
+		// A managed row that happens to share the id was installed by the
+		// panel sign-in and owns its own credential; the empty desktop store
+		// behind the old id says nothing about it.
+		if a := p.accountLocked(id); a != nil && a.Source != sourceManaged {
 			a.State = stateInvalid
 			a.LastError = noteLoginRequired
 		}
@@ -310,6 +313,12 @@ func (p *pool) applyStateLocked(state persistedState) {
 		index[row.ID] = row
 	}
 	for _, a := range p.accounts {
+		if a.Source == sourceManaged {
+			// saveLocked never records a managed row: the managed store owns
+			// it in full.  A stale entry under the same id (from the days it
+			// was a discovered row) must not be pasted onto it.
+			continue
+		}
 		row, ok := index[a.ID]
 		if !ok {
 			continue
