@@ -100,13 +100,13 @@ func (p *panel) handleSchedule(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"wired":   true,
-		"enabled": st.Enabled,
+		"wired":                   true,
+		"enabled":                 st.Enabled,
 		"balance_refresh_enabled": cfg.BalanceRefresh.Enabled,
 		"balance_refresh_minutes": int(cfg.BalanceRefresh.Every / time.Minute),
-		"groups":  groups,
-		"rows":    rows,
-		"runs":    p.mergedRuns(),
+		"groups":                  groups,
+		"rows":                    rows,
+		"runs":                    p.mergedRuns(),
 	})
 }
 

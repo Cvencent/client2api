@@ -77,7 +77,6 @@ func scheduleFuncBody(t *testing.T, src, name string) string {
 	return ""
 }
 
-
 func TestScheduleFormIDsAreDeclaredAndRead(t *testing.T) {
 	src := scheduleShellSource(t)
 	// 全局默认区由 scDefaultHTML 在运行时拼出，控件 id 是拼接字符串；saveConfig 只

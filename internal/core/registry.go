@@ -567,11 +567,11 @@ func (r *Registry) ResolveCandidates(ctx context.Context, model string) ([]Candi
 	now := time.Now()
 	for i, o := range owners {
 		ranked[i] = scored{
-			Candidate:  o,
-			usable:     r.usableNow(ctx, o.Client),
+			Candidate: o,
+			usable:    r.usableNow(ctx, o.Client),
 			suppressed: r.ModelSuppressed(o.Client.Name(), o.Model, now) ||
 				r.ModelDegraded(o.Client.Name(), o.Model, now),
-			priority:   r.priority(o.Client.Name()),
+			priority: r.priority(o.Client.Name()),
 		}
 	}
 	sort.SliceStable(ranked, func(i, j int) bool {
