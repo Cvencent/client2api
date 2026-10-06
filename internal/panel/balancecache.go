@@ -279,12 +279,28 @@ func (c *balanceCache) refreshStateLocked(client string) *balanceClientRefresh {
 	return st
 }
 
+// revivePolicy says which verdicts a funded balance read may clear, so the
+// background sweep and the operator's explicit refresh can share one code path
+// without the sweep quietly defeating a cooldown the vendor asked for.
+type revivePolicy int
+
+const (
+	// reviveOff never clears a verdict: the legacy global sweep and embedders.
+	reviveOff revivePolicy = iota
+	// reviveTerminal clears only verdicts that carry no clock of their own and
+	// would otherwise park the account forever (exhausted / low_credit /
+	// quota_exceeded). The background sweep uses this so a plan that came back
+	// is noticed without an operator click.
+	reviveTerminal
+	// reviveAll also clears a live rate-limit cooldown. Only an explicit
+	// refresh -- the operator pressing 刷新余额 / 余额 -- uses it.
+	reviveAll
+)
+
 // refreshClient starts one refresh pass for one client. limit <= 0 means all
 // enabled accounts in that client; a positive limit keeps the gentle
-// background sweep small. revive is true only for explicit refreshes, where a
-// successful funded balance read is evidence that a cooling account can be
-// brought back without waiting for the operator to press revive too.
-func (c *balanceCache) refreshClient(ctx context.Context, client string, limit int, force, revive bool) (balanceRefreshStatus, bool) {
+// background sweep small. policy decides what a funded balance read may clear.
+func (c *balanceCache) refreshClient(ctx context.Context, client string, limit int, force bool, policy revivePolicy) (balanceRefreshStatus, bool) {
 	if c == nil {
 		return balanceRefreshStatus{Client: client}, false
 	}
@@ -346,7 +362,7 @@ func (c *balanceCache) refreshClient(ctx context.Context, client string, limit i
 	c.mu.Unlock()
 
 	if len(targets) > 0 {
-		go c.runRefresh(ctx, client, targets, revive)
+		go c.runRefresh(ctx, client, targets, policy)
 	}
 	return snap, true
 }
@@ -389,7 +405,7 @@ func (c *balanceCache) refresh(ctx context.Context, limit int, force bool) bool 
 				c.inflight = false
 				c.mu.Unlock()
 			}()
-			c.runRefresh(ctx, "", targets, false)
+			c.runRefresh(ctx, "", targets, reviveOff)
 		}()
 	} else {
 		c.mu.Lock()
@@ -399,7 +415,7 @@ func (c *balanceCache) refresh(ctx context.Context, limit int, force bool) bool 
 	return true
 }
 
-func (c *balanceCache) runRefresh(ctx context.Context, client string, targets []refreshTarget, revive bool) {
+func (c *balanceCache) runRefresh(ctx context.Context, client string, targets []refreshTarget, policy revivePolicy) {
 	for i, tgt := range targets {
 		if i > 0 {
 			select {
@@ -413,7 +429,7 @@ func (c *balanceCache) runRefresh(ctx context.Context, client string, targets []
 			c.finishRefresh(client, ctx.Err())
 			return
 		}
-		revived, err := c.refreshOne(ctx, tgt, revive)
+		revived, err := c.refreshOne(ctx, tgt, policy)
 		c.mu.Lock()
 		st := c.refreshStateLocked(client)
 		st.done++
@@ -498,7 +514,7 @@ func (c *balanceCache) targetsForClient(client string, limit int) []refreshTarge
 	return out
 }
 
-func (c *balanceCache) refreshOne(ctx context.Context, tgt refreshTarget, revive bool) (bool, error) {
+func (c *balanceCache) refreshOne(ctx context.Context, tgt refreshTarget, policy revivePolicy) (bool, error) {
 	var client core.Client
 	for _, cand := range c.all.All() {
 		if cand.Name() == tgt.client {
@@ -522,7 +538,14 @@ func (c *balanceCache) refreshOne(ctx context.Context, tgt refreshTarget, revive
 	}
 	c.put(tgt.client, tgt.id, bal)
 
-	if !revive || !balanceIsFunded(bal) || !balanceCanReviveState(tgt.state) {
+	if policy == reviveOff || !balanceIsFunded(bal) || !balanceCanReviveState(tgt.state) {
+		return false, nil
+	}
+	// A rate-limit verdict has its own clock and clears itself, so the
+	// background sweep leaves it alone; only an explicit refresh clears it
+	// early.  A terminal quota verdict never self-heals, so the sweep may
+	// clear it the moment a funded balance proves the plan is back.
+	if policy == reviveTerminal && balanceStateSelfHeals(tgt.state) {
 		return false, nil
 	}
 	if !tgt.enabled {
@@ -541,6 +564,18 @@ func (c *balanceCache) refreshOne(ctx context.Context, tgt refreshTarget, revive
 
 func balanceIsFunded(bal core.Balance) bool {
 	return bal.Unlimited || bal.Credits > 0
+}
+
+// balanceStateSelfHeals reports whether a verdict carries its own expiry.  A
+// cooling or rate-limited account returns to the pool when its cooldown
+// lapses, so nothing has to clear it; an exhausted one has no clock and would
+// otherwise stay parked forever.
+func balanceStateSelfHeals(state string) bool {
+	switch strings.ToLower(strings.TrimSpace(state)) {
+	case "cooling", "rate_limited":
+		return true
+	}
+	return false
 }
 
 func balanceCanReviveState(state string) bool {

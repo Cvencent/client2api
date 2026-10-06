@@ -41,7 +41,12 @@ func (c *Client) loadProviders() []storedProvider {
 	}
 	out := make([]storedProvider, 0, len(store.Providers))
 	for _, p := range store.Providers {
-		if p.ID == "" || p.APIKey == "" {
+		if p.ID == "" {
+			continue
+		}
+		// A keyless row is only legitimate for a loopback upstream; anything
+		// else missing its key is a half-written row and is dropped.
+		if p.APIKey == "" && !isLoopbackBase(p.BaseURL) {
 			continue
 		}
 		out = append(out, p)

@@ -435,6 +435,9 @@ func (p *panel) handleClientList(w http.ResponseWriter, r *http.Request) {
 //	GET    <base>/conversations           ?key=…&model=…
 //	POST   <base>/conversations           {"account":"…","key":"…"}
 //	POST   <base>/conversations/unbind    {"key":"…"}
+//
+//	POST   <base>/quick-connect/<id>/probe
+//	POST   <base>/quick-connect/<id>/connect  {"fields":{"api_key":"…"}}
 // ---------------------------------------------------------------------------
 
 func (p *panel) handleClientScoped(w http.ResponseWriter, r *http.Request) {
@@ -481,6 +484,15 @@ func (p *panel) handleClientScoped(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := p.ctx(r, 10*time.Second)
 		defer cancel()
 		writeJSON(w, http.StatusOK, core.CapabilitiesOf(ctx, client))
+
+	// One-click companion-service connections.  Probe is read-only and may
+	// be called repeatedly before anything is created; Connect is the only
+	// verb that writes.  A module without the capability answers 501.
+	case len(segs) == 3 && segs[0] == "quick-connect" && segs[2] == "probe":
+		p.quickConnectProbe(w, r, client, segs[1])
+
+	case len(segs) == 3 && segs[0] == "quick-connect" && segs[2] == "connect":
+		p.quickConnectConnect(w, r, client, segs[1])
 
 	case len(segs) == 1 && segs[0] == "accounts":
 		p.accounts(w, r, client)

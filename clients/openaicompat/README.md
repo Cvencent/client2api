@@ -70,7 +70,7 @@ providers added through the panel, and reports "no provider configured".
 | field | meaning |
 |---|---|
 | `id` | Routing prefix and the built-in default lookup key. Required. |
-| `api_key` | Bearer credential. Required; a row without one is dropped. |
+| `api_key` | Bearer credential. Required unless `base_url` is a loopback address (`127.0.0.1`, `localhost`, `::1`), where a keyless local service such as OmniRoute is expected; a row that is neither keyed nor loopback is dropped. |
 | `base_url` | OpenAI-compatible API root, no trailing slash. Empty = built-in table. |
 | `label` | Display name for the panel. Defaults to `id`. |
 | `disabled` | Parks the row without deleting it. |
@@ -119,6 +119,11 @@ enable/disable, test and refresh providers. Each account is one provider row:
   whole add flow: no browser login tab, because a key pasted here is the
   operator's own account and is the only credential these vendors issue for
   a third-party tool.
+- **One-click local sources** are the shortcut past that form.  The module
+  implements `core.QuickConnectProvider` and advertises OmniRoute: the panel
+  probes `http://127.0.0.1:20128/v1/models`, and a single click creates the
+  `omniroute` row (model `auto`, no API key) and tests it.  Probe is
+  read-only, so "check" never turns into "create" behind the operator's back.
 - **Remove** and **enable/disable** only act on panel-owned rows. A provider
   written into `clients.openai-compat.providers` is shown but reported as
   unremovable, because the durable copy lives in the config file the panel must
@@ -134,6 +139,9 @@ source, base URL, model list and in-flight count.
 
 ## What this module deliberately does not do
 
+- It does not ship, install or supervise OmniRoute.  The button connects to a
+  copy the operator already installed and started; when that process is down
+  the row fails like any other unreachable upstream, and the probe says so.
 - No OAuth, device-code, PKCE or credential-file import. Vendors whose free
   access needs an interactive login stay their own module.
 - No per-account balance or usage API: the OpenAI-compatible surface does not

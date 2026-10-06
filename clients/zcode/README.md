@@ -610,6 +610,13 @@ Order matters: the envelope codes are checked first, `402` before the keyword
 scan, and `429` **before** the keyword scan — so a `429` whose body happens to
 say "quota exceeded" stays a rate limit instead of wrongly exhausting the account.
 
+An `exhausted` mark carries no cooldown of its own — a plan's quota does not
+come back on a timer — so it is cleared by evidence instead of by the clock: a
+successful plan claim, the vendor's `1003 already claimed` (which says the
+account already holds the plan), and a funded balance read through the panel all
+drop the verdict and put the account straight back into rotation. Only `invalid`
+stays parked, because a dead credential needs a real fix rather than a retry.
+
 When no account is usable, `Chat` returns `core.ErrNotConfigured` (HTTP 503 at
 the gateway) with a detail line explaining why.
 

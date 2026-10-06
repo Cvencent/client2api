@@ -133,3 +133,47 @@ func TestBalancesRefreshRevivesFundedCoolingAccounts(t *testing.T) {
 		t.Fatalf("revive calls = %v, want the refreshed funded account revived", got)
 	}
 }
+
+// The background sweep (the pass a plain GET /balances starts) must clear a
+// verdict that has no clock of its own.  A plan that came back after being
+// parked "exhausted" is usable again the moment a funded balance is read, so
+// the operator does not have to press 刷新余额 for the state to catch up.
+func TestBalancesSoftRefreshClearsATerminalQuotaVerdict(t *testing.T) {
+	c := &revivableQuotaClient{fakeQuotaClient: quotaClient("zcode", core.AccountRecord{
+		ID: "jwt1", State: "exhausted", Enabled: true,
+	})}
+	c.balances["jwt1"] = core.Balance{Credits: 100_000_000, Total: 100_000_000}
+	p, _ := balanceHandler(Options{Registry: registryOf(c), Started: time.Now()})
+
+	doTask(t, p, http.MethodGet, "/panel/api/clients/zcode/balances", "")
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && len(c.reviveCalls()) == 0 {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := c.reviveCalls(); len(got) != 1 || got[0] != "jwt1" {
+		t.Fatalf("background refresh revive calls = %v, want the funded exhausted account cleared", got)
+	}
+}
+
+// A live rate-limit cooldown clears itself, so the background sweep must leave
+// it alone: clearing it on every page open would defeat the back-off the vendor
+// asked for.  Only an explicit operator refresh forces it.
+func TestBalancesSoftRefreshLeavesALiveCooldownAlone(t *testing.T) {
+	c := &revivableQuotaClient{fakeQuotaClient: quotaClient("wb", core.AccountRecord{
+		ID: "a1", State: "cooling", Enabled: true,
+	})}
+	c.balances["a1"] = core.Balance{Credits: 5, Total: 10}
+	p, _ := balanceHandler(Options{Registry: registryOf(c), Started: time.Now()})
+
+	doTask(t, p, http.MethodGet, "/panel/api/clients/wb/balances", "")
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && len(c.seenSoon()) == 0 {
+		time.Sleep(10 * time.Millisecond)
+	}
+	time.Sleep(150 * time.Millisecond)
+	if got := c.reviveCalls(); len(got) != 0 {
+		t.Fatalf("background refresh revived a live cooldown: %v", got)
+	}
+}

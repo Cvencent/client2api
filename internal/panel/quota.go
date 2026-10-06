@@ -237,7 +237,7 @@ func (p *panel) balances(w http.ResponseWriter, r *http.Request, c core.Client) 
 	if p.balanceCache != nil {
 		// Fire and forget from a context that outlives this request: the
 		// vendor calls must not be cancelled the moment the GET returns.
-		p.balanceCache.refreshClient(context.WithoutCancel(r.Context()), c.Name(), balanceRefreshBatch, false, false)
+		p.balanceCache.refreshClient(context.WithoutCancel(r.Context()), c.Name(), balanceRefreshBatch, false, reviveTerminal)
 		out["refresh"] = p.balanceCache.statusForClient(c.Name())
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -262,7 +262,7 @@ func (p *panel) balancesRefresh(w http.ResponseWriter, r *http.Request, c core.C
 	status := balanceRefreshStatus{Client: c.Name()}
 	started := false
 	if p.balanceCache != nil {
-		status, started = p.balanceCache.refreshClient(context.WithoutCancel(r.Context()), c.Name(), 0, true, true)
+		status, started = p.balanceCache.refreshClient(context.WithoutCancel(r.Context()), c.Name(), 0, true, reviveAll)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":      true,

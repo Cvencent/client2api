@@ -574,4 +574,12 @@ func TestManualFormLinksToTheProviderKeyPage(t *testing.T) {
 	if !strings.Contains(manual, "wireManualKeyLink(n)") {
 		t.Error("renderManual does not wire the key-page link after painting the form")
 	}
+	// A text field may carry options as suggestions.  openai-compat uses that
+	// for provider ids: known vendors stay discoverable without turning the
+	// routing prefix into a closed enum that blocks custom endpoints.
+	for _, want := range []string{"<datalist", "f.options", " list="} {
+		if !strings.Contains(manual, want) {
+			t.Errorf("renderManual does not render text-field suggestions: missing %q", want)
+		}
+	}
 }

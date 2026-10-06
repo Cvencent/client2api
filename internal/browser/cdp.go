@@ -661,7 +661,7 @@ func (p *Page) Navigate(ctx context.Context, url string) error {
 // Click dispatches a real click on the first element matching the selector.
 // It returns false when nothing matched.
 func (p *Page) Click(ctx context.Context, selector string) (bool, error) {
-	js := `(function(){var el=document.querySelector(` + jsString(selector) + `);` +
+	js := `(function(){var el=` + elementQueryJS(selector) + `;` +
 		`if(!el){return false;}el.scrollIntoView({block:'center'});el.click();return true;})()`
 	return p.EvalBool(ctx, js)
 }
@@ -670,10 +670,11 @@ func (p *Page) Click(ctx context.Context, selector string) (bool, error) {
 // typist would, which is what React-controlled inputs require: the value is
 // written through the native setter and an input event is dispatched.
 func (p *Page) Fill(ctx context.Context, selector string, value string) (bool, error) {
-	js := `(function(){var el=document.querySelector(` + jsString(selector) + `);` +
+	js := `(function(){var el=` + elementQueryJS(selector) + `;` +
 		`if(!el){return false;}` +
 		`el.focus();` +
-		`var proto=el instanceof HTMLTextAreaElement?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;` +
+		`var win=el.ownerDocument&&el.ownerDocument.defaultView||window;` +
+		`var proto=el instanceof win.HTMLTextAreaElement?win.HTMLTextAreaElement.prototype:win.HTMLInputElement.prototype;` +
 		`var setter=Object.getOwnPropertyDescriptor(proto,'value').set;` +
 		`setter.call(el,` + jsString(value) + `);` +
 		`el.dispatchEvent(new Event('input',{bubbles:true}));` +
@@ -684,7 +685,7 @@ func (p *Page) Fill(ctx context.Context, selector string, value string) (bool, e
 
 // Exists reports whether any element matches the selector.
 func (p *Page) Exists(ctx context.Context, selector string) (bool, error) {
-	return p.EvalBool(ctx, `!!document.querySelector(`+jsString(selector)+`)`)
+	return p.EvalBool(ctx, `!!(`+elementQueryJS(selector)+`)`)
 }
 
 // URL reports the page's current address.
@@ -737,6 +738,23 @@ func firstLine(s string) string {
 		return s[:i]
 	}
 	return s
+}
+
+// elementQueryJS finds the first matching element in the top document or in
+// any same-origin iframe.  Vendor login pages increasingly put the form in an
+// iframe; a top-level document.querySelector silently misses it.  The try/catch
+// keeps a cross-origin frame from breaking the whole lookup.
+func elementQueryJS(selector string) string {
+	return `(function(){function find(doc){` +
+		`var hit=doc.querySelector(` + jsString(selector) + `);` +
+		`if(hit){return hit;}` +
+		`var frames=doc.querySelectorAll('iframe,frame');` +
+		`for(var i=0;i<frames.length;i++){` +
+		`try{var child=frames[i].contentDocument;` +
+		`if(child){var nested=find(child);if(nested){return nested;}}}` +
+		`catch(e){}` +
+		`}` +
+		`return null;}return find(document);})()`
 }
 
 // jsString renders s as a JavaScript string literal.

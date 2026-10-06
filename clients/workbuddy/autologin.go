@@ -97,11 +97,11 @@ var autoPollInterval = defaultAutoPollInterval
 // The vendor's authorisation page.  Ported from wb_add_account.py's SEL_*.
 const (
 	selAgreeGate  = "button.agree-btn"
-	selPhoneTab   = `div[class*="login__tab"]`
-	selPhoneInput = `input[placeholder="请输入你的手机号"]`
-	selCodeBtn    = "button.oneid-react-verify-code__code-btn"
-	selCodeInput  = `input[placeholder="请输入验证码"]`
-	selSubmit     = "div.oneid-react-dialog-confirm-button"
+	selPhoneTab   = `div[class*="login-methods"], div[class*="login__tab"]`
+	selPhoneInput = `input#phoneNumber, input[placeholder="请输入你的手机号"]`
+	selCodeBtn    = `input.code-btn, button.code-btn, button.oneid-react-verify-code__code-btn`
+	selCodeInput  = `input#code, input[placeholder="请输入验证码"]`
+	selSubmit     = `input#kc-login, button#kc-login, div.oneid-react-dialog-confirm-button`
 	selAgreeBox   = "input.t-checkbox__former"
 )
 
@@ -762,7 +762,14 @@ func checkAgreement(ctx context.Context, page pageDriver) (bool, error) {
 // pageBody reads the rendered text.  A page that has gone away reads as empty
 // rather than failing the whole run: the poll that follows is the real verdict.
 func pageBody(ctx context.Context, page pageDriver) string {
-	body, err := page.EvalString(ctx, "document.body ? document.body.innerText : ''")
+	js := `(function(){function read(doc){` +
+		`var out=doc.body?doc.body.innerText:'';` +
+		`var frames=doc.querySelectorAll('iframe,frame');` +
+		`for(var i=0;i<frames.length;i++){` +
+		`try{var child=frames[i].contentDocument;if(child){out+='\n'+read(child);}}catch(e){}` +
+		`}` +
+		`return out;}return read(document);})()`
+	body, err := page.EvalString(ctx, js)
 	if err != nil {
 		return ""
 	}

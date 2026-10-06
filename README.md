@@ -301,6 +301,10 @@ ZCode 的一个 Zhipu 账号可能同时拥有计划 JWT、coding-plan API key �
 所以从任务看板或定时批次发起的领取（它们只拿一个账号 id）仍然能找到该账号的 JWT。
 如果厂商返回“当前用户不存在coding plan”，说明该 key 本身不属于 coding-plan 套餐，
 不是面板漏显示；请在 ZCode 客户端登录对应套餐账号后重新导入。
+
+领取成功后（或厂商回「已领取」）账号之前因为额度耗尽留下的 `exhausted` 判定会被清
+掉，立即回到调度；面板余额刷新读到有额度时也会清掉这类判定。所以「已经领了 1 亿，
+状态还停在冷却中」不会再把账号一直挡在轮转之外。
 ## Model routing
 
 Three accepted forms:
@@ -1048,6 +1052,17 @@ capability matrix and the bulk routes keep reading the static bit.
 time — deliberately serial, so a burst of upstream calls cannot look like abuse.
 An already-claimed day reports success, because the operator's question is "is
 today's reward in hand?".
+
+**One-click local sources** are the shortcut past an add form for a service that
+needs no credential of its own. A module that implements
+`core.QuickConnectProvider` advertises targets (rendered as `quick_connect` in
+its capabilities); the panel probes one read-only and, on the operator's click,
+calls `POST …/quick-connect/<id>/connect`, which creates the source through the
+same `AddAccount` path a manual row takes, then tests it. `openai-compat` is
+the first user: it offers OmniRoute at `http://127.0.0.1:20128/v1`, model
+`auto`, no API key. A loopback `base_url` is the only place an empty key is
+accepted, and the module never installs or supervises the service it points at
+— a probe that finds nothing says so rather than creating a dead row.
 
 **Sign-in** is browser-first. The panel calls `POST /login`, shows the returned
 URL (and, when the flow has one, a user code the operator confirms), then polls

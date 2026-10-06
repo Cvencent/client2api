@@ -821,6 +821,11 @@ func (c *Client) Checkin(ctx context.Context, id, action string) (core.CheckinRe
 				"starts_at": time.Unix(startsAt, 0).UTC().Format(time.RFC3339),
 				"ends_at":   time.Unix(endsAt, 0).UTC().Format(time.RFC3339),
 			}
+			// The vendor just granted a plan, so any quota verdict recorded
+			// earlier (exhausted/cooling) is stale by definition.  Clear it here
+			// rather than waiting for an operator to press 恢复, or the account
+			// stays out of rotation while holding a freshly claimed quota.
+			c.pool.clearPenalty(acct.ID)
 			return done()
 		}
 
@@ -846,7 +851,11 @@ func (c *Client) Checkin(ctx context.Context, id, action string) (core.CheckinRe
 		// a refusal -- not eligible, quota used up and a rejected argument all
 		// say something is wrong with this account or this call.
 		if last.code == claimCodeAlreadyClaimed {
+			// Already holding the plan is just as much proof that the quota is
+			// back as a fresh grant, so a verdict recorded before the claim (a
+			// 1005 quota limit, say) must not keep the account parked.
 			res.OK = true
+			c.pool.clearPenalty(acct.ID)
 		}
 		return done()
 	}

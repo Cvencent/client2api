@@ -115,13 +115,19 @@ func (cfg Config) normalize() Config {
 		p.BaseURL = strings.TrimRight(strings.TrimSpace(p.BaseURL), "/")
 		p.APIKey = strings.TrimSpace(p.APIKey)
 		p.Label = strings.TrimSpace(p.Label)
-		if p.APIKey == "" || p.ID == "" {
-			continue
-		}
 		if p.BaseURL == "" {
 			p.BaseURL = builtinBaseURL(p.ID)
 		}
 		if p.BaseURL == "" {
+			continue
+		}
+		if p.ID == "" {
+			continue
+		}
+		// A credential is required unless the upstream is on this machine.
+		// That is the one case where an empty key describes the service
+		// (OmniRoute answers keyless on loopback) instead of a mistake.
+		if p.APIKey == "" && !isLoopbackBase(p.BaseURL) {
 			continue
 		}
 		models := make([]string, 0, len(p.Models))
@@ -381,7 +387,12 @@ func reservedHeader(key string) bool {
 func (p ProviderConfig) applyHeaders(req *request) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", "Bearer "+p.APIKey)
+	// A keyless local upstream must not be sent a bare "Bearer " header:
+	// some servers reject an empty credential outright instead of treating
+	// it as an anonymous request.
+	if p.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+p.APIKey)
+	}
 	req.Header.Set("User-Agent", "client2api/1.0 (+openai-compat)")
 	for k, v := range p.ExtraHeaders {
 		req.Header.Set(k, v)

@@ -24,13 +24,16 @@ import (
 // renders these verbatim, so a module owns its own credential schema without
 // the panel knowing anything about it.
 type FieldSpec struct {
-	Key         string   `json:"key"`
-	Label       string   `json:"label"`
-	Type        string   `json:"type"` // text|password|textarea|number|bool|select
-	Required    bool     `json:"required,omitempty"`
-	Placeholder string   `json:"placeholder,omitempty"`
-	Help        string   `json:"help,omitempty"`
-	Options     []string `json:"options,omitempty"`
+	Key         string `json:"key"`
+	Label       string `json:"label"`
+	Type        string `json:"type"` // text|password|textarea|number|bool|select
+	Required    bool   `json:"required,omitempty"`
+	Placeholder string `json:"placeholder,omitempty"`
+	Help        string `json:"help,omitempty"`
+	// Options is the choice list for select fields.  For text fields the
+	// panel renders the same list as datalist suggestions, so a module can
+	// offer known values without preventing an operator-supplied one.
+	Options []string `json:"options,omitempty"`
 	// Default pre-fills the input.  Never put a real credential here.
 	Default string `json:"default,omitempty"`
 }
@@ -223,6 +226,12 @@ type Capabilities struct {
 	// vendor's key page without hard-coding the table in JavaScript.
 	KeyPages map[string]string `json:"key_pages,omitempty"`
 
+	// QuickConnect lists ready-made upstreams the panel can add with one
+	// button, without walking the whole add form.  It is the panel's only
+	// source of truth for that block: an empty slice hides it entirely, so a
+	// module that offers nothing new looks exactly as it did before.
+	QuickConnect []QuickConnectTarget `json:"quick_connect,omitempty"`
+
 	// DirectKey is the AccountFields key a module accepts the operator's OWN
 	// credential in (DirectKeyProvider).  It is the panel's licence to render a
 	// "paste your own key" control beside the browser login, and it names the
@@ -397,6 +406,67 @@ type KeyPageProvider interface {
 	KeyPageURLs(ctx context.Context) map[string]string
 }
 
+// QuickConnectTarget is one ready-made upstream a module can add in a single
+// step.  Today the only shape it describes is a companion service running on
+// this machine -- OmniRoute is the first -- so the panel's job is: check
+// whether the service answers, then ask the module to create the source.
+//
+// The point is that the operator never types a base URL or hunts for a
+// console link: both come from here.
+type QuickConnectTarget struct {
+	// ID is the value passed back to ProbeQuickConnect and ConnectQuickConnect.
+	ID string `json:"id"`
+	// Label is the operator-facing name of the service.
+	Label string `json:"label"`
+	// Help is one line explaining what connecting buys the operator.
+	Help string `json:"help,omitempty"`
+	// BaseURL is the upstream root the panel pre-fills and the module uses
+	// when the operator does not override it.
+	BaseURL string `json:"base_url"`
+	// Console is the service's own dashboard, opened in a new tab so the
+	// operator can mint a key or configure providers without leaving the flow.
+	Console string `json:"console,omitempty"`
+	// KeyOptional marks a service that answers without a credential.  The
+	// panel then labels the key box optional instead of blocking on it -- but
+	// the module still owns the final decision, because only it knows which
+	// credential the upstream actually accepts.
+	KeyOptional bool `json:"key_optional,omitempty"`
+	// Install is advisory text shown when the probe finds nothing listening.
+	// It is never executed by the gateway.
+	Install string `json:"install,omitempty"`
+}
+
+// QuickConnectStatus is the outcome of probing one target.  Running is the
+// only thing the panel acts on; Detail is the operator-facing reason, and is
+// meaningful in both directions (why it looks up, or why it does not).
+type QuickConnectStatus struct {
+	ID      string `json:"id"`
+	Running bool   `json:"running"`
+	Detail  string `json:"detail,omitempty"`
+}
+
+// QuickConnectProvider lets a module offer one-click connections to a
+// companion service on this machine.  It is optional like every other
+// capability: a module that lacks it simply renders no block.
+//
+// Probe must stay read-only.  The panel calls it before the operator has
+// committed to anything, so a probe that wrote state would turn "check" into
+// "connect" behind their back.  Connect is the only call allowed to write.
+type QuickConnectProvider interface {
+	Client
+	// QuickConnectTargets lists what this module can connect to.  It must not
+	// depend on which request arrived.
+	QuickConnectTargets(ctx context.Context) []QuickConnectTarget
+	// ProbeQuickConnect reports whether one target is reachable right now.
+	// "Not running" is a normal answer, not an error.
+	ProbeQuickConnect(ctx context.Context, id string) (QuickConnectStatus, error)
+	// ConnectQuickConnect creates the source for one target.  fields carries
+	// whatever the operator supplied in the panel (today: an optional API key
+	// and an optional base URL); an unknown key is the module's business to
+	// ignore.
+	ConnectQuickConnect(ctx context.Context, id string, fields map[string]string) (AccountRecord, error)
+}
+
 // RealmLoginProvider is a LoginProvider whose flow branches on which upstream
 // realm the account is being added to.  It is a separate interface on purpose:
 // the shared machinery is opt-in, so a module with a single realm keeps
@@ -476,6 +546,9 @@ func CapabilitiesOf(ctx context.Context, c Client) Capabilities {
 	}
 	if kp, ok := c.(KeyPageProvider); ok {
 		caps.KeyPages = kp.KeyPageURLs(ctx)
+	}
+	if qc, ok := c.(QuickConnectProvider); ok {
+		caps.QuickConnect = qc.QuickConnectTargets(ctx)
 	}
 	if rl, ok := c.(RealmLoginProvider); ok {
 		caps.Realms = rl.LoginRealms(ctx)
@@ -604,6 +677,14 @@ func AsCheckinProvider(c Client) (CheckinProvider, bool) {
 func AsModelRefresher(c Client) (ModelRefresher, bool) {
 	mr, ok := c.(ModelRefresher)
 	return mr, ok
+}
+
+// AsQuickConnectProvider narrows a registered client to the one-click local
+// source capability.  The panel answers 501 for a module that never opted in,
+// exactly as it does for every other optional capability.
+func AsQuickConnectProvider(c Client) (QuickConnectProvider, bool) {
+	qc, ok := c.(QuickConnectProvider)
+	return qc, ok
 }
 
 // Field reads one string out of an AccountSpec, trimming surrounding space.

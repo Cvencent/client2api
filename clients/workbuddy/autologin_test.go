@@ -87,7 +87,7 @@ func (p *fakePage) Fill(_ context.Context, selector, value string) (bool, error)
 func (p *fakePage) EvalString(_ context.Context, expression string) (string, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if strings.Contains(expression, "document.body") {
+	if strings.Contains(expression, "body.innerText") {
 		return p.body, nil
 	}
 	return "", nil

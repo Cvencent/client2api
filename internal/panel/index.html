@@ -316,6 +316,28 @@ label.fld > .hint { display: block; font-size: 11.5px; color: var(--ink-3); marg
 .ownkey input { min-width: 0; padding: 5px 8px; font-size: 12.5px; }
 .ownkey #ownKeyOthers { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; }
 .ownkey #ownKeyOthers .hint { margin: 0; }
+
+/* 一键连接本机服务：面板里唯一不要求操作员先知道 Base URL 的入口。
+   卡片默认只露一个主按钮，地址和 Key 收进「高级选项」，因为本机服务
+   绝大多数情况下这两个值都是对的。 */
+.qc-box { border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--line-soft)); border-radius: 9px; padding: 6px 12px 10px; margin: 2px 0 12px; background: var(--accent-soft); }
+.qc-box .qc-head .k { font-weight: 600; color: var(--ink-2); }
+.qc-box .hint { font-size: 11.5px; color: var(--ink-3); }
+.qc-card { border: 1px solid var(--line-soft); border-radius: 8px; padding: 8px 10px; margin-top: 6px; background: var(--surface); }
+.qc-card .qc-top { display: flex; align-items: center; gap: 8px; }
+.qc-card .qc-top b { font-size: 13.5px; }
+.qc-card .qc-state { margin-left: auto; font-size: 11.5px; padding: 1px 8px; border-radius: 999px; background: var(--surface-2); color: var(--ink-3); }
+.qc-card .qc-state[data-state="up"] { background: var(--ok-soft); color: var(--ok); }
+.qc-card .qc-state[data-state="down"] { background: var(--warn-soft); color: var(--warn); }
+.qc-card .qc-state[data-state="busy"] { background: var(--accent-soft); color: var(--accent); }
+.qc-card .qc-help { margin-top: 3px; }
+.qc-card .qc-acts { gap: 8px; padding: 7px 0 1px; flex-wrap: wrap; }
+.qc-card .qc-msg { margin-top: 5px; }
+.qc-card .qc-adv { margin-top: 4px; }
+.qc-card .qc-adv summary { font-size: 11.5px; color: var(--ink-3); cursor: pointer; }
+.qc-card .qc-opt { gap: 8px; padding: 5px 0 0; align-items: center; }
+.qc-card .qc-opt .k { flex: 0 0 62px; font-size: 11.5px; color: var(--ink-3); }
+.qc-card .qc-opt input { flex: 1 1 auto; min-width: 0; padding: 5px 8px; font-size: 12.5px; }
 .auto-log {
   max-height: 168px; overflow: auto; margin: 4px 0 0; padding: 8px 10px;
   border: 1px solid var(--line-soft); border-radius: 7px; background: var(--surface);
@@ -2008,6 +2030,16 @@ input, select, textarea { transition-property: border-color, box-shadow, backgro
 
       <!-- 手动添加 -->
       <div id="addTabManual" class="tab-panel" hidden>
+        <!-- 一键连接本机服务：只有声明了 capabilities.quick_connect 的模块才有。
+             探测是只读的，连接才会建档；默认只露一个主按钮。 -->
+        <div id="quickConnect" class="qc-box" hidden>
+          <div class="row qc-head">
+            <span class="k">一键连接本机服务</span>
+            <span class="grow"></span>
+            <span class="hint">不用填 Base URL，连上后自动建档并测试</span>
+          </div>
+          <div id="qcCards"></div>
+        </div>
         <div id="manFields"></div>
         <div id="manKeyLink" class="hint" hidden></div>
         <div class="fld"><label class="lb" for="manLabel">备注（可选）</label><input id="manLabel" type="text" placeholder="给这个账号起个名字"></div>
@@ -6935,7 +6967,7 @@ $("#btnKey").addEventListener("click", async () => {
 });
 
 /* ── 添加账号弹层 ─────────────────────────────────────────────────────── */
-const ADD = { tab: "login", session: null, timer: null, creds: [], realm: "", sms: null, smsTimer: null, mode: "add", restore: null, auto: null, autoTimer: null, autoSeen: 0, autoBatch: null, autoDone: "" };
+const ADD = { tab: "login", session: null, timer: null, creds: [], realm: "", sms: null, smsTimer: null, mode: "add", restore: null, auto: null, autoTimer: null, autoSeen: 0, autoBatch: null, autoDone: "", autoBusy: false };
 function openAdd() {
   // 重登复用这个弹层，所以每次打开都先把标题和那句说明擦干净；openReloginTarget
   // 会在 openAdd 之后再按需要改写它们。
@@ -6956,7 +6988,11 @@ function openAdd() {
   setAddTab("login");
   pickAddClient(CUR || NAMES[0]);
 }
-function closeAdd() { stopPoll(); stopSmsPoll(); stopAutoPoll(); releaseSms("", true); hideVeil($("#addVeil")); }
+function closeAdd() {
+  if (autoBusy()) { toast("自动添加运行中，请先点「停止」再关闭", "err"); return false; }
+  stopPoll(); stopSmsPoll(); stopAutoPoll(); releaseSms("", true); hideVeil($("#addVeil"));
+  return true;
+}
 // renderAddRealms draws the realm picker for a module that serves more than one
 // vendor service (workbuddy: 国内 CodeBuddy / 国际 WorkBuddy).  A module with a
 // single upstream reports an empty list and gets no picker at all -- the
@@ -6994,11 +7030,24 @@ function autoOn(n) { return !!(capsOf(n || $("#addClient").value) || {}).auto_lo
 function renderAddAuto(n) {
   const on = autoOn(n);
   $("#addAuto").hidden = !on;
-  if (!on) { stopAutoPoll(); ADD.auto = null; }
+  if (!on) { stopAutoPoll(); ADD.auto = null; setAutoBusy(false); }
 }
 function stopAutoPoll() { if (ADD.autoTimer) { clearInterval(ADD.autoTimer); ADD.autoTimer = null; } }
+function autoBusy() { return !!ADD.autoBusy; }
+function setAutoBusy(on) {
+  ADD.autoBusy = !!on;
+  const close = $("#btnCloseAdd");
+  close.disabled = !!on;
+  close.textContent = on ? "运行中…" : "关闭";
+  close.title = on ? "自动添加运行中，请先点「停止」再关闭" : "";
+  const picker = $("#addClient");
+  if (picker) picker.disabled = !!on;
+  const tabs = $("#addTabs");
+  if (tabs) tabs.querySelectorAll("button").forEach(b => { b.disabled = !!on; });
+}
 function resetAuto() {
   stopAutoPoll();
+  setAutoBusy(false);
   ADD.auto = null; ADD.autoSeen = 0; ADD.autoBatch = null; ADD.autoDone = "";
   $("#autoLog").textContent = ""; $("#autoLog").hidden = true;
   $("#autoStatus").textContent = "用接码平台自动完成整个登录";
@@ -7029,9 +7078,10 @@ function autoBatchDone() {
 
 function autoBatchFinish() {
   const b = ADD.autoBatch;
-  if (!b) return;
+  if (!b) { setAutoBusy(false); return; }
   stopAutoPoll();
   ADD.auto = null;
+  setAutoBusy(false);
   $("#btnAutoStart").disabled = false;
   $("#btnAutoStop").hidden = true;
   if (b.added >= b.want) {
@@ -7070,6 +7120,7 @@ async function autoStartRun(n) {
 async function autoStart() {
   const n = $("#addClient").value;
   if (!autoOn(n)) return;
+  setAutoBusy(true);
   stopAutoPoll();
   // 重登一次只针对一个账号，所以只有普通添加才走批量。
   const batch = ADD.mode !== "restore";
@@ -7097,6 +7148,7 @@ async function autoStart() {
     toast("自动添加启动失败：" + res.err, "err");
     $("#btnAutoStart").disabled = false;
     $("#btnAutoStop").hidden = true;
+    setAutoBusy(false);
   }
 }
 async function autoPoll() {
@@ -7109,6 +7161,7 @@ async function autoPoll() {
     $("#btnAutoStart").disabled = false;
     $("#btnAutoStop").hidden = true;
     $("#autoStatus").textContent = "进度查询失败：" + r.err;
+    setAutoBusy(false);
     return;
   }
   renderAutoJob(r.data || {});
@@ -7188,11 +7241,15 @@ function renderAutoJob(job) {
       // 重登是一次性模式：跑完就回到普通添加，免得下一次「一键自动添加」还拿着
       // 上一个账号的号码。自动重登成功后凭据是就地覆盖的，不需要额外复苏。
       ADD.mode = "add"; ADD.restore = null;
+      $("#btnAutoStart").disabled = false;
+      $("#btnAutoStop").hidden = true;
+      setAutoBusy(false);
       refreshAll();
     }
   } else if (job.state === "cancelled") {
     $("#autoStatus").textContent = b ? "已停止：" + autoBatchText() : "已停止";
     if (b) autoBatchFinish();
+    else setAutoBusy(false);
   } else {
     const msg = job.message || "未知错误";
     if (b) {
@@ -7203,6 +7260,7 @@ function renderAutoJob(job) {
     } else {
       $("#autoStatus").textContent = "失败：" + msg;
       toast("自动添加失败：" + msg, "err");
+      setAutoBusy(false);
     }
   }
 }
@@ -7348,6 +7406,7 @@ function pickAddClient(n) {
   renderAddSms(n);
   renderAddAuto(n);
   renderOwnKey(n);
+  renderQuickConnect(n);
   // 「浏览器登录」这一个 tab 其实是「不导入、不手填」的入口：浏览器登录、自动添加、
   // 接码三块都挂在它下面。任何一块存在，这个 tab 就得留着。
   const canLoginTab = loginOn(n) || autoOn(n) || smsOn(n);
@@ -7661,8 +7720,101 @@ function renderOwnKeyOthers(n, data, newID) {
     others.map(a => '<button class="xs" data-ownkey-off="' + esc(a.id) + '">停用 ' + esc(a.label || a.id) + "</button>").join("");
 }
 
+/* 一键连接本机服务。模块用 capabilities.quick_connect 声明它可以一键连上哪些本机
+   服务（目前是 OmniRoute）。探测是只读的：先确认服务在不在，再决定要不要建档，
+   这样「检测」和「连接」不会变成同一件事。 */
+function qcTargets(n) {
+  const k = capsOf(n) || {};
+  return Array.isArray(k.quick_connect) ? k.quick_connect : [];
+}
+function qcTargetFor(n, id) {
+  return qcTargets(n).find(t => t && t.id === id) || null;
+}
+function qcStateText(state) {
+  if (state === "busy") return "处理中…";
+  if (state === "up") return "运行中";
+  if (state === "down") return "未连接";
+  return "未检测";
+}
+function qcSetState(card, state, msg) {
+  const s = card.querySelector(".qc-state");
+  if (s) { s.dataset.state = state; s.textContent = qcStateText(state); }
+  const box = card.querySelector(".qc-msg");
+  if (!box) return;
+  if (msg) { box.hidden = false; box.textContent = msg; } else { box.hidden = true; box.textContent = ""; }
+}
+function renderQuickConnect(n) {
+  const box = $("#quickConnect"), list = $("#qcCards");
+  if (!box || !list) return;
+  const targets = qcTargets(n);
+  if (!targets.length) { box.hidden = true; list.innerHTML = ""; return; }
+  box.hidden = false;
+  list.innerHTML = targets.map(t => {
+    const id = String(t.id || "");
+    if (!id) return "";
+    const keyNote = t.key_optional ? "可留空（本机服务）" : "必填";
+    return '<div class="qc-card" data-qc="' + esc(id) + '" data-console="' + esc(t.console || "") + '">' +
+      '<div class="qc-top"><b>' + esc(t.label || id) + '</b><span class="qc-state" data-state="idle">未检测</span></div>' +
+      (t.help ? '<div class="hint qc-help">' + esc(t.help) + '</div>' : "") +
+      '<div class="row qc-acts">' +
+        '<button class="xs primary" data-qc-connect>一键连接</button>' +
+        '<button class="xs" data-qc-probe>检测服务</button>' +
+        (t.console ? '<button class="xs" data-qc-console>打开控制台</button>' : "") +
+      '</div>' +
+      '<div class="hint qc-msg" hidden></div>' +
+      '<details class="qc-adv"><summary>高级选项</summary>' +
+        '<div class="row qc-opt"><span class="k">服务地址</span><input class="qc-base" type="text" spellcheck="false" value="' + esc(t.base_url || "") + '"></div>' +
+        '<div class="row qc-opt"><span class="k">API Key</span><input class="qc-key" type="password" spellcheck="false" autocomplete="off" placeholder="' + esc(keyNote) + '"></div>' +
+      '</details>' +
+    '</div>';
+  }).join("");
+}
+async function qcProbe(n, card) {
+  qcSetState(card, "busy", "");
+  const r = await api(cbase(n) + "/quick-connect/" + aid(card.dataset.qc) + "/probe", { method: "POST", body: {} });
+  if (!r.ok) { qcSetState(card, "down", "检测失败：" + r.err); return false; }
+  const st = r.data || {};
+  if (st.running) { qcSetState(card, "up", st.detail || "服务正在运行"); return true; }
+  // 「没检测到」时把怎么启动写清楚：这是整套流程里唯一需要操作员动手的地方。
+  const t = qcTargetFor(n, card.dataset.qc);
+  const hint = t && t.install ? "装好并启动它：" + t.install : "";
+  qcSetState(card, "down", [st.detail, hint].filter(Boolean).join("　"));
+  return false;
+}
+async function qcConnect(n, card) {
+  const btn = card.querySelector("[data-qc-connect]");
+  const base = (card.querySelector(".qc-base") || {}).value || "";
+  const key = (card.querySelector(".qc-key") || {}).value || "";
+  if (btn) btn.disabled = true;
+  qcSetState(card, "busy", "正在连接…");
+  const r = await api(cbase(n) + "/quick-connect/" + aid(card.dataset.qc) + "/connect",
+    { method: "POST", body: { fields: { base_url: base.trim(), api_key: key.trim() } } });
+  if (!r.ok) { if (btn) btn.disabled = false; qcSetState(card, "down", "连接失败：" + r.err); return; }
+  applyAccounts(n, r.data);
+  const rec = (r.data && r.data.account) || {};
+  if (!rec.id) {
+    if (btn) btn.disabled = false;
+    qcSetState(card, "up", "已连接"); toast("已连接"); await refreshAll(); return;
+  }
+  // 建档和能用是两件事：立刻跑一次真实测试，免得操作员看到一行「已连接」却调不动。
+  qcSetState(card, "busy", "已添加，正在测试…");
+  const t = await api(cbase(n) + "/accounts/" + aid(rec.id) + "/test", { method: "POST", body: {} });
+  if (btn) btn.disabled = false;
+  const res = (t.data && t.data.result) || null;
+  if (t.ok && res && res.ok) {
+    qcSetState(card, "up", "已连接，测试通过");
+    toast((rec.label || rec.id) + " 已连接");
+  } else {
+    const why = (res && res.error) || t.err || "测试未通过";
+    qcSetState(card, "down", "已添加，但测试未通过：" + why);
+    toast("已添加，但测试未通过", "err");
+  }
+  await refreshAll();
+}
+
 function renderManual() {
   const n = $("#addClient").value, k = capsOf(n) || {};
+  renderQuickConnect(n);
   const fs = k.fields || [];
   $("#manFields").innerHTML = fs.map(f => {
     const id = "mf_" + f.key, lb = '<label class="lb" for="' + id + '">' + esc(f.label || f.key) + (f.required ? " *" : "") + '</label>';
@@ -7670,7 +7822,13 @@ function renderManual() {
     if (f.type === "textarea") inp = '<textarea id="' + id + '" data-key="' + esc(f.key) + '" placeholder="' + esc(f.placeholder || "") + '"></textarea>';
     else if (f.type === "bool") inp = '<input id="' + id + '" data-key="' + esc(f.key) + '" type="checkbox"' + (f.default === "true" ? " checked" : "") + '>';
     else if (f.type === "select") inp = '<select id="' + id + '" data-key="' + esc(f.key) + '">' + (f.options || []).map(o => '<option>' + esc(o) + '</option>').join("") + '</select>';
-    else inp = '<input id="' + id + '" data-key="' + esc(f.key) + '" type="' + (f.type === "number" ? "number" : (f.type === "password" ? "password" : "text")) + '" placeholder="' + esc(f.placeholder || "") + '" value="' + esc(f.default || "") + '">';
+    else {
+      const typ = f.type === "number" ? "number" : (f.type === "password" ? "password" : "text");
+      const opts = Array.isArray(f.options) ? f.options : [];
+      const listId = id + "_list";
+      inp = '<input id="' + id + '" data-key="' + esc(f.key) + '" type="' + typ + '" placeholder="' + esc(f.placeholder || "") + '" value="' + esc(f.default || "") + '"' + (opts.length ? ' list="' + listId + '"' : "") + '>';
+      if (opts.length) inp += '<datalist id="' + listId + '">' + opts.map(o => '<option value="' + esc(o) + '"></option>').join("") + '</datalist>';
+    }
     return '<div class="fld">' + lb + inp + (f.help ? '<div class="hint">' + esc(f.help) + '</div>' : "") + '</div>';
   }).join("") || '<div class="hint">该客户端没有声明可填字段</div>';
   wireManualKeyLink(n);
@@ -8179,6 +8337,19 @@ $("#btnImportSel").addEventListener("click", () => doImport(false));
 $("#btnImportAll").addEventListener("click", () => doImport(true));
 $("#btnImportBundle").addEventListener("click", () => doImportBundle());
 $("#btnManual").addEventListener("click", doManual);
+// 一键连接的按钮是委派的：卡片由 renderQuickConnect 重建，单独绑会在重建后失效。
+$("#quickConnect").addEventListener("click", ev => {
+  const card = ev.target.closest && ev.target.closest(".qc-card");
+  if (!card) return;
+  const n = $("#addClient").value;
+  if (ev.target.closest("[data-qc-console]")) {
+    const url = card.dataset.console;
+    if (url) window.open(url, "_blank", "noopener");
+    return;
+  }
+  if (ev.target.closest("[data-qc-probe]")) { qcProbe(n, card); return; }
+  if (ev.target.closest("[data-qc-connect]")) { qcConnect(n, card); return; }
+});
 $("#btnRefresh").addEventListener("click", refreshCurrentView);
 $("#btnCapClose").addEventListener("click", () => { if (CAP.resolve) capSettle(false, new Error("已取消人机验证")); });
 $("#capVeil").addEventListener("click", ev => { if (ev.target === $("#capVeil") && CAP.resolve) capSettle(false, new Error("已取消人机验证")); });

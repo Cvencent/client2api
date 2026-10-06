@@ -22,7 +22,7 @@ func (c *Client) AccountFields(ctx context.Context) []core.FieldSpec {
 		{
 			Key:         "provider",
 			Label:       "Provider id",
-			Type:        "select",
+			Type:        "text",
 			Required:    true,
 			Options:     builtinProviderIDs(),
 			Placeholder: "groq",
@@ -91,13 +91,6 @@ func (c *Client) AddAccount(ctx context.Context, spec core.AccountSpec) (core.Ac
 	if strings.ContainsAny(id, " \t\r\n") {
 		return core.AccountRecord{}, fmt.Errorf("the provider id must not contain whitespace")
 	}
-	key := strings.TrimSpace(spec.Fields["api_key"])
-	if key == "" {
-		return core.AccountRecord{}, fmt.Errorf("an API key is required")
-	}
-	if strings.ContainsAny(key, " \t\r\n") {
-		return core.AccountRecord{}, fmt.Errorf("the API key contains whitespace; paste it as a single unbroken token")
-	}
 	if existing, ok := c.pool.byID(id); ok && existing.Source == sourceConfig {
 		return core.AccountRecord{}, fmt.Errorf("provider %q already comes from the module configuration; change it there instead", id)
 	}
@@ -108,6 +101,16 @@ func (c *Client) AddAccount(ctx context.Context, spec core.AccountSpec) (core.Ac
 	}
 	if baseURL == "" {
 		return core.AccountRecord{}, fmt.Errorf("provider %q has no built-in base URL; enter one in the base_url field", id)
+	}
+
+	// A key is required unless the upstream is on this machine: a loopback
+	// base URL is the one case where the service itself answers keyless.
+	key := strings.TrimSpace(spec.Fields["api_key"])
+	if key == "" && !isLoopbackBase(baseURL) {
+		return core.AccountRecord{}, fmt.Errorf("an API key is required")
+	}
+	if strings.ContainsAny(key, " \t\r\n") {
+		return core.AccountRecord{}, fmt.Errorf("the API key contains whitespace; paste it as a single unbroken token")
 	}
 
 	row := storedProvider{
@@ -227,7 +230,7 @@ func (c *Client) RefreshAccount(ctx context.Context, id string) ([]core.RefreshR
 	out := make([]core.RefreshResult, 0, len(targets))
 	for _, rec := range targets {
 		res := core.RefreshResult{AccountID: rec.ID}
-		if rec.APIKey == "" {
+		if rec.APIKey == "" && !isLoopbackBase(rec.BaseURL) {
 			res.Error = "this provider has no API key"
 			out = append(out, res)
 			continue
@@ -288,7 +291,7 @@ func (c *Client) probeProvider(ctx context.Context, prov ProviderConfig, rec pro
 	start := c.now()
 	defer func() { res.ElapsedMS = c.now().Sub(start).Milliseconds() }()
 
-	if rec.APIKey == "" {
+	if rec.APIKey == "" && !isLoopbackBase(rec.BaseURL) {
 		res.Error = "this provider has no API key"
 		return res
 	}

@@ -139,6 +139,26 @@ func TestAccountFieldsDeclareProviderAndKey(t *testing.T) {
 	}
 }
 
+// The provider id is a routing prefix, not a closed enum: arbitrary
+// OpenAI-compatible sources are explicitly supported. The form must keep the
+// known ids as suggestions while still allowing an operator to type one.
+func TestProviderFieldAcceptsCustomIDs(t *testing.T) {
+	c := newTestClient(t, t.TempDir())
+	for _, f := range c.AccountFields(context.Background()) {
+		if f.Key != "provider" {
+			continue
+		}
+		if f.Type == "select" {
+			t.Fatal("provider is a select field, so custom provider ids cannot be entered")
+		}
+		if len(f.Options) == 0 {
+			t.Fatal("provider has no built-in suggestions")
+		}
+		return
+	}
+	t.Fatal("provider field not found")
+}
+
 // The add form's provider picker is only half the operator's job; the other
 // half is getting a key from that vendor.  Every provider the field spec
 // offers must therefore have a key page, or the panel's "go get a key" link

@@ -399,6 +399,30 @@ func (p *pool) revive(id string) bool {
 	return false
 }
 
+// clearPenalty drops the runtime verdict on one account without touching its
+// enabled flag.  It is what a successful vendor action uses to tell the pool
+// that a verdict it recorded earlier no longer holds: a plan claim proves the
+// quota is back, so the account must re-enter rotation rather than stay parked
+// until an operator presses 恢复.  Unlike revive it never re-enables a
+// credential the operator parked on purpose.
+func (p *pool) clearPenalty(id string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.ensureLocked()
+
+	for _, a := range p.accounts {
+		if a.ID != id {
+			continue
+		}
+		a.State = stateReady
+		a.CooldownUntil = time.Time{}
+		a.Note = ""
+		a.LastError = ""
+		p.saveLocked()
+		return
+	}
+}
+
 // replaceSecret installs a jwt the desktop client has renewed.
 func (p *pool) replaceSecret(id, secret, userID string) {
 	p.mu.Lock()

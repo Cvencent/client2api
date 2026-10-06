@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"fmt"
 	"regexp"
 	"sort"
 	"strings"
@@ -67,6 +68,48 @@ func shellDanglingIDs(src string) []string {
 	}
 	sort.Strings(dangling)
 	return dangling
+}
+
+// shellDuplicateIDs returns, sorted, every id="..." literal the file declares
+// more than once.  It scans the whole file, so ids the script injects through
+// innerHTML template strings count too -- those are exactly the ones a human
+// eye skips.
+func shellDuplicateIDs(src string) []string {
+	counts := map[string]int{}
+	for _, m := range shellIDAttr.FindAllStringSubmatch(src, -1) {
+		counts[m[1]]++
+	}
+	dups := []string{}
+	for id, n := range counts {
+		if n > 1 {
+			dups = append(dups, fmt.Sprintf("%s(x%d)", id, n))
+		}
+	}
+	sort.Strings(dups)
+	return dups
+}
+
+// TestShellHasNoDuplicateElementIDs 既然已经开始扫 id，就把重复也一并守住。
+// getElementById 和 $("#x") 只认第一个同名元素，重复的 id 会让后一个永远拿不到
+// 事件。这不是假设：一键连接的卡片就曾经被渲染进任务中心同名的 qcList，点
+// 「检测服务」完全没反应。
+func TestShellHasNoDuplicateElementIDs(t *testing.T) {
+	src := string(indexHTML)
+	if dups := shellDuplicateIDs(src); len(dups) > 0 {
+		t.Errorf("shell 里有重复的 id（同名元素只有第一个能被 $ 拿到）：%s", strings.Join(dups, ", "))
+	}
+}
+
+// TestShellDuplicateIDGuardFlagsARepeat 是上面那个守卫的反向证据：一个被渲染
+// 两次的模板必须被抓出来，否则守卫在真出事时是不会叫的。
+func TestShellDuplicateIDGuardFlagsARepeat(t *testing.T) {
+	const src = `<div id="once"></div>
+<div id="twice"></div>
+<script>const t = '&lt;span id="twice"&gt;'</script>`
+	got := strings.Join(shellDuplicateIDs(src), ",")
+	if want := "twice(x2)"; got != want {
+		t.Fatalf("duplicate ids = %q, want %q", got, want)
+	}
 }
 
 func TestShellScriptOnlyUsesIDsTheMarkupDefines(t *testing.T) {
