@@ -299,6 +299,11 @@ func TestAutoLoginHappyPath(t *testing.T) {
 			t.Fatalf("log is missing %q: %v", want, logTexts(log))
 		}
 	}
+	// The outcome has to be the last line, so the log box the operator watches
+	// ends with "did it work?" answered instead of trailing off at a step.
+	if last := log[len(log)-1].Text; !strings.Contains(last, "登录成功") {
+		t.Fatalf("log does not end with the outcome: %q", last)
+	}
 }
 
 func logContains(lines []core.AutoLogLine, needle string) bool {
@@ -316,6 +321,27 @@ func logTexts(lines []core.AutoLogLine) []string {
 		out = append(out, l.Text)
 	}
 	return out
+}
+
+// TestAutoJobFailLandsInTheLog pins the fix for the "log just stops at 打开授权页…"
+// confusion: a terminal failure has to append its reason, not only set the
+// status line the operator may never look at.
+func TestAutoJobFailLandsInTheLog(t *testing.T) {
+	job := &autoJob{id: "job", state: core.AutoLoginRunning, startedAt: time.Now()}
+	job.logf("打开授权页…")
+	job.fail("找不到手机号输入框，厂商登录页可能已改版")
+
+	snap := job.snapshot()
+	if snap.State != core.AutoLoginFailed {
+		t.Fatalf("state = %q, want failed", snap.State)
+	}
+	if snap.Message != "找不到手机号输入框，厂商登录页可能已改版" {
+		t.Fatalf("message = %q, want the reason", snap.Message)
+	}
+	last := snap.Log[len(snap.Log)-1].Text
+	if !strings.Contains(last, "失败：") || !strings.Contains(last, "找不到手机号输入框") {
+		t.Fatalf("last log line = %q, want the failure reason", last)
+	}
 }
 
 func TestAutoLoginSkipsPoolPhones(t *testing.T) {

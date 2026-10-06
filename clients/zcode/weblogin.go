@@ -43,9 +43,6 @@ const (
 	// The two flow endpoints, relative to oauthAPIBase().
 	oauthInitPath = "/oauth/cli/init"
 	oauthPollPath = "/oauth/cli/poll"
-	// oauthProvider is the only body field the reference sends on init.
-	oauthProvider = "zai"
-
 	// The exchange walk, relative to oauthExchangeBase().
 	exchangeLoginPath    = "/api/auth/z/login"
 	exchangeCustomerPath = "/api/biz/customer/getCustomerInfo"
@@ -91,9 +88,13 @@ const (
 // webLoginEntry is the durable half of a session.  It is a separate struct so
 // the session's mutex is never copied.
 type webLoginEntry struct {
-	SessionID string    `json:"session_id"`
-	PollToken string    `json:"poll_token"`
-	FlowID    string    `json:"flow_id"`
+	SessionID string `json:"session_id"`
+	PollToken string `json:"poll_token"`
+	FlowID    string `json:"flow_id"`
+	// Realm is the Zhipu service this flow signs in to ("zai" or
+	// "bigmodel").  It is persisted because the poll has to know which
+	// credential walk to run, and a gateway restart must not change that.
+	Realm     string    `json:"realm,omitempty"`
 	URL       string    `json:"url,omitempty"`
 	Code      string    `json:"code,omitempty"`
 	StartedAt time.Time `json:"started_at"`
@@ -158,6 +159,7 @@ func (s *webLogin) snapshot() core.LoginState {
 		Code:      s.Code,
 		Message:   core.Redact(message),
 		AccountID: accountID,
+		Realm:     s.Realm,
 	}
 }
 
@@ -287,13 +289,50 @@ func (c *Client) pruneLogins() {
 // core.LoginProvider
 // ---------------------------------------------------------------------------
 
-// StartLogin implements core.LoginProvider.  It performs the flow's init call
-// and returns a pending state whose URL the operator opens in a browser.
+// Both interfaces are asserted because the panel lights its picker from the
+// type assertion: a typo here would look like "this module has no realms"
+// rather than a missing feature.
+var (
+	_ core.LoginProvider      = (*Client)(nil)
+	_ core.RealmLoginProvider = (*Client)(nil)
+)
+
+// StartLogin implements core.LoginProvider.  It starts a flow on the module's
+// configured default realm.
 //
 // Unlike qwenwork this does not short-circuit when an account is already
 // usable: zcode's pool is explicitly multi-account, so a second panel login is
 // a legitimate operation.
 func (c *Client) StartLogin(ctx context.Context) (core.LoginState, error) {
+	return c.StartLoginRealm(ctx, "")
+}
+
+// LoginRealms implements core.RealmLoginProvider.  Zhipu runs two services and
+// a credential from one cannot sign in on the other, so the operator has to
+// pick before the flow starts: a mainland phone number on the international
+// page fails its human check ("请求失败"), and the mainland page is the only
+// one that issues a mainland credential.
+func (c *Client) LoginRealms(context.Context) []core.LoginRealm {
+	return []core.LoginRealm{
+		{Code: regionZai, Name: "国际版", Help: "Z.ai（chat.z.ai）：国际手机号 / 邮箱账号"},
+		{Code: regionBigmodel, Name: "国内版", Help: "BigModel（bigmodel.cn）：国内手机号账号"},
+	}
+}
+
+// StartLoginRealm implements core.RealmLoginProvider.  An empty realm asks for
+// the module's configured default (Config.OAuthProvider); a realm the panel
+// did not get from LoginRealms is refused rather than silently mapped onto the
+// other service, because that would store a credential the operator cannot use.
+func (c *Client) StartLoginRealm(ctx context.Context, want string) (core.LoginState, error) {
+	realm := c.cfg.oauthLoginRealm()
+	if strings.TrimSpace(want) != "" {
+		picked, ok := parseLoginRealm(want)
+		if !ok {
+			return core.LoginState{}, fmt.Errorf("unknown sign-in realm %q (want %q or %q)",
+				want, regionZai, regionBigmodel)
+		}
+		realm = picked
+	}
 	if c.pool.dir == "" {
 		return core.LoginState{}, errors.New("no data directory: a credential could not be stored")
 	}
@@ -303,7 +342,7 @@ func (c *Client) StartLogin(ctx context.Context) (core.LoginState, error) {
 	if err != nil {
 		return core.LoginState{}, err
 	}
-	flow, err := c.oauthInit(ctx, token)
+	flow, err := c.oauthInit(ctx, token, realm)
 	if err != nil {
 		return core.LoginState{}, err
 	}
@@ -314,16 +353,27 @@ func (c *Client) StartLogin(ctx context.Context) (core.LoginState, error) {
 			SessionID: shortID(),
 			PollToken: token,
 			FlowID:    flow.FlowID,
+			Realm:     realm,
 			URL:       flow.AuthorizeURL,
 			Code:      userCodeFromURL(flow.AuthorizeURL),
 			StartedAt: started,
 			ExpiresAt: started.Add(c.cfg.loginTTL()),
 		},
-		state:   core.LoginPending,
-		message: "open the URL in a browser and finish the Z.AI sign-in; this panel keeps polling",
+		state: core.LoginPending,
+		message: "open the URL in a browser and finish the " + loginRealmName(realm) +
+			" sign-in; this panel keeps polling",
 	}
 	c.putLogin(sess)
 	return sess.snapshot(), nil
+}
+
+// loginRealmName is the operator-facing name of a realm, used in the pending
+// message.  It mirrors LoginRealms so the two never drift.
+func loginRealmName(realm string) string {
+	if realm == regionBigmodel {
+		return "BigModel"
+	}
+	return "Z.AI"
 }
 
 // PollLogin implements core.LoginProvider.  It polls the vendor exactly once
@@ -389,7 +439,7 @@ func (c *Client) PollLogin(ctx context.Context, sessionID string) (core.LoginSta
 	// before any of it can appear in a note.
 	secrets = append(secrets, data.Token, data.accessToken())
 
-	acct, note, err := c.credentialFromAuth(ctx, data)
+	acct, note, err := c.credentialFromAuth(ctx, data, sess.Realm)
 	if err != nil {
 		sess.set(core.LoginFailed, scrubSecrets(err.Error(), secrets...), "")
 		c.persistLogins()
@@ -460,10 +510,13 @@ type oauthFlow struct {
 	AuthorizeURL string `json:"authorize_url"`
 }
 
-// oauthInit starts the flow.  The request carries only the two headers the
-// official CLI sends.
-func (c *Client) oauthInit(ctx context.Context, pollToken string) (oauthFlow, error) {
-	body := map[string]string{"provider": oauthProvider}
+// oauthInit starts the flow on one realm.  `provider` is the realm code the
+// vendor's own client sends ("zai" for chat.z.ai, "bigmodel" for
+// bigmodel.cn) and it is what makes the returned authorize_url point at the
+// matching login page.  The request carries only the two headers the official
+// CLI sends.
+func (c *Client) oauthInit(ctx context.Context, pollToken, provider string) (oauthFlow, error) {
+	body := map[string]string{"provider": provider}
 	if id := strings.TrimSpace(c.cfg.OAuthClientID); id != "" {
 		body["client_id"] = id
 	}
@@ -598,7 +651,10 @@ func (c *Client) doLogin(req *http.Request) ([]byte, int, error) {
 // key is preferred, because a JWT account needs captcha_command to be usable
 // at all.  If the exchange fails we still keep the JWT, exactly like the
 // reference, and say so in the note.
-func (c *Client) credentialFromAuth(ctx context.Context, data oauthPollData) (managedAccount, string, error) {
+// realm is the service the flow signed in to.  An empty realm means "the
+// session predates the picker", and the international walk -- the only one
+// that existed then -- is what it must keep doing.
+func (c *Client) credentialFromAuth(ctx context.Context, data oauthPollData, realm string) (managedAccount, string, error) {
 	jwt := strings.TrimSpace(data.Token)
 	access := data.accessToken()
 	// The poll usually hands back the plan JWT beside the OAuth access token,
@@ -608,12 +664,28 @@ func (c *Client) credentialFromAuth(ctx context.Context, data oauthPollData) (ma
 	// who it belongs to once the response is gone.
 	userID := jwtUserID(jwt)
 
+	if realm == regionBigmodel {
+		// 国内版没有 z.ai 的 business-token 交换：厂商自己的 BigModel 适配器原样
+		// 使用轮询回来的 token set（连 businessTokenResolver 都没有），所以这里也
+		// 只认它直接给的凭据。多打一次 api.z.ai 的兑换只会拿到 401/404，然后让一次
+		// 本来成功的登录在最后一步失败。
+		if jwt == "" {
+			return managedAccount{}, "", errors.New(
+				"the vendor reported the mainland sign-in as complete but returned no plan credential")
+		}
+		acct, err := c.panelAccount(kindJWT, jwt, userID, realm)
+		if err != nil {
+			return managedAccount{}, "", err
+		}
+		return acct, "signed in; the mainland service returned a plan JWT", nil
+	}
+
 	if access == "" {
 		if jwt == "" {
 			return managedAccount{}, "", errors.New(
 				"the vendor reported the sign-in as complete but returned no credential")
 		}
-		acct, err := c.panelAccount(kindJWT, jwt, userID)
+		acct, err := c.panelAccount(kindJWT, jwt, userID, realm)
 		if err != nil {
 			return managedAccount{}, "", err
 		}
@@ -630,7 +702,7 @@ func (c *Client) credentialFromAuth(ctx context.Context, data oauthPollData) (ma
 		// is the credential it actually issued for this plan.)
 		return managedAccount{}, "", errors.New(scrubSecrets(err.Error(), access, jwt))
 	}
-	acct, acctErr := c.panelAccount(kindAPIKey, key, userID)
+	acct, acctErr := c.panelAccount(kindAPIKey, key, userID, realm)
 	if acctErr != nil {
 		return managedAccount{}, "", acctErr
 	}
@@ -640,7 +712,11 @@ func (c *Client) credentialFromAuth(ctx context.Context, data oauthPollData) (ma
 // panelAccount builds the stored entry for a credential the panel obtained.
 // userID is the account the credential belongs to, when the sign-in response
 // named one; it is recorded because it cannot be recovered afterwards.
-func (c *Client) panelAccount(kind, secret, userID string) (managedAccount, error) {
+//
+// realm is the service the credential came from; it becomes the account's
+// region, and therefore its provider and default base URL, so a mainland
+// sign-in is not filed as an international account.
+func (c *Client) panelAccount(kind, secret, userID, realm string) (managedAccount, error) {
 	limit := maxAPIKeyBytes
 	if kind == kindJWT {
 		limit = maxJWTBytes
@@ -654,7 +730,7 @@ func (c *Client) panelAccount(kind, secret, userID string) (managedAccount, erro
 		ID:        c.pool.freshManagedID(),
 		Label:     labelPanelLogin,
 		Kind:      kind,
-		Region:    regionZai,
+		Region:    panelLoginRegion(realm),
 		UserID:    strings.TrimSpace(userID),
 		Origin:    originPanelLogin,
 		Enabled:   &enabled,
@@ -667,6 +743,16 @@ func (c *Client) panelAccount(kind, secret, userID string) (managedAccount, erro
 		m.APIKey = secret
 	}
 	return m, nil
+}
+
+// panelLoginRegion maps a sign-in realm onto the account region code.  The two
+// vocabularies are deliberately the same strings; an empty realm is a session
+// started before the picker existed, which was always the international one.
+func panelLoginRegion(realm string) string {
+	if realm == regionBigmodel {
+		return regionBigmodel
+	}
+	return regionZai
 }
 
 // exchangeAPIKey walks access token -> business token -> organisation and

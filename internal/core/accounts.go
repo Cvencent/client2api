@@ -154,6 +154,16 @@ type CheckinAction struct {
 	ID    string `json:"id"`    // passed back to Checkin
 	Label string `json:"label"` // operator-facing button text
 	Help  string `json:"help,omitempty"`
+	// Channels, when non-empty, scopes the action to specific credential
+	// kinds -- the module's own "kind" field as reported on the account
+	// record (zcode writes "jwt" / "api-key").  It exists because a
+	// vendor promotion can be gated on one channel of an account while the
+	// panel shows that account's other channels as sibling rows: ZCode's
+	// plan claim only works on the plan JWT, so the coding-plan API key row
+	// must not offer it.  Empty means "every row", which is what every
+	// module but zcode wants; the panel still reads this field, so it stays
+	// part of the wire contract and must be omitempty.
+	Channels []string `json:"channels,omitempty"`
 }
 
 // CheckinResult is the outcome of one check-in attempt.

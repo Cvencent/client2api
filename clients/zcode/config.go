@@ -59,6 +59,11 @@ const (
 	defaultOAuthExchangeBase = "https://api.z.ai"
 )
 
+// oauthProviderDefault is the provider the panel sign-in used before the
+// mainland option existed: Z.ai (chat.z.ai).  Keeping it the default means an
+// operator who never touches the realm picker sees no change at all.
+const oauthProviderDefault = "zai"
+
 // defaultModels is the catalogue the module advertises when the upstream
 // cannot answer.  It mirrors the model ids the ZCode plan publishes today, so
 // a cold start or a temporary vendor outage still shows the full picker and
@@ -154,6 +159,14 @@ type Config struct {
 	//
 	// OAuthAPIBase serves /oauth/cli/init and /oauth/cli/poll/{flow_id}.
 	OAuthAPIBase string `json:"oauth_api_base"`
+	// OAuthProvider is the default sign-in realm for the panel's "add account"
+	// flow: "zai" (international, chat.z.ai) or "bigmodel" (mainland,
+	// bigmodel.cn).  The vendor's /oauth/cli/init returns a different
+	// authorization URL for each, and a phone number registered on one service
+	// cannot sign in on the other -- a mainland number on the z.ai page ends in
+	// "请求失败".  The panel's realm picker overrides this per sign-in; this is
+	// the default the picker starts on and what StartLogin (no realm) uses.
+	OAuthProvider string `json:"oauth_provider"`
 	// OAuthExchangeBase serves the /api/auth/z/login -> organisation/project ->
 	// API key walk that turns an OAuth access token into a usable credential.
 	OAuthExchangeBase string `json:"oauth_exchange_base"`
@@ -257,6 +270,31 @@ func (c *Config) modelIDs() []string {
 		return c.Models
 	}
 	return defaultModels
+}
+
+// parseLoginRealm maps a panel or config value onto one of the two Zhipu
+// services.  The realm codes double as the vendor's OAuth provider ids and as
+// the module's own account "region" values, so a single string travels from
+// the panel's picker to /oauth/cli/init unchanged.
+func parseLoginRealm(v string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case regionZai, "z.ai", "global", "international", "intl":
+		return regionZai, true
+	case regionBigmodel, "bigmodel.cn", "cn", "china", "domestic", "mainland":
+		return regionBigmodel, true
+	}
+	return "", false
+}
+
+// oauthLoginRealm is the module's configured default sign-in realm.  A value
+// the module does not recognise falls back to the historical default rather
+// than making the sign-in impossible; a realm the panel explicitly picked is
+// validated instead (see StartLoginRealm).
+func (c *Config) oauthLoginRealm() string {
+	if r, ok := parseLoginRealm(c.OAuthProvider); ok {
+		return r
+	}
+	return oauthProviderDefault
 }
 
 // oauthAPIBase is the origin+prefix that serves the OAuth CLI endpoints.

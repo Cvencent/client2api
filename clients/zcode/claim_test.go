@@ -676,6 +676,13 @@ func TestCheckinAdvertisesExactlyOneAction(t *testing.T) {
 	if actions[0].Label == "" || actions[0].Help == "" {
 		t.Errorf("action = %+v, want a label and help text", actions[0])
 	}
+	// 活动套餐走的是计划账单接口，只有计划凭据（jwt）那一条通道能领。一个账号的
+	// 编码计划 API key 是它的兄弟通道，账号行上和 JWT 并列显示，但那一行不该出现
+	// 领取按钮。所以这个动作必须用 Channels 把自己限定在 jwt 通道上，面板按行过滤
+	// （见 internal/panel/index.html 的 checkinActionsFor）。
+	if got := actions[0].Channels; len(got) != 1 || got[0] != kindJWT {
+		t.Errorf("action channels = %v, want [%q]: the coding-plan api-key row must not offer the claim", got, kindJWT)
+	}
 }
 
 func TestAccountBalanceCountsTokensAndTheEarliestLiveTranche(t *testing.T) {

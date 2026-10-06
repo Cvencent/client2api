@@ -111,6 +111,41 @@ func TestTheJWTAccountLabelNamesTheLogin(t *testing.T) {
 	}
 }
 
+// TestAStalePersistedLabelDoesNotHideTheAccountName is the regression for the
+// "still says JWT" report: a state file written by an older build can carry a
+// label the current discovery would name better ("ZCode plan JWT" where the
+// credential itself now tells us "ZCode plan JWT ...88087632").  Runtime state
+// that the pool persists (enabled / cooldown / note) must survive the restart,
+// but a *derived* label must not be able to overwrite the freshly discovered
+// one, or the fix in jwtAccountLabel can never reach an operator who has
+// already run the old build once.
+func TestAStalePersistedLabelDoesNotHideTheAccountName(t *testing.T) {
+	env := newPanelEnv(t, `{"auto_discover":true}`)
+	const id = "zcode-credentials:zcodejwttoken"
+	jwt := makeJWT(`{"user_id":"u-1","sub":"u-1"}`)
+
+	writeZcodeV2(t, env.home, "", `{"zcodejwttoken":"`+jwt+`"}`)
+	// The state file as an older build left it: the label it knew, plus
+	// runtime state that must survive this same restart.
+	stale := `{"version":1,"accounts":[{"id":"` + id + `","label":"ZCode plan JWT",` +
+		`"enabled":false,"state":"ready"}]}`
+	if err := os.WriteFile(env.statePath(), []byte(stale), 0o600); err != nil {
+		t.Fatalf("write the stale state: %v", err)
+	}
+
+	c := env.client(t, nil)
+	rec, ok := recordsByID(t, c)[id]
+	if !ok {
+		t.Fatal("the discovered credential vanished")
+	}
+	if rec.Label != "ZCode plan JWT u-1" {
+		t.Errorf("label = %q, want the freshly discovered account name", rec.Label)
+	}
+	if rec.Enabled {
+		t.Errorf("the persisted enabled=false must survive the restart")
+	}
+}
+
 // TestRecordForPublishesTheIdentity pins the projection: the panel can only
 // group on what the record carries, so the account's user id has to survive the
 // trip.  A credential that knows no account must report none rather than an

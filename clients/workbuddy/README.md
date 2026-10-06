@@ -261,6 +261,14 @@ instead of renting a new one. Relevant config: `browser_path`,
 `browser_headless`, `auto_login_timeout_seconds`, `sms_polls`,
 `sms_interval_seconds`, `dup_retries`.
 
+The panel log is the operator's only window into a run that has no visible
+browser, so a job's **last** line is always its outcome — `登录成功，已添加账号 <id>`
+on success, or `失败：<原因>` on failure — never a trailing-off step. When
+`browser_headless` is true (the default) the `浏览器已启动` line says the window
+is suppressed on purpose. A selector failure names the page it was looking at
+(title and URL), which is what tells "the page never loaded" apart from "the
+vendor redesigned the page" without a screenshot.
+
 ## Status fields
 
 `Status()` is cheap: no network call, never blocks, safe to poll every 10 s.

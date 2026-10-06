@@ -70,6 +70,7 @@ func (p *panel) accountBalance(w http.ResponseWriter, r *http.Request, c core.Cl
 		p.balanceCache.put(c.Name(), id, bal)
 	}
 
+	revived := p.reviveFundedAccount(ctx, c, id, bal)
 	out := map[string]any{
 		"ok":            true,
 		"credits":       bal.Credits,
@@ -77,6 +78,9 @@ func (p *panel) accountBalance(w http.ResponseWriter, r *http.Request, c core.Cl
 	}
 	if bal.Unlimited {
 		out["unlimited"] = true
+	}
+	if revived {
+		out["revived"] = true
 	}
 	if bal.Used > 0 {
 		out["used"] = bal.Used
@@ -98,6 +102,44 @@ func (p *panel) accountBalance(w http.ResponseWriter, r *http.Request, c core.Cl
 		out["accounts"] = p.relist(ctx, am)
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// reviveFundedAccount is the explicit operator override for the dashboard:
+// when a balance read succeeds with credit available, a cooling/exhausted
+// account can be brought back immediately. Invalid or disabled credentials are
+// deliberately excluded; they need a real relogin or manual repair.
+func (p *panel) reviveFundedAccount(ctx context.Context, c core.Client, id string, bal core.Balance) bool {
+	if !balanceIsFunded(bal) {
+		return false
+	}
+	am, ok := core.AsAccountManager(c)
+	if !ok {
+		return false
+	}
+	recs, err := am.Accounts(ctx)
+	if err != nil {
+		return false
+	}
+	state := ""
+	enabled := false
+	for _, rec := range recs {
+		if rec.ID == id {
+			state = rec.State
+			enabled = rec.Enabled
+			break
+		}
+	}
+	if !balanceCanReviveState(state) {
+		return false
+	}
+	if !enabled {
+		return false
+	}
+	rv, ok := core.AsReviver(c)
+	if !ok {
+		return false
+	}
+	return rv.ReviveAccount(ctx, id) == nil
 }
 
 // balanceRow is one account's line in the accounts page's balance column.
@@ -195,7 +237,8 @@ func (p *panel) balances(w http.ResponseWriter, r *http.Request, c core.Client) 
 	if p.balanceCache != nil {
 		// Fire and forget from a context that outlives this request: the
 		// vendor calls must not be cancelled the moment the GET returns.
-		p.balanceCache.refresh(context.WithoutCancel(r.Context()), balanceRefreshBatch, false)
+		p.balanceCache.refreshClient(context.WithoutCancel(r.Context()), c.Name(), balanceRefreshBatch, false, false)
+		out["refresh"] = p.balanceCache.statusForClient(c.Name())
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -216,11 +259,17 @@ func (p *panel) balancesRefresh(w http.ResponseWriter, r *http.Request, c core.C
 		writeErr(w, http.StatusNotImplemented, c.Name()+" cannot list accounts")
 		return
 	}
+	status := balanceRefreshStatus{Client: c.Name()}
 	started := false
 	if p.balanceCache != nil {
-		started = p.balanceCache.refresh(context.WithoutCancel(r.Context()), balanceRefreshBatch, true)
+		status, started = p.balanceCache.refreshClient(context.WithoutCancel(r.Context()), c.Name(), 0, true, true)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "started": started, "batch": balanceRefreshBatch})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":      true,
+		"started": started,
+		"batch":   balanceRefreshBatch,
+		"refresh": status,
+	})
 }
 
 // packageRow is one account's line in the packages view.  The key names follow

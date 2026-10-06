@@ -179,6 +179,34 @@ func TestAccountGroupIsHealthyWhenAnyChannelIsHealthy(t *testing.T) {
 	}
 }
 
+// TestPoolTilesUseTheSameStateClassifierAsTheRows pins the fix for "下面显示冷却中、
+// 上面记成禁用": the tiles must bucket accounts through accountState -- the same
+// function that paints each row's chip -- instead of re-listing raw state words.
+// A literal list drifts: exhausted is a cooling reason but read as "bad", and
+// low_credit / quota_exceeded / rate_limited matched no bucket at all.
+func TestPoolTilesUseTheSameStateClassifierAsTheRows(t *testing.T) {
+	src := poolStatsUISource(t)
+	stats := poolStatsFuncBody(t, src, "renderStats")
+
+	for _, want := range []string{
+		"const st = accGroupStat(g);",
+		"const cls = accountState(st);",
+		`if (cls.key === "ready") ready++;`,
+		`else if (cls.key === "cooling") cool++;`,
+		`else if (cls.key === "disabled") bad++;`,
+	} {
+		if !strings.Contains(stats, want) {
+			t.Errorf("renderStats 没有按行里同一套分类分桶，缺：%s", want)
+		}
+	}
+	// 负控：旧的按字面值分桶必须消失，否则「冷却中」被记成「禁用」会回来。
+	for _, bad := range []string{`st.state === "exhausted"`, `st.state === "cooling"`, "if (!st.enabled) bad++;"} {
+		if strings.Contains(stats, bad) {
+			t.Errorf("renderStats 又按原始 state 字面值分桶了：%s", bad)
+		}
+	}
+}
+
 // TestAccountGroupHeaderHasNoActionButtons 钉住组头那一行是纯信息行。每个通道
 // 单独启停、单独测试是需求本身；组头再挂一个批量按钮会把两份凭据的状态混在
 // 一起，而且没有明显正确的语义。

@@ -242,6 +242,15 @@ func (j *autoJob) finish(state, message, accountID string) {
 	j.expiresAt = j.finishedAt.Add(autoJobTTL)
 }
 
+// fail records a terminal failure and mirrors the reason into the log.  Without
+// this the operator's log box stops at the last step that ran ("打开授权页…") and
+// the reason lives only in the status line, which is exactly the "did it even
+// launch the browser?" confusion this exists to end.
+func (j *autoJob) fail(reason string) {
+	j.logf("失败：%s", reason)
+	j.finish(core.AutoLoginFailed, reason, "")
+}
+
 func (j *autoJob) snapshot() core.AutoLoginJob {
 	j.mu.Lock()
 	defer j.mu.Unlock()
@@ -329,7 +338,7 @@ func (c *Client) StartAutoLogin(ctx context.Context, req core.AutoLoginRequest) 
 	c.up.log("workbuddy: auto login started realm=%s", realm)
 	core.GoSafe("workbuddy auto login", func(msg string) {
 		cancel()
-		job.finish(core.AutoLoginFailed, "internal error: "+msg, "")
+		job.fail("internal error: " + msg)
 	}, func() {
 		defer cancel()
 		c.runAutoLogin(runCtx, job, req, opts)
@@ -367,6 +376,7 @@ func (c *Client) CancelAutoLogin(_ context.Context, id string) error {
 	var cancel context.CancelFunc
 	if job.state == core.AutoLoginRunning {
 		job.state = core.AutoLoginCancelled
+		job.appendLocked("已取消")
 		job.message = "已取消"
 		job.finishedAt = time.Now()
 		job.expiresAt = job.finishedAt.Add(autoJobTTL)
@@ -400,11 +410,11 @@ func (c *Client) runAutoLogin(ctx context.Context, job *autoJob, req core.AutoLo
 	case err == nil:
 		return // autoLogin recorded success
 	case errors.Is(err, context.DeadlineExceeded):
-		job.finish(core.AutoLoginFailed, "超时：整个流程在限定时间内没有完成", "")
+		job.fail("超时：整个流程在限定时间内没有完成")
 	case errors.Is(err, context.Canceled):
 		job.finish(core.AutoLoginCancelled, "已取消", "")
 	default:
-		job.finish(core.AutoLoginFailed, err.Error(), "")
+		job.fail(err.Error())
 	}
 }
 
@@ -440,7 +450,13 @@ func (c *Client) autoLogin(
 	}
 	defer br.Close()
 	page := br.Page()
-	job.logf("浏览器已启动")
+	// Say which mode the window is in: the operator cannot see a headless
+	// browser, so "启动" alone reads as "did it even start?".
+	if c.cfg.browserHeadless() {
+		job.logf("浏览器已启动（无界面模式，不会弹窗口；要看窗口把 browser_headless 设为 false）")
+	} else {
+		job.logf("浏览器已启动")
+	}
 
 	// 3) Rent a number, skipping the ones the pool already holds.
 	job.setStep("phone")
@@ -483,6 +499,11 @@ func (c *Client) autoLogin(
 		return err
 	}
 	job.finish(core.AutoLoginSuccess, st.Message, st.AccountID)
+	if st.AccountID != "" {
+		job.logf("登录成功，已添加账号 %s", st.AccountID)
+	} else {
+		job.logf("登录成功")
+	}
 	return nil
 }
 
@@ -507,9 +528,11 @@ func (c *Client) openPhoneLogin(ctx context.Context, job *autoJob, page pageDriv
 	} else if ok {
 		job.logf("已切到手机验证码登录")
 		sleepCtx(ctx, phoneTabSettle)
+	} else {
+		job.logf("页面上没有手机号标签，按默认页继续")
 	}
 	if !waitSelector(ctx, page, selPhoneInput, 15*time.Second) {
-		return errors.New("找不到手机号输入框，厂商登录页可能已改版")
+		return fmt.Errorf("找不到手机号输入框，厂商登录页可能已改版（%s）", pageWhere(ctx, page))
 	}
 	filled, err := page.Fill(ctx, selPhoneInput, phone)
 	if err != nil {
@@ -531,7 +554,7 @@ func (c *Client) openPhoneLogin(ctx context.Context, job *autoJob, page pageDriv
 // away, the same early check wb-auto's request_sms_code does.
 func (c *Client) requestSMSCode(ctx context.Context, job *autoJob, page pageDriver) error {
 	if !waitSelector(ctx, page, selCodeBtn, 15*time.Second) {
-		return errors.New("找不到「获取验证码」按钮，厂商登录页可能已改版")
+		return fmt.Errorf("找不到「获取验证码」按钮，厂商登录页可能已改版（%s）", pageWhere(ctx, page))
 	}
 	ok, err := page.Click(ctx, selCodeBtn)
 	if err != nil {
@@ -578,7 +601,7 @@ func (c *Client) waitSMSCode(ctx context.Context, job *autoJob, opts core.SMSOpt
 // confirm control has taken (a styled div, or a plain button by its text).
 func (c *Client) submitLogin(ctx context.Context, job *autoJob, page pageDriver, code string) error {
 	if !waitSelector(ctx, page, selCodeInput, 10*time.Second) {
-		return errors.New("找不到验证码输入框，厂商登录页可能已改版")
+		return fmt.Errorf("找不到验证码输入框，厂商登录页可能已改版（%s）", pageWhere(ctx, page))
 	}
 	filled, err := page.Fill(ctx, selCodeInput, code)
 	if err != nil {
@@ -744,6 +767,26 @@ func pageBody(ctx context.Context, page pageDriver) string {
 		return ""
 	}
 	return body
+}
+
+// pageWhere names the page the driver is on.  The operator watching this log
+// cannot see the (headless) window, so a selector failure has to say where it
+// was looking: the title and URL are what tell "the page never loaded" apart
+// from "the vendor redesigned the page".
+func pageWhere(ctx context.Context, page pageDriver) string {
+	title, _ := page.EvalString(ctx, "document.title")
+	href, _ := page.EvalString(ctx, "location.href")
+	title, href = strings.TrimSpace(title), strings.TrimSpace(href)
+	switch {
+	case title != "" && href != "":
+		return fmt.Sprintf("当前页面 %q %s", title, href)
+	case href != "":
+		return "当前页面 " + href
+	case title != "":
+		return fmt.Sprintf("当前页面 %q", title)
+	default:
+		return "页面没有加载出标题或地址"
+	}
 }
 
 // firstText returns the first needle found in haystack, or "".

@@ -242,9 +242,9 @@ func (p *pool) mergeStateLocked() {
 		if !ok {
 			continue
 		}
-		if s.Label != "" {
-			a.Label = s.Label
-		}
+		// The label is derived fresh from the credential every start; a state
+		// file written by an older build must not pin the old naming, or a
+		// label fix (e.g. the JWT account name) can never reach the operator.
 		if s.Enabled != nil {
 			a.Enabled = *s.Enabled
 		}

@@ -21,6 +21,8 @@
   /* 色块用上面的官方色；小字号文字用下面的暗/亮档，否则要么糊要么刺眼。 */
   --ok-text: #85ce61; --warn-text: #ebb563; --bad-text: #f78989; --accent-text: #79bbff;
   --radius: 4px; --radius-lg: 8px; --radius-sm: 3px;
+  --ease-out: cubic-bezier(.2, .7, .3, 1);
+  --dur-fast: 150ms; --dur-med: 220ms;
   --ring: 0 0 0 2px rgba(64,158,255,.25);
   --shadow: 0 2px 12px 0 rgba(0,0,0,.5);
   --shadow-sm: 0 1px 4px rgba(0,0,0,.4);
@@ -167,6 +169,11 @@ body {
    改成一个只在超宽屏才生效的上限：本机 1840px 可用宽度下内容通栏，和顶栏对齐；
    真正的大屏（>2200px）才收住，免得一行拉得读不下去。 */
 .view { padding: 22px 24px 64px; max-width: 2200px; width: 100%; }
+.view:not([hidden]) { animation: viewIn var(--dur-med) var(--ease-out) both; }
+@keyframes viewIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
 .view[hidden] { display: none; }
 
 /* ── 控件 ─────────────────────────────────────────────────────────── */
@@ -223,6 +230,8 @@ label.fld > .hint { display: block; font-size: 11.5px; color: var(--ink-3); marg
 
 /* ── 面板块 ───────────────────────────────────────────────────────── */
 .box { background: var(--surface); border: 1px solid var(--line); border-radius: 11px; box-shadow: var(--shadow); margin-bottom: 20px; overflow: clip; }
+.box { transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out); }
+.box:hover { border-color: var(--line); box-shadow: 0 4px 20px -8px rgba(0,0,0,.24); }
 /* overflow:clip 而不是 hidden：两者一样会裁圆角，但 clip 不会把自己变成滚动容器。
    否则 .savebar 的 position:sticky;bottom:0 会以这个盒子当参照，而它根本不滚动，
    「粘底」就退化成普通文档流 —— 配置页那种四千多像素的长表单，保存按钮要一路
@@ -387,11 +396,15 @@ legend { font-size: 12px; color: var(--ink-3); font-weight: 600; padding-bottom:
 /* ── 弹层 ─────────────────────────────────────────────────────────── */
 .veil { position: fixed; inset: 0; background: rgba(6,8,13,.62); backdrop-filter: blur(2px); display: none; z-index: 60; }
 .veil.on { display: flex; align-items: center; justify-content: center; padding: 20px; }
+.veil.on { animation: veilIn 140ms var(--ease-out) both; }
+@keyframes veilIn { from { opacity: 0; } to { opacity: 1; } }
 .dlg {
   background: var(--surface); border: 1px solid var(--line); border-radius: 13px;
   width: 560px; max-width: 100%; max-height: 86vh; display: flex; flex-direction: column;
   box-shadow: 0 24px 64px -24px rgba(0,0,0,.6);
+  animation: dlgIn var(--dur-med) var(--ease-out) both;
 }
+@keyframes dlgIn { from { opacity: 0; transform: scale(.985) translateY(4px); } to { opacity: 1; transform: scale(1) translateY(0); } }
 .dlg header { padding: 17px 20px 13px; border-bottom: 1px solid var(--line-soft); }
 .dlg header h3 { font-size: 15px; font-weight: 620; }
 .dlg header .hint { color: var(--ink-3); font-size: 12.5px; margin-top: 5px; }
@@ -586,6 +599,8 @@ legend { font-size: 12px; color: var(--ink-3); font-weight: 600; padding-bottom:
   .pk-grid { display: flex; flex-wrap: wrap; gap: 10px; }
   .pk-card { flex: 1 1 220px; min-width: 200px; border: 1px solid var(--line-soft);
     border-radius: 8px; padding: 11px 13px; }
+  .pk-card { transition: border-color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out); }
+  .pk-card:hover { transform: translateY(-1px); border-color: var(--line); box-shadow: var(--shadow-sm); }
   .pk-card .who { display: flex; align-items: baseline; gap: 7px; margin-bottom: 7px; }
   .pk-card .nm { font-weight: 600; font-size: 13px; }
   .pk-card .realm { font-size: 11px; color: var(--ink-3); font-family: var(--mono); }
@@ -652,6 +667,11 @@ button.chip.on { background: var(--accent-soft); color: var(--accent); border-co
 .subtabs { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 2px 14px; }
 .subtabs .subtab { min-height: 30px; padding: 5px 14px; cursor: pointer; }
 .subtab-panel { display: flex; flex-direction: column; }
+.subtab-panel:not([hidden]) { animation: panelIn var(--dur-fast) var(--ease-out) both; }
+@keyframes panelIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
 .subtab-panel[hidden] { display: none; }
 
 /* The authorization link is a real anchor, so give it the block's own look
@@ -1232,6 +1252,27 @@ input[type=checkbox] { width: 14px; height: 14px; padding: 0; accent-color: var(
 }
 .recent-bad { color: var(--bad); font-weight: 650; }
 .recent-ok { color: var(--ok); font-weight: 650; }
+/* ── 全局交互动效：统一节奏，只动 transform / opacity / 颜色 ── */
+button, .chip, .tag, .nav a, .acc tbody tr, .qrow, .srow,
+.pfm, .vc, .pfplat, .pk-card, .scdef, input, select, textarea {
+  transition-duration: var(--dur-fast);
+  transition-timing-function: var(--ease-out);
+}
+button, .chip, .nav a, .vc, .pfplat, .pk-card, .scdef {
+  transition-property: color, background-color, border-color, box-shadow, filter, transform;
+}
+button:active:not(:disabled), .chip:active, .nav a:active,
+.vc:active, .pfplat:active, .pk-card:active { transform: translateY(1px); }
+.vc:hover, .pfplat:hover { border-color: var(--accent); box-shadow: var(--shadow-sm); }
+.vc, .pfplat { transition-property: border-color, box-shadow, transform; }
+.pfm:hover, .scdef:hover { border-color: var(--accent); }
+.pfmodels:not([hidden]), .tab-panel:not([hidden]) {
+  animation: panelIn var(--dur-fast) var(--ease-out) both;
+}
+.acc tbody tr, .qrow, .srow { transition-property: background-color; }
+input, select, textarea { transition-property: border-color, box-shadow, background-color, color; }
+.dlg .tabs .tab { transition-property: color, background-color, box-shadow, transform; }
+.toast { transition: opacity var(--dur-med) var(--ease-out), transform var(--dur-med) var(--ease-out); }
 </style>
 </head>
 <body>
@@ -2471,14 +2512,19 @@ function renderChips() {
 
 function renderStats() {
   // 这几个 tile 数的是账号，不是凭据：一个账号有两个通道，它仍然只是一个账号。
+  // 分桶必须和表里那颗状态 chip 走同一套 accountState，不能按 state 的字面值再
+  // 分一次。以前这里认死了 "cooling" / "invalid" 等几个词，于是下面显示「冷却中」
+  // 的行会被上面记成「禁用」（exhausted 就是这样）或干脆掉出所有桶（low_credit /
+  // quota_exceeded / rate_limited 一个字都没匹配上）——磁贴间的数字也就对不起来。
+  // unknown 没有对应的 tile，按行里的「未知」处理，不计入任何一桶。
   let total = 0, ready = 0, cool = 0, bad = 0;
   NAMES.forEach(n => accGroups(ACCTS[n] && ACCTS[n].accounts).forEach(g => {
     const st = accGroupStat(g);
+    const cls = accountState(st);
     total++;
-    if (!st.enabled) bad++;
-    else if (st.state === "ready") ready++;
-    else if (st.state === "cooling") cool++;
-    else if (st.state === "invalid" || st.state === "exhausted" || st.state === "expired") bad++;
+    if (cls.key === "ready") ready++;
+    else if (cls.key === "cooling") cool++;
+    else if (cls.key === "disabled") bad++;
   }));
   $("#sTotal").textContent = total;
   $("#sHealthy").textContent = ready;
@@ -2647,6 +2693,8 @@ const BALS = {};
 // BAL_POLL 是每个客户端还没跑完的缓存回读定时器；切客户端或重新刷新时先清掉。
 const BAL_POLL = {};
 const BAL_POLL_WAITS = [1500, 4000, 9000, 16000];
+const BAL_POLL_RUNNING_MS = 2500;
+const BAL_POLL_MAX_TICKS = 240;
 // BAL_SOFT_MS 是「重新进账号页就再要一批」的窗口，和服务端的软节流同一个量级。
 const BAL_SOFT_MS = 45000;
 
@@ -2660,11 +2708,30 @@ function ensureBalances(n) {
 }
 
 // applyBalances 把一次 /balances 缓存读到的行抄进 BALS。
+function syncBalanceButton(n) {
+  const btn = $("#btnBalanceAll");
+  if (!btn) return;
+  const st = n === CUR ? (BALS[n] || {}).refresh : null;
+  if (st && st.running) {
+    btn.disabled = true;
+    btn.textContent = "刷新中 " + (st.done || 0) + "/" + (st.total || 0);
+  } else {
+    btn.disabled = false;
+    btn.textContent = "刷新余额";
+  }
+}
+
 function applyBalances(n, data) {
   const prev = BALS[n] || {};
   const byID = {};
   (data.accounts || []).forEach(x => { byID[x.id] = x; });
-  BALS[n] = { loading: false, loaded: true, loadedAt: Date.now(), unit: data.unit || prev.unit || "", byID };
+  BALS[n] = {
+    loading: false, loaded: true, loadedAt: Date.now(),
+    unit: data.unit || prev.unit || "", byID,
+    refresh: data.refresh || prev.refresh || null,
+    notify: !!prev.notify
+  };
+  syncBalanceButton(n);
   if (CUR === n) renderAccounts();
 }
 
@@ -2675,7 +2742,12 @@ async function readBalances(n) {
     applyBalances(n, r.data);
   } else {
     const prev = BALS[n] || {};
-    BALS[n] = { loading: false, loaded: false, loadedAt: prev.loadedAt || 0, error: r.err || "读取失败", unit: prev.unit || "", byID: prev.byID || {} };
+    BALS[n] = {
+      loading: false, loaded: false, loadedAt: prev.loadedAt || 0,
+      error: r.err || "读取失败", unit: prev.unit || "", byID: prev.byID || {},
+      refresh: prev.refresh || null, notify: !!prev.notify
+    };
+    syncBalanceButton(n);
     if (CUR === n) renderAccounts();
   }
   return r;
@@ -2685,11 +2757,23 @@ async function readBalances(n) {
 // 全是本地缓存读取，不会再向厂商多发一次请求。
 function pollBalanceCache(n) {
   clearTimeout(BAL_POLL[n]);
-  let i = 0;
+  let i = 0, runningTicks = 0, sawRunning = false;
   const tick = async () => {
     await readBalances(n);
+    const state = BALS[n] || {};
+    const st = state.refresh;
+    if (st && st.running) {
+      sawRunning = true;
+      runningTicks++;
+      if (runningTicks < BAL_POLL_MAX_TICKS) BAL_POLL[n] = setTimeout(tick, BAL_POLL_RUNNING_MS);
+      return;
+    }
+    if (state.notify && st && st.message) {
+      toast(n + " 余额" + (st.revived ? "已恢复 " + st.revived + " 个账号，" : "") + st.message);
+      state.notify = false;
+    }
     i++;
-    if (i < BAL_POLL_WAITS.length) BAL_POLL[n] = setTimeout(tick, BAL_POLL_WAITS[i]);
+    if (!sawRunning && i < BAL_POLL_WAITS.length) BAL_POLL[n] = setTimeout(tick, BAL_POLL_WAITS[i]);
   };
   BAL_POLL[n] = setTimeout(tick, BAL_POLL_WAITS[0]);
 }
@@ -2704,12 +2788,27 @@ async function loadBalances(n, force) {
   clearTimeout(BAL_POLL[n]);
   // 先落一个 loading 快照再 await：renderAccounts 会在等待期间再进来一次，
   // 这个标记就是它不会递归的原因。
-  BALS[n] = { loading: true, loaded: false, loadedAt: (prev && prev.loadedAt) || 0, unit: (prev && prev.unit) || "", byID: (prev && prev.byID) || {} };
+  BALS[n] = {
+    loading: true, loaded: false, loadedAt: (prev && prev.loadedAt) || 0,
+    unit: (prev && prev.unit) || "", byID: (prev && prev.byID) || {},
+    refresh: (prev && prev.refresh) || null, notify: force
+  };
   if (CUR === n) renderAccounts();
   if (force) {
-    // 让服务端安排下一批（每次最多 3 个账号，后台慢慢读）。这个 POST 不等待厂商
-    // 结果就返回，所以点一下不会变成几十个并发请求。
-    await api(cbase(n) + "/balances/refresh", { method: "POST" });
+    const r = await api(cbase(n) + "/balances/refresh", { method: "POST" });
+    if (!r.ok) {
+      if (BALS[n]) BALS[n].notify = false;
+      toast("刷新余额失败：" + r.err, "err");
+    } else {
+      const st = (r.data || {}).refresh || null;
+      BALS[n].refresh = st;
+      BALS[n].notify = !!r.data.started;
+      syncBalanceButton(n);
+      if (r.data.started) toast(n + " 余额刷新中 " + (st ? (st.done || 0) + "/" + (st.total || 0) : ""));
+      else if (st && st.running) toast(n + " 正在刷新余额 " + (st.done || 0) + "/" + (st.total || 0));
+      else if (st && st.retry_after_ms) toast("请 " + Math.max(1, Math.ceil(st.retry_after_ms / 1000)) + " 秒后再试");
+      else toast(n + " 暂时没有可刷新的账号");
+    }
   }
   await readBalances(n);
   pollBalanceCache(n);
@@ -2798,6 +2897,7 @@ function renderAccounts() {
   const showBal = !!caps.balance;
   document.body.classList.toggle("hide-bal", !showBal);
   $("#btnBalanceAll").hidden = !showBal;
+  syncBalanceButton(CUR);
   const cols = showBal ? 13 : 12;
   if (!CUR) { tb.innerHTML = '<tr><td colspan="' + cols + '" class="hint">没有已注册的客户端</td></tr>'; $("#accNote").textContent = ""; hideAccPager(); return; }
   // accNote 是当前客户端的注解：模块说不可服务时原样带上它给的理由
@@ -2813,6 +2913,8 @@ function renderAccounts() {
   const hx = (px || {}).health;
   if (hx && hx.servable === false) accText += " · 不可服务" + (hx.note ? "：" + hx.note : "");
   const full = (px && px.pool) ? (Number(px.pool.in_flight_full) || 0) : 0;
+  const balRefresh = (BALS[CUR] || {}).refresh;
+  if (balRefresh && balRefresh.running) accText += " · 余额刷新 " + (balRefresh.done || 0) + "/" + (balRefresh.total || 0);
   if (full) accText += " · " + full + " 个账号在途占满";
   // 静默轮询读取失败时不弹 toast（每 5s 一次会刷屏），理由记在这里：这一行
   // 本来就属于「当前客户端怎么了」，比一个转瞬即逝的浮层更容易看见。
@@ -3051,6 +3153,23 @@ function checkinActionTitle(x) {
   return [cn, raw && raw !== cn ? raw : "", help].filter(Boolean).join(" · ");
 }
 
+// checkinActionsFor 把客户端级的签到动作收窄到「这一行现在真能点哪些」。
+//
+// 动作清单是客户端级的（core.CheckinProvider.CheckinActions），但有些动作只对某一
+// 种凭据通道成立：zcode 的活动套餐走计划账单接口，只认计划 JWT；同一个账号的编码
+// 计划 API key 是它的兄弟通道，账号行上和它并列，但那一行根本领不了。模块用
+// CheckinAction.Channels 声明自己限定在哪些通道（值就是账号记录里的 fields.kind，
+// 比如 "jwt" / "api-key"）；没声明的动作照旧对每一行都出现。这里只过滤，不改动
+// 传入的清单。
+function checkinActionsFor(a, acts) {
+  const kind = String(((((a || {}).fields) || {}).kind) || "").toLowerCase();
+  return (acts || []).filter(x => {
+    const only = (x && x.channels) || [];
+    if (!only.length) return true;
+    return only.some(c => String(c).toLowerCase() === kind);
+  });
+}
+
 function accRowHTML(a, caps, acts, showBal, chan, open, groupKey) {
   const btns = [];
   // 「备注」记的是这个账号登录用的手机号/邮箱，存在网关配置里（不是模块里），
@@ -3069,12 +3188,17 @@ function accRowHTML(a, caps, acts, showBal, chan, open, groupKey) {
   // 存在的账号收窄自己（codearts 没有凭据时返回空、minimaxcode 凭据过期时返回空），
   // 所以 checkin 为真而 actions 为空是正常状态，那种情况下不该渲染按钮。
   if (caps.checkin_ready) {
-    if (acts.length > 1) {
-      acts.forEach(x => btns.push('<button class="xs chip" data-do="checkin" data-act="' + esc(x.id) + '" data-id="' + esc(a.id) + '" title="' + esc(checkinActionTitle(x)) + '">' + esc(checkinActionLabel(x)) + '</button>'));
-    } else {
+    // acts 是客户端级的清单，但有些动作只对某一种凭据通道成立（zcode 的活动
+    // 套餐只认 jwt）。按这一行的通道先收窄，收窄后为空就整条都不渲染——否则
+    // 「模块有签到能力」会被误读成「这一行能签到」，一个账号的 API key 通道
+    // 就长出一个点了必然失败的领取按钮。
+    const actsFor = checkinActionsFor(a, acts);
+    if (actsFor.length > 1) {
+      actsFor.forEach(x => btns.push('<button class="xs chip" data-do="checkin" data-act="' + esc(x.id) + '" data-id="' + esc(a.id) + '" title="' + esc(checkinActionTitle(x)) + '">' + esc(checkinActionLabel(x)) + '</button>'));
+    } else if (actsFor.length === 1) {
       // 单一签到动作：中文标签在窄列里也可能被省略号截断，所以 title 里留
       // 模块自己的原话。
-      const one = acts[0] || { id: "", label: "签到", help: "" };
+      const one = actsFor[0];
       btns.push('<button class="xs primary" data-do="checkin" data-act="' + esc(one.id || "") + '" data-id="' + esc(a.id) + '" title="' + esc(checkinActionTitle(one)) + '">' + esc(checkinActionLabel(one)) + '</button>');
     }
   }
@@ -3386,6 +3510,7 @@ function bulk(kind) {
     api(cbase(CUR) + "/accounts/refresh", { method: "POST", body: {} }).then(r => {
       if (!r.ok) return toast("刷新失败：" + r.err, "err");
       applyAccounts(CUR, r.data); renderAccounts();
+      loadBalances(CUR, true);
       toast("已刷新 " + ((r.data.results || []).length) + " 个账号");
     });
   } else if (kind === "test") {
@@ -3405,7 +3530,6 @@ function bulk(kind) {
     // 不再一次性问完全部账号：服务端每次只挑最旧的 3 个慢慢读（中间还隔着几
     // 秒），这里先留着上次的数字，再分几次回读缓存把新数字补上。
     loadBalances(CUR, true);
-    toast(CUR + " 余额正在分批刷新（每次最多 3 个账号，稍候自动显示）");
   }
 }
 
@@ -3413,13 +3537,29 @@ function bulk(kind) {
 async function checkinClient(n) {
   const list = ((ACCTS[n] || {}).accounts || []).filter(a => a.enabled);
   if (!list.length) { toast(n + " 没有启用的账号", "err"); return; }
-  let ok = 0;
-  for (const a of list) {
-    const r = await api(cbase(n) + "/accounts/" + aid(a.id) + "/checkin", { method: "POST", body: {} });
-    if (r.ok) { applyAccounts(n, r.data); if (r.data.result && r.data.result.ok) ok++; }
+  const btn = $("#btnCheckinAll");
+  const keep = btn ? btn.textContent : "";
+  if (btn) { btn.disabled = true; btn.textContent = "签到 0/" + list.length; }
+  let done = 0, ok = 0, already = 0, failed = 0;
+  try {
+    for (const a of list) {
+      if (btn) btn.textContent = "签到 " + (done + 1) + "/" + list.length;
+      const r = await api(cbase(n) + "/accounts/" + aid(a.id) + "/checkin", { method: "POST", body: {} });
+      const x = (r.ok && r.data && r.data.result) || {};
+      if (r.ok) {
+        applyAccounts(n, r.data);
+        if (x.ok) ok++;
+        else if (/已签|已经|already|已领取/.test(String(x.message || x.error || ""))) already++;
+        else failed++;
+      } else failed++;
+      done++;
+      if (btn) btn.textContent = "签到 " + done + "/" + list.length;
+    }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = keep || "全部签到"; }
   }
   renderAccounts();
-  toast(n + " 签到：" + ok + "/" + list.length + " 成功", ok === list.length ? "" : "err");
+  toast(n + " 签到：成功 " + ok + "，已签到 " + already + "，失败 " + failed, failed ? "err" : "");
 }
 
 /* ── 用量 / 客户端 / 模型 ─────────────────────────────────────────────── */

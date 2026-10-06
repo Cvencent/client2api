@@ -282,6 +282,12 @@ no stable user id may fall back to a token prefix as its id.
 ZCode 的一个 Zhipu 账号可能同时拥有计划 JWT、coding-plan API key 和 OAuth 派生 key。
 面板按账号身份把这三类凭证聚合为“一个账号、多条通道”，不会把它们当成三个独立账号。
 
+面板网页登录分两个通道：「国际版」走 Z.AI（chat.z.ai），「国内版」走 BigModel
+（bigmodel.cn）。两者是不同服务，同一张手机号不能通用：国内号必须在「国内版」页
+面登录，用国际版会验证后报「请求失败」。登录后账号会带 `realm` 标签区分国内/国际。
+国内版直接使用厂商轮询返回的计划 JWT（bigmodel 没有 api.z.ai 的兑换流程），因此不要
+再把它当国际账号去做 key 兑换，否则会拿到 401/404。
+
 额度来自两套上游接口并合并展示：
 
 - `open.bigmodel.cn/api/monitor/usage/quota/limit`：5 小时滚动窗口、每日 Token 窗口、
@@ -289,7 +295,10 @@ ZCode 的一个 Zhipu 账号可能同时拥有计划 JWT、coding-plan API key �
 - `zcode.z.ai/api/v1/zcode-plan/billing/balance`：活动套餐、Start Plan 等一次性或周期
   Token 额度。
 
-活动套餐领取会解析同账号的 sibling 通道：从 API-key 行或 JWT 行点击都可以领取。
+活动套餐领取只走 JWT 通道：面板的「领取活动套餐」按钮只在账号的 jwt 通道那一行
+出现（模块用 CheckinAction.Channels 把它限定在 jwt），coding-plan API key 行不再显示——
+计划账单接口只认计划凭据，那个按钮点了也领不了。后台仍会解析同账号的 sibling 通道，
+所以从任务看板或定时批次发起的领取（它们只拿一个账号 id）仍然能找到该账号的 JWT。
 如果厂商返回“当前用户不存在coding plan”，说明该 key 本身不属于 coding-plan 套餐，
 不是面板漏显示；请在 ZCode 客户端登录对应套餐账号后重新导入。
 ## Model routing
@@ -448,6 +457,11 @@ are Asia/Shanghai local hours, and an **empty list means "never run this one"**
 even when the master switch is on. Accounts are walked serially with a 45 s
 gap, because the vendors' anti-abuse checks roll back chores whose events
 burst.
+
+一个平台可以用自己的时间表 `schedule.clients.<平台>.<批次>` 覆盖共享时点。打包的
+配置给 zcode 的 `checkin` 单独设了 `[0, 9, 12, 18, 21]`：它的每日活动额度是限量的，
+`0` 点对齐上海日切，而预览是不带验证码的 GET、只有真的领到时才唤起浏览器验证码，
+所以多跑几次成本很低。时点可在面板的「任务中心 → 时间表」里改。
 
 `session_sticky` has two levels.  Inside a module it pins a conversation to the
 account that last served it.  At the gateway it also pins the **platform**: when

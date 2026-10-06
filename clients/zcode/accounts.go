@@ -524,7 +524,12 @@ func recordFor(a *Account, now time.Time, captchaReady bool) core.AccountRecord 
 		// then the panel keeps that credential as its own account.
 		Identity: a.UserID,
 		Fields: map[string]any{
-			"kind":     kindNameForMode(a.Mode),
+			"kind": kindNameForMode(a.Mode),
+			// realm names the Zhipu service this credential belongs to, for the
+			// panel's tag beside the account name and for the re-login picker.
+			// It is the same value as the region, under the name the rest of
+			// the module (and the panel) uses for "which service".
+			"realm":    regionForProvider(a.Provider),
 			"provider": a.Provider,
 			"source":   a.Source,
 			"origin":   originOf(a),

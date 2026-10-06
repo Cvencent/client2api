@@ -286,6 +286,9 @@ func (b *browserSolver) mintOnce(ctx context.Context, info regionInfo) (string, 
 	}
 	kid := 0
 	defer func() {
+		// The profile names the browser even after Edge relaunches its main
+		// process; the started pid is only a fallback for the first instant.
+		killBrowserProfile(profile, b.logf)
 		killBrowserTree(kid, b.logf)
 		_ = os.RemoveAll(profile)
 	}()
@@ -306,8 +309,9 @@ func (b *browserSolver) mintOnce(ctx context.Context, info regionInfo) (string, 
 	// Chromium clamps its initial window placement onto the desktop even
 	// with --window-position set, so the window has to be moved again from
 	// outside once it exists.  See guardBrowserWindow.
-	guardBrowserWindow(kid, waited, b.logf)
+	guardBrowserWindow(profile, waited, b.logf)
 	defer func() {
+		killBrowserProfile(profile, b.logf)
 		killBrowserTree(kid, b.logf)
 		select {
 		case <-waited:

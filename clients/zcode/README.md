@@ -57,6 +57,7 @@ key is optional; an absent or malformed object degrades to the defaults below
     "zcode": {
       "accounts": [ /* see below */ ],
       "upstream_base": "",
+      "oauth_provider": "zai",
       "auto_discover": true,
       "models": [
         "GLM-5.3", "GLM-5.3-Flash", "GLM-5.3-FlashX", "GLM-5.2",
@@ -86,6 +87,7 @@ key is optional; an absent or malformed object degrades to the defaults below
 | --- | --- | --- | --- |
 | `accounts` | array | `[]` | Explicit credentials, tried before discovered ones. |
 | `upstream_base` | string | `""` | **Explicit, off-by-default** override: send *every* request to `<upstream_base>/v1/messages` with **no credentials at all**. Intended for proving the translation layer against a locally running Anthropic-wire gateway. Never used as a silent fallback. |
+| `oauth_provider` | string | `zai` | Default sign-in realm for the panel's add-account flow: `zai` (international, chat.z.ai) or `bigmodel` (mainland, bigmodel.cn). Sets the realm the picker starts on and what a bare `StartLogin` uses; see [Panel sign-in realms](#panel-sign-in-realms). |
 | `auto_discover` | bool | `true` | Read credentials already on the machine (see *Credential discovery*). |
 | `models` | array | the 11 GLM ids in [Model ids](#model-ids) | Model ids advertised by `Models()`. The built-in list is used when the upstream catalogue cannot be read. |
 | `max_tokens_default` | int | `32768` | `max_tokens` when the caller sends none and the catalogue has no published budget. The known plan models are filled from the vendor's docs instead (see `builtinModelSpecs`). |
@@ -273,13 +275,45 @@ The module implements nine of the optional panel capabilities:
 | `core.AccountManager` | **yes** | list, add, remove, enable/disable, test, refresh |
 | `core.CredentialImporter` | **yes** | read-only discovery of the desktop client's stores, then an explicit import |
 | `core.LoginProvider` | **yes** | browser hand-off OAuth; see `weblogin.go` |
+| `core.RealmLoginProvider` | **yes** | two sign-in realms, `zai` and `bigmodel`; see [Panel sign-in realms](#panel-sign-in-realms) |
 | `core.ModelRefresher` | **yes** | live catalogue from the vendor's config endpoint |
-| `core.CheckinProvider` | **yes** | one action, `claim` — claims a promotional plan |
+| `core.CheckinProvider` | **yes** | one action, `claim` — claims a promotional plan; `Channels: ["jwt"]` keeps the panel from offering it on an account's coding-plan API key row |
 | `core.BalanceProvider` | **yes** | per-entitlement token balances |
 | `core.PackageProvider` | **yes** | the same buckets as package rows |
 | `core.TaskProvider` | **yes** | the task board's `claim` row; see [Tasks and scheduling](#tasks-and-scheduling) |
 | `core.BatchPlanner` | **yes** | one batch, `checkin`, so the claim can run on the scheduler's timetable |
 | `core.CaptchaProvider` | **yes** | reports the Aliyun scene the panel runs; see [Captcha paths](#captcha-paths) |
+
+### Panel sign-in realms
+
+Zhipu runs two separate services and a credential from one cannot sign in on
+the other, so the panel's add-account flow asks which one to use. The module
+advertises both through `core.RealmLoginProvider`; the operator's pick is sent
+to `/oauth/cli/init` as `provider`, which is what makes the returned
+`authorize_url` point at the matching login page.
+
+| Realm | Service | Sign-in page | What the poll returns |
+| --- | --- | --- | --- |
+| `zai` (international, default) | Z.AI / chat.z.ai | `chat.z.ai/api/oauth/authorize` | an OAuth access token, which the module walks through `api.z.ai` to mint a coding-plan API key; the plan JWT is kept as a fallback |
+| `bigmodel` (mainland) | BigModel / bigmodel.cn | `bigmodel.cn/login?appId=zcode` | the plan JWT the vendor hands back directly; there is **no** `api.z.ai` business-token walk |
+
+A mainland phone number entered on the international page passes its human
+check and then fails with the vendor's "请求失败", and vice versa, so the realm
+has to match the account: pick **国内版** for a `bigmodel.cn` (mainland) account
+and **国际版** for a `chat.z.ai` account.
+
+`oauth_provider` sets the realm the picker starts on (and what a bare
+`StartLogin` uses); it does not stop the operator from picking the other one.
+An unrecognised configured value falls back to `zai` so a typo cannot make
+sign-in impossible, but a realm the panel picked that the module does not know
+is refused rather than silently mapped onto the wrong service — that would
+store a credential the operator cannot use.
+
+The realm also becomes the new account's `region`, and therefore its provider
+and default base URL, so a mainland sign-in is filed as `bigmodel` rather than
+as an international account. Sessions started before the picker existed carry
+no realm and keep using the international walk, which is the only path that
+existed then.
 
 ### Field schema
 
@@ -449,6 +483,16 @@ in the config, `[9, 21]` by default — not on the reference's ten-minute
 frontend timer. A refusal is a `TaskResult{OK: false}`, which the scheduler
 counts as *refused*, not *failed*, so an unattended run cannot manufacture an
 outage out of a missing local solver.
+
+The daily promotion is a limited pool, so the shipped config gives zcode a
+denser timetable of its own — `schedule.clients.zcode.checkin.hours`,
+`[0, 9, 12, 18, 21]` — instead of the shared `[9, 21]`. A per-client entry
+wins over the shared group for that one client, and the hour `0` puts a run at
+the CST day boundary, which is when a daily quota resets. This is cheap to run
+often: `claimPreview` is a tokenless GET and the Aliyun captcha is only minted
+once a run actually has a plan to claim, so an empty sweep costs four small
+requests and no browser. Edit the hours in the panel's 任务中心 time table (or
+`schedule.clients.zcode.checkin.hours` in the config) to taste.
 
 **Liveness reporting.** The claim endpoints are the one place the vendor decides
 from activity whether to offer a plan at all, so every `claimPreview` first POSTs
