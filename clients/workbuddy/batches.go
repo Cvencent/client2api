@@ -113,6 +113,7 @@ func (c *Client) Batches() []core.Batch {
 func runScheduledCheckin(ctx context.Context, c *Client, a *Auth, res core.TaskResult) core.TaskResult {
 	if a.IsGlobal() {
 		res.OK = false
+		res.Skipped = true
 		res.Message = "the international realm credits no check-in; the scheduled check-in skips global accounts"
 		return res
 	}
@@ -123,6 +124,7 @@ func runScheduledCheckin(ctx context.Context, c *Client, a *Auth, res core.TaskR
 	})
 	res.OK = cr.OK
 	res.Error = cr.Error
+	res.Message = core.Redact(strings.TrimSpace(cr.Message))
 	// The consecutive-login pass runs whether or not today's reward was
 	// credited, because the tiers it redeems were earned by the days before
 	// today.  It is gated on the pool instead: the reference runs its pass over
@@ -136,7 +138,9 @@ func runScheduledCheckin(ctx context.Context, c *Client, a *Auth, res core.TaskR
 		res.Message = firstNonEmpty(strings.TrimSpace(cr.Message), "the daily check-in was credited")
 		return res
 	}
-	res.Message = "the check-in was refused"
+	if res.Message == "" {
+		res.Message = "the check-in was refused"
+	}
 	if res.Error == "" {
 		res.Error = "the upstream would not credit the check-in"
 	}
@@ -152,6 +156,7 @@ func runScheduledCheckin(ctx context.Context, c *Client, a *Auth, res core.TaskR
 func runScheduledTravel(ctx context.Context, c *Client, a *Auth, res core.TaskResult) core.TaskResult {
 	if a.IsGlobal() {
 		res.OK = false
+		res.Skipped = true
 		res.Message = "the international realm has no cat travel; skipped"
 		return res
 	}
@@ -200,6 +205,7 @@ func runScheduledTravel(ctx context.Context, c *Client, a *Auth, res core.TaskRe
 	// idle
 	if st.DailyLimitReached {
 		res.OK = false
+		res.Skipped = true
 		res.Message = "today's trip has already been sent"
 		return res
 	}
@@ -231,6 +237,7 @@ func runScheduledTravel(ctx context.Context, c *Client, a *Auth, res core.TaskRe
 func runScheduledActivity(ctx context.Context, c *Client, a *Auth, res core.TaskResult) core.TaskResult {
 	if a.IsGlobal() {
 		res.OK = false
+		res.Skipped = true
 		res.Message = "the international realm has no activity scoring; skipped"
 		return res
 	}

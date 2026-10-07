@@ -34,6 +34,14 @@ type FieldSpec struct {
 	// panel renders the same list as datalist suggestions, so a module can
 	// offer known values without preventing an operator-supplied one.
 	Options []string `json:"options,omitempty"`
+	// Advanced marks a field the panel keeps behind a collapsed
+	// "advanced settings" section: optional, rarely filled in, and part of
+	// a path most operators never take -- openai-compat's base URL and
+	// model list are the reason it exists, because pasting a key for a
+	// built-in provider needs neither.  The zero value keeps the previous
+	// flat layout, so a module that does not set it renders exactly as
+	// before.
+	Advanced bool `json:"advanced,omitempty"`
 	// Default pre-fills the input.  Never put a real credential here.
 	Default string `json:"default,omitempty"`
 }
@@ -125,6 +133,20 @@ type LoginState struct {
 	Code      string `json:"code,omitempty"`
 	Message   string `json:"message,omitempty"`
 	AccountID string `json:"account_id,omitempty"`
+	// LocalApp is set when the module handed the URL to the vendor's own
+	// desktop application instead of leaving the operator to open it.  The
+	// panel must then stop offering its own "open in browser" control: a
+	// normal browser cannot finish this vendor's sign-in (Tabbit is the
+	// only such module today), so a link button there would only send the
+	// operator to a page that bounces them back to the vendor's site.
+	LocalApp bool `json:"local_app,omitempty"`
+	// HandoffPath names the credential the panel imports once the operator
+	// has finished signing in inside that application.  It is the module's
+	// own DiscoveredCredential.Path echoed back verbatim, so the panel can
+	// finish the login without knowing which vendor it is talking to.
+	// Empty means there is nothing to import and the ordinary polling
+	// result is the only way the session can end.
+	HandoffPath string `json:"handoff_path,omitempty"`
 	// Realm is the upstream family this login targets, echoed back so the
 	// panel can label the result.  Empty for a single-realm module.
 	Realm string `json:"realm,omitempty"`
@@ -174,12 +196,16 @@ type CheckinAction struct {
 // A refusal by the upstream — already checked in today, wrong realm, expired
 // credential — is a RESULT, not an error: OK is false and Error says why.
 type CheckinResult struct {
-	OK        bool           `json:"ok"`
-	AccountID string         `json:"account_id,omitempty"`
-	Action    string         `json:"action,omitempty"`
-	Code      int            `json:"code,omitempty"`
-	Message   string         `json:"message,omitempty"`
-	Error     string         `json:"error,omitempty"`
+	OK        bool   `json:"ok"`
+	AccountID string `json:"account_id,omitempty"`
+	Action    string `json:"action,omitempty"`
+	Code      int    `json:"code,omitempty"`
+	Message   string `json:"message,omitempty"`
+	Error     string `json:"error,omitempty"`
+	// Skipped means the action did not execute because it is not applicable
+	// to this account or the vendor has not enabled it.  The task centre
+	// must not count it as a refusal.
+	Skipped   bool           `json:"skipped,omitempty"`
 	Data      map[string]any `json:"data,omitempty"`
 	ElapsedMS int64          `json:"elapsed_ms,omitempty"`
 	At        string         `json:"at,omitempty"` // RFC3339, when it finished
@@ -506,6 +532,41 @@ type CheckinProvider interface {
 	// could not be made at all (unknown account id, no store configured) —
 	// an upstream refusal is a CheckinResult with OK false.
 	Checkin(ctx context.Context, id, action string) (CheckinResult, error)
+}
+
+// CheckinActionAllowsAccount reports whether action may run for rec.
+//
+// A non-empty Channels list scopes the action to matching credential kinds;
+// callers use this before starting a batch so accounts that do not carry that
+// channel are skipped instead of spending an upstream call and recording a
+// misleading refusal.  When action does not name any CheckinAction, the
+// helper returns true so ordinary task codes keep running unchanged.
+func CheckinActionAllowsAccount(actions []CheckinAction, action string, rec AccountRecord) bool {
+	matched := false
+	for _, a := range actions {
+		if action != "" && a.ID != action {
+			continue
+		}
+		matched = true
+		if len(a.Channels) == 0 {
+			return true
+		}
+		kind := accountFieldString(rec, "kind")
+		for _, ch := range a.Channels {
+			if strings.EqualFold(strings.TrimSpace(ch), kind) {
+				return true
+			}
+		}
+	}
+	return !matched
+}
+
+func accountFieldString(rec AccountRecord, key string) string {
+	if rec.Fields == nil {
+		return ""
+	}
+	s, _ := rec.Fields[key].(string)
+	return strings.TrimSpace(s)
 }
 
 // ModelRefresher lets a module re-read its model catalogue from the vendor on

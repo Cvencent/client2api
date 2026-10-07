@@ -360,6 +360,14 @@ func (c *Client) checkinFail(res *core.CheckinResult, e *entry, err error, what 
 	if !ok {
 		return false
 	}
+	if ue.Status == http.StatusNotFound {
+		res.OK = false
+		res.Skipped = true
+		res.Message = "the vendor has not enabled daily check-in for this account"
+		res.Error = fmt.Sprintf("could not %s: %s", what, ue.Message)
+		res.Data["error_kind"] = ue.Kind.String()
+		return true
+	}
 	c.noteUpstream(false, ue.Kind, ue.Message)
 	c.pool.markFailureWith(e, ue.Kind, ue.Message, ue.RetryAfter)
 	res.Error = fmt.Sprintf("could not %s: %s", what, ue.Message)

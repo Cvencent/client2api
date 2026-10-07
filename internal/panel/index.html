@@ -771,6 +771,25 @@ body.hide-bal .c-bal { display: none; }
   border-radius: 7px; padding: 7px 11px; width: 100%; min-height: 70px; resize: vertical;
 }
 #manFields textarea:focus { outline: none; border-color: var(--accent); }
+/* 动态字段是 <div class="fld">，上面那条 label.fld 规则管不到它：不另外补一份
+   间距，手填表单就会挤成一坨。顺便给高级折叠区和密码显隐开关配样式。 */
+#manFields .fld { display: block; margin-bottom: 14px; }
+#manFields .fld > .lb { display: block; font-size: 12.5px; color: var(--ink-2); margin-bottom: 5px; }
+#manFields .fld > .hint { display: block; font-size: 11.5px; color: var(--ink-3); margin-top: 4px; }
+#manFields .fld > .fldErr { font-size: 11.5px; color: var(--bad); margin-top: 4px; }
+#manFields .pw-wrap { position: relative; display: block; }
+#manFields .pw-wrap > input { padding-right: 58px; }
+#manFields .pw-toggle {
+  position: absolute; right: 5px; top: 50%; transform: translateY(-50%);
+  border: none; background: none; color: var(--ink-3); cursor: pointer;
+  font: 12px var(--sans); padding: 3px 6px; border-radius: 5px;
+}
+#manFields .pw-toggle:hover { color: var(--ink); background: var(--surface-2); }
+#manFields details.adv {
+  margin: 2px 0 14px; padding-top: 10px; border-top: 1px solid var(--line-soft);
+}
+#manFields details.adv > summary { cursor: pointer; color: var(--ink-3); font-size: 12.5px; }
+#manFields details.adv[open] > summary { margin-bottom: 10px; }
 #addClient { margin-bottom: 2px; }
 .uschart-hd, .uschart-body { padding: 10px 14px; }
 .uschart-hd { display: flex; align-items: center; border-bottom: 1px solid var(--line-soft); }
@@ -1997,7 +2016,7 @@ input, select, textarea { transition-property: border-color, box-shadow, backgro
           <div id="smsHint" class="hint"></div>
         </div>
         <div id="addReady" hidden>
-          <div class="state">在浏览器打开以下链接并登录：</div>
+          <div class="state" id="addReadyHint">在浏览器打开以下链接并登录：</div>
           <div class="url" id="addUrlWrap" hidden><a id="addUrl" href="#" target="_blank" rel="noopener noreferrer"></a></div>
           <div class="state" id="addCodeWrap" hidden>设备码：<b id="addCode"></b></div>
           <div class="state" id="addPoll"><span class="dots">等待授权完成，自动检测中</span></div>
@@ -2053,6 +2072,7 @@ input, select, textarea { transition-property: border-color, box-shadow, backgro
       <button id="btnImportSel" class="primary" hidden>导入所选</button>
       <button id="btnImportAll" hidden>全部导入</button>
       <button id="btnManual" class="primary" hidden>添加</button>
+      <button id="btnHandoff" class="primary" hidden>已完成登录，读取凭据</button>
       <button id="btnCopyUrl" hidden>复制链接</button>
       <button id="btnOpenUrl" class="primary" hidden>在浏览器打开</button>
       <button id="btnCloseAdd">关闭</button>
@@ -5474,15 +5494,17 @@ function scRenderRuns(runs) {
     const t = r.at ? new Date(r.at).toLocaleString("zh-CN", { hour12: false }) : "-";
     const src = r.trigger === "schedule" ? "定时" : "手动";
     const st = runStateChip(r);
+    const reasons = Array.isArray(r.refusals) ? r.refusals.filter(Boolean) : [];
+    const reasonText = reasons.join("；") + ((reasons.length && r.error) ? "；" : "") + (r.error || "");
     const ms = r.elapsed_ms ? (r.elapsed_ms / 1000).toFixed(1) + "s" : "-";
     return "<tr><td data-th=\"时间\">" + esc(t) + "</td><td data-th=\"平台\">" + esc(r.client) + "</td><td data-th=\"任务\">" + esc(scLabel(r.batch)) + "</td>" +
       "<td data-th=\"来源\">" + src + "</td><td data-th=\"账号\" class=\"acc-num\">" + (r.accounts || 0) + "</td><td data-th=\"执行\" class=\"acc-num\">" + (r.ran || 0) + "</td>" +
-      "<td data-th=\"拒绝\" class=\"acc-num\">" + (r.refused || 0) + "</td><td data-th=\"失败\" class=\"acc-num\">" + (r.failed || 0) + "</td>" +
+      "<td data-th=\"拒绝\" class=\"acc-num\">" + (r.refused || 0) + "</td><td data-th=\"跳过\" class=\"acc-num\">" + (r.skipped || 0) + "</td><td data-th=\"失败\" class=\"acc-num\">" + (r.failed || 0) + "</td>" +
       "<td data-th=\"耗时\" class=\"acc-num\">" + esc(ms) + "</td>" +
-      ((st || r.error) ? "<td data-th=\"说明\">" + st + esc(r.error || "") + "</td>" : "<td></td>") + "</tr>";
+      ((st || reasonText) ? "<td data-th=\"说明\">" + st + esc(reasonText) + "</td>" : "<td></td>") + "</tr>";
   }).join("");
   box.innerHTML = '<div class="tbl-wrap"><table class="acc stk"><thead><tr>' +
-    "<th>时间</th><th>平台</th><th>任务</th><th>来源</th><th>账号</th><th>执行</th><th>拒绝</th><th>失败</th><th>耗时</th><th>说明</th>" +
+    "<th>时间</th><th>平台</th><th>任务</th><th>来源</th><th>账号</th><th>执行</th><th>拒绝</th><th>跳过</th><th>失败</th><th>耗时</th><th>说明</th>" +
     "</tr></thead><tbody>" + rows + "</tbody></table></div>";
   scScheduleRefresh();
 }
@@ -6967,7 +6989,7 @@ $("#btnKey").addEventListener("click", async () => {
 });
 
 /* ── 添加账号弹层 ─────────────────────────────────────────────────────── */
-const ADD = { tab: "login", session: null, timer: null, creds: [], realm: "", sms: null, smsTimer: null, mode: "add", restore: null, auto: null, autoTimer: null, autoSeen: 0, autoBatch: null, autoDone: "", autoBusy: false };
+const ADD = { tab: "login", session: null, timer: null, creds: [], realm: "", sms: null, smsTimer: null, mode: "add", restore: null, auto: null, autoTimer: null, autoSeen: 0, autoBatch: null, autoDone: "", autoBusy: false, handoff: "" };
 function openAdd() {
   // 重登复用这个弹层，所以每次打开都先把标题和那句说明擦干净；openReloginTarget
   // 会在 openAdd 之后再按需要改写它们。
@@ -7463,6 +7485,11 @@ function resetLogin() {
   $("#addReady").hidden = true;
   $("#addDone").hidden = true; $("#addErr").hidden = true; $("#addCodeWrap").hidden = true;
   $("#smsCodeRow").hidden = true;
+  // 交接是上一次登录留下的状态：不清掉的话，下一个客户端会直接看到上一次的
+  // 「读取凭据」按钮，而那个路径根本不是它的。
+  $("#btnHandoff").hidden = true;
+  $("#addReadyHint").textContent = "在浏览器打开以下链接并登录：";
+  ADD.handoff = "";
   ADD.session = null;
 }
 function setLoginBusy(on) {
@@ -7487,7 +7514,13 @@ async function startLogin() {
   if (url) {
     const a = $("#addUrl"); a.href = url; a.textContent = url;
     $("#addReady").hidden = false;
-    $("#btnCopyUrl").hidden = false; $("#btnOpenUrl").hidden = false;
+    // 模块把登录页交给了厂商自己的客户端（tabbit）：链接已经在那边打开了，
+    // 面板不能再给一个「在浏览器打开」——普通浏览器走不完这种登录。改成
+    // 「读取凭据」：客户端里登录完，按一下就把新会话导进来。
+    ADD.handoff = st.local_app ? (st.handoff_path || "") : "";
+    $("#btnHandoff").hidden = !ADD.handoff;
+    $("#btnCopyUrl").hidden = !!ADD.handoff; $("#btnOpenUrl").hidden = !!ADD.handoff;
+    if (ADD.handoff) $("#addReadyHint").textContent = "登录页已在客户端里打开，请在那边完成登录：";
   }
   if (st.code) { $("#addCodeWrap").hidden = false; $("#addCode").textContent = st.code; }
   // Pending is the only state that belongs next to the authorisation link.  A
@@ -7577,7 +7610,28 @@ async function pollLogin(n) {
   $("#addErr").hidden = false;
   $("#addErr").textContent = st.message || ("登录" + st.state);
 }
+// 客户端交接的收尾：模块已经把登录页交给厂商自己的客户端（tabbit），所以面板
+// 不问「链接在不在」，而是问「会话导进来没有」。路径是模块自己给的那个凭据名，
+// 面板照样不认识任何具体客户端；导完仍走 loginDone，重登的刷新与 revive 一条不少。
+async function handoffImport() {
+  const n = $("#addClient").value, path = ADD.handoff;
+  if (!path) { toast("这个登录没有可读取的凭据", "err"); return; }
+  const btn = $("#btnHandoff");
+  btn.disabled = true; const was = btn.textContent; btn.textContent = "读取中…";
+  const r = await api(cbase(n) + "/import", { method: "POST", body: { paths: [path] } });
+  btn.disabled = false; btn.textContent = was;
+  if (!r.ok) { $("#addErr").hidden = false; $("#addErr").textContent = "读取凭据失败：" + r.err; return; }
+  const data = r.data || {}, rec = (data.imported || [])[0] || {};
+  if (data.accounts) applyAccounts(n, data.accounts);
+  // 刚导进来的那条才是带着新凭据的行：重登时把收尾指向它，免得对着一条已经被
+  // 替换掉号的旧记录去清标记。
+  if (ADD.mode === "restore" && ADD.restore && rec.id) ADD.restore.id = rec.id;
+  return loginDone({ state: "success", account_id: rec.id || rec.label || "", message: "已从客户端读取新的会话凭据" });
+}
 async function loginDone(st) {
+  // 收尾必须先把轮询停掉：交接会话在模块那边一直是 pending，不停的话成功提示会被
+  // 下一次轮询的等待消息盖掉。
+  stopPoll();
   $("#addPoll").innerHTML = "";
   $("#addDone").hidden = false;
   // Naming the realm is the whole reason the picker exists: without it the
@@ -7598,9 +7652,12 @@ async function loginDone(st) {
   // 否则账号会带着旧的 session-dead park 继续被跳过。
   if (restore && restore.id) {
     const n = $("#addClient").value;
-    const r = await api(cbase(n) + "/accounts/" + aid(restore.id) + "/revive", { method: "POST" });
     // 接码重登有号码可报，浏览器重登只有账号名，所以给一个回退链。
     const who = restore.label || restore.phone || restore.id;
+    // 不是每个模块都有要清的惩罚标记：tabbit 没有运行期冷却，没实现 core.Reviver，
+    // 对它调 revive 只会拿到 501，把一次成功的重登报成「恢复失败」。
+    if (!(capsOf(n) || {}).revive) { toast("已重新登录：" + who); return; }
+    const r = await api(cbase(n) + "/accounts/" + aid(restore.id) + "/revive", { method: "POST" });
     toast(r.ok ? "已重新登录并恢复：" + who : "重登成功，但恢复失败：" + r.err, r.ok ? "" : "err");
     if (r.ok) { applyAccounts(n, r.data); await refreshAll(); }
   }
@@ -7812,26 +7869,72 @@ async function qcConnect(n, card) {
   await refreshAll();
 }
 
+// 一个字段的 HTML。密码框带一个显隐开关（API Key 粘错一位是这里最常见的失败），
+// 每个字段都带一个自己的错误位，后端/本地校验都能就地报错。
+function manualFieldHTML(f) {
+  const id = "mf_" + f.key, lb = '<label class="lb" for="' + id + '">' + esc(f.label || f.key) + (f.required ? " *" : "") + '</label>';
+  let inp;
+  if (f.type === "textarea") inp = '<textarea id="' + id + '" data-key="' + esc(f.key) + '" placeholder="' + esc(f.placeholder || "") + '"></textarea>';
+  else if (f.type === "bool") inp = '<input id="' + id + '" data-key="' + esc(f.key) + '" type="checkbox"' + (f.default === "true" ? " checked" : "") + '>';
+  else if (f.type === "select") inp = '<select id="' + id + '" data-key="' + esc(f.key) + '">' + (f.options || []).map(o => '<option>' + esc(o) + '</option>').join("") + '</select>';
+  else {
+    const typ = f.type === "number" ? "number" : (f.type === "password" ? "password" : "text");
+    const opts = Array.isArray(f.options) ? f.options : [];
+    const listId = id + "_list";
+    inp = '<input id="' + id + '" data-key="' + esc(f.key) + '" type="' + typ + '" placeholder="' + esc(f.placeholder || "") + '" value="' + esc(f.default || "") + '"' + (opts.length ? ' list="' + listId + '"' : "") + '>';
+    if (opts.length) inp += '<datalist id="' + listId + '">' + opts.map(o => '<option value="' + esc(o) + '"></option>').join("") + '</datalist>';
+    if (f.type === "password") inp = '<span class="pw-wrap">' + inp + '<button type="button" class="pw-toggle" data-pw="' + id + '">显示</button></span>';
+  }
+  return '<div class="fld" data-field="' + esc(f.key) + '">' + lb + inp +
+    (f.help ? '<div class="hint">' + esc(f.help) + '</div>' : "") +
+    '<div class="fldErr" hidden></div></div>';
+}
+
 function renderManual() {
   const n = $("#addClient").value, k = capsOf(n) || {};
   renderQuickConnect(n);
   const fs = k.fields || [];
-  $("#manFields").innerHTML = fs.map(f => {
-    const id = "mf_" + f.key, lb = '<label class="lb" for="' + id + '">' + esc(f.label || f.key) + (f.required ? " *" : "") + '</label>';
-    let inp;
-    if (f.type === "textarea") inp = '<textarea id="' + id + '" data-key="' + esc(f.key) + '" placeholder="' + esc(f.placeholder || "") + '"></textarea>';
-    else if (f.type === "bool") inp = '<input id="' + id + '" data-key="' + esc(f.key) + '" type="checkbox"' + (f.default === "true" ? " checked" : "") + '>';
-    else if (f.type === "select") inp = '<select id="' + id + '" data-key="' + esc(f.key) + '">' + (f.options || []).map(o => '<option>' + esc(o) + '</option>').join("") + '</select>';
-    else {
-      const typ = f.type === "number" ? "number" : (f.type === "password" ? "password" : "text");
-      const opts = Array.isArray(f.options) ? f.options : [];
-      const listId = id + "_list";
-      inp = '<input id="' + id + '" data-key="' + esc(f.key) + '" type="' + typ + '" placeholder="' + esc(f.placeholder || "") + '" value="' + esc(f.default || "") + '"' + (opts.length ? ' list="' + listId + '"' : "") + '>';
-      if (opts.length) inp += '<datalist id="' + listId + '">' + opts.map(o => '<option value="' + esc(o) + '"></option>').join("") + '</datalist>';
-    }
-    return '<div class="fld">' + lb + inp + (f.help ? '<div class="hint">' + esc(f.help) + '</div>' : "") + '</div>';
-  }).join("") || '<div class="hint">该客户端没有声明可填字段</div>';
+  const basic = fs.filter(f => !f.advanced), adv = fs.filter(f => f.advanced);
+  let html = basic.map(manualFieldHTML).join("");
+  // 高级项默认收起：base_url / models 这种只有自定义服务商才要填的字段，摊在主
+  // 表单里会让「选服务商 + 粘 Key」这条主路径看起来复杂得多。哪些字段算高级由
+  // 模块自己的 field.advanced 声明，面板不按客户端名字写死。
+  if (adv.length) {
+    html += '<details class="adv"><summary>高级设置（可选）</summary>' + adv.map(manualFieldHTML).join("") + '</details>';
+  }
+  $("#manFields").innerHTML = html || '<div class="hint">该客户端没有声明可填字段</div>';
+  // 模块自己声明了备注字段时，弹窗底部那条通用备注就是重复的第二个输入框。
+  $("#manLabel").parentElement.hidden = fs.some(f => f.key === "label");
+  $$("#manFields .pw-toggle").forEach(b => b.addEventListener("click", () => {
+    const inp = document.getElementById(b.dataset.pw);
+    if (!inp) return;
+    const show = inp.type === "password";
+    inp.type = show ? "text" : "password";
+    b.textContent = show ? "隐藏" : "显示";
+  }));
   wireManualKeyLink(n);
+}
+
+// manualFieldError 把一条错误贴在对应字段下面，并给输入框上红边。返回是否找到
+// 那个字段，调用方据此决定要不要回落到弹窗顶部的错误区。
+function manualFieldError(key, msg) {
+  const box = $$("#manFields .fld").find(d => d.dataset.field === key);
+  if (!box) return false;
+  // 高级项默认收起：错误落在里面时必须先展开，否则操作员只看到一句「添加失败」，
+  // 却找不到是哪一栏出的问题。
+  const adv = box.closest("details");
+  if (adv) adv.open = true;
+  const err = box.querySelector(".fldErr");
+  if (err) { err.hidden = false; err.textContent = msg; }
+  const inp = box.querySelector("[data-key]");
+  if (inp) inp.classList.add("invalid");
+  return true;
+}
+
+function clearManualErrors() {
+  $$("#manFields .fldErr").forEach(el => { el.hidden = true; el.textContent = ""; });
+  $$("#manFields .invalid").forEach(el => el.classList.remove("invalid"));
+  $("#manErr").hidden = true;
 }
 
 function manualFieldByKey(key) {
@@ -7856,13 +7959,38 @@ function wireManualKeyLink(n) {
   if (has) sel.addEventListener("change", renderManualKeyLink);
   renderManualKeyLink();
 }
+// 后端错误里点名了字段 key 时就贴到那个字段下面（openai-compat 的报错会点名
+// base_url / api_key），否则回落到弹窗顶部那条错误区。
+function manualServerFieldError(fs, msg) {
+  const text = String(msg || "");
+  for (const f of fs) {
+    if (f.key && text.includes(f.key)) return manualFieldError(f.key, text);
+  }
+  return false;
+}
+
 async function doManual() {
-  const n = $("#addClient").value;
-  const body = { label: $("#manLabel").value.trim(), fields: {} };
+  const n = $("#addClient").value, fs = (capsOf(n) || {}).fields || [];
+  clearManualErrors();
+  const hasOwnLabel = fs.some(f => f.key === "label");
+  const body = { label: hasOwnLabel ? "" : $("#manLabel").value.trim(), fields: {} };
   $$("#manFields [data-key]").forEach(el => { body.fields[el.dataset.key] = el.type === "checkbox" ? (el.checked ? "true" : "false") : el.value; });
-  $("#manErr").hidden = true;
+  body.label = hasOwnLabel ? (body.fields.label || "").trim() : body.label;
+  // 必填项先在本地拦一道：面板知道模块声明了哪些字段是必填的，没必要为一个
+  // 空框跑一趟后端再回来报错。
+  for (const f of fs) {
+    if (!f.required) continue;
+    if (!String(body.fields[f.key] || "").trim()) manualFieldError(f.key, "请填写" + (f.label || f.key));
+  }
+  if ($$("#manFields .fldErr").some(el => !el.hidden)) return;
+  const btn = $("#btnManual");
+  btn.disabled = true; const was = btn.textContent; btn.textContent = "添加中…";
   const r = await api(cbase(n) + "/accounts", { method: "POST", body: body });
-  if (!r.ok) { $("#manErr").hidden = false; $("#manErr").textContent = "添加失败：" + r.err; return; }
+  btn.disabled = false; btn.textContent = was;
+  if (!r.ok) {
+    if (!manualServerFieldError(fs, r.err)) { $("#manErr").hidden = false; $("#manErr").textContent = "添加失败：" + r.err; }
+    return;
+  }
   toast("账号已添加");
   applyAccounts(n, r.data); await refreshAll();
 }
@@ -8294,6 +8422,7 @@ $("#keyVeil").addEventListener("click", ev => { if (ev.target === $("#keyVeil") 
 $("#addTabs").addEventListener("click", ev => { const t = ev.target.closest && ev.target.closest("[data-tab]"); if (t) setAddTab(t.dataset.tab); });
 $("#addClient").addEventListener("change", () => { pickAddClient($("#addClient").value); });
 $("#btnStartLogin").addEventListener("click", startLogin);
+$("#btnHandoff").addEventListener("click", handoffImport);
 $("#btnOwnKeySave").addEventListener("click", saveOwnKey);
 // 回车＝保存：这是个单行的粘贴框，粘完直接回车是最自然的动作。
 $("#addOwnKey").addEventListener("keydown", ev => {

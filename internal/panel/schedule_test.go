@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -224,13 +225,16 @@ func TestRunOutcomeDistinguishesSuccessFromRefusal(t *testing.T) {
 		name    string
 		ran     int
 		refused int
+		skipped int
 		failed  int
 		errText string
 		want    string
 	}{
 		{name: "clean success", ran: 3, want: "ok"},
 		{name: "all refused", ran: 3, refused: 3, want: "refused"},
+		{name: "all skipped", ran: 3, skipped: 3, want: "skipped"},
 		{name: "mixed", ran: 3, refused: 1, want: "partial"},
+		{name: "mixed skip", ran: 3, skipped: 1, want: "partial"},
 		{name: "failure", ran: 3, refused: 3, failed: 1, want: "failed"},
 		{name: "journal error with one success", ran: 1, errText: "boom", want: "partial"},
 		{name: "journal error with nothing run", errText: "boom", want: "failed"},
@@ -238,14 +242,35 @@ func TestRunOutcomeDistinguishesSuccessFromRefusal(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := runOutcome(tc.ran, tc.refused, tc.failed, tc.errText); got != tc.want {
-				t.Errorf("runOutcome(%d,%d,%d,%q) = %q, want %q", tc.ran, tc.refused, tc.failed, tc.errText, got, tc.want)
+			if got := runOutcome(tc.ran, tc.refused, tc.skipped, tc.failed, tc.errText); got != tc.want {
+				t.Errorf("runOutcome(%d,%d,%d,%d,%q) = %q, want %q", tc.ran, tc.refused, tc.skipped, tc.failed, tc.errText, got, tc.want)
 			}
 		})
 	}
 }
 
+func TestScheduleRunRowsShowSkippedAndRefusalReasons(t *testing.T) {
+	src := scheduleShellSource(t)
+	body := scheduleFuncBody(t, src, "scRenderRuns")
+	for _, want := range []string{"r.skipped", "<th>跳过</th>", "reasons.join"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("scRenderRuns is missing %q", want)
+		}
+	}
+}
+
+func TestRunRefusalReasonsKeepsOnlyRefusedSteps(t *testing.T) {
+	got := runRefusalReasons(batchRun{Steps: []batchStep{
+		{Refused: true, Error: "quota exhausted"},
+		{Skipped: true, Refused: true, Error: "not applicable"},
+	}})
+	if len(got) != 1 || got[0] != "quota exhausted" {
+		t.Fatalf("reasons = %v, want only the refused step's error", got)
+	}
+}
+
 func TestScheduleViewWithoutASchedulerSaysSo(t *testing.T) {
+
 	out := scheduleView(t, statusPanel(t, nil))
 	if out["wired"] != false {
 		t.Errorf("wired = %v, want false when no scheduler is wired", out["wired"])

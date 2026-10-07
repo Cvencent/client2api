@@ -235,14 +235,22 @@ GET  /api/commerce/activity/v1/sign-in/status  ?scene_codes=desktop_pet
 
 `tabbit` implements `core.LoginProvider`, but the module performs **no login of its own**,
 and the login URL it hands out only works inside the Tabbit browser (an ordinary browser
-redirects to the marketing site). There are two real paths, and `StartLogin`'s message
-names both:
+redirects to the marketing site). `StartLogin` therefore **opens that page in the Tabbit
+browser itself**, through the browser's own launcher — the same `tabbit-cli` 导入凭据
+uses — and answers with `local_app: true` plus `handoff_path`. That pair is a
+vendor-neutral signal the panel reads as "no link to open here; finish by importing the
+credential I just named", which is what an account row's 重登 now does. If the launcher
+is missing or refuses to come up (`BROWSER_LAUNCH_FAILED`), the state keeps
+`local_app` false and returns the URL together with the launcher's own failure, so the
+panel still offers the manual route. There are two real paths to a credential:
 
-1. **Import (preferred).** Sign in inside the Tabbit browser, then press **导入凭据** and
-   pick the browser-cookie entry. That stores a `web-token` account and the web transport
-   uses it directly — no sidecar at all. This is what `StartLogin` tells the operator to
-   do, and it is also why `PollLogin` reports only the sidecar path: an imported cookie
-   lands in the account table, not in a login session.
+1. **Import (preferred).** Sign in inside the Tabbit browser, then let the panel read the
+   browser-cookie entry (`handoff_path` names exactly which one). That stores a
+   `web-token` account and the web transport uses it directly — no sidecar at all, and a
+   re-login updates the same `tabbit-web:<uid>` row instead of adding a second one.
+   `PollLogin` reports only the sidecar path, because an imported cookie lands in the
+   account table, not in a login session: a hand-off session stays `pending` until the
+   panel imports the cookie, which is why polling one never relaunches the browser.
 2. **Sidecar.** Start `tabbit2api`, let it drive the browser, then poll. The verdict is
    deliberately **not** `/health`: the sidecar answers that even when nobody is signed in.
    The module asks for the model list instead, and the session turns `success` as soon as

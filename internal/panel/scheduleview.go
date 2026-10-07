@@ -51,17 +51,19 @@ type scheduleRow struct {
 // scheduler's own history (scheduled fires and manual presses it served) or
 // the panel's sweep journal (the one-click batch buttons).
 type scheduleRun struct {
-	At       string `json:"at"`
-	Client   string `json:"client"`
-	Batch    string `json:"batch"`
-	Trigger  string `json:"trigger"`
-	State    string `json:"state,omitempty"`
-	Accounts int    `json:"accounts"`
-	Ran      int    `json:"ran"`
-	Refused  int    `json:"refused"`
-	Failed   int    `json:"failed"`
-	Elapsed  int64  `json:"elapsed_ms"`
-	Error    string `json:"error,omitempty"`
+	At       string   `json:"at"`
+	Client   string   `json:"client"`
+	Batch    string   `json:"batch"`
+	Trigger  string   `json:"trigger"`
+	State    string   `json:"state,omitempty"`
+	Accounts int      `json:"accounts"`
+	Ran      int      `json:"ran"`
+	Refused  int      `json:"refused"`
+	Failed   int      `json:"failed"`
+	Skipped  int      `json:"skipped"`
+	Elapsed  int64    `json:"elapsed_ms"`
+	Refusals []string `json:"refusals,omitempty"`
+	Error    string   `json:"error,omitempty"`
 }
 
 // runJournalMax bounds what the merged journal returns.  The page shows the
@@ -181,11 +183,13 @@ func (p *panel) mergedRuns() []scheduleRun {
 				Client:   rec.Client,
 				Batch:    rec.Batch,
 				Trigger:  rec.Trigger,
-				State:    runOutcome(rec.Ran, rec.Refused, rec.Failed, rec.Error),
+				State:    runOutcome(rec.Ran, rec.Refused, rec.Skipped, rec.Failed, rec.Error),
 				Accounts: rec.Accounts,
 				Ran:      rec.Ran,
 				Refused:  rec.Refused,
+				Skipped:  rec.Skipped,
 				Failed:   rec.Failed,
+				Refusals: append([]string(nil), rec.Refusals...),
 				Elapsed:  rec.Duration.Milliseconds(),
 				Error:    rec.Error,
 			})
@@ -209,9 +213,11 @@ func (p *panel) mergedRuns() []scheduleRun {
 			Accounts: run.Accounts,
 			Ran:      run.Ran,
 			Refused:  run.Refused,
+			Skipped:  run.Skipped,
 			Failed:   run.Failed,
-			Elapsed:  run.ElapsedMS,
+			Refusals: runRefusalReasons(run),
 			Error:    run.Error,
+			Elapsed:  run.ElapsedMS,
 		})
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].At > out[j].At })
@@ -224,30 +230,65 @@ func (p *panel) mergedRuns() []scheduleRun {
 	return out
 }
 
-// runOutcome turns one finished run's counters into the state the task centre
+// runRefusalReasons extracts the operator-facing reasons from a manual sweep.
+func runRefusalReasons(run batchRun) []string {
+	var out []string
+	for _, step := range run.Steps {
+		if step.Skipped || !step.Refused {
+			continue
+		}
+		reason := core.Redact(strings.TrimSpace(firstNonEmpty(step.Message, step.Error)))
+		if reason == "" {
+			reason = "the vendor refused the action"
+		}
+		seen := false
+		for _, got := range out {
+			if got == reason {
+				seen = true
+				break
+			}
+		}
+		if !seen {
+			out = append(out, reason)
+		}
+		if len(out) >= 5 {
+			break
+		}
+	}
+	return out
+}
+
 // shows.  Before this the scheduled path hard-coded "done" for every run, so
+// runOutcome turns one finished run's counters into the state the task centre
 // a sweep in which every account was refused was indistinguishable from a
 // clean success -- and the UI rendered no status at all.
 //
 //   - failed  : at least one transport/Go error (or the journal's own error)
-//   - partial : some work succeeded and some was refused/failed
+//   - partial : some work succeeded and some was refused/skipped/failed
 //   - refused : every executed step was a legitimate vendor refusal
+//   - skipped : every executed step was deliberately not applicable
 //   - ok      : at least one step succeeded and nothing failed
 //   - done    : the run finished without executing anything (nothing to do)
-func runOutcome(ran, refused, failed int, errText string) string {
+func runOutcome(ran, refused, skipped, failed int, errText string) string {
+	success := ran - refused - skipped
+	if success < 0 {
+		success = 0
+	}
 	switch {
 	case failed > 0 || strings.TrimSpace(errText) != "":
-		if ran > refused {
+		if success > 0 {
 			return "partial"
 		}
 		return "failed"
-	case ran > refused:
-		if refused > 0 {
+	case success > 0:
+		if refused > 0 || skipped > 0 {
 			return "partial"
 		}
 		return "ok"
-	case ran > 0:
+	case refused > 0:
 		return "refused"
+	case skipped > 0:
+		return "skipped"
 	default:
 		return "done"
 	}

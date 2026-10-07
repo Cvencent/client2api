@@ -207,6 +207,28 @@ func TestWorkbuddyCheckinCNAlreadyDoneCountsAsSuccess(t *testing.T) {
 	}
 }
 
+func TestWorkbuddyCheckinCNAlreadyDoneHTTP400CountsAsSuccess(t *testing.T) {
+	// The live CN endpoint reports an idempotent repeat with HTTP 400 plus
+	// business code 10001; that is still "already checked in", not a transport
+	// failure that should land in the task centre as a refusal.
+	rt := checkinRT(http.StatusBadRequest, `{"code":10001,"msg":"today already checked in"}`)
+	c, _ := panelClient(t, rt, cnAccountFiles())
+
+	res, err := c.Checkin(context.Background(), "uid-cn-0001", "")
+	if err != nil {
+		t.Fatalf("Checkin: %v", err)
+	}
+	if !res.OK {
+		t.Fatalf("OK = false for HTTP 400 code 10001: error=%q", res.Error)
+	}
+	if res.Code != 10001 {
+		t.Errorf("Code = %d, want 10001", res.Code)
+	}
+	if done, _ := res.Data["already_done"].(bool); !done {
+		t.Error("already_done = false, want true for HTTP 400 code 10001")
+	}
+	}
+
 func TestWorkbuddyCheckinCNRefusalIsAResult(t *testing.T) {
 	rt := checkinRT(http.StatusOK, `{"code":40001,"msg":"活动已结束"}`)
 	c, _ := panelClient(t, rt, cnAccountFiles())

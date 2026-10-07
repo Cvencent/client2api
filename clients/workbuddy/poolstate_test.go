@@ -116,6 +116,25 @@ func TestWorkbuddyPoolStateExpiredCooldownDoesNotPark(t *testing.T) {
 	}
 }
 
+func TestWorkbuddyPoolStateLapsedCooldownBecomesReady(t *testing.T) {
+	a := &Auth{AccessToken: "at-111111111111", UID: "u1"}
+	p, clk := newPickPool([]*Auth{a})
+
+	p.MarkFailure(a, &Error{Kind: ErrSoftRate, Status: 429, RetryAfter: 30 * time.Second, Msg: "slow down"})
+	if got := p.Snapshot()[0]; got.State != stateCooling {
+		t.Fatalf("state during cooldown = %q, want %q", got.State, stateCooling)
+	}
+
+	clk.advance(31 * time.Second)
+	got := p.Snapshot()[0]
+	if got.State != stateReady || got.Note != "" {
+		t.Fatalf("state after cooldown = %q/%q, want ready with no note", got.State, got.Note)
+	}
+	if !got.Enabled {
+		t.Fatal("an account whose cooldown lapsed must be enabled")
+	}
+}
+
 func TestWorkbuddyPoolStateNeverHoldsACredential(t *testing.T) {
 	dir := t.TempDir()
 	a := &Auth{AccessToken: "at-SECRET-abcdefghijklmnop", UID: "u1"}

@@ -577,9 +577,69 @@ func TestManualFormLinksToTheProviderKeyPage(t *testing.T) {
 	// A text field may carry options as suggestions.  openai-compat uses that
 	// for provider ids: known vendors stay discoverable without turning the
 	// routing prefix into a closed enum that blocks custom endpoints.
+	// 建议列表在单字段渲染函数里，renderManual 只管分层和拼装。
+	field := poolStatsFuncBody(t, src, "manualFieldHTML")
 	for _, want := range []string{"<datalist", "f.options", " list="} {
-		if !strings.Contains(manual, want) {
-			t.Errorf("renderManual does not render text-field suggestions: missing %q", want)
+		if !strings.Contains(field, want) {
+			t.Errorf("manualFieldHTML does not render text-field suggestions: missing %q", want)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 手动添加表单：高级项折叠、密码显隐、必填就地报错。
+//
+// openai-compat 的 base_url / models 只有自定义服务商才要填。它们摊在主表单里
+// 会把一个「选服务商 + 粘 Key」的操作变成五栏要读的表；模块用 field.advanced
+// 声明收起，面板按声明渲染折叠区（不按客户端名字写死）。
+// ---------------------------------------------------------------------------
+func TestManualFormTiersAdvancedFieldsAndTogglesSecrets(t *testing.T) {
+	src := poolStatsUISource(t)
+
+	// 单字段渲染单独一个函数，密码框旁边要有一个显隐开关。API Key 粘错一位是
+	// 这里最常见的失败，肉眼比对一次比重新申请一把快得多。
+	field := poolStatsFuncBody(t, src, "manualFieldHTML")
+	for _, want := range []string{
+		`class="pw-toggle"`, `data-pw="`, `<datalist`, "f.options", " list=",
+		`f.required ? " *"`, `class="fldErr"`,
+	} {
+		if !strings.Contains(field, want) {
+			t.Errorf("manualFieldHTML 少了 %q", want)
+		}
+	}
+
+	render := poolStatsFuncBody(t, src, "renderManual")
+	for _, want := range []string{
+		"f.advanced", `<details class="adv">`, "高级设置", "manualFieldHTML",
+		`#manFields .pw-toggle`, `$("#manLabel")`,
+	} {
+		if !strings.Contains(render, want) {
+			t.Errorf("renderManual 少了 %q", want)
+		}
+	}
+	// 声明了自己 label 字段的模块（openai-compat、tabbit）不能再多出一个底部
+	// 通用备注框 —— 两个「备注」并排出现是纯噪声，而且只有下面那个会丢。
+	if !strings.Contains(render, `f.key === "label"`) {
+		t.Error("renderManual 没有根据模块声明的 label 字段隐藏通用备注框")
+	}
+	if !strings.Contains(src, `id="manLabel"`) {
+		t.Error("通用备注框整块被删了：没有 label 字段的模块还要用它")
+	}
+	if !strings.Contains(src, "label.fld") || !strings.Contains(src, "#manFields .fld") {
+		t.Error("动态字段是 div.fld，没有配套间距样式就会挤成一坨")
+	}
+
+	// 必填项先在面板拦一道，没必要为空框跑一趟后端；保存期间按钮要能看出在忙。
+	// 高级项里的报错要先把折叠区展开，否则错误只写在看不见的 DOM 里。
+	err := poolStatsFuncBody(t, src, "manualFieldError")
+	if !strings.Contains(err, `closest("details")`) || !strings.Contains(err, "open = true") {
+		t.Error("manualFieldError 不展开高级折叠区：里面那条错误操作员看不到")
+	}
+
+	save := poolStatsFuncBody(t, src, "doManual")
+	for _, want := range []string{"f.required", "manualFieldError", `"添加中…"`, "btnManual"} {
+		if !strings.Contains(save, want) {
+			t.Errorf("doManual 少了 %q", want)
 		}
 	}
 }

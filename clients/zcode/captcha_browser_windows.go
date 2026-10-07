@@ -3,9 +3,11 @@
 package zcode
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -32,15 +34,130 @@ func browserCandidates() []string {
 	return append(out, "msedge.exe", "chrome.exe")
 }
 
-// configureBrowserCommand asks Windows to create the process without showing a
-// window.  Chromium often ignores the flag for its own browser window, which is
-// why guardBrowserWindow exists as well, but when it is honoured the operator
-// never sees even a flash.
-func configureBrowserCommand(cmd *exec.Cmd) {
-	if cmd == nil {
-		return
+// captchaBrowserDesktopName is the private desktop Chromium windows are
+// created on.  The operator's shell (Explorer and the taskbar) is attached to
+// the normal desktop, so a window that exists only on this desktop cannot
+// flash into the taskbar while it starts.
+const captchaBrowserDesktopName = "client2api-zcode-captcha"
+
+// desktopAllAccess is DESKTOP_ALL_ACCESS: the new desktop must be able to
+// create the browser's windows and accept the process created on it.
+const desktopAllAccess = 0x000F01FF
+
+var (
+	desktopOnce   sync.Once
+	desktopHandle uintptr
+	desktopErr    error
+)
+
+// hiddenCaptchaDesktop creates the private desktop once per process.  Keeping
+// the handle open keeps the desktop alive for the lifetime of the gateway;
+// Windows destroys it with the window station when the process exits.
+func hiddenCaptchaDesktop() (uintptr, error) {
+	desktopOnce.Do(func() {
+		name, err := syscall.UTF16PtrFromString(captchaBrowserDesktopName)
+		if err != nil {
+			desktopErr = err
+			return
+		}
+		h, _, callErr := procCreateDesktopW.Call(
+			uintptr(unsafe.Pointer(name)),
+			0,
+			0,
+			0,
+			uintptr(desktopAllAccess),
+			0,
+		)
+		if h == 0 {
+			if callErr != syscall.Errno(0) {
+				desktopErr = callErr
+			} else {
+				desktopErr = syscall.EINVAL
+			}
+			return
+		}
+		desktopHandle = h
+	})
+	return desktopHandle, desktopErr
+}
+
+// startCaptchaBrowser asks CreateProcess for a browser on the private desktop.
+// StartupInfo.Desktop is the important part: exec.Cmd cannot express it, while
+// passing it here means the first Chromium window is born where Explorer and
+// the taskbar cannot see it.
+//
+// If the private desktop cannot be created (for example a non-interactive
+// service session), fail instead of launching a visible browser and flashing
+// the taskbar.  captcha_command remains the headless fallback.
+func startCaptchaBrowser(exe string, args []string) (captchaBrowserProcess, error) {
+	if _, err := hiddenCaptchaDesktop(); err != nil {
+		return nil, fmt.Errorf("cannot create the private captcha desktop: %w", err)
 	}
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	app, err := syscall.UTF16PtrFromString(exe)
+	if err != nil {
+		return nil, err
+	}
+	commandLine, err := syscall.UTF16PtrFromString(windowsCommandLine(exe, args))
+	if err != nil {
+		return nil, err
+	}
+	desktop, err := syscall.UTF16PtrFromString(captchaBrowserDesktopName)
+	if err != nil {
+		return nil, err
+	}
+
+	startup := syscall.StartupInfo{
+		Cb:      uint32(unsafe.Sizeof(syscall.StartupInfo{})),
+		Desktop: desktop,
+	}
+	var info syscall.ProcessInformation
+	if err := syscall.CreateProcess(app, commandLine, nil, nil, false, 0, nil, nil, &startup, &info); err != nil {
+		return nil, err
+	}
+	_ = syscall.CloseHandle(info.Thread)
+	return &windowsCaptchaBrowserProcess{pid: int(info.ProcessId), handle: info.Process}, nil
+}
+
+func windowsCommandLine(exe string, args []string) string {
+	parts := make([]string, 0, len(args)+1)
+	parts = append(parts, syscall.EscapeArg(exe))
+	for _, arg := range args {
+		parts = append(parts, syscall.EscapeArg(arg))
+	}
+	return strings.Join(parts, " ")
+}
+
+type windowsCaptchaBrowserProcess struct {
+	pid    int
+	handle syscall.Handle
+	once   sync.Once
+	err    error
+}
+
+func (p *windowsCaptchaBrowserProcess) PID() int { return p.pid }
+
+func (p *windowsCaptchaBrowserProcess) Wait() error {
+	p.once.Do(func() {
+		defer syscall.CloseHandle(p.handle)
+		status, err := syscall.WaitForSingleObject(p.handle, syscall.INFINITE)
+		if err != nil {
+			p.err = err
+			return
+		}
+		if status != syscall.WAIT_OBJECT_0 {
+			p.err = fmt.Errorf("unexpected process wait status %#x", status)
+			return
+		}
+		var code uint32
+		if err := syscall.GetExitCodeProcess(p.handle, &code); err != nil {
+			p.err = err
+			return
+		}
+		if code != 0 {
+			p.err = fmt.Errorf("browser exited with code %d", code)
+		}
+	})
+	return p.err
 }
 
 var (
@@ -49,6 +166,7 @@ var (
 	procGetWindowThreadProcessID = user32.NewProc("GetWindowThreadProcessId")
 	procIsWindowVisible          = user32.NewProc("IsWindowVisible")
 	procSetWindowPos             = user32.NewProc("SetWindowPos")
+	procCreateDesktopW           = user32.NewProc("CreateDesktopW")
 
 	kernel32                 = syscall.NewLazyDLL("kernel32.dll")
 	procOpenProcess          = kernel32.NewProc("OpenProcess")
@@ -95,22 +213,67 @@ var (
 	})
 )
 
+// The kernel wants a process HANDLE, and it writes a UNICODE_STRING into the
+// front of the caller's buffer whose Buffer member points at the command line
+// stored right behind it in that same buffer.
+const (
+	// processQueryLimitedInformation is PROCESS_QUERY_LIMITED_INFORMATION.
+	// It is the access right that still works across integrity levels, which
+	// is what enumerating other people's processes needs.
+	processQueryLimitedInformation = 0x1000
+	// processTerminateAccess is PROCESS_TERMINATE, used to close a browser
+	// this module started.
+	processTerminateAccess = 0x0001
+)
+
+// commandLineBuf recycles the read buffer.  The off-screen guard asks for the
+// command line once per top-level window, twenty times a second, and a fresh
+// 64 KiB allocation per window is a lot of garbage for a background poll.
+var commandLineBuf = sync.Pool{
+	New: func() any {
+		b := make([]byte, 64<<10)
+		return &b
+	},
+}
+
 // processCommandLine returns the full command line of pid.  Chromium relaunches
 // its browser process, so the pid the gateway started is not the pid that owns
 // the window later; the unique --user-data-dir in the command line is the only
 // stable handle.
+//
+// NtQueryInformationProcess takes a HANDLE and a caller-owned buffer.  The
+// earlier version passed the bare pid and a zero-length buffer, so the kernel
+// answered STATUS_INVALID_HANDLE every single time and both callers silently
+// gave up: the guard never moved a window and the profile-based kill never
+// matched a process.  That is why the throwaway captcha browsers stayed on the
+// operator's desktop and piled up run after run.
 func processCommandLine(pid uintptr) (string, bool) {
+	if pid == 0 {
+		return "", false
+	}
+	h, _, _ := procOpenProcess.Call(processQueryLimitedInformation, 0, pid)
+	if h == 0 {
+		return "", false
+	}
+	defer procCloseHandle.Call(h)
+
 	type unicodeString struct {
 		Length        uint16
 		MaximumLength uint16
 		Buffer        uintptr
 	}
-	var buf unicodeString
+	// 64 KiB holds the header plus the longest command line Windows can
+	// report (32767 UTF-16 units).
+	bufp := commandLineBuf.Get().(*[]byte)
+	defer commandLineBuf.Put(bufp)
+	buf := *bufp
+
+	base := uintptr(unsafe.Pointer(&buf[0]))
 	status, _, _ := procQueryCommandlineInfo.Call(
-		pid,
+		h,
 		uintptr(processCommandLineClass),
-		uintptr(unsafe.Pointer(&buf)),
-		0,
+		base,
+		uintptr(len(buf)),
 	)
 	// NTSTATUS: 0 or the informational band (0x40000000..0x7FFFFFFF) is a
 	// success; anything in the error bands is a failed read (system
@@ -118,12 +281,18 @@ func processCommandLine(pid uintptr) (string, bool) {
 	if status != 0 && (status&0xC0000000) != 0 {
 		return "", false
 	}
-	if buf.Length == 0 || buf.Buffer == 0 {
+	us := (*unicodeString)(unsafe.Pointer(&buf[0]))
+	if us.Length == 0 || us.Buffer < base {
 		return "", false
 	}
-	// Converting the kernel-returned pointer in two steps keeps vet's
-	// unsafe.Pointer rules happy: the syscall wrote it, we only read it.
-	q := (*[32768]uint16)(unsafe.Pointer(&struct{ a uintptr }{buf.Buffer}))[:buf.Length/2]
+	// Read the string by offset instead of converting the kernel's uintptr
+	// back into a pointer: same bytes, and nothing for vet to flag.
+	off := int(us.Buffer - base)
+	need := int(us.Length)
+	if need%2 != 0 || off > len(buf) || need > len(buf)-off {
+		return "", false
+	}
+	q := (*[32768]uint16)(unsafe.Pointer(&buf[off]))[:need/2]
 	return syscall.UTF16ToString(q), true
 }
 
@@ -212,13 +381,12 @@ func killBrowserProfile(profile string, logf func(string, ...any)) {
 	if len(pids) == 0 {
 		return
 	}
-	const processTerminate = 0x0001
 	const waitTimeout = 5000 // ms
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		alive := false
 		for _, pid := range pids {
-			h, _, _ := procOpenProcess.Call(processTerminate, 0, uintptr(pid))
+			h, _, _ := procOpenProcess.Call(processTerminateAccess, 0, uintptr(pid))
 			if h == 0 {
 				continue // already gone, or nothing this process can touch
 			}
@@ -242,6 +410,65 @@ func killBrowserProfile(profile string, logf func(string, ...any)) {
 	}
 	if logf != nil {
 		logf("zcode: closed %d captcha browser process(es) for %s", len(pids), profile)
+	}
+}
+
+// captchaProfileToken pulls the throwaway profile name out of a command line.
+var captchaProfileToken = regexp.MustCompile(`zcode-captcha-\d+`)
+
+// reapStaleCaptchaBrowsers closes browsers an earlier run left behind: a crash
+// or a hard kill between launching the window and its cleanup leaves the
+// process, and sometimes its profile, in %TEMP% forever.  A live mint always
+// has a freshly touched profile directory, so an untouched directory -- or a
+// missing one, which is what a failed cleanup leaves behind -- is what
+// separates debris from work in progress.  The zcode-captcha- prefix is the
+// safety boundary: the operator's own browser never runs with it.
+//
+// It runs once while the module starts, before this process can mint its own
+// captcha, so every matching process and profile directory is debris by
+// definition.  The zcode-captcha- prefix is the safety boundary: the
+// operator's own browser never runs with it.
+func reapStaleCaptchaBrowsers(logf func(string, ...any)) {
+	tmp := os.TempDir()
+	closing := 0
+	for _, pid := range matchingProcessIDs(captchaProfilePrefix, browserProcessNames()) {
+		line, ok := processCommandLine(pid)
+		if !ok {
+			continue
+		}
+		name := captchaProfileToken.FindString(line)
+		if name == "" {
+			continue
+		}
+		h, _, _ := procOpenProcess.Call(processTerminateAccess, 0, pid)
+		if h == 0 {
+			continue
+		}
+		procTerminateProcess.Call(h, 1)
+		procCloseHandle.Call(h)
+		closing++
+	}
+	if closing > 0 && logf != nil {
+		logf("zcode: closed %d leftover captcha browser process(es) from an earlier run", closing)
+	}
+
+	// Fold in any profile directory whose browser is already gone.
+	entries, err := os.ReadDir(tmp)
+	if err != nil {
+		return
+	}
+	removed := 0
+	for _, e := range entries {
+		if !e.IsDir() || !strings.HasPrefix(e.Name(), captchaProfilePrefix) {
+			continue
+		}
+		dir := filepath.Join(tmp, e.Name())
+		if os.RemoveAll(dir) == nil {
+			removed++
+		}
+	}
+	if removed > 0 && logf != nil {
+		logf("zcode: removed %d leftover captcha browser profile(s)", removed)
 	}
 }
 

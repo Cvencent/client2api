@@ -17,6 +17,14 @@ import (
 	"time"
 )
 
+// captchaBrowserProcess is the small lifecycle surface the mint needs from a
+// platform-specific browser launch.  Windows cannot use exec.Cmd here because
+// it must provide a private desktop in STARTUPINFO; Unix keeps using it.
+type captchaBrowserProcess interface {
+	PID() int
+	Wait() error
+}
+
 // The JWT ("start-plan") channel wants an Aliyun traceless-verification
 // parameter on every call, and only Aliyun's own JavaScript can mint one --
 // against a real browser fingerprint.  This file mints it with the browser the
@@ -241,6 +249,7 @@ func newBrowserSolver(cfg *Config, logf func(string, ...any)) *browserSolver {
 			}
 			return nil
 		}
+		reapStaleCaptchaBrowsers(logf)
 		return &browserSolver{exe: exe, logf: logf}
 	}
 	exe := findBrowser()
@@ -250,6 +259,7 @@ func newBrowserSolver(cfg *Config, logf func(string, ...any)) *browserSolver {
 		}
 		return nil
 	}
+	reapStaleCaptchaBrowsers(logf)
 	return &browserSolver{exe: exe, logf: logf}
 }
 
@@ -296,16 +306,13 @@ func (b *browserSolver) mintOnce(ctx context.Context, info regionInfo) (string, 
 	mintCtx, cancel := context.WithTimeout(ctx, captchaMintTimeout)
 	defer cancel()
 
-	cmd := exec.Command(b.exe, browserArgs(profile, sess.url())...)
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
-	configureBrowserCommand(cmd)
-	if err := cmd.Start(); err != nil {
+	proc, err := startCaptchaBrowser(b.exe, browserArgs(profile, sess.url()))
+	if err != nil {
 		return "", fmt.Errorf("zcode: cannot start %s: %w", filepath.Base(b.exe), err)
 	}
-	kid = cmd.Process.Pid
+	kid = proc.PID()
 	waited := make(chan struct{})
-	go func() { _ = cmd.Wait(); close(waited) }()
+	go func() { _ = proc.Wait(); close(waited) }()
 	// Chromium clamps its initial window placement onto the desktop even
 	// with --window-position set, so the window has to be moved again from
 	// outside once it exists.  See guardBrowserWindow.

@@ -978,7 +978,7 @@ renderer never calls it either — so there is nothing honest to implement from.
 | zcode | yes | yes | yes — polls `POST {api}/oauth/cli/init` → `GET …/poll/{flow_id}` | yes — claims the promotion via the built-in Edge/Chrome captcha solver; `captcha_command` is the headless fallback |
 | kimi | yes | yes | yes — RFC 8628 device grant against `auth.kimi.com`; the CLI is not required | no — no such endpoint exists |
 | qwenwork | yes | no — nothing on disk holds a usable token | yes — PKCE device flow | yes — `daily`, against the Sash check-in API |
-| tabbit | yes | yes | yes — browser hand-off: opens the Tabbit web sign-in, then confirms it from the sidecar's model list | no — the module only talks to a local sidecar |
+| tabbit | yes | yes | yes — browser hand-off: opens the sign-in page inside the Tabbit browser through its own launcher, then reads the session cookie back (`local_app` + `handoff_path`; with no launcher it falls back to returning the URL) | no — the module only talks to a local sidecar |
 | minimaxcode | yes | yes | yes — RFC 8628 device grant against `account.minimax.cn`, PKCE, with the CN `user_code` variant; the desktop GUI is not required | no — the product has no check-in |
 | cline | yes | yes | yes — WorkOS device-code flow, the same client id the desktop app uses | no — no such endpoint exists |
 | lobsterai | yes | yes | yes — browser hand-off; the module returns the URL and watches for the credential it leaves behind | yes — a daily check-in action |
@@ -993,9 +993,10 @@ Of the **original seven** modules, six expose a login and were verified against
 the live vendor endpoints from a running gateway, not just from tests: each
 `POST /panel/api/clients/<name>/login` returns a real `state: "pending"` with a
 working browser URL (`kimi` also returns the user code to confirm). `tabbit` is
-the one whose URL belongs to a browser its *sidecar* drives: the module cannot
-sign in by itself, so it hands the URL over and then watches the sidecar's model
-list to learn that the browser finished. `minimaxcode` joined them with an
+the one whose URL only works inside the Tabbit browser: the module opens the page
+there through that browser's own launcher and answers with `local_app` plus the
+credential path to import afterwards, so the panel shows a 读取凭据 button instead
+of a link a normal browser cannot use. `minimaxcode` joined them with an
 RFC 8628 device grant recovered from its desktop bundle; unlike the six above it
 has only been exercised against a scripted transport, so a real sign-in from
 this machine is still the open item.
@@ -1070,8 +1071,9 @@ URL (and, when the flow has one, a user code the operator confirms), then polls
 the operator to install a vendor CLI to sign in: kimi, qwenwork, zcode, cline
 and minimaxcode are pure device/poll flows, trae runs a temporary loopback
 listener to catch its OAuth callback, workbuddy polls the vendor's own state
-endpoint, and tabbit hands the browser off to its sidecar and confirms from the
-model list that the sign-in landed; `raccoon` serves a loopback QR/SMS page,
+endpoint, and tabbit opens its sign-in page in the Tabbit browser itself and asks
+the panel to import the cookie afterwards (falling back to returning the URL when
+no launcher is installed); `raccoon` serves a loopback QR/SMS page,
 `openrouter` catches a PKCE callback on a loopback listener, and `opencode`
 offers an anonymous free credential or a device-code sign-in. A module that
 cannot sign in must say so instead of showing a button — the panel renders that

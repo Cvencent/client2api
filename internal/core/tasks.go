@@ -62,6 +62,10 @@ type TaskResult struct {
 	AccountID string `json:"account_id,omitempty"`
 	Message   string `json:"message,omitempty"`
 	Error     string `json:"error,omitempty"`
+	// Skipped means there was deliberately nothing to execute -- already
+	// done, not enabled for this account, or a scope the action does not
+	// apply to.  It is neither a success nor a vendor refusal.
+	Skipped bool `json:"skipped,omitempty"`
 	// Credit/Energy are what actually landed this run; zero on a repeat.
 	Credit    int64  `json:"credit,omitempty"`
 	Energy    int64  `json:"energy,omitempty"`

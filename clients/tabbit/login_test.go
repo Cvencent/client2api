@@ -6,8 +6,11 @@ package tabbit
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -52,8 +55,54 @@ const (
 func loginClient(t *testing.T, cfg string, tp roundTripFunc) *Client {
 	t.Helper()
 	clearTabbitEnv(t)
+	// 启动器默认指向一个不存在的路径：这套测试必须在任何一台机器上都不去
+	// 真启动 Tabbit 浏览器。交接那条路自己指定一个存在的桩文件。
+	missingTabbitCLI(t)
 	withCandidates(t, closedPortURL(t))
 	return newTestClient(t, cfg, &http.Client{Transport: tp})
+}
+
+// missingTabbitCLI 把 tabbit_cli 指到一个不存在的路径，并返回它。测试用
+// 它表达「这台机器上没有 Tabbit 浏览器」。
+func missingTabbitCLI(t *testing.T) string {
+	t.Helper()
+	p := filepath.ToSlash(filepath.Join(t.TempDir(), "no-such-tabbit-cli.exe"))
+	t.Setenv("TABBIT_CLI", p)
+	return p
+}
+
+// stubTabbitCLI 把启动器指到一个真实存在的文件，让「交给客户端」那条路被
+// 走到。真正执行的东西由 fakeLauncher 换掉，所以这里不会拉起任何进程。
+func stubTabbitCLI(t *testing.T) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "tabbit-cli.exe")
+	if err := os.WriteFile(p, []byte("stub"), 0o600); err != nil {
+		t.Fatalf("writing the stub launcher: %v", err)
+	}
+	t.Setenv("TABBIT_CLI", filepath.ToSlash(p))
+	return p
+}
+
+// launcherCalls 记下交接路径交给启动器的东西。
+type launcherCalls struct {
+	tasks    []string
+	programs []string
+}
+
+// fakeLauncher 替换调起浏览器那一步。生产代码只会调 runTabbitProgram；
+// 这里换掉它的调用点，让「模块把登录页交给 Tabbit 浏览器」这件事可以在
+// 没有浏览器、没有 Node、没有 Playwright 的机器上被断言。
+func fakeLauncher(t *testing.T, reply json.RawMessage, err error) *launcherCalls {
+	t.Helper()
+	calls := &launcherCalls{}
+	old := runTabbitLauncher
+	runTabbitLauncher = func(_ *Client, _ context.Context, task, _ string, program string) (json.RawMessage, error) {
+		calls.tasks = append(calls.tasks, task)
+		calls.programs = append(calls.programs, program)
+		return reply, err
+	}
+	t.Cleanup(func() { runTabbitLauncher = old })
+	return calls
 }
 
 func TestTabbitLoginHandsOffTheBrowserFlow(t *testing.T) {
@@ -86,6 +135,96 @@ func TestTabbitLoginHandsOffTheBrowserFlow(t *testing.T) {
 	}
 	if caps := core.CapabilitiesOf(context.Background(), c); !caps.Login {
 		t.Fatal("tabbit implements LoginProvider but CapabilitiesOf does not report login")
+	}
+	// 没有启动器时不能假装已经把登录页交给了客户端：面板只能把链接给操作员，
+	// 让他自己去 Tabbit 浏览器里打开。
+	if st.LocalApp {
+		t.Error("本机没有 Tabbit 启动器，却报告已经把登录页交给了客户端")
+	}
+	if st.HandoffPath != "" {
+		t.Error("没有交接就不该给出要导入的凭据路径")
+	}
+}
+
+// Tabbit 的登录只能在 Tabbit 浏览器里完成，普通浏览器打开只会被弹回厂商官网。
+// 所以模块自己把登录页送进那个浏览器，并告诉面板「别再给我一个在浏览器打开的
+// 按钮，改成回来读凭据」。
+func TestTabbitLoginOpensThePageInTheTabbitBrowser(t *testing.T) {
+	clearTabbitEnv(t)
+	stubTabbitCLI(t)
+	withCandidates(t, closedPortURL(t))
+	calls := fakeLauncher(t, json.RawMessage(`{"url":"`+wantsLoginURL+`"}`), nil)
+	c := newTestClient(t, `{"base_url":"http://sidecar.test"}`, &http.Client{Transport: downTransport()})
+	ctx := context.Background()
+
+	st, err := c.StartLogin(ctx)
+	if err != nil {
+		t.Fatalf("StartLogin: %v", err)
+	}
+	if !st.LocalApp {
+		t.Error("模块已经把登录页交给 Tabbit 浏览器，却没有告诉面板（local_app）")
+	}
+	if st.HandoffPath != browserCookiePath {
+		t.Errorf("交接后要导入的凭据路径 = %q，want %q", st.HandoffPath, browserCookiePath)
+	}
+	if !strings.Contains(st.Message, "客户端") {
+		t.Errorf("交接的消息必须说清楚登录要在客户端里完成：%q", st.Message)
+	}
+	if !strings.Contains(st.Message, "读取凭据") {
+		t.Errorf("交接的消息必须告诉操作员下一步按哪个按钮：%q", st.Message)
+	}
+	if len(calls.programs) != 1 {
+		t.Fatalf("启动器被调用了 %d 次，want 1", len(calls.programs))
+	}
+	prog := calls.programs[0]
+	if !strings.Contains(prog, wantsLoginURL) {
+		t.Errorf("交给浏览器的程序没有导航到登录页：%q", prog)
+	}
+	if !strings.Contains(prog, "page.goto") || !strings.Contains(prog, "bringToFront") {
+		t.Errorf("交给浏览器的程序必须导航并把窗口置前：%q", prog)
+	}
+	if calls.tasks[0] == cliTaskName {
+		t.Errorf("登录页和读 cookie 用同一个任务名 %q，收尾时会把登录页的所有权一起放掉", cliTaskName)
+	}
+
+	// 轮询一个交接会话不能再拉一次浏览器：操作员正在那边输密码，面板的收尾
+	// 动作是「读凭据」，不是「再开一次」。
+	again, err := c.PollLogin(ctx, st.SessionID)
+	if err != nil {
+		t.Fatalf("PollLogin: %v", err)
+	}
+	if again.State != core.LoginPending {
+		t.Errorf("交接会话在客户端登录完成前应保持 pending，得到 %q", again.State)
+	}
+	if len(calls.programs) != 1 {
+		t.Errorf("轮询又拉起了 %d 次浏览器，want 仍然 1 次", len(calls.programs))
+	}
+}
+
+// 启动器装了但起不来（常见的 BROWSER_LAUNCH_FAILED）时不能把会话说成交接成功：
+// 面板会因此藏掉「在浏览器打开」，操作员就一个入口都没有了。
+func TestTabbitLoginFallsBackWhenTheLauncherFails(t *testing.T) {
+	clearTabbitEnv(t)
+	stubTabbitCLI(t)
+	withCandidates(t, closedPortURL(t))
+	fakeLauncher(t, nil, errors.New("BROWSER_LAUNCH_FAILED: the launcher refused to start"))
+	c := newTestClient(t, `{"base_url":"http://sidecar.test"}`, &http.Client{Transport: downTransport()})
+
+	st, err := c.StartLogin(context.Background())
+	if err != nil {
+		t.Fatalf("StartLogin: %v", err)
+	}
+	if st.LocalApp {
+		t.Error("启动器失败了，却报告登录页已经交给客户端")
+	}
+	if st.URL != wantsLoginURL {
+		t.Errorf("失败时仍要把链接交给操作员，got %q", st.URL)
+	}
+	if !strings.Contains(st.Message, "BROWSER_LAUNCH_FAILED") {
+		t.Errorf("失败原因必须原样告诉操作员：%q", st.Message)
+	}
+	if !strings.Contains(st.Message, "导入凭据") {
+		t.Errorf("失败后要指出手动那条路：%q", st.Message)
 	}
 }
 

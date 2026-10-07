@@ -490,6 +490,9 @@ func TestCheckinDoesNotParkTheAccountOnA404(t *testing.T) {
 	if res.OK {
 		t.Error("ok = true on a 404")
 	}
+	if !res.Skipped {
+		t.Error("skipped = false on a 404: a disabled vendor feature is not a refusal")
+	}
 	if res.Data["error_kind"] != kindClient.String() {
 		t.Errorf("data = %+v, want error_kind=%s", res.Data, kindClient.String())
 	}

@@ -78,6 +78,9 @@ func clearTabbitEnv(t *testing.T) {
 		"CLIENT2API_TABBIT_BASE_URL", "TABBIT_BASE_URL",
 		"CLIENT2API_TABBIT_API_KEY", "TABBIT_API_KEY",
 		"CLIENT2API_TABBIT_CMD", "TABBIT_SIDECAR_CMD",
+		// 浏览器启动器也是环境变量进得来的：不清掉的话，这台机器上真装了
+		// Tabbit 的测试会去调真浏览器。
+		"CLIENT2API_TABBIT_CLI", "TABBIT_CLI",
 	} {
 		t.Setenv(k, "")
 	}

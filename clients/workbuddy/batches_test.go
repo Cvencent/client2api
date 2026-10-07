@@ -152,6 +152,9 @@ func TestWorkbuddyScheduledCheckinSkipsTheInternationalRealm(t *testing.T) {
 	if res.OK {
 		t.Fatal("the international realm credited a check-in")
 	}
+	if !res.Skipped {
+		t.Fatal("the international realm check-in was not marked as skipped")
+	}
 	if !strings.Contains(res.Message, "international realm") {
 		t.Fatalf("message = %q, want it to name the international realm", res.Message)
 	}
@@ -159,6 +162,25 @@ func TestWorkbuddyScheduledCheckinSkipsTheInternationalRealm(t *testing.T) {
 	// reward: one would only be risk-control noise.
 	if paths := wbPaths(rt); len(paths) != 0 {
 		t.Fatalf("the global skip sent %v, want no request", paths)
+	}
+}
+
+func TestWorkbuddyScheduledCheckinKeepsTheUpstreamRefusalMessage(t *testing.T) {
+	s := &taskStub{}
+	c, _ := batchClient(t, s, map[string]string{
+		dailyCheckinPathV2: wbRefusal(40001, "activity ended"),
+	})
+	a := wbCNAuth(t, c)
+
+	res, err := c.RunTask(context.Background(), a.ID(), choreCheckin)
+	if err != nil {
+		t.Fatalf("RunTask: %v", err)
+	}
+	if res.OK {
+		t.Fatal("OK = true for a business refusal")
+	}
+	if !strings.Contains(res.Message, "activity ended") {
+		t.Fatalf("message = %q, want the vendor's own refusal reason", res.Message)
 	}
 }
 
@@ -286,6 +308,9 @@ func TestWorkbuddyScheduledTravelHonoursTheDailyLimit(t *testing.T) {
 	}
 	if res.OK {
 		t.Fatal("a second trip was sent on the same day")
+	}
+	if !res.Skipped {
+		t.Fatal("the daily-limit travel result was not marked as skipped")
 	}
 	if !strings.Contains(res.Message, "already been sent") {
 		t.Fatalf("message = %q, want the daily-limit report", res.Message)

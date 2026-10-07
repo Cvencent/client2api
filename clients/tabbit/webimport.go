@@ -52,8 +52,14 @@ const (
 	// browserCookieKind labels the discovered credential in the panel.
 	browserCookieKind = "browser-cookie"
 
-	// cliTaskName is the skill task every call in this file belongs to.
+	// cliTaskName is the skill task the cookie probe runs in.
 	cliTaskName = "client2api-cookie"
+
+	// loginTaskName is the task the browser hand-off opens.  It is a
+	// separate name on purpose: the login page is left open for the
+	// operator, and the cookie probe ends its own task with `finish`, so
+	// sharing one name would release the login page on every probe.
+	loginTaskName = "client2api-login"
 
 	// cliCallTimeout bounds one launcher call.  The skill allows 60000-180000ms
 	// for a program; the rest of the calls answer immediately.
@@ -129,6 +135,62 @@ func defaultTabbitCLI() string {
 // CredentialImporter
 // ---------------------------------------------------------------------------
 
+// loginPageProgram is the Playwright program that puts the vendor's sign-in page
+// in front of the operator inside the Tabbit browser.
+//
+// It navigates the launcher's own initial page -- the skill's documented way to
+// reach a known destination -- and brings the window forward, because a login
+// page the operator cannot see is the same as no page at all.  The page is then
+// left open on purpose: the whole point of the hand-off is that a human finishes
+// the sign-in there, and the vendor's own flow closes the tab when it is done.
+//
+// The URL comes from this module's own configuration, so it is quoted rather than
+// interpolated into a template: an operator-supplied web_host must never be able
+// to turn into program text.
+func loginPageProgram(url string) string {
+	return "await page.goto(" + strconv.Quote(url) + ", {waitUntil: 'domcontentloaded'});\n" +
+		"await page.bringToFront();\n" +
+		"return {url: page.url(), title: await page.title()};\n"
+}
+
+// runTabbitLauncher is the seam the tests replace.  Production always drives the
+// installed launcher through runTabbitProgram.
+var runTabbitLauncher = func(c *Client, ctx context.Context, task, cli, program string) (json.RawMessage, error) {
+	return c.runTabbitProgram(ctx, task, cli, program)
+}
+
+// openLoginPageInTabbit hands the login URL to the Tabbit browser itself.
+//
+// The URL cannot be opened anywhere else: the vendor's sign-in only completes in
+// that browser, and a normal one bounces straight back to the vendor's site.  A
+// missing launcher, or one that refuses to come up, is reported as an error so
+// the caller can fall back to telling the operator to open it by hand.
+func (c *Client) openLoginPageInTabbit(ctx context.Context, url string) error {
+	cli, err := c.requireTabbitCLI()
+	if err != nil {
+		return err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	_, runErr := runTabbitLauncher(c, ctx, loginTaskName, cli, loginPageProgram(url))
+	return runErr
+}
+
+// requireTabbitCLI resolves the launcher and insists that it is actually on this
+// machine: the default location is a guess, and a guess that produces a hand-off
+// nobody can complete is worse than saying so.
+func (c *Client) requireTabbitCLI() (string, error) {
+	cli := c.tabbitCLI()
+	if cli == "" {
+		return "", errors.New("the Tabbit browser launcher could not be located")
+	}
+	if _, err := os.Stat(cli); err != nil {
+		return "", fmt.Errorf("the Tabbit browser launcher is not installed at %s", cli)
+	}
+	return cli, nil
+}
+
 // discoverBrowserCookie offers the running browser as one more importable
 // credential.  It reports whether the launcher exists, and never talks to the
 // browser: the panel calls this whenever the import tab is opened, and a probe
@@ -170,7 +232,7 @@ func (c *Client) importBrowserCookie(ctx context.Context) (core.AccountRecord, e
 		ctx = context.Background()
 	}
 
-	raw, err := c.runTabbitProgram(ctx, cli, cookieProgram)
+	raw, err := c.runTabbitProgram(ctx, cliTaskName, cli, cookieProgram)
 	if err != nil {
 		return core.AccountRecord{}, err
 	}
@@ -242,12 +304,21 @@ const browserLaunchFailed = "BROWSER_LAUNCH_FAILED"
 // from the panel.  A launcher that refuses to come up under this process will
 // refuse again on every retry, so the message has to name the way out instead
 // of inviting the operator to press the button a second time.
-func launcherHint(msg string) string {
+// launcherAction names what a launcher call was trying to do, so a failure
+// never claims the browser was reading cookies when it was opening a login page.
+func launcherAction(task string) string {
+	if task == loginTaskName {
+		return "open the Tabbit sign-in page"
+	}
+	return "read the Tabbit browser's cookies"
+}
+
+func launcherHint(task, msg string) string {
 	if !strings.Contains(msg, browserLaunchFailed) {
 		return msg
 	}
 	return msg + " — the launcher would not come up under this process; either run it by hand " +
-		"from an interactive shell (`tabbit-cli.exe create --task " + cliTaskName + "`), or open the " +
+		"from an interactive shell (`tabbit-cli.exe create --task " + task + "`), or open the " +
 		"Tabbit browser, copy the `token` cookie for web.tabbit.com (DevTools → Application → " +
 		"Cookies) and paste it into the Web session cookie field"
 }
@@ -255,10 +326,10 @@ func launcherHint(msg string) string {
 // createTabbitTask opens the skill task the program will run in.  It is a
 // separate call because the launcher refuses to run a program for a task that
 // does not exist yet; a failure here is reported with the launcher's own words.
-func (c *Client) createTabbitTask(ctx context.Context, cli string) error {
+func (c *Client) createTabbitTask(ctx context.Context, task, cli string) error {
 	cctx, cancel := context.WithTimeout(ctx, cliCreateTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(cctx, cli, "create", "--task", cliTaskName)
+	cmd := exec.CommandContext(cctx, cli, "create", "--task", task)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -277,13 +348,13 @@ func (c *Client) createTabbitTask(ctx context.Context, cli string) error {
 			msg = runErr.Error()
 		}
 		return fmt.Errorf("the Tabbit browser launcher could not open its task: %s",
-			truncate(launcherHint(msg), 400))
+			truncate(launcherHint(task, msg), 400))
 	}
 	return nil
 }
 
 // runTabbitProgram runs one program on the launcher and returns its value.
-func (c *Client) runTabbitProgram(ctx context.Context, cli, program string) (json.RawMessage, error) {
+func (c *Client) runTabbitProgram(ctx context.Context, task, cli, program string) (json.RawMessage, error) {
 	reqID, err := cliRequestID()
 	if err != nil {
 		return nil, err
@@ -305,14 +376,14 @@ func (c *Client) runTabbitProgram(ctx context.Context, cli, program string) (jso
 	// The launcher answers BROWSER_LAUNCH_FAILED for a task it was never asked
 	// to open, so the task is created first.  The skill documents the step:
 	// "create --task NAME" returns an inventory and takes no tab.
-	if err := c.createTabbitTask(ctx, cli); err != nil {
+	if err := c.createTabbitTask(ctx, task, cli); err != nil {
 		return nil, err
 	}
 
 	cctx, cancel := context.WithTimeout(ctx, cliCallTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(cctx, cli, "nodejs",
-		"--task", cliTaskName,
+		"--task", task,
 		"--request-id", reqID,
 		"--timeout-ms", strconv.Itoa(cliProgramTimeoutMS))
 	cmd.Stdin = f
@@ -321,7 +392,7 @@ func (c *Client) runTabbitProgram(ctx context.Context, cli, program string) (jso
 	cmd.Stderr = &stderr
 
 	// The skill requires the task to be finished on every path.
-	defer c.finishTabbitTask(cli)
+	defer c.finishTabbitTask(task, cli)
 
 	runErr := cmd.Run()
 	if cctx.Err() != nil {
@@ -330,7 +401,7 @@ func (c *Client) runTabbitProgram(ctx context.Context, cli, program string) (jso
 	raw := bytes.TrimSpace(stdout.Bytes())
 	if len(raw) == 0 {
 		if msg := strings.TrimSpace(stderr.String()); msg != "" {
-			return nil, fmt.Errorf("the Tabbit browser launcher failed: %s", truncate(launcherHint(msg), 400))
+			return nil, fmt.Errorf("the Tabbit browser launcher failed: %s", truncate(launcherHint(task, msg), 400))
 		}
 		if runErr != nil {
 			return nil, fmt.Errorf("the Tabbit browser launcher failed: %w", runErr)
@@ -351,14 +422,15 @@ func (c *Client) runTabbitProgram(ctx context.Context, cli, program string) (jso
 			msg = "status " + strings.TrimSpace(env.Status)
 		}
 		if runErr != nil {
-			return nil, fmt.Errorf("the Tabbit browser could not read its cookies (%s): %s",
-				truncate(runErr.Error(), 120), truncate(launcherHint(msg), 400))
+			return nil, fmt.Errorf("the Tabbit browser could not %s (%s): %s",
+				launcherAction(task), truncate(runErr.Error(), 120), truncate(launcherHint(task, msg), 400))
 		}
-		return nil, fmt.Errorf("the Tabbit browser could not read its cookies: %s", truncate(launcherHint(msg), 400))
+		return nil, fmt.Errorf("the Tabbit browser could not %s: %s",
+			launcherAction(task), truncate(launcherHint(task, msg), 400))
 	}
 	value := env.Result.Value
 	if len(value) == 0 && env.Result.ResourceID != "" {
-		value, err = c.readTabbitResource(cctx, cli, env.Result.ResourceID)
+		value, err = c.readTabbitResource(cctx, task, cli, env.Result.ResourceID)
 		if err != nil {
 			return nil, err
 		}
@@ -370,12 +442,12 @@ func (c *Client) runTabbitProgram(ctx context.Context, cli, program string) (jso
 }
 
 // readTabbitResource pulls a result the launcher spilled to a resource.
-func (c *Client) readTabbitResource(ctx context.Context, cli, id string) (json.RawMessage, error) {
+func (c *Client) readTabbitResource(ctx context.Context, task, cli, id string) (json.RawMessage, error) {
 	var out bytes.Buffer
 	offset := 0
 	for call := 0; call < cliMaxResourceCalls; call++ {
 		cmd := exec.CommandContext(ctx, cli, "resource",
-			"--task", cliTaskName,
+			"--task", task,
 			"--resource", id,
 			"--offset", strconv.Itoa(offset),
 			"--max-bytes", strconv.Itoa(cliMaxResourceBytes))
@@ -405,14 +477,14 @@ func (c *Client) readTabbitResource(ctx context.Context, cli, id string) (json.R
 
 // finishTabbitTask ends the skill task.  It uses its own context so a cancelled
 // caller cannot leave the task open in the browser.
-func (c *Client) finishTabbitTask(cli string) {
+func (c *Client) finishTabbitTask(task, cli string) {
 	fctx, cancel := context.WithTimeout(context.Background(), cliFinishTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(fctx, cli, "finish", "--task", cliTaskName)
+	cmd := exec.CommandContext(fctx, cli, "finish", "--task", task)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		c.deps.Log("tabbit: could not finish the browser task %s: %s", cliTaskName,
+		c.deps.Log("tabbit: could not finish the browser task %s: %s", task,
 			truncate(strings.TrimSpace(stderr.String()), 200))
 	}
 }

@@ -70,6 +70,7 @@ type batchStep struct {
 	Code      string `json:"code"`
 	OK        bool   `json:"ok"`
 	Refused   bool   `json:"refused,omitempty"` // a legitimate "no" from the vendor
+	Skipped   bool   `json:"skipped,omitempty"` // deliberately not run / not applicable
 	Message   string `json:"message,omitempty"`
 	Error     string `json:"error,omitempty"`
 	Credit    int64  `json:"credit,omitempty"`
@@ -444,6 +445,10 @@ func (p *panel) runBatch(ctx context.Context, id string, c core.Client, b core.B
 		finish(c.Name() + " does not run tasks")
 		return
 	}
+	var checkinActions []core.CheckinAction
+	if cp, ok := core.AsCheckinProvider(c); ok {
+		checkinActions = cp.CheckinActions(ctx)
+	}
 	am, ok := core.AsAccountManager(c)
 	if !ok {
 		finish(c.Name() + " does not manage accounts")
@@ -492,15 +497,30 @@ func (p *panel) runBatch(ctx context.Context, id string, c core.Client, b core.B
 		// exactly this reason, and only one of the three had been reached.
 		p.sweeps.mutate(id, func(r *batchRun) { r.Accounts++ })
 
+		if !core.CheckinActionAllowsAccount(checkinActions, "", a) {
+			p.sweeps.mutate(id, func(r *batchRun) {
+				r.Skipped++
+				r.Steps = append(r.Steps, batchStep{
+					Account: a.ID,
+					Code:    core.CheckinBatchName,
+					Skipped: true,
+					Message: "action is not scoped to this account channel",
+				})
+			})
+			p.sweeps.mutate(id, func(r *batchRun) { r.Done++ })
+			continue
+		}
+
 		if gated(ctx, tp, a.ID, b.Gate) {
 			p.sweeps.mutate(id, func(r *batchRun) {
 				r.Skipped++
 				r.Steps = append(r.Steps, batchStep{
 					Account: a.ID,
 					Code:    b.Gate,
-					Refused: true,
+					Skipped: true,
 					Message: "gate not satisfied",
 				})
+				r.Done++
 			})
 			continue
 		}
@@ -509,9 +529,25 @@ func (p *panel) runBatch(ctx context.Context, id string, c core.Client, b core.B
 			if ctx.Err() != nil {
 				break
 			}
+			if !core.CheckinActionAllowsAccount(checkinActions, code, a) {
+				p.sweeps.mutate(id, func(r *batchRun) {
+					r.Skipped++
+					r.Steps = append(r.Steps, batchStep{
+						Account: a.ID,
+						Code:    code,
+						Skipped: true,
+						Message: "action is not scoped to this account channel",
+					})
+				})
+				continue
+			}
 			step := p.runOne(ctx, tp, a.ID, code)
 			p.sweeps.mutate(id, func(r *batchRun) {
 				r.Steps = append(r.Steps, step)
+				if step.Skipped {
+					r.Skipped++
+					return
+				}
 				r.Ran++
 				// Refused is tested before Error on purpose.  runOne copies
 				// TaskResult.Error into the step even when the module answered
@@ -567,14 +603,15 @@ func (p *panel) runOne(ctx context.Context, tp core.TaskProvider, account, code 
 		return step
 	}
 	step.OK = res.OK
+	step.Skipped = res.Skipped
 	step.Message = res.Message
 	if res.Error != "" {
 		step.Error = res.Error
-		if !res.OK {
+		if !res.OK && !res.Skipped {
 			step.Refused = true
 		}
 	}
-	if !res.OK && res.Error == "" {
+	if !res.OK && !res.Skipped && res.Error == "" {
 		step.Refused = true
 	}
 	step.Credit = res.Credit
@@ -824,6 +861,7 @@ func (p *panel) runCheckinBatch(ctx context.Context, id string, c core.Client, b
 		finish(core.Redact(err.Error()))
 		return
 	}
+	checkinActions := cp.CheckinActions(ctx)
 
 	gap := b.AccountGap
 	if gap <= 0 {
@@ -848,6 +886,16 @@ func (p *panel) runCheckinBatch(ctx context.Context, id string, c core.Client, b
 		p.sweeps.mutate(id, func(r *batchRun) { r.Accounts++ })
 
 		step := batchStep{Account: a.ID, Code: core.CheckinBatchName}
+		if !core.CheckinActionAllowsAccount(checkinActions, "", a) {
+			step.Skipped = true
+			step.Message = "action is not scoped to this account channel"
+			p.sweeps.mutate(id, func(r *batchRun) {
+				r.Skipped++
+				r.Steps = append(r.Steps, step)
+				r.Done++
+			})
+			continue
+		}
 		started := time.Now()
 		stepCtx, cancel := context.WithTimeout(ctx, batchStepTimeout)
 		res, cerr := cp.Checkin(stepCtx, a.ID, "")
@@ -857,19 +905,24 @@ func (p *panel) runCheckinBatch(ctx context.Context, id string, c core.Client, b
 			step.Error = core.Redact(cerr.Error())
 		} else {
 			step.OK = res.OK
+			step.Skipped = res.Skipped
 			step.Message = res.Message
 			if res.Error != "" {
 				step.Error = res.Error
-				if !res.OK {
+				if !res.OK && !res.Skipped {
 					step.Refused = true
 				}
 			}
-			if !res.OK && res.Error == "" {
+			if !res.OK && !res.Skipped && res.Error == "" {
 				step.Refused = true
 			}
 		}
 		p.sweeps.mutate(id, func(r *batchRun) {
 			r.Steps = append(r.Steps, step)
+			if step.Skipped {
+				r.Skipped++
+				return
+			}
 			r.Ran++
 			switch {
 			case step.Refused:

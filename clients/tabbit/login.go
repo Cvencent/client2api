@@ -20,8 +20,15 @@ package tabbit
 //
 // StartLogin therefore hands back the vendor URL -- which has to be opened in
 // the Tabbit browser -- and says which of the two paths this machine can take.
+// When the browser's own launcher is installed it uses it: the page is opened
+// in the Tabbit browser and brought forward, and the state comes back with
+// LocalApp set, which is the panel's signal to stop offering its own "open in
+// browser" link and finish through HandoffPath instead.
+//
 // PollLogin only ever reports on the sidecar path: an imported cookie lands in
-// the account table, not in a login session, so there is nothing to poll.
+// the account table, not in a login session, so there is nothing to poll.  A
+// hand-off session says exactly that -- it stays pending until the operator
+// imports the cookie the browser just minted.
 //
 // Consequences that are deliberate, and that the panel and README repeat:
 //
@@ -84,6 +91,12 @@ type loginSession struct {
 	state     string
 	message   string
 	accountID string
+	// localApp is true when the page was handed to the Tabbit browser itself
+	// rather than left for the operator to open, and handoffPath is the
+	// credential the panel imports once that sign-in is finished.  Both are
+	// false/empty for the ordinary sidecar hand-off.
+	localApp    bool
+	handoffPath string
 }
 
 // StartLogin implements core.LoginProvider.  It is deliberately not "start
@@ -110,7 +123,18 @@ func (c *Client) StartLogin(ctx context.Context) (core.LoginState, error) {
 		startedAt: time.Now(),
 		state:     core.LoginPending,
 	}
-	s.message = c.loginStartMessage(ctx, loc, h, url)
+	// The page has to be opened in the Tabbit browser, and this process
+	// already knows how to drive that browser's launcher: hand the URL over
+	// instead of telling the operator to paste it somewhere that cannot
+	// complete the sign-in.  A machine without a usable launcher keeps the
+	// old hand-off, with the failure spelled out.
+	if err := c.openLoginPageInTabbit(ctx, url); err != nil {
+		s.message = c.loginStartMessage(ctx, loc, h, url) + " " + handoffFailedMessage(err)
+	} else {
+		s.localApp = true
+		s.handoffPath = browserCookiePath
+		s.message = handoffMessage(url)
+	}
 	c.putLogin(s)
 	return loginStateOf(s), nil
 }
@@ -143,6 +167,13 @@ func (c *Client) PollLogin(ctx context.Context, sessionID string) (core.LoginSta
 				loginSessionTTL)
 		})
 		return st, nil
+	}
+
+	if s.localApp {
+		// A hand-off has nothing to poll: the credential lands in the browser
+		// profile, and the panel finishes the flow by importing it.  Probing
+		// here would also relaunch the browser under the operator's hands.
+		return loginStateOf(s), nil
 	}
 
 	loc := c.locate()
@@ -256,12 +287,33 @@ func unknownLoginErr(id string) error {
 
 func loginStateOf(s *loginSession) core.LoginState {
 	return core.LoginState{
-		SessionID: s.id,
-		State:     s.state,
-		URL:       s.url,
-		Message:   s.message,
-		AccountID: s.accountID,
+		SessionID:   s.id,
+		State:       s.state,
+		URL:         s.url,
+		Message:     s.message,
+		AccountID:   s.accountID,
+		LocalApp:    s.localApp,
+		HandoffPath: s.handoffPath,
 	}
+}
+
+// handoffMessage is what the operator reads once the login page has been placed
+// in the Tabbit browser.  It is panel copy, not a log line, so it is written in
+// the same language as the dialog around it -- and it names the panel button
+// that finishes the flow, because that button is what replaces "open in browser".
+func handoffMessage(url string) string {
+	return fmt.Sprintf(
+		"已唤起 Tabbit 客户端并打开登录页（%s）。请在客户端里完成登录，然后回到面板点「已完成登录，读取凭据」："+
+			"面板会从那个浏览器读出新的 web-token 会话，就地更新这个账号。", url)
+}
+
+// handoffFailedMessage explains a launcher that could not be used and names the
+// route that is left on such a machine: open the page in the Tabbit browser by
+// hand, then import the cookie.  Handing back the raw launcher error matters --
+// BROWSER_LAUNCH_FAILED tells the operator the browser itself needs attention.
+func handoffFailedMessage(err error) string {
+	return "没能调起 Tabbit 客户端（" + truncate(err.Error(), 200) + "）。" +
+		"请在 Tabbit 浏览器里手动打开上面的链接完成登录，再用本面板的「导入凭据」把 web-token 会话读进来。"
 }
 
 // ---------------------------------------------------------------------------

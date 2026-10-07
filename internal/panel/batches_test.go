@@ -252,7 +252,26 @@ func TestSweepSkipsParkedAccounts(t *testing.T) {
 	}
 }
 
+func TestSweepCountsATaskResultSkipAsSkippedNotRefused(t *testing.T) {
+	c := newSweepClient("wb", core.TaskResult{
+		OK:      false,
+		Skipped: true,
+		Message: "the international realm has no check-in",
+	}, liveAccount("a1"))
+	p := batchPanel(t, c)
+
+	run := runSweep(t, p, c, "checkin")
+
+	if run.Skipped != 1 || run.Refused != 0 || run.Ran != 0 || run.Failed != 0 {
+		t.Errorf("skipped/refused/ran/failed = %d/%d/%d/%d, want 1/0/0/0", run.Skipped, run.Refused, run.Ran, run.Failed)
+	}
+	if len(run.Steps) != 1 || !run.Steps[0].Skipped || run.Steps[0].Refused {
+		t.Errorf("steps = %+v, want one skipped, non-refused step", run.Steps)
+	}
+}
+
 func TestSweepRecordsAnOutstandingGateAsASkip(t *testing.T) {
+
 	c := newSweepClient("wb", core.TaskResult{OK: true}, liveAccount("a1"))
 	// The gate chore is listed and NOT finished, so the batch is not worth
 	// running yet.
@@ -277,7 +296,10 @@ func TestSweepRecordsAnOutstandingGateAsASkip(t *testing.T) {
 	if len(run.Steps) != 1 {
 		t.Fatalf("steps = %d, want the gate step", len(run.Steps))
 	}
-	if run.Steps[0].Code != "buddy" || !run.Steps[0].Refused {
+	if run.Done != 1 {
+		t.Errorf("done = %d, want 1: a gated account is finished, not stuck", run.Done)
+	}
+	if run.Steps[0].Code != "buddy" || !run.Steps[0].Skipped || run.Steps[0].Refused {
 		t.Errorf("the gate step is wrong: %+v", run.Steps[0])
 	}
 }

@@ -514,6 +514,30 @@ func (e *poolEntry) usable(now time.Time) bool {
 	return !now.Before(e.until)
 }
 
+// settleExpiredCooldownLocked retires a timed account park once its deadline
+// has passed. usable() already admits such an entry, so leaving state and note
+// untouched makes the panel claim "cooling" while the picker is willing to use
+// it. Callers hold p.mu.
+func (p *Pool) settleExpiredCooldownLocked(e *poolEntry, now time.Time) bool {
+	if p == nil || e == nil || e.until.IsZero() || now.Before(e.until) || e.faults.Blocked(now) {
+		return false
+	}
+	switch e.state {
+	case stateCooling, stateExhausted, stateInvalid:
+	default:
+		return false
+	}
+	e.state = stateReady
+	e.until = time.Time{}
+	e.note = ""
+	e.current = 0
+	p.dirty = true
+	// The low-balance guard may immediately park an account whose last known
+	// balance is still at or below the reserve.
+	p.applyReserveLocked(e, now)
+	return true
+}
+
 // Ready reports whether at least one account is usable right now.
 func (p *Pool) Ready() bool {
 	if p == nil {
@@ -1743,6 +1767,7 @@ func (p *Pool) Snapshot() []core.AccountStatus {
 		if e.auth == nil {
 			continue
 		}
+		p.settleExpiredCooldownLocked(e, now)
 		state := e.state
 		if state == "" {
 			state = stateUnknown
@@ -1800,6 +1825,7 @@ func (p *Pool) Snapshot() []core.AccountStatus {
 		as.Extra = extra
 		out = append(out, as)
 	}
+	p.saveLocked()
 	return out
 }
 

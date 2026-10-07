@@ -164,6 +164,62 @@ func TestReloginFinishRevivesWithAFallbackName(t *testing.T) {
 	}
 }
 
+// 客户端交接：tabbit 的登录只能在 Tabbit 浏览器里完成，模块直接把登录页送进去，
+// 所以面板不能再给一个「在浏览器打开」——普通浏览器打开只会被弹回官网。面板改
+// 为按模块给的路径导入凭据，然后走和其它重登一样的收尾。
+func TestReloginHandsOffToTheVendorApp(t *testing.T) {
+	src := reloginSource(t)
+	if !strings.Contains(src, `id="btnHandoff"`) {
+		t.Error("弹层里没有客户端交接的「读取凭据」按钮（id=btnHandoff）")
+	}
+	if !strings.Contains(src, `$("#btnHandoff").addEventListener("click"`) {
+		t.Error("「读取凭据」按钮没有挂事件")
+	}
+
+	start := poolStatsFuncBody(t, src, "startLogin")
+	for _, want := range []string{
+		"st.local_app", "st.handoff_path",
+		`$("#btnOpenUrl").hidden = !!ADD.handoff`,
+		`$("#btnCopyUrl").hidden = !!ADD.handoff`,
+		`$("#btnHandoff").hidden = !ADD.handoff`,
+	} {
+		if !strings.Contains(start, want) {
+			t.Errorf("startLogin 少了 %q：交接时面板会把责任推回给操作员", want)
+		}
+	}
+
+	reset := poolStatsFuncBody(t, src, "resetLogin")
+	for _, want := range []string{`$("#btnHandoff").hidden = true`, `ADD.handoff = ""`} {
+		if !strings.Contains(reset, want) {
+			t.Errorf("resetLogin 不清上一次的交接状态（%q）：下一个账号会看到上一次的按钮", want)
+		}
+	}
+
+	// 收尾复用重登那条路：导入的必须就是模块点名的那个凭据路径，收尾后仍然
+	// 刷新账号池、仍然对重登的那个账号做收尾动作。
+	imp := poolStatsFuncBody(t, src, "handoffImport")
+	for _, want := range []string{`"/import"`, "ADD.handoff", "loginDone("} {
+		if !strings.Contains(imp, want) {
+			t.Errorf("handoffImport 少了 %q", want)
+		}
+	}
+}
+
+// 不是每个模块都有要清的惩罚标记。tabbit 没有运行期冷却，所以它没实现
+// core.Reviver，面板对它调 revive 只会拿到 501，把一次成功的重登报成
+// 「重登成功，但恢复失败」。收尾必须先看能力矩阵。
+func TestReloginSkipsReviveWhenTheModuleHasNone(t *testing.T) {
+	body := poolStatsFuncBody(t, reloginSource(t), "loginDone")
+	if !strings.Contains(body, `(capsOf(n) || {}).revive`) {
+		t.Error("loginDone 没看模块有没有 revive 能力：tabbit 这种没有惩罚状态的模块会被报成恢复失败")
+	}
+	// 轮询必须能被收尾动作停掉，否则交接会话会在成功提示之后继续把 pending
+	// 消息刷回去。
+	if !strings.Contains(body, "stopPoll()") {
+		t.Error("loginDone 不停止轮询：成功提示会被下一次 pending 覆盖")
+	}
+}
+
 // reloginSource 是这些检查共用的 index.html 正文。
 func reloginSource(t *testing.T) string {
 	t.Helper()

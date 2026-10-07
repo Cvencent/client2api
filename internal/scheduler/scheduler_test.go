@@ -259,6 +259,28 @@ func (c *checkinOnly) Checkin(ctx context.Context, id, action string) (core.Chec
 	return core.CheckinResult{OK: true, AccountID: id, Action: action}, nil
 }
 
+type scopedCheckinOnly struct {
+	*checkinOnly
+	actions []core.CheckinAction
+}
+
+func (c *scopedCheckinOnly) CheckinActions(context.Context) []core.CheckinAction {
+	return c.actions
+}
+
+type actionScopedClient struct {
+	*fakeClient
+	actions []core.CheckinAction
+}
+
+func (c *actionScopedClient) CheckinActions(context.Context) []core.CheckinAction {
+	return c.actions
+}
+
+func (c *actionScopedClient) Checkin(_ context.Context, id, action string) (core.CheckinResult, error) {
+	return core.CheckinResult{OK: true, AccountID: id, Action: action}, nil
+}
+
 func registryOf(cs ...core.Client) *core.Registry {
 	reg := core.NewRegistry()
 	for _, c := range cs {
@@ -601,7 +623,66 @@ func TestDisabledAccountsAreSkipped(t *testing.T) {
 // Failure semantics
 // ---------------------------------------------------------------------------
 
+func TestTaskBatchSkipsMismatchedActionChannel(t *testing.T) {
+	logs := &recorder{}
+	clk := newFakeClock(cstMidnight, logs)
+	f := &fakeClient{
+		name:    "zcode",
+		batches: []core.Batch{oneBatch("checkin", "claim")},
+		accounts: []core.AccountRecord{{
+			ID:      "api-key-row",
+			Enabled: true,
+			Fields:  map[string]any{"kind": "api-key"},
+		}},
+		rec: logs,
+	}
+	c := &actionScopedClient{fakeClient: f, actions: []core.CheckinAction{{ID: "claim", Channels: []string{"jwt"}}}}
+	r := New(deps(registryOf(c), clk, logs))
+	r.Reconfigure(Config{})
+
+	rep, ok := r.RunBatchNow(context.Background(), "zcode", "checkin")
+	if !ok {
+		t.Fatal("RunBatchNow: ok = false")
+	}
+	if rep.Skipped != 1 || rep.Ran != 0 || rep.Refused != 0 || rep.Failed != 0 {
+		t.Fatalf("report = %+v, want one channel-scoped skip and no calls", rep)
+	}
+	if got := logs.all(); len(got) != 1 || got[0] != "sleep" {
+		t.Fatalf("events = %v, want only the post-batch settle", got)
+	}
+}
+
+func TestRefusalReasonUsesErrorAndSkipIsNotRefusal(t *testing.T) {
+	logs := &recorder{}
+	clk := newFakeClock(cstMidnight, logs)
+	f := &fakeClient{
+		name:     "fake",
+		batches:  []core.Batch{oneBatch("checkin", "skip", "refuse")},
+		accounts: []core.AccountRecord{{ID: "a1", Enabled: true}},
+		rec:      logs,
+		run: func(_ context.Context, _, code string) (core.TaskResult, error) {
+			switch code {
+			case "skip":
+				return core.TaskResult{OK: false, Skipped: true, Message: "already done"}, nil
+			default:
+				return core.TaskResult{OK: false, Error: "quota exhausted"}, nil
+			}
+		},
+	}
+	r := New(deps(registryOf(f), clk, logs))
+	r.Reconfigure(Config{})
+
+	rep, _ := r.RunBatchNow(context.Background(), "fake", "checkin")
+	if rep.Ran != 2 || rep.Skipped != 1 || rep.Refused != 1 || rep.Failed != 0 {
+		t.Fatalf("report = %+v, want ran=2 skipped=1 refused=1 failed=0", rep)
+	}
+	if len(rep.Refusals) != 1 || rep.Refusals[0] != "quota exhausted" {
+		t.Fatalf("refusals = %v, want the business error reason", rep.Refusals)
+	}
+}
+
 func TestRefusalIsNotAnErrorAndDoesNotAbort(t *testing.T) {
+
 	logs := &recorder{}
 	clk := newFakeClock(cstMidnight, logs)
 	f := &fakeClient{
@@ -1450,7 +1531,37 @@ func TestCheckinOnlyClientIsScheduled(t *testing.T) {
 	}
 }
 
+func TestSyntheticCheckinSkipsMismatchedActionChannel(t *testing.T) {
+	logs := &recorder{}
+	clk := newFakeClock(cstMidnight, logs)
+	base := &checkinOnly{
+		name: "trae",
+		accounts: []core.AccountRecord{{
+			ID:      "api-key-row",
+			Enabled: true,
+			State:   "ready",
+			Fields:  map[string]any{"kind": "api-key"},
+		}},
+		rec: logs,
+	}
+	c := &scopedCheckinOnly{checkinOnly: base, actions: []core.CheckinAction{{ID: "claim", Channels: []string{"jwt"}}}}
+	r := New(deps(registryOf(c), clk, logs))
+	r.Reconfigure(Config{})
+
+	rep, ok := r.RunBatchNow(context.Background(), "trae", core.CheckinBatchName)
+	if !ok {
+		t.Fatal("RunBatchNow: ok = false")
+	}
+	if rep.Skipped != 1 || rep.Ran != 0 || rep.Refused != 0 || rep.Failed != 0 {
+		t.Fatalf("report = %+v, want one channel-scoped skip and no calls", rep)
+	}
+	if got := logs.all(); len(got) != 1 || got[0] != "sleep" {
+		t.Fatalf("events = %v, want only the post-batch settle", got)
+	}
+}
+
 func TestSyntheticCheckinIncludesExhaustedButNotOperatorDisabled(t *testing.T) {
+
 	logs := &recorder{}
 	clk := newFakeClock(cstMidnight, logs)
 	c := &checkinOnly{

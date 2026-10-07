@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"unicode"
 
 	"client2api/internal/core"
 )
@@ -189,4 +190,62 @@ func TestKeyPagesCoverEveryOfferedProvider(t *testing.T) {
 			t.Errorf("key page for %q is not an https URL: %q", id, u)
 		}
 	}
+}
+
+// 添加账号表单是给操作员看的，不是给本项目的开发者看的：标签、帮助文字、占位符
+// 全部走中文，而且只有自定义服务商才需要填的接口地址 / 模型列表要收进「高级
+// 设置」。字段 key 一个都不能改 —— 它们同时是提交体和已存账号的键，改了就丢数据。
+func TestAccountFieldsAreChineseAndTiered(t *testing.T) {
+	c := newTestClient(t, t.TempDir())
+	fields := c.AccountFields(context.Background())
+	byKey := map[string]core.FieldSpec{}
+	for _, f := range fields {
+		byKey[f.Key] = f
+	}
+	for _, key := range []string{"provider", "api_key", "base_url", "models", "label"} {
+		if _, ok := byKey[key]; !ok {
+			t.Fatalf("AccountFields 少了字段 key %q：key 同时是提交体和已存账号的键，不能改名", key)
+		}
+	}
+	// "API Key" 是保留的行业词（翻译成「密钥」反而没人认识），其余标签必须含汉字。
+	for _, f := range fields {
+		if f.Key == "api_key" {
+			continue
+		}
+		if !hasHan(f.Label) {
+			t.Errorf("字段 %q 的标签不是中文：%q", f.Key, f.Label)
+		}
+	}
+	for _, f := range fields {
+		if f.Help != "" && !hasHan(f.Help) {
+			t.Errorf("字段 %q 的帮助文字不是中文：%q", f.Key, f.Help)
+		}
+		if f.Placeholder != "" && !hasHan(f.Placeholder) && f.Key != "provider" && f.Key != "base_url" && f.Key != "models" {
+			t.Errorf("字段 %q 的占位符既不是中文也不是示例值：%q", f.Key, f.Placeholder)
+		}
+	}
+	for _, key := range []string{"base_url", "models"} {
+		if !byKey[key].Advanced {
+			t.Errorf("字段 %q 必须标成高级项，默认收起", key)
+		}
+	}
+	for _, key := range []string{"provider", "api_key", "label"} {
+		if byKey[key].Advanced {
+			t.Errorf("字段 %q 不该被折叠：填它是完成一次添加的主路径", key)
+		}
+	}
+	if !byKey["provider"].Required || !byKey["api_key"].Required {
+		t.Error("服务商和 API Key 都是必填：空着提交只会在后端被否掉")
+	}
+}
+
+// hasHan 报告一个字符串里有没有汉字。用 unicode 表判定，避免把「groq」这类本该
+// 保留原文的词判成不合格。
+func hasHan(s string) bool {
+	for _, r := range s {
+		if unicode.Is(unicode.Han, r) {
+			return true
+		}
+	}
+	return false
 }

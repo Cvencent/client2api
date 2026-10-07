@@ -19,6 +19,7 @@ import (
 type checkinOnlyClient struct {
 	*fakeBareClient
 	accounts []core.AccountRecord
+	actions  []core.CheckinAction
 	calls    []string
 	res      core.CheckinResult
 	err      error
@@ -49,6 +50,9 @@ func (c *checkinOnlyClient) RefreshAccount(context.Context, string) ([]core.Refr
 }
 
 func (c *checkinOnlyClient) CheckinActions(context.Context) []core.CheckinAction {
+	if c.actions != nil {
+		return c.actions
+	}
 	return []core.CheckinAction{{ID: "daily", Label: "每日签到"}}
 }
 
@@ -141,7 +145,34 @@ func TestSyntheticCheckinSweepCountsAVendorRefusal(t *testing.T) {
 	}
 }
 
+func TestSyntheticCheckinSweepSkipsAnActionScopedToAnotherChannel(t *testing.T) {
+	c := &checkinOnlyClient{
+		fakeBareClient: &fakeBareClient{name: "zcode"},
+		accounts: []core.AccountRecord{{
+			ID:      "api-key-row",
+			Label:   "api-key-row",
+			Enabled: true,
+			Fields:  map[string]any{"kind": "api-key"},
+		}},
+		actions: []core.CheckinAction{{ID: "claim", Label: "claim", Channels: []string{"jwt"}}},
+	}
+	p := batchPanel(t, c)
+
+	run := runSweep(t, p, c, core.CheckinBatchName)
+
+	if len(c.calls) != 0 {
+		t.Fatalf("Checkin calls = %v, want none for an api-key row", c.calls)
+	}
+	if run.Skipped != 1 || run.Ran != 0 || run.Refused != 0 || run.Failed != 0 {
+		t.Errorf("skipped/ran/refused/failed = %d/%d/%d/%d, want 1/0/0/0", run.Skipped, run.Ran, run.Refused, run.Failed)
+	}
+	if len(run.Steps) != 1 || !run.Steps[0].Skipped || run.Steps[0].Refused {
+		t.Errorf("steps = %+v, want one skipped, non-refused step", run.Steps)
+	}
+}
+
 func TestBatchStartStillRefusesAPlannerThatCannotRun(t *testing.T) {
+
 	c := &accountOnlyClient{fakeBareClient: &fakeBareClient{name: "planner"}, accounts: []core.AccountRecord{liveAccount("a1")}}
 	p := batchPanel(t, c)
 	p.opts.Registry = registryOf(c)

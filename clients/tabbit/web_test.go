@@ -500,12 +500,12 @@ func TestTabbitWebTestAccountReportsTheQuota(t *testing.T) {
 // manual route instead of inviting a second press of the same button.
 func TestTabbitLauncherHintNamesTheWayOut(t *testing.T) {
 	plain := "the Tabbit browser returned an empty result"
-	if got := launcherHint(plain); got != plain {
+	if got := launcherHint(cliTaskName, plain); got != plain {
 		t.Errorf("an unrelated failure was rewritten: %q", got)
 	}
 
 	raw := `{"error":{"code":"BROWSER_LAUNCH_FAILED","message":"Cannot launch Tabbit Browser"}}`
-	got := launcherHint(raw)
+	got := launcherHint(cliTaskName, raw)
 	if !strings.Contains(got, raw) {
 		t.Errorf("the launcher's own words were dropped: %q", got)
 	}
@@ -513,6 +513,13 @@ func TestTabbitLauncherHintNamesTheWayOut(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("the hint does not mention %q: %q", want, got)
 		}
+	}
+
+	// 登录交接用的是另一个任务名（登录页要留在浏览器里），提示里的手工命令必须
+	// 用传进来的那个名字，而不是写死 cookie 任务。
+	login := launcherHint(loginTaskName, raw)
+	if !strings.Contains(login, loginTaskName) || strings.Contains(login, cliTaskName) {
+		t.Errorf("登录交接的提示写死了 cookie 任务名：%q", login)
 	}
 }
 

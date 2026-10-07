@@ -284,6 +284,15 @@ func (c *Client) postJSON(ctx context.Context, endpoint string, body []byte, dec
 		return env, fmt.Errorf("read body: %w", err)
 	}
 	if resp.StatusCode >= 400 {
+		// WorkBuddy reports the idempotent "already checked in today"
+		// outcome as HTTP 400 plus its normal success business code.  The
+		// caller must see that envelope so the task centre can count it as a
+		// success (or at least a no-op), not as an upstream transport error.
+		if resp.StatusCode == http.StatusBadRequest {
+			if err := json.Unmarshal(raw, &env); err == nil && env.Code == checkinCodeAlreadyDone {
+				return env, nil
+			}
+		}
 		return env, &Error{
 			Kind:   Classify(resp.StatusCode, string(raw)),
 			Status: resp.StatusCode,
