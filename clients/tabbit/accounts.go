@@ -880,7 +880,7 @@ func (c *Client) Import(ctx context.Context, paths []string, all bool) ([]core.A
 			return nil, err
 		}
 		for _, d := range found {
-			if d.Importable && !d.Imported {
+			if d.Importable && (!d.Imported || d.Kind == browserCookieKind) {
 				targets = append(targets, d.Path)
 			}
 		}

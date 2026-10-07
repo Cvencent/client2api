@@ -339,6 +339,25 @@ never from guesswork.
 
 ---
 
+## Credit balance
+
+`AccountBalance` implements `core.BalanceProvider` through the desktop
+client's own account-context endpoint:
+
+`GET /api/v1/adapter/user/account-context?include=user,plan,quota,page,data_sharing`
+
+The endpoint is opened with the account's bearer token. The response may be
+wrapped in `data`; the user quota is read from `quota.user_quota`,
+`quota.userQuota`, or the `quota` object itself. The module uses the vendor's
+`remaining` value when present and otherwise computes `max(total - used, 0)`.
+The vendor's default `credits` unit is rendered as `积分` in the panel.
+
+A rejected access token is refreshed and the read is retried once, matching the
+account-context behavior of the desktop client. A malformed reply is an error;
+the panel must not turn an unknown quota into a fabricated zero.
+
+---
+
 ## Streaming
 
 `Chat` always returns a `core.Stream` over the upstream SSE body.
@@ -414,31 +433,11 @@ appended, where the age is rendered `0s` / `Ns` / `Nm` / `Nh`.
   `announcement:credits-growth-card` operation to this account, so a live call
   answers `404`. The success path is therefore unobserved against a real
   account — see "Daily check-in" above.
-* **No quota/billing integration, and the dead endpoint constant is gone.**
-  `accountContextPath` (`/api/v1/adapter/user/account-context?include=user,plan,quota`)
-  used to be declared in `upstream.go` but nothing in this package ever called
-  it, so the module advertised quota awareness it did not have. It has been
-  deleted rather than left as decoration. The endpoint is not unreachable in
-  principle -- it is a real vendor route, and `docs/upstream/qwenwork.md`
-  documents it -- but it cannot be used from here yet, and saying so is cheaper
-  than a wrong `Status().Extra`:
-
-  * No response body from it has ever been captured in this environment (there
-    is no credential here), and `docs/upstream/qwenwork.md` records the URL but
-    not the body. This module does not surface field names it has not seen.
-  * The only field list available came from a third-party reference client
-    (`client2api-lab/_upstream/qwenwork2api-makers/edge-functions/admin/overview.js`,
-    which reads `data.quota.{total,used,remaining,exceeded}`,
-    `data.plan.{name,user_type,is_personal_version}` and
-    `data.user.{name,email,is_biz}`). That is a second-hand parse, not an
-    observed response, so it was deliberately not adopted.
-
-  What is still wanted: `Status` cannot report remaining credit, and the only
-  signal today is a request that comes back exhausted. To wire it up, capture
-  one 200 body and send `include=user,plan,quota` **verbatim** -- the vendor
-  matches that list literally, so a plausible-looking `credit` silently returns
-  no quota fields instead of an error -- then parse `data` and surface only the
-  `quota`/`plan` keys that body actually carries.
+* **Credit balance is read live, but expiry tranches are not exposed.**
+  The account-context response is parsed with the QwenWorkCN client's own rules,
+  including `user_quota`/`userQuota` and the `remaining` or `total - used`
+  calculation. The reply does not provide per-tranche expiry buckets, so
+  `Expiring` and `EarliestAt` stay zero rather than guessing from plan dates.
 * **`/api/v1/userinfo` is declared and unused as well.** It was outside this
   cleanup, so it stays, but it has the same problem: a constant with no caller
   looks like a feature that exists.

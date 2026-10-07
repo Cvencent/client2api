@@ -83,6 +83,10 @@ uses the Tabbit browser's own command line (`tabbit-cli.exe`), which exposes a P
 runtime: a small JavaScript program calls `context.cookies()` and returns the `token`
 cookie.
 
+The browser-cookie entry remains selectable after its first import and is labelled
+*已导入，可更新*. Signing in again in the Tabbit browser and re-importing it replaces
+the existing `tabbit-web:<uid>` token in place; it does not add a duplicate account.
+
 * The CLI is **discovered**, never hard-coded: `tabbit_cli` in the config, then
   `%LOCALAPPDATA%\Tabbit\LocalAgent\bin\tabbit-cli.exe`. The `cliPath` inside
   `launcher-target.json` is *not* used to invoke anything — it is only evidence that the
@@ -103,8 +107,9 @@ cookie.
   it recognises `BROWSER_LAUNCH_FAILED`.** The cookie can always be pasted in by hand
   (DevTools → Application → Cookies → `https://web.tabbit.com` → `token`).
 * Because a best-effort scan must not be ruined by one unavailable source,
-  `Import(all=true)` **skips** a broken browser-cookie source (and logs it); naming that
-  source explicitly in `paths` returns the real error.
+  `Import(all=true)` refreshes the browser-cookie source even when that account already
+  exists, but **skips** it when the source is broken (and logs it); naming that source
+  explicitly in `paths` returns the real error.
 
 ## Config
 

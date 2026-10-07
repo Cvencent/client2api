@@ -103,7 +103,7 @@ func TestAccountRowOwnButtonsAreChinese(t *testing.T) {
 
 	// data-do -> 该行按钮上必须出现的中文标签（逐字出现在渲染代码里）。
 	wants := []struct{ do, label string }{
-		{`data-do="note"`, "备注"},
+		{`data-do="note"`, "账号标识"},
 		{`data-do="test"`, "测试"},
 		{`data-do="del"`, "删除"},
 		{`data-do="relogin"`, "重登"},

@@ -276,6 +276,20 @@ func TestAutoAddBatchControls(t *testing.T) {
 // 的入口，自动添加和接码都挂在它下面。只实现 AutoLoginProvider/SMSProvider 的模块
 // （loomy）必须落在这个 tab 上并改名为「自动登录」，而不是被推进「手动添加」；三块
 // 都没有的模块（minimaxcode）则要把这个 tab 藏掉，免得出现一个点开是空的按钮。
+func TestTabbitBrowserCookieCanBeReimportedFromImportTab(t *testing.T) {
+	body := poolStatsFuncBody(t, reloginSource(t), "discover")
+	for _, want := range []string{
+		`const refreshable = c.kind === "browser-cookie" && c.importable;`,
+		`(c.imported && !refreshable ? " disabled" : "")`,
+		`(refreshable || (c.importable && !c.imported) ? " checked" : "")`,
+		`" · 已导入，可更新"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("Tabbit 浏览器 Cookie 不能在导入页重新导入：缺少 %s", want)
+		}
+	}
+}
+
 func TestAddDialogTabFollowsCapabilities(t *testing.T) {
 	body := poolStatsFuncBody(t, reloginSource(t), "pickAddClient")
 
@@ -288,7 +302,13 @@ func TestAddDialogTabFollowsCapabilities(t *testing.T) {
 	if !strings.Contains(body, `loginTab.textContent = loginOn(n) ? "浏览器登录" : (autoOn(n) ? "自动登录" : "接码");`) {
 		t.Errorf("pickAddClient 不再按能力给「登录」tab 改名")
 	}
-	if !strings.Contains(body, `if (!canLoginTab) { if (loginTab) loginTab.classList.remove("on"); setAddTab(k.import ? "import" : "manual"); }`) {
-		t.Errorf("pickAddClient 在没有登录能力时不再退回导入/手动 tab")
+	if !strings.Contains(body, `const canManualTab = k.manage && (((k.fields || []).length > 0) || qcTargets(n).length > 0);`) {
+		t.Errorf("pickAddClient 不再按字段/快速连接能力隐藏空的手动添加 tab")
+	}
+	if !strings.Contains(body, `manualTab.hidden = !canManualTab;`) {
+		t.Errorf("pickAddClient 不再隐藏无内容的手动添加 tab")
+	}
+	if !strings.Contains(body, `if (!tabs.includes(ADD.tab)) setAddTab(tabs[0] || "login");`) {
+		t.Errorf("pickAddClient 没有在能力变化后切到真正存在的 tab")
 	}
 }

@@ -647,6 +647,52 @@ func TestTabbitDiscoverAndImport(t *testing.T) {
 	}
 }
 
+func TestTabbitImportAllRefreshesAnImportedBrowserCookie(t *testing.T) {
+	ctx := context.Background()
+	clearTabbitEnv(t)
+	withCandidates(t, closedPortURL(t))
+	cli := filepath.ToSlash(failingCLI(t))
+	c := newTestClient(t, `{"tabbit_cli":"`+cli+`"}`, nil)
+
+	tokens := []string{
+		webJWTFor(t, "refresh-uid", time.Now().Add(time.Hour)),
+		webJWTFor(t, "refresh-uid", time.Now().Add(2*time.Hour)),
+	}
+	calls := 0
+	old := runTabbitLauncher
+	runTabbitLauncher = func(_ *Client, _ context.Context, _, _, _ string) (json.RawMessage, error) {
+		token := tokens[0]
+		if calls < len(tokens) {
+			token = tokens[calls]
+		}
+		calls++
+		return json.RawMessage(`{"token":"` + token + `"}`), nil
+	}
+	t.Cleanup(func() { runTabbitLauncher = old })
+
+	if _, err := c.Import(ctx, []string{browserCookiePath}, false); err != nil {
+		t.Fatalf("initial browser-cookie import: %v", err)
+	}
+
+	got, err := c.Import(ctx, nil, true)
+	if err != nil {
+		t.Fatalf("Import all after browser login refresh: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("refreshed %d accounts, want the existing browser cookie", len(got))
+	}
+	if calls != 2 {
+		t.Fatalf("browser reads = %d, want 2", calls)
+	}
+	ep, ok := c.firstEnabledWeb()
+	if !ok {
+		t.Fatal("the refreshed browser cookie is missing from the pool")
+	}
+	if ep.Token != tokens[1] {
+		t.Fatal("Import all kept the old browser cookie instead of updating it")
+	}
+}
+
 func TestTabbitImportAllSkipsAlreadyImported(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeSidecar(t, true)

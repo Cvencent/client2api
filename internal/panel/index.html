@@ -790,6 +790,11 @@ body.hide-bal .c-bal { display: none; }
 }
 #manFields details.adv > summary { cursor: pointer; color: var(--ink-3); font-size: 12.5px; }
 #manFields details.adv[open] > summary { margin-bottom: 10px; }
+.man-guide { margin-bottom: 12px; padding: 10px 12px; border: 1px solid var(--line-soft); border-radius: 8px; background: var(--surface-2); }
+.man-guide .mg-title { color: var(--ink-2); font-size: 12.5px; font-weight: 600; }
+.man-guide .mg-note { margin-top: 3px; color: var(--ink-3); font-size: 11.5px; line-height: 1.55; }
+.man-guide ol { margin: 7px 0 0; padding-left: 18px; color: var(--ink-2); font-size: 12px; line-height: 1.6; }
+.man-guide li + li { margin-top: 2px; }
 #addClient { margin-bottom: 2px; }
 .uschart-hd, .uschart-body { padding: 10px 14px; }
 .uschart-hd { display: flex; align-items: center; border-bottom: 1px solid var(--line-soft); }
@@ -975,12 +980,18 @@ html { scrollbar-gutter: stable; }
 #view-accounts table.acc .col-bal { width: 7%; }
 #view-accounts table.acc .col-rate { width: 7%; }
 #view-accounts table.acc .col-inflight { width: 5%; }
-#view-accounts table.acc .col-usage { width: 14%; }
-#view-accounts table.acc .col-last { width: 8%; }
-#view-accounts table.acc .col-expiry { width: 8%; }
-#view-accounts table.acc .col-note { width: 9%; }
-#view-accounts table.acc .col-fields { width: 7%; }
-#view-accounts table.acc .col-acts { width: 11%; }
+#view-accounts table.acc .col-usage { width: 12%; }
+#view-accounts table.acc .col-last { width: 7%; }
+#view-accounts table.acc .col-expiry { width: 7%; }
+#view-accounts table.acc .col-note { width: 15%; }
+#view-accounts table.acc .col-fields { width: 6%; }
+#view-accounts table.acc .col-acts { width: 10%; }
+#view-accounts table.acc th.sortable { cursor: pointer; user-select: none; white-space: nowrap; transition: color .15s ease, background .15s ease; }
+#view-accounts table.acc th.sortable:hover { color: var(--accent-text); background: var(--surface-2); }
+#view-accounts table.acc th.sortable:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+#view-accounts table.acc th.sortable .sort-mark { display: inline-block; width: 1em; margin-left: 3px; color: var(--ink-3); transition: color .15s ease, transform .15s ease; }
+#view-accounts table.acc th.sortable.sort-on { color: var(--accent-text); }
+#view-accounts table.acc th.sortable.sort-on .sort-mark { color: var(--accent); }
 #view-accounts table.acc .accPrio { width: 52px; min-width: 52px; padding: 4px 5px; text-align: center; }
 #view-accounts table.acc td.c-prio, #view-accounts table.acc th.c-prio { text-align: center; }
 #view-accounts table.acc td > .name,
@@ -990,7 +1001,7 @@ html { scrollbar-gutter: stable; }
 #view-accounts table.acc td.c-last { overflow: hidden; }
 #view-accounts table.acc td.c-usage > span,
 #view-accounts table.acc td.c-last > span { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#view-accounts table.acc td .note { display: inline-block; max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+#view-accounts table.acc td .note { display: -webkit-box; max-width: 100%; overflow: hidden; text-overflow: ellipsis; -webkit-line-clamp: 2; -webkit-box-orient: vertical; white-space: normal; overflow-wrap: anywhere; line-height: 1.35; vertical-align: bottom; cursor: help; }
 /* 字段列只放一个「还有细节」的入口：整颗 chip 限宽省略，完整键值对仍在 title 里。
    状态 chip 也命中这条规则，但它本来就只有几个字符，限宽对它没有影响。 */
 #view-accounts table.acc td > .chip { display: inline-block; max-width: 96px; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
@@ -1415,7 +1426,7 @@ input, select, textarea { transition-property: border-color, box-shadow, backgro
           </colgroup>
           <thead><tr>
             <th class="mark" aria-hidden="true"></th>
-            <th>账号</th><th>状态</th><th>优先级</th><th class="c-bal" title="显示上次读到的余额；打开页面后会分批慢慢更新，不会一次问完所有账号">余额</th><th>成功 / 失败</th><th>在途</th><th>用量</th><th>最近成功</th><th>到期</th><th>备注</th><th>字段</th><th class="c-acts"></th>
+            <th>账号</th><th>状态</th><th>优先级</th><th class="c-bal sortable" id="accSortBal" tabindex="0" aria-label="按余额排序" aria-sort="none" title="点击按余额升序，再点切到降序，第三次恢复默认顺序">余额 <span class="sort-mark" aria-hidden="true">↕</span></th><th>成功 / 失败</th><th>在途</th><th>用量</th><th>最近成功</th><th>到期</th><th class="c-note" title="模块返回的账号状态说明，例如冷却、限流、凭据失效；它不是右侧的账号标识">状态说明</th><th>字段</th><th class="c-acts"></th>
           </tr></thead>
           <tbody id="accBody"></tbody>
         </table>
@@ -2051,6 +2062,7 @@ input, select, textarea { transition-property: border-color, box-shadow, backgro
       <div id="addTabManual" class="tab-panel" hidden>
         <!-- 一键连接本机服务：只有声明了 capabilities.quick_connect 的模块才有。
              探测是只读的，连接才会建档；默认只露一个主按钮。 -->
+        <div id="manGuide" class="man-guide" hidden></div>
         <div id="quickConnect" class="qc-box" hidden>
           <div class="row qc-head">
             <span class="k">一键连接本机服务</span>
@@ -2080,14 +2092,14 @@ input, select, textarea { transition-property: border-color, box-shadow, backgro
   </div>
 </div>
 
-<!-- 账号身份备注。模块的厂商接口只回一个昵称（trae 的 userInfo 就一个
+<!-- 账号身份标识。模块的厂商接口只回一个昵称（trae 的 userInfo 就一个
      ScreenName），凭据坏掉时从账号表上看不出这一行到底是哪个手机号/邮箱，
-     重登也就不知道该用哪一个。备注由操作员自己填，存在网关配置里（跟账号优先级
+     重登也就不知道该用哪一个。标识由操作员自己填，存在网关配置里（跟账号优先级
      同一套持久化），升级保留，只在本机显示。 -->
 <div class="veil" id="noteVeil">
   <div class="dlg" style="width:440px">
     <header>
-      <h3>账号身份备注</h3>
+      <h3>账号身份标识</h3>
       <div class="hint" id="noteHelp"></div>
     </header>
     <div class="body">
@@ -2531,6 +2543,7 @@ let ACC_EXPANDED_FOR = "";
 // ACC_PAGE 是当前页（1 起），ACC_PAGE_SIZE 是每页多少个账号，切客户端时归位到
 // 第 1 页——留着上一页的页码切到另一个池子会直接落在一张空表上。
 let ACC_PAGE = 1;
+const ACC_SORT = {};
 let ACC_PAGE_SIZE = 50;
 
 // elsewhereClients 在当前客户端之外找命中的账号，返回 [{ name, n }]。账号池一次只
@@ -2731,7 +2744,8 @@ function noteCell(a) {
   // stays intact.
   const key = n.toLowerCase().replace(/\s+\([^()]*left\)$/, "");
   const zh = NOTE_WORDS[key];
-  return '<span class="note"' + (zh ? ' title="' + esc(n) + '"' : "") + '>' + esc(zh || n) + '</span>';
+  const tip = zh ? (zh === n ? n : zh + "（原始值：" + n + "）") : n;
+  return '<span class="note" tabindex="0" aria-label="状态说明：' + esc(tip) + '" title="' + esc(tip) + '">' + esc(zh || n) + '</span>';
 }
 
 /* ── 余额列 ──────────────────────────────────────────────────────────────
@@ -2925,6 +2939,56 @@ function accBalanceCell(a) {
 // 各个通道不一定都读得到余额（ZCode 的计划余额只认 JWT 通道，api-key 通道
 // 会直接报「需要计划凭据」），所以收起的分组行不能只看第一条通道，否则余额
 // 永远显示不出来。一条可用都没有时退回第一条，让「读取失败 / … / -」照旧可见。
+function accGroupBalanceValue(rows) {
+  const st = BALS[CUR];
+  if (!st || !st.byID) return null;
+  for (const a of rows || []) {
+    const b = st.byID[a.id];
+    if (!b || b.error) continue;
+    if (b.unlimited) return Number.POSITIVE_INFINITY;
+    if (b.credits == null) continue;
+    const n = Number(b.credits);
+    const value = Number.isFinite(n) ? n : null;
+    if (value != null) return value;
+  }
+  return null;
+}
+
+function accSortDir(n) { return ACC_SORT[n] || ""; }
+
+function accSortGroups(groups, dir) {
+  if (!dir) return groups;
+  return groups.map((g, i) => ({ g, i, bal: accGroupBalanceValue(g.rows) })).sort((a, b) => {
+    const av = a.bal, bv = b.bal;
+    if (av == null && bv == null) return a.i - b.i;
+    if (av == null) return 1;
+    if (bv == null) return -1;
+    if (av === bv) return a.i - b.i;
+    return dir > 0 ? av - bv : bv - av;
+  }).map(x => x.g);
+}
+
+function syncAccSortHeader() {
+  const th = $("#accSortBal");
+  if (!th) return;
+  const dir = accSortDir(CUR);
+  th.classList.toggle("sort-on", !!dir);
+  th.setAttribute("aria-sort", dir === "asc" ? "ascending" : dir === "desc" ? "descending" : "none");
+  const mark = th.querySelector(".sort-mark");
+  if (mark) mark.textContent = dir === "asc" ? "↑" : dir === "desc" ? "↓" : "↕";
+  th.title = dir === "asc" ? "余额升序，点击改为降序" : dir === "desc" ? "余额降序，点击恢复默认顺序" : "点击按余额升序，再点切到降序，第三次恢复默认顺序";
+}
+
+function accSortBalance() {
+  const cur = accSortDir(CUR);
+  const next = cur === "asc" ? "desc" : cur === "desc" ? "" : "asc";
+  if (next) ACC_SORT[CUR] = next; else delete ACC_SORT[CUR];
+  ACC_PAGE = 1;
+  renderAccounts();
+  const wrap = $("#accBody").closest(".tbl-wrap");
+  if (wrap) wrap.scrollTop = 0;
+}
+
 function accGroupBalanceCell(rows) {
   const st = BALS[CUR];
   if (st && st.byID) {
@@ -2948,6 +3012,7 @@ function renderAccounts() {
   // colspan 必须跟着列数走，否则两个空态行会缺一格。
   const showBal = !!caps.balance;
   document.body.classList.toggle("hide-bal", !showBal);
+  syncAccSortHeader(CUR);
   $("#btnBalanceAll").hidden = !showBal;
   syncBalanceButton(CUR);
   const cols = showBal ? 13 : 12;
@@ -3096,9 +3161,10 @@ function accGoPage(p) {
 // 一张和当前筛选条件对不上的表上。
 function accShownGroups() {
   const rec = ACCTS[CUR] || { accounts: [] };
-  const groups = accGroups(rec.accounts || []);
+  const allGroups = accGroups(rec.accounts || []);
   const q = ($("#accSearch").value || "").trim().toLowerCase();
-  return q ? groups.filter(g => g.rows.some(a => matchText(a, q))) : groups;
+  const groups = q ? allGroups.filter(g => g.rows.some(a => matchText(a, q))) : allGroups;
+  return accSortGroups(groups, accSortDir(CUR));
 }
 
 // accountIdentity 是账号列上让人认人的那行字。操作员自己记的备注（手机号/邮箱）
@@ -3226,7 +3292,7 @@ function accRowHTML(a, caps, acts, showBal, chan, open, groupKey) {
   const btns = [];
   // 「备注」记的是这个账号登录用的手机号/邮箱，存在网关配置里（不是模块里），
   // 所以不依赖 caps.manage：只读模块的账号也能标出来，重登时才知道该用哪一个。
-  btns.push('<button class="xs" data-do="note" data-id="' + esc(a.id) + '" title="记下这个账号登录用的手机号或邮箱，重登时用来认人">' + (a.operator_note ? "备注 ✓" : "备注") + '</button>');
+  btns.push('<button class="xs" data-do="note" data-id="' + esc(a.id) + '" title="记录这个账号登录用的手机号或邮箱，用来辨认账号和重登；它不是状态说明列">' + (a.operator_note ? "账号标识 ✓" : "账号标识") + '</button>');
   if (caps.manage) {
     btns.push('<button class="xs" data-do="test" data-id="' + esc(a.id) + '">测试</button>');
     btns.push(accToggleButton(a, caps));
@@ -3339,9 +3405,9 @@ async function saveAccountPriority(id, raw) {
   toast("账号优先级已保存");
 }
 
-/* ── 账号身份备注 ───────────────────────────────────────────────────────
+/* ── 账号身份标识 ───────────────────────────────────────────────────────
    厂商的 userInfo 只回一个昵称（trae 就一个 ScreenName），账号池里一条凭据到底
-   是哪个手机号/邮箱，模块自己说不出来，只有操作员知道。备注存在网关配置的
+   是哪个手机号/邮箱，模块自己说不出来，只有操作员知道。标识存在网关配置的
    platforms.<平台>.account_notes 里，与账号优先级同一套写入路径：PATCH 配置 →
    热加载 → 重画。它只是面板的显示名，不参与路由。 */
 const NOTE = { id: "" };
@@ -3352,7 +3418,7 @@ function openAccountNote(id) {
   const acc = accById(CUR, id);
   if (!acc) { toast("找不到账号 " + id, "err"); return; }
   NOTE.id = id;
-  $("#noteHelp").textContent = "为「" + accountIdentity(acc) + "」记下它登录用的手机号或邮箱，重登时用来认人。";
+  $("#noteHelp").textContent = "为「" + accountIdentity(acc) + "」记下它登录用的手机号或邮箱，用来辨认账号和重登。它不是账号池里的状态说明。";
   $("#noteInput").value = acc.operator_note || "";
   $("#noteErr").hidden = true;
   showVeil($("#noteVeil"));
@@ -3381,14 +3447,14 @@ async function saveAccountNote() {
     }
     const reloaded = await api("/panel/api/reload", { method: "POST" });
     if (!reloaded.ok) {
-      $("#noteErr").hidden = false; $("#noteErr").textContent = "备注已写入配置，但热加载失败：" + reloaded.err;
+      $("#noteErr").hidden = false; $("#noteErr").textContent = "账号标识已写入配置，但热加载失败：" + reloaded.err;
       return;
     }
     const list = ((ACCTS[CUR] || {}).accounts) || [];
     list.forEach(a => { if (a.id === id) a.operator_note = value; });
     closeAccountNote();
     renderAccounts();
-    toast(value ? "账号备注已保存" : "账号备注已清除");
+    toast(value ? "账号标识已保存" : "账号标识已清除");
   } finally { btn.disabled = false; }
 }
 
@@ -7441,10 +7507,16 @@ function pickAddClient(n) {
     loginTab.hidden = !canLoginTab;
     loginTab.textContent = loginOn(n) ? "浏览器登录" : (autoOn(n) ? "自动登录" : "接码");
   }
-  if (!canLoginTab) { if (loginTab) loginTab.classList.remove("on"); setAddTab(k.import ? "import" : "manual"); }
-  if (ADD.tab === "login" && !canLoginTab) setAddTab(k.import ? "import" : "manual");
-  if (ADD.tab === "import" && !k.import) setAddTab(canLoginTab ? "login" : "manual");
-  if (ADD.tab === "manual" && !k.manage) setAddTab(canLoginTab ? "login" : "import");
+  // 没有声明任何手填字段、也没有一键连接目标时，手动添加页签本身就是空的：
+  // 与其让操作员点进去看到一个空页，不如直接藏掉，只留下真正能完成添加的页签。
+  const manualTab = $$("#addTabs .tab").find(x => x.dataset.tab === "manual");
+  const canManualTab = k.manage && (((k.fields || []).length > 0) || qcTargets(n).length > 0);
+  manualTab.hidden = !canManualTab;
+  const tabs = [];
+  if (canLoginTab) tabs.push("login");
+  if (k.import) tabs.push("import");
+  if (canManualTab) tabs.push("manual");
+  if (!tabs.includes(ADD.tab)) setAddTab(tabs[0] || "login");
   syncAddLoginButton();
 }
 function setAddTab(t) {
@@ -7669,9 +7741,15 @@ async function discover() {
   if (!r.ok) { $("#addPick").innerHTML = ""; $("#importErr").hidden = false; $("#importErr").textContent = "探测失败：" + r.err; return; }
   ADD.creds = (r.data && r.data.detected) || [];
   $("#addPick").textContent = "探测到 " + ADD.creds.length + " 条凭据";
-  $("#impList").innerHTML = ADD.creds.map((c, i) =>
-    '<label class="row"><input type="checkbox" data-i="' + i + '"' + (c.imported ? " disabled" : "") + (c.importable && !c.imported ? " checked" : "") + '>' +
-    '<span class="k">' + esc(c.kind) + '</span><span class="grow"></span><span class="v">' + esc(c.label || c.path) + (c.imported ? " · 已导入" : "") + '</span></label>').join("") ||
+  $("#impList").innerHTML = ADD.creds.map((c, i) => {
+    const refreshable = c.kind === "browser-cookie" && c.importable;
+    const suffix = c.imported ? (refreshable ? " · 已导入，可更新" : " · 已导入") : "";
+    return '<label class="row"><input type="checkbox" data-i="' + i + '"' +
+      (c.imported && !refreshable ? " disabled" : "") +
+      (refreshable || (c.importable && !c.imported) ? " checked" : "") + '>' +
+      '<span class="k">' + esc(c.kind) + '</span><span class="grow"></span><span class="v">' +
+      esc(c.label || c.path) + suffix + '</span></label>';
+  }).join("") ||
     '<div class="hint">没有探测到可导入的凭据</div>';
 }
 async function doImport(all) {
@@ -7890,10 +7968,52 @@ function manualFieldHTML(f) {
     '<div class="fldErr" hidden></div></div>';
 }
 
+function manualGuideSteps(fs, k) {
+  const fields = fs || [];
+  const keys = new Set(fields.map(f => f.key));
+  const required = fields.filter(f => f.required).map(f => f.label || f.key);
+  const steps = [];
+  if (!fields.length) {
+    steps.push("这个客户端没有可手填字段，请用上方的一键连接，或改用浏览器登录、导入凭据。");
+    return steps;
+  }
+  steps.push("先填写带 * 的必填项" + (required.length ? "：" + required.join("、") : "") + "。");
+  if (keys.has("api_key") || keys.has("key")) {
+    steps.push("API Key 要去服务商控制台创建，不要填登录密码；有获取链接时直接点开链接。");
+  }
+  const loginLabel = "浏览器登录";
+  const importLabel = "导入凭据";
+  const testLabel = "测试";
+  if (keys.has("access_token") || keys.has("token") || keys.has("jwt")) {
+    steps.push("Token、Cookie、JWT 属于登录凭据，优先用「" + loginLabel + "」或「" + importLabel + "」自动获取；只有你已经复制到值时才在这里粘贴。");
+  }
+  if (fields.some(f => f.advanced)) {
+    steps.push("普通内置服务商不用展开高级设置；只有自定义接口地址、模型列表时才填。");
+  }
+  steps.push("点「添加」；成功后回账号池点「" + testLabel + "」，测试通过才算可用。");
+  return steps;
+}
+
+function manualGuideHTML(n, fs) {
+  const k = capsOf(n) || {};
+  const title = "手动添加怎么用";
+  const intro = "只在浏览器登录或导入凭据拿不到时使用" +
+    "；已经有的 API Key、Token 也可以直接粘贴。";
+  const steps = manualGuideSteps(fs, k);
+  return '<div class="mg-title">' + esc(title) + '</div>' +
+    '<div class="mg-note">' + esc(intro) + '</div>' +
+    '<ol>' + steps.map(x => '<li>' + esc(x) + '</li>').join("") + '</ol>';
+}
+
 function renderManual() {
   const n = $("#addClient").value, k = capsOf(n) || {};
   renderQuickConnect(n);
   const fs = k.fields || [];
+  const guide = $("#manGuide");
+  if (guide) {
+    guide.hidden = false;
+    guide.innerHTML = manualGuideHTML(n, fs);
+  }
   const basic = fs.filter(f => !f.advanced), adv = fs.filter(f => f.advanced);
   let html = basic.map(manualFieldHTML).join("");
   // 高级项默认收起：base_url / models 这种只有自定义服务商才要填的字段，摊在主
@@ -8042,6 +8162,12 @@ $("#accSearch").addEventListener("keydown", ev => {
   renderAccounts();
 });
 
+$("#accSortBal").addEventListener("click", accSortBalance);
+$("#accSortBal").addEventListener("keydown", ev => {
+  if (ev.key !== "Enter" && ev.key !== " ") return;
+  ev.preventDefault();
+  accSortBalance();
+});
 // ── 账号池分页 ──────────────────────────────────────────────────────────
 // accTurn 是翻页的唯一入口：夹好页码、重画，然后把表格滚回顶部。不滚的话操作员
 // 点完「下一页」看到的还是半屏上一页的行，会以为没翻动。

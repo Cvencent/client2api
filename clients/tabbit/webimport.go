@@ -232,7 +232,7 @@ func (c *Client) importBrowserCookie(ctx context.Context) (core.AccountRecord, e
 		ctx = context.Background()
 	}
 
-	raw, err := c.runTabbitProgram(ctx, cliTaskName, cli, cookieProgram)
+	raw, err := runTabbitLauncher(c, ctx, cliTaskName, cli, cookieProgram)
 	if err != nil {
 		return core.AccountRecord{}, err
 	}
