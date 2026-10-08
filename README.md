@@ -1,6 +1,6 @@
 # client2api
 
-One OpenAI-compatible gateway in front of fifteen AI backends:
+One OpenAI-compatible gateway in front of sixteen AI backends:
 
 | route | client | what it wraps |
 |---|---|---|
@@ -8,6 +8,7 @@ One OpenAI-compatible gateway in front of fifteen AI backends:
 | `trae/…` | Trae | TRAE SOLO / Trae CN |
 | `zcode/…` | ZCode | Z.AI coding plan (Anthropic Messages upstream) |
 | `kimi/…` | Kimi | Kimi Code CLI |
+| `qoder/…` | Qoder CN | Qoder CN 桌面账号、积分与签到（不提供对话） |
 | `qwenwork/…` | QwenWork | 千问办公 / QoderWork CN desktop agent |
 | `tabbit/…` | Tabbit | Tabbit Browser (via a sidecar) |
 | `minimaxcode/…` | MiniMax Code | MiniMax Code desktop agent (Anthropic Messages upstream) |
@@ -445,6 +446,8 @@ to every module that implements `core.LiveReloader`, with no restart.
 | `panel.package_detail_limit` | restart; the panel reads it once, at construction |
 | `schedule.*` | live (`Reconfigure`), but the running loop only reacts to the *next* wake; the `schedule` block is reported in `GET /panel/api/status` |
 
+`platforms.<name>.priority` and `platforms.<name>.account_priorities` both accept any integer, including negatives. Lower numbers are higher priority: for example, `-10` is tried before `-5`, and the default is `0`.
+
 `prompt` is the system-prompt strategy: `passthrough` (default), `custom`
 (replace every `system`/`developer` turn with `file`, or with the shipped
 engineering prompt when `file` is empty) or `append` (insert after the leading
@@ -539,6 +542,14 @@ a check-in or a manual balance refresh has the same effect. Changing the
 value is live and re-evaluates every account immediately. For example,
 `{"platforms":{"workbuddy":{"reserve_credits":0}}}` keeps zero-credit
 WorkBuddy accounts out of routing and shows them as paused instead of green.
+
+Only a balance reading the vendor's own reply corroborates parks an
+account. When a reply contradicts itself about a package that still
+advertises capacity -- WorkBuddy's 体验版 keeps a stale lifetime
+`CapacityRemain` after its monthly cycle is spent -- the conservative
+number is still shown but is not treated as a known-empty wallet, so a
+working account is never parked on it. A park the vendor earned with a
+real refusal keeps its own deadline.
 
 The guard currently has a pool-side implementation in workbuddy, the reference's
 credit-parking model; a module without a balance-aware pool ignores it.
@@ -700,6 +711,7 @@ configuration), and the panel says so instead of implying a Redis mirror.
 | trae | MIT upstream, ported | see `clients/trae/README.md` |
 | zcode | AGPL upstream → **clean-room rewrite** | see `clients/zcode/README.md` |
 | kimi | MIT upstream, ported | see `clients/kimi/README.md` |
+| qoder | public OpenAPI + observed desktop credential format, no upstream code copied | see `clients/qoder/README.md` |
 | qwenwork | **no licence** → **clean-room rewrite** | see `clients/qwenwork/README.md` |
 | tabbit | GPL-3.0 upstream → **sidecar only, no code reuse** | see `clients/tabbit/README.md` |
 | minimaxcode | **no upstream** → **clean-room rewrite** | see `clients/minimaxcode/README.md` |
@@ -977,6 +989,7 @@ renderer never calls it either — so there is nothing honest to implement from.
 | trae | yes | yes | yes — loopback redirect on `127.0.0.1`, opens `www.trae.cn/authorization` | yes — `daily-checkin` (CN only) |
 | zcode | yes | yes | yes — polls `POST {api}/oauth/cli/init` → `GET …/poll/{flow_id}` | yes — claims the promotion via the built-in Edge/Chrome captcha solver; `captcha_command` is the headless fallback |
 | kimi | yes | yes | yes — RFC 8628 device grant against `auth.kimi.com`; the CLI is not required | no — no such endpoint exists |
+| qoder | yes | yes — Electron safeStorage + DPAPI on Windows; a pasted token elsewhere | no — the desktop client owns sign-in | yes — daily `CLAIM_BENEFIT` campaign |
 | qwenwork | yes | no — nothing on disk holds a usable token | yes — PKCE device flow | yes — `daily`, against the Sash check-in API |
 | tabbit | yes | yes | yes — browser hand-off: opens the sign-in page inside the Tabbit browser through its own launcher, then reads the session cookie back (`local_app` + `handoff_path`; with no launcher it falls back to returning the URL) | no — the module only talks to a local sidecar |
 | minimaxcode | yes | yes | yes — RFC 8628 device grant against `account.minimax.cn`, PKCE, with the CN `user_code` variant; the desktop GUI is not required | no — the product has no check-in |

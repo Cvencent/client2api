@@ -287,6 +287,16 @@ vendor redesigned the page" without a screenshot.
 `unknown`), `expires_at` (RFC 3339), `note` (cooldown reason / remaining time),
 `extra.realm`, `extra.failures`.
 
+### Low-balance guard
+
+`platforms.workbuddy.reserve_credits` (see the root README) parks an account
+whose last *known* balance is at or below the threshold.  Only a reading the
+vendor's own reply corroborates can park it: the 体验版 package keeps a stale
+lifetime `CapacityRemain` after its monthly cycle is spent, and the reply's own
+`TotalDosage` copies that figure, so a raw zero beside a contradicting view is
+not proof that the account is empty -- it is left in rotation instead, and the
+next real refusal parks the account with its own deadline.
+
 ## Request path
 
 1. `Chat` picks a usable account (round-robin, skipping ones already tried in

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -56,6 +57,14 @@ func fakeSignIn(t *testing.T, granted bool, statusBody string) (*fakeWeb, *signI
 		var body map[string]any
 		if err := json.Unmarshal(raw[:n], &body); err != nil {
 			t.Errorf("the sign-in body is not JSON: %v (%s)", err, raw[:n])
+		}
+		// The vendor's sign-in endpoint is idempotent per request_no and now
+		// refuses the request outright when the key is absent.  Mirror that here
+		// so a body without the key fails the tests the same way it fails live.
+		if key, _ := body["request_no"].(string); strings.TrimSpace(key) == "" {
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			writeWebJSON(w, `{"error_code":"VALIDATION_ERROR","error_message":"request validation failed","details":[{"field":"body.request_no","reason":"missing","message":"Field required"}]}`)
+			return
 		}
 		st.mu.Lock()
 		st.body = body
@@ -141,6 +150,34 @@ func TestTabbitCheckinSendsTheSceneCode(t *testing.T) {
 	}
 	if got, _ := body["scene_code"].(string); got != webSignInScene {
 		t.Fatalf("the body carried scene_code=%q, want %q (body=%v)", got, webSignInScene, body)
+	}
+}
+
+// signInRequestNoShape is a v4 UUID, the shape the vendor's own client uses for
+// the caller-generated keys in this family (client_run_id, page_instance_id,
+// x-signature).  The sign-in endpoint treats request_no as an idempotency key.
+var signInRequestNoShape = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+
+// TestTabbitCheckinSendsARequestNo locks the idempotency key the vendor now
+// requires.  Without it the sign-in endpoint answers 422 VALIDATION_ERROR
+// "body.request_no missing" and grants nothing, so the panel button silently
+// fails even though the cookie is perfectly good.
+func TestTabbitCheckinSendsARequestNo(t *testing.T) {
+	f, st := fakeSignIn(t, true, "")
+	c, rec := newWebClient(t, f)
+
+	res, err := c.Checkin(context.Background(), rec.ID, "")
+	if err != nil {
+		t.Fatalf("Checkin: %v", err)
+	}
+	if !res.OK {
+		t.Fatalf("a sign-in without the key was not credited: %+v", res)
+	}
+
+	_, body := st.snapshot()
+	got, _ := body["request_no"].(string)
+	if !signInRequestNoShape.MatchString(got) {
+		t.Fatalf("request_no = %q, want a v4 UUID (body=%v)", got, body)
 	}
 }
 

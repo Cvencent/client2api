@@ -669,6 +669,17 @@ func (c *Client) webStatus(ctx context.Context, st core.Status) core.Status {
 					shortUID(claims.Sub), v.models, time.Since(v.at).Round(time.Second))
 				break
 			}
+			if v, held := c.webRateLimited(ep.ID, time.Now()); held {
+				// web.tabbit.com keeps answering the model catalogue while it
+				// refuses every run with 429.  Letting the catalogue probe below
+				// overwrite the rate-limit verdict is what made the pool read
+				// "ready" (and the row read "invalid") while every candidate
+				// failed.  Skip the probe too: it would spend the status budget
+				// to learn nothing.
+				acct.State = epStateCooling
+				acct.Note = webRateLimitNote(v)
+				break
+			}
 			wa := c.webAuthFrom(ep.Token, endpointLabel(ep), epOriginPanel, ep.BaseURL)
 			models, err := c.webFetchModels(probeCtx, wa)
 			switch {
@@ -701,6 +712,7 @@ func (c *Client) webStatus(ctx context.Context, st core.Status) core.Status {
 					at:        time.Now(),
 					err:       core.Redact(truncate(err.Error(), 300)),
 					transient: !webAuthRejection(err),
+					kind:      core.FailureKindOf(err),
 				})
 				acct.State = epStateInvalid
 				acct.Note = truncate(err.Error(), 200)
@@ -782,11 +794,45 @@ func (c *Client) noteWebFailure(wa webAuth, err error) {
 	if f, ok := core.AsFailure(err); ok {
 		status = f.Status
 	}
+	at := time.Now()
+	hold := time.Duration(0)
+	if kind == core.FailureRateLimited {
+		// Grow the rest across consecutive 429s instead of resetting it to the
+		// flat cooldown.  The gateway retries a rate-limited candidate, and
+		// answering every retry with another run is what turns one refusal
+		// into the vendor's longer penalty; a growing hold stops that
+		// amplification and lets the panel show the real cooling window.
+		hold = nextRateLimitHold(0)
+		if prev, seen := c.webVerdictFor(wa.accountID); seen && prev.kind == core.FailureRateLimited {
+			hold = nextRateLimitHold(prev.hold)
+		}
+	}
 	c.storeWebVerdict(wa.accountID, webVerdict{
-		at:        time.Now(),
+		at:        at,
 		err:       core.Redact(truncate(err.Error(), 300)),
 		transient: !webAuthRejection(err),
 		kind:      kind,
 		status:    status,
+		hold:      hold,
 	})
+}
+
+// nextRateLimitHold is the rest the next 429 earns, given how long the previous
+// one asked for.  The first refusal is the short flat cooldown; a repeated one
+// bounded time instead of forever.
+// grows 1m -> 5m -> 10m -> 20m and is capped, so a bad session is parked for
+// a bounded time instead of forever.
+func nextRateLimitHold(prev time.Duration) time.Duration {
+	switch {
+	case prev < webRateLimitCooldown:
+		return webRateLimitCooldown
+	case prev < 5*time.Minute:
+		return 5 * time.Minute
+	default:
+		hold := prev * 2
+		if hold > webRateLimitHoldMax {
+			hold = webRateLimitHoldMax
+		}
+		return hold
+	}
 }

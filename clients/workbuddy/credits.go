@@ -99,8 +99,8 @@ func (c *Client) CreditPackages(ctx context.Context, a *Auth) ([]CreditPackage, 
 					CapacitySize        int64  `json:"CapacitySize"`
 					CycleCapacityRemain int64  `json:"CycleCapacityRemain"`
 					CycleCapacityUsed   int64  `json:"CycleCapacityUsed"`
-					CycleCapacitySize   int64  `json:"CycleCapacitySize"`
 					ExpiredTime         string `json:"ExpiredTime"`
+					CycleCapacitySize   int64  `json:"CycleCapacitySize"`
 					PackageEndTime      string `json:"PackageEndTime"`
 					CycleEndTime        string `json:"CycleEndTime"`
 					CreateTime          int64  `json:"CreateTime"`
@@ -169,8 +169,8 @@ func (c *Client) CreditPackages(ctx context.Context, a *Auth) ([]CreditPackage, 
 
 // UserResource returns the account's remaining and total credits.
 func (c *Client) UserResource(ctx context.Context, a *Auth) (remain, total int64, err error) {
-	remain, total, _, err = c.UserResourceDetailed(ctx, a, 0)
-	return remain, total, err
+	rep, err := c.ReadCredit(ctx, a, 0)
+	return rep.Remain, rep.Total, err
 }
 
 // parsePackageEndTime parses an upstream package end time.  An empty or
@@ -193,8 +193,8 @@ func parsePackageEndTime(raw string) (time.Time, bool) {
 // credits first instead of letting campaign credit lapse.  soon <= 0 disables
 // the bucket.  expiring is always a subset of remain.
 func (c *Client) UserResourceDetailed(ctx context.Context, a *Auth, soon time.Duration) (remain, total, expiring int64, err error) {
-	remain, total, expiring, _, _, err = c.UserResourceDetailedWithExpiry(ctx, a, soon)
-	return remain, total, expiring, err
+	rep, err := c.ReadCredit(ctx, a, soon)
+	return rep.Remain, rep.Total, rep.Expiring, err
 }
 
 // UserResourceDetailedWithExpiry additionally reports the earliest future expiry
@@ -204,10 +204,44 @@ func (c *Client) UserResourceDetailed(ctx context.Context, a *Auth, soon time.Du
 // packages whose end time is missing or unparseable never form a batch; with no
 // usable batch both are zero.
 func (c *Client) UserResourceDetailedWithExpiry(ctx context.Context, a *Auth, soon time.Duration) (remain, total, expiring int64, earliestAt time.Time, earliestRemaining int64, err error) {
+	rep, err := c.ReadCredit(ctx, a, soon)
+	return rep.Remain, rep.Total, rep.Expiring, rep.EarliestAt, rep.EarliestRemaining, err
+}
+
+// CreditReport is one account's decoded wallet: the totals the panel shows and
+// the pool routes on, plus whether the vendor's own reply can be believed.
+type CreditReport struct {
+	Remain            int64
+	Total             int64
+	Expiring          int64
+	EarliestAt        time.Time
+	EarliestRemaining int64
+
+	// Corroborated is false when the vendor contradicts itself about a
+	// package that still advertises capacity: the cycle view says the
+	// package is spent while the lifetime capacity view still shows credit.
+	// WorkBuddy's 体验版 package is the observed shape -- it keeps a stale
+	// CapacityRemain after the cycle is used up, the reply's own TotalDosage
+	// copies that stale figure, and the chat path refuses the account anyway
+	// with 14018/402.
+	//
+	// The conservative number is still what gets reported, because the serving
+	// path follows the spent view, but a zero that arrives beside a
+	// contradicting view is not evidence that the wallet is empty, so nothing
+	// may park on it.
+	Corroborated bool
+}
+
+// ReadCredit is the single decode of the vendor's credit reply, shared by the
+// panel's balance column and the pool's routing table.  The UserResource*
+// wrappers below drop the corroboration bit for callers that only want
+// numbers.
+func (c *Client) ReadCredit(ctx context.Context, a *Auth, soon time.Duration) (CreditReport, error) {
+	rep := CreditReport{Corroborated: true}
 	now := time.Now()
 	data, err := c.billingMeterJSON(ctx, a, http.MethodPost, creditPackagesBody(now))
 	if err != nil {
-		return 0, 0, 0, time.Time{}, 0, err
+		return CreditReport{}, err
 	}
 	var resp struct {
 		Response struct {
@@ -221,48 +255,58 @@ func (c *Client) UserResourceDetailedWithExpiry(ctx context.Context, a *Auth, so
 					CycleCapacitySize   int64  `json:"CycleCapacitySize"`
 					CycleCapacityRemain int64  `json:"CycleCapacityRemain"`
 					CycleCapacityUsed   int64  `json:"CycleCapacityUsed"`
+					ExpiredTime         string `json:"ExpiredTime"`
 				} `json:"Accounts"`
 			} `json:"Data"`
 		} `json:"Response"`
 	}
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return 0, 0, 0, time.Time{}, 0, fmt.Errorf("resource parse: %w", err)
+		return CreditReport{}, fmt.Errorf("resource parse: %w", err)
 	}
 	for _, acct := range resp.Response.Data.Accounts {
-		r, _, size := packageRemainUsed(respAccount{
+		pkg := respAccount{
 			CapacityRemain:      acct.CapacityRemain,
 			CapacityUsed:        acct.CapacityUsed,
 			CapacitySize:        acct.CapacitySize,
 			CycleCapacityRemain: acct.CycleCapacityRemain,
 			CycleCapacityUsed:   acct.CycleCapacityUsed,
 			CycleCapacitySize:   acct.CycleCapacitySize,
-		})
+		}
+		r, _, size := packageRemainUsed(pkg)
 		if r < 0 {
 			r = 0
 		}
 		if size < r {
 			size = r
 		}
-		remain += r
-		total += size
+		rep.Remain += r
+		rep.Total += size
 		if r <= 0 {
+			// A spent package can still carry a stale lifetime remainder; see
+			// CreditReport.Corroborated.  That shape is why a zero here is not
+			// proof that the wallet is empty.
+			if acct.ExpiredTime == "" && creditViewsDisagree(pkg) {
+				if end, ok := parsePackageEndTime(acct.CycleEndTime); !ok || end.After(now) {
+					rep.Corroborated = false
+				}
+			}
 			continue
 		}
 		end, ok := parsePackageEndTime(acct.CycleEndTime)
 		if !ok || !end.After(now) {
 			continue
 		}
-		if earliestAt.IsZero() || end.Before(earliestAt) {
-			earliestAt = end
-			earliestRemaining = r
-		} else if end.Equal(earliestAt) {
-			earliestRemaining += r
+		if rep.EarliestAt.IsZero() || end.Before(rep.EarliestAt) {
+			rep.EarliestAt = end
+			rep.EarliestRemaining = r
+		} else if end.Equal(rep.EarliestAt) {
+			rep.EarliestRemaining += r
 		}
 		if soon > 0 && !end.After(now.Add(soon)) {
-			expiring += r
+			rep.Expiring += r
 		}
 	}
-	return remain, total, expiring, earliestAt, earliestRemaining, nil
+	return rep, nil
 }
 
 // packageRemainUsed aggregates one package's remain/used/size.  The cycle fields
@@ -294,4 +338,37 @@ func packageRemainUsed(a respAccount) (remain, used, size int64) {
 		used = size - remain
 	}
 	return remain, used, size
+}
+
+// creditViewsDisagree reports whether one package's two views of the same
+// wallet contradict each other: the cycle view (which packageRemainUsed
+// prefers) says the package is spent while the lifetime capacity view still
+// advertises credit.
+//
+// This is an observed upstream shape, not a theoretical one.  A WorkBuddy
+// trial package keeps its CapacityRemain at the full size after its monthly
+// cycle is used up, and the reply's own TotalDosage copies that stale figure,
+// while the chat path still refuses the account with 14018/402.  The
+// conservative cycle figure is the one to report, because the serving path
+// follows it, but a zero that arrives beside a contradicting view is not
+// evidence that the wallet is empty.
+func creditViewsDisagree(a respAccount) bool {
+	if a.CycleCapacitySize <= 0 {
+		return false
+	}
+	cycle := a.CycleCapacityRemain
+	if used := a.CycleCapacityUsed; used > a.CycleCapacitySize-cycle {
+		cycle = a.CycleCapacitySize - used
+	}
+	if cycle > 0 {
+		return false
+	}
+	lifetime := a.CapacityRemain
+	if lifetime <= 0 {
+		return false
+	}
+	if a.CapacitySize > 0 && lifetime > a.CapacitySize {
+		lifetime = a.CapacitySize
+	}
+	return lifetime > 0
 }

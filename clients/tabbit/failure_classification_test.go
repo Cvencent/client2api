@@ -141,3 +141,62 @@ func TestTabbitChat429RecordsTheFailureAndRotatesSession(t *testing.T) {
 		t.Fatalf("second Chat Cookie = %q, want the second session", got)
 	}
 }
+
+// TestTabbitChatWaitsOutACoolingSession pins the fix for the retry loop that
+// kept answering the vendor's 429 with another run.  With a single session in
+// the pool, a cooling account must report backpressure instead of creating
+// another room and deepening the penalty.
+func TestTabbitChatWaitsOutACoolingSession(t *testing.T) {
+	f := newFakeWeb(t)
+	c, rec := newWebClient(t, f)
+
+	limited := core.Fail("tabbit", rec.ID, core.FailureRateLimited, http.StatusTooManyRequests,
+		errors.New("Tabbit rate limited POST /api/v3/chat/rooms/x/runs (HTTP 429): slow down"))
+	c.noteWebFailure(webAuth{accountID: rec.ID}, limited)
+
+	_, err := drainChat(context.Background(), c, &core.ChatRequest{
+		Model:    "Default",
+		Messages: []core.Message{{Role: "user", Content: "hi"}},
+	})
+	if !errors.Is(err, core.ErrBusy) {
+		t.Fatalf("Chat on a cooling session = %v, want core.ErrBusy", err)
+	}
+	if n := f.hits("session"); n != 0 {
+		t.Fatalf("a cooling session created %d room(s), want 0", n)
+	}
+}
+
+// TestTabbitRateLimitHoldGrowsAcrossConsecutiveRefusals pins the backoff: a
+// repeated 429 grows the rest and a completed run clears it.
+func TestTabbitRateLimitHoldGrowsAcrossConsecutiveRefusals(t *testing.T) {
+	f := newFakeWeb(t)
+	c, rec := newWebClient(t, f)
+	wa := webAuth{accountID: rec.ID}
+
+	limited := core.Fail("tabbit", rec.ID, core.FailureRateLimited, http.StatusTooManyRequests,
+		errors.New("Tabbit rate limited POST /api/v3/chat/rooms/x/runs (HTTP 429): slow down"))
+	c.noteWebFailure(wa, limited)
+	first, ok := c.webVerdictFor(rec.ID)
+	if !ok || first.hold != webRateLimitCooldown {
+		t.Fatalf("first 429 hold = %v, want %v", first.hold, webRateLimitCooldown)
+	}
+
+	c.noteWebFailure(wa, limited)
+	second, _ := c.webVerdictFor(rec.ID)
+	if want := 5 * time.Minute; second.hold != want {
+		t.Fatalf("second 429 hold = %v, want %v", second.hold, want)
+	}
+	c.noteWebFailure(wa, limited)
+	third, _ := c.webVerdictFor(rec.ID)
+	if want := 10 * time.Minute; third.hold != want {
+		t.Fatalf("third 429 hold = %v, want %v", third.hold, want)
+	}
+	if !c.webCooling(rec.ID, time.Now()) {
+		t.Fatal("a grown hold did not keep the session cooling")
+	}
+
+	c.noteWebSuccess(wa)
+	if c.webCooling(rec.ID, time.Now()) {
+		t.Fatal("a completed run did not clear the rate-limit hold")
+	}
+}

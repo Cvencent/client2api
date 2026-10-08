@@ -11,7 +11,7 @@ read-only credits view.
   `{code, message, details, data}` envelope on the non-streaming endpoints.
 - Auth: a raccoon JWT (`access_token`) carried as `Authorization: Bearer …`,
   with an optional `refresh_token` for renewal and an `X-Org-Code` header that
-  is `personal` for a personal account.
+  is empty for a personal account and the org code otherwise.
 - Sign-in: an interactive loopback page with WeChat **QR** and **SMS** tabs
   (`core.LoginProvider`), plus credential import for an existing token.
 - Dependencies: **standard library only**. AES-128-CFB, base64 and JWT payload
@@ -123,9 +123,11 @@ storage location is *unverified* and the module will not look for it; use
 4. Paste both into the panel's credential form, or put them in the config, or
    write them to a JSON file and list it in `credential_paths`.
 
-The `office_identity` is `personal` for a personal account, otherwise an org
-code; it is sent as `X-Org-Code` on every request (empty when unknown, which is
-also what the vendor client does).
+The `office_identity` is a personal account's **empty** value, otherwise an org
+code; it is sent as `X-Org-Code` on every request. The vendor's own `user_info`
+reports `office_identity:""` for a personal account, and its chat endpoint
+rejects the literal `personal` with `code 200022 org_not_found_error`, so any
+`personal` sentinel is normalised to an empty header before it goes out.
 
 ---
 
@@ -294,7 +296,7 @@ copy-paste starting point.
     "raccoon": {
       "access_token": "<jwt>",
       "refresh_token": "<jwt>",
-      "office_identity": "personal",
+      "office_identity": "",
 
       "credential_paths": ["C:\\path\\to\\raccoon-credentials.json"],
 
@@ -318,7 +320,7 @@ copy-paste starting point.
 | `access_token` | string | — | single-account shorthand |
 | `refresh_token` | string | — | single-account shorthand; enables renewal |
 | `expires_at` | string | — | millisecond timestamp; omit to let the JWT `exp` decide |
-| `office_identity` | string | `personal` | org code, sent as `X-Org-Code` |
+| `office_identity` | string | `""` | org code, sent as `X-Org-Code`; blank for a personal account |
 | `user_id` | string | — | groups credentials belonging to one account |
 | `nickname` | string | — | display only |
 | `phone` | string | — | display only (masked in the panel) |

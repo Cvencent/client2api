@@ -138,8 +138,8 @@ func TestNoteCellStripsTheCooldownSuffix(t *testing.T) {
 	if !strings.Contains(src, `low_credit: "积分不足，已暂停"`) {
 		t.Error("the panel has no translation for the low-balance park note")
 	}
-	body := poolStatsFuncBody(t, src, "noteCell")
-	if !strings.Contains(body, `replace(/\s+\([^()]*left\)$/, "")`) {
-		t.Error("noteCell does not strip the pool's \" (… left)\" suffix before looking the note up")
+	body := poolStatsFuncBody(t, src, "statusNoteText")
+	if !strings.Contains(body, `\s+left`) || !strings.Contains(body, `noteDurationZh`) {
+		t.Error("statusNoteText does not strip the pool's \" (… left)\" suffix before looking the note up")
 	}
 }

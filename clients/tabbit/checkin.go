@@ -63,6 +63,13 @@ const (
 // and an unknown field is better left out than guessed at.
 type signInRequest struct {
 	SceneCode string `json:"scene_code"`
+	// RequestNo is the caller-generated idempotency key the endpoint now
+	// requires: without it the vendor answers 422 VALIDATION_ERROR with
+	// details[].field="body.request_no".  A fresh v4 UUID per claim is the shape
+	// the vendor's own bundle uses for the rest of this key family (client_run_id,
+	// page_instance_id, x-signature), and the sibling /activity/v1/participate
+	// call passes the same caller-made key.
+	RequestNo string `json:"request_no"`
 }
 
 // signInReply is what this module decodes from the POST.  The vendor's real
@@ -169,7 +176,7 @@ func (c *Client) Checkin(ctx context.Context, id, action string) (core.CheckinRe
 	ctx, cancel := context.WithTimeout(ctx, signInTimeout)
 	defer cancel()
 
-	body, err := json.Marshal(signInRequest{SceneCode: webSignInScene})
+	body, err := json.Marshal(signInRequest{SceneCode: webSignInScene, RequestNo: newUUID()})
 	if err != nil {
 		return res, err
 	}

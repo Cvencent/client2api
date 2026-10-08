@@ -68,8 +68,7 @@ func (c *Client) AccountBalance(ctx context.Context, id string, soon time.Durati
 	if err != nil {
 		return core.Balance{}, err
 	}
-	remain, total, expiring, earliestAt, earliestRemaining, err :=
-		c.UserResourceDetailedWithExpiry(ctx, a, soon)
+	rep, err := c.ReadCredit(ctx, a, soon)
 	if err != nil {
 		// The vendor's own wording is preserved verbatim; the panel redacts it.
 		return core.Balance{}, err
@@ -84,13 +83,13 @@ func (c *Client) AccountBalance(ctx context.Context, id string, soon time.Durati
 	// credit used to stay parked until an operator pressed Revive by hand, even
 	// after the vendor granted more.  A positive balance is the evidence that
 	// the park no longer applies, so recording it lifts the park.
-	c.pool.SetCreditsDetailed(a, remain, total, expiring, earliestAt, earliestRemaining)
+	c.recordCredit(a, rep)
 	return core.Balance{
-		Credits:           remain,
-		Total:             total,
-		Expiring:          expiring,
-		EarliestAt:        earliestAt,
-		EarliestRemaining: earliestRemaining,
+		Credits:           rep.Remain,
+		Total:             rep.Total,
+		Expiring:          rep.Expiring,
+		EarliestAt:        rep.EarliestAt,
+		EarliestRemaining: rep.EarliestRemaining,
 		// This vendor sells 积分, and both the CN and the intl realms bill in
 		// them, so the label is not realm-dependent.
 		Unit: balanceUnit,
@@ -159,4 +158,22 @@ func (c *Client) AccountVouchers(ctx context.Context, id string) ([]core.Voucher
 		})
 	}
 	return out, nil
+}
+
+// recordCredit feeds one decoded wallet to the pool.  It is the single hook
+// every balance read goes through -- the panel's account view, the scheduler's
+// refresh pass, a login and a credential import all arrive here -- so no future
+// caller can forget it.
+//
+// A reading the vendor's own reply contradicts is deliberately not recorded.
+// Its conservative number is what the panel shows, but treating it as a known
+// balance is what parks a working account: the meter said zero while the
+// chat path happily served the turn.  The pool is only told that the park the
+// guard itself created has lost its evidence.
+func (c *Client) recordCredit(a *Auth, rep CreditReport) {
+	if rep.Corroborated {
+		c.pool.SetCreditsDetailed(a, rep.Remain, rep.Total, rep.Expiring, rep.EarliestAt, rep.EarliestRemaining)
+		return
+	}
+	c.pool.DiscardUncorroboratedCredit(a)
 }

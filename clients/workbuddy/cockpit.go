@@ -254,10 +254,9 @@ func (c *Client) afterBundleImport(ctx context.Context, a *Auth) {
 	// lets an account parked for having no credit come back the moment the
 	// vendor says it has some.  A zero window is passed because this pass wants
 	// the totals, not a second expiring-bucket computation nobody asked for.
-	remain, total, expiring, earliestAt, earliestRemaining, err :=
-		c.UserResourceDetailedWithExpiry(ctx, a, 0)
+	rep, err := c.ReadCredit(ctx, a, 0)
 	if err != nil {
 		return
 	}
-	c.pool.SetCreditsDetailed(a, remain, total, expiring, earliestAt, earliestRemaining)
+	c.recordCredit(a, rep)
 }

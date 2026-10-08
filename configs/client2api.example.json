@@ -103,6 +103,7 @@
     "openrouter": {
       "free_only": true
     },
+    "qoder": {},
     "qwenwork": {},
     "raccoon": {
       "tls_profile": "chrome",

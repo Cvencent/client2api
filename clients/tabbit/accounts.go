@@ -30,6 +30,7 @@ const (
 	accountsFileName = "accounts.json"
 
 	epStateReady   = "ready"
+	epStateCooling = "cooling"
 	epStateInvalid = "invalid"
 	epStateUnknown = "unknown"
 
@@ -428,6 +429,11 @@ func (c *Client) fillWebRecord(rec *core.AccountRecord, ep storedEndpoint) {
 	// the same verdict with different rules, so one timed-out status probe could
 	// paint the badge red while this table still showed the row as ready.
 	trusted := webVerdictTrusted(verdict, seen)
+	// A recent 429 outranks the trusted-verdict rules: the vendor keeps
+	// answering the catalogue while it refuses runs, so without this the row
+	// reads either "ready" (badge) or "invalid" (this table) while every
+	// candidate is actually just rate limited.
+	cooling, rateLimited := c.webRateLimited(ep.ID, time.Now())
 	// A caller that already has something to say (AddAccount) keeps its words.
 	note := strings.TrimSpace(rec.Note)
 	rec.Note = ""
@@ -439,6 +445,9 @@ func (c *Client) fillWebRecord(rec *core.AccountRecord, ep storedEndpoint) {
 		rec.State = epStateInvalid
 		rec.Note = "the cookie expired at " + exp.UTC().Format(time.RFC3339) +
 			"; sign in again in the Tabbit browser and press 导入凭据"
+	case rateLimited:
+		rec.State = epStateCooling
+		rec.Note = webRateLimitNote(cooling)
 	case trusted && verdict.err != "":
 		rec.State = epStateInvalid
 		rec.Note = verdict.err

@@ -279,10 +279,9 @@ func configuredAccounts(cfg config) []account {
 			return
 		}
 		office := strings.TrimSpace(a.Office)
-		if office == "" {
-			// A personal account: X-Org-Code is still always sent.
-			office = "personal"
-		}
+		// A personal account carries no org code: the vendor's own user_info
+		// reports office_identity as "", and inventing the sentinel
+		// "personal" makes the chat endpoint answer 200022 org_not_found.
 		out = append(out, account{
 			credential: credential{
 				AccessToken:    tok,

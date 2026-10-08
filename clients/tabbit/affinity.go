@@ -31,6 +31,7 @@ package tabbit
 // tabbit.  What lives here is the module half.
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -199,9 +200,12 @@ func (c *Client) pickWebSession(conversationKey, model string) (storedEndpoint, 
 	}
 	ep, ok := c.firstAvailableWeb()
 	if !ok {
-		// Every session is cooling. Fall back to store order so the module
-		// still reports the vendor's real error instead of "not configured".
-		ep, ok = c.firstEnabledWeb()
+		// Every session is cooling or otherwise unusable.  Do not fall back
+		// to store order here: that would hand the gateway the very session
+		// whose 429 it is trying to rest, and every retry would create another
+		// room and deepen the vendor's penalty.  resolveWebAuthFor turns this
+		// into backpressure instead.
+		return storedEndpoint{}, false
 	}
 	if !ok {
 		return storedEndpoint{}, false
@@ -264,6 +268,14 @@ func (c *Client) locationFor(ep storedEndpoint, loc location) location {
 func (c *Client) resolveWebAuthFor(conversationKey, model string) (webAuth, error) {
 	if ep, ok := c.pickWebSession(conversationKey, model); ok {
 		return c.webAuthFrom(ep.Token, endpointLabel(ep), epOriginPanel, ep.BaseURL), nil
+	}
+	// A panel account that is merely cooling must not fall through to the
+	// "first enabled" fallback: that path ignores the cooldown, so the
+	// gateway's retry walks straight back into the same 429 and every extra
+	// attempt makes the vendor's penalty worse.  Report backpressure instead,
+	// which the gateway returns to the caller without rotating into it again.
+	if c.anyWebAccount() && !c.anyAvailableWebAccount() {
+		return webAuth{}, fmt.Errorf("%w: every Tabbit session is cooling after a rate limit", core.ErrBusy)
 	}
 	return c.resolveWebAuth()
 }

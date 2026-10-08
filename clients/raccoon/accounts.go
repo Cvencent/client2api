@@ -51,7 +51,7 @@ func (c *Client) AccountFields(ctx context.Context) []core.FieldSpec {
 		{Key: "nickname", Label: "Nickname", Type: "text"},
 		{Key: "phone", Label: "Phone", Type: "text"},
 		{Key: "office_identity", Label: "Org code", Type: "text",
-			Help: "`personal` for a personal account; otherwise the org code. Sent as X-Org-Code."},
+			Help: "Leave blank for a personal account; otherwise the org code. Sent as X-Org-Code."},
 		{Key: "device_id", Label: "Device id", Type: "text",
 			Help: "Optional 32-hex id, sent as X-Client-Device-ID."},
 	}
@@ -84,9 +84,6 @@ func (c *Client) AddAccount(ctx context.Context, spec core.AccountSpec) (core.Ac
 		},
 		Label:  strings.TrimSpace(spec.Label),
 		Origin: originStored,
-	}
-	if a.OfficeIdentity == "" {
-		a.OfficeIdentity = "personal"
 	}
 	if id := strings.TrimSpace(spec.ID); id != "" {
 		a.ID = id

@@ -232,8 +232,8 @@ func TestChatStreamMergesToolCallFragments(t *testing.T) {
 		if got := r.Header.Get("Authorization"); got != "Bearer tok-live" {
 			t.Errorf("Authorization = %q", got)
 		}
-		if got := r.Header.Get("X-Org-Code"); got != "personal" {
-			t.Errorf("X-Org-Code = %q, want it always sent", got)
+		if got := r.Header.Get("X-Org-Code"); got != "org-9x" {
+			t.Errorf("X-Org-Code = %q, want the org code forwarded", got)
 		}
 		writeSSE(w,
 			`{"choices":[{"delta":{"content":"let me "}}]}`,
@@ -247,7 +247,7 @@ func TestChatStreamMergesToolCallFragments(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	c := newTestClient(t, t.TempDir(), fmt.Sprintf(`{"base_url":%q,"access_token":"tok-live","office_identity":"personal"}`, ts.URL), ts.Client())
+	c := newTestClient(t, t.TempDir(), fmt.Sprintf(`{"base_url":%q,"access_token":"tok-live","office_identity":"org-9x"}`, ts.URL), ts.Client())
 	s, err := c.Chat(context.Background(), &core.ChatRequest{
 		Model:    "sn-kimi-k3 · x1",
 		Messages: []core.Message{{Role: "user", Content: "weather?"}},
@@ -417,8 +417,8 @@ func TestRefreshRequestShape(t *testing.T) {
 		if got := r.Header.Get("Authorization"); got != "Bearer old-token" {
 			t.Errorf("Authorization = %q", got)
 		}
-		if got := r.Header.Get("X-Org-Code"); got != "personal" {
-			t.Errorf("X-Org-Code = %q", got)
+		if got := r.Header.Get("X-Org-Code"); got != "org-9x" {
+			t.Errorf("X-Org-Code = %q, want the org code forwarded", got)
 		}
 		if got := r.Header.Get("X-Raccoon-Language"); got != "zh" {
 			t.Errorf("X-Raccoon-Language = %q", got)
@@ -434,7 +434,7 @@ func TestRefreshRequestShape(t *testing.T) {
 	res, err := c.refresh(context.Background(), credential{
 		AccessToken:    "old-token",
 		RefreshToken:   "RT-1",
-		OfficeIdentity: "personal",
+		OfficeIdentity: "org-9x",
 		DeviceID:       "dev-1",
 		Nickname:       "old-nick",
 	})

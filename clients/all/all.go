@@ -14,6 +14,7 @@ import (
 	_ "client2api/clients/openaicompat"
 	_ "client2api/clients/opencode"
 	_ "client2api/clients/openrouter"
+	_ "client2api/clients/qoder"
 	_ "client2api/clients/qwenwork"
 	_ "client2api/clients/raccoon"
 	_ "client2api/clients/tabbit"

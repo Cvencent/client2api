@@ -1,0 +1,33 @@
+{
+  "openapi_base": "https://openapi.qoder.com.cn",
+  "client_type": 10,
+  "cosy_version": "0.4.3",
+  "user_agent": "Qoder",
+
+  "request_timeout": "30s",
+  "probe_timeout": "20s",
+  "cooldown": "60s",
+  "auth_cooldown": "30m",
+
+  "models": ["qmodel_38max", "qfmodel"],
+
+  "accounts": [
+    {
+      "label": "我的 Qoder CN",
+      "token": "",
+      "refresh_token": "",
+      "user_id": "",
+      "phone": "",
+      "name": "",
+      "expires_at": "",
+      "enabled": true
+    }
+  ],
+
+  "token": "",
+  "refresh_token": "",
+  "user_id": "",
+  "phone": "",
+  "name": "",
+  "expires_at": ""
+}

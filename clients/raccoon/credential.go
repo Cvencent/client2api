@@ -210,7 +210,7 @@ func raccoonHeaders(c credential, platform, version string) http.Header {
 	h.Set("Accept", "application/json")
 	h.Set("Content-Type", "application/json")
 	h.Set("Authorization", "Bearer "+c.AccessToken)
-	h.Set("X-Org-Code", c.OfficeIdentity)
+	h.Set("X-Org-Code", orgHeader(c.OfficeIdentity))
 	h.Set("X-Raccoon-Language", vendorLanguage)
 	if platform != "" {
 		h.Set("X-Client-Platform", platform)
@@ -222,6 +222,23 @@ func raccoonHeaders(c credential, platform, version string) http.Header {
 		h.Set("X-Client-Device-ID", c.DeviceID)
 	}
 	return h
+}
+
+// orgHeader maps a credential's office identity onto the `X-Org-Code` header.
+//
+// A personal account has NO org code, and the vendor agrees: its own
+// `user_info` reports `office_identity:""` beside an empty `orgs` list.  The
+// chat endpoint enforces that: sending the literal sentinel `personal` is
+// answered with HTTP 400 `code 200022 org_not_found_error: org not found`,
+// while an empty header streams normally.  The sentinel is therefore
+// normalised away here, the single choke point every authenticated request
+// passes through, so stored accounts that still carry it are repaired too.
+func orgHeader(office string) string {
+	v := strings.TrimSpace(office)
+	if strings.EqualFold(v, "personal") {
+		return ""
+	}
+	return v
 }
 
 // encryptPhone implements the vendor's phone transport cipher:

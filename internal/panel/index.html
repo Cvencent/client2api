@@ -1808,7 +1808,7 @@ input, select, textarea { transition-property: border-color, box-shadow, backgro
         </div>
         <div class="pad" id="pfBody"><div class="hint">正在读取平台与模型…</div></div>
         <div class="savebar">
-          <span class="hint">勾选 = 允许调用，取消勾选即加入该平台黑名单；优先级数字越小越先路由。「平台总并发 / 网关单账号并发」与「最低余额」在平台头部，WorkBuddy 卡片里额外有账号池治理。保存后立即热加载生效，无需重启。</span>
+          <span class="hint">勾选 = 允许调用，取消勾选即加入该平台黑名单；优先级填整数，可以为负数，数字越小越先路由，例如 -10 比 -5 更优先；留空使用默认 0。「平台总并发 / 网关单账号并发」与「最低余额」在平台头部，WorkBuddy 卡片里额外有账号池治理。保存后立即热加载生效，无需重启。</span>
           <span class="grow"></span>
           <button class="primary" id="btnPfSave">保存并生效</button>
         </div>
@@ -2725,8 +2725,8 @@ function accExpiryCell(a) {
     esc(left <= 0 ? "已过期 " + span : "还有 " + span) + '</span>';
 }
 
-// 备注列印的是模块自己的机器词（invalid / expired / rate_limited…）。常用的那几个
-// 翻成中文，翻译表里没有的原样显示 —— 模块将来加一个新状态，面板不该把它藏起来。
+// 备注列印的是模块自己的机器词（invalid / expired / rate_limited…）。面板负责
+// 统一成中文；未来新增的未知英文状态也会收口成中文提示，避免表格里中英文混杂。
 const NOTE_WORDS = {
   invalid: "凭据已失效", expired: "已过期", unauthorized: "未授权", disabled: "已停用",
   cooling: "冷却中", banned: "已封禁", rate_limited: "被限流", quota_exceeded: "额度用尽",
@@ -2734,18 +2734,128 @@ const NOTE_WORDS = {
   no_credential: "缺少凭据", login_required: "需要重新登录", unreachable: "连不上上游",
   // trae 自己给的两个机器词：凭据被上游拒了，等冷却没用，只能重登。
   auth: "授权失败，需重登", session_dead: "会话失效，需重登",
+  unknown: "未知", error: "状态异常", ready: "可用",
+  "no credential": "缺少凭据", "cooling down": "冷却中", "out of credit": "额度已用尽",
+  throttled: "被限流", "free tier temporarily unavailable": "免费额度暂时不可用",
+  "the vendor rejected this key": "上游拒绝了这把密钥",
+  "disabled by operator": "已被操作员停用", "disabled by the operator": "已被操作员停用",
+  "not configured": "尚未配置", "no access token": "没有访问令牌",
+  "access token expired": "访问令牌已过期",
+  hard_credit: "额度已用尽", soft_rate: "被限流", not_found: "模型或资源不存在",
+  server: "上游服务异常", content_blocked: "内容被上游拦截", bad_params: "请求参数错误",
+  account_fault: "账号异常", model_blocked: "模型不可用", waf_block: "被上游安全策略拦截",
+  prompt_too_long: "提示词过长", image_invalid: "图片无效", client: "请求被上游拒绝",
+  plan_limit: "套餐额度已用尽", quota: "额度已用尽", param: "请求参数错误",
+  retry_later: "请稍后重试", transport: "网络连接失败", network: "网络连接失败",
+  queue: "上游排队中，请稍后重试", transient: "上游暂时异常",
+  "no credential has been imported yet": "尚未导入凭据",
 };
+const NOTE_SENTENCES = {
+  "already in the accounts directory": "已存在于账号目录",
+  "parked by the operator; the credential file is still on disk": "已被操作员停用；凭据文件仍保留在磁盘上",
+  "no credential file found; the CLI may still hold a token in the OS keyring, which this module cannot read": "未找到凭据文件；CLI 可能仍将令牌保存在系统钥匙串中，本模块无法读取",
+  "conventional location for a hand-written key file (not created by any OpenRouter tool)": "手写密钥文件的常规位置（不是 OpenRouter 工具创建的）",
+  "the executable this gateway would run for a request today": "当前网关实际会调用的可执行文件",
+  "known kimi install location": "已识别的 Kimi 安装位置",
+  "kimi-shaped executable found in ~/.kimi-work/bin": "在 ~/.kimi-work/bin 找到 Kimi 可执行文件",
+  "auxiliary tool from the kimi desktop toolchain, not the kimi Code CLI; binding it would make every request fail, so it is not importable": "这是 Kimi 桌面工具链的辅助工具，不是 Kimi Code CLI；绑定它会导致所有请求失败，因此不能导入",
+  "device identity of the local kimi-webbridge daemon (a device_id, no credential). Importing it would register a device, not a login, so it is not importable": "本地 kimi-webbridge 守护进程的设备标识（只是 device_id，不是凭据）。导入它只会登记设备，不能完成登录，因此不能导入",
+  "pid file of the local kimi-webbridge daemon; not a credential and not importable": "本地 kimi-webbridge 守护进程的 PID 文件；不是凭据，不能导入",
+  "the webbridge daemon binary, not the kimi Code CLI; it cannot serve a chat request, so it is not importable": "这是 Webbridge 守护进程程序，不是 Kimi Code CLI；它不能处理对话请求，因此不能导入",
+  "the kimi desktop app is installed for this user. Its login is separate from the CLI's and this module cannot use it, so it is not importable": "这台电脑已安装 Kimi 桌面客户端。它的登录状态与 CLI 相互独立，本模块无法使用，因此不能导入",
+  "kimi-desktop's token store. It is encrypted with Chromium safeStorage (Windows DPAPI / macOS Keychain) and the standard library cannot decrypt it, so this module cannot import it": "Kimi 桌面客户端的令牌存储。它由 Chromium safeStorage 加密（Windows DPAPI / macOS Keychain），标准库无法解密，因此本模块不能导入",
+  "kimi-desktop's model cache; it lists model ids but holds no credential": "Kimi 桌面客户端的模型缓存；只包含模型 ID，不包含凭据",
+  "already probed by this module's login check; its contents are never copied into this module's state, so there is nothing to import": "本模块的登录检查已经读取过它；内容不会复制到模块状态中，因此无需导入",
+  "signed in from the panel; this module calls the vendor directly over HTTPS": "已通过面板登录；本模块会直接通过 HTTPS 调用厂商",
+  "the stored access token has expired and is renewed from the saved refresh token on the next request": "保存的访问令牌已过期，下次请求会用保存的刷新令牌自动续期",
+  "the stored access token has expired and is refreshed from the saved refresh token on the next request": "保存的访问令牌已过期，下次请求会用保存的刷新令牌自动续期",
+  "the stored access token has expired and no refresh token was saved with it; sign in again from the panel": "保存的访问令牌已过期，而且没有保存刷新令牌；请从面板重新登录",
+  "credential has expired; the CLI refreshes it on the next prompt": "凭据已过期；CLI 会在下次对话时自动刷新",
+  "kimi CLI is not installed, so no login can exist": "未安装 Kimi CLI，因此无法存在登录凭据",
+  "no account; log in from the panel": "没有账号；请从面板登录",
+};
+
+function noteDurationZh(s) {
+  const raw = String(s || "").replace(/\s+left$/i, "").trim();
+  const m = /^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/i.exec(raw);
+  if (!m) return raw;
+  const h = Number(m[1] || 0), min = Number(m[2] || 0), sec = Number(m[3] || 0);
+  const out = [];
+  if (h) out.push(h + " 小时");
+  if (min) out.push(min + " 分钟");
+  if (sec || !out.length) out.push(sec + " 秒");
+  return out.join(" ");
+}
+
+function statusNoteText(n, a) {
+  const raw = String(n || "").trim();
+  if (!raw) return "";
+  const key = raw.toLowerCase();
+  if (NOTE_WORDS[key]) return NOTE_WORDS[key];
+  if (NOTE_SENTENCES[key]) return NOTE_SENTENCES[key];
+
+  // 冷却说明常见两种尾部："(... left)" 和 "(until ...)"。先把尾部变成中文，
+  // 再递归翻译前面的原因。
+  let m = /^(.*?)\s+\(([^()]*)\s+left\)$/i.exec(raw);
+  if (m) {
+    const base = statusNoteText(m[1], a) || "账号暂不可用";
+    const left = noteDurationZh(m[2]);
+    return base + (left ? "（剩余 " + left + "）" : "");
+  }
+  m = /^(.*?)\s+\(until\s+([^)]*)\)$/i.exec(raw);
+  if (m) {
+    const base = statusNoteText(m[1], a) || "账号暂不可用";
+    return base + "（截止 " + m[2] + "）";
+  }
+
+  const patterns = [
+    [/^the desktop client's Electron profile \(session, Local Storage, caches\); this module does not parse Chromium leveldb stores, so nothing here is importable$/i, "桌面客户端的 Electron 配置目录（会话、Local Storage、缓存）；本模块无法解析 Chromium leveldb 数据，因此不能导入"],
+    [/^plan JWT in the ZCode desktop client credential store$/i, "ZCode 桌面客户端凭据库中的套餐 JWT"],
+    [/^API key for the (.+) connection in the ZCode desktop client credential store$/i, (x) => "ZCode 桌面客户端凭据库中“" + x[1] + "”连接的 API Key"],
+    [/^not a plaintext credential \(.*\)$/i, "不是明文凭据（悬停查看详情）"],
+    [/^plaintext credential found in (.+)$/i, (x) => "在 " + x[1] + " 找到明文凭据"],
+    [/^imported as (.+)$/i, (x) => "已导入为 " + x[1]],
+    [/^from (.+)$/i, (x) => "来源：" + x[1]],
+    [/^(\d+) account\(s\) in this file$/i, (x) => "此文件中有 " + x[1] + " 个账号"],
+    [/^executable binding registered by this module in (.+); it pins (.+) as the kimi CLI, and is used only when clients\.kimi\.binary is empty$/i, (x) => "已登记 Kimi CLI 绑定：" + x[2] + "（记录在 " + x[1] + "，仅在 clients.kimi.binary 为空时使用）"],
+    [/^this account is marked dead after /i, "账号已被判定失效；请悬停查看原因和恢复方式"],
+    [/^this account is cooling down after /i, "账号正在冷却；到期后会自动恢复"],
+    [/^this account carries an unreadable health state /i, "账号健康状态无法读取；请在面板重新启用"],
+    [/^refresh token rejected/i, "刷新令牌被上游拒绝，需要重新登录"],
+    [/^\d+\s+session dead$/i, "会话失效"],
+    [/^web\.tabbit\.com is rate limiting this session/i, "Tabbit 正在限制这个会话；请稍后再试"],
+    [/^web\.tabbit\.com answered;\s*/i, "Tabbit 已正常响应："],
+    [/^not checked yet;\s*/i, "尚未检查；请点击测试"],
+    [/^the last check succeeded more than /i, "上次检查已超过有效期；请点击测试重新检查"],
+    [/^the cookie expired at /i, "登录凭据已过期；请在 Tabbit 浏览器重新登录后导入凭据"],
+    [/^version\s+([^;]+);\s*(\d+)\s+models;\s*drives\s+(.+)$/i, (x) => "版本 " + x[1] + "；模型 " + x[2] + " 个；连接 " + x[3]],
+    [/^version\s+([^;]+);\s*(\d+)\s+models$/i, (x) => "版本 " + x[1] + "；模型 " + x[2] + " 个"],
+    [/^healthy$/i, "运行正常"],
+    [/^out of credit:\s*/i, "额度已用尽："],
+    [/^free-tier daily cap reached:\s*/i, "免费额度每日上限已到："],
+    [/^the vendor rejected this key:\s*/i, "上游拒绝了这把密钥："],
+    [/^stream:\s*/i, "流式响应异常："],
+  ];
+  for (const [re, zh] of patterns) {
+    const hit = re.exec(raw);
+    if (!hit) continue;
+    const text = typeof zh === "function" ? zh(hit) : zh;
+    const rest = String(hit[0] || "").length === raw.length ? "" : raw.slice(hit[0].length).trim();
+    if (rest && /[\u3400-\u9fff]/.test(rest)) return text + rest;
+    return text;
+  }
+
+  const cjk = /[\u3400-\u9fff]/;
+  if (cjk.test(raw)) return raw;
+  return "状态异常（悬停查看原始说明）";
+}
+
 function noteCell(a) {
   const n = String(a.note || "").trim();
   if (!n) return '<span class="hint">—</span>';
-  // The pool appends " (16h0m0s left)" to a note whose deadline is still ahead,
-  // so looking the raw string up would miss every translated word.  Only that
-  // specific trailing form is stripped; a note that merely contains brackets
-  // stays intact.
-  const key = n.toLowerCase().replace(/\s+\([^()]*left\)$/, "");
-  const zh = NOTE_WORDS[key];
-  const tip = zh ? (zh === n ? n : zh + "（原始值：" + n + "）") : n;
-  return '<span class="note" tabindex="0" aria-label="状态说明：' + esc(tip) + '" title="' + esc(tip) + '">' + esc(zh || n) + '</span>';
+  const zh = statusNoteText(n, a);
+  const tip = zh && zh !== n ? zh + "（原始值：" + n + "）" : n;
+  return '<span class="note" tabindex="0" aria-label="状态说明：' + esc(tip) + '" title="' + esc(tip) + '">' + esc(zh || "状态异常") + '</span>';
 }
 
 /* ── 余额列 ──────────────────────────────────────────────────────────────
@@ -3212,7 +3322,7 @@ function accPriorityCell(a, caps) {
   const raw = a.priority == null ? "" : String(a.priority);
   const value = Number(raw) === 0 ? "" : raw;
   const dis = caps && caps.manage ? "" : " disabled";
-  return '<input class="cfgtext accPrio" type="number" step="1" value="' + esc(value) + '" placeholder="0" data-id="' + esc(a.id) + '" title="数字越小越优先；同优先级继续轮询。留空恢复默认 0"' + dis + '>';
+  return '<input class="cfgtext accPrio" type="number" step="1" value="' + esc(value) + '" placeholder="0" data-id="' + esc(a.id) + '" title="可为负数；数字越小越优先，例如 -10 优先于 -5；同优先级继续轮询。留空恢复默认 0"' + dis + '>';
 }
 
 function accGroupPriorityCell(rows) {
@@ -3380,7 +3490,7 @@ async function saveAccountPriority(id, raw) {
   const value = String(raw == null ? "" : raw).trim();
   const priority = value === "" ? null : Number(value);
   if (value !== "" && (!Number.isFinite(priority) || !Number.isInteger(priority))) {
-    toast("账号优先级必须是整数", "err");
+    toast("账号优先级必须是整数（可为负数）", "err");
     renderAccounts();
     return;
   }
@@ -4824,7 +4934,7 @@ async function renderPlatforms() {
     out.push('<div class="pfhead">' +
       '<button class="xs pfToggle" type="button" aria-expanded="false" title="展开 / 收起详情与模型清单">▸</button>' +
       '<span class="pfname">' + esc(n) + '</span>' +
-      '<label class="sel-note">优先级 <input class="cfgtext pfPrio" type="number" value="' + esc(prio) + '" placeholder="0" style="width:76px"></label>' +
+      '<label class="sel-note">优先级 <input class="cfgtext pfPrio" type="number" step="1" value="' + esc(prio) + '" placeholder="0" title="可为负数；数字越小越优先，例如 -10 优先于 -5。留空使用默认 0" style="width:76px"></label>' +
       '<label class="sel-note" title="网关层跨账号总上限；留空默认 2，填 0 = 不限制">平台总并发 <input class="cfgtext pfMif" type="number" min="0" value="' + esc(mif) + '" placeholder="2" style="width:76px"></label>' +
       '<label class="sel-note" title="网关层每账号上限；留空默认 2，填 0 = 不限制">网关单账号并发 <input class="cfgtext pfMifAcct" type="number" min="0" value="' + esc(mifAcct) + '" placeholder="2" style="width:76px"></label>' +
       '<label class="sel-note" title="账号余额低于或等于这个数就暂停（不再参与路由），直到余额回升；留空或 0 = 零余额即暂停；-1 = 关闭这个保护">最低余额 <input class="cfgtext pfReserve" type="number" min="-1" value="' + esc(res) + '" placeholder="0" style="width:76px"></label>' +
@@ -4910,7 +5020,7 @@ function pfSetAll(open) {
 async function savePlatforms() {
   if (!PF) { await renderPlatforms(); }
   const changed = {};
-  let bad = null;
+  let bad = "", badReason = "";
   for (const el of document.querySelectorAll("#pfBody .pfplat")) {
     const name = el.dataset.client;
     if (!name) continue;
@@ -4922,20 +5032,20 @@ async function savePlatforms() {
     const baseRes = base.reserve_credits == null ? 0 : Number(base.reserve_credits) || 0;
     const prioEl = el.querySelector(".pfPrio");
     const raw = prioEl ? prioEl.value.trim() : "";
-    const prio = raw === "" ? 0 : parseInt(raw, 10);
-    if (!Number.isFinite(prio)) { bad = name; break; }
+    const prio = raw === "" ? 0 : Number(raw);
+    if (!Number.isInteger(prio)) { bad = name; badReason = "优先级必须是整数（可为负数）"; break; }
     const mifEl = el.querySelector(".pfMif");
     const mifRaw = mifEl ? mifEl.value.trim() : "";
-    const mif = mifRaw === "" ? 0 : parseInt(mifRaw, 10);
-    if (!Number.isFinite(mif) || mif < 0) { bad = name; break; }
+    const mif = mifRaw === "" ? 0 : Number(mifRaw);
+    if (!Number.isInteger(mif) || mif < 0) { bad = name; badReason = "平台总并发必须是 0 或正整数"; break; }
     const mifAcctEl = el.querySelector(".pfMifAcct");
     const mifAcctRaw = mifAcctEl ? mifAcctEl.value.trim() : "";
-    const mifAcct = mifAcctRaw === "" ? 0 : parseInt(mifAcctRaw, 10);
-    if (!Number.isFinite(mifAcct) || mifAcct < 0) { bad = name; break; }
+    const mifAcct = mifAcctRaw === "" ? 0 : Number(mifAcctRaw);
+    if (!Number.isInteger(mifAcct) || mifAcct < 0) { bad = name; badReason = "网关单账号并发必须是 0 或正整数"; break; }
     const resEl = el.querySelector(".pfReserve");
     const resRaw = resEl ? resEl.value.trim() : "";
-    const res = resRaw === "" ? 0 : parseInt(resRaw, 10);
-    if (!Number.isFinite(res) || res < -1) { bad = name; break; }
+    const res = resRaw === "" ? 0 : Number(resRaw);
+    if (!Number.isInteger(res) || res < -1) { bad = name; badReason = "最低余额必须是 -1 或更大的整数"; break; }
     const off = [];
     el.querySelectorAll(".pfm").forEach(row => {
       if (!row.querySelector(".pfmBox").checked) off.push(row.dataset.model);
@@ -4950,7 +5060,7 @@ async function savePlatforms() {
     if (Object.keys(entry).length) changed[name] = entry;
   }
   if (bad) {
-    toast("「" + bad + "」的优先级 / 平台总并发 / 网关单账号并发必须是非负整数，最低余额必须是 -1 或更大的整数", "err");
+    toast("「" + bad + "」" + badReason, "err");
     return;
   }
 

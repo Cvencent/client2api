@@ -100,7 +100,23 @@ const (
 	// Tabbit's 429 is often per-session or concurrency shaped, so this is a
 	// short rest rather than a quota-disable verdict.
 	webRateLimitCooldown = time.Minute
+
+	// webRateLimitHold is how long the panel keeps calling a session that just
+	// returned 429 "cooling".  It is deliberately longer than the picker's rest:
+	// web.tabbit.com keeps answering the model catalogue while it refuses every
+	// run with 429, so a successful catalogue probe must not repaint the row
+	// green underneath a stream of failed candidates.  A completed chat stores a
+	// fresh success verdict and clears this hold, so it never outlives the next
+	// real answer.
+	webRateLimitHold = 10 * time.Minute
 )
+
+// webRateLimitHoldMax caps the growing rest a repeated 429 earns.  A burst of
+// runs against one session is what trips the vendor's limiter, and each extra
+// run deepens it: the hold doubles on every consecutive 429 so the module backs
+// off instead of walking back into the same wall.  A completed run stores a
+// success verdict and clears the hold.
+const webRateLimitHoldMax = 30 * time.Minute
 
 // webReqCtx is the x-req-ctx header the official client sends: base64 of
 // "<version>(<build>)".  Derived rather than hard-coded so the two constants
@@ -298,6 +314,25 @@ func (c *Client) webConfigured() bool {
 	return token != ""
 }
 
+// anyWebAccount reports whether the panel store holds at least one web
+// session.  It is the "is this a panel-managed pool" test, so a pool that is
+// entirely cooling can be told apart from a deployment that never added one.
+func (c *Client) anyWebAccount() bool {
+	for _, ep := range c.endpointsSnapshot() {
+		if epKind(ep) == kindWebToken {
+			return true
+		}
+	}
+	return false
+}
+
+// anyAvailableWebAccount reports whether any stored session can serve right
+// now under the module's own usability rules.
+func (c *Client) anyAvailableWebAccount() bool {
+	_, ok := c.firstAvailableWeb()
+	return ok
+}
+
 // webRoute reports whether a call should go to the web API rather than the
 // sidecar.
 //
@@ -377,6 +412,11 @@ type webVerdict struct {
 	transient bool // a transport failure, not a verdict on the credential
 	kind      core.FailureKind
 	status    int
+
+	// hold is the rest this refusal earned, when it is longer than the flat
+	// cooldown.  It carries a repeated 429's exponential backoff from the
+	// failure observer into the picker and the panel.
+	hold time.Duration
 }
 
 // webCooling reports a session that is resting after a retryable rate-limit.
@@ -386,7 +426,62 @@ func (c *Client) webCooling(id string, now time.Time) bool {
 	if !ok || v.kind != core.FailureRateLimited || v.at.IsZero() {
 		return false
 	}
-	return now.Sub(v.at) < webRateLimitCooldown
+	hold := v.hold
+	if hold <= 0 {
+		hold = webRateLimitCooldown
+	}
+	return now.Sub(v.at) < hold
+}
+
+// webRateLimited reports a session the vendor refused with 429 recently enough
+// that the panel should still call it cooling.  It is the longer-lived sibling
+// of webCooling: the picker only needs to rest the session between the
+// gateway's retries, while Status() and the account table have to keep telling
+// the operator why every candidate is failing.
+func (c *Client) webRateLimited(id string, now time.Time) (webVerdict, bool) {
+	v, ok := c.webVerdictFor(id)
+	if !ok || v.kind != core.FailureRateLimited || v.at.IsZero() {
+		return webVerdict{}, false
+	}
+	if now.Sub(v.at) >= webRateLimitHold {
+		hold := v.hold
+		if hold <= 0 {
+			hold = webRateLimitCooldown
+		}
+		// The display hold is the floor: a session the vendor just refused
+		// stays orange at least long enough for the operator to see why, even
+		// before the exponential backoff has grown past the flat cooldown.
+		if hold < webRateLimitHold {
+			hold = webRateLimitHold
+		}
+		if now.Sub(v.at) >= hold {
+			return webVerdict{}, false
+		}
+	}
+	hold := v.hold
+	if hold <= 0 {
+		hold = webRateLimitCooldown
+	}
+	// The display hold is the floor: a session the vendor just refused stays
+	// orange at least long enough for the operator to see why, even before the
+	// exponential backoff has grown past the flat cooldown.
+	if hold < webRateLimitHold {
+		hold = webRateLimitHold
+	}
+	if now.Sub(v.at) >= hold {
+		return webVerdict{}, false
+	}
+	return v, true
+}
+
+// webRateLimitNote explains a cooling session, in the operator's own terms, plus
+// the vendor's own words so the reason is never a guess.
+func webRateLimitNote(v webVerdict) string {
+	note := "web.tabbit.com is rate limiting this session; the next run can be tried in a few minutes"
+	if v.err != "" {
+		note += ": " + v.err
+	}
+	return note
 }
 
 func (c *Client) webVerdictFor(id string) (webVerdict, bool) {

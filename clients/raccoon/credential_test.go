@@ -175,7 +175,7 @@ func TestIdentityPrefersUserIDThenJWT(t *testing.T) {
 func TestRaccoonHeaders(t *testing.T) {
 	h := raccoonHeaders(credential{
 		AccessToken:    "AT",
-		OfficeIdentity: "personal",
+		OfficeIdentity: "org-9x",
 		DeviceID:       "deadbeef",
 	}, "desktop-windows", "v1.0.35")
 
@@ -191,8 +191,8 @@ func TestRaccoonHeaders(t *testing.T) {
 	if got := h.Get("X-Raccoon-Language"); got != "zh" {
 		t.Fatalf("X-Raccoon-Language = %q", got)
 	}
-	if got := h.Get("X-Org-Code"); got != "personal" {
-		t.Fatalf("X-Org-Code = %q", got)
+	if got := h.Get("X-Org-Code"); got != "org-9x" {
+		t.Fatalf("X-Org-Code = %q, want the org code forwarded", got)
 	}
 	if got := h.Get("X-Client-Platform"); got != "desktop-windows" {
 		t.Fatalf("X-Client-Platform = %q", got)
@@ -212,6 +212,14 @@ func TestRaccoonHeaders(t *testing.T) {
 	}
 	if got := lean.Get("X-Org-Code"); got != "" {
 		t.Fatalf("X-Org-Code = %q, want empty", got)
+	}
+
+	// The literal sentinel `personal` is NOT a real org code: the vendor's
+	// chat endpoint answers it with 200022 org_not_found_error, so it must
+	// be normalised to an empty header rather than forwarded verbatim.
+	sentinel := raccoonHeaders(credential{AccessToken: "AT", OfficeIdentity: "personal"}, "", "")
+	if got := sentinel.Get("X-Org-Code"); got != "" {
+		t.Fatalf("X-Org-Code = %q, want the personal sentinel dropped", got)
 	}
 	for _, k := range []string{"X-Client-Platform", "X-Client-Version", "X-Client-Device-ID"} {
 		if _, ok := lean[http.CanonicalHeaderKey(k)]; ok {
@@ -392,8 +400,8 @@ func TestConfiguredAccountsSources(t *testing.T) {
 	if got[0].Origin != originConfig || got[0].AccessToken != "tok-a" || got[0].Label != "A" {
 		t.Fatalf("configuredAccounts[0] = %+v", got[0])
 	}
-	if got[0].OfficeIdentity != "personal" {
-		t.Fatalf("office_identity default = %q, want personal", got[0].OfficeIdentity)
+	if got[0].OfficeIdentity != "" {
+		t.Fatalf("office_identity default = %q, want empty (no invented sentinel)", got[0].OfficeIdentity)
 	}
 
 	// The single-account shorthand.

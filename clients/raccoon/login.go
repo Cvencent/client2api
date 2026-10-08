@@ -442,9 +442,6 @@ func (c *Client) loginWithSMS(ctx context.Context, phone, smsCode string) (crede
 // successful.  The credential is written through the same pool a pasted key
 // uses, so it survives a restart and shows up in the account table.
 func (c *Client) finishLogin(ctx context.Context, sess *loginSession, cred credential) {
-	if strings.TrimSpace(cred.OfficeIdentity) == "" {
-		cred.OfficeIdentity = "personal"
-	}
 	if info, err := c.fetchUserInfo(ctx, cred); err == nil {
 		if info.ID != "" {
 			cred.UserID = info.ID

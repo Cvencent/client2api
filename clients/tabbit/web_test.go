@@ -469,6 +469,74 @@ func TestTabbitWebStatusDoesNotTrustAVerdictForever(t *testing.T) {
 	}
 }
 
+// TestTabbitWebStatusShowsARateLimitedSessionAsCooling pins the fix for a pool
+// that read "ready" while every run was refused with 429.  web.tabbit.com keeps
+// answering the model catalogue while it is rate-limiting the run endpoint, so a
+// fresh catalogue probe must not wipe the rate-limit verdict.
+func TestTabbitWebStatusShowsARateLimitedSessionAsCooling(t *testing.T) {
+	f := newFakeWeb(t)
+	c, rec := newWebClient(t, f)
+
+	c.storeWebVerdict(rec.ID, webVerdict{
+		at:        time.Now(),
+		err:       "Tabbit rate limited POST /api/v3/chat/rooms/x/runs (HTTP 429): slow down",
+		transient: true,
+		kind:      core.FailureRateLimited,
+		status:    http.StatusTooManyRequests,
+	})
+
+	st := c.Status(context.Background())
+	if st.Ready {
+		t.Fatalf("a rate-limited session still made the module ready: %+v", st.Accounts)
+	}
+	if got := st.Accounts[0].State; got != epStateCooling {
+		t.Fatalf("state = %q, want %q (note=%q)", got, epStateCooling, st.Accounts[0].Note)
+	}
+	if !strings.Contains(st.Accounts[0].Note, "rate limiting") {
+		t.Errorf("the note does not name the rate limit: %q", st.Accounts[0].Note)
+	}
+	if n := f.hits("models"); n != 0 {
+		t.Errorf("Status spent %d catalogue call(s) on a cooling session, want 0", n)
+	}
+
+	// The row the operator clicks into must agree with the badge.
+	list, err := c.Accounts(context.Background())
+	if err != nil {
+		t.Fatalf("Accounts: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("Accounts = %+v, want one row", list)
+	}
+	if list[0].State != st.Accounts[0].State {
+		t.Errorf("the account row says %q while Status says %q; the two views must agree",
+			list[0].State, st.Accounts[0].State)
+	}
+}
+
+// TestTabbitWebStatusRecoversAfterTheRateLimitHold bounds that hold: once the
+// verdict is older than webRateLimitHold the catalogue probe runs again, and a
+// still-working cookie turns the row back to ready.
+func TestTabbitWebStatusRecoversAfterTheRateLimitHold(t *testing.T) {
+	f := newFakeWeb(t)
+	c, rec := newWebClient(t, f)
+
+	c.storeWebVerdict(rec.ID, webVerdict{
+		at:        time.Now().Add(-webRateLimitHold - time.Second),
+		err:       "Tabbit rate limited POST /api/v3/chat/rooms/x/runs (HTTP 429): slow down",
+		transient: true,
+		kind:      core.FailureRateLimited,
+		status:    http.StatusTooManyRequests,
+	})
+
+	st := c.Status(context.Background())
+	if !st.Ready {
+		t.Fatalf("a stale rate limit kept the module down: %+v", st.Accounts)
+	}
+	if got := st.Accounts[0].State; got != epStateReady {
+		t.Errorf("state = %q, want %q (note=%q)", got, epStateReady, st.Accounts[0].Note)
+	}
+}
+
 // TestTabbitWebTestAccountReportsTheQuota covers the other real thing the
 // cookie buys: the vendor's own quota report, folded into the test result
 // because the module deliberately refuses to invent a credit count.

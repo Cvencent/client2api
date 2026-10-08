@@ -214,10 +214,16 @@ slice of the account's quota back once per day. The endpoint pair was read off t
 vendor's own web bundle, not guessed:
 
 ```
-POST /api/commerce/activity/v1/sign-in         body: {"scene_code":"desktop_pet"}
+POST /api/commerce/activity/v1/sign-in         body: {"scene_code":"desktop_pet","request_no":"<uuid>"}
 GET  /api/commerce/activity/v1/sign-in/status  ?scene_codes=desktop_pet
 ```
 
+* **The claim carries an idempotency key.** The sign-in endpoint is keyed by
+  `request_no`; without it the vendor answers `422 VALIDATION_ERROR`
+  (`body.request_no`, "missing") and grants nothing. The module sends a fresh v4
+  UUID per claim — the same shape the bundle uses for `client_run_id`,
+  `page_instance_id` and `x-signature`, and the same key the sibling
+  `POST /api/commerce/activity/v1/participate` call passes.
 * **The reward is quota, not credits.** The vendor's own i18n table files it under the usage
   ledger as "Sign-in Reward", next to "Usage Restored" and "Usage Reset Coupon". Since the
   quota endpoint reports a *percentage* of the cycle's allowance, a claim shows up as
@@ -286,6 +292,19 @@ is GPL-3.0 and separate):
   start when spawned by this process on the development machine, so 导入凭据 may report
   `BROWSER_LAUNCH_FAILED` while the same command works from a shell. Pasting the cookie
   always works.
+* **Vendor-side run limits (HTTP 429).** `POST /api/v3/chat/rooms/<room>/runs`
+  answers `429` with the marketing page as its body when web.tabbit.com decides the
+  session has asked for too much. The catalogue, the quota read and the sign-in can
+  all keep working at the same moment, so a green badge is not proof that a completion
+  will be served. After such a refusal the account is reported as `cooling` — in
+  `Status()` *and* in the account table — and the session is held out of the picker.
+  A chat request that finds every session cooling returns `core.ErrBusy` *before*
+  opening a room, so the gateway's retry loop can no longer answer one `429` with
+  several more runs and deepen the vendor's penalty. The first refusal rests for
+  `webRateLimitCooldown`; a repeated one grows the rest (1m, 5m, 10m, 20m, capped at
+  `webRateLimitHoldMax`) and a run that succeeds clears both. With one session there is
+  nothing to rotate to; adding a second web-token account is the real mitigation. The
+  module cannot fix the limit, only report it honestly and stop making it worse.
 * **Sidecar hazards** (only on that path): brittle webpack/DOM bridge, a profile copy that
   needs every Tabbit window closed, prompt truncation above ~19 000 characters, and
   snapshot-diff streaming that may duplicate or reorder text.
