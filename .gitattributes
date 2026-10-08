@@ -1,1 +1,5 @@
 internal/prompt/defaultprompt.md text eol=lf
+internal/panel/index.html text eol=lf
+internal/panel/captcha.html text eol=lf
+*.go text eol=lf
+Makefile text eol=lf

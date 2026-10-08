@@ -65,7 +65,10 @@ func csp(doc []byte) string {
 			"connect-src 'self'; img-src 'self' data:; frame-src 'self'; form-action 'none'; " +
 			"frame-ancestors 'none'; base-uri 'none'"
 	}
-	sum := sha256.Sum256(body)
+	// HTML parsers normalize CRLF and lone CR to LF before CSP hashes the
+	// inline script.  Do the same here so a Windows checkout with CRLF does
+	// not emit a hash that every browser rejects.
+	sum := sha256.Sum256(normalizeScriptLineEndings(body))
 	return "default-src 'none'; script-src 'self' 'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'; " +
 		"style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; frame-src 'self'; " +
 		"form-action 'none'; frame-ancestors 'none'; base-uri 'none'"
@@ -94,6 +97,26 @@ func scriptBody(doc []byte) ([]byte, bool) {
 		return nil, false
 	}
 	return body, true
+}
+
+// normalizeScriptLineEndings matches the HTML parser's newline normalization
+// for script text: CRLF and CR both become LF.
+func normalizeScriptLineEndings(body []byte) []byte {
+	if bytes.IndexByte(body, '\r') < 0 {
+		return body
+	}
+	out := make([]byte, 0, len(body))
+	for i := 0; i < len(body); i++ {
+		if body[i] != '\r' {
+			out = append(out, body[i])
+			continue
+		}
+		out = append(out, '\n')
+		if i+1 < len(body) && body[i+1] == '\n' {
+			i++
+		}
+	}
+	return out
 }
 
 // setSecurityHeaders writes the panel's response headers.  It is applied to the

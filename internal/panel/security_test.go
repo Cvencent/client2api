@@ -99,6 +99,11 @@ func TestCSPNamesTheInlineScriptByHash(t *testing.T) {
 	if !strings.HasPrefix(body, "\n\"use strict\";") {
 		t.Fatalf("script body starts with %q; the hash would be over the wrong bytes", firstLine(body))
 	}
+	// Browsers normalize CRLF to LF before hashing inline script text.
+	// Mirror that here so the test still checks the real browser rule when
+	// the checkout has Windows line endings.
+	body = strings.ReplaceAll(body, "\r\n", "\n")
+	body = strings.ReplaceAll(body, "\r", "\n")
 	sum := sha256.Sum256([]byte(body))
 	want := "sha256-" + base64.StdEncoding.EncodeToString(sum[:])
 
@@ -121,6 +126,16 @@ func TestCSPNamesTheInlineScriptByHash(t *testing.T) {
 		if !strings.Contains(policy, d) {
 			t.Errorf("policy is missing %q\npolicy: %s", d, policy)
 		}
+	}
+}
+
+// TestCSPNormalizesInlineScriptLineEndings pins the browser rule for inline
+// script hashes: CRLF and CR are normalized to LF before hashing.
+func TestCSPNormalizesInlineScriptLineEndings(t *testing.T) {
+	lf := []byte("<html><script>\nlet x = 1;\n</script></html>")
+	crlf := []byte(strings.ReplaceAll(string(lf), "\n", "\r\n"))
+	if got, want := csp(crlf), csp(lf); got != want {
+		t.Fatalf("CRLF and LF documents produced different CSPs:\nCRLF: %s\nLF:   %s", got, want)
 	}
 }
 
