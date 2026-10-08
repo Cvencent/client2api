@@ -65,6 +65,12 @@ type AutoLoginRequest struct {
 	// Phone pins the number to rent.  Empty means "draw one", which is the
 	// normal path; the restore flow sets it to the account's own number.
 	Phone string `json:"phone,omitempty"`
+	// Avoid lists numbers a fresh draw must not return.  The panel sends the
+	// numbers this auto-add batch has already tried, so the platform cannot
+	// hand the same one back and make the batch fail in a loop.  It only
+	// applies when Phone is empty: a pinned restore number is asked for
+	// explicitly and cannot be avoided.
+	Avoid []string `json:"avoid,omitempty"`
 }
 
 // AutoLoginProvider runs a vendor login end to end in a browser the module

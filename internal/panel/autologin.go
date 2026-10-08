@@ -26,12 +26,29 @@ import (
 // configured settings.  Token is the operator's per-run override of the
 // platform credential, the same way smsRequest carries one.
 type autoLoginRequest struct {
-	Realm    string `json:"realm,omitempty"`
-	Token    string `json:"token,omitempty"`
-	Keyword  string `json:"keyword,omitempty"`
-	Province string `json:"province,omitempty"`
-	CardType string `json:"card_type,omitempty"`
-	Phone    string `json:"phone,omitempty"`
+	Realm    string   `json:"realm,omitempty"`
+	Token    string   `json:"token,omitempty"`
+	Keyword  string   `json:"keyword,omitempty"`
+	Province string   `json:"province,omitempty"`
+	CardType string   `json:"card_type,omitempty"`
+	Avoid    []string `json:"avoid,omitempty"`
+	Phone    string   `json:"phone,omitempty"`
+}
+
+// trimAll trims each entry and drops the empty ones.  It leaves the list order
+// alone: the module de-duplicates against its own pool, and a test that reads
+// the request back wants to see what the panel actually sent.
+func trimAll(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // autoLoginStart answers POST <base>/auto-login.
@@ -61,6 +78,7 @@ func (p *panel) autoLoginStart(w http.ResponseWriter, r *http.Request, c core.Cl
 		Province: strings.TrimSpace(body.Province),
 		CardType: strings.TrimSpace(body.CardType),
 		Phone:    strings.TrimSpace(body.Phone),
+		Avoid:    trimAll(body.Avoid),
 	})
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, core.Redact(err.Error()))

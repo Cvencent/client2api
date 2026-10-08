@@ -245,6 +245,49 @@ func TestTaskRunQueueDrainsEveryPendingChore(t *testing.T) {
 	}
 }
 
+func TestTaskQueuePacesTasksWithinOneAccount(t *testing.T) {
+	c := newSweepClient("loomy", core.TaskResult{OK: true}, liveAccount("a1"))
+	c.tasks = []core.TaskInfo{{Code: "c1", Auto: true}, {Code: "c2", Auto: true}}
+	c.batches = []core.Batch{{Name: "growth", Codes: []string{"c1", "c2"}, TaskGap: 60 * time.Millisecond}}
+	p := taskPanel(t, c)
+
+	rec, out := doTask(t, p, http.MethodPost, queuePath("loomy", "run_queue"), `{"concurrency":2}`)
+	if rec.Code != http.StatusOK || out["started"] != true {
+		t.Fatalf("run_queue: status=%d out=%v body=%s", rec.Code, out, rec.Body.String())
+	}
+	waitQueue(t, p, "loomy")
+
+	times := c.runTimes()
+	if len(times) != 2 {
+		t.Fatalf("run times = %d, want 2", len(times))
+	}
+	if gap := times[1].Sub(times[0]); gap < 40*time.Millisecond {
+		t.Fatalf("tasks ran %v apart, want the 60ms TaskGap to apply", gap)
+	}
+}
+
+func TestTaskQueueDoesNotOverlapTasksWithinOneAccount(t *testing.T) {
+	c := newSweepClient("loomy", core.TaskResult{OK: true}, liveAccount("a1"))
+	c.runDelay = 120 * time.Millisecond
+	c.tasks = []core.TaskInfo{{Code: "c1", Auto: true}, {Code: "c2", Auto: true}}
+	c.batches = []core.Batch{{Name: "growth", Codes: []string{"c1", "c2"}, TaskGap: 40 * time.Millisecond}}
+	p := taskPanel(t, c)
+
+	rec, out := doTask(t, p, http.MethodPost, queuePath("loomy", "run_queue"), `{"concurrency":2}`)
+	if rec.Code != http.StatusOK || out["started"] != true {
+		t.Fatalf("run_queue: status=%d out=%v body=%s", rec.Code, out, rec.Body.String())
+	}
+	waitQueue(t, p, "loomy")
+
+	times := c.runTimes()
+	if len(times) != 2 {
+		t.Fatalf("run times = %d, want 2", len(times))
+	}
+	if gap := times[1].Sub(times[0]); gap < 150*time.Millisecond {
+		t.Fatalf("tasks started %v apart with a 120ms task and 40ms gap; want no overlap", gap)
+	}
+}
+
 func TestTaskQueueRefreshesTheBalanceAfterSuccess(t *testing.T) {
 	c := &fakeTaskBalanceClient{
 		fakeTaskClient: &fakeTaskClient{

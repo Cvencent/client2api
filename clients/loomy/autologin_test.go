@@ -20,6 +20,7 @@ type fakeVendor struct {
 	mu sync.Mutex
 
 	phone        string
+	phoneQueue   []string
 	code         string
 	msgDelivered bool
 	codeAsked    bool
@@ -41,6 +42,17 @@ func (f *fakeVendor) handler() http.HandlerFunc {
 			case "leftAmount":
 				fmt.Fprint(w, "28.55")
 			case "getPhone":
+				f.mu.Lock()
+				queued := ""
+				if len(f.phoneQueue) > 0 {
+					queued = f.phoneQueue[0]
+					f.phoneQueue = f.phoneQueue[1:]
+				}
+				f.mu.Unlock()
+				if queued != "" {
+					fmt.Fprint(w, queued)
+					return
+				}
 				if want := q.Get("phone"); want != "" {
 					fmt.Fprint(w, want)
 					return
@@ -172,6 +184,43 @@ func TestAutoLoginPinsTheAccountNumberOnARelogin(t *testing.T) {
 	accounts := c.store.snapshot()
 	if len(accounts) != 1 || accounts[0].Phone != vendor.phone {
 		t.Fatalf("stored accounts = %+v, want the pinned number", accounts)
+	}
+}
+
+// TestAutoLoginSkipsNumbersTheBatchAlreadyTried: 一个批次里刚失败过的号码必须
+// 进入下一轮的避让表，否则平台把同一个号发回来，批次就会一直原地空转。
+// 这里平台先发被避让的号，再发可用的号，流程必须只停在后者上。
+func TestAutoLoginSkipsNumbersTheBatchAlreadyTried(t *testing.T) {
+	vendor := newFakeVendor()
+	vendor.phone = "13800000001"
+	vendor.phoneQueue = []string{"13800000000", vendor.phone}
+	srv := httptest.NewServer(vendor.handler())
+	defer srv.Close()
+
+	c := newTestClientInDir(t, t.TempDir(), autoLoginConfig(srv), srv.Client().Transport)
+	job := &autoJob{state: core.AutoLoginRunning}
+
+	req := core.AutoLoginRequest{Avoid: []string{"13800000000"}}
+	if err := c.autoLogin(context.Background(), job, req, core.SMSOpts{}); err != nil {
+		t.Fatalf("autoLogin: %v", err)
+	}
+	if got := job.snapshot().State; got != core.AutoLoginSuccess {
+		t.Fatalf("job state = %q, want success", got)
+	}
+
+	accounts := c.store.snapshot()
+	if len(accounts) != 1 {
+		t.Fatalf("stored accounts = %d, want 1", len(accounts))
+	}
+	if got := accounts[0].Phone; got != vendor.phone {
+		t.Errorf("stored phone = %q, want the avoided number skipped and %q used", got, vendor.phone)
+	}
+
+	vendor.mu.Lock()
+	defer vendor.mu.Unlock()
+	// 被避让的那个号要直接还给平台，不能占着不用还得计费。
+	if len(vendor.released) == 0 || vendor.released[0] != "13800000000" {
+		t.Errorf("released = %v, want the avoided number handed straight back first", vendor.released)
 	}
 }
 

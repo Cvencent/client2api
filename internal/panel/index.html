@@ -309,6 +309,11 @@ label.fld > .hint { display: block; font-size: 11.5px; color: var(--ink-3); marg
 .sms-box #smsCard { flex: 0 0 86px; }
 .sms-box .v.mono { font: 600 14px var(--mono); letter-spacing: 0; }
 .sms-box .hint { font-size: 11.5px; color: var(--ink-3); }
+/* 接码平台状态行：读取中的转圈和失败态。.hint 默认是灰的，失败要能一眼看见；
+   转圈单独一个节点，读完之后隐藏，不会把「余额 28.55」顶得忽长忽短。 */
+.sms-box #smsStatus.err { color: var(--bad); }
+.sms-box #smsStatusDots { color: var(--accent); font-weight: 600; }
+.sms-box #smsStatusDots[hidden] { display: none; }
 /* 自动添加：模块自己开浏览器跑完整个登录，面板只显示一条进度日志。 */
 .auto-box { border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--line-soft)); border-radius: 9px; padding: 6px 12px 10px; margin: 2px 0 12px; background: var(--accent-soft); }
 .auto-box .row { gap: 8px; padding: 5px 0; }
@@ -2032,7 +2037,9 @@ input, select, textarea { transition-property: border-color, box-shadow, backgro
             <span class="k">接码平台</span>
             <a href="https://eomsg.com/appweb/signUp.html?inviter=36couhpl" target="_blank" rel="noopener noreferrer">没有账号？注册</a>
             <span class="grow"></span>
-            <span id="smsStatus" class="hint"></span>
+            <span id="smsStatusDots" class="dots" aria-hidden="true" hidden></span>
+            <span id="smsStatus" class="hint" role="status" aria-live="polite"></span>
+            <button class="xs" id="btnSmsStatusReload" title="重新读取接码平台的状态（余额、可用省份）">重新读取</button>
             <button class="xs" id="btnSmsToken">设置 token</button>
           </div>
           <div id="smsTokenRow" class="row" hidden>
@@ -7701,6 +7708,10 @@ function autoBody() {
     card_type: $("#smsCard").value || ""
   };
   if (ADD.mode === "restore" && ADD.restore) b.phone = ADD.restore.phone;
+  // 普通添加是逐次抽号的批量流程：把本轮已经试过的号码一并发给模块，否则接码
+  // 平台可能把刚失败的那个号又发回来，批次就会卡在同一个号上空转。重登是钉住
+  // 账号自己的号码，不能用 avoid 把它挡掉。
+  else if (ADD.autoBatch && ADD.autoBatch.seen.length) b.avoid = ADD.autoBatch.seen.slice();
   return b;
 }
 // autoStartRun 发起一次登录尝试，并把轮询接到这个 job 上。
@@ -7729,7 +7740,7 @@ async function autoStart() {
   $("#btnAutoStart").disabled = true;
   $("#btnAutoStop").hidden = false;
   if (batch) {
-    ADD.autoBatch = { want: autoInt("#autoWant", 1, 50, 1), tries: autoInt("#autoTries", 1, 100, 5), added: 0, attempted: 0, lastErr: "" };
+    ADD.autoBatch = { want: autoInt("#autoWant", 1, 50, 1), tries: autoInt("#autoTries", 1, 100, 5), added: 0, attempted: 0, lastErr: "", seen: [] };
     $("#autoStatus").textContent = "正在启动…（" + autoBatchText() + "）";
   } else {
     ADD.autoBatch = null;
@@ -7816,6 +7827,8 @@ function renderAutoJob(job) {
     log.scrollTop = log.scrollHeight;
   }
   if (job.phone) $("#autoStatus").textContent = "号码 " + job.phone + " …";
+  // 这个号已经试过，就记进本轮避让表；下一个 attempt 不会再拿到它。
+  if (ADD.autoBatch && job.phone && ADD.autoBatch.seen.indexOf(job.phone) < 0) ADD.autoBatch.seen.push(job.phone);
   if (job.state === "running") {
     const step = AUTO_STEPS[job.step] || job.step || "进行中";
     const tail = ADD.autoBatch ? "（" + autoBatchText() + "）" : "";
@@ -7899,14 +7912,44 @@ function renderAddSms(n) {
   // 否则 loomy 的「讯飞」会被 workbuddy 的「腾讯科技」覆盖。没有记住的值时先留空。
   $("#smsKeyword").value = LS.get("smskeyword:" + n, "");
   $("#smsTokenRow").hidden = true;
+  // 每次打开对话框都把状态行复位：上一次的读取中转圈或者「平台不可用」都不能
+  // 留着骗人，紧接着的 smsStatusLoad 会重新读一次。
+  syncSmsStatusUI(false);
   smsStatusLoad();
 }
+// syncSmsStatusUI 把状态行拨到「正在读取」或「没在读」。读取中也顺手禁掉
+// 「重新读取」，否则连点会并发打出一串相同的请求。
+function syncSmsStatusUI(on) {
+  const dots = $("#smsStatusDots");
+  if (dots) dots.hidden = !on;
+  const btn = $("#btnSmsStatusReload");
+  if (btn) btn.disabled = on;
+}
+
 async function smsStatusLoad() {
   const n = $("#addClient").value;
   if (!smsOn(n)) return;
-  const r = await api(cbase(n) + "/sms", { method: "POST", body: { token: smsToken() } });
   const st = $("#smsStatus");
-  if (!r.ok) { st.textContent = "平台不可用：" + r.err; return; }
+  // 先落地「正在读取」。这一程要走一次接码平台的网络接口，慢的时候好几秒，
+  // 没有这句话操作员就不知道是该等还是坏了。
+  syncSmsStatusUI(true);
+  st.classList.remove("err");
+  st.textContent = "正在读取接码平台状态…";
+  let r;
+  try {
+    r = await api(cbase(n) + "/sms", { method: "POST", body: { token: smsToken() } });
+  } finally {
+    // 无论成败都要收回转圈，否则「重新读取」会一直被禁着。
+    syncSmsStatusUI(false);
+  }
+  if (n !== $("#addClient").value) return; // 读取期间换了客户端，这次结果不要再画回去
+  if (!r.ok) {
+    // 失败是最需要再试一次的时候，所以留一句指路，而不是把「平台不可用」钉在这里。
+    st.classList.add("err");
+    st.textContent = "读取失败：" + r.err + " · 点「重新读取」再试";
+    return;
+  }
+  st.classList.remove("err");
   const d = r.data || {};
   const pv = $("#smsProvince");
   if (pv.options.length <= 1) {
@@ -7917,7 +7960,12 @@ async function smsStatusLoad() {
   if (d.keyword && !$("#smsKeyword").value.trim()) $("#smsKeyword").value = d.keyword;
   const bits = [d.configured ? "已配置" : "未配置 token"];
   if (d.balance) bits.push("余额 " + d.balance);
-  if (d.error) bits.push(d.error);
+  // 模块在「已配置」的情况下也会回一个 error（平台暂时连不上），这和「没配 token」
+  // 不是一回事：前者要标红，后者只是提示。两者都写清楚，操作员才知道该不该重试。
+  if (d.error) {
+    st.classList.add("err");
+    bits.push(d.error + " · 点「重新读取」再试");
+  }
   st.textContent = bits.join(" · ");
 }
 function showSmsNumber() {
@@ -9137,6 +9185,9 @@ $("#btnSmsCopyCode").addEventListener("click", () => { const c = $("#smsCode").t
   // 关键词按客户端分别记住：同一个 eomsg token 下，两个模块的短信发送方关键词不同。
   $("#smsKeyword").addEventListener("change", () => LS.set("smskeyword:" + $("#addClient").value, $("#smsKeyword").value.trim()));
 $("#btnSmsToken").addEventListener("click", () => { $("#smsTokenRow").hidden = !$("#smsTokenRow").hidden; });
+// 接码平台状态只读一次就定死了：这里给它一个显式的重试入口。状态读取本身是
+// 幂等的（只是问一下平台余额和可用省份），多点几次没有副作用。
+$("#btnSmsStatusReload").addEventListener("click", smsStatusLoad);
 $("#btnSmsTokenSave").addEventListener("click", async () => {
   LS.set("smstoken", $("#smsToken").value.trim());
   $("#smsTokenRow").hidden = true;

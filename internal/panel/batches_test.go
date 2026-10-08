@@ -188,6 +188,34 @@ func TestSweepCountsAVendorRefusalAsRefusedNotFailed(t *testing.T) {
 	}
 }
 
+func TestSweepPacesCodesWithinOneAccount(t *testing.T) {
+	c := newSweepClient("loomy", core.TaskResult{OK: true}, liveAccount("a1"))
+	c.batches = []core.Batch{{
+		Name:       "growth",
+		Codes:      []string{"c1", "c2"},
+		TaskGap:    25 * time.Millisecond,
+		AccountGap: time.Millisecond,
+		Settle:     time.Millisecond,
+	}}
+	p := batchPanel(t, c)
+
+	run := runSweep(t, p, c, "growth")
+
+	if run.Ran != 2 || len(run.Steps) != 2 {
+		t.Fatalf("ran/steps = %d/%d, want 2/2", run.Ran, len(run.Steps))
+	}
+	if len(c.codes()) != 2 || c.codes()[0] != "c1" || c.codes()[1] != "c2" {
+		t.Fatalf("codes = %v, want [c1 c2]", c.codes())
+	}
+	times := c.runTimes()
+	if len(times) != 2 {
+		t.Fatalf("run times = %d, want 2", len(times))
+	}
+	if gap := times[1].Sub(times[0]); gap < 18*time.Millisecond {
+		t.Fatalf("tasks ran %v apart, want the 25ms TaskGap to apply", gap)
+	}
+}
+
 func TestSweepCountsATransportFailureAsFailed(t *testing.T) {
 	c := newSweepClient("wb", core.TaskResult{}, liveAccount("a1"))
 	c.runErr = errors.New("dial tcp 10.0.0.1:443: connect: connection refused")

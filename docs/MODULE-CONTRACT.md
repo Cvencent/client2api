@@ -514,12 +514,14 @@ Rules:
   error) when there is nothing to show, and must not mutate upstream state —
   it is called on a timer. `core.CapabilitiesOf` turns the interface into
   `tasks: true`; the board is only drawn for modules that implement it.
-- **Pacing is yours.** The panel runs "execute all automatable tasks"
-  **serially**, one chore at a time, precisely because the reference
-  implementation measured that bursting the same events a couple of seconds
-  apart makes the vendor roll the whole run back. Any additional spacing (the
-  reference uses 45 s ± 10 s jitter between chat events) belongs inside
-  `RunTask`, not in the panel.
+- **Pacing is shared, but the module owns the vendor timing.** The panel runs
+  all chores for one account strictly serially and never overlaps two vendor
+  calls for the same credential. A module whose chores need a visible human
+  cadence sets `core.Batch.TaskGap`; the scheduler and the panel's
+  `run_queue`/batch paths apply it after one chore finishes and add ±20%
+  jitter. Any spacing that is specific to one upstream call (the reference
+  uses 45 s ± 10 s jitter between chat events) still belongs inside
+  `RunTask`; `TaskGap` is the account-level quiet period between chores.
 - **Never leak the credential.** `Title`, `Desc`, `Note` and `Group` are
   upstream strings: the panel passes them through `core.Redact`, and a module
   that puts a token in a task title would defeat that. Do not.
@@ -668,15 +670,16 @@ and each module's README gives the reason.
 | `cline` | `AccountManager` `accounts.go:58`; `CredentialImporter` `:497`; `LoginProvider` `:371`; `BalanceProvider` `:299`; `Reviver` `:206`; `ModelRefresher` `models.go:534`; `ModelLimitsProvider` `models.go:625` | `TaskProvider`/`BatchPlanner`, `CheckinProvider`, `ConversationBinder` (and therefore `LiveReloader`), `HintProvider`, `Degrader`, `HealthProvider`/`PoolStatsReporter`, `PackageProvider`/`VoucherProvider`, `BundleImporter`, `RealmLoginProvider`, `CaptchaProvider` |
 | `lobsterai` | `AccountManager` `accounts.go:51`; `CredentialImporter` `:332`; `BundleImporter` `:463`; `LoginProvider` `login.go:57`; `BalanceProvider` `balance.go:30`; `CheckinProvider` `checkin.go:22`; `PoolStatsReporter` `lobsterai.go:333`; `ModelRefresher` `lobsterai.go:185` | `Reviver` (a refresh here is unconditional), `ModelLimitsProvider` (the vendor publishes no output budget, and the interface forbids fetching), `TaskProvider`/`BatchPlanner`, `ConversationBinder`, `HintProvider`, `Degrader`, `HealthProvider`, `PackageProvider`/`VoucherProvider`, `RealmLoginProvider`, `CaptchaProvider` |
 | `codearts` | `AccountManager` `panel.go:27`; `LoginProvider` `:412`; `CheckinProvider` `credits.go:64`; `BalanceProvider` `credits.go:360`; `Reviver` `codearts.go:176`; `HintProvider` `codearts.go:184`; `ModelRefresher` `models.go:466`; `ModelLimitsProvider` `models.go:501` | `CredentialImporter` (the IDE plugin keeps no discoverable credential file), `BundleImporter`, `RealmLoginProvider` (one realm), `CaptchaProvider` (Huawei's own portal handles the challenge), `TaskProvider`/`BatchPlanner` (the vendor has no task API), `Degrader`, `HealthProvider`/`PoolStatsReporter`, `PackageProvider`/`VoucherProvider`, `ConversationBinder` |
-| `loomy` | `AccountManager` `accounts.go:454`; `Reviver` `:573`; `BalanceProvider` `quota.go:177`; `PackageProvider` `quota.go:210`; `CheckinProvider` `quota.go:263`; `TaskProvider` `onboarding.go:232`, `:310`; `ModelRefresher` `loomy.go:183` | `ModelLimitsProvider` (the catalogue carries no output-token field), `LoginProvider` (the interface cannot carry an SMS code), `CredentialImporter`/`BundleImporter`, `CaptchaProvider` (none needed), `BatchPlanner` (the onboarding board is a one-off checklist — nothing on it is a chore the scheduler could pace), `ConversationBinder`, `HintProvider`, `Degrader`, `HealthProvider`/`PoolStatsReporter`, `VoucherProvider` |
+| `loomy` | `AccountManager` `accounts.go:454`; `Reviver` `:573`; `BalanceProvider` `quota.go:177`; `PackageProvider` `quota.go:210`; `CheckinProvider` `quota.go:263`; `TaskProvider` `onboarding.go:232`, `:310`; `BatchPlanner` `batches.go:10` (the `growth` onboarding batch, `PendingOnly`, `TaskGap` 10s); `ModelRefresher` `loomy.go:183` | `ModelLimitsProvider` (the catalogue carries no output-token field), `LoginProvider` (the interface cannot carry an SMS code), `CredentialImporter`/`BundleImporter`, `CaptchaProvider` (none needed), `ConversationBinder`, `HintProvider`, `Degrader`, `HealthProvider`/`PoolStatsReporter`, `VoucherProvider` |
 | `raccoon` | `AccountManager` `accounts.go:38`; `CredentialImporter` `:210`; `LoginProvider` `login.go:214` (loopback QR/SMS page, stdlib QR in `qr.go`); `Reviver` `:123`; `BalanceProvider` `balance.go:46`; `PackageProvider` `balance.go:67`; `CheckinProvider` `checkin.go:60`, `:155` (one action, `login-points` — the desktop login grant, which claims the daily 300 credits); `ModelRefresher` `raccoon.go:156`; `ModelLimitsProvider` `raccoon.go:285` | `RealmLoginProvider` (a single sign-in flow), `VoucherProvider` (no vendor concept), `TaskProvider`/`BatchPlanner`, `CaptchaProvider` (the SMS tab loads the vendor's Aliyun slider in the browser; the module solves nothing server-side), `HintProvider`, `BundleImporter`, `ConversationBinder`, `Degrader`, `HealthProvider`/`PoolStatsReporter` |
 | `opencode` | `AccountManager` `accounts.go:119`; `CredentialImporter` `credential.go:227`, `:305`; `LoginProvider` `login.go:86`; `RealmLoginProvider` `login.go:91` (realms `free` anonymous + `oauth` device code); `ModelRefresher` `opencode.go:202`; `ModelLimitsProvider` `models.go:417`; `PoolStatsReporter` `pool.go:634` | `BalanceProvider` (**Zen exposes no balance, credit or quota endpoint at all**: `/zen/v1/key`, `/zen/v1/credits` and `/zen/v1/me` are 404 with an HTML body, and the binary contains no such path — billing is console-only, so a fabricated `0` would be worse than saying so), `Reviver`/`CaptchaProvider` (OAuth tokens are refreshed lazily before a call; there is no separate health record to revive and no captcha), `CheckinProvider`/`TaskProvider`/`BatchPlanner` (no such API), `PackageProvider`/`VoucherProvider`/`BundleImporter`, `ConversationBinder`, `HintProvider`, `Degrader`, `HealthProvider` |
 | `openrouter` | `AccountManager` `accounts.go:24`; `CredentialImporter` `credential.go:177`, `:265`; `LoginProvider` `login.go:273` (browser PKCE); `BalanceProvider` `balance.go:29`; `ModelRefresher` `models.go:443`; `ModelLimitsProvider` `models.go:522`; `PoolStatsReporter` `openrouter.go:291`; `HealthProvider` `openrouter.go:299`; `LiveReloader` `openrouter.go:326` | `Reviver`/`RealmLoginProvider`/`CaptchaProvider` (a PKCE-issued key never expires on its own, and there is one realm and no captcha), `CheckinProvider`/`TaskProvider`/`BatchPlanner` (the vendor has no check-in and no task board), `VoucherProvider`/`PackageProvider` (no such concept), `ConversationBinder` (one upstream host makes stickiness meaningless), `BundleImporter`, `HintProvider`, `Degrader` |
 
 Two facts this table makes visible that no single module README states:
 
-1. **`core.BatchPlanner` has exactly three implementations, and the scheduler
-   no longer needs one to schedule a check-in.**
+1. **`core.BatchPlanner` is implemented by `workbuddy`, `zcode`,
+   `minimaxcode` and `loomy`, and the scheduler no longer needs one to schedule
+   a check-in.**
    `core.PlannedBatches` gives a module that only implements
    `core.CheckinProvider` one synthetic `checkin` batch, and
    `internal/scheduler/scheduler.go` plus `internal/panel/batches.go` execute
@@ -684,11 +687,14 @@ Two facts this table makes visible that no single module README states:
    plans the reference's six batches, `tasks.go` runs the codes they name),
    `zcode` (one `checkin` batch over its `claim` action) and `minimaxcode`
    (one `checkin` batch over `daily-signin`) keep the task-code path, while
-   `trae`, `qwenwork`, `lobsterai`, `codearts`, `loomy` and `raccoon` appear in
-   the task centre under the same shared `checkin` timetable, backed by the
-   check-in their account rows already offer. A module with neither capability
-   still answers `[scheduler] idle: nothing scheduled`, and the six chore
-   aliases in `internal/panel/batches.go` answer 501 for it. The seventh alias,
+   `loomy` deliberately publishes its `growth` onboarding batch with a
+   10-second `TaskGap`, so its first-run chores do not look like a scripted
+   burst; `trae`, `qwenwork`, `lobsterai`, `codearts` and `raccoon` appear
+   in the task centre under the same shared `checkin` timetable, backed by
+   the check-in their account rows already offer. A module with neither
+   capability still answers `[scheduler] idle: nothing scheduled`, and the
+   six chore aliases in `internal/panel/batches.go` answer 501 for it. The
+   seventh alias,
    `balance_all`, is the exception and is deliberately *not* a batch: a balance
    is not a chore any module plans, so `internal/panel/batches.go` intercepts it
    by name and hands it to `Scheduler.RunBalanceRefreshNow`, which sweeps every

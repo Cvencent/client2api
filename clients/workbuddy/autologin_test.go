@@ -374,6 +374,26 @@ func TestAutoLoginSkipsPoolPhones(t *testing.T) {
 	}
 }
 
+// TestAutoLoginSkipsNumbersTheBatchAlreadyTried: the panel's batch loop sends
+// the numbers it has already used, and they must reach the platform alongside
+// the pool's own numbers -- otherwise the platform can hand the same failed
+// number straight back and the batch spins.
+func TestAutoLoginSkipsNumbersTheBatchAlreadyTried(t *testing.T) {
+	v := successVendor()
+	c, _ := autoLoginClient(t, v)
+	page := newFakePage()
+	platform := &fakePlatform{number: core.SMSNumber{Phone: "13800002222"}, code: "111111"}
+
+	req := core.AutoLoginRequest{Avoid: []string{"13800009999", "13800009999", " "}}
+	if _, err := runAutoLogin(t, c, page, platform, req); err != nil {
+		t.Fatalf("autoLogin: %v", err)
+	}
+	got := platform.avoidedPhones()
+	if len(got) != 1 || got[0] != "13800009999" {
+		t.Fatalf("avoid = %v, want the batch-history number once, de-duplicated", got)
+	}
+}
+
 func TestAutoLoginReleasesTheNumberOnFailure(t *testing.T) {
 	v := successVendor()
 	c, _ := autoLoginClient(t, v)

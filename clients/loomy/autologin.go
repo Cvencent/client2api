@@ -275,7 +275,11 @@ func (c *Client) autoLogin(ctx context.Context, job *autoJob, req core.AutoLogin
 	// 1) Rent a number, or re-issue the account's own number on a re-login.
 	job.setStep("phone")
 	want := strings.TrimSpace(req.Phone)
-	num, err := c.AcquirePhone(ctx, opts, want, c.phonePool())
+	avoid := c.autoLoginAvoid(req)
+	if want == "" {
+		job.logf("取号中（避开池内及本轮已试 %d 个号码）…", len(avoid))
+	}
+	num, err := c.AcquirePhone(ctx, opts, want, avoid)
 	if err != nil {
 		return fmt.Errorf("取号失败：%w", err)
 	}
@@ -348,6 +352,33 @@ func (c *Client) waitAutoCode(ctx context.Context, job *autoJob, opts core.SMSOp
 		job.logf("等待短信验证码…（%d/%d）", i+1, polls)
 	}
 	return "", errors.New("超时：接码平台一直没有收到验证码")
+}
+
+// autoLoginAvoid is the set of numbers a fresh draw must skip: the numbers the
+// caller has already tried in this batch (req.Avoid) plus everything the pool
+// already holds.  Pool numbers are always skipped, so a batch cannot re-rent an
+// account the module already carries; the batch's own history is what stops the
+// platform from returning the number that just failed.
+//
+// The pinned restore path asks for one exact number, so Avoid does not apply
+// there and neither list is consulted.
+func (c *Client) autoLoginAvoid(req core.AutoLoginRequest) []string {
+	if strings.TrimSpace(req.Phone) != "" {
+		return nil
+	}
+	seen := make(map[string]bool)
+	var out []string
+	for _, list := range [][]string{req.Avoid, c.phonePool()} {
+		for _, n := range list {
+			n = strings.TrimSpace(n)
+			if n == "" || seen[n] {
+				continue
+			}
+			seen[n] = true
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 // phonePool is the set of phone numbers the module already holds, so a fresh

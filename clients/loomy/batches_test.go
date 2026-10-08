@@ -19,6 +19,9 @@ func TestLoomyPlansTheGrowthBatch(t *testing.T) {
 	if !b.PendingOnly {
 		t.Fatal("growth batch must skip tasks the vendor already reports complete")
 	}
+	if b.TaskGap <= 0 {
+		t.Fatal("growth batch must pace chores within one account")
+	}
 	if len(b.Codes) != len(onboardingRegistry) {
 		t.Fatalf("codes = %d, want %d", len(b.Codes), len(onboardingRegistry))
 	}

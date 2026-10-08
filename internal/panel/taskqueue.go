@@ -72,15 +72,74 @@ type queueItem struct {
 // taskQueue is the per-module queue.  Every method takes the lock and none of
 // them does I/O, so a chore in flight never holds it.
 type taskQueue struct {
-	mu        sync.Mutex
-	running   bool
-	startedAt time.Time
-	items     []queueItem
-	conc      int
-	seq       int
+	mu           sync.Mutex
+	running      bool
+	startedAt    time.Time
+	items        []queueItem
+	conc         int
+	seq          int
+	lastRunAt    map[string]time.Time
+	accountLocks map[string]chan struct{}
 }
 
 func newTaskQueue() *taskQueue { return &taskQueue{} }
+
+// lockAccount serialises work for one account.  Different accounts keep
+// running in parallel, but a vendor chore is stateful: overlapping two
+// chores for one account makes both report nonsense and can look scripted.
+// The returned release function is safe to call exactly once.
+func (q *taskQueue) lockAccount(ctx context.Context, account string) (func(), bool) {
+	q.mu.Lock()
+	if q.accountLocks == nil {
+		q.accountLocks = make(map[string]chan struct{})
+	}
+	ch := q.accountLocks[account]
+	if ch == nil {
+		ch = make(chan struct{}, 1)
+		q.accountLocks[account] = ch
+	}
+	q.mu.Unlock()
+
+	select {
+	case ch <- struct{}{}:
+		return func() { <-ch }, true
+	case <-ctx.Done():
+		return nil, false
+	}
+}
+
+// waitTaskGap blocks a worker until acc's TaskGap has elapsed since that
+// account's previous chore finished.  The account lock is held around both
+// this wait and the chore itself, so one account is strictly serial while
+// different accounts can still drain in parallel.
+func (q *taskQueue) waitTaskGap(ctx context.Context, account string, gap time.Duration) bool {
+	if gap <= 0 {
+		return true
+	}
+	q.mu.Lock()
+	prev := q.lastRunAt[account]
+	q.mu.Unlock()
+	if prev.IsZero() {
+		return true
+	}
+	if wait := gap - time.Since(prev); wait > 0 {
+		return core.SleepCtx(ctx, wait)
+	}
+	return true
+}
+
+// noteTaskDone records the instant a chore finished.  waitTaskGap measures
+// from this instant, not from the next task's arrival: a slow vendor call
+// already gives the account a natural pause, and the configured gap is the
+// additional quiet period after that call.
+func (q *taskQueue) noteTaskDone(account string) {
+	q.mu.Lock()
+	if q.lastRunAt == nil {
+		q.lastRunAt = make(map[string]time.Time)
+	}
+	q.lastRunAt[account] = time.Now()
+	q.mu.Unlock()
+}
 
 // taskQueues hands each module its own queue.
 //
@@ -125,6 +184,8 @@ func (q *taskQueue) begin(conc int, items []queueItem) bool {
 	q.items = items
 	q.conc = conc
 	q.seq++
+	q.lastRunAt = make(map[string]time.Time)
+	q.accountLocks = make(map[string]chan struct{})
 	return true
 }
 
@@ -440,6 +501,19 @@ func (p *panel) taskRunQueue(w http.ResponseWriter, r *http.Request, c core.Clie
 // was written long before the work finishes, and a caller that navigated away
 // must not cancel a round it asked for.
 func (p *panel) drainTaskQueue(tp core.TaskProvider, client string) {
+	gaps := map[string]time.Duration{}
+	if p.opts.Registry != nil {
+		if c, ok := p.opts.Registry.Get(client); ok {
+			for _, b := range core.PlannedBatches(c) {
+				if b.TaskGap <= 0 {
+					continue
+				}
+				for _, code := range append(append([]string(nil), b.Codes...), b.Claim...) {
+					gaps[code] = b.TaskGap
+				}
+			}
+		}
+	}
 	q := p.chores.forClient(client)
 	defer q.finish()
 
@@ -458,6 +532,16 @@ func (p *panel) drainTaskQueue(tp core.TaskProvider, client string) {
 				if !ok {
 					return
 				}
+				releaseAccount, ok := q.lockAccount(context.Background(), item.Account)
+				if !ok {
+					q.settle(idx, queueError, "queue stopped before the account lock was available")
+					return
+				}
+
+				if !q.waitTaskGap(context.Background(), item.Account, gaps[item.Code]) {
+					releaseAccount()
+					return
+				}
 				started := time.Now()
 				runID := p.runs.start(client, item.Account, item.Code)
 				q.markRun(idx, runID)
@@ -465,6 +549,8 @@ func (p *panel) drainTaskQueue(tp core.TaskProvider, client string) {
 				ctx, cancel := context.WithTimeout(context.Background(), taskRunTimeout)
 				res, err := tp.RunTask(ctx, item.Account, item.Code)
 				cancel()
+				q.noteTaskDone(item.Account)
+				releaseAccount()
 
 				if err != nil {
 					res = core.TaskResult{

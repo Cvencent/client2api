@@ -662,8 +662,8 @@ func (c *Client) rentAutoPhone(ctx context.Context, job *autoJob, req core.AutoL
 		job.logf("已占用号码 %s（指定）", num.Phone)
 		return num.Phone, true, nil
 	}
-	avoid := c.poolPhones()
-	job.logf("取号中（避开池内 %d 个号码）…", len(avoid))
+	avoid := autoLoginAvoid(req, c.poolPhones())
+	job.logf("取号中（避开池内及本轮已试 %d 个号码）…", len(avoid))
 	num, err := platform.Acquire(ctx, opts, "", avoid)
 	if err != nil {
 		return "", false, fmt.Errorf("取号失败：%w", err)
@@ -674,6 +674,28 @@ func (c *Client) rentAutoPhone(ctx context.Context, job *autoJob, req core.AutoL
 	}
 	job.logf("已取号 %s%s", num.Phone, suffix)
 	return num.Phone, true, nil
+}
+
+// autoLoginAvoid merges the numbers this auto-add batch has already tried
+// (req.Avoid, sent by the panel) with the numbers the pool already holds.  Both
+// must be skipped: the pool set stops the batch from re-renting an account the
+// module already carries, and the batch set stops the platform from handing back
+// the number that just failed.  Duplicates are dropped and empty entries are
+// ignored, so the module never asks the platform to skip a blank.
+func autoLoginAvoid(req core.AutoLoginRequest, pool []string) []string {
+	seen := make(map[string]bool)
+	var out []string
+	for _, list := range [][]string{req.Avoid, pool} {
+		for _, n := range list {
+			n = strings.TrimSpace(n)
+			if n == "" || seen[n] {
+				continue
+			}
+			seen[n] = true
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 // poolPhones is the set of phone-number accounts the pool already holds.  The

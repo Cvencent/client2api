@@ -469,6 +469,7 @@ func (p *panel) runBatch(ctx context.Context, id string, c core.Client, b core.B
 	if gap <= 0 {
 		gap = defaultAccountGap
 	}
+	taskGap := b.TaskGap
 
 	first := true
 	for _, a := range accounts {
@@ -525,10 +526,17 @@ func (p *panel) runBatch(ctx context.Context, id string, c core.Client, b core.B
 			continue
 		}
 
+		ranACode := false
 		for _, code := range codes {
 			if ctx.Err() != nil {
 				break
 			}
+			if ranACode && taskGap > 0 {
+				if !skipSleep(ctx, core.JitterDur(taskGap)) {
+					break
+				}
+			}
+			ranACode = true
 			if !core.CheckinActionAllowsAccount(checkinActions, code, a) {
 				p.sweeps.mutate(id, func(r *batchRun) {
 					r.Skipped++

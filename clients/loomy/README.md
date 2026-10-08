@@ -91,6 +91,13 @@ shared `EOMSG_TOKEN` environment variable, or a token pasted in the panel.
 be overridden per run.  A re-login pins the account's own phone number, so
 refreshing an expired session does not create a second Loomy account.
 
+A fresh draw never reuses a number the pool already holds, and the panel's
+batch loop sends back every number it has already tried in this run as
+`AutoLoginRequest.Avoid`.  The module merges those with the pool and hands the
+platform's repeats straight back, so one failed number cannot make the batch
+spin on itself.  A re-login pins the account's own number, which is asked for
+explicitly and so is never filtered by that list.
+
 The **WeChat** login path is deliberately **not** implemented: its QR-code flow
 lives in a reference file that could not be fetched, so it could not be
 reproduced faithfully.
@@ -338,13 +345,17 @@ stream request with a plain envelope, and a silent empty stream would be worse.
 | `core.LoginProvider` | URL-and-poll only; it cannot carry the SMS code back. See above. |
 | `core.CredentialImporter` / `core.BundleImporter` | There is no discoverable credential source on disk (the session lives inside the desktop app's own store, in a format that could not be verified) and no bundle format. |
 | `core.CaptchaProvider` | The SMS flow needs no captcha. |
-| `core.BatchPlanner` | The onboarding board is a one-off checklist: each entry is a first-login chore, not a recurring task the scheduler could pace. `core.TaskProvider` alone is enough to show it and run one entry at a time. |
 | `core.HintProvider`, `core.HealthProvider`, `core.Degrader`, `core.PoolStatsReporter` | Not needed for correctness; the module's `Status` already reports per-account state honestly. |
 
 Implemented optional interfaces: **`core.AccountManager`**, **`core.Reviver`**,
 **`core.ModelRefresher`**, **`core.BalanceProvider`**, **`core.PackageProvider`**,
 **`core.CheckinProvider`**, **`core.ModelLimitsProvider`**, **`core.TaskProvider`**,
-**`core.SMSProvider`**, **`core.AutoLoginProvider`**.
+**`core.BatchPlanner`**, **`core.SMSProvider`**, **`core.AutoLoginProvider`**.
+
+`Batches()` exposes the onboarding registry as the **`growth`** batch with
+`PendingOnly` and a 10-second task gap (8-12 seconds after the scheduler's
+±20% jitter) between chores on the same account, so the vendor does not see
+an unnatural burst. The batch still runs one account at a time.
 
 `client_test.go` asserts the ones it claims *and* the ones it must not
 (`LoginProvider`, `CredentialImporter`, `BundleImporter`), so a future change that

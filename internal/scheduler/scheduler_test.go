@@ -565,6 +565,58 @@ func TestAccountGapHonoredAndOrderingIsPerAccountThenPerCode(t *testing.T) {
 	}
 }
 
+func TestTaskGapPacesCodesWithinAnAccount(t *testing.T) {
+	logs := &recorder{}
+	clk := newFakeClock(cstMidnight, logs)
+	f := &fakeClient{
+		name: "fake",
+		batches: []core.Batch{{
+			Name:       batchGrowth,
+			Codes:      []string{"c1", "c2"},
+			TaskGap:    100 * time.Millisecond,
+			AccountGap: 500 * time.Millisecond,
+			Settle:     10 * time.Millisecond,
+		}},
+		accounts: []core.AccountRecord{{ID: "acc1", Enabled: true}, {ID: "acc2", Enabled: true}},
+		rec:      logs,
+	}
+	r := New(deps(registryOf(f), clk, logs))
+	r.Reconfigure(Config{Enabled: true, Growth: Group{Enabled: true, Hours: []int{12}}})
+
+	rep, ok := r.RunBatchNow(context.Background(), "fake", batchGrowth)
+	if !ok {
+		t.Fatal("RunBatchNow: ok = false")
+	}
+	want := []string{
+		"acc1/c1", "sleep", "acc1/c2",
+		"sleep",
+		"acc2/c1", "sleep", "acc2/c2",
+		"sleep", // settle, after the batch
+	}
+	if got := logs.all(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("event order:\n got %v\nwant %v", got, want)
+	}
+	sleeps := clk.durations()
+	if len(sleeps) != 4 {
+		t.Fatalf("sleeps = %v, want two task gaps, one account gap and one settle", sleeps)
+	}
+	if sleeps[0] < 80*time.Millisecond || sleeps[0] > 120*time.Millisecond {
+		t.Fatalf("first task gap = %v, want 100ms +/-20%%", sleeps[0])
+	}
+	if sleeps[1] < 400*time.Millisecond || sleeps[1] > 600*time.Millisecond {
+		t.Fatalf("account gap = %v, want 500ms +/-20%%", sleeps[1])
+	}
+	if sleeps[2] < 80*time.Millisecond || sleeps[2] > 120*time.Millisecond {
+		t.Fatalf("second task gap = %v, want 100ms +/-20%%", sleeps[2])
+	}
+	if sleeps[3] != 10*time.Millisecond {
+		t.Fatalf("settle = %v, want 10ms", sleeps[3])
+	}
+	if rep.Accounts != 2 || rep.Ran != 4 || rep.Failed != 0 {
+		t.Fatalf("report = %+v, want accounts=2 ran=4 failed=0", rep)
+	}
+}
+
 func TestDefaultAccountGapWhenBatchLeavesItZero(t *testing.T) {
 	logs := &recorder{}
 	clk := newFakeClock(cstMidnight, logs)

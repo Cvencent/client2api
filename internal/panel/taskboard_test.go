@@ -33,8 +33,9 @@ type fakeTaskClient struct {
 	// ran is appended by the run goroutine the panel spawns and read by the
 	// test goroutine, so it carries its own lock rather than relying on the
 	// runner having finished.
-	mu  sync.Mutex
-	ran []string
+	mu    sync.Mutex
+	ran   []string
+	ranAt []time.Time
 }
 
 // fakeTaskBalanceClient is a task module that can also report a live balance.
@@ -72,6 +73,13 @@ func (f *fakeTaskClient) codes() []string {
 	return append([]string(nil), f.ran...)
 }
 
+// runTimes returns a copy of the wall-clock instants RunTask was entered.
+func (f *fakeTaskClient) runTimes() []time.Time {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]time.Time(nil), f.ranAt...)
+}
+
 func (f *fakeTaskClient) Name() string                                 { return f.name }
 func (f *fakeTaskClient) Models(context.Context) ([]core.Model, error) { return nil, nil }
 func (f *fakeTaskClient) Chat(context.Context, *core.ChatRequest) (core.Stream, error) {
@@ -87,6 +95,9 @@ func (f *fakeTaskClient) RunTask(ctx context.Context, _, code string) (core.Task
 	if f.runErr != nil {
 		return core.TaskResult{}, f.runErr
 	}
+	f.mu.Lock()
+	f.ranAt = append(f.ranAt, time.Now())
+	f.mu.Unlock()
 	if f.runDelay > 0 {
 		select {
 		case <-time.After(f.runDelay):

@@ -26,10 +26,11 @@
 //
 // Pacing is protocol, not politeness: the vendor rolls back sub-second bursts,
 // so a batch waits Batch.AccountGap (DefaultAccountGap when zero) between two
-// consecutive accounts, with +/-20% jitter so the traffic is not a metronome,
-// and waits Batch.Settle (DefaultSettle when zero) afterwards before the
-// report is published, because upstream scoring lags and an immediate
-// read-back would double-run.
+// consecutive accounts and Batch.TaskGap between two chores within one
+// account, with +/-20% jitter so the traffic is not a metronome. It then
+// waits Batch.Settle (DefaultSettle when zero) afterwards before the report
+// is published, because upstream scoring lags and an immediate read-back
+// would double-run.
 //
 // # Everything is injectable
 //
@@ -859,6 +860,7 @@ func (r *Runner) runBatchAs(ctx context.Context, clientName, batchName, trigger 
 	if gap <= 0 {
 		gap = DefaultAccountGap
 	}
+	taskGap := b.TaskGap
 
 	ranAnAccount := false
 	for _, rec := range accounts {
@@ -903,11 +905,19 @@ func (r *Runner) runBatchAs(ctx context.Context, clientName, batchName, trigger 
 			}
 		}
 		ranAnAccount = true
+		ranACode := false
 
 		for _, code := range accountCodes {
 			if ctx.Err() != nil {
 				break
 			}
+			if ranACode && taskGap > 0 {
+				if !r.sleep(ctx, jitter(taskGap)) {
+					r.log("[scheduler] %s/%s: context done while pacing tasks", clientName, batchName)
+					break
+				}
+			}
+			ranACode = true
 			if !core.CheckinActionAllowsAccount(checkinActions, code, rec) {
 				rep.Skipped++
 				r.log("[scheduler] %s/%s account %q code %q skipped: action is not scoped to this account channel", clientName, batchName, acc, code)

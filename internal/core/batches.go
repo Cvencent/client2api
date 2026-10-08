@@ -36,6 +36,12 @@ type Batch struct {
 	// loses the rewards it was meant to earn.  Zero means the scheduler's
 	// default.
 	AccountGap time.Duration `json:"account_gap,omitempty"`
+	// TaskGap is the minimum wait between two consecutive codes within one
+	// account.  Zero keeps the historical behaviour: a batch's codes run
+	// immediately, one after another.  Modules whose chores look like a human
+	// sequence (Loomy's first-run onboarding, for example) set this so the
+	// vendor does not see a single-second burst.
+	TaskGap time.Duration `json:"task_gap,omitempty"`
 	// Settle is how long to wait after a run before trusting a read-back.
 	// Upstream scoring lags by several seconds, so a batch that immediately
 	// re-reads the board sees stale progress and would double-run.
