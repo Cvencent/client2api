@@ -1,7 +1,6 @@
 package workbuddy
 
 import (
-	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -25,6 +24,7 @@ const (
 	stateReady     = "ready"
 	stateCooling   = "cooling"
 	stateExhausted = "exhausted"
+	stateFault     = "fault"
 	stateInvalid   = "invalid"
 	stateUnknown   = "unknown"
 )
@@ -203,7 +203,7 @@ func cooldownFor(kind ErrKind, retryAfter time.Duration) (time.Duration, string)
 	case ErrHardCredit:
 		return longCreditCooldown, stateExhausted
 	case ErrAccountFault:
-		return accountFaultCooldown, stateExhausted
+		return accountFaultCooldown, stateFault
 	case ErrWafBlock:
 		return wafCooldown, stateCooling
 	case ErrSessionDead:
@@ -259,6 +259,10 @@ type modelCooldown struct {
 	// Hits counts consecutive parks of this model on this account; it drives
 	// the code 11102 backoff.
 	Hits int
+	// Kind distinguishes a vendor rate-limit window from a deterministic
+	// "this model is not available on this account" refusal.  Both park the
+	// model; only the panel cares which, so it can label and time the park.
+	Kind string
 }
 
 type poolEntry struct {
@@ -523,7 +527,7 @@ func (p *Pool) settleExpiredCooldownLocked(e *poolEntry, now time.Time) bool {
 		return false
 	}
 	switch e.state {
-	case stateCooling, stateExhausted, stateInvalid:
+	case stateCooling, stateExhausted, stateFault, stateInvalid:
 	default:
 		return false
 	}
@@ -550,6 +554,31 @@ func (p *Pool) Ready() bool {
 		if e.usable(now) {
 			return true
 		}
+	}
+	return false
+}
+
+// UsableRealm reports whether the pool holds at least one usable account in
+// realm, ignoring per-model parks and occupancy.  It answers "does this install
+// have anything for this realm at all", which is what lets the chat path tell
+// the two ways a pick comes up empty apart: a realm no account serves (a
+// configuration problem) and a realm whose accounts are all parked for the
+// model that was asked for (a platform that is configured but busy).
+//
+// The empty realm means "any realm", exactly as realmMatches does, so a bare
+// model name keeps the soft preference it has everywhere else.
+func (p *Pool) UsableRealm(realm string) bool {
+	if p == nil {
+		return false
+	}
+	now := p.now()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, e := range p.entries {
+		if e == nil || e.auth == nil || !e.usable(now) || !realmMatches(e, realm) {
+			continue
+		}
+		return true
 	}
 	return false
 }
@@ -591,7 +620,11 @@ func realmMatches(e *poolEntry, realm string) bool {
 }
 
 // pickLocked is the historical round-robin, shared by Pick and by the
-// all-models-cooling fallback of PickForModel.  The caller holds p.mu.
+// model-agnostic rotation behind Pick, and behind PickForModelInRealm when the
+// caller named no model at all -- where no per-model park can apply and every
+// account is therefore fair game.  The model-aware path deliberately has no
+// second chance here, for the reason spelled out on PickForModel.  The caller
+// holds p.mu.
 func (p *Pool) pickLocked(skip map[string]bool, now time.Time) (*Auth, bool) {
 	return p.pickLockedRealm(skip, "", now)
 }
@@ -874,9 +907,9 @@ func (p *Pool) counts() poolCounts {
 			}
 			continue
 		}
-		// Not usable: a parked credential with no wall clock waits for an
-		// operator, anything with one is cooling.
-		if e.until.IsZero() {
+		// Not usable: account faults and parked credentials with no wall clock
+		// wait for an operator; the other timed parks are cooling.
+		if e.until.IsZero() || e.state == stateFault {
 			c.disabled++
 		} else {
 			c.cooling++
@@ -946,11 +979,16 @@ func (p *Pool) UsableForModelInRealm(accountID, model, realm string) bool {
 //     each account takes a share of the rotation equal to its score's share of
 //     the sum.  Accounts used inside minPickGap score nothing for this round,
 //     so two concurrent requests do not land on the same credential.
-//  3. If no candidate survives, fall back to the plain round-robin.  Every
-//     account being parked for this model is a real possibility; refusing to
-//     serve at all would turn a model-level problem into an outage, so the
-//     request still goes somewhere and the caller decides what the answer is
-//     worth.
+//  3. If no candidate survives, report that no account can serve the model.
+//     The round-robin is deliberately NOT a fallback here.  A park is the
+//     vendor's own answer -- 11102 says the model does not exist on that
+//     credential, and a 6004 dates the reset -- so handing the account back
+//     does not "still serve the request": it spends an upstream call to
+//     re-ask a question the vendor has already answered, and a 6004 park
+//     re-recorded from "now" slides its own reset window forward, so a busy
+//     pool can hold one account parked for as long as it keeps trying.  An
+//     empty candidate set is the honest answer: the caller turns it into
+//     backpressure or a platform failover.
 //
 // An empty model means "this caller does not know the model" and delegates to
 // Pick, which is what keeps the two paths honest about what they promise.
@@ -1008,8 +1046,13 @@ func (p *Pool) PickForModelInRealm(skip map[string]bool, model, realm string) (*
 		// Only the model-scoped path has anything to warn about: with an empty
 		// model the plain rotation below is the intended answer, not a fallback.
 		if model != "" {
-			p.log("workbuddy: every usable account is cooling down for model %s%s; falling back to round-robin",
+			// Name the model and the realm, never an account: the entries that
+			// could have served this model are exactly the ones the loop above
+			// filtered out, and naming one would blame it for a decision the
+			// pool just made about the model.
+			p.log("workbuddy: no account can serve model %s%s right now (parked for that model or at its in-flight ceiling)",
 				model, realmSuffix(realm))
+			return nil, false
 		}
 		return p.pickLockedRealm(skip, realm, now)
 	}
@@ -1585,7 +1628,7 @@ func (p *Pool) MarkModelBlocked(a *Auth, model, reason string) time.Duration {
 	if ttl <= 0 || ttl > modelBlockMaxTTL {
 		ttl = modelBlockMaxTTL
 	}
-	e.parkModel(model, modelCooldown{Until: now.Add(ttl), Reason: reason, Hits: hits})
+	e.parkModel(model, modelCooldown{Until: now.Add(ttl), Reason: reason, Hits: hits, Kind: core.ModelParkUnsupported})
 	p.log("workbuddy: model %s parked on account %s for %v (%s, hit %d)",
 		model, core.MaskSecret(a.ID()), ttl.Round(time.Second), reason, hits)
 	return ttl
@@ -1619,7 +1662,7 @@ func (p *Pool) MarkModelRateLimited(a *Auth, model string, resetAt time.Time, ba
 			hits = prev.Hits + 1
 		}
 	}
-	mc := modelCooldown{Reason: reason, Hits: hits}
+	mc := modelCooldown{Reason: reason, Hits: hits, Kind: core.ModelParkRateLimit}
 	var ttl time.Duration
 	if !resetAt.IsZero() {
 		until := resetAt
@@ -1810,18 +1853,14 @@ func (p *Pool) Snapshot() []core.AccountStatus {
 		// still refuse one model, so it has to be visible: "state=ready" plus a
 		// 502 for one model is otherwise inexplicable from Status() alone.
 		e.pruneModelCool(now)
-		if len(e.modelCool) > 0 {
-			parks := make([]string, 0, len(e.modelCool))
-			for m, mc := range e.modelCool {
-				if mc.Until.IsZero() {
-					parks = append(parks, m)
-					continue
-				}
-				parks = append(parks, fmt.Sprintf("%s until %s", m, mc.Until.UTC().Format(time.RFC3339)))
-			}
-			sort.Strings(parks)
-			extra["model_cooldowns"] = parks
+		// Published even when empty: the key's presence is what tells the panel
+		// this module reports per-model limits, so "nothing parked" and "this
+		// module cannot say" stay distinguishable.
+		parks := make([]core.ModelPark, 0, len(e.modelCool))
+		for m, mc := range e.modelCool {
+			parks = append(parks, core.NewModelPark(m, mc.Kind, mc.Reason, mc.Until, mc.ResetAt))
 		}
+		extra["model_cooldowns"] = core.SortModelParks(parks)
 		as.Extra = extra
 		out = append(out, as)
 	}
@@ -1845,7 +1884,7 @@ func (p *Pool) Summary() string {
 		switch {
 		case e.usable(now):
 			ready++
-		case e.state == stateInvalid || e.state == stateExhausted:
+		case e.state == stateInvalid || e.state == stateExhausted || e.state == stateFault:
 			parked++
 		default:
 			cooling++

@@ -57,6 +57,13 @@ type Client struct {
 	stateMu   sync.Mutex
 	lastErr   string
 	lastErrAt time.Time
+
+	// loginMu guards the in-flight browser-login sessions and the cached
+	// device identity.  A login that survives a restart is a login nobody can
+	// reason about, so only the machine id is persisted.
+	loginMu        sync.Mutex
+	logins         map[string]*loginSession
+	machineIDCache string
 }
 
 // New builds the client.  It never fails for a missing or malformed credential:
@@ -112,6 +119,7 @@ var (
 	_ core.Client             = (*Client)(nil)
 	_ core.AccountManager     = (*Client)(nil)
 	_ core.CredentialImporter = (*Client)(nil)
+	_ core.LoginProvider      = (*Client)(nil)
 	_ core.BalanceProvider    = (*Client)(nil)
 	_ core.CheckinProvider    = (*Client)(nil)
 	_ core.Reviver            = (*Client)(nil)
@@ -171,11 +179,11 @@ func (c *Client) Status(ctx context.Context) core.Status {
 	switch {
 	case len(accounts) == 0:
 		st.Ready = false
-		st.Detail = "还没有凭据：在 Qoder CN 客户端登录后点「从 Qoder CN 导入」，" +
-			"或手动粘贴设备令牌（CLIENT2API_QODER_TOKEN）"
+		st.Detail = "还没有凭据：在账号页用「浏览器登录」，或从 Qoder CN 客户端导入，" +
+			"也可以手动粘贴设备令牌（CLIENT2API_QODER_TOKEN）"
 	case usable == 0 && gone > 0:
 		st.Ready = false
-		st.Detail = "令牌已被厂商拒绝或已过期；请在 Qoder CN 客户端重新登录后重新导入"
+		st.Detail = "令牌已被厂商拒绝或已过期；请在账号页用「链接重登」重新登录"
 	case usable == 0:
 		st.Ready = false
 		st.Detail = "所有账号都被停用或正在冷却"

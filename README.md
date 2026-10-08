@@ -8,7 +8,7 @@ One OpenAI-compatible gateway in front of sixteen AI backends:
 | `trae/…` | Trae | TRAE SOLO / Trae CN |
 | `zcode/…` | ZCode | Z.AI coding plan (Anthropic Messages upstream) |
 | `kimi/…` | Kimi | Kimi Code CLI |
-| `qoder/…` | Qoder CN | Qoder CN 桌面账号、积分与签到（不提供对话） |
+| `qoder/…` | Qoder CN | Qoder CN 浏览器/桌面账号、积分与签到（不提供对话） |
 | `qwenwork/…` | QwenWork | 千问办公 / QoderWork CN desktop agent |
 | `tabbit/…` | Tabbit | Tabbit Browser (via a sidecar) |
 | `minimaxcode/…` | MiniMax Code | MiniMax Code desktop agent (Anthropic Messages upstream) |
@@ -989,7 +989,7 @@ renderer never calls it either — so there is nothing honest to implement from.
 | trae | yes | yes | yes — loopback redirect on `127.0.0.1`, opens `www.trae.cn/authorization` | yes — `daily-checkin` (CN only) |
 | zcode | yes | yes | yes — polls `POST {api}/oauth/cli/init` → `GET …/poll/{flow_id}` | yes — claims the promotion via the built-in Edge/Chrome captcha solver; `captcha_command` is the headless fallback |
 | kimi | yes | yes | yes — RFC 8628 device grant against `auth.kimi.com`; the CLI is not required | no — no such endpoint exists |
-| qoder | yes | yes — Electron safeStorage + DPAPI on Windows; a pasted token elsewhere | no — the desktop client owns sign-in | yes — daily `CLAIM_BENEFIT` campaign |
+| qoder | yes | yes — Electron safeStorage + DPAPI on Windows; a pasted token elsewhere | yes — browser device grant + PKCE; polls `GET /api/v1/deviceToken/poll` | yes — daily `CLAIM_BENEFIT` campaign |
 | qwenwork | yes | no — nothing on disk holds a usable token | yes — PKCE device flow | yes — `daily`, against the Sash check-in API |
 | tabbit | yes | yes | yes — browser hand-off: opens the sign-in page inside the Tabbit browser through its own launcher, then reads the session cookie back (`local_app` + `handoff_path`; with no launcher it falls back to returning the URL) | no — the module only talks to a local sidecar |
 | minimaxcode | yes | yes | yes — RFC 8628 device grant against `account.minimax.cn`, PKCE, with the CN `user_code` variant; the desktop GUI is not required | no — the product has no check-in |

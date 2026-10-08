@@ -20,11 +20,11 @@ import (
 // AccountManager implementation.
 //
 // The credential is a device token the Qoder CN desktop client mints at login
-// and keeps in an Electron safeStorage blob.  This module can read that blob
-// (credential.go) or accept a pasted token, but it never mints one: the device
-// flow belongs to the desktop client, and a token minted here would be a
-// credential the operator did not ask for.  When the vendor stops accepting a
-// token the remedy is to open Qoder CN, sign in, and import again.
+// and keeps in an Electron safeStorage blob.  This module can also obtain one
+// through the vendor browser device grant or accept a pasted token; it never
+// invents a credential behind the operator's back.  When the vendor stops
+// accepting a token the remedy is the panel's browser re-login, local import,
+// or manual replacement.
 
 const (
 	originConfig = "config"
@@ -471,7 +471,7 @@ func (c *Client) AccountFields(ctx context.Context) []core.FieldSpec {
 			Required:    true,
 			Placeholder: "dt-...",
 			Help: "Qoder CN 客户端的设备令牌，以 dt- 开头。在客户端里打开一次后，" +
-				"用上面的「从 Qoder CN 导入」最省事；也可以手动粘贴。",
+				"优先用上面的「浏览器登录」直接获取；也可以从客户端导入或手动粘贴。",
 		},
 		{
 			Key:         "refresh_token",
@@ -612,7 +612,7 @@ func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, e
 		// error, because that is the one thing the caller could not have known.
 		result.Error = redactErr(err)
 		if failureKind(err) == core.FailureAuth {
-			result.Error = "令牌已被厂商拒绝，请在 Qoder CN 客户端重新登录后导入"
+			result.Error = "令牌已被厂商拒绝，请在账号页用「链接重登」重新登录，或从 Qoder CN 客户端重新导入"
 			c.penalise(id, err, time.Now().UTC())
 		}
 		return result, nil
@@ -633,9 +633,9 @@ func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, e
 //
 // The refresh token Qoder CN issues is deliberately NOT used: a refresh rotates
 // the pair, and rotating it here would silently invalidate the copy the desktop
-// client still holds.  Renewing therefore stays where it belongs -- in the
-// desktop client -- and this method reports honestly so the panel can say
-// "重新登录" when the token is really gone.
+// client still holds.  Renewing therefore stays an explicit operator action
+// (panel browser sign-in or desktop-client import), and this method reports
+// honestly so the panel can say "重新登录" when the token is really gone.
 func (c *Client) RefreshAccount(ctx context.Context, id string) ([]core.RefreshResult, error) {
 	targets := c.store.snapshot()
 	if id != "" {
@@ -663,7 +663,7 @@ func (c *Client) RefreshAccount(ctx context.Context, id string) ([]core.RefreshR
 		}
 		message := redactErr(err)
 		if failureKind(err) == core.FailureAuth {
-			message = "令牌已失效，请在 Qoder CN 客户端重新登录后导入"
+			message = "令牌已失效，请在账号页用「链接重登」重新登录，或从 Qoder CN 客户端重新导入"
 		}
 		results = append(results, core.RefreshResult{AccountID: acc.ID, OK: false, Error: message})
 	}
@@ -744,13 +744,13 @@ func accountRecord(a *account, now time.Time) core.AccountRecord {
 	switch {
 	case a.dead:
 		record.State = "invalid"
-		record.Note = "令牌已被厂商拒绝；请在 Qoder CN 客户端重新登录后重新导入"
+		record.Note = "令牌已被厂商拒绝；请在账号页点「链接重登」重新登录"
 	case !a.Enabled:
 		record.State = "cooling"
 		record.Note = "被操作者停用"
 	case a.expired(now):
 		record.State = "invalid"
-		record.Note = "令牌已过期；请在 Qoder CN 客户端重新登录后重新导入"
+		record.Note = "令牌已过期；请在账号页点「链接重登」重新登录"
 	case !a.cooldownTill.IsZero() && now.Before(a.cooldownTill):
 		record.State = "cooling"
 		record.Note = "冷却中，还有 " + humanAge(a.cooldownTill.Sub(now))

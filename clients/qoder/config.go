@@ -31,6 +31,21 @@ const (
 	// defaultOpenAPIBase serves userinfo, the quota ledger and the campaign
 	// (check-in) endpoints.  It is the only host this module calls.
 	defaultOpenAPIBase = "https://openapi.qoder.com.cn"
+	// defaultAuthBase serves the browser sign-in page and the device-account
+	// picker it wraps.  It is a different host from the OpenAPI base: the
+	// operator signs in on qoder.cn, while the token poll runs on
+	// openapi.qoder.com.cn.
+	defaultAuthBase = "https://qoder.cn"
+	// defaultAuthClientID is the public OAuth client id of the Qoder CN
+	// desktop client.  Device-flow client ids are not secrets, so the
+	// module ships the same constant the vendor's app uses.
+	defaultAuthClientID = "732aef47-9cf2-46a2-95fe-4cebb5d0d1fa"
+	// authBizVariant is the sign-in page's own product selector.
+	authBizVariant = "qoder"
+	// machineIDFile stores the stable device identity the login URL carries.
+	// Minting a new id on every sign-in looks like a new device to the
+	// vendor, so it is persisted next to the credentials.
+	machineIDFile = "machine-id"
 	// defaultClientType is the Cosy-ClientType the desktop client sends
 	// (10 = the Qoder desktop build).  The endpoints reject a request without
 	// it, so it is sent on every call.
@@ -79,9 +94,14 @@ type accountConfig struct {
 // object mean the same thing.
 type config struct {
 	OpenAPIBase string `json:"openapi_base"`
-	ClientType  *int   `json:"client_type"`
-	CosyVersion string `json:"cosy_version"`
-	UserAgent   string `json:"user_agent"`
+	// AuthBase is the browser sign-in host; AuthClientID is the public
+	// OAuth client id.  Both default to the Qoder CN desktop client's own
+	// constants, so an empty config still has a working browser login.
+	AuthBase     string `json:"auth_base"`
+	AuthClientID string `json:"auth_client_id"`
+	ClientType   *int   `json:"client_type"`
+	CosyVersion  string `json:"cosy_version"`
+	UserAgent    string `json:"user_agent"`
 
 	Accounts []accountConfig `json:"accounts"`
 
@@ -107,6 +127,17 @@ type config struct {
 
 func (c config) openAPIBase() string {
 	return strings.TrimRight(firstNonEmpty(c.OpenAPIBase, defaultOpenAPIBase), "/")
+}
+
+// authBase is the host the browser sign-in page lives on.
+func (c config) authBase() string {
+	return strings.TrimRight(firstNonEmpty(c.AuthBase, defaultAuthBase), "/")
+}
+
+// authClientID is the OAuth client id the device flow identifies itself
+// with.  A blank value falls back to the vendor's own public constant.
+func (c config) authClientID() string {
+	return firstNonEmpty(c.AuthClientID, defaultAuthClientID)
 }
 
 func (c config) clientType() int {
@@ -227,6 +258,8 @@ func parseConfig(raw json.RawMessage) (config, error) {
 // itself is handled by configuredAccounts so config-file entries keep order.
 func applyEnv(cfg *config) {
 	envStr(&cfg.OpenAPIBase, "CLIENT2API_QODER_OPENAPI_BASE")
+	envStr(&cfg.AuthBase, "CLIENT2API_QODER_AUTH_BASE")
+	envStr(&cfg.AuthClientID, "CLIENT2API_QODER_AUTH_CLIENT_ID")
 	envStr(&cfg.CosyVersion, "CLIENT2API_QODER_COSY_VERSION")
 	envStr(&cfg.UserAgent, "CLIENT2API_QODER_USER_AGENT")
 }

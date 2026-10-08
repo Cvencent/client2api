@@ -1,6 +1,8 @@
 # `qoder` client
 
-`qoder` 接入的是 **Qoder CN 桌面客户端**（`qoder.com.cn`）。它负责账号池、积分余额、每日签到和本地凭据导入。
+`qoder` 接入的是 **Qoder CN**（`qoder.com.cn` / `qoder.cn`）。它负责浏览器登录、账号池、积分余额、每日签到和本地凭据导入。
+
+账号有两条来源：面板里的浏览器登录（推荐，不需要装客户端），以及从桌面客户端导入的本地凭据。
 
 它**不提供对话接口**。Qoder CN 的推理网关 `gateway.qoder.com.cn` 要求桌面客户端原生安全 SDK 生成逐请求签名；缺少这个签名时，网关会拒绝请求。为了避免把“签名不匹配”伪装成普通的 502 上游故障，本模块的 `Chat` 会明确返回不支持。
 
@@ -8,7 +10,8 @@
 
 | 能力 | 是否支持 | 说明 |
 | --- | --- | --- |
-| 账号池 | 支持 | 导入桌面客户端凭据，或手动粘贴设备令牌 |
+| 账号池 | 支持 | 浏览器登录、导入桌面客户端凭据，或手动粘贴设备令牌 |
+| 浏览器登录 | 支持 | 面板生成厂商登录链接，浏览器确认后账号自动落地（设备授权 + PKCE） |
 | 余额查询 | 支持 | 读取 `GET /api/v2/quota/usage` |
 | 每日签到 | 支持 | 活动开放时领取每日 Credits |
 | 测试/启停/恢复 | 支持 | 测试只读 `GET /api/v1/userinfo` |
@@ -17,12 +20,19 @@
 
 ## 添加账号
 
-推荐路径：
+推荐路径是浏览器登录（不需要装桌面客户端）：
+
+1. 打开本项目的账号页，选择 `qoder`。
+2. 切到“浏览器登录”，点“获取授权链接”，在浏览器里完成登录。
+3. 面板会轮询设备授权；浏览器确认后，账号自动写入账号池，并显示用户 ID、手机号和积分。
+
+如果电脑上已经登录了 Qoder CN 桌面客户端，也可以直接导入：
 
 1. 打开并登录 Qoder CN 桌面客户端。
-2. 打开本项目的账号页，选择 `qoder`。
+2. 在账号页选择 `qoder`，切到“导入凭据”。
 3. 点击“从 Qoder CN 导入”。模块会读取 `%APPDATA%\com.qodercn.app.stable\auth.v1.dat`。
-4. 导入成功后，账号会显示厂商用户 ID、手机号和积分。
+
+浏览器登录走的是 Qoder CN 自己的设备授权：面板把浏览器带到 `qoder.cn/users/sign-in`，授权完成后用 `GET /api/v1/deviceToken/poll` 取回同一个设备令牌。机器标识保存在数据目录下的 `machine-id`，所以重启后仍是同一台设备；账号 ID 取厂商用户 ID（`qoder-<user_id>`），同一个人重新登录会就地覆盖，不会多出一条。
 
 也可以手动粘贴设备令牌。设备令牌通常以 `dt-` 开头。刷新令牌只用于展示，本模块不会使用它换新令牌，以免让桌面客户端手里的凭据失效。
 
@@ -32,7 +42,7 @@ Windows 上读凭据的流程是：
 - AES 密钥来自同目录 `Local State` 的 `os_crypt.encrypted_key`；
 - `encrypted_key` 前面的 `DPAPI` 前缀去掉后，通过当前 Windows 用户的 DPAPI 解包。
 
-非 Windows 平台不能读取桌面凭据，但仍可以手动粘贴设备令牌。
+非 Windows 平台不能读取桌面凭据，但仍可使用面板里的浏览器登录，或手动粘贴设备令牌。
 
 ## 签到
 
@@ -58,6 +68,8 @@ POST /sash/api/v1/me/campaigns/{campaignId}/claim
   "clients": {
     "qoder": {
       "openapi_base": "https://openapi.qoder.com.cn",
+      "auth_base": "https://qoder.cn",
+      "auth_client_id": "732aef47-9cf2-46a2-95fe-4cebb5d0d1fa",
       "client_type": 10,
       "cosy_version": "0.4.3",
       "user_agent": "Qoder",
@@ -97,6 +109,9 @@ POST /sash/api/v1/me/campaigns/{campaignId}/claim
 | `CLIENT2API_QODER_EXPIRES_AT` | 过期时间 |
 | `CLIENT2API_QODER_USER_DATA_DIR` | 覆盖 Qoder CN 的 Electron 用户目录 |
 | `CLIENT2API_QODER_OPENAPI_BASE` | 覆盖 OpenAPI 根地址 |
+| `CLIENT2API_QODER_AUTH_BASE` | 覆盖浏览器登录页根地址 |
+| `CLIENT2API_QODER_AUTH_CLIENT_ID` | 覆盖设备授权 OAuth client id |
+| `CLIENT2API_QODER_MACHINE_ID` | 覆盖持久化的设备标识（UUID） |
 | `CLIENT2API_QODER_COSY_VERSION` | 覆盖客户端版本头 |
 | `CLIENT2API_QODER_USER_AGENT` | 覆盖 User-Agent |
 

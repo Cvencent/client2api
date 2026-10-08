@@ -16,7 +16,8 @@ import (
 // 重登弹层有没有把标题和说明改对、跑完之后有没有对着这个账号再清一次标记。
 
 // TestReloginButtonIsWiredToTheCapabilityMatrix: 手机号账号走接码，其余会登录的
-// 模块走浏览器登录，两者互斥；而且只有凭据看起来坏了的那一行才渲染按钮。
+// 模块走浏览器登录；两者都具备时同时给出，而且只有凭据看起来坏了的那一行
+// 才渲染按钮。WorkBuddy 正好同时具备这三个能力。
 func TestReloginButtonIsWiredToTheCapabilityMatrix(t *testing.T) {
 	body := poolStatsFuncBody(t, reloginSource(t), "accRowHTML")
 
@@ -30,17 +31,29 @@ func TestReloginButtonIsWiredToTheCapabilityMatrix(t *testing.T) {
 		// 手机号优先取操作员自己记的备注，其次才是模块的 label；账号 id 不参与，
 		// 否则 trae 这种纯数字 id 会被错当成手机号而走错重登分支。
 		`const phoneAcct = /^\d{6,15}$/.test(String(a.operator_note || a.label || "").trim());`,
-		"if (caps.sms && phoneAcct) {",
-		"} else if (caps.login && needsRelogin(a)) {",
+		"if (needsRelogin(a)) {",
+		"if (caps.login) {",
+		`if (phoneAcct && (caps.auto_login || caps.sms)) {`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("accRowHTML 少了这一句能力判断：%s", want)
 		}
 	}
 
-	// 两条分支都要真的渲染按钮，且都挂 data-do="relogin"。
+	// 两个入口都挂 data-do="relogin"，但用 data-mode 明确区分手动和接码。
 	if n := strings.Count(body, `data-do="relogin"`); n != 2 {
-		t.Errorf("accRowHTML 里 data-do=\"relogin\" 出现 %d 次，want 2（接码 + 浏览器）", n)
+		t.Errorf("accRowHTML 里 data-do=\"relogin\" 出现 %d 次，want 2（链接 + 接码）", n)
+	}
+	for _, want := range []string{
+		`data-mode="link"`,
+		`const phoneMode = caps.auto_login ? "auto" : "sms";`,
+		`data-mode="' + phoneMode + '"`,
+		">链接重登</button>",
+		">接码重登</button>",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("accRowHTML 少了这一条重登入口：%s", want)
+		}
 	}
 	if !strings.Contains(body, `data-id="' + esc(a.id) + '"`) {
 		t.Errorf("重登按钮没有带上账号 id")
@@ -53,9 +66,10 @@ func TestNeedsReloginCoversTheThreeCredentialSignals(t *testing.T) {
 	body := poolStatsFuncBody(t, reloginSource(t), "needsRelogin")
 
 	for _, want := range []string{
-		`st === "invalid" || st === "expired" || st === "unauthorized"`,
+		`st === "invalid" || st === "expired" || st === "unauthorized" || st === "fault" || st === "account_fault"`,
 		`f.expired === true`,
 		`f.relogin === true`,
+		`note.startsWith("account_fault")`,
 		"login_required",
 		"expired",
 		"unauthorized",
@@ -67,7 +81,7 @@ func TestNeedsReloginCoversTheThreeCredentialSignals(t *testing.T) {
 	}
 }
 
-// TestReloginDispatchesAndBailsOut: 有手机号会租号就走接码，否则走浏览器登录；
+// TestReloginDispatchesAndBailsOut: 按钮模式决定走链接登录还是接码自动登录；
 // 两样都没有要报错，而不是静默打开一个空弹层。
 func TestReloginDispatchesAndBailsOut(t *testing.T) {
 	src := reloginSource(t)
@@ -76,21 +90,32 @@ func TestReloginDispatchesAndBailsOut(t *testing.T) {
 	if !strings.Contains(body, "const phoneAcct = /^\\d{6,15}$/.test(phone);") {
 		t.Errorf("openRelogin 不再把账号名当手机号来判定")
 	}
-	// 能自己跑完整个登录的模块（loomy）走自动重登，号码钉住、验证码也由模块代取。
-	if !strings.Contains(body, "if (autoOn(n) && phoneAcct && !loginOn(n)) return openAutoRelogin(n, acc, phone);") {
-		t.Errorf("openRelogin 不再把自动登录模块交给自动重登")
+	// 点击「链接登录」只开厂商授权页，不去碰接码平台。
+	if !strings.Contains(body, `if (mode === "link" && loginOn(n)) return openBrowserRelogin(n, acc);`) {
+		t.Errorf("openRelogin 不再把链接登录交给浏览器重登")
 	}
-	if !strings.Contains(body, "if (smsOn(n) && phoneAcct) return openSMSRelogin(n, acc, phone);") {
-		t.Errorf("openRelogin 不再把手机号账号交给接码重登")
+	// WorkBuddy 同时有 login + auto_login；接码按钮必须选完整的自动登录，
+	// 而不是面板侧那个只启动普通登录会话、自己再取一次码的半截流程。
+	if !strings.Contains(body, `if (mode === "auto" && phoneAcct && autoOn(n)) return openAutoRelogin(n, acc, phone);`) {
+		t.Errorf("openRelogin 不再把自动接码重登交给模块完整的 AutoLogin")
 	}
-	if !strings.Contains(body, "if (loginOn(n)) return openBrowserRelogin(n, acc);") {
-		t.Errorf("openRelogin 不再把其它账号交给浏览器重登")
+	if !strings.Contains(body, `if (mode === "sms" && phoneAcct && smsOn(n) && !autoOn(n)) return openSMSRelogin(n, acc, phone);`) {
+		t.Errorf("openRelogin 不再保留仅有 SMSProvider 时的面板接码回落")
 	}
 	if !strings.Contains(body, `toast(n + " 的账号既不能用接码重登，也没有浏览器登录，无法在面板里重新登录", "err")`) {
 		t.Errorf("openRelogin 在两条路都不通时既不报错也不返回")
 	}
 	if !strings.Contains(src, `function loginOn(n) { return !!(capsOf(n || $("#addClient").value) || {}).login; }`) {
 		t.Errorf("index.html 丢了 loginOn，openRelogin 的分支会直接抛错")
+	}
+}
+
+// TestReloginButtonPassesItsModeToTheDispatcher: 两个入口用 data-mode 区分，
+// 点击时必须把它传给 openRelogin；否则两行按钮最终还是会落到同一个旧分支。
+func TestReloginButtonPassesItsModeToTheDispatcher(t *testing.T) {
+	body := poolStatsFuncBody(t, reloginSource(t), "act")
+	if !strings.Contains(body, `openRelogin(n, id, btn.dataset.mode || "")`) {
+		t.Errorf("重登按钮没有把 data-mode 传给 openRelogin")
 	}
 }
 

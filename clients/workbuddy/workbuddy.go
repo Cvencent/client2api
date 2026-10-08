@@ -823,6 +823,12 @@ func (c *Client) fetchAllRealmModels() ([]core.Model, error) {
 // Chat implements core.Client.  It returns core.ErrNotConfigured when no usable
 // credential exists, core.ErrUnsupported for a request it cannot express, and a
 // classified upstream error otherwise.
+//
+// core.ErrPlatformExhausted means the install does hold accounts for the
+// request's realm but none of them can take this model right now: the vendor
+// parked it on every one of them, or they are all at their in-flight ceiling.
+// It is kept distinct from ErrNotConfigured so a router that has another
+// platform behind this one can move on instead of reporting a missing account.
 func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -962,6 +968,17 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 	}
 	if busy {
 		return nil, core.ErrBusy
+	}
+	// Nothing was attempted and nothing refused: the picker simply found no
+	// account for this model.  A realm this install serves no account in is
+	// the configuration problem ErrNotConfigured has always meant; a realm
+	// whose accounts are all parked for this model is a platform that is
+	// configured but cannot take the request, which the router may skip
+	// without blaming an account.
+	for _, realm := range route.realms {
+		if c.pool.UsableRealm(realm) {
+			return nil, core.ErrPlatformExhausted
+		}
 	}
 	return nil, core.ErrNotConfigured
 }

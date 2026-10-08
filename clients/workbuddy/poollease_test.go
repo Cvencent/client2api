@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"client2api/internal/core"
 )
@@ -359,5 +360,31 @@ func TestWorkbuddyPoolStatsReportTheLiveCounters(t *testing.T) {
 	}
 	if s.StickySessions != 2 {
 		t.Fatalf("PoolStats.StickySessions = %d, want 2", s.StickySessions)
+	}
+}
+
+// TestWorkbuddyChatRefusesAModelEveryAccountIsParkedFor is the end-to-end face
+// of the same rule: when the pool has no account left for the requested model,
+// Chat must not spend an upstream call re-asking a question the vendor already
+// answered with 6004.  It reports the platform exhausted so the router can hand
+// the request to another platform instead of logging a failure against an
+// account that is only parked for that one model.
+func TestWorkbuddyChatRefusesAModelEveryAccountIsParkedFor(t *testing.T) {
+	rt := &fakeRT{}
+	c, _ := newTestClient(t, rt)
+	auth := c.findAuthByUID("uid-test-0001")
+	if auth == nil {
+		t.Fatal("the fixture holds no known account")
+	}
+
+	req := chatRequest()
+	c.pool.MarkModelRateLimited(auth, strings.TrimSpace(req.Model), time.Now().Add(2*time.Hour), time.Minute, modelRateLimitReason)
+
+	_, err := c.Chat(context.Background(), req)
+	if !errors.Is(err, core.ErrPlatformExhausted) {
+		t.Fatalf("Chat = %v, want core.ErrPlatformExhausted for a model parked on every account", err)
+	}
+	if got := len(rt.calls); got != 0 {
+		t.Fatalf("Chat made %d upstream call(s) for a model the vendor already parked", got)
 	}
 }

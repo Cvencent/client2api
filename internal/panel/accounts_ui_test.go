@@ -293,8 +293,10 @@ func TestAccountColumnsSplitTheTableEvenly(t *testing.T) {
 	}
 
 	widths := regexp.MustCompile(`#view-accounts table\.acc \.col-[a-z]+ \{ width: ([0-9.]+)%; \}`).FindAllStringSubmatch(src, -1)
-	if len(widths) != 13 {
-		t.Fatalf("expected 13 account column widths, got %d", len(widths))
+	// 加列必须同时加一条宽度规则：少一条，剩下几列就按固定布局被重新划分，
+	// 看上去像某一列忽然变宽/变窄。
+	if len(widths) != 14 {
+		t.Fatalf("expected 14 account column widths, got %d", len(widths))
 	}
 	total := 0.0
 	for _, m := range widths {
@@ -341,12 +343,10 @@ func TestAccountGroupHeaderHasNoActionButtons(t *testing.T) {
 	if !strings.Contains(head, `g.rows.length + ' 个通道</span></div>'`) {
 		t.Error("组头没有显示通道数")
 	}
-	// 组头是 3 格（标记、账号名、状态），其余宽度靠 colspan 吃掉；列数一变
-	// 组头就会错位，而错位只在有多通道账号时看得见。
-	// 组头本身是 3 格（标记、账号名、状态）；余额列存在时再多一格，其余宽度
-	// 靠 colspan 吃掉。列数一变组头就会错位，而错位只在有多通道账号时看得见。
-	if !strings.Contains(head, `colspan="' + (showBal ? cols - 5 : cols - 4) + '"`) {
-		t.Error("组头的 colspan 没有跟着表头列数走（showBal ? cols - 5 : cols - 4）")
+	// 固定格：标记、账号名、状态、模型；余额列存在时再多一格，其余宽度靠
+	// colspan 吃掉。
+	if !strings.Contains(head, `colspan="' + (showBal ? cols - 6 : cols - 5) + '"`) {
+		t.Error("组头的 colspan 没有跟着表头列数走（showBal ? cols - 6 : cols - 5）")
 	}
 	// 收起时也要看得到余额：同一个账号只有部分通道能报余额（ZCode 只有 JWT
 	// 通道能报计划余额），只看第一条通道会让余额永远显示不出来。

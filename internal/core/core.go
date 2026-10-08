@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sort"
 	"time"
 )
 
@@ -292,6 +293,64 @@ type AccountStatus struct {
 	// AccountRecord.Identity, and is what lets a panel show several credentials
 	// for one account as channels of it rather than as separate accounts.
 	Identity string `json:"identity,omitempty"`
+}
+
+// ModelPark is one model a pool has parked on one account right now.  A pool
+// with a per-model cooldown publishes these in AccountStatus.Extra under the
+// "model_cooldowns" key so the panel can answer "which models can this
+// account
+// serve at this instant" without parsing the module's own prose.
+//
+// It is structured rather than a rendered sentence on purpose: the panel
+// labels a vendor rate-limit window and a deterministic "this model is not
+// available here" refusal differently, and it has to time the first one.  The
+// key must be present -- even as an empty slice -- on every account of a
+// module that parks models: its absence is how the panel tells "nothing is
+// parked" apart from "this module does not report model-level limits".
+type ModelPark struct {
+	Model string `json:"model"`
+	// Kind is ModelParkRateLimit for a timed window or ModelParkUnsupported
+	// for a model the vendor refuses on this account.
+	Kind   string `json:"kind"`
+	Reason string `json:"reason,omitempty"`
+	// Until is when the park lapses, RFC3339 UTC.  Empty means the module
+	// could not say.
+	Until string `json:"until,omitempty"`
+	// ResetAt is the vendor's own reset instant when it gave one.  It is kept
+	// apart from Until because "the vendor said 14:30" and "our backoff runs
+	// out at 14:30" read differently to an operator.
+	ResetAt string `json:"reset_at,omitempty"`
+}
+
+// The two kinds a ModelPark can be, shared by the pools that raise parks and
+// the panel that renders them.
+const (
+	ModelParkRateLimit   = "rate_limit"
+	ModelParkUnsupported = "unsupported"
+)
+
+// NewModelPark builds one wire entry from a module's own park record.  until
+// and resetAt may be zero; a zero time is omitted rather than serialised as
+// "0001-01-01".
+func NewModelPark(model, kind, reason string, until, resetAt time.Time) ModelPark {
+	p := ModelPark{Model: model, Kind: kind, Reason: reason}
+	if !until.IsZero() {
+		p.Until = until.UTC().Format(time.RFC3339)
+	}
+	if !resetAt.IsZero() {
+		p.ResetAt = resetAt.UTC().Format(time.RFC3339)
+	}
+	return p
+}
+
+// SortModelParks puts a park list in a stable order and guarantees it is
+// non-nil, so a module with nothing parked publishes [] rather than null.
+// The panel renders an empty list and a missing list differently.
+func SortModelParks(parks []ModelPark) []ModelPark {
+	out := make([]ModelPark, 0, len(parks))
+	out = append(out, parks...)
+	sort.Slice(out, func(i, j int) bool { return out[i].Model < out[j].Model })
+	return out
 }
 
 // Status is a module's self-report.

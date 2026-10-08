@@ -89,6 +89,10 @@ type modelCooldown struct {
 	// Hits counts consecutive parks of the same kind, which is what the
 	// geometric backoff doubles on.
 	Hits int
+	// Kind distinguishes a vendor rate-limit window from a deterministic
+	// "this model is not available on this account" refusal.  Both park the
+	// model; only the panel cares which, so it can label and time the park.
+	Kind string
 }
 
 // markPickedLocked records that this pool just handed an account out.  The
@@ -406,7 +410,7 @@ func (p *Pool) MarkModelBlocked(a *Auth, model, reason string) time.Duration {
 	if ttl <= 0 || ttl > modelBlockMaxTTL {
 		ttl = modelBlockMaxTTL
 	}
-	e.parkModel(model, modelCooldown{Until: now.Add(ttl), Reason: reason, Hits: hits})
+	e.parkModel(model, modelCooldown{Until: now.Add(ttl), Reason: reason, Hits: hits, Kind: core.ModelParkUnsupported})
 	p.log("trae: model %s parked on account %s for %v (%s, hit %d)",
 		model, core.MaskSecret(a.ID()), ttl.Round(time.Second), reason, hits)
 	return ttl
@@ -440,7 +444,7 @@ func (p *Pool) MarkModelRateLimited(a *Auth, model string, resetAt time.Time, ba
 			hits = prev.Hits + 1
 		}
 	}
-	mc := modelCooldown{Reason: reason, Hits: hits}
+	mc := modelCooldown{Reason: reason, Hits: hits, Kind: core.ModelParkRateLimit}
 	var ttl time.Duration
 	if !resetAt.IsZero() {
 		until := resetAt

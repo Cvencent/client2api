@@ -975,16 +975,17 @@ html { scrollbar-gutter: stable; }
 #view-accounts table.acc { table-layout: fixed; width: 100%; }
 #view-accounts table.acc .col-mark { width: 1%; }
 #view-accounts table.acc .col-account { width: 10%; }
-#view-accounts table.acc .col-state { width: 6.5%; }
+#view-accounts table.acc .col-state { width: 6%; }
+#view-accounts table.acc .col-models { width: 6%; }
 #view-accounts table.acc .col-prio { width: 6.5%; }
-#view-accounts table.acc .col-bal { width: 7%; }
-#view-accounts table.acc .col-rate { width: 7%; }
-#view-accounts table.acc .col-inflight { width: 5%; }
+#view-accounts table.acc .col-bal { width: 6%; }
+#view-accounts table.acc .col-rate { width: 6%; }
+#view-accounts table.acc .col-inflight { width: 4%; }
 #view-accounts table.acc .col-usage { width: 12%; }
 #view-accounts table.acc .col-last { width: 7%; }
-#view-accounts table.acc .col-expiry { width: 7%; }
+#view-accounts table.acc .col-expiry { width: 6%; }
 #view-accounts table.acc .col-note { width: 15%; }
-#view-accounts table.acc .col-fields { width: 6%; }
+#view-accounts table.acc .col-fields { width: 4.5%; }
 #view-accounts table.acc .col-acts { width: 10%; }
 #view-accounts table.acc th.sortable { cursor: pointer; user-select: none; white-space: nowrap; transition: color .15s ease, background .15s ease; }
 #view-accounts table.acc th.sortable:hover { color: var(--accent-text); background: var(--surface-2); }
@@ -994,6 +995,28 @@ html { scrollbar-gutter: stable; }
 #view-accounts table.acc th.sortable.sort-on .sort-mark { color: var(--accent); }
 #view-accounts table.acc .accPrio { width: 52px; min-width: 52px; padding: 4px 5px; text-align: center; }
 #view-accounts table.acc td.c-prio, #view-accounts table.acc th.c-prio { text-align: center; }
+/* 模型列：一个 chip 概括「可用 N · 限流 M」，点开看整个账号的模型明细。
+   chip 窄了会省略号截断，完整计数在 title 里；三种颜色和弹层里一致。 */
+#view-accounts table.acc td.c-models { overflow: hidden; }
+#view-accounts table.acc td.c-models .models-chip { font-variant-numeric: tabular-nums; }
+#view-accounts table.acc td.c-models .models-chip.ok { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+#view-accounts table.acc td.c-models .models-chip.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+#view-accounts table.acc td.c-models .models-chip.err { background: var(--bad-soft); color: var(--bad); border-color: transparent; }
+/* 模型弹层：一个账号一段，下面是模型格子。绿色可用、黄色限流（带解除时间）、
+   红色不支持。整个弹层只读，没有需要提交的东西，所以页脚只有一个关闭按钮。 */
+.mpark-acct { margin: 0 0 16px; }
+.mpark-acct:last-child { margin-bottom: 0; }
+.mpark-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 7px; }
+.mpark-head .nm { font-weight: 620; font-size: 13.5px; }
+.mpark-head .hint { font-size: 11.5px; }
+.mpark-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); gap: 6px; }
+.mpark-m { display: flex; align-items: center; gap: 7px; padding: 7px 10px; border: 1px solid var(--line-soft); border-radius: 7px; background: var(--surface-2); font-size: 12px; min-width: 0; }
+.mpark-m .ic { flex: none; width: 13px; text-align: center; font-weight: 700; }
+.mpark-m .nm { flex: 1 1 auto; min-width: 0; font: 11.5px/1.35 var(--mono); color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mpark-m .st { flex: none; font-size: 11px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.mpark-m.ok .ic { color: var(--ok); }
+.mpark-m.limit .ic, .mpark-m.limit .st { color: var(--warn); }
+.mpark-m.bad .ic, .mpark-m.bad .st { color: var(--bad); }
 #view-accounts table.acc td > .name,
 #view-accounts table.acc td > .hint { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
 #view-accounts table.acc td > .hint { font-size: 11px; }
@@ -1420,13 +1443,13 @@ input, select, textarea { transition-property: border-color, box-shadow, backgro
         <div class="tbl-wrap">
         <table class="acc">
           <colgroup>
-            <col class="col-mark"><col class="col-account"><col class="col-state"><col class="col-prio">
+            <col class="col-mark"><col class="col-account"><col class="col-state"><col class="col-models"><col class="col-prio">
             <col class="col-bal"><col class="col-rate"><col class="col-inflight"><col class="col-usage">
             <col class="col-last"><col class="col-expiry"><col class="col-note"><col class="col-fields"><col class="col-acts">
           </colgroup>
           <thead><tr>
             <th class="mark" aria-hidden="true"></th>
-            <th>账号</th><th>状态</th><th>优先级</th><th class="c-bal sortable" id="accSortBal" tabindex="0" aria-label="按余额排序" aria-sort="none" title="点击按余额升序，再点切到降序，第三次恢复默认顺序">余额 <span class="sort-mark" aria-hidden="true">↕</span></th><th>成功 / 失败</th><th>在途</th><th>用量</th><th>最近成功</th><th>到期</th><th class="c-note" title="模块返回的账号状态说明，例如冷却、限流、凭据失效；它不是右侧的账号标识">状态说明</th><th>字段</th><th class="c-acts"></th>
+            <th>账号</th><th>状态</th><th class="c-models" title="这个账号当前能用的模型数，以及被厂商限流的模型数；点开看明细">模型</th><th>优先级</th><th class="c-bal sortable" id="accSortBal" tabindex="0" aria-label="按余额排序" aria-sort="none" title="点击按余额升序，再点切到降序，第三次恢复默认顺序">余额 <span class="sort-mark" aria-hidden="true">↕</span></th><th>成功 / 失败</th><th>在途</th><th>用量</th><th>最近成功</th><th>到期</th><th class="c-note" title="模块返回的账号状态说明，例如冷却、限流、凭据失效；它不是右侧的账号标识">状态说明</th><th>字段</th><th class="c-acts"></th>
           </tr></thead>
           <tbody id="accBody"></tbody>
         </table>
@@ -2118,6 +2141,23 @@ input, select, textarea { transition-property: border-color, box-shadow, backgro
   </div>
 </div>
 
+<!-- 模型明细：账号池「模型」列点开的只读弹层。一个账号一段，列出它所在
+     realm 的模型：可用（绿）、限流（黄，带解除时间）、该账号不支持（红）。
+     数据全部来自模块自己上报的状态，弹层不产生任何厂商调用。 -->
+<div class="veil" id="modelVeil">
+  <div class="dlg" style="width:560px">
+    <header>
+      <h3>模型可用情况</h3>
+      <div class="hint" id="modelHelp"></div>
+    </header>
+    <div class="body" id="modelBody"></div>
+    <footer>
+      <span class="grow"></span>
+      <button id="btnModelClose">关闭</button>
+    </footer>
+  </div>
+</div>
+
 <!-- 密钥 -->
 <div class="veil" id="keyVeil" data-lock="1">
   <div class="dlg" style="width:420px">
@@ -2606,8 +2646,13 @@ function renderStats() {
 function accountState(a) {
   const raw = String((a && a.state) || "unknown").toLowerCase();
   const disabled = !(a && a.enabled);
+  const note = String((a && a.note) || "").toLowerCase();
   // 冷却中 = 链路/凭据本身是好的，只是额度或限流导致暂时不可调度；
   // 禁用   = 人工停用或凭据已失效，需要重新登录/处理。
+  // 旧版本把 account_fault 也写成 exhausted；note 仍能证明这不是冷却。
+  if (raw === "fault" || raw === "account_fault" || note.startsWith("account_fault")) {
+    return { key: "disabled", label: "账号异常", cls: "err" };
+  }
   if (raw === "cooling" || raw === "exhausted" || raw === "low_credit" || raw === "quota_exceeded" || raw === "rate_limited") {
     return { key: "cooling", label: "冷却中", cls: "warn" };
   }
@@ -2645,6 +2690,159 @@ function fieldSummary(a) {
   const all = ks.map(k => k + "=" + String(f[k]));
   return '<span class="chip" title="' + esc(all.join(" / ")) + '">' +
     esc(all[0].slice(0, 28)) + (all.length > 1 ? " +" + (all.length - 1) : "") + '</span>';
+}
+
+// ── 账号的模型可用情况 ───────────────────────────────────────────────
+// workbuddy / trae 会把被厂商限流的模型写进 Status().Accounts[].Extra 的
+// model_cooldowns，账号池列表据此画出「模型」列：可用多少个、限流多少个，
+// 点开看该账号所在 realm 的完整模型清单和每个模型的状态。
+//
+// 键「在不在」本身就是信号：模块报了 key（哪怕是空数组）说明它会上报模型
+// 级限流；没这个 key 的模块就是不上报，界面必须把「没有限流」和「说不了」
+// 分开，不能编一个空清单出来。
+
+// acctStatusExtra 取某一行账号的状态 extra。账号记录本身（AccountRecord）
+// 不带状态 extra，它在 GET /panel/api/status 的 Accounts[].Extra 里；账号记录
+// 自己带了就用它自己的，两者都没有就返回空对象。
+function acctStatusExtra(n, a) {
+  const own = (a && a.extra) || null;
+  const c = poolClient(n);
+  const st = (c && c.extra && c.extra[a.id]) || null;
+  return Object.assign({}, st || {}, own || {});
+}
+
+// realmModels 取某个 realm 的模型清单（去掉 "realm:" 前缀）。overview 的
+// clients[].models 是 "cn:glm-5.3" 这种带前缀的写法，同一个模块的账号按
+// fields.realm 分服务区，模型也按前缀分开。
+function realmModels(n, realm) {
+  const c = clientInfo(n);
+  const all = (c && c.models) || [];
+  const prefix = realm ? realm + ":" : "";
+  const out = [];
+  all.forEach(raw => {
+    const id = String(raw || "");
+    if (!id) return;
+    if (prefix) {
+      if (id.slice(0, prefix.length) === prefix) out.push(id.slice(prefix.length));
+      return;
+    }
+    const i = id.indexOf(":");
+    out.push(i >= 0 ? id.slice(i + 1) : id);
+  });
+  return out;
+}
+
+// modelParkEntry 把一个 model_cooldowns 条目摊平成 {model, kind, until}。
+// 新服务端发结构化对象；滚动升级中被缓存的老页面可能还收到 "model until
+// 2026-…" 这种句子，兜底解析一下，别把整句当成模型名。
+function modelParkEntry(p) {
+  if (typeof p === "string") {
+    const i = p.indexOf(" until ");
+    return { model: (i < 0 ? p : p.slice(0, i)).trim(), kind: "rate_limit", until: i < 0 ? "" : p.slice(i + 7).trim() };
+  }
+  if (p && typeof p === "object") {
+    return { model: String(p.model || ""), kind: String(p.kind || "rate_limit"), until: String(p.until || p.reset_at || "") };
+  }
+  return { model: "", kind: "rate_limit", until: "" };
+}
+
+// parkRemaining 把解除时间说成人话：本地几点 + 还剩多久。
+function parkRemaining(ts) {
+  const t = Date.parse(ts);
+  if (!isFinite(t)) return ts ? String(ts) : "";
+  const mins = Math.max(0, Math.round((t - Date.now()) / 60000));
+  let tail;
+  if (mins <= 0) tail = "即将解除";
+  else if (mins < 60) tail = "还剩 " + mins + " 分钟";
+  else if (mins < 1440) tail = "还剩 " + Math.round(mins / 60) + " 小时";
+  else tail = "还剩 " + Math.round(mins / 1440) + " 天";
+  const d = new Date(t);
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return hh + ":" + mm + " " + tail;
+}
+
+// acctModelSummary 汇总一行账号的模型可用情况。返回 null 表示这个模块不上报
+// 模型级限流（没有 model_cooldowns 键）；否则返回 {realm, catalog, parks,
+// avail, limited, unsupported, catalogKnown}。厂商没拒绝过的模型按「可用」算。
+function acctModelSummary(n, a) {
+  const ex = acctStatusExtra(n, a);
+  const raw = ex ? ex.model_cooldowns : undefined;
+  if (!Array.isArray(raw)) return null;
+  const f = (a && a.fields) || {};
+  const realm = String(f.realm || ex.realm || "");
+  const catalog = realmModels(n, realm);
+  const parks = {};
+  raw.forEach(p => {
+    const e = modelParkEntry(p);
+    if (e.model) parks[e.model] = e;
+  });
+  let avail = 0, limited = 0, unsupported = 0;
+  const seen = {};
+  catalog.forEach(m => {
+    seen[m] = true;
+    const p = parks[m];
+    if (!p) { avail++; return; }
+    if (p.kind === "unsupported") unsupported++; else limited++;
+  });
+  // 目录之外的 park 也要算进去：模块可能为了一个已经下架的模型还在倒计时。
+  Object.keys(parks).forEach(m => {
+    if (seen[m]) return;
+    if (parks[m].kind === "unsupported") unsupported++; else limited++;
+  });
+  return { realm, catalog, parks, avail, limited, unsupported, catalogKnown: catalog.length > 0 };
+}
+
+// modelSummaryBits 把三个计数拼成一行「可用 N · 限流 M · 不支持 K」。
+function modelSummaryBits(avail, limited, unsupported) {
+  const bits = ["可用 " + avail];
+  if (limited) bits.push("限流 " + limited);
+  if (unsupported) bits.push("不支持 " + unsupported);
+  return bits.join(" · ");
+}
+
+// modelCellBits 是「模型」列里那颗 chip 的可见文字。列只有 6%，装不下
+// 「可用 12 · 限流 2」，而被限流的账号最该一眼看见的正是「有限流」这件事：
+// 有问题时只显示问题本身，完整拆分挂在 title 上，明细在弹层里。
+function modelCellBits(avail, limited, unsupported) {
+  const bad = limited + unsupported;
+  if (!bad) return "可用 " + avail;
+  if (limited && unsupported) return "受限 " + bad;
+  if (limited) return "限流 " + limited;
+  return "不支持 " + unsupported;
+}
+
+// 模型列的格子：可用/限流/不支持三个数字，点开是明细。一个都不剩时标红，
+// 有部分限流时标黄，全可用时标绿。不上报的模块留一个「—」加说明。
+function accModelsCell(n, a) {
+  const sum = acctModelSummary(n, a);
+  if (!sum) return '<span class="hint" title="该平台不报模型级限流；账号的冷却请看「状态」列">—</span>';
+  if (!sum.catalogKnown && !sum.limited && !sum.unsupported) {
+    return '<span class="hint" title="该平台还没有上报模型目录">—</span>';
+  }
+  const full = modelSummaryBits(sum.avail, sum.limited, sum.unsupported);
+  const short = modelCellBits(sum.avail, sum.limited, sum.unsupported);
+  let cls = "ok";
+  if (!sum.avail) cls = "err";
+  else if (sum.limited || sum.unsupported) cls = "warn";
+  return '<button class="xs chip models-chip ' + cls + '" data-do="models" data-ids="' + esc(a.id) + '" title="' + esc(full + "；点击查看明细") + '">' + esc(short) + '</button>';
+}
+
+// 组头的模型格：把组里每个通道汇总成一行不可点的文字，明细展开后逐行看。
+function accGroupModelsCell(n, rows) {
+  let avail = 0, limited = 0, unsupported = 0, any = false, known = false;
+  (rows || []).forEach(r => {
+    const s = acctModelSummary(n, r);
+    if (!s) return;
+    any = true;
+    if (s.catalogKnown) known = true;
+    avail += s.avail; limited += s.limited; unsupported += s.unsupported;
+  });
+  if (!any) return '<span class="hint">—</span>';
+  const text = modelSummaryBits(avail, limited, unsupported);
+  const cls = (limited || unsupported) ? "warn" : "ok";
+  const tip = known ? "组里每个通道各自统计；展开后逐行查看" : "该平台还没有上报模型目录";
+  return '<span class="chip ' + cls + '" title="' + esc(text + "；" + tip) + '">' + esc(modelCellBits(avail, limited, unsupported)) + '</span>';
 }
 
 // ago renders an RFC3339 stamp as "多久以前".  The gateway reports the account's
@@ -3125,7 +3323,7 @@ function renderAccounts() {
   syncAccSortHeader(CUR);
   $("#btnBalanceAll").hidden = !showBal;
   syncBalanceButton(CUR);
-  const cols = showBal ? 13 : 12;
+  const cols = showBal ? 14 : 13;
   if (!CUR) { tb.innerHTML = '<tr><td colspan="' + cols + '" class="hint">没有已注册的客户端</td></tr>'; $("#accNote").textContent = ""; hideAccPager(); return; }
   // accNote 是当前客户端的注解：模块说不可服务时原样带上它给的理由
   // （health.note），只要有账号在途占满就在末尾追加一句；为 0 时一个字不动。
@@ -3207,6 +3405,7 @@ function renderAccounts() {
         '<td><div class="name">' + esc(g.identity) + ' <span class="chip">' + g.rows.length + ' 个通道</span></div>' +
           '<div class="hint">' + esc(g.rows[0].client || CUR) + ' · 同一账号的不同登录方式</div></td>' +
         '<td>' + stateChip(st) + '</td>' +
+        '<td class="c-models">' + accGroupModelsCell(CUR, g.rows) + '</td>' +
         '<td class="num c-prio">' + accGroupPriorityCell(g.rows) + '</td>' +
         // 分组行上只有「展开/收起」这一个动作：启用、停用、测试都按通道走，一个
         // "整组操作"的按钮会把两个不同凭据的状态搅在一起，操作员也说不清刚才改的
@@ -3215,7 +3414,7 @@ function renderAccounts() {
         // （ZCode 的计划余额只认 JWT，而组里第一条往往是 api-key），收起
         // 时不显示的话，操作员看到的永远是「-」。展开后每行照旧各报各的。
         (showBal ? '<td class="num c-bal">' + accGroupBalanceCell(g.rows) + '</td>' : '') +
-        '<td colspan="' + (showBal ? cols - 5 : cols - 4) + '" class="hint">' + esc(st.on + "/" + st.of + " 个通道已启用" + (open ? "；每一行可以单独启用、停用和测试" : "；点这一行展开")) + '</td>' +
+        '<td colspan="' + (showBal ? cols - 6 : cols - 5) + '" class="hint">' + esc(st.on + "/" + st.of + " 个通道已启用" + (open ? "；每一行可以单独启用、停用和测试" : "；点这一行展开")) + '</td>' +
       '</tr>' +
       g.rows.map(a => accRowHTML(a, caps, acts, showBal, true, open, g.key)).join("");
   }).join("");
@@ -3298,19 +3497,20 @@ function accountHint(a) {
 // needsRelogin 回答的是「这个账号现在像不像凭据坏了」。只有这种账号才值得在行
 // 内摆一个「重登」，否则每行都挂一个按钮，健康的池子反而更难读。判据全部取模块
 // 自己给的机器词，不猜：
-//   · state 已经是 invalid / expired / unauthorized；
+//   · state 已经是 invalid / expired / unauthorized / fault / account_fault；
 //   · fields.expired 为真（codearts 就是这种：state 还叫 ready，令牌已经过期）；
 //   · fields.relogin 为真（模块自己判定这份凭据已经死了，trae 的 401 就是）；
-//   · note 里出现 login_required / expired / unauthorized / no_credential。
+//   · note 以 account_fault 开头，或出现 login_required / expired / unauthorized / no_credential。
 function needsRelogin(a) {
   const st = String((a && a.state) || "").toLowerCase();
-  if (st === "invalid" || st === "expired" || st === "unauthorized") return true;
+  if (st === "invalid" || st === "expired" || st === "unauthorized" || st === "fault" || st === "account_fault") return true;
   const f = (a && a.fields) || {};
   if (f.expired === true || f.expired === "true") return true;
   // 模块主动声明的信号：它自己知道这份凭据已经死了（trae 的 1001/4010 与
   // 401 就是这种），比下面按词猜 note 更准。
   if (f.relogin === true || f.relogin === "true") return true;
   const note = String((a && a.note) || "").toLowerCase();
+  if (note.startsWith("account_fault")) return true;
   return /login_required|expired|unauthorized|no_credential|invalid[_-]?token|(^|[^0-9])401([^0-9]|$)/.test(note);
 }
 
@@ -3431,19 +3631,26 @@ function accRowHTML(a, caps, acts, showBal, chan, open, groupKey) {
     }
   }
   // 重登：比「恢复」多一步真实的重新登录，因为 session-dead 的账号光清
-  // 标记是活不过来的。两条路，同一排只出一个按钮：
-  //   · 会租号的模块 + 手机号账号 → 接码重登，号码买回来、验证码自动取；
-  //   · 其余会登录的模块（cline / codearts …）→ 浏览器重登，开厂商自己的
-  //     授权页，人点完自动落盘。
-  // 两条都只在账号确实像凭据坏了时出现（state 或 note 说了 expired /
+  // 标记是活不过来的。只要模块会登录，就给一个手动链接入口；如果模块还会
+  // 自动接码，同一个账号再给一个接码入口。WorkBuddy 这两种能力都有，所以
+  // 重新登录时不再被迫二选一。
+  //
+  // 按钮只在账号确实像凭据坏了时出现（state 或 note 说了 expired /
   // invalid / 需要重新登录），健康的账号不铺按钮。
   // 手机号优先取操作员自己记的备注，其次才是模块的 label。id 不参与：trae 的
   // id 本身就是一串数字，拿它当手机号会把浏览器重登错走成接码。
   const phoneAcct = /^\d{6,15}$/.test(String(a.operator_note || a.label || "").trim());
-  if (caps.sms && phoneAcct) {
-    btns.push('<button class="xs" data-do="relogin" data-id="' + esc(a.id) + '" title="用这个账号自己的手机号重新登录（接码平台自动取验证码），成功后清除禁用/冷却状态">重登</button>');
-  } else if (caps.login && needsRelogin(a)) {
-    btns.push('<button class="xs" data-do="relogin" data-id="' + esc(a.id) + '" title="为这个账号重新走一遍厂商登录（拿一个新的授权链接或设备码），完成后凭据就地更新并清除失效标记">重登</button>');
+  if (needsRelogin(a)) {
+    if (caps.login) {
+      btns.push('<button class="xs" data-do="relogin" data-mode="link" data-id="' + esc(a.id) + '" title="打开厂商登录链接，你自己完成登录；成功后账号会就地更新并清除异常状态">链接重登</button>');
+    }
+    if (phoneAcct && (caps.auto_login || caps.sms)) {
+      const phoneMode = caps.auto_login ? "auto" : "sms";
+      const phoneTitle = caps.auto_login
+        ? "用账号绑定的手机号，由接码平台自动收验证码并完成整个登录"
+        : "租回账号绑定的手机号并自动取验证码，你在厂商页面确认登录";
+      btns.push('<button class="xs primary" data-do="relogin" data-mode="' + phoneMode + '" data-id="' + esc(a.id) + '" title="' + phoneTitle + '">接码重登</button>');
+    }
   }
   // 余额走一次真实的厂商调用（POST 而不是 GET 就是为了说明这点），
   // 只有实现 BalanceReader 的模块才有 caps.balance；没有就别渲染按钮。
@@ -3461,6 +3668,7 @@ function accRowHTML(a, caps, acts, showBal, chan, open, groupKey) {
     '<td class="mark"><span class="pulse" style="background:' + (accountState(a).key === "ready" ? "var(--ok)" : (accountState(a).key === "cooling" ? "var(--warn)" : "var(--bad)")) + '"></span></td>' +
     '<td><div class="name">' + (chan ? '<span class="branch">└</span> ' : '') + esc(accountIdentity(a)) + realmTag(a) + '</div><div class="hint">' + esc(accountHint(a)) + '</div></td>' +
     '<td>' + stateChip(a) + '</td>' +
+    '<td class="c-models">' + accModelsCell(CUR, a) + '</td>' +
     '<td class="num c-prio">' + accPriorityCell(a, caps) + '</td>' +
     (showBal ? '<td class="num c-bal">' + accBalanceCell(a) + '</td>' : '') +
     '<td class="num">' + accRateCell(a) + '</td>' +
@@ -3539,6 +3747,51 @@ function closeAccountNote() {
   $("#noteErr").hidden = true;
   hideVeil($("#noteVeil"));
 }
+
+/* ── 模型明细弹层 ─────────────────────────────────────────────────────
+   「模型」列点开的就是它。只读，数据全来自已经拿到的 status + overview，
+   不发任何请求，所以打开/关闭都是瞬时的。 */
+function modelCellHTML(m, p) {
+  const name = '<span class="nm" title="' + esc(m) + '">' + esc(m) + '</span>';
+  if (!p) return '<div class="mpark-m ok"><span class="ic">✓</span>' + name + '</div>';
+  if (p.kind === "unsupported") {
+    return '<div class="mpark-m bad"><span class="ic">⊘</span>' + name + '<span class="st">该账号不支持</span></div>';
+  }
+  const when = p.until ? parkRemaining(p.until) : "";
+  return '<div class="mpark-m limit"><span class="ic">✕</span>' + name + '<span class="st">' + esc(when ? "限流至 " + when : "限流中") + '</span></div>';
+}
+function openModelsDialog(n, ids) {
+  const list = (ids || []).filter(Boolean);
+  const secs = [];
+  list.forEach(id => {
+    const a = accById(n, id);
+    if (!a) return;
+    const sum = acctModelSummary(n, a);
+    const realm = sum ? sum.realm : String(((a.fields || {}).realm) || "");
+    let head = '<div class="mpark-head"><span class="nm">' + esc(accountIdentity(a)) + '</span>';
+    if (realm) head += '<span class="realm-tag">' + esc(realmName(n, realm)) + '</span>';
+    head += sum
+      ? '<span class="hint">' + esc(modelSummaryBits(sum.avail, sum.limited, sum.unsupported)) + '</span>'
+      : '<span class="hint">该平台不报模型级限流</span>';
+    head += '</div>';
+    let grid;
+    if (!sum) {
+      grid = '<div class="hint">这个模块不上报单个模型的限流状态；整个账号一起冷却时请看「状态」列。</div>';
+    } else if (!sum.catalog.length && !sum.limited && !sum.unsupported) {
+      grid = '<div class="hint">模块还没有上报模型目录。</div>';
+    } else {
+      const cells = [];
+      sum.catalog.forEach(m => cells.push(modelCellHTML(m, sum.parks[m])));
+      Object.keys(sum.parks).forEach(m => { if (sum.catalog.indexOf(m) < 0) cells.push(modelCellHTML(m, sum.parks[m])); });
+      grid = '<div class="mpark-grid">' + cells.join("") + '</div>';
+    }
+    secs.push('<div class="mpark-acct">' + head + grid + '</div>');
+  });
+  $("#modelHelp").textContent = "只统计模块自己上报的状态：厂商没拒绝过的模型按可用算。";
+  $("#modelBody").innerHTML = secs.join("") || '<div class="hint">没有可显示的账号数据。</div>';
+  showVeil($("#modelVeil"));
+}
+function closeModelsDialog() { hideVeil($("#modelVeil")); }
 async function saveAccountNote() {
   const id = NOTE.id;
   if (!id) return;
@@ -3718,7 +3971,7 @@ async function act(btn) {
       openTasks(n, id);
       return;
     } else if (doIt === "relogin") {
-      openRelogin(n, id);
+      openRelogin(n, id, btn.dataset.mode || "");
       return;
     } else if (doIt === "note") {
       openAccountNote(id);
@@ -7718,16 +7971,22 @@ async function startLogin() {
 // 重登：账号凭据坏了的时候，从账号行直接发起一次真实的重新登录。两条路共用
 // 同一个「添加账号」弹层——授权链接、设备码、轮询状态都已经在那里了——差别只在
 // 标题、一句说明，以及成功后 loginDone 会对着这个账号再调一次 revive。
-function openRelogin(n, id) {
+function openRelogin(n, id, mode) {
   const acc = ((ACCTS[n] || {}).accounts || []).find(a => String(a.id) === String(id));
   if (!acc) { toast("找不到账号 " + id, "err"); return; }
   const phone = String(acc.operator_note || acc.label || "").trim();
   const phoneAcct = /^\d{6,15}$/.test(phone);
-  // 模块自己能跑完整个登录的（loomy）：手机号钉住，模块自己收码提交，人不用做任何事。
-  // 会开浏览器、需要人在厂商页面上点确认的（workbuddy）走下面的接码重登。
-  if (autoOn(n) && phoneAcct && !loginOn(n)) return openAutoRelogin(n, acc, phone);
-  if (smsOn(n) && phoneAcct) return openSMSRelogin(n, acc, phone);
-  if (loginOn(n)) return openBrowserRelogin(n, acc);
+  // 按钮自带模式：链接登录只走浏览器授权，接码重登优先走模块完整的自动登录。
+  // sms 只作为仅有 SMSProvider、没有 AutoLoginProvider 的模块回落。
+  if (mode === "link" && loginOn(n)) return openBrowserRelogin(n, acc);
+  if (mode === "auto" && phoneAcct && autoOn(n)) return openAutoRelogin(n, acc, phone);
+  if (mode === "sms" && phoneAcct && smsOn(n) && !autoOn(n)) return openSMSRelogin(n, acc, phone);
+  // 兼容旧调用（没有 mode）：优先完整自动登录，其次浏览器，最后才是面板接码。
+  if (!mode) {
+    if (autoOn(n) && phoneAcct) return openAutoRelogin(n, acc, phone);
+    if (loginOn(n)) return openBrowserRelogin(n, acc);
+    if (smsOn(n) && phoneAcct) return openSMSRelogin(n, acc, phone);
+  }
   toast(n + " 的账号既不能用接码重登，也没有浏览器登录，无法在面板里重新登录", "err");
 }
 
@@ -8241,6 +8500,14 @@ $("#accBody").addEventListener("click", ev => {
   // 空态里那些「别的客户端有 N 个匹配」的徽章：切过去，搜索框里的关键词留着。
   const go = ev.target.closest && ev.target.closest("button[data-goto]");
   if (go) { CUR = go.dataset.goto; ACC_PAGE = 1; renderAccounts(); return; }
+  // 「模型」列：只读弹层，数据全在手里，不发请求，也不改任何状态。它必须
+  // 在 act() 之前拦下——act() 的分支里没有 models，落到那里会什么都不做。
+  const md = ev.target.closest && ev.target.closest('button[data-do="models"]');
+  if (md) {
+    const ids = String(md.dataset.ids || md.dataset.id || "").split(",").filter(Boolean);
+    openModelsDialog(CUR, ids);
+    return;
+  }
   const b = ev.target.closest && ev.target.closest("button[data-do]");
   if (b) { act(b); return; }
   // 多通道账号的分组行整行可点，展开/收起它下面的通道行。只重画这张表，不重新
@@ -8650,6 +8917,8 @@ $("#btnAdd").addEventListener("click", openAdd);
 $("#btnCloseAdd").addEventListener("click", closeAdd);
 $("#addVeil").addEventListener("click", ev => { if (ev.target === $("#addVeil")) closeAdd(); });
 $("#noteVeil").addEventListener("click", ev => { if (ev.target === $("#noteVeil")) closeAccountNote(); });
+$("#modelVeil").addEventListener("click", ev => { if (ev.target === $("#modelVeil")) closeModelsDialog(); });
+$("#btnModelClose").addEventListener("click", closeModelsDialog);
 $("#btnNoteClose").addEventListener("click", closeAccountNote);
 $("#btnNoteClear").addEventListener("click", () => { $("#noteInput").value = ""; saveAccountNote(); });
 $("#btnNoteSave").addEventListener("click", saveAccountNote);
@@ -8728,6 +8997,7 @@ function closeTopVeil() {
   if (!v || v.dataset.lock === "1") return false;
   if (v.id === "addVeil") { closeAdd(); return true; }
   if (v.id === "noteVeil") { closeAccountNote(); return true; }
+  if (v.id === "modelVeil") { closeModelsDialog(); return true; }
   if (v.id === "taskVeil") { closeTasks(); return true; }
   if (v.id === "capVeil") { if (CAP.resolve) capSettle(false, new Error("已取消人机验证")); return true; }
   hideVeil(v);

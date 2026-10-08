@@ -1,7 +1,6 @@
 package trae
 
 import (
-	"strings"
 	"testing"
 	"time"
 
@@ -266,12 +265,15 @@ func TestTraePoolSnapshotRendersAParkedModel(t *testing.T) {
 	if len(snap) != 1 {
 		t.Fatalf("snapshot len = %d", len(snap))
 	}
-	rendered, _ := snap[0].Extra["model_cooldowns"].([]string)
-	if len(rendered) != 1 || rendered[0] == "" {
-		t.Fatalf("model_cooldowns = %#v", snap[0].Extra["model_cooldowns"])
+	parks, ok := snap[0].Extra["model_cooldowns"].([]core.ModelPark)
+	if !ok || len(parks) != 1 {
+		t.Fatalf("model_cooldowns = %#v, want one []core.ModelPark entry", snap[0].Extra["model_cooldowns"])
 	}
-	if !strings.Contains(rendered[0], "model-x") {
-		t.Fatalf("parked model not rendered: %q", rendered[0])
+	if parks[0].Model != "model-x" {
+		t.Fatalf("parked model = %q, want model-x", parks[0].Model)
+	}
+	if parks[0].Kind != core.ModelParkUnsupported {
+		t.Fatalf("parked kind = %q, want %q", parks[0].Kind, core.ModelParkUnsupported)
 	}
 }
 

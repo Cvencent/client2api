@@ -1,5 +1,7 @@
 {
   "openapi_base": "https://openapi.qoder.com.cn",
+  "auth_base": "https://qoder.cn",
+  "auth_client_id": "732aef47-9cf2-46a2-95fe-4cebb5d0d1fa",
   "client_type": 10,
   "cosy_version": "0.4.3",
   "user_agent": "Qoder",

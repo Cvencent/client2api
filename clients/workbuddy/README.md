@@ -301,7 +301,13 @@ next real refusal parks the account with its own deadline.
 
 1. `Chat` picks a usable account (round-robin, skipping ones already tried in
    this request) and pre-refreshes the token if it expires within
-   `refresh_window_seconds`.
+   `refresh_window_seconds`.  The pick is model-aware: an account the vendor
+   has parked for that model is never a candidate, not even as a last resort,
+   because handing it back would spend a call re-asking the question the
+   vendor's own `11102`/`6004` already answered -- and a `6004` park
+   re-recorded from "now" slides its reset window forward.  When nothing can
+   take the model the module answers `core.ErrPlatformExhausted`, which the
+   gateway turns into a failover rather than a failure against an account.
 2. The body is rewritten in the reference's exact order: `stream: true`;
    `max_completion_tokens` → `max_tokens`; `stream_options.include_usage`;
    `tool_choice` flattened to the string form the vendor accepts; `developer` →

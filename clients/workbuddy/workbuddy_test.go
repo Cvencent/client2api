@@ -805,7 +805,7 @@ func TestCooldownFor(t *testing.T) {
 		wantZero  bool
 	}{
 		{ErrHardCredit, 0, stateExhausted, false},
-		{ErrAccountFault, 0, stateExhausted, false},
+		{ErrAccountFault, 0, stateFault, false},
 		{ErrWafBlock, 0, stateCooling, false},
 		{ErrSessionDead, 0, stateCooling, false},
 		{ErrSoftRate, 45 * time.Second, stateCooling, false},

@@ -8,7 +8,6 @@ package trae
 import (
 	"errors"
 	"fmt"
-	"sort"
 	"sync"
 	"time"
 
@@ -417,18 +416,14 @@ func (p *Pool) Snapshot() []core.AccountStatus {
 		// still refuse one model, so it has to be visible: state=ready plus a
 		// failure for one model is otherwise inexplicable from Status() alone.
 		e.pruneModelCool(now)
-		if len(e.modelCool) > 0 {
-			parks := make([]string, 0, len(e.modelCool))
-			for m, mc := range e.modelCool {
-				if mc.Until.IsZero() {
-					parks = append(parks, m)
-					continue
-				}
-				parks = append(parks, fmt.Sprintf("%s until %s", m, mc.Until.UTC().Format(time.RFC3339)))
-			}
-			sort.Strings(parks)
-			extra["model_cooldowns"] = parks
+		// Published even when empty: the key's presence is what tells the panel
+		// this module reports per-model limits, so "nothing parked" and "this
+		// module cannot say" stay distinguishable.
+		parks := make([]core.ModelPark, 0, len(e.modelCool))
+		for m, mc := range e.modelCool {
+			parks = append(parks, core.NewModelPark(m, mc.Kind, mc.Reason, mc.Until, mc.ResetAt))
 		}
+		extra["model_cooldowns"] = core.SortModelParks(parks)
 		as := core.AccountStatus{
 			ID:      e.auth.ID(),
 			Label:   e.auth.Label(),

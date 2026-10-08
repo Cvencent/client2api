@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"client2api/internal/core"
 )
 
 // reviveClient builds a Client whose pool and account store live in dir, with
@@ -119,7 +121,9 @@ func TestTraeReviveClearsModelParks(t *testing.T) {
 		t.Fatal("a reviving operator expects every model park to be lifted")
 	}
 	for _, s := range c.pool.Snapshot() {
-		if parks, has := s.Extra["model_cooldowns"]; has {
+		// The key is always present for a module that reports model parks;
+		// what must be gone is every entry in it.
+		if parks, ok := s.Extra["model_cooldowns"].([]core.ModelPark); ok && len(parks) > 0 {
 			t.Fatalf("model parks survived the revive: %v", parks)
 		}
 	}

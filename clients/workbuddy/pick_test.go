@@ -126,6 +126,55 @@ func TestWorkbuddyClearModelCooldownOnlyClearsBackoffParks(t *testing.T) {
 	}
 }
 
+// TestWorkbuddyPoolSnapshotDescribesModelParks pins the structured shape the
+// panel needs: a parked model arrives as {model, kind, until, reset_at}, not as
+// a rendered sentence.  The panel has to label a vendor rate-limit window
+// differently from a deterministic "this model is not here" refusal, and it has
+// to time the first one; parsing the module's prose from JavaScript would be
+// worse.
+func TestWorkbuddyPoolSnapshotDescribesModelParks(t *testing.T) {
+	a, _ := pickAuths()
+	p, clk := newPickPool([]*Auth{a})
+
+	p.MarkModelBlocked(a, "refused-model", ModelBlockReason)
+	p.MarkModelRateLimited(a, "limited-model", clk.at.Add(2*time.Hour), time.Minute, modelRateLimitReason)
+
+	snap := p.Snapshot()
+	if len(snap) != 1 {
+		t.Fatalf("snapshot len = %d, want 1", len(snap))
+	}
+	parks, ok := snap[0].Extra["model_cooldowns"].([]core.ModelPark)
+	if !ok {
+		t.Fatalf("model_cooldowns = %#v, want []core.ModelPark", snap[0].Extra["model_cooldowns"])
+	}
+	if len(parks) != 2 {
+		t.Fatalf("parks = %#v, want two entries", parks)
+	}
+	// Sorted by model id, so the panel's render order is stable across polls.
+	if parks[0].Model != "limited-model" || parks[1].Model != "refused-model" {
+		t.Fatalf("parks = %#v, want a model-sorted list", parks)
+	}
+	limited, refused := parks[0], parks[1]
+	if limited.Kind != core.ModelParkRateLimit {
+		t.Errorf("limited kind = %q, want %q", limited.Kind, core.ModelParkRateLimit)
+	}
+	if limited.Reason != modelRateLimitReason {
+		t.Errorf("limited reason = %q, want %q", limited.Reason, modelRateLimitReason)
+	}
+	if got, want := limited.ResetAt, clk.at.Add(2*time.Hour).UTC().Format(time.RFC3339); got != want {
+		t.Errorf("limited reset_at = %q, want %q", got, want)
+	}
+	if limited.Until == "" {
+		t.Error("a dated park must carry the instant it lapses")
+	}
+	if refused.Kind != core.ModelParkUnsupported {
+		t.Errorf("refused kind = %q, want %q", refused.Kind, core.ModelParkUnsupported)
+	}
+	if refused.Until == "" {
+		t.Error("a 11102 backoff must still carry the instant it lapses")
+	}
+}
+
 // TestWorkbuddyModelScopedFailureDrivesTheModelPark drives the wiring end to
 // end: the classified Error carries the scope, failureDetail forwards it, and
 // MarkFailureForModel picks the right policy.
@@ -173,17 +222,26 @@ func TestWorkbuddyModelScopedFailureDrivesTheModelPark(t *testing.T) {
 	}
 }
 
-// TestWorkbuddyPoolPickForModelFallsBackRatherThanFailing: stickiness and model
-// parks are optimisations.  When every account is parked for the model the
-// request must still be served, exactly as it was before.
-func TestWorkbuddyPoolPickForModelFallsBackRatherThanFailing(t *testing.T) {
+// TestWorkbuddyPoolPickForModelRefusesWhenEveryAccountIsParked: stickiness and
+// model parks are NOT only optimisations, which is the correction production
+// traffic forced.  The fallback this test used to pin served a model-parked
+// request from the very account the vendor had just parked for that model, so a
+// busy pool re-hit the vendor's 6004 on every burst and re-recorded the park
+// from "now" -- walking the reset window forward and filling the recent-calls
+// view with failures against a credential that was healthy for every other
+// model.  A park is the vendor's own answer, so an empty candidate set is the
+// answer here.  The model-agnostic pick below is untouched, which is what keeps
+// a park scoped to the one model it was recorded for.
+func TestWorkbuddyPoolPickForModelRefusesWhenEveryAccountIsParked(t *testing.T) {
 	a, b := pickAuths()
 	p, _ := newPickPool([]*Auth{a, b})
 	p.MarkModelBlocked(a, "model-x", ModelBlockReason)
 	p.MarkModelBlocked(b, "model-x", ModelBlockReason)
-	got, ok := p.PickForModel(nil, "model-x")
-	if !ok || got == nil {
-		t.Fatal("a fully parked model must fall back to the model-agnostic pick")
+	if got, ok := p.PickForModel(nil, "model-x"); ok {
+		t.Fatalf("PickForModel = %s, want no candidate: every account is parked for that model", got.ID())
+	}
+	if got, ok := p.Pick(nil); !ok || got == nil {
+		t.Fatal("the model-agnostic pick must keep rotating over a model park")
 	}
 }
 
@@ -400,5 +458,39 @@ func TestWorkbuddyConversationKeyFallsBackToContent(t *testing.T) {
 	// And with nothing to derive from, stickiness stays off as before.
 	if got := conversationKey(&core.ChatRequest{}, ChatMeta{}); got != "" {
 		t.Fatalf("key = %q, want empty", got)
+	}
+}
+
+// TestWorkbuddyPoolPickForModelSkipsTheParkedAccountWhenTheRestAreBusy is the
+// shape that produced a stream of bogus "candidate failed" rows in production:
+// the one account that may serve the model is at its in-flight ceiling, and the
+// only other entry the round-robin could still hand out is the one the vendor
+// has just parked for that exact model.  Walking the rotation onto the parked
+// account re-asks a question the vendor already answered -- and because a 6004
+// park is recorded from "now", every one of those attempts slides the window
+// forward again, so the account never gets to recover inside the reset it was
+// promised.  A park has to mean something: no candidate is the honest answer,
+// and the caller gets to hand the request to another platform.
+func TestWorkbuddyPoolPickForModelSkipsTheParkedAccountWhenTheRestAreBusy(t *testing.T) {
+	a, b := pickAuths()
+	p, clk := newPickPool([]*Auth{a, b})
+	p.SetMaxInFlight(1)
+	p.MarkModelRateLimited(a, "model-x", clk.at.Add(time.Hour), time.Minute, modelRateLimitReason)
+	if !p.Acquire(b) {
+		t.Fatal("Acquire(b) = false below a ceiling of 1")
+	}
+
+	if got, ok := p.PickForModel(nil, "model-x"); ok {
+		if got == nil {
+			t.Fatal("PickForModel = ok with a nil account")
+		}
+		t.Fatalf("PickForModel = %s, want no candidate: the only free account is parked for that model", got.ID())
+	}
+
+	// Releasing the other account makes room again: the park is about the
+	// model, not about the pool.
+	p.Release(b)
+	if got, ok := p.PickForModel(nil, "model-x"); !ok || got == nil || got.ID() != b.ID() {
+		t.Fatalf("PickForModel after the release = %v (ok=%v), want %s", got, ok, b.ID())
 	}
 }

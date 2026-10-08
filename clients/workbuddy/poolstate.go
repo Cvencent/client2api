@@ -186,7 +186,7 @@ func (p *Pool) applyStagedLocked(fresh *poolEntry) {
 		return
 	}
 	switch rec.State {
-	case stateCooling, stateExhausted, stateInvalid:
+	case stateCooling, stateExhausted, stateFault, stateInvalid:
 		fresh.state = rec.State
 		fresh.until = rec.CooldownUntil
 		fresh.note = rec.Note
