@@ -124,11 +124,11 @@ jobs:
           case "${{ matrix.goos }}" in
             windows)
               NAME="client2api-v${V}-windows-amd64.zip"
-              zip -q "$NAME" client2api.exe configs/client2api.example.json README.md
+              zip -q "$NAME" client2api.exe configs/client2api.example.json README.md README.zh-CN.md
               ;;
             *)
               NAME="client2api-v${V}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz"
-              tar czf "$NAME" client2api configs/client2api.example.json README.md
+              tar czf "$NAME" client2api configs/client2api.example.json README.md README.zh-CN.md
               ;;
           esac
           echo "name=$NAME" >> "$GITHUB_ENV"

@@ -23,7 +23,7 @@
 //	client2api.ico          shortcut icon
 //	configs/                live config plus the example
 //	data/                   account pool and usage history (optional)
-//	README.md, LICENSE
+//	README.md, README.zh-CN.md, LICENSE
 package main
 
 import (

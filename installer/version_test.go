@@ -69,6 +69,7 @@ func TestBuildScriptStagesEveryPayloadInput(t *testing.T) {
 		"client2api.exe",
 		"probe.exe",
 		"README.md",
+		"README.zh-CN.md",
 		"LICENSE",
 		"client2api.ico",
 		"client2api.json",
@@ -80,6 +81,28 @@ func TestBuildScriptStagesEveryPayloadInput(t *testing.T) {
 	for _, name := range required {
 		if !strings.Contains(body, name) {
 			t.Errorf("installer/build.ps1 never mentions %s, which the installer payload depends on", name)
+		}
+	}
+}
+
+// TestReadmesExistAndCrossLink keeps the repository and release-facing
+// archives from drifting back to a single README.
+func TestReadmesExistAndCrossLink(t *testing.T) {
+	english, err := os.ReadFile(filepath.Join("..", "README.md"))
+	if err != nil {
+		t.Fatalf("read README.md: %v", err)
+	}
+	chinese, err := os.ReadFile(filepath.Join("..", "README.zh-CN.md"))
+	if err != nil {
+		t.Fatalf("read README.zh-CN.md: %v", err)
+	}
+
+	for name, body := range map[string]string{"README.md": string(english), "README.zh-CN.md": string(chinese)} {
+		if !strings.Contains(body, "[English](README.md)") {
+			t.Errorf("%s is missing the English README link", name)
+		}
+		if !strings.Contains(body, "[简体中文](README.zh-CN.md)") {
+			t.Errorf("%s is missing the Chinese README link", name)
 		}
 	}
 }

@@ -171,6 +171,7 @@ Write-Step 'building panelsmoke.exe'
 if ($LASTEXITCODE -ne 0) { throw "go build ./cmd/panelsmoke failed ($LASTEXITCODE)" }
 
 Copy-Item -Force (Join-Path $repoRoot 'README.md') $PayloadDirectory
+Copy-Item -Force (Join-Path $repoRoot 'README.zh-CN.md') $PayloadDirectory
 Copy-Item -Force (Join-Path $repoRoot 'LICENSE')   $PayloadDirectory
 Copy-Item -Force (Join-Path $installerDir 'client2api.ico') $PayloadDirectory
 

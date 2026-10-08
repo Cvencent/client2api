@@ -1,5 +1,7 @@
 # client2api
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 One OpenAI-compatible gateway in front of sixteen AI backends:
 
 | route | client | what it wraps |
@@ -8,15 +10,15 @@ One OpenAI-compatible gateway in front of sixteen AI backends:
 | `trae/…` | Trae | TRAE SOLO / Trae CN |
 | `zcode/…` | ZCode | Z.AI coding plan (Anthropic Messages upstream) |
 | `kimi/…` | Kimi | Kimi Code CLI |
-| `qoder/…` | Qoder CN | Qoder CN 浏览器/桌面账号、积分与签到（不提供对话） |
-| `qwenwork/…` | QwenWork | 千问办公 / QoderWork CN desktop agent |
+| `qoder/…` | Qoder CN | Qoder CN browser/desktop accounts, credits and check-in (no chat) |
+| `qwenwork/…` | QwenWork | Qwen Office / QoderWork CN desktop agent |
 | `tabbit/…` | Tabbit | Tabbit Browser (via a sidecar) |
 | `minimaxcode/…` | MiniMax Code | MiniMax Code desktop agent (Anthropic Messages upstream) |
 | `cline/…` | Cline | Cline (cline.bot) — WorkOS credential, OpenAI-shaped upstream |
-| `lobsterai/…` | LobsterAI | 有道龙虾 LobsterAI (Youdao) — OpenAI-shaped, SSE only |
-| `codearts/…` | CodeArts | 华为 CodeArts IDE model service (SDK-HMAC-SHA256) |
-| `loomy/…` | Loomy | 讯飞 Loomy (iFlytek) — HMAC-SHA1 signed account endpoints |
-| `raccoon/…` | Raccoon | 商汤小浣熊 Raccoon Work (SenseTime) |
+| `lobsterai/…` | LobsterAI | Youdao LobsterAI — OpenAI-shaped, SSE only |
+| `codearts/…` | CodeArts | Huawei CodeArts IDE model service (SDK-HMAC-SHA256) |
+| `loomy/…` | Loomy | iFlytek Loomy — HMAC-SHA1 signed account endpoints |
+| `raccoon/…` | Raccoon | SenseTime Raccoon Work |
 | `openrouter/…` | OpenRouter | OpenRouter (openrouter.ai) — multi-vendor router whose ids contain a slash; free models only by default (`free_only`) |
 | `opencode/…` | OpenCode Zen | OpenCode Zen (opencode.ai) — one OpenAI-shaped façade in front of Anthropic-, Google- and OpenAI-native models |
 | `openai-compat/…` | OpenAI-compatible sources | One config-driven module over many OpenAI-shaped free tiers: Groq, Cerebras, SiliconFlow, Mistral, NVIDIA NIM, Together, Fireworks, DeepInfra, Chutes, HuggingFace; route as `openai-compat/<provider>/<model>` |
@@ -28,70 +30,7 @@ Everything is served from **one** HTTP surface — `POST /v1/chat/completions`,
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-当前版本：**0.1.9**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
-
-## 项目简介
-
-client2api 把多个 AI 客户端/平台的账号能力聚合成一个 OpenAI 兼容网关。它统一提供
-`/v1/chat/completions`、`/v1/models`、`/v1/status` 和 `/healthz`，并在
-`/panel/` 提供账号池、平台路由、用量、任务中心、配置导入导出等管理页面。
-
-主要能力：
-
-- 多平台账号池和自动切换；同一模型可按平台优先级和账号健康状态路由。
-- OpenAI 兼容 API，支持流式和非流式请求。
-- 平台级模型白名单/黑名单、路由优先级、并发上限和账号余额保护。
-- 账号登录、导入、导出、签到、余额刷新、定时任务和运行记录。
-- 账号池每行可以「重登」：凭据被上游拒了（失效 / 401 之类）时直接为这一行重走一次厂商登录，就地覆盖旧凭据，不新增一条。
-- 每个账号可以记一条「备注」——登录用的手机号或邮箱。模块的厂商接口常常只回昵称，记下这个才认得出重登该用哪个号。
-- 免费模型优先、失败重试、限流冷却、账号/平台熔断与自动恢复。
-- Windows 安装器支持覆盖升级：配置、账号池和用量数据原地保留，并在覆盖前后各跑
-  一次真实浏览器面板自检，失败就拒绝安装或自动回滚。
-
-## 快速开始
-
-### Windows 安装
-
-从 [Releases](https://github.com/Cvencent/client2api/releases) 下载最新
-`client2api-setup-<version>.exe`，双击安装。安装完成后打开托盘菜单或在浏览器访问
-`http://127.0.0.1:8790/panel/`。端口可以在托盘菜单“设置”中修改。
-
-### 从源码运行
-
-```powershell
-$tools='D:\client2api-lab\_tools'
-$env:PATH="$tools\go\bin;$tools\w64devkit\bin;$env:PATH"
-$env:GOCACHE="$tools\gocache"
-$env:GOTMPDIR="$tools\gotmp"
-$env:GOMODCACHE="$tools\gomodcache"
-$env:GOFLAGS='-mod=mod'
-$env:GOPROXY='off'
-$env:CGO_ENABLED='0'
-go build -o client2api.exe ./cmd/client2api
-.\client2api.exe -config configs\client2api.json
-```
-
-也可以直接用 Docker：
-
-```sh
-docker compose up -d --build
-docker compose logs -f
-```
-
-### 数据安全
-
-`data/` 包含账号凭据和运行状态，`configs/client2api.json` 包含本机配置；
-两者都已加入 `.gitignore`，不会进入源码仓库。仓库中的安装器构建脚本使用
-`-NoData` 生成空数据包，升级时由安装器保留现有数据。
-
-## 发布与更新
-
-每次发布安装包时，必须同步完成：
-
-1. 更新 `cmd/client2api/main.go` 与 `installer/setup/main.go` 的版本号。
-2. 在 [CHANGELOG.md](CHANGELOG.md) 写明本版本新增、修复和行为变化。
-3. 创建同版本 Git tag 和 GitHub Release，并用安装包文件加 SHA256 作为发布资产。
-4. 在 Release 说明中写清楚升级方式、是否需要重新登录、是否涉及数据迁移。
+Current version: **0.1.23**. Full history: [CHANGELOG.md](CHANGELOG.md).
 
 ## The one design rule
 
@@ -278,34 +217,47 @@ This is defence in depth, not the primary control: a module is expected not to p
 a credential in `Status` at all. It exists because a module whose account carries
 no stable user id may fall back to a token prefix as its id.
 
-### ZCode 账号与额度
+### ZCode accounts and credits
 
-ZCode 的一个 Zhipu 账号可能同时拥有计划 JWT、coding-plan API key 和 OAuth 派生 key。
-面板按账号身份把这三类凭证聚合为“一个账号、多条通道”，不会把它们当成三个独立账号。
+A single Zhipu account can hold a plan JWT, a coding-plan API key and an
+OAuth-derived key at the same time. The panel groups those credentials by
+account identity into "one account, multiple channels" instead of showing three
+separate accounts.
 
-面板网页登录分两个通道：「国际版」走 Z.AI（chat.z.ai），「国内版」走 BigModel
-（bigmodel.cn）。两者是不同服务，同一张手机号不能通用：国内号必须在「国内版」页
-面登录，用国际版会验证后报「请求失败」。登录后账号会带 `realm` 标签区分国内/国际。
-国内版直接使用厂商轮询返回的计划 JWT（bigmodel 没有 api.z.ai 的兑换流程），因此不要
-再把它当国际账号去做 key 兑换，否则会拿到 401/404。
+Web sign-in has two realms: International uses Z.AI (chat.z.ai), China uses
+BigModel (bigmodel.cn). They are different services, and one phone number cannot
+be used across them: a China number must use the China option, while the
+international option fails validation with "request failed". After sign-in the
+account carries a `realm` tag. The China realm uses the plan JWT returned by the
+vendor's polling flow directly (bigmodel has no api.z.ai exchange flow), so do
+not treat it as an international account for key exchange, or the result will be
+401/404.
 
-额度来自两套上游接口并合并展示：
+Credits come from two upstream APIs and are merged in the panel:
 
-- `open.bigmodel.cn/api/monitor/usage/quota/limit`：5 小时滚动窗口、每日 Token 窗口、
-  当前用量、剩余量和重置时间；`subscription/list` 补充套餐等级与到期时间。
-- `zcode.z.ai/api/v1/zcode-plan/billing/balance`：活动套餐、Start Plan 等一次性或周期
-  Token 额度。
+- `open.bigmodel.cn/api/monitor/usage/quota/limit`: the 5-hour rolling window,
+  the daily token window, current usage, remaining amount and reset time;
+  `subscription/list` adds the plan tier and expiry date.
+- `zcode.z.ai/api/v1/zcode-plan/billing/balance`: one-off or recurring token
+  grants such as activity packages and Start Plan.
 
-活动套餐领取只走 JWT 通道：面板的「领取活动套餐」按钮只在账号的 jwt 通道那一行
-出现（模块用 CheckinAction.Channels 把它限定在 jwt），coding-plan API key 行不再显示——
-计划账单接口只认计划凭据，那个按钮点了也领不了。后台仍会解析同账号的 sibling 通道，
-所以从任务看板或定时批次发起的领取（它们只拿一个账号 id）仍然能找到该账号的 JWT。
-如果厂商返回“当前用户不存在coding plan”，说明该 key 本身不属于 coding-plan 套餐，
-不是面板漏显示；请在 ZCode 客户端登录对应套餐账号后重新导入。
+The promotion claim is JWT-only: the Claim activity package button appears only
+on the account's jwt channel (the module uses CheckinAction.Channels to limit
+it to jwt), and is not shown on a coding-plan API key row. The plan billing
+endpoint only accepts plan credentials, so that button could not claim anything
+there. The backend still resolves sibling channels for the same account, so
+claims started from the task board or scheduled batches (which receive just one
+account id) can still find that account's JWT. If the vendor returns "current
+user has no coding plan", the key itself does not belong to a coding-plan
+package; it is not a panel display bug. Sign in with the matching package
+account in the ZCode client and import it again.
 
-领取成功后（或厂商回「已领取」）账号之前因为额度耗尽留下的 `exhausted` 判定会被清
-掉，立即回到调度；面板余额刷新读到有额度时也会清掉这类判定。所以「已经领了 1 亿，
-状态还停在冷却中」不会再把账号一直挡在轮转之外。
+After a successful claim (or a vendor "already claimed" response), an earlier
+`exhausted` verdict caused by depleted credits is cleared and the account
+returns to routing immediately; a balance refresh that reads available credits
+clears it too. This means "already claimed 100M but the state is still cooling
+down" no longer keeps the account out of rotation.
+
 ## Model routing
 
 Three accepted forms:
@@ -456,7 +408,7 @@ system template verbatim; `clients/workbuddy/README.md` records the behaviour an
 why the other modules deliberately leave their vendor's prompt alone.
 
 `schedule` runs the daily chores each module advertises through
-`core.PlannedBatches` — "全部自动" for the whole pool, not just the one client
+`core.PlannedBatches` — "run everything" for the whole pool, not just the one client
 you have the panel open on. A module that declares no batches of its own but
 implements `core.CheckinProvider` gets one synthetic `checkin` batch, so its
 account-row check-in button and the timetable are the same chore. Hour lists
@@ -465,10 +417,7 @@ even when the master switch is on. Accounts are walked serially with a 45 s
 gap, because the vendors' anti-abuse checks roll back chores whose events
 burst.
 
-一个平台可以用自己的时间表 `schedule.clients.<平台>.<批次>` 覆盖共享时点。打包的
-配置给 zcode 的 `checkin` 单独设了 `[0, 9, 12, 18, 21]`：它的每日活动额度是限量的，
-`0` 点对齐上海日切，而预览是不带验证码的 GET、只有真的领到时才唤起浏览器验证码，
-所以多跑几次成本很低。时点可在面板的「任务中心 → 时间表」里改。
+ A platform can override the shared hours with its own timetable at `schedule.clients.<platform>.<batch>`. The packaged config gives zcode's `checkin` batch `[0, 9, 12, 18, 21]`: its daily activity quota is limited, `0` aligns with the Shanghai day boundary, and the preview is an unauthenticated GET, so only a real claim opens the browser. The hours are editable in the panel under Task Centre -> Timetable.
 
 `session_sticky` has two levels.  Inside a module it pins a conversation to the
 account that last served it.  At the gateway it also pins the **platform**: when
@@ -491,7 +440,7 @@ without it credits go stale and a balance-recovered account stays parked until
 the next chore. Set the minutes to `0` to drop the tick without touching the
 switch. It is still gated by `schedule.enabled`, like every other batch.
 
-The accounts page does not wait for that sweep. Its 余额 column reads a
+The accounts page does not wait for that sweep. Its balance column reads a
 persistent cache (`data/panel/balance_cache.json`) and only ever nudges a few
 accounts at a time (3 per pass, 2s apart, at most one pass per 45s), so
 opening the page cannot turn into a fleet-wide burst against the vendor.
@@ -517,7 +466,7 @@ own account pool. WorkBuddy is the main consumer and reads the whole `pool.*` /
 an internal pool slot first and a gateway `platforms.workbuddy.*` slot second, so
 the two ceilings stack and the tighter one governs in practice. The panel now
 keeps the root-level `pool.*` / `cooldown.*` controls inside the WorkBuddy card
-on 平台配置 rather than on 配置; the labels there should not be confused with
+on the platform-config page rather than on the main config page; the labels there should not be confused with
 the two gateway ceilings below. The JSON keys are unchanged.
 
 Each platform can also carry two gateway-level ceilings in the `platforms`
@@ -536,7 +485,7 @@ more than three to any one account.
 a positive value raises the threshold, and `-1` turns the guard off for
 that platform. An unknown balance is never parked, so a fresh install
 does not start with an empty pool. The park is visible in the panel as
-`积分不足，已暂停`, and the next `schedule.balance_refresh_minutes` sweep
+`credits are insufficient; account paused`, and the next `schedule.balance_refresh_minutes` sweep
 revives the account automatically once its balance is above the threshold;
 a check-in or a manual balance refresh has the same effect. Changing the
 value is live and re-evaluates every account immediately. For example,
@@ -545,7 +494,7 @@ WorkBuddy accounts out of routing and shows them as paused instead of green.
 
 Only a balance reading the vendor's own reply corroborates parks an
 account. When a reply contradicts itself about a package that still
-advertises capacity -- WorkBuddy's 体验版 keeps a stale lifetime
+advertises capacity -- WorkBuddy's trial package keeps a stale lifetime
 `CapacityRemain` after its monthly cycle is spent -- the conservative
 number is still shown but is not treated as a known-empty wallet, so a
 working account is never parked on it. A park the vendor earned with a
@@ -570,7 +519,7 @@ path as the other platform settings.
 `account_notes` is the operator's own label for one account inside a platform:
 the phone number or e-mail that credential signs in with. It maps the account
 id shown by that module to free text, is display metadata only (routing never
-reads it), and is edited from the 「备注」 button on the account row through
+reads it), and is edited from the Note button on the account row through
 the same live config path as `account_priorities`. It exists because most
 vendors' user-info replies carry a nickname rather than the identity the
 credential was issued to, so the panel cannot derive it — and without it an
@@ -731,15 +680,15 @@ records what was read and what was written.
 ## The panel
 
 <http://127.0.0.1:8788/panel/> (`/` redirects there). It is laid out like the
-original WorkBuddy dashboard: a left sidebar carrying nine views (账号池 / 对话测试 /
-用量 / 积分构成 / 客户端 / 任务中心 / 模型与档位 / 配置 / 运行日志), a sticky topbar with the page
-title, a theme switch (dark → light → auto), refresh, and 添加账号. Above the
+original WorkBuddy dashboard: a left sidebar carrying nine views (Accounts / Chat test / Usage / Credits / Clients / Task Centre / Models and Archive / Config / Runtime log), a sticky topbar
+ with the page
+title, a theme switch (dark → light → auto), refresh, and Add account. Above the
 account table sits a row of counters derived from the data — total / ready /
 cooling / disabled / clients / models — not a hardcoded number.
 
-Each account row carries its own controls. 「备注」 records the phone number or
-e-mail that account signs in with (see `account_notes` below); 「恢复」 clears the
-runtime penalties a module holds for that credential, and 「重登」 goes one step
+Each account row carries its own controls. Note records the phone number or
+e-mail that account signs in with (see `account_notes` below); Revive clears the
+runtime penalties a module holds for that credential, and Re-login goes one step
 further and re-runs the vendor's own login for that one row, overwriting the
 credential in place. The re-login button only appears where it can help: a
 module that implements `core.LoginProvider`/`core.SMSProvider`, and an account
@@ -747,13 +696,13 @@ the module itself flagged as dead (`fields.relogin`, or a state/note that says
 expired, invalid or unauthorized). A module without login cannot offer one, and
 a healthy row stays clean.
 
-Automation lives in one place: the 任务中心 view owns the master switch, the
+Automation lives in one place: the Task Centre view owns the master switch, the
 global default hours per batch (including the balance-refresh interval), the
-per-platform overrides, and the run journal. The 配置 view no longer duplicates
+per-platform overrides, and the run journal. The Config view no longer duplicates
 those controls, so `schedule.*` has a single editing surface.
 
-The 用量 总览 subtab reports the window through a row of metric tiles rather
-than a stack of identical grey rows: 成功率 / 输入 / 输出 / 合计 / 平均延迟 each
+The Usage overview subtab reports the window through a row of metric tiles rather
+than a stack of identical grey rows: success rate / input / output / total / average latency each
 carry their own accent and a subtitle that says where the number came from (the
 failure count under the success rate, each side's share of the total under the
 token counts, the average rate under the total, the window under the latency) —
@@ -765,11 +714,11 @@ itself, because at a 72-hour window the columns are three or four pixels wide
 with empty gaps between them. The reveal animation and the success-rate meter
 both stand down under `prefers-reduced-motion`.
 
-The 定时任务 subtab is laid out so that the defaults do not cost a screen to
+The Scheduled Tasks subtab is laid out so that the defaults do not cost a screen to
 read: each batch is one card in a responsive grid — toggle on the left, hours
 box on the right, ticked cards tinted — instead of a stack of full-width rows
-with a `width:100%` input each. In the rules table the 自定义 chip and the
-跟随全局 button appear only on rows that actually override the shared hours,
+with a `width:100%` input each. In the rules table the Custom chip and the
+Follow-global button appear only on rows that actually override the shared hours,
 so a table where nothing is customized reads as a column of quiet dashes
 instead of the same grey button repeated fifteen times; both are created and
 removed together as the row is edited. The hour-syntax explainer sits with the
@@ -794,7 +743,7 @@ headers are unaffected either way. (The reference splits its JavaScript into a
 separate `app.js` for the same reason; hashing reaches the same place without a
 build step or moving 140 KB of embedded assets.)
 
-**对话测试** sends a real request through the gateway, not through a panel-shaped
+**Chat test** sends a real request through the gateway, not through a panel-shaped
 shortcut: it calls `POST /v1/chat/completions` from the browser (the panel handler
 is mounted on the same mux as `/v1/`, so there is no CORS hop) and prints the raw
 status code, elapsed time, time-to-first-token, `usage`, `finish_reason`, and the
@@ -806,20 +755,20 @@ Modules without a stickiness table say so in the dropdown instead of offering a
 choice that would be ignored.
 
 Backpressure and pool state are shown where a module actually has them. The counter
-row carries **粘性会话** (the summed `pool.sticky_sessions` across the modules that
-report a pool), the account table has an **在途** column per account
+row carries **Sticky sessions** (the summed `pool.sticky_sessions` across the modules that
+report a pool), the account table has an **In flight** column per account
 (`in_flight / in_flight_limit`; `∞` when the module reports no ceiling, `—` when it
 reports no lease at all), and the sidebar's Redis tile reads
-`N 客户端 / M 就绪 · 本地内存` (`· Redis 镜像` when the gateway is mirrored into
+`N clients / M ready · local memory` (`· Redis mirror` when the gateway is mirrored into
 Upstash). Beside the account table the annotation appends the module's own reason
-when `health.servable` is false (`不可服务：<note>`) and `N 个账号在途占满` when that
+when `health.servable` is false (`unservable: <note>`) and `N accounts at their in-flight ceiling` when that
 client currently has every usable account at its ceiling. The two extra keys come
 from `GET /panel/api/status`, because neither `overview` nor the account records
 carry `pool`/`health`/`extra`. A module that implements neither interface shows
 nothing there: a missing key is rendered as blank, never as `0`.
 
 Every chat request also prints one aligned row to the console, and the very same
-line is mirrored into the **运行日志** view through the gateway's log ring:
+line is mirrored into the **Runtime log** view through the gateway's log ring:
 
 ```
 | #014 | 02:12:20 | workbuddy/glm-5.2          | stream | 200 | work(5f4a1c2e)         | TTFB=812ms    | tok=486    | 61.5tok/s   | total=7.9s |
@@ -842,7 +791,7 @@ panel's log view stay in sync; tests silence the rows through `TestMain`.
 Because chat rows are written on every request, they would otherwise flush every
 scheduled chore's result out of the ring before anyone could read it. The ring
 therefore tags each line with a **channel** (`gateway.LogEntry{ts, ch, text}`) and
-the log view filters on it: 任务 / 对话 / 系统 chips over the same buffer, with the
+the log view filters on it: Tasks / Chats / System chips over the same buffer, with the
 per-channel counts shown in the all view and the tag column suppressed once a
 single channel is selected (every row would carry the same tag). Classification is
 a prefix match on the line as it is written — `| #` is a chat row, the chore verbs
@@ -863,11 +812,11 @@ attempt and the last writer wins. The gateway cannot see inside a module's pool,
 and a failure is the only case where it can learn an account from the error
 alone — so before this slot existed every *successful* request was recorded with
 an empty account, which showed as a blank label in the row above and collapsed
-the whole 按账号 table into a single `(未路由)` row. A failure still prefers the
+the whole by-account table into a single `(unrouted)` row. A failure still prefers the
 account its own error names and falls back to the slot only when the error names
 none. A module that never writes the slot is not wrong, merely unattributed.
 
-**用量 → 最近调用** is the per-request journal (`recent.json`), which
+**Usage → Recent calls** is the per-request journal (`recent.json`), which
 `GET /panel/api/usage` returns as `recent`. Each row carries the caller's own
 **session id**: the conversation id the gateway already resolved
 (`metadata.conversation_id` / `conversationId`, or the top-level spelling), then
@@ -875,22 +824,22 @@ the option spellings the router also accepts (`conversation_id`,
 `conversationId`, `prompt_cache_key`), and only when the caller named none of
 those the `X-Conversation-Request-ID` header. The request's `user` field is
 deliberately never used: an end-user id is not a conversation, and writing it
-into a column called 会话ID would claim a session the caller never named. The
+into a column called Session ID would claim a session the caller never named. The
 row falls back, when the caller named none of them, to `core.DeriveConversationKey` —
 the same content-derived key the router uses for stickiness — so a conversation that
 arrived without an id reads as one conversation instead of a run of blank cells. That
 key carries the `d-` prefix (`core.DerivedKeyPrefix`) and the panel renders such a value
-as `推 …`, so an inferred session is never mistaken for one the client declared; a
-request with nothing signable to derive from still shows 无会话标识. The derived key
+as `derived …`, so an inferred session is never mistaken for one the client declared; a
+request with nothing signable to derive from still shows No session ID. The derived key
 never enters `ChatRequest.ConversationID` or `Options`, so routing is unchanged. The
-account column resolves the recorded account id the way the 账号 page does: the
+account column resolves the recorded account id the way the Accounts page does: the
 operator's own note (the phone number or e-mail kept for a re-login) wins, then
 the module's label, and the raw id is the last resort so a row never goes blank
 after an account is deleted. The hover title keeps the raw id, the module label
 and the vendor identity, so a label that only names the credential ("ZCode plan
 JWT") is still traceable to the account behind the channel.
 
-**用量** is a real chart rather than a row of bars. `GET /panel/api/usage` returns
+**Usage** is a real chart rather than a row of bars. `GET /panel/api/usage` returns
 `series` — one `UsagePoint` per bucket, carrying `t`, `scope` (`hour` or `day`),
 `prompt_tokens`, `completion_tokens`, `requests`, `failures` and `total_tokens` —
 and the view draws it as inline SVG: stacked prompt/completion columns, four
@@ -902,7 +851,7 @@ rather than coerced to `NaN`, which would otherwise flatten the entire chart, an
 the label format is chosen per point, because a window that reaches past the
 rollup boundary mixes `hour` and `day` buckets in one series.
 
-**积分构成** answers a different question — not "how much have I used", but "how
+**Credit composition** answers a different question — not "how much have I used", but "how
 long is what is left good for". It takes every credit batch the module reports,
 subtracts each batch from its account's own remaining total (the upstream records
 the same grant under more than one batch, so summing the batches would overstate
@@ -945,7 +894,7 @@ never do anything reads as a broken one. Two details matter:
   rows on the same page. Slicing the credential rows instead would make one
   vendor account look like two accounts.
 - **The counts stay whole.** The header still reports the full pool, and the
-  pager adds `第 N-M 个，共 X 个账号`; both count the filtered list, not the
+  pager adds `N-M of X accounts`; both count the filtered list, not the
   current page. Paging is for the eye, the numbers still answer "how many
   accounts do I manage".
 
@@ -969,7 +918,7 @@ do the other.
 
 A module that can drive the vendor's **growth centre** — the daily chores the
 official client performs on the user's behalf — additionally gets a **task
-board** (任务中心). It lists each chore with its real progress and reward, runs
+board** (Task Centre). It lists each chore with its real progress and reward, runs
 one on demand, and offers an *execute everything automatable* queue. Runs are
 asynchronous (the panel returns a run id and polls), and the queue advances
 **serially**: the vendors' anti-abuse checks roll back chores whose events are
@@ -1008,7 +957,7 @@ the live vendor endpoints from a running gateway, not just from tests: each
 working browser URL (`kimi` also returns the user code to confirm). `tabbit` is
 the one whose URL only works inside the Tabbit browser: the module opens the page
 there through that browser's own launcher and answers with `local_app` plus the
-credential path to import afterwards, so the panel shows a 读取凭据 button instead
+credential path to import afterwards, so the panel shows a Read credential button instead
 of a link a normal browser cannot use. `minimaxcode` joined them with an
 RFC 8628 device grant recovered from its desktop bundle; unlike the six above it
 has only been exercised against a scripted transport, so a real sign-in from
@@ -1042,7 +991,7 @@ Panel state stays inside each module's own `data/<client>/` directory. The
 `clients.<name>` blocks in `configs/client2api.json` are operator-owned and the
 panel never edits them.
 
-**Balances** are cached, not live. The accounts page's 余额 column is served
+**Balances** are cached, not live. The accounts page's balance column is served
 from `data/panel/balance_cache.json` — the last number each vendor gave for
 each account — so opening the page shows the previous values immediately and
 costs no upstream calls. A page open also schedules one background pass over
@@ -1062,7 +1011,7 @@ button on an account *row* is driven by a second, live flag (`checkin_ready`)
 rather than by the module-level capability bit, so a module whose accounts cannot
 claim anything at the moment does not offer a click that could only fail; the
 capability matrix and the bulk routes keep reading the static bit.
-"全部签到" walks the enabled accounts one at a
+"Check in all" walks the enabled accounts one at a
 time — deliberately serial, so a burst of upstream calls cannot look like abuse.
 An already-claimed day reports success, because the operator's question is "is
 today's reward in hand?".
@@ -1101,7 +1050,7 @@ RefreshModels(ctx context.Context) ([]Model, error)
 ```
 
 `GET /panel/api/models` renders one row per model with its client, and marks a
-row 上游 only when the module reported it from a live fetch; every other row (a
+row upstream only when the module reported it from a live fetch; every other row (a
 module's own built-in catalogue, an operator-configured list, the metadata
 table) is marked as local and names where it came from. `POST
 /panel/api/models/refresh` is the only path that re-asks the vendor, and it does
@@ -1112,7 +1061,7 @@ a catalogue: it returns the last good list, or the module's own built-in list
 where it has one, or the operator's configured list, or nothing — workbuddy,
 which has no built-in list, answers empty rather than inventing ids.
 
-The models view carries a 倍率 column, because a credit multiplier is the one
+The models view carries a multiplier column, because a credit multiplier is the one
 per-model fact an operator actually shops on and it has no home in the OpenAI
 shape. `core.Model.Extra` travels through both surfaces: `GET /v1/models` emits
 it as an `extra` object on the entry (omitted entirely when the module published
@@ -1135,13 +1084,13 @@ built-in default when a vendor reports nothing. When a chat request arrives with
 no `max_tokens` / `max_completion_tokens`, the gateway fills the same resolved
 output cap; a caller that supplied its own number is never second-guessed.
 
-The 模型与档位 page turns both columns into number inputs, labels each field's
-source (`手动` / `上游` / `预设` / `未公开`), and saves through
+The Models and Archive page turns both columns into number inputs, labels each field's
+source (Manual / Upstream / Preset / Not public), and saves through
 `POST /panel/api/model_context`. Manual values live in
 `<data_dir>/model_context.json` (written atomically, `0600`), survive an upgrade
 with the rest of `data/`, and are removed — falling back to the upstream value or
 the preset — when the field is cleared and saved, or when the row's
-「恢复官方默认」 button is used.
+Restore official default button is used.
 
 The panel is protected by the gateway's top-level `api_key`
 (`configs/client2api.json:3`). Empty — the default — leaves it unauthenticated,
@@ -1270,9 +1219,9 @@ list.
 
 | reference route | verdict |
 |---|---|
-| `GET /panel/api/login/regions` | **kept, but per client.** The route is `…/clients/<name>/login/regions` and answers with the realms *that module* offers — an empty array for a module whose upstream has only one sign-up. The reference's version was a static whitelist of seven registration regions for workbuddy's international sign-up, which is why it could not live in the shared layer. workbuddy publishes its own two realms (`cn` 国内版, `global` 国际版) through `core.RealmLoginProvider`, and the panel draws the picker from that response instead of a hardcoded list. |
+| `GET /panel/api/login/regions` | **kept, but per client.** The route is `…/clients/<name>/login/regions` and answers with the realms *that module* offers — an empty array for a module whose upstream has only one sign-up. The reference's version was a static whitelist of seven registration regions for workbuddy's international sign-up, which is why it could not live in the shared layer. workbuddy publishes its own two realms (`cn` China, `global` international) through `core.RealmLoginProvider`, and the panel draws the picker from that response instead of a hardcoded list. |
 | `POST /panel/api/import/cockpit` | **served per client as `POST …/clients/<name>/import/bundle`.** The reference's path named one vendor's export, and its body is that vendor's schema (`uid`/`access_token`/`refresh_token`/`domain`), so neither the path nor the parser belongs in the shared layer. A module that can read such a document implements `core.BundleImporter` and declares `capabilities.import_bundle`; `internal/panel` forwards the bytes and never parses them. `workbuddy` is the module that reads this particular format. |
-| `GET /panel/api/school/vouchers` | **kept, but per client.** The route is `…/clients/<name>/school/vouchers` and answers `501` for every module that does not implement `core.VoucherProvider`; only workbuddy can, because the 开学季 activity is workbuddy's. |
+| `GET /panel/api/school/vouchers` | **kept, but per client.** The route is `…/clients/<name>/school/vouchers` and answers `501` for every module that does not implement `core.VoucherProvider`; only workbuddy can, because the school activity is workbuddy's. |
 
 Everything else in the reference's route table — `revive`, `balance`,
 `packages`, the five task verbs, `usage/save`, `model_probes`, the batch sweeps —

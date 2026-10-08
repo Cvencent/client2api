@@ -83,6 +83,7 @@ func TestOperatorStatePaths(t *testing.T) {
 		{"client2api.exe", false, false},
 		{"probe.exe", false, false},
 		{"README.md", false, false},
+		{"README.zh-CN.md", false, false},
 		{"configs", false, false},
 		{"database/x.json", false, false},
 	}
