@@ -385,7 +385,7 @@ coding-plan API key 行不会显示领取按钮。领取成功后，之前因额
 | lobsterai | 是 | 是 | 是，浏览器交接 | 是，每日签到 |
 | codearts | 是 | 否 | 是，门户登录 | 是，每日签到 |
 | loomy | 是 | 否 | 是，一键短信登录 | 是，首次登录奖励 |
-| raccoon | 是 | 是 | 是，本机二维码/短信页 | 是，桌面登录积分 |
+| raccoon | 是 | 是 | 是，本机二维码/短信页 | 是，领取每日 300 积分（桌面登录发放接口） |
 | opencode | 是 | 是 | 是，匿名免费或 Console 设备码 | 否 |
 | openrouter | 是 | 是 | 是，浏览器 PKCE | 否 |
 | openai-compat | 是 | 否 | 否 | 否 |

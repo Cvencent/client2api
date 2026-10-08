@@ -24,9 +24,15 @@ const (
 	stateReady     = "ready"
 	stateCooling   = "cooling"
 	stateExhausted = "exhausted"
-	stateFault     = "fault"
-	stateInvalid   = "invalid"
-	stateUnknown   = "unknown"
+	// stateRisk is an upstream account-level restriction (for example 11140 /
+	// request illegal). Re-login does not clear it; the panel offers waiting or
+	// appeal instead of a credential-repair action.
+	stateRisk = "risk"
+	// stateFault is the pre-2026 spelling persisted by older builds. New failures
+	// use stateRisk; pool state restoration migrates old records.
+	stateFault   = "fault"
+	stateInvalid = "invalid"
+	stateUnknown = "unknown"
 )
 
 // reserveCreditNote marks the park the low-balance guard created.  It is a
@@ -203,7 +209,7 @@ func cooldownFor(kind ErrKind, retryAfter time.Duration) (time.Duration, string)
 	case ErrHardCredit:
 		return longCreditCooldown, stateExhausted
 	case ErrAccountFault:
-		return accountFaultCooldown, stateFault
+		return accountFaultCooldown, stateRisk
 	case ErrWafBlock:
 		return wafCooldown, stateCooling
 	case ErrSessionDead:
@@ -527,7 +533,7 @@ func (p *Pool) settleExpiredCooldownLocked(e *poolEntry, now time.Time) bool {
 		return false
 	}
 	switch e.state {
-	case stateCooling, stateExhausted, stateFault, stateInvalid:
+	case stateCooling, stateExhausted, stateRisk, stateFault, stateInvalid:
 	default:
 		return false
 	}
@@ -907,9 +913,9 @@ func (p *Pool) counts() poolCounts {
 			}
 			continue
 		}
-		// Not usable: account faults and parked credentials with no wall clock
-		// wait for an operator; the other timed parks are cooling.
-		if e.until.IsZero() || e.state == stateFault {
+		// Not usable: platform risk, credential faults and parked accounts with no
+		// wall clock wait for an operator; the other timed parks are cooling.
+		if e.until.IsZero() || e.state == stateRisk || e.state == stateFault {
 			c.disabled++
 		} else {
 			c.cooling++
@@ -1884,7 +1890,7 @@ func (p *Pool) Summary() string {
 		switch {
 		case e.usable(now):
 			ready++
-		case e.state == stateInvalid || e.state == stateExhausted || e.state == stateFault:
+		case e.state == stateInvalid || e.state == stateExhausted || e.state == stateRisk || e.state == stateFault:
 			parked++
 		default:
 			cooling++

@@ -8,13 +8,13 @@
 // `clients/qwenwork` module.
 //
 // Deliberate scope decisions (see README.md):
-// Scope decisions (see README.md):
 //   - interactive sign-in IS implemented: a loopback page carries a locally
 //     rendered QR code and an SMS form.  The QR encoder is stdlib-only (see
 //     qr.go), so no dependency was added.
-//   - the daily 300 credits are granted by the server (`daily_grant`) and have
-//     no endpoint, so there is no claim button for them; the desktop login
-//     points grant IS offered through CheckinProvider.
+//   - the daily 300 login credits are claimed through the desktop login grant
+//     (POST /api/web/desktop/v1/login/points/grant), exposed as the
+//     `login-points` CheckinProvider action; the server grants them once per
+//     day and answers `granted:false` on a repeat request.
 package raccoon
 
 import (

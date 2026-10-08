@@ -328,7 +328,7 @@ func TestWorkbuddyTasksMarksUnportedChoresManual(t *testing.T) {
 			t.Fatalf("%s has Auto=false but no Note explaining why", code)
 		}
 	}
-	if !strings.Contains(byCode["Expert_lighthouse"].Note, "connector") {
+	if !strings.Contains(byCode["Expert_lighthouse"].Note, "连接器") {
 		t.Fatalf("Expert_lighthouse Note = %q, want it to name the connector requirement",
 			byCode["Expert_lighthouse"].Note)
 	}

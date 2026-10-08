@@ -253,13 +253,13 @@ func isMPTaskCode(code string) bool { return mpTaskCodes[strings.TrimSpace(code)
 // An empty answer means "no runner ported, and we have nothing more specific to
 // say than that".
 var taskManualNotes = map[string]string{
-	"skill_1": "Needs a real Skill tool call inside the client; the reference never cracked it, so there is no runner.",
-	"Expert_lighthouse": "Needs a real connector authorisation the user must grant in the client; " +
-		"deliberately not automated.",
-	"Expert_Philanthropy": "Spends real money (a donation); deliberately not automated.",
+	"skill_1":                     "需要在客户端里真正调用一次 Skill 工具，目前没有自动执行通道，请手动完成。",
+	"Expert_lighthouse":           "需要你在客户端里完成一次真实的连接器授权，本模块故意不自动执行。",
+	"Expert_Philanthropy":         "该任务需要真实捐款（真金白银），本模块故意不自动执行。",
+	"wb_wechat_oa_subscribe_task": "需要在客户端里手动完成关注/订阅动作，目前没有自动执行通道。",
 }
 
-const taskNoRunnerNote = "No runner is ported for this chore, so it has to be completed in the client."
+const taskNoRunnerNote = "这条任务还没有自动执行通道，需要在客户端里手动完成。"
 
 // --- Tasks ------------------------------------------------------------------
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -404,7 +405,11 @@ func (c *Client) ReviveAccount(ctx context.Context, id string) error {
 	return nil
 }
 
-// TestAccount makes one real call against the vendor with this credential.  A
+// probeModelID is WorkBuddy's own routing model. Testing it proves the
+// credential can spend quota through the same path real requests use.
+const probeModelID = "auto"
+
+// TestAccount makes one real call against the vendor with this credential. A
 // refusal is a result, not an error: the panel needs to show *why* a credential
 // is no good, and only an unknown id is a programming mistake.
 func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, error) {
@@ -425,45 +430,85 @@ func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, e
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 
-	type probe struct {
-		models []core.Model
-		err    error
-	}
 	started := time.Now()
-	ch := make(chan probe, 1)
+	ch := make(chan error, 1)
 	// GoSafe, not a bare "go": the probe would otherwise take the gateway down,
 	// and the report has to fill ch as well -- an empty ch would leave the
 	// select below waiting out the whole probe timeout.
 	core.GoSafe("workbuddy account probe", func(msg string) {
-		ch <- probe{err: errors.New(msg)}
+		ch <- errors.New(msg)
 	}, func() {
-		models, err := c.fetchModelsBounded(a, a.RealmName())
-		ch <- probe{models, err}
+		ch <- c.probeAutoChat(ctx, a)
 	})
 
 	res := core.TestResult{AccountID: a.ID()}
 	select {
-	case r := <-ch:
+	case err := <-ch:
 		res.ElapsedMS = time.Since(started).Milliseconds()
-		if r.err != nil {
-			kind, _ := c.pool.MarkFailure(a, r.err)
+		if err != nil {
+			kind, _ := c.pool.MarkFailure(a, err)
 			c.up.log("workbuddy: panel test of %s failed (%s)", core.MaskSecret(a.ID()), kind)
 			res.OK = false
-			res.Error = core.Redact(describeFailure(r.err))
+			res.Error = core.Redact(describeFailure(err))
 			return res, nil
 		}
 		c.pool.MarkSuccess(a)
 		res.OK = true
-		if len(r.models) > 0 {
-			res.Model = r.models[0].ID
-		}
-		res.Reply = fmt.Sprintf("%d model(s) reachable", len(r.models))
+		res.Model = probeModelID
+		res.Reply = "Auto model reachable"
 		return res, nil
 	case <-ctx.Done():
 		res.ElapsedMS = time.Since(started).Milliseconds()
 		res.OK = false
-		res.Error = "the catalogue fetch did not finish in time"
+		res.Error = "the Auto model test did not finish in time"
 		return res, nil
+	}
+}
+
+// probeAutoChat performs the smallest real streamed Auto completion that
+// proves the credential can use the model, not just read its catalogue.
+// Success requires a completed stream; a 402, a risk-control refusal, or an
+// SSE error frame all stay failures for the caller to classify and park.
+func (c *Client) probeAutoChat(ctx context.Context, a *Auth) error {
+	req := &core.ChatRequest{
+		Model:  probeModelID,
+		Stream: true,
+		Messages: []core.Message{{
+			Role:    "user",
+			Content: "Reply with exactly one word: pong",
+		}},
+	}
+	body, err := buildWireBodyFor(req, probeModelID)
+	if err != nil {
+		return err
+	}
+	meta := ChatMeta{
+		ConversationID:        "workbuddy-probe-" + a.ID(),
+		ConversationRequestID: "workbuddy-probe-" + a.ID(),
+	}
+	rc, err := c.attempt(ctx, a, body, meta)
+	if err != nil {
+		return err
+	}
+	stream := newWBStream(ctx, rc)
+	defer stream.Close()
+	for {
+		ev, err := stream.Recv()
+		if err == io.EOF {
+			return errors.New("Auto model stream ended before completion")
+		}
+		if err != nil {
+			return err
+		}
+		switch ev.Type {
+		case core.EventError:
+			if ev.Err != nil {
+				return ev.Err
+			}
+			return errors.New("Auto model stream reported an error")
+		case core.EventDone:
+			return nil
+		}
 	}
 }
 

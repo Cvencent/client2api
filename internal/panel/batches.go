@@ -602,6 +602,9 @@ func (p *panel) runOne(ctx context.Context, tp core.TaskProvider, account, code 
 		step.Error = core.Redact(err.Error())
 		return step
 	}
+	if res.OK {
+		p.refreshBalanceAfterTask(tp, firstNonEmpty(res.AccountID, account))
+	}
 	step.OK = res.OK
 	step.Skipped = res.Skipped
 	step.Message = res.Message

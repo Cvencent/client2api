@@ -19,7 +19,7 @@ import (
 //
 // core.LoginProvider is implemented in login.go (loopback QR + SMS page);
 // core.CheckinProvider is implemented in checkin.go (the desktop login-points
-// grant; the daily 300 credits have no endpoint at all).
+// grant, which is how the daily 300 credits are claimed).
 // Deliberately NOT implemented (and why):
 //   - core.TaskProvider / core.BatchProvider / core.CaptchaProvider /
 //     core.HintProvider: the vendor exposes nothing of the sort.

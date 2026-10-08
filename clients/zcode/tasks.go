@@ -162,7 +162,7 @@ func (c *Client) Tasks(ctx context.Context, accountID string) ([]core.TaskInfo, 
 		return nil, err
 	}
 	if acct == nil {
-		return []core.TaskInfo{claimRow("娌℃湁鍙敤鐨?ZCode 璁″垝 (jwt) 璐﹀彿锛涙椿鍔ㄥ椁愬彧璧?jwt 閫氶亾")}, nil
+		return []core.TaskInfo{claimRow("没有可用的 ZCode 计划 (jwt) 账号；活动套餐只走 jwt 通道")}, nil
 	}
 	if acct.Mode != modeJWT {
 		return []core.TaskInfo{claimRow(fmt.Sprintf(

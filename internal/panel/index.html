@@ -124,6 +124,13 @@ body {
 .qrow .prog { font-variant-numeric: tabular-nums; color: var(--ink-2); text-align: right; }
 .qrow .st { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .qrow .msg { font-size: 12px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 任务看板的账号条 + 全部账号矩阵 */
+.tb-accounts { gap: 10px; }
+.tb-accounts .chips { flex-wrap: wrap; }
+.tb-matrix { display: flex; flex-direction: column; gap: 10px; padding: 12px 16px 16px; }
+.tb-acct { border: 1px solid var(--line-soft); border-radius: 8px; padding: 10px 12px; background: var(--surface-2); }
+.tb-acct-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.tb-acct-h b { font-size: 13.5px; }
 .qdot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
 .qdot.done { background: var(--ok); }
 .qdot.run { background: var(--accent); animation: qpulse 1.2s ease-in-out infinite; }
@@ -1422,7 +1429,9 @@ input, select, textarea { transition-property: border-color, box-shadow, backgro
         <div class="stat"><div class="v" id="sTotal">-</div><div class="k">账号总数</div></div>
         <div class="stat good"><div class="v" id="sHealthy">-</div><div class="k">可用</div></div>
         <div class="stat warn"><div class="v" id="sCooling">-</div><div class="k">冷却中</div></div>
-        <div class="stat bad"><div class="v" id="sDisabled">-</div><div class="k">已禁用 / 失效</div></div>
+        <div class="stat bad"><div class="v" id="sRisk">-</div><div class="k">风控</div></div>
+        <div class="stat bad"><div class="v" id="sFault">-</div><div class="k">账号异常</div></div>
+        <div class="stat bad"><div class="v" id="sDisabled">-</div><div class="k">已停用</div></div>
         <div class="stat"><div class="v" id="sClients">-</div><div class="k">已接入客户端</div></div>
         <div class="stat"><div class="v" id="sReady">-</div><div class="k">就绪客户端</div></div>
         <div class="stat"><div class="v" id="sSticky">-</div><div class="k">粘性会话</div></div>
@@ -1774,6 +1783,12 @@ input, select, textarea { transition-property: border-color, box-shadow, backgro
           <div class="chips" id="tbChips"></div>
           <button class="xs primary" id="btnTbRunAll">执行全部可自动任务</button>
         </header>
+        <div class="tblbar tb-accounts" id="tbAccountsBar" hidden>
+          <span class="note">账号</span>
+          <div class="chips" id="tbAccounts"></div>
+          <span class="grow"></span>
+          <span class="hint" id="tbAccountsHint">先选账号，再执行单条；未选时按平台全量取数。</span>
+        </div>
         <div id="tbBody"></div>
       </div>
       </div>
@@ -2622,19 +2637,23 @@ function renderStats() {
   // 的行会被上面记成「禁用」（exhausted 就是这样）或干脆掉出所有桶（low_credit /
   // quota_exceeded / rate_limited 一个字都没匹配上）——磁贴间的数字也就对不起来。
   // unknown 没有对应的 tile，按行里的「未知」处理，不计入任何一桶。
-  let total = 0, ready = 0, cool = 0, bad = 0;
+  let total = 0, ready = 0, cool = 0, risk = 0, fault = 0, disabled = 0;
   NAMES.forEach(n => accGroups(ACCTS[n] && ACCTS[n].accounts).forEach(g => {
     const st = accGroupStat(g);
     const cls = accountState(st);
     total++;
     if (cls.key === "ready") ready++;
     else if (cls.key === "cooling") cool++;
-    else if (cls.key === "disabled") bad++;
+    else if (cls.key === "risk") risk++;
+    else if (cls.key === "fault") fault++;
+    else if (cls.key === "disabled") disabled++;
   }));
   $("#sTotal").textContent = total;
   $("#sHealthy").textContent = ready;
   $("#sCooling").textContent = cool;
-  $("#sDisabled").textContent = bad;
+  $("#sRisk").textContent = risk;
+  $("#sFault").textContent = fault;
+  $("#sDisabled").textContent = disabled;
   $("#sClients").textContent = NAMES.length;
   $("#sReady").textContent = (SNAP.clients || []).filter(c => c.ready).length;
   // 粘性会话是全网关的口径（其余几块也是跨客户端累加）。没有任何客户端报
@@ -2647,17 +2666,21 @@ function accountState(a) {
   const raw = String((a && a.state) || "unknown").toLowerCase();
   const disabled = !(a && a.enabled);
   const note = String((a && a.note) || "").toLowerCase();
-  // 冷却中 = 链路/凭据本身是好的，只是额度或限流导致暂时不可调度；
-  // 禁用   = 人工停用或凭据已失效，需要重新登录/处理。
-  // 旧版本把 account_fault 也写成 exhausted；note 仍能证明这不是冷却。
-  if (raw === "fault" || raw === "account_fault" || note.startsWith("account_fault")) {
-    return { key: "disabled", label: "账号异常", cls: "err" };
+  // 冷却中 = 链路/凭据本身是好的，只是额度或限流导致暂时不可调度。
+  // 风控   = 平台限制账号行为，重登解决不了，只能等待或申诉。
+  // 账号异常 = token/session 失效，重新登录可以修复。
+  // 旧版本的 fault/account_fault 都属于平台风控，升级后统一显示为「风控」。
+  if (raw === "risk" || raw === "fault" || raw === "account_fault" || note.startsWith("account_fault")) {
+    return { key: "risk", label: "风控", cls: "err" };
   }
   if (raw === "cooling" || raw === "exhausted" || raw === "low_credit" || raw === "quota_exceeded" || raw === "rate_limited") {
     return { key: "cooling", label: "冷却中", cls: "warn" };
   }
-  if (raw === "invalid" || raw === "expired" || raw === "unauthorized" || raw === "banned" || raw === "disabled") {
-    return { key: "disabled", label: "禁用", cls: "err" };
+  if (raw === "invalid" || raw === "expired" || raw === "unauthorized") {
+    return { key: "fault", label: "账号异常", cls: "err" };
+  }
+  if (raw === "banned" || raw === "disabled") {
+    return { key: "disabled", label: "已停用", cls: "err" };
   }
   if (disabled) return { key: "disabled", label: "禁用", cls: "err" };
   if (raw === "ready") return { key: "ready", label: "可用", cls: "ok" };
@@ -2941,7 +2964,8 @@ const NOTE_WORDS = {
   "access token expired": "访问令牌已过期",
   hard_credit: "额度已用尽", soft_rate: "被限流", not_found: "模型或资源不存在",
   server: "上游服务异常", content_blocked: "内容被上游拦截", bad_params: "请求参数错误",
-  account_fault: "账号异常", model_blocked: "模型不可用", waf_block: "被上游安全策略拦截",
+  risk: "风控", fault: "账号异常", account_fault: "风控",
+  model_blocked: "模型不可用", waf_block: "被上游安全策略拦截",
   prompt_too_long: "提示词过长", image_invalid: "图片无效", client: "请求被上游拒绝",
   plan_limit: "套餐额度已用尽", quota: "额度已用尽", param: "请求参数错误",
   retry_later: "请稍后重试", transport: "网络连接失败", network: "网络连接失败",
@@ -3497,20 +3521,20 @@ function accountHint(a) {
 // needsRelogin 回答的是「这个账号现在像不像凭据坏了」。只有这种账号才值得在行
 // 内摆一个「重登」，否则每行都挂一个按钮，健康的池子反而更难读。判据全部取模块
 // 自己给的机器词，不猜：
-//   · state 已经是 invalid / expired / unauthorized / fault / account_fault；
+//   · state 已经是 invalid / expired / unauthorized；
+//   · 风控（risk / fault / account_fault）不算凭据失效，不显示重登按钮。
 //   · fields.expired 为真（codearts 就是这种：state 还叫 ready，令牌已经过期）；
 //   · fields.relogin 为真（模块自己判定这份凭据已经死了，trae 的 401 就是）；
-//   · note 以 account_fault 开头，或出现 login_required / expired / unauthorized / no_credential。
+//   · note 出现 login_required / expired / unauthorized / no_credential 等凭据失效词。
 function needsRelogin(a) {
   const st = String((a && a.state) || "").toLowerCase();
-  if (st === "invalid" || st === "expired" || st === "unauthorized" || st === "fault" || st === "account_fault") return true;
+  if (st === "invalid" || st === "expired" || st === "unauthorized") return true;
   const f = (a && a.fields) || {};
   if (f.expired === true || f.expired === "true") return true;
   // 模块主动声明的信号：它自己知道这份凭据已经死了（trae 的 1001/4010 与
   // 401 就是这种），比下面按词猜 note 更准。
   if (f.relogin === true || f.relogin === "true") return true;
   const note = String((a && a.note) || "").toLowerCase();
-  if (note.startsWith("account_fault")) return true;
   return /login_required|expired|unauthorized|no_credential|invalid[_-]?token|(^|[^0-9])401([^0-9]|$)/.test(note);
 }
 
@@ -5827,6 +5851,7 @@ function scRowHTML(r) {
     // 已经是「跟随全局」的行不再画那颗灰按钮：全表十几行都挂着一个点不动的按钮，
     // 看着像坏了，而不是像「这里不用改」。
     (scOwned(scKey(r.client, r.batch), r) ? '<button class="xs" data-scfollow>跟随全局</button> ' : "") +
+    '<button class="xs" data-scboard>看板</button> ' +
     '<button class="xs primary" data-scrun>立即执行</button></td>' +
     "</tr>";
 }
@@ -5924,7 +5949,10 @@ function scRenderRuns(runs) {
     const src = r.trigger === "schedule" ? "定时" : "手动";
     const st = runStateChip(r);
     const reasons = Array.isArray(r.refusals) ? r.refusals.filter(Boolean) : [];
-    const reasonText = reasons.join("；") + ((reasons.length && r.error) ? "；" : "") + (r.error || "");
+    let reasonText = reasons.join("；") + ((reasons.length && r.error) ? "；" : "") + (r.error || "");
+    if (!reasonText && ((r.refused || 0) + (r.skipped || 0) + (r.failed || 0)) > 0) {
+      reasonText = "旧版本记录未保存原因（升级后新记录会带上供应商返回）";
+    }
     const ms = r.elapsed_ms ? (r.elapsed_ms / 1000).toFixed(1) + "s" : "-";
     return "<tr><td data-th=\"时间\">" + esc(t) + "</td><td data-th=\"平台\">" + esc(r.client) + "</td><td data-th=\"任务\">" + esc(scLabel(r.batch)) + "</td>" +
       "<td data-th=\"来源\">" + src + "</td><td data-th=\"账号\" class=\"acc-num\">" + (r.accounts || 0) + "</td><td data-th=\"执行\" class=\"acc-num\">" + (r.ran || 0) + "</td>" +
@@ -6253,7 +6281,8 @@ function renderQueue(groups, progress, emptyTitle, emptyDesc) {
   let total = 0;
   list.innerHTML = groups.map(g => {
     total += g.rows.length;
-    return '<div class="qgroup"><header><span class="nm">' + esc(g.nick || g.uid.slice(0, 12)) + '</span><span class="cnt">' + g.rows.length + ' 项待办</span></header>' +
+    return '<div class="qgroup"><header><span class="nm">' + esc(g.nick || g.uid.slice(0, 12)) + '</span><span class="cnt">' + g.rows.length + ' 项待办</span>' +
+      '<span class="grow"></span><button class="xs" data-qboard="' + esc(g.uid) + '" title="在任务看板里只看这个账号">看板</button></header>' +
       g.rows.map(qrowHTML).join('') + '</div>';
   }).join('');
   $("#qcSummary").textContent = total + " 项";
@@ -6362,8 +6391,17 @@ function reattachQueueView() {
    串行执行是刻意的：参考实现实测过并发连发会被判定作弊并整体回滚。      */
 const TB = { client: null, tasks: [], runs: [], timer: null };
 
+// 任务中心三个页签共享的选择状态：账号优先——看板取数、单条执行、以及从
+// 定时/批量页签跳过来时都读这里，避免“页面停在 A 账号、请求打到 B 账号”的错位。
+const TASKCENTER = { client: null, account: "", allAccounts: false, batch: "" };
+
 const tbClients = () => NAMES.filter(n => capsOf(n).tasks);
-const tbRuns = code => TB.runs.filter(r => r.code === code);
+// 运行记录按“任务 + 当前选中账号”过滤。服务端在单账号模式下已经只返回该账号
+// 的记录，这里再按 account 兜一层：切账号时上一账号的旧记录不会短暂混进来。
+const tbRuns = code => TB.runs.filter(r =>
+  r.code === code &&
+  (!TASKCENTER.account || r.account === TASKCENTER.account)
+);
 const tbLive = code => tbRuns(code).find(r => r.state === "running") || null;
 function tbLast(code) {
   const done = tbRuns(code).filter(r => r.state === "done");
@@ -6388,10 +6426,44 @@ function tbSchedule() {
     if (VIEW === "taskscenter") renderTaskBoard().catch(() => {});
   }, 4000);
 }
+// tbAccountLabel 取当前选中账号在列表里的显示名，缺省回落到 id。
+function tbAccountLabel(accts) {
+  const hit = (accts || []).filter(a => String(a.id) === TASKCENTER.account)[0];
+  return hit ? (hit.label || accountIdentity(hit) || hit.id) : TASKCENTER.account;
+}
+// 全部账号：一张按账号分组的矩阵。这里只读不写——要执行某一条得先点账号钻进去，
+// 因为单条执行必须带具体账号，否则 RunTask 会落到模块自己的默认账号上。
+function tbAccountMatrix(accounts) {
+  if (!accounts.length) return '<div class="pad hint">这个客户端没有可用的账号。</div>';
+  return '<div class="tb-matrix">' + accounts.map(g => {
+    const label = g.label || g.account || "默认账号";
+    const tasks = g.tasks || [];
+    const done = tasks.filter(t => t.claimed).length;
+    const pending = tasks.filter(t => t.auto && !t.claimed && !t.locked).length;
+    const state = g.error
+      ? '<span class="chip err">读取失败</span>'
+      : '<span class="chip">' + done + "/" + tasks.length + " 已完成</span>";
+    let body;
+    if (g.error) body = '<div class="hint">' + esc(g.error) + "</div>";
+    else if (!tasks.length) body = '<div class="hint">这里没有任务。账号未就绪时属于正常。</div>';
+    else body = '<div class="chips">' + tasks.map(t => {
+      const cls = t.claimed ? " on" : (t.auto && !t.locked ? "" : " off");
+      const mark = t.claimed ? "已领取" : (t.locked ? "未解锁" : (t.auto ? "可执行" : "需人工"));
+      return '<span class="chip' + cls + '" title="' + esc(t.title || t.code) + '">' + esc(mark) + " " + esc(t.title || t.code) + "</span>";
+    }).join("") + "</div>";
+    return '<div class="tb-acct"><div class="tb-acct-h"><b>' + esc(label) + "</b> " + state +
+      (pending ? ' <span class="chip warn">' + pending + " 项待办</span>" : "") +
+      ' <span class="hint">' + esc(String(g.account || "")) + "</span>" +
+      (g.account ? ' <button class="xs" data-ta-open="' + esc(g.account) + '">查看并执行</button>' : "") +
+      "</div>" + body + "</div>";
+  }).join("") + "</div>";
+}
 async function renderTaskBoard() {
   const list = tbClients();
   if (!list.length) {
     $("#tbChips").innerHTML = "";
+    $("#tbAccounts").innerHTML = "";
+    $("#tbAccountsBar").hidden = true;
     $("#tbNote").textContent = "-";
     $("#tbBody").innerHTML = '<div class="pad hint">还没有客户端提供任务看板。一个客户端实现了任务能力后，这里会自动出现。</div>';
     return;
@@ -6404,14 +6476,44 @@ async function renderTaskBoard() {
     '<button class="chip' + (n === TB.client ? " on" : "") + '" data-c="' + esc(n) + '">' + esc(n) + "</button>").join("");
   syncSchoolBtn();
 
-  const r = await api(cbase(TB.client) + "/tasks");
+  // 账号优先：账号池已经拉过就直接复用，没拉过补一次；拿不到账号就退回平台全量，
+  // 让“该模块不支持账号管理”时看板照旧能用。
+  if (!ACCTS[TB.client]) { try { await loadAccounts(TB.client, true); } catch (e) { } }
+  const accts = ((ACCTS[TB.client] || {}).accounts || []).filter(a => a.enabled !== false);
+  if (!accts.length) { TASKCENTER.allAccounts = false; TASKCENTER.account = ""; }
+  else if (TASKCENTER.account && !accts.some(a => String(a.id) === TASKCENTER.account)) { TASKCENTER.account = ""; TASKCENTER.allAccounts = true; }
+  else if (!TASKCENTER.allAccounts && !TASKCENTER.account) { TASKCENTER.allAccounts = true; }
+  $("#tbAccountsBar").hidden = !accts.length;
+  $("#tbAccounts").innerHTML = accts.length
+    ? '<button class="chip' + (TASKCENTER.allAccounts ? " on" : "") + '" data-ta="">全部账号</button>' +
+      accts.map(a => '<button class="chip' + (!TASKCENTER.allAccounts && String(a.id) === TASKCENTER.account ? " on" : "") +
+        '" data-ta="' + esc(a.id) + '" title="' + esc(String(a.id)) + '">' + esc(a.label || accountIdentity(a) || a.id) + "</button>").join("")
+    : "";
+
+  const path = TASKCENTER.allAccounts ? "/tasks?all=1"
+    : (TASKCENTER.account ? "/tasks?account=" + encodeURIComponent(TASKCENTER.account) : "/tasks");
+  const r = await api(cbase(TB.client) + path);
   if (!r.ok) { $("#tbBody").innerHTML = '<div class="pad hint">' + esc(r.err || "读取任务失败") + "</div>"; return; }
+
+  // 全部账号：一张按账号分组的矩阵（见 tbAccountMatrix）。不在这里给“执行”
+  // 按钮——单条执行必须带具体账号，否则 RunTask 会落到模块的默认账号上。
+  if (TASKCENTER.allAccounts && Array.isArray(r.data.accounts)) {
+    TB.runs = [];
+    r.data.accounts.forEach(g => { (g.runs || []).forEach(x => { if (x.state === "running") TB.runs.push(x); }); });
+    $("#tbNote").textContent = TB.client + " · 全部账号 · " + r.data.accounts.length + " 个账号" +
+      (TASKCENTER.batch ? " · 批次 " + TASKCENTER.batch : "");
+    $("#tbBody").innerHTML = tbAccountMatrix(r.data.accounts);
+    tbSchedule();
+    return;
+  }
+
   TB.tasks = r.data.tasks || [];
   TB.runs = r.data.runs || [];
 
   const auto = TB.tasks.filter(t => t.auto).length;
   const claim = TB.tasks.filter(t => t.claimable && !t.claimed).length;
-  $("#tbNote").textContent = TB.tasks.length + " 个任务 · " + auto + " 个可自动执行" + (claim ? " · " + claim + " 个可领取" : "");
+  const who = TASKCENTER.account ? tbAccountLabel(accts) + " · " : "";
+  $("#tbNote").textContent = who + TB.tasks.length + " 个任务 · " + auto + " 个可自动执行" + (claim ? " · " + claim + " 个可领取" : "");
 
   if (!TB.tasks.length) {
     $("#tbBody").innerHTML = '<div class="pad hint">这个客户端没有返回任务列表。账号未就绪时属于正常。</div>';
@@ -6452,7 +6554,9 @@ async function renderTaskBoard() {
 }
 async function runOneTask(code) {
   if (!TB.client) return;
-  const r = await api(cbase(TB.client) + "/tasks/" + encodeURIComponent(code) + "/run", { method: "POST", body: {} });
+  // 单条执行必须知道账号：全部账号矩阵里点执行会被挡下来，先选一个具体账号。
+  if (TASKCENTER.allAccounts) { toast("先在上方选中一个具体账号，再执行单条任务", "err"); return; }
+  const r = await api(cbase(TB.client) + "/tasks/" + encodeURIComponent(code) + "/run", { method: "POST", body: { account: TASKCENTER.account } });
   if (!r.ok) { toast(r.err || "无法启动任务", "err"); return; }
   toast("已开始：" + code);
   await renderTaskBoard();
@@ -6465,7 +6569,7 @@ async function waitForTask(code, budgetMs) {
   const deadline = Date.now() + (budgetMs || 45 * 60 * 1000);
   while (Date.now() < deadline) {
     await new Promise(res => setTimeout(res, 3000));
-    const r = await api(cbase(TB.client) + "/tasks");
+    const r = await api(cbase(TB.client) + (TASKCENTER.account ? "/tasks?account=" + encodeURIComponent(TASKCENTER.account) : "/tasks"));
     if (!r.ok) return null;
     TB.tasks = r.data.tasks || [];
     TB.runs = r.data.runs || [];
@@ -6474,6 +6578,7 @@ async function waitForTask(code, budgetMs) {
   return null;
 }
 async function runAllTasks() {
+  if (TASKCENTER.allAccounts) { toast("先在上方选中一个具体账号，再批量执行", "err"); return; }
   const auto = TB.tasks.filter(t => t.auto);
   if (!auto.length) { toast("这个客户端没有可自动执行的任务", "err"); return; }
   if (!confirm("依次执行 " + auto.length + " 个任务？任务之间有必要的等待，可能耗时较久。")) return;
@@ -6488,6 +6593,21 @@ async function runAllTasks() {
     await renderTaskBoard();
   }
   toast("任务执行完成：" + ok + "/" + auto.length + " 成功", ok === auto.length ? "" : "err");
+}
+// tbGotoBoard 是定时/批量页签往任务看板的跨页链接：把客户端、账号、批次一起带
+// 过去，让看板落在同一个上下文里，而不是另开一个默认平台。
+function tbGotoBoard(client, account, batch) {
+  if (client) TB.client = client;
+  TASKCENTER.client = client || TB.client || TASKCENTER.client;
+  TASKCENTER.account = account || "";
+  TASKCENTER.allAccounts = !account;
+  TASKCENTER.batch = batch || "";
+  TB.runs = [];
+  // 先选页签再切视图：setupSubtabs 在“还不在任务中心”时不会触发 onShow，
+  // 所以 go() 是唯一的首次渲染；已经在任务中心时 select() 负责渲染一次。
+  if (TASKS_SUBTABS) TASKS_SUBTABS.select("board");
+  if (VIEW !== "taskscenter") go("taskscenter");
+  else if (!TASKS_SUBTABS) renderTaskBoard();
 }
 
 /* ── 积分构成 ─────────────────────────────────────────────────────────── */
@@ -8638,9 +8758,23 @@ $("#qcChips").addEventListener("click", e => {
 $("#tbChips").addEventListener("click", e => {
   const b = e.target.closest(".chip[data-c]");
   if (!b) return;
+  // 换客户端就把账号选择归零：新平台的账号 id 和旧平台没有关系。
+  TASKCENTER.client = b.dataset.c;
+  TASKCENTER.account = "";
+  TASKCENTER.allAccounts = false;
+  TASKCENTER.batch = "";
   TB.client = b.dataset.c;
   TB.runs = [];
   renderQC();
+  renderTaskBoard();
+});
+$("#tbAccounts").addEventListener("click", e => {
+  const b = e.target.closest("button[data-ta]");
+  if (!b) return;
+  const id = b.dataset.ta || "";
+  TASKCENTER.account = id;
+  TASKCENTER.allAccounts = !id;
+  TB.runs = [];
   renderTaskBoard();
 });
 // 一次性批量：按钮是按当前客户端动态画的，所以用委托。
@@ -8648,7 +8782,20 @@ $("#qcBatchBtns").addEventListener("click", e => {
   const b = e.target.closest("button[data-batch]");
   if (b) qcBatchRun(b);
 });
+// 批量执行的分组头带「看板」：切到任务看板并只看这个账号。
+$("#qcList").addEventListener("click", e => {
+  const b = e.target.closest("button[data-qboard]");
+  if (b) tbGotoBoard(TB.client || qcPick(qcClients()), b.dataset.qboard, "");
+});
 $("#tbBody").addEventListener("click", e => {
+  const open = e.target.closest("button[data-ta-open]");
+  if (open) {
+    TASKCENTER.account = open.dataset.taOpen || "";
+    TASKCENTER.allAccounts = false;
+    TB.runs = [];
+    renderTaskBoard();
+    return;
+  }
   const b = e.target.closest("button[data-run]");
   if (b) runOneTask(b.dataset.run);
 });
@@ -8670,6 +8817,7 @@ $("#scBody").addEventListener("change", e => {
 $("#scBody").addEventListener("click", e => {
   const tr = e.target.closest("tr.scrow");
   if (!tr) return;
+  if (e.target.closest("[data-scboard]")) { tbGotoBoard(tr.dataset.client, "", tr.dataset.batch); return; }
   if (e.target.closest("[data-scfollow]")) { scFollowGlobal(tr); return; }
   const run = e.target.closest("[data-scrun]");
   if (run) scRunNow(run);

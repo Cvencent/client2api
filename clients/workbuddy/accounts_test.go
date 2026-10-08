@@ -30,6 +30,13 @@ const enterpriseModelsFixture = `{"code":0,"data":{
   "agents":[{"name":"cli","models":["claude-sonnet-4","glm-5"]}]
 }}`
 
+const autoProbeSSEFixture = `data: {"code":0,"msg":"","data":{"id":"chatcmpl-probe","object":"chat.completion.chunk","model":"auto","choices":[{"index":0,"delta":{"role":"assistant","content":"pong"}}]}}
+
+data: {"code":0,"msg":"","data":{"id":"chatcmpl-probe","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}}
+
+data: [DONE]
+`
+
 // panelClient builds a Client over a fresh temp data dir pre-seeded with the
 // named credential files (name -> body).
 func panelClient(t *testing.T, rt http.RoundTripper, files map[string]string) (*Client, string) {
@@ -95,6 +102,20 @@ func catalogueRT(status int, body string) *fakeRT {
 			return jsonResponse(status, body), nil
 		}
 		return jsonResponse(http.StatusInternalServerError, `{"code":1,"msg":"probe disabled"}`), nil
+	}}
+}
+
+// chatProbeRT answers the real chat path.  A non-2xx status is returned as
+// JSON; a success is returned as the SSE stream the vendor actually uses.
+func chatProbeRT(status int, body string) *fakeRT {
+	return &fakeRT{handler: func(req *http.Request) (*http.Response, error) {
+		if !strings.HasSuffix(req.URL.Path, chatCompletionsPath) {
+			return jsonResponse(http.StatusInternalServerError, `{"code":1,"msg":"unexpected probe endpoint"}`), nil
+		}
+		if status >= 400 {
+			return jsonResponse(status, body), nil
+		}
+		return sseResponse(status, body, nil), nil
 	}}
 }
 
@@ -481,8 +502,17 @@ func TestWorkbuddyTestAccountParkedIsAResult(t *testing.T) {
 	}
 }
 
-func TestWorkbuddyTestAccountReachesUpstream(t *testing.T) {
-	c, _ := panelClient(t, catalogueRT(http.StatusOK, enterpriseModelsFixture), map[string]string{
+func TestWorkbuddyTestAccountUsesAutoChat(t *testing.T) {
+	var seen *http.Request
+	rt := &fakeRT{handler: func(req *http.Request) (*http.Response, error) {
+		if !strings.HasSuffix(req.URL.Path, chatCompletionsPath) {
+			t.Errorf("TestAccount probed %s, want the chat path", req.URL.Path)
+			return jsonResponse(http.StatusInternalServerError, `{"code":1,"msg":"catalogue is not a chat probe"}`), nil
+		}
+		seen = req
+		return sseResponse(http.StatusOK, autoProbeSSEFixture, nil), nil
+	}}
+	c, _ := panelClient(t, rt, map[string]string{
 		"wb-uid-a.json": credJSON("access-token-abcdefgh", "", "cn", "copilot.tencent.com", "uid-a", 0),
 	})
 	res, err := c.TestAccount(context.Background(), "uid-a")
@@ -492,19 +522,60 @@ func TestWorkbuddyTestAccountReachesUpstream(t *testing.T) {
 	if !res.OK {
 		t.Fatalf("result = %+v, want OK", res)
 	}
-	if res.Model == "" {
-		t.Fatalf("no model reported: %+v", res)
+	if res.Model != "auto" {
+		t.Fatalf("model = %q, want auto", res.Model)
 	}
-	if !strings.Contains(res.Reply, "model(s) reachable") {
+	if !strings.Contains(res.Reply, "Auto model reachable") {
 		t.Fatalf("reply = %q", res.Reply)
 	}
 	if res.AccountID != "uid-a" {
 		t.Fatalf("account id = %q", res.AccountID)
 	}
+	if seen == nil {
+		t.Fatal("no chat request was sent")
+	}
+	body := wbBody(t, seen)
+	if body["model"] != "auto" {
+		t.Fatalf("model sent = %v, want auto", body["model"])
+	}
+	if body["stream"] != true {
+		t.Fatalf("stream sent = %v, want true", body["stream"])
+	}
+}
+
+func TestWorkbuddyTestAccountHardCreditKeepsAccountParked(t *testing.T) {
+	rt := &fakeRT{handler: func(req *http.Request) (*http.Response, error) {
+		if strings.HasSuffix(req.URL.Path, enterpriseModelsPth) {
+			// The old bug treated a reachable catalogue as proof that chat works.
+			return jsonResponse(http.StatusOK, enterpriseModelsFixture), nil
+		}
+		if strings.HasSuffix(req.URL.Path, chatCompletionsPath) {
+			return jsonResponse(http.StatusPaymentRequired, `{"code":1,"msg":"积分不足"}`), nil
+		}
+		return jsonResponse(http.StatusInternalServerError, `{"code":1,"msg":"unexpected endpoint"}`), nil
+	}}
+	c, _ := panelClient(t, rt, map[string]string{
+		"wb-uid-a.json": credJSON("access-token-abcdefgh", "", "cn", "copilot.tencent.com", "uid-a", 0),
+	})
+	a := c.findAuth("uid-a")
+	if a == nil {
+		t.Fatal("test account was not loaded")
+	}
+	c.pool.MarkFailure(a, &Error{Kind: ErrHardCredit, Status: http.StatusPaymentRequired, Msg: "no credit"})
+	res, err := c.TestAccount(context.Background(), "uid-a")
+	if err != nil {
+		t.Fatalf("TestAccount: %v", err)
+	}
+	if res.OK {
+		t.Fatalf("a zero-credit account tested as usable: %+v", res)
+	}
+	if got := c.pool.Snapshot()[0]; got.State != stateExhausted {
+		t.Fatalf("state after failed chat = %q, want %q", got.State, stateExhausted)
+	}
 }
 
 func TestWorkbuddyTestAccountRefusalIsAResult(t *testing.T) {
-	c, _ := panelClient(t, catalogueRT(http.StatusUnauthorized, `{"code":1,"msg":"token expired"}`),
+	c, _ := panelClient(t, chatProbeRT(http.StatusUnauthorized, `{"code":1,"msg":"token expired"}`),
 		map[string]string{
 			"wb-uid-a.json": credJSON("access-token-abcdefgh", "", "cn", "copilot.tencent.com", "uid-a", 0),
 		})

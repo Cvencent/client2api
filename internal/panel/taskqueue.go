@@ -480,6 +480,9 @@ func (p *panel) drainTaskQueue(tp core.TaskProvider, client string) {
 					res.At = time.Now().Format(time.RFC3339)
 				}
 				res.ElapsedMS = time.Since(started).Milliseconds()
+				if err == nil && res.OK {
+					p.refreshBalanceAfterTask(tp, res.AccountID)
+				}
 				p.runs.finish(runID, res, time.Since(started))
 
 				// A vendor refusal is a RESULT, not a failure (see core.TaskResult):

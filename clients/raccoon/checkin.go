@@ -22,16 +22,18 @@ import (
 //
 // There is no status endpoint and no "already claimed" error code. The reply is
 // a bare {granted, popup?} object: `granted:true` means points moved, and
-// `granted:false` is the server declining this attempt. **The window the server
-// enforces is not documented anywhere in the client** — the hook fires on every
-// launch and lets the reply decide — so this module must not claim the reward is
-// once per day, once per account, or anything else. It asks, and reports the
-// answer. The vendor's own hook is fire-and-forget: it logs a failure to the
+// `granted:false` is the server declining this attempt. The client does not
+// document the exact window the server enforces, so this module does not
+// hard-code a reset hour or infer a reason from a refusal: it asks, and reports
+// the answer. The vendor's own hook is fire-and-forget: it logs a failure to the
 // console and shows a popup only when `granted` is true.
 //
-// This is NOT the daily 300 credits — those are granted server-side
-// (`daily_grant` in the points ledger), have no endpoint at all (see
-// balance.go), and are not claimed by anything here.
+// **This endpoint is the daily 300-credit grant.** A live check against a
+// real account showed that a `granted:true` reply writes a `daily_grant`
+// entry of +300 into the points ledger, and a repeat request the same day
+// answers `granted:false`. The reply still carries no reason, so this module
+// reports a refusal instead of guessing whether the cause was "already
+// claimed today" or "outside the grant window".
 
 const (
 	// checkinActionLoginPoints is the single action this module offers.
@@ -64,8 +66,8 @@ func (c *Client) CheckinActions(ctx context.Context) []core.CheckinAction {
 	}
 	return []core.CheckinAction{{
 		ID:    checkinActionLoginPoints,
-		Label: "领取登录积分",
-		Help:  "Asks the vendor to grant this account's desktop login points. The vendor decides whether anything is handed out this time, so granted:false is reported as a refusal, not an error. This is not the 300 daily credits, which have no endpoint.",
+		Label: "领取每日 300 积分",
+		Help:  "领取本账号当天 300 桌面登录积分（POST /api/web/desktop/v1/login/points/grant）。服务端每天发放一次；重复请求或不在发放时段会返回 granted:false，本模块把它记成拒绝而不是错误。",
 	}}
 }
 
@@ -134,12 +136,12 @@ func (c *Client) Checkin(ctx context.Context, id, action string) (core.CheckinRe
 		// error. It is still a refusal for us: no points moved. We do not guess
 		// at why — the reply carries no reason, and the client documents no
 		// window.
-		res.Error = "the vendor did not grant desktop login points this time"
+		res.Error = "the vendor did not grant the daily 300 login points this time (granted:false; already claimed today or outside the grant window)"
 		return c.finishCheckin(res, start), nil
 	}
 
 	res.OK = true
-	res.Message = "the vendor granted the desktop login points"
+	res.Message = "the vendor granted the daily 300 login points"
 	if reply.Popup != nil {
 		res.Message += " (the reply carried a popup; see data.popup)"
 	}

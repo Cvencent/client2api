@@ -37,6 +37,34 @@ type fakeTaskClient struct {
 	ran []string
 }
 
+// fakeTaskBalanceClient is a task module that can also report a live balance.
+// The panel uses that capability to refresh the account-pool row after a chore
+// changes the vendor's balance.
+type fakeTaskBalanceClient struct {
+	*fakeTaskClient
+
+	mu           sync.Mutex
+	balance      core.Balance
+	balanceErr   error
+	balanceCalls int
+}
+
+func (f *fakeTaskBalanceClient) AccountBalance(context.Context, string, time.Duration) (core.Balance, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.balanceCalls++
+	if f.balanceErr != nil {
+		return core.Balance{}, f.balanceErr
+	}
+	return f.balance, nil
+}
+
+func (f *fakeTaskBalanceClient) calls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.balanceCalls
+}
+
 // codes returns a copy of the task codes RunTask has been asked to run.
 func (f *fakeTaskClient) codes() []string {
 	f.mu.Lock()
@@ -226,6 +254,35 @@ func TestTaskRunIsAsynchronousAndJournalled(t *testing.T) {
 	}
 }
 
+func TestTaskRunRefreshesTheBalanceAfterSuccess(t *testing.T) {
+	c := &fakeTaskBalanceClient{
+		fakeTaskClient: &fakeTaskClient{name: "loomy", result: core.TaskResult{OK: true, AccountID: "a1"}},
+		balance:        core.Balance{Credits: 10000, Unit: "credits"},
+	}
+	p := taskPanel(t, c)
+	p.initBalanceCache()
+	seedBalanceCache(p, "loomy", "a1", core.Balance{Credits: 7000, Unit: "credits"})
+
+	rec, out := doTask(t, p, http.MethodPost, "/panel/api/clients/loomy/tasks/share_soul/run", `{"account":"a1"}`)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("run: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	run, _ := out["run"].(map[string]any)
+	id, _ := run["id"].(string)
+	waitRun(t, p, "loomy", id)
+
+	entry, ok := p.balanceCache.entry("loomy", "a1")
+	if !ok {
+		t.Fatal("the balance cache lost the account")
+	}
+	if entry.Credits != 10000 {
+		t.Fatalf("cached balance = %d, want the post-task balance 10000", entry.Credits)
+	}
+	if got := c.calls(); got != 1 {
+		t.Fatalf("AccountBalance calls = %d, want one after the task", got)
+	}
+}
+
 func TestTaskRunRecordsARefusalAsAResultNotAnError(t *testing.T) {
 	// A run error means "the attempt could not be made".  A vendor refusal is
 	// still an answer, and the board must be able to show it.
@@ -351,5 +408,56 @@ func TestTaskRunCodesWithSlashesAndDotsSurvive(t *testing.T) {
 	}
 	if ran := c.codes(); len(ran) != 1 || ran[0] != code {
 		t.Fatalf("code mangled: %v", ran)
+	}
+}
+
+func TestTaskListFiltersRunsByAccount(t *testing.T) {
+	c := &fakeTaskClient{
+		name:   "loomy",
+		tasks:  []core.TaskInfo{{Code: "share_soul", Auto: true}},
+		result: core.TaskResult{OK: true, AccountID: "a1"},
+	}
+	p := taskPanel(t, c)
+	p.runs.start("loomy", "a1", "share_soul")
+	p.runs.start("loomy", "a2", "share_soul")
+
+	rec, out := doTask(t, p, http.MethodGet, "/panel/api/clients/loomy/tasks?account=a1", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	runs, _ := out["runs"].([]any)
+	if len(runs) != 1 {
+		t.Fatalf("runs = %v, want only a1", runs)
+	}
+	run, _ := runs[0].(map[string]any)
+	if run["account"] != "a1" {
+		t.Fatalf("run account = %v, want a1", run["account"])
+	}
+}
+
+func TestTaskListAllGroupsByAccount(t *testing.T) {
+	c := newSweepClient("loomy", core.TaskResult{OK: true}, liveAccount("a1"), liveAccount("a2"))
+	c.fakeTaskClient.tasks = []core.TaskInfo{{Code: "share_soul", Auto: true}}
+	p := taskPanel(t, c)
+	p.runs.start("loomy", "a1", "share_soul")
+	p.runs.start("loomy", "a2", "share_soul")
+
+	rec, out := doTask(t, p, http.MethodGet, "/panel/api/clients/loomy/tasks?all=1", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	accounts, _ := out["accounts"].([]any)
+	if len(accounts) != 2 {
+		t.Fatalf("accounts = %v, want a1 and a2", accounts)
+	}
+	for _, raw := range accounts {
+		row, _ := raw.(map[string]any)
+		runs, _ := row["runs"].([]any)
+		if len(runs) != 1 {
+			t.Fatalf("row %v has runs %v, want one account-scoped run", row["account"], runs)
+		}
+		if len(row["tasks"].([]any)) != 1 {
+			t.Fatalf("row %v lost tasks", row)
+		}
 	}
 }

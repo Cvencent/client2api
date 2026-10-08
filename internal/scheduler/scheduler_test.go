@@ -1613,3 +1613,59 @@ func TestRunBatchNowRunsTheSyntheticCheckin(t *testing.T) {
 		t.Fatalf("events = %v, want %v", got, want)
 	}
 }
+
+func TestPendingOnlyBatchSkipsClaimedCodes(t *testing.T) {
+	logs := &recorder{}
+	clk := newFakeClock(cstMidnight, logs)
+	c := &fakeClient{
+		name:     "fake",
+		accounts: []core.AccountRecord{{ID: "a1", Enabled: true}},
+		tasks: map[string][]core.TaskInfo{"a1": {
+			{Code: "done", Claimed: true, Auto: true},
+			{Code: "todo", Auto: true},
+			{Code: "locked", Locked: true, Auto: true},
+		}},
+		batches: []core.Batch{{Name: "growth", Codes: []string{"done", "todo", "locked"}, PendingOnly: true, Settle: time.Millisecond}},
+		rec:     logs,
+	}
+	r := New(deps(registryOf(c), clk, logs))
+	r.Reconfigure(Config{Enabled: true, Growth: Group{Enabled: true, Hours: []int{12}}})
+
+	rep := r.runBatch(context.Background(), "fake", "growth")
+	if rep.Ran != 1 {
+		t.Fatalf("ran = %d, want only the pending task", rep.Ran)
+	}
+	want := []string{"a1/todo", "sleep"}
+	if got := logs.all(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("events = %v, want %v", got, want)
+	}
+}
+
+func TestScheduledBatchHonoursAccountScope(t *testing.T) {
+	logs := &recorder{}
+	clk := newFakeClock(cstMidnight, logs)
+	c := &fakeClient{
+		name:     "wb",
+		accounts: []core.AccountRecord{{ID: "a1", Enabled: true}},
+		tasks:    map[string][]core.TaskInfo{"a1": {{Code: "todo", Auto: true}}},
+		batches:  []core.Batch{{Name: "growth", Codes: []string{"todo"}, Settle: time.Millisecond}},
+		rec:      logs,
+	}
+	r := New(deps(registryOf(c), clk, logs))
+	r.Reconfigure(Config{
+		Enabled: true,
+		Growth: Group{
+			Enabled: true,
+			Hours:   []int{12},
+			Accounts: AccountScope{
+				Mode:    AccountScopeInclude,
+				Include: []string{"a2"},
+			},
+		},
+	})
+
+	rep := r.runBatch(context.Background(), "wb", "growth")
+	if rep.Ran != 0 || rep.Accounts != 0 {
+		t.Fatalf("report = %+v, want no account in the include scope", rep)
+	}
+}

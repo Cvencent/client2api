@@ -309,3 +309,34 @@ func TestScheduleViewMergesTheRunJournal(t *testing.T) {
 		t.Errorf("second run trigger = %v, want the scheduled one", second["trigger"])
 	}
 }
+
+func TestScheduleRowsIncludeLoomyGrowthAndAccountScope(t *testing.T) {
+	c := newSweepClient("loomy", core.TaskResult{OK: true}, liveAccount("a1"))
+	c.batches = []core.Batch{{Name: "growth", Codes: []string{"share_soul"}, PendingOnly: true}}
+	p := statusPanel(t, &fakeScheduler{
+		st: scheduler.Status{Enabled: true},
+		cfg: scheduler.Config{
+			Enabled: true,
+			Growth: scheduler.Group{
+				Enabled: true,
+				Hours:   []int{12},
+				Accounts: scheduler.AccountScope{
+					Mode:    scheduler.AccountScopeExclude,
+					Exclude: []string{"a2"},
+				},
+			},
+		},
+	})
+	p.opts.Registry = registryOf(c)
+
+	rows := p.scheduleRows(p.opts.Scheduler.Config(), p.opts.Scheduler.Status())
+	if len(rows) != 1 || rows[0].Client != "loomy" || rows[0].Batch != "growth" {
+		t.Fatalf("rows = %+v, want loomy/growth", rows)
+	}
+	if !rows[0].PendingOnly {
+		t.Fatal("pending-only was lost from the schedule row")
+	}
+	if rows[0].AccountScope.Mode != scheduler.AccountScopeExclude || len(rows[0].AccountScope.Exclude) != 1 {
+		t.Fatalf("account scope lost: %+v", rows[0].AccountScope)
+	}
+}

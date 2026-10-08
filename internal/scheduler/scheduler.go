@@ -98,6 +98,46 @@ const (
 type Group struct {
 	Enabled bool
 	Hours   []int // hours of day in CST, 0-23
+	// Accounts optionally narrows the batch to selected account IDs.
+	Accounts AccountScope
+}
+
+// AccountScope narrows one scheduled batch to a subset of a platform's
+// enabled accounts. The zero value keeps the historical platform-wide
+// behaviour.
+const (
+	AccountScopePlatform = "platform"
+	AccountScopeInclude  = "include"
+	AccountScopeExclude  = "exclude"
+)
+
+// AccountScope is the account-level include/exclude override for one plan.
+type AccountScope struct {
+	Mode    string
+	Include []string
+	Exclude []string
+}
+
+// Allows reports whether an account is inside the configured scope.
+func (s AccountScope) Allows(account string) bool {
+	switch strings.ToLower(strings.TrimSpace(s.Mode)) {
+	case AccountScopeInclude:
+		for _, id := range s.Include {
+			if id == account {
+				return true
+			}
+		}
+		return false
+	case AccountScopeExclude:
+		for _, id := range s.Exclude {
+			if id == account {
+				return false
+			}
+		}
+		return true
+	default:
+		return true
+	}
 }
 
 // Config is the operator's timetable.
@@ -748,6 +788,7 @@ func (r *Runner) runBatch(ctx context.Context, clientName, batchName string) Rep
 // records as the reason: the timetable, or an operator's button.
 func (r *Runner) runBatchAs(ctx context.Context, clientName, batchName, trigger string) Report {
 	rep := Report{Client: clientName, Batch: batchName, Started: r.now()}
+	cfg, _ := r.config()
 	finish := func(b core.Batch) Report {
 		rep.Duration = r.now().Sub(rep.Started)
 		settle := b.Settle
@@ -811,6 +852,7 @@ func (r *Runner) runBatchAs(ctx context.Context, clientName, batchName, trigger 
 		rep.Errors = append(rep.Errors, err.Error())
 		r.log("[scheduler] %s/%s: listing accounts failed, using the default account: %v", clientName, batchName, err)
 	}
+	accounts = scopeAccounts(cfg, clientName, batchName, accounts)
 	rep.Accounts = len(accounts)
 
 	gap := b.AccountGap
@@ -839,6 +881,21 @@ func (r *Runner) runBatchAs(ctx context.Context, clientName, batchName, trigger 
 				continue
 			}
 		}
+		accountCodes := codes
+		if b.PendingOnly {
+			next, perr := pendingCodes(ctx, tp, acc, codes)
+			if perr != nil {
+				rep.Failed++
+				rep.Errors = append(rep.Errors, perr.Error())
+				r.log("[scheduler] %s/%s account %q: reading pending tasks failed: %v", clientName, batchName, acc, perr)
+				continue
+			}
+			accountCodes = next
+			if len(accountCodes) == 0 {
+				r.log("[scheduler] %s/%s account %q: no pending tasks", clientName, batchName, acc)
+				continue
+			}
+		}
 		if ranAnAccount {
 			if !r.sleep(ctx, jitter(gap)) {
 				r.log("[scheduler] %s/%s: context done while pacing accounts", clientName, batchName)
@@ -847,7 +904,7 @@ func (r *Runner) runBatchAs(ctx context.Context, clientName, batchName, trigger 
 		}
 		ranAnAccount = true
 
-		for _, code := range codes {
+		for _, code := range accountCodes {
 			if ctx.Err() != nil {
 				break
 			}
@@ -933,6 +990,19 @@ func accountRecordsOfForBatch(ctx context.Context, c core.Client, checkin bool) 
 	return out, nil
 }
 
+// scopeAccounts applies a schedule group's account include/exclude policy.
+// The zero scope keeps every account supplied by the platform policy.
+func scopeAccounts(cfg Config, client, batch string, accounts []core.AccountRecord) []core.AccountRecord {
+	group, _ := cfg.GroupFor(client, batch)
+	filtered := accounts[:0]
+	for _, rec := range accounts {
+		if group.Accounts.Allows(rec.ID) {
+			filtered = append(filtered, rec)
+		}
+	}
+	return filtered
+}
+
 func checkinAccount(rec core.AccountRecord) bool {
 	if rec.Fields != nil {
 		if v, ok := rec.Fields["disabled"].(bool); ok && v {
@@ -986,6 +1056,27 @@ func appendReason(list []string, reason string) []string {
 // gateOpen reports whether the batch's gate is present and still incomplete.
 // A missing gate and an already satisfied gate both mean "not worth running",
 // which is a skip, not a failure.
+func pendingCodes(ctx context.Context, tp core.TaskProvider, account string, codes []string) ([]string, error) {
+	list, err := tp.Tasks(ctx, account)
+	if err != nil {
+		return nil, err
+	}
+	pending := make(map[string]bool)
+	for _, t := range list {
+		if t.Claimed || t.Locked || !t.Auto {
+			continue
+		}
+		pending[t.Code] = true
+	}
+	out := make([]string, 0, len(codes))
+	for _, code := range codes {
+		if pending[code] {
+			out = append(out, code)
+		}
+	}
+	return out, nil
+}
+
 func gateOpen(ctx context.Context, tp core.TaskProvider, accountID, gate string) (bool, error) {
 	tasks, err := tp.Tasks(ctx, accountID)
 	if err != nil {
@@ -1186,6 +1277,8 @@ func (r *Runner) runCheckinBatchAs(ctx context.Context, c core.Client, b core.Ba
 		rep.Errors = append(rep.Errors, err.Error())
 		r.log("[scheduler] %s/%s: listing accounts failed, using the default account: %v", rep.Client, rep.Batch, err)
 	}
+	cfg, _ := r.config()
+	accounts = scopeAccounts(cfg, rep.Client, rep.Batch, accounts)
 	rep.Accounts = len(accounts)
 	checkinActions := cp.CheckinActions(ctx)
 	gap := b.AccountGap

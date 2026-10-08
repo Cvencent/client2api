@@ -193,7 +193,9 @@ func TestPoolTilesUseTheSameStateClassifierAsTheRows(t *testing.T) {
 		"const cls = accountState(st);",
 		`if (cls.key === "ready") ready++;`,
 		`else if (cls.key === "cooling") cool++;`,
-		`else if (cls.key === "disabled") bad++;`,
+		`else if (cls.key === "risk") risk++;`,
+		`else if (cls.key === "fault") fault++;`,
+		`else if (cls.key === "disabled") disabled++;`,
 	} {
 		if !strings.Contains(stats, want) {
 			t.Errorf("renderStats 没有按行里同一套分类分桶，缺：%s", want)

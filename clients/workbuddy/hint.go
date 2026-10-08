@@ -71,7 +71,7 @@ func GatewayHint(kind ErrKind, msg string, ctx HintContext) string {
 	case ErrSoftRate:
 		return "rate limited by upstream; retry after reset"
 	case ErrAccountFault:
-		return "account-level fault at upstream (auth/quota state); the gateway will rotate or disable this account"
+		return "platform risk control blocked this account; wait for the restriction to expire or appeal it with the vendor; re-login will not clear it"
 	case ErrSessionDead:
 		return "account session expired at upstream; the account is disabled until re-login"
 	case ErrHardCredit:

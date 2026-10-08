@@ -16,7 +16,7 @@ func TestWorkbuddyGatewayHintKindTable(t *testing.T) {
 		{ErrImageInvalid, "image request was rejected by upstream; check image_url format and image data"},
 		{ErrWafBlock, "upstream WAF blocked the gateway; retry after the block window"},
 		{ErrSoftRate, "rate limited by upstream; retry after reset"},
-		{ErrAccountFault, "account-level fault at upstream (auth/quota state); the gateway will rotate or disable this account"},
+		{ErrAccountFault, "platform risk control blocked this account; wait for the restriction to expire or appeal it with the vendor; re-login will not clear it"},
 		{ErrSessionDead, "account session expired at upstream; the account is disabled until re-login"},
 		{ErrHardCredit, "account credits exhausted at upstream; waiting for daily check-in to restore"},
 		{ErrModelBlocked, "upstream has no such model on this backend; switch model or retry on another account"},
@@ -212,7 +212,7 @@ func TestWorkbuddyHintTranslatesTheSharedKinds(t *testing.T) {
 		{core.FailureWAF, "upstream WAF blocked the gateway; retry after the block window"},
 		{core.FailureRateLimited, "rate limited by upstream; retry after reset"},
 		{core.FailureQuota, "account credits exhausted at upstream; waiting for daily check-in to restore"},
-		{core.FailureAuth, "account-level fault at upstream (auth/quota state); the gateway will rotate or disable this account"},
+		{core.FailureAuth, "platform risk control blocked this account; wait for the restriction to expire or appeal it with the vendor; re-login will not clear it"},
 		{core.FailureSessionDead, "account session expired at upstream; the account is disabled until re-login"},
 		{core.FailureContentBlocked, "request content was rejected by content policy; adjust the prompt and retry"},
 	}

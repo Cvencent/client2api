@@ -245,6 +245,40 @@ func TestTaskRunQueueDrainsEveryPendingChore(t *testing.T) {
 	}
 }
 
+func TestTaskQueueRefreshesTheBalanceAfterSuccess(t *testing.T) {
+	c := &fakeTaskBalanceClient{
+		fakeTaskClient: &fakeTaskClient{
+			name:   "loomy",
+			tasks:  []core.TaskInfo{{Code: "share_soul", Auto: true}},
+			result: core.TaskResult{OK: true, AccountID: "a1"},
+		},
+		balance: core.Balance{Credits: 10000, Unit: "credits"},
+	}
+	p := taskPanel(t, c)
+	p.initBalanceCache()
+	seedBalanceCache(p, "loomy", "a1", core.Balance{Credits: 7000, Unit: "credits"})
+
+	rec, out := doTask(t, p, http.MethodPost, queuePath("loomy", "run_queue"), "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("run_queue: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if out["started"] != true {
+		t.Fatalf("started = %v, want true (%v)", out["started"], out)
+	}
+	waitQueue(t, p, "loomy")
+
+	entry, ok := p.balanceCache.entry("loomy", "a1")
+	if !ok {
+		t.Fatal("the balance cache lost the account")
+	}
+	if entry.Credits != 10000 {
+		t.Fatalf("cached balance = %d, want the post-task balance 10000", entry.Credits)
+	}
+	if got := c.calls(); got != 1 {
+		t.Fatalf("AccountBalance calls = %d, want one after the queued task", got)
+	}
+}
+
 func TestTaskRunQueueRefusesASecondRound(t *testing.T) {
 	c := &fakeTaskClient{
 		name:     "wb",

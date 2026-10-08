@@ -27,8 +27,10 @@ The user's target is to use each provider's free models or free allowance:
 - No new panel UI beyond what the existing login capability already renders.
 - No new global credential store.
 - No browser automation, CDP, or external QR image service.
-- No attempt to claim Raccoon's daily 300 credits through an endpoint; the
-  vendor grants those server-side and exposes no claim API.
+- Raccoon's daily 300 credits are claimed through the one endpoint the vendor
+  does expose, `POST /api/web/desktop/v1/login/points/grant` (action id
+  `login-points`). A live check showed a successful grant writes a `daily_grant`
+  of +300 to the points ledger; a same-day repeat answers `granted:false`.
 - No filtering of OpenRouter or Raccoon accounts to free models only. Free
   models are identified and preferred for probes, but the account's paid quota
   remains usable.
@@ -284,7 +286,9 @@ account instead of creating a duplicate.
 
 After storing the credential, best-effort call the existing
 `login-points` reward action. A refusal or failure does not fail the login.
-The daily 300 credits remain untouched because no endpoint exists.
+The `login-points` grant is the daily 300 credit claim itself: a real grant
+writes a `daily_grant` of +300 to the points ledger, and a same-day repeat
+answers `granted:false`.
 
 Refresh continues through the existing `POST /api/web/auth/v1/refresh` path.
 

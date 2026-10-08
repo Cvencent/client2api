@@ -185,9 +185,14 @@ func (p *Pool) applyStagedLocked(fresh *poolEntry) {
 		fresh.fails = rec.Fails
 		return
 	}
-	switch rec.State {
-	case stateCooling, stateExhausted, stateFault, stateInvalid:
-		fresh.state = rec.State
+	state := rec.State
+	if state == stateFault || state == "account_fault" ||
+		strings.HasPrefix(strings.ToLower(rec.Note), ErrAccountFault.String()) {
+		state = stateRisk
+	}
+	switch state {
+	case stateCooling, stateExhausted, stateRisk, stateInvalid:
+		fresh.state = state
 		fresh.until = rec.CooldownUntil
 		fresh.note = rec.Note
 	default:

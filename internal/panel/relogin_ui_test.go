@@ -66,10 +66,9 @@ func TestNeedsReloginCoversTheThreeCredentialSignals(t *testing.T) {
 	body := poolStatsFuncBody(t, reloginSource(t), "needsRelogin")
 
 	for _, want := range []string{
-		`st === "invalid" || st === "expired" || st === "unauthorized" || st === "fault" || st === "account_fault"`,
+		`st === "invalid" || st === "expired" || st === "unauthorized"`,
 		`f.expired === true`,
 		`f.relogin === true`,
-		`note.startsWith("account_fault")`,
 		"login_required",
 		"expired",
 		"unauthorized",
@@ -77,6 +76,17 @@ func TestNeedsReloginCoversTheThreeCredentialSignals(t *testing.T) {
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("needsRelogin 不再认这条信号：%s", want)
+		}
+	}
+
+	for _, unwanted := range []string{
+		`st === "risk"`,
+		`st === "fault"`,
+		`st === "account_fault"`,
+		`note.startsWith("account_fault")`,
+	} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("needsRelogin 仍然把平台风控当成可重登：%s", unwanted)
 		}
 	}
 }

@@ -38,6 +38,15 @@ type sweepClient struct {
 
 func (s *sweepClient) Batches() []core.Batch { return s.batches }
 
+type balanceSweepClient struct {
+	*sweepClient
+	balance core.Balance
+}
+
+func (b *balanceSweepClient) AccountBalance(context.Context, string, time.Duration) (core.Balance, error) {
+	return b.balance, nil
+}
+
 // accountOnlyClient lists accounts and declares a batch but cannot run a chore:
 // the shape runBatch must reject before it spends a 45-second account gap.
 type accountOnlyClient struct {
@@ -224,6 +233,26 @@ func TestSweepCountsASuccessAndItsCredit(t *testing.T) {
 	}
 	if run.Done != 1 {
 		t.Errorf("done = %d, want 1", run.Done)
+	}
+}
+
+func TestSweepRefreshesTheBalanceAfterSuccess(t *testing.T) {
+	c := &balanceSweepClient{
+		sweepClient: newSweepClient("loomy", core.TaskResult{OK: true, AccountID: "a1"}, liveAccount("a1")),
+		balance:     core.Balance{Credits: 10000, Unit: "credits"},
+	}
+	p := batchPanel(t, c)
+	p.initBalanceCache()
+	seedBalanceCache(p, "loomy", "a1", core.Balance{Credits: 7000, Unit: "credits"})
+
+	runSweep(t, p, c, "checkin")
+
+	entry, ok := p.balanceCache.entry("loomy", "a1")
+	if !ok {
+		t.Fatal("the balance cache lost the account")
+	}
+	if entry.Credits != 10000 {
+		t.Fatalf("cached balance = %d, want the post-task balance 10000", entry.Credits)
 	}
 }
 

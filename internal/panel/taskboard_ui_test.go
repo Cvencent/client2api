@@ -107,3 +107,40 @@ func TestTaskBoardWiringCatchesTheNoteMovedBeforeTheButton(t *testing.T) {
 		t.Error("note 被挪到按钮之前的写法没有被抓到")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// 任务中心「账号优先」：三个页签共享一个选中账号，看板按账号取数、单条执行把
+// 账号发给服务端。少了任何一条，就会出现「页面停在 A 账号、请求打到默认账号」
+// 这种看不见的错位，所以这几处接线逐字钉住。
+// ---------------------------------------------------------------------------
+
+func TestTaskCenterBindsTheSelectedAccount(t *testing.T) {
+	page := poolStatsUISource(t)
+	for _, want := range []string{
+		"const TASKCENTER =",
+		"/tasks?account=",
+		"/tasks?all=1",
+		"body: { account: TASKCENTER.account }",
+		`id="tbAccounts"`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("任务中心缺少账号绑定：%q", want)
+		}
+	}
+	if !strings.Contains(page, "r.account === TASKCENTER.account") {
+		t.Error("运行记录没有再按账号过滤")
+	}
+}
+
+func TestTaskCenterCrossLinksScheduleAndBatch(t *testing.T) {
+	page := poolStatsUISource(t)
+	for _, want := range []string{
+		"data-scboard",
+		"data-qboard",
+		"function tbGotoBoard(",
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("任务中心缺少跨页跳转：%q", want)
+		}
+	}
+}

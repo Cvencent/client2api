@@ -40,7 +40,7 @@ import (
 )
 
 // version is overridable with -ldflags "-X main.version=...".
-var version = "0.1.24"
+var version = "0.1.25"
 
 // restartHandoffEnv marks the replacement half of a panel restart.  It tells a
 // starting process to keep retrying the listen address instead of failing fast,
@@ -200,8 +200,15 @@ type scheduleConfig struct {
 // Hours is a slice rather than a pointer so an explicit [] (never run this
 // one here) stays distinguishable from an absent key (no override at all).
 type scheduleOverride struct {
-	Enabled *bool `json:"enabled"`
-	Hours   []int `json:"hours"`
+	Enabled  *bool                 `json:"enabled"`
+	Hours    []int                 `json:"hours"`
+	Accounts *scheduleAccountScope `json:"accounts,omitempty"`
+}
+
+type scheduleAccountScope struct {
+	Mode    string   `json:"mode"`
+	Include []string `json:"include"`
+	Exclude []string `json:"exclude"`
 }
 
 // schedule projects the file's timetable onto the scheduler's config.  A group
@@ -247,16 +254,29 @@ func (s scheduleConfig) schedClients() map[string]map[string]scheduler.Group {
 	out := make(map[string]map[string]scheduler.Group, len(s.Clients))
 	for client, byBatch := range s.Clients {
 		for batch, ov := range byBatch {
-			if ov.Enabled == nil && ov.Hours == nil {
+			if ov.Enabled == nil && ov.Hours == nil && ov.Accounts == nil {
 				continue
 			}
 			if out[client] == nil {
 				out[client] = make(map[string]scheduler.Group, len(byBatch))
 			}
-			out[client][batch] = schedGroup(ov.Enabled, ov.Hours)
+			group := schedGroup(ov.Enabled, ov.Hours)
+			group.Accounts = schedAccountScope(ov.Accounts)
+			out[client][batch] = group
 		}
 	}
 	return out
+}
+
+func schedAccountScope(s *scheduleAccountScope) scheduler.AccountScope {
+	if s == nil {
+		return scheduler.AccountScope{}
+	}
+	return scheduler.AccountScope{
+		Mode:    strings.TrimSpace(s.Mode),
+		Include: append([]string(nil), s.Include...),
+		Exclude: append([]string(nil), s.Exclude...),
+	}
 }
 
 type promptConfig struct {

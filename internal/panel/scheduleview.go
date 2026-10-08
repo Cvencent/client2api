@@ -32,9 +32,14 @@ type scheduleRow struct {
 	// Codes is what the batch will run, so the operator can tell "this
 	// platform's checkin" from another platform's checkin.
 	Codes []string `json:"codes,omitempty"`
+	// PendingOnly means the executor checks each account's task state
+	// before running and skips chores the vendor already reports done.
+	PendingOnly bool `json:"pending_only"`
 	// Hours is the effective timetable in CST: the per-platform override
 	// when there is one, otherwise the shared group.
 	Hours []int `json:"hours"`
+	// AccountScope is the effective account include/exclude policy.
+	AccountScope scheduler.AccountScope `json:"account_scope"`
 	// GroupEnabled is the timetable switch (not the account count) -- the
 	// master switch gates the whole page and is reported separately.
 	GroupEnabled bool `json:"group_enabled"`
@@ -149,7 +154,9 @@ func (p *panel) scheduleRows(cfg scheduler.Config, st scheduler.Status) []schedu
 				Client:       c.Name(),
 				Batch:        b.Name,
 				Codes:        b.Codes,
+				PendingOnly:  b.PendingOnly,
 				Hours:        intsOrEmpty(g.Hours),
+				AccountScope: g.Accounts,
 				GroupEnabled: g.Enabled,
 				Override:     override,
 				Accounts:     total,

@@ -164,6 +164,25 @@ func (s *taskRuns) forClient(client string, limit int) []taskRun {
 	return out
 }
 
+// forClientAccount returns one account's runs newest-first. An empty account
+// keeps the platform-wide view for callers that did not choose an account.
+func (s *taskRuns) forClientAccount(client, account string, limit int) []taskRun {
+	runs := s.forClient(client, 0)
+	if account != "" {
+		filtered := runs[:0]
+		for _, run := range runs {
+			if run.Account == account {
+				filtered = append(filtered, run)
+			}
+		}
+		runs = filtered
+	}
+	if limit > 0 && len(runs) > limit {
+		runs = runs[:limit]
+	}
+	return runs
+}
+
 func sortByStartDesc(runs []taskRun) {
 	// Insertion sort: the slice is tiny and almost always already ordered.
 	for i := 1; i < len(runs); i++ {
@@ -194,6 +213,10 @@ func (p *panel) taskList(w http.ResponseWriter, r *http.Request, c core.Client) 
 		return
 	}
 	accountID := r.URL.Query().Get("account")
+	if r.URL.Query().Get("all") == "1" {
+		p.taskListAll(w, r, c, tp)
+		return
+	}
 	ctx, cancel := p.ctx(r, 30*time.Second)
 	defer cancel()
 
@@ -206,8 +229,68 @@ func (p *panel) taskList(w http.ResponseWriter, r *http.Request, c core.Client) 
 		"client":  c.Name(),
 		"account": accountID,
 		"tasks":   redactTasks(list),
-		"runs":    p.runs.forClient(c.Name(), 50),
+		"runs":    p.runs.forClientAccount(c.Name(), accountID, 50),
 	})
+}
+
+type taskAccountRow struct {
+	Account string          `json:"account"`
+	Label   string          `json:"label,omitempty"`
+	State   string          `json:"state,omitempty"`
+	Tasks   []core.TaskInfo `json:"tasks"`
+	Runs    []taskRun       `json:"runs"`
+	Error   string          `json:"error,omitempty"`
+}
+
+// taskListAll answers GET <base>/tasks?all=1. It reads each enabled account
+// independently so the board can say exactly which account is done and which
+// one still has work, rather than blending their task state together.
+func (p *panel) taskListAll(w http.ResponseWriter, r *http.Request, c core.Client, tp core.TaskProvider) {
+	accounts := []core.AccountRecord{{}}
+	if am, ok := core.AsAccountManager(c); ok {
+		ctx, cancel := p.ctx(r, taskScanTimeout)
+		defer cancel()
+		list, err := am.Accounts(ctx)
+		if err != nil {
+			writeErr(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		accounts = accounts[:0]
+		for _, account := range list {
+			if account.Enabled {
+				accounts = append(accounts, account)
+			}
+		}
+	}
+
+	ctx, cancel := p.ctx(r, taskScanTimeout)
+	defer cancel()
+	rows := make([]taskAccountRow, len(accounts))
+	sem := make(chan struct{}, taskScanConc)
+	var wg sync.WaitGroup
+	for i, account := range accounts {
+		wg.Add(1)
+		p.safeGo("panel task board account scan", func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			rows[i] = taskAccountRow{
+				Account: account.ID,
+				Label:   core.Redact(account.Label),
+				State:   account.State,
+				Tasks:   []core.TaskInfo{},
+				Runs:    p.runs.forClientAccount(c.Name(), account.ID, 50),
+			}
+			list, err := tp.Tasks(ctx, account.ID)
+			if err != nil {
+				rows[i].Error = core.Redact(err.Error())
+				return
+			}
+			rows[i].Tasks = redactTasks(list)
+		})
+	}
+	wg.Wait()
+	writeJSON(w, http.StatusOK, map[string]any{"client": c.Name(), "accounts": rows})
 }
 
 // taskRun answers POST <base>/tasks/<code>/run.  It starts the chore and
@@ -271,6 +354,9 @@ func (p *panel) taskRun(w http.ResponseWriter, r *http.Request, c core.Client, c
 			res.At = time.Now().Format(time.RFC3339)
 		}
 		res.ElapsedMS = time.Since(started).Milliseconds()
+		if err == nil && res.OK {
+			p.refreshBalanceAfterTask(c, res.AccountID)
+		}
 		p.runs.finish(id, res, time.Since(started))
 	})
 

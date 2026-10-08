@@ -499,6 +499,31 @@ func validateScheduleConfig(v any) error {
 					return err
 				}
 			}
+			if a, ok := om["accounts"]; ok && a != nil {
+				am, ok := a.(map[string]any)
+				if !ok {
+					return fmt.Errorf("schedule.clients.%s.%s.accounts must be an object", client, batch)
+				}
+				if mode, ok := am["mode"]; ok && mode != nil {
+					s, ok := mode.(string)
+					if !ok || (s != "platform" && s != "include" && s != "exclude") {
+						return fmt.Errorf("schedule.clients.%s.%s.accounts.mode must be platform, include or exclude", client, batch)
+					}
+				}
+				for _, key := range []string{"include", "exclude"} {
+					if raw, ok := am[key]; ok && raw != nil {
+						arr, ok := raw.([]any)
+						if !ok {
+							return fmt.Errorf("schedule.clients.%s.%s.accounts.%s must be an array of account ids", client, batch, key)
+						}
+						for _, item := range arr {
+							if _, ok := item.(string); !ok {
+								return fmt.Errorf("schedule.clients.%s.%s.accounts.%s must contain only strings", client, batch, key)
+							}
+						}
+					}
+				}
+			}
 		}
 	}
 	return nil

@@ -43,6 +43,11 @@ type Batch struct {
 	// Claim names codes whose reward must be claimed after the batch's runs.
 	// They are appended to Codes when the batch executes, in this order.
 	Claim []string `json:"claim,omitempty"`
+	// PendingOnly means the executor must re-read Tasks for each account and
+	// run only codes that are still actionable. It is for one-off growth
+	// chores: running an already-claimed chore is harmless but pollutes the
+	// run journal and looks like work that still needs doing.
+	PendingOnly bool `json:"pending_only,omitempty"`
 	// Gate names a task code that must be present and *incomplete* before the
 	// batch is worth running at all (the reference gates the travel batch on
 	// the buddy agreement/first-chat chores).  Empty means "always run".

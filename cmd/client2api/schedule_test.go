@@ -3,6 +3,8 @@ package main
 import (
 	"reflect"
 	"testing"
+
+	"client2api/internal/scheduler"
 )
 
 // TestScheduleProjectsPerClientOverrides pins the config-file -> scheduler
@@ -83,5 +85,28 @@ func TestScheduleWithoutClientsKeepsTheSharedTimetable(t *testing.T) {
 	}
 	if _, ok := sc.Override("wb", "checkin"); ok {
 		t.Fatal("Override reported an entry for a config that has none")
+	}
+}
+
+func TestScheduleProjectsAccountScope(t *testing.T) {
+	cfg := fileConfig{Schedule: scheduleConfig{
+		Enabled: true,
+		Clients: map[string]map[string]scheduleOverride{
+			"loomy": {
+				"growth": {
+					Hours: []int{12},
+					Accounts: &scheduleAccountScope{
+						Mode:    scheduler.AccountScopeExclude,
+						Exclude: []string{"a2"},
+					},
+				},
+			},
+		},
+	}}
+
+	sc := cfg.schedule()
+	g := sc.Clients["loomy"]["growth"]
+	if g.Accounts.Mode != scheduler.AccountScopeExclude || !reflect.DeepEqual(g.Accounts.Exclude, []string{"a2"}) {
+		t.Fatalf("account scope = %+v, want exclude a2", g.Accounts)
 	}
 }

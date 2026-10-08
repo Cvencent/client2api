@@ -29,20 +29,17 @@ This module was written clean-room from a reference TypeScript implementation
 the standard library only — including a hand-written QR encoder (`qr.go`) — so
 `go.mod` is unchanged.
 
-**No check-in for the daily 300 credits.** Raccoon's daily 300 credits are
-granted by the server (`daily_grant` in the points ledger) and there is **no
-endpoint** for them. The reference warns explicitly that this must not become a
-check-in button, because the button could only ever fail.
-
-What *is* exposed is the **desktop login grant** —
-`POST /api/web/desktop/v1/login/points/grant`, action id `login-points`. The
-vendor's own client fires it from a React hook on every launch and shows a popup
-only when the reply says `granted:true`. Note what this module does **not**
-claim: the reply is a bare `{granted, popup?}` with no reason field, and
-**nothing in the client documents the window the server enforces** — so the
-button is not described as daily, weekly or one-off. It asks, and reports
-`granted:false` as a refusal. The 300 daily credits remain unclaimed by
-anything here.
+**The daily 300 credits are claimed through the desktop login grant.**
+The vendor grants them once per day, and the endpoint that moves them is
+`POST /api/web/desktop/v1/login/points/grant` (action id `login-points`). The
+vendor's own client fires it from a React hook on every launch and shows a
+popup only when the reply says `granted:true`. A live check against a real
+account confirmed it: a `granted:true` reply writes a `daily_grant` entry of
+`+300` into `GET /api/web/points/v1/bills`, and a repeat request the same day
+answers `granted:false`. What this module does **not** claim is *why* the
+server declined — the reply is a bare `{granted, popup?}` with no reason field —
+so `granted:false` is reported as a refusal (already claimed today, or outside
+the grant window), never as a fabricated success or a hard error.
 
 **No vendor-storage auto-discovery.** See "Where credentials come from".
 
@@ -164,10 +161,10 @@ and the SMS exchange happen server-side in the module process. The session
 expires after `login_timeout` (default 5m) and `CancelLogin` closes the
 listener.
 
-**The daily 300 credits still have no endpoint.** The vendor grants them
-server-side (`daily_grant` in the points ledger); the only login-shaped reward
-exposed here is the desktop `login-points` grant, which is not described as
-daily.
+**The daily 300 credits ride on the desktop `login-points` grant.** The vendor
+writes them to the points ledger as `daily_grant`; the panel's check-in button
+calls `POST /api/web/desktop/v1/login/points/grant` to claim the day's 300, and
+a repeat request reports `granted:false` as a refusal.
 
 ---
 
@@ -365,7 +362,7 @@ refuses to replay it on another account (it would fail identically everywhere).
 | `core.BalanceProvider` | yes | `GET /api/web/points/v1/balance`, read-only |
 | `core.PackageProvider` | yes | the balance's pools as separate packages |
 | `core.LoginProvider` | yes | loopback QR/SMS page; `RealmLoginProvider` is not implemented (a single sign-in flow) |
-| `core.CheckinProvider` | yes | one action, `login-points`: the desktop login grant. The 300 daily credits have no endpoint and are not claimed |
+| `core.CheckinProvider` | yes | one action, `login-points`: claims the daily 300 login credits through the desktop login grant |
 | `core.VoucherProvider` | **no** | the vendor exposes no voucher concept |
 | `core.TaskProvider` / `core.BatchProvider` | **no** | nothing to offer |
 | `core.CaptchaProvider` | **no** | the SMS tab loads the vendor's Aliyun slider in the browser; the module never solves a captcha server-side |
@@ -411,12 +408,12 @@ stdlib QR encoder against fixed vectors (including an over-capacity error).
 
 Marked honestly rather than asserted:
 
-- **No live call was ever made to `xiaohuanxiong.com` from this module.** Every
-  endpoint shape, header name, field name and multiplier rule above is taken
-  from the reference implementation and its recorded measurements, not from a
-  request this module made. The `points/v1/bills` query-parameter spelling
-  (`paging.limit` / `paging.offset`) and the `desktop/v1` grant behaviour are the
-  least exercised of these.
+- **Live checks were run against `xiaohuanxiong.com` for the points surface.**
+  `GET /api/web/points/v1/balance`, `GET /api/web/points/v1/bills` (with
+  `paging.limit` / `paging.offset`) and `POST /api/web/desktop/v1/login/points/grant`
+  were all exercised with a real account; the grant reply and the resulting
+  `daily_grant` of `+300` in the ledger are therefore measured, not inferred.
+  The chat/streaming endpoints remain ported from the reference.
 - **The access-token lifetime (~3 h) and the 300 s renewal window** come from the
   reference's measurements; the module only relies on the JWT `exp`.
 - **`max_output_tokens` values** are the vendor's `params.max_tokens` as recorded
@@ -426,9 +423,9 @@ Marked honestly rather than asserted:
   hand-written in `qr.go` (byte mode, ECC level M, versions 1-10) so no
   dependency is added; the reference used a QR library. No live scan has been
   performed from this machine.
-- **Deviation:** the reference exposes a check-in-shaped credits view. This module
-  exposes one action, `login-points`, wired to the desktop login grant, and leaves
-  the daily 300 credits alone — they have no endpoint.
+- **Deviation:** the reference exposes a check-in-shaped credits view. This
+  module exposes one action, `login-points`, wired to the desktop login grant,
+  which is how the daily 300 credits are claimed.
 - **The reward window is unknown, and the code says so.** The grant reply is
   `{granted, popup?}`: no reason, no "next available at", and the client never
   states how often the server grants. Earlier drafts of this module asserted "at

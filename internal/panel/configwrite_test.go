@@ -500,6 +500,37 @@ func TestConfigRefusesABadPerPlatformOverride(t *testing.T) {
 	}
 }
 
+func TestConfigRefusesABadScheduleAccountScope(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "bad mode",
+			body: `{"schedule":{"clients":{"wb":{"checkin":{"accounts":{"mode":"sometimes"}}}}}}`,
+			want: "schedule.clients.wb.checkin.accounts.mode",
+		},
+		{
+			name: "bad include",
+			body: `{"schedule":{"clients":{"wb":{"checkin":{"accounts":{"mode":"include","include":"a1"}}}}}}`,
+			want: "schedule.clients.wb.checkin.accounts.include",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := configFile(t, baseConfig)
+			p := configPanel(path)
+			w, _ := doConfig(t, p, http.MethodPatch, tc.body)
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("PATCH = %d, want 400 (%s)", w.Code, w.Body.String())
+			}
+			if body := w.Body.String(); !strings.Contains(body, tc.want) {
+				t.Errorf("rejection %q does not contain %q", body, tc.want)
+			}
+		})
+	}
+}
+
 func TestConfigAcceptsPerPlatformOverrides(t *testing.T) {
 	path := configFile(t, baseConfig)
 	p := configPanel(path)

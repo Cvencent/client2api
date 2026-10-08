@@ -227,7 +227,7 @@ func TestWorkbuddyCheckinCNAlreadyDoneHTTP400CountsAsSuccess(t *testing.T) {
 	if done, _ := res.Data["already_done"].(bool); !done {
 		t.Error("already_done = false, want true for HTTP 400 code 10001")
 	}
-	}
+}
 
 func TestWorkbuddyCheckinCNRefusalIsAResult(t *testing.T) {
 	rt := checkinRT(http.StatusOK, `{"code":40001,"msg":"活动已结束"}`)

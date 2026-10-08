@@ -116,6 +116,35 @@ func TestWorkbuddyPoolStateExpiredCooldownDoesNotPark(t *testing.T) {
 	}
 }
 
+func TestWorkbuddyLegacyAccountFaultRestoresAsRisk(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		state string
+		note  string
+	}{
+		{name: "old fault state", state: stateFault, note: ErrAccountFault.String()},
+		{name: "old account_fault state", state: "account_fault", note: ErrAccountFault.String()},
+		{name: "old exhausted state with fault note", state: stateExhausted, note: ErrAccountFault.String()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			a := &Auth{AccessToken: "at-111111111111", UID: "u1"}
+			writePoolFile(t, dir, persistedPool{Version: poolStateVersion, Accounts: []persistedPoolAccount{{
+				ID:            a.ID(),
+				State:         tc.state,
+				CooldownUntil: time.Now().Add(6 * time.Hour),
+				Note:          tc.note,
+			}}})
+
+			p := restartPool(t, dir, a)
+			snap := p.Snapshot()
+			if len(snap) != 1 || snap[0].State != stateRisk {
+				t.Fatalf("snapshot = %+v, want one risk account", snap)
+			}
+		})
+	}
+}
+
 func TestWorkbuddyPoolStateLapsedCooldownBecomesReady(t *testing.T) {
 	a := &Auth{AccessToken: "at-111111111111", UID: "u1"}
 	p, clk := newPickPool([]*Auth{a})
