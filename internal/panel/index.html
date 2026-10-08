@@ -1968,7 +1968,7 @@ input, select, textarea { transition-property: border-color, box-shadow, backgro
       </div>
     </header>
     <div class="body">
-      <div class="fld">
+      <div class="fld" id="addClientField">
         <label class="lb" for="addClient">客户端</label>
         <select id="addClient"></select>
       </div>
@@ -2003,7 +2003,7 @@ input, select, textarea { transition-property: border-color, box-shadow, backgro
             <button class="xs" id="btnAutoStop" hidden>停止</button>
             <button class="xs primary" id="btnAutoStart">一键自动添加</button>
           </div>
-          <div class="row auto-head">
+          <div class="row auto-head" id="autoBatchRow">
             <label class="k">期望账号数 <input id="autoWant" class="cfgtext" type="number" min="1" max="50" value="1" style="width:64px"></label>
             <label class="k">最大尝试次数 <input id="autoTries" class="cfgtext" type="number" min="1" max="100" value="5" style="width:64px"></label>
             <span class="hint">每次尝试可能成功或失败，达到期望账号数即停止</span>
@@ -7438,6 +7438,33 @@ function openAdd() {
   }).join("");
   setAddTab("login");
   pickAddClient(CUR || NAMES[0]);
+  syncAddMode();
+}
+// syncAddMode trims the shared add-account dialog when it is reused for one
+// account's re-login.  The restore path already pins the client and phone, so
+// batch targets and manual number picking are not inputs the backend reads.
+function syncAddMode() {
+  const restore = ADD.mode === "restore";
+  const n = $("#addClient").value;
+  $("#addTabs").hidden = restore;
+  $("#addClientField").hidden = restore;
+  $("#autoBatchRow").hidden = restore;
+  $("#smsPick").hidden = restore;
+  $("#smsPick2").hidden = restore || autoOn(n);
+  $("#smsNumRow").hidden = true;
+  $("#smsCodeRow").hidden = true;
+  $("#smsHint").hidden = restore && autoOn(n);
+  $("#btnAutoStart").textContent = restore ? "一键重新登录" : "一键自动添加";
+  if (restore) {
+    $("#addRealm").hidden = true;
+    $("#addOwnKey").hidden = true;
+  }
+  if (!autoBusy()) {
+    $("#autoStatus").textContent = restore ?
+      "自动重新登录：租回原号码、收取验证码并提交" :
+      "用接码平台自动完成整个登录";
+  }
+  syncAddLoginButton();
 }
 function closeAdd() {
   if (autoBusy()) { toast("自动添加运行中，请先点「停止」再关闭", "err"); return false; }
@@ -7501,7 +7528,9 @@ function resetAuto() {
   setAutoBusy(false);
   ADD.auto = null; ADD.autoSeen = 0; ADD.autoBatch = null; ADD.autoDone = "";
   $("#autoLog").textContent = ""; $("#autoLog").hidden = true;
-  $("#autoStatus").textContent = "用接码平台自动完成整个登录";
+  $("#autoStatus").textContent = ADD.mode === "restore" ?
+    "自动重新登录：租回原号码、收取验证码并提交" :
+    "用接码平台自动完成整个登录";
   $("#btnAutoStart").disabled = false;
   $("#btnAutoStop").hidden = true;
 }
@@ -7912,7 +7941,8 @@ function setAddTab(t) {
 // 也用到「浏览器登录」这个 tab —— 自动添加、接码两块都挂在它下面 —— 但它没有链接
 // 可拿，所以按钮要单独判断，不能只看 tab 是否选中。
 function syncAddLoginButton() {
-  $("#btnStartLogin").hidden = !(ADD.tab === "login" && loginOn());
+  const autoRestore = ADD.mode === "restore" && autoOn($("#addClient").value);
+  $("#btnStartLogin").hidden = autoRestore || !(ADD.tab === "login" && loginOn());
 }
 function resetLogin() {
   stopPoll();
@@ -8009,6 +8039,7 @@ function openReloginTarget(n, acc, notice) {
   $("#addNotice").hidden = false;
   $("#addNotice").textContent = notice;
   $("#addDone").hidden = true; $("#addErr").hidden = true;
+  syncAddMode();
   return ADD.restore;
 }
 

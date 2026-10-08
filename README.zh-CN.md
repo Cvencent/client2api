@@ -29,7 +29,7 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-当前版本：**0.1.23**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：**0.1.24**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 核心设计规则
 

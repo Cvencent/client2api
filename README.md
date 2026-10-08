@@ -30,7 +30,7 @@ Everything is served from **one** HTTP surface — `POST /v1/chat/completions`,
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-Current version: **0.1.23**. Full history: [CHANGELOG.md](CHANGELOG.md).
+Current version: **0.1.24**. Full history: [CHANGELOG.md](CHANGELOG.md).
 
 ## The one design rule
 

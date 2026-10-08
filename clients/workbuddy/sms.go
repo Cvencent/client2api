@@ -2,6 +2,7 @@ package workbuddy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand"
@@ -115,6 +116,12 @@ func (s *smsClient) call(ctx context.Context, params url.Values) (string, error)
 		// A *url.Error prints the whole request URL, and the token lives in
 		// its query string, so the message is scrubbed before it can become a
 		// panel error.
+		if errors.Is(err, context.DeadlineExceeded) {
+			return "", fmt.Errorf("SMS platform request timed out: %w", context.DeadlineExceeded)
+		}
+		if errors.Is(err, context.Canceled) {
+			return "", fmt.Errorf("SMS platform request cancelled: %w", context.Canceled)
+		}
 		return "", fmt.Errorf("cannot reach the SMS platform: %s", s.scrub(err.Error(), endpoint))
 	}
 	defer resp.Body.Close()
@@ -358,6 +365,9 @@ func (c *Client) AcquirePhone(ctx context.Context, opts core.SMSOpts, want strin
 	if want := strings.TrimSpace(want); want != "" {
 		num, err := sc.getPhone(ctx, want, strings.TrimSpace(opts.Province), cardType)
 		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				return core.SMSNumber{}, fmt.Errorf("重新占用号码超时：%w", err)
+			}
 			return core.SMSNumber{}, err
 		}
 		return core.SMSNumber{Phone: num, Province: strings.TrimSpace(opts.Province), Keyword: r.keyword, Reused: true}, nil
@@ -377,6 +387,9 @@ func (c *Client) AcquirePhone(ctx context.Context, opts core.SMSOpts, want strin
 		}
 		num, err := sc.getPhone(ctx, "", prov, cardType)
 		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				return core.SMSNumber{}, fmt.Errorf("取号超时：%w", err)
+			}
 			return core.SMSNumber{}, err
 		}
 		if !skip[num] {

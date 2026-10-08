@@ -2,6 +2,8 @@ package workbuddy
 
 import (
 	"context"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -502,5 +504,65 @@ func TestCancelAutoLoginStopsARunningJob(t *testing.T) {
 	got, _ = c.PollAutoLogin(context.Background(), job.id)
 	if got.State != core.AutoLoginCancelled {
 		t.Fatalf("a late finish overwrote the cancel: %q", got.State)
+	}
+}
+
+type pinnedPhoneTimeoutTransport struct{}
+
+func (pinnedPhoneTimeoutTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if strings.Contains(req.URL.Path, "/v2/plugin/auth/state") {
+		body := stateFixture("state-relogin", "https://example.test/auth")
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    req,
+		}, nil
+	}
+	return nil, context.DeadlineExceeded
+}
+
+// TestRunAutoLoginKeepsAPlatformTimeoutAtThePlatformLayer pins the re-login
+// failure shown in the panel.  A pinned number timing out while the outer job
+// still has time left is a platform failure, not the five-minute whole-run
+// timeout.
+func TestRunAutoLoginKeepsAPlatformTimeoutAtThePlatformLayer(t *testing.T) {
+	oldLaunch := launchAutoBrowser
+	launchAutoBrowser = func(context.Context, browser.LaunchOpts) (autoBrowser, error) {
+		return fakeBrowser{page: newFakePage()}, nil
+	}
+	t.Cleanup(func() { launchAutoBrowser = oldLaunch })
+
+	raw, err := New(core.Deps{
+		DataDir: t.TempDir(),
+		Config:  []byte(`{"sms_token":"tok-abc","sms_base":"https://sms.test/zc/data.php"}`),
+		HTTPClient: &http.Client{
+			Transport: pinnedPhoneTimeoutTransport{},
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	c := raw.(*Client)
+	job := &autoJob{
+		id:        "relogin-timeout",
+		realm:     realmCN,
+		state:     core.AutoLoginRunning,
+		step:      "starting",
+		startedAt: time.Now(),
+	}
+
+	c.runAutoLogin(context.Background(), job, core.AutoLoginRequest{Phone: "13800005555"}, core.SMSOpts{Token: "tok-abc"})
+
+	snap := job.snapshot()
+	if snap.State != core.AutoLoginFailed {
+		t.Fatalf("state = %q, want failed (%s)", snap.State, snap.Message)
+	}
+	if strings.Contains(snap.Message, "整个流程") {
+		t.Fatalf("platform timeout was misreported as the whole-run timeout: %q", snap.Message)
+	}
+	if !strings.Contains(snap.Message, "重新占用") || !strings.Contains(snap.Message, "超时") {
+		t.Fatalf("message = %q, want a pinned-number timeout reason", snap.Message)
 	}
 }

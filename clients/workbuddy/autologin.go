@@ -409,10 +409,10 @@ func (c *Client) runAutoLogin(ctx context.Context, job *autoJob, req core.AutoLo
 	switch {
 	case err == nil:
 		return // autoLogin recorded success
-	case errors.Is(err, context.DeadlineExceeded):
-		job.fail("超时：整个流程在限定时间内没有完成")
-	case errors.Is(err, context.Canceled):
+	case errors.Is(err, context.Canceled) && errors.Is(ctx.Err(), context.Canceled):
 		job.finish(core.AutoLoginCancelled, "已取消", "")
+	case errors.Is(ctx.Err(), context.DeadlineExceeded) && errors.Is(err, context.DeadlineExceeded):
+		job.fail("超时：整个流程在限定时间内没有完成")
 	default:
 		job.fail(err.Error())
 	}

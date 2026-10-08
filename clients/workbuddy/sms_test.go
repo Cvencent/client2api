@@ -2,6 +2,7 @@ package workbuddy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"client2api/internal/core"
 )
@@ -215,6 +217,27 @@ func TestAcquirePhoneReissuesAKnownNumber(t *testing.T) {
 	}
 	if num.Phone != "13800000000" || !num.Reused {
 		t.Errorf("number = %+v, want the requested number flagged as reused", num)
+	}
+}
+
+func TestAcquirePhoneLabelsAReissueTimeout(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+	c := smsTestClient(t, srv, smsConfig(srv, ""))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	_, err := c.AcquirePhone(ctx, core.SMSOpts{}, "13800000000", nil)
+	if err == nil {
+		t.Fatal("AcquirePhone succeeded while the platform request was stalled")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v, want context deadline preserved", err)
+	}
+	if !strings.Contains(err.Error(), "重新占用号码超时") {
+		t.Fatalf("error = %q, want a clear reissue-timeout message", err)
 	}
 }
 
