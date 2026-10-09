@@ -30,7 +30,38 @@ Everything is served from **one** HTTP surface — `POST /v1/chat/completions`,
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-Current version: **0.1.24**. Full history: [CHANGELOG.md](CHANGELOG.md).
+Current version: **0.1.28**. Full history: [CHANGELOG.md](CHANGELOG.md).
+
+### Recent highlights (0.1.25 - 0.1.28)
+
+* **Large account pools are easier to operate:** the accounts table pages at 20 / 50 / 100 / 200
+  rows, filters by account state, and sorts account, state, model, priority, balance,
+  success/failure, in-flight, usage, last-success and expiry columns. Multi-channel accounts
+  stay together across paging and sorting.
+* **Account states are more precise:** WorkBuddy risk control and credential faults are separate.
+  Risk control is a vendor behaviour restriction that re-login normally cannot fix; a credential
+  fault is an expired token or session and can be repaired by signing in again. Legacy
+  `account_fault` rows render as risk.
+* **The Task Centre is account-first:** schedules are grouped into platform tabs, recovery probes,
+  daily balance refreshes, batch runs and the task board share the same account scope, and
+  unsaved edits are explicit before Save & Apply.
+* **Temporary parked states recover automatically:** each platform gets a recovery probe every
+  four hours with +/- one hour of jitter, plus one daily balance sweep in the 30 minutes after
+  midnight so a daily grant returns the account to routing.
+* **The task board is cached:** previously scanned accounts render from cache, only new accounts
+  are fetched, and Refresh task state forces a rescan. An account turns green when all automated
+  work is done or only human/locked items remain.
+* **Routing is more flexible:** platform and account priorities accept negative integers, where
+  a lower number wins, and a platform can override its base priority in Beijing-time windows.
+* **Usage is easier to read:** Recent calls now records the caller's session id, falls back to a
+  content-derived `d-` key when none was supplied, and resolves account labels through the same
+  operator note / module label / raw id order as the Accounts page.
+* **Platform coverage was extended and corrected:** Qoder CN, QwenWork credits, Tabbit's daily
+  3% sign-in, Raccoon's daily 300 credits and Loomy's first-login growth tasks are represented
+  by real module capabilities rather than panel-only buttons.
+* **Panel actions are consistent:** one topbar Refresh button is present on all eleven views and
+  dispatches per view; Chat test and Runtime log now have refresh too. Model context length and
+  max output are visible, editable and restorable from the Models view.
 
 ## The one design rule
 
@@ -47,7 +78,7 @@ That is enforced mechanically, not by convention:
 * No `clients/*` package may import another `clients/*` package.
 * Every module registers itself from `init()` via `core.Register`.
 * `clients/all/all.go` is the **only** file that knows the full list — it is
-  nothing but fourteen blank imports.
+  nothing but sixteen blank imports.
 * `cmd/client2api/main.go` builds each module in turn; **if one fails to
   construct, it is logged and skipped**, and the process keeps running with the
   rest.
@@ -202,6 +233,12 @@ files are replaced, while `configs/client2api.json` and everything under
 `data/` are left exactly as they were found -- the live config, the account
 pool and the usage history survive, including when the new package was built
 with `-NoData`. Uninstall first if a clean slate is what you want.
+
+The setup image is built as a Windows GUI executable, so double-clicking it does not add a
+console window beside the wizard. Silent or scripted console flags attach back to the
+launcher's console when one exists. The autostart checkbox is remembered across upgrades;
+when upgrading from a build that predates the preference, an existing Startup shortcut is
+treated as checked.
 
 ## Credential handling
 
@@ -726,26 +763,45 @@ records what was read and what was written.
 ## The panel
 
 <http://127.0.0.1:8788/panel/> (`/` redirects there). It is laid out like the
-original WorkBuddy dashboard: a left sidebar carrying nine views (Accounts / Chat test / Usage / Credits / Clients / Task Centre / Models and Archive / Config / Runtime log), a sticky topbar
- with the page
-title, a theme switch (dark → light → auto), refresh, and Add account. Above the
-account table sits a row of counters derived from the data — total / ready /
-cooling / disabled / clients / models — not a hardcoded number.
+original WorkBuddy dashboard: a left sidebar carrying eleven views (Accounts / Chat test /
+Usage / Alerts / Credits / Clients / Task Centre / Models and Profiles / Platform config /
+Config / Runtime log), a sticky topbar with the page title, a theme switch
+(dark -> light -> auto), one always-visible Refresh button, and Add account. Above the
+account table sits a row of counters derived from the data — total / ready / cooling /
+risk / account fault / disabled / clients / models — not a hardcoded number.
+
+The topbar Refresh button is the single page-refresh entry point. It dispatches to the
+current view, including Chat test and Runtime log, which previously had no refresh button
+at all. Duplicate refresh buttons were removed from card headers; actions that really do
+something different remain distinct, such as renewing credentials, refreshing balances,
+re-fetching the model catalogue and restarting the process.
 
 Each account row carries its own controls. Note records the phone number or
-e-mail that account signs in with (see `account_notes` below); Revive clears the
-runtime penalties a module holds for that credential, and Re-login goes one step
-further and re-runs the vendor's own login for that one row, overwriting the
-credential in place. The re-login button only appears where it can help: a
-module that implements `core.LoginProvider`/`core.SMSProvider`, and an account
-the module itself flagged as dead (`fields.relogin`, or a state/note that says
-expired, invalid or unauthorized). A module without login cannot offer one, and
-a healthy row stays clean.
+e-mail that account signs in with (see `account_notes` below). The enabled/disabled
+control is state-aware: an enabled account shows Disable; any other state shows
+Restore or Enable. Enable and revive are deliberately one button because the
+operator's intent is the same, and the revive path also clears cooling and breaker
+penalties when the module supports it. Re-login goes one step further and re-runs
+the vendor's own login for that one row, overwriting the credential in place. The
+re-login button only appears where it can help: a module that implements
+`core.LoginProvider`/`core.SMSProvider`, and an account the module itself flagged
+as dead (`fields.relogin`, or a state/note that says expired, invalid or
+unauthorized). A module without login cannot offer one, and a healthy row stays clean.
+
+Row colour follows the account-level state summary, not the first channel's raw string.
+Green is ready, amber is cooling with the vendor's reset time where available, and red is
+either risk control or an account fault. Risk control is a vendor behaviour restriction
+that re-login normally cannot fix; an account fault is an expired token or dead session,
+where Re-login can help. Legacy `account_fault` rows are rendered as risk. The same
+account-level rule feeds the status filter and the counters above the table.
 
 Automation lives in one place: the Task Centre view owns the master switch, the
-global default hours per batch (including the balance-refresh interval), the
-per-platform overrides, and the run journal. The Config view no longer duplicates
-those controls, so `schedule.*` has a single editing surface.
+per-platform schedule tabs, the recovery and daily-balance controls, and the run
+journal. The Config view no longer duplicates those controls, so `schedule.*` has
+a single editing surface. The separate global-default editor has been removed:
+rows with no override inherit the shared schedule and show it as a placeholder, while
+edited rows gain a Custom badge and share the Save & Apply action at the top right.
+Switching platform tabs preserves unsaved edits, and the dirty indicator stays visible.
 
 The Usage overview subtab reports the window through a row of metric tiles rather
 than a stack of identical grey rows: success rate / input / output / total / average latency each
@@ -760,15 +816,13 @@ itself, because at a 72-hour window the columns are three or four pixels wide
 with empty gaps between them. The reveal animation and the success-rate meter
 both stand down under `prefers-reduced-motion`.
 
-The Scheduled Tasks subtab is laid out so that the defaults do not cost a screen to
-read: each batch is one card in a responsive grid — toggle on the left, hours
-box on the right, ticked cards tinted — instead of a stack of full-width rows
-with a `width:100%` input each. In the rules table the Custom chip and the
-Follow-global button appear only on rows that actually override the shared hours,
-so a table where nothing is customized reads as a column of quiet dashes
-instead of the same grey button repeated fifteen times; both are created and
-removed together as the row is edited. The hour-syntax explainer sits with the
-table toolbar it describes rather than in a full-width sticky banner.
+The Scheduled Tasks subtab now groups rules by platform instead of flattening every
+platform into one long table. Each platform tab shows only its own batches, with the
+effective hours in the input and the inherited shared value in the placeholder. The
+Custom badge and Follow-global action appear only on rows that actually override the
+shared schedule; both are added and removed as the row is edited. The hourly syntax
+explainer sits with the table toolbar it describes, and changes are submitted through
+the one Save & Apply button.
 
 The panel is an administrative surface: it holds credentials and can rewrite the
 config, so every response it produces carries a policy, including the shell and
@@ -949,6 +1003,17 @@ return to page 1: a page number that was meaningful for the previous set has no
 meaning for the new one, and a search that narrows 138 accounts to 5 would
 otherwise leave the operator staring at an empty table.
 
+The same toolbar carries a state filter whose buckets are the account-level states used
+by the table chips and the counters: all, ready, cooling, risk, account fault, disabled
+and unknown. Filtering is client-side and never re-requests the upstream, and the result
+line reports how many accounts remain. Ten columns can be sorted: account, state, model,
+priority, balance, success/failure, in-flight, usage, last success and expiry. The cycle
+is ascending, descending, then default; columns with a natural high-value-first order such
+as balance and usage start descending, while priority starts ascending so the most
+preferred account is first. Missing values always sort last. A background poll re-renders
+in place without resetting the page or scroll position; only an explicit sort, client
+switch, search or page-size change returns to page 1.
+
 Discovering credentials on this machine is not the only way in. A module can also
 accept a **document the operator supplies** — an export produced by another tool
 — by implementing `core.BundleImporter` instead of (or as well as)
@@ -992,7 +1057,7 @@ renderer never calls it either — so there is nothing honest to implement from.
 | kimi | yes | yes | yes — RFC 8628 device grant against `auth.kimi.com`; the CLI is not required | no — no such endpoint exists |
 | qoder | yes | yes — Electron safeStorage + DPAPI on Windows; a pasted token elsewhere | yes — browser device grant + PKCE; polls `GET /api/v1/deviceToken/poll` | yes — daily `CLAIM_BENEFIT` campaign |
 | qwenwork | yes | no — nothing on disk holds a usable token | yes — PKCE device flow | yes — `daily`, against the Sash check-in API |
-| tabbit | yes | yes | yes — browser hand-off: opens the sign-in page inside the Tabbit browser through its own launcher, then reads the session cookie back (`local_app` + `handoff_path`; with no launcher it falls back to returning the URL) | no — the module only talks to a local sidecar |
+| tabbit | yes | yes | yes — browser hand-off: opens the sign-in page inside the Tabbit browser through its own launcher, then reads the session cookie back (`local_app` + `handoff_path`; with no launcher it falls back to returning the URL) | yes — daily `sign-in` for the `desktop_pet` scene (normally 3% credit), with a fresh `request_no` idempotency key |
 | minimaxcode | yes | yes | yes — RFC 8628 device grant against `account.minimax.cn`, PKCE, with the CN `user_code` variant; the desktop GUI is not required | no — the product has no check-in |
 | cline | yes | yes | yes — WorkOS device-code flow, the same client id the desktop app uses | no — no such endpoint exists |
 | lobsterai | yes | yes | yes — browser hand-off; the module returns the URL and watches for the credential it leaves behind | yes — a daily check-in action |
@@ -1058,7 +1123,7 @@ button. The file lives under `data/`, which an installer upgrade preserves.
 
 **Check-in** is per-account: each `core.CheckinAction` the module advertises
 becomes its own button, so workbuddy shows two (the two realms are two different
-rewards) while trae, zcode, minimaxcode, qwenwork and raccoon show one. The
+rewards) while trae, tabbit, zcode, minimaxcode, qwenwork and raccoon show one. The
 button on an account *row* is driven by a second, live flag (`checkin_ready`)
 rather than by the module-level capability bit, so a module whose accounts cannot
 claim anything at the moment does not offer a click that could only fail; the
