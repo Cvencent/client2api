@@ -482,6 +482,12 @@ func TestDefaultConfigIsValid(t *testing.T) {
 		if !e.g.Enabled {
 			t.Fatalf("default group %q is disabled", e.name)
 		}
+		if e.name == RecoveryTaskName {
+			if e.g.Every <= 0 {
+				t.Fatalf("default recovery interval = %v, want > 0", e.g.Every)
+			}
+			continue
+		}
 		if len(e.g.Hours) == 0 {
 			t.Fatalf("default group %q has no hours", e.name)
 		}
@@ -1270,8 +1276,22 @@ func TestStatusNextListsOnlyEnabledPlannedBatches(t *testing.T) {
 		batchCheckin: time.Date(2026, 3, 4, 8, 0, 0, 0, CST),
 		batchTravel:  time.Date(2026, 3, 4, 9, 0, 0, 0, CST),
 	}
+	recoveryAt, hasRecovery := st.Next[RecoveryTaskName]
+	if hasRecovery {
+		delete(st.Next, RecoveryTaskName)
+	}
+	dailyAt, hasDaily := st.Next[DailyBalanceTaskName]
+	if hasDaily {
+		delete(st.Next, DailyBalanceTaskName)
+	}
 	if !reflect.DeepEqual(st.Next, want) {
-		t.Fatalf("Status().Next = %v, want %v", st.Next, want)
+		t.Fatalf("Status().Next = %v, want %v plus recovery", st.Next, want)
+	}
+	if !hasRecovery || recoveryAt.Sub(clk.Now()) < 3*time.Hour || recoveryAt.Sub(clk.Now()) > 5*time.Hour {
+		t.Fatalf("recovery next = %v, want one 3h..5h window", recoveryAt)
+	}
+	if !hasDaily || dailyAt.Sub(clk.Now()) <= 0 || dailyAt.In(CST).Hour() != 0 || dailyAt.In(CST).Minute() >= 30 {
+		t.Fatalf("daily balance next = %v, want one 00:00..00:30 CST window", dailyAt)
 	}
 	if !st.Enabled {
 		t.Fatal("Status().Enabled = false, want true")
@@ -1351,11 +1371,22 @@ func TestPlainClientIsNeverScheduled(t *testing.T) {
 	r := New(deps(registryOf(plainClient{name: "plain"}, plannerOnly{name: "planner"}), clk, logs))
 	r.Reconfigure(DefaultConfig())
 
-	if got := r.plan(clk.Now(), func() Config { c, _ := r.config(); return c }()); len(got) != 0 {
-		t.Fatalf("plan = %v, want nothing scheduled", got)
+	for _, f := range r.plan(clk.Now(), func() Config { c, _ := r.config(); return c }()) {
+		if f.batch != RecoveryTaskName && f.batch != DailyBalanceTaskName {
+			t.Fatalf("plan = %v, want no daily batch for capability-less clients", f)
+		}
 	}
-	if st := r.Status(); len(st.Next) != 0 && len(st.Next) != 1 {
-		t.Fatalf("Status().Next = %v, want only the balance tick at most", st.Next)
+	st := r.Status()
+	if _, ok := st.Next[RecoveryTaskName]; !ok {
+		t.Fatalf("Status().Next = %v, want recovery", st.Next)
+	}
+	if _, ok := st.Next[DailyBalanceTaskName]; !ok {
+		t.Fatalf("Status().Next = %v, want daily_balance", st.Next)
+	}
+	for name := range st.Next {
+		if name != RecoveryTaskName && name != DailyBalanceTaskName && name != BalanceTickName {
+			t.Fatalf("Status().Next = %v, want only the synthetic tasks and the balance tick", st.Next)
+		}
 	}
 }
 
@@ -1719,5 +1750,108 @@ func TestScheduledBatchHonoursAccountScope(t *testing.T) {
 	rep := r.runBatch(context.Background(), "wb", "growth")
 	if rep.Ran != 0 || rep.Accounts != 0 {
 		t.Fatalf("report = %+v, want no account in the include scope", rep)
+	}
+}
+func TestValidateAcceptsPeriodicRecoveryGroup(t *testing.T) {
+	cfg := Config{Recovery: Group{Enabled: true, Every: 4 * time.Hour, Jitter: time.Hour}}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate(recovery every=4h jitter=1h) = %v, want nil", err)
+	}
+}
+
+func TestValidateRecoveryStillRequiresAnIntervalWithHoursPresent(t *testing.T) {
+	cfg := Config{Recovery: Group{Enabled: true, Hours: []int{9}}}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("Validate(recovery with only hours) = nil, want a missing-interval error")
+	}
+}
+
+func TestRecoveryGroupForUsesThePerClientOverride(t *testing.T) {
+	cfg := Config{
+		Enabled:  true,
+		Recovery: Group{Enabled: true, Every: 4 * time.Hour, Jitter: time.Hour},
+		Clients: map[string]map[string]Group{
+			"loomy": {
+				RecoveryTaskName: {Enabled: true, Every: 90 * time.Minute, Jitter: 15 * time.Minute},
+			},
+		},
+	}
+	g, ok := cfg.GroupFor("loomy", RecoveryTaskName)
+	if !ok || g.Every != 90*time.Minute || g.Jitter != 15*time.Minute {
+		t.Fatalf("GroupFor(loomy, recovery) = %+v/%v, want the 90m/15m override", g, ok)
+	}
+	shared, ok := cfg.GroupFor("other", RecoveryTaskName)
+	if !ok || shared.Every != 4*time.Hour || shared.Jitter != time.Hour {
+		t.Fatalf("GroupFor(other, recovery) = %+v/%v, want the shared 4h/1h", shared, ok)
+	}
+}
+
+func TestRecoveryPlanAndStatusUseOneStoredWindow(t *testing.T) {
+	logs := &recorder{}
+	clk := newFakeClock(cstMidnight, logs)
+	f := &fakeClient{name: "fake", rec: logs}
+	var calls atomic.Int32
+	d := deps(registryOf(f), clk, logs)
+	d.OnRecoveryProbe = func(_ context.Context, client string) {
+		if client != "fake" {
+			t.Errorf("recovery hook client = %q, want fake", client)
+		}
+		calls.Add(1)
+	}
+	r := New(d)
+	r.Reconfigure(Config{Enabled: true, Recovery: Group{Enabled: true, Every: 4 * time.Hour, Jitter: time.Hour}})
+
+	st := r.Status()
+	at, ok := st.NextByClient["fake/"+RecoveryTaskName]
+	if !ok {
+		t.Fatalf("Status().NextByClient = %v, want fake/recovery", st.NextByClient)
+	}
+	wait := at.Sub(cstMidnight)
+	if wait < 3*time.Hour || wait > 5*time.Hour {
+		t.Fatalf("recovery next in %s, want 3h..5h", wait)
+	}
+	for _, f := range r.plan(clk.Now(), r.Config()) {
+		if f.client == "fake" && f.batch == RecoveryTaskName && !f.at.Equal(at) {
+			t.Fatalf("plan recovery at %s, Status reported %s", f.at, at)
+		}
+	}
+	if !r.RunRecoveryNow(context.Background(), "fake") {
+		t.Fatal("RunRecoveryNow = false, want true when the hook is wired")
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("recovery hook calls = %d, want 1", calls.Load())
+	}
+	if got := r.Status().NextByClient["fake/"+RecoveryTaskName]; !got.Equal(at) {
+		t.Fatalf("manual recovery moved next from %s to %s", at, got)
+	}
+}
+
+func TestRunFiresRecoveryProbe(t *testing.T) {
+	logs := &recorder{}
+	clk := newFakeClock(cstMidnight, logs)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var ticks atomic.Int32
+	d := deps(registryOf(&fakeClient{name: "fake", rec: logs}), clk, logs)
+	d.OnRecoveryProbe = func(context.Context, string) {
+		if ticks.Add(1) == 1 {
+			cancel()
+		}
+	}
+	r := New(d)
+	r.Reconfigure(Config{Enabled: true, Recovery: Group{Enabled: true, Every: 4 * time.Hour, Jitter: time.Hour}})
+	done := make(chan struct{})
+	go func() { r.Run(ctx); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return after the recovery hook")
+	}
+	if ticks.Load() != 1 {
+		t.Fatalf("recovery ticks = %d, want 1", ticks.Load())
+	}
+	waits := clk.durations()
+	if len(waits) != 1 || waits[0] < 3*time.Hour || waits[0] > 5*time.Hour {
+		t.Fatalf("recovery waits = %v, want one 3h..5h wait", waits)
 	}
 }

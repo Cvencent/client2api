@@ -88,12 +88,16 @@ func TestCheckinOnlyClientAppearsInTheScheduleRows(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	rows, _ := out["rows"].([]any)
-	if len(rows) != 1 {
-		t.Fatalf("rows = %v, want one synthetic check-in row", out["rows"])
+	var row map[string]any
+	for _, raw := range rows {
+		candidate, _ := raw.(map[string]any)
+		if candidate["client"] == "ci" && candidate["batch"] == core.CheckinBatchName {
+			row = candidate
+			break
+		}
 	}
-	row, _ := rows[0].(map[string]any)
-	if row["client"] != "ci" || row["batch"] != core.CheckinBatchName {
-		t.Fatalf("row = %v, want ci/%s", row, core.CheckinBatchName)
+	if row == nil {
+		t.Fatalf("rows = %v, want a synthetic check-in row for ci", out["rows"])
 	}
 	codes, _ := row["codes"].([]any)
 	if len(codes) != 1 || codes[0] != core.CheckinBatchName {

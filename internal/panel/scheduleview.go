@@ -38,6 +38,10 @@ type scheduleRow struct {
 	// Hours is the effective timetable in CST: the per-platform override
 	// when there is one, otherwise the shared group.
 	Hours []int `json:"hours"`
+	// EveryMinutes and JitterMinutes are the effective interval controls
+	// for the synthetic recovery task.  They are zero for daily batches.
+	EveryMinutes  int `json:"every_minutes,omitempty"`
+	JitterMinutes int `json:"jitter_minutes,omitempty"`
 	// AccountScope is the effective account include/exclude policy.
 	AccountScope scheduler.AccountScope `json:"account_scope"`
 	// GroupEnabled is the timetable switch (not the account count) -- the
@@ -100,9 +104,11 @@ func (p *panel) handleSchedule(w http.ResponseWriter, r *http.Request) {
 	groups := make([]map[string]any, 0, 8)
 	for _, g := range cfg.Groups() {
 		groups = append(groups, map[string]any{
-			"name":    g.Name,
-			"enabled": g.Group.Enabled,
-			"hours":   intsOrEmpty(g.Group.Hours),
+			"name":           g.Name,
+			"enabled":        g.Group.Enabled,
+			"hours":          intsOrEmpty(g.Group.Hours),
+			"every_minutes":  int(g.Group.Every / time.Minute),
+			"jitter_minutes": int(g.Group.Jitter / time.Minute),
 		})
 	}
 
@@ -111,6 +117,9 @@ func (p *panel) handleSchedule(w http.ResponseWriter, r *http.Request) {
 		"enabled":                 st.Enabled,
 		"balance_refresh_enabled": cfg.BalanceRefresh.Enabled,
 		"balance_refresh_minutes": int(cfg.BalanceRefresh.Every / time.Minute),
+		"recovery_enabled":        cfg.Recovery.Enabled,
+		"recovery_every_minutes":  int(cfg.Recovery.Every / time.Minute),
+		"recovery_jitter_minutes": int(cfg.Recovery.Jitter / time.Minute),
 		"groups":                  groups,
 		"rows":                    rows,
 		"runs":                    p.mergedRuns(),
@@ -125,11 +134,7 @@ func (p *panel) scheduleRows(cfg scheduler.Config, st scheduler.Status) []schedu
 		return out
 	}
 	for _, c := range p.opts.Registry.All() {
-		batches := core.PlannedBatches(c)
-		if len(batches) == 0 {
-			continue
-		}
-		// One account listing per client: every batch of the same client
+		// One account listing per client: every row for the same client
 		// runs over the same accounts.
 		total, ready := 0, 0
 		if am, ok := core.AsAccountManager(c); ok {
@@ -144,7 +149,45 @@ func (p *panel) scheduleRows(cfg scheduler.Config, st scheduler.Status) []schedu
 			}
 			cancel()
 		}
-		for _, b := range batches {
+
+		recovery, _ := cfg.GroupFor(c.Name(), scheduler.RecoveryTaskName)
+		_, recoveryOverride := cfg.Override(c.Name(), scheduler.RecoveryTaskName)
+		recoveryRow := scheduleRow{
+			Client:        c.Name(),
+			Batch:         scheduler.RecoveryTaskName,
+			Hours:         []int{},
+			EveryMinutes:  int(recovery.Every / time.Minute),
+			JitterMinutes: int(recovery.Jitter / time.Minute),
+			GroupEnabled:  recovery.Enabled,
+			Override:      recoveryOverride,
+			Accounts:      total,
+			Ready:         ready,
+		}
+		if at, ok := st.NextByClient[c.Name()+"/"+scheduler.RecoveryTaskName]; ok && !at.IsZero() {
+			recoveryRow.Next = at.Format(time.RFC3339)
+		}
+		out = append(out, recoveryRow)
+
+		// The daily balance sweep is the second synthetic per-platform task:
+		// hour-based rather than interval-based, so it carries Hours instead of
+		// Every/Jitter.
+		daily, _ := cfg.GroupFor(c.Name(), scheduler.DailyBalanceTaskName)
+		_, dailyOverride := cfg.Override(c.Name(), scheduler.DailyBalanceTaskName)
+		dailyRow := scheduleRow{
+			Client:       c.Name(),
+			Batch:        scheduler.DailyBalanceTaskName,
+			Hours:        intsOrEmpty(daily.Hours),
+			GroupEnabled: daily.Enabled,
+			Override:     dailyOverride,
+			Accounts:     total,
+			Ready:        ready,
+		}
+		if at, ok := st.NextByClient[c.Name()+"/"+scheduler.DailyBalanceTaskName]; ok && !at.IsZero() {
+			dailyRow.Next = at.Format(time.RFC3339)
+		}
+		out = append(out, dailyRow)
+
+		for _, b := range core.PlannedBatches(c) {
 			if b.Name == "" {
 				continue
 			}

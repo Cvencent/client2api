@@ -189,14 +189,14 @@ func runScheduledTravel(ctx context.Context, c *Client, a *Auth, res core.TaskRe
 			res.Error = core.Redact(describeFailure(cerr))
 			return res
 		}
-		c.pool.MarkSuccess(a)
+		c.pool.MarkNonChatSuccess(a)
 		res.OK = true
 		res.Credit = credit
 		res.Message = fmt.Sprintf("the arrived trip was claimed (%d credit)", credit)
 		return res
 
 	case "traveling":
-		c.pool.MarkSuccess(a)
+		c.pool.MarkNonChatSuccess(a)
 		res.OK = true
 		res.Message = "the cat is still travelling; nothing to do"
 		return res
@@ -223,7 +223,7 @@ func runScheduledTravel(ctx context.Context, c *Client, a *Auth, res core.TaskRe
 		res.Error = core.Redact(describeFailure(derr))
 		return res
 	}
-	c.pool.MarkSuccess(a)
+	c.pool.MarkNonChatSuccess(a)
 	res.OK = true
 	res.Message = "the cat was sent out for today's trip"
 	return res
@@ -249,7 +249,7 @@ func runScheduledActivity(ctx context.Context, c *Client, a *Auth, res core.Task
 		res.Error = core.Redact(describeFailure(err))
 		return res
 	}
-	c.pool.MarkSuccess(a)
+	c.pool.MarkNonChatSuccess(a)
 	res.OK = true
 
 	days, derr := c.GrowthStreak(ctx, a)
@@ -283,7 +283,7 @@ func runScheduledKeepalive(ctx context.Context, c *Client, a *Auth, res core.Tas
 		res.Error = core.Redact(describeFailure(err))
 		return res
 	}
-	c.pool.MarkSuccess(a)
+	c.pool.MarkNonChatSuccess(a)
 	// RefreshToken updates the account in memory and (by design) leaves
 	// persistence to its caller, so that a refresh which never reaches disk is
 	// visible in the log rather than silently forgotten.

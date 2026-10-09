@@ -30,6 +30,8 @@ var scheduleFormKeys = []string{
 	"travel_hours", "travel_enabled",
 	"activity_hours", "activity_enabled",
 	"blackcat_hours", "blackcat_enabled",
+	"recovery_enabled", "recovery_every_minutes", "recovery_jitter_minutes",
+	"daily_balance_enabled", "daily_balance_hours",
 	"balance_refresh_enabled", "balance_refresh_minutes",
 	"growth_hours", "growth_enabled",
 	// clients 不在这张表单里：按平台的自定义时点编辑器在任务中心
@@ -49,6 +51,8 @@ var scheduleDefaultIDs = []string{
 	"scDefActivityEnabled", "scDefActivityHours",
 	"scDefBlackcatEnabled", "scDefBlackcatHours",
 	"scDefGrowthEnabled", "scDefGrowthHours",
+	"scDefRecoveryEnabled", "scDefRecoveryEvery", "scDefRecoveryJitter",
+	"scDefDaily_balanceEnabled", "scDefDaily_balanceHours",
 	"scDefBalanceEnabled", "scDefBalanceMinutes",
 }
 
@@ -59,6 +63,47 @@ func scheduleShellSource(t *testing.T) string {
 		t.Fatal("index.html was not embedded")
 	}
 	return src
+}
+
+func TestScheduleRecoveryUiControlsAndParsing(t *testing.T) {
+	src := scheduleShellSource(t)
+	for _, want := range []string{
+		`recovery:`, `"recovery"`, `id="scDefRecoveryEnabled"`,
+		`id="scDefRecoveryEvery"`, `id="scDefRecoveryJitter"`,
+		`class="cfgtext scEvery"`, `class="cfgtext scJitter"`,
+		`data-scgroup`,
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("recovery schedule UI is missing %q", want)
+		}
+	}
+	if !strings.Contains(src, "\u6062\u590d\u63a2\u6d4b") {
+		t.Error("recovery task has no Chinese label")
+	}
+	parse := scheduleFuncBody(t, src, "parseSchedDuration")
+	for _, want := range []string{"value * 60", "Number.isFinite", "return Math.round"} {
+		if !strings.Contains(parse, want) {
+			t.Errorf("parseSchedDuration is missing %q", want)
+		}
+	}
+	save := scheduleFuncBody(t, src, "scSave")
+	for _, want := range []string{
+		"recovery_enabled", "recovery_every_minutes", "recovery_jitter_minutes",
+		"every_minutes", "jitter_minutes", "parseSchedDuration(pend.every)",
+	} {
+		if !strings.Contains(save, want) {
+			t.Errorf("scSave does not persist %q", want)
+		}
+	}
+}
+
+func TestScheduleRowsGroupByPlatform(t *testing.T) {
+	body := scheduleFuncBody(t, scheduleShellSource(t), "scRenderRows")
+	for _, want := range []string{"sc-group", "lastClient", "row.client !== lastClient"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("scRenderRows does not group platforms: missing %q", want)
+		}
+	}
 }
 
 // scheduleFuncBody 截取一个顶层 function 的函数体：这些函数都以行首的 "}" 结束，
@@ -360,8 +405,13 @@ func TestScheduleOverrideKeysMatchTheConfigStruct(t *testing.T) {
 			t.Errorf("scheduleOverride 缺少 json tag %q：面板写的这份自定义会被丢掉", want)
 		}
 	}
-	if len(got) != 2 {
-		t.Errorf("scheduleOverride 的 json tag = %v, want exactly enabled/hours", got)
+	for _, want := range []string{"every_minutes", "jitter_minutes"} {
+		if !got[want] {
+			t.Errorf("scheduleOverride missing json tag %q; recovery edits would be dropped", want)
+		}
+	}
+	if len(got) != 4 {
+		t.Errorf("scheduleOverride json tags = %v, want exactly enabled/hours/every_minutes/jitter_minutes", got)
 	}
 }
 

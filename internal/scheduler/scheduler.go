@@ -66,7 +66,22 @@ const (
 	// balance-refresh tick under, so a panel can show it next to the batches
 	// without Status growing a vendor-shaped field.
 	BalanceTickName = "balance_refresh"
+	// RecoveryTaskName is the synthetic periodic probe task. Unlike the daily
+	// batches it has no fixed hour and runs once per interval for every
+	// registered platform.
+	RecoveryTaskName = "recovery"
 )
+
+// DailyBalanceTaskName is the synthetic early-morning balance sweep. It runs
+// once a day per registered platform, inside the window that starts at the
+// configured hour (default midnight), because that is when the platforms that
+// grant a daily quota top their accounts up.
+const DailyBalanceTaskName = "daily_balance"
+
+// DailyBalanceWindow is how long after the configured hour the daily balance
+// sweep may land. The offset is drawn per platform per day so every install
+// does not hammer the vendor at exactly 00:00.
+const DailyBalanceWindow = 30 * time.Minute
 
 // jitterFrac is the width of the pacing jitter, symmetric around the nominal
 // duration.
@@ -99,6 +114,12 @@ const (
 type Group struct {
 	Enabled bool
 	Hours   []int // hours of day in CST, 0-23
+	// Every and Jitter are used by the synthetic recovery task. Every is
+	// the nominal interval and Jitter is the symmetric random spread around
+	// it: every=4h jitter=1h produces a delay in [3h,5h]. A non-positive
+	// jitter means no spread.
+	Every  time.Duration
+	Jitter time.Duration
 	// Accounts optionally narrows the batch to selected account IDs.
 	Accounts AccountScope
 }
@@ -150,6 +171,14 @@ type Config struct {
 	Keepalive Group
 	Blackcat  Group
 	Growth    Group
+	// Recovery is one periodic schedule shared by every registered platform.
+	// Per-platform overrides live in Clients under RecoveryTaskName.
+	Recovery Group
+	// DailyBalance is one fixed-hour schedule shared by every registered
+	// platform: an early-morning balance sweep that picks up the credits the
+	// vendors grant at the start of their quota day.  Per-platform overrides
+	// live in Clients under DailyBalanceTaskName.
+	DailyBalance Group
 	// Clients overrides one platform's timetable for named batches.  The
 	// outer key is a client name and the inner key a batch name, both
 	// matched case-insensitively.  A (client, batch) pair that is absent
@@ -175,6 +204,11 @@ func DefaultConfig() Config {
 		Keepalive: Group{Enabled: true, Hours: []int{8, 14, 20}},
 		Blackcat:  Group{Enabled: true, Hours: []int{23}},
 		Growth:    Group{Enabled: true, Hours: []int{12}},
+		Recovery:  Group{Enabled: true, Every: 4 * time.Hour, Jitter: time.Hour},
+		// Midnight CST, with up to DailyBalanceWindow of spread: the vendors
+		// that grant a daily quota release it at the turn of the day, and a
+		// top-up seen shortly after is what makes the account usable again.
+		DailyBalance: Group{Enabled: true, Hours: []int{0}},
 	}
 	cfg.BalanceRefresh.Enabled = true
 	cfg.BalanceRefresh.Every = 5 * time.Minute
@@ -198,6 +232,10 @@ func (c Config) groupByName(name string) (Group, bool) {
 		return c.Blackcat, true
 	case batchGrowth:
 		return c.Growth, true
+	case RecoveryTaskName:
+		return c.Recovery, true
+	case DailyBalanceTaskName:
+		return c.DailyBalance, true
 	}
 	return Group{}, false
 }
@@ -268,6 +306,8 @@ func (c *Config) groups() []struct {
 		{batchKeepalive, &c.Keepalive},
 		{batchBlackcat, &c.Blackcat},
 		{batchGrowth, &c.Growth},
+		{RecoveryTaskName, &c.Recovery},
+		{DailyBalanceTaskName, &c.DailyBalance},
 	}
 }
 
@@ -343,13 +383,31 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("scheduler: batch %s has hours outside 0..23", strings.Join(outOfRange, ", "))
 	}
 	for _, e := range groups {
-		if e.g.Enabled && len(e.g.Hours) == 0 {
+		if !e.g.Enabled {
+			continue
+		}
+		if e.name == RecoveryTaskName {
+			if e.g.Every <= 0 {
+				return fmt.Errorf("scheduler: recovery is enabled but has no positive interval")
+			}
+			continue
+		}
+		if len(e.g.Hours) == 0 {
 			return fmt.Errorf("scheduler: batch %q is enabled but has no hours", e.name)
 		}
 	}
 	for _, client := range overrides {
 		for batch, g := range c.Clients[client] {
-			if g.Enabled && len(g.Hours) == 0 {
+			if !g.Enabled {
+				continue
+			}
+			if strings.EqualFold(strings.TrimSpace(batch), RecoveryTaskName) {
+				if g.Every <= 0 {
+					return fmt.Errorf("scheduler: recovery for %s is enabled but has no positive interval", client)
+				}
+				continue
+			}
+			if len(g.Hours) == 0 {
 				return fmt.Errorf("scheduler: batch %q for %s is enabled but has no hours", batch, client)
 			}
 		}
@@ -400,6 +458,23 @@ func jitter(d time.Duration) time.Duration {
 	return out
 }
 
+// recoveryDelay returns one periodic recovery interval with an optional
+// symmetric random spread. The delay never drops below zero.
+func recoveryDelay(every, random time.Duration) time.Duration {
+	if every <= 0 {
+		return 0
+	}
+	if random <= 0 {
+		return every
+	}
+	span := 2 * float64(random)
+	out := time.Duration(float64(every) - float64(random) + rand.Float64()*span)
+	if out < 0 {
+		return 0
+	}
+	return out
+}
+
 // Deps is what the runner needs from its host.
 type Deps struct {
 	Registry *core.Registry
@@ -411,6 +486,15 @@ type Deps struct {
 	// BalanceRefresh.Enabled is set.  It is the host's own work: the
 	// scheduler has no idea what a balance is.
 	OnBalanceRefresh func(ctx context.Context)
+	// OnRecoveryProbe is called for one platform when its periodic recovery
+	// task fires. The host decides which accounts are eligible and performs
+	// the vendor-scoped balance/renewal work.
+	OnRecoveryProbe func(ctx context.Context, client string)
+	// OnDailyBalanceProbe is called for one platform when its daily balance
+	// sweep fires. The host refreshes every account's balance, including the
+	// accounts parked in recoverable states, so a credit grant that landed
+	// shortly after midnight lifts the park without an operator press.
+	OnDailyBalanceProbe func(ctx context.Context, client string)
 	// HistoryPath, when non-empty, persists the finished-run journal as
 	// JSON so the panel can still show yesterday's runs after a restart.
 	// Empty keeps the history in memory for the life of the process.
@@ -423,16 +507,25 @@ type Runner struct {
 	cfg     Config
 	last    map[string]Report
 	balNext time.Time
+	// recoveryNext stores one next-fire instant per platform. It keeps
+	// Status, plan and Run on the same jittered window instead of drawing a
+	// fresh random delay every time they are read.
+	recoveryNext map[string]time.Time
+	// dailyBalanceNext is recoveryNext for the daily balance sweep: one next
+	// fire per platform, drawn once and reused by Status, plan and Run.
+	dailyBalanceNext map[string]time.Time
 	// history is the finished-run journal, oldest first.  It is bounded
 	// by historyMax and persisted to historyPath when the host set one.
 	history     []RunRecord
 	historyPath string
 
-	reg   *core.Registry
-	logf  func(format string, args ...any)
-	now   func() time.Time
-	sleep func(ctx context.Context, d time.Duration) bool
-	onBal func(ctx context.Context)
+	reg        *core.Registry
+	logf       func(format string, args ...any)
+	now        func() time.Time
+	sleep      func(ctx context.Context, d time.Duration) bool
+	onBal      func(ctx context.Context)
+	onRecovery func(ctx context.Context, client string)
+	onDailyBal func(ctx context.Context, client string)
 
 	// wake lets Reconfigure disturb a Run that is blocked because nothing is
 	// scheduled at all.
@@ -444,13 +537,15 @@ type Runner struct {
 // process that never configures a schedule never touches a vendor.
 func New(deps Deps) *Runner {
 	r := &Runner{
-		last:  map[string]Report{},
-		reg:   deps.Registry,
-		logf:  deps.Logf,
-		now:   deps.Now,
-		sleep: deps.Sleep,
-		onBal: deps.OnBalanceRefresh,
-		wake:  make(chan struct{}, 1),
+		last:       map[string]Report{},
+		reg:        deps.Registry,
+		logf:       deps.Logf,
+		now:        deps.Now,
+		sleep:      deps.Sleep,
+		onBal:      deps.OnBalanceRefresh,
+		onRecovery: deps.OnRecoveryProbe,
+		onDailyBal: deps.OnDailyBalanceProbe,
+		wake:       make(chan struct{}, 1),
 	}
 	r.historyPath = deps.HistoryPath
 	if r.historyPath != "" {
@@ -527,6 +622,8 @@ func (r *Runner) Reconfigure(cfg Config) {
 	r.mu.Lock()
 	r.cfg = cfg
 	r.balNext = balNext
+	r.recoveryNext = nil
+	r.dailyBalanceNext = nil
 	r.mu.Unlock()
 
 	r.log("[scheduler] reconfigured: enabled=%v checkin=%v travel=%v activity=%v keepalive=%v blackcat=%v growth=%v balance=%v/%v",
@@ -595,6 +692,14 @@ func (r *Runner) plan(now time.Time, cfg Config) []fire {
 	}
 	var out []fire
 	for _, c := range r.reg.All() {
+		if g, known := cfg.GroupFor(c.Name(), RecoveryTaskName); known && g.Enabled && g.Every > 0 {
+			out = append(out, fire{client: c.Name(), batch: RecoveryTaskName, at: r.recoveryAt(now, c.Name(), g)})
+		}
+		if g, known := cfg.GroupFor(c.Name(), DailyBalanceTaskName); known && g.Enabled && len(g.Hours) > 0 {
+			if at := r.dailyBalanceAt(now, c.Name(), g); !at.IsZero() {
+				out = append(out, fire{client: c.Name(), batch: DailyBalanceTaskName, at: at})
+			}
+		}
 		batches := core.PlannedBatches(c)
 		if len(batches) == 0 {
 			continue
@@ -624,6 +729,52 @@ func (r *Runner) plan(now time.Time, cfg Config) []fire {
 		return out[i].batch < out[j].batch
 	})
 	return out
+}
+
+// recoveryAt returns the stored next fire for one platform, creating the
+// jittered window exactly once. The caller must pass an enabled recovery
+// group with a positive interval.
+func (r *Runner) recoveryAt(now time.Time, client string, group Group) time.Time {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.recoveryNext == nil {
+		r.recoveryNext = make(map[string]time.Time)
+	}
+	if at, ok := r.recoveryNext[client]; ok && !at.IsZero() {
+		return at
+	}
+	at := now.Add(recoveryDelay(group.Every, group.Jitter))
+	r.recoveryNext[client] = at
+	return at
+}
+
+// dailyBalanceAt returns the stored next fire for one platform's daily balance
+// sweep, drawing the within-window offset exactly once.  The caller must pass
+// an enabled group that lists at least one hour.
+func (r *Runner) dailyBalanceAt(now time.Time, client string, group Group) time.Time {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.dailyBalanceNext == nil {
+		r.dailyBalanceNext = make(map[string]time.Time)
+	}
+	if at, ok := r.dailyBalanceNext[client]; ok && !at.IsZero() {
+		return at
+	}
+	at := dailyBalanceFire(now, group)
+	r.dailyBalanceNext[client] = at
+	return at
+}
+
+// dailyBalanceFire picks the next sweep instant: the next occurrence of one of
+// the configured hours, plus a uniformly random offset inside
+// DailyBalanceWindow.  The offset keeps every platform from hitting the vendor
+// at the same second while still landing inside the promised window.
+func dailyBalanceFire(now time.Time, group Group) time.Time {
+	base := NextFire(now, group.Hours, CST)
+	if base.IsZero() || DailyBalanceWindow <= 0 {
+		return base
+	}
+	return base.Add(time.Duration(rand.Int64N(int64(DailyBalanceWindow))))
 }
 
 // balanceNext reports the next balance tick.  A tick is only planned when the
@@ -691,7 +842,13 @@ func (r *Runner) Run(ctx context.Context) {
 			if f.at.After(now) {
 				continue
 			}
-			r.runBatch(ctx, f.client, f.batch)
+			if strings.EqualFold(f.batch, RecoveryTaskName) {
+				r.tickRecovery(ctx, cfg, f.client)
+			} else if strings.EqualFold(f.batch, DailyBalanceTaskName) {
+				r.tickDailyBalance(ctx, cfg, f.client)
+			} else {
+				r.runBatch(ctx, f.client, f.batch)
+			}
 			if ctx.Err() != nil {
 				return
 			}
@@ -726,6 +883,90 @@ func (r *Runner) tickBalance(ctx context.Context, cfg Config) {
 	if hook != nil {
 		hook(ctx)
 	}
+}
+
+// tickRecovery advances one platform's stored recovery window before the
+// host hook runs. Advancing first means a slow or failed probe cannot leave
+// the same fire at the head of the plan.
+func (r *Runner) tickRecovery(ctx context.Context, cfg Config, client string) {
+	group, ok := cfg.GroupFor(client, RecoveryTaskName)
+	if !ok || !group.Enabled || group.Every <= 0 {
+		return
+	}
+	r.mu.Lock()
+	if r.recoveryNext == nil {
+		r.recoveryNext = make(map[string]time.Time)
+	}
+	r.recoveryNext[client] = r.now().Add(recoveryDelay(group.Every, group.Jitter))
+	hook := r.onRecovery
+	r.mu.Unlock()
+	r.log("[scheduler] recovery probe %s (every %s jitter %s)", client, group.Every, group.Jitter)
+	if hook != nil {
+		hook(ctx, client)
+	}
+}
+
+// tickDailyBalance advances one platform's stored sweep window before the host
+// hook runs, so a slow sweep cannot leave the same fire at the head of the
+// plan.
+func (r *Runner) tickDailyBalance(ctx context.Context, cfg Config, client string) {
+	group, ok := cfg.GroupFor(client, DailyBalanceTaskName)
+	if !ok || !group.Enabled || len(group.Hours) == 0 {
+		return
+	}
+	r.mu.Lock()
+	if r.dailyBalanceNext == nil {
+		r.dailyBalanceNext = make(map[string]time.Time)
+	}
+	r.dailyBalanceNext[client] = dailyBalanceFire(r.now(), group)
+	hook := r.onDailyBal
+	r.mu.Unlock()
+	r.log("[scheduler] daily balance sweep %s (window %s)", client, DailyBalanceWindow)
+	if hook != nil {
+		hook(ctx, client)
+	}
+}
+
+// RunRecoveryNow hands one platform's recovery probe to the host hook right
+// now. It deliberately does not move the stored window.
+func (r *Runner) RunRecoveryNow(ctx context.Context, client string) bool {
+	if r.reg == nil {
+		return false
+	}
+	if _, ok := r.reg.Get(client); !ok {
+		return false
+	}
+	r.mu.Lock()
+	hook := r.onRecovery
+	r.mu.Unlock()
+	if hook == nil {
+		return false
+	}
+	r.log("[scheduler] recovery probe %s (manual)", client)
+	hook(ctx, client)
+	return true
+}
+
+// RunDailyBalanceNow hands one platform's daily balance sweep to the host hook
+// right now. Like RunRecoveryNow it deliberately does not move the stored
+// window: a manual press is "one now", not a renegotiation of tomorrow's
+// automatic sweep.
+func (r *Runner) RunDailyBalanceNow(ctx context.Context, client string) bool {
+	if r.reg == nil {
+		return false
+	}
+	if _, ok := r.reg.Get(client); !ok {
+		return false
+	}
+	r.mu.Lock()
+	hook := r.onDailyBal
+	r.mu.Unlock()
+	if hook == nil {
+		return false
+	}
+	r.log("[scheduler] daily balance sweep %s (manual)", client)
+	hook(ctx, client)
+	return true
 }
 
 // RunBalanceRefreshNow hands the balance-refresh tick to the host's hook right

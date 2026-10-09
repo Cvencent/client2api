@@ -80,6 +80,24 @@ func TestBalanceWireShapeReportsUnlimited(t *testing.T) {
 	}
 }
 
+func TestBalanceWireShapeReportsUnverified(t *testing.T) {
+	c := quotaClient("workbuddy", core.AccountRecord{ID: "a1"})
+	c.balances["a1"] = core.Balance{Credits: 0, Total: 500, Unverified: true}
+	p := taskPanel(t, c)
+	_, out := doTask(t, p, http.MethodPost, "/panel/api/clients/workbuddy/accounts/a1/balance", "")
+	if out["unverified"] != true {
+		t.Fatalf("per-account unverified = %#v, want true", out["unverified"])
+	}
+
+	p.initBalanceCache()
+	seedBalanceCache(p, c.Name(), "a1", c.balances["a1"])
+	_, list := doTask(t, p, http.MethodGet, "/panel/api/clients/workbuddy/balances", "")
+	row := rowsOf(t, list["accounts"])[0]
+	if row["unverified"] != true {
+		t.Fatalf("balance-row unverified = %#v, want true", row["unverified"])
+	}
+}
+
 func TestPackagesWireShape(t *testing.T) {
 	c := quotaClient("wb", core.AccountRecord{ID: "a1", Label: "一号", State: "ready"})
 	c.packages["a1"] = core.PackageReport{

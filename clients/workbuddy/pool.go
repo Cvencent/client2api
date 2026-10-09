@@ -1356,6 +1356,30 @@ func (p *Pool) MarkSuccess(a *Auth) {
 	p.saveLocked()
 }
 
+// MarkNonChatSuccess records a successful request that is *not* a chat
+// completion: a check-in, a travel / activity chore, a growth task or a
+// token keepalive.
+//
+// It deliberately does not touch the account's health -- its state, cooldown,
+// breaker or degrade deadlines.  A chore is served by a different upstream
+// path than chat, so "the sign-in went through" is not evidence that chat
+// works.  Letting it clear a risk or breaker park flipped a genuine verdict to
+// ready on every daily task and back to risk on the next chat, which is the
+// bug this method exists to stop.  All it contributes is the reporting
+// counters.
+func (p *Pool) MarkNonChatSuccess(a *Auth) {
+	if p == nil || a == nil {
+		return
+	}
+	now := p.now()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if e := p.findLocked(a); e != nil {
+		e.successCount++
+		e.lastSuccess = now
+	}
+}
+
 // Revive clears every runtime penalty recorded for one account: the cooldown or
 // park (with its exhausted/invalid verdict), the failure counter, the
 // session-death streak and every per-model park.  It is what the panel's
@@ -1836,8 +1860,29 @@ func (p *Pool) Snapshot() []core.AccountStatus {
 			as.ExpiresAt = exp.UTC().Format(time.RFC3339)
 		}
 		note := e.note
+		// A breaker or degrade park lives in faults, not in until, so an account
+		// held only by one of them used to print a bare "cooling" with no
+		// reason and no deadline.  Pick whichever deadline is actually holding
+		// the account and name that axis, so the panel can explain the park
+		// instead of showing an unexplained cooldown.
+		blockUntil := time.Time{}
 		if !e.until.IsZero() && now.Before(e.until) {
-			left := e.until.Sub(now).Round(time.Second)
+			blockUntil = e.until
+		}
+		if fu := e.faults.BlockedUntil(now); fu.After(blockUntil) {
+			blockUntil = fu
+			if note == "" {
+				bu, du := e.faults.BreakerUntil(), e.faults.DegradeUntil()
+				switch {
+				case !bu.IsZero() && now.Before(bu) && !bu.Before(fu):
+					note = "breaker"
+				case !du.IsZero() && now.Before(du):
+					note = "degrade"
+				}
+			}
+		}
+		if !blockUntil.IsZero() {
+			left := blockUntil.Sub(now).Round(time.Second)
 			if note == "" {
 				note = "cooling"
 			}

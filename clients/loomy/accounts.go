@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math/rand"
 	"os"
 	"sort"
 	"strings"
@@ -27,7 +28,17 @@ import (
 const (
 	originConfig = "config"
 	originStored = "stored"
+
+	minBackgroundProbeDelay = 3 * time.Hour
+	backgroundProbeJitter   = 3 * time.Hour
 )
+
+// backgroundProbeDelay spreads recovery probes over a 3..6 hour window.
+// The variable is deliberately injectable from tests; production uses the
+// package RNG, so the sweep does not develop a fixed rhythm.
+var backgroundProbeDelay = func() time.Duration {
+	return minBackgroundProbeDelay + time.Duration(rand.Int63n(int64(backgroundProbeJitter)))
+}
 
 // storedAccount is one session as it is written to disk.  The token is the only
 // secret in this file and it is written with 0600 through the atomic writer.
@@ -57,6 +68,7 @@ type accountState struct {
 	Failures     int    `json:"failures,omitempty"`
 	LastError    string `json:"last_error,omitempty"`
 	CooldownTill string `json:"cooldown_until,omitempty"` // RFC3339
+	ProbeAfter   string `json:"probe_after,omitempty"`    // RFC3339
 	LastUsed     string `json:"last_used,omitempty"`      // RFC3339
 }
 
@@ -73,6 +85,7 @@ type account struct {
 	// revive.
 	failures     int
 	cooldownTill time.Time
+	probeAfter   time.Time
 	dead         bool
 	lastError    string
 	lastUsed     time.Time
@@ -126,6 +139,7 @@ func loadStore(path, statePath string) (*store, error) {
 	if err := readJSONIfPresent(statePath, &states); err != nil {
 		return s, fmt.Errorf("loomy: reading %s: %w", statePath, err)
 	}
+	migratedProbe := false
 	for _, a := range s.all {
 		st, ok := states.Accounts[a.ID]
 		if !ok {
@@ -135,7 +149,15 @@ func loadStore(path, statePath string) (*store, error) {
 		a.failures = st.Failures
 		a.lastError = st.LastError
 		a.cooldownTill = parseRFC3339(st.CooldownTill)
+		a.probeAfter = parseRFC3339(st.ProbeAfter)
+		if a.probeAfter.IsZero() && !a.dead && !a.cooldownTill.IsZero() {
+			a.probeAfter = time.Now().UTC().Add(backgroundProbeDelay())
+			migratedProbe = true
+		}
 		a.lastUsed = parseRFC3339(st.LastUsed)
+	}
+	if migratedProbe {
+		_ = s.saveState()
 	}
 	return s, nil
 }
@@ -185,7 +207,7 @@ func (s *store) saveState() error {
 	}
 	file := stateFile{Accounts: map[string]accountState{}}
 	for _, a := range s.all {
-		if !a.dead && a.failures == 0 && a.lastError == "" && a.cooldownTill.IsZero() && a.lastUsed.IsZero() {
+		if !a.dead && a.failures == 0 && a.lastError == "" && a.cooldownTill.IsZero() && a.probeAfter.IsZero() && a.lastUsed.IsZero() {
 			continue
 		}
 		st := accountState{
@@ -195,6 +217,9 @@ func (s *store) saveState() error {
 		}
 		if !a.cooldownTill.IsZero() {
 			st.CooldownTill = a.cooldownTill.UTC().Format(time.RFC3339)
+		}
+		if !a.probeAfter.IsZero() {
+			st.ProbeAfter = a.probeAfter.UTC().Format(time.RFC3339)
 		}
 		if !a.lastUsed.IsZero() {
 			st.LastUsed = a.lastUsed.UTC().Format(time.RFC3339)
@@ -223,6 +248,7 @@ func (s *store) applyConfig(configured []account) {
 				// file must not silently pardon a session the vendor rejected.
 				acc.failures = existing.failures
 				acc.cooldownTill = existing.cooldownTill
+				acc.probeAfter = existing.probeAfter
 				acc.dead = existing.dead
 				acc.lastError = existing.lastError
 				acc.lastUsed = existing.lastUsed
@@ -329,6 +355,42 @@ func (s *store) firstExpired(now time.Time) (account, bool) {
 	return account{}, false
 }
 
+// backgroundProbeDue gates vendor probes started by shared background sweeps.
+// A penalised account gets one probe per randomised quiet window; an explicit
+// operator action does not call this method and is never delayed.
+func (s *store) backgroundProbeDue(id string, now time.Time, delay func() time.Duration) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, a := range s.all {
+		if a.ID != id {
+			continue
+		}
+		if !a.Enabled || a.dead || strings.TrimSpace(a.AccessToken) == "" || a.expired(now) {
+			return false
+		}
+		if now.Before(a.cooldownTill) {
+			return false
+		}
+		if a.probeAfter.IsZero() {
+			return true
+		}
+		if now.Before(a.probeAfter) {
+			return false
+		}
+		next := backgroundProbeDelay()
+		if delay != nil {
+			next = delay()
+		}
+		if next < minBackgroundProbeDelay {
+			next = minBackgroundProbeDelay
+		}
+		a.probeAfter = now.Add(next)
+		_ = s.saveState()
+		return true
+	}
+	return false
+}
+
 // penalise records a failure.  A rejected session is parked for good; anything
 // else gets a cooldown, because a rate limit or a network hiccup is temporary.
 func (s *store) penalise(id string, err error, now time.Time, cooldown time.Duration) {
@@ -342,8 +404,10 @@ func (s *store) penalise(id string, err error, now time.Time, cooldown time.Dura
 		a.lastError = redactErr(err)
 		if failureKind(err) == core.FailureSessionDead {
 			a.dead = true
+			a.probeAfter = time.Time{}
 		} else {
 			a.cooldownTill = now.Add(cooldown)
+			a.probeAfter = now.Add(backgroundProbeDelay())
 		}
 		if saveErr := s.saveState(); saveErr != nil {
 			// Losing the state file costs honesty across a restart, never
@@ -365,6 +429,7 @@ func (s *store) reset(id string, now time.Time) {
 		a.failures = 0
 		a.lastError = ""
 		a.cooldownTill = time.Time{}
+		a.probeAfter = time.Time{}
 		a.lastUsed = now
 		if err := s.saveState(); err != nil {
 			_ = err
@@ -386,6 +451,7 @@ func (s *store) revive(id string) error {
 		a.failures = 0
 		a.lastError = ""
 		a.cooldownTill = time.Time{}
+		a.probeAfter = time.Time{}
 		a.Enabled = true
 		if err := s.save(); err != nil {
 			return err
@@ -588,6 +654,11 @@ func (c *Client) ReviveAccount(ctx context.Context, id string) error {
 	return c.store.revive(id)
 }
 
+// BackgroundProbeDue implements core.BackgroundProbeGate.
+func (c *Client) BackgroundProbeDue(_ context.Context, id string) bool {
+	return c.store.backgroundProbeDue(id, time.Now().UTC(), backgroundProbeDelay)
+}
+
 // TestAccount probes one account against the cheapest read-only endpoint.
 func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, error) {
 	acc, ok := c.store.lookup(id)
@@ -615,6 +686,7 @@ func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, e
 
 	result.OK = true
 	result.Reply = "the session is accepted"
+	c.store.reset(id, time.Now().UTC())
 	return result, nil
 }
 

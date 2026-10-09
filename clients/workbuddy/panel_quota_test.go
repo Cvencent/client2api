@@ -91,6 +91,33 @@ func TestWorkbuddyPanelAccountBalanceMapsEveryBucket(t *testing.T) {
 	}
 }
 
+// A zero that the vendor's own reply contradicts is the conservative number
+// to show, but the panel must not present it as a confirmed empty wallet: the
+// account is still deliberately usable, and the UI needs to say so.
+func TestWorkbuddyPanelAccountBalanceMarksContradictoryZeroUnverified(t *testing.T) {
+	future := time.Now().Add(20 * 24 * time.Hour).Format(packageEndLayout)
+	accounts := `{
+	  "CapacityRemain":500,"CapacityUsed":0,"CapacitySize":500,
+	  "CycleCapacityRemain":0,"CycleCapacityUsed":500,"CycleCapacitySize":500,
+	  "ExpiredTime":"","CycleEndTime":"` + future + `"
+	}`
+	rt := &fakeRT{handler: func(*http.Request) (*http.Response, error) {
+		return jsonResponse(200, meterEnvelope(accounts)), nil
+	}}
+	c, _ := panelClient(t, rt, cnAccountFiles())
+
+	got, err := c.AccountBalance(context.Background(), "uid-cn-0001", 0)
+	if err != nil {
+		t.Fatalf("AccountBalance: %v", err)
+	}
+	if got.Credits != 0 || got.Total != 500 {
+		t.Fatalf("credits/total = %d/%d, want 0/500", got.Credits, got.Total)
+	}
+	if !got.Unverified {
+		t.Fatalf("contradictory zero is not marked unverified: %+v", got)
+	}
+}
+
 // TestWorkbuddyPanelQuotaUnknownAccountMakesNoUpstreamCall is the sibling of the
 // "unknown ID" rule the panel relies on: the lookup is local, so a bad id must
 // cost zero vendor calls and must still be an error.

@@ -3,9 +3,60 @@ package main
 import (
 	"reflect"
 	"testing"
+	"time"
 
 	"client2api/internal/scheduler"
 )
+
+func TestScheduleRecoveryDefaultsAndOverrides(t *testing.T) {
+	cfg := fileConfig{Schedule: scheduleConfig{Enabled: true}}
+	sc := cfg.schedule()
+	if !sc.Recovery.Enabled || sc.Recovery.Every != 4*time.Hour || sc.Recovery.Jitter != time.Hour {
+		t.Fatalf("default recovery = %+v, want enabled 4h +/-1h", sc.Recovery)
+	}
+
+	off := false
+	cfg = fileConfig{Schedule: scheduleConfig{Enabled: true, RecoveryEnabled: &off}}
+	if sc := cfg.schedule(); sc.Recovery.Enabled {
+		t.Fatalf("explicit recovery_enabled=false was ignored: %+v", sc.Recovery)
+	}
+
+	on := true
+	every, jitter := 120, 30
+	cfg = fileConfig{Schedule: scheduleConfig{
+		Enabled: true,
+		Clients: map[string]map[string]scheduleOverride{
+			"loomy": {"recovery": {Enabled: &off, EveryMinutes: &every, JitterMinutes: &jitter}},
+			"other": {"recovery": {Enabled: &on}},
+		},
+	}}
+	sc = cfg.schedule()
+	loomy := sc.Clients["loomy"][scheduler.RecoveryTaskName]
+	if loomy.Enabled || loomy.Every != 2*time.Hour || loomy.Jitter != 30*time.Minute {
+		t.Fatalf("loomy recovery override = %+v, want disabled 2h +/-30m", loomy)
+	}
+	other := sc.Clients["other"][scheduler.RecoveryTaskName]
+	if !other.Enabled || other.Every != 4*time.Hour || other.Jitter != time.Hour {
+		t.Fatalf("partial recovery override = %+v, want inherited 4h +/-1h", other)
+	}
+	if sc.Recovery.Every != 4*time.Hour || sc.Recovery.Jitter != time.Hour {
+		t.Fatalf("per-platform override mutated shared recovery: %+v", sc.Recovery)
+	}
+}
+
+func TestScheduleRecoveryExplicitZeroJitterStaysZero(t *testing.T) {
+	every, jitter := 120, 0
+	cfg := fileConfig{Schedule: scheduleConfig{
+		Enabled: true,
+		Clients: map[string]map[string]scheduleOverride{
+			"loomy": {"recovery": {EveryMinutes: &every, JitterMinutes: &jitter}},
+		},
+	}}
+	got := cfg.schedule().Clients["loomy"][scheduler.RecoveryTaskName]
+	if !got.Enabled || got.Every != 2*time.Hour || got.Jitter != 0 {
+		t.Fatalf("explicit zero jitter = %+v, want inherited enabled with 2h and no jitter", got)
+	}
+}
 
 // TestScheduleProjectsPerClientOverrides pins the config-file -> scheduler
 // projection of schedule.clients.  Three shapes have three different meanings,

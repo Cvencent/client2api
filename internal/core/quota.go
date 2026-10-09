@@ -17,6 +17,12 @@ type Balance struct {
 	Credits int64   // credits left right now
 	Used    float64 // what the vendor reports as consumed; fractional for credit meters
 	Total   int64   // the account's capacity
+	// Unverified means Credits is the best conservative number to show, but
+	// the vendor's own reply contradicts it, so it must not be treated as a
+	// confirmed empty wallet or drive a low-balance park. WorkBuddy's trial
+	// package is the observed case: the cycle view says 0 while the stale
+	// lifetime view still advertises capacity.
+	Unverified bool
 	// Unlimited is the vendor's own statement that Credits is not finite.
 	// Credits and Total are then advisory and must not be rendered as a
 	// running balance; Trae uses credits_limit=-1 for this case.

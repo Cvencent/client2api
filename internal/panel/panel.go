@@ -48,6 +48,14 @@ type Scheduler interface {
 	// "not implemented" answer, so the route answers 501 rather than 200 for
 	// work that never happened.
 	RunBalanceRefreshNow(ctx context.Context) bool
+	// RunRecoveryNow runs one platform's recovery probe off-schedule.
+	// False means the host did not wire the hook, so the route must answer
+	// 501 instead of pretending the probe happened.
+	RunRecoveryNow(ctx context.Context, client string) bool
+	// RunDailyBalanceNow runs one platform's early-morning balance sweep
+	// off-schedule.  Same 501 contract as RunRecoveryNow: false means the
+	// host did not wire the hook, so nothing actually ran.
+	RunDailyBalanceNow(ctx context.Context, client string) bool
 }
 
 //go:embed index.html
@@ -170,6 +178,7 @@ func New(opts Options) http.Handler {
 	mux := http.NewServeMux()
 	p := &panel{opts: opts, runs: newTaskRuns(), sweeps: newBatchRuns(), chores: newTaskQueues(), taskLocks: newAccountLocks()}
 	p.initBalanceCache()
+	p.initTaskBoardCache()
 	p.queue = newBatchQueue(p.sweeps)
 	p.queue.run = p.execSweep
 	p.queue.report = p.panicReport()
@@ -251,6 +260,10 @@ type panel struct {
 	// refresh that moves the column forward a few accounts at a time.
 	// Created in New; nil when the panel has no registry (some tests).
 	balanceCache *balanceCache
+	// taskBoardCache is the last task list seen for each account.  The board
+	// reads it before asking a vendor, so revisiting the page only fetches
+	// accounts that have never been seen.
+	taskBoardCache *taskBoardCache
 	// runs journals asynchronous task-board runs.  Created in New so a panel
 	// built in a test never sees a nil store.
 	runs *taskRuns
@@ -294,12 +307,27 @@ func (p *panel) initBalanceCache() {
 	p.balanceCache = newBalanceCache(p.opts.Registry, p.expiringSoon, cachePath)
 }
 
+// initTaskBoardCache wires the last-known task lists used by the board.  A
+// panel with no data directory still gets an in-memory cache, which keeps
+// tests and embedded callers from accidentally re-scanning on every render.
+func (p *panel) initTaskBoardCache() {
+	if p == nil {
+		return
+	}
+	cachePath := ""
+	if p.opts.DataDir != "" {
+		cachePath = filepath.Join(p.opts.DataDir, filepath.FromSlash(DefaultTaskBoardCacheFileName))
+	}
+	p.taskBoardCache = newTaskBoardCache(cachePath)
+}
+
 // balanceHandler builds a panel usable from a test: same wiring as New, but
 // the *panel stays addressable so a case can seed the balance cache.
 func balanceHandler(opts Options) (*panel, http.Handler) {
 	mux := http.NewServeMux()
 	p := &panel{opts: opts, runs: newTaskRuns(), sweeps: newBatchRuns(), chores: newTaskQueues(), taskLocks: newAccountLocks()}
 	p.initBalanceCache()
+	p.initTaskBoardCache()
 	p.queue = newBatchQueue(p.sweeps)
 	p.queue.run = p.execSweep
 	p.queue.report = p.panicReport()

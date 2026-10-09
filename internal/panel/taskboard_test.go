@@ -127,12 +127,14 @@ func taskPanel(t *testing.T, clients ...core.Client) *panel {
 	for _, c := range clients {
 		reg.Add(c)
 	}
-	return &panel{
+	p := &panel{
 		opts:      Options{Registry: reg, Version: "test", Listen: "127.0.0.1:0"},
 		runs:      newTaskRuns(),
 		chores:    newTaskQueues(),
 		taskLocks: newAccountLocks(),
 	}
+	p.initTaskBoardCache()
+	return p
 }
 
 func doTask(t *testing.T, p *panel, method, path, body string) (*httptest.ResponseRecorder, map[string]any) {

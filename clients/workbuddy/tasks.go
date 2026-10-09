@@ -931,13 +931,13 @@ func (c *Client) RunTask(ctx context.Context, accountID, code string) (res core.
 	case after != nil:
 		// Events were reported but the target is not credited yet.  Say so
 		// plainly instead of calling it a failure: scoring is asynchronous.
-		c.pool.MarkSuccess(a)
+		c.pool.MarkNonChatSuccess(a)
 		res.OK = true
 		res.Message = taskProgressTail(note, after)
 		return res, nil
 
 	default:
-		c.pool.MarkSuccess(a)
+		c.pool.MarkNonChatSuccess(a)
 		res.OK = true
 		res.Message = firstNonEmpty(note, "the events were reported") +
 			"; the board could not be re-read to confirm the progress"

@@ -30,6 +30,12 @@ type fakeScheduler struct {
 	// balanceCalls counts presses, so a test can prove the route reached the
 	// scheduler rather than merely answering 200.
 	balanceCalls int
+	// noRecovery mirrors noBalance for the per-platform recovery route.
+	noRecovery   bool
+	recoveryCall string
+	// noDaily mirrors noRecovery for the per-platform daily balance route.
+	noDaily   bool
+	dailyCall string
 }
 
 func (f *fakeScheduler) Status() scheduler.Status { return f.st }
@@ -41,6 +47,16 @@ func (f *fakeScheduler) History() []scheduler.RunRecord { return f.history }
 func (f *fakeScheduler) RunBalanceRefreshNow(ctx context.Context) bool {
 	f.balanceCalls++
 	return !f.noBalance
+}
+
+func (f *fakeScheduler) RunRecoveryNow(_ context.Context, client string) bool {
+	f.recoveryCall = client
+	return !f.noRecovery
+}
+
+func (f *fakeScheduler) RunDailyBalanceNow(_ context.Context, client string) bool {
+	f.dailyCall = client
+	return !f.noDaily
 }
 
 func statusPanel(t *testing.T, s Scheduler) *panel {
@@ -165,10 +181,17 @@ func TestScheduleViewReportsEachPlatformsTimetable(t *testing.T) {
 		t.Fatalf("wired = %v, want true", out["wired"])
 	}
 	rows, _ := out["rows"].([]any)
-	if len(rows) != 1 {
-		t.Fatalf("rows = %v, want one (wb, checkin) row", out["rows"])
+	var row map[string]any
+	for _, raw := range rows {
+		candidate, _ := raw.(map[string]any)
+		if candidate["batch"] == "checkin" {
+			row = candidate
+			break
+		}
 	}
-	row, _ := rows[0].(map[string]any)
+	if row == nil {
+		t.Fatalf("rows = %v, want a wb/checkin row", out["rows"])
+	}
 	if row["client"] != "wb" || row["batch"] != "checkin" {
 		t.Errorf("row = %v, want wb/checkin", row)
 	}
@@ -204,10 +227,17 @@ func TestScheduleViewFallsBackToTheSharedHours(t *testing.T) {
 		t.Errorf("balance_refresh_minutes = %v, want 0 when disabled", out["balance_refresh_minutes"])
 	}
 	rows, _ := scheduleView(t, p)["rows"].([]any)
-	if len(rows) != 1 {
-		t.Fatalf("rows = %v, want one", rows)
+	var row map[string]any
+	for _, raw := range rows {
+		candidate, _ := raw.(map[string]any)
+		if candidate["batch"] == "checkin" {
+			row = candidate
+			break
+		}
 	}
-	row, _ := rows[0].(map[string]any)
+	if row == nil {
+		t.Fatalf("rows = %v, want a checkin row", rows)
+	}
 	if row["override"] != false {
 		t.Errorf("override = %v, want false", row["override"])
 	}
@@ -330,13 +360,75 @@ func TestScheduleRowsIncludeLoomyGrowthAndAccountScope(t *testing.T) {
 	p.opts.Registry = registryOf(c)
 
 	rows := p.scheduleRows(p.opts.Scheduler.Config(), p.opts.Scheduler.Status())
-	if len(rows) != 1 || rows[0].Client != "loomy" || rows[0].Batch != "growth" {
+	var row scheduleRow
+	for _, candidate := range rows {
+		if candidate.Client == "loomy" && candidate.Batch == "growth" {
+			row = candidate
+			break
+		}
+	}
+	if row.Client == "" {
 		t.Fatalf("rows = %+v, want loomy/growth", rows)
 	}
-	if !rows[0].PendingOnly {
+	if !row.PendingOnly {
 		t.Fatal("pending-only was lost from the schedule row")
 	}
-	if rows[0].AccountScope.Mode != scheduler.AccountScopeExclude || len(rows[0].AccountScope.Exclude) != 1 {
-		t.Fatalf("account scope lost: %+v", rows[0].AccountScope)
+	if row.AccountScope.Mode != scheduler.AccountScopeExclude || len(row.AccountScope.Exclude) != 1 {
+		t.Fatalf("account scope lost: %+v", row.AccountScope)
+	}
+}
+
+func TestScheduleViewIncludesRecoveryForEveryRegisteredClient(t *testing.T) {
+	wb := newSweepClient("wb", core.TaskResult{OK: true}, liveAccount("a1"))
+	loomy := newSweepClient("loomy", core.TaskResult{OK: true}, liveAccount("l1"))
+	loomy.batches = nil // recovery must not depend on a daily batch plan
+	nextWB := time.Date(2026, 3, 4, 7, 0, 0, 0, scheduler.CST)
+	nextLoomy := nextWB.Add(2 * time.Hour)
+	p := statusPanel(t, &fakeScheduler{
+		st: scheduler.Status{Enabled: true, NextByClient: map[string]time.Time{
+			"wb/recovery":    nextWB,
+			"loomy/recovery": nextLoomy,
+		}},
+		cfg: scheduler.Config{
+			Enabled:  true,
+			Recovery: scheduler.Group{Enabled: true, Every: 4 * time.Hour, Jitter: time.Hour},
+		},
+	})
+	p.opts.Registry = registryOf(wb, loomy)
+
+	rows := p.scheduleRows(p.opts.Scheduler.Config(), p.opts.Scheduler.Status())
+	got := map[string]scheduleRow{}
+	for _, row := range rows {
+		if row.Batch == scheduler.RecoveryTaskName {
+			got[row.Client] = row
+		}
+	}
+	for _, client := range []string{"wb", "loomy"} {
+		row, ok := got[client]
+		if !ok {
+			t.Fatalf("%s has no recovery row: %+v", client, rows)
+		}
+		if row.EveryMinutes != 240 || row.JitterMinutes != 60 {
+			t.Fatalf("%s recovery interval = %d/%d, want 240/60", client, row.EveryMinutes, row.JitterMinutes)
+		}
+		if row.Next == "" {
+			t.Fatalf("%s recovery next fire is missing", client)
+		}
+	}
+}
+
+func TestRecoveryRunRouteUsesSchedulerHook(t *testing.T) {
+	c := newSweepClient("wb", core.TaskResult{OK: true}, liveAccount("a1"))
+	s := &fakeScheduler{}
+	p := statusPanel(t, s)
+	p.opts.Registry = registryOf(c)
+
+	rec := httptest.NewRecorder()
+	p.handleClientScoped(rec, httptest.NewRequest(http.MethodPost, "/panel/api/clients/wb/batches/recovery/run", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("recovery run = %d (%s), want 200", rec.Code, rec.Body.String())
+	}
+	if s.recoveryCall != "wb" {
+		t.Fatalf("recovery hook client = %q, want wb", s.recoveryCall)
 	}
 }

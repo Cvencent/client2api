@@ -90,6 +90,7 @@ func (c *Client) AccountBalance(ctx context.Context, id string, soon time.Durati
 		Expiring:          rep.Expiring,
 		EarliestAt:        rep.EarliestAt,
 		EarliestRemaining: rep.EarliestRemaining,
+		Unverified:        !rep.Corroborated,
 		// This vendor sells 积分, and both the CN and the intl realms bill in
 		// them, so the label is not realm-dependent.
 		Unit: balanceUnit,

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"client2api/internal/core"
+	"client2api/internal/scheduler"
 )
 
 // ---------------------------------------------------------------------------
@@ -721,6 +722,14 @@ func (p *panel) batchList(w http.ResponseWriter, r *http.Request, c core.Client)
 // It journals the sweep as queued and returns 202 immediately: the sweep itself
 // takes tens of seconds per account and must not be tied to this request.
 func (p *panel) batchStart(w http.ResponseWriter, r *http.Request, c core.Client, name string) {
+	if strings.EqualFold(strings.TrimSpace(name), scheduler.RecoveryTaskName) {
+		p.recoveryStart(w, r, c)
+		return
+	}
+	if strings.EqualFold(strings.TrimSpace(name), scheduler.DailyBalanceTaskName) {
+		p.dailyBalanceStart(w, r, c)
+		return
+	}
 	b, ok := core.BatchOf(c, name)
 	if !ok {
 		writeErr(w, http.StatusNotImplemented, c.Name()+" has no batch named "+name)
@@ -744,6 +753,41 @@ func (p *panel) batchStart(w http.ResponseWriter, r *http.Request, c core.Client
 	})
 	p.queue.enqueue(queuedSweep{runID: run.ID, client: c.Name(), batch: b})
 	writeJSON(w, http.StatusAccepted, toJSONRun(*run))
+}
+
+// recoveryStart runs the synthetic per-platform recovery probe. Unlike a
+// batch it has no task codes: the scheduler hook refreshes balances and
+// renews idle credentials for the accounts parked in recoverable states.
+func (p *panel) recoveryStart(w http.ResponseWriter, r *http.Request, c core.Client) {
+	if p.opts.Scheduler == nil {
+		writeErr(w, http.StatusNotImplemented, "scheduler not available")
+		return
+	}
+	ctx, cancel := p.ctx(r, 2*time.Minute)
+	defer cancel()
+	if !p.opts.Scheduler.RunRecoveryNow(ctx, c.Name()) {
+		writeErr(w, http.StatusNotImplemented, "recovery probe is not wired")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "batch": scheduler.RecoveryTaskName, "state": "probed"})
+}
+
+// dailyBalanceStart runs the synthetic per-platform daily balance sweep.  Like
+// recovery it has no task codes: the scheduler hook refreshes every account's
+// balance, including the accounts parked in recoverable states, so a credit
+// grant that landed after midnight lifts the park.
+func (p *panel) dailyBalanceStart(w http.ResponseWriter, r *http.Request, c core.Client) {
+	if p.opts.Scheduler == nil {
+		writeErr(w, http.StatusNotImplemented, "scheduler not available")
+		return
+	}
+	ctx, cancel := p.ctx(r, 2*time.Minute)
+	defer cancel()
+	if !p.opts.Scheduler.RunDailyBalanceNow(ctx, c.Name()) {
+		writeErr(w, http.StatusNotImplemented, "daily balance sweep is not wired")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "batch": scheduler.DailyBalanceTaskName, "state": "refreshed"})
 }
 
 // balanceAll answers the reference's POST /panel/api/balance_all.

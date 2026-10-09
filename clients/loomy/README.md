@@ -284,7 +284,15 @@ else. Nothing is written when `DataDir` is empty.
 | File | Contents |
 | --- | --- |
 | `accounts.json` | the imported credentials (`id`, `label`, `access_token`, `userid`, `phone`, `nickname`, `expires_at_ms`, `enabled`) |
-| `state.json` | per-account runtime penalties (`dead`, `failures`, `last_error`, `cooldown_until`, `last_used`) |
+| `state.json` | per-account runtime penalties (`dead`, `failures`, `last_error`, `cooldown_until`, `probe_after`, `last_used`) |
+
+After a transient failure, the module writes a `probe_after` timestamp into
+`state.json`. Shared background balance and renewal sweeps wait for a
+randomised 3..6 hour quiet window before probing that account again; the
+ordinary cooldown still controls when a real request may select it. An
+upgrade that carries a legacy `cooldown_until` without `probe_after` gets a
+fresh quiet window on load. Manual `TestAccount` and explicit balance
+refreshes bypass the gate, and a successful manual test clears both clocks.
 
 Credentials from the config are tagged `origin: config` and **cannot be removed
 from the panel** (`RemoveAccount` refuses, pointing at the config file); stored
@@ -351,6 +359,10 @@ Implemented optional interfaces: **`core.AccountManager`**, **`core.Reviver`**,
 **`core.ModelRefresher`**, **`core.BalanceProvider`**, **`core.PackageProvider`**,
 **`core.CheckinProvider`**, **`core.ModelLimitsProvider`**, **`core.TaskProvider`**,
 **`core.BatchPlanner`**, **`core.SMSProvider`**, **`core.AutoLoginProvider`**.
+
+It also implements **`core.BackgroundProbeGate`** so shared background
+sweeps respect the per-account quiet window above without slowing down an
+operator's explicit action.
 
 `Batches()` exposes the onboarding registry as the **`growth`** batch with
 `PendingOnly` and a 10-second task gap (8-12 seconds after the scheduler's

@@ -138,14 +138,14 @@ func TestBalancesRefreshRevivesFundedCoolingAccounts(t *testing.T) {
 // verdict that has no clock of its own.  A plan that came back after being
 // parked "exhausted" is usable again the moment a funded balance is read, so
 // the operator does not have to press 刷新余额 for the state to catch up.
-func TestBalancesSoftRefreshClearsATerminalQuotaVerdict(t *testing.T) {
+func TestExplicitBalanceRefreshClearsATerminalQuotaVerdict(t *testing.T) {
 	c := &revivableQuotaClient{fakeQuotaClient: quotaClient("zcode", core.AccountRecord{
 		ID: "jwt1", State: "exhausted", Enabled: true,
 	})}
 	c.balances["jwt1"] = core.Balance{Credits: 100_000_000, Total: 100_000_000}
 	p, _ := balanceHandler(Options{Registry: registryOf(c), Started: time.Now()})
 
-	doTask(t, p, http.MethodGet, "/panel/api/clients/zcode/balances", "")
+	doTask(t, p, http.MethodPost, "/panel/api/clients/zcode/balances/refresh", "")
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) && len(c.reviveCalls()) == 0 {

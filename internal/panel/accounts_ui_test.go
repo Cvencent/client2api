@@ -316,7 +316,7 @@ func TestAccountColumnsSplitTheTableEvenly(t *testing.T) {
 func TestAccountPriorityIsEditableFromThePoolPage(t *testing.T) {
 	src := string(indexHTML)
 	for _, want := range []string{
-		"<th>优先级</th>",
+		`id="accSortPrio" data-sort="prio"`,
 		"function accPriorityCell(",
 		"accPrio",
 		"async function saveAccountPriority(",

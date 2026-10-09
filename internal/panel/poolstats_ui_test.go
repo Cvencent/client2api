@@ -150,7 +150,7 @@ func accountsRowCells(t *testing.T, src string) int {
 func TestInFlightColumnIsWiredEndToEnd(t *testing.T) {
 	src := poolStatsUISource(t)
 
-	if !strings.Contains(src, "<th>在途</th>") {
+	if !strings.Contains(src, `id="accSortInflight" data-sort="inflight"`) {
 		t.Error("账号表表头没有「在途」列")
 	}
 	if h, r := accountsHeaderCells(t, src), accountsRowCells(t, src); h != r {

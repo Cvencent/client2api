@@ -356,7 +356,7 @@ func (c *Client) RunTaskAuto(ctx context.Context, accountID, code string) (res c
 
 	switch {
 	case after != nil && after.claimed():
-		c.pool.MarkSuccess(a)
+		c.pool.MarkNonChatSuccess(a)
 		res.OK = true
 		res.Message = firstNonEmpty(note, "the chore is complete")
 		return res, nil
@@ -385,13 +385,13 @@ func (c *Client) RunTaskAuto(ctx context.Context, accountID, code string) (res c
 	case after != nil:
 		// Events were reported but the target is not credited yet: scoring is
 		// asynchronous, so this is progress, not a failure.
-		c.pool.MarkSuccess(a)
+		c.pool.MarkNonChatSuccess(a)
 		res.OK = true
 		res.Message = taskProgressTail(note, after)
 		return res, nil
 
 	default:
-		c.pool.MarkSuccess(a)
+		c.pool.MarkNonChatSuccess(a)
 		res.OK = true
 		res.Message = firstNonEmpty(note, "the events were reported") +
 			"; the board could not be re-read to confirm the progress"

@@ -170,7 +170,7 @@ func (c *Client) checkinCN(ctx context.Context, a *Auth, res core.CheckinResult)
 		if serr := a.SaveAtomic(); serr != nil {
 			c.deps.Logf("workbuddy: check-in succeeded but the stamp could not be saved: %v", serr)
 		}
-		c.pool.MarkSuccess(a)
+		c.pool.MarkNonChatSuccess(a)
 		res.Data = map[string]any{
 			"last_checkin": a.LastCheckinValue(),
 			"already_done": env.Code == checkinCodeAlreadyDone,

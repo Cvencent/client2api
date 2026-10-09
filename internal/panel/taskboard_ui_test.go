@@ -118,8 +118,8 @@ func TestTaskCenterBindsTheSelectedAccount(t *testing.T) {
 	page := poolStatsUISource(t)
 	for _, want := range []string{
 		"const TASKCENTER =",
-		"/tasks?account=",
-		"/tasks?all=1",
+		`params.push("account=" + encodeURIComponent(TASKCENTER.account))`,
+		`params.push("all=1")`,
 		"body: { account: TASKCENTER.account }",
 		`id="tbAccounts"`,
 	} {

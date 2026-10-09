@@ -129,6 +129,8 @@ body {
 .tb-accounts .chips { flex-wrap: wrap; }
 .tb-matrix { display: flex; flex-direction: column; gap: 10px; padding: 12px 16px 16px; }
 .tb-acct { border: 1px solid var(--line-soft); border-radius: 8px; padding: 10px 12px; background: var(--surface-2); }
+.tb-acct { transition: border-color .18s ease, background .18s ease, box-shadow .18s ease; }
+.tb-acct.done { border-color: color-mix(in srgb, var(--ok) 55%, var(--line-soft)); background: var(--ok-soft); box-shadow: inset 3px 0 0 var(--ok); }
 .tb-acct-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
 .tb-acct-h b { font-size: 13.5px; }
 .qdot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
@@ -733,6 +735,7 @@ button.chip.on { background: var(--accent-soft); color: var(--accent); border-co
 .acc .c-bal .u { color: var(--ink-3); font-size: 11px; margin-left: 3px; }
 .acc .c-bal .bar { display: block; height: 3px; margin-top: 4px; border-radius: 2px; background: var(--line-soft); overflow: hidden; }
 .acc .c-bal .bal-used { display: block; color: var(--ink-3); font-size: 10.5px; margin-top: 2px; }
+.acc .c-bal .bal-verify { display: block; color: var(--warn); font-size: 10.5px; margin-top: 1px; }
 .acc .c-bal .bar i { display: block; height: 100%; background: var(--ok); }
 body.hide-bal .c-bal { display: none; }
 /* 一个厂商账号一行，它下面缩进的是这个账号的各个登录通道。分组行稍微加重、通道行
@@ -1136,11 +1139,16 @@ button.primary:active:not(:disabled) { filter: brightness(.94); }
    （桌面应用的内嵌浏览器侧栏常见 500px 上下）折叠成一张张卡片，免得“操作”列
    要横向拖动才看得到。规则限定在 .acc.sc / .acc.stk，账号表和模型表不受影响。 */
 #view-taskscenter .box > header { flex-wrap: wrap; row-gap: 8px; }
-.acc.sc { min-width: 760px; }
+.acc.sc { min-width: 860px; }
 .acc.sc th, .acc.sc td { padding: 9px 12px; }
 .acc.sc .hint { display: block; margin-top: 2px; font-size: 11px; color: var(--ink-3);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 240px; }
 .acc.sc .scHours { width: 104px; }
+.acc.sc .scDur { display: inline-flex; align-items: center; gap: 5px; }
+.acc.sc .scDur > span { font-size: 11px; color: var(--ink-3); }
+.acc.sc .scEvery, .acc.sc .scJitter { width: 66px; }
+.acc.sc tr.sc-group td { padding: 6px 12px; background: var(--surface-2); border-bottom: 1px solid var(--line-soft); font-weight: 600; color: var(--ink-2); }
+.acc.sc tr.sc-group:hover td { background: var(--surface-2); }
 .acc.sc .sc-c-next { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .acc.sc .sc-c-acts { white-space: nowrap; text-align: right; }
 .acc.sc .sc-c-acts button { margin: 2px 0 2px 4px; }
@@ -1162,6 +1170,8 @@ button.primary:active:not(:disabled) { filter: brightness(.94); }
     border: 1px solid var(--line-soft); border-radius: 9px; background: var(--surface);
   }
   .acc.sc tr.scrow:hover { background: var(--surface-2); }
+  .acc.sc tr.sc-group { display: block; margin-top: 14px; }
+  .acc.sc tr.sc-group td { display: block; border-radius: 7px; }
   .acc.sc tr:last-child td { border-bottom: none; }
   .acc.sc td { display: block; padding: 0; border-bottom: none; }
   .acc.sc td.sc-c-name { grid-area: 1 / 1 / 2 / 2; font-weight: 600; }
@@ -1448,6 +1458,15 @@ input, select, textarea { transition-property: border-color, box-shadow, backgro
           <div class="chips" id="clientChips"></div>
           <span class="grow"></span>
           <input id="accSearch" class="filt" type="search" placeholder="搜索账号 / 备注（/）" spellcheck="false" autocomplete="off">
+          <label class="sel-note" for="accStateFilter">状态 <select id="accStateFilter" title="按账号汇总状态筛选">
+            <option value="">全部</option>
+            <option value="ready">可用</option>
+            <option value="cooling">冷却中</option>
+            <option value="risk">风控</option>
+            <option value="fault">账号异常</option>
+            <option value="disabled">已停用</option>
+            <option value="unknown">未知</option>
+          </select></label>
           <span class="note" id="accNote"></span>
           <button class="xs" id="btnRefreshAll">全部刷新</button>
           <button class="xs" id="btnBalanceAll" title="让服务端分批刷新余额（每次最多 3 个账号，慢慢来），不会一次性把整个号池问一遍">刷新余额</button>
@@ -1463,7 +1482,7 @@ input, select, textarea { transition-property: border-color, box-shadow, backgro
           </colgroup>
           <thead><tr>
             <th class="mark" aria-hidden="true"></th>
-            <th>账号</th><th>状态</th><th class="c-models" title="这个账号当前能用的模型数，以及被厂商限流的模型数；点开看明细">模型</th><th>优先级</th><th class="c-bal sortable" id="accSortBal" tabindex="0" aria-label="按余额排序" aria-sort="none" title="点击按余额升序，再点切到降序，第三次恢复默认顺序">余额 <span class="sort-mark" aria-hidden="true">↕</span></th><th>成功 / 失败</th><th>在途</th><th>用量</th><th>最近成功</th><th>到期</th><th class="c-note" title="模块返回的账号状态说明，例如冷却、限流、凭据失效；它不是右侧的账号标识">状态说明</th><th>字段</th><th class="c-acts"></th>
+            <th class="sortable" id="accSortAccount" data-sort="account" tabindex="0" aria-sort="none" title="按账号排序">账号 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="sortable" id="accSortState" data-sort="state" tabindex="0" aria-sort="none" title="按状态排序">状态 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="c-models sortable" id="accSortModels" data-sort="models" tabindex="0" aria-sort="none" title="按模型可用情况排序">模型 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="sortable" id="accSortPrio" data-sort="prio" tabindex="0" aria-sort="none" title="按优先级排序">优先级 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="c-bal sortable" id="accSortBal" data-sort="balance" tabindex="0" aria-sort="none" title="按余额排序">余额 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="sortable" id="accSortRate" data-sort="rate" tabindex="0" aria-sort="none" title="按成功 / 失败排序">成功 / 失败 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="sortable" id="accSortInflight" data-sort="inflight" tabindex="0" aria-sort="none" title="按在途占用排序">在途 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="c-usage sortable" id="accSortUsage" data-sort="usage" tabindex="0" aria-sort="none" title="按调用次数和 token 用量排序">用量 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="c-last sortable" id="accSortLast" data-sort="last" tabindex="0" aria-sort="none" title="按最近成功时间排序">最近成功 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="sortable" id="accSortExpiry" data-sort="expiry" tabindex="0" aria-sort="none" title="按凭据到期时间排序">到期 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="c-note" title="模块返回的账号状态说明，例如冷却、限流、凭据失效；它不是右侧的账号标识">状态说明</th><th>字段</th><th class="c-acts"></th>
           </tr></thead>
           <tbody id="accBody"></tbody>
         </table>
@@ -1669,6 +1688,7 @@ input, select, textarea { transition-property: border-color, box-shadow, backgro
         <div class="tbl-wrap">
         <table class="acc md">
           <thead><tr>
+
             <th>客户端</th><th>就绪</th><th>账号管理</th><th>导入凭据</th><th>浏览器登录</th>
             <th>接码</th><th>自动添加</th>
             <th>每日签到</th><th>上游刷新</th><th>账号数</th><th>字段</th>
@@ -1786,6 +1806,7 @@ input, select, textarea { transition-property: border-color, box-shadow, backgro
           <h3>任务看板 <span class="hint" id="tbNote">-</span></h3>
           <span class="grow"></span>
           <div class="chips" id="tbChips"></div>
+          <button class="xs" id="btnTbRefreshTasks">刷新任务状态</button>
           <button class="xs primary" id="btnTbRunAll">执行全部可自动任务</button>
         </header>
         <div class="tblbar tb-accounts" id="tbAccountsBar" hidden>
@@ -2606,6 +2627,9 @@ let ACC_EXPANDED_FOR = "";
 // 第 1 页——留着上一页的页码切到另一个池子会直接落在一张空表上。
 let ACC_PAGE = 1;
 const ACC_SORT = {};
+const ACC_FILTER_LABELS = { ready: "可用", cooling: "冷却中", risk: "风控", fault: "账号异常", disabled: "已停用", unknown: "未知" };
+function accStateFilterLabel(state) { return ACC_FILTER_LABELS[state] || state || ""; }
+const ACC_FILTER = {};
 let ACC_PAGE_SIZE = 50;
 
 // elsewhereClients 在当前客户端之外找命中的账号，返回 [{ name, n }]。账号池一次只
@@ -2972,6 +2996,9 @@ const NOTE_WORDS = {
   hard_credit: "额度已用尽", soft_rate: "被限流", not_found: "模型或资源不存在",
   server: "上游服务异常", content_blocked: "内容被上游拦截", bad_params: "请求参数错误",
   risk: "风控", fault: "账号异常", account_fault: "风控",
+  // 账户级两套惩罚机制：熔断（classified 失败连续命中）和连败降权（未分类失败）。
+  // 它们和冷却共用“(... left)”后缀，面板会拼成“熔断保护中（剩余 …）”。
+  breaker: "熔断保护中", degrade: "连续失败保护中",
   model_blocked: "模型不可用", waf_block: "被上游安全策略拦截",
   prompt_too_long: "提示词过长", image_invalid: "图片无效", client: "请求被上游拒绝",
   plan_limit: "套餐额度已用尽", quota: "额度已用尽", param: "请求参数错误",
@@ -3263,7 +3290,9 @@ function accBalanceCell(a) {
   if (b.expiring > 0) tip += "，其中 " + b.expiring + " 即将过期";
   if (b.earliest_at) tip += "（最早到期 " + b.earliest_at + (b.earliest_remaining != null ? "，剩 " + b.earliest_remaining : "") + "）";
   tip += balFetchedTip(b.fetched_at);
+  if (b.unverified) tip += "；厂商的两套额度数据互相矛盾，余额暂未确认";
   let html = '<span title="' + esc(tip) + '">' + numf(left) + u + '</span>';
+  if (b.unverified) html += '<span class="bal-verify">待确认</span>';
   // 厂商报了「已用」才多挂一行；进度条已经回答了「还能用多久」。
   if (used > 0) html += '<span class="bal-used">已用 ' + numf(used) + '</span>';
   // 只有厂商报了总量才画进度条：没有分母就不该编一个比例出来。
@@ -3293,35 +3322,138 @@ function accGroupBalanceValue(rows) {
   return null;
 }
 
-function accSortDir(n) { return ACC_SORT[n] || ""; }
-
-function accSortGroups(groups, dir) {
-  if (!dir) return groups;
-  return groups.map((g, i) => ({ g, i, bal: accGroupBalanceValue(g.rows) })).sort((a, b) => {
-    const av = a.bal, bv = b.bal;
+function accSort(n) { return ACC_SORT[n] || { col: "", dir: "" }; }
+function accStateFilter() {
+  const el = $("#accStateFilter");
+  if (el) {
+    const value = String(el.value || "");
+    if (CUR) ACC_FILTER[CUR] = value;
+    return value;
+  }
+  return (CUR && ACC_FILTER[CUR]) || "";
+}
+function syncAccStateFilter() {
+  const el = $("#accStateFilter");
+  if (el) el.value = (CUR && ACC_FILTER[CUR]) || "";
+}
+function accSortDir(n) { return accSort(n).dir; }
+function accSortDefaultDir(col) {
+  switch (col) {
+    case "account":
+    case "state":
+    case "models":
+    case "prio":
+    case "expiry":
+      return "asc";
+    case "balance":
+    case "rate":
+    case "inflight":
+    case "usage":
+    case "last":
+      return "desc";
+  }
+  return "asc";
+}
+function accSortFor(col) {
+  const x = accSort(CUR);
+  const same = col === x.col;
+  const next = same ? (x.dir ? (x.dir === "asc" ? "desc" : "") : accSortDefaultDir(col)) : accSortDefaultDir(col);
+  if (next) ACC_SORT[CUR] = { col: col, dir: next }; else delete ACC_SORT[CUR];
+  return { col: col, dir: next };
+}
+function accGroupStatValue(g) {
+  const out = { key: accountState(accGroupStat(g)).key, order: 0 };
+  const order = { ready: 0, cooling: 1, risk: 2, fault: 3, disabled: 4, unknown: 5 };
+  out.order = (order[out.key] == null) ? 9 : order[out.key];
+  return out.order;
+}
+function accGroupModelValue(g) {
+  let n = 0;
+  (g.rows || []).forEach(a => { const s = acctModelSummary(CUR, a); if (s) n += Number(s.avail) || 0; });
+  return n ? n : null;
+}
+function accGroupRateValue(g) {
+  let req = 0, err = 0, any = false;
+  (g.rows || []).forEach(a => {
+    const s = accStatOf(a.id); if (!s) return; any = true;
+    req += Number(s.requests) || 0; err += Number(s.failures) || 0;
+  });
+  return any ? Math.max(0, req - err) : null;
+}
+function accGroupInflightValue(g) {
+  let n = 0, any = false;
+  (g.rows || []).forEach(a => { const x = acctExtra(CUR, a); if (x) { any = true; n += Number(x.in_flight) || 0; } });
+  return any ? n : null;
+}
+function accGroupUsageValue(g) {
+  let req = 0, any = false;
+  (g.rows || []).forEach(a => { const s = accStatOf(a.id); if (s) { any = true; req += Number(s.requests) || 0; } });
+  return any ? req : null;
+}
+function accGroupLastValue(g) {
+  let t = 0, any = false;
+  (g.rows || []).forEach(a => { const s = accStatOf(a.id); if (s && s.last_success) { any = true; t = Math.max(t, Date.parse(s.last_success) || 0); } });
+  return any ? t : null;
+}
+function accGroupExpiryValue(g) {
+  let t = 0, any = false;
+  (g.rows || []).forEach(a => { const v = Date.parse(a.expires_at || ""); if (isFinite(v)) { any = true; t = any && t ? Math.min(t, v) : v; } });
+  return any ? t : null;
+}
+function accSortValue(g, col) {
+  switch (col) {
+    case "account":
+      return String(accountIdentity(g.rows[0]) || "").toLowerCase();
+    case "state":
+      return accountState(accGroupStat(g)).label;
+    case "models":
+      return accGroupModelValue(g);
+    case "prio":
+      return Math.min.apply(null, g.rows.map(a => Number(a.priority) || 0));
+    case "balance":
+      return accGroupBalanceValue(g.rows);
+    case "rate":
+      return accGroupRateValue(g.rows);
+    case "inflight":
+      return accGroupInflightValue(g.rows);
+    case "usage":
+      return accGroupUsageValue(g.rows);
+    case "last":
+      return accGroupLastValue(g.rows);
+    case "expiry":
+      return accGroupExpiryValue(g.rows);
+  }
+  return null;
+}
+function accSortGroups(groups, sort) {
+  if (!sort || !sort.col || !sort.dir) return groups;
+  const col = sort.col, dir = sort.dir;
+  return groups.map((g, i) => ({ g: g, i: i })).sort((a, b) => {
+    const av = accSortValue(a.g, col), bv = accSortValue(b.g, col);
     if (av == null && bv == null) return a.i - b.i;
     if (av == null) return 1;
     if (bv == null) return -1;
     if (av === bv) return a.i - b.i;
-    return dir > 0 ? av - bv : bv - av;
+    const cmp = av < bv ? -1 : 1;
+    return dir === "asc" ? cmp : -cmp;
   }).map(x => x.g);
 }
-
 function syncAccSortHeader() {
-  const th = $("#accSortBal");
-  if (!th) return;
-  const dir = accSortDir(CUR);
-  th.classList.toggle("sort-on", !!dir);
-  th.setAttribute("aria-sort", dir === "asc" ? "ascending" : dir === "desc" ? "descending" : "none");
-  const mark = th.querySelector(".sort-mark");
-  if (mark) mark.textContent = dir === "asc" ? "↑" : dir === "desc" ? "↓" : "↕";
-  th.title = dir === "asc" ? "余额升序，点击改为降序" : dir === "desc" ? "余额降序，点击恢复默认顺序" : "点击按余额升序，再点切到降序，第三次恢复默认顺序";
+  const sort = accSort(CUR);
+  // th[data-sort] is the single source for every sortable account column,
+  // so adding a column only needs the data-sort attribute and one switch
+  // branch in accSortValue.
+  document.querySelectorAll("th[data-sort]").forEach(th => {
+    const on = th.dataset.sort === sort.col;
+    th.classList.toggle("sort-on", on);
+    th.setAttribute("aria-sort", on ? "ascending" : sort.dir === "desc" ? "descending" : "none");
+    const mark = th.querySelector(".sort-mark");
+    if (mark) mark.textContent = on ? (sort.dir === "asc" ? "↑" : "↓") : "↕";
+  });
 }
-
-function accSortBalance() {
-  const cur = accSortDir(CUR);
-  const next = cur === "asc" ? "desc" : cur === "desc" ? "" : "asc";
-  if (next) ACC_SORT[CUR] = next; else delete ACC_SORT[CUR];
+function accSortBy(col) {
+  const next = accSortFor(col);
+  if (next.dir) ACC_SORT[CUR] = next; else delete ACC_SORT[CUR];
   ACC_PAGE = 1;
   renderAccounts();
   const wrap = $("#accBody").closest(".tbl-wrap");
@@ -3352,6 +3484,7 @@ function renderAccounts() {
   const showBal = !!caps.balance;
   document.body.classList.toggle("hide-bal", !showBal);
   syncAccSortHeader(CUR);
+  syncAccStateFilter();
   $("#btnBalanceAll").hidden = !showBal;
   syncBalanceButton(CUR);
   const cols = showBal ? 14 : 13;
@@ -3391,13 +3524,20 @@ function renderAccounts() {
     ACC_EXPANDED_FOR = qKey;
     shown.forEach(g => { if (g.rows.length > 1) ACC_OPEN.add(accOpenKey(CUR, g.key)); });
   }
+  const stateFilter = accStateFilter();
+  if (stateFilter) accText += " · 筛选：" + accStateFilterLabel(stateFilter) + " · " + shown.length + " 个";
   if (q) accText += " · 匹配 " + shown.length + " 个";
 
   // ── 分页 ──────────────────────────────────────────────────────────────
   // 切在组与组之间，一个账号的多条凭据永远在同一页。页数变化（搜索把结果从
   // 300 个筛到 5 个）时把页码夹回合法范围，否则会停在一张空表上。
+  // Filtering and sorting are render-time only; the accounts data itself stays
+  // untouched. Clamp the page after the filtered count is known so a passive
+  // poll can shrink the set without dropping the user onto an empty last page.
   const total = shown.length;
   const pages = Math.max(1, Math.ceil(total / ACC_PAGE_SIZE));
+  // Keep the page in range without ever assigning ACC_PAGE = 1 here: passive
+  // polling must not bounce a user who is reading page 3 back to the top.
   if (ACC_PAGE > pages) ACC_PAGE = pages;
   if (ACC_PAGE < 1) ACC_PAGE = 1;
   const from = (ACC_PAGE - 1) * ACC_PAGE_SIZE;
@@ -3420,8 +3560,11 @@ function renderAccounts() {
     const hits = elsewhereClients(q);
     const tail = hits.length
       ? "其他客户端里有匹配：" + hits.map(h => '<button class="xs chip" data-goto="' + esc(h.name) + '">' + esc(h.name) + ' <b>' + h.n + '</b></button>').join(" ")
-      : "换个关键词试试";
-    tb.innerHTML = '<tr class="filtered"><td colspan="' + cols + '" class="hint">' + esc("没有账号匹配「" + qRaw + "」") + " · " + tail + '</td></tr>';
+      : (stateFilter ? (qRaw ? "换个状态或关键词试试" : "换个状态试试") : "换个关键词试试");
+    const emptyText = stateFilter
+      ? "没有「" + accStateFilterLabel(stateFilter) + "」状态的账号" + (qRaw ? "，关键词「" + qRaw + "」" : "")
+      : "没有账号匹配「" + qRaw + "」";
+    tb.innerHTML = '<tr class="filtered"><td colspan="' + cols + '" class="hint">' + esc(emptyText) + " · " + tail + '</td></tr>';
     hideAccPager();
     return;
   }
@@ -3503,8 +3646,11 @@ function accShownGroups() {
   const rec = ACCTS[CUR] || { accounts: [] };
   const allGroups = accGroups(rec.accounts || []);
   const q = ($("#accSearch").value || "").trim().toLowerCase();
-  const groups = q ? allGroups.filter(g => g.rows.some(a => matchText(a, q))) : allGroups;
-  return accSortGroups(groups, accSortDir(CUR));
+  const state = accStateFilter();
+  let groups = allGroups;
+  if (state) groups = groups.filter(g => accountState(accGroupStat(g)).key === state);
+  if (q) groups = groups.filter(g => g.rows.some(a => matchText(a, q)));
+  return accSortGroups(groups, accSort(CUR));
 }
 
 // accountIdentity 是账号列上让人认人的那行字。操作员自己记的备注（手机号/邮箱）
@@ -5780,8 +5926,13 @@ const SC = { data: null, rows: {}, dirty: {}, removed: {}, timer: null };
 const SC_BATCH_LABELS = {
   checkin: "自动签到", travel: "猫猫旅行", activity: "活跃上报",
   keepalive: "Token 保活", blackcat: "黑猫巡检", growth: "成长任务",
+  recovery: "恢复探测",
 };
-const SC_GROUPS = ["checkin", "keepalive", "travel", "activity", "blackcat", "growth"];
+  // 每日余额刷新是第二个合成任务：固定时点（默认 0 点）+ 30 分钟随机窗口，
+  // 所以它跟普通批次一样用时点输入，不需要 recovery 那套间隔控件。
+  daily_balance: "每日余额刷新",
+};
+const SC_GROUPS = ["checkin", "keepalive", "travel", "activity", "blackcat", "growth", "recovery", "daily_balance"];
 const scLabel = b => SC_BATCH_LABELS[b] || b;
 // scDefaultHTML 渲染「全局默认」区：每个 batch 一组开关 + 时点，外加余额刷新。
 // 缺键默认值由服务端算好（groups / balance_refresh_*），面板不重复判断默认。
@@ -5790,6 +5941,20 @@ function scDefaultHTML(d) {
   ((d || {}).groups || []).forEach(g => { byName[g.name] = g; });
   const out = [];
   SC_GROUPS.forEach(name => {
+    if (name === "recovery") {
+      const on = !!(d || {}).recovery_enabled;
+      const every = (d || {}).recovery_every_minutes === undefined ? 240 : (d || {}).recovery_every_minutes;
+      const jitter = (d || {}).recovery_jitter_minutes === undefined ? 60 : (d || {}).recovery_jitter_minutes;
+      out.push('<div class="scdef' + (on ? " on" : "") + '">' +
+        '<label class="scdefsw"><input type="checkbox" id="scDefRecoveryEnabled"' +
+        (on ? " checked" : "") + '><span>恢复探测</span></label>' +
+        '<input class="cfgtext scdefh" id="scDefRecoveryEvery" spellcheck="false" autocomplete="off" value="' +
+        esc(scDurationText(every)) + '" placeholder="间隔，如 4h" aria-label="恢复探测间隔">' +
+        '<input class="cfgtext scdefh" id="scDefRecoveryJitter" spellcheck="false" autocomplete="off" value="' +
+        esc(scDurationText(jitter)) + '" placeholder="随机，如 1h" aria-label="恢复探测随机范围">' +
+        '</div>');
+      return;
+    }
     const g = byName[name] || { enabled: false, hours: [] };
     const label = SC_BATCH_LABELS[name] || name;
     const id = name.charAt(0).toUpperCase() + name.slice(1);
@@ -5820,10 +5985,36 @@ function scRenderDefaults(d) {
 const scKey = (c, b) => c + "\u0000" + b;
 const scHoursText = h => (h || []).join(", ");
 
+function scDurationText(minutes) {
+  const n = Number(minutes);
+  if (!Number.isFinite(n) || n <= 0) return "0m";
+  if (n >= 60 && n % 60 === 0) return (n / 60) + "h";
+  return Math.round(n) + "m";
+}
+
+// parseSchedDuration accepts bare minutes plus explicit minute/hour units, so an
+// operator can type "4h", "240m", or "90" without learning a second format.
+function parseSchedDuration(raw) {
+  const text = String(raw == null ? "" : raw).trim().toLowerCase();
+  if (!text) return null;
+  const m = text.match(/^(\d+(?:\.\d+)?)\s*(m|min|分钟|h|hr|小时)?$/);
+  if (!m) return null;
+  const value = Number(m[1]);
+  if (!Number.isFinite(value) || value < 0) return null;
+  const unit = m[2] || "m";
+  const minutes = /^(h|hr|小时)$/.test(unit) ? value * 60 : value;
+  return Math.round(minutes);
+}
+
 // 共享（非按平台）时点：按 batch 名从 groups 里找。
 function scShared(batch) {
   const g = (((SC.data || {}).groups) || []).filter(x => x.name === batch)[0];
-  return g ? { enabled: !!g.enabled, hours: g.hours || [] } : { enabled: false, hours: [] };
+  return g ? {
+    enabled: !!g.enabled,
+    hours: g.hours || [],
+    every_minutes: g.every_minutes,
+    jitter_minutes: g.jitter_minutes,
+  } : { enabled: false, hours: [], every_minutes: 0, jitter_minutes: 0 };
 }
 
 function scStateHTML(d) {
@@ -5841,14 +6032,23 @@ function scRowHTML(r) {
   // 未保存的编辑存在 SC.dirty 里，重画（搜索/过滤）时优先用它，否则打字一半
   // 切一下筛选就会被服务端值盖回去。
   const pend = SC.dirty[scKey(r.client, r.batch)] || null;
+  const isRecovery = r.batch === "recovery";
   const hours = pend ? pend.hours : scHoursText(r.hours);
+  const every = pend ? pend.every : scDurationText(r.every_minutes);
+  const jitter = pend ? pend.jitter : scDurationText(r.jitter_minutes);
   const on = pend ? pend.enabled : r.group_enabled;
   const codes = (r.codes || []).join(", ");
   const next = r.next ? schedClock(r.next) : "-";
+  const hoursControl = isRecovery
+    ? '<span class="scDur"><span>每</span><input class="cfgtext scEvery" spellcheck="false" autocomplete="off" value="' + esc(every) +
+      '" placeholder="' + esc(scDurationText(shared.every_minutes)) + '" aria-label="恢复探测间隔"><span>±</span>' +
+      '<input class="cfgtext scJitter" spellcheck="false" autocomplete="off" value="' + esc(jitter) +
+      '" placeholder="' + esc(scDurationText(shared.jitter_minutes)) + '" aria-label="恢复探测随机范围"></span>'
+    : '<input class="cfgtext scHours" spellcheck="false" autocomplete="off" value="' + esc(hours) + '" placeholder="' + esc(scHoursText(shared.hours)) + '">';
   return '<tr class="scrow" data-client="' + esc(r.client) + '" data-batch="' + esc(r.batch) + '">' +
     '<td class="sc-c-name">' + esc(r.client) + '<div class="hint">' + r.ready + "/" + r.accounts + " 个启用账号</div></td>" +
     '<td class="sc-c-task">' + esc(scLabel(r.batch)) + '<div class="hint">' + esc(r.batch) + (codes ? " · " + esc(codes) : "") + "</div></td>" +
-    '<td class="sc-c-hours"><input class="cfgtext scHours" spellcheck="false" autocomplete="off" value="' + esc(hours) + '" placeholder="' + esc(scHoursText(shared.hours)) + '"></td>' +
+    '<td class="sc-c-hours">' + hoursControl + '</td>' +
     '<td class="sc-c-on"><input type="checkbox" class="scOn"' + (on ? " checked" : "") + "></td>" +
     '<td class="sc-c-next">' + esc(next) + "</td>" +
     '<td class="sc-c-tag">' +
@@ -5897,12 +6097,18 @@ function scUpdateBadges() {
 function scMarkDirty(tr) {
   const key = scKey(tr.dataset.client, tr.dataset.batch);
   if (!SC.rows[key]) return;
-  SC.dirty[key] = {
+  const pend = {
     client: tr.dataset.client,
     batch: tr.dataset.batch,
-    hours: tr.querySelector(".scHours").value,
     enabled: tr.querySelector(".scOn").checked,
   };
+  if (tr.dataset.batch === "recovery") {
+    pend.every = tr.querySelector(".scEvery").value;
+    pend.jitter = tr.querySelector(".scJitter").value;
+  } else {
+    pend.hours = tr.querySelector(".scHours").value;
+  }
+  SC.dirty[key] = pend;
   delete SC.removed[key];
   scUpdateBadges();
 }
@@ -5926,14 +6132,22 @@ function scRenderRows() {
     box.innerHTML = '<div class="pad hint">没有匹配的规则。</div>';
     return;
   }
+  let lastClient = "";
+  const bodyHTML = shown.map(row => {
+    const head = row.client !== lastClient
+      ? '<tr class="sc-group" data-scgroup><td colspan="7">' + esc(row.client) + "</td></tr>"
+      : "";
+    lastClient = row.client;
+    return head + scRowHTML(row);
+  }).join("");
   // colgroup 把列宽钉死：七列全靠内容撑宽时，「时点」和「下一跳」两列宽度随
   // 每行内容跳动，扫一列扫不到底。
   box.innerHTML = '<div class="tbl-wrap"><table class="acc sc">' +
-    '<colgroup><col style="width:22%"><col style="width:21%"><col style="width:118px">' +
+    '<colgroup><col style="width:20%"><col style="width:19%"><col style="width:220px">' +
     '<col style="width:54px"><col style="width:88px"><col style="width:70px"><col style="width:132px"></colgroup>' +
     "<thead><tr>" +
-    "<th>平台</th><th>任务</th><th>时点（北京时间）</th><th>启用</th><th>下一跳</th><th>自定义</th>" +
-    "<th>操作</th></tr></thead><tbody>" + shown.map(scRowHTML).join("") + "</tbody></table></div>";
+    "<th>平台</th><th>任务</th><th>时点 / 间隔</th><th>启用</th><th>下一跳</th><th>自定义</th>" +
+    "<th>操作</th></tr></thead><tbody>" + bodyHTML + "</tbody></table></div>";
   box.querySelectorAll(".scrow").forEach(el => {
     const key = scKey(el.dataset.client, el.dataset.batch);
     SC.rows[key] = Object.assign({}, shown.filter(r => scKey(r.client, r.batch) === key)[0], { el: el });
@@ -6037,14 +6251,31 @@ async function scSave() {
   // 但它仍然算一次改动，不能默默丢掉。
   for (const key of Object.keys(SC.dirty)) {
     const pend = SC.dirty[key];
+    if (pend.batch === "recovery") {
+      const every = parseSchedDuration(pend.every);
+      const jitter = parseSchedDuration(pend.jitter);
+      if (every === null || every <= 0 || jitter === null || jitter < 0) {
+        bad = SC.rows[key] ? SC.rows[key].el : null;
+        break;
+      }
+      if (!clients[pend.client]) clients[pend.client] = {};
+      clients[pend.client][pend.batch] = { enabled: !!pend.enabled, every_minutes: every, jitter_minutes: jitter };
+      continue;
+    }
     const hours = parseSchedHours(pend.hours);
     if (hours === null) { bad = SC.rows[key] ? SC.rows[key].el : null; break; }
     if (!clients[pend.client]) clients[pend.client] = {};
     clients[pend.client][pend.batch] = { enabled: !!pend.enabled, hours: hours };
   }
   if (bad) {
-    toast("时点只能是 0-23 的整数，用逗号分隔（例如 9, 21）", "err");
-    if (bad) bad.querySelector(".scHours").focus();
+    const recovery = bad.querySelector(".scEvery");
+    if (recovery) {
+      toast("恢复探测间隔必须大于 0，随机值不能小于 0；可填 4h 或 240m", "err");
+      recovery.focus();
+    } else {
+      toast("时点只能是 0-23 的整数，用逗号分隔（例如 9, 21）", "err");
+      bad.querySelector(".scHours").focus();
+    }
     return;
   }
   for (const key of Object.keys(SC.removed)) {
@@ -6055,9 +6286,26 @@ async function scSave() {
   const sch = {};
   const wantMaster = $("#scMaster").checked;
   if (wantMaster !== !!d.enabled) sch.enabled = wantMaster;
+  const recOn = $("#scDefRecoveryEnabled"), recEveryEl = $("#scDefRecoveryEvery"), recJitterEl = $("#scDefRecoveryJitter");
+  if (recOn && recEveryEl && recJitterEl) {
+    const every = parseSchedDuration(recEveryEl.value);
+    const jitter = parseSchedDuration(recJitterEl.value);
+    if (every === null || every <= 0 || jitter === null || jitter < 0) {
+      bad = recEveryEl;
+    } else {
+      if (recOn.checked !== !!d.recovery_enabled) sch.recovery_enabled = recOn.checked;
+      if (every !== (d.recovery_every_minutes || 0)) sch.recovery_every_minutes = every;
+      if (jitter !== (d.recovery_jitter_minutes || 0)) sch.recovery_jitter_minutes = jitter;
+    }
+  }
+  if (bad) {
+    toast("恢复探测间隔必须大于 0，随机值不能小于 0；可填 4h 或 240m", "err");
+    bad.focus();
+    return;
+  }
   // 全局默认：每个 batch 一组开关 + 时点，加余额刷新。只提交与当前生效值不同的
   // 项，免得一次只改平台覆盖的保存把整套默认值也写进文件。
-  SC_GROUPS.forEach(name => {
+  SC_GROUPS.filter(name => name !== "recovery").forEach(name => {
     const id = name.charAt(0).toUpperCase() + name.slice(1);
     const onEl = $("#scDef" + id + "Enabled"), hrEl = $("#scDef" + id + "Hours");
     if (!onEl || !hrEl) return;
@@ -6100,7 +6348,12 @@ async function scSave() {
 function scFollowGlobal(tr) {
   const key = scKey(tr.dataset.client, tr.dataset.batch);
   const shared = scShared(tr.dataset.batch);
-  tr.querySelector(".scHours").value = scHoursText(shared.hours);
+  if (tr.dataset.batch === "recovery") {
+    tr.querySelector(".scEvery").value = scDurationText(shared.every_minutes);
+    tr.querySelector(".scJitter").value = scDurationText(shared.jitter_minutes);
+  } else {
+    tr.querySelector(".scHours").value = scHoursText(shared.hours);
+  }
   tr.querySelector(".scOn").checked = shared.enabled;
   SC.removed[key] = { client: tr.dataset.client, batch: tr.dataset.batch };
   delete SC.dirty[key];
@@ -6396,7 +6649,7 @@ function reattachQueueView() {
    同步等待会把 HTTP 连接拖死，所以启动后轮询。
 
    串行执行是刻意的：参考实现实测过并发连发会被判定作弊并整体回滚。      */
-const TB = { client: null, tasks: [], runs: [], timer: null };
+const TB = { client: null, tasks: [], runs: [], timer: null, refreshing: false };
 
 // 任务中心三个页签共享的选择状态：账号优先——看板取数、单条执行、以及从
 // 定时/批量页签跳过来时都读这里，避免“页面停在 A 账号、请求打到 B 账号”的错位。
@@ -6430,13 +6683,19 @@ function tbSchedule() {
   if (TB.timer) { clearTimeout(TB.timer); TB.timer = null; }
   if (!TB.runs.some(r => r.state === "running")) return;
   TB.timer = setTimeout(() => {
-    if (VIEW === "taskscenter") renderTaskBoard().catch(() => {});
+    if (VIEW === "taskscenter") renderTaskBoard(true).catch(() => {});
   }, 4000);
 }
 // tbAccountLabel 取当前选中账号在列表里的显示名，缺省回落到 id。
 function tbAccountLabel(accts) {
   const hit = (accts || []).filter(a => String(a.id) === TASKCENTER.account)[0];
   return hit ? (hit.label || accountIdentity(hit) || hit.id) : TASKCENTER.account;
+}
+function tbFetchedAt(ms) {
+  const t = Number(ms || 0);
+  if (!Number.isFinite(t) || t <= 0) return "";
+  try { return new Date(t).toLocaleTimeString("zh-CN", { hour12: false, hour: "2-digit", minute: "2-digit" }); }
+  catch (e) { return ""; }
 }
 // 全部账号：一张按账号分组的矩阵。这里只读不写——要执行某一条得先点账号钻进去，
 // 因为单条执行必须带具体账号，否则 RunTask 会落到模块自己的默认账号上。
@@ -6447,9 +6706,12 @@ function tbAccountMatrix(accounts) {
     const tasks = g.tasks || [];
     const done = tasks.filter(t => t.claimed).length;
     const pending = tasks.filter(t => t.auto && !t.claimed && !t.locked).length;
+    const allDone = pending === 0 && !g.error && tasks.length > 0;
     const state = g.error
       ? '<span class="chip err">读取失败</span>'
       : '<span class="chip">' + done + "/" + tasks.length + " 已完成</span>";
+    const stamp = tbFetchedAt(g.fetched_at);
+    const cache = g.error ? "" : (g.cached ? '<span class="hint">缓存 ' + esc(stamp) + "</span>" : '<span class="hint">刚刷新 ' + esc(stamp) + "</span>");
     let body;
     if (g.error) body = '<div class="hint">' + esc(g.error) + "</div>";
     else if (!tasks.length) body = '<div class="hint">这里没有任务。账号未就绪时属于正常。</div>';
@@ -6458,14 +6720,15 @@ function tbAccountMatrix(accounts) {
       const mark = t.claimed ? "已领取" : (t.locked ? "未解锁" : (t.auto ? "可执行" : "需人工"));
       return '<span class="chip' + cls + '" title="' + esc(t.title || t.code) + '">' + esc(mark) + " " + esc(t.title || t.code) + "</span>";
     }).join("") + "</div>";
-    return '<div class="tb-acct"><div class="tb-acct-h"><b>' + esc(label) + "</b> " + state +
+    return '<div class="tb-acct' + (allDone ? " done" : "") + '"><div class="tb-acct-h"><b>' + esc(label) + "</b> " + state +
       (pending ? ' <span class="chip warn">' + pending + " 项待办</span>" : "") +
       ' <span class="hint">' + esc(String(g.account || "")) + "</span>" +
+      cache +
       (g.account ? ' <button class="xs" data-ta-open="' + esc(g.account) + '">查看并执行</button>' : "") +
       "</div>" + body + "</div>";
   }).join("") + "</div>";
 }
-async function renderTaskBoard() {
+async function renderTaskBoard(force) {
   const list = tbClients();
   if (!list.length) {
     $("#tbChips").innerHTML = "";
@@ -6473,7 +6736,7 @@ async function renderTaskBoard() {
     $("#tbAccountsBar").hidden = true;
     $("#tbNote").textContent = "-";
     $("#tbBody").innerHTML = '<div class="pad hint">还没有客户端提供任务看板。一个客户端实现了任务能力后，这里会自动出现。</div>';
-    return;
+    return false;
   }
   if (!TB.client || !list.includes(TB.client)) {
     const ready = n => { const c = clientInfo(n); return !!(c && c.ready); };
@@ -6497,17 +6760,22 @@ async function renderTaskBoard() {
         '" data-ta="' + esc(a.id) + '" title="' + esc(String(a.id)) + '">' + esc(a.label || accountIdentity(a) || a.id) + "</button>").join("")
     : "";
 
-  const path = TASKCENTER.allAccounts ? "/tasks?all=1"
-    : (TASKCENTER.account ? "/tasks?account=" + encodeURIComponent(TASKCENTER.account) : "/tasks");
+  const params = [];
+  if (TASKCENTER.allAccounts) params.push("all=1");
+  else if (TASKCENTER.account) params.push("account=" + encodeURIComponent(TASKCENTER.account));
+  if (force) params.push("refresh=1");
+  const path = "/tasks" + (params.length ? "?" + params.join("&") : "");
   const r = await api(cbase(TB.client) + path);
-  if (!r.ok) { $("#tbBody").innerHTML = '<div class="pad hint">' + esc(r.err || "读取任务失败") + "</div>"; return; }
+  if (!r.ok) { $("#tbBody").innerHTML = '<div class="pad hint">' + esc(r.err || "读取任务失败") + "</div>"; return false; }
 
   // 全部账号：一张按账号分组的矩阵（见 tbAccountMatrix）。不在这里给“执行”
   // 按钮——单条执行必须带具体账号，否则 RunTask 会落到模块的默认账号上。
   if (TASKCENTER.allAccounts && Array.isArray(r.data.accounts)) {
     TB.runs = [];
     r.data.accounts.forEach(g => { (g.runs || []).forEach(x => { if (x.state === "running") TB.runs.push(x); }); });
-    $("#tbNote").textContent = TB.client + " · 全部账号 · " + r.data.accounts.length + " 个账号" +
+    const cachedCount = r.data.accounts.filter(g => g.cached).length;
+    const scanNote = force ? " · 已刷新任务状态" : (cachedCount ? " · " + cachedCount + " 个使用缓存" : " · 已刷新任务状态");
+    $("#tbNote").textContent = TB.client + " · 全部账号 · " + r.data.accounts.length + " 个账号" + scanNote +
       (TASKCENTER.batch ? " · 批次 " + TASKCENTER.batch : "");
     $("#tbBody").innerHTML = tbAccountMatrix(r.data.accounts);
     tbSchedule();
@@ -6520,7 +6788,8 @@ async function renderTaskBoard() {
   const auto = TB.tasks.filter(t => t.auto).length;
   const claim = TB.tasks.filter(t => t.claimable && !t.claimed).length;
   const who = TASKCENTER.account ? tbAccountLabel(accts) + " · " : "";
-  $("#tbNote").textContent = who + TB.tasks.length + " 个任务 · " + auto + " 个可自动执行" + (claim ? " · " + claim + " 个可领取" : "");
+  const taskCacheNote = r.data.cached ? " · 使用缓存" : " · 已刷新任务状态";
+  $("#tbNote").textContent = who + TB.tasks.length + " 个任务 · " + auto + " 个可自动执行" + (claim ? " · " + claim + " 个可领取" : "") + taskCacheNote;
 
   if (!TB.tasks.length) {
     $("#tbBody").innerHTML = '<div class="pad hint">这个客户端没有返回任务列表。账号未就绪时属于正常。</div>';
@@ -6559,6 +6828,21 @@ async function renderTaskBoard() {
     rows + "</tbody></table></div>";
   tbSchedule();
 }
+async function tbRefreshTasks() {
+  if (TB.refreshing) return;
+  TB.refreshing = true;
+  const btn = $("#btnTbRefreshTasks");
+  if (btn) { btn.disabled = true; btn.textContent = "刷新中…"; }
+  try {
+    const ok = await renderTaskBoard(true);
+    toast(ok === false ? "刷新任务状态失败" : "任务状态已刷新", ok === false ? "err" : "ok");
+  } catch (e) {
+    toast("刷新任务状态失败：" + (e && e.message ? e.message : e), "err");
+  } finally {
+    TB.refreshing = false;
+    if (btn) { btn.disabled = false; btn.textContent = "刷新任务状态"; }
+  }
+}
 async function runOneTask(code) {
   if (!TB.client) return;
   // 单条执行必须知道账号：全部账号矩阵里点执行会被挡下来，先选一个具体账号。
@@ -6576,7 +6860,8 @@ async function waitForTask(code, budgetMs) {
   const deadline = Date.now() + (budgetMs || 45 * 60 * 1000);
   while (Date.now() < deadline) {
     await new Promise(res => setTimeout(res, 3000));
-    const r = await api(cbase(TB.client) + (TASKCENTER.account ? "/tasks?account=" + encodeURIComponent(TASKCENTER.account) : "/tasks"));
+    const scope = TASKCENTER.account ? "account=" + encodeURIComponent(TASKCENTER.account) + "&" : "";
+    const r = await api(cbase(TB.client) + "/tasks?" + scope + "refresh=1");
     if (!r.ok) return null;
     TB.tasks = r.data.tasks || [];
     TB.runs = r.data.runs || [];
@@ -8738,11 +9023,28 @@ $("#accSearch").addEventListener("keydown", ev => {
   renderAccounts();
 });
 
-$("#accSortBal").addEventListener("click", accSortBalance);
-$("#accSortBal").addEventListener("keydown", ev => {
+const accSortTable = $("#view-accounts table.acc");
+function accSortHeaderOf(ev) {
+  return ev.target && ev.target.closest ? ev.target.closest("th[data-sort]") : null;
+}
+if (accSortTable) accSortTable.addEventListener("click", ev => {
+  const th = accSortHeaderOf(ev);
+  if (th) accSortBy(th.dataset.sort);
+});
+if (accSortTable) accSortTable.addEventListener("keydown", ev => {
   if (ev.key !== "Enter" && ev.key !== " ") return;
+  const th = accSortHeaderOf(ev);
+  if (!th) return;
   ev.preventDefault();
-  accSortBalance();
+  accSortBy(th.dataset.sort);
+});
+$("#accStateFilter").addEventListener("change", () => {
+  ACC_PAGE = 1;
+  ACC_EXPANDED_FOR = "";
+  if (CUR) ACC_FILTER[CUR] = String($("#accStateFilter").value || "");
+  renderAccounts();
+  const wrap = $("#accBody").closest(".tbl-wrap");
+  if (wrap) wrap.scrollTop = 0;
 });
 // ── 账号池分页 ──────────────────────────────────────────────────────────
 // accTurn 是翻页的唯一入口：夹好页码、重画，然后把表格滚回顶部。不滚的话操作员
@@ -8751,7 +9053,7 @@ function accTurn(p) {
   const prev = ACC_PAGE;
   accGoPage(p);
   if (ACC_PAGE === prev) return;
-  const wrap = $("#accounts .tbl-wrap") || $("#accBody").closest(".tbl-wrap");
+  const wrap = $("#view-accounts .tbl-wrap") || $("#accBody").closest(".tbl-wrap");
   if (wrap) wrap.scrollTop = 0;
 }
 $("#accPageFirst").addEventListener("click", () => accTurn(1));
@@ -8794,6 +9096,7 @@ $("#btnRunQueue").addEventListener("click", qcRun);
 $("#btnCkScan").addEventListener("click", ckScan);
 $("#btnCkRun").addEventListener("click", ckRun);
 $("#btnTbRunAll").addEventListener("click", runAllTasks);
+$("#btnTbRefreshTasks").addEventListener("click", tbRefreshTasks);
 // 两个 chips 行共用 TB.client：点任一处，两边一起跟着换。
 $("#qcChips").addEventListener("click", e => {
   const b = e.target.closest(".chip[data-c]");

@@ -79,6 +79,9 @@ func (p *panel) accountBalance(w http.ResponseWriter, r *http.Request, c core.Cl
 	if bal.Unlimited {
 		out["unlimited"] = true
 	}
+	if bal.Unverified {
+		out["unverified"] = true
+	}
 	if revived {
 		out["revived"] = true
 	}
@@ -155,6 +158,7 @@ type balanceRow struct {
 	Credits           *int64  `json:"credits,omitempty"`
 	Used              float64 `json:"used,omitempty"`
 	Total             int64   `json:"credits_total"`
+	Unverified        bool    `json:"unverified,omitempty"`
 	Unlimited         bool    `json:"unlimited,omitempty"`
 	Expiring          int64   `json:"expiring,omitempty"`
 	EarliestAt        string  `json:"earliest_at,omitempty"`
@@ -220,6 +224,7 @@ func (p *panel) balances(w http.ResponseWriter, r *http.Request, c core.Client) 
 				credits := e.Credits
 				row.Credits = &credits
 				row.Total = e.Total
+				row.Unverified = e.Unverified
 				row.Used = e.Used
 				row.Unlimited = e.Unlimited
 				row.Expiring = e.Expiring

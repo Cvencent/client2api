@@ -2,6 +2,7 @@ package panel
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"sync"
@@ -220,32 +221,37 @@ func (p *panel) taskList(w http.ResponseWriter, r *http.Request, c core.Client) 
 	ctx, cancel := p.ctx(r, 30*time.Second)
 	defer cancel()
 
-	list, err := tp.Tasks(ctx, accountID)
+	list, cached, fetchedAt, err := p.taskBoardTasks(ctx, c.Name(), tp, accountID, r.URL.Query().Get("refresh") == "1")
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"client":  c.Name(),
-		"account": accountID,
-		"tasks":   redactTasks(list),
-		"runs":    p.runs.forClientAccount(c.Name(), accountID, 50),
+		"client":     c.Name(),
+		"account":    accountID,
+		"tasks":      list,
+		"runs":       p.runs.forClientAccount(c.Name(), accountID, 50),
+		"cached":     cached,
+		"fetched_at": fetchedAt,
 	})
 }
 
 type taskAccountRow struct {
-	Account string          `json:"account"`
-	Label   string          `json:"label,omitempty"`
-	State   string          `json:"state,omitempty"`
-	Tasks   []core.TaskInfo `json:"tasks"`
-	Runs    []taskRun       `json:"runs"`
-	Error   string          `json:"error,omitempty"`
+	Account   string          `json:"account"`
+	Label     string          `json:"label,omitempty"`
+	State     string          `json:"state,omitempty"`
+	Tasks     []core.TaskInfo `json:"tasks"`
+	Runs      []taskRun       `json:"runs"`
+	Error     string          `json:"error,omitempty"`
+	Cached    bool            `json:"cached"`
+	FetchedAt int64           `json:"fetched_at"`
 }
 
 // taskListAll answers GET <base>/tasks?all=1. It reads each enabled account
 // independently so the board can say exactly which account is done and which
 // one still has work, rather than blending their task state together.
 func (p *panel) taskListAll(w http.ResponseWriter, r *http.Request, c core.Client, tp core.TaskProvider) {
+	force := r.URL.Query().Get("refresh") == "1"
 	accounts := []core.AccountRecord{{}}
 	if am, ok := core.AsAccountManager(c); ok {
 		ctx, cancel := p.ctx(r, taskScanTimeout)
@@ -281,16 +287,45 @@ func (p *panel) taskListAll(w http.ResponseWriter, r *http.Request, c core.Clien
 				Tasks:   []core.TaskInfo{},
 				Runs:    p.runs.forClientAccount(c.Name(), account.ID, 50),
 			}
-			list, err := tp.Tasks(ctx, account.ID)
+			list, cached, fetchedAt, err := p.taskBoardTasks(ctx, c.Name(), tp, account.ID, force)
+			rows[i].Cached = cached
+			rows[i].FetchedAt = fetchedAt
 			if err != nil {
 				rows[i].Error = core.Redact(err.Error())
 				return
 			}
-			rows[i].Tasks = redactTasks(list)
+			rows[i].Tasks = list
 		})
 	}
 	wg.Wait()
 	writeJSON(w, http.StatusOK, map[string]any{"client": c.Name(), "accounts": rows})
+}
+
+// taskBoardTasks serves a cached task list when one exists, avoiding a vendor
+// call for accounts the board has already seen.  force is the manual-refresh
+// path: it always asks upstream and replaces the cache entry.
+func (p *panel) taskBoardTasks(ctx context.Context, client string, tp core.TaskProvider, accountID string, force bool) ([]core.TaskInfo, bool, int64, error) {
+	if !force && p != nil && p.taskBoardCache != nil {
+		if e, ok := p.taskBoardCache.entry(client, accountID); ok {
+			var err error
+			if e.Error != "" {
+				err = errors.New(e.Error)
+			}
+			return append([]core.TaskInfo(nil), e.Tasks...), true, e.FetchedAt, err
+		}
+	}
+	list, err := tp.Tasks(ctx, accountID)
+	if err != nil {
+		if p != nil && p.taskBoardCache != nil {
+			p.taskBoardCache.put(client, accountID, nil, err)
+		}
+		return nil, false, time.Now().UnixMilli(), err
+	}
+	tasks := redactTasks(list)
+	if p != nil && p.taskBoardCache != nil {
+		p.taskBoardCache.put(client, accountID, tasks, nil)
+	}
+	return tasks, false, time.Now().UnixMilli(), nil
 }
 
 // taskRun answers POST <base>/tasks/<code>/run.  It starts the chore and

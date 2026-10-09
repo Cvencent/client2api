@@ -440,6 +440,29 @@ without it credits go stale and a balance-recovered account stays parked until
 the next chore. Set the minutes to `0` to drop the tick without touching the
 switch. It is still gated by `schedule.enabled`, like every other batch.
 
+`schedule.recovery_enabled` (default **on**) adds one platform-scoped recovery probe
+every `schedule.recovery_every_minutes` (default **240**) with a symmetric random
+spread of `schedule.recovery_jitter_minutes` (default **60**): `4h +/- 1h` means
+the next probe lands between three and five hours later. A platform can override
+the shared values at `schedule.clients.<platform>.recovery` with
+`every_minutes` and `jitter_minutes`; `0` jitter means no spread. The probe
+rechecks temporary parked states such as cooling, exhausted or rate-limited and
+renews expiring credentials. The frequent balance sweep deliberately leaves those
+accounts alone, while an explicit test, refresh or manual recovery press still
+checks immediately. The Task Centre groups the rules by platform and exposes both
+interval controls in the recovery row.
+
+`schedule.daily_balance_enabled` (default **on**) adds one platform-scoped
+balance sweep per day at `schedule.daily_balance_hours` (default **0**, i.e.
+midnight CST), spread randomly across the following 30 minutes. The platforms
+that grant a daily quota top accounts up at the turn of their day, so this is
+the sweep that turns a grant into a usable account: it refreshes every account
+including the parked ones, so an exhausted account that now has credits
+unfreezes without an operator press. It is hour-based like a batch, so an empty
+`daily_balance_hours` turns it off, and a platform overrides the shared hours at
+`schedule.clients.<platform>.daily_balance`. The Task Centre lists it as a
+`每日余额刷新` row next to recovery.
+
 The accounts page does not wait for that sweep. Its balance column reads a
 persistent cache (`data/panel/balance_cache.json`) and only ever nudges a few
 accounts at a time (3 per pass, 2s apart, at most one pass per 45s), so
@@ -923,6 +946,12 @@ one on demand, and offers an *execute everything automatable* queue. Runs are
 asynchronous (the panel returns a run id and polls), and the queue advances
 **serially**: the vendors' anti-abuse checks roll back chores whose events are
 bursting only seconds apart, so pace is treated as part of the protocol.
+
+The board remembers each account's last task list in
+`data/panel/task_board_cache.json`. Reopening the board renders that cache and
+only fetches accounts with no entry; **Refresh task state** forces a fresh
+platform scan. An account card turns green once it has no actionable automated
+chore left (everything claimed, or only human/locked entries remain).
 
 Four modules publish a board: `workbuddy` (the reference's whole growth centre),
 `zcode`, `minimaxcode` and `loomy` (its first-login onboarding checklist).

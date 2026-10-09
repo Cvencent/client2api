@@ -37,6 +37,7 @@ type balanceEntry struct {
 	Credits           int64   `json:"credits"`
 	Used              float64 `json:"used,omitempty"`
 	Total             int64   `json:"credits_total"`
+	Unverified        bool    `json:"unverified,omitempty"`
 	Unlimited         bool    `json:"unlimited,omitempty"`
 	Expiring          int64   `json:"expiring,omitempty"`
 	EarliestAt        string  `json:"earliest_at,omitempty"`
@@ -175,6 +176,7 @@ func (c *balanceCache) put(client, id string, bal core.Balance) {
 		Credits:           bal.Credits,
 		Used:              bal.Used,
 		Total:             bal.Total,
+		Unverified:        bal.Unverified,
 		Unlimited:         bal.Unlimited,
 		Expiring:          bal.Expiring,
 		EarliestAt:        formatEarliestAt(bal.EarliestAt),
@@ -306,6 +308,9 @@ func (c *balanceCache) refreshClient(ctx context.Context, client string, limit i
 	}
 	client = strings.TrimSpace(client)
 	targets := c.targetsForClient(client, limit)
+	if !force {
+		targets = withoutRecoverableTargets(targets)
+	}
 	now := time.Now()
 
 	c.mu.Lock()
@@ -362,7 +367,7 @@ func (c *balanceCache) refreshClient(ctx context.Context, client string, limit i
 	c.mu.Unlock()
 
 	if len(targets) > 0 {
-		go c.runRefresh(ctx, client, targets, policy)
+		go c.runRefresh(ctx, client, targets, policy, !force)
 	}
 	return snap, true
 }
@@ -405,7 +410,7 @@ func (c *balanceCache) refresh(ctx context.Context, limit int, force bool) bool 
 				c.inflight = false
 				c.mu.Unlock()
 			}()
-			c.runRefresh(ctx, "", targets, reviveOff)
+			c.runRefresh(ctx, "", targets, reviveOff, true)
 		}()
 	} else {
 		c.mu.Lock()
@@ -415,9 +420,18 @@ func (c *balanceCache) refresh(ctx context.Context, limit int, force bool) bool 
 	return true
 }
 
-func (c *balanceCache) runRefresh(ctx context.Context, client string, targets []refreshTarget, policy revivePolicy) {
-	for i, tgt := range targets {
-		if i > 0 {
+func (c *balanceCache) runRefresh(ctx context.Context, client string, targets []refreshTarget, policy revivePolicy, background bool) {
+	vendorCalls := 0
+	for _, tgt := range targets {
+		if ctx.Err() != nil {
+			c.finishRefresh(client, ctx.Err())
+			return
+		}
+		if background && !c.backgroundProbeAllowed(ctx, tgt) {
+			c.noteRefreshResult(client, false, nil)
+			continue
+		}
+		if vendorCalls > 0 {
 			select {
 			case <-time.After(balanceRefreshGap):
 			case <-ctx.Done():
@@ -425,25 +439,35 @@ func (c *balanceCache) runRefresh(ctx context.Context, client string, targets []
 				return
 			}
 		}
-		if ctx.Err() != nil {
-			c.finishRefresh(client, ctx.Err())
-			return
-		}
+		vendorCalls++
 		revived, err := c.refreshOne(ctx, tgt, policy)
-		c.mu.Lock()
-		st := c.refreshStateLocked(client)
-		st.done++
-		if err != nil {
-			st.failed++
-		} else {
-			st.succeeded++
-		}
-		if revived {
-			st.revived++
-		}
-		c.mu.Unlock()
+		c.noteRefreshResult(client, revived, err)
 	}
 	c.finishRefresh(client, nil)
+}
+
+func (c *balanceCache) backgroundProbeAllowed(ctx context.Context, tgt refreshTarget) bool {
+	for _, cand := range c.all.All() {
+		if cand.Name() == tgt.client {
+			return core.BackgroundProbeAllowed(ctx, cand, tgt.id)
+		}
+	}
+	return false
+}
+
+func (c *balanceCache) noteRefreshResult(client string, revived bool, err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	st := c.refreshStateLocked(client)
+	st.done++
+	if err != nil {
+		st.failed++
+	} else {
+		st.succeeded++
+	}
+	if revived {
+		st.revived++
+	}
 }
 
 func (c *balanceCache) finishRefresh(client string, err error) {
@@ -510,6 +534,21 @@ func (c *balanceCache) targetsForClient(client string, limit int) []refreshTarge
 	})
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]
+	}
+	return out
+}
+
+// withoutRecoverableTargets keeps the frequent soft sweep away from accounts
+// that are already parked by a temporary vendor verdict.  The scheduled
+// recovery task and an explicit operator refresh deliberately keep every
+// target, so their paths call refreshClient with force=true.
+func withoutRecoverableTargets(in []refreshTarget) []refreshTarget {
+	out := in[:0]
+	for _, tgt := range in {
+		if core.IsRecoverableAccountState(tgt.state) {
+			continue
+		}
+		out = append(out, tgt)
 	}
 	return out
 }

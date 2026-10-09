@@ -29,11 +29,11 @@ func TestBalancesUIReadsTheCacheAndRefreshesInBatches(t *testing.T) {
 
 	bulk := poolStatsFuncBody(t, src, "bulk")
 	if !strings.Contains(bulk, "loadBalances(CUR, true)") {
-		t.Error("bulk(\"balance\") 不再触发分批刷新")
+		t.Error(`bulk("balance") 不再触发分批刷新`)
 	}
 	// 老实现是直接 loadBalances(CUR, true).then(...)，等一次全量结果回来才报数。
 	if strings.Contains(bulk, "余额已刷新：") {
-		t.Error("bulk(\"balance\") 还在等一次全量刷新返回")
+		t.Error(`bulk("balance") 还在等一次全量刷新返回`)
 	}
 }
 
@@ -47,6 +47,15 @@ func TestBalancesUIRendersUnknownCreditsAsDash(t *testing.T) {
 	}
 }
 
+func TestBalancesUIMarksUnverifiedCreditsAsPending(t *testing.T) {
+	body := poolStatsFuncBody(t, string(indexHTML), "accBalanceCell")
+	for _, want := range []string{"b.unverified", "待确认", "厂商的两套额度数据互相矛盾"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("accBalanceCell does not mark unverified credit: missing %q", want)
+		}
+	}
+}
+
 func TestBalancesUIPollsTheCacheWithoutCallingTheVendor(t *testing.T) {
 	src := string(indexHTML)
 	if !strings.Contains(src, "const BAL_SOFT_MS") {
@@ -54,7 +63,7 @@ func TestBalancesUIPollsTheCacheWithoutCallingTheVendor(t *testing.T) {
 	}
 	ensure := poolStatsFuncBody(t, src, "ensureBalances")
 	if !strings.Contains(ensure, "st.loaded && Date.now() - (st.loadedAt || 0) < BAL_SOFT_MS") {
-		t.Error("重新进账号页不再受软窗口节流，会连着要批次")
+		t.Error("重新进入账号页不再受软窗口节流，会连着要批次")
 	}
 	body := poolStatsFuncBody(t, src, "pollBalanceCache")
 	if !strings.Contains(body, "readBalances(n)") {
@@ -70,6 +79,6 @@ func TestBalancesUIPollsTheCacheWithoutCallingTheVendor(t *testing.T) {
 	}
 	// GET 是缓存读取；这里出现写方法就说明回读变成了另一次刷新。
 	if strings.Contains(read, "method: \"POST\"") {
-		t.Error("readBalances 用了 POST，缓存回读不再是无副作用读取")
+		t.Error("readBalances 用了 POST，缓存回读不再是副作用读取")
 	}
 }

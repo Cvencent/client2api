@@ -40,7 +40,7 @@ import (
 )
 
 // version is overridable with -ldflags "-X main.version=...".
-var version = "0.1.26"
+var version = "0.1.27"
 
 // restartHandoffEnv marks the replacement half of a panel restart.  It tells a
 // starting process to keep retrying the listen address instead of failing fast,
@@ -188,6 +188,16 @@ type scheduleConfig struct {
 	BalanceRefreshEnabled *bool `json:"balance_refresh_enabled"`
 	BalanceRefreshMinutes int   `json:"balance_refresh_minutes"`
 
+	RecoveryEnabled       *bool `json:"recovery_enabled"`
+	RecoveryEveryMinutes  *int  `json:"recovery_every_minutes"`
+	RecoveryJitterMinutes *int  `json:"recovery_jitter_minutes"`
+
+	// DailyBalance is the shared early-morning balance sweep.  A nil hour
+	// list means "the default midnight"; an explicit empty list means
+	// "never run it here".
+	DailyBalanceEnabled *bool `json:"daily_balance_enabled"`
+	DailyBalanceHours   []int `json:"daily_balance_hours"`
+
 	// Clients overrides the shared timetable for one platform.  The outer
 	// key is a client name, the inner key a batch name ("checkin", "travel",
 	// ...); both are matched case-insensitively.  A (client, batch) pair
@@ -200,9 +210,11 @@ type scheduleConfig struct {
 // Hours is a slice rather than a pointer so an explicit [] (never run this
 // one here) stays distinguishable from an absent key (no override at all).
 type scheduleOverride struct {
-	Enabled  *bool                 `json:"enabled"`
-	Hours    []int                 `json:"hours"`
-	Accounts *scheduleAccountScope `json:"accounts,omitempty"`
+	Enabled       *bool                 `json:"enabled"`
+	Hours         []int                 `json:"hours"`
+	EveryMinutes  *int                  `json:"every_minutes"`
+	JitterMinutes *int                  `json:"jitter_minutes"`
+	Accounts      *scheduleAccountScope `json:"accounts,omitempty"`
 }
 
 type scheduleAccountScope struct {
@@ -218,13 +230,15 @@ type scheduleAccountScope struct {
 func (c *fileConfig) schedule() scheduler.Config {
 	s := c.Schedule
 	cfg := scheduler.Config{
-		Enabled:   s.Enabled,
-		Checkin:   schedGroup(s.CheckinEnabled, s.CheckinHours),
-		Travel:    schedGroup(s.TravelEnabled, s.TravelHours),
-		Activity:  schedGroup(s.ActivityEnabled, s.ActivityHours),
-		Keepalive: schedGroup(s.KeepaliveEnabled, s.KeepaliveHours),
-		Blackcat:  schedGroup(s.BlackcatEnabled, s.BlackcatHours),
-		Growth:    schedGroup(s.GrowthEnabled, s.GrowthHours),
+		Enabled:      s.Enabled,
+		Checkin:      schedGroup(s.CheckinEnabled, s.CheckinHours),
+		Travel:       schedGroup(s.TravelEnabled, s.TravelHours),
+		Activity:     schedGroup(s.ActivityEnabled, s.ActivityHours),
+		Keepalive:    schedGroup(s.KeepaliveEnabled, s.KeepaliveHours),
+		Blackcat:     schedGroup(s.BlackcatEnabled, s.BlackcatHours),
+		Growth:       schedGroup(s.GrowthEnabled, s.GrowthHours),
+		Recovery:     s.recoveryGroup(),
+		DailyBalance: s.dailyBalanceGroup(),
 	}
 	// The master switch is the real gate, so every group defaults to on — and
 	// so does the balance tick, matching the reference, whose README documents
@@ -243,6 +257,41 @@ func schedGroup(enabled *bool, hours []int) scheduler.Group {
 	return scheduler.Group{Enabled: boolOr(enabled, true) && len(hours) > 0, Hours: hours}
 }
 
+const (
+	defaultRecoveryEvery  = 4 * time.Hour
+	defaultRecoveryJitter = time.Hour
+)
+
+// defaultDailyBalanceHour is when the shared daily balance sweep starts.  The
+// scheduler spreads the actual fire across the following window.
+const defaultDailyBalanceHour = 0
+
+// recoveryGroup projects the shared periodic recovery task.  The interval and
+// jitter use pointers so an explicitly configured zero jitter stays zero
+// rather than being replaced by the default.
+func (s scheduleConfig) recoveryGroup() scheduler.Group {
+	everyMinutes := intOr(s.RecoveryEveryMinutes, int(defaultRecoveryEvery/time.Minute))
+	jitterMinutes := intOr(s.RecoveryJitterMinutes, int(defaultRecoveryJitter/time.Minute))
+	return scheduler.Group{
+		Enabled: boolOr(s.RecoveryEnabled, true),
+		Every:   time.Duration(everyMinutes) * time.Minute,
+		Jitter:  time.Duration(jitterMinutes) * time.Minute,
+	}
+}
+
+// dailyBalanceGroup projects the shared daily balance sweep.  A nil hour list
+// falls back to the default midnight; an explicit empty list stays empty, which
+// schedGroup turns into "disabled".  The distinction matters because an
+// operator who clears the hours box expects the task to stop, not to snap back
+// to midnight.
+func (s scheduleConfig) dailyBalanceGroup() scheduler.Group {
+	hours := s.DailyBalanceHours
+	if hours == nil {
+		hours = []int{defaultDailyBalanceHour}
+	}
+	return schedGroup(s.DailyBalanceEnabled, hours)
+}
+
 // schedClients projects the per-platform overrides onto the scheduler's own
 // config.  A pair with neither an explicit switch nor an explicit hours list
 // is not an override at all, so it is dropped instead of being materialised
@@ -251,16 +300,46 @@ func (s scheduleConfig) schedClients() map[string]map[string]scheduler.Group {
 	if len(s.Clients) == 0 {
 		return nil
 	}
+	sharedRecovery := s.recoveryGroup()
+	sharedDaily := s.dailyBalanceGroup()
 	out := make(map[string]map[string]scheduler.Group, len(s.Clients))
 	for client, byBatch := range s.Clients {
 		for batch, ov := range byBatch {
-			if ov.Enabled == nil && ov.Hours == nil && ov.Accounts == nil {
+			isRecovery := strings.EqualFold(strings.TrimSpace(batch), scheduler.RecoveryTaskName)
+			isDaily := strings.EqualFold(strings.TrimSpace(batch), scheduler.DailyBalanceTaskName)
+			if isRecovery {
+				if ov.Enabled == nil && ov.EveryMinutes == nil && ov.JitterMinutes == nil && ov.Accounts == nil {
+					continue
+				}
+			} else if ov.Enabled == nil && ov.Hours == nil && ov.Accounts == nil {
 				continue
 			}
 			if out[client] == nil {
 				out[client] = make(map[string]scheduler.Group, len(byBatch))
 			}
 			group := schedGroup(ov.Enabled, ov.Hours)
+			if isRecovery {
+				group = sharedRecovery
+				if ov.Enabled != nil {
+					group.Enabled = *ov.Enabled
+				}
+				if ov.EveryMinutes != nil {
+					group.Every = time.Duration(*ov.EveryMinutes) * time.Minute
+				}
+				if ov.JitterMinutes != nil {
+					group.Jitter = time.Duration(*ov.JitterMinutes) * time.Minute
+				}
+			} else if isDaily {
+				// The daily sweep is hour-based like a batch, so a partial override
+				// inherits the shared switch and replaces only the hours it names.
+				group = sharedDaily
+				if ov.Hours != nil {
+					group.Hours = ov.Hours
+					group.Enabled = boolOr(ov.Enabled, true) && len(ov.Hours) > 0
+				} else if ov.Enabled != nil {
+					group.Enabled = *ov.Enabled
+				}
+			}
 			group.Accounts = schedAccountScope(ov.Accounts)
 			out[client][batch] = group
 		}
@@ -380,6 +459,15 @@ func (c *fileConfig) applyDefaults() {
 	}
 	if c.Schedule.BalanceRefreshMinutes <= 0 {
 		c.Schedule.BalanceRefreshMinutes = 5
+	}
+	if c.Schedule.RecoveryEnabled == nil {
+		c.Schedule.RecoveryEnabled = boolPtr(true)
+	}
+	if c.Schedule.RecoveryEveryMinutes == nil {
+		c.Schedule.RecoveryEveryMinutes = ptrInt(int(defaultRecoveryEvery / time.Minute))
+	}
+	if c.Schedule.RecoveryJitterMinutes == nil {
+		c.Schedule.RecoveryJitterMinutes = ptrInt(int(defaultRecoveryJitter / time.Minute))
 	}
 	if c.Prompt.Mode == "" {
 		c.Prompt.Mode = "passthrough"
@@ -723,7 +811,22 @@ func (c *fileConfig) poolTuning() *core.PoolTuning {
 // Capability-gated on both halves: a module that cannot report balances, or
 // cannot list its accounts, is skipped rather than guessed at.
 func refreshBalances(ctx context.Context, reg *core.Registry, soon time.Duration, logger *log.Logger) {
+	refreshBalancesMatching(ctx, reg, "", soon, logger, false, false)
+}
+
+// refreshBalancesForClient is the scheduled recovery sweep.  It is scoped to
+// one platform, includes accounts parked in recoverable states, and bypasses
+// the module's quiet-probe gate because the scheduler already paced the probe.
+func refreshBalancesForClient(ctx context.Context, reg *core.Registry, client string, soon time.Duration, logger *log.Logger, includeRecoverable bool) {
+	refreshBalancesMatching(ctx, reg, client, soon, logger, includeRecoverable, includeRecoverable)
+}
+
+func refreshBalancesMatching(ctx context.Context, reg *core.Registry, client string, soon time.Duration, logger *log.Logger, includeRecoverable, ignoreGate bool) {
+	client = strings.TrimSpace(client)
 	for _, c := range reg.All() {
+		if client != "" && !strings.EqualFold(c.Name(), client) {
+			continue
+		}
 		bp, ok := core.AsBalanceProvider(c)
 		if !ok {
 			continue
@@ -736,10 +839,16 @@ func refreshBalances(ctx context.Context, reg *core.Registry, soon time.Duration
 		accounts, err := am.Accounts(lctx)
 		cancel()
 		if err != nil {
-			logger.Printf("[%s] balance sweep: %v", c.Name(), err)
+			logf(logger, "[%s] balance sweep: %v", c.Name(), err)
 			continue
 		}
 		for _, acct := range accounts {
+			if !balanceProbeEligible(acct.State, includeRecoverable) {
+				continue
+			}
+			if !ignoreGate && !core.BackgroundProbeAllowed(ctx, c, acct.ID) {
+				continue
+			}
 			// One dead credential must not abort the sweep.  The pool hears
 			// about that failure through the chat path, which is where a
 			// failure can actually be classified; here we only need the
@@ -748,10 +857,25 @@ func refreshBalances(ctx context.Context, reg *core.Registry, soon time.Duration
 			_, err := bp.AccountBalance(bctx, acct.ID, soon)
 			cancel()
 			if err != nil {
-				logger.Printf("[%s] balance sweep %s: %v", c.Name(), core.MaskSecret(acct.ID), err)
+				logf(logger, "[%s] balance sweep %s: %v", c.Name(), core.MaskSecret(acct.ID), err)
 			}
 		}
 	}
+}
+
+// balanceProbeEligible separates the global soft sweep from the scheduled
+// recovery sweep.  The soft sweep leaves self-parking states alone; recovery
+// includes those temporary verdicts but still skips terminal credential errors.
+func balanceProbeEligible(state string, includeRecoverable bool) bool {
+	state = strings.ToLower(strings.TrimSpace(state))
+	if includeRecoverable {
+		switch state {
+		case "", "ready", "unknown":
+			return true
+		}
+		return core.IsRecoverableAccountState(state)
+	}
+	return !core.IsRecoverableAccountState(state)
 }
 
 // liveSnapshot projects the file config onto the hot-editable snapshot.
@@ -986,6 +1110,21 @@ func run() error {
 	// The scheduler is vendor-blind: it learns what to run from each module's
 	// own BatchPlan and never names a task code itself.  A module that plans
 	// nothing is simply never scheduled.
+	//
+	// platformSweep is the per-platform recovery/daily work: refresh every
+	// account's balance -- including the parked ones a fresh credit grant could
+	// free -- and renew the idle credentials whose expiry crept inside the
+	// module's refresh margin.  The daily sweep and the periodic recovery probe
+	// are the same work at different cadences, so they share one closure.
+	platformSweep := func(ctx context.Context, client string) {
+		soon := dur(cfg.Pool.ExpiringSoon, 168*time.Hour)
+		if d := live.Load().ExpiringSoon; d > 0 {
+			soon = d
+		}
+		refreshBalancesForClient(ctx, registry, client, soon, logger, true)
+		refreshExpiringAccountsForClient(ctx, registry, client, time.Now(), logger)
+	}
+
 	sched := scheduler.New(scheduler.Deps{
 		Registry: registry,
 		Logf:     logger.Printf,
@@ -1021,12 +1160,15 @@ func run() error {
 				}
 			}
 		},
+		OnRecoveryProbe:     platformSweep,
+		OnDailyBalanceProbe: platformSweep,
 	})
 	sched.Reconfigure(cfg.schedule())
 	logger.Printf("schedule: enabled=%v checkin=%v travel=%v activity=%v keepalive=%v blackcat=%v growth=%v",
 		cfg.Schedule.Enabled, cfg.Schedule.CheckinHours, cfg.Schedule.TravelHours,
 		cfg.Schedule.ActivityHours, cfg.Schedule.KeepaliveHours,
 		cfg.Schedule.BlackcatHours, cfg.Schedule.GrowthHours)
+	logger.Printf("schedule: daily_balance=%v recovery=%v", cfg.schedule().DailyBalance, cfg.schedule().Recovery)
 	logger.Printf("prompt: mode=%s file=%q  session_sticky: enabled=%t ttl=%s gc=%s  pool: breaker=%d/%s idle_weight=%.2f in_flight=%d/%d",
 		cfg.Prompt.Mode, cfg.Prompt.File, boolOr(cfg.SessionSticky.Enabled, true),
 		cfg.SessionSticky.TTL, cfg.SessionSticky.GCInterval,

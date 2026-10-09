@@ -33,7 +33,23 @@ const renewTimeout = 60 * time.Second
 // list accounts is skipped, and one account's failure is logged without
 // stopping the rest.
 func refreshExpiringAccounts(ctx context.Context, reg *core.Registry, now time.Time, logger *log.Logger) {
+	refreshExpiringAccountsMatching(ctx, reg, "", now, logger)
+}
+
+// refreshExpiringAccountsForClient limits the idle-token sweep to one
+// platform.  The scheduled recovery hook uses it after the platform's balance
+// probe, so a token that lapsed while the account was parked is renewed in the
+// same quiet window.
+func refreshExpiringAccountsForClient(ctx context.Context, reg *core.Registry, client string, now time.Time, logger *log.Logger) {
+	refreshExpiringAccountsMatching(ctx, reg, client, now, logger)
+}
+
+func refreshExpiringAccountsMatching(ctx context.Context, reg *core.Registry, client string, now time.Time, logger *log.Logger) {
+	client = strings.TrimSpace(client)
 	for _, c := range reg.All() {
+		if client != "" && !strings.EqualFold(c.Name(), client) {
+			continue
+		}
 		am, ok := core.AsAccountManager(c)
 		if !ok {
 			continue

@@ -442,6 +442,7 @@ func validateScheduleConfig(v any) error {
 		"checkin_enabled", "travel_enabled", "activity_enabled",
 		"keepalive_enabled", "blackcat_enabled", "growth_enabled",
 		"balance_refresh_enabled",
+		"daily_balance_enabled",
 	} {
 		if b, ok := m[key]; ok && b != nil {
 			if _, ok := b.(bool); !ok {
@@ -452,6 +453,7 @@ func validateScheduleConfig(v any) error {
 	for _, key := range []string{
 		"checkin_hours", "travel_hours", "activity_hours",
 		"keepalive_hours", "blackcat_hours", "growth_hours",
+		"daily_balance_hours",
 	} {
 		if h, ok := m[key]; ok && h != nil {
 			if err := validateScheduleHours("schedule."+key, h); err != nil {
