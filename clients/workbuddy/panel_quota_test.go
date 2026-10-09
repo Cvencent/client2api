@@ -91,10 +91,10 @@ func TestWorkbuddyPanelAccountBalanceMapsEveryBucket(t *testing.T) {
 	}
 }
 
-// A zero that the vendor's own reply contradicts is the conservative number
-// to show, but the panel must not present it as a confirmed empty wallet: the
-// account is still deliberately usable, and the UI needs to say so.
-func TestWorkbuddyPanelAccountBalanceMarksContradictoryZeroUnverified(t *testing.T) {
+// A zero that the vendor's own reply contradicts is still not a confirmed
+// empty wallet.  The panel-facing AccountBalance resolves that ambiguity by
+// probing the real Auto path; this lower-level test keeps the decode honest.
+func TestWorkbuddyReadCreditMarksContradictoryZeroUncorroborated(t *testing.T) {
 	future := time.Now().Add(20 * 24 * time.Hour).Format(packageEndLayout)
 	accounts := `{
 	  "CapacityRemain":500,"CapacityUsed":0,"CapacitySize":500,
@@ -105,16 +105,20 @@ func TestWorkbuddyPanelAccountBalanceMarksContradictoryZeroUnverified(t *testing
 		return jsonResponse(200, meterEnvelope(accounts)), nil
 	}}
 	c, _ := panelClient(t, rt, cnAccountFiles())
+	a := c.findAuth("uid-cn-0001")
+	if a == nil {
+		t.Fatal("test account did not load")
+	}
 
-	got, err := c.AccountBalance(context.Background(), "uid-cn-0001", 0)
+	got, err := c.ReadCredit(context.Background(), a, 0)
 	if err != nil {
-		t.Fatalf("AccountBalance: %v", err)
+		t.Fatalf("ReadCredit: %v", err)
 	}
-	if got.Credits != 0 || got.Total != 500 {
-		t.Fatalf("credits/total = %d/%d, want 0/500", got.Credits, got.Total)
+	if got.Remain != 0 || got.Total != 500 {
+		t.Fatalf("remain/total = %d/%d, want 0/500", got.Remain, got.Total)
 	}
-	if !got.Unverified {
-		t.Fatalf("contradictory zero is not marked unverified: %+v", got)
+	if got.Corroborated {
+		t.Fatalf("contradictory zero is corroborated: %+v", got)
 	}
 }
 

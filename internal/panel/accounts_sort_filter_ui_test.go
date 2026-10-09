@@ -232,6 +232,29 @@ func TestAccountPoolSortValueExtractsEachColumn(t *testing.T) {
 	}
 }
 
+func TestAccountPoolGroupSummarySortFunctionsConsumeRowsArgument(t *testing.T) {
+	src := poolStatsUISource(t)
+
+	for _, name := range []string{
+		"accGroupRateValue",
+		"accGroupInflightValue",
+		"accGroupUsageValue",
+		"accGroupLastValue",
+		"accGroupExpiryValue",
+	} {
+		body := poolStatsFuncBody(t, src, name)
+		if !strings.HasPrefix(body, "function "+name+"(rows) {") {
+			t.Errorf("%s must accept the rows array passed by accSortValue", name)
+		}
+		if !strings.Contains(body, "(rows || []).forEach") {
+			t.Errorf("%s must iterate its rows argument, not a group object's missing .rows field", name)
+		}
+		if strings.Contains(body, "(g.rows || []).forEach") {
+			t.Errorf("%s still reads a missing g.rows field", name)
+		}
+	}
+}
+
 func TestAccountPoolSortHeaderStateReflectsActiveColumnOnly(t *testing.T) {
 	src := poolStatsUISource(t)
 	body := poolStatsFuncBody(t, src, "syncAccSortHeader")

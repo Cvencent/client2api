@@ -400,6 +400,24 @@ to every module that implements `core.LiveReloader`, with no restart.
 
 `platforms.<name>.priority` and `platforms.<name>.account_priorities` both accept any integer, including negatives. Lower numbers are higher priority: for example, `-10` is tried before `-5`, and the default is `0`.
 
+`platforms.<name>.priority_schedule` overrides the base `priority` during fixed
+time windows, which is how an operator gives a platform a better or worse
+routing position only during part of the day:
+
+```json
+{"platforms":{"zcode":{"priority":5,"priority_schedule":[
+  {"start":"01:00","end":"05:00","priority":1},
+  {"start":"05:00","end":"08:00","priority":-2}
+]}}}
+```
+
+Each rule uses Beijing time (UTC+8) regardless of the host timezone, is
+half-open `[start, end)`, and may cross midnight (`23:00`-`06:00`). The first
+matching rule wins; when no rule matches, the base `priority` is used. Rules
+on one platform must not overlap, and `start` must differ from `end`; the panel
+rejects both cases before writing. The same values are editable in the panel's
+platform cards under 「分时规则」.
+
 `prompt` is the system-prompt strategy: `passthrough` (default), `custom`
 (replace every `system`/`developer` turn with `file`, or with the shipped
 engineering prompt when `file` is empty) or `append` (insert after the leading
@@ -519,9 +537,14 @@ Only a balance reading the vendor's own reply corroborates parks an
 account. When a reply contradicts itself about a package that still
 advertises capacity -- WorkBuddy's trial package keeps a stale lifetime
 `CapacityRemain` after its monthly cycle is spent -- the conservative
-number is still shown but is not treated as a known-empty wallet, so a
-working account is never parked on it. A park the vendor earned with a
-real refusal keeps its own deadline.
+number is still shown, but the contradiction is resolved instead of being
+left as a pending state for the operator. A positive remainder is recorded
+and the account is marked usable; a contradictory zero is probed through
+the same real Auto model call as the panel's Test button, so success marks
+it usable and failure applies the normal cooling, credit or risk verdict.
+Background sweeps remember that decision for six hours per account, so a
+contradictory zero is not probed on every pass. A park the vendor earned
+with a real refusal keeps its own deadline.
 
 The guard currently has a pool-side implementation in workbuddy, the reference's
 credit-parking model; a module without a balance-aware pool ignores it.

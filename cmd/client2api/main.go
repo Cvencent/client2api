@@ -40,7 +40,7 @@ import (
 )
 
 // version is overridable with -ldflags "-X main.version=...".
-var version = "0.1.27"
+var version = "0.1.28"
 
 // restartHandoffEnv marks the replacement half of a panel restart.  It tells a
 // starting process to keep retrying the listen address instead of failing fast,
@@ -80,8 +80,9 @@ type fileConfig struct {
 // and the upstream models this platform must not be given.  DisabledModels is
 // a blacklist, so a model that is not listed stays callable.
 type platformConfig struct {
-	Priority       int      `json:"priority"`
-	DisabledModels []string `json:"disabled_models"`
+	Priority         int                    `json:"priority"`
+	PrioritySchedule []priorityWindowConfig `json:"priority_schedule,omitempty"`
+	DisabledModels   []string               `json:"disabled_models"`
 	// MaxInFlight caps concurrent requests against this platform.  Absent
 	// means the default of 2; an explicit 0 means no ceiling.  A pointer is
 	// required so the two cases stay distinguishable in JSON.
@@ -135,7 +136,7 @@ func (c *fileConfig) platformConfigsFor(clients []core.Client) map[string]core.P
 		}
 	}
 	for name, p := range c.Platforms {
-		cfg := core.PlatformConfig{Priority: p.Priority}
+		cfg := core.PlatformConfig{Priority: p.Priority, PrioritySchedule: projectPrioritySchedule(p.PrioritySchedule)}
 		cfg.MaxInFlight = intOr(p.MaxInFlight, defaultPlatformMaxInFlight)
 		cfg.MaxInFlightPerAccount = intOr(p.MaxInFlightPerAccount, defaultPlatformMaxInFlightPerAccount)
 		cfg.ReserveCredits = p.ReserveCredits
@@ -1624,4 +1625,50 @@ func listenWithBindRetry(addr string, window time.Duration) (net.Listener, error
 		}
 		time.Sleep(150 * time.Millisecond)
 	}
+}
+
+// priorityWindowConfig is one local-time override for a platform priority.
+// Times are HH:MM in Beijing time; a start later than the end crosses
+// midnight (for example 23:00 -> 06:00).
+type priorityWindowConfig struct {
+	Start    string `json:"start"`
+	End      string `json:"end"`
+	Priority int    `json:"priority"`
+}
+
+// parseClockMinute parses HH:MM into minutes from midnight.  The accepted
+// range is 00:00 through 23:59.
+func parseClockMinute(raw string) (int, bool) {
+	s := strings.TrimSpace(raw)
+	if len(s) != 5 || s[2] != ':' {
+		return 0, false
+	}
+	hour, err := strconv.Atoi(s[:2])
+	if err != nil {
+		return 0, false
+	}
+	minute, err := strconv.Atoi(s[3:])
+	if err != nil || hour < 0 || hour > 23 || minute < 0 || minute > 59 {
+		return 0, false
+	}
+	return hour*60 + minute, true
+}
+
+func projectPrioritySchedule(raw []priorityWindowConfig) []core.PriorityWindow {
+	out := make([]core.PriorityWindow, 0, len(raw))
+	for _, w := range raw {
+		start, ok := parseClockMinute(w.Start)
+		if !ok {
+			continue
+		}
+		end, ok := parseClockMinute(w.End)
+		if !ok || start == end {
+			continue
+		}
+		out = append(out, core.PriorityWindow{StartMinute: start, EndMinute: end, Priority: w.Priority})
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }

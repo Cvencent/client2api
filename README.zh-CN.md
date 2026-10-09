@@ -321,6 +321,21 @@ coding-plan API key 行不会显示领取按钮。领取成功后，之前因额
 `platforms.<name>.priority` 和 `platforms.<name>.account_priorities` 都接受负数。
 数字越小优先级越高，例如 `-10` 优先于 `-5`，默认是 `0`。
 
+`platforms.<name>.priority_schedule` 可以在固定时间段内覆盖基础优先级，例如只在
+凌晨把某个平台提前：
+
+```json
+{"platforms":{"zcode":{"priority":5,"priority_schedule":[
+  {"start":"01:00","end":"05:00","priority":1},
+  {"start":"05:00","end":"08:00","priority":-2}
+]}}}
+```
+
+规则按北京时间（UTC+8）判定，与主机时区无关；区间为左闭右开的 `[开始, 结束)`，
+支持跨零点（如 `23:00`-`06:00`）。命中第一条规则就用它的优先级，没命中就用基础
+`priority`。同一平台的规则不能重叠，开始和结束也不能相同；面板保存前会直接拦下。
+面板平台卡片里的「分时规则」就是这套值的编辑入口。
+
 ## 错误映射
 
 错误统一为 OpenAI 形状：

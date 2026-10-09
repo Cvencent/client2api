@@ -163,7 +163,7 @@ func TestScatteredRefreshButtonsAreGone(t *testing.T) {
 	// 这几个做的是顶栏刷新做不了的事（让服务端去问上游、重新读号池、探测能力），
 	// 必须留着——但要确认它们还在，免得为了统一把真功能删了。
 	keep := []string{
-		`id="btnRefreshAll"`, // 重新读取号池
+		`id="btnRefreshAll"`, // 重新续期凭据（不是顶栏那种重读页面）
 		`id="btnBalanceAll"`, // 重新读取余额
 		`id="btnPk"`,         // 重新探测能力
 		`id="btnModels"`,     // 重新拉模型目录
@@ -173,5 +173,41 @@ func TestScatteredRefreshButtonsAreGone(t *testing.T) {
 		if !strings.Contains(src, k) {
 			t.Errorf("按钮 %s 不见了；它做的是和统一刷新不同的事，不该被合并掉", k)
 		}
+	}
+}
+
+// TestRefreshCredentialsIsHonest 钉住账号池「刷新凭据」按钮的回报方式。
+// 它以前无论每个账号成功还是失败，都只弹一句「已刷新 N 个账号」——对不能
+// 续期的平台来说那句话就是假的，操作员看到的就是“点了没反应”。改名后要
+// 保证：按钮走的是 refreshCredentials，它分别统计成功与失败，全部失败时
+// 把平台的真实原因说出来，而且在请求在途时给按钮一个可见状态。
+func TestRefreshCredentialsIsHonest(t *testing.T) {
+	src := poolStatsUISource(t)
+
+	// 它做的是续期凭据，不是重读页面；名字不能和顶栏那颗统一刷新混。
+	if !strings.Contains(src, `id="btnRefreshAll" title=`) {
+		t.Errorf("刷新凭据按钮缺少 title；它做的是续期凭据，需要一句说明")
+	}
+	if strings.Contains(src, `id="btnRefreshAll">全部刷新<`) {
+		t.Errorf("刷新凭据按钮还在叫「全部刷新」，会和顶栏刷新混淆")
+	}
+
+	// bulk("refresh") 必须委托给 refreshCredentials，而不是自己发请求。
+	if bulk := poolStatsFuncBody(t, src, "bulk"); !strings.Contains(bulk, "refreshCredentials()") {
+		t.Errorf("bulk(\"refresh\") 没有走 refreshCredentials")
+	}
+
+	body := poolStatsFuncBody(t, src, "refreshCredentials")
+	// 分别数成功 / 失败，而不是只报总数。
+	if !strings.Contains(body, ".filter(x => x && x.ok).length") {
+		t.Errorf("refreshCredentials 没有把成功数单独数出来")
+	}
+	// 全部失败时要把平台给的原因说出来，而不是谎报成功。
+	if !strings.Contains(body, "凭据未能续期") {
+		t.Errorf("refreshCredentials 在全部失败时没有如实说明")
+	}
+	// 请求在途时要给按钮一个可见状态，别让慢上游看起来像死按钮。
+	if !strings.Contains(body, "刷新中") || !strings.Contains(body, "btn.disabled = true") {
+		t.Errorf("refreshCredentials 请求在途时没有禁用/改文案")
 	}
 }

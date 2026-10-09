@@ -894,36 +894,3 @@ func (c *Client) ApplyPlatformPolicy(cfg core.PlatformConfig) {
 	}
 	c.logf("workbuddy: accounts at or below %d credit are parked until the balance rises", cfg.ReserveCredits)
 }
-
-// DiscardUncorroboratedCredit records that the last balance read could not be
-// believed: the vendor's own reply contradicted itself about a package that
-// still advertises capacity (see workbuddy.CreditReport.Corroborated).
-//
-// A reading like that is still the best number to show -- the serving path
-// follows its conservative side -- but it is not evidence that the wallet is
-// empty, so it must not keep an account out of rotation.  Only the park the
-// low-balance guard created is lifted; a park the vendor earned with a real
-// refusal, a rate limit or a dead credential keeps its own deadline.
-func (p *Pool) DiscardUncorroboratedCredit(a *Auth) bool {
-	if p == nil || a == nil {
-		return false
-	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	e := p.findLocked(a)
-	if e == nil {
-		return false
-	}
-	if e.state != stateExhausted || e.note != reserveCreditNote {
-		return false
-	}
-	e.state = stateReady
-	e.until = time.Time{}
-	e.note = ""
-	e.modelCool = nil
-	e.current = 0
-	p.dirty = true
-	p.saveLocked()
-	p.log("workbuddy: account %s reported a self-contradicting balance; leaving the low-credit guard", e.auth.Label())
-	return true
-}

@@ -16,44 +16,18 @@ import (
 // panel.go 的 /panel/api/status 已经带 schedule），所以没有任何编译期检查能拦住
 // 「表单少写一个键」「按钮画在了没有能力的模块上」「改名后 $() 指向空气」这类
 // 退化——shell_test.go 只保证 id 对得上，不保证这些。这里静态钉住三件事：
-//   1. 自动排程区读写的键 == cmd/client2api 的 scheduleConfig 的 json tag；
+//   1. 定时任务页读写的键必须存在于 cmd/client2api 的 scheduleConfig；
 //   2. scheduler.Status 的三态（没接调度器 / 总开关关着 / 在跑）都有渲染分支；
 //   3. 批量按钮的 verb 与 batches.go 的别名表一一对应，且被 caps.batches 门控。
 // ---------------------------------------------------------------------------
 
-// scheduleFormKeys 是自动排程区读写的全部键，顺序即界面顺序。
-// 与 cmd/client2api/main.go 的 scheduleConfig（json tag）必须完全一致。
+// scheduleFormKeys 是定时任务页会写回 schedule 的顶层键。各任务的全局默认值
+// 仍由后端 scheduleConfig 持有，但页面不再开放编辑入口。
 var scheduleFormKeys = []string{
+	// 任务中心的定时任务页只写这两个顶层键。各任务的全局默认值仍由后端
+	// scheduleConfig 持有，但页面不再提供编辑入口。
 	"enabled",
-	"checkin_hours", "checkin_enabled",
-	"keepalive_hours", "keepalive_enabled",
-	"travel_hours", "travel_enabled",
-	"activity_hours", "activity_enabled",
-	"blackcat_hours", "blackcat_enabled",
-	"recovery_enabled", "recovery_every_minutes", "recovery_jitter_minutes",
-	"daily_balance_enabled", "daily_balance_hours",
-	"balance_refresh_enabled", "balance_refresh_minutes",
-	"growth_hours", "growth_enabled",
-	// clients 不在这张表单里：按平台的自定义时点编辑器在任务中心
-	// （#view-taskscenter 的「定时任务」盒），但写的是同一个 schedule.* 节，
-	// 所以这个键仍然属于这一块。
 	"clients",
-}
-
-// scheduleFormIDs 是自动排程区声明的元素 id；后半段是 saveConfig 要用 $()
-// 逐个读回来的输入控件。
-// scheduleDefaultIDs 是任务中心「全局默认」区在运行时拼出的元素 id。它们不出现在
-// 静态标记里，所以 shell 的 id 守卫看不到；这里单独钉住，防止拼错后保存静默丢字段。
-var scheduleDefaultIDs = []string{
-	"scDefCheckinEnabled", "scDefCheckinHours",
-	"scDefKeepaliveEnabled", "scDefKeepaliveHours",
-	"scDefTravelEnabled", "scDefTravelHours",
-	"scDefActivityEnabled", "scDefActivityHours",
-	"scDefBlackcatEnabled", "scDefBlackcatHours",
-	"scDefGrowthEnabled", "scDefGrowthHours",
-	"scDefRecoveryEnabled", "scDefRecoveryEvery", "scDefRecoveryJitter",
-	"scDefDaily_balanceEnabled", "scDefDaily_balanceHours",
-	"scDefBalanceEnabled", "scDefBalanceMinutes",
 }
 
 func scheduleShellSource(t *testing.T) string {
@@ -68,10 +42,8 @@ func scheduleShellSource(t *testing.T) string {
 func TestScheduleRecoveryUiControlsAndParsing(t *testing.T) {
 	src := scheduleShellSource(t)
 	for _, want := range []string{
-		`recovery:`, `"recovery"`, `id="scDefRecoveryEnabled"`,
-		`id="scDefRecoveryEvery"`, `id="scDefRecoveryJitter"`,
-		`class="cfgtext scEvery"`, `class="cfgtext scJitter"`,
-		`data-scgroup`,
+		`recovery:`, `"recovery"`, `class="cfgtext scEvery"`,
+		`class="cfgtext scJitter"`, `data-scc`,
 	} {
 		if !strings.Contains(src, want) {
 			t.Errorf("recovery schedule UI is missing %q", want)
@@ -88,7 +60,6 @@ func TestScheduleRecoveryUiControlsAndParsing(t *testing.T) {
 	}
 	save := scheduleFuncBody(t, src, "scSave")
 	for _, want := range []string{
-		"recovery_enabled", "recovery_every_minutes", "recovery_jitter_minutes",
 		"every_minutes", "jitter_minutes", "parseSchedDuration(pend.every)",
 	} {
 		if !strings.Contains(save, want) {
@@ -97,12 +68,20 @@ func TestScheduleRecoveryUiControlsAndParsing(t *testing.T) {
 	}
 }
 
-func TestScheduleRowsGroupByPlatform(t *testing.T) {
-	body := scheduleFuncBody(t, scheduleShellSource(t), "scRenderRows")
-	for _, want := range []string{"sc-group", "lastClient", "row.client !== lastClient"} {
-		if !strings.Contains(body, want) {
-			t.Errorf("scRenderRows does not group platforms: missing %q", want)
+func TestScheduleUsesPlatformTabs(t *testing.T) {
+	src := scheduleShellSource(t)
+	body := scheduleFuncBody(t, src, "scRenderRows")
+	if !strings.Contains(body, `r.client === SC.client`) {
+		t.Error("scRenderRows 没有按当前平台 Tab 过滤规则")
+	}
+	chips := scheduleFuncBody(t, src, "scRenderChips")
+	for _, want := range []string{`data-scc`, `n === SC.client ? " on" : ""`} {
+		if !strings.Contains(chips, want) {
+			t.Errorf("scRenderChips 没有画平台 Tab：missing %q", want)
 		}
+	}
+	if !strings.Contains(src, `closest("button[data-scc]")`) {
+		t.Error("平台 Tab 没有点击切换处理")
 	}
 }
 
@@ -122,24 +101,25 @@ func scheduleFuncBody(t *testing.T, src, name string) string {
 	return ""
 }
 
-func TestScheduleFormIDsAreDeclaredAndRead(t *testing.T) {
+func TestScheduleSaveUsesVisibleMasterAndOverrideShape(t *testing.T) {
 	src := scheduleShellSource(t)
-	// 全局默认区由 scDefaultHTML 在运行时拼出，控件 id 是拼接字符串；saveConfig 只
-	// 负责渲染，写入在 scSave。这里检查拼出来的每个 id 都被 scSave 读回去。
-	defaults := scheduleFuncBody(t, src, "scDefaultHTML")
-	for _, id := range scheduleDefaultIDs {
-		if !strings.Contains(defaults, `"`+id+`"`) && !strings.Contains(defaults, `+ id +`) {
-			t.Errorf("全局默认区没有拼出 %s", id)
+	save := scheduleFuncBody(t, src, "scSave")
+	for _, want := range []string{
+		`$("#scMaster").checked`,
+		`clients[pend.client][pend.batch] = { enabled:`,
+		`clients[rem.client][rem.batch] = null`,
+		`SC.dirty = {}; SC.removed = {};`,
+	} {
+		if !strings.Contains(save, want) {
+			t.Errorf("scSave 没有保留可编辑字段 %q", want)
 		}
 	}
-	save := scheduleFuncBody(t, src, "scSave")
-	if !strings.Contains(save, `$("#scDef" + id + "Enabled")`) ||
-		!strings.Contains(save, `$("#scDef" + id + "Hours")`) {
-		t.Error("scSave 没有把全局默认区的开关/时点读回去")
+	if strings.Contains(save, "scDef") {
+		t.Error("scSave 仍在读已删除的全局默认控件")
 	}
-	if !strings.Contains(save, `$("#scDefBalanceEnabled")`) ||
-		!strings.Contains(save, `$("#scDefBalanceMinutes")`) {
-		t.Error("scSave 没有把余额刷新设置读回去")
+	render := scheduleFuncBody(t, src, "renderSchedule")
+	if strings.Contains(render, "SC.dirty = {}") || strings.Contains(render, "SC.removed = {}") {
+		t.Error("重新渲染定时任务页时不能清空未保存的编辑")
 	}
 }
 
@@ -174,11 +154,6 @@ func TestScheduleKeysMatchTheConfigStruct(t *testing.T) {
 			t.Errorf("面板读写 schedule.%s，但 Go 的 scheduleConfig 没有这个 json tag", k)
 		}
 	}
-	for k := range inGo {
-		if !inUI[k] {
-			t.Errorf("Go 的 scheduleConfig 有 %q，面板没有对应的输入框", k)
-		}
-	}
 }
 
 // TestScheduleStatusRendersTheThreeStates 钉住三态：status 里没有 schedule 字段
@@ -191,7 +166,7 @@ func TestScheduleStatusRendersTheThreeStates(t *testing.T) {
 			t.Errorf("状态条缺少 %q 这一态", want)
 		}
 	}
-	// 三态现在由任务中心的 scStateHTML / scRenderDefaults 渲染，不再读 status 的
+	// 三态现在由任务中心的 scStateHTML 渲染，不再读 status 的
 	// schedule 字段（它已经在 /panel/api/schedule 的 wired/enabled 里）。
 	state := scheduleFuncBody(t, src, "scStateHTML")
 	for _, want := range []string{"没有接入调度器", "总开关是关的", "调度器在跑"} {
@@ -276,50 +251,26 @@ func TestBatchButtonsAreGatedOnTheCapabilityBit(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// 「定时任务」盒的版式。这几块全是运行时拼出来的字符串，Go 侧除了 id 守卫以外
-// 什么都看不见，所以用静态断言把「为什么长这样」钉住：下面每一条都对应一次真实
-// 的退化——
-//  1. 全局默认区退回满屏 .cfgrow：十三个铺满宽度的行只为表达六个开关，时点框
-//     还要跟着拉到 100% 宽，一屏放不下。
-//  2. 每一行都挂一颗点不动的「跟随全局」按钮：十几行同一个灰按钮，看起来像坏
-//     了，而不是像「这里不用改」。
-//  3. 「自定义」列整列重复同一个词：那列信息量为零，却占掉一列宽度。
-//
-// ---------------------------------------------------------------------------
-func TestScheduleDefaultsAndTableLayout(t *testing.T) {
+// 定时任务页现在按平台分 Tab：不再有「全局默认」编辑区，也不再平铺所有平台。
+func TestScheduleUsesPlatformTabsAndCompactRows(t *testing.T) {
 	src := scheduleShellSource(t)
-	defaults := scheduleFuncBody(t, src, "scDefaultHTML")
-	row := scheduleFuncBody(t, src, "scRowHTML")
-
-	// ① 全局默认区是网格里的卡片，不是满宽的 .cfgrow。
-	// 卡片的 class 是拼出来的（后面还要接 " on"），所以匹配片段而不是整串。
-	if !strings.Contains(defaults, `class="scdef`) {
-		t.Error("全局默认区没有画出 .scdef 卡片：退回满屏 .cfgrow 会让六个开关占掉一整屏")
+	if strings.Contains(src, "scDefaultHTML") || strings.Contains(src, `id="scDefaults"`) {
+		t.Error("「全局默认」编辑区又出现了")
 	}
-	if strings.Contains(defaults, `class="cfgrow"`) {
-		t.Error("全局默认区又用回了满宽的 .cfgrow：那正是这次要消掉的版式")
-	}
-	if !strings.Contains(src, "#scDefaults { display: grid;") {
-		t.Error("#scDefaults 不是网格：卡片不会并排，还是会竖着堆一屏")
-	}
-	// 控件 id 一个都不能少——scSave 逐个读回它们，少一个就静默丢一个设置。
-	for _, id := range scheduleDefaultIDs {
-		if !strings.Contains(defaults, `"`+id+`"`) && !strings.Contains(defaults, `+ id +`) {
-			t.Errorf("改成卡片之后，全局默认区没有拼出 %s", id)
+	for _, want := range []string{`id="scChips"`, `data-scc`, `data-scfollow`, `data-scrun`} {
+		if !strings.Contains(src, want) {
+			t.Errorf("平台 Tab 版式缺少 %q", want)
 		}
 	}
-
-	// ② 「跟随全局」只在真的自定义时才出现。
+	row := scheduleFuncBody(t, src, "scRowHTML")
 	if !strings.Contains(row, "scOwned(scKey(r.client, r.batch), r) ?") {
 		t.Error("操作列没有按是否自定义来决定画不画「跟随全局」按钮")
 	}
-	// ③ 「自定义」列不再整列重复同一个词。
-	if strings.Contains(row, `<span class="chip scTag"></span>`) {
-		t.Error("「自定义」列又变回每行都空挂一个 chip：整列重复同一个词，信息量为零")
+	if strings.Contains(row, `class="sc-c-name"`) {
+		t.Error("规则行仍在重复画平台列；平台应只出现在 Tab 上")
 	}
 	if !strings.Contains(src, "scTagNone") {
-		t.Error("「自定义」列没有占位符：非自定义的行会留下一格空白，看起来像加载失败")
+		t.Error("「自定义」列没有占位符：非自定义的行会留下一格空白")
 	}
 }
 
@@ -338,10 +289,12 @@ func TestScheduleHoursParsingRules(t *testing.T) {
 			t.Errorf("parseSchedHours 缺少 %q", want)
 		}
 	}
-	// 「缺键 = 开」的默认值现在由服务端算好并经 groups[].enabled 下发，面板不再自己
-	// 猜测缺键语义，所以这里改成钉住全局默认区的渲染直接使用服务端值。
-	if !strings.Contains(scheduleFuncBody(t, src, "scDefaultHTML"), "g.enabled ?") {
-		t.Error("全局默认区没有使用服务端下发的 group.enabled")
+	// 全局默认值由服务端经 groups[] 下发，页面不再自己猜测缺键语义。
+	// 每行仍以服务端下发的共享时点作为 placeholder；平台 Tab 只是切换视图，
+	// 不改变未自定义任务继续跟随后端默认值的语义。
+	row := scheduleFuncBody(t, src, "scRowHTML")
+	if !strings.Contains(row, `placeholder="' + esc(scHoursText(shared.hours)) + '"`) {
+		t.Error("规则行没有回显服务端下发的默认时点")
 	}
 }
 
@@ -349,9 +302,9 @@ func TestScheduleHoursParsingRules(t *testing.T) {
 // 上面那堆 strings.Contains 可能是"总能匹配到"的自证。
 func TestScheduleIDChecksCatchAMissingField(t *testing.T) {
 	src := scheduleShellSource(t)
-	broken := strings.Replace(src, `$("#scDefBalanceEnabled")`, `$("#scDefRenamed")`, -1)
+	broken := strings.Replace(src, `$("#scChips")`, `$("#scChipsRenamed")`, -1)
 	if broken == src {
-		t.Fatal("测试自己失效了：源码里没有可替换的 $(\"#scDefBalanceEnabled\")")
+		t.Fatal("测试自己失效了：源码里没有可替换的 $(\"#scChips\")")
 	}
 	var dangling []string
 	declared := map[string]bool{}
@@ -360,7 +313,7 @@ func TestScheduleIDChecksCatchAMissingField(t *testing.T) {
 			declared[m[1]] = true
 		}
 	}
-	if declared["scDefRenamed"] {
+	if declared["scChipsRenamed"] {
 		t.Error("改名后的 id 不该还算已声明")
 	}
 	for _, re := range shellRefs {

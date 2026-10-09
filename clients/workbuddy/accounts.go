@@ -409,20 +409,12 @@ func (c *Client) ReviveAccount(ctx context.Context, id string) error {
 // credential can spend quota through the same path real requests use.
 const probeModelID = "auto"
 
-// TestAccount makes one real call against the vendor with this credential. A
-// refusal is a result, not an error: the panel needs to show *why* a credential
-// is no good, and only an unknown id is a programming mistake.
-func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, error) {
-	a := c.findAuth(id)
-	if a == nil {
-		if _, ok := c.findDisabled(id); ok {
-			return core.TestResult{
-				AccountID: id,
-				OK:        false,
-				Error:     "the account is parked; enable it before testing",
-			}, nil
-		}
-		return core.TestResult{}, fmt.Errorf("account %q not found", id)
+// runAutoProbe is the shared real Auto call behind the panel's Test button and
+// the automatic resolution of a contradictory zero balance.  It reports the
+// timeout separately so the panel can keep its existing wording.
+func (c *Client) runAutoProbe(ctx context.Context, a *Auth) (error, time.Duration, bool) {
+	if c == nil || a == nil {
+		return errors.New("workbuddy: no account"), 0, false
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -441,28 +433,48 @@ func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, e
 		ch <- c.probeAutoChat(ctx, a)
 	})
 
-	res := core.TestResult{AccountID: a.ID()}
 	select {
 	case err := <-ch:
-		res.ElapsedMS = time.Since(started).Milliseconds()
-		if err != nil {
-			kind, _ := c.pool.MarkFailure(a, err)
-			c.up.log("workbuddy: panel test of %s failed (%s)", core.MaskSecret(a.ID()), kind)
-			res.OK = false
-			res.Error = core.Redact(describeFailure(err))
-			return res, nil
-		}
-		c.pool.MarkSuccess(a)
-		res.OK = true
-		res.Model = probeModelID
-		res.Reply = "Auto model reachable"
-		return res, nil
+		return err, time.Since(started), false
 	case <-ctx.Done():
-		res.ElapsedMS = time.Since(started).Milliseconds()
+		return ctx.Err(), time.Since(started), true
+	}
+}
+
+// TestAccount makes one real call against the vendor with this credential. A
+// refusal is a result, not an error: the panel needs to show *why* a credential
+// is no good, and only an unknown id is a programming mistake.
+func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, error) {
+	a := c.findAuth(id)
+	if a == nil {
+		if _, ok := c.findDisabled(id); ok {
+			return core.TestResult{
+				AccountID: id,
+				OK:        false,
+				Error:     "the account is parked; enable it before testing",
+			}, nil
+		}
+		return core.TestResult{}, fmt.Errorf("account %q not found", id)
+	}
+	err, elapsed, timedOut := c.runAutoProbe(ctx, a)
+	res := core.TestResult{AccountID: a.ID(), ElapsedMS: elapsed.Milliseconds()}
+	if timedOut {
 		res.OK = false
 		res.Error = "the Auto model test did not finish in time"
 		return res, nil
 	}
+	if err != nil {
+		kind, _ := c.pool.MarkFailure(a, err)
+		c.up.log("workbuddy: panel test of %s failed (%s)", core.MaskSecret(a.ID()), kind)
+		res.OK = false
+		res.Error = core.Redact(describeFailure(err))
+		return res, nil
+	}
+	c.pool.MarkSuccess(a)
+	res.OK = true
+	res.Model = probeModelID
+	res.Reply = "Auto model reachable"
+	return res, nil
 }
 
 // probeAutoChat performs the smallest real streamed Auto completion that

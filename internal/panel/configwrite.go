@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -244,6 +245,42 @@ func isRedacted(v any) bool {
 	return ok && s == redactedPlaceholder
 }
 
+type configPriorityWindow struct {
+	start, end, priority int
+}
+
+func parseConfigPriorityClock(raw string) (int, bool) {
+	s := strings.TrimSpace(raw)
+	if len(s) != 5 || s[2] != ':' {
+		return 0, false
+	}
+	hour, err := strconv.Atoi(s[:2])
+	if err != nil {
+		return 0, false
+	}
+	minute, err := strconv.Atoi(s[3:])
+	if err != nil || hour < 0 || hour > 23 || minute < 0 || minute > 59 {
+		return 0, false
+	}
+	return hour*60 + minute, true
+}
+
+func configPriorityWindowContains(w configPriorityWindow, minute int) bool {
+	if w.start < w.end {
+		return minute >= w.start && minute < w.end
+	}
+	return minute >= w.start || minute < w.end
+}
+
+func configPriorityWindowsOverlap(a, b configPriorityWindow) bool {
+	for minute := 0; minute < 24*60; minute++ {
+		if configPriorityWindowContains(a, minute) && configPriorityWindowContains(b, minute) {
+			return true
+		}
+	}
+	return false
+}
+
 // validateConfig type-checks the document the way the process will read it.
 // Without this a typo saved from the editor would only surface as a failed
 // startup, long after the save looked successful.
@@ -334,6 +371,49 @@ func validateConfig(cfg map[string]any) error {
 					if _, ok := e.(string); !ok {
 						return fmt.Errorf("platform %q disabled_models must contain only model ids", name)
 					}
+				}
+			}
+			if ps, ok := em["priority_schedule"]; ok && ps != nil {
+				arr, ok := ps.([]any)
+				if !ok {
+					return fmt.Errorf("platform %q priority_schedule must be an array", name)
+				}
+				windows := make([]configPriorityWindow, 0, len(arr))
+				for i, raw := range arr {
+					rule, ok := raw.(map[string]any)
+					if !ok {
+						return fmt.Errorf("platform %q priority_schedule[%d] must be an object", name, i)
+					}
+					startRaw, ok := rule["start"].(string)
+					if !ok {
+						return fmt.Errorf("platform %q priority_schedule[%d].start must be a string", name, i)
+					}
+					endRaw, ok := rule["end"].(string)
+					if !ok {
+						return fmt.Errorf("platform %q priority_schedule[%d].end must be a string", name, i)
+					}
+					priority, ok := rule["priority"].(float64)
+					if !ok || priority != float64(int(priority)) {
+						return fmt.Errorf("platform %q priority_schedule[%d].priority must be a whole number", name, i)
+					}
+					start, ok := parseConfigPriorityClock(startRaw)
+					if !ok {
+						return fmt.Errorf("platform %q priority_schedule[%d].start must be HH:MM", name, i)
+					}
+					end, ok := parseConfigPriorityClock(endRaw)
+					if !ok {
+						return fmt.Errorf("platform %q priority_schedule[%d].end must be HH:MM", name, i)
+					}
+					if start == end {
+						return fmt.Errorf("platform %q priority_schedule[%d] start and end must differ", name, i)
+					}
+					w := configPriorityWindow{start: start, end: end, priority: int(priority)}
+					for j, prev := range windows {
+						if configPriorityWindowsOverlap(prev, w) {
+							return fmt.Errorf("platform %q priority_schedule[%d] overlaps priority_schedule[%d]", name, i, j)
+						}
+					}
+					windows = append(windows, w)
 				}
 			}
 			if m, ok := em["max_in_flight"]; ok && m != nil {

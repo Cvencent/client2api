@@ -124,15 +124,9 @@ body {
 .qrow .prog { font-variant-numeric: tabular-nums; color: var(--ink-2); text-align: right; }
 .qrow .st { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .qrow .msg { font-size: 12px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* 任务看板的账号条 + 全部账号矩阵 */
+/* 任务看板的账号条 + 全部账号表（做完的账号标签走 .chip.ok 的绿色） */
 .tb-accounts { gap: 10px; }
 .tb-accounts .chips { flex-wrap: wrap; }
-.tb-matrix { display: flex; flex-direction: column; gap: 10px; padding: 12px 16px 16px; }
-.tb-acct { border: 1px solid var(--line-soft); border-radius: 8px; padding: 10px 12px; background: var(--surface-2); }
-.tb-acct { transition: border-color .18s ease, background .18s ease, box-shadow .18s ease; }
-.tb-acct.done { border-color: color-mix(in srgb, var(--ok) 55%, var(--line-soft)); background: var(--ok-soft); box-shadow: inset 3px 0 0 var(--ok); }
-.tb-acct-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
-.tb-acct-h b { font-size: 13.5px; }
 .qdot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
 .qdot.done { background: var(--ok); }
 .qdot.run { background: var(--accent); animation: qpulse 1.2s ease-in-out infinite; }
@@ -1093,6 +1087,49 @@ button.primary:active:not(:disabled) { filter: brightness(.94); }
 .pfplat { border: 1px solid var(--line-soft); border-radius: 9px; margin-bottom: 10px; overflow: hidden; }
 .pfhead { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; padding: 9px 12px; background: var(--surface-2); }
 .pfhead .pfname { font-weight: 600; font-size: 13px; min-width: 96px; }
+.pfSchedToggle { white-space: nowrap; }
+.pfSchedToggle[aria-expanded="true"] { border-color: var(--accent); color: var(--accent-text); }
+.pfSchedCount { color: var(--ink-3); font-size: 11px; }
+.pfSchedNow { white-space: nowrap; }
+.pfSched {
+  padding: 10px 12px 12px;
+  border-top: 1px solid var(--line-soft);
+  background: var(--surface-2);
+}
+.pfSchedHead { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 7px; }
+.pfSchedHead strong { font-size: 12.5px; color: var(--ink-2); }
+.pfSchedHead .hint { font-size: 11.5px; }
+.pfSchedCols, .pfSchedRow {
+  display: grid;
+  grid-template-columns: 96px 14px 96px 84px minmax(76px, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+.pfSchedCols { padding: 0 9px 4px; color: var(--ink-3); font-size: 11px; }
+.pfSchedRows { display: flex; flex-direction: column; gap: 6px; }
+.pfSchedRow {
+  min-height: 36px;
+  padding: 5px 8px;
+  border: 1px solid var(--line-soft);
+  border-radius: 7px;
+  background: var(--surface);
+  transition: border-color var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out);
+}
+.pfSchedRow.on { border-color: color-mix(in srgb, var(--accent) 55%, var(--line-soft)); background: var(--accent-soft); }
+.pfSchedRow.bad { border-color: var(--bad); background: var(--bad-soft); }
+.pfSchedRow input { width: 100%; min-width: 0; }
+.pfSchedPrio { text-align: center; }
+.pfSchedDash { color: var(--ink-3); text-align: center; }
+.pfSchedFlag { color: var(--accent-text); font-size: 11px; white-space: nowrap; }
+.pfSchedDel { justify-self: end; }
+.pfSchedEmpty { padding: 10px; border: 1px dashed var(--line-soft); border-radius: 7px; color: var(--ink-3); font-size: 12px; }
+.pfSchedHint { margin-top: 7px; color: var(--ink-3); font-size: 11.5px; line-height: 1.55; }
+@media (max-width: 700px) {
+  .pfSchedCols { display: none; }
+  .pfSchedRow { grid-template-columns: 1fr 14px 1fr; gap: 6px; }
+  .pfSchedPrio, .pfSchedFlag, .pfSchedDel { grid-column: span 3; width: 100%; }
+  .pfSchedDel { justify-self: stretch; }
+}
 .pfhead .pfcount { color: var(--ink-3); font-size: 11.5px; }
 .pfhead .pfToggle { width: 24px; padding: 0; }
 .pfmodels { padding: 10px 12px 12px; }
@@ -1115,25 +1152,6 @@ button.primary:active:not(:disabled) { filter: brightness(.94); }
 .pfm.off { color: var(--bad); border-color: var(--bad); }
 .pfm .pfmname { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* 十之一、任务中心「全局默认」。以前六个 batch 各自两行 .cfgrow、时点框
-   width:100%，十三行铺满一屏才表达完六个开关；现在一张卡一个 batch，开关在左、
-   时点框在右，按可用宽度排成 2–3 列。卡片的浅底只在勾选后才出现，关着的 batch
-   一眼能和开着的分开。 */
-#scDefaults { display: grid; grid-template-columns: repeat(auto-fill, minmax(258px, 1fr)); gap: 8px; }
-.scdef {
-  display: flex; align-items: center; gap: 10px; padding: 7px 11px;
-  border: 1px solid var(--line-soft); border-radius: var(--radius); background: var(--surface);
-}
-.scdef.on { background: var(--accent-soft); border-color: transparent; }
-.scdefsw {
-  display: flex; align-items: center; gap: 7px; flex: 1 1 auto; min-width: 0;
-  font-size: 13px; color: var(--ink-2); cursor: pointer; white-space: nowrap;
-}
-.scdefsw input { margin: 0; flex: none; }
-.scdef.on .scdefsw { color: var(--accent-text); }
-/* 时点框给一个稳定的下限，操作员一眼知道这里填的是「几点」而不是任意文本。 */
-.scdefh { flex: 0 1 116px; width: auto; min-width: 84px; padding: 5px 9px; font-size: 12.5px; text-align: center; }
-#scDefaultsState { margin-bottom: 9px; }
 
 /* 十、任务中心 · 定时任务与运行记录。这两张表列多而每列窄：宽屏按表看，窄屏
    （桌面应用的内嵌浏览器侧栏常见 500px 上下）折叠成一张张卡片，免得“操作”列
@@ -1147,8 +1165,6 @@ button.primary:active:not(:disabled) { filter: brightness(.94); }
 .acc.sc .scDur { display: inline-flex; align-items: center; gap: 5px; }
 .acc.sc .scDur > span { font-size: 11px; color: var(--ink-3); }
 .acc.sc .scEvery, .acc.sc .scJitter { width: 66px; }
-.acc.sc tr.sc-group td { padding: 6px 12px; background: var(--surface-2); border-bottom: 1px solid var(--line-soft); font-weight: 600; color: var(--ink-2); }
-.acc.sc tr.sc-group:hover td { background: var(--surface-2); }
 .acc.sc .sc-c-next { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .acc.sc .sc-c-acts { white-space: nowrap; text-align: right; }
 .acc.sc .sc-c-acts button { margin: 2px 0 2px 4px; }
@@ -1157,8 +1173,10 @@ button.primary:active:not(:disabled) { filter: brightness(.94); }
 .acc.sc .sc-c-tag { text-align: center; }
 .acc.sc .scTagNone { color: var(--ink-3); opacity: .5; }
 #view-taskscenter .scHint { padding: 9px 16px; border-bottom: 1px solid var(--line-soft); background: var(--surface); }
+#scChips { flex: 0 1 auto; max-width: 100%; flex-wrap: wrap; row-gap: 5px; }
+#scChips .chip { white-space: nowrap; }
 #view-taskscenter .scMaster { font-size: 12.5px; color: var(--ink-2); }
-/* 窄屏卡片。定时任务行排成两列网格：第一行「平台 / 自定义」，第二行任务，
+/* 窄屏卡片。定时任务行排成网格：第一行「自定义」，第二行任务，
    第三行时点 · 启用 · 下一跳，第四行操作。表头此时隐藏，行内用 ::before 补标签。 */
 @media (max-width: 820px) {
   .acc.sc { min-width: 0; }
@@ -1170,11 +1188,8 @@ button.primary:active:not(:disabled) { filter: brightness(.94); }
     border: 1px solid var(--line-soft); border-radius: 9px; background: var(--surface);
   }
   .acc.sc tr.scrow:hover { background: var(--surface-2); }
-  .acc.sc tr.sc-group { display: block; margin-top: 14px; }
-  .acc.sc tr.sc-group td { display: block; border-radius: 7px; }
   .acc.sc tr:last-child td { border-bottom: none; }
   .acc.sc td { display: block; padding: 0; border-bottom: none; }
-  .acc.sc td.sc-c-name { grid-area: 1 / 1 / 2 / 2; font-weight: 600; }
   .acc.sc td.sc-c-tag { grid-area: 1 / 3 / 2 / 4; text-align: right; }
   .acc.sc td.sc-c-task { grid-area: 2 / 1 / 3 / 4; }
   .acc.sc td.sc-c-hours { grid-area: 3 / 1 / 4 / 2; white-space: nowrap; }
@@ -1351,18 +1366,18 @@ input[type=checkbox] { width: 14px; height: 14px; padding: 0; accent-color: var(
 .recent-ok { color: var(--ok); font-weight: 650; }
 /* ── 全局交互动效：统一节奏，只动 transform / opacity / 颜色 ── */
 button, .chip, .tag, .nav a, .acc tbody tr, .qrow, .srow,
-.pfm, .vc, .pfplat, .pk-card, .scdef, input, select, textarea {
+.pfm, .vc, .pfplat, .pk-card, input, select, textarea {
   transition-duration: var(--dur-fast);
   transition-timing-function: var(--ease-out);
 }
-button, .chip, .nav a, .vc, .pfplat, .pk-card, .scdef {
+button, .chip, .nav a, .vc, .pfplat, .pk-card {
   transition-property: color, background-color, border-color, box-shadow, filter, transform;
 }
 button:active:not(:disabled), .chip:active, .nav a:active,
 .vc:active, .pfplat:active, .pk-card:active { transform: translateY(1px); }
 .vc:hover, .pfplat:hover { border-color: var(--accent); box-shadow: var(--shadow-sm); }
 .vc, .pfplat { transition-property: border-color, box-shadow, transform; }
-.pfm:hover, .scdef:hover { border-color: var(--accent); }
+.pfm:hover { border-color: var(--accent); }
 .pfmodels:not([hidden]), .tab-panel:not([hidden]) {
   animation: panelIn var(--dur-fast) var(--ease-out) both;
 }
@@ -1468,7 +1483,7 @@ input, select, textarea { transition-property: border-color, box-shadow, backgro
             <option value="unknown">未知</option>
           </select></label>
           <span class="note" id="accNote"></span>
-          <button class="xs" id="btnRefreshAll">全部刷新</button>
+          <button class="xs" id="btnRefreshAll" title="重新向上游续期/刷新已启用账号的登录凭据（续期 access token）；平台不提供续期时会如实提示">刷新凭据</button>
           <button class="xs" id="btnBalanceAll" title="让服务端分批刷新余额（每次最多 3 个账号，慢慢来），不会一次性把整个号池问一遍">刷新余额</button>
           <button class="xs" id="btnCheckinAll">全部签到</button>
           <button class="xs" id="btnTestAll">全部测试</button>
@@ -1709,16 +1724,6 @@ input, select, textarea { transition-property: border-color, box-shadow, backgro
       <div class="subtab-panel" data-subtab-panel="tasks-schedule" id="tasks-panel-schedule" role="tabpanel" aria-labelledby="tasks-tab-schedule">
      <div class="box">
        <header>
-          <h3>全局默认 <span class="hint">所有平台未自定义时使用</span></h3>
-          <span class="grow"></span>
-        </header>
-       <div class="pad">
-         <div class="cfghelp" id="scDefaultsState"></div>
-         <div id="scDefaults"></div>
-       </div>
-     </div>
-     <div class="box">
-       <header>
          <h3>定时任务 <span class="hint" id="scNote">-</span></h3>
           <span class="grow"></span>
           <label class="chk scMaster"><input type="checkbox" id="scMaster"> 总开关</label>
@@ -1726,10 +1731,12 @@ input, select, textarea { transition-property: border-color, box-shadow, backgro
         </header>
         <div class="cfghelp" id="scState"></div>
         <div class="tblbar">
-          <input id="scSearch" type="search" placeholder="搜索平台 / 任务（/）" spellcheck="false" autocomplete="off">
-          <label class="chk"><input type="checkbox" id="scOnlyOwn">只看已自定义</label>
+          <div class="chips" id="scChips"></div>
           <span class="grow"></span>
+          <input id="scSearch" type="search" placeholder="搜索任务（/）" spellcheck="false" autocomplete="off">
+          <label class="chk"><input type="checkbox" id="scOnlyOwn">只看已自定义</label>
           <span class="note" id="scCount"></span>
+          <span class="chip warn" id="scDirty" hidden>有未保存的改动</span>
         </div>
         <div class="cfghelp scHint">时点按北京时间、逗号分隔 0-23（例如 <code>9, 21</code>）；留空 = 该平台此任务永不跑。改了任一行就按右上角「保存并生效」提交，热加载即时生效。</div>
         <div id="scBody"></div>
@@ -3372,32 +3379,32 @@ function accGroupModelValue(g) {
   (g.rows || []).forEach(a => { const s = acctModelSummary(CUR, a); if (s) n += Number(s.avail) || 0; });
   return n ? n : null;
 }
-function accGroupRateValue(g) {
+function accGroupRateValue(rows) {
   let req = 0, err = 0, any = false;
-  (g.rows || []).forEach(a => {
+  (rows || []).forEach(a => {
     const s = accStatOf(a.id); if (!s) return; any = true;
     req += Number(s.requests) || 0; err += Number(s.failures) || 0;
   });
   return any ? Math.max(0, req - err) : null;
 }
-function accGroupInflightValue(g) {
+function accGroupInflightValue(rows) {
   let n = 0, any = false;
-  (g.rows || []).forEach(a => { const x = acctExtra(CUR, a); if (x) { any = true; n += Number(x.in_flight) || 0; } });
+  (rows || []).forEach(a => { const x = acctExtra(CUR, a); if (x) { any = true; n += Number(x.in_flight) || 0; } });
   return any ? n : null;
 }
-function accGroupUsageValue(g) {
+function accGroupUsageValue(rows) {
   let req = 0, any = false;
-  (g.rows || []).forEach(a => { const s = accStatOf(a.id); if (s) { any = true; req += Number(s.requests) || 0; } });
+  (rows || []).forEach(a => { const s = accStatOf(a.id); if (s) { any = true; req += Number(s.requests) || 0; } });
   return any ? req : null;
 }
-function accGroupLastValue(g) {
+function accGroupLastValue(rows) {
   let t = 0, any = false;
-  (g.rows || []).forEach(a => { const s = accStatOf(a.id); if (s && s.last_success) { any = true; t = Math.max(t, Date.parse(s.last_success) || 0); } });
+  (rows || []).forEach(a => { const s = accStatOf(a.id); if (s && s.last_success) { any = true; t = Math.max(t, Date.parse(s.last_success) || 0); } });
   return any ? t : null;
 }
-function accGroupExpiryValue(g) {
+function accGroupExpiryValue(rows) {
   let t = 0, any = false;
-  (g.rows || []).forEach(a => { const v = Date.parse(a.expires_at || ""); if (isFinite(v)) { any = true; t = any && t ? Math.min(t, v) : v; } });
+  (rows || []).forEach(a => { const v = Date.parse(a.expires_at || ""); if (isFinite(v)) { any = true; t = any && t ? Math.min(t, v) : v; } });
   return any ? t : null;
 }
 function accSortValue(g, col) {
@@ -4163,14 +4170,7 @@ function bulk(kind) {
   const caps = capsOf(CUR);
   if (!CUR || !list.length) { toast("当前客户端没有可用账号", "err"); return; }
   if (kind === "refresh") {
-    // 账号池重读时余额也一起作废：刚换过凭据的账号，旧余额已经不是它的了。
-    delete BALS[CUR];
-    api(cbase(CUR) + "/accounts/refresh", { method: "POST", body: {} }).then(r => {
-      if (!r.ok) return toast("刷新失败：" + r.err, "err");
-      applyAccounts(CUR, r.data); renderAccounts();
-      loadBalances(CUR, true);
-      toast("已刷新 " + ((r.data.results || []).length) + " 个账号");
-    });
+    refreshCredentials();
   } else if (kind === "test") {
     toast("逐个测试 " + list.length + " 个账号…");
     (async () => {
@@ -4188,6 +4188,41 @@ function bulk(kind) {
     // 不再一次性问完全部账号：服务端每次只挑最旧的 3 个慢慢读（中间还隔着几
     // 秒），这里先留着上次的数字，再分几次回读缓存把新数字补上。
     loadBalances(CUR, true);
+  }
+}
+
+// refreshCredentials re-news the current client's stored credentials upstream
+// (token renewal for the modules that support it) and reports the outcome per
+// account.  It used to announce a blanket "已刷新 N 个账号" even when every
+// account came back with an error, which is exactly why the toolbar button read
+// as "does nothing" for the modules that cannot renew.  It also blocks and
+// relabels the button while the request is in flight, so a slow upstream no
+// longer looks like a dead click.
+async function refreshCredentials() {
+  const n = CUR;
+  const btn = $("#btnRefreshAll");
+  const keep = btn ? btn.textContent : "";
+  if (btn) { btn.disabled = true; btn.textContent = "刷新中…"; }
+  // 账号池重读时余额也一起作废：刚换过凭据的账号，旧余额已经不是它的了。
+  delete BALS[n];
+  try {
+    const r = await api(cbase(n) + "/accounts/refresh", { method: "POST", body: {} });
+    if (!r.ok) { toast("刷新凭据失败：" + r.err, "err"); return; }
+    applyAccounts(n, r.data); renderAccounts();
+    const results = (r.data && r.data.results) || [];
+    const ok = results.filter(x => x && x.ok).length;
+    const failed = results.length - ok;
+    // 余额跟着凭据一起过期：后台分批回读一遍，别让新凭据配着旧余额显示。
+    loadBalances(n, true);
+    if (!results.length) return toast("没有可续期的账号凭据");
+    if (!failed) return toast("已续期 " + ok + " 个账号的凭据");
+    if (!ok) {
+      const first = results.find(x => x && x.error);
+      return toast("凭据未能续期：" + ((first && first.error) || "平台未提供续期方式"), "err");
+    }
+    toast("凭据续期：成功 " + ok + "，失败 " + failed, "err");
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = keep || "刷新凭据"; }
   }
 }
 
@@ -5314,6 +5349,140 @@ function pfWorkBuddyPoolHTML(c) {
     '</div>';
 }
 
+/* ── 平台分时优先级 ────────────────────────────────────────────────────
+  每个平台除了基础优先级外，还能配置若干 [开始, 结束) 时间段覆盖值。区间按
+  北京时间判定，支持跨零点（23:00-06:00）。同一平台的时间段不允许重叠，
+  否则路由会因为规则先后产生不同结果。 */
+const PF_BEIJING_OFFSET_MS = 8 * 60 * 60 * 1000;
+
+// pfClockMinute 把 "HH:MM" 转成当天分钟数；空串 / 非法格式返回 null。
+function pfClockMinute(raw) {
+  const s = String(raw == null ? "" : raw).trim();
+  const m = /^(\d{1,2}):(\d{2})$/.exec(s);
+  if (!m) return null;
+  const h = parseInt(m[1], 10), mm = parseInt(m[2], 10);
+  if (h < 0 || h > 23 || mm < 0 || mm > 59) return null;
+  return h * 60 + mm;
+}
+
+// pfNowMinute 用北京时间算当前分钟数。UTC+8 固定偏移，不跟随浏览器本地时区。
+function pfNowMinute() {
+  const b = new Date(Date.now() + PF_BEIJING_OFFSET_MS);
+  return b.getUTCHours() * 60 + b.getUTCMinutes();
+}
+
+function pfPriorityWindowContains(start, end, minute) {
+  if (start == null || end == null || start === end) return false;
+  if (start < end) return minute >= start && minute < end;
+  return minute >= start || minute < end;
+}
+
+function pfPriorityWindowsOverlap(a, b) {
+  for (let minute = 0; minute < 24 * 60; minute++) {
+    if (pfPriorityWindowContains(a.start, a.end, minute) &&
+        pfPriorityWindowContains(b.start, b.end, minute)) return true;
+  }
+  return false;
+}
+
+function pfSchedRowHTML(w) {
+  const r = w || {};
+  return '<div class="pfSchedRow">' +
+    '<input class="cfgtext pfSchedStart" type="time" value="' + esc(r.start || "") + '">' +
+    '<span class="pfSchedDash">-</span>' +
+    '<input class="cfgtext pfSchedEnd" type="time" value="' + esc(r.end || "") + '">' +
+    '<input class="cfgtext pfSchedPrio" type="number" step="1" value="' +
+      esc(r.priority == null ? "" : String(r.priority)) + '" placeholder="0" title="整数，可为负数；数字越小越优先">' +
+    '<span class="pfSchedFlag"></span>' +
+    '<button class="xs pfSchedDel" type="button" title="删除这一条规则">删除</button>' +
+    '</div>';
+}
+
+// pfPriorityScheduleHTML 画分时规则编辑器；没有规则时给一条空行供直接填写。
+function pfPriorityScheduleHTML(entry) {
+  const rules = Array.isArray(entry && entry.priority_schedule) ? entry.priority_schedule : [];
+  const rows = (rules.length ? rules : [{}]).map(pfSchedRowHTML).join("");
+  return '<div class="pfSched" hidden>' +
+    '<div class="pfSchedHead"><strong>分时优先级规则</strong>' +
+      '<span class="hint">按北京时间判定；开始包含、结束不包含。支持跨零点，例如 23:00-06:00。未命中任何规则时使用上方基础优先级。</span>' +
+      '<span class="pfSchedNow"></span><span class="grow"></span>' +
+      '<button class="xs pfSchedAdd" type="button">新增规则</button></div>' +
+    '<div class="pfSchedCols"><span>开始</span><span></span><span>结束</span><span>优先级</span><span>状态</span><span></span></div>' +
+    '<div class="pfSchedRows">' + rows + '</div>' +
+    '<div class="pfSchedHint">同一平台的时间段不能重叠；点「保存并生效」后写回配置。优先级数字越小越先路由，例如 -10 比 -5 更优先。</div>' +
+    '</div>';
+}
+
+// pfReadPrioritySchedule 读回一个平台的分时规则；非法输入给出可读原因。
+function pfReadPrioritySchedule(plat) {
+  const rows = Array.from(plat.querySelectorAll(".pfSchedRow"));
+  const out = [];
+  for (const row of rows) {
+    const startEl = row.querySelector(".pfSchedStart");
+    const endEl = row.querySelector(".pfSchedEnd");
+    const prioEl = row.querySelector(".pfSchedPrio");
+    const startRaw = startEl ? startEl.value.trim() : "";
+    const endRaw = endEl ? endEl.value.trim() : "";
+    const prioRaw = prioEl ? prioEl.value.trim() : "";
+    if (startRaw === "" && endRaw === "" && prioRaw === "") continue;
+    const start = pfClockMinute(startRaw);
+    const end = pfClockMinute(endRaw);
+    if (start == null || end == null) {
+      return { err: "时间格式必须是 HH:MM", row: row };
+    }
+    if (start === end) {
+      return { err: "开始和结束时间 must differ（不能相同）", row: row };
+    }
+    const priority = Number(prioRaw === "" ? "0" : prioRaw);
+    if (!Number.isInteger(priority)) {
+      return { err: "优先级必须是整数（可为负数）", row: row };
+    }
+    for (const prev of out) {
+      if (pfPriorityWindowsOverlap(prev, { start: start, end: end })) {
+        return { err: "时间段 overlap（不能重叠）", row: row };
+      }
+    }
+    out.push({ start: startRaw, end: endRaw, priority: priority });
+  }
+  return { rules: out };
+}
+
+// pfSyncPrioritySchedule 只改可见状态：当前生效规则高亮、非法行标红、刷新计数。
+function pfSyncPrioritySchedule() {
+  const now = pfNowMinute();
+  document.querySelectorAll("#pfBody .pfplat").forEach(plat => {
+    const box = plat.querySelector(".pfSched");
+    if (!box) return;
+    const rows = Array.from(box.querySelectorAll(".pfSchedRow"));
+    const cols = box.querySelector(".pfSchedCols");
+    let active = null;
+    rows.forEach(row => {
+      const startRaw = row.querySelector(".pfSchedStart").value.trim();
+      const endRaw = row.querySelector(".pfSchedEnd").value.trim();
+      const prioEl = row.querySelector(".pfSchedPrio");
+      const prioRaw = prioEl.value.trim();
+      const start = pfClockMinute(startRaw), end = pfClockMinute(endRaw);
+      const empty = startRaw === "" && endRaw === "" && prioRaw === "";
+      const bad = !empty && (start == null || end == null || start === end);
+      const on = !bad && start != null && pfPriorityWindowContains(start, end, now);
+      row.classList.toggle("bad", bad);
+      row.classList.toggle("on", on);
+      const flag = row.querySelector(".pfSchedFlag");
+      if (flag) flag.textContent = bad ? "时间格式无效" : (on ? "当前生效" : "未生效");
+      if (on) active = prioRaw;
+    });
+    if (cols) cols.hidden = rows.length === 0;
+    const toggle = plat.querySelector(".pfSchedToggle");
+    const badge = toggle ? toggle.querySelector(".pfSchedCount") : null;
+    if (badge) badge.textContent = rows.length + " 条";
+    const nowEl = box.querySelector(".pfSchedNow");
+    if (nowEl) {
+      nowEl.textContent = active == null ? "当前未命中分时规则" : ("当前生效优先级 " + active);
+      nowEl.className = "pfSchedNow" + (active == null ? " hint" : "");
+    }
+  });
+}
+
 async function renderPlatforms() {
   const [cfg, md] = await Promise.all([api("/panel/api/config"), api("/panel/api/models")]);
   const body = $("#pfBody");
@@ -5364,7 +5533,8 @@ async function renderPlatforms() {
     out.push('<div class="pfhead">' +
       '<button class="xs pfToggle" type="button" aria-expanded="false" title="展开 / 收起详情与模型清单">▸</button>' +
       '<span class="pfname">' + esc(n) + '</span>' +
-      '<label class="sel-note">优先级 <input class="cfgtext pfPrio" type="number" step="1" value="' + esc(prio) + '" placeholder="0" title="可为负数；数字越小越优先，例如 -10 优先于 -5。留空使用默认 0" style="width:76px"></label>' +
+      '<label class="sel-note">基础优先级 <input class="cfgtext pfPrio" type="number" step="1" value="' + esc(prio) + '" placeholder="0" title="可为负数；数字越小越优先，例如 -10 优先于 -5。留空使用默认 0" style="width:76px"></label>' +
+      '<button class="xs pfSchedToggle" type="button" aria-expanded="false" title="按时间段覆盖基础优先级；点开编辑当前平台的分时规则">分时规则 <span class="pfSchedCount"></span></button>' +
       '<label class="sel-note" title="网关层跨账号总上限；留空默认 2，填 0 = 不限制">平台总并发 <input class="cfgtext pfMif" type="number" min="0" value="' + esc(mif) + '" placeholder="2" style="width:76px"></label>' +
       '<label class="sel-note" title="网关层每账号上限；留空默认 2，填 0 = 不限制">网关单账号并发 <input class="cfgtext pfMifAcct" type="number" min="0" value="' + esc(mifAcct) + '" placeholder="2" style="width:76px"></label>' +
       '<label class="sel-note" title="账号余额低于或等于这个数就暂停（不再参与路由），直到余额回升；留空或 0 = 零余额即暂停；-1 = 关闭这个保护">最低余额 <input class="cfgtext pfReserve" type="number" min="-1" value="' + esc(res) + '" placeholder="0" style="width:76px"></label>' +
@@ -5374,6 +5544,8 @@ async function renderPlatforms() {
       '<button class="xs pfNone" type="button">全禁用</button>' +
       '</div>');
     out.push('<div class="pfmodels" hidden>');
+    // 展开区顶部是 priority_schedule 分时规则编辑器，下方才是模型清单。
+    out.push(pfPriorityScheduleHTML(entry));
     if (n === "workbuddy") out.push(pfWorkBuddyPoolHTML(c));
     if (list.length) out.push('<div class="pfwbhd" style="margin-top:10px">模型清单</div>');
     if (!list.length) {
@@ -5395,6 +5567,7 @@ async function renderPlatforms() {
   $("#pfNote").textContent = names.length + " 个平台 · 共禁用 " + totalOff + " 项";
   body.innerHTML = out.join("") || '<div class="hint">没有可配置的平台。</div>';
   pfApply();
+  pfSyncPrioritySchedule();
 }
 
 // 过滤只改可见性，不动模型本身，所以保存时仍能读到每个平台的全量状态。
@@ -5440,6 +5613,10 @@ function pfSetAll(open) {
     const box = el.querySelector(".pfmodels");
     if (!box) return;
     box.hidden = !open;
+    const sched = el.querySelector(".pfSched");
+    if (sched) sched.hidden = true;
+    const st = el.querySelector(".pfSchedToggle");
+    if (st) st.setAttribute("aria-expanded", "false");
     const t = el.querySelector(".pfToggle");
     if (t) { t.textContent = open ? "▾" : "▸"; t.setAttribute("aria-expanded", open ? "true" : "false"); }
   });
@@ -5481,7 +5658,11 @@ async function savePlatforms() {
       if (!row.querySelector(".pfmBox").checked) off.push(row.dataset.model);
     });
     const nowOff = off.map(m => String(m).trim().toLowerCase()).filter(Boolean).sort();
+    const sched = pfReadPrioritySchedule(el);
+    if (sched.err) { bad = name; badReason = "分时规则" + sched.err; break; }
+    const baseSched = Array.isArray(base.priority_schedule) ? base.priority_schedule : [];
     const entry = {};
+    if (JSON.stringify(sched.rules) !== JSON.stringify(baseSched)) entry.priority_schedule = sched.rules;
     if (prio !== basePrio) entry.priority = prio;
     if (mif !== baseMif) entry.max_in_flight = mif;
     if (mifAcct !== baseMifAcct) entry.max_in_flight_per_account = mifAcct;
@@ -5922,7 +6103,9 @@ async function renderLogs() {
 
    三态（wired/enabled）：wired 为假 = 本进程没接调度器；
    enabled 为假 = 接了但总开关是关的；其余 = 在跑。               */
-const SC = { data: null, rows: {}, dirty: {}, removed: {}, timer: null };
+// client 是当前选中的平台 Tab：规则表一次只画一个平台，不再把 20 个平台 × N 个
+// 任务平铺成一整屏。dirty/removed 仍按 platform+batch 记，切 Tab 不会丢未保存的改动。
+const SC = { client: "", data: null, rows: {}, dirty: {}, removed: {}, timer: null };
 const SC_BATCH_LABELS = {
   checkin: "自动签到", travel: "猫猫旅行", activity: "活跃上报",
   keepalive: "Token 保活", blackcat: "黑猫巡检", growth: "成长任务",
@@ -5931,56 +6114,9 @@ const SC_BATCH_LABELS = {
   // 所以它跟普通批次一样用时点输入，不需要 recovery 那套间隔控件。
   daily_balance: "每日余额刷新",
 };
-const SC_GROUPS = ["checkin", "keepalive", "travel", "activity", "blackcat", "growth", "recovery", "daily_balance"];
 const scLabel = b => SC_BATCH_LABELS[b] || b;
-// scDefaultHTML 渲染「全局默认」区：每个 batch 一组开关 + 时点，外加余额刷新。
-// 缺键默认值由服务端算好（groups / balance_refresh_*），面板不重复判断默认。
-function scDefaultHTML(d) {
-  const byName = {};
-  ((d || {}).groups || []).forEach(g => { byName[g.name] = g; });
-  const out = [];
-  SC_GROUPS.forEach(name => {
-    if (name === "recovery") {
-      const on = !!(d || {}).recovery_enabled;
-      const every = (d || {}).recovery_every_minutes === undefined ? 240 : (d || {}).recovery_every_minutes;
-      const jitter = (d || {}).recovery_jitter_minutes === undefined ? 60 : (d || {}).recovery_jitter_minutes;
-      out.push('<div class="scdef' + (on ? " on" : "") + '">' +
-        '<label class="scdefsw"><input type="checkbox" id="scDefRecoveryEnabled"' +
-        (on ? " checked" : "") + '><span>恢复探测</span></label>' +
-        '<input class="cfgtext scdefh" id="scDefRecoveryEvery" spellcheck="false" autocomplete="off" value="' +
-        esc(scDurationText(every)) + '" placeholder="间隔，如 4h" aria-label="恢复探测间隔">' +
-        '<input class="cfgtext scdefh" id="scDefRecoveryJitter" spellcheck="false" autocomplete="off" value="' +
-        esc(scDurationText(jitter)) + '" placeholder="随机，如 1h" aria-label="恢复探测随机范围">' +
-        '</div>');
-      return;
-    }
-    const g = byName[name] || { enabled: false, hours: [] };
-    const label = SC_BATCH_LABELS[name] || name;
-    const id = name.charAt(0).toUpperCase() + name.slice(1);
-    // 一张卡一行：开关 + 时点输入并排。以前是两行铺满全宽的 .cfgrow，十三个
-    // 满屏拉下来只为表达六个开关。控件 id 一字未改，scSave 与回归测试照旧。
-    out.push('<div class="scdef' + (g.enabled ? " on" : "") + '">' +
-      '<label class="scdefsw"><input type="checkbox" id="scDef' + id + 'Enabled"' + (g.enabled ? " checked" : "") + '>' +
-      '<span>' + esc(label) + '</span></label>' +
-      '<input class="cfgtext scdefh" id="scDef' + id + 'Hours" spellcheck="false" autocomplete="off" value="' +
-      esc(scHoursText(g.hours)) + '" placeholder="时点，留空 = 不跑" aria-label="' + esc(label) + '时点">' +
-      '</div>');
-  });
-  out.push('<div class="scdef' + ((d || {}).balance_refresh_enabled ? " on" : "") + '">' +
-    '<label class="scdefsw"><input type="checkbox" id="scDefBalanceEnabled"' +
-    ((d || {}).balance_refresh_enabled ? " checked" : "") + '><span>刷新余额</span></label>' +
-    '<input class="cfgtext scdefh" id="scDefBalanceMinutes" type="number" min="1" spellcheck="false" value="' +
-    esc(((d || {}).balance_refresh_minutes) || "") + '" placeholder="间隔（分钟）" aria-label="余额刷新间隔（分钟）">' +
-    '</div>');
-  return out.join("");
-}
-
-function scRenderDefaults(d) {
-  $("#scDefaultsState").textContent = d.wired
-    ? (d.enabled ? "调度器已启用：下面这些是各平台未自定义时使用的默认时点。" : "总开关当前关闭：时点可以编辑保存，但不会触发。")
-    : "本进程没有接入调度器：时点可以编辑保存，但不会有任何东西按它触发。";
-  $("#scDefaults").innerHTML = scDefaultHTML(d);
-}
+// 「全局默认」那一整块已经删掉：每个平台一个 Tab，各自编辑自己的时点。没有自定义
+// 的平台仍然跑配置里那份默认值，行里的 placeholder 会把默认值回显出来。
 const scKey = (c, b) => c + "\u0000" + b;
 const scHoursText = h => (h || []).join(", ");
 
@@ -6045,7 +6181,6 @@ function scRowHTML(r) {
       '" placeholder="' + esc(scDurationText(shared.jitter_minutes)) + '" aria-label="恢复探测随机范围"></span>'
     : '<input class="cfgtext scHours" spellcheck="false" autocomplete="off" value="' + esc(hours) + '" placeholder="' + esc(scHoursText(shared.hours)) + '">';
   return '<tr class="scrow" data-client="' + esc(r.client) + '" data-batch="' + esc(r.batch) + '">' +
-    '<td class="sc-c-name">' + esc(r.client) + '<div class="hint">' + r.ready + "/" + r.accounts + " 个启用账号</div></td>" +
     '<td class="sc-c-task">' + esc(scLabel(r.batch)) + '<div class="hint">' + esc(r.batch) + (codes ? " · " + esc(codes) : "") + "</div></td>" +
     '<td class="sc-c-hours">' + hoursControl + '</td>' +
     '<td class="sc-c-on"><input type="checkbox" class="scOn"' + (on ? " checked" : "") + "></td>" +
@@ -6110,14 +6245,53 @@ function scMarkDirty(tr) {
   SC.dirty[key] = pend;
   delete SC.removed[key];
   scUpdateBadges();
+  scRenderChips();
+  scUpdateDirty();
 }
 
+// scClients 列出 /panel/api/schedule 里声明了定时任务的平台，顺序即服务端顺序。
+function scClients() {
+  const seen = [];
+  (((SC.data || {}).rows) || []).forEach(r => { if (seen.indexOf(r.client) < 0) seen.push(r.client); });
+  return seen;
+}
+// scRenderChips 画平台 Tab。角标是「这个平台有几条自定义」，切 Tab 前就能看出哪个
+// 平台被改过（含还没保存的改动）。
+function scRenderChips() {
+  const names = scClients();
+  const bar = $("#scChips");
+  if (!bar) return;
+  if (!SC.client || names.indexOf(SC.client) < 0) SC.client = names[0] || "";
+  bar.innerHTML = names.map(n => {
+    const mine = (((SC.data || {}).rows) || []).filter(r => r.client === n);
+    const own = mine.filter(r => scOwned(scKey(r.client, r.batch), r)).length;
+    const ready = mine.reduce((a, r) => a + (Number(r.ready) || 0), 0);
+    return '<button class="chip' + (n === SC.client ? " on" : "") + '" data-scc="' + esc(n) +
+      '" title="' + esc(ready + " 个启用账号") + '">' + esc(n) + (own ? " <b>" + own + "</b>" : "") + "</button>";
+  }).join("");
+}
+// 有没有还没保存的改动。保存按钮就在这一屏右上角，这里只负责把它变得显眼：
+// 以前改完不知道要点那颗按钮，切走就没了。
+function scHasDirty() {
+  return Object.keys(SC.dirty).length > 0 || Object.keys(SC.removed).length > 0;
+}
+function scUpdateDirty() {
+  const el = $("#scDirty");
+  if (el) el.hidden = !scHasDirty();
+}
 function scRenderRows() {
   const box = $("#scBody");
-  const rows = ((SC.data || {}).rows) || [];
+  const all = ((SC.data || {}).rows) || [];
+  scRenderChips();
+  scUpdateDirty();
+  const rows = all.filter(r => r.client === SC.client);
   SC.rows = {};
-  if (!rows.length) {
+  if (!all.length) {
     box.innerHTML = '<div class="pad hint">还没有客户端声明定时任务。模块实现了 core.BatchPlanner 后，这里会自动出现它的批次。</div>';
+    return;
+  }
+  if (!rows.length) {
+    box.innerHTML = '<div class="pad hint">这个平台没有声明定时任务。</div>';
     return;
   }
   const q = ($("#scSearch").value || "").trim().toLowerCase();
@@ -6125,33 +6299,27 @@ function scRenderRows() {
   const shown = rows.filter(r => {
     if (ownOnly && !scOwned(scKey(r.client, r.batch), r)) return false;
     if (!q) return true;
-    return (r.client + " " + r.batch + " " + scLabel(r.batch) + " " + (r.codes || []).join(" ")).toLowerCase().indexOf(q) >= 0;
+    return (r.batch + " " + scLabel(r.batch) + " " + (r.codes || []).join(" ")).toLowerCase().indexOf(q) >= 0;
   });
   if (!shown.length) {
     box.innerHTML = '<div class="pad hint">没有匹配的规则。</div>';
     return;
   }
-  let lastClient = "";
-  const bodyHTML = shown.map(row => {
-    const head = row.client !== lastClient
-      ? '<tr class="sc-group" data-scgroup><td colspan="7">' + esc(row.client) + "</td></tr>"
-      : "";
-    lastClient = row.client;
-    return head + scRowHTML(row);
-  }).join("");
-  // colgroup 把列宽钉死：七列全靠内容撑宽时，「时点」和「下一跳」两列宽度随
+  const bodyHTML = shown.map(scRowHTML).join("");
+  // colgroup 把列宽钉死：六列全靠内容撑宽时，「时点」和「下一跳」两列宽度随
   // 每行内容跳动，扫一列扫不到底。
   box.innerHTML = '<div class="tbl-wrap"><table class="acc sc">' +
-    '<colgroup><col style="width:20%"><col style="width:19%"><col style="width:220px">' +
+    '<colgroup><col style="width:26%"><col style="width:220px">' +
     '<col style="width:54px"><col style="width:88px"><col style="width:70px"><col style="width:132px"></colgroup>' +
     "<thead><tr>" +
-    "<th>平台</th><th>任务</th><th>时点 / 间隔</th><th>启用</th><th>下一跳</th><th>自定义</th>" +
+    "<th>任务</th><th>时点 / 间隔</th><th>启用</th><th>下一跳</th><th>自定义</th>" +
     "<th>操作</th></tr></thead><tbody>" + bodyHTML + "</tbody></table></div>";
   box.querySelectorAll(".scrow").forEach(el => {
     const key = scKey(el.dataset.client, el.dataset.batch);
     SC.rows[key] = Object.assign({}, shown.filter(r => scKey(r.client, r.batch) === key)[0], { el: el });
   });
   scUpdateBadges();
+  scUpdateDirty();
 }
 
 function scRenderRuns(runs) {
@@ -6229,14 +6397,13 @@ async function renderSchedule() {
     return;
   }
   const d = r.data || {};
-  SC.data = d; SC.dirty = {}; SC.removed = {};
+  SC.data = d;
   $("#scNote").textContent = d.wired ? (d.enabled ? "已启用" : "已停用") : "未接入";
   $("#scMaster").checked = !!d.enabled;
   $("#scMaster").disabled = !d.wired;
   $("#btnScSave").disabled = !d.wired;
   $("#scState").innerHTML = scStateHTML(d);
   $("#scCount").textContent = ((d.rows || []).length) + " 条规则";
-  scRenderDefaults(d);
   scRenderRows();
   scRenderRuns(d.runs || []);
 }
@@ -6245,7 +6412,7 @@ async function scSave() {
   const d = SC.data || {};
   if (!d.wired) { toast("本进程没有接入调度器", "err"); return; }
   const clients = {};
-  let bad = null;
+  let badKey = "";
   // 用编辑时记下的快照，而不是重新读 DOM：行可能因为搜索/过滤已被画掉，
   // 但它仍然算一次改动，不能默默丢掉。
   for (const key of Object.keys(SC.dirty)) {
@@ -6254,7 +6421,7 @@ async function scSave() {
       const every = parseSchedDuration(pend.every);
       const jitter = parseSchedDuration(pend.jitter);
       if (every === null || every <= 0 || jitter === null || jitter < 0) {
-        bad = SC.rows[key] ? SC.rows[key].el : null;
+        badKey = key;
         break;
       }
       if (!clients[pend.client]) clients[pend.client] = {};
@@ -6262,18 +6429,19 @@ async function scSave() {
       continue;
     }
     const hours = parseSchedHours(pend.hours);
-    if (hours === null) { bad = SC.rows[key] ? SC.rows[key].el : null; break; }
+    if (hours === null) { badKey = key; break; }
     if (!clients[pend.client]) clients[pend.client] = {};
     clients[pend.client][pend.batch] = { enabled: !!pend.enabled, hours: hours };
   }
-  if (bad) {
-    const recovery = bad.querySelector(".scEvery");
-    if (recovery) {
+  if (badKey) {
+    const pend = SC.dirty[badKey] || {};
+    const row = SC.rows[badKey];
+    if (pend.batch === "recovery") {
       toast("恢复探测间隔必须大于 0，随机值不能小于 0；可填 4h 或 240m", "err");
-      recovery.focus();
+      if (row) row.el.querySelector(".scEvery").focus();
     } else {
       toast("时点只能是 0-23 的整数，用逗号分隔（例如 9, 21）", "err");
-      bad.querySelector(".scHours").focus();
+      if (row) row.el.querySelector(".scHours").focus();
     }
     return;
   }
@@ -6285,47 +6453,6 @@ async function scSave() {
   const sch = {};
   const wantMaster = $("#scMaster").checked;
   if (wantMaster !== !!d.enabled) sch.enabled = wantMaster;
-  const recOn = $("#scDefRecoveryEnabled"), recEveryEl = $("#scDefRecoveryEvery"), recJitterEl = $("#scDefRecoveryJitter");
-  if (recOn && recEveryEl && recJitterEl) {
-    const every = parseSchedDuration(recEveryEl.value);
-    const jitter = parseSchedDuration(recJitterEl.value);
-    if (every === null || every <= 0 || jitter === null || jitter < 0) {
-      bad = recEveryEl;
-    } else {
-      if (recOn.checked !== !!d.recovery_enabled) sch.recovery_enabled = recOn.checked;
-      if (every !== (d.recovery_every_minutes || 0)) sch.recovery_every_minutes = every;
-      if (jitter !== (d.recovery_jitter_minutes || 0)) sch.recovery_jitter_minutes = jitter;
-    }
-  }
-  if (bad) {
-    toast("恢复探测间隔必须大于 0，随机值不能小于 0；可填 4h 或 240m", "err");
-    bad.focus();
-    return;
-  }
-  // 全局默认：每个 batch 一组开关 + 时点，加余额刷新。只提交与当前生效值不同的
-  // 项，免得一次只改平台覆盖的保存把整套默认值也写进文件。
-  SC_GROUPS.filter(name => name !== "recovery").forEach(name => {
-    const id = name.charAt(0).toUpperCase() + name.slice(1);
-    const onEl = $("#scDef" + id + "Enabled"), hrEl = $("#scDef" + id + "Hours");
-    if (!onEl || !hrEl) return;
-    const hours = parseSchedHours(hrEl.value);
-    if (hours === null) { bad = hrEl; return; }
-    const was = scShared(name);
-    if (onEl.checked !== !!was.enabled) sch[name + "_enabled"] = onEl.checked;
-    if (hours.join(",") !== (was.hours || []).join(",")) sch[name + "_hours"] = hours;
-  });
-  if (bad) {
-    toast("时点只能是 0-23 的整数，用逗号分隔（例如 9, 21）", "err");
-    bad.focus();
-    return;
-  }
-  const balOn = $("#scDefBalanceEnabled"), balMin = $("#scDefBalanceMinutes");
-  if (balOn && balMin) {
-    const mins = parseInt(balMin.value, 10);
-    const nextMin = Number.isFinite(mins) && mins > 0 ? mins : 0;
-    if (balOn.checked !== !!d.balance_refresh_enabled) sch.balance_refresh_enabled = balOn.checked;
-    if (nextMin !== (d.balance_refresh_minutes || 0)) sch.balance_refresh_minutes = nextMin;
-  }
   const changedClients = Object.keys(clients).filter(n => Object.keys(clients[n]).length > 0);
   if (changedClients.length) sch.clients = clients;
   if (!Object.keys(sch).length) { toast("没有改动"); return; }
@@ -6335,6 +6462,8 @@ async function scSave() {
   try {
     const r = await api("/panel/api/config", { method: "PATCH", body: { schedule: sch } });
     if (!r.ok) { toast("保存失败：" + r.err, "err"); return; }
+    // 只有服务端确认写入后才清空本地编辑；否则热加载失败时也不丢用户刚改的值。
+    SC.dirty = {}; SC.removed = {};
     const rel = await api("/panel/api/reload", { method: "POST" });
     if (!rel.ok) toast("已保存，但热加载失败：" + rel.err + "（重启后生效）", "err");
     else toast("已保存并立即生效");
@@ -6357,6 +6486,8 @@ function scFollowGlobal(tr) {
   SC.removed[key] = { client: tr.dataset.client, batch: tr.dataset.batch };
   delete SC.dirty[key];
   scUpdateBadges();
+  scRenderChips();
+  scUpdateDirty();
 }
 
 async function scRunNow(btn) {
@@ -6648,7 +6779,9 @@ function reattachQueueView() {
    同步等待会把 HTTP 连接拖死，所以启动后轮询。
 
    串行执行是刻意的：参考实现实测过并发连发会被判定作弊并整体回滚。      */
-const TB = { client: null, tasks: [], runs: [], timer: null, refreshing: false };
+// done 按客户端缓存「今天已经不用再点」的账号集合，用来给全部账号旁边那排账号
+// 标签上色；全部账号页和单账号页每次拿到任务状态都会更新它。
+const TB = { client: null, tasks: [], runs: [], timer: null, refreshing: false, done: {} };
 
 // 任务中心三个页签共享的选择状态：账号优先——看板取数、单条执行、以及从
 // 定时/批量页签跳过来时都读这里，避免“页面停在 A 账号、请求打到 B 账号”的错位。
@@ -6696,36 +6829,65 @@ function tbFetchedAt(ms) {
   try { return new Date(t).toLocaleTimeString("zh-CN", { hour12: false, hour: "2-digit", minute: "2-digit" }); }
   catch (e) { return ""; }
 }
-// 全部账号：一张按账号分组的矩阵。这里只读不写——要执行某一条得先点账号钻进去，
-// 因为单条执行必须带具体账号，否则 RunTask 会落到模块自己的默认账号上。
-function tbAccountMatrix(accounts) {
+// tbDoneIds 从 all=1 的账号矩阵里算出「这个账号今天不用再点了」的集合：没有任何
+// 可自动执行、又没锁住的待办就算完成——只剩人工项和未解锁项也算完成，这正是操作
+// 员要的「这个号没我事了」。读取失败、没有任务的账号不算，它们不是完成，是未知。
+function tbDoneIds(accounts) {
+  const out = {};
+  (accounts || []).forEach(g => {
+    if (!g || g.error || !g.account) return;
+    const tasks = g.tasks || [];
+    if (!tasks.length) return;
+    if (tasks.filter(t => t.auto && !t.claimed && !t.locked).length) return;
+    out[String(g.account)] = true;
+  });
+  return out;
+}
+// tbAccountChips 画「全部账号」旁边那排账号标签，做完的标绿——这是操作员扫一眼就
+// 知道还剩哪个号要处理的地方。当前选中的那个走主色（.on 的权重压过 .ok）。
+function tbAccountChips(accts) {
+  if (!accts || !accts.length) return "";
+  const done = TB.done[TB.client] || {};
+  let html = '<button class="chip' + (TASKCENTER.allAccounts ? " on" : "") + '" data-ta="">全部账号</button>';
+  html += accts.map(a => {
+    const id = String(a.id);
+    const on = !TASKCENTER.allAccounts && id === TASKCENTER.account;
+    const cls = "chip" + (on ? " on" : "") + (done[id] ? " ok" : "");
+    return '<button class="' + cls + '" data-ta="' + esc(a.id) + '" title="' + esc(id) + '">' +
+      esc(a.label || accountIdentity(a) || a.id) + "</button>";
+  }).join("");
+  return html;
+}
+// 全部账号：只回答「每个账号做完了没有」——一账号一行的表，逐条任务的细节留给点进
+// 账号后的那张表。以前把每个账号的每条任务都铺在这里，几十个号就是几百行。
+function tbAccountTable(accounts) {
   if (!accounts.length) return '<div class="pad hint">这个客户端没有可用的账号。</div>';
-  return '<div class="tb-matrix">' + accounts.map(g => {
-    const label = g.label || g.account || "默认账号";
+  const rows = accounts.map(g => {
     const tasks = g.tasks || [];
     const done = tasks.filter(t => t.claimed).length;
     const pending = tasks.filter(t => t.auto && !t.claimed && !t.locked).length;
     const allDone = pending === 0 && !g.error && tasks.length > 0;
-    const state = g.error
-      ? '<span class="chip err">读取失败</span>'
-      : '<span class="chip">' + done + "/" + tasks.length + " 已完成</span>";
+    let state;
+    if (g.error) state = '<span class="chip err">读取失败</span>';
+    else if (!tasks.length) state = '<span class="chip">无任务</span>';
+    else if (allDone) state = '<span class="chip ok">已完成</span>';
+    else state = '<span class="chip warn">' + pending + " 项待办</span>";
     const stamp = tbFetchedAt(g.fetched_at);
-    const cache = g.error ? "" : (g.cached ? '<span class="hint">缓存 ' + esc(stamp) + "</span>" : '<span class="hint">刚刷新 ' + esc(stamp) + "</span>");
-    let body;
-    if (g.error) body = '<div class="hint">' + esc(g.error) + "</div>";
-    else if (!tasks.length) body = '<div class="hint">这里没有任务。账号未就绪时属于正常。</div>';
-    else body = '<div class="chips">' + tasks.map(t => {
-      const cls = t.claimed ? " on" : (t.auto && !t.locked ? "" : " off");
-      const mark = t.claimed ? "已领取" : (t.locked ? "未解锁" : (t.auto ? "可执行" : "需人工"));
-      return '<span class="chip' + cls + '" title="' + esc(t.title || t.code) + '">' + esc(mark) + " " + esc(t.title || t.code) + "</span>";
-    }).join("") + "</div>";
-    return '<div class="tb-acct' + (allDone ? " done" : "") + '"><div class="tb-acct-h"><b>' + esc(label) + "</b> " + state +
-      (pending ? ' <span class="chip warn">' + pending + " 项待办</span>" : "") +
-      ' <span class="hint">' + esc(String(g.account || "")) + "</span>" +
-      cache +
-      (g.account ? ' <button class="xs" data-ta-open="' + esc(g.account) + '">查看并执行</button>' : "") +
-      "</div>" + body + "</div>";
-  }).join("") + "</div>";
+    const fresh = g.error ? "" : (g.cached ? "缓存 " + esc(stamp) : "刚刷新 " + esc(stamp));
+    const who = String(g.account || "");
+    return "<tr>" +
+      '<td class="acc-name"><div class="name">' + esc(g.label || who || "默认账号") + "</div>" +
+        '<div class="hint" title="' + esc(who) + '">' + esc(who || "-") + "</div></td>" +
+      "<td>" + state + "</td>" +
+      '<td class="acc-num">' + done + "/" + tasks.length + "</td>" +
+      "<td>" + fresh + (g.error ? ' <span class="hint">' + esc(g.error) + "</span>" : "") + "</td>" +
+      '<td class="acc-acts">' +
+        (g.account ? '<button class="xs" data-ta-open="' + esc(g.account) + '">查看并执行</button>' : '<span class="hint">-</span>') +
+      "</td></tr>";
+  }).join("");
+  return '<div class="tbl-wrap"><table class="acc"><thead><tr>' +
+    "<th>账号</th><th>状态</th><th>已完成</th><th>数据</th><th>操作</th>" +
+    "</tr></thead><tbody>" + rows + "</tbody></table></div>";
 }
 async function renderTaskBoard(force) {
   const list = tbClients();
@@ -6753,11 +6915,7 @@ async function renderTaskBoard(force) {
   else if (TASKCENTER.account && !accts.some(a => String(a.id) === TASKCENTER.account)) { TASKCENTER.account = ""; TASKCENTER.allAccounts = true; }
   else if (!TASKCENTER.allAccounts && !TASKCENTER.account) { TASKCENTER.allAccounts = true; }
   $("#tbAccountsBar").hidden = !accts.length;
-  $("#tbAccounts").innerHTML = accts.length
-    ? '<button class="chip' + (TASKCENTER.allAccounts ? " on" : "") + '" data-ta="">全部账号</button>' +
-      accts.map(a => '<button class="chip' + (!TASKCENTER.allAccounts && String(a.id) === TASKCENTER.account ? " on" : "") +
-        '" data-ta="' + esc(a.id) + '" title="' + esc(String(a.id)) + '">' + esc(a.label || accountIdentity(a) || a.id) + "</button>").join("")
-    : "";
+  $("#tbAccounts").innerHTML = tbAccountChips(accts);
 
   const params = [];
   if (TASKCENTER.allAccounts) params.push("all=1");
@@ -6767,22 +6925,34 @@ async function renderTaskBoard(force) {
   const r = await api(cbase(TB.client) + path);
   if (!r.ok) { $("#tbBody").innerHTML = '<div class="pad hint">' + esc(r.err || "读取任务失败") + "</div>"; return false; }
 
-  // 全部账号：一张按账号分组的矩阵（见 tbAccountMatrix）。不在这里给“执行”
-  // 按钮——单条执行必须带具体账号，否则 RunTask 会落到模块的默认账号上。
+  // 全部账号：一账号一行的表（见 tbAccountTable），账号标签上色见 tbAccountChips。
+  // 不在这里给“执行”按钮——单条执行必须带具体账号，否则会落到模块的默认账号上。
   if (TASKCENTER.allAccounts && Array.isArray(r.data.accounts)) {
     TB.runs = [];
     r.data.accounts.forEach(g => { (g.runs || []).forEach(x => { if (x.state === "running") TB.runs.push(x); }); });
+    // 记下哪些账号今天已经没事了，再把那排账号标签重新刷一遍颜色。
+    TB.done[TB.client] = tbDoneIds(r.data.accounts);
+    $("#tbAccounts").innerHTML = tbAccountChips(accts);
     const cachedCount = r.data.accounts.filter(g => g.cached).length;
     const scanNote = force ? " · 已刷新任务状态" : (cachedCount ? " · " + cachedCount + " 个使用缓存" : " · 已刷新任务状态");
     $("#tbNote").textContent = TB.client + " · 全部账号 · " + r.data.accounts.length + " 个账号" + scanNote +
       (TASKCENTER.batch ? " · 批次 " + TASKCENTER.batch : "");
-    $("#tbBody").innerHTML = tbAccountMatrix(r.data.accounts);
+    $("#tbBody").innerHTML = tbAccountTable(r.data.accounts);
     tbSchedule();
     return;
   }
 
   TB.tasks = r.data.tasks || [];
   TB.runs = r.data.runs || [];
+
+  // 单账号这张表刚读回来，顺手更新那颗账号标签的颜色：执行完一个任务不用等回全部账号。
+  if (TASKCENTER.account) {
+    const id = String(TASKCENTER.account);
+    const cur = TB.done[TB.client] || {};
+    if (tbDoneIds([{ account: id, tasks: TB.tasks }])[id]) cur[id] = true; else delete cur[id];
+    TB.done[TB.client] = cur;
+    $("#tbAccounts").innerHTML = tbAccountChips(accts);
+  }
 
   const auto = TB.tasks.filter(t => t.auto).length;
   const claim = TB.tasks.filter(t => t.claimable && !t.claimed).length;
@@ -9151,11 +9321,17 @@ $("#tbBody").addEventListener("click", e => {
 });
 // 定时任务：规则表与运行记录。搜索/过滤只重画规则表，运行记录单独重拉。
 $("#btnScSave").addEventListener("click", scSave);
+$("#scChips").addEventListener("click", e => {
+  const tab = e.target.closest("button[data-scc]");
+  if (!tab) return;
+  SC.client = tab.dataset.scc || "";
+  scRenderRows();
+});
 $("#scSearch").addEventListener("input", scRenderRows);
 $("#scOnlyOwn").addEventListener("change", scRenderRows);
 // 委托：规则行是运行时拼出来的，所以监听容器而不是每行。
 $("#scBody").addEventListener("input", e => {
-  if (!e.target.classList.contains("scHours")) return;
+  if (!e.target.classList.contains("scHours") && !e.target.classList.contains("scEvery") && !e.target.classList.contains("scJitter")) return;
   const tr = e.target.closest("tr.scrow");
   if (tr) scMarkDirty(tr);
 });
@@ -9399,6 +9575,27 @@ $("#pfBody").addEventListener("click", ev => {
     t.setAttribute("aria-expanded", open ? "true" : "false");
     return;
   }
+  const schedDel = ev.target.closest(".pfSchedDel");
+  if (schedDel) {
+    schedDel.closest(".pfSchedRow").remove();
+    pfSyncPrioritySchedule();
+    return;
+  }
+  const schedToggle = ev.target.closest(".pfSchedToggle");
+  if (schedToggle) {
+    const box = plat.querySelector(".pfSched");
+    box.hidden = !box.hidden;
+    schedToggle.setAttribute("aria-expanded", box.hidden ? "false" : "true");
+    pfSyncPrioritySchedule();
+    return;
+  }
+  const schedAdd = ev.target.closest(".pfSchedAdd");
+  if (schedAdd) {
+    const rows = plat.querySelector(".pfSchedRows");
+    rows.insertAdjacentHTML("beforeend", pfSchedRowHTML({}));
+    pfSyncPrioritySchedule();
+    return;
+  }
   const all = ev.target.closest(".pfAll"), none = ev.target.closest(".pfNone");
   if (!all && !none) return;
   plat.querySelectorAll(".pfm").forEach(row => {
@@ -9415,6 +9612,11 @@ $("#pfBody").addEventListener("change", ev => {
   box.closest(".pfm").classList.toggle("off", !box.checked);
   pfCount(box.closest(".pfplat"));
   pfApply();
+});
+// 分时规则的时间/优先级变化即时反映「当前生效」高亮；保存仍走「保存并生效」。
+$("#pfBody").addEventListener("input", ev => {
+  if (!ev.target.closest(".pfSchedRow")) return;
+  pfSyncPrioritySchedule();
 });
 $("#pfBody").addEventListener("input", ev => {
   if (ev.target && DUR_FIELDS.indexOf(ev.target.id) >= 0) markDurationFields();
@@ -9813,6 +10015,12 @@ const TASKS_SUBTABS = setupSubtabs("taskscenter", name => {
   if (name === "schedule") renderSchedule();
   else if (name === "batch") { renderQC(); reattachQueueView(); }
   else if (name === "board") renderTaskBoard();
+});
+window.addEventListener("beforeunload", e => {
+  if (VIEW === "taskscenter" && TASKS_SUBTABS && TASKS_SUBTABS.active === "schedule" && scHasDirty()) {
+    e.preventDefault();
+    e.returnValue = "";
+  }
 });
 
 /* ── 启动 ─────────────────────────────────────────────────────────────── */

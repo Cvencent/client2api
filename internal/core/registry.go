@@ -93,6 +93,11 @@ type PlatformConfig struct {
 	// numbers win.  Equal priorities fall back to the platform name so that
 	// the same request cannot flip between processes.
 	Priority int
+	// PrioritySchedule overrides Priority during fixed local-time windows.
+	// Each window uses Beijing time (UTC+8), is half-open [start, end), and
+	// may cross midnight.  The first matching window wins.  Outside every
+	// window the base Priority remains in force.
+	PrioritySchedule []PriorityWindow
 	// DisabledModels lists upstream model ids this platform must not be
 	// given.  Matching is case-insensitive and surrounding space is ignored,
 	// because the ids are typed by hand.
@@ -134,12 +139,22 @@ type PlatformConfig struct {
 // platformPolicy is the normalised form stored in the registry.
 type platformPolicy struct {
 	priority              int
+	prioritySchedule      []PriorityWindow
 	disabled              map[string]struct{}
 	maxInFlight           int
 	maxInFlightPerAccount int
 	reserveCredits        int
 	accountPriorities     map[string]int
 	accountNotes          map[string]string
+}
+
+// PriorityWindow is one local-time override for a platform's routing
+// priority.  Minutes are counted from local midnight; EndMinute is
+// exclusive.  StartMinute > EndMinute means the window crosses midnight.
+type PriorityWindow struct {
+	StartMinute int
+	EndMinute   int
+	Priority    int
 }
 
 // normalizeModelID is the key form for blacklist matching.
@@ -165,6 +180,9 @@ func (r *Registry) SetPlatformConfigs(cfgs map[string]PlatformConfig) {
 	next := make(map[string]platformPolicy, len(cfgs))
 	for name, cfg := range cfgs {
 		pol := platformPolicy{priority: cfg.Priority, reserveCredits: cfg.ReserveCredits}
+		if len(cfg.PrioritySchedule) > 0 {
+			pol.prioritySchedule = append([]PriorityWindow(nil), cfg.PrioritySchedule...)
+		}
 		if len(cfg.AccountPriorities) > 0 {
 			pol.accountPriorities = make(map[string]int, len(cfg.AccountPriorities))
 			for id, priority := range cfg.AccountPriorities {
@@ -286,11 +304,40 @@ func (r *Registry) ModelAllowed(platform, model string) bool {
 	return !disabled
 }
 
-// priority returns a platform's configured routing priority, defaulting to 0.
+// platformPriorityCST keeps time-window matching independent of the host's
+// local timezone: operators write the rules in Beijing time.
+var platformPriorityCST = time.FixedZone("CST", 8*60*60)
+
+// priority returns the platform's effective routing priority right now.
 func (r *Registry) priority(name string) int {
+	return r.priorityAt(name, time.Now())
+}
+
+// priorityAt is priority with an injectable clock for tests.  A matching
+// schedule window overrides the base priority; otherwise the base value is
+// returned unchanged.
+func (r *Registry) priorityAt(name string, now time.Time) int {
 	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.platforms[name].priority
+	pol := r.platforms[name]
+	r.mu.RUnlock()
+	local := now.In(platformPriorityCST)
+	minute := local.Hour()*60 + local.Minute()
+	for _, w := range pol.prioritySchedule {
+		if priorityWindowContains(w, minute) {
+			return w.Priority
+		}
+	}
+	return pol.priority
+}
+
+// priorityWindowContains reports whether minute falls inside the half-open
+// local-time window.  A start greater than the end means the window crosses
+// midnight.
+func priorityWindowContains(w PriorityWindow, minute int) bool {
+	if w.StartMinute < w.EndMinute {
+		return minute >= w.StartMinute && minute < w.EndMinute
+	}
+	return minute >= w.StartMinute || minute < w.EndMinute
 }
 
 // SetPlatformHealth replaces the health tracker.  A nil tracker restores the

@@ -257,12 +257,26 @@ func (c config) dupRetries() int {
 	return defaultDupRetries
 }
 
+// unverifiedProbeState records when the last real Auto probe ran for one
+// contradictory balance, so shared background sweeps do not re-probe the same
+// account on every pass.
+type unverifiedProbeState struct {
+	at time.Time
+}
+
 // Client implements core.Client.
 type Client struct {
 	deps core.Deps
 	cfg  config
 	up   *Upstream
 	pool *Pool
+
+	// unverifiedProbes remembers the last real Auto probe for a balance the
+	// vendor described with contradictory numbers.  A zero reading is not
+	// trusted as empty, but it must not turn every background balance sweep
+	// into another chat request either.
+	unverifiedMu     sync.Mutex
+	unverifiedProbes map[string]unverifiedProbeState
 
 	// affinity pins a conversation to the account that already warmed the
 	// vendor's prompt cache for it.  See affinity.go: it is created by New, and

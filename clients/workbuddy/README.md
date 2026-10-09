@@ -291,11 +291,14 @@ vendor redesigned the page" without a screenshot.
 
 `platforms.workbuddy.reserve_credits` (see the root README) parks an account
 whose last *known* balance is at or below the threshold.  Only a reading the
-vendor's own reply corroborates can park it: the 体验版 package keeps a stale
-lifetime `CapacityRemain` after its monthly cycle is spent, and the reply's own
-`TotalDosage` copies that figure, so a raw zero beside a contradicting view is
-not proof that the account is empty -- it is left in rotation instead, and the
-next real refusal parks the account with its own deadline.
+vendor's own reply corroborates can park it.  When the reply contradicts
+itself -- the 体验版 package keeps a stale lifetime `CapacityRemain` after
+its monthly cycle is spent -- a positive remainder is still recorded as
+usable evidence, while a contradictory zero is resolved automatically with
+the same real Auto model call as the panel's Test button.  Success marks the
+account usable; failure applies the normal cooling, credit or risk verdict.
+The decision is reused for six hours per account so a background balance
+sweep does not turn every pass into another model request.
 
 ## Request path
 

@@ -258,5 +258,5 @@ func (c *Client) afterBundleImport(ctx context.Context, a *Auth) {
 	if err != nil {
 		return
 	}
-	c.recordCredit(a, rep)
+	c.recordCredit(ctx, a, rep)
 }

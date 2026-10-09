@@ -83,14 +83,17 @@ func (c *Client) AccountBalance(ctx context.Context, id string, soon time.Durati
 	// credit used to stay parked until an operator pressed Revive by hand, even
 	// after the vendor granted more.  A positive balance is the evidence that
 	// the park no longer applies, so recording it lifts the park.
-	c.recordCredit(a, rep)
+	resolved := c.recordCredit(ctx, a, rep)
 	return core.Balance{
 		Credits:           rep.Remain,
 		Total:             rep.Total,
 		Expiring:          rep.Expiring,
 		EarliestAt:        rep.EarliestAt,
 		EarliestRemaining: rep.EarliestRemaining,
-		Unverified:        !rep.Corroborated,
+		// A contradictory reading is shown as pending only until the pool has
+		// resolved it.  A positive balance is direct evidence of usability; a
+		// zero balance is no longer pending once the real Auto probe has run.
+		Unverified: !rep.Corroborated && !resolved,
 		// This vendor sells 积分, and both the CN and the intl realms bill in
 		// them, so the label is not realm-dependent.
 		Unit: balanceUnit,
@@ -161,20 +164,69 @@ func (c *Client) AccountVouchers(ctx context.Context, id string) ([]core.Voucher
 	return out, nil
 }
 
-// recordCredit feeds one decoded wallet to the pool.  It is the single hook
-// every balance read goes through -- the panel's account view, the scheduler's
-// refresh pass, a login and a credential import all arrive here -- so no future
-// caller can forget it.
+// unverifiedProbeInterval keeps a contradictory zero from turning every
+// background balance sweep into another paid Auto call.  The recovery task
+// already jitters its own cadence; this is the per-account floor.
+const unverifiedProbeInterval = 6 * time.Hour
+
+// recordCredit feeds one decoded wallet to the pool and reports whether that
+// wallet's usability is now decided.
 //
-// A reading the vendor's own reply contradicts is deliberately not recorded.
-// Its conservative number is what the panel shows, but treating it as a known
-// balance is what parks a working account: the meter said zero while the
-// chat path happily served the turn.  The pool is only told that the park the
-// guard itself created has lost its evidence.
-func (c *Client) recordCredit(a *Auth, rep CreditReport) {
-	if rep.Corroborated {
-		c.pool.SetCreditsDetailed(a, rep.Remain, rep.Total, rep.Expiring, rep.EarliestAt, rep.EarliestRemaining)
+// A corroborated reading is always recorded.  A contradictory reading with a
+// positive remainder is still evidence that the account can serve traffic, so
+// it is recorded instead of being thrown away.  Only a contradictory zero is
+// left unresolved, and that is resolved by the same real Auto call the panel's
+// Test button uses.
+func (c *Client) recordCredit(ctx context.Context, a *Auth, rep CreditReport) bool {
+	if a == nil {
+		return false
+	}
+	if rep.Corroborated || rep.Remain > 0 {
+		if c.pool != nil {
+			c.pool.SetCreditsDetailed(a, rep.Remain, rep.Total, rep.Expiring, rep.EarliestAt, rep.EarliestRemaining)
+		}
+		c.clearUnverifiedProbe(a.ID())
+		return true
+	}
+	return c.resolveUnverifiedZero(ctx, a)
+}
+
+func (c *Client) resolveUnverifiedZero(ctx context.Context, a *Auth) bool {
+	if c == nil || a == nil {
+		return false
+	}
+	id := a.ID()
+	now := time.Now()
+	c.unverifiedMu.Lock()
+	if st, ok := c.unverifiedProbes[id]; ok && now.Sub(st.at) < unverifiedProbeInterval {
+		c.unverifiedMu.Unlock()
+		return true
+	}
+	c.unverifiedMu.Unlock()
+
+	err, _, _ := c.runAutoProbe(ctx, a)
+	if c.pool != nil {
+		if err != nil {
+			c.pool.MarkFailure(a, err)
+		} else {
+			c.pool.MarkSuccess(a)
+		}
+	}
+
+	c.unverifiedMu.Lock()
+	if c.unverifiedProbes == nil {
+		c.unverifiedProbes = make(map[string]unverifiedProbeState, 1)
+	}
+	c.unverifiedProbes[id] = unverifiedProbeState{at: time.Now()}
+	c.unverifiedMu.Unlock()
+	return true
+}
+
+func (c *Client) clearUnverifiedProbe(id string) {
+	if c == nil {
 		return
 	}
-	c.pool.DiscardUncorroboratedCredit(a)
+	c.unverifiedMu.Lock()
+	delete(c.unverifiedProbes, id)
+	c.unverifiedMu.Unlock()
 }
