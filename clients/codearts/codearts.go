@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"client2api/internal/core"
@@ -49,6 +50,15 @@ type Client struct {
 
 	loginMu sync.Mutex
 	logins  map[string]*panelLogin
+
+	// affinity pins a conversation to the credential that first served it.
+	// See affinity.go.
+	affinity *core.Affinity
+
+	// inFlight is the number of chat streams currently open.  The success
+	// path feeds it through core.TrackStream so PoolStats reports real
+	// concurrency rather than a second bookkeeping.
+	inFlight atomic.Int64
 }
 
 // newClient is the core.Factory for this module.
@@ -69,6 +79,8 @@ func newClient(deps core.Deps) (core.Client, error) {
 		pool:   newPool(),
 		logins: make(map[string]*panelLogin),
 	}
+	c.affinity = core.NewAffinity(0)
+	c.affinity.StartGC()
 	c.setPaths()
 	c.pool.onSave = func(err error) {
 		if err != nil {

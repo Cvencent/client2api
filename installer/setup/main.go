@@ -39,7 +39,7 @@ import (
 // version is the packaging default; build.ps1 injects the authoritative value
 // from cmd/client2api/main.go with -X main.version=... .  installer's guard
 // test fails if this literal ever drifts from the source of truth.
-var version = "0.1.28"
+var version = "0.1.29"
 
 const (
 	appName      = "client2api"
@@ -90,6 +90,11 @@ func main() {
 		}
 		os.Exit(runWizard())
 	}
+
+	// This image is GUI-subsystem so the wizard never flashes a console, which
+	// means a scripted invocation has no console of its own.  Attach to the
+	// launcher's when there is one so -silent / -dir keep their progress output.
+	attachParentConsole()
 
 	if opt.uninstall || strings.EqualFold(filepath.Base(selfPath()), uninstallExe) {
 		if err := uninstall(opt); err != nil {
@@ -229,4 +234,25 @@ func enableUTF8Console() error {
 func waitForEnter() {
 	fmt.Print("按回车键退出...")
 	_, _ = fmt.Scanln()
+}
+
+// attachParentConsole reconnects a GUI-subsystem image to the console that
+// launched it, so console-mode flags keep working after the installer was
+// switched to the windowsgui subsystem.  It is a no-op when there is no
+// parent console (Explorer, the normal double-click path) and never causes a
+// window to appear.
+func attachParentConsole() {
+	kernel32 := windows.NewLazySystemDLL("kernel32.dll")
+	attach := kernel32.NewProc("AttachConsole")
+	if r, _, _ := attach.Call(^uintptr(0)); r == 0 {
+		return // no parent console, or it was already attached
+	}
+	// Go captured the standard handles before main(), and a GUI image starts
+	// with them null; reopen them onto the console we just attached to.
+	if f, err := os.OpenFile("CONOUT$", os.O_WRONLY, 0); err == nil {
+		os.Stdout = f
+	}
+	if f, err := os.OpenFile("CONOUT$", os.O_WRONLY, 0); err == nil {
+		os.Stderr = f
+	}
 }

@@ -368,7 +368,8 @@ refuses to replay it on another account (it would fail identically everywhere).
 | `core.CaptchaProvider` | **no** | the SMS tab loads the vendor's Aliyun slider in the browser; the module never solves a captcha server-side |
 | `core.HintProvider` | **no** | nothing to hint at |
 
-`TestAccount` makes one real, read-only call to `/api/web/auth/v1/user_info`.
+`TestAccount` sends one minimum-size real chat completion through the account under
+test, so a token that opens the gateway but cannot answer is reported as failed.
 A refusal is reported as a failed test result, not as an error.
 
 ---

@@ -185,18 +185,20 @@ func TestCapabilitiesMatchImplementedInterfaces(t *testing.T) {
 	if !caps.Manage || !caps.Import || !caps.Refresh || !caps.Balance {
 		t.Fatalf("capabilities = %+v, want manage/import/refresh/balance", caps)
 	}
+	if !caps.Login {
+		t.Fatalf("capabilities = %+v, want the PKCE login surface", caps)
+	}
 	if len(caps.Fields) == 0 {
 		t.Fatal("AccountFields returned nothing, so the panel hides the add form")
 	}
 	if caps.Fields[0].Key != "api_key" || !caps.Fields[0].Required {
 		t.Fatalf("first field = %+v, want a required api_key", caps.Fields[0])
 	}
-	if !caps.Login {
-		t.Fatalf("capabilities = %+v, want the PKCE login surface", caps)
+	if !caps.Conversations || !caps.Live {
+		t.Fatalf("capabilities = %+v, want conversation stickiness and live reload", caps)
 	}
 	if caps.Checkin || caps.Tasks || caps.Bundle || caps.Vouchers ||
-		caps.Packages || caps.Degrade || caps.Revive || caps.Conversations ||
-		caps.Captcha || caps.Batches {
+		caps.Packages || caps.Degrade || caps.Revive || caps.Captcha || caps.Batches {
 		t.Fatalf("the module advertises a surface it does not implement: %+v", caps)
 	}
 }

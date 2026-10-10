@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os/exec"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"client2api/internal/core"
@@ -51,6 +52,11 @@ type Client struct {
 	// A field rather than a direct call so a test can substitute one without
 	// launching Edge.
 	mintBrowser func(context.Context, regionInfo) (string, error)
+
+	// inFlight is the number of chat streams currently open.  The success
+	// path feeds it through core.TrackStream so PoolStats reports real
+	// concurrency rather than a second bookkeeping.
+	inFlight atomic.Int64
 }
 
 // New builds the module.  It never returns an error for a bad config: a
@@ -218,7 +224,8 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 
 		stream, err := c.attempt(ctx, req, acct, model)
 		if err == nil {
-			return stream, nil
+			c.inFlight.Add(1)
+			return core.TrackStream(stream, func() { c.inFlight.Add(-1) }), nil
 		}
 		lastErr = err
 

@@ -1,5 +1,6 @@
 {
   "openapi_base": "https://openapi.qoder.com.cn",
+  "gateway_base": "https://gateway.qoder.com.cn",
   "auth_base": "https://qoder.cn",
   "auth_client_id": "732aef47-9cf2-46a2-95fe-4cebb5d0d1fa",
   "client_type": 10,
@@ -8,8 +9,24 @@
 
   "request_timeout": "30s",
   "probe_timeout": "20s",
+  "chat_timeout": "10m",
+  "models_ttl": "30m",
+  "models_timeout": "30s",
+  "chat_model": "auto",
   "cooldown": "60s",
   "auth_cooldown": "30m",
+
+  "sms_token": "",
+  "sms_keyword": "Qoder",
+  "sms_base": "https://api.eomsg.com/zc/data.php",
+  "sms_provinces": [],
+  "sms_card_type": "全部",
+  "browser_path": "",
+  "browser_headless": true,
+  "auto_login_timeout_seconds": 300,
+  "sms_polls": 12,
+  "sms_interval_seconds": 5,
+  "dup_retries": 6,
 
   "models": ["qmodel_38max", "qfmodel"],
 

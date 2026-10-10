@@ -15,10 +15,10 @@ import (
 // upstream.go is the HTTP layer: one request builder for the OpenAPI host the
 // desktop client uses, plus the four routes this module needs.
 //
-// Everything here talks to https://openapi.qoder.com.cn.  The vendor's
-// inference host (gateway.qoder.com.cn) is deliberately not contacted: it
-// requires a per-request signature minted by the desktop client's native
-// security SDK, which is not something a Go module can reproduce (see README).
+// Everything here talks to https://openapi.qoder.com.cn, which takes the plain
+// device bearer token.  The vendor's inference host (gateway.qoder.com.cn) is a
+// separate layer with its own signing (see gateway.go and cosy.go); this file
+// never touches it.
 
 // maxResponseBytes bounds a non-streaming response body.
 const maxResponseBytes = 4 << 20
@@ -145,13 +145,17 @@ type quotaUsage struct {
 // campaign is one entry of the campaigns list.  Only the fields this module
 // acts on are modelled; the placements and copy are ignored.
 type campaign struct {
-	CampaignID  string `json:"campaignId"`
-	CampaignKey string `json:"campaignKey"`
-	ActionType  string `json:"actionType"`
-	StartAt     int64  `json:"startAt"`
-	EndAt       int64  `json:"endAt"`
-	ClaimStatus string `json:"claimStatus"`
-	Benefit     struct {
+	Title        string `json:"title"`
+	Name         string `json:"name"`
+	CampaignName string `json:"campaignName"`
+	Description  string `json:"description"`
+	CampaignID   string `json:"campaignId"`
+	CampaignKey  string `json:"campaignKey"`
+	ActionType   string `json:"actionType"`
+	StartAt      int64  `json:"startAt"`
+	EndAt        int64  `json:"endAt"`
+	ClaimStatus  string `json:"claimStatus"`
+	Benefit      struct {
 		Kind   string  `json:"kind"`
 		Amount float64 `json:"amount"`
 	} `json:"benefit"`

@@ -57,3 +57,64 @@ func (c *Client) AccountBalance(ctx context.Context, id string, soon time.Durati
 		Unit:    unit,
 	}, nil
 }
+
+// AccountPackages implements core.PackageProvider.  Qoder reports the credit
+// ledger as two pools, so those two pools are exactly the two tranches the
+// panel shows.  No tranche is invented when the vendor reports a zero pool:
+// a zero row still carries the vendor's own total, which is useful when the
+// subscription has been fully spent.
+func (c *Client) AccountPackages(ctx context.Context, id string) (core.PackageReport, error) {
+	acc, ok := c.store.lookup(id)
+	if !ok {
+		return core.PackageReport{}, fmt.Errorf("qoder: no account %q", id)
+	}
+
+	usage, err := c.up.quotaUsage(ctx, acc.Token)
+	if err != nil {
+		if !callerGone(err) {
+			c.penalise(id, err, time.Now().UTC())
+		}
+		return core.PackageReport{}, err
+	}
+	c.store.clearPenalties(id)
+
+	user := creditPackage("订阅额度", usage.UserQuota)
+	addon := creditPackage("活动加赠", usage.AddOnQuota)
+	if expiry := epochMillis(usage.ExpiresAt); !expiry.IsZero() {
+		user.EndTime = expiry.UTC().Format(time.RFC3339)
+	}
+
+	return core.PackageReport{
+		Remain:   user.Remain + addon.Remain,
+		Size:     user.Size + addon.Size,
+		Packages: []core.CreditPackage{user, addon},
+	}, nil
+}
+
+// creditPackage converts one vendor pool into a panel tranche, keeping the
+// vendor's own numbers.  A negative remainder is clamped to zero; that is a
+// display guard, not a rewrite of the vendor's total.
+func creditPackage(name string, b quotaBucket) core.CreditPackage {
+	remain := int64(math.Round(b.Remaining))
+	if remain < 0 {
+		remain = 0
+	}
+	size := int64(math.Round(b.Total))
+	used := int64(math.Round(b.Used))
+	if used < 0 {
+		used = 0
+	}
+	if size < remain {
+		size = remain
+	}
+	return core.CreditPackage{Name: name, Remain: remain, Used: used, Size: size}
+}
+
+// epochMillis turns a vendor millisecond timestamp into a Time, treating an
+// absent or nonsensical value as "no deadline".
+func epochMillis(ms int64) time.Time {
+	if ms <= 0 {
+		return time.Time{}
+	}
+	return time.UnixMilli(ms)
+}

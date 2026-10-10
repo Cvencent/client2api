@@ -68,7 +68,7 @@ func TestExplicitBalanceReadIgnoresTheQuietWindow(t *testing.T) {
 }
 
 func TestSuccessfulAccountTestClearsEveryPenalty(t *testing.T) {
-	c := newTestClient(t, "{}", alwaysJSON(200, okEnvelope("null")))
+	c := newTestClient(t, "{}", alwaysSSE("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\ndata: [DONE]\n\n"))
 	seedAccount(t, c, "loomy-1", testToken, 0)
 	c.store.penalise("loomy-1", &apiError{Status: 500, Message: "boom"}, time.Now().UTC(), time.Minute)
 

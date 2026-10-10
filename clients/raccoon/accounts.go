@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -128,7 +129,9 @@ func (c *Client) ReviveAccount(ctx context.Context, id string) error {
 }
 
 // TestAccount makes ONE real, read-only call to prove the credential works.
-// A refusal is a RESULT, not an error.
+// TestAccount sends ONE minimum-size real completion to prove the credential
+// works, which is stronger than the old user-info read: it also proves the
+// account can actually answer.  A refusal is a RESULT, not an error.
 func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, error) {
 	e := c.pool.find(id)
 	if e == nil {
@@ -137,25 +140,84 @@ func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, e
 	ctx, cancel := withTimeout(ctx, probeTimeout)
 	defer cancel()
 	start := time.Now()
-	info, err := c.fetchUserInfo(ctx, e.acct.cred())
+	model := c.probeModelID()
+	reply, err := c.probeChat(ctx, e, model)
 	elapsed := time.Since(start).Milliseconds()
-	res := core.TestResult{AccountID: id, ElapsedMS: elapsed}
+	res := core.TestResult{AccountID: id, Model: model, ElapsedMS: elapsed}
 	if err != nil {
 		res.Error = core.Redact(err.Error())
 		c.pool.markFailure(e, classifyErr(err), err.Error())
 		return res, nil
 	}
 	res.OK = true
-	res.Model = "auth/user_info"
-	if info.Name != "" {
-		res.Reply = info.Name
-	} else if info.ID != "" {
-		res.Reply = "user " + info.ID
-	} else {
-		res.Reply = "credential accepted"
-	}
+	res.Reply = reply
 	c.pool.markUsed(e)
 	return res, nil
+}
+
+// probeModelID names the first catalogue model, which is the cheapest probe
+// target the platform exposes.
+func (c *Client) probeModelID() string {
+	ids := c.modelIDs()
+	if len(ids) == 0 {
+		return ""
+	}
+	return ids[0]
+}
+
+// probeChat sends one minimum-size real completion through the given account
+// and returns the first text it produced.
+//
+// A user-info read proves the token is accepted; only a completion proves the
+// account can actually answer, which is what the panel's 测试 button asks.
+// The account is pinned through chatWith so the probe never rotates onto a
+// different credential than the one under test.
+func (c *Client) probeChat(ctx context.Context, e *entry, model string) (string, error) {
+	if strings.TrimSpace(model) == "" {
+		return "", fmt.Errorf("raccoon: no model is available to probe with")
+	}
+	maxTokens := 16
+	req := &core.ChatRequest{
+		Model:     model,
+		Messages:  []core.Message{{Role: "user", Content: "ping"}},
+		MaxTokens: &maxTokens,
+	}
+	stream, err := c.chatWith(ctx, nil, e, req, mapModel(model))
+	if err != nil {
+		return "", err
+	}
+	defer stream.Close()
+
+	var reply strings.Builder
+	for {
+		event, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			if reply.Len() > 0 {
+				return reply.String(), nil
+			}
+			return "", err
+		}
+		switch event.Type {
+		case core.EventDelta:
+			reply.WriteString(event.Delta)
+		case core.EventError:
+			if event.Err != nil {
+				if reply.Len() > 0 {
+					return reply.String(), nil
+				}
+				return "", event.Err
+			}
+		case core.EventDone:
+			// keep draining until the stream really ends
+		}
+	}
+	if reply.Len() == 0 {
+		return "", fmt.Errorf("raccoon: %s answered without any text", model)
+	}
+	return reply.String(), nil
 }
 
 // RefreshAccount renews one account (or every refreshable account when id is

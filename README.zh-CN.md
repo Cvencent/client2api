@@ -10,7 +10,7 @@
 | `trae/…` | Trae | TRAE SOLO / Trae CN |
 | `zcode/…` | ZCode | Z.AI coding plan（上游为 Anthropic Messages） |
 | `kimi/…` | Kimi | Kimi Code CLI |
-| `qoder/…` | Qoder CN | Qoder CN 浏览器/桌面账号、积分与签到（不提供对话） |
+| `qoder/…` | Qoder CN | Qoder CN 浏览器/桌面账号、积分、签到与对话 |
 | `qwenwork/…` | QwenWork | 千问办公 / QoderWork CN 桌面端 |
 | `tabbit/…` | Tabbit | Tabbit 浏览器（通过本地 sidecar） |
 | `minimaxcode/…` | MiniMax Code | MiniMax Code 桌面端（上游为 Anthropic Messages） |
@@ -29,10 +29,18 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-当前版本：**0.1.28**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：**0.1.29**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
 
-### 近期重点（0.1.25 - 0.1.28）
+### 近期重点（0.1.26 - 0.1.29）
 
+* **面板统一成一套精致工作台视觉**：11 个页面共用近似 Apple 的材质、亮暗语义色、
+  页面和面板过渡、统一控件状态和响应式布局，并支持减少动画模式。
+* **更多平台能看到真实健康状态**：codearts、openai-compat、tabbit、lobsterai、opencode
+  已补上池健康和在途统计；会话粘性会让多轮对话优先留在首次成功服务的账号上。
+* **Qoder CN 补齐完整对话能力**：签名模型目录、流式对话、套餐明细、活动任务、接码自动登录、
+  健康状态、池统计和会话粘性都已接通；可对话平台的“测试”会发送一次最小真实请求。
+* **Windows 安装体验更安静、更稳定**：安装器不再闪现控制台窗口，升级会记住开机启动选择，
+  并继续保留现有配置、账号池、用量和任务数据。
 * **账号池更适合大批量账号**：默认分页，支持 20 / 50 / 100 / 200 条；可按状态筛选，
   账号、状态、模型、优先级、余额、成功/失败、在途、用量、最近成功、到期等列可排序；
   多通道账号分组不会在分页和排序时被拆散。
@@ -51,6 +59,8 @@
   账号列优先显示操作员备注或手机号，不再只显示 `ZCode plan JWT` 这类凭据类型。
 * **平台能力持续补齐**：Qoder CN、QwenWork 积分、Tabbit 每日 3% 签到、
   Raccoon 每日 300 积分，以及 Loomy 首次登录成长任务，都对应到真实模块能力，不再是面板上的空按钮。
+* **Qoder CN 支持真实对话**：模型目录与对话流直连 `gateway.qoder.com.cn`（模块自带 COSY 签名），
+  账号「测试」与其它有聊天能力的平台一致，都发送一次最小真实请求才算通过。
 * **面板操作统一**：顶栏刷新按钮在 11 个页面都可见，并按当前页面刷新；对话测试和
   运行日志也补上了刷新。模型上下文长度和最大输出可在“模型与档位”里查看、修改和恢复默认。
 
@@ -420,7 +430,7 @@ coding-plan API key 行不会显示领取按钮。领取成功后，之前因额
 | trae | 是 | 是 | 是，本机 loopback 回调 | 是，仅国内 `daily-checkin` |
 | zcode | 是 | 是 | 是，设备轮询 | 是，支持浏览器验证码 |
 | kimi | 是 | 是 | 是，RFC 8628 设备授权 | 否 |
-| qoder | 是 | 是 | 是，浏览器设备授权 + PKCE | 是，每日 `CLAIM_BENEFIT` |
+| qoder | 是 | 是 | 是，浏览器设备授权 + PKCE；并支持通过阿里云 SSO 一键接码自动登录（`core.AutoLoginProvider` + `core.SMSProvider`） | 是，每日 `CLAIM_BENEFIT`，并提供活动任务板、套餐明细、健康状态和模型输出上限 |
 | qwenwork | 是 | 否 | 是，PKCE 设备流 | 是，Sash 每日签到 |
 | tabbit | 是 | 是 | 是，交给 Tabbit 浏览器 | 是，每日 `sign-in`（`desktop_pet` 场景，通常每日 3% 额度） |
 | minimaxcode | 是 | 是 | 是，RFC 8628 设备授权 | 否 |

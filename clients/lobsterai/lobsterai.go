@@ -82,6 +82,10 @@ type Client struct {
 	loginMu sync.Mutex
 	logins  map[string]*loginSession
 
+	// affinity pins a conversation to the account that first served it. See
+	// affinity.go.
+	affinity *core.Affinity
+
 	errMu   sync.Mutex
 	lastErr string
 }
@@ -98,6 +102,8 @@ func New(deps core.Deps) (core.Client, error) {
 		pool:   newPool(),
 		logins: map[string]*loginSession{},
 	}
+	c.affinity = core.NewAffinity(0)
+	c.affinity.StartGC()
 	cfg, err := parseConfig(deps.Config)
 	if err != nil {
 		c.cfgErr = err
@@ -269,7 +275,7 @@ func (c *Client) openChat(ctx context.Context, cancel context.CancelFunc, req *c
 		if err := ctx.Err(); err != nil {
 			break
 		}
-		acct, err := c.pool.acquire(c.now(), c.cfg.maxInFlight())
+		acct, err := c.acquireAccount(req, "")
 		if err != nil {
 			if lastErr != nil {
 				return nil, lastErr
@@ -283,6 +289,9 @@ func (c *Client) openChat(ctx context.Context, cancel context.CancelFunc, req *c
 			c.pool.release(acct.ID)
 			continue
 		}
+		// Bind only after the slot is genuinely held, so a busy account that was
+		// skipped cannot capture the conversation.
+		c.bindServedConversation(req, acct.ID)
 		if err := c.ensureFresh(ctx, acct); err != nil {
 			c.pool.release(acct.ID)
 			lastErr = c.classifyErrFor(acct, err)

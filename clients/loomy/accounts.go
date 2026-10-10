@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"math/rand"
 	"os"
@@ -659,7 +660,8 @@ func (c *Client) BackgroundProbeDue(_ context.Context, id string) bool {
 	return c.store.backgroundProbeDue(id, time.Now().UTC(), backgroundProbeDelay)
 }
 
-// TestAccount probes one account against the cheapest read-only endpoint.
+// TestAccount sends one minimum-size real chat completion through the account
+// under test, so only an account that can actually answer is reported as OK.
 func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, error) {
 	acc, ok := c.store.lookup(id)
 	if !ok {
@@ -670,10 +672,11 @@ func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, e
 	defer cancel()
 
 	start := time.Now()
-	err := c.up.probeCredential(probeCtx, acc.AccessToken)
+	model := probeModel(c.cachedOrFallback())
+	reply, err := c.probeChat(probeCtx, acc, model)
 	elapsed := time.Since(start).Milliseconds()
 
-	result := core.TestResult{AccountID: id, Model: "", ElapsedMS: elapsed}
+	result := core.TestResult{AccountID: id, Model: model, ElapsedMS: elapsed}
 	if err != nil {
 		// A refusal is a result, not an error: only an unknown account id is an
 		// error, because that is the one thing the caller could not have known.
@@ -685,9 +688,75 @@ func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, e
 	}
 
 	result.OK = true
-	result.Reply = "the session is accepted"
+	result.Reply = reply
 	c.store.reset(id, time.Now().UTC())
 	return result, nil
+}
+
+// probeModel names the first catalogue model, which is the cheapest probe
+// target Loomy exposes.
+func probeModel(models []core.Model) string {
+	if len(models) == 0 {
+		return ""
+	}
+	return models[0].ID
+}
+
+// probeChat sends one minimum-size real completion and returns the first text
+// it produced.
+//
+// A credential read proves the session is accepted; only a completion proves
+// the account can actually answer, which is what the panel's 测试 button
+// asks.
+func (c *Client) probeChat(ctx context.Context, acc account, model string) (string, error) {
+	if strings.TrimSpace(model) == "" {
+		return "", fmt.Errorf("loomy: no model is available to probe with")
+	}
+	maxTokens := 16
+	body, err := buildBody(&core.ChatRequest{
+		Model:     model,
+		Messages:  []core.Message{{Role: "user", Content: "ping"}},
+		MaxTokens: &maxTokens,
+	})
+	if err != nil {
+		return "", err
+	}
+	stream, err := c.up.openChatStream(ctx, acc.AccessToken, body)
+	if err != nil {
+		return "", err
+	}
+	defer stream.Close()
+
+	var reply strings.Builder
+	for {
+		event, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			if reply.Len() > 0 {
+				return reply.String(), nil
+			}
+			return "", err
+		}
+		switch event.Type {
+		case core.EventDelta:
+			reply.WriteString(event.Delta)
+		case core.EventError:
+			if event.Err != nil {
+				if reply.Len() > 0 {
+					return reply.String(), nil
+				}
+				return "", event.Err
+			}
+		case core.EventDone:
+			// keep draining until the stream really ends
+		}
+	}
+	if reply.Len() == 0 {
+		return "", fmt.Errorf("loomy: %s answered without any text", model)
+	}
+	return reply.String(), nil
 }
 
 // RefreshAccount checks the credentials instead of renewing them.

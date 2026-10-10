@@ -61,6 +61,10 @@ type Client struct {
 	models *modelCache
 	now    func() time.Time
 
+	// affinity pins a conversation to the credential that first served it.
+	// See affinity.go.
+	affinity *core.Affinity
+
 	// loginMu guards logins, the in-flight PKCE sessions.  A session owns its
 	// own mutex; this one only protects the map.
 	loginMu sync.Mutex
@@ -81,6 +85,8 @@ type Client struct {
 // exactly when it needs to be visible.
 func New(deps core.Deps) (core.Client, error) {
 	c := &Client{deps: deps, now: time.Now, pool: newPool(), models: &modelCache{}}
+	c.affinity = core.NewAffinity(0)
+	c.affinity.StartGC()
 	cfg, err := parseConfig(deps.Config)
 	if err != nil {
 		c.cfgErr = err
@@ -104,6 +110,10 @@ func (c *Client) ensure() {
 	}
 	if c.models == nil {
 		c.models = &modelCache{}
+	}
+	if c.affinity == nil {
+		c.affinity = core.NewAffinity(0)
+		c.affinity.StartGC()
 	}
 	if c.logins == nil {
 		c.logins = make(map[string]*loginSession)
@@ -202,7 +212,7 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 
 	var lastErr error
 	for attempt := 0; attempt < maxRotate; attempt++ {
-		acct, err := c.pool.acquire(c.now(), c.limit())
+		acct, err := c.acquireAccount(req)
 		if err != nil {
 			if lastErr != nil {
 				return nil, lastErr
@@ -217,6 +227,7 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 		}
 		// The account is settled here, before the response is known: the
 		// gateway's "served by" column must not be a guess.
+		c.bindServedConversation(req, acct.ID)
 		core.NoteServedBy(req, acct.ID)
 
 		stream, err := c.openChat(ctx, acct, body)
@@ -337,29 +348,6 @@ func (c *Client) Health() core.Health {
 		h.Note = "no OpenRouter credential configured"
 	}
 	return h
-}
-
-// ApplyLive honours the live knobs that mean something for a single-realm,
-// single-key pool.  MaxInFlightGlobal is ignored because OpenRouter has no
-// realm split, and the affinity knobs are ignored because this module keeps no
-// conversation bindings.
-func (c *Client) ApplyLive(s core.LiveSettings) {
-	c.ensure()
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if s.MaxInFlight != nil {
-		v := *s.MaxInFlight
-		c.liveLimit = &v
-	}
-	if s.Pool != nil {
-		if s.Pool.BreakerThreshold != nil {
-			v := *s.Pool.BreakerThreshold
-			c.liveThreshold = &v
-		}
-		if s.Pool.BreakerCooldown != nil {
-			c.liveCooldown = *s.Pool.BreakerCooldown
-		}
-	}
 }
 
 // --- shared helpers -------------------------------------------------------

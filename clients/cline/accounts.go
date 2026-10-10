@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -216,9 +217,11 @@ func (c *Client) ReviveAccount(ctx context.Context, id string) error {
 	return nil
 }
 
-// TestAccount makes one real call against the vendor with this credential.  A
-// refusal is a result, not an error: the panel needs to show *why* a credential
-// is no good, and only an unknown id is a programming mistake.
+// TestAccount sends one minimum-size real chat completion, pinned to the
+// account under test, so a token that opens the gateway but cannot actually
+// answer is reported as failed.  A refusal is a result, not an error: the panel
+// needs to show *why* a credential is no good, and only an unknown id is a
+// programming mistake.
 func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, error) {
 	e := c.pool.find(id)
 	if e == nil {
@@ -234,7 +237,8 @@ func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, e
 	acct := c.pool.accountOf(e)
 	res := core.TestResult{AccountID: acct.id()}
 
-	info, err := c.whoAmI(ctx, acct)
+	model := c.firstModelID()
+	reply, err := c.probeChat(ctx, acct, model)
 	res.ElapsedMS = time.Since(started).Milliseconds()
 	if err != nil {
 		msg := cleanErrorText(err.Error())
@@ -246,9 +250,69 @@ func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, e
 	c.pool.markUsed(e)
 	c.noteUpstream(true, "")
 	res.OK = true
-	res.Model = firstNonEmpty(info.Model, c.firstModelID())
-	res.Reply = whoAmIReply(info)
+	res.Model = model
+	res.Reply = reply
 	return res, nil
+}
+
+// probeChat sends one minimum-size real completion through the given account
+// and returns the first text it produced.
+//
+// A profile read proves the token is accepted; only a completion proves the
+// account can actually answer, which is what the panel's 测试 button asks.
+// The account is pinned directly through chatStream so the probe never
+// rotates onto a different credential than the one under test.
+func (c *Client) probeChat(ctx context.Context, acct account, model string) (string, error) {
+	if strings.TrimSpace(model) == "" {
+		return "", fmt.Errorf("cline: no model is available to probe with")
+	}
+	maxTokens := 16
+	req := &core.ChatRequest{
+		Model:     model,
+		Messages:  []core.Message{{Role: "user", Content: "ping"}},
+		MaxTokens: &maxTokens,
+	}
+	body, err := buildBody(req, c.cfg.maxTokens(), c.cfg.reasoningEffort())
+	if err != nil {
+		return "", err
+	}
+	resp, err := c.chatStream(ctx, acct, body)
+	if err != nil {
+		return "", err
+	}
+	stream := newClineStream(ctx, nil, resp.Body)
+	defer stream.Close()
+
+	var reply strings.Builder
+	for {
+		event, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			if reply.Len() > 0 {
+				return reply.String(), nil
+			}
+			return "", err
+		}
+		switch event.Type {
+		case core.EventDelta:
+			reply.WriteString(event.Delta)
+		case core.EventError:
+			if event.Err != nil {
+				if reply.Len() > 0 {
+					return reply.String(), nil
+				}
+				return "", event.Err
+			}
+		case core.EventDone:
+			// keep draining until the stream really ends
+		}
+	}
+	if reply.Len() == 0 {
+		return "", fmt.Errorf("cline: %s answered without any text", model)
+	}
+	return reply.String(), nil
 }
 
 // RefreshAccount renews one credential, or every credential when id is empty.

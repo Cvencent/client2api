@@ -417,6 +417,7 @@ into the process working directory would be worse than losing the accounts.
 | `core.ModelRefresher` | **yes** | `RefreshModels` bypasses the TTL |
 | `core.ModelLimitsProvider` | **yes** | from the static table and the cache only |
 | `core.PoolStatsReporter` | **yes** | in-flight accounting |
+| `core.HealthProvider` | **yes** | pool census over the same account states Status renders |
 | `core.LoginProvider` / `core.RealmLoginProvider` | **yes** | two realms: `free` (anonymous `x-api-key: public`) and `oauth` (Console device-code sign-in) |
 
 ### Deliberately **not** implemented
@@ -427,10 +428,11 @@ into the process working directory would be worse than losing the accounts.
 | `Reviver`, `CaptchaProvider` | OAuth tokens are refreshed lazily before a call (see "Login"); there is no separate health record to revive, and no endpoint used carries a captcha. |
 | `CheckinProvider`, `TaskProvider`, `BatchPlanner` | Zen has no check-in and no task/claim API. |
 | `PackageProvider`, `VoucherProvider`, `BundleImporter` | No such concept in Zen. |
-| `ConversationBinder`, `HintProvider`, `Degrader`, `HealthProvider` | Not needed by this module's shape. |
+| `ConversationBinder`, `HintProvider`, `Degrader` | Not needed by this module's shape. |
 
-The compile-time assertions at the bottom of `opencode.go` and `accounts.go`
-prove the implemented set; the comment above them records this same list.
+The compile-time assertions in `health.go` prove the health capability;
+`opencode.go` and `accounts.go` carry the rest of the implemented set.
+
 
 ---
 

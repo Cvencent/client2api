@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"sort"
@@ -47,6 +48,10 @@ const (
 	// probeTimeout bounds one TestAccount round trip.  It is shorter than the
 	// chat timeout on purpose: a panel button must answer promptly.
 	probeTimeout = 30 * time.Second
+
+	// probeModel is the model a connectivity probe asks for.  "pro" is the
+	// vendor's own default tier and is always present in the catalogue.
+	probeModel = "pro"
 )
 
 // ---------------------------------------------------------------------------
@@ -208,9 +213,11 @@ func (c *Client) ReviveAccount(ctx context.Context, id string) error {
 	return nil
 }
 
-// TestAccount makes one real call against the vendor with this credential.  A
-// refusal is a result, not an error: the panel needs to show *why* a credential
-// is no good, and only an unknown id is a programming mistake.
+// TestAccount sends one minimum-size real chat completion, pinned to the
+// account under test, so a token that opens the gateway but cannot actually
+// answer is reported as failed.  A refusal is a result, not an error: the panel
+// needs to show *why* a credential is no good, and only an unknown id is a
+// programming mistake.
 func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, error) {
 	e := c.pool.find(id)
 	if e == nil {
@@ -226,11 +233,7 @@ func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, e
 	res := core.TestResult{AccountID: e.acct.id()}
 
 	acct := c.pool.accountOf(e)
-	sess, err := c.sessionFor(acct)
-	var models []core.Model
-	if err == nil {
-		models, err = c.modelList(ctx, acct, sess)
-	}
+	reply, err := c.probeChat(ctx, acct, probeModel)
 	res.ElapsedMS = time.Since(started).Milliseconds()
 
 	if err != nil {
@@ -245,11 +248,69 @@ func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, e
 	c.pool.markUsed(e)
 	c.noteUpstream(true, kindNone, "")
 	res.OK = true
-	if len(models) > 0 {
-		res.Model = models[0].ID
-	}
-	res.Reply = fmt.Sprintf("%d model(s) reachable", len(models))
+	res.Model = probeModel
+	res.Reply = reply
 	return res, nil
+}
+
+// probeChat sends one minimum-size real completion and returns the first text
+// it produced.
+//
+// A catalogue listing proves the token opens the gateway; only a completion
+// proves the account can actually answer, which is what the panel's 测试 button
+// is asked.  The prompt is one word because the probe is billed like any other
+// request.
+func (c *Client) probeChat(ctx context.Context, acct account, modelKey string) (string, error) {
+	sess, err := c.sessionFor(acct)
+	if err != nil {
+		return "", err
+	}
+	key := mapModel(modelKey)
+	maxTokens := 16
+	req := &core.ChatRequest{
+		Model:     key,
+		Messages:  []core.Message{{Role: "user", Content: "ping"}},
+		MaxTokens: &maxTokens,
+	}
+	body, err := buildBody(req, key, c.cfg.maxTokens())
+	if err != nil {
+		return "", err
+	}
+	resp, err := c.chatStream(ctx, acct, sess, string(body), key)
+	if err != nil {
+		return "", err
+	}
+	stream := newQwenStream(ctx, nil, resp.Body)
+	defer stream.Close()
+
+	var reply strings.Builder
+	for {
+		event, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			if reply.Len() > 0 {
+				return reply.String(), nil
+			}
+			return "", err
+		}
+		switch event.Type {
+		case core.EventDelta:
+			reply.WriteString(event.Delta)
+		case core.EventError:
+			if event.Err != nil {
+				if reply.Len() > 0 {
+					return reply.String(), nil
+				}
+				return "", event.Err
+			}
+		}
+	}
+	if reply.Len() == 0 {
+		return "", fmt.Errorf("qwenwork: %s answered without any text", key)
+	}
+	return reply.String(), nil
 }
 
 // RefreshAccount renews one credential, or every credential when id is empty.

@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"client2api/internal/core"
@@ -60,6 +61,11 @@ type Client struct {
 	// affinity.go.  It is created by New, and every method on it is nil-safe, so
 	// a Client assembled by a test without New keeps working.
 	affinity *core.Affinity
+
+	// inFlight is the number of chat streams currently open across both
+	// transports.  The success paths feed it through core.TrackStream, so
+	// PoolStats reports real concurrency rather than a second bookkeeping.
+	inFlight atomic.Int64
 
 	// vendorClient, when non-nil, replaces the shared HTTP client with one
 	// whose TLS handshake imitates a browser.  It is set by New when the config
@@ -270,7 +276,8 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 		c.noteError(err.Error())
 		return nil, err
 	}
-	return stream, nil
+	c.inFlight.Add(1)
+	return core.TrackStream(stream, func() { c.inFlight.Add(-1) }), nil
 }
 
 // Status reports honestly what this module knows right now.  It never starts

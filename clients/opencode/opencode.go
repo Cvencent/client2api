@@ -66,6 +66,9 @@ type Client struct {
 
 	errMu   sync.Mutex
 	lastErr string
+	// affinity pins a conversation to the account that first served it. See
+	// affinity.go.
+	affinity *core.Affinity
 	// sessionOnce guards the lazy minting of the free-tier session id that
 	// the anonymous handshake must carry.  See freeTierSession.
 	sessionOnce    sync.Once
@@ -78,6 +81,8 @@ type Client struct {
 // reason the process fails to start.
 func New(deps core.Deps) (core.Client, error) {
 	c := &Client{deps: deps}
+	c.affinity = core.NewAffinity(0)
+	c.affinity.StartGC()
 	cfg, err := parseConfig(deps.Config)
 	if err != nil {
 		c.cfgErr = err
@@ -96,6 +101,10 @@ func (c *Client) ensure() {
 		}
 		if c.pool == nil {
 			c.pool = newPool()
+		}
+		if c.affinity == nil {
+			c.affinity = core.NewAffinity(0)
+			c.affinity.StartGC()
 		}
 		c.loadAccounts()
 	})
@@ -308,7 +317,7 @@ func (c *Client) openChat(ctx context.Context, cancel context.CancelFunc, req *c
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		acct, err := c.pool.acquire(c.now(), c.cfg.maxInFlight())
+		acct, err := c.acquireAccount(req)
 		if err != nil {
 			if lastErr != nil {
 				return nil, lastErr
@@ -322,6 +331,9 @@ func (c *Client) openChat(ctx context.Context, cancel context.CancelFunc, req *c
 			c.pool.release(acct.ID)
 			continue
 		}
+		// Bind only after the slot is genuinely held, so a busy account that was
+		// skipped cannot capture the conversation.
+		c.bindServedConversation(req, acct.ID)
 		// NoteServedBy is called right after the pick: this is the account the
 		// panel must show, and nothing later in the request may change it.
 		core.NoteServedBy(req, acct.ID)
@@ -442,9 +454,11 @@ func (c *Client) lastErrorNote() string {
 // and the OpenCode Console device-code flow).
 //   - CheckinProvider, TaskProvider, BatchPlanner: Zen has no check-in and no
 //     task/claim API.
-//   - ConversationBinder, HintProvider, Degrader, HealthProvider,
-//     PackageProvider, VoucherProvider, BundleImporter: not needed by this
-//     module's shape.
+//   - ConversationBinder, HintProvider, Degrader, PackageProvider,
+//     VoucherProvider, BundleImporter: not needed by this module's shape.
+//
+// Implemented in health.go: HealthProvider, the pool census the status page
+// reads as its servability verdict.
 var (
 	_ core.Client              = (*Client)(nil)
 	_ core.ModelRefresher      = (*Client)(nil)

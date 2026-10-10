@@ -592,40 +592,38 @@ func (c *Client) ReviveAccount(ctx context.Context, id string) error {
 	return c.store.revive(id)
 }
 
-// TestAccount probes one account against the cheapest read-only endpoint.
+// TestAccount sends one minimum-size real chat request through the same gateway
+// route normal traffic uses. A model-list or userinfo read only proves the token
+// opens the account; it does not prove the account can answer.
 func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, error) {
 	acc, ok := c.store.lookup(id)
 	if !ok {
 		return core.TestResult{}, fmt.Errorf("qoder: no account %q", id)
 	}
-
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	probeCtx, cancel := context.WithTimeout(ctx, c.cfg.probeTimeout())
 	defer cancel()
 
 	start := time.Now()
-	info, err := c.up.userInfo(probeCtx, acc.Token)
-	elapsed := time.Since(start).Milliseconds()
-
-	result := core.TestResult{AccountID: id, ElapsedMS: elapsed}
+	reply, err := c.probeChat(probeCtx, acc)
+	result := core.TestResult{AccountID: id, ElapsedMS: time.Since(start).Milliseconds()}
 	if err != nil {
 		// A refusal is a result, not an error: only an unknown account id is an
 		// error, because that is the one thing the caller could not have known.
 		result.Error = redactErr(err)
 		if failureKind(err) == core.FailureAuth {
 			result.Error = "令牌已被厂商拒绝，请在账号页用「链接重登」重新登录，或从 Qoder CN 客户端重新导入"
-			c.penalise(id, err, time.Now().UTC())
 		}
+		c.penalise(id, err, time.Now().UTC())
 		return result, nil
 	}
 
 	c.store.reset(id, time.Now().UTC())
-	if merged := mergeAccount(acc, info); merged.UserID != acc.UserID || merged.Name != acc.Name || merged.Phone != acc.Phone {
-		if err := c.store.put(merged); err != nil {
-			c.logf("qoder: persisting refreshed identity for %s: %v", id, err)
-		}
-	}
 	result.OK = true
-	result.Reply = "令牌可用" + describeIdentity(info)
+	result.Model = c.cfg.testModel()
+	result.Reply = reply
 	return result, nil
 }
 

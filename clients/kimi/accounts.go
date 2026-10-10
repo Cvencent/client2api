@@ -25,7 +25,9 @@ package kimi
 //     merely *reports* state the CLI owns (`cli-login`, a probed credential) is
 //     forgotten in accounts.json while the CLI's own file stays where it is.
 //   - TestAccount probes the CLI and the login state.  It never sends a
-//     conversation to the vendor.
+//     conversation to the vendor: every account that can chat is verified
+//     with one minimum-size real request, over HTTPS for the panel login and
+//     through the CLI for the CLI-backed rows.
 //   - RefreshAccount reports, per account, that kimi has no renewal to trigger.
 //   - LoginProvider is a *guided* flow: the operator runs `kimi login` in a
 //     terminal and the module polls for the credential to appear.  The CLI's
@@ -42,6 +44,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -940,16 +943,29 @@ func (c *Client) TestAccount(ctx context.Context, id string) (res core.TestResul
 				path, strings.Join(creds.searched, ", "))
 			return res, nil
 		}
+		reply, perr := c.probeCLIChat(ctx, found.record.ID, path)
+		if perr != nil {
+			res.Error = core.Redact(perr.Error())
+			return res, nil
+		}
 		res.OK = true
-		res.Reply = fmt.Sprintf("binding is usable: %s exists and login evidence was found (%s). No conversation was sent.",
-			path, strings.Join(creds.foundRefs(), ", "))
+		resReplyFromProbe(&res, reply, "binding "+path)
 		return res, nil
 
 	case kindCredential:
-		res.OK = true
-		res.Reply = fmt.Sprintf("credential source %s is present (%s). No conversation was sent.",
-			found.source.Ref, found.record.State)
-		return res, nil
+		// The panel login is a credential this module owns and can drive over
+		// HTTPS.  Every other credential row is evidence for the CLI's login,
+		// so it is verified through the CLI below, exactly like cli-login.
+		if found.record.ID == webLoginID {
+			reply, perr := c.probeWebChat(ctx, c.cfg.DefaultModel)
+			if perr != nil {
+				res.Error = core.Redact(perr.Error())
+				return res, nil
+			}
+			res.OK = true
+			resReplyFromProbe(&res, reply, "panel login")
+			return res, nil
+		}
 	}
 
 	bin, binErr := c.run.binaryPath()
@@ -963,14 +979,115 @@ func (c *Client) TestAccount(ctx context.Context, id string) (res core.TestResul
 			bin, strings.Join(creds.searched, ", "), strings.Join(credentialEnvVars, ", "))
 		return res, nil
 	}
-	res.OK = true
-	if refs := creds.foundRefs(); len(refs) > 0 {
-		res.Reply = fmt.Sprintf("kimi CLI found at %s and login evidence found at %s. No conversation was sent.",
-			bin, strings.Join(refs, ", "))
-	} else {
-		res.Reply = fmt.Sprintf("kimi CLI found at %s; assume_logged_in is set, so the login check is skipped. No conversation was sent.", bin)
+	reply, perr := c.probeCLIChat(ctx, found.record.ID, bin)
+	if perr != nil {
+		res.Error = core.Redact(perr.Error())
+		return res, nil
 	}
+	res.OK = true
+	resReplyFromProbe(&res, reply, "kimi CLI at "+bin)
 	return res, nil
+}
+
+// probeRequest is the minimum-size real completion every probe sends.  The
+// prompt is one word because the probe is billed like any other request.
+func probeRequest(model string) *core.ChatRequest {
+	maxTokens := 16
+	return &core.ChatRequest{
+		Model:     strings.TrimSpace(model),
+		Messages:  []core.Message{{Role: "user", Content: "ping"}},
+		MaxTokens: &maxTokens,
+	}
+}
+
+// resReplyFromProbe records the streamed text a real probe produced, naming the
+// credential it came from so the panel's reply line says what was tested.
+func resReplyFromProbe(res *core.TestResult, reply, source string) {
+	res.Reply = fmt.Sprintf("%s [probe: %s]", strings.TrimSpace(reply), source)
+}
+
+// probeWebChat sends one minimum-size real HTTPS chat through the panel login
+// and returns the first text it produced.
+func (c *Client) probeWebChat(ctx context.Context, model string) (string, error) {
+	tok, ok, err := c.freshToken(ctx)
+	if err != nil {
+		return "", err
+	}
+	if !ok || tok.expired() {
+		return "", errNotLoggedIn
+	}
+	stream, err := c.directChat(ctx, probeRequest(model), tok)
+	if err != nil {
+		return "", err
+	}
+	defer stream.Close()
+	return drainProbeStream(stream, model)
+}
+
+// probeCLIChat runs one minimum-size real completion through the given CLI
+// binary, pinned to accountID, and returns the first text it produced.
+func (c *Client) probeCLIChat(ctx context.Context, accountID, bin string) (string, error) {
+	model := c.cfg.DefaultModel
+	prompt, media, err := c.buildPrompt(ctx, probeRequest(model))
+	if err != nil {
+		return "", err
+	}
+	args := c.cliArgs(prompt, model)
+
+	// Backpressure mirrors Chat: the semaphore bounds how many agent
+	// processes may run at once, and the stream releases the slot on Close.
+	select {
+	case c.run.sem <- struct{}{}:
+	case <-ctx.Done():
+		media.cleanup()
+		return "", ctx.Err()
+	}
+	runCtx, cancel := context.WithTimeout(ctx, c.cfg.timeout())
+	stream, err := startStream(runCtx, cancel, c, accountID, bin, args, media)
+	if err != nil {
+		<-c.run.sem
+		cancel()
+		media.cleanup()
+		return "", err
+	}
+	defer stream.Close()
+	return drainProbeStream(stream, model)
+}
+
+// drainProbeStream reads a probe stream to its end and returns the text it
+// produced.  A stream that produced text before failing is a success: the
+// point of the probe is that the account answered at all.
+func drainProbeStream(stream core.Stream, model string) (string, error) {
+	var reply strings.Builder
+	for {
+		event, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			if reply.Len() > 0 {
+				return reply.String(), nil
+			}
+			return "", err
+		}
+		switch event.Type {
+		case core.EventDelta:
+			reply.WriteString(event.Delta)
+		case core.EventError:
+			if event.Err != nil {
+				if reply.Len() > 0 {
+					return reply.String(), nil
+				}
+				return "", event.Err
+			}
+		case core.EventDone:
+			// keep draining until the stream really ends
+		}
+	}
+	if reply.Len() == 0 {
+		return "", fmt.Errorf("kimi: %s answered without any text", model)
+	}
+	return reply.String(), nil
 }
 
 // RefreshAccount implements core.AccountManager.

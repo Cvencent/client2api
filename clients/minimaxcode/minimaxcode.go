@@ -28,6 +28,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"client2api/internal/core"
@@ -62,6 +63,11 @@ type Client struct {
 	// it is nil-safe, so a Client assembled by hand still works.  See
 	// affinity.go.
 	affinity *core.Affinity
+
+	// inFlight is the number of chat streams currently open.  The success
+	// path feeds it through core.TrackStream, so PoolStats reports real
+	// concurrency rather than a second bookkeeping.
+	inFlight atomic.Int64
 
 	// models is the catalogue, re-read from the desktop client's config.yaml by
 	// RefreshModels.  There is no vendor model-list endpoint to call (see
@@ -303,7 +309,8 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 		stream, err := c.attempt(ctx, &cred, model, req)
 		if err == nil {
 			c.pool.noteSuccess(acct.ID)
-			return stream, nil
+			c.inFlight.Add(1)
+			return core.TrackStream(stream, func() { c.inFlight.Add(-1) }), nil
 		}
 		lastErr = err
 

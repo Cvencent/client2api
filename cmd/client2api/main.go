@@ -40,7 +40,7 @@ import (
 )
 
 // version is overridable with -ldflags "-X main.version=...".
-var version = "0.1.28"
+var version = "0.1.29"
 
 // restartHandoffEnv marks the replacement half of a panel restart.  It tells a
 // starting process to keep retrying the listen address instead of failing fast,
@@ -1264,6 +1264,7 @@ func run() error {
 		// Inherit the log destinations: the panel restart keeps writing to the
 		// same place the process it replaced was writing to.
 		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+		cmd.SysProcAttr = hiddenProcessAttr()
 		if err := cmd.Start(); err != nil {
 			return fmt.Errorf("starting the replacement process: %w", err)
 		}

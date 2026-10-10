@@ -647,6 +647,38 @@ func TestChatRetriesOnceAfterAuthFailure(t *testing.T) {
 	}
 }
 
+// TestTestAccountSendsARealChatRequest pins the change the operator asked for:
+// the panel's 测试 button must send a real completion, not just read the
+// user-info endpoint.
+func TestTestAccountSendsARealChatRequest(t *testing.T) {
+	var chatCalls int
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != pathChat {
+			t.Errorf("unexpected path %q", r.URL.Path)
+			return
+		}
+		chatCalls++
+		writeSSE(w, `{"choices":[{"delta":{"content":"pong"}}]}`, `{"choices":[{"finish_reason":"stop"}]}`, `[DONE]`)
+	}))
+	defer ts.Close()
+
+	c := newTestClient(t, t.TempDir(),
+		fmt.Sprintf(`{"base_url":%q,"access_token":"tok","user_id":"u1"}`, ts.URL), ts.Client())
+	res, err := c.TestAccount(context.Background(), "uid:u1")
+	if err != nil {
+		t.Fatalf("TestAccount: %v", err)
+	}
+	if !res.OK {
+		t.Fatalf("TestAccount failed: %+v", res)
+	}
+	if res.Reply != "pong" {
+		t.Fatalf("Reply = %q, want the streamed text", res.Reply)
+	}
+	if chatCalls != 1 {
+		t.Fatalf("chat calls = %d, want 1", chatCalls)
+	}
+}
+
 // ---- credential management -------------------------------------------
 
 func TestChatNotConfigured(t *testing.T) {

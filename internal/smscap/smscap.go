@@ -1,10 +1,9 @@
 // Package smscap is the shared client for the one-time-SMS platform the panel
 // rents phone numbers from (eomsg).
 //
-// Two modules need it: workbuddy, whose vendor login is a browser flow that
-// needs a number the operator can type in, and loomy, whose vendor login is a
-// plain HTTP phone-code API the module can drive end to end.  The platform
-// protocol is identical for both, so it lives here once instead of twice.
+// WorkBuddy, Loomy and Qoder CN all need it: their vendor logins either run in
+// a browser or call a phone-code API.  The platform protocol is identical, so
+// it lives here once instead of being copied into every module.
 //
 // The platform protocol is a plain GET API (https://api.eomsg.com/zc/data.php):
 //

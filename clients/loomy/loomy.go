@@ -41,6 +41,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"client2api/internal/core"
@@ -89,6 +90,15 @@ type Client struct {
 	smsRot smscap.Rotator
 	autoMu sync.Mutex
 	autos  map[string]*autoJob
+
+	// affinity pins a conversation to the account that first served it, so a
+	// multi-turn conversation keeps the same vendor session instead of walking
+	// the LRU pool one account per turn. See affinity.go.
+	affinity *core.Affinity
+
+	// inFlight is the number of chat streams currently open.  Chat feeds it
+	// through core.TrackStream, so PoolStats reports real concurrency.
+	inFlight atomic.Int64
 }
 
 // New builds the client.  It never fails for a missing or malformed credential:
@@ -109,6 +119,8 @@ func New(deps core.Deps) (core.Client, error) {
 	}
 
 	c := &Client{deps: deps, cfg: cfg}
+	c.affinity = core.NewAffinity(0)
+	c.affinity.StartGC()
 	c.setPaths()
 
 	st, err := loadStore(c.accountsPath, c.statePath)
@@ -396,7 +408,7 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 	}
 
 	now := time.Now().UTC()
-	candidates := c.store.candidates(now)
+	candidates := c.orderedCandidates(&local, local.Model)
 	if len(candidates) == 0 {
 		return nil, c.unavailableError(now)
 	}
@@ -417,6 +429,9 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 			busy = true
 			continue
 		}
+		// Bind only after the slot is genuinely held, so a conversation cannot be
+		// pinned to an account that was skipped because it was already busy.
+		c.bindServedConversation(&local, acc.ID)
 		stream, err := c.up.openChatStream(ctx, acc.AccessToken, body)
 		if err == nil {
 			c.store.reset(acc.ID, time.Now().UTC())
@@ -424,7 +439,8 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 			// The slot is nil in most unit tests, and NoteServedBy is a no-op
 			// then, so this is safe to call unconditionally.
 			core.NoteServedBy(req, acc.ID)
-			return stream, nil
+			c.inFlight.Add(1)
+			return core.TrackStream(stream, func() { c.inFlight.Add(-1) }), nil
 		}
 		lastErr = err
 		// A cancelled caller is not evidence about the credential.  The

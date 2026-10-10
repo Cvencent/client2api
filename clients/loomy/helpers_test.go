@@ -116,6 +116,14 @@ func alwaysJSON(status int, body string) *stubTransport {
 	}}
 }
 
+// alwaysSSE answers every request with one fixed SSE body, which is what the
+// TestAccount chat probe reads.
+func alwaysSSE(body string) *stubTransport {
+	return &stubTransport{handler: func(*http.Request, string) *http.Response {
+		return sseResponse(body)
+	}}
+}
+
 // failingTransport models a request that never reached the vendor at all.
 type failingTransport struct{ err error }
 

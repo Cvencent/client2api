@@ -357,6 +357,32 @@ func TestNewRegistersConcreteCapabilities(t *testing.T) {
 	if _, ok := c.(core.Reviver); !ok {
 		t.Fatal("client does not implement Reviver")
 	}
+	if _, ok := c.(core.SMSProvider); !ok {
+		t.Fatal("client does not implement SMSProvider")
+	}
+	if _, ok := c.(core.AutoLoginProvider); !ok {
+		t.Fatal("client does not implement AutoLoginProvider")
+	}
+	for name, ok := range map[string]bool{
+		"PackageProvider":     implements[core.PackageProvider](c),
+		"TaskProvider":        implements[core.TaskProvider](c),
+		"TaskClaimer":         implements[core.TaskClaimer](c),
+		"TaskAutoRunner":      implements[core.TaskAutoRunner](c),
+		"HealthProvider":      implements[core.HealthProvider](c),
+		"PoolStatsReporter":   implements[core.PoolStatsReporter](c),
+		"ModelLimitsProvider": implements[core.ModelLimitsProvider](c),
+		"ConversationBinder":  implements[core.ConversationBinder](c),
+		"LiveReloader":        implements[core.LiveReloader](c),
+	} {
+		if !ok {
+			t.Fatalf("client does not implement %s", name)
+		}
+	}
+}
+
+func implements[T any](v any) bool {
+	_, ok := v.(T)
+	return ok
 }
 
 func Example_splitCampaigns() {

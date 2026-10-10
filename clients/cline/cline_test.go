@@ -311,6 +311,36 @@ func TestAccountIDComesFromUserInfoClineUserID(t *testing.T) {
 	}
 }
 
+// TestTestAccountSendsARealChatRequest pins the change the operator asked for:
+// the panel's 测试 button must send a real completion, not just read the
+// profile.
+func TestTestAccountSendsARealChatRequest(t *testing.T) {
+	f := newFakeServer(t)
+	f.handle(chatPath, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"pong\"}}]}\n\ndata: [DONE]\n\n"))
+	})
+	f.json(userInfoPath, http.StatusOK, `{"data":{"clineUserId":"usr-1","email":"a@b.c"}}`)
+	c := newTestClient(t, f, `"access_token":"workos:tok","account_id":"usr-1"`)
+
+	res, err := c.TestAccount(context.Background(), "acct:usr-1")
+	if err != nil {
+		t.Fatalf("TestAccount: %v", err)
+	}
+	if !res.OK {
+		t.Fatalf("TestAccount failed: %+v", res)
+	}
+	if res.Reply != "pong" {
+		t.Fatalf("Reply = %q, want the streamed text", res.Reply)
+	}
+	if f.count(chatPath) != 1 {
+		t.Fatalf("chat requests = %d, want 1", f.count(chatPath))
+	}
+	if f.count(userInfoPath) != 0 {
+		t.Fatalf("the probe still read the profile %d time(s)", f.count(userInfoPath))
+	}
+}
+
 func mustUnix(t *testing.T, s string) int64 {
 	t.Helper()
 	ts, ok := parseTimeString(s)

@@ -739,6 +739,13 @@ func (w *wizard) build() {
 	w.chkLaunch = w.ctl(idChkLaunch, "BUTTON", "安装完成后启动 client2api 并打开控制面板", wsChild|wsVisible|wsTabStop|bsAutoCheckBox, 0, 30, 192, 560, 22)
 	procSendMessageW.Call(w.chkDesktop, 0x00F1 /* BM_SETCHECK */, 1, 0)
 	procSendMessageW.Call(w.chkLaunch, 0x00F1, 1, 0)
+	// Restore the operator's autostart choice: an explicit remembered value
+	// wins, otherwise an existing startup shortcut means this is an upgrade
+	// from a build that predates the preference and the box starts checked.
+	stored, hasStored := readRegistryBool(defaultRoot(), startupValue)
+	if startupDefault(stored, hasStored, startupShortcutExists()) {
+		procSendMessageW.Call(w.chkStartup, 0x00F1, 1, 0)
+	}
 	p2note := w.label(0, "安装会保留现有监听端口，并按配置地址打开控制面板。", 30, 232, 560, 20)
 	w.page2 = []uintptr{w.chkDesktop, w.chkStartup, w.chkLaunch, p2note}
 

@@ -28,6 +28,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"client2api/internal/core"
@@ -73,6 +74,15 @@ type Client struct {
 
 	// now is a test seam; production always uses time.Now.
 	now func() time.Time
+
+	// affinity pins a conversation to the account that first served it. See
+	// affinity.go.
+	affinity *core.Affinity
+
+	// inFlight is the number of chat streams currently open.  The success
+	// path feeds it through core.TrackStream, so PoolStats reports real
+	// concurrency rather than a second bookkeeping.
+	inFlight atomic.Int64
 }
 
 // New builds the module. A malformed config is logged and replaced with
@@ -84,6 +94,8 @@ func New(deps core.Deps) (core.Client, error) {
 		cfg = config{}
 	}
 	c := &Client{deps: deps, cfg: cfg, now: time.Now}
+	c.affinity = core.NewAffinity(0)
+	c.affinity.StartGC()
 	c.setPaths()
 	if c.accountsPath != "" {
 		if err := core.EnsureDir(deps.DataDir); err != nil {
@@ -380,7 +392,7 @@ func (c *Client) openChat(ctx context.Context, cancel context.CancelFunc, req *c
 	// in-flight ceiling.
 	busy := false
 	for i := 0; i < c.cfg.maxAttempts(); i++ {
-		e := c.pool.pick(skip)
+		e := c.pickAccount(skip, conversationKey(req))
 		if e == nil {
 			break
 		}
@@ -392,12 +404,16 @@ func (c *Client) openChat(ctx context.Context, cancel context.CancelFunc, req *c
 			continue
 		}
 		skip[e.acct.id()] = true
+		// Bind only after the slot is genuinely held, so a busy account that was
+		// skipped cannot capture the conversation.
+		c.bindServedConversation(req, e.acct.id())
 		c.ensureFresh(ctx, e)
 		stream, err := c.chatWith(ctx, cancel, e, req, model)
 		if err == nil {
 			c.pool.markUsed(e)
 			c.noteUpstreamOK()
-			return stream, nil
+			c.inFlight.Add(1)
+			return core.TrackStream(stream, func() { c.inFlight.Add(-1) }), nil
 		}
 		lastErr = err
 		kind := classifyErr(err)

@@ -302,7 +302,10 @@ func TestCapabilitiesReportTheImplementedSet(t *testing.T) {
 		"Captcha":  caps.Captcha,
 	} {
 		want := name == "Manage" || name == "Login" || name == "Checkin" ||
-			name == "Refresh" || name == "Revive" || name == "Balance"
+			name == "Refresh" || name == "Revive" || name == "Balance" || name == "Live"
+		// Health is now a real capability (health.go); PoolStats is exercised
+		// by its own test and is not part of Capabilities.
+		want = want || name == "Health"
 		if got != want {
 			t.Errorf("Capabilities.%s = %v, want %v", name, got, want)
 		}

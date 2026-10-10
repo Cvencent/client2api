@@ -595,7 +595,8 @@ func (c *Client) openWebStream(ctx context.Context, req *core.ChatRequest) (core
 		return fail(err)
 	}
 	c.noteWebSuccess(wa)
-	return newWebStream(join.Body, cancel, c.deps.Log), nil
+	c.inFlight.Add(1)
+	return core.TrackStream(newWebStream(join.Body, cancel, c.deps.Log), func() { c.inFlight.Add(-1) }), nil
 }
 
 // webModels is Models() on the web transport.  Unlike the sidecar path it never

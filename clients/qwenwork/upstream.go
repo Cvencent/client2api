@@ -645,7 +645,10 @@ func (c *Client) openChat(ctx context.Context, release context.CancelFunc, req *
 		if err == nil {
 			c.pool.markUsed(e)
 			c.noteUpstream(true, kindNone, "")
-			return newQwenStream(ctx, release, resp.Body), nil
+			// Count the live call for as long as the stream is open, so
+			// PoolStats reports the module's real concurrency.
+			c.inFlight.Add(1)
+			return core.TrackStream(newQwenStream(ctx, release, resp.Body), func() { c.inFlight.Add(-1) }), nil
 		}
 
 		ue, ok := asUpstreamError(err)

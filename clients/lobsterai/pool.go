@@ -247,6 +247,22 @@ func (p *pool) acquire(now time.Time, limit int) (*accountRecord, error) {
 	return chosen, nil
 }
 
+// acquireByID reserves one in-flight slot on a specific account when it is
+// selectable right now. It is the affinity-aware twin of acquire: the caller
+// has already chosen the account, but the pool still enforces every admission
+// rule before handing out the slot.
+func (p *pool) acquireByID(id string, now time.Time, limit int) (*accountRecord, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	a := p.find(strings.TrimSpace(id))
+	if a == nil || !p.selectable(a, now, limit) {
+		return nil, fmt.Errorf("%w: account %s is not selectable", core.ErrBusy, id)
+	}
+	a.inFlight++
+	a.lastUsed = now
+	return a, nil
+}
+
 // release returns an in-flight slot.  It is keyed by id rather than by pointer
 // so a stream that outlives a reload still balances the books.
 func (p *pool) release(id string) {

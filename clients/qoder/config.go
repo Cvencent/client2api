@@ -54,6 +54,18 @@ const (
 	defaultCosyVersion = "0.4.3"
 	// defaultUserAgent is the User-Agent the desktop client reports.
 	defaultUserAgent = "Qoder"
+	// defaultBusinessProduct is the client-identity value the desktop client
+	// sends as Cosy-Business-Product and X-IDE-Platform.
+	defaultBusinessProduct = "qoder"
+	// defaultMachineOS is the X-Machine-OS value the desktop client sends on
+	// Windows.  The gateway only records it, so a non-Windows host is honest
+	// about itself and is still accepted.
+	defaultMachineOS = "win32"
+	// defaultGatewayBase serves the inference gateway: the model catalogue and
+	// the chat stream both live on its /algo edge, behind the COSY signature
+	// this module mints (see cosy.go).  It is a different host from the
+	// OpenAPI base.
+	defaultGatewayBase = "https://gateway.qoder.com.cn"
 	// desktopUserDataDir is the Electron user-data directory Qoder CN writes
 	// its safeStorage key and auth blob into, relative to %APPDATA%.
 	desktopUserDataDir = "com.qodercn.app.stable"
@@ -65,6 +77,14 @@ const (
 const (
 	// defaultRequestTimeout bounds one non-streaming OpenAPI request.
 	defaultRequestTimeout = 30 * time.Second
+	// defaultChatTimeout bounds one streamed chat request end to end.  A
+	// coding answer takes a while, so it is longer than a plain RPC.
+	defaultChatTimeout = 5 * time.Minute
+	// defaultModelsTTL is how long a fetched catalogue is trusted before the
+	// background refresher fetches it again.
+	defaultModelsTTL = 30 * time.Minute
+	// defaultModelsTimeout bounds one model-catalogue fetch.
+	defaultModelsTimeout = 20 * time.Second
 	// defaultProbeTimeout bounds one TestAccount / RefreshAccount round trip.
 	// A panel button has to answer promptly.
 	defaultProbeTimeout = 20 * time.Second
@@ -75,6 +95,22 @@ const (
 	// It is long because re-importing from the desktop client is the only
 	// remedy this module offers.
 	defaultAuthCooldown = 30 * time.Minute
+	// defaultSMSKeyword is the sender keyword the one-time-SMS platform
+	// filters on.  Qoder's Aliyun verification text is signed "qoder", so
+	// the platform must be asked for that sender; any other keyword reads
+	// as "no message has arrived".
+	defaultSMSKeyword = "Qoder"
+	// defaultAutoLoginTimeout bounds one auto-login run end to end.  The
+	// Aliyun form waits for an SMS, so it is longer than a plain RPC.
+	defaultAutoLoginTimeout = 5 * time.Minute
+	// defaultSMSPolls is how many times one rented number is checked for
+	// its SMS before the run gives up on that number.
+	defaultSMSPolls = 12
+	// defaultSMSInterval is the pause between two SMS polls.
+	defaultSMSInterval = 5 * time.Second
+	// defaultDupRetries is how many extra numbers to draw when the platform
+	// keeps handing back one that is already in the pool.
+	defaultDupRetries = 6
 )
 
 // accountConfig is one entry of the `accounts` array.
@@ -94,6 +130,10 @@ type accountConfig struct {
 // object mean the same thing.
 type config struct {
 	OpenAPIBase string `json:"openapi_base"`
+	// GatewayBase is the inference host.  The model catalogue and the chat
+	// stream live on its /algo edge, signed with the same credential the
+	// OpenAPI calls use as a plain bearer token.
+	GatewayBase string `json:"gateway_base"`
 	// AuthBase is the browser sign-in host; AuthClientID is the public
 	// OAuth client id.  Both default to the Qoder CN desktop client's own
 	// constants, so an empty config still has a working browser login.
@@ -117,6 +157,51 @@ type config struct {
 	ProbeTimeout   durationField `json:"probe_timeout"`
 	Cooldown       durationField `json:"cooldown"`
 	AuthCooldown   durationField `json:"auth_cooldown"`
+	ChatTimeout    durationField `json:"chat_timeout"`
+	ModelsTTL      durationField `json:"models_ttl"`
+	ModelsTimeout  durationField `json:"models_timeout"`
+
+	// ChatModel is the model every connection test uses.  "auto" is the
+	// vendor's own default and routes to whatever it considers current,
+	// which is exactly what a connectivity probe wants.
+	ChatModel string `json:"chat_model"`
+
+	// SMSToken is the one-time-SMS platform credential (eomsg).  Empty
+	// means the panel's 接码 controls report "not configured" and refuse to
+	// rent a number; the operator can still paste a token into the panel,
+	// which overrides this per call without a restart.
+	SMSToken string `json:"sms_token"`
+	// SMSKeyword is the sender keyword the platform filters on.  Absent
+	// means defaultSMSKeyword ("Qoder").
+	SMSKeyword string `json:"sms_keyword"`
+	// SMSBase overrides the platform endpoint.  Absent means the built-in
+	// eomsg URL, which is the only provider this module speaks.
+	SMSBase string `json:"sms_base"`
+	// SMSProvinces replaces the built-in rotation pool.  An empty list
+	// keeps the built-in provinces; "none" disables the rotation.
+	SMSProvinces []string `json:"sms_provinces"`
+	// SMSCardType is the card class the platform hands out.  Absent means
+	// "全部" (let the platform choose).
+	SMSCardType string `json:"sms_card_type"`
+
+	// BrowserPath pins the Chromium-family executable the auto-login flow
+	// drives.  Empty means "find an installed Edge or Chrome".
+	BrowserPath string `json:"browser_path"`
+	// BrowserHeadless runs that browser without a window.  Absent means
+	// true.
+	BrowserHeadless *bool `json:"browser_headless"`
+	// AutoLoginTimeoutSeconds bounds one auto-login run end to end.
+	// Absent means 300s.
+	AutoLoginTimeoutSeconds *int `json:"auto_login_timeout_seconds"`
+	// SMSPolls is how many times one rented number is checked for its SMS.
+	// Absent means 12.
+	SMSPolls *int `json:"sms_polls"`
+	// SMSIntervalSeconds is the pause between two SMS polls.  Absent means
+	// 5s.
+	SMSIntervalSeconds *int `json:"sms_interval_seconds"`
+	// DupRetries is how many extra numbers to draw when the platform keeps
+	// handing back one that is already in the pool.  Absent means 6.
+	DupRetries *int `json:"dup_retries"`
 
 	// Models overrides the built-in catalogue.  It exists because the vendor's
 	// own model list lives behind an endpoint this module cannot call (see
@@ -127,6 +212,16 @@ type config struct {
 
 func (c config) openAPIBase() string {
 	return strings.TrimRight(firstNonEmpty(c.OpenAPIBase, defaultOpenAPIBase), "/")
+}
+
+// gatewayBase is the host the model catalogue and the chat stream live on.
+func (c config) gatewayBase() string {
+	return strings.TrimRight(firstNonEmpty(c.GatewayBase, defaultGatewayBase), "/")
+}
+
+// testModel is the model a connectivity probe asks for.
+func (c config) testModel() string {
+	return firstNonEmpty(c.ChatModel, defaultTestModel)
 }
 
 // authBase is the host the browser sign-in page lives on.
@@ -169,6 +264,71 @@ func (c config) cooldown() time.Duration {
 
 func (c config) authCooldown() time.Duration {
 	return durationOr(string(c.AuthCooldown), defaultAuthCooldown)
+}
+
+func (c config) chatTimeout() time.Duration {
+	return durationOr(string(c.ChatTimeout), defaultChatTimeout)
+}
+
+func (c config) modelsTTL() time.Duration {
+	return durationOr(string(c.ModelsTTL), defaultModelsTTL)
+}
+
+func (c config) modelsTimeout() time.Duration {
+	return durationOr(string(c.ModelsTimeout), defaultModelsTimeout)
+}
+
+// browserHeadless resolves `browser_headless`.  Absent means headless: the
+// common case is a host with no desktop to draw on, and a run that wants a
+// visible window is the exception an operator opts into.
+func (c config) browserHeadless() bool {
+	if c.BrowserHeadless != nil {
+		return *c.BrowserHeadless
+	}
+	return true
+}
+
+// autoLoginTimeout resolves `auto_login_timeout_seconds`.
+func (c config) autoLoginTimeout() time.Duration {
+	if c.AutoLoginTimeoutSeconds != nil && *c.AutoLoginTimeoutSeconds > 0 {
+		return time.Duration(*c.AutoLoginTimeoutSeconds) * time.Second
+	}
+	return defaultAutoLoginTimeout
+}
+
+// smsPolls resolves `sms_polls`: how many times one number is checked for its
+// SMS before the run gives up on it.
+func (c config) smsPolls() int {
+	if c.SMSPolls != nil && *c.SMSPolls > 0 {
+		return *c.SMSPolls
+	}
+	return defaultSMSPolls
+}
+
+// smsInterval resolves `sms_interval_seconds`: the pause between two SMS
+// polls.
+func (c config) smsInterval() time.Duration {
+	if c.SMSIntervalSeconds != nil && *c.SMSIntervalSeconds > 0 {
+		return time.Duration(*c.SMSIntervalSeconds) * time.Second
+	}
+	return defaultSMSInterval
+}
+
+// dupRetries resolves `dup_retries`: how many extra numbers to draw when the
+// platform keeps handing back one that is already in the pool.
+func (c config) dupRetries() int {
+	if c.DupRetries != nil && *c.DupRetries > 0 {
+		return *c.DupRetries
+	}
+	return defaultDupRetries
+}
+
+// smsCardType resolves `sms_card_type`.
+func (c config) smsCardType() string {
+	if s := strings.TrimSpace(c.SMSCardType); s != "" {
+		return s
+	}
+	return "全部"
 }
 
 // modelIDs is the catalogue the operator configured, or the built-in list.
@@ -258,6 +418,7 @@ func parseConfig(raw json.RawMessage) (config, error) {
 // itself is handled by configuredAccounts so config-file entries keep order.
 func applyEnv(cfg *config) {
 	envStr(&cfg.OpenAPIBase, "CLIENT2API_QODER_OPENAPI_BASE")
+	envStr(&cfg.GatewayBase, "CLIENT2API_QODER_GATEWAY_BASE")
 	envStr(&cfg.AuthBase, "CLIENT2API_QODER_AUTH_BASE")
 	envStr(&cfg.AuthClientID, "CLIENT2API_QODER_AUTH_CLIENT_ID")
 	envStr(&cfg.CosyVersion, "CLIENT2API_QODER_COSY_VERSION")

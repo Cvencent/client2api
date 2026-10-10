@@ -629,6 +629,22 @@ func createShortcuts(opt options, dir string) error {
 			errs = append(errs, err)
 		}
 	}
+	if opt.startup {
+		if err := createShortcut(filepath.Join(startupDir(), startupLNK), exe, args, dir, icon,
+			"开机启动 client2api 本地网关"); err != nil {
+			errs = append(errs, err)
+		}
+	} else {
+		// Unticking autostart during an upgrade must remove the link the
+		// previous version created; leaving it would contradict the box.
+		clearStartupShortcut()
+	}
+	if err := writeStartupPreference(opt.startup); err != nil {
+		// The preference is what makes the next upgrade remember the box; a
+		// registry failure should be visible but must not fail an otherwise
+		// complete install.
+		errs = append(errs, err)
+	}
 	if !opt.noDesktop {
 		desktop, _ := knownFolder(windows.FOLDERID_Desktop, filepath.Join(os.Getenv("USERPROFILE"), "Desktop"))
 		if err := createShortcut(filepath.Join(desktop, appName+".lnk"), exe, args, dir, icon,
@@ -651,8 +667,7 @@ func removeShortcuts(opt options, dir string) {
 	desktop, _ := knownFolder(windows.FOLDERID_Desktop, filepath.Join(os.Getenv("USERPROFILE"), "Desktop"))
 	_ = os.Remove(filepath.Join(desktop, appName+".lnk"))
 
-	startupDir := filepath.Join(os.Getenv("APPDATA"), "Microsoft", "Windows", "Start Menu", "Programs", "Startup")
-	_ = os.Remove(filepath.Join(startupDir, appName+".lnk"))
+	clearStartupShortcut()
 }
 
 func writeRegistry(dir string) error {

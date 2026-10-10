@@ -584,15 +584,9 @@ func TestTestAccountSucceedsWithALoginAndSendsNoConversation(t *testing.T) {
 	noCLIOnPath(t)
 	cred := writeCredential(t, filepath.Join(t.TempDir(), "kimi-code.json"), "sk-abcdefghijklmnopqrstuvwxyz")
 
-	// A stub that fails loudly if it is ever executed: TestAccount must not run
-	// the CLI.
-	dir := t.TempDir()
-	var bin string
-	if runtime.GOOS == "windows" {
-		bin = writeScript(t, dir, "kimi.cmd", "@echo off\r\n>&2 echo EXPLODED\r\nexit /b 9\r\n")
-	} else {
-		bin = writeScript(t, dir, "kimi", "#!/bin/sh\necho EXPLODED >&2\nexit 9\n")
-	}
+	// The stub answers like the real CLI: TestAccount must drive one real
+	// completion, not just stat the login files.
+	bin := stubEmitting(t, cliFixture("pong"))
 	c, _ := newClient(t, map[string]any{"binary": bin, "credential_files": []string{cred}})
 
 	res, err := c.TestAccount(context.Background(), cliLoginID)
@@ -605,11 +599,11 @@ func TestTestAccountSucceedsWithALoginAndSendsNoConversation(t *testing.T) {
 	if res.Model != c.cfg.DefaultModel {
 		t.Errorf("model = %q, want %q", res.Model, c.cfg.DefaultModel)
 	}
-	if !strings.Contains(res.Reply, "No conversation was sent") {
-		t.Errorf("reply = %q, want it to say no conversation was sent", res.Reply)
+	if !strings.Contains(res.Reply, "pong") {
+		t.Errorf("reply = %q, want the CLI's real answer", res.Reply)
 	}
-	if strings.Contains(res.Reply+res.Error, "EXPLODED") {
-		t.Error("TestAccount ran the CLI")
+	if !strings.Contains(res.Reply, "probe:") {
+		t.Errorf("reply = %q, want it to name the probed credential", res.Reply)
 	}
 }
 

@@ -53,7 +53,8 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 		cancel()
 		return nil, err
 	}
-	return stream, nil
+	c.inFlight.Add(1)
+	return core.TrackStream(stream, func() { c.inFlight.Add(-1) }), nil
 }
 
 // openStream runs the account retry loop and returns a live stream.
@@ -79,7 +80,7 @@ func (c *Client) openStream(ctx context.Context, req *core.ChatRequest, release 
 			}
 			return nil, err
 		}
-		e := c.pool.pick(tried)
+		e := c.pickAccount(req, tried)
 		if e == nil {
 			if lastErr != nil {
 				return nil, c.terminal(lastErr, lastAcct)
@@ -97,6 +98,9 @@ func (c *Client) openStream(ctx context.Context, req *core.ChatRequest, release 
 			busy = true
 			continue
 		}
+		// Bind only after the slot is genuinely held, so a busy account that was
+		// skipped cannot capture the conversation.
+		c.bindServedConversation(req, acctID)
 		// The gateway reads this slot to attribute the request in its usage
 		// ledger, so it is set before every attempt, not once.
 		core.NoteServedBy(req, acctID)

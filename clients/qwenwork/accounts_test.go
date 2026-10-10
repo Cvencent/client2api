@@ -54,6 +54,18 @@ func routedTransport(models, refresh, poll func(*http.Request) (*http.Response, 
 }
 
 // panelClient builds a real Client against a throwaway data directory.
+// chatTransport answers any chat-path request with the given SSE body.  It is
+// what the TestAccount probe hits, so a test that exercises the probe never
+// has to model the whole catalogue route.
+func chatTransport(frames string) *fakeTransport {
+	return &fakeTransport{handler: func(_ int, req *http.Request, _ string) (*http.Response, error) {
+		if strings.Contains(req.URL.String(), "/algo/api/v2/service/pro/sse/agent_chat_generation") {
+			return fakeResponse(req, http.StatusOK, frames), nil
+		}
+		return nil, errors.New("offline test: unrouted " + req.URL.String())
+	}}
+}
+
 func panelClient(t *testing.T, cfgJSON string, rt *fakeTransport) *Client {
 	t.Helper()
 	clearCredentialEnv(t)
@@ -395,9 +407,7 @@ func TestQwenworkSetAccountEnabledParksAndRevives(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestQwenworkTestAccountReachesUpstream(t *testing.T) {
-	rt := routedTransport(func(req *http.Request) (*http.Response, error) {
-		return fakeResponse(req, http.StatusOK, panelModelList), nil
-	}, nil, nil)
+	rt := chatTransport(chatSSEFrames)
 	c := panelClient(t, "", rt)
 	rec := addPanelAccount(t, c, map[string]string{"access_token": "tok-live", "uid": "u-live"})
 
@@ -411,11 +421,11 @@ func TestQwenworkTestAccountReachesUpstream(t *testing.T) {
 	if res.AccountID != rec.ID {
 		t.Errorf("AccountID = %q, want %q", res.AccountID, rec.ID)
 	}
-	if res.Model != "qwen3-max" {
-		t.Errorf("Model = %q, want the first usable catalogue entry", res.Model)
+	if res.Model != probeModel {
+		t.Errorf("Model = %q, want the probe model %q", res.Model, probeModel)
 	}
-	if !strings.Contains(res.Reply, "2 model(s)") {
-		t.Errorf("Reply = %q, want it to count the two usable models", res.Reply)
+	if !strings.Contains(res.Reply, "Hello") {
+		t.Errorf("Reply = %q, want the streamed text", res.Reply)
 	}
 	if rt.count() == 0 {
 		t.Error("no request reached the upstream")

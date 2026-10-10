@@ -98,6 +98,55 @@ func (p *providerPool) ready(now time.Time) int {
 	return n
 }
 
+// noteInFlight adjusts a provider's live request count.  delta is +1 when a
+// stream opens and -1 when it closes.  It is the same counter PoolStats and the
+// panel read, and it stamps lastUsed so the operator can see which provider is
+// actually serving.  An id no longer in the pool is ignored, which keeps a
+// stream that outlives a reload from unbalancing the books.
+func (p *providerPool) noteInFlight(id string, delta int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, a := range p.accts {
+		if strings.EqualFold(a.ID, id) {
+			a.inFlight += delta
+			if a.inFlight < 0 {
+				a.inFlight = 0
+			}
+			if delta > 0 {
+				a.lastUsed = time.Now()
+			}
+			return
+		}
+	}
+}
+
+// stats reports the live in-flight total and how many enabled providers are at
+// their per-provider ceiling.
+func (p *providerPool) stats(limit int) (inFlight, full int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, a := range p.accts {
+		inFlight += a.inFlight
+		if limit > 0 && !a.Disabled && a.inFlight >= limit {
+			full++
+		}
+	}
+	return inFlight, full
+}
+
+// disabled counts providers the operator switched off.
+func (p *providerPool) disabled() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	n := 0
+	for _, a := range p.accts {
+		if a.Disabled {
+			n++
+		}
+	}
+	return n
+}
+
 func (p *providerPool) summary(now time.Time) string {
 	p.mu.Lock()
 	defer p.mu.Unlock()

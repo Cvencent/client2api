@@ -4,9 +4,13 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"runtime"
 	"syscall"
 	"unsafe"
+
+	"golang.org/x/sys/windows/registry"
 
 	"golang.org/x/sys/windows"
 )
@@ -38,6 +42,95 @@ const (
 	coinitApartmentThreaded = 0x2
 	swShowNormal            = 1
 )
+
+const (
+	// startupLNK is the shortcut the installer owns in the user's Startup
+	// folder.  Its name is also the marker older installs left behind, so an
+	// upgrade can recover the operator's choice even before the registry key
+	// existed.
+	startupLNK = appName + ".lnk"
+	// startupValue remembers the checkbox across upgrades.  It lives beside
+	// InstallDir under HKLM/HKCU\Software\client2api.
+	startupValue = "Startup"
+)
+
+// startupDir returns the per-user Startup folder.  A redirected profile
+// falls back to the path the shell uses when the known-folder query fails.
+func startupDir() string {
+	dir, _ := knownFolder(windows.FOLDERID_Startup,
+		filepath.Join(os.Getenv("APPDATA"), "Microsoft", "Windows", "Start Menu", "Programs", "Startup"))
+	return dir
+}
+
+// startupShortcutExistsIn reports whether the startup link is present in a
+// specific directory.  Kept separate from startupShortcutExists so tests can
+// point it at a temp directory.
+func startupShortcutExistsIn(dir string) bool {
+	if dir == "" {
+		return false
+	}
+	info, err := os.Stat(filepath.Join(dir, startupLNK))
+	return err == nil && !info.IsDir()
+}
+
+func startupShortcutExists() bool {
+	return startupShortcutExistsIn(startupDir())
+}
+
+// clearStartupShortcutIn removes the link from dir.  The wizard uses it when
+// the operator unticks autostart during an upgrade, so the remembered "off"
+// actually takes effect instead of leaving the old link behind.
+func clearStartupShortcutIn(dir string) {
+	if dir == "" {
+		return
+	}
+	_ = os.Remove(filepath.Join(dir, startupLNK))
+}
+
+func clearStartupShortcut() {
+	clearStartupShortcutIn(startupDir())
+}
+
+// startupDefault decides whether the wizard's autostart box starts checked.
+// An explicit remembered value wins; otherwise the presence of the shortcut
+// is treated as "on", which is how installs made before the preference was
+// persisted migrate without the operator having to tick the box again.
+func startupDefault(stored, hasStored, hasShortcut bool) bool {
+	if hasStored {
+		return stored
+	}
+	return hasShortcut
+}
+
+// readRegistryBool reads a stored boolean; a missing value reports has=false
+// so callers can tell "never set" apart from an explicit "off".
+func readRegistryBool(root registry.Key, name string) (value, has bool) {
+	k, err := registry.OpenKey(root, appKey, registry.QUERY_VALUE)
+	if err != nil {
+		return false, false
+	}
+	defer k.Close()
+	v, _, err := k.GetIntegerValue(name)
+	if err != nil {
+		return false, false
+	}
+	return v != 0, true
+}
+
+// writeStartupPreference records the operator's checkbox so the next upgrade
+// can restore it instead of starting unchecked.
+func writeStartupPreference(enabled bool) error {
+	k, _, err := registry.CreateKey(registry.CURRENT_USER, appKey, registry.WRITE)
+	if err != nil {
+		return err
+	}
+	defer k.Close()
+	v := uint32(0)
+	if enabled {
+		v = 1
+	}
+	return k.SetDWordValue(startupValue, v)
+}
 
 // ishellLinkWVtbl mirrors IShellLinkWVtbl from the Windows SDK's shobjidl.h.
 // The slot order there is neither the alphabetical one the documentation

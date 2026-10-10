@@ -421,6 +421,8 @@ until an operator sets it.
 It implements, and the panel discovers: `AccountManager`, `LoginProvider`,
 `CheckinProvider`, `ModelRefresher`, `ModelLimitsProvider`, `Reviver`,
 `BalanceProvider` and `HintProvider`.
+It also implements `HealthProvider` and `PoolStatsReporter`; the pool census
+drives the status badge and the in-flight count.
 
 Deliberately absent, with reasons:
 
@@ -432,7 +434,6 @@ Deliberately absent, with reasons:
 | `CaptchaProvider` | The sign-in flow is a browser redirect to Huawei's own portal, which handles its own challenges. |
 | `TaskProvider`, `BatchPlanner` | **The vendor has no task API.** The only recurring action is the daily check-in, which `CheckinProvider` covers. Implementing these would mean inventing an API. |
 | `Degrader` | No cheaper model tier to degrade to. |
-| `HealthProvider` | Would require a synthetic probe request; the account pool's own cooldown state already answers "is this usable". |
 | `LiveReloader` | Credentials are re-read on demand; there is nothing to hot-swap. |
 | `PackageProvider`, `VoucherProvider` | The vendor exposes credit *totals* but no per-package or voucher breakdown. `AccountBalance` reports what genuinely exists. |
 | `ConversationProvider` | The vendor has no conversation-list API. |

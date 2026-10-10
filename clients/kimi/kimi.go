@@ -41,6 +41,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"client2api/internal/core"
@@ -376,6 +377,11 @@ type Client struct {
 	mu      sync.Mutex
 	lastErr string
 
+	// inFlight is the number of chat streams currently open.  Chat feeds it
+	// through core.TrackStream on each success path, so PoolStats can report
+	// the module's real concurrency instead of a second bookkeeping.
+	inFlight atomic.Int64
+
 	// modelsMu guards the upstream model-list cache.  Models() is called on
 	// every panel refresh, so the vendor is asked only when the cache is empty
 	// or older than modelsCacheTTL; keeping the last good answer here is what
@@ -528,7 +534,10 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 					// console row.  kimi has two accounts rather than a pool, and
 					// this is the branch that served the turn.
 					core.NoteServedBy(req, webLoginID)
-					return st, nil
+					// Count the live call for as long as the stream is open, so
+					// PoolStats reports the module's real concurrency.
+					c.inFlight.Add(1)
+					return core.TrackStream(st, func() { c.inFlight.Add(-1) }), nil
 				}
 				directErr = derr
 				c.noteError(derr)
@@ -672,7 +681,11 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 		c.noteError(err)
 		return nil, err
 	}
-	return st, nil
+	// Count the live CLI call for as long as the stream is open.  The
+	// stream releases its own concurrency slot on Close; this is the
+	// module-level number PoolStats reports.
+	c.inFlight.Add(1)
+	return core.TrackStream(st, func() { c.inFlight.Add(-1) }), nil
 }
 
 // Status implements core.Client.  It is deliberately cheap: two small file

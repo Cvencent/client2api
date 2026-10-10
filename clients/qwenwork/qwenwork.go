@@ -26,6 +26,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"client2api/internal/core"
@@ -100,6 +101,10 @@ type Client struct {
 	lastErrKind errKind
 	lastErr     string
 	lastErrAt   time.Time
+
+	// inFlight is the number of chat streams currently open.  openChat feeds
+	// it through core.TrackStream, so PoolStats reports real concurrency.
+	inFlight atomic.Int64
 
 	// Panel-driven device authorisations (see accounts.go).  These live in
 	// memory only: a restart drops a half-finished flow, and the operator

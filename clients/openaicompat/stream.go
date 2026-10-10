@@ -191,6 +191,12 @@ type httpResponse = httpResponseAlias
 
 func newChatStream(c *Client, resp *httpResponseAlias, prov ProviderConfig, accountID string, cancel context.CancelFunc) *chatStream {
 	body := newIdleReader(resp.Body, c.cfg.streamIdle())
+	// The provider's in-flight count follows the stream's lifetime exactly: this
+	// constructor runs only after a successful upstream call, and release() is
+	// idempotent, so a double Close cannot double-count.
+	if c != nil && c.pool != nil && accountID != "" {
+		c.pool.noteInFlight(accountID, 1)
+	}
 	return &chatStream{
 		client:    c,
 		resp:      resp,
@@ -383,6 +389,9 @@ func (s *chatStream) finishReason() string {
 func (s *chatStream) release() {
 	s.closeOnce.Do(func() {
 		s.released = true
+		if s.client != nil && s.client.pool != nil && s.accountID != "" {
+			s.client.pool.noteInFlight(s.accountID, -1)
+		}
 		if s.body != nil {
 			s.closeErr = s.body.Close()
 		} else if s.resp != nil {

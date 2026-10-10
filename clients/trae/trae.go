@@ -75,6 +75,11 @@ type Client struct {
 
 	requests atomic.Int64
 	failures atomic.Int64
+
+	// inFlight is the number of chat streams currently open.  The success
+	// path feeds it through core.TrackStream so PoolStats reports the real
+	// concurrency the vendor sees.
+	inFlight atomic.Int64
 }
 
 // New builds the trae client.  A missing credential is NOT an error: Status()
@@ -346,7 +351,8 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 			skip[a.ID()] = true
 		default:
 			c.pool.MarkSuccessForModel(a, model)
-			return newStream(c, a, rc), nil
+			c.inFlight.Add(1)
+			return core.TrackStream(newStream(c, a, rc), func() { c.inFlight.Add(-1) }), nil
 		}
 	}
 

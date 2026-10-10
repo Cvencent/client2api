@@ -154,6 +154,11 @@ if (-not $env:GOFLAGS) { $env:GOFLAGS = '-mod=mod' }
 $env:CGO_ENABLED = '0'
 
 $ldflags = "-s -w -X main.version=$version"
+# The wizard is what an operator double-clicks, so the installer image must
+# be GUI-subsystem.  A console-subsystem setup .exe makes Windows allocate a
+# console before main() runs, and hideConsoleWindow() can only hide it after
+# the fact -- which is the CMD window that flashes beside the wizard.
+$guiLdflags = $ldflags + " -H=windowsgui"
 
 Write-Step 'building client2api.exe'
 & $go build -trimpath -ldflags "$ldflags -H=windowsgui" -o (Join-Path $PayloadDirectory 'client2api.exe') ./cmd/client2api
@@ -293,7 +298,7 @@ Write-Step 'building the installer'
 $env:GOOS = 'windows'
 $env:GOARCH = 'amd64'
 try {
-    & $go build -trimpath -ldflags $ldflags -o $setupPath ./installer/setup
+    & $go build -trimpath -ldflags $guiLdflags -o $setupPath ./installer/setup
     if ($LASTEXITCODE -ne 0) { throw "go build ./installer/setup failed ($LASTEXITCODE)" }
 } finally {
     Remove-Item Env:\GOOS -ErrorAction SilentlyContinue

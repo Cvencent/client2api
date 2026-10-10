@@ -10,7 +10,7 @@ One OpenAI-compatible gateway in front of sixteen AI backends:
 | `trae/…` | Trae | TRAE SOLO / Trae CN |
 | `zcode/…` | ZCode | Z.AI coding plan (Anthropic Messages upstream) |
 | `kimi/…` | Kimi | Kimi Code CLI |
-| `qoder/…` | Qoder CN | Qoder CN browser/desktop accounts, credits and check-in (no chat) |
+| `qoder/…` | Qoder CN | Qoder CN browser/desktop accounts, credits, check-in and chat |
 | `qwenwork/…` | QwenWork | Qwen Office / QoderWork CN desktop agent |
 | `tabbit/…` | Tabbit | Tabbit Browser (via a sidecar) |
 | `minimaxcode/…` | MiniMax Code | MiniMax Code desktop agent (Anthropic Messages upstream) |
@@ -30,10 +30,23 @@ Everything is served from **one** HTTP surface — `POST /v1/chat/completions`,
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-Current version: **0.1.28**. Full history: [CHANGELOG.md](CHANGELOG.md).
+Current version: **0.1.29**. Full history: [CHANGELOG.md](CHANGELOG.md).
 
-### Recent highlights (0.1.25 - 0.1.28)
+### Recent highlights (0.1.26 - 0.1.29)
 
+* **The panel has one polished workspace design:** all eleven views now share an Apple-like
+  material system, semantic light/dark colors, smoother page and panel transitions, consistent
+  controls, responsive layouts and a reduced-motion fallback.
+* **Account health is visible across more platforms:** codearts, openai-compat, tabbit,
+  lobsterai and opencode now report pool health and real in-flight counts, and conversation
+  affinity keeps a multi-turn session on the account that first served it.
+* **Qoder CN is a full chat module:** signed model discovery and streaming chat, packages,
+  campaign tasks, SMS auto-login, health, pool stats and sticky sessions are all wired to
+  real vendor behavior. Account test buttons now verify chat-capable platforms with one
+  minimum-size real completion.
+* **Windows installation is quieter and more predictable:** the installer no longer flashes
+  a console window, remembers the autostart choice across upgrades, and keeps the existing
+  config, accounts, usage and task data.
 * **Large account pools are easier to operate:** the accounts table pages at 20 / 50 / 100 / 200
   rows, filters by account state, and sorts account, state, model, priority, balance,
   success/failure, in-flight, usage, last-success and expiry columns. Multi-channel accounts
@@ -59,6 +72,9 @@ Current version: **0.1.28**. Full history: [CHANGELOG.md](CHANGELOG.md).
 * **Platform coverage was extended and corrected:** Qoder CN, QwenWork credits, Tabbit's daily
   3% sign-in, Raccoon's daily 300 credits and Loomy's first-login growth tasks are represented
   by real module capabilities rather than panel-only buttons.
+* **Qoder CN now chats:** the model catalogue and completion stream go straight to
+  `gateway.qoder.com.cn` with the module's own COSY signing, and every platform that
+  can chat verifies an account with one minimum-size real request.
 * **Panel actions are consistent:** one topbar Refresh button is present on all eleven views and
   dispatches per view; Chat test and Runtime log now have refresh too. Model context length and
   max output are visible, editable and restorable from the Models view.
@@ -1055,7 +1071,7 @@ renderer never calls it either — so there is nothing honest to implement from.
 | trae | yes | yes | yes — loopback redirect on `127.0.0.1`, opens `www.trae.cn/authorization` | yes — `daily-checkin` (CN only) |
 | zcode | yes | yes | yes — polls `POST {api}/oauth/cli/init` → `GET …/poll/{flow_id}` | yes — claims the promotion via the built-in Edge/Chrome captcha solver; `captcha_command` is the headless fallback |
 | kimi | yes | yes | yes — RFC 8628 device grant against `auth.kimi.com`; the CLI is not required | no — no such endpoint exists |
-| qoder | yes | yes — Electron safeStorage + DPAPI on Windows; a pasted token elsewhere | yes — browser device grant + PKCE; polls `GET /api/v1/deviceToken/poll` | yes — daily `CLAIM_BENEFIT` campaign |
+| qoder | yes | yes — Electron safeStorage + DPAPI on Windows; a pasted token elsewhere | yes — browser device grant + PKCE; plus one-click SMS auto-login through Aliyun SSO (`core.AutoLoginProvider` + `core.SMSProvider`) | yes — the daily `CLAIM_BENEFIT` campaign; also a real campaign task board, package breakdown, pool health and model output limits |
 | qwenwork | yes | no — nothing on disk holds a usable token | yes — PKCE device flow | yes — `daily`, against the Sash check-in API |
 | tabbit | yes | yes | yes — browser hand-off: opens the sign-in page inside the Tabbit browser through its own launcher, then reads the session cookie back (`local_app` + `handoff_path`; with no launcher it falls back to returning the URL) | yes — daily `sign-in` for the `desktop_pet` scene (normally 3% credit), with a fresh `request_no` idempotency key |
 | minimaxcode | yes | yes | yes — RFC 8628 device grant against `account.minimax.cn`, PKCE, with the CN `user_code` variant; the desktop GUI is not required | no — the product has no check-in |
