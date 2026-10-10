@@ -204,9 +204,8 @@ func (c *Client) do(ctx context.Context, spec requestSpec) (*http.Response, erro
 // Models returns the catalogue.  It never returns an error: the panel's model
 // picker must not go empty because the vendor is having a bad day.
 //
-// With no credential at all it answers from the built-in catalogue and makes no
-// request — the module contract's ModelRefresher rule, applied here too so that
-// an unconfigured module is silent on the wire.
+// GET /models is public, so an unconfigured module still consults it; the
+// built-in catalogue is only the final outage fallback.
 func (c *Client) Models(ctx context.Context) ([]core.Model, error) {
 	c.ensure()
 	if ctx == nil {
@@ -214,9 +213,6 @@ func (c *Client) Models(ctx context.Context) ([]core.Model, error) {
 	}
 	if cached, ok := c.cachedModels(); ok {
 		return c.servedModels(cached), nil
-	}
-	if c.pool.size() == 0 {
-		return c.servedModels(fallbackModels(c.cfg)), nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.cfg.modelsTimeout())
 	defer cancel()
@@ -235,15 +231,12 @@ func (c *Client) Models(ctx context.Context) ([]core.Model, error) {
 // RefreshModels bypasses the TTL cache.
 //
 // On failure it returns the last known-good list ALONGSIDE the error, so a
-// failed refresh never empties the picker.  With no credential it returns the
-// built-in catalogue and a nil error, and makes no request.
+// failed refresh never empties the picker.  The public list is fetched even
+// without a credential; the built-in catalogue is only the outage fallback.
 func (c *Client) RefreshModels(ctx context.Context) ([]core.Model, error) {
 	c.ensure()
 	if ctx == nil {
 		ctx = context.Background()
-	}
-	if c.pool.size() == 0 {
-		return c.servedModels(fallbackModels(c.cfg)), nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.cfg.modelsTimeout())
 	defer cancel()

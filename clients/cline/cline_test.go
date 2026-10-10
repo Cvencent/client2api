@@ -387,18 +387,18 @@ func TestCatalogueMergesThreeSources(t *testing.T) {
 	f := newFakeServer(t)
 	// The metered list: no cline-free/* ids anywhere.
 	f.json(modelsPath, http.StatusOK, `{"data":[
-		{"id":"deepseek/deepseek-v4.1-flash","object":"model","created":1,"owned_by":"deepseek"},
-		{"id":"anthropic/claude-sonnet-4.5","object":"model","created":1,"owned_by":"anthropic"}
-	]}`)
+        {"id":"deepseek/deepseek-v4.1-flash","object":"model","created":1,"owned_by":"deepseek"},
+        {"id":"anthropic/claude-sonnet-4.5","object":"model","created":1,"owned_by":"anthropic"}
+    ]}`)
 	// The recommended endpoint carries the free array, and one recommendation
 	// that the metered list does not have.
 	f.json(recommendedPath, http.StatusOK, `{
-		"data":[
-			{"id":"cline-free/gemini-3.8-flash","name":"Gemini 3.8 Flash","description":"x","tags":["free"]},
-			{"id":"stealth/space-bunny-alpha","name":"Space Bunny Alpha","description":"y","tags":["free"]}
-		],
-		"free":["cline-free/gemini-3.8-flash","stealth/space-bunny-alpha","cline-free/mimo-v2.6-flash","cline-free/muse-spark-1.3-contributor"]
-	}`)
+        "data":[
+            {"id":"cline-free/gemini-3.8-flash","name":"Gemini 3.8 Flash","description":"x","tags":["free"]},
+            {"id":"stealth/space-bunny-alpha","name":"Space Bunny Alpha","description":"y","tags":["free"]}
+        ],
+        "free":["cline-free/gemini-3.8-flash","stealth/space-bunny-alpha","cline-free/mimo-v2.6-flash","cline-free/muse-spark-1.3-contributor"]
+    }`)
 
 	c := newTestClient(t, f, `"access_token":"workos:t"`)
 	models, err := c.RefreshModels(context.Background())
@@ -434,6 +434,41 @@ func TestCatalogueMergesThreeSources(t *testing.T) {
 	// The list endpoint really did not carry the free ids.
 	if f.count(modelsPath) != 1 {
 		t.Fatalf("models endpoint called %d times, want 1", f.count(modelsPath))
+	}
+}
+
+func TestRecommendedFreeObjectsEnterTheCatalogue(t *testing.T) {
+	f := newFakeServer(t)
+	f.json(modelsPath, http.StatusOK, `{"data":[
+        {"id":"stepfun/step-5-preview","object":"model","owned_by":"stepfun"}
+    ]}`)
+	f.json(recommendedPath, http.StatusOK, `{
+        "recommended":[
+            {"id":"anthropic/claude-sonnet-5.5","name":"claude-sonnet-5.5"}
+        ],
+        "free":[
+            {"id":"cline-free/step-5-preview","name":"Step 5 Preview","description":"StepFun's flagship model for agentic work","tags":[]}
+        ]
+    }`)
+
+	c := newTestClient(t, f, `"access_token":"workos:t"`)
+	models, err := c.RefreshModels(context.Background())
+	if err != nil {
+		t.Fatalf("RefreshModels: %v", err)
+	}
+	ids := map[string]core.Model{}
+	for _, m := range models {
+		ids[m.ID] = m
+	}
+	got, ok := ids["cline-free/step-5-preview"]
+	if !ok {
+		t.Fatalf("merged catalogue is missing cline-free/step-5-preview: %v", modelIDs(models))
+	}
+	if got.Extra["free"] != true {
+		t.Fatalf("free = %v, want true", got.Extra["free"])
+	}
+	if got.Extra["display_name"] != "Step 5 Preview" {
+		t.Fatalf("display_name = %v, want Step 5 Preview", got.Extra["display_name"])
 	}
 }
 

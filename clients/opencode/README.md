@@ -130,8 +130,9 @@ The catalogue is a merge of two sources, and the merge order is the whole point:
 
 `extra_models` in the config appends ids; it can never remove one.
 
-If the live fetch fails, the module keeps the last known-good list, and with no
-credential at all it answers from the built-in catalogue and makes no request.
+The public list is fetched even when no credential is configured. If the live
+fetch fails, the module keeps the last known-good list and only then falls back
+to the built-in catalogue.
 
 ### `ModelLimitsProvider`
 
@@ -188,7 +189,7 @@ See `config.example.json` for the complete shape.
 | `test_model` | string | `gpt-5-nano` | what the panel's "test" button asks |
 | `auth_base_url` | string | `https://opencode.ai/console` | OpenCode Console origin the `oauth` device-code login drives; a non-absolute `http(s)` value is discarded |
 | `default_realm` | string | `free` | the realm `StartLogin` targets when the panel sends none: `free` or `oauth`; anything else folds to `free` |
-| `free_models` | string[] | `["space-bunny-free"]` | the zero-cost ids an anonymous credential may ask for — an allowlist, not a `*-free` pattern |
+| `free_models` | string[] | `["space-bunny-free"]` | extra zero-cost ids for an anonymous credential; vendor ids ending in `*-free` are recognized automatically |
 
 **Durations** accept a Go duration string (`"90s"`) or a bare JSON number read
 as seconds (`90`). A value that cannot be parsed becomes zero, and zero means
@@ -302,15 +303,14 @@ publishes two realms, and `StartLogin` defaults to `default_realm` (`free`).
 the fixed id `opencode:anonymous`, `AuthMode: "anonymous"` and the literal
 `APIKey: "public"`, sent upstream as `x-api-key: public` with no
 `Authorization`. Adding it twice updates the same row rather than creating a
-duplicate. Anonymous accounts are narrowed to the free allowlist
-(`free_models`, default `["space-bunny-free"]`): `Models()` serves **only**
-those ids, each tagged `Extra["free"] = true`, and a chat request for any other
-model is refused locally without an HTTP call. The vendor's other `*-free` ids
-are gated behind a paid plan or a region check (`FreeTierError`), which is why
-this is an allowlist rather than a `*-free` pattern.
+duplicate. Anonymous accounts are narrowed to the vendor ids ending in `*-free`
+plus the configured `free_models` additions: `Models()` serves **only** those
+ids, each tagged `Extra["free"] = true`, and a chat request for any other model
+is refused locally without an HTTP call. The configured list remains available
+for zero-cost ids that do not carry the suffix.
 
 Because a paid id answers `Missing API key.`, the panel's Test button probes
-the first free allowlist id for an anonymous account (a configured
+the first configured free id for an anonymous account (a configured
 `test_model` is kept only when it is itself free), and re-adding the free
 account clears any failure state a previous refusal left behind.
 

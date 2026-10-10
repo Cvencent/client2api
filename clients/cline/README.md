@@ -26,13 +26,14 @@ free model whatsoever.
 | Source | Shape | What it contributes |
 | --- | --- | --- |
 | `GET /api/v1/models` | `{id, object, created, owned_by}` | the metered catalogue (~460 ids) |
-| `GET /api/v1/ai/cline/recommended-models` | `{id, name, description, tags}` plus a top-level `free` array | display names, descriptions and **every free id** |
+| `GET /api/v1/ai/cline/recommended-models` | `{id, name, description, tags}` plus a top-level `free` array | display names, descriptions and **every free model**, including free-only entries absent from `/api/v1/models` |
 | built-in table | compiled in | the five free models, and a usable list when the network is down |
 
-Merge rule: built-in **<** `/api/v1/models` **<** recommended. The recommended
-source wins because it is the only one that carries a display name and the free
-verdict. `Extra["free"]` is written unconditionally by the `/api/v1/models` pass,
-so a lower-precedence guess can never survive a higher-precedence answer.
+Merge rule: built-in **<** `/api/v1/models` **<** recommended/free. Both live
+responses are authoritative. Free-array objects are merged as catalogue rows, not
+treated as ids only, so their name and description survive. `Extra["free"]` is
+written unconditionally by the live passes, so a lower-precedence guess cannot
+survive a higher-precedence answer.
 
 The built-in table is a fallback for a total outage, not a permanent skeleton.
 Once any live source answers, a built-in entry survives only when that source

@@ -129,13 +129,13 @@ type recommendedEnvelope struct {
 // freeRef is one member of the recommended endpoint's free array, which holds
 // either a bare id string or an object.
 type freeRef struct {
-	ID    string `json:"id"`
+	modelEntry
 	Model string `json:"model"`
 }
 
-// ids extracts the ids a free array names.
-func (e recommendedEnvelope) ids() []string {
-	out := make([]string, 0, len(e.Free))
+// freeEntries parses the free array without discarding object metadata.
+func (e recommendedEnvelope) freeEntries() []modelEntry {
+	out := make([]modelEntry, 0, len(e.Free))
 	for _, raw := range e.Free {
 		trimmed := strings.TrimSpace(string(raw))
 		if trimmed == "" {
@@ -145,15 +145,17 @@ func (e recommendedEnvelope) ids() []string {
 			var s string
 			if json.Unmarshal(raw, &s) == nil {
 				if s = strings.TrimSpace(s); s != "" {
-					out = append(out, s)
+					out = append(out, modelEntry{ID: s})
 				}
 			}
 			continue
 		}
 		var ref freeRef
 		if json.Unmarshal(raw, &ref) == nil {
-			if id := firstNonEmpty(ref.ID, ref.Model); id != "" {
-				out = append(out, id)
+			entry := ref.modelEntry
+			entry.ID = firstNonEmpty(entry.ID, ref.Model)
+			if entry.ID != "" {
+				out = append(out, entry)
 			}
 		}
 	}
@@ -324,17 +326,13 @@ func parseModelsList(raw []byte) ([]core.Model, error) {
 }
 
 // parseRecommended decodes the recommended-models response, returning the
-// entries and the ids named by the free array.
-func parseRecommended(raw []byte) ([]modelEntry, map[string]bool, error) {
+// recommended entries and the parsed free entries.
+func parseRecommended(raw []byte) ([]modelEntry, []modelEntry, error) {
 	var env recommendedEnvelope
 	if err := json.Unmarshal(raw, &env); err != nil {
 		return nil, nil, fmt.Errorf("cline: unreadable recommended models: %w", err)
 	}
-	freeIDs := map[string]bool{}
-	for _, id := range env.ids() {
-		freeIDs[id] = true
-	}
-	return env.entries(), freeIDs, nil
+	return env.entries(), env.freeEntries(), nil
 }
 
 // mergeCatalog is the three-source merge.  Precedence, lowest first:
@@ -355,12 +353,14 @@ func parseRecommended(raw []byte) ([]modelEntry, map[string]bool, error) {
 // of being resurrected as a permanent 404 for Auto/ routing.  If that endpoint
 // failed, the built-in free entries are kept so a partial outage does not make
 // free models flap.
-func mergeCatalog(builtin []builtinModel, listed []core.Model, recommended []modelEntry, freeIDs map[string]bool, freeAuthoritative bool) []core.Model {
-	order := make([]string, 0, len(builtin)+len(listed)+len(recommended))
+func mergeCatalog(builtin []builtinModel, listed []core.Model, recommended, freeEntries []modelEntry, freeAuthoritative bool) []core.Model {
+	order := make([]string, 0, len(builtin)+len(listed)+len(recommended)+len(freeEntries))
 	byID := map[string]core.Model{}
 	free := map[string]bool{}
-	for id := range freeIDs {
-		free[id] = true
+	for _, e := range freeEntries {
+		if id := strings.TrimSpace(e.ID); id != "" {
+			free[id] = true
+		}
 	}
 
 	// liveIDs is the set of ids at least one live source knows about.  The
@@ -369,7 +369,7 @@ func mergeCatalog(builtin []builtinModel, listed []core.Model, recommended []mod
 	// the complete truth for free ids.  If that endpoint failed we keep the
 	// built-in free entries rather than making free models flap during a partial
 	// outage.
-	liveIDs := make(map[string]bool, len(listed)+len(recommended)+len(freeIDs))
+	liveIDs := make(map[string]bool, len(listed)+len(recommended)+len(freeEntries))
 	for _, m := range listed {
 		liveIDs[m.ID] = true
 	}
@@ -378,8 +378,10 @@ func mergeCatalog(builtin []builtinModel, listed []core.Model, recommended []mod
 			liveIDs[id] = true
 		}
 	}
-	for id := range freeIDs {
-		liveIDs[id] = true
+	for _, e := range freeEntries {
+		if id := strings.TrimSpace(e.ID); id != "" {
+			liveIDs[id] = true
+		}
 	}
 	put := func(id string, m core.Model, isFree bool) {
 		if _, seen := byID[id]; !seen {
@@ -428,6 +430,16 @@ func mergeCatalog(builtin []builtinModel, listed []core.Model, recommended []mod
 			continue
 		}
 		put(m.ID, m, entryFree(e, free))
+	}
+
+	// Free entries are authoritative and may carry metadata absent from the
+	// recommended list, so add them after it rather than only recording their IDs.
+	for _, e := range freeEntries {
+		m, ok := modelFromEntry(e, free)
+		if !ok {
+			continue
+		}
+		put(m.ID, m, true)
 	}
 
 	out := make([]core.Model, 0, len(order))
@@ -595,11 +607,11 @@ func (c *Client) refreshModelsAsync() {
 // fetchModels builds the catalogue from the three sources.
 func (c *Client) fetchModels(ctx context.Context) ([]core.Model, error) {
 	listed, listErr := c.fetchModelsList(ctx)
-	recommended, freeIDs, recErr := c.fetchRecommended(ctx)
+	recommended, freeEntries, recErr := c.fetchRecommended(ctx)
 	if listErr != nil && recErr != nil {
 		return nil, fmt.Errorf("cline: no catalogue source answered: %v; %v", scrubError(listErr), scrubError(recErr))
 	}
-	merged := mergeCatalog(builtinModels, listed, recommended, freeIDs, recErr == nil)
+	merged := mergeCatalog(builtinModels, listed, recommended, freeEntries, recErr == nil)
 	if len(merged) == 0 {
 		return nil, errNoCatalog
 	}
@@ -622,7 +634,7 @@ func (c *Client) fetchModelsList(ctx context.Context) ([]core.Model, error) {
 // the free ids.  The endpoint needs NO authentication, so it is called without
 // a bearer even when one exists -- that is also what makes the fallback work
 // with no credential at all.
-func (c *Client) fetchRecommended(ctx context.Context) ([]modelEntry, map[string]bool, error) {
+func (c *Client) fetchRecommended(ctx context.Context) ([]modelEntry, []modelEntry, error) {
 	status, _, raw, err := c.doJSON(ctx, http.MethodGet, c.cfg.endpoint(recommendedPath), "", nil)
 	if err != nil {
 		return nil, nil, err

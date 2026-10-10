@@ -330,9 +330,8 @@ func TestCachedModelsHonoursTheTTL(t *testing.T) {
 // Fetching.
 // ---------------------------------------------------------------------------
 
-// The ModelRefresher contract: with no credential at all, answer the built-in
-// list, make no request, and do not count it as an attempt.
-func TestModelsWithoutACredentialMakesNoRequest(t *testing.T) {
+// GET /models is public, so even an unconfigured module gets the API catalogue.
+func TestModelsWithoutACredentialFetchesThePublicCatalogue(t *testing.T) {
 	called := false
 	c := newFakeClient(t, Config{}, func(*http.Request) (*http.Response, error) {
 		called = true
@@ -343,14 +342,14 @@ func TestModelsWithoutACredentialMakesNoRequest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Models = %v, want nil", err)
 	}
-	if called {
-		t.Fatal("Models made a network call with no credential")
+	if !called {
+		t.Fatal("Models did not call the public catalogue endpoint")
 	}
-	if len(models) != len(staticCatalogue) {
-		t.Fatalf("Models = %d models, want the built-in catalogue", len(models))
+	if len(models) != 1 || models[0].ID != "gpt-5.1" {
+		t.Fatalf("Models = %v, want the API catalogue", modelIDsOf(models))
 	}
-	if _, ok := c.cachedModels(); ok {
-		t.Fatal("the built-in fallback was stored as if it were live")
+	if _, ok := c.cachedModels(); !ok {
+		t.Fatal("the public catalogue was not cached")
 	}
 
 	called = false
@@ -358,11 +357,11 @@ func TestModelsWithoutACredentialMakesNoRequest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RefreshModels = %v, want nil", err)
 	}
-	if called {
-		t.Fatal("RefreshModels made a network call with no credential")
+	if !called {
+		t.Fatal("RefreshModels did not call the public catalogue endpoint")
 	}
-	if len(models) != len(staticCatalogue) {
-		t.Fatalf("RefreshModels = %d models, want the built-in catalogue", len(models))
+	if len(models) != 1 || models[0].ID != "gpt-5.1" {
+		t.Fatalf("RefreshModels = %v, want the API catalogue", modelIDsOf(models))
 	}
 }
 
@@ -515,8 +514,45 @@ func TestFreeModelIsMarkedInTheCatalogue(t *testing.T) {
 	}
 }
 
+func TestFreeSuffixIsMarkedWithoutAnAllowlistEntry(t *testing.T) {
+	m := markFree(core.Model{ID: "step-5-preview-free"}, freeModelSet(Config{}))
+	if m.Extra["free"] != true {
+		t.Fatalf("Extra = %+v, want free:true from the vendor id", m.Extra)
+	}
+}
+
+func TestStep5PreviewFreeIsServedToAnAnonymousAccount(t *testing.T) {
+	c := newFakeClient(t, Config{}, func(*http.Request) (*http.Response, error) {
+		return jsonResponse(200, `{"object":"list","data":[`+
+			`{"id":"step-5-preview-free"},`+
+			`{"id":"gpt-5.1"}]}`), nil
+	})
+	c.pool.upsert(accountRecord{
+		ID: "opencode:anonymous", AuthMode: "anonymous", APIKey: "public",
+		Enabled: true, Source: sourcePanel,
+	})
+
+	models, err := c.Models(context.Background())
+	if err != nil {
+		t.Fatalf("Models: %v", err)
+	}
+	var found bool
+	for _, m := range models {
+		if m.ID != "step-5-preview-free" {
+			continue
+		}
+		found = true
+		if m.Extra["free"] != true {
+			t.Fatalf("Extra = %+v, want free:true", m.Extra)
+		}
+	}
+	if !found {
+		t.Fatalf("models = %v, want step-5-preview-free", modelIDsOf(models))
+	}
+}
+
 // TestAnonymousOnlyPoolServesOnlyFreeModels proves the catalogue is narrowed
-// to the free allowlist when the only account is anonymous.
+// to vendor free ids and the configured additions for an anonymous-only pool.
 func TestAnonymousOnlyPoolServesOnlyFreeModels(t *testing.T) {
 	c := newFakeClient(t, Config{}, func(*http.Request) (*http.Response, error) {
 		return jsonResponse(200, `{"object":"list","data":[{"id":"space-bunny-free"},{"id":"gpt-5.1"}]}`), nil

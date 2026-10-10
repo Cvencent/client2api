@@ -258,10 +258,17 @@ func freeModelSet(cfg Config) map[string]bool {
 	return out
 }
 
+// isFreeModelID treats a vendor-published -free suffix as authoritative, with
+// the configured allowlist covering free ids that do not carry the suffix.
+func isFreeModelID(id string, allowed map[string]bool) bool {
+	id = strings.TrimSpace(id)
+	return id != "" && (allowed[id] || strings.HasSuffix(strings.ToLower(id), "-free"))
+}
+
 // anonymousModelAllowed reports whether an anonymous credential may ask for
 // this model id.
 func anonymousModelAllowed(id string, cfg Config) bool {
-	return freeModelSet(cfg)[strings.TrimSpace(id)]
+	return isFreeModelID(id, freeModelSet(cfg))
 }
 
 // probeModel is the model the panel's Test button runs for one account.  A
@@ -283,10 +290,10 @@ func (c *Client) probeModel(a *accountRecord) string {
 	return configured
 }
 
-// markFree tags a catalogue entry as free when the allowlist covers it.  It
-// returns the entry unchanged otherwise.
+// markFree tags a catalogue entry as free when its id carries the vendor's
+// -free suffix or the configured allowlist covers it.
 func markFree(m core.Model, allowed map[string]bool) core.Model {
-	if !allowed[strings.TrimSpace(m.ID)] {
+	if !isFreeModelID(m.ID, allowed) {
 		return m
 	}
 	if m.Extra == nil {
@@ -299,9 +306,9 @@ func markFree(m core.Model, allowed map[string]bool) core.Model {
 // servedModels narrows and annotates the catalogue for the pool the module
 // holds right now:
 //
-//   - an anonymous-only pool is narrowed to the free allowlist, because those
-//     are the only ids the public credential can serve;
-//   - the allowlist entries are marked free:true wherever they appear;
+//   - an anonymous-only pool is narrowed to ids ending in -free plus the
+//     configured allowlist, because those are what the public credential serves;
+//   - matching entries are marked free:true wherever they appear;
 //   - a signed-in workspace's allowed models are unioned in so the picker
 //     offers the models that account can actually use.
 //
@@ -316,7 +323,7 @@ func (c *Client) servedModels(in []core.Model) []core.Model {
 		if m.ID == "" || seen[m.ID] {
 			continue
 		}
-		free := allowed[m.ID]
+		free := isFreeModelID(m.ID, allowed)
 		if anonymousOnly && !free {
 			continue
 		}
