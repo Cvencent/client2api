@@ -11,8 +11,9 @@ func TestUsageOverviewShowsCacheHitRateAndTotalCost(t *testing.T) {
 	for _, want := range []string{
 		`k: "缓存命中率"`,
 		`k: "总花费"`,
-		"t.cached_tokens",
-		"t.prompt_tokens",
+		"t.cache_hit_tokens",
+		"t.cache_prompt_tokens",
+		"usageCacheHitRate(cacheHit, cachePrompt, t.has_cached_tokens)",
 		"t.has_cost",
 		"t.unpriced_requests",
 		"未定价",

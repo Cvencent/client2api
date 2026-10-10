@@ -60,6 +60,71 @@ func TestPlatformsViewConfiguresRouting(t *testing.T) {
 	}
 }
 
+func TestPlatformsPageSplitsGroupsAndPlatformRulesIntoTabs(t *testing.T) {
+	src := poolStatsUISource(t)
+
+	nav := subtabNavHTML(t, src, "platforms")
+	for _, want := range []string{
+		`data-subtab="groups"`, ">模型路由组<",
+		`data-subtab="rules"`, ">平台与模型<",
+		`role="tab"`, `aria-selected="true"`, `class="chip subtab on"`,
+	} {
+		if !strings.Contains(nav, want) {
+			t.Errorf("平台配置二级 Tab 缺少 %q", want)
+		}
+	}
+	if got := strings.Count(nav, `class="chip subtab on"`); got != 1 {
+		t.Errorf("平台配置二级 Tab 默认选中项 = %d, want exactly 1", got)
+	}
+
+	groups := subtabPanelHTML(t, src, "platforms-groups")
+	if !strings.Contains(groups, `id="pfGroups"`) {
+		t.Error("模型路由组面板不包含 #pfGroups")
+	}
+	if strings.Contains(groups, `id="pfBody"`) {
+		t.Error("模型路由组面板不应包含平台卡片 #pfBody")
+	}
+
+	rules := subtabPanelHTML(t, src, "platforms-rules")
+	for _, want := range []string{`id="pfSearch"`, `id="pfOnlyOff"`, `id="btnPfExpand"`, `id="btnPfCollapse"`, `id="pfBody"`} {
+		if !strings.Contains(rules, want) {
+			t.Errorf("平台与模型面板缺少 %q", want)
+		}
+	}
+	if strings.Contains(rules, `id="pfGroups"`) {
+		t.Error("平台与模型面板不应包含模型路由组 #pfGroups")
+	}
+
+	if strings.Contains(subtabOpenTag(t, src, "platforms-groups"), " hidden") {
+		t.Error("模型路由组应该是默认可见面板")
+	}
+	if !strings.Contains(subtabOpenTag(t, src, "platforms-rules"), " hidden") {
+		t.Error("平台与模型面板默认应隐藏")
+	}
+	if !strings.Contains(src, `setupSubtabs("platforms"`) {
+		t.Error("平台配置二级 Tab 没有接入 setupSubtabs")
+	}
+}
+
+func TestPlatformsReadFailureIsVisibleFromTheDefaultGroupsTab(t *testing.T) {
+	src := poolStatsUISource(t)
+	render := poolStatsFuncBody(t, src, "renderPlatforms")
+	start := strings.Index(render, "if (!cfg.ok)")
+	if start < 0 {
+		t.Fatal("renderPlatforms has no config read-failure branch")
+	}
+	end := strings.Index(render[start:], "return;")
+	if end < 0 {
+		t.Fatal("renderPlatforms read-failure branch never returns")
+	}
+	branch := render[start : start+end]
+	for _, want := range []string{`$("#pfGroups")`, `body.innerHTML = failure`, `groupsEl.innerHTML = failure`} {
+		if !strings.Contains(branch, want) {
+			t.Errorf("平台读取失败分支缺少 %q，默认的模型路由组 Tab 会一直停在加载中", want)
+		}
+	}
+}
+
 // TestPlatformsModelFilterKeepsCardVisible 钉住平台卡片里的「过滤模型名」：它只能
 // 藏模型行，不能把整张平台卡片（连输入框）藏掉。曾经的 bug 是过滤无匹配时卡片
 // 被 hidden，输入框跟着消失，用户既改不了也清不掉，看起来就像过滤坏了。

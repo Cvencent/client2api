@@ -1038,6 +1038,13 @@ re-login button only appears where it can help: a module that implements
 as dead (`fields.relogin`, or a state/note that says expired, invalid or
 unauthorized). A module without login cannot offer one, and a healthy row stays clean.
 
+The Add-account dialog carries an optional SMS-platform proxy beside the platform
+token. It is stored in this browser only and is sent with each SMS-platform call;
+the module then builds a request-scoped transport that overrides the proxy for
+that call. Empty keeps the normal transport, and the override never touches the
+vendor's own requests or the gateway-wide `proxy`. `http`, `https` and `socks5`
+proxy URLs are accepted.
+
 Row colour follows the account-level state summary, not the first channel's raw string.
 Green is ready, amber is cooling with the vendor's reset time where available, and red is
 either risk control or an account fault. Risk control is a vendor behaviour restriction
@@ -1058,7 +1065,12 @@ than a stack of identical grey rows: success rate / input / output / total / cac
 carry their own accent and a subtitle that says where the number came from (the
 failure count under the success rate, each side's share of the total under the
 token counts, the average rate under the total, the window under the latency) —
-so a glance says which figure is the one being looked for. Cache hit rate is the reported cached prompt tokens divided by prompt tokens; an unreported or zero prompt total renders `—`. Total cost is the CNY sum of the per-call prices. An unknown price leaves the total marked unknown instead of silently adding zero. The chart under them
+so a glance says which figure is the one being looked for. Cache hit rate is the
+cached prompt tokens divided by prompt tokens, counting only requests whose
+upstream actually reported the cache fields; older buckets that never reported
+them are excluded rather than counted as misses. An unreported or zero prompt
+total renders `—`. Total cost is the CNY sum of the per-call prices. An unknown
+price leaves the total marked unknown instead of silently adding zero. The chart under them
 is interactive: hovering a column reports that hour's input / output / request
 count in a readout above the plot, and the arrow keys walk the same points
 (Home / End jump to the ends). The column hit area is wider than the column
@@ -1462,7 +1474,17 @@ source (Manual / Upstream / Preset / Not public), and saves through
 `<data_dir>/model_context.json` (written atomically, `0600`), survive an upgrade
 with the rest of `data/`, and are removed — falling back to the upstream value or
 the preset — when the field is cleared and saved, or when the row's
-Restore official default button is used. Prices are shown in CNY per million tokens. Their resolution order is operator override > the value the module reported > the official default in `internal/modelmeta/pricing.json`, built from the models.dev snapshot dated 2026-10-10 and converted at USD/CNY 7.20. When the catalogue publishes a cache-read price, cached prompt tokens use it; otherwise they use the ordinary input price. An unknown price is rendered `—`, not `¥0`; only an explicitly free model is zero-cost.
+Restore official default button is used. Prices are shown in CNY per million
+tokens. Their resolution order is operator override > the value the module
+reported > a built-in official price. Most built-ins come from the models.dev
+snapshot dated 2026-10-10 in `internal/modelmeta/pricing.json`, converted at
+USD/CNY 7.20. DeepSeek Flash and Pro are the exception: they use DeepSeek's
+official CNY list prices, including the Beijing-time peak/off-peak schedule.
+The model list shows the off-peak price; a completed request is priced using
+the rate in force at its completion time. When the catalogue publishes a
+cache-read price, cached prompt tokens use it; otherwise they use the ordinary
+input price. An unknown price is rendered `—`, not `¥0`; only an explicitly
+free model is zero-cost.
 
 The panel is protected by the gateway's top-level `api_key`
 (`configs/client2api.json:3`). Empty — the default — leaves it unauthenticated,

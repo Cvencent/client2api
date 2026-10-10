@@ -71,7 +71,7 @@ func TestAutoLoginStartPassesTheRequestThrough(t *testing.T) {
 	h := autoPanel(t, c)
 
 	rec := hitRoute(t, h, http.MethodPost, "/panel/api/clients/wb/auto-login",
-		`{"realm":"cn","token":"tok-1","keyword":"腾讯科技","province":"广东","card_type":"联通",`+
+		`{"realm":"cn","token":"tok-1","proxy":"http://127.0.0.1:8080","keyword":"腾讯科技","province":"广东","card_type":"联通",`+
 			`"phone":"17000000042","avoid":["17000000001"," 17000000002 ",""]}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
@@ -84,7 +84,7 @@ func TestAutoLoginStartPassesTheRequestThrough(t *testing.T) {
 		t.Fatalf("started = %d runs, want one", len(c.started))
 	}
 	got := c.started[0]
-	if got.Realm != "cn" || got.Token != "tok-1" || got.Keyword != "腾讯科技" ||
+	if got.Realm != "cn" || got.Token != "tok-1" || got.Proxy != "http://127.0.0.1:8080" || got.Keyword != "腾讯科技" ||
 		got.Province != "广东" || got.CardType != "联通" || got.Phone != "17000000042" {
 		t.Errorf("request = %+v, want the body verbatim", got)
 	}

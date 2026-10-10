@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"client2api/internal/core"
+	"client2api/internal/dsml"
 )
 
 // stream.go is the module's own SSE reader.
@@ -51,14 +52,20 @@ type chatStream struct {
 	done    bool
 	closed  bool
 	reached bool // a terminator frame was seen
+
+	parser      *dsml.Parser
+	toolIndexes map[int]int
+	nextToolIx  int
 }
 
 func newChatStream(body io.ReadCloser, idle time.Duration, cancel context.CancelFunc) *chatStream {
 	s := &chatStream{
-		body:   body,
-		reader: bufio.NewReaderSize(body, 64<<10),
-		idle:   idle,
-		cancel: cancel,
+		body:        body,
+		reader:      bufio.NewReaderSize(body, 64<<10),
+		idle:        idle,
+		cancel:      cancel,
+		parser:      dsml.NewParser(),
+		toolIndexes: map[int]int{},
 	}
 	if idle > 0 {
 		s.timer = time.AfterFunc(idle, func() {
@@ -156,10 +163,35 @@ func (s *chatStream) finishUp() {
 		return
 	}
 	s.reached = true
+	if text, calls := s.parser.Finish(); text != "" || len(calls) > 0 {
+		s.appendDSML(text, calls)
+	}
 	if s.usage != nil {
 		s.pending = append(s.pending, core.Event{Type: core.EventUsage, Usage: s.usage})
 	}
 	s.pending = append(s.pending, core.Event{Type: core.EventDone, Finish: s.finish})
+}
+
+func (s *chatStream) appendDSML(text string, calls []dsml.Call) {
+	if text != "" {
+		s.pending = append(s.pending, core.Event{Type: core.EventDelta, Delta: text})
+	}
+	s.appendToolCalls(calls)
+}
+
+func (s *chatStream) appendToolCalls(calls []dsml.Call) {
+	for _, call := range calls {
+		index := s.nextToolIx
+		s.nextToolIx++
+		s.pending = append(s.pending, core.Event{
+			Type: core.EventToolCall,
+			ToolCall: &core.ToolCallDelta{
+				Index:     index,
+				Name:      call.Name,
+				Arguments: call.Arguments,
+			},
+		})
+	}
 }
 
 // readFrame reads one SSE event and returns its data payload.
@@ -234,7 +266,7 @@ type chunk struct {
 		PromptTokens        int `json:"prompt_tokens"`
 		CompletionTokens    int `json:"completion_tokens"`
 		TotalTokens         int `json:"total_tokens"`
-		PromptTokensDetails struct {
+		PromptTokensDetails *struct {
 			CachedTokens int `json:"cached_tokens"`
 		} `json:"prompt_tokens_details"`
 		CompletionTokensDetails struct {
@@ -274,7 +306,10 @@ func (s *chatStream) decode(payload string) error {
 			CompletionTokens: c.Usage.CompletionTokens,
 			TotalTokens:      c.Usage.TotalTokens,
 			ReasoningTokens:  c.Usage.CompletionTokensDetails.ReasoningTokens,
-			CachedTokens:     c.Usage.PromptTokensDetails.CachedTokens,
+		}
+		if c.Usage.PromptTokensDetails != nil {
+			usage.CachedTokens = c.Usage.PromptTokensDetails.CachedTokens
+			usage.CachedTokensKnown = true
 		}
 		if usage.TotalTokens == 0 {
 			usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
@@ -287,18 +322,31 @@ func (s *chatStream) decode(payload string) error {
 		if reasoning == "" {
 			reasoning = choice.Delta.Reasoning
 		}
-		if choice.Delta.Content != "" || reasoning != "" {
+		text := ""
+		var calls []dsml.Call
+		if choice.Delta.Content != "" {
+			text, calls = s.parser.Feed(choice.Delta.Content)
+		}
+		if reasoning != "" || text != "" {
 			s.pending = append(s.pending, core.Event{
-				Type:      core.EventDelta,
-				Delta:     choice.Delta.Content,
-				Reasoning: reasoning,
+				Type: core.EventDelta, Delta: text, Reasoning: reasoning,
 			})
 		}
+		s.appendToolCalls(calls)
 		for _, call := range choice.Delta.ToolCalls {
+			if s.toolIndexes == nil {
+				s.toolIndexes = map[int]int{}
+			}
+			index, ok := s.toolIndexes[call.Index]
+			if !ok {
+				index = s.nextToolIx
+				s.nextToolIx++
+				s.toolIndexes[call.Index] = index
+			}
 			s.pending = append(s.pending, core.Event{
 				Type: core.EventToolCall,
 				ToolCall: &core.ToolCallDelta{
-					Index:     call.Index,
+					Index:     index,
 					ID:        call.ID,
 					Name:      call.Function.Name,
 					Arguments: call.Function.Arguments,

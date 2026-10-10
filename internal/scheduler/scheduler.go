@@ -530,6 +530,29 @@ type Runner struct {
 	// wake lets Reconfigure disturb a Run that is blocked because nothing is
 	// scheduled at all.
 	wake chan struct{}
+
+	// lanes serializes scheduled batches per platform while allowing different
+	// platforms to run at the same time.  A global synchronous loop let one
+	// platform with dozens of paced accounts postpone every other platform's
+	// daily chore.
+	lanesMu sync.Mutex
+	lanes   map[string]*batchLane
+	batchWG sync.WaitGroup
+}
+
+// scheduledBatch is one queued timetable firing.
+type scheduledBatch struct {
+	client string
+	batch  string
+}
+
+// batchLane is one platform's serial queue.  mu covers both running and
+// pending; a single worker drains pending in order.
+type batchLane struct {
+	mu      sync.Mutex
+	running bool
+	pending []scheduledBatch
+	started chan struct{}
 }
 
 // New returns a Runner that is configured to do nothing.  The host installs
@@ -793,6 +816,7 @@ func (r *Runner) balanceNext(now time.Time, cfg Config, stored time.Time) (time.
 func (r *Runner) Run(ctx context.Context) {
 	r.log("[scheduler] run started")
 	defer r.log("[scheduler] run stopped")
+	defer r.batchWG.Wait()
 
 	for {
 		if ctx.Err() != nil {
@@ -847,7 +871,7 @@ func (r *Runner) Run(ctx context.Context) {
 			} else if strings.EqualFold(f.batch, DailyBalanceTaskName) {
 				r.tickDailyBalance(ctx, cfg, f.client)
 			} else {
-				r.runBatch(ctx, f.client, f.batch)
+				r.dispatchBatch(ctx, f.client, f.batch)
 			}
 			if ctx.Err() != nil {
 				return
@@ -1018,6 +1042,78 @@ func (r *Runner) RunBatchNow(ctx context.Context, client, batch string) (Report,
 	}
 	rep := r.runBatchAs(ctx, client, batch, TriggerManual)
 	return rep, true
+}
+
+// dispatchBatch queues one scheduled batch on its platform's lane.  The lane
+// runs at most one batch at a time, but different lanes make progress without
+// waiting for one another.
+func (r *Runner) dispatchBatch(ctx context.Context, client, batch string) {
+	job := scheduledBatch{client: client, batch: batch}
+	r.lanesMu.Lock()
+	if r.lanes == nil {
+		r.lanes = make(map[string]*batchLane)
+	}
+	lane := r.lanes[client]
+	if lane == nil {
+		lane = &batchLane{}
+		r.lanes[client] = lane
+	}
+	lane.mu.Lock()
+	var started chan struct{}
+	lane.pending = append(lane.pending, job)
+	start := !lane.running
+	if start {
+		lane.running = true
+		lane.started = make(chan struct{})
+		started = lane.started
+	}
+	lane.mu.Unlock()
+	r.lanesMu.Unlock()
+
+	if !start {
+		return
+	}
+	r.batchWG.Add(1)
+	go func() {
+		defer r.batchWG.Done()
+		r.runBatchLane(ctx, lane, started)
+	}()
+	<-started
+}
+
+// runBatchLane drains one platform's queue in order.  Recover is deliberate:
+// a panic in one vendor call must not kill the worker and leave the queue
+// permanently marked running.
+func (r *Runner) runBatchLane(ctx context.Context, lane *batchLane, started chan struct{}) {
+	first := true
+	for {
+		lane.mu.Lock()
+		if len(lane.pending) == 0 {
+			lane.running = false
+			if first {
+				close(started)
+			}
+			lane.mu.Unlock()
+			return
+		}
+		job := lane.pending[0]
+		lane.pending = lane.pending[1:]
+		if first {
+			close(started)
+			first = false
+		}
+		cancelled := ctx.Err() != nil
+		lane.mu.Unlock()
+		if cancelled {
+			continue
+		}
+
+		core.Recover("scheduled batch "+job.client+"/"+job.batch, func(msg string) {
+			r.log("%s", msg)
+		}, func() {
+			r.runBatch(ctx, job.client, job.batch)
+		})
+	}
 }
 
 // runBatch executes one scheduled batch for one client.

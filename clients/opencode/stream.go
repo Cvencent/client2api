@@ -189,7 +189,7 @@ type oaiUsage struct {
 	TotalTokens             int                   `json:"total_tokens"`
 	InputTokens             int                   `json:"input_tokens"`
 	OutputTokens            int                   `json:"output_tokens"`
-	CacheReadInputTokens    int                   `json:"cache_read_input_tokens"`
+	CacheReadInputTokens    *int                  `json:"cache_read_input_tokens"`
 	CacheCreationInputToken int                   `json:"cache_creation_input_tokens"`
 	PromptTokensDetails     *oaiPromptDetails     `json:"prompt_tokens_details"`
 	CompletionTokensDetails *oaiCompletionDetails `json:"completion_tokens_details"`
@@ -211,9 +211,10 @@ func (u *oaiUsage) toCore() core.Usage {
 		out.CachedTokens = u.PromptTokensDetails.CachedTokens
 	case u.InputTokensDetails != nil && u.InputTokensDetails.CachedTokens > 0:
 		out.CachedTokens = u.InputTokensDetails.CachedTokens
-	case u.CacheReadInputTokens > 0:
-		out.CachedTokens = u.CacheReadInputTokens
+	case u.CacheReadInputTokens != nil && *u.CacheReadInputTokens > 0:
+		out.CachedTokens = *u.CacheReadInputTokens
 	}
+	out.CachedTokensKnown = u.PromptTokensDetails != nil || u.InputTokensDetails != nil || u.CacheReadInputTokens != nil
 	if u.CompletionTokensDetails != nil && u.CompletionTokensDetails.ReasoningTokens > 0 {
 		out.ReasoningTokens = u.CompletionTokensDetails.ReasoningTokens
 	} else if u.OutputTokensDetails != nil {

@@ -306,6 +306,9 @@ func (s *anthropicStream) toolIndexFor(block int) int {
 // this has to be a merge rather than an assignment.
 func (s *anthropicStream) mergeUsage(u anthropicUsage) {
 	core := usageToCore(u)
+	if core.CachedTokensKnown {
+		s.usage.CachedTokensKnown = true
+	}
 	if core.PromptTokens > 0 {
 		s.usage.PromptTokens = core.PromptTokens
 		s.usage.CachedTokens = core.CachedTokens

@@ -237,6 +237,7 @@ func (u *oaiUsage) toCore() core.Usage {
 	}
 	if u.PromptTokensDetails != nil {
 		out.CachedTokens = u.PromptTokensDetails.CachedTokens
+		out.CachedTokensKnown = true
 	}
 	if u.CompletionTokensDetails != nil {
 		out.ReasoningTokens = u.CompletionTokensDetails.ReasoningTokens

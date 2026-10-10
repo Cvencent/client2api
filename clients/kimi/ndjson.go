@@ -259,6 +259,7 @@ func decodeUsage(u *usageRecord) *core.Usage {
 	}
 	if v := firstInt(u.CachedTokens, u.CacheReadInputTokens); v != nil {
 		out.CachedTokens = *v
+		out.CachedTokensKnown = true
 	}
 	if !any {
 		return nil

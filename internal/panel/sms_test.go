@@ -20,6 +20,7 @@ type fakeSMSClient struct {
 	code       core.SMSCode
 	acquireErr error
 
+	opts     []core.SMSOpts
 	acquired []string
 	avoided  [][]string
 	polled   []string
@@ -27,9 +28,13 @@ type fakeSMSClient struct {
 	blocked  []string
 }
 
-func (f *fakeSMSClient) SMSStatus(context.Context, core.SMSOpts) core.SMSStatus { return f.status }
+func (f *fakeSMSClient) SMSStatus(_ context.Context, opts core.SMSOpts) core.SMSStatus {
+	f.opts = append(f.opts, opts)
+	return f.status
+}
 
-func (f *fakeSMSClient) AcquirePhone(_ context.Context, _ core.SMSOpts, want string, avoid []string) (core.SMSNumber, error) {
+func (f *fakeSMSClient) AcquirePhone(_ context.Context, opts core.SMSOpts, want string, avoid []string) (core.SMSNumber, error) {
+	f.opts = append(f.opts, opts)
 	f.acquired = append(f.acquired, want)
 	f.avoided = append(f.avoided, avoid)
 	if f.acquireErr != nil {
@@ -42,12 +47,14 @@ func (f *fakeSMSClient) AcquirePhone(_ context.Context, _ core.SMSOpts, want str
 	return n, nil
 }
 
-func (f *fakeSMSClient) PollSMSCode(_ context.Context, _ core.SMSOpts, phone string) (core.SMSCode, error) {
+func (f *fakeSMSClient) PollSMSCode(_ context.Context, opts core.SMSOpts, phone string) (core.SMSCode, error) {
+	f.opts = append(f.opts, opts)
 	f.polled = append(f.polled, phone)
 	return f.code, nil
 }
 
-func (f *fakeSMSClient) ReleasePhone(_ context.Context, _ core.SMSOpts, phone string, block bool) error {
+func (f *fakeSMSClient) ReleasePhone(_ context.Context, opts core.SMSOpts, phone string, block bool) error {
+	f.opts = append(f.opts, opts)
 	if block {
 		f.blocked = append(f.blocked, phone)
 		return nil
@@ -116,7 +123,7 @@ func TestSMSPhonePassesTheRequestThrough(t *testing.T) {
 	h := smsPanel(t, c)
 
 	rec := hitRoute(t, h, http.MethodPost, "/panel/api/clients/wb/sms/phone",
-		`{"token":"tok-1","keyword":"腾讯科技","province":"广东","avoid":["17000000001"]}`)
+		`{"token":"tok-1","proxy":"http://127.0.0.1:8080","keyword":"腾讯科技","province":"广东","avoid":["17000000001"]}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -129,6 +136,9 @@ func TestSMSPhonePassesTheRequestThrough(t *testing.T) {
 	}
 	if len(c.avoided) != 1 || len(c.avoided[0]) != 1 || c.avoided[0][0] != "17000000001" {
 		t.Errorf("avoid list = %v, want [17000000001]", c.avoided)
+	}
+	if len(c.opts) != 1 || c.opts[0].Token != "tok-1" || c.opts[0].Proxy != "http://127.0.0.1:8080" {
+		t.Errorf("opts = %+v, want the pasted token and proxy", c.opts)
 	}
 }
 
@@ -237,7 +247,7 @@ func (e errString) Error() string { return string(e) }
 func TestSMSStatusAcceptsAPastedToken(t *testing.T) {
 	c := &fakeSMSClient{fakeClient: &fakeClient{name: "wb"}, status: core.SMSStatus{Configured: true, Balance: "1.00"}}
 	h := smsPanel(t, c)
-	rec := hitRoute(t, h, http.MethodPost, "/panel/api/clients/wb/sms", `{"token":"pasted"}`)
+	rec := hitRoute(t, h, http.MethodPost, "/panel/api/clients/wb/sms", `{"token":"pasted","proxy":"socks5://127.0.0.1:1080"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -247,5 +257,8 @@ func TestSMSStatusAcceptsAPastedToken(t *testing.T) {
 	}
 	if out["balance"] != "1.00" {
 		t.Errorf("balance = %v", out["balance"])
+	}
+	if len(c.opts) != 1 || c.opts[0].Proxy != "socks5://127.0.0.1:1080" {
+		t.Errorf("opts = %+v, want the pasted proxy", c.opts)
 	}
 }

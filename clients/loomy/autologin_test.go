@@ -247,3 +247,17 @@ func TestSMSStatusAnswersNotConfiguredWithoutAToken(t *testing.T) {
 		t.Error("provinces = empty, want the built-in rotation pool")
 	}
 }
+
+func TestSMSProxyOverridesTheTransportPerCall(t *testing.T) {
+	c := &Client{cfg: config{}}
+	if got := c.resolveSMS(core.SMSOpts{Proxy: "socks5://127.0.0.1:1080"}).proxy; got != "socks5://127.0.0.1:1080" {
+		t.Fatalf("proxy = %q, want the per-call override", got)
+	}
+}
+
+func TestAutoLoginRequestCarriesTheProxyIntoSMSPtions(t *testing.T) {
+	got := smsOptsFrom(core.AutoLoginRequest{Proxy: "http://127.0.0.1:8080"})
+	if got.Proxy != "http://127.0.0.1:8080" {
+		t.Fatalf("proxy = %q, want the auto-login request's proxy", got.Proxy)
+	}
+}

@@ -59,6 +59,7 @@ type AutoLoginJob struct {
 type AutoLoginRequest struct {
 	Realm    string `json:"realm,omitempty"`
 	Token    string `json:"token,omitempty"`
+	Proxy    string `json:"proxy,omitempty"`
 	Keyword  string `json:"keyword,omitempty"`
 	Province string `json:"province,omitempty"`
 	CardType string `json:"card_type,omitempty"`

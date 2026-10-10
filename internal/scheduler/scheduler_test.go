@@ -955,6 +955,8 @@ func TestGateReadErrorIsRecordedAndSkipped(t *testing.T) {
 func TestRunFiresAtTheScheduledHourAndStopsWithTheContext(t *testing.T) {
 	logs := &recorder{}
 	clk := newFakeClock(time.Date(2026, 3, 4, 8, 30, 0, 0, CST), logs)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	f := &fakeClient{
 		name:    "fake",
 		batches: []core.Batch{oneBatch(batchCheckin, "c1")},
@@ -963,16 +965,31 @@ func TestRunFiresAtTheScheduledHourAndStopsWithTheContext(t *testing.T) {
 	r := New(deps(registryOf(f), clk, logs))
 	r.Reconfigure(Config{Enabled: true, Checkin: Group{Enabled: true, Hours: []int{9}}})
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	// Kill the run on the settle wait that follows the batch (the second wait;
-	// the first one is the wait until 09:00).
+	// The scheduler now dispatches batches to per-platform lanes.  With the
+	// fake clock a central loop can otherwise race ahead to tomorrow before the
+	// lane worker gets CPU; hold the post-dispatch wait until the batch has
+	// actually started, then cancel it.
+	var cancelled atomic.Bool
 	clk.onSleep = func() bool {
-		if len(clk.durations()) >= 2 {
-			cancel()
-			return false
+		if len(clk.durations()) < 2 {
+			return true
 		}
-		return true
+		if !cancelled.CompareAndSwap(false, true) {
+			return true
+		}
+		deadline := time.Now().Add(2 * time.Second)
+		for {
+			for _, event := range logs.all() {
+				if event == "/c1" {
+					cancel()
+					return false
+				}
+			}
+			if time.Now().After(deadline) {
+				return false
+			}
+			time.Sleep(time.Millisecond)
+		}
 	}
 
 	done := make(chan struct{})
@@ -986,8 +1003,18 @@ func TestRunFiresAtTheScheduledHourAndStopsWithTheContext(t *testing.T) {
 		t.Fatal("Run did not return after its context died")
 	}
 
-	if got := logs.all(); !reflect.DeepEqual(got, []string{"sleep", "/c1", "sleep"}) {
-		t.Fatalf("events = %v, want a wait, the batch, then the settle", got)
+	got := logs.all()
+	if len(got) < 3 || got[0] != "sleep" || got[len(got)-1] != "sleep" {
+		t.Fatalf("events = %v, want a wait, the batch, and a final settle", got)
+	}
+	tasks := 0
+	for _, event := range got {
+		if event == "/c1" {
+			tasks++
+		}
+	}
+	if tasks != 1 {
+		t.Fatalf("events = %v, want the scheduled batch exactly once", got)
 	}
 	if waits := clk.durations(); len(waits) == 0 || waits[0] != 30*time.Minute {
 		t.Fatalf("first wait = %v, want exactly 30m", waits)
@@ -1854,4 +1881,174 @@ func TestRunFiresRecoveryProbe(t *testing.T) {
 	if len(waits) != 1 || waits[0] < 3*time.Hour || waits[0] > 5*time.Hour {
 		t.Fatalf("recovery waits = %v, want one 3h..5h wait", waits)
 	}
+}
+
+func TestScheduledBatchesOnDifferentPlatformsRunConcurrently(t *testing.T) {
+	logs := &recorder{}
+	clk := newFakeClock(time.Date(2026, 3, 4, 8, 30, 0, 0, CST), logs)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	defer unblock()
+
+	startedA := make(chan struct{})
+	startedB := make(chan struct{})
+	a := &fakeClient{
+		name:     "a",
+		batches:  []core.Batch{oneBatch(batchCheckin, "a-task")},
+		accounts: []core.AccountRecord{{ID: "a-account", Enabled: true}},
+		rec:      logs,
+		run: func(ctx context.Context, accountID, code string) (core.TaskResult, error) {
+			close(startedA)
+			select {
+			case <-release:
+				return core.TaskResult{OK: true, Code: code, AccountID: accountID}, nil
+			case <-ctx.Done():
+				return core.TaskResult{}, ctx.Err()
+			}
+		},
+	}
+	b := &fakeClient{
+		name:     "b",
+		batches:  []core.Batch{oneBatch(batchCheckin, "b-task")},
+		accounts: []core.AccountRecord{{ID: "b-account", Enabled: true}},
+		rec:      logs,
+		run: func(ctx context.Context, accountID, code string) (core.TaskResult, error) {
+			close(startedB)
+			return core.TaskResult{OK: true, Code: code, AccountID: accountID}, nil
+		},
+	}
+	r := New(deps(registryOf(a, b), clk, logs))
+	r.Reconfigure(Config{Enabled: true, Checkin: Group{Enabled: true, Hours: []int{9}}})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		r.Run(ctx)
+		close(done)
+	}()
+	waitDone := func() {
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("Run did not stop after cancellation")
+		}
+	}
+
+	select {
+	case <-startedA:
+	case <-time.After(2 * time.Second):
+		cancel()
+		waitDone()
+		t.Fatal("the first platform's batch never started")
+	}
+
+	select {
+	case <-startedB:
+	case <-time.After(time.Second):
+		unblock()
+		cancel()
+		waitDone()
+		t.Fatal("a second platform was blocked behind the first platform's long batch")
+	}
+
+	unblock()
+	cancel()
+	waitDone()
+}
+
+func TestScheduledBatchesForOnePlatformStaySerial(t *testing.T) {
+	logs := &recorder{}
+	clk := newFakeClock(time.Date(2026, 3, 4, 8, 30, 0, 0, CST), logs)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	defer unblock()
+
+	firstStarted := make(chan struct{})
+	secondStarted := make(chan struct{})
+	var active, maxActive atomic.Int32
+	a := &fakeClient{
+		name: "a",
+		batches: []core.Batch{
+			oneBatch(batchCheckin, "first"),
+			oneBatch(batchGrowth, "second"),
+		},
+		accounts: []core.AccountRecord{{ID: "a-account", Enabled: true}},
+		rec:      logs,
+		run: func(ctx context.Context, accountID, code string) (core.TaskResult, error) {
+			n := active.Add(1)
+			for {
+				old := maxActive.Load()
+				if n <= old || maxActive.CompareAndSwap(old, n) {
+					break
+				}
+			}
+			defer active.Add(-1)
+			switch code {
+			case "first":
+				close(firstStarted)
+				select {
+				case <-release:
+				case <-ctx.Done():
+				}
+			case "second":
+				close(secondStarted)
+			}
+			return core.TaskResult{OK: true, Code: code, AccountID: accountID}, nil
+		},
+	}
+	r := New(deps(registryOf(a), clk, logs))
+	r.Reconfigure(Config{
+		Enabled: true,
+		Checkin: Group{Enabled: true, Hours: []int{9}},
+		Growth:  Group{Enabled: true, Hours: []int{9}},
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		r.Run(ctx)
+		close(done)
+	}()
+	waitDone := func() {
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("Run did not stop after cancellation")
+		}
+	}
+
+	select {
+	case <-firstStarted:
+	case <-time.After(2 * time.Second):
+		cancel()
+		waitDone()
+		t.Fatal("the first batch never started")
+	}
+	select {
+	case <-secondStarted:
+		unblock()
+		cancel()
+		waitDone()
+		t.Fatal("two batches for one platform overlapped")
+	case <-time.After(100 * time.Millisecond):
+	}
+	if got := maxActive.Load(); got != 1 {
+		unblock()
+		cancel()
+		waitDone()
+		t.Fatalf("maximum overlapping tasks for one platform = %d, want 1", got)
+	}
+
+	unblock()
+	select {
+	case <-secondStarted:
+	case <-time.After(2 * time.Second):
+		cancel()
+		waitDone()
+		t.Fatal("the second batch did not start after the first finished")
+	}
+	cancel()
+	waitDone()
 }

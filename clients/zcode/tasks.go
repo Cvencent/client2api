@@ -71,24 +71,39 @@ func (c *Client) Batches() []core.Batch {
 	}}
 }
 
-// claimBoard is the module's short-lived copy of one account's claim preview.
+// claimBoard is the module's short-lived copy of one account's claim state.
 // Every field is guarded by mu and the zero value is ready to use.
 type claimBoard struct {
-	mu      sync.Mutex
-	plans   []claimPlan
-	account string
-	at      time.Time
+	mu            sync.Mutex
+	plans         []claimPlan
+	active        *planBalances
+	activeChecked bool
+	account       string
+	at            time.Time
 }
 
-// plansFor returns the claimable plans for acct, re-reading the vendor at most
-// once per claimBoardTTL.
-func (c *Client) plansFor(ctx context.Context, acct *Account) ([]claimPlan, error) {
+// claimBoardSnapshot is the board's read-only view of the cached state.
+type claimBoardSnapshot struct {
+	plans         []claimPlan
+	active        *planBalances
+	activeChecked bool
+}
+
+// boardFor returns the claimable plans and, when the preview is empty, the
+// active balance document for acct.  It re-reads the vendor at most once per
+// claimBoardTTL so the panel's frequent board polling does not turn into a
+// billing burst.
+func (c *Client) boardFor(ctx context.Context, acct *Account) (claimBoardSnapshot, error) {
 	now := time.Now()
 	c.board.mu.Lock()
 	if c.board.account == acct.ID && now.Sub(c.board.at) < claimBoardTTL {
-		plans := append([]claimPlan(nil), c.board.plans...)
+		snap := claimBoardSnapshot{
+			plans:         append([]claimPlan(nil), c.board.plans...),
+			active:        c.board.active,
+			activeChecked: c.board.activeChecked,
+		}
 		c.board.mu.Unlock()
-		return plans, nil
+		return snap, nil
 	}
 	c.board.mu.Unlock()
 
@@ -96,21 +111,36 @@ func (c *Client) plansFor(ctx context.Context, acct *Account) ([]claimPlan, erro
 	if err != nil {
 		// A failed read is never cached: the board has to be able to show the
 		// vendor's refusal the moment it happens.
-		return nil, err
+		return claimBoardSnapshot{}, err
+	}
+	snap := claimBoardSnapshot{plans: plans}
+	if len(plans) == 0 {
+		// An empty preview is also the state after a successful claim.  The
+		// balance document is the only other read that can distinguish that
+		// from "the vendor has no active plan", so make the distinction before
+		// rendering the row.  A failed balance read is left unchecked; the
+		// caller can say so without turning the whole board into an error.
+		if active, balanceErr := c.planBalanceOf(ctx, acct); balanceErr == nil {
+			snap.active = active
+			snap.activeChecked = true
+		}
 	}
 	c.board.mu.Lock()
 	c.board.plans = append([]claimPlan(nil), plans...)
+	c.board.active = snap.active
+	c.board.activeChecked = snap.activeChecked
 	c.board.account = acct.ID
 	c.board.at = now
 	c.board.mu.Unlock()
-	return plans, nil
+	return snap, nil
 }
 
 // forgetBoard drops the cache so the next board read sees the claim that just
 // landed instead of the preview that preceded it.
 func (c *Client) forgetBoard() {
 	c.board.mu.Lock()
-	c.board.plans, c.board.account, c.board.at = nil, "", time.Time{}
+	c.board.plans, c.board.active, c.board.activeChecked = nil, nil, false
+	c.board.account, c.board.at = "", time.Time{}
 	c.board.mu.Unlock()
 }
 
@@ -150,7 +180,8 @@ func (c *Client) planAccount(id string) (*Account, error) {
 }
 
 // Tasks implements core.TaskProvider.  The board has one row: the promotional
-// plan claim, described by whatever the vendor currently offers.
+// plan claim, described by whatever the vendor currently offers or by the
+// active plan when the preview is empty because it was already claimed.
 //
 // The row is always returned, even when it cannot be run.  No JWT account, a
 // missing captcha solver, a plan list that is empty -- all three are states the
@@ -182,12 +213,20 @@ func (c *Client) Tasks(ctx context.Context, accountID string) ([]core.TaskInfo, 
 	ctx, cancel := context.WithTimeout(ctx, claimBoardTimeout)
 	defer cancel()
 
-	plans, err := c.plansFor(ctx, acct)
+	snap, err := c.boardFor(ctx, acct)
 	if err != nil {
 		return nil, err
 	}
+	plans := snap.plans
 	if len(plans) == 0 {
-		return []core.TaskInfo{claimRow("厂商当前没有可领取的活动套餐")}, nil
+		if snap.activeChecked && hasActivePlanBalance(snap.active) {
+			return []core.TaskInfo{activePlanRow(snap.active)}, nil
+		}
+		note := "厂商当前没有可领取的活动套餐"
+		if !snap.activeChecked {
+			note += "（已领取计划暂无法确认）"
+		}
+		return []core.TaskInfo{claimRow(note)}, nil
 	}
 	if len(plans) > claimMaxPlans {
 		plans = plans[:claimMaxPlans]
@@ -239,6 +278,76 @@ func claimBoardRow(plans []claimPlan) core.TaskInfo {
 	}
 	info.Note = note
 	return info
+}
+
+// hasActivePlanBalance reports whether the balance document contains an active
+// plan or entitlement.  The two collections are checked independently because
+// the vendor has returned both shapes over time, and either one is enough to
+// prove that an empty preview means "already claimed" rather than "never
+// offered".
+func hasActivePlanBalance(doc *planBalances) bool {
+	return doc != nil && (len(doc.Plans) > 0 || len(doc.Balances) > 0)
+}
+
+// activePlanRow renders the steady state after a successful claim.  The row is
+// deliberately Claimed and Locked: the panel already renders that pair as
+// "已领取 / 已完成", and no claim button should be offered again.
+func activePlanRow(doc *planBalances) core.TaskInfo {
+	top := topActivePlan(doc)
+	info := core.TaskInfo{
+		Code:    claimAction,
+		Title:   "活动套餐已领取",
+		Desc:    firstNonEmpty(top.Name, top.id(), "活动套餐"),
+		Group:   "活动套餐",
+		Claimed: true,
+		Locked:  true,
+	}
+	summary := activeGrantSummary(doc)
+	if summary == "" {
+		summary = grantSummary(top.tokenGrants())
+	}
+	if summary != "" {
+		info.Desc += "：" + summary
+	}
+	info.Note = "账号已领取该活动，权益正在生效，无需重复领取"
+	return info
+}
+
+// topActivePlan selects the highest-priority plan in a balance document.  The
+// balance endpoint is not required to sort its rows, and the panel should name
+// the same plan the claim preview would have named.
+func topActivePlan(doc *planBalances) claimPlan {
+	if doc == nil || len(doc.Plans) == 0 {
+		if doc != nil && len(doc.Balances) > 0 {
+			return claimPlan{ID: doc.Balances[0].planID()}
+		}
+		return claimPlan{}
+	}
+	top := doc.Plans[0]
+	for _, p := range doc.Plans[1:] {
+		if p.Priority > top.Priority || (p.Priority == top.Priority && p.id() < top.id()) {
+			top = p
+		}
+	}
+	return top
+}
+
+// activeGrantSummary summarises the remaining token buckets in a balance
+// document.  Unlike claimPreview, the balance endpoint normally carries the
+// grant amounts as balance rows rather than plan entitlements, so reading the
+// rows is what keeps the board useful in the post-claim state.
+func activeGrantSummary(doc *planBalances) string {
+	if doc == nil {
+		return ""
+	}
+	parts := make([]string, 0, len(doc.Balances))
+	for _, row := range doc.Balances {
+		if row.Meter != "model_usage" || !strings.EqualFold(row.UnitType, "token") || row.ShowName == "" {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s 剩余 %s tokens", row.ShowName, humanUnits(float64(row.remaining()))))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // RunTask implements core.TaskProvider by running the claim.

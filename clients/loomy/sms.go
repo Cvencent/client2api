@@ -36,6 +36,7 @@ type smsResolved struct {
 	token     string
 	keyword   string
 	base      string
+	proxy     string
 	provinces []string
 }
 
@@ -54,6 +55,9 @@ func (c *Client) resolveSMS(opts core.SMSOpts) smsResolved {
 	}
 	if t := strings.TrimSpace(opts.Token); t != "" {
 		r.token = t
+	}
+	if p := strings.TrimSpace(opts.Proxy); p != "" {
+		r.proxy = p
 	}
 	if k := strings.TrimSpace(opts.Keyword); k != "" {
 		r.keyword = k
@@ -84,7 +88,7 @@ func (c *Client) newSMSClient(r smsResolved) (*smscap.Client, error) {
 	if hc == nil {
 		hc = &http.Client{Timeout: smscap.HTTPTimeout}
 	}
-	return smscap.New(smscap.Options{Base: r.base, Token: r.token, Keyword: r.keyword, HTTP: hc})
+	return smscap.New(smscap.Options{Base: r.base, Token: r.token, Keyword: r.keyword, HTTP: hc, Proxy: r.proxy})
 }
 
 // ---------------------------------------------------------------------------

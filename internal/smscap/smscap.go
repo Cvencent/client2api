@@ -85,6 +85,9 @@ type Options struct {
 	Token   string
 	Keyword string
 	HTTP    *http.Client
+	// Proxy, when set, routes this client's requests through that proxy only.
+	// Supported schemes are http, https and socks5.
+	Proxy string
 }
 
 // Client is one configured platform client.  It is built per call from the
@@ -116,7 +119,58 @@ func New(opts Options) (*Client, error) {
 	if hc == nil {
 		hc = &http.Client{Timeout: HTTPTimeout}
 	}
+	if strings.TrimSpace(opts.Proxy) != "" {
+		var err error
+		hc, err = httpClientWithProxy(hc, opts.Proxy)
+		if err != nil {
+			return nil, err
+		}
+	}
 	return &Client{base: base, token: token, keyword: keyword, http: hc}, nil
+}
+
+// HTTPClientWithProxy returns base with a per-call proxy transport.  The base
+// client and its transport are never mutated: the SMS override must not leak
+// into the vendor HTTP path or any other caller.  An empty proxy returns base
+// unchanged.
+func HTTPClientWithProxy(base *http.Client, proxy string) (*http.Client, error) {
+	return httpClientWithProxy(base, proxy)
+}
+
+func httpClientWithProxy(base *http.Client, proxy string) (*http.Client, error) {
+	proxy = strings.TrimSpace(proxy)
+	if proxy == "" {
+		if base == nil {
+			return &http.Client{Timeout: HTTPTimeout}, nil
+		}
+		return base, nil
+	}
+	u, err := url.Parse(proxy)
+	if err != nil || u.Host == "" || u.Scheme == "" {
+		return nil, fmt.Errorf("invalid SMS platform proxy address")
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "http", "https", "socks5":
+	default:
+		return nil, fmt.Errorf("unsupported SMS platform proxy scheme %q (use http, https or socks5)", u.Scheme)
+	}
+	// Never include userinfo in an error: proxy URLs may carry credentials.
+	u.User = nil
+	if base == nil {
+		base = &http.Client{Timeout: HTTPTimeout}
+	}
+	hc := *base
+	var tr *http.Transport
+	if t, ok := hc.Transport.(*http.Transport); ok && t != nil {
+		tr = t.Clone()
+	} else if hc.Transport == nil {
+		tr = http.DefaultTransport.(*http.Transport).Clone()
+	} else {
+		return nil, fmt.Errorf("SMS platform proxy cannot override the configured HTTP transport")
+	}
+	tr.Proxy = http.ProxyURL(u)
+	hc.Transport = tr
+	return &hc, nil
 }
 
 // Keyword is the sender filter this client was built with.

@@ -46,7 +46,11 @@ type SMSStatus struct {
 // token in the panel without editing the config file and restarting the
 // process.  The rest are per-call overrides of the module's defaults.
 type SMSOpts struct {
-	Token    string `json:"token,omitempty"`
+	Token string `json:"token,omitempty"`
+	// Proxy overrides the HTTP transport for this SMS-platform call only.  It
+	// is separate from the gateway-wide proxy because the SMS provider and the
+	// vendor can need different egress paths.
+	Proxy    string `json:"proxy,omitempty"`
 	Keyword  string `json:"keyword,omitempty"`
 	Province string `json:"province,omitempty"`
 	CardType string `json:"card_type,omitempty"`

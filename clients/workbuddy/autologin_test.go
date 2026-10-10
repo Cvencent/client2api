@@ -464,6 +464,13 @@ func TestStartAutoLoginFailsFastWithoutAPlatformToken(t *testing.T) {
 	}
 }
 
+func TestAutoLoginRequestCarriesTheProxyIntoSMSPtions(t *testing.T) {
+	got := smsOptsFrom(core.AutoLoginRequest{Proxy: "http://127.0.0.1:8080"})
+	if got.Proxy != "http://127.0.0.1:8080" {
+		t.Fatalf("proxy = %q, want the auto-login request's proxy", got.Proxy)
+	}
+}
+
 func TestAutoLoginCapabilityIsAdvertised(t *testing.T) {
 	v := successVendor()
 	c, _ := autoLoginClient(t, v)

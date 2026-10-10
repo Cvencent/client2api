@@ -870,7 +870,7 @@ func (s *server) recordUsage(rec UsageRecord) {
 			model = rest
 		}
 		provider := modelmeta.New(modelmeta.Options{Client: rec.Client, Overrides: s.opts.ModelOverrides})
-		meta := provider.Merge(model, modelmeta.Meta{})
+		meta := provider.MergeAt(model, modelmeta.Meta{}, rec.At)
 		if meta.HasPrice {
 			rec.priceUsage(ModelPrice{
 				InputPerMillion:     meta.InputPerMillion,

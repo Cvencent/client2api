@@ -245,6 +245,7 @@ func (c *Client) CancelAutoLogin(_ context.Context, id string) error {
 func smsOptsFrom(r core.AutoLoginRequest) core.SMSOpts {
 	return core.SMSOpts{
 		Token:    strings.TrimSpace(r.Token),
+		Proxy:    strings.TrimSpace(r.Proxy),
 		Keyword:  strings.TrimSpace(r.Keyword),
 		Province: strings.TrimSpace(r.Province),
 		CardType: strings.TrimSpace(r.CardType),

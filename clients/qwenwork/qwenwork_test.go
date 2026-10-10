@@ -1248,8 +1248,8 @@ func TestUsageFromAny(t *testing.T) {
 		{"plain", map[string]any{"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5}, &core.Usage{PromptTokens: 3, CompletionTokens: 2, TotalTokens: 5}},
 		{"total is derived", map[string]any{"prompt_tokens": 3, "completion_tokens": 2}, &core.Usage{PromptTokens: 3, CompletionTokens: 2, TotalTokens: 5}},
 		{"input/output aliases", map[string]any{"input_tokens": 5, "output_tokens": 7}, &core.Usage{PromptTokens: 5, CompletionTokens: 7, TotalTokens: 12}},
-		{"cache aliases", map[string]any{"prompt_tokens": 10, "completion_tokens": 1, "prompt_cache_hit_tokens": 4}, &core.Usage{PromptTokens: 10, CompletionTokens: 1, TotalTokens: 11, CachedTokens: 4}},
-		{"cached in details", map[string]any{"prompt_tokens": 10, "prompt_tokens_details": map[string]any{"cached_tokens": 9}}, &core.Usage{PromptTokens: 10, TotalTokens: 10, CachedTokens: 9}},
+		{"cache aliases", map[string]any{"prompt_tokens": 10, "completion_tokens": 1, "prompt_cache_hit_tokens": 4}, &core.Usage{PromptTokens: 10, CompletionTokens: 1, TotalTokens: 11, CachedTokens: 4, CachedTokensKnown: true}},
+		{"cached in details", map[string]any{"prompt_tokens": 10, "prompt_tokens_details": map[string]any{"cached_tokens": 9}}, &core.Usage{PromptTokens: 10, TotalTokens: 10, CachedTokens: 9, CachedTokensKnown: true}},
 		{"reasoning in details", map[string]any{"prompt_tokens": 1, "completion_tokens_details": map[string]any{"reasoning_tokens": 4}}, &core.Usage{PromptTokens: 1, TotalTokens: 1, ReasoningTokens: 4}},
 		{"numbers as strings", map[string]any{"prompt_tokens": "12", "completion_tokens": json.Number("1")}, &core.Usage{PromptTokens: 12, CompletionTokens: 1, TotalTokens: 13}},
 	}

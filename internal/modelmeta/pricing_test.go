@@ -1,6 +1,118 @@
 package modelmeta
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
+
+func TestDeepSeekOfficialPriceUsesCNYPricing(t *testing.T) {
+	cases := []struct {
+		name   string
+		client string
+		model  string
+	}{
+		{name: "workbuddy cn", client: "workbuddy", model: "cn:deepseek-v4.1-flash"},
+		{name: "workbuddy global", client: "workbuddy", model: "global:deepseek-v4.1-flash"},
+		{name: "raccoon", client: "raccoon", model: "sn-deepseek-v4-1-flash"},
+		{name: "deepseek official id", client: "deepseek", model: "deepseek-flash"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			price, ok := DefaultPrice(tc.client, tc.model)
+			if !ok {
+				t.Fatalf("DefaultPrice(%q, %q) did not resolve", tc.client, tc.model)
+			}
+			// Official DeepSeek CNY list price, off-peak, per million tokens.
+			if price.InputPerMillion != 1 || price.OutputPerMillion != 4 || !price.HasCacheRead || price.CacheReadPerMillion != 0.02 {
+				t.Fatalf("DefaultPrice(%q, %q) = %+v, want official CNY off-peak 1/4/0.02", tc.client, tc.model, price)
+			}
+		})
+	}
+}
+
+func TestDeepSeekOfficialProPriceUsesCNYPricing(t *testing.T) {
+	price, ok := DefaultPrice("workbuddy", "cn:deepseek-v4-pro")
+	if !ok {
+		t.Fatal("workbuddy deepseek-v4-pro did not resolve")
+	}
+	// Official DeepSeek CNY list price, off-peak, per million tokens.
+	if price.InputPerMillion != 4.5 || price.OutputPerMillion != 13.5 || !price.HasCacheRead || price.CacheReadPerMillion != 0.15 {
+		t.Fatalf("DefaultPrice(workbuddy, cn:deepseek-v4-pro) = %+v, want official CNY off-peak 4.5/13.5/0.15", price)
+	}
+}
+
+func TestDeepSeekOfficialPriceUsesBeijingPeakHours(t *testing.T) {
+	beijing := time.FixedZone("CST", 8*60*60)
+	cases := []struct {
+		name string
+		at   time.Time
+		want Price
+	}{
+		{
+			name: "weekday before peak",
+			at:   time.Date(2026, 10, 12, 8, 59, 0, 0, beijing),
+			want: Price{InputPerMillion: 1, OutputPerMillion: 4, CacheReadPerMillion: 0.02, HasPrice: true, HasCacheRead: true},
+		},
+		{
+			name: "weekday morning peak",
+			at:   time.Date(2026, 10, 12, 9, 0, 0, 0, beijing),
+			want: Price{InputPerMillion: 2, OutputPerMillion: 8, CacheReadPerMillion: 0.04, HasPrice: true, HasCacheRead: true},
+		},
+		{
+			name: "weekday lunch off-peak",
+			at:   time.Date(2026, 10, 12, 12, 0, 0, 0, beijing),
+			want: Price{InputPerMillion: 1, OutputPerMillion: 4, CacheReadPerMillion: 0.02, HasPrice: true, HasCacheRead: true},
+		},
+		{
+			name: "weekday afternoon peak",
+			at:   time.Date(2026, 10, 12, 14, 0, 0, 0, beijing),
+			want: Price{InputPerMillion: 2, OutputPerMillion: 8, CacheReadPerMillion: 0.04, HasPrice: true, HasCacheRead: true},
+		},
+		{
+			name: "weekday after peak",
+			at:   time.Date(2026, 10, 12, 18, 0, 0, 0, beijing),
+			want: Price{InputPerMillion: 1, OutputPerMillion: 4, CacheReadPerMillion: 0.02, HasPrice: true, HasCacheRead: true},
+		},
+		{
+			name: "weekend",
+			at:   time.Date(2026, 10, 10, 10, 0, 0, 0, beijing),
+			want: Price{InputPerMillion: 1, OutputPerMillion: 4, CacheReadPerMillion: 0.02, HasPrice: true, HasCacheRead: true},
+		},
+		{
+			name: "national day holiday",
+			at:   time.Date(2026, 10, 1, 10, 0, 0, 0, beijing),
+			want: Price{InputPerMillion: 1, OutputPerMillion: 4, CacheReadPerMillion: 0.02, HasPrice: true, HasCacheRead: true},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			price, ok := DefaultPriceAt("workbuddy", "cn:deepseek-v4.1-flash", tc.at)
+			if !ok {
+				t.Fatal("DefaultPriceAt did not resolve")
+			}
+			if price != tc.want {
+				t.Fatalf("DefaultPriceAt(%s) = %+v, want %+v", tc.at.Format(time.RFC3339), price, tc.want)
+			}
+		})
+	}
+}
+
+func TestProviderMergeAtKeepsManualPricePrecedence(t *testing.T) {
+	beijing := time.FixedZone("CST", 8*60*60)
+	at := time.Date(2026, 10, 12, 10, 0, 0, 0, beijing)
+	store, err := OpenOverrideStore("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetPrice("workbuddy", "cn:deepseek-v4.1-flash", 7, 8, 0.5, true); err != nil {
+		t.Fatal(err)
+	}
+	p := New(Options{Client: "workbuddy", Overrides: store})
+	meta := p.MergeAt("cn:deepseek-v4.1-flash", Meta{}, at)
+	if meta.InputPerMillion != 7 || meta.OutputPerMillion != 8 || meta.CacheReadPerMillion != 0.5 {
+		t.Fatalf("MergeAt overwrote manual price: %+v", meta)
+	}
+}
 
 func TestModelPriceOverrideRoundTrip(t *testing.T) {
 	s, err := OpenOverrideStore("")

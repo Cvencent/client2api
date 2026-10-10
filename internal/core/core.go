@@ -223,6 +223,10 @@ type Usage struct {
 	TotalTokens      int `json:"total_tokens"`
 	ReasoningTokens  int `json:"reasoning_tokens,omitempty"`
 	CachedTokens     int `json:"cached_tokens,omitempty"`
+	// CachedTokensKnown distinguishes a reported zero from a protocol that
+	// omitted cache accounting entirely. The value alone cannot: both decode
+	// to zero, but only the first is a real cache miss.
+	CachedTokensKnown bool `json:"-"`
 }
 
 // Model is one model a module can serve.

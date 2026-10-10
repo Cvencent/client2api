@@ -237,10 +237,33 @@ func containsAny(haystack string, needles []string) bool {
 // ---------------------------------------------------------------------------
 
 type anthropicUsage struct {
-	InputTokens              int `json:"input_tokens"`
-	OutputTokens             int `json:"output_tokens"`
-	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
-	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+	InputTokens                  int  `json:"input_tokens"`
+	OutputTokens                 int  `json:"output_tokens"`
+	CacheReadInputTokens         int  `json:"cache_read_input_tokens"`
+	CacheCreationInputTokens     int  `json:"cache_creation_input_tokens"`
+	CacheReadInputTokensReported bool `json:"-"`
+}
+
+func (u *anthropicUsage) UnmarshalJSON(data []byte) error {
+	var wire struct {
+		InputTokens              int  `json:"input_tokens"`
+		OutputTokens             int  `json:"output_tokens"`
+		CacheReadInputTokens     *int `json:"cache_read_input_tokens"`
+		CacheCreationInputTokens int  `json:"cache_creation_input_tokens"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	*u = anthropicUsage{
+		InputTokens:              wire.InputTokens,
+		OutputTokens:             wire.OutputTokens,
+		CacheCreationInputTokens: wire.CacheCreationInputTokens,
+	}
+	if wire.CacheReadInputTokens != nil {
+		u.CacheReadInputTokens = *wire.CacheReadInputTokens
+		u.CacheReadInputTokensReported = true
+	}
+	return nil
 }
 
 // usageToCore converts Anthropic accounting into OpenAI accounting.  Anthropic
@@ -250,10 +273,11 @@ func usageToCore(u anthropicUsage) core.Usage {
 	prompt := u.InputTokens + u.CacheReadInputTokens + u.CacheCreationInputTokens
 	completion := u.OutputTokens
 	return core.Usage{
-		PromptTokens:     prompt,
-		CompletionTokens: completion,
-		TotalTokens:      prompt + completion,
-		CachedTokens:     u.CacheReadInputTokens,
+		PromptTokens:      prompt,
+		CompletionTokens:  completion,
+		TotalTokens:       prompt + completion,
+		CachedTokens:      u.CacheReadInputTokens,
+		CachedTokensKnown: u.CacheReadInputTokensReported,
 	}
 }
 

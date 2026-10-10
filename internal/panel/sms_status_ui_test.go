@@ -119,3 +119,31 @@ func TestSmsStatusWiringCatchesAMissingDotsElement(t *testing.T) {
 		t.Fatal("删掉读取中的转圈之后，检查器还是绿的")
 	}
 }
+
+// TestSmsProxySettingIsPersistedAndSent pins the per-call proxy control: it is
+// stored in this browser beside the token, rendered when the dialog opens, and
+// sent on both the manual and automatic SMS paths.
+func TestSmsProxySettingIsPersistedAndSent(t *testing.T) {
+	src := poolStatsUISource(t)
+	for _, want := range []string{
+		`id="smsProxy"`,
+		`id="btnSmsProxySave"`,
+		`function smsProxy()`,
+		`LS.get("smsproxy", "")`,
+		`LS.set("smsproxy"`,
+		`proxy: smsProxy()`,
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("SMS proxy wiring is missing %s", want)
+		}
+	}
+	for _, name := range []string{"smsBody", "autoBody"} {
+		if body := poolStatsFuncBody(t, src, name); !strings.Contains(body, "proxy: smsProxy()") {
+			t.Errorf("%s does not send the SMS proxy", name)
+		}
+	}
+	render := poolStatsFuncBody(t, src, "renderAddSms")
+	if !strings.Contains(render, `$("#smsProxy").value = smsProxy()`) {
+		t.Errorf("renderAddSms does not restore the saved proxy")
+	}
+}

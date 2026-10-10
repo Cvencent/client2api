@@ -979,7 +979,7 @@ func TestDecodeUsage(t *testing.T) {
 		{
 			name: "reasoning and cached",
 			in:   &usageRecord{PromptTokens: &pt, ReasoningTokens: &rt, CacheReadInputTokens: &cch},
-			want: &core.Usage{PromptTokens: 10, CompletionTokens: 0, TotalTokens: 10, ReasoningTokens: 2, CachedTokens: 6},
+			want: &core.Usage{PromptTokens: 10, CompletionTokens: 0, TotalTokens: 10, ReasoningTokens: 2, CachedTokens: 6, CachedTokensKnown: true},
 		},
 	}
 	for _, tc := range cases {

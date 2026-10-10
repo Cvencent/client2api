@@ -97,6 +97,13 @@ func TestSMSStatusDefaultsToQoderKeyword(t *testing.T) {
 	}
 }
 
+func TestSMSProxyOverridesTheTransportPerCall(t *testing.T) {
+	c := &Client{cfg: config{}}
+	if got := c.resolveSMS(core.SMSOpts{Proxy: "socks5://127.0.0.1:1080"}).proxy; got != "socks5://127.0.0.1:1080" {
+		t.Fatalf("proxy = %q, want the per-call override", got)
+	}
+}
+
 func TestAcquirePhoneSkipsVirtualNumberSegments(t *testing.T) {
 	f := &fakeQoderSMS{phones: []string{"17000000001", "13800000000"}}
 	srv := httptest.NewServer(http.HandlerFunc(f.serve))

@@ -303,6 +303,9 @@ func (s *anthropicStream) consume(payload []byte) {
 // mergeUsage folds an incremental usage report into the running totals.
 // message_delta usually carries only output_tokens.
 func (s *anthropicStream) mergeUsage(u anthropicUsage) {
+	if u.CacheReadInputTokensReported {
+		s.usage.CachedTokensKnown = true
+	}
 	if u.InputTokens > 0 || u.CacheReadInputTokens > 0 || u.CacheCreationInputTokens > 0 {
 		s.usage.PromptTokens = u.InputTokens + u.CacheReadInputTokens + u.CacheCreationInputTokens
 		s.usage.CachedTokens = u.CacheReadInputTokens

@@ -28,6 +28,7 @@ import (
 type autoLoginRequest struct {
 	Realm    string   `json:"realm,omitempty"`
 	Token    string   `json:"token,omitempty"`
+	Proxy    string   `json:"proxy,omitempty"`
 	Keyword  string   `json:"keyword,omitempty"`
 	Province string   `json:"province,omitempty"`
 	CardType string   `json:"card_type,omitempty"`
@@ -74,6 +75,7 @@ func (p *panel) autoLoginStart(w http.ResponseWriter, r *http.Request, c core.Cl
 	job, err := ap.StartAutoLogin(ctx, core.AutoLoginRequest{
 		Realm:    strings.TrimSpace(body.Realm),
 		Token:    strings.TrimSpace(body.Token),
+		Proxy:    strings.TrimSpace(body.Proxy),
 		Keyword:  strings.TrimSpace(body.Keyword),
 		Province: strings.TrimSpace(body.Province),
 		CardType: strings.TrimSpace(body.CardType),

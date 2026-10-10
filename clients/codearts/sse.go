@@ -181,7 +181,7 @@ type sseUsage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
-	PromptDetails    struct {
+	PromptDetails    *struct {
 		CachedTokens     int `json:"cached_tokens"`
 		CacheHitTokens   int `json:"prompt_cache_hit_tokens"`
 		CacheWriteTokens int `json:"cache_write_tokens"`
@@ -278,7 +278,10 @@ func usageFrom(u *sseUsage) core.Usage {
 		CompletionTokens: u.CompletionTokens,
 		TotalTokens:      u.TotalTokens,
 		ReasoningTokens:  u.CompletionDetails.ReasoningTokens,
-		CachedTokens:     firstNonZero(u.PromptDetails.CachedTokens, u.PromptDetails.CacheHitTokens),
+	}
+	if u.PromptDetails != nil {
+		out.CachedTokens = firstNonZero(u.PromptDetails.CachedTokens, u.PromptDetails.CacheHitTokens)
+		out.CachedTokensKnown = true
 	}
 	if out.TotalTokens == 0 {
 		out.TotalTokens = out.PromptTokens + out.CompletionTokens

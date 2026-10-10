@@ -214,7 +214,7 @@ slice of the account's quota back once per day. The endpoint pair was read off t
 vendor's own web bundle, not guessed:
 
 ```
-POST /api/commerce/activity/v1/sign-in         body: {"scene_code":"desktop_pet","request_no":"<uuid>"}
+POST /api/commerce/activity/v1/sign-in         body: {"scene_codes":["desktop_pet"],"request_no":"<uuid>"}
 GET  /api/commerce/activity/v1/sign-in/status  ?scene_codes=desktop_pet
 ```
 
@@ -224,6 +224,9 @@ GET  /api/commerce/activity/v1/sign-in/status  ?scene_codes=desktop_pet
   UUID per claim — the same shape the bundle uses for `client_run_id`,
   `page_instance_id` and `x-signature`, and the same key the sibling
   `POST /api/commerce/activity/v1/participate` call passes.
+* **The scenes are sent as an array.** The current contract names the request
+  field `scene_codes`; the old singular `scene_code` is answered with
+  `422 VALIDATION_ERROR` (`body.scene_codes`, "missing") and grants nothing.
 * **The reward is quota, not credits.** The vendor's own i18n table files it under the usage
   ledger as "Sign-in Reward", next to "Usage Restored" and "Usage Reset Coupon". Since the
   quota endpoint reports a *percentage* of the cycle's allowance, a claim shows up as

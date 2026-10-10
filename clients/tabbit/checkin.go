@@ -58,11 +58,11 @@ const (
 	signInTimeout = 20 * time.Second
 )
 
-// signInRequest is the body the vendor's client sends.  Only the scene is known
-// to be required; the vendor's own client sends the same object its UI builds,
-// and an unknown field is better left out than guessed at.
+// signInRequest is the body the vendor's client sends.  The current contract
+// names the scene field in the plural; the old singular field is rejected with
+// 422 VALIDATION_ERROR before any reward is considered.
 type signInRequest struct {
-	SceneCode string `json:"scene_code"`
+	SceneCodes []string `json:"scene_codes"`
 	// RequestNo is the caller-generated idempotency key the endpoint now
 	// requires: without it the vendor answers 422 VALIDATION_ERROR with
 	// details[].field="body.request_no".  A fresh v4 UUID per claim is the shape
@@ -176,7 +176,7 @@ func (c *Client) Checkin(ctx context.Context, id, action string) (core.CheckinRe
 	ctx, cancel := context.WithTimeout(ctx, signInTimeout)
 	defer cancel()
 
-	body, err := json.Marshal(signInRequest{SceneCode: webSignInScene, RequestNo: newUUID()})
+	body, err := json.Marshal(signInRequest{SceneCodes: []string{webSignInScene}, RequestNo: newUUID()})
 	if err != nil {
 		return res, err
 	}

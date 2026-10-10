@@ -307,6 +307,7 @@ func (u *oaiUsage) toCore() *core.Usage {
 	}
 	if u.PromptTokensDetails != nil {
 		out.CachedTokens = u.PromptTokensDetails.CachedTokens
+		out.CachedTokensKnown = true
 	}
 	if out.TotalTokens == 0 {
 		out.TotalTokens = out.PromptTokens + out.CompletionTokens

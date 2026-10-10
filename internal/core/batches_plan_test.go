@@ -40,3 +40,58 @@ func TestPlannedBatchesIgnoresModulesWithNoBatchCapability(t *testing.T) {
 		t.Fatalf("PlannedBatches = %+v, want none", bs)
 	}
 }
+
+type growthAndCheckinPlanner struct {
+	checkinStub
+}
+
+func (c *growthAndCheckinPlanner) Batches() []Batch {
+	return []Batch{{Name: "growth", Codes: []string{"onboarding"}}}
+}
+
+type declaredCheckinAndGrowthPlanner struct {
+	checkinStub
+}
+
+func (c *declaredCheckinAndGrowthPlanner) Batches() []Batch {
+	return []Batch{
+		{Name: "growth", Codes: []string{"onboarding"}},
+		{Name: CheckinBatchName, Codes: []string{"claim"}},
+	}
+}
+
+func TestPlannedBatchesAddsSyntheticCheckinBesideOtherDeclaredBatches(t *testing.T) {
+	c := &growthAndCheckinPlanner{checkinStub{
+		plainClient: plainClient{name: "loomy"},
+		actions:     []CheckinAction{{ID: "daily"}},
+	}}
+
+	bs := PlannedBatches(c)
+	if len(bs) != 2 {
+		t.Fatalf("PlannedBatches = %+v, want the declared growth batch plus synthetic checkin", bs)
+	}
+	if bs[0].Name != "growth" || bs[1].Name != CheckinBatchName {
+		t.Fatalf("PlannedBatches = %+v, want growth then checkin", bs)
+	}
+	if IsCheckinBatch(c, bs[0]) {
+		t.Fatal("IsCheckinBatch = true for the declared growth batch")
+	}
+	if !IsCheckinBatch(c, bs[1]) {
+		t.Fatal("IsCheckinBatch = false for the synthetic check-in batch")
+	}
+}
+
+func TestPlannedBatchesDoesNotDuplicateADeclaredCheckinBatch(t *testing.T) {
+	c := &declaredCheckinAndGrowthPlanner{checkinStub{
+		plainClient: plainClient{name: "declared"},
+		actions:     []CheckinAction{{ID: "claim"}},
+	}}
+
+	bs := PlannedBatches(c)
+	if len(bs) != 2 {
+		t.Fatalf("PlannedBatches = %+v, want exactly the two declared batches", bs)
+	}
+	if IsCheckinBatch(c, bs[1]) {
+		t.Fatal("IsCheckinBatch = true for a module-declared checkin batch")
+	}
+}

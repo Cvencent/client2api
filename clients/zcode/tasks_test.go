@@ -47,6 +47,40 @@ func previewRoutes() map[string]func(*http.Request) (*http.Response, error) {
 	}
 }
 
+// claimedPlanBalanceFixture is the state that used to look "empty" on the
+// board: the preview has nothing left to claim because this plan was already
+// claimed, but the balance document proves it is active and still has tokens.
+const claimedPlanBalanceFixture = `{
+  "code": 0,
+  "msg": "",
+  "data": {
+    "plans": [
+      {
+        "plan_id": "zcode-v3-start-plan-1010",
+        "name": "ZCode Weekend Build",
+        "priority": 100,
+        "status": "active",
+        "ends_at": 1791766800
+      }
+    ],
+    "balances": [
+      {
+        "plan_id": "zcode-v3-start-plan-1010",
+        "entitlement_id": "e-weekend",
+        "show_name": "GLM-5.3-Flash",
+        "meter": "model_usage",
+        "unit_type": "token",
+        "total_units": 300000000,
+        "used_units": 0,
+        "remaining_units": 300000000,
+        "available_units": 300000000,
+        "period": "one_time",
+        "expires_at": 1791766800
+      }
+    ]
+  }
+}`
+
 func TestBatchesDeclareTheCheckinClaim(t *testing.T) {
 	// Batches() runs on every scheduler tick and whenever the panel renders the
 	// schedule, so it must be pure and must not need an account or a solver.
@@ -263,6 +297,9 @@ func TestTasksWithNothingClaimableSaysSo(t *testing.T) {
 		planPreviewPath: func(*http.Request) (*http.Response, error) {
 			return jsonResponse(http.StatusOK, `{"code":0,"data":{"server_time":1,"plans":[]}}`), nil
 		},
+		planBalancePath: func(*http.Request) (*http.Response, error) {
+			return jsonResponse(http.StatusOK, `{"code":0,"data":{"plans":[],"balances":[]}}`), nil
+		},
 	}, true)
 
 	tasks, err := c.Tasks(context.Background(), "")
@@ -274,6 +311,65 @@ func TestTasksWithNothingClaimableSaysSo(t *testing.T) {
 	}
 	if !strings.Contains(tasks[0].Note, "没有可领取") {
 		t.Errorf("note = %q, want the empty board explained", tasks[0].Note)
+	}
+}
+
+func TestTasksReportsAnAlreadyClaimedActivePlan(t *testing.T) {
+	c, _, _ := claimEnv(t, map[string]func(*http.Request) (*http.Response, error){
+		planPreviewPath: func(*http.Request) (*http.Response, error) {
+			return jsonResponse(http.StatusOK, `{"code":0,"data":{"server_time":1,"plans":[]}}`), nil
+		},
+		planBalancePath: func(*http.Request) (*http.Response, error) {
+			return jsonResponse(http.StatusOK, claimedPlanBalanceFixture), nil
+		},
+	}, true)
+
+	tasks, err := c.Tasks(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Tasks: %v", err)
+	}
+	if len(tasks) != 1 {
+		t.Fatalf("got %d rows, want 1: %+v", len(tasks), tasks)
+	}
+	got := tasks[0]
+	if !got.Claimed || !got.Locked || got.Claimable || got.Auto {
+		t.Errorf("flags = claimed:%v locked:%v claimable:%v auto:%v, want claimed+locked only",
+			got.Claimed, got.Locked, got.Claimable, got.Auto)
+	}
+	if got.Title != "活动套餐已领取" {
+		t.Errorf("title = %q, want the claimed state named", got.Title)
+	}
+	if !strings.Contains(got.Desc, "ZCode Weekend Build") {
+		t.Errorf("desc = %q, want the active plan name", got.Desc)
+	}
+	if !strings.Contains(got.Desc, "300,000,000 tokens") {
+		t.Errorf("desc = %q, want the remaining token grant", got.Desc)
+	}
+	if !strings.Contains(got.Note, "无需重复领取") {
+		t.Errorf("note = %q, want the board to say there is nothing left to do", got.Note)
+	}
+}
+
+func TestTasksCachesTheActivePlanAfterAnEmptyPreview(t *testing.T) {
+	c, ft, _ := claimEnv(t, map[string]func(*http.Request) (*http.Response, error){
+		planPreviewPath: func(*http.Request) (*http.Response, error) {
+			return jsonResponse(http.StatusOK, `{"code":0,"data":{"server_time":1,"plans":[]}}`), nil
+		},
+		planBalancePath: func(*http.Request) (*http.Response, error) {
+			return jsonResponse(http.StatusOK, claimedPlanBalanceFixture), nil
+		},
+	}, true)
+
+	for i := 0; i < 3; i++ {
+		if _, err := c.Tasks(context.Background(), ""); err != nil {
+			t.Fatalf("Tasks #%d: %v", i, err)
+		}
+	}
+	if n := pathCount(ft, planPreviewPath); n != 1 {
+		t.Errorf("made %d preview requests for 3 board reads, want 1", n)
+	}
+	if n := pathCount(ft, planBalancePath); n != 1 {
+		t.Errorf("made %d balance requests for 3 board reads, want 1", n)
 	}
 }
 

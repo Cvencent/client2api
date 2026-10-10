@@ -66,6 +66,12 @@ func fakeSignIn(t *testing.T, granted bool, statusBody string) (*fakeWeb, *signI
 			writeWebJSON(w, `{"error_code":"VALIDATION_ERROR","error_message":"request validation failed","details":[{"field":"body.request_no","reason":"missing","message":"Field required"}]}`)
 			return
 		}
+		scenes, _ := body["scene_codes"].([]any)
+		if len(scenes) != 1 || scenes[0] != webSignInScene {
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			writeWebJSON(w, `{"error_code":"VALIDATION_ERROR","error_message":"request validation failed","details":[{"field":"body.scene_codes","reason":"missing","message":"Field required"}]}`)
+			return
+		}
 		st.mu.Lock()
 		st.body = body
 		st.method = r.Method
@@ -134,10 +140,10 @@ func TestTabbitCheckinClaimsTheDailyReward(t *testing.T) {
 	}
 }
 
-// TestTabbitCheckinSendsTheSceneCode locks the request body: the vendor's own
-// client names the scene it is signing in for, and the module must send the same
-// one or the vendor credits the wrong thing.
-func TestTabbitCheckinSendsTheSceneCode(t *testing.T) {
+// TestTabbitCheckinSendsTheSceneCodes locks the request body: the vendor's
+// current contract requires the plural array, and the obsolete singular field
+// is answered with 422 VALIDATION_ERROR before any reward is considered.
+func TestTabbitCheckinSendsTheSceneCodes(t *testing.T) {
 	f, st := fakeSignIn(t, true, "")
 	c, rec := newWebClient(t, f)
 
@@ -148,8 +154,12 @@ func TestTabbitCheckinSendsTheSceneCode(t *testing.T) {
 	if method != http.MethodPost {
 		t.Fatalf("sign-in used %s, want POST", method)
 	}
-	if got, _ := body["scene_code"].(string); got != webSignInScene {
-		t.Fatalf("the body carried scene_code=%q, want %q (body=%v)", got, webSignInScene, body)
+	if _, stale := body["scene_code"]; stale {
+		t.Fatalf("the body still carried the obsolete scene_code field: %v", body)
+	}
+	got, _ := body["scene_codes"].([]any)
+	if len(got) != 1 || got[0] != webSignInScene {
+		t.Fatalf("the body carried scene_codes=%v, want [%s] (body=%v)", got, webSignInScene, body)
 	}
 }
 

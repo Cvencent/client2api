@@ -215,6 +215,19 @@ func TestUsageRecordSetUsage(t *testing.T) {
 	}
 }
 
+func TestUsageRecordTracksWhetherCacheUsageWasReported(t *testing.T) {
+	var rec UsageRecord
+	rec.setUsage(&core.Usage{PromptTokens: 7, CompletionTokens: 3})
+	if rec.HasCachedTokens {
+		t.Fatalf("usage without cache details was marked as cache-reported: %+v", rec)
+	}
+
+	rec.setUsage(&core.Usage{PromptTokens: 7, CompletionTokens: 3, CachedTokensKnown: true})
+	if !rec.HasCachedTokens || rec.CachedTokens != 0 {
+		t.Fatalf("reported zero cache was not preserved: %+v", rec)
+	}
+}
+
 func TestStatsNilSafeAndCounters(t *testing.T) {
 	var nilStats *Stats
 	if nilStats.Requests() != 0 || nilStats.Failures() != 0 {

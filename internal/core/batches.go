@@ -1,6 +1,9 @@
 package core
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // ---------------------------------------------------------------------------
 // Scheduled batches (optional).
@@ -87,24 +90,36 @@ const CheckinBatchName = "checkin"
 // PlannedBatches reports every batch a module should appear under in the task
 // centre and the scheduler.
 //
-// A module that declares its own batches keeps them verbatim.  A module that
-// only implements CheckinProvider gets one synthetic batch, so the panel's
-// per-account check-in button and the daily scheduled check-in are the same
-// chore under one name the operator can enable.
+// A module that declares its own batches keeps them, but a CheckinProvider
+// still gets the synthetic check-in when it has no declared batch under that
+// name.  This keeps the panel's per-account check-in button and the daily
+// scheduled check-in as the same chore even for modules such as Loomy that
+// also schedule unrelated growth chores.
 func PlannedBatches(c Client) []Batch {
+	var out []Batch
+	declaredCheckin := false
 	if bp, ok := AsBatchPlanner(c); ok {
 		if bs := bp.Batches(); len(bs) > 0 {
-			return bs
+			out = append(out, bs...)
+			for _, b := range bs {
+				if strings.EqualFold(strings.TrimSpace(b.Name), CheckinBatchName) {
+					declaredCheckin = true
+					break
+				}
+			}
 		}
 	}
-	if _, ok := AsCheckinProvider(c); ok {
-		return []Batch{{Name: CheckinBatchName, Codes: []string{CheckinBatchName}}}
+	if !declaredCheckin {
+		if _, ok := AsCheckinProvider(c); ok {
+			out = append(out, Batch{Name: CheckinBatchName, Codes: []string{CheckinBatchName}})
+		}
 	}
-	return nil
+	return out
 }
 
 // IsCheckinBatch reports whether b is the synthetic check-in batch, i.e. the
-// one PlannedBatches invented because the module plans none of its own.
+// one PlannedBatches appended because the module does not declare a batch
+// named "checkin" itself.
 //
 // The executor must ask this instead of testing b.Name: a module that declares
 // its own "checkin" batch means task codes to run (zcode, workbuddy and
@@ -113,8 +128,12 @@ func IsCheckinBatch(c Client, b Batch) bool {
 	if b.Name != CheckinBatchName || len(b.Codes) != 1 || b.Codes[0] != CheckinBatchName {
 		return false
 	}
-	if bp, ok := AsBatchPlanner(c); ok && len(bp.Batches()) > 0 {
-		return false
+	if bp, ok := AsBatchPlanner(c); ok {
+		for _, declared := range bp.Batches() {
+			if strings.EqualFold(strings.TrimSpace(declared.Name), CheckinBatchName) {
+				return false
+			}
+		}
 	}
 	_, ok := AsCheckinProvider(c)
 	return ok

@@ -1,10 +1,13 @@
 package gateway
 
 import (
+	"encoding/json"
 	"io"
 	"log"
 	"math"
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -63,6 +66,9 @@ func TestUsageReportCarriesCacheAndCost(t *testing.T) {
 	if !rep.Totals.HasCachedTokens || rep.Totals.CachedTokens != 400 {
 		t.Fatalf("totals cache = has:%v value:%d, want has:true value:400", rep.Totals.HasCachedTokens, rep.Totals.CachedTokens)
 	}
+	if rep.Totals.CachePromptTokens != 1000 {
+		t.Fatalf("cache prompt tokens = %d, want 1000", rep.Totals.CachePromptTokens)
+	}
 	if !rep.Totals.HasCost || math.Abs(rep.Totals.Cost-0.0126) > 1e-12 {
 		t.Fatalf("totals cost = has:%v value:%v, want has:true value:0.0126", rep.Totals.HasCost, rep.Totals.Cost)
 	}
@@ -75,6 +81,54 @@ func TestUsageReportCarriesCacheAndCost(t *testing.T) {
 	p := rep.Series[0]
 	if !p.HasCachedTokens || p.CachedTokens != 400 || !p.HasCost || math.Abs(p.Cost-0.0126) > 1e-12 {
 		t.Fatalf("series point = %+v, want cache 400 and cost 0.0126", p)
+	}
+	if p.CachePromptTokens != 1000 {
+		t.Fatalf("series cache prompt tokens = %d, want 1000", p.CachePromptTokens)
+	}
+}
+
+func TestUsageReportExcludesPromptTokensWithoutCacheReport(t *testing.T) {
+	s := NewUsageStore(8)
+	at := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
+	s.Add(at, "zcode", "cn", "a1", "zcode/glm-5.3", UsageDelta{
+		PromptTokens:    900,
+		HasPromptTokens: true,
+	}, true)
+	s.Add(at, "zcode", "cn", "a1", "zcode/glm-5.3", UsageDelta{
+		PromptTokens:    1000,
+		HasPromptTokens: true,
+		CachedTokens:    400,
+		HasCachedTokens: true,
+	}, true)
+
+	rep := s.UsageReport(0)
+	if rep.Totals.PromptTokens != 1900 {
+		t.Fatalf("prompt tokens = %d, want 1900", rep.Totals.PromptTokens)
+	}
+	if rep.Totals.CachePromptTokens != 1000 {
+		t.Fatalf("cache prompt tokens = %d, want only the cache-reported 1000", rep.Totals.CachePromptTokens)
+	}
+	if rep.Totals.CacheHitTokens != 400 {
+		t.Fatalf("cache hit tokens = %d, want 400", rep.Totals.CacheHitTokens)
+	}
+	// Simulate a bucket persisted before CachePromptTokens/CacheHitTokens existed.
+	// Its cached numerator must not leak into the new hit-rate pair.
+	key := bucketKey(hourScopeOf(at), "zcode", "cn", "a1", "zcode/glm-5.3")
+	if b := s.buckets[key]; b != nil {
+		b.Cached += 900
+		b.HasCached = true
+	} else {
+		t.Fatal("test bucket missing")
+	}
+	rep = s.UsageReport(0)
+	if rep.Totals.CachedTokens != 1300 || rep.Totals.CacheHitTokens != 400 {
+		t.Fatalf("legacy cache polluted hit rate: cached=%d hit=%d, want 1300 and 400", rep.Totals.CachedTokens, rep.Totals.CacheHitTokens)
+	}
+	if len(rep.ByModel) != 1 || rep.ByModel[0].CachePromptTokens != 1000 || rep.ByModel[0].CacheHitTokens != 400 {
+		t.Fatalf("model cache pair = %+v, want prompt 1000 and hit 400", rep.ByModel)
+	}
+	if len(rep.Series) != 1 || rep.Series[0].CachePromptTokens != 1000 || rep.Series[0].CacheHitTokens != 400 {
+		t.Fatalf("series cache pair = %+v, want prompt 1000 and hit 400", rep.Series)
 	}
 }
 
@@ -155,6 +209,165 @@ func TestChatRecordsOfficialAndManualModelCost(t *testing.T) {
 		})
 	}
 }
+
+func TestRecordUsagePricesDeepSeekAtRequestTime(t *testing.T) {
+	beijing := time.FixedZone("CST", 8*60*60)
+	usage := NewUsageStore(10)
+	srv := &server{opts: Options{Usage: usage}}
+
+	srv.recordUsage(UsageRecord{
+		At:               time.Date(2026, 10, 12, 10, 0, 0, 0, beijing),
+		Client:           "workbuddy",
+		Model:            "workbuddy/cn:deepseek-v4.1-flash",
+		PromptTokens:     1000,
+		CachedTokens:     400,
+		HasCachedTokens:  true,
+		CompletionTokens: 200,
+	})
+
+	got := usage.Snapshot()
+	if len(got) != 1 {
+		t.Fatalf("usage records = %d, want 1", len(got))
+	}
+	want := 0.002816 // (600*2 + 400*0.04 + 200*8) / 1e6, Beijing morning peak
+	if !got[0].HasCost || math.Abs(got[0].Cost-want) > 1e-12 {
+		t.Fatalf("cost = has:%v value:%v, want has:true value:%v", got[0].HasCost, got[0].Cost, want)
+	}
+}
+
+func TestUsageLoadMigratesDeepSeekHourlyCosts(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "usage.json")
+	b := usageBucket{
+		Scope:   hourScope + "2026-10-12T10",
+		Client:  "workbuddy",
+		Model:   "workbuddy/cn:deepseek-v4.1-flash",
+		PT:      1000,
+		Cached:  400,
+		CT:      200,
+		HasCost: true,
+	}
+	previous, ok := modelmeta.DeepSeekPreviousPrice(b.Client, b.Model)
+	if !ok {
+		t.Fatal("old DeepSeek aggregate price did not resolve")
+	}
+	b.Cost = gatewayCost(previous, b.PT-b.Cached, b.Cached, b.CT)
+
+	raw, err := json.Marshal(usageFile{
+		Version:        usageFileVersion,
+		PricingVersion: 1,
+		Buckets:        []usageBucket{b},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	s := NewPersistentUsageStore(8, path)
+	if err := s.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	got := s.buckets[bucketKey(b.Scope, b.Client, "", "", b.Model)]
+	if got == nil {
+		t.Fatal("migrated bucket is missing")
+	}
+	price, ok := modelmeta.DefaultPriceAt(b.Client, b.Model, scopeTime(b.Scope))
+	if !ok {
+		t.Fatal("official DeepSeek price did not resolve")
+	}
+	want := gatewayCost(price, b.PT-b.Cached, b.Cached, b.CT)
+	if !got.HasCost || math.Abs(got.Cost-want) > 1e-12 {
+		t.Fatalf("migrated cost = has:%v value:%v, want %v", got.HasCost, got.Cost, want)
+	}
+	if math.Abs(got.Cost-b.Cost) < 1e-12 {
+		t.Fatalf("migrated cost did not change from old aggregate %v", b.Cost)
+	}
+
+	if err := s.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	raw, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved usageFile
+	if err := json.Unmarshal(raw, &saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved.PricingVersion != usagePricingVersion {
+		t.Fatalf("saved pricing version = %d, want %d", saved.PricingVersion, usagePricingVersion)
+	}
+}
+
+func TestUsagePricingMigrationPreservesManualAndDayCosts(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "usage.json")
+	manual := usageBucket{
+		Scope:   hourScope + "2026-10-12T10",
+		Client:  "workbuddy",
+		Model:   "workbuddy/cn:deepseek-v4.1-flash",
+		PT:      1000,
+		Cached:  400,
+		CT:      200,
+		Cost:    9.5,
+		HasCost: true,
+	}
+	day := usageBucket{
+		Scope:   dayScope + "2026-10-11",
+		Client:  "workbuddy",
+		Model:   "workbuddy/cn:deepseek-v4.1-flash",
+		PT:      1000,
+		Cached:  400,
+		CT:      200,
+		HasCost: true,
+	}
+	previous, ok := modelmeta.DeepSeekPreviousPrice(day.Client, day.Model)
+	if !ok {
+		t.Fatal("old DeepSeek aggregate price did not resolve")
+	}
+	day.Cost = gatewayCost(previous, day.PT-day.Cached, day.Cached, day.CT)
+
+	raw, err := json.Marshal(usageFile{
+		Version:        usageFileVersion,
+		PricingVersion: 1,
+		Buckets:        []usageBucket{manual, day},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	s := NewPersistentUsageStore(8, path)
+	if err := s.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	gotManual := s.buckets[bucketKey(manual.Scope, manual.Client, "", "", manual.Model)]
+	if gotManual == nil || !gotManual.HasCost || gotManual.Cost != manual.Cost {
+		t.Fatalf("manual hourly cost was rewritten: %+v", gotManual)
+	}
+	gotDay := s.buckets[bucketKey(day.Scope, day.Client, "", "", day.Model)]
+	if gotDay == nil || !gotDay.HasCost || gotDay.Cost != day.Cost {
+		t.Fatalf("day cost was rewritten: %+v", gotDay)
+	}
+
+	if err := s.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	raw, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved usageFile
+	if err := json.Unmarshal(raw, &saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved.PricingVersion != usagePricingVersion {
+		t.Fatalf("saved pricing version = %d, want %d", saved.PricingVersion, usagePricingVersion)
+	}
+}
+
 func TestUsageReportCountsUnpricedSuccessfulCalls(t *testing.T) {
 	s := NewUsageStore(8)
 	at := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)

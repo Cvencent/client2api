@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Price is a per-million-token price in CNY.
@@ -93,13 +94,35 @@ func pricingTable() map[string]Price {
 }
 
 // DefaultPrice resolves an official default price for a client and model id.
+// DeepSeek's published rate varies by request time, so this compatibility
+// entry point returns the off-peak rate used for model-list display.
 func DefaultPrice(client, model string) (Price, bool) {
+	return DefaultPriceAt(client, model, time.Time{})
+}
+
+// DefaultPriceAt resolves an official price applicable at at. An unset or zero
+// time is treated as off-peak, matching DefaultPrice's display contract.
+func DefaultPriceAt(client, model string, at time.Time) (Price, bool) {
 	if explicitFreePriceID(model) {
 		return Price{HasPrice: true}, true
 	}
+	rawModel := strings.ToLower(strings.TrimSpace(model))
 	key := normalizePriceID(model)
 	if key == "" {
 		return Price{}, false
+	}
+	// Resolve a client-specific opaque alias before consulting either price
+	// source. Some aliases point at an official id (Raccoon's sn-deepseek...),
+	// and the official DeepSeek rate must win over the third-party aggregate
+	// row that may share the normalized id.
+	if officialKey, ok := deepSeekOfficialPriceKey(client, model); ok {
+		p, _ := deepSeekOfficialPrice(officialKey, at)
+		return p, true
+	}
+	aliases := clientPriceAliases[strings.ToLower(strings.TrimSpace(client))]
+	target := aliases[rawModel]
+	if target == "" {
+		target = aliases[key]
 	}
 	table := pricingTable()
 	if p, ok := table[key]; ok {
@@ -112,8 +135,7 @@ func DefaultPrice(client, model string) (Price, bool) {
 	}
 	// A few reseller ids are opaque aliases. Only map an alias when the
 	// client's catalogue makes the target unambiguous.
-	aliases := clientPriceAliases[strings.ToLower(strings.TrimSpace(client))]
-	if target, ok := aliases[key]; ok {
+	if target != "" {
 		if p, ok := table[target]; ok {
 			return p, true
 		}
@@ -124,6 +146,143 @@ func DefaultPrice(client, model string) (Price, bool) {
 		}
 	}
 	return Price{}, false
+}
+
+// IsOfficialDeepSeekModel reports whether the client/model pair resolves to
+// one of the built-in DeepSeek list-price rows. It is used by the one-time
+// usage-history migration, which must not rewrite unrelated third-party
+// prices just because they happen to share a DeepSeek-looking model name.
+func IsOfficialDeepSeekModel(client, model string) bool {
+	if explicitFreePriceID(model) {
+		return false
+	}
+	_, ok := deepSeekOfficialPriceKey(client, model)
+	return ok
+}
+
+// DeepSeekPreviousPrice returns the third-party aggregate row that the built-in
+// table used before the official DeepSeek CNY override was added. It exists
+// only for the one-time usage-history migration, which must distinguish an old
+// automatic estimate from an operator's manual price.
+func DeepSeekPreviousPrice(client, model string) (Price, bool) {
+	if !IsOfficialDeepSeekModel(client, model) {
+		return Price{}, false
+	}
+	rawModel := strings.ToLower(strings.TrimSpace(model))
+	key := normalizePriceID(model)
+	aliases := clientPriceAliases[strings.ToLower(strings.TrimSpace(client))]
+	target := aliases[rawModel]
+	if target == "" {
+		target = aliases[key]
+	}
+	table := pricingTable()
+	for _, candidate := range []string{target, key} {
+		if candidate == "" {
+			continue
+		}
+		if p, ok := table[candidate]; ok {
+			return p, true
+		}
+		if dashed := strings.ReplaceAll(candidate, ".", "-"); dashed != candidate {
+			if p, ok := table[dashed]; ok {
+				return p, true
+			}
+		}
+	}
+	return Price{}, false
+}
+
+func deepSeekOfficialPriceKey(client, model string) (string, bool) {
+	rawModel := strings.ToLower(strings.TrimSpace(model))
+	key := normalizePriceID(model)
+	if key == "" {
+		return "", false
+	}
+	aliases := clientPriceAliases[strings.ToLower(strings.TrimSpace(client))]
+	target := aliases[rawModel]
+	if target == "" {
+		target = aliases[key]
+	}
+	if target != "" {
+		if _, ok := deepSeekOfficialPrices[target]; ok {
+			return target, true
+		}
+	}
+	if _, ok := deepSeekOfficialPrices[key]; ok {
+		return key, true
+	}
+	return "", false
+}
+
+type deepSeekPrice struct {
+	offPeak Price
+	peak    Price
+}
+
+var deepSeekOfficialPrices = map[string]deepSeekPrice{
+	"deepseek-flash": {
+		offPeak: Price{InputPerMillion: 1, OutputPerMillion: 4, CacheReadPerMillion: 0.02, HasPrice: true, HasCacheRead: true},
+		peak:    Price{InputPerMillion: 2, OutputPerMillion: 8, CacheReadPerMillion: 0.04, HasPrice: true, HasCacheRead: true},
+	},
+	"deepseek-v4-flash": {
+		offPeak: Price{InputPerMillion: 1, OutputPerMillion: 4, CacheReadPerMillion: 0.02, HasPrice: true, HasCacheRead: true},
+		peak:    Price{InputPerMillion: 2, OutputPerMillion: 8, CacheReadPerMillion: 0.04, HasPrice: true, HasCacheRead: true},
+	},
+	"deepseek-v4-flash-vision-exp": {
+		offPeak: Price{InputPerMillion: 1, OutputPerMillion: 4, CacheReadPerMillion: 0.02, HasPrice: true, HasCacheRead: true},
+		peak:    Price{InputPerMillion: 2, OutputPerMillion: 8, CacheReadPerMillion: 0.04, HasPrice: true, HasCacheRead: true},
+	},
+	"deepseek-v4.1-flash": {
+		offPeak: Price{InputPerMillion: 1, OutputPerMillion: 4, CacheReadPerMillion: 0.02, HasPrice: true, HasCacheRead: true},
+		peak:    Price{InputPerMillion: 2, OutputPerMillion: 8, CacheReadPerMillion: 0.04, HasPrice: true, HasCacheRead: true},
+	},
+	"deepseek-v4-pro": {
+		offPeak: Price{InputPerMillion: 4.5, OutputPerMillion: 13.5, CacheReadPerMillion: 0.15, HasPrice: true, HasCacheRead: true},
+		peak:    Price{InputPerMillion: 9, OutputPerMillion: 27, CacheReadPerMillion: 0.3, HasPrice: true, HasCacheRead: true},
+	},
+}
+
+func deepSeekOfficialPrice(key string, at time.Time) (Price, bool) {
+	p, ok := deepSeekOfficialPrices[key]
+	if !ok {
+		return Price{}, false
+	}
+	if at.IsZero() || !deepSeekPeak(at) {
+		return p.offPeak, true
+	}
+	return p.peak, true
+}
+
+var deepSeekBeijing = time.FixedZone("Asia/Shanghai", 8*60*60)
+
+// deepSeekPeak reports whether at is in DeepSeek's peak window. The published
+// schedule is Beijing time, weekdays, excluding Chinese public holidays.
+func deepSeekPeak(at time.Time) bool {
+	t := at.In(deepSeekBeijing)
+	if t.Weekday() == time.Saturday || t.Weekday() == time.Sunday || deepSeekHoliday(t) {
+		return false
+	}
+	minute := t.Hour()*60 + t.Minute()
+	return (minute >= 9*60 && minute < 12*60) || (minute >= 14*60 && minute < 18*60)
+}
+
+func deepSeekHoliday(t time.Time) bool {
+	day := t.Format("2006-01-02")
+	_, ok := deepSeekHolidays[day]
+	return ok
+}
+
+// Public holiday dates are the mainland China State Council schedule. They are
+// kept explicitly because Go's tz database has no concept of statutory
+// holidays, and inferring them from weekends would misprice make-up workdays.
+var deepSeekHolidays = map[string]struct{}{
+	"2026-01-01": {}, "2026-01-02": {}, "2026-01-03": {},
+	"2026-02-15": {}, "2026-02-16": {}, "2026-02-17": {}, "2026-02-18": {}, "2026-02-19": {}, "2026-02-20": {}, "2026-02-21": {}, "2026-02-22": {}, "2026-02-23": {},
+	"2026-04-04": {}, "2026-04-05": {}, "2026-04-06": {},
+	"2026-05-01": {}, "2026-05-02": {}, "2026-05-03": {}, "2026-05-04": {}, "2026-05-05": {},
+	"2026-06-19": {}, "2026-06-20": {}, "2026-06-21": {},
+	"2026-09-25": {}, "2026-09-26": {}, "2026-09-27": {},
+	"2026-10-01": {}, "2026-10-02": {}, "2026-10-03": {}, "2026-10-04": {}, "2026-10-05": {}, "2026-10-06": {}, "2026-10-07": {},
 }
 
 var clientPriceAliases = map[string]map[string]string{

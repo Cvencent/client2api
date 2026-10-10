@@ -223,14 +223,23 @@ func usageFromAny(v any) *core.Usage {
 		ReasoningTokens:  num("reasoning_tokens"),
 		CachedTokens:     num("cached_tokens", "prompt_cache_hit_tokens", "cache_read_input_tokens"),
 	}
+	for _, key := range []string{"cached_tokens", "prompt_cache_hit_tokens", "cache_read_input_tokens"} {
+		if _, ok := numberField(m, key); ok {
+			u.CachedTokensKnown = true
+			break
+		}
+	}
 	if d, ok := m["completion_tokens_details"].(map[string]any); ok {
 		if f, ok := numberField(d, "reasoning_tokens"); ok && f > 0 {
 			u.ReasoningTokens = int(f)
 		}
 	}
 	if d, ok := m["prompt_tokens_details"].(map[string]any); ok {
-		if f, ok := numberField(d, "cached_tokens"); ok && f > 0 {
-			u.CachedTokens = int(f)
+		if f, ok := numberField(d, "cached_tokens"); ok {
+			u.CachedTokensKnown = true
+			if f > 0 {
+				u.CachedTokens = int(f)
+			}
 		}
 	}
 	if u.TotalTokens == 0 {

@@ -1145,12 +1145,33 @@ func usageFromMap(u map[string]any) *core.Usage {
 		}
 		return 0
 	}
+	getKnown := func(keys ...string) (int, bool) {
+		for _, k := range keys {
+			if n, ok := num64(u[k]); ok {
+				return int(n), true
+			}
+		}
+		return 0, false
+	}
+	cached, cachedKnown := getKnown("cached_tokens", "prompt_cache_hit_tokens", "cache_read_input_tokens")
+	if !cachedKnown {
+		for _, key := range []string{"prompt_tokens_details", "input_tokens_details"} {
+			if details, ok := u[key].(map[string]any); ok {
+				if n, ok := num64(details["cached_tokens"]); ok {
+					cached = int(n)
+					cachedKnown = true
+					break
+				}
+			}
+		}
+	}
 	out := &core.Usage{
-		PromptTokens:     get("prompt_tokens", "input_tokens"),
-		CompletionTokens: get("completion_tokens", "output_tokens"),
-		TotalTokens:      get("total_tokens"),
-		ReasoningTokens:  get("reasoning_tokens"),
-		CachedTokens:     get("cached_tokens", "prompt_cache_hit_tokens", "cache_read_input_tokens"),
+		PromptTokens:      get("prompt_tokens", "input_tokens"),
+		CompletionTokens:  get("completion_tokens", "output_tokens"),
+		TotalTokens:       get("total_tokens"),
+		ReasoningTokens:   get("reasoning_tokens"),
+		CachedTokens:      cached,
+		CachedTokensKnown: cachedKnown,
 	}
 	if out.TotalTokens == 0 {
 		out.TotalTokens = out.PromptTokens + out.CompletionTokens

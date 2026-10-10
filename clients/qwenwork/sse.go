@@ -385,13 +385,15 @@ func usageFromAny(v any) *core.Usage {
 		if details, ok := m[key].(map[string]any); ok {
 			if n, ok := numberField(details, "cached_tokens"); ok {
 				u.CachedTokens = int(n)
+				u.CachedTokensKnown = true
 				break
 			}
 		}
 	}
-	if u.CachedTokens == 0 {
+	if !u.CachedTokensKnown {
 		if n, ok := numberField(m, "prompt_cache_hit_tokens", "cache_read_input_tokens", "cached_tokens"); ok {
 			u.CachedTokens = int(n)
+			u.CachedTokensKnown = true
 		}
 	}
 	if u.PromptTokens == 0 && u.CompletionTokens == 0 && u.TotalTokens == 0 {

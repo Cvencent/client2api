@@ -95,12 +95,19 @@ func (p *Provider) Lookup(model string) (Meta, bool) {
 // This is the API a client module should use: it applies the whole precedence
 // chain, so the module never duplicates the rules.
 func (p *Provider) Merge(model string, vendor Meta) Meta {
+	return p.MergeAt(model, vendor, time.Time{})
+}
+
+// MergeAt is Merge with an explicit request time for time-varying prices. A
+// zero time selects the static off-peak/catalogue value; the gateway passes the
+// completed request timestamp so DeepSeek peak rates apply to the right calls.
+func (p *Provider) MergeAt(model string, vendor Meta, at time.Time) Meta {
 	if vendor.Source == "" && !vendor.IsZero() {
 		// The caller passed live values without provenance; they are vendor values
 		// by definition.
 		vendor.Source = SourceVendor
 	}
-	out, _ := p.resolve(model, vendor)
+	out, _ := p.resolveAt(model, vendor, at)
 	return out
 }
 
@@ -121,6 +128,10 @@ func (p *Provider) RemoteEnabled() bool {
 
 // resolve is the whole chain in one place.
 func (p *Provider) resolve(model string, vendor Meta) (Meta, bool) {
+	return p.resolveAt(model, vendor, time.Time{})
+}
+
+func (p *Provider) resolveAt(model string, vendor Meta, at time.Time) (Meta, bool) {
 	if p == nil {
 		return vendor.Clone(), !vendor.IsZero()
 	}
@@ -149,7 +160,7 @@ func (p *Provider) resolve(model string, vendor Meta) (Meta, bool) {
 			}
 		}
 		if !out.HasPrice || (!out.HasCacheRead && out.SourceOf(FieldInputPrice) != SourceManual) {
-			if price, ok := DefaultPrice(p.client, model); ok {
+			if price, ok := DefaultPriceAt(p.client, model, at); ok {
 				out = mergePrice(out, price, SourceStatic)
 			}
 		}

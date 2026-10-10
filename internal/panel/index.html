@@ -1085,6 +1085,7 @@ button.primary:active:not(:disabled) { filter: brightness(.94); }
 /* 九、平台配置页。每个平台一张可折叠的卡片：头部一行放优先级与开关，展开后
    才是模型清单。模型动辄几百个，给清单固定高度并内部滚动，页面本身不跟着疯长。 */
 .pfplat { border: 1px solid var(--line-soft); border-radius: 9px; margin-bottom: 10px; overflow: hidden; }
+.pfSubtabs { width: auto; margin: 14px 18px 0; }
 .pfhead { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; padding: 9px 12px; background: var(--surface-2); }
 .pfhead .pfname { font-weight: 600; font-size: 13px; min-width: 96px; max-width: 100%; overflow-wrap: anywhere; }
 .pfSchedToggle { white-space: nowrap; }
@@ -1685,6 +1686,7 @@ details.cfg summary:hover, details.adv summary:hover { color: var(--accent-text)
   .view { padding: 16px 12px 56px; }
   .box > header { min-height: 0; padding: 12px 14px; }
   .subtabs { display: flex; width: 100%; overflow-x: auto; scrollbar-width: none; }
+  #view-platforms .pfSubtabs { width: auto; margin: 12px 14px 0; }
   .subtabs::-webkit-scrollbar { display: none; }
   .subtabs .subtab { flex: 0 0 auto; }
   .stat { min-height: 78px; }
@@ -2180,22 +2182,30 @@ details.cfg summary:hover, details.adv summary:hover { color: var(--accent-text)
     <section class="view" id="view-platforms" hidden>
       <div class="box">
         <header>
-          <h3>平台路由配置 <span class="hint">按平台设置路由优先级、模型黑名单、并发与最低余额；WorkBuddy 还带账号池治理</span></h3>
+          <h3>平台路由配置 <span class="hint">设置模型路由组、平台优先级、模型黑名单、并发与最低余额；WorkBuddy 还带账号池治理</span></h3>
           <span class="grow"></span>
           <span class="note" id="pfNote">-</span>
           <button class="xs" id="btnSourceAdd" type="button">添加中转站</button>
           <button class="xs" id="btnPfExport">导出</button>
           <button class="xs" id="btnPfImport">导入</button>
         </header>
-        <div class="tblbar">
-          <input id="pfSearch" type="search" placeholder="搜索平台 / 模型（/）" spellcheck="false" autocomplete="off">
-          <label class="chk"><input type="checkbox" id="pfOnlyOff">只看已禁用</label>
-          <span class="grow"></span>
-          <button class="xs" id="btnPfExpand">全部展开</button>
-          <button class="xs" id="btnPfCollapse">全部收起</button>
+        <div class="subtabs pfSubtabs" data-subtabs="platforms" role="tablist" aria-label="平台路由配置视图">
+          <button class="chip subtab on" type="button" id="platforms-tab-groups" role="tab" aria-selected="true" aria-controls="platforms-panel-groups" data-subtab="groups">模型路由组</button>
+          <button class="chip subtab" type="button" id="platforms-tab-rules" role="tab" aria-selected="false" aria-controls="platforms-panel-rules" data-subtab="rules" tabindex="-1">平台与模型</button>
         </div>
-        <div class="pad" id="pfGroups"><div class="hint">正在读取模型路由组…</div></div>
-        <div class="pad" id="pfBody"><div class="hint">正在读取平台与模型…</div></div>
+        <div class="subtab-panel" data-subtab-panel="platforms-groups" id="platforms-panel-groups" role="tabpanel" aria-labelledby="platforms-tab-groups">
+          <div class="pad" id="pfGroups"><div class="hint">正在读取模型路由组…</div></div>
+        </div>
+        <div class="subtab-panel" data-subtab-panel="platforms-rules" id="platforms-panel-rules" role="tabpanel" aria-labelledby="platforms-tab-rules" hidden>
+          <div class="tblbar">
+            <input id="pfSearch" type="search" placeholder="搜索平台 / 模型（/）" spellcheck="false" autocomplete="off">
+            <label class="chk"><input type="checkbox" id="pfOnlyOff">只看已禁用</label>
+            <span class="grow"></span>
+            <button class="xs" id="btnPfExpand">全部展开</button>
+            <button class="xs" id="btnPfCollapse">全部收起</button>
+          </div>
+          <div class="pad" id="pfBody"><div class="hint">正在读取平台与模型…</div></div>
+        </div>
         <div class="savebar">
           <span class="hint">勾选 = 允许调用，取消勾选即加入该平台黑名单；优先级填整数，可以为负数，数字越小越先路由，例如 -10 比 -5 更优先；留空使用默认 0。「平台总并发 / 网关单账号并发」与「最低余额」在平台头部，WorkBuddy 卡片里额外有账号池治理。保存后立即热加载生效，无需重启。</span>
           <span class="grow"></span>
@@ -2407,6 +2417,10 @@ details.cfg summary:hover, details.adv summary:hover { color: var(--accent-text)
           <div id="smsTokenRow" class="row" hidden>
             <input id="smsToken" type="password" placeholder="eomsg token（只存在本机浏览器）" style="flex:1">
             <button class="xs primary" id="btnSmsTokenSave">保存</button>
+          </div>
+          <div id="smsProxyRow" class="row">
+            <input id="smsProxy" type="text" placeholder="接码代理（可选，如 http://127.0.0.1:7890 或 socks5://127.0.0.1:1080）" style="flex:1">
+            <button class="xs primary" id="btnSmsProxySave">保存代理</button>
           </div>
           <div id="smsPick" class="row">
             <select id="smsProvince" title="号码归属地"></select>
@@ -5008,8 +5022,9 @@ function renderUsageTiles(d, t, rate) {
   const total = Number(t.total_tokens || 0);
   const pt = Number(t.prompt_tokens || 0);
   const ct = Number(t.completion_tokens || 0);
-  const cached = Number(t.cached_tokens || 0);
-  const hit = usageCacheHitRate(cached, pt, t.has_cached_tokens);
+  const cacheHit = Number(t.cache_hit_tokens || 0);
+  const cachePrompt = Number(t.cache_prompt_tokens || 0);
+  const hit = usageCacheHitRate(cacheHit, cachePrompt, t.has_cached_tokens);
   const unpriced = Number(t.unpriced_requests || 0);
   const share = n => (total ? Math.round(n / total * 100) : 0);
   const tiles = [
@@ -5031,11 +5046,11 @@ function renderUsageTiles(d, t, rate) {
     {
       k: "缓存命中率", v: hit == null ? "—" : (hit < 1 ? hit.toFixed(1) : String(Math.round(hit))) + "%",
       tint: "accent", tintText: "accent-text",
-      sub: t.has_cached_tokens ? numf(Math.min(Math.max(cached, 0), pt)) + " 缓存 tokens" : "上游未报缓存 tokens",
+      sub: hit == null ? "暂无缓存上报" : numf(Math.min(Math.max(cacheHit, 0), cachePrompt)) + " 已计入缓存 tokens",
     },
     {
       k: "总花费", v: t.has_cost ? fmtUsageCost(t.cost) : "—", tint: "ok", tintText: "ok-text",
-      sub: unpriced ? numf(unpriced) + " 条未定价，未计入" : (t.has_cost ? "人民币" : "没有可计价请求"),
+      sub: unpriced ? numf(unpriced) + " 条未定价，未计入" : (t.has_cost ? "按模型价格估算" : "没有可计价请求"),
     },
     {
       k: "合计 tokens", v: numf(total), tint: "ok", tintText: "ok-text",
@@ -6128,7 +6143,10 @@ async function renderPlatforms(preserveDraft = false) {
   const body = $("#pfBody");
   if (!cfg.ok) {
     $("#pfNote").textContent = "读取失败";
-    body.innerHTML = '<div class="state err">' + esc(cfg.err) + "</div>";
+    const failure = '<div class="state err">' + esc(cfg.err) + "</div>";
+    const groupsEl = $("#pfGroups");
+    if (groupsEl) groupsEl.innerHTML = failure;
+    body.innerHTML = failure;
     return;
   }
   const c = (cfg.data && cfg.data.config) || {};
@@ -8846,6 +8864,7 @@ function autoBody() {
   const b = {
     realm: ADD.realm || "",
     token: smsToken(),
+    proxy: smsProxy(),
     keyword: $("#smsKeyword").value.trim(),
     province: $("#smsProvince").value || "",
     card_type: $("#smsCard").value || ""
@@ -9026,11 +9045,13 @@ function renderAutoJob(job) {
    粘贴。号码在登录成功或关闭弹层时自动释放。token 优先用服务端配置的；
    操作员也能在这里贴一个，只存在本机浏览器（c2a.smstoken）。 */
 function smsToken() { return LS.get("smstoken", ""); }
+function smsProxy() { return LS.get("smsproxy", ""); }
 function smsOn(n) { return !!(capsOf(n || $("#addClient").value) || {}).sms; }
 function loginOn(n) { return !!(capsOf(n || $("#addClient").value) || {}).login; }
 function smsBody(extra) {
   const b = {
     token: smsToken(),
+    proxy: smsProxy(),
     keyword: $("#smsKeyword").value.trim(),
     province: $("#smsProvince").value || "",
     card_type: $("#smsCard").value || ""
@@ -9051,6 +9072,7 @@ function renderAddSms(n) {
   $("#smsNumRow").hidden = true; $("#smsCodeRow").hidden = true;
   $("#smsHint").textContent = restore ? "重登：用这个账号自己的手机号重新登录。" : "";
   $("#smsToken").value = smsToken();
+  $("#smsProxy").value = smsProxy();
   // 关键词默认值由模块给（SMSStatus.keyword）：面板不再硬编码某个平台的默认值，
   // 否则 loomy 的「讯飞」会被 workbuddy 的「腾讯科技」覆盖。没有记住的值时先留空。
   $("#smsKeyword").value = LS.get("smskeyword:" + n, "");
@@ -9080,7 +9102,7 @@ async function smsStatusLoad() {
   st.textContent = "正在读取接码平台状态…";
   let r;
   try {
-    r = await api(cbase(n) + "/sms", { method: "POST", body: { token: smsToken() } });
+    r = await api(cbase(n) + "/sms", { method: "POST", body: { token: smsToken(), proxy: smsProxy() } });
   } finally {
     // 无论成败都要收回转圈，否则「重新读取」会一直被禁着。
     syncSmsStatusUI(false);
@@ -10434,6 +10456,11 @@ $("#btnSmsTokenSave").addEventListener("click", async () => {
   toast("接码 token 已保存在本机浏览器");
   await smsStatusLoad();
 });
+$("#btnSmsProxySave").addEventListener("click", async () => {
+  LS.set("smsproxy", $("#smsProxy").value.trim());
+  toast("接码代理已保存在本机浏览器");
+  await smsStatusLoad();
+});
 $("#btnOpenUrl").addEventListener("click", () => { const u = $("#addUrl").textContent; if (u) window.open(u, "_blank", "noopener"); });
 $("#btnCopyUrl").addEventListener("click", async () => { const u = $("#addUrl").textContent; try { await navigator.clipboard.writeText(u); toast("链接已复制"); } catch (e) { toast("复制失败", "err"); } });
 $("#btnDiscover").addEventListener("click", discover);
@@ -10747,6 +10774,7 @@ $("#chatInput").addEventListener("keydown", ev => {
 const USAGE_SUBTABS = setupSubtabs("usage", () => {
   if (VIEW === "usage") renderUsage();
 });
+setupSubtabs("platforms");
 const TASKS_SUBTABS = setupSubtabs("taskscenter", name => {
   if (VIEW !== "taskscenter") return;
   if (name === "schedule") renderSchedule();

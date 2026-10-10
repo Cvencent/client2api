@@ -35,6 +35,7 @@ import (
 // optional: the panel sends only what the operator changed.
 type smsRequest struct {
 	Token    string   `json:"token,omitempty"`
+	Proxy    string   `json:"proxy,omitempty"`
 	Keyword  string   `json:"keyword,omitempty"`
 	Province string   `json:"province,omitempty"`
 	CardType string   `json:"card_type,omitempty"`
@@ -46,6 +47,7 @@ type smsRequest struct {
 func (b smsRequest) opts() core.SMSOpts {
 	return core.SMSOpts{
 		Token:    strings.TrimSpace(b.Token),
+		Proxy:    strings.TrimSpace(b.Proxy),
 		Keyword:  strings.TrimSpace(b.Keyword),
 		Province: strings.TrimSpace(b.Province),
 		CardType: strings.TrimSpace(b.CardType),

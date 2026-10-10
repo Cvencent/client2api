@@ -180,7 +180,7 @@ func (rec *UsageRecord) setUsage(u *core.Usage) {
 	}
 	rec.PromptTokens = u.PromptTokens
 	rec.CachedTokens = u.CachedTokens
-	rec.HasCachedTokens = true
+	rec.HasCachedTokens = u.CachedTokensKnown || u.CachedTokens > 0
 	rec.CompletionTokens = u.CompletionTokens
 	rec.TotalTokens = u.TotalTokens
 	if rec.TotalTokens == 0 {
@@ -266,10 +266,12 @@ type usageBucket struct {
 	Realm     string  `json:"r"`
 	Account   string  `json:"a"`
 	Model     string  `json:"m"`
-	Req       int64   `json:"q"`  // requests, failures included
-	Err       int64   `json:"e"`  // failed attempts
-	PT        int64   `json:"p"`  // prompt tokens
-	Cached    int64   `json:"ch"` // cached prompt tokens
+	Req       int64   `json:"q"`            // requests, failures included
+	Err       int64   `json:"e"`            // failed attempts
+	PT        int64   `json:"p"`            // prompt tokens
+	Cached    int64   `json:"ch"`           // cached prompt tokens
+	CachedHit int64   `json:"cr,omitempty"` // cached tokens from requests that reported cache usage
+	CachedPT  int64   `json:"cp,omitempty"` // prompt tokens from requests that reported cache usage
 	HasCached bool    `json:"hc,omitempty"`
 	CT        int64   `json:"ct"` // completion tokens
 	TT        int64   `json:"t"`  // total tokens
@@ -302,6 +304,8 @@ func (b *usageBucket) mergeFrom(src *usageBucket) {
 	b.Err += src.Err
 	b.PT += src.PT
 	b.Cached += src.Cached
+	b.CachedHit += src.CachedHit
+	b.CachedPT += src.CachedPT
 	b.HasCached = b.HasCached || src.HasCached
 	b.CT += src.CT
 	b.TT += src.TT
@@ -475,6 +479,10 @@ func (s *UsageStore) addLocked(now time.Time, client, realm, account, model stri
 	}
 	if d.HasCachedTokens {
 		b.Cached += d.CachedTokens
+		b.CachedHit += d.CachedTokens
+		if d.HasPromptTokens && d.PromptTokens > 0 {
+			b.CachedPT += d.PromptTokens
+		}
 		b.HasCached = true
 	}
 	if d.HasCompletion {
@@ -794,6 +802,8 @@ type UsageTotals struct {
 	Failures           int64    `json:"failures"`
 	PromptTokens       int64    `json:"prompt_tokens"`
 	CachedTokens       int64    `json:"cached_tokens"`
+	CacheHitTokens     int64    `json:"cache_hit_tokens"`
+	CachePromptTokens  int64    `json:"cache_prompt_tokens"`
 	HasCachedTokens    bool     `json:"has_cached_tokens"`
 	CompletionTokens   int64    `json:"completion_tokens"`
 	TotalTokens        int64    `json:"total_tokens"`
@@ -823,17 +833,19 @@ type UsageBucket struct {
 
 // UsagePoint is one time-slice of the series.
 type UsagePoint struct {
-	T                string  `json:"t"`
-	Scope            string  `json:"scope,omitempty"` // "hour" | "day"
-	PromptTokens     int64   `json:"prompt_tokens"`
-	CachedTokens     int64   `json:"cached_tokens,omitempty"`
-	HasCachedTokens  bool    `json:"has_cached_tokens,omitempty"`
-	CompletionTokens int64   `json:"completion_tokens"`
-	Requests         int64   `json:"requests"`
-	Failures         int64   `json:"failures,omitempty"`
-	TotalTokens      int64   `json:"total_tokens,omitempty"`
-	Cost             float64 `json:"cost,omitempty"`
-	HasCost          bool    `json:"has_cost,omitempty"`
+	T                 string  `json:"t"`
+	Scope             string  `json:"scope,omitempty"` // "hour" | "day"
+	PromptTokens      int64   `json:"prompt_tokens"`
+	CachedTokens      int64   `json:"cached_tokens,omitempty"`
+	CacheHitTokens    int64   `json:"cache_hit_tokens,omitempty"`
+	CachePromptTokens int64   `json:"cache_prompt_tokens,omitempty"`
+	HasCachedTokens   bool    `json:"has_cached_tokens,omitempty"`
+	CompletionTokens  int64   `json:"completion_tokens"`
+	Requests          int64   `json:"requests"`
+	Failures          int64   `json:"failures,omitempty"`
+	TotalTokens       int64   `json:"total_tokens,omitempty"`
+	Cost              float64 `json:"cost,omitempty"`
+	HasCost           bool    `json:"has_cost,omitempty"`
 }
 
 // UsageReport is the whole /panel/api/usage payload.
@@ -1010,6 +1022,8 @@ func (a *usageAgg) add(b *usageBucket) {
 	a.Failures += b.Err
 	a.PromptTokens += b.PT
 	a.CachedTokens += b.Cached
+	a.CacheHitTokens += b.CachedHit
+	a.CachePromptTokens += b.CachedPT
 	a.HasCachedTokens = a.HasCachedTokens || b.HasCached
 	a.CompletionTokens += b.CT
 	a.TotalTokens += b.TT
@@ -1081,17 +1095,19 @@ func seriesPoints(m map[string]*usageAgg, prefix, scope string) []UsagePoint {
 		}
 		agg := m[k].finish()
 		out = append(out, UsagePoint{
-			T:                t.Format(time.RFC3339),
-			Scope:            scope,
-			PromptTokens:     agg.PromptTokens,
-			CachedTokens:     agg.CachedTokens,
-			HasCachedTokens:  agg.HasCachedTokens,
-			CompletionTokens: agg.CompletionTokens,
-			Requests:         agg.Requests,
-			Failures:         agg.Failures,
-			TotalTokens:      agg.TotalTokens,
-			Cost:             agg.Cost,
-			HasCost:          agg.HasCost,
+			T:                 t.Format(time.RFC3339),
+			Scope:             scope,
+			PromptTokens:      agg.PromptTokens,
+			CachedTokens:      agg.CachedTokens,
+			CacheHitTokens:    agg.CacheHitTokens,
+			CachePromptTokens: agg.CachePromptTokens,
+			HasCachedTokens:   agg.HasCachedTokens,
+			CompletionTokens:  agg.CompletionTokens,
+			Requests:          agg.Requests,
+			Failures:          agg.Failures,
+			TotalTokens:       agg.TotalTokens,
+			Cost:              agg.Cost,
+			HasCost:           agg.HasCost,
 		})
 	}
 	return out

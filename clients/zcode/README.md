@@ -447,7 +447,7 @@ button calls. The action itself is unchanged — only its trigger is.
 
 | Surface | Row |
 | --- | --- |
-| `GET .../tasks` | one row, code `claim`, group `活动套餐`, describing the plan a claim would take right now (name, its token grants, and how many other plans are waiting) |
+| `GET .../tasks` | one row, code `claim`, group `活动套餐`, describing the plan a claim would take right now (name, its token grants, and how many other plans are waiting). If the preview is empty because the plan was already claimed, the balance document turns the row into `Claimed` / `活动套餐已领取` instead of reporting that nothing exists. |
 | `POST .../tasks/claim/run` | the same claim; `RunTask` clears the preview cache afterwards, because a claim invalidates it |
 | `Batches()` | one batch, `checkin`, whose single code is `claim` |
 
@@ -464,11 +464,14 @@ a request:
 | --- | --- |
 | no `jwt` account at all | 没有可用的 ZCode 计划 (jwt) 账号；活动套餐只走 jwt 通道 |
 | a `jwt` account but no local solver (built-in browser unavailable and no `captcha_command`) | 这个看板的领取按钮没有浏览器可用；请在账号列表里点「领取」，那一步会用你自己的浏览器过验证码 |
-| the vendor offers nothing | 厂商当前没有可领取的活动套餐 |
+| the preview is empty and the balance has an active plan | `活动套餐已领取` with the active plan name and remaining token grants; the panel renders this as 已领取 / 已完成 and offers no second claim button |
+| the preview is empty and the balance is empty too | 厂商当前没有可领取的活动套餐 |
+| the preview is empty and the balance read fails | 厂商当前没有可领取的活动套餐（已领取计划暂无法确认） |
 
-`Tasks` caches its preview for ten seconds (`claimBoardTTL`), because the panel
-re-reads the board every three seconds while a run is live and `preview` is a
-billing endpoint. A *failed* preview is never cached.
+`Tasks` caches its preview, and the active-plan balance read that follows an
+empty preview, for ten seconds (`claimBoardTTL`), because the panel re-reads the
+board every three seconds while a run is live and both are billing endpoints. A
+*failed* preview is never cached.
 
 Two deliberate omissions in the result mapping:
 

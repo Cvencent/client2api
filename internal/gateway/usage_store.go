@@ -4,16 +4,22 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"client2api/internal/core"
+	"client2api/internal/modelmeta"
 )
 
 // usageFileVersion is the on-disk schema version.
 const usageFileVersion = 1
+
+// usagePricingVersion is bumped when a published price change makes historical
+// bucket costs stale. The migration is one-way and is persisted in usage.json.
+const usagePricingVersion = 2
 
 const recentFileVersion = 1
 
@@ -36,9 +42,10 @@ func recentPathFor(usagePath string) string {
 // requests use a separate bounded recent.json so each flush rewrites at most
 // DefaultRecentRecords entries instead of the full in-memory ring.
 type usageFile struct {
-	Version int           `json:"version"`
-	Saved   time.Time     `json:"saved"`
-	Buckets []usageBucket `json:"buckets"`
+	Version        int           `json:"version"`
+	PricingVersion int           `json:"pricing_version,omitempty"`
+	Saved          time.Time     `json:"saved"`
+	Buckets        []usageBucket `json:"buckets"`
 	// LastOK is the per-account last-success stamp.  It is stored next to the
 	// buckets because it cannot be derived from them: a bucket is hour
 	// granular, so it can say "a1 succeeded during this hour" but never
@@ -170,6 +177,7 @@ func (s *UsageStore) load(path string) error {
 		s.reportError("usage load", err)
 		return err
 	}
+	migrated := s.migratePricing(&f)
 
 	buckets := make(map[string]*usageBucket, len(f.Buckets))
 	for i := range f.Buckets {
@@ -200,12 +208,92 @@ func (s *UsageStore) load(path string) error {
 	}
 	s.dirty = false
 	s.lastErr = nil
+	if migrated {
+		s.dirty = true
+	}
 	s.enforceCapLocked()
 	s.mu.Unlock()
 	if err := s.loadRecent(path); err != nil {
 		return err
 	}
 	return nil
+}
+
+// migratePricing repairs historical bucket costs after a published price
+// correction. Only hourly buckets are eligible: a day bucket has lost the time
+// needed to choose DeepSeek's peak or off-peak rate, so inventing one would be
+// worse than leaving its existing estimate alone. The returned flag makes the
+// repaired document flush on the next Save/tick.
+func (s *UsageStore) migratePricing(f *usageFile) bool {
+	if f == nil || f.PricingVersion >= usagePricingVersion {
+		return false
+	}
+	changed := false
+	for i := range f.Buckets {
+		b := &f.Buckets[i]
+		if !strings.HasPrefix(b.Scope, hourScope) || b.Model == "" {
+			continue
+		}
+		client, model := splitBucketModel(b)
+		if !modelmeta.IsOfficialDeepSeekModel(client, model) {
+			continue
+		}
+		previous, ok := modelmeta.DeepSeekPreviousPrice(client, model)
+		if !ok {
+			continue
+		}
+		prompt := b.PT
+		cached := b.Cached
+		if cached > prompt {
+			cached = prompt
+		}
+		if !b.HasCost || math.Abs(b.Cost-gatewayCost(previous, prompt-cached, cached, b.CT)) > 1e-9 {
+			// A bucket whose stored total does not match the old built-in
+			// aggregate was priced another way (most importantly, a manual
+			// override) and must stay untouched.
+			continue
+		}
+		price, ok := modelmeta.DefaultPriceAt(client, model, scopeTime(b.Scope))
+		if !ok {
+			continue
+		}
+		cost := gatewayCost(price, prompt-cached, cached, b.CT)
+		if !b.HasCost || b.Cost != cost {
+			b.Cost = cost
+			b.HasCost = true
+			changed = true
+		}
+	}
+	if f.PricingVersion < usagePricingVersion {
+		f.PricingVersion = usagePricingVersion
+		changed = true
+	}
+	return changed
+}
+
+// splitBucketModel accepts both the canonical client/model value and a bare
+// model id. The bucket's Client column is authoritative when the two disagree.
+func splitBucketModel(b *usageBucket) (string, string) {
+	if b == nil {
+		return "", ""
+	}
+	client, model := b.Client, b.Model
+	if client == "" {
+		if prefix, rest, ok := strings.Cut(model, "/"); ok {
+			client, model = prefix, rest
+		}
+	}
+	return client, model
+}
+
+func gatewayCost(price modelmeta.Price, uncached, cached, completion int64) float64 {
+	cacheRate := price.InputPerMillion
+	if price.HasCacheRead {
+		cacheRate = price.CacheReadPerMillion
+	}
+	return (float64(uncached)*price.InputPerMillion +
+		float64(cached)*cacheRate +
+		float64(completion)*price.OutputPerMillion) / 1_000_000
 }
 
 func (s *UsageStore) loadRecent(usagePath string) error {
@@ -264,7 +352,12 @@ func (s *UsageStore) flush(force bool) error {
 		s.mu.Unlock()
 		return nil
 	}
-	f := usageFile{Version: usageFileVersion, Saved: time.Now().UTC(), Buckets: make([]usageBucket, 0, len(s.buckets))}
+	f := usageFile{
+		Version:        usageFileVersion,
+		PricingVersion: usagePricingVersion,
+		Saved:          time.Now().UTC(),
+		Buckets:        make([]usageBucket, 0, len(s.buckets)),
+	}
 	now := time.Now().UTC()
 	rf := recentFile{Version: recentFileVersion, Saved: now}
 	keep := s.count

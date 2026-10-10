@@ -371,6 +371,13 @@ func TestProvinceRotationNeverRepeatsConsecutively(t *testing.T) {
 	}
 }
 
+func TestSMSProxyOverridesTheTransportPerCall(t *testing.T) {
+	c := &Client{cfg: config{}}
+	if got := c.resolveSMS(core.SMSOpts{Proxy: "socks5://127.0.0.1:1080"}).proxy; got != "socks5://127.0.0.1:1080" {
+		t.Fatalf("proxy = %q, want the per-call override", got)
+	}
+}
+
 func TestResolveSMSHonoursTheNoneEscapeHatch(t *testing.T) {
 	c := &Client{cfg: config{SMSProvinces: []string{"none"}}}
 	if got := c.resolveSMS(core.SMSOpts{}).provinces; len(got) != 0 {

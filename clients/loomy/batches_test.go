@@ -41,3 +41,17 @@ func TestLoomyGrowthBatchIsAPlannerAndTaskProvider(t *testing.T) {
 	_ = core.BatchPlanner(c)
 	_ = core.TaskProvider(c)
 }
+
+func TestLoomyPlannedBatchesIncludeTheDailyCheckin(t *testing.T) {
+	c := &Client{}
+	batches := core.PlannedBatches(c)
+	if len(batches) != 2 {
+		t.Fatalf("PlannedBatches = %+v, want growth plus checkin", batches)
+	}
+	if batches[0].Name != "growth" || batches[1].Name != core.CheckinBatchName {
+		t.Fatalf("PlannedBatches = %+v, want growth then %q", batches, core.CheckinBatchName)
+	}
+	if !core.IsCheckinBatch(c, batches[1]) {
+		t.Fatal("the scheduled Loomy check-in was not recognised as the synthetic check-in batch")
+	}
+}

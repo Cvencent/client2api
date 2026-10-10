@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"client2api/internal/core"
+	"client2api/internal/smscap"
 )
 
 // sms.go is the module's optional "rent a phone number from a one-time-SMS
@@ -220,6 +221,7 @@ type smsResolved struct {
 	token     string
 	keyword   string
 	base      string
+	proxy     string
 	provinces []string
 }
 
@@ -238,6 +240,9 @@ func (c *Client) resolveSMS(opts core.SMSOpts) smsResolved {
 	}
 	if t := strings.TrimSpace(opts.Token); t != "" {
 		r.token = t
+	}
+	if p := strings.TrimSpace(opts.Proxy); p != "" {
+		r.proxy = p
 	}
 	if k := strings.TrimSpace(opts.Keyword); k != "" {
 		r.keyword = k
@@ -279,6 +284,10 @@ func (c *Client) newSMSClient(r smsResolved) (*smsClient, error) {
 	hc := c.deps.HTTPClient
 	if hc == nil {
 		hc = &http.Client{Timeout: smsHTTPTimeout}
+	}
+	hc, err := smscap.HTTPClientWithProxy(hc, r.proxy)
+	if err != nil {
+		return nil, err
 	}
 	return &smsClient{base: r.base, token: r.token, keyword: r.keyword, http: hc}, nil
 }
