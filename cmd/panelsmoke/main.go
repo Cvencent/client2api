@@ -235,7 +235,7 @@ func waitForPanel(ctx context.Context, base string, gatewayLog *bytes.Buffer) er
 	deadline := time.Now().Add(45 * time.Second)
 	var lastErr error
 	for {
-		if err := probeURL(ctx, client, base+"/healthz", false); err != nil {
+		if err := probeHealth(ctx, client, base+"/healthz"); err != nil {
 			lastErr = err
 		} else if err := probeURL(ctx, client, base+"/panel/", true); err != nil {
 			lastErr = err
@@ -253,6 +253,39 @@ func waitForPanel(ctx context.Context, base string, gatewayLog *bytes.Buffer) er
 		case <-time.After(200 * time.Millisecond):
 		}
 	}
+}
+
+// probeHealth checks the gateway's readiness contract.  A fresh config has no
+// account yet, so the gateway correctly reports 503 {"status":"unavailable"}.
+// The smoke gate accepts that answer as booted; a malformed 503 must not pass.
+func probeHealth(ctx context.Context, client *http.Client, url string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusServiceUnavailable {
+		return fmt.Errorf("GET %s: %s", url, resp.Status)
+	}
+	var payload struct {
+		Status  string `json:"status"`
+		Service string `json:"service"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return fmt.Errorf("GET %s: invalid health response: %w", url, err)
+	}
+	if payload.Status != "ok" && payload.Status != "unavailable" {
+		return fmt.Errorf("GET %s: unexpected health status %q", url, payload.Status)
+	}
+	if strings.TrimSpace(payload.Service) == "" {
+		return fmt.Errorf("GET %s: health response has no service name", url)
+	}
+	return nil
 }
 
 func probeURL(ctx context.Context, client *http.Client, url string, wantShell bool) error {
