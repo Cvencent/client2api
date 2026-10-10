@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"sort"
 
 	"client2api/internal/core"
 )
@@ -26,6 +27,11 @@ type configResponse struct {
 	CanRestart bool     `json:"can_restart"`
 	Clients    []string `json:"clients"`
 	Registered []string `json:"registered"`
+	// ModelGroupDefaults lists the built-in GPT-6+ routing groups that are
+	// currently active. Config.model_groups carries the effective groups the
+	// editor should show; this list lets the UI mark the built-in rows apart
+	// from operator-declared ones without duplicating the defaults in JS.
+	ModelGroupDefaults []string `json:"model_group_defaults"`
 	// Config is the raw config re-serialised after redaction.  It is `any`
 	// rather than a map so that "unknown path" renders as null, exactly as the
 	// contract says, instead of an empty object the panel would index into.
@@ -95,7 +101,46 @@ func (p *panel) configRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp.Config = redactConfig(parsed)
+	p.exposeModelGroups(&resp)
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// exposeModelGroups puts the effective routing groups into the config payload.
+// The file remains the authority on operator overrides, but a built-in GPT-6
+// group is absent from that file until it is edited. Showing the registry's
+// effective view is what makes the built-in names appear in the editor and
+// keeps their displayed members and priorities identical to runtime routing.
+func (p *panel) exposeModelGroups(resp *configResponse) {
+	if p == nil || p.opts.Registry == nil || resp == nil {
+		return
+	}
+	groups := p.opts.Registry.ModelGroups()
+	projected := make(map[string]any, len(groups))
+	defaults := make([]string, 0, len(groups))
+	for name, group := range groups {
+		members := make([]string, 0, len(group.Members))
+		for _, member := range group.Members {
+			members = append(members, member.Client+"/"+member.Model)
+		}
+		entry := map[string]any{"members": members}
+		if len(group.PlatformPriorities) > 0 {
+			priorities := make(map[string]int, len(group.PlatformPriorities))
+			for platform, priority := range group.PlatformPriorities {
+				priorities[platform] = priority
+			}
+			entry["platform_priorities"] = priorities
+		}
+		if group.Builtin {
+			entry["builtin"] = true
+			defaults = append(defaults, name)
+		}
+		projected[name] = entry
+	}
+	sort.Strings(defaults)
+	resp.ModelGroupDefaults = defaults
+	if cfg, ok := resp.Config.(map[string]any); ok {
+		cfg["model_groups"] = projected
+	}
 }
 
 // redactConfig walks a decoded JSON document, masking the value of any key

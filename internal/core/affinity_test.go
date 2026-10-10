@@ -470,18 +470,16 @@ func (c *affinityStub) ConversationAccount(key, _ string) (string, bool) {
 	return v, ok
 }
 
-// TestConversationKeyOfStaysOffForAnUnscopedRequest pins the opt-in contract the
-// derived key must not break: ConversationKeyOf itself keeps answering "" for a
-// request that names no conversation, so every module that pins "an unscoped
-// request rotates exactly as before" still does.  The content fallback is a
-// separate call a module has to make on purpose.
-func TestConversationKeyOfStaysOffForAnUnscopedRequest(t *testing.T) {
+// TestConversationKeyOfFallsBackToContentForAnUnscopedRequest pins the shared
+// fallback: a request that names no conversation still gets the same stable key
+// WorkBuddy already derives from its first user turn.
+func TestConversationKeyOfFallsBackToContentForAnUnscopedRequest(t *testing.T) {
 	req := &ChatRequest{Messages: []Message{{Role: "user", Content: "hello"}}}
-	if got := ConversationKeyOf(req); got != "" {
-		t.Fatalf("ConversationKeyOf = %q, want empty", got)
+	if got := ConversationKeyOf(req); got != DeriveConversationKey(req.Messages) {
+		t.Fatalf("ConversationKeyOf = %q, want the derived content key", got)
 	}
-	if got := DeriveConversationKey(req.Messages); got == "" {
-		t.Fatal("the content fallback is the whole point and it derived nothing")
+	if got := ConversationKeyOf(&ChatRequest{}); got != "" {
+		t.Fatalf("ConversationKeyOf with nothing signable = %q, want empty", got)
 	}
 }
 

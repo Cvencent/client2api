@@ -110,3 +110,47 @@ func TestModelsViewReadsTheMetadataKeysTheGoStructSends(t *testing.T) {
 		}
 	}
 }
+
+func TestModelsViewEditsCNYPrices(t *testing.T) {
+	src := poolStatsUISource(t)
+	render := poolStatsFuncBody(t, src, "renderModels")
+	for _, want := range []string{
+		`mdPriceCell("input"`,
+		`mdPriceCell("output"`,
+		`mdPriceCell("cache"`,
+		"m.input_per_million",
+		"m.input_price_source",
+		"m.input_price_default",
+		"m.output_per_million",
+		"m.output_price_source",
+		"m.output_price_default",
+		"m.cache_read_per_million",
+		"m.cache_read_price_source",
+		"m.cache_read_price_default",
+		"m.has_price",
+		"m.has_cache_read",
+	} {
+		if !strings.Contains(render, want) {
+			t.Errorf("renderModels 没有用 %s 渲染价格列", want)
+		}
+	}
+	for _, label := range []string{"输入价", "输出价", "缓存读取价", "¥/百万 tokens"} {
+		if !strings.Contains(src, label) {
+			t.Errorf("模型页缺少价格标签 %q", label)
+		}
+	}
+
+	save := poolStatsFuncBody(t, src, "mdSave")
+	for _, want := range []string{
+		`patch.has_price = false`,
+		`patch.has_price = true`,
+		`input_per_million`,
+		`output_per_million`,
+		`cache_read_per_million`,
+		`has_cache_read`,
+	} {
+		if !strings.Contains(save, want) {
+			t.Errorf("mdSave 的价格提交缺少 %s", want)
+		}
+	}
+}

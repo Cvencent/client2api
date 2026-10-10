@@ -130,6 +130,25 @@ func TestWorkbuddyModelExtraKeepsTheOlderSpellings(t *testing.T) {
 	}
 }
 
+// The GPT-6 catalogue's 1,050,000 value is above the backend's hard request
+// ceiling. Advertising it to Codex delays compaction until the next turn is
+// already too large, so the module must expose the real serving limit.
+func TestWorkbuddyModelExtraCapsTheContextAtTheServingLimit(t *testing.T) {
+	extra := modelExtra(ModelInfo{ID: "gpt-5.5", ContextWindow: 1050000})
+	for _, key := range []string{"context_length", "context_window"} {
+		if got := extra[key]; got != int64(1048576) {
+			t.Fatalf("%s = %v, want 1048576", key, got)
+		}
+	}
+
+	small := modelExtra(ModelInfo{ID: "gpt-5.3-codex", ContextWindow: 400000})
+	for _, key := range []string{"context_length", "context_window"} {
+		if got := small[key]; got != int64(400000) {
+			t.Fatalf("%s = %v, want the smaller upstream value unchanged", key, got)
+		}
+	}
+}
+
 // "The upstream did not say" and "the upstream said zero" are different facts: a
 // zero must never be published as a real limit, and a model with no promotion
 // must not grow promo keys that would make the panel draw a discount.

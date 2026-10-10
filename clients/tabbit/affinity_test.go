@@ -170,9 +170,10 @@ func TestTabbitAffinityPinsTheSidecarEndpoint(t *testing.T) {
 	}
 }
 
-// TestTabbitAffinityIgnoresARequestWithNoConversationKey pins the other half of
-// the contract: an unscoped request must not touch the table at all.
-func TestTabbitAffinityIgnoresARequestWithNoConversationKey(t *testing.T) {
+// TestTabbitAffinityUsesContentFallbackForAnUnscopedRequest pins the new
+// default: a request with no explicit conversation id still derives a stable
+// key from the first user turn and is served by the account that warmed it.
+func TestTabbitAffinityUsesContentFallbackForAnUnscopedRequest(t *testing.T) {
 	ctx := context.Background()
 	f := newFakeWeb(t)
 	c, _ := newWebClient(t, f)
@@ -185,10 +186,10 @@ func TestTabbitAffinityIgnoresARequestWithNoConversationKey(t *testing.T) {
 		t.Fatalf("chat: %v", err)
 	}
 	if got := f.header().Get("Cookie"); strings.Contains(got, secondToken) {
-		t.Fatalf("an unscoped request was pinned (Cookie=%q)", got)
+		t.Fatalf("an unscoped conversation was served by the manually bound second session (Cookie=%q)", got)
 	}
-	if n := c.affinity.Count(); n != 1 {
-		t.Fatalf("the table holds %d bindings, want only the one this test made", n)
+	if n := c.affinity.Count(); n != 2 {
+		t.Fatalf("the table holds %d bindings, want the explicit binding plus the content-derived one", n)
 	}
 }
 

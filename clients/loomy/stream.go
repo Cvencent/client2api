@@ -100,13 +100,13 @@ func (s *chatStream) Recv() (core.Event, error) {
 			s.stopTimer()
 			s.done = true
 			if errors.Is(err, io.EOF) {
-				// The upstream closed the connection.  If it never sent a
-				// terminator we still end cleanly: a truncated stream that
-				// stopped between frames is indistinguishable from a
-				// well-behaved close, and reporting an error would fail
-				// completions that actually succeeded.  The usage and finish
-				// reason seen so far are still reported.
-				s.finishUp()
+				// A normal completion must carry an explicit terminal frame.
+				// Treating a bare connection close as success turns truncated
+				// answers into apparently valid responses for the caller.
+				s.pending = append(s.pending, core.Event{
+					Type: core.EventError,
+					Err:  errors.New("loomy: upstream stream ended before a terminal frame"),
+				})
 				if len(s.pending) > 0 {
 					ev := s.pending[0]
 					s.pending = s.pending[1:]

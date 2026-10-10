@@ -215,6 +215,7 @@ func TestWorkbuddyHintTranslatesTheSharedKinds(t *testing.T) {
 		{core.FailureAuth, "platform risk control blocked this account; wait for the restriction to expire or appeal it with the vendor; re-login will not clear it"},
 		{core.FailureSessionDead, "account session expired at upstream; the account is disabled until re-login"},
 		{core.FailureContentBlocked, "request content was rejected by content policy; adjust the prompt and retry"},
+		{core.FailureContextWindow, "request context exceeds the model's limit; reduce history/message size"},
 	}
 	for _, tc := range tests {
 		if got := c.Hint(tc.kind, "whatever the vendor said", core.HintContext{}); got != tc.want {

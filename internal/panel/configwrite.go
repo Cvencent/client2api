@@ -105,6 +105,7 @@ func (p *panel) configWrite(w http.ResponseWriter, r *http.Request) {
 	if p.opts.Registry != nil {
 		resp.Clients = p.opts.Registry.Names()
 	}
+	p.exposeModelGroups(&resp.configResponse)
 	writeJSON(w, http.StatusOK, resp)
 }
 

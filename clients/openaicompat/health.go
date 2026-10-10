@@ -58,12 +58,11 @@ func (c *Client) Health() core.Health {
 
 // PoolStats implements core.PoolStatsReporter.  InFlight is the exact number of
 // open streams, and InFlightFull counts the enabled providers sitting at
-// max_in_flight.  Runnable's provider pool has no conversation stickiness, so
-// StickySessions stays zero.
+// max_in_flight.  StickySessions is the live affinity table.
 func (c *Client) PoolStats() core.PoolStats {
 	if c == nil || c.pool == nil {
 		return core.PoolStats{}
 	}
 	inFlight, full := c.pool.stats(c.cfg.maxInFlight())
-	return core.PoolStats{InFlight: inFlight, InFlightFull: full}
+	return core.PoolStats{InFlight: inFlight, InFlightFull: full, StickySessions: c.affinity.Count()}
 }

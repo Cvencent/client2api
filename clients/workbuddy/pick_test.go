@@ -461,6 +461,20 @@ func TestWorkbuddyConversationKeyFallsBackToContent(t *testing.T) {
 	}
 }
 
+// TestWorkbuddyConversationKeyKeepsMetaAheadOfContentFallback preserves the
+// locally minted message id when the request has no explicit conversation id.
+// The shared content fallback must not displace it: WorkBuddy uses that same
+// meta id for the upstream conversation header and the prompt cache salt.
+func TestWorkbuddyConversationKeyKeepsMetaAheadOfContentFallback(t *testing.T) {
+	req := &core.ChatRequest{Messages: []core.Message{
+		{Role: "system", Content: "you are helpful"},
+		{Role: "user", Content: "hello"},
+	}}
+	if got := conversationKey(req, ChatMeta{ConversationID: "from-meta"}); got != "from-meta" {
+		t.Fatalf("key = %q, want from-meta before the content fallback", got)
+	}
+}
+
 // TestWorkbuddyPoolPickForModelSkipsTheParkedAccountWhenTheRestAreBusy is the
 // shape that produced a stream of bogus "candidate failed" rows in production:
 // the one account that may serve the model is at its in-flight ceiling, and the

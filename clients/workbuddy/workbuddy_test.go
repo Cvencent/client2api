@@ -873,7 +873,8 @@ func TestRetryableKind(t *testing.T) {
 	if !retryableKind(ErrSoftRate) || !retryableKind(ErrHardCredit) {
 		t.Fatal("transient/credit failures must be retryable on another account")
 	}
-	if retryableKind(ErrBadParams) || retryableKind(ErrContentBlocked) || retryableKind(ErrImageInvalid) {
+	if retryableKind(ErrBadParams) || retryableKind(ErrContentBlocked) ||
+		retryableKind(ErrImageInvalid) || retryableKind(ErrPromptTooLong) {
 		t.Fatal("request-shape failures must not be retried")
 	}
 }

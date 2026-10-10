@@ -441,6 +441,27 @@ func TestResponses_UpstreamErrorIsReported(t *testing.T) {
 	}
 }
 
+func TestResponses_ContextWindowErrorIsActionable(t *testing.T) {
+	err := core.Fail("t", "acct", core.FailureContextWindow, http.StatusBadRequest,
+		io.ErrUnexpectedEOF)
+	srv := newTestServer(t, &testClient{name: "t", chatErr: err}, NewStats(), NewUsageStore(10))
+
+	rec := responses(t, srv, `{"model":"t/m1","input":"hi"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body = %s", rec.Code, rec.Body)
+	}
+	var env apiErrorEnvelope
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode error envelope: %v; body = %s", err, rec.Body)
+	}
+	if env.Error.Code != "context_window_exceeded" {
+		t.Errorf("error.code = %v, want context_window_exceeded", env.Error.Code)
+	}
+	if env.Error.Type != "invalid_request_error" {
+		t.Errorf("error.type = %q, want invalid_request_error", env.Error.Type)
+	}
+}
+
 func TestResponses_StreamErrorBecomesResponseFailed(t *testing.T) {
 	// A stream that breaks after opening must emit response.failed rather than
 	// hanging or closing silently, which is what keeps Codex from stalling.

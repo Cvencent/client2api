@@ -765,7 +765,7 @@ func (s *server) handleResponses(w http.ResponseWriter, r *http.Request) {
 	rec := UsageRecord{At: time.Now(), StartedAt: time.Now()}
 	defer func() {
 		rec.At = time.Now()
-		s.opts.Usage.Record(rec)
+		s.recordUsage(rec)
 	}()
 
 	stat := newChatStat(rec.StartedAt, "", false)

@@ -80,7 +80,8 @@ func TestKimiPoolStatsTrackInFlight(t *testing.T) {
 		t.Fatalf("in-flight after Close = %d, want 0", got)
 	}
 
-	// A conversation-scoped request must also have written a sticky binding.
+	// Both the unscoped request above (content fallback) and this explicitly
+	// scoped request are conversations now, so each has its own binding.
 	req2 := userReq("kimi", "hi again")
 	req2.Options = map[string]any{"conversation_id": "conv-sticky"}
 	st2, err := c.Chat(context.Background(), req2)
@@ -89,8 +90,8 @@ func TestKimiPoolStatsTrackInFlight(t *testing.T) {
 	}
 	_ = recvAll(t, st2)
 	_ = st2.Close()
-	if got := c.PoolStats().StickySessions; got != 1 {
-		t.Fatalf("sticky sessions = %d, want 1", got)
+	if got := c.PoolStats().StickySessions; got != 2 {
+		t.Fatalf("sticky sessions = %d, want 2", got)
 	}
 }
 

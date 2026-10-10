@@ -107,7 +107,10 @@ func TestChatRetriesUnavailablePlatformAfterDemotionExpires(t *testing.T) {
 	// Expire the demotion the way wall-clock time would, without sleeping.
 	reg.NoteModelUnavailable("busy", "m1", time.Now().Add(-2*core.PlatformUnavailableCooldown))
 	busy.seen = nil
-	if rec := chat(t, srv, bufferedBody); rec.Code != http.StatusOK {
+	// A different message is a different conversation, so platform stickiness
+	// from the first request must not hide the expired demotion.
+	other := `{"model":"m1","messages":[{"role":"user","content":"different conversation"}]}`
+	if rec := chat(t, srv, other); rec.Code != http.StatusOK {
 		t.Fatalf("second status = %d, body %s", rec.Code, rec.Body.String())
 	}
 	if busy.seen == nil {

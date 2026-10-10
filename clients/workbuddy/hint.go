@@ -106,10 +106,12 @@ func (c *Client) Hint(kind core.FailureKind, message string, ctx core.HintContex
 // errKindFor maps the gateway's coarse failure taxonomy onto this module's
 // finer upstream vocabulary.  It is deliberately one-way and lossy: several
 // ErrKind values collapse onto one FailureKind, and the ones with no gateway
-// counterpart (ErrPromptTooLong, ErrImageInvalid, ErrModelBlocked) are reached
-// through the message body rather than through the classified kind.
+// counterpart (ErrImageInvalid, ErrModelBlocked) are reached through the
+// message body rather than through the classified kind.
 func errKindFor(kind core.FailureKind) ErrKind {
 	switch kind {
+	case core.FailureContextWindow:
+		return ErrPromptTooLong
 	case core.FailureWAF:
 		return ErrWafBlock
 	case core.FailureRateLimited:

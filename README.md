@@ -70,6 +70,11 @@ platform and account priorities. Upstream IDs containing `/` are preserved.
 Keys and their scanned model lists live in `data/my-relay/accounts.json`, not
 the source definition. Instance backup/restore includes both. Removing a source
 retains its account file; re-adding the same ID and API root restores that pool.
+Every source is conversation-sticky: a multi-turn conversation keeps landing on
+the key that warmed its upstream prompt cache, so a relay that bills per cached
+prefix does not re-charge the whole prompt when the pool rotates. The binding is
+per source and per conversation, and it is ignored while the key is disabled,
+cooling down or missing the requested model from its scanned catalogue.
 The existing `clients.openai-compat` configuration and data remain supported;
 the panel displays that legacy module as **onmiRoute**.
 
@@ -88,7 +93,7 @@ HTTP 429 endpoint outages, are classified as upstream failures.
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-Current version: **0.1.32**. Full history: [CHANGELOG.md](CHANGELOG.md).
+Current version: **0.1.33**. Full history: [CHANGELOG.md](CHANGELOG.md).
 
 ### Recent highlights (0.1.26 - 0.1.29)
 
@@ -432,6 +437,14 @@ Inside a group the member platform's `platform_priorities` are tried first;
 platforms without a group priority fall back to the global
 `platforms.<name>.priority` and `priority_schedule`. Members missing from a
 live catalogue are skipped, so one flaky module cannot take the group down.
+
+Five GPT-6+ groups ship as built-ins so a Codex client can ask for the native
+lowercase name with no platform prefix: `gpt-6-astra`, `gpt-6.1-sol`,
+`gpt-6-sol`, `gpt-6-luna` and `gpt-6.1-sol-pro`, mapped onto the OpenCode and
+OpenRouter members that currently serve them. They appear in **Platforms →
+Model Routing Groups** marked **built-in**. Editing one writes an override into
+`model_groups` that replaces the default from then on; a config entry with the
+same name and an explicit empty member list suppresses it.
 
 When a router-chosen candidate (a bare name or `Auto/`) answers `404 model not
 found`, the gateway demotes that platform/model pair briefly and tries the next
@@ -886,22 +899,19 @@ you disable stickiness — that would read as "expire immediately", so a
 non-positive window is resolved back to the 30m default instead.
 
 `session_sticky.ttl` (default **30m**) is how long a conversation stays pinned to
-the account it started on; the key comes from `conversation_id`,
-`conversationId`, `prompt_cache_key` or the request's user field, in that order.
-A request carrying none of them is not sticky *by default* — but a module may opt
-in to a content-derived key (`core.DeriveConversationKey`), which hashes the
-system prompt plus the first user turn and returns it under a `d-` prefix.
-workbuddy opts in, so a client that sends no id at all still keeps its account
-instead of rotating every turn and re-billing the whole prefix. `gc_interval`
+the account it started on. The key comes from `conversation_id`,
+`conversationId`, `prompt_cache_key` or the request's user field, in that order;
+when a caller names none of them the router derives one from the message content
+(`core.DeriveConversationKey`), hashing the system prompt plus the first user turn
+and returning it under a `d-` prefix. Every module now takes that content fallback,
+so a client that sends no id at all still keeps its account instead of rotating
+every turn and re-billing the whole prefix — including the custom relay sources
+under `sources.<id>`, whose key pool is sticky per source. `gc_interval`
 (default **5m**) is how often expired bindings are swept. All three are hot: every
-module that implements `core.LiveReloader` picks them up on a reload. The seven
-original modules all implement it; the seven added later implement neither
-`LiveReloader` nor `ConversationBinder`, so for them the switch has no effect.
-Of the seven that do bind conversations — workbuddy, trae, qwenwork, zcode, kimi,
-tabbit and minimaxcode — workbuddy and trae are the two where the switch has the
-most visible effect. A binding whose account has been
-parked or is cooling down for the requested model is dropped rather than served,
-so stickiness can never turn into a failure.
+module implements `core.LiveReloader`, so a reload retunes the window on the live
+process without a restart. A binding whose account has been parked, is cooling
+down for the requested model, is disabled or removed, or does not advertise the
+model is dropped rather than served, so stickiness can never turn into a failure.
 
 `panel.package_detail_limit` (default **5**) is the panel's own display setting,
 not a routing one: the credits view sorts each account's live batches by earliest
@@ -1035,11 +1045,11 @@ edited rows gain a Custom badge and share the Save & Apply action at the top rig
 Switching platform tabs preserves unsaved edits, and the dirty indicator stays visible.
 
 The Usage overview subtab reports the window through a row of metric tiles rather
-than a stack of identical grey rows: success rate / input / output / total / average latency each
+than a stack of identical grey rows: success rate / input / output / total / cache hit rate / total cost / average latency each
 carry their own accent and a subtitle that says where the number came from (the
 failure count under the success rate, each side's share of the total under the
 token counts, the average rate under the total, the window under the latency) —
-so a glance says which figure is the one being looked for. The chart under them
+so a glance says which figure is the one being looked for. Cache hit rate is the reported cached prompt tokens divided by prompt tokens; an unreported or zero prompt total renders `—`. Total cost is the CNY sum of the per-call prices. An unknown price leaves the total marked unknown instead of silently adding zero. The chart under them
 is interactive: hovering a column reports that hour's input / output / request
 count in a readout above the plot, and the arrow keys walk the same points
 (Home / End jump to the ends). The column hit area is wider than the column
@@ -1148,7 +1158,7 @@ account its own error names and falls back to the slot only when the error names
 none. A module that never writes the slot is not wrong, merely unattributed.
 
 **Usage → Recent calls** is the per-request journal (`recent.json`), which
-`GET /panel/api/usage` returns as `recent`. Each row carries the caller's own
+`GET /panel/api/usage` returns as `recent`. Each priced row also carries cached prompt tokens, that row's cache hit rate, and its CNY cost; an unknown price renders `—`, while an explicitly free model renders `¥0`. Each row carries the caller's own
 **session id**: the conversation id the gateway already resolved
 (`metadata.conversation_id` / `conversationId`, or the top-level spelling), then
 the option spellings the router also accepts (`conversation_id`,
@@ -1437,13 +1447,13 @@ built-in default when a vendor reports nothing. When a chat request arrives with
 no `max_tokens` / `max_completion_tokens`, the gateway fills the same resolved
 output cap; a caller that supplied its own number is never second-guessed.
 
-The Models and Archive page turns both columns into number inputs, labels each field's
+The Models and Archive page turns context, output, and price fields into number inputs, labels each field's
 source (Manual / Upstream / Preset / Not public), and saves through
 `POST /panel/api/model_context`. Manual values live in
 `<data_dir>/model_context.json` (written atomically, `0600`), survive an upgrade
 with the rest of `data/`, and are removed — falling back to the upstream value or
 the preset — when the field is cleared and saved, or when the row's
-Restore official default button is used.
+Restore official default button is used. Prices are shown in CNY per million tokens. Their resolution order is operator override > the value the module reported > the official default in `internal/modelmeta/pricing.json`, built from the models.dev snapshot dated 2026-10-10 and converted at USD/CNY 7.20. When the catalogue publishes a cache-read price, cached prompt tokens use it; otherwise they use the ordinary input price. An unknown price is rendered `—`, not `¥0`; only an explicitly free model is zero-cost.
 
 The panel is protected by the gateway's top-level `api_key`
 (`configs/client2api.json:3`). Empty — the default — leaves it unauthenticated,

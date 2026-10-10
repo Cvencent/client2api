@@ -16,11 +16,18 @@ import (
 type Override struct {
 	ContextLength   int64 `json:"context_length,omitempty"`
 	MaxOutputTokens int64 `json:"max_output_tokens,omitempty"`
+	// Prices are in CNY per million tokens. Has flags keep an explicit free
+	// model (0/0) distinct from a field that was never configured.
+	InputPerMillion     float64 `json:"input_per_million,omitempty"`
+	OutputPerMillion    float64 `json:"output_per_million,omitempty"`
+	CacheReadPerMillion float64 `json:"cache_read_per_million,omitempty"`
+	HasPrice            bool    `json:"has_price,omitempty"`
+	HasCacheRead        bool    `json:"has_cache_read,omitempty"`
 }
 
 // IsZero reports whether the override carries no manual value.
 func (o Override) IsZero() bool {
-	return o.ContextLength <= 0 && o.MaxOutputTokens <= 0
+	return o.ContextLength <= 0 && o.MaxOutputTokens <= 0 && !o.HasPrice && !o.HasCacheRead
 }
 
 type overrideDoc struct {
@@ -92,8 +99,8 @@ func (s *OverrideStore) Get(client, model string) (Override, bool) {
 	return o, true
 }
 
-// Set replaces the manual values for one client/model pair. A non-positive
-// field removes that field's manual value.
+// Set replaces the context/output manual values for one client/model pair.
+// Price fields that were already configured are preserved.
 func (s *OverrideStore) Set(client, model string, contextLength, maxOutputTokens int64) error {
 	if s == nil {
 		return errors.New("modelmeta: nil override store")
@@ -105,15 +112,96 @@ func (s *OverrideStore) Set(client, model string, contextLength, maxOutputTokens
 	if contextLength < 0 || maxOutputTokens < 0 {
 		return errors.New("modelmeta: overrides must not be negative")
 	}
-	o := Override{ContextLength: contextLength, MaxOutputTokens: maxOutputTokens}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	o := s.getLocked(client, model)
+	o.ContextLength = contextLength
+	o.MaxOutputTokens = maxOutputTokens
+	return s.putLocked(client, model, o)
+}
+
+// SetPrice replaces the manual per-million-token price for one client/model
+// pair while preserving context and output overrides. A price with both input
+// and output zero is still retained when HasPrice is true, representing a
+// deliberately free model rather than an unknown one.
+func (s *OverrideStore) SetPrice(client, model string, inputPerMillion, outputPerMillion, cacheReadPerMillion float64, hasCacheRead bool) error {
+	if s == nil {
+		return errors.New("modelmeta: nil override store")
+	}
+	client, model = strings.TrimSpace(client), strings.TrimSpace(model)
+	if client == "" || model == "" {
+		return errors.New("modelmeta: client and model are required")
+	}
+	if inputPerMillion < 0 || outputPerMillion < 0 || cacheReadPerMillion < 0 {
+		return errors.New("modelmeta: prices must not be negative")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	o := s.getLocked(client, model)
+	o.InputPerMillion = inputPerMillion
+	o.OutputPerMillion = outputPerMillion
+	o.CacheReadPerMillion = cacheReadPerMillion
+	o.HasPrice = true
+	o.HasCacheRead = hasCacheRead
+	if !hasCacheRead {
+		o.CacheReadPerMillion = 0
+	}
+	return s.putLocked(client, model, o)
+}
+
+// DeletePrice removes only the manual price, leaving context/output intact.
+func (s *OverrideStore) DeletePrice(client, model string) error {
+	if s == nil {
+		return errors.New("modelmeta: nil override store")
+	}
+	client, model = strings.TrimSpace(client), strings.TrimSpace(model)
+	if client == "" || model == "" {
+		return errors.New("modelmeta: client and model are required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	o := s.getLocked(client, model)
+	o.InputPerMillion = 0
+	o.OutputPerMillion = 0
+	o.CacheReadPerMillion = 0
+	o.HasPrice = false
+	o.HasCacheRead = false
+	return s.putLocked(client, model, o)
+}
+
+// Delete removes all manual values for one client/model pair.
+func (s *OverrideStore) Delete(client, model string) error {
+	if s == nil {
+		return errors.New("modelmeta: nil override store")
+	}
+	client, model = strings.TrimSpace(client), strings.TrimSpace(model)
+	if client == "" || model == "" {
+		return errors.New("modelmeta: client and model are required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if models := s.doc.Clients[client]; models != nil {
+		delete(models, model)
+		if len(models) == 0 {
+			delete(s.doc.Clients, client)
+		}
+	}
+	return s.writeLocked()
+}
+
+func (s *OverrideStore) getLocked(client, model string) Override {
+	if models := s.doc.Clients[client]; models != nil {
+		return models[model]
+	}
+	return Override{}
+}
+
+func (s *OverrideStore) putLocked(client, model string, o Override) error {
 	if s.doc.Clients == nil {
 		s.doc.Clients = map[string]map[string]Override{}
 	}
-	models := s.doc.Clients[client]
 	if o.IsZero() {
-		if models != nil {
+		if models := s.doc.Clients[client]; models != nil {
 			delete(models, model)
 			if len(models) == 0 {
 				delete(s.doc.Clients, client)
@@ -121,17 +209,13 @@ func (s *OverrideStore) Set(client, model string, contextLength, maxOutputTokens
 		}
 		return s.writeLocked()
 	}
+	models := s.doc.Clients[client]
 	if models == nil {
 		models = map[string]Override{}
 		s.doc.Clients[client] = models
 	}
 	models[model] = o
 	return s.writeLocked()
-}
-
-// Delete removes all manual values for one client/model pair.
-func (s *OverrideStore) Delete(client, model string) error {
-	return s.Set(client, model, 0, 0)
 }
 
 // Snapshot returns a deep copy of all overrides.

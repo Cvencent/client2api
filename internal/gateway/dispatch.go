@@ -1,7 +1,10 @@
 package gateway
 
 import (
+	"errors"
+	"io"
 	"net/http"
+	"sync"
 	"time"
 
 	"client2api/internal/core"
@@ -231,6 +234,7 @@ func (s *server) routeAndServe(w http.ResponseWriter, r *http.Request, in routeI
 	}
 	s.opts.Registry.NoteModelSuccess(client.Name(), upstreamModel, time.Now())
 	s.sessionPlatforms.bind(conversationKey, client.Name())
+	stream = wrapStickyFailure(stream, client, conversationKey)
 	defer stream.Close()
 
 	a := emitArgs{s: s, client: client, model: in.modelForWire, stream: stream, hintCtx: hintCtx, rec: in.rec, stat: in.stat}
@@ -239,4 +243,38 @@ func (s *server) routeAndServe(w http.ResponseWriter, r *http.Request, in routeI
 		return
 	}
 	in.emitter.emitBuffered(w, r, a)
+}
+
+// stickyFailureStream forgets a conversation binding after an opened stream
+// fails. A partial response cannot be retried safely, but the next turn must
+// be allowed to select a different account instead of returning to the one
+// that just broke.
+type stickyFailureStream struct {
+	core.Stream
+	binder core.ConversationBinder
+	key    string
+	once   sync.Once
+}
+
+func wrapStickyFailure(stream core.Stream, client core.Client, key string) core.Stream {
+	if stream == nil || key == "" {
+		return stream
+	}
+	binder, ok := core.AsConversationBinder(client)
+	if !ok {
+		return stream
+	}
+	return &stickyFailureStream{Stream: stream, binder: binder, key: key}
+}
+
+func (s *stickyFailureStream) forget() {
+	s.once.Do(func() { s.binder.UnbindConversation(s.key) })
+}
+
+func (s *stickyFailureStream) Recv() (core.Event, error) {
+	ev, err := s.Stream.Recv()
+	if ev.Type == core.EventError || (err != nil && !errors.Is(err, io.EOF)) {
+		s.forget()
+	}
+	return ev, err
 }

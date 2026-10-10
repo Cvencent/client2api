@@ -132,31 +132,34 @@ func TestStreamAcceptsEmptyDataTerminator(t *testing.T) {
 	}
 }
 
-// TestStreamCleanEOFWithoutTerminator: a body that simply ends is a normal end
-// of stream, not an error, and still produces the done event.
-func TestStreamCleanEOFWithoutTerminator(t *testing.T) {
+func TestStreamReportsUnexpectedEOFWithoutTerminator(t *testing.T) {
 	body := "data: {\"choices\":[{\"delta\":{\"content\":\"tail\"}}]}\n\n"
-	events := drain(t, fixtureStream(t, body))
-	if len(events) != 2 {
-		t.Fatalf("got %d events, want 2: %+v", len(events), events)
+	s := fixtureStream(t, body)
+	if ev, err := s.Recv(); err != nil || ev.Type != core.EventDelta || ev.Delta != "tail" {
+		t.Fatalf("first event = %+v, %v; want the partial delta", ev, err)
 	}
-	if events[0].Delta != "tail" {
-		t.Errorf("event 0 = %+v", events[0])
+	ev, err := s.Recv()
+	if err != nil {
+		t.Fatalf("second Recv returned %v", err)
 	}
-	if events[1].Type != core.EventDone {
-		t.Errorf("event 1 = %+v, want done", events[1])
+	if ev.Type != core.EventError || ev.Err == nil {
+		t.Fatalf("second event = %+v, want a stream error", ev)
+	}
+	if !strings.Contains(ev.Err.Error(), "terminal frame") {
+		t.Errorf("unexpected error: %v", ev.Err)
 	}
 }
 
 func TestStreamFinalFrameWithoutTrailingBlankLine(t *testing.T) {
-	// No trailing newline at all: the last frame must still be delivered.
+	// No trailing newline at all: the last frame is delivered, then the missing
+	// terminal frame is reported as an error instead of a successful done event.
 	body := "data: {\"choices\":[{\"delta\":{\"content\":\"last\"}}]}"
-	events := drain(t, fixtureStream(t, body))
-	if len(events) != 2 {
-		t.Fatalf("got %d events, want 2: %+v", len(events), events)
+	s := fixtureStream(t, body)
+	if ev, err := s.Recv(); err != nil || ev.Type != core.EventDelta || ev.Delta != "last" {
+		t.Fatalf("first event = %+v, %v; want the final delta", ev, err)
 	}
-	if events[0].Delta != "last" {
-		t.Errorf("event 0 = %+v", events[0])
+	if ev, err := s.Recv(); err != nil || ev.Type != core.EventError {
+		t.Fatalf("second event = %+v, %v; want unexpected EOF error", ev, err)
 	}
 }
 

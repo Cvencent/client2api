@@ -172,9 +172,10 @@ type chatStream struct {
 	closeErr  error
 	released  bool
 
-	done      bool
-	failed    bool
-	succeeded bool
+	done       bool
+	failed     bool
+	succeeded  bool
+	terminated bool
 
 	pending   []core.Event
 	usage     *core.Usage
@@ -269,6 +270,7 @@ func (s *chatStream) absorb(frame sseFrame) {
 		return
 	}
 	if isDonePayload(data) {
+		s.terminated = true
 		s.endStream()
 		return
 	}
@@ -299,6 +301,7 @@ func (s *chatStream) absorb(frame sseFrame) {
 			s.pending = append(s.pending, core.Event{Type: core.EventToolCall, ToolCall: fragmentOf(frag)})
 		}
 		if choice.FinishReason != nil && strings.TrimSpace(*choice.FinishReason) != "" {
+			s.terminated = true
 			s.finish = normalizeFinish(*choice.FinishReason)
 		}
 	}
@@ -373,7 +376,10 @@ func (s *chatStream) endStream() {
 		return
 	}
 	s.done = true
-	if !s.failed {
+	if !s.failed && !s.terminated {
+		s.failed = true
+		s.pending = append(s.pending, core.Event{Type: core.EventError, Err: core.Fail(s.client.Name(), s.accountID, core.FailureUpstream, 0, errors.New("openai-compat: upstream stream ended before a terminal frame"))})
+	} else if !s.failed {
 		s.pending = append(s.pending, core.Event{Type: core.EventDone, Finish: s.finishReason()})
 		s.succeeded = true
 	}

@@ -1144,6 +1144,7 @@ button.primary:active:not(:disabled) { filter: brightness(.94); }
 .pfgList { display: flex; flex-direction: column; gap: 8px; }
 .pfGroup { border: 1px solid var(--line-soft); border-radius: 7px; background: var(--surface); }
 .pfghead { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 7px 9px; border-bottom: 1px solid var(--line-soft); }
+.pfgBuiltin { display: inline-flex; align-items: center; border: 1px solid var(--line-soft); border-radius: 999px; padding: 1px 7px; color: var(--ink-3); font-size: 11px; white-space: nowrap; }
 .pfgrows { display: flex; flex-direction: column; gap: 5px; padding: 8px 9px 0; }
 .pfGRow { display: grid; grid-template-columns: minmax(180px, 1fr) 96px auto; align-items: center; gap: 8px; }
 .pfGRow input { width: 100%; min-width: 0; }
@@ -1931,7 +1932,7 @@ details.cfg summary:hover, details.adv summary:hover { color: var(--accent-text)
         </header>
         <div class="tbl-wrap">
         <table class="acc md">
-          <thead><tr><th>时间</th><th>平台</th><th>模型</th><th>思考强度</th><th>会话ID <span class="hint">调用方报的就原样显示，没报则按消息内容推一个</span></th><th>账号</th><th>结果</th><th>候选</th><th>输入</th><th>输出</th><th>合计</th><th>耗时</th><th>速率</th></tr></thead>
+          <thead><tr><th>时间</th><th>平台</th><th>模型</th><th>思考强度</th><th>会话ID <span class="hint">调用方报的就原样显示，没报则按消息内容推一个</span></th><th>账号</th><th>结果</th><th>候选</th><th>输入</th><th>输出</th><th>缓存 tokens</th><th>缓存命中率</th><th>花费 <span class="hint">¥/百万 tokens 计价</span></th><th>合计</th><th>耗时</th><th>速率</th></tr></thead>
           <tbody id="usRecentBody"></tbody>
         </table>
         </div>
@@ -2166,7 +2167,7 @@ details.cfg summary:hover, details.adv summary:hover { color: var(--accent-text)
         <div class="tbl-wrap">
         <table class="acc md">
           <thead><tr>
-            <th>模型</th><th>客户端</th><th>来源</th><th>倍率</th><th>默认档</th><th>思考档位</th><th>上下文</th><th>最大输出</th><th>操作</th><th>所属</th>
+            <th>模型</th><th>客户端</th><th>来源</th><th>倍率</th><th>默认档</th><th>思考档位</th><th>上下文</th><th>最大输出</th><th>输入价<br><span class="hint">¥/百万 tokens</span></th><th>输出价<br><span class="hint">¥/百万 tokens</span></th><th>缓存读取价<br><span class="hint">¥/百万 tokens</span></th><th>操作</th><th>所属</th>
           </tr></thead>
           <tbody id="mdBody"></tbody>
         </table>
@@ -4989,10 +4990,27 @@ function usageRealmRows(list) {
 //   输入/输出 副标题是各自占合计的百分比 —— 一眼看出这轮是长输入还是长输出
 //   合计      副标题是平均速率
 //   平均延迟  副标题是时间窗口（和标题栏那个下拉框对得上）
+function fmtUsageCost(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return "—";
+  if (n === 0) return "¥0";
+  if (n < 0.000001) return "¥" + n.toExponential(2);
+  const digits = n < 0.01 ? 6 : (n < 1 ? 4 : 2);
+  return "¥" + n.toFixed(digits).replace(/0+$/, "").replace(/\.$/, "");
+}
+function usageCacheHitRate(cached, prompt, hasCached) {
+  const p = Number(prompt || 0);
+  if (!hasCached || !(p > 0)) return null;
+  const c = Math.min(Math.max(Number(cached || 0), 0), p);
+  return c / p * 100;
+}
 function renderUsageTiles(d, t, rate) {
   const total = Number(t.total_tokens || 0);
   const pt = Number(t.prompt_tokens || 0);
   const ct = Number(t.completion_tokens || 0);
+  const cached = Number(t.cached_tokens || 0);
+  const hit = usageCacheHitRate(cached, pt, t.has_cached_tokens);
+  const unpriced = Number(t.unpriced_requests || 0);
   const share = n => (total ? Math.round(n / total * 100) : 0);
   const tiles = [
     {
@@ -5009,6 +5027,15 @@ function renderUsageTiles(d, t, rate) {
     {
       k: "输出 tokens", v: numf(ct), tint: "accent", tintText: "accent-text",
       sub: "占合计 " + share(ct) + "%",
+    },
+    {
+      k: "缓存命中率", v: hit == null ? "—" : (hit < 1 ? hit.toFixed(1) : String(Math.round(hit))) + "%",
+      tint: "accent", tintText: "accent-text",
+      sub: t.has_cached_tokens ? numf(Math.min(Math.max(cached, 0), pt)) + " 缓存 tokens" : "上游未报缓存 tokens",
+    },
+    {
+      k: "总花费", v: t.has_cost ? fmtUsageCost(t.cost) : "—", tint: "ok", tintText: "ok-text",
+      sub: unpriced ? numf(unpriced) + " 条未定价，未计入" : (t.has_cost ? "人民币" : "没有可计价请求"),
     },
     {
       k: "合计 tokens", v: numf(total), tint: "ok", tintText: "ok-text",
@@ -5157,6 +5184,10 @@ function renderRecentRows() {
       if (s && s !== accName && accParts.indexOf(s) < 0) accParts.push(s);
     });
     const accTip = accParts.filter(Boolean).join(" · ");
+    const cacheHit = usageCacheHitRate(x.cached_tokens, x.prompt_tokens, x.has_cached_tokens);
+    const cacheText = x.has_cached_tokens ? numf(x.cached_tokens || 0) : "—";
+    const cacheHitText = cacheHit == null ? "—" : (cacheHit < 1 ? cacheHit.toFixed(1) : String(Math.round(cacheHit))) + "%";
+    const costText = x.has_cost ? fmtUsageCost(x.cost) : "—";
     return '<tr><td class="hint">' + esc(fmtCallTime(x.at)) + '</td>' +
       '<td>' + esc(platformLabel(x.client || "-")) + '</td><td>' + esc(x.model || "-") + '</td>' +
       '<td>' + (x.reasoning_effort ? '<span class="tag warn">' + esc(x.reasoning_effort) + '</span>' : '<span class="hint">-</span>') + '</td>' +
@@ -5164,9 +5195,10 @@ function renderRecentRows() {
       '<td title="' + esc(accTip) + '">' + esc(accName) + '</td><td>' + state + '</td>' +
       '<td class="num">' + (x.candidate ? "#" + esc(String(x.candidate)) : "-") + '</td>' +
       '<td class="num">' + numf(x.prompt_tokens || 0) + '</td><td class="num">' + numf(x.completion_tokens || 0) + '</td>' +
+      '<td class="num">' + cacheText + '</td><td class="num">' + cacheHitText + '</td><td class="num">' + costText + '</td>' +
       '<td class="num">' + numf(x.total_tokens || 0) + '</td><td class="num">' + fmtMs(x.latency_ms) + '</td>' +
       '<td class="num">' + fmtRate(x.tokens_per_second) + '</td></tr>';
-  }).join("") || '<tr><td colspan="13" class="hint">暂无调用记录</td></tr>';
+  }).join("") || '<tr><td colspan="16" class="hint">暂无调用记录</td></tr>';
   if ($("#usRecentNote")) $("#usRecentNote").textContent = rows.length + " / " + US_RECENT.length + " 条";
 }
 
@@ -5362,11 +5394,27 @@ function mdNumCell(field, value, source, def, probe) {
     ' value="' + esc(v) + '" data-initial="' + esc(v) + '" data-default="' + esc(d) + '">' +
     '<div class="mdsrc' + (source === "manual" ? " manual" : "") + '">' + esc(mdSrcText(source)) + '</div>' + hint + "</td>";
 }
+function mdPriceCell(field, value, source, def, configured, defaultConfigured) {
+  const v = configured ? String(value == null ? 0 : value) : "";
+  const d = defaultConfigured ? String(def == null ? 0 : def) : "";
+  const hint = "人民币 / 百万 tokens；留空表示未公开，0 表示免费";
+  return '<td class="num mdedit" data-field="price-' + field + '">' +
+    '<input class="mdnum mdprice" type="number" min="0" step="0.000001" inputmode="decimal" data-field="price-' + field + '"' +
+    ' value="' + esc(v) + '" data-initial="' + esc(v) + '" data-default="' + esc(d) + '" title="' + esc(hint) + '">' +
+    '<div class="mdsrc' + (source === "manual" ? " manual" : "") + '">' + esc(mdSrcText(source)) + '</div></td>';
+}
 let MD_EDITS = {};
 function mdKey(client, model) { return client + "\u0000" + model; }
 function mdRowKey(tr) { return mdKey(tr.dataset.client, tr.dataset.model); }
 function mdInputs(tr) {
-  return { ctx: tr.querySelector('input[data-field="context"]'), out: tr.querySelector('input[data-field="output"]') };
+  const q = f => tr.querySelector('input[data-field="' + f + '"]');
+  return {
+    ctx: q("context"),
+    out: q("output"),
+    inPrice: q("price-input"),
+    outPrice: q("price-output"),
+    cachePrice: q("price-cache"),
+  };
 }
 function mdSyncDirty() {
   const n = Object.keys(MD_EDITS).length;
@@ -5375,19 +5423,25 @@ function mdSyncDirty() {
   const note = $("#mdDirty");
   if (note) note.textContent = n ? n + " 项未保存" : "";
   document.querySelectorAll("#mdBody tr[data-client]").forEach(tr => {
-    const { ctx, out } = mdInputs(tr);
-    if (!ctx || !out) return;
-    if (ctx.value !== ctx.dataset.initial) ctx.classList.add("dirty"); else ctx.classList.remove("dirty");
-    if (out.value !== out.dataset.initial) out.classList.add("dirty"); else out.classList.remove("dirty");
+    const { ctx, out, inPrice, outPrice, cachePrice } = mdInputs(tr);
+    [ctx, out, inPrice, outPrice, cachePrice].forEach(input => {
+      if (!input) return;
+      if (input.value !== input.dataset.initial) input.classList.add("dirty"); else input.classList.remove("dirty");
+    });
   });
 }
 // restore=true 表示「恢复官方默认」：保存时提交 0，服务端据此删掉手动值。
 function mdRecord(tr, restore) {
-  const { ctx, out } = mdInputs(tr);
-  if (!ctx || !out) return;
+  const { ctx, out, inPrice, outPrice, cachePrice } = mdInputs(tr);
+  if (!ctx || !out || !inPrice || !outPrice || !cachePrice) return;
   const key = mdRowKey(tr);
-  if (ctx.value !== ctx.dataset.initial || out.value !== out.dataset.initial) {
-    MD_EDITS[key] = { ctx: ctx.value, out: out.value, restore: !!restore };
+  const inputs = [ctx, out, inPrice, outPrice, cachePrice];
+  if (restore || inputs.some(input => input.value !== input.dataset.initial)) {
+    MD_EDITS[key] = {
+      ctx: ctx.value, out: out.value,
+      inPrice: inPrice.value, outPrice: outPrice.value, cachePrice: cachePrice.value,
+      restore: !!restore,
+    };
   } else {
     delete MD_EDITS[key];
   }
@@ -5398,11 +5452,20 @@ function mdReapplyEdits() {
   document.querySelectorAll("#mdBody tr[data-client]").forEach(tr => {
     const e = MD_EDITS[mdRowKey(tr)];
     if (!e) return;
-    const { ctx, out } = mdInputs(tr);
+    const { ctx, out, inPrice, outPrice, cachePrice } = mdInputs(tr);
     if (ctx && ctx.value !== e.ctx) ctx.value = e.ctx;
     if (out && out.value !== e.out) out.value = e.out;
+    if (inPrice && inPrice.value !== e.inPrice) inPrice.value = e.inPrice;
+    if (outPrice && outPrice.value !== e.outPrice) outPrice.value = e.outPrice;
+    if (cachePrice && cachePrice.value !== e.cachePrice) cachePrice.value = e.cachePrice;
   });
   mdSyncDirty();
+}
+function mdPriceNumber(raw) {
+  const s = String(raw == null ? "" : raw).trim();
+  if (s === "") return null;
+  const n = Number(s);
+  return Number.isFinite(n) && n >= 0 ? n : 0;
 }
 async function mdSave() {
   const clients = {};
@@ -5412,18 +5475,41 @@ async function mdSave() {
     if (!e) return;
     n++;
     // 恢复默认 = 清掉这一对模型的手动值，回落到上游值或官方预设。
-    if (e.restore) { (clients[it.client] || (clients[it.client] = {}))[it.model] = { context_length: 0, max_output_tokens: 0 }; return; }
+    if (e.restore) {
+      (clients[it.client] || (clients[it.client] = {}))[it.model] = {
+        context_length: 0,
+        max_output_tokens: 0,
+        has_price: false,
+      };
+      return;
+    }
     const ctxChanged = e.ctx !== it.ctxStr;
     const outChanged = e.out !== it.outStr;
     // 没改的那一半如果本来就是手动值，要原样带上，否则会被这次提交清掉。
     const ctxManual = ctxChanged ? (parseInt(e.ctx, 10) || 0) : (it.ctxSrc === "manual" ? it.ctx : 0);
     const outManual = outChanged ? (parseInt(e.out, 10) || 0) : (it.outSrc === "manual" ? it.out : 0);
-    (clients[it.client] || (clients[it.client] = {}))[it.model] = { context_length: ctxManual, max_output_tokens: outManual };
+    const priceChanged = e.inPrice !== it.inPriceStr || e.outPrice !== it.outPriceStr || e.cachePrice !== it.cachePriceStr;
+    const patch = { context_length: ctxManual, max_output_tokens: outManual };
+    if (priceChanged) {
+      const inPrice = mdPriceNumber(e.inPrice);
+      const outPrice = mdPriceNumber(e.outPrice);
+      const cachePrice = mdPriceNumber(e.cachePrice);
+      if (inPrice === null && outPrice === null && cachePrice === null) {
+        patch.has_price = false;
+      } else {
+        patch.has_price = true;
+        patch.input_per_million = inPrice === null ? 0 : inPrice;
+        patch.output_per_million = outPrice === null ? 0 : outPrice;
+        patch.has_cache_read = cachePrice !== null;
+        if (cachePrice !== null) patch.cache_read_per_million = cachePrice;
+      }
+    }
+    (clients[it.client] || (clients[it.client] = {}))[it.model] = patch;
   });
   if (!n) return;
   const r = await api("/panel/api/model_context", { method: "POST", body: { clients: clients } });
   if (!r.ok) { toast("保存失败：" + r.err, "err"); return; }
-  toast("已保存 " + n + " 个模型的上下文设置", "ok");
+  toast("已保存 " + n + " 个模型的设置", "ok");
   MD_EDITS = {};
   await renderModels(false);
 }
@@ -5440,7 +5526,7 @@ async function renderModels(refresh) {
     refresh ? api("/panel/api/models/refresh", { method: "POST" }) : api("/panel/api/models"),
     api("/panel/api/model_probes"),
   ]);
-  if (!r.ok) { $("#mdNote").textContent = "获取失败：" + r.err; $("#mdBody").innerHTML = '<tr><td colspan="10" class="hint">' + esc(r.err) + '</td></tr>'; return; }
+  if (!r.ok) { $("#mdNote").textContent = "获取失败：" + r.err; $("#mdBody").innerHTML = '<tr><td colspan="13" class="hint">' + esc(r.err) + '</td></tr>'; return; }
   // 探测数据是可选增强：未配置 / 工具还没跑过 / 读取失败，都退化为无标注，
   // 绝不让它影响模型列表本身（与 /panel/api/model_probes 的空集语义一致）。
   const probes = (pr.ok && pr.data && pr.data.probes) || {};
@@ -5494,6 +5580,12 @@ async function renderModels(refresh) {
         out: m.max_output_tokens || 0,
         outStr: m.max_output_tokens > 0 ? String(m.max_output_tokens) : "",
         outSrc: m.max_output_source || "",
+        inPrice: m.has_price ? Number(m.input_per_million || 0) : 0,
+        inPriceStr: m.has_price ? String(m.input_per_million || 0) : "",
+        outPrice: m.has_price ? Number(m.output_per_million || 0) : 0,
+        outPriceStr: m.has_price ? String(m.output_per_million || 0) : "",
+        cachePrice: m.has_cache_read ? Number(m.cache_read_per_million || 0) : 0,
+        cachePriceStr: m.has_cache_read ? String(m.cache_read_per_million || 0) : "",
         up: !isFallback,
         free: free,
         text: haystack([c.name, m.id, nm, m.owned_by, ex]).join(" "),
@@ -5508,6 +5600,9 @@ async function renderModels(refresh) {
           effortsCell(ex) +
           mdNumCell("context", m.context_length, m.context_source, m.context_default) +
           mdNumCell("output", m.max_output_tokens, m.max_output_source, m.max_output_default, probe) +
+          mdPriceCell("input", m.input_per_million, m.input_price_source, m.input_price_default, m.has_price, m.default_has_price) +
+          mdPriceCell("output", m.output_per_million, m.output_price_source, m.output_price_default, m.has_price, m.default_has_price) +
+          mdPriceCell("cache", m.cache_read_per_million, m.cache_read_price_source, m.cache_read_price_default, m.has_cache_read, m.default_has_cache_read) +
           '<td class="mdacts"><button class="xs mdRestore" type="button" title="清掉手动值，回到上游值或官方预设">恢复官方默认</button></td>' +
           // 所属和客户端是同一个名字时留一个破折号：大部分行都这样，重复一遍
           // 只是把这一列变成噪音。两边真的不一样（上游自报的归属不同）才显示。
@@ -5553,7 +5648,7 @@ function mdApply() {
     (!cl || it.client === cl) && (!upOnly || it.up) && (!freeOnly || it.free) &&
     words.every(w => it.text.indexOf(w) >= 0));
   $("#mdBody").innerHTML = rows.map(it => it.html).join("") ||
-    '<tr class="filtered"><td colspan="10" class="hint">' +
+    '<tr class="filtered"><td colspan="13" class="hint">' +
     (MD_ITEMS.length ? "没有模型匹配当前筛选条件，清空搜索框即可回到全量" : "没有任何模块返回模型") + '</td></tr>';
   mdReapplyEdits();
   // 计数只在真的筛掉了东西时才着色：否则这个数字会一直在抢注意力。
@@ -5948,6 +6043,8 @@ function pfModelGroupMemberHTML(member, prio) {
 // priority input, which is keyed by the member's client on save.
 function pfModelGroupHTML(name, g) {
   const group = g || {};
+  const builtin = group.builtin === true;
+  const canDelete = !builtin;
   const prios = group.platform_priorities || {};
   const members = Array.isArray(group.members) ? group.members : [];
   const rows = members.map(m => {
@@ -5955,9 +6052,10 @@ function pfModelGroupHTML(name, g) {
     return pfModelGroupMemberHTML(m, prios[client]);
   }).join("");
   return '<div class="pfGroup">' +
-    '<div class="pfghead"><label class="sel-note">组名 <input class="cfgtext pfGName" type="text" value="' + esc(name || "") + '" placeholder="deepseek-v4.1-flash" spellcheck="false" autocomplete="off"></label>' +
+    '<div class="pfghead"><label class="sel-note">组名 <input class="cfgtext pfGName" type="text" value="' + esc(name || "") + '" placeholder="deepseek-v4.1-flash" spellcheck="false" autocomplete="off"' + (builtin ? ' readonly title="内置 GPT 原生模型名；可改成员和优先级，组名保持不变"' : '') + '></label>' +
+    (builtin ? '<span class="pfgBuiltin">内置</span>' : '') +
     '<span class="grow"></span>' +
-    '<button class="xs pfGDel" type="button">删除组</button></div>' +
+    '<button class="xs pfGDel" type="button"' + (canDelete ? '' : ' disabled title="内置组不能删除；可改成员和优先级"') + '>删除组</button></div>' +
     '<div class="pfgrows">' + rows + '</div>' +
     '<div class="pfgfoot"><button class="xs pfGAddMember" type="button">新增成员</button></div>' +
     '</div>';
@@ -6064,7 +6162,7 @@ async function renderPlatforms(preserveDraft = false) {
     groupsBaseline: JSON.parse(JSON.stringify(c.model_groups || {})),
   };
   const groupsEl = $("#pfGroups");
-  if (groupsEl) groupsEl.innerHTML = pfModelGroupsHTML(c.model_groups || {});
+  if (groupsEl) groupsEl.innerHTML = pfModelGroupsHTML(c.model_groups || {}, cfg.data.model_group_defaults || []);
 
   let totalOff = 0;
   const out = [];
@@ -9955,10 +10053,13 @@ $("#mdBody").addEventListener("click", ev => {
   if (!btn) return;
   const tr = btn.closest("tr[data-client]");
   if (!tr) return;
-  const { ctx, out } = mdInputs(tr);
-  if (!ctx || !out) return;
+  const { ctx, out, inPrice, outPrice, cachePrice } = mdInputs(tr);
+  if (!ctx || !out || !inPrice || !outPrice || !cachePrice) return;
   ctx.value = ctx.dataset.default;
   out.value = out.dataset.default;
+  inPrice.value = inPrice.dataset.default;
+  outPrice.value = outPrice.dataset.default;
+  cachePrice.value = cachePrice.dataset.default;
   mdRecord(tr, true);
 });
 $("#btnMdSave").addEventListener("click", mdSave);

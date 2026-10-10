@@ -60,6 +60,9 @@ const (
 	FieldMaxOutputTokens = "max_output_tokens"
 	FieldEfforts         = "supported_efforts"
 	FieldDefaultEffort   = "default_effort"
+	FieldInputPrice      = "input_price"
+	FieldOutputPrice     = "output_price"
+	FieldCacheReadPrice  = "cache_read_price"
 )
 
 // DefaultContextWindow is the reference panel's context policy value: an unknown
@@ -68,7 +71,10 @@ const (
 // for it.
 const DefaultContextWindow int64 = 1000000
 
-// Fields lists every metadata field this package resolves, in precedence order.
+// Fields lists the capability fields this package resolves, in precedence
+// order. Price is deliberately not part of this list: it is accounting data,
+// not a capability, and a static price must not make a models.dev capability
+// answer look like it came from the embedded table.
 func Fields() []string {
 	return []string{FieldContextLength, FieldMaxOutputTokens, FieldEfforts, FieldDefaultEffort}
 }
@@ -88,6 +94,13 @@ type Meta struct {
 	// DefaultEffort is the advertised default. It is only ever set to a member of
 	// Efforts; an unsupported default is dropped rather than advertised.
 	DefaultEffort string `json:"default_effort,omitempty"`
+	// Per-million-token accounting prices in CNY. HasPrice distinguishes an
+	// explicit free model (0/0) from "no published price".
+	InputPerMillion     float64 `json:"input_per_million,omitempty"`
+	OutputPerMillion    float64 `json:"output_per_million,omitempty"`
+	CacheReadPerMillion float64 `json:"cache_read_per_million,omitempty"`
+	HasPrice            bool    `json:"has_price,omitempty"`
+	HasCacheRead        bool    `json:"has_cache_read,omitempty"`
 	// Source is the strongest provenance among the fields that are set.
 	Source string `json:"source,omitempty"`
 	// FieldSources maps a Field* constant to the source of that single field, so a
@@ -97,7 +110,7 @@ type Meta struct {
 
 // IsZero reports whether the Meta carries no usable metadata at all.
 func (m Meta) IsZero() bool {
-	return m.ContextLength <= 0 && m.MaxOutputTokens <= 0 && len(m.Efforts) == 0 && m.DefaultEffort == ""
+	return m.ContextLength <= 0 && m.MaxOutputTokens <= 0 && len(m.Efforts) == 0 && m.DefaultEffort == "" && !m.HasPrice && !m.HasCacheRead
 }
 
 // Has reports whether a single Field* is set to a usable value.
@@ -111,6 +124,10 @@ func (m Meta) Has(field string) bool {
 		return len(m.Efforts) > 0
 	case FieldDefaultEffort:
 		return m.DefaultEffort != ""
+	case FieldInputPrice, FieldOutputPrice:
+		return m.HasPrice
+	case FieldCacheReadPrice:
+		return m.HasCacheRead
 	}
 	return false
 }
@@ -145,7 +162,9 @@ func (m Meta) Clone() Meta {
 // Equal reports whether two Metas carry the same values and the same provenance.
 func (m Meta) Equal(o Meta) bool {
 	if m.ContextLength != o.ContextLength || m.MaxOutputTokens != o.MaxOutputTokens ||
-		m.DefaultEffort != o.DefaultEffort || m.Source != o.Source {
+		m.DefaultEffort != o.DefaultEffort || m.Source != o.Source ||
+		m.InputPerMillion != o.InputPerMillion || m.OutputPerMillion != o.OutputPerMillion ||
+		m.CacheReadPerMillion != o.CacheReadPerMillion || m.HasPrice != o.HasPrice || m.HasCacheRead != o.HasCacheRead {
 		return false
 	}
 	if len(m.Efforts) != len(o.Efforts) {
@@ -186,6 +205,21 @@ func Merge(vendor, fallback Meta) Meta {
 			continue
 		}
 		copyField(&out, fallback, field)
+	}
+	// Price is copied as one decision. If the destination already has a manual
+	// or vendor price, the fallback must not fill only its cache-read half.
+	if !out.HasPrice && fallback.HasPrice {
+		source := fallback.SourceOf(FieldInputPrice)
+		if source == "" {
+			source = fallback.Source
+		}
+		out = mergePrice(out, Price{
+			InputPerMillion:     fallback.InputPerMillion,
+			OutputPerMillion:    fallback.OutputPerMillion,
+			CacheReadPerMillion: fallback.CacheReadPerMillion,
+			HasPrice:            true,
+			HasCacheRead:        fallback.HasCacheRead,
+		}, source)
 	}
 	out.Efforts = dedupeStrings(out.Efforts)
 	if out.DefaultEffort != "" && !containsString(out.Efforts, out.DefaultEffort) {
@@ -260,6 +294,15 @@ func copyField(dst *Meta, src Meta, field string) {
 		dst.Efforts = append([]string(nil), src.Efforts...)
 	case FieldDefaultEffort:
 		dst.DefaultEffort = src.DefaultEffort
+	case FieldInputPrice:
+		dst.InputPerMillion = src.InputPerMillion
+		dst.HasPrice = true
+	case FieldOutputPrice:
+		dst.OutputPerMillion = src.OutputPerMillion
+		dst.HasPrice = true
+	case FieldCacheReadPrice:
+		dst.CacheReadPerMillion = src.CacheReadPerMillion
+		dst.HasCacheRead = true
 	default:
 		return
 	}

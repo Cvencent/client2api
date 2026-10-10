@@ -427,8 +427,9 @@ func ConversationKey(options map[string]any, user string) string {
 
 // ConversationKeyOf resolves the stickiness key for a whole request: the
 // conversation id the gateway already resolved (from the metadata object or the
-// top level) when the caller supplied one, and otherwise the raw option
-// spellings that ConversationKey accepts.
+// top level) when the caller supplied one, the raw option spellings (or the
+// request user), and finally a stable key derived from the system prompt plus
+// the first user turn.
 //
 // Modules should prefer this over ConversationKey.  A client that follows the
 // OpenAI convention puts its conversation id in metadata, where the option
@@ -436,12 +437,10 @@ func ConversationKey(options map[string]any, user string) string {
 // stickiness for exactly the clients that are most explicit about their
 // conversations.
 //
-// A request that names no conversation and carries no user identifier resolves
-// to "" here — "not conversation-scoped", which several modules pin as a
-// contract (an unscoped request must rotate exactly as it did before).  A module
-// that wants those requests to stick anyway asks for DeriveConversationKey
-// explicitly; that is the reference's content fallback, and it is opt-in here
-// because stickiness policy is a per-module decision.
+// The content fallback is what makes stickiness useful for clients that never
+// send a conversation id.  It returns "" only when there is genuinely nothing
+// stable to hash, which is the safe degradation: no key means no binding and
+// ordinary rotation.
 func ConversationKeyOf(req *ChatRequest) string {
 	if req == nil {
 		return ""
@@ -449,7 +448,10 @@ func ConversationKeyOf(req *ChatRequest) string {
 	if id := strings.TrimSpace(req.ConversationID); id != "" {
 		return id
 	}
-	return ConversationKey(req.Options, req.User)
+	if k := ConversationKey(req.Options, req.User); k != "" {
+		return k
+	}
+	return DeriveConversationKey(req.Messages)
 }
 
 // DerivedKeyPrefix namespaces a content-derived key so it can never be confused

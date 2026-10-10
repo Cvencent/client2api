@@ -328,7 +328,8 @@ sweep does not turn every pass into another model request.
    short cooldown (honouring `Retry-After`); quota/credit exhaustion → long
    cooldown; the request then moves to the next account, up to `max_attempts`.
    A 400-class error is returned to the caller as-is (502 by the gateway) because
-   retrying cannot help.
+   retrying cannot help. Context-window overflow is surfaced as
+   `context_window_exceeded`, allowing the caller to compact and resume.
 
 ### More than one User-Agent, on purpose
 

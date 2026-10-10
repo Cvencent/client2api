@@ -33,6 +33,11 @@ const (
 	// would not help -- the content is what the vendor objected to -- so the
 	// gateway triggers the degraded-prompt window and retries once instead.
 	FailureContentBlocked FailureKind = "content_blocked"
+	// FailureContextWindow is an upstream refusal because the assembled prompt
+	// is larger than the model's serving limit.  Rotating accounts cannot make
+	// the same request smaller, but the gateway must preserve the 400 and emit
+	// a code that lets the caller trigger conversation compaction.
+	FailureContextWindow FailureKind = "context_window_exceeded"
 	// FailureOther is anything unclassified.  Never rotated: the gateway
 	// cannot know whether a second attempt would help, and the reference's
 	// own amplification analysis says guessing is worse than failing.
@@ -135,7 +140,7 @@ func Retryable(k FailureKind) bool {
 	case FailureWAF, FailureRateLimited, FailureQuota, FailureAuth,
 		FailureSessionDead, FailureUpstream:
 		return true
-	case FailureContentBlocked, FailureOther:
+	case FailureContentBlocked, FailureContextWindow, FailureOther:
 		return false
 	}
 	return false

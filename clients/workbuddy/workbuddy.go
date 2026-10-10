@@ -916,6 +916,7 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 		attempts = n
 	}
 	var lastErr error
+	lastAccount := ""
 	// busy records that the gateway's per-account ceiling (which can be
 	// tighter than the pool's own) refused an account we had already taken.
 	busy := false
@@ -931,6 +932,7 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 		// next iteration overwrites this, so the value the gateway reads once
 		// Chat returns is the account of the attempt that actually got through.
 		skip[a.ID()] = true
+		lastAccount = a.ID()
 		// Take the in-flight slot before the call and hold it until the
 		// response body is closed: that is the window the vendor's risk control
 		// measures, so it is the window the ceiling has to cover.  Losing the
@@ -968,11 +970,11 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 		kind, _ := c.pool.MarkFailureForModel(a, route.bare, err)
 		lastErr = err
 		if !retryableKind(kind) {
-			return nil, err
+			return nil, classifyFailure(err, lastAccount)
 		}
 	}
 	if lastErr != nil {
-		return nil, errors.Join(core.ErrPlatformExhausted, lastErr)
+		return nil, errors.Join(core.ErrPlatformExhausted, classifyFailure(lastErr, lastAccount))
 	}
 	// Nothing was attempted because every usable account is at its ceiling:
 	// that is backpressure, not a configuration problem, and saying so is what

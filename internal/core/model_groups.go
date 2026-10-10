@@ -20,6 +20,10 @@ type ModelGroupMember struct {
 type ModelGroup struct {
 	Members            []ModelGroupMember
 	PlatformPriorities map[string]int
+	// Builtin reports that this group came from the gateway's default GPT-6
+	// catalogue rather than the operator's config. The panel renders it as
+	// editable and can persist an override or suppress it explicitly.
+	Builtin bool
 }
 
 // SetModelGroups replaces the operator-declared equivalence groups. The lookup
@@ -33,6 +37,7 @@ func (r *Registry) SetModelGroups(groups map[string]ModelGroup) {
 		}
 
 		normalized := ModelGroup{}
+		normalized.Builtin = group.Builtin
 		for _, member := range group.Members {
 			client := strings.TrimSpace(member.Client)
 			model := strings.TrimSpace(member.Model)
@@ -117,6 +122,7 @@ func (r *Registry) ModelGroups() map[string]ModelGroup {
 func cloneModelGroup(group ModelGroup) ModelGroup {
 	out := ModelGroup{
 		Members: append([]ModelGroupMember(nil), group.Members...),
+		Builtin: group.Builtin,
 	}
 	if len(group.PlatformPriorities) > 0 {
 		out.PlatformPriorities = make(map[string]int, len(group.PlatformPriorities))

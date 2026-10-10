@@ -984,7 +984,10 @@ func TestChatHonoursTheCallerContext(t *testing.T) {
 	}
 	c := f.client(t, `,"first_token_timeout":"60ms"`)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	// Keep the caller deadline comfortably above the 60ms watchdog. A shared
+	// CI runner can delay timer scheduling under load; a tight 2s deadline made
+	// that scheduling delay look like a cancelled caller instead of idle timeout.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	st, err := c.Chat(ctx, &core.ChatRequest{
 		Model:    "deepseek-v4-pro",

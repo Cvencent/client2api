@@ -66,13 +66,16 @@ API 地址只接受 HTTP(S)，需要 `/v1` 等前缀的服务请一并填写。
 
 Key 与扫描目录保存在各平台的 `data/<平台ID>/accounts.json`，不放进 `sources`
 配置。整份备份包含平台定义和账号数据。删除平台保留账号文件，重新添加相同
-ID 与 API 地址即可恢复账号池。旧 `clients.openai-compat` 配置、存储与调用地址
+ID 与 API 地址即可恢复账号池。每个自定义中转站都是**会话粘性**的：多轮对话会
+持续落在已经预热上游提示缓存的同一个 Key 上，因此按缓存前缀计费的中转站不会因为
+账号池轮换而重收整段前缀。粘性按“中转站 + 会话”绑定；Key 被停用、冷却或扫描目录里
+没有当前模型时，这条绑定会被忽略。旧 `clients.openai-compat` 配置、存储与调用地址
 继续兼容，页面将这个旧模块显示为 **onmiRoute**。
 
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-当前版本：**0.1.32**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：**0.1.33**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 ### 近期重点（0.1.26 - 0.1.29）
 
@@ -371,6 +374,13 @@ coding-plan API key 行不会显示领取按钮。领取成功后，之前因额
 `client/model` 仍然锁定平台，不会展开成整组。组内优先用该组的
 `platform_priorities`；没配的平台回落到全局 `platforms.<name>.priority` 与
 `priority_schedule`。成员在当前目录里缺失时会被跳过，单个平台掉线不会拖垮整组。
+
+默认内置五个 GPT-6+ 路由组，让 Codex 可以直接使用不带平台前缀的原生小写名称：
+`gpt-6-astra`、`gpt-6.1-sol`、`gpt-6-sol`、`gpt-6-luna` 和
+`gpt-6.1-sol-pro`，分别映射到当前提供这些模型的 OpenCode / OpenRouter 成员。
+它们会显示在**平台配置 → 模型路由组**里，并带有“内置”标记；修改其中一个会
+把覆盖项写入 `model_groups`，之后以文件里的配置为准。若要在配置文件里停用某个
+默认组，写入同名条目并把 `members` 设为空数组即可。
 
 ## Responses 接口
 
@@ -680,18 +690,18 @@ assistant 消息的事件——只发 delta 的流会显示文字但永远不执
 
 用量：
 
-* “总览”显示成功率、输入、输出、合计和平均延迟。
+* “总览”显示成功率、输入、输出、合计、缓存命中率、总花费和平均延迟。
 * 图表是可交互的内联 SVG，支持悬停和方向键查看每个时间点。
 * “积分构成”按剩余有效期展示，帮助判断哪些额度会先过期。
-* “最近调用”显示调用方传入的会话 ID；没有会话 ID 时会用内容派生的
+* “最近调用”还显示缓存 tokens、该条缓存命中率和人民币花费；未知价显示 `—`，显式免费才显示 `¥0`。它会显示调用方传入的会话 ID；没有会话 ID 时会用内容派生的
   `d-` 前缀键，并标注为推断值；无法推断时显示“无会话标识”。
 
 模型与档案：
 
-* 每个模型显示 `context_length` 和 `max_output_tokens`。
-* 解析顺序是：操作员手动值 > 模块上报值 > `internal/modelmeta/table.json` 官方预设。
-* 手动值保存在 `data/model_context.json`，升级不会丢失，可恢复为官方默认值。
-* `/v1/models` 同时返回这两个字段，OpenAI 兼容客户端可直接读取。
+* 每个模型显示 `context_length`、`max_output_tokens`，以及人民币/百万 tokens 的输入价、输出价、缓存读取价。
+* 能力字段按“操作员手动值 > 模块上报值 > 官方预设”解析；价格同样遵循该顺序，官方默认价来自 2026-10-10 的 models.dev 快照，并按 1 美元 = 7.20 元换算。
+* 缓存读取价存在时，缓存输入按缓存价计算，未缓存输入按输入价计算；没有缓存价时，全部输入都按输入价计算。未知价不会被当成 0 元。
+* 手动值保存在 `data/model_context.json`，升级不会丢失，可恢复为官方默认值。`/v1/models` 仍返回上下文和最大输出字段，OpenAI 兼容客户端可直接读取。
 
 面板鉴权使用顶层 `api_key`。为空时不做鉴权；设置后所有 `/panel/api/*`
 都要求 `Authorization: Bearer <key>` 或 `X-Api-Key: <key>`。

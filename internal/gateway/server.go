@@ -495,7 +495,7 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 	rec := UsageRecord{At: time.Now(), StartedAt: time.Now()}
 	defer func() {
 		rec.At = time.Now()
-		s.opts.Usage.Record(rec)
+		s.recordUsage(rec)
 	}()
 
 	// The console row for this request.  It is created before the body is read
@@ -601,6 +601,7 @@ func (s *server) serveRemainingCandidates(w http.ResponseWriter, r *http.Request
 				rec.Account = servedBy
 				stat.uid = servedBy
 			}
+			stream = wrapStickyFailure(stream, client, core.ConversationKeyOf(baseReq))
 			defer stream.Close()
 			// The wire model is the caller's own name; only the module sees the
 			// resolved upstream id, which already lives on rec.Model.
@@ -856,6 +857,32 @@ func (s *server) fail(rec *UsageRecord) {
 	}
 }
 
+// recordUsage prices one completed request and files it in the usage ledger.
+// Prices come from the same operator override -> embedded directory chain as
+// the model panel, but a price row is deliberately not treated as capability
+// metadata. An unknown price leaves Cost unset instead of recording a
+// misleading zero.
+func (s *server) recordUsage(rec UsageRecord) {
+	if rec.Client != "" && rec.Model != "" &&
+		(rec.PromptTokens > 0 || rec.CompletionTokens > 0 || rec.HasCachedTokens) {
+		model := rec.Model
+		if prefix, rest, ok := strings.Cut(model, "/"); ok && strings.EqualFold(prefix, rec.Client) && rest != "" {
+			model = rest
+		}
+		provider := modelmeta.New(modelmeta.Options{Client: rec.Client, Overrides: s.opts.ModelOverrides})
+		meta := provider.Merge(model, modelmeta.Meta{})
+		if meta.HasPrice {
+			rec.priceUsage(ModelPrice{
+				InputPerMillion:     meta.InputPerMillion,
+				OutputPerMillion:    meta.OutputPerMillion,
+				CacheReadPerMillion: meta.CacheReadPerMillion,
+				HasCacheRead:        meta.HasCacheRead,
+			}, true)
+		}
+	}
+	s.opts.Usage.Record(rec)
+}
+
 // errorCodeFor names a failure the way the reference panel names it in
 // `error.code`: a symbolic string, never the vendor's numeric business code.
 // The reference keeps the vendor's own code/msg/requestId inside `message`
@@ -891,6 +918,8 @@ func errorCodeFor(err error, status int) string {
 			return "rate_limit_exceeded"
 		case core.FailureContentBlocked:
 			return "content_blocked"
+		case core.FailureContextWindow:
+			return "context_window_exceeded"
 		case core.FailureQuota:
 			return "quota_exhausted"
 		case core.FailureAuth:
@@ -942,7 +971,9 @@ func upstreamErrorShape(err error) (int, string, core.FailureKind) {
 			if f.Status >= 400 && f.Status <= 599 {
 				status = f.Status
 			}
-			if f.Kind != core.FailureOther {
+			if f.Kind == core.FailureContextWindow {
+				typ = "invalid_request_error"
+			} else if f.Kind != core.FailureOther {
 				typ = string(f.Kind) + "_error"
 			}
 			kind = f.Kind

@@ -2,6 +2,12 @@ package workbuddy
 
 import "strings"
 
+// WorkBuddy advertises a 1,050,000-token catalogue value for its GPT models,
+// but the serving backend rejects requests above 1,048,576 tokens.  Publishing
+// the larger number lets clients compact after the real limit has already been
+// crossed, so the effective limit is capped here.
+const workbuddyContextLimit int64 = 1048576
+
 // creditsPrefix renders the upstream credits string the way the reference panel
 // does.  The upstream is not consistent: the same field arrives as "x0.05
 // credits", "x0.29" and "x0.00 credits", so the suffix is trimmed before the
@@ -92,13 +98,18 @@ func modelExtra(mi ModelInfo) map[string]any {
 	setStr("reasoning_effort", mi.ReasoningEffort)
 	setStr("reasoning_summary", mi.ReasoningSummary)
 
-	setInt("context_length", mi.ContextWindow)
+	contextWindow := mi.ContextWindow
+	if contextWindow > workbuddyContextLimit {
+		contextWindow = workbuddyContextLimit
+	}
+
+	setInt("context_length", contextWindow)
 	setInt("max_output_tokens", mi.MaxTokens)
 	setList("reasoning_supported_efforts", mi.Efforts)
 	setStr("reasoning_default_effort", mi.DefaultEffort)
 
 	// The spellings this module served before the reference keys were added.
-	setInt("context_window", mi.ContextWindow)
+	setInt("context_window", contextWindow)
 	setInt("max_tokens", mi.MaxTokens)
 	setList("reasoning_efforts", mi.Efforts)
 

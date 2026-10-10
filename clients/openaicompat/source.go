@@ -30,10 +30,19 @@ type source struct {
 	lastErr    string
 	active     bool
 	generation uint64
+	affinity   *core.Affinity
 }
 
 func newSource(name string, cfg core.SourceConfig, deps core.Deps) (*source, error) {
-	s := &source{name: name, deps: deps, pool: newProviderPool(), cooling: map[string]time.Time{}, lastUsed: map[string]uint64{}}
+	s := &source{
+		name:     name,
+		deps:     deps,
+		pool:     newProviderPool(),
+		cooling:  map[string]time.Time{},
+		lastUsed: map[string]uint64{},
+		affinity: core.NewAffinity(0),
+	}
+	s.affinity.StartGC()
 	if err := s.ConfigureSource(cfg); err != nil {
 		return nil, err
 	}
@@ -197,7 +206,7 @@ func (s *source) Health() core.Health {
 }
 func (s *source) PoolStats() core.PoolStats {
 	n, _ := s.pool.stats(0)
-	return core.PoolStats{InFlight: n}
+	return core.PoolStats{InFlight: n, StickySessions: s.affinity.Count()}
 }
 
 func (s *source) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, error) {
@@ -206,6 +215,8 @@ func (s *source) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 	}
 	tried := map[string]bool{}
 	var last error
+	conversationKey := core.ConversationKeyOf(req)
+	bound, _ := s.affinity.Resolve(conversationKey, s.usableFor(req.Model))
 	// Account-slot contention does not spend a network retry; inspect all keys.
 	attempts := 0
 	for {
@@ -238,9 +249,20 @@ func (s *source) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 			break
 		}
 		p := candidates[0]
+		if bound != "" && !tried[bound] {
+			for _, candidate := range candidates {
+				if candidate.ID == bound {
+					p = candidate
+					break
+				}
+			}
+		}
 		tried[p.ID] = true
 		s.sequence++
 		s.lastUsed[p.ID] = s.sequence
+		if conversationKey != "" {
+			s.affinity.Bind(conversationKey, p.ID)
+		}
 		transport, prov := s.transportLocked(), s.providerLocked(p)
 		s.mu.Unlock()
 		if err := req.AcquireAccountSlot(p.ID); err != nil {

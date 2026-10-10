@@ -63,6 +63,51 @@ type Stats struct {
 	failures atomic.Int64
 }
 
+// ModelPrice is a per-million-token price snapshot. Amounts are in the
+// accounting currency used by the panel (currently CNY). HasCacheRead
+// distinguishes an explicitly free cache-read rate from "not published": in
+// the latter case cached input falls back to the ordinary input rate.
+type ModelPrice struct {
+	InputPerMillion     float64
+	OutputPerMillion    float64
+	CacheReadPerMillion float64
+	HasCacheRead        bool
+}
+
+// CostForUsage applies a per-million-token price to one usage report. Cached
+// input tokens are charged at the cache-read rate when one is published, and
+// at the ordinary input rate otherwise. Cached tokens are clamped to the
+// reported prompt size so a dirty upstream number can never make uncached
+// input negative.
+func CostForUsage(price ModelPrice, u *core.Usage) float64 {
+	if u == nil {
+		return 0
+	}
+	prompt := int64(u.PromptTokens)
+	if prompt < 0 {
+		prompt = 0
+	}
+	completion := int64(u.CompletionTokens)
+	if completion < 0 {
+		completion = 0
+	}
+	cached := int64(u.CachedTokens)
+	if cached < 0 {
+		cached = 0
+	}
+	if cached > prompt {
+		cached = prompt
+	}
+	uncached := prompt - cached
+	cacheRate := price.InputPerMillion
+	if price.HasCacheRead {
+		cacheRate = price.CacheReadPerMillion
+	}
+	return (float64(uncached)*price.InputPerMillion +
+		float64(cached)*cacheRate +
+		float64(completion)*price.OutputPerMillion) / 1_000_000
+}
+
 // NewStats returns zeroed counters.
 func NewStats() *Stats { return &Stats{} }
 
@@ -113,8 +158,13 @@ type UsageRecord struct {
 	// inflate the aggregate totals.
 	Attempt          bool    `json:"attempt,omitempty"`
 	PromptTokens     int     `json:"prompt_tokens,omitempty"`
+	CachedTokens     int     `json:"cached_tokens,omitempty"`
+	HasCachedTokens  bool    `json:"has_cached_tokens,omitempty"`
 	CompletionTokens int     `json:"completion_tokens,omitempty"`
 	TotalTokens      int     `json:"total_tokens,omitempty"`
+	Cost             float64 `json:"cost,omitempty"`
+	HasCost          bool    `json:"has_cost,omitempty"`
+	CostEstimated    bool    `json:"cost_estimated,omitempty"`
 	LatencyMs        int64   `json:"latency_ms,omitempty"`
 	HasLatency       bool    `json:"has_latency,omitempty"`
 	TokensPerSecond  float64 `json:"tokens_per_second,omitempty"`
@@ -129,11 +179,32 @@ func (rec *UsageRecord) setUsage(u *core.Usage) {
 		return
 	}
 	rec.PromptTokens = u.PromptTokens
+	rec.CachedTokens = u.CachedTokens
+	rec.HasCachedTokens = true
 	rec.CompletionTokens = u.CompletionTokens
 	rec.TotalTokens = u.TotalTokens
 	if rec.TotalTokens == 0 {
 		rec.TotalTokens = rec.PromptTokens + rec.CompletionTokens
 	}
+}
+
+// priceUsage copies a price snapshot and its computed cost onto the record.
+func (rec *UsageRecord) priceUsage(price ModelPrice, known bool) {
+	if rec == nil {
+		return
+	}
+	if !known {
+		rec.Cost = 0
+		rec.HasCost = false
+		return
+	}
+	rec.Cost = CostForUsage(price, &core.Usage{
+		PromptTokens:     rec.PromptTokens,
+		CompletionTokens: rec.CompletionTokens,
+		TotalTokens:      rec.TotalTokens,
+		CachedTokens:     rec.CachedTokens,
+	})
+	rec.HasCost = true
 }
 
 // ---------------------------------------------------------------------------
@@ -190,20 +261,25 @@ func derivedSessionID(req *core.ChatRequest) string {
 // usageBucket is one (time scope, client, realm, account, model) accumulator.
 // The JSON tags are short because the number of buckets grows with time.
 type usageBucket struct {
-	Scope   string  `json:"s"` // "h:2006-01-02T15" (hour) or "d:2006-01-02" (day)
-	Client  string  `json:"c"`
-	Realm   string  `json:"r"`
-	Account string  `json:"a"`
-	Model   string  `json:"m"`
-	Req     int64   `json:"q"`  // requests, failures included
-	Err     int64   `json:"e"`  // failed attempts
-	PT      int64   `json:"p"`  // prompt tokens
-	CT      int64   `json:"ct"` // completion tokens
-	TT      int64   `json:"t"`  // total tokens
-	LatMs   int64   `json:"l"`  // latency sum, milliseconds
-	LatN    int64   `json:"ln"` // latency samples
-	TPS     float64 `json:"v"`  // tokens-per-second sum
-	TPSN    int64   `json:"vn"` // tokens-per-second samples
+	Scope     string  `json:"s"` // "h:2006-01-02T15" (hour) or "d:2006-01-02" (day)
+	Client    string  `json:"c"`
+	Realm     string  `json:"r"`
+	Account   string  `json:"a"`
+	Model     string  `json:"m"`
+	Req       int64   `json:"q"`  // requests, failures included
+	Err       int64   `json:"e"`  // failed attempts
+	PT        int64   `json:"p"`  // prompt tokens
+	Cached    int64   `json:"ch"` // cached prompt tokens
+	HasCached bool    `json:"hc,omitempty"`
+	CT        int64   `json:"ct"` // completion tokens
+	TT        int64   `json:"t"`  // total tokens
+	Cost      float64 `json:"$"`  // accounting currency, CNY
+	HasCost   bool    `json:"hcst,omitempty"`
+	Unpriced  int64   `json:"u,omitempty"`
+	LatMs     int64   `json:"l"`  // latency sum, milliseconds
+	LatN      int64   `json:"ln"` // latency samples
+	TPS       float64 `json:"v"`  // tokens-per-second sum
+	TPSN      int64   `json:"vn"` // tokens-per-second samples
 }
 
 func (b *usageBucket) key() string {
@@ -225,8 +301,13 @@ func (b *usageBucket) mergeFrom(src *usageBucket) {
 	b.Req += src.Req
 	b.Err += src.Err
 	b.PT += src.PT
+	b.Cached += src.Cached
+	b.HasCached = b.HasCached || src.HasCached
 	b.CT += src.CT
 	b.TT += src.TT
+	b.Cost += src.Cost
+	b.HasCost = b.HasCost || src.HasCost
+	b.Unpriced += src.Unpriced
 	b.LatMs += src.LatMs
 	b.LatN += src.LatN
 	b.TPS += src.TPS
@@ -354,10 +435,14 @@ func (s *UsageStore) Add(now time.Time, client, realm, account, model string, d 
 type UsageDelta struct {
 	PromptTokens     int64
 	HasPromptTokens  bool
+	CachedTokens     int64
+	HasCachedTokens  bool
 	CompletionTokens int64
 	HasCompletion    bool
 	TotalTokens      int64
 	HasTotal         bool
+	Cost             float64
+	HasCost          bool
 	LatencyMs        int64
 	HasLatency       bool
 	TokensPerSecond  float64
@@ -388,8 +473,18 @@ func (s *UsageStore) addLocked(now time.Time, client, realm, account, model stri
 	if d.HasPromptTokens {
 		b.PT += d.PromptTokens
 	}
+	if d.HasCachedTokens {
+		b.Cached += d.CachedTokens
+		b.HasCached = true
+	}
 	if d.HasCompletion {
 		b.CT += d.CompletionTokens
+	}
+	if d.HasCost {
+		b.Cost += d.Cost
+		b.HasCost = true
+	} else if ok && (d.PromptTokens > 0 || d.CompletionTokens > 0 || d.CachedTokens > 0) {
+		b.Unpriced++
 	}
 	if d.HasTotal {
 		b.TT += d.TotalTokens
@@ -447,10 +542,14 @@ func (s *UsageStore) Record(rec UsageRecord) {
 	d := UsageDelta{
 		PromptTokens:     int64(rec.PromptTokens),
 		HasPromptTokens:  true,
+		CachedTokens:     int64(rec.CachedTokens),
+		HasCachedTokens:  rec.HasCachedTokens,
 		CompletionTokens: int64(rec.CompletionTokens),
 		HasCompletion:    true,
 		TotalTokens:      int64(rec.TotalTokens),
 		HasTotal:         rec.TotalTokens != 0,
+		Cost:             rec.Cost,
+		HasCost:          rec.HasCost,
 		LatencyMs:        latencyMs,
 		HasLatency:       hasLatency,
 		TokensPerSecond:  tps,
@@ -694,8 +793,14 @@ type UsageTotals struct {
 	Requests           int64    `json:"requests"`
 	Failures           int64    `json:"failures"`
 	PromptTokens       int64    `json:"prompt_tokens"`
+	CachedTokens       int64    `json:"cached_tokens"`
+	HasCachedTokens    bool     `json:"has_cached_tokens"`
 	CompletionTokens   int64    `json:"completion_tokens"`
 	TotalTokens        int64    `json:"total_tokens"`
+	Cost               float64  `json:"cost"`
+	HasCost            bool     `json:"has_cost"`
+	CostEstimated      bool     `json:"cost_estimated,omitempty"`
+	UnpricedRequests   int64    `json:"unpriced_requests,omitempty"`
 	AvgLatencyMs       *float64 `json:"avg_latency_ms,omitempty"`
 	AvgTokensPerSecond *float64 `json:"avg_tokens_per_second,omitempty"`
 }
@@ -718,13 +823,17 @@ type UsageBucket struct {
 
 // UsagePoint is one time-slice of the series.
 type UsagePoint struct {
-	T                string `json:"t"`
-	Scope            string `json:"scope,omitempty"` // "hour" | "day"
-	PromptTokens     int64  `json:"prompt_tokens"`
-	CompletionTokens int64  `json:"completion_tokens"`
-	Requests         int64  `json:"requests"`
-	Failures         int64  `json:"failures,omitempty"`
-	TotalTokens      int64  `json:"total_tokens,omitempty"`
+	T                string  `json:"t"`
+	Scope            string  `json:"scope,omitempty"` // "hour" | "day"
+	PromptTokens     int64   `json:"prompt_tokens"`
+	CachedTokens     int64   `json:"cached_tokens,omitempty"`
+	HasCachedTokens  bool    `json:"has_cached_tokens,omitempty"`
+	CompletionTokens int64   `json:"completion_tokens"`
+	Requests         int64   `json:"requests"`
+	Failures         int64   `json:"failures,omitempty"`
+	TotalTokens      int64   `json:"total_tokens,omitempty"`
+	Cost             float64 `json:"cost,omitempty"`
+	HasCost          bool    `json:"has_cost,omitempty"`
 }
 
 // UsageReport is the whole /panel/api/usage payload.
@@ -900,8 +1009,13 @@ func (a *usageAgg) add(b *usageBucket) {
 	a.Requests += b.Req
 	a.Failures += b.Err
 	a.PromptTokens += b.PT
+	a.CachedTokens += b.Cached
+	a.HasCachedTokens = a.HasCachedTokens || b.HasCached
 	a.CompletionTokens += b.CT
 	a.TotalTokens += b.TT
+	a.Cost += b.Cost
+	a.HasCost = a.HasCost || b.HasCost
+	a.UnpricedRequests += b.Unpriced
 	a.latSum += b.LatMs
 	a.latN += b.LatN
 	a.tpsSum += b.TPS
@@ -970,10 +1084,14 @@ func seriesPoints(m map[string]*usageAgg, prefix, scope string) []UsagePoint {
 			T:                t.Format(time.RFC3339),
 			Scope:            scope,
 			PromptTokens:     agg.PromptTokens,
+			CachedTokens:     agg.CachedTokens,
+			HasCachedTokens:  agg.HasCachedTokens,
 			CompletionTokens: agg.CompletionTokens,
 			Requests:         agg.Requests,
 			Failures:         agg.Failures,
 			TotalTokens:      agg.TotalTokens,
+			Cost:             agg.Cost,
+			HasCost:          agg.HasCost,
 		})
 	}
 	return out

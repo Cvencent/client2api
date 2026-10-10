@@ -104,6 +104,31 @@ func TestChatRoutesToCorrectProvider(t *testing.T) {
 	}
 }
 
+func TestChatReportsUnexpectedEOFWhenUpstreamCutsStreamBeforeDone(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n"))
+	}))
+	defer srv.Close()
+	c := testClient(t)
+	c.cfg.Providers[0].BaseURL = srv.URL
+	c.cfg.Providers = c.cfg.Providers[:1]
+	c.pool.reload(c.buildCredentials())
+	req := &core.ChatRequest{Model: "groq/llama-3.3-70b-versatile", Messages: []core.Message{{Role: "user", Content: "ping"}}, Stream: true}
+	req.SetAccountAcquirer(func(string) (func(), error) { return func() {}, nil })
+	stream, err := c.Chat(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	defer stream.Close()
+	_, _, _, _, _, err = drainStream(stream)
+	if err == nil {
+		t.Fatal("cut stream was reported as a successful completion")
+	}
+	if !strings.Contains(err.Error(), "ended before a terminal frame") {
+		t.Fatalf("error = %v", err)
+	}
+}
 func TestChatUnknownProvider(t *testing.T) {
 	c := testClient(t)
 	req := &core.ChatRequest{

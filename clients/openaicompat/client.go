@@ -38,6 +38,10 @@ type Client struct {
 	pool   *providerPool
 	models *struct{}
 	now    func() time.Time
+	// affinity pins a conversation to the provider account that served it.
+	// A provider here is one credential, so a binding keeps a repeated
+	// conversation on the upstream that already warmed its prompt cache.
+	affinity *core.Affinity
 
 	mu      sync.Mutex
 	lastErr string
@@ -52,7 +56,14 @@ func init() {
 
 // New builds the module.
 func New(deps core.Deps) (core.Client, error) {
-	c := &Client{deps: deps, now: time.Now, pool: newProviderPool(), models: &struct{}{}}
+	c := &Client{
+		deps:     deps,
+		now:      time.Now,
+		pool:     newProviderPool(),
+		models:   &struct{}{},
+		affinity: core.NewAffinity(0),
+	}
+	c.affinity.StartGC()
 	cfg, err := parseConfig(deps.Config)
 	if err != nil {
 		c.cfgErr = err
@@ -74,6 +85,10 @@ func (c *Client) ensure() {
 	}
 	if c.models == nil {
 		c.models = &struct{}{}
+	}
+	if c.affinity == nil {
+		c.affinity = core.NewAffinity(0)
+		c.affinity.StartGC()
 	}
 }
 
@@ -220,6 +235,9 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 	}
 	if err := req.AcquireAccountSlot(rec.ID); err != nil {
 		return nil, err
+	}
+	if key := core.ConversationKeyOf(req); key != "" {
+		c.affinity.Bind(key, rec.ID)
 	}
 	core.NoteServedBy(req, rec.ID)
 	stream, err := c.doChat(ctx, prov, rec.ID, body)

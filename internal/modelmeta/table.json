@@ -190,7 +190,7 @@
         "_note": "The international realm accepts ONLY [high]; sending low/max there is an HTTP 400. Kept realm-split on purpose."
       },
       "gpt-6-astra": {
-        "context_length": 1050000,
+        "context_length": 1048576,
         "max_output_tokens": 128000,
         "origin": "model.json",
         "efforts_by_realm": {
@@ -199,7 +199,7 @@
         "effort_origin": "effort_catalog.go:globalEffortFallback"
       },
       "gpt-5.6-sol": {
-        "context_length": 1050000,
+        "context_length": 1048576,
         "max_output_tokens": 128000,
         "origin": "model.json",
         "efforts_by_realm": {
@@ -208,7 +208,7 @@
         "effort_origin": "effort_catalog.go:globalEffortFallback"
       },
       "gpt-5.6-terra": {
-        "context_length": 1050000,
+        "context_length": 1048576,
         "max_output_tokens": 128000,
         "origin": "model.json",
         "efforts_by_realm": {
@@ -217,7 +217,7 @@
         "effort_origin": "effort_catalog.go:globalEffortFallback"
       },
       "gpt-5.6-luna": {
-        "context_length": 1050000,
+        "context_length": 1048576,
         "max_output_tokens": 128000,
         "origin": "model.json",
         "efforts_by_realm": {
@@ -226,7 +226,7 @@
         "effort_origin": "effort_catalog.go:globalEffortFallback"
       },
       "gpt-5.5": {
-        "context_length": 1050000,
+        "context_length": 1048576,
         "max_output_tokens": 128000,
         "origin": "model.json",
         "efforts_by_realm": {
@@ -235,7 +235,7 @@
         "effort_origin": "effort_catalog.go:globalEffortFallback"
       },
       "gpt-5.4": {
-        "context_length": 1050000,
+        "context_length": 1048576,
         "max_output_tokens": 128000,
         "origin": "model.json",
         "efforts_by_realm": {

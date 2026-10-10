@@ -41,7 +41,7 @@ import (
 )
 
 // version is overridable with -ldflags "-X main.version=...".
-var version = "0.1.32"
+var version = "0.1.33"
 
 // restartHandoffEnv marks the replacement half of a panel restart.  It tells a
 // starting process to keep retrying the listen address instead of failing fast,
@@ -120,6 +120,18 @@ type modelGroupConfig struct {
 	PlatformPriorities map[string]int `json:"platform_priorities,omitempty"`
 }
 
+// builtinGPT6ModelGroups are native, lowercase GPT-6+ names that Codex expects
+// to see without a platform prefix. They route through the same equivalence
+// tables as operator-declared groups, while a config entry with the same name
+// replaces the default and an explicit empty entry suppresses it.
+var builtinGPT6ModelGroups = map[string][]string{
+	"gpt-6-astra":     {"opencode/gpt-6-astra"},
+	"gpt-6.1-sol":     {"opencode/gpt-6.1-sol"},
+	"gpt-6-sol":       {"opencode/gpt-6-sol", "openrouter/openai/gpt-6-sol"},
+	"gpt-6-luna":      {"opencode/gpt-6-luna", "openrouter/openai/gpt-6-luna"},
+	"gpt-6.1-sol-pro": {"openrouter/openai/gpt-6.1-sol-pro"},
+}
+
 // platformConfigs projects the file's platforms block onto the router's own
 // policy type.  A blank model id is dropped: it can never match an upstream id
 // and would only be a dead blacklist entry.  A missing block projects an empty
@@ -181,17 +193,27 @@ func (c *fileConfig) platformConfigsFor(clients []core.Client) map[string]core.P
 // equivalence type. Blank names and malformed member rows are ignored here;
 // the panel validates operator writes before they reach this path.
 func (c *fileConfig) modelGroups() map[string]core.ModelGroup {
-	if len(c.ModelGroups) == 0 {
-		return map[string]core.ModelGroup{}
+	rawGroups := make(map[string]modelGroupConfig, len(builtinGPT6ModelGroups)+len(c.ModelGroups))
+	for name, members := range builtinGPT6ModelGroups {
+		rawGroups[name] = modelGroupConfig{Members: members}
+	}
+	configuredNames := make(map[string]struct{}, len(c.ModelGroups))
+	for name, group := range c.ModelGroups {
+		key := strings.ToLower(strings.TrimSpace(name))
+		if key == "" {
+			continue
+		}
+		configuredNames[key] = struct{}{}
+		rawGroups[key] = group
 	}
 
-	rawNames := make([]string, 0, len(c.ModelGroups))
-	for rawName := range c.ModelGroups {
+	rawNames := make([]string, 0, len(rawGroups))
+	for rawName := range rawGroups {
 		rawNames = append(rawNames, rawName)
 	}
 	sort.Strings(rawNames)
 
-	out := make(map[string]core.ModelGroup, len(c.ModelGroups))
+	out := make(map[string]core.ModelGroup, len(rawGroups))
 	for _, rawName := range rawNames {
 		name := strings.ToLower(strings.TrimSpace(rawName))
 		if name == "" {
@@ -201,8 +223,9 @@ func (c *fileConfig) modelGroups() map[string]core.ModelGroup {
 			continue
 		}
 
-		raw := c.ModelGroups[rawName]
-		group := core.ModelGroup{}
+		raw := rawGroups[rawName]
+		_, configured := configuredNames[name]
+		group := core.ModelGroup{Builtin: !configured}
 		seenMembers := make(map[string]struct{}, len(raw.Members))
 		for _, rawMember := range raw.Members {
 			client, model, ok := strings.Cut(strings.TrimSpace(rawMember), "/")

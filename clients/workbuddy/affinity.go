@@ -14,7 +14,11 @@ package workbuddy
 // the table is fed, the pick path that consults it, and the three methods that
 // make Client a core.ConversationBinder.
 
-import "client2api/internal/core"
+import (
+	"strings"
+
+	"client2api/internal/core"
+)
 
 // usableFor is the liveness predicate the affinity table consults before it
 // hands back a binding.
@@ -128,7 +132,10 @@ func conversationKey(req *core.ChatRequest, meta ChatMeta) string {
 	if req == nil {
 		return meta.ConversationID
 	}
-	if k := core.ConversationKeyOf(req); k != "" {
+	if id := strings.TrimSpace(req.ConversationID); id != "" {
+		return id
+	}
+	if k := core.ConversationKey(req.Options, req.User); k != "" {
 		return k
 	}
 	if meta.ConversationID != "" {

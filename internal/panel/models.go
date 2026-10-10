@@ -19,15 +19,29 @@ const (
 )
 
 type modelInfo struct {
-	ID                string         `json:"id"`
-	OwnedBy           string         `json:"owned_by"`
-	Extra             map[string]any `json:"extra"`
-	ContextLength     int64          `json:"context_length,omitempty"`
-	MaxOutputTokens   int64          `json:"max_output_tokens,omitempty"`
-	ContextSource     string         `json:"context_source,omitempty"`
-	MaxOutputSource   string         `json:"max_output_source,omitempty"`
-	ContextEditable   bool           `json:"context_editable"`
-	MaxOutputEditable bool           `json:"max_output_editable"`
+	ID                    string         `json:"id"`
+	OwnedBy               string         `json:"owned_by"`
+	Extra                 map[string]any `json:"extra"`
+	ContextLength         int64          `json:"context_length,omitempty"`
+	MaxOutputTokens       int64          `json:"max_output_tokens,omitempty"`
+	ContextSource         string         `json:"context_source,omitempty"`
+	MaxOutputSource       string         `json:"max_output_source,omitempty"`
+	InputPerMillion       float64        `json:"input_per_million,omitempty"`
+	OutputPerMillion      float64        `json:"output_per_million,omitempty"`
+	CacheReadPerMillion   float64        `json:"cache_read_per_million,omitempty"`
+	HasPrice              bool           `json:"has_price"`
+	HasCacheRead          bool           `json:"has_cache_read"`
+	InputPriceSource      string         `json:"input_price_source,omitempty"`
+	OutputPriceSource     string         `json:"output_price_source,omitempty"`
+	CacheReadPriceSource  string         `json:"cache_read_price_source,omitempty"`
+	InputPriceDefault     float64        `json:"input_price_default,omitempty"`
+	OutputPriceDefault    float64        `json:"output_price_default,omitempty"`
+	CacheReadPriceDefault float64        `json:"cache_read_price_default,omitempty"`
+	DefaultHasPrice       bool           `json:"default_has_price"`
+	DefaultHasCacheRead   bool           `json:"default_has_cache_read"`
+	PriceEditable         bool           `json:"price_editable"`
+	ContextEditable       bool           `json:"context_editable"`
+	MaxOutputEditable     bool           `json:"max_output_editable"`
 	// ContextDefault / MaxOutputDefault is the value that would apply with no
 	// manual override (upstream value, else the official preset). It is what the
 	// row's "restore default" button writes back, and zero means unknown.
@@ -159,17 +173,31 @@ func (p *panel) modelsFor(ctx context.Context, c core.Client, refresh bool) clie
 		meta := provider.Merge(m.ID, vendor)
 		base := plain.Merge(m.ID, vendor)
 		row.Models = append(row.Models, modelInfo{
-			ID:                core.Redact(m.ID),
-			OwnedBy:           core.Redact(owned),
-			Extra:             extra,
-			ContextLength:     meta.ContextLength,
-			MaxOutputTokens:   meta.MaxOutputTokens,
-			ContextSource:     meta.SourceOf(modelmeta.FieldContextLength),
-			MaxOutputSource:   meta.SourceOf(modelmeta.FieldMaxOutputTokens),
-			ContextDefault:    base.ContextLength,
-			MaxOutputDefault:  base.MaxOutputTokens,
-			ContextEditable:   p.opts.ModelOverrides != nil,
-			MaxOutputEditable: p.opts.ModelOverrides != nil,
+			ID:                    core.Redact(m.ID),
+			OwnedBy:               core.Redact(owned),
+			Extra:                 extra,
+			ContextLength:         meta.ContextLength,
+			MaxOutputTokens:       meta.MaxOutputTokens,
+			ContextSource:         meta.SourceOf(modelmeta.FieldContextLength),
+			MaxOutputSource:       meta.SourceOf(modelmeta.FieldMaxOutputTokens),
+			InputPerMillion:       meta.InputPerMillion,
+			OutputPerMillion:      meta.OutputPerMillion,
+			CacheReadPerMillion:   meta.CacheReadPerMillion,
+			HasPrice:              meta.HasPrice,
+			HasCacheRead:          meta.HasCacheRead,
+			InputPriceSource:      meta.SourceOf(modelmeta.FieldInputPrice),
+			OutputPriceSource:     meta.SourceOf(modelmeta.FieldOutputPrice),
+			CacheReadPriceSource:  meta.SourceOf(modelmeta.FieldCacheReadPrice),
+			InputPriceDefault:     base.InputPerMillion,
+			OutputPriceDefault:    base.OutputPerMillion,
+			CacheReadPriceDefault: base.CacheReadPerMillion,
+			DefaultHasPrice:       base.HasPrice,
+			DefaultHasCacheRead:   base.HasCacheRead,
+			PriceEditable:         p.opts.ModelOverrides != nil,
+			ContextDefault:        base.ContextLength,
+			MaxOutputDefault:      base.MaxOutputTokens,
+			ContextEditable:       p.opts.ModelOverrides != nil,
+			MaxOutputEditable:     p.opts.ModelOverrides != nil,
 		})
 	}
 	return row

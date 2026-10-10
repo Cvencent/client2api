@@ -148,8 +148,14 @@ func (p *Provider) resolve(model string, vendor Meta) (Meta, bool) {
 				out = Merge(out, m)
 			}
 		}
+		if !out.HasPrice || (!out.HasCacheRead && out.SourceOf(FieldInputPrice) != SourceManual) {
+			if price, ok := DefaultPrice(p.client, model); ok {
+				out = mergePrice(out, price, SourceStatic)
+			}
+		}
+
 	}
-	if out.IsZero() && model != "" && p.contextCap > 0 {
+	if !out.Has(FieldContextLength) && model != "" && p.contextCap > 0 {
 		// Policy value: only the context window is over-estimated this way, and
 		// only when a caller explicitly asked for a cap. It is tagged
 		// SourceFallback so the operator can see it was not measured.
@@ -160,10 +166,20 @@ func (p *Provider) resolve(model string, vendor Meta) (Meta, bool) {
 		out.FieldSources[FieldContextLength] = SourceFallback
 		out.Source = strongestSource(out.FieldSources)
 	}
-	if !out.IsZero() && model != "" && p.store != nil {
+	if hasCapabilityMetadata(out) && model != "" && p.store != nil {
 		// Warm the cache so the next cold start has an answer even with no vendor
 		// and no models.dev access. Put is a no-op when nothing changed.
 		p.store.Put(model, out)
 	}
-	return out, !out.IsZero()
+	return out, hasCapabilityMetadata(out)
+}
+
+// hasCapabilityMetadata reports whether resolved data answers a capability
+// question (context, output, efforts). Price alone is useful to the accounting
+// path, but it is not a successful metadata lookup: a model with no published
+// limits must still let the caller try the next metadata source or use its own
+// default rather than treating a price row as a complete answer.
+func hasCapabilityMetadata(m Meta) bool {
+	return m.Has(FieldContextLength) || m.Has(FieldMaxOutputTokens) ||
+		m.Has(FieldEfforts) || m.Has(FieldDefaultEffort)
 }

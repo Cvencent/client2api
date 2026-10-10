@@ -195,10 +195,10 @@ func TestQwenworkChatKeepsAConversationOnOneAccount(t *testing.T) {
 	}
 }
 
-// TestQwenworkChatWithoutAConversationKeyStillRotates guards the opt-in half:
-// a request that names no conversation must behave exactly as before, and must
-// leave the table empty.
-func TestQwenworkChatWithoutAConversationKeyStillRotates(t *testing.T) {
+// TestQwenworkChatWithoutAConversationKeyUsesContentFallback pins the new
+// default for every platform: a request that names no conversation derives a
+// stable key from the first user turn and stays on the account it warmed.
+func TestQwenworkChatWithoutAConversationKeyUsesContentFallback(t *testing.T) {
 	rt := &fakeTransport{}
 	rt.handler = func(_ int, req *http.Request, _ string) (*http.Response, error) {
 		return fakeResponse(req, http.StatusOK, chatSSEFrames), nil
@@ -216,11 +216,11 @@ func TestQwenworkChatWithoutAConversationKeyStillRotates(t *testing.T) {
 		stream.Close()
 	}
 
-	if second := c.pool.find("uid:2"); second == nil || second.acct.LastUsed == 0 {
-		t.Error("an unscoped request must still rotate through the pool")
+	if second := c.pool.find("uid:2"); second == nil || second.acct.LastUsed != 0 {
+		t.Error("a repeated unscoped conversation must stay on its first account")
 	}
-	if got := c.affinity.Count(); got != 0 {
-		t.Errorf("an unscoped request left %d bindings, want 0", got)
+	if got := c.affinity.Count(); got != 1 {
+		t.Errorf("an unscoped conversation left %d bindings, want 1", got)
 	}
 }
 

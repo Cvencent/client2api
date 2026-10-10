@@ -144,6 +144,25 @@ enable/disable, test and refresh providers. Each account is one provider row:
 The API key is never returned to the panel; account records carry only the
 source, base URL, model list and in-flight count.
 
+## Conversation stickiness
+
+Both halves of this module keep a conversation on the credential that first
+served it. The legacy client pins a qualified-model conversation to its one
+provider row; a dynamic `sources.<id>` relay pins the conversation to the key
+that warmed the upstream prompt cache. The key comes from the usual spellings
+(`conversation_id` / `conversationId` / `prompt_cache_key` / the request user),
+and falls back to `core.DeriveConversationKey` so a client that sends no id at
+all still stays put instead of rotating and re-billing the whole prefix. A
+binding is ignored while its source is disabled, its key is disabled or cooling
+down, or the key's scanned catalogue does not advertise the requested model, so
+stickiness never serves a parked key. `session_sticky.enabled` / `ttl` /
+`gc_interval` retune it live.
+
+A streaming relay that drops the connection before a terminal frame (`[DONE]`
+or a chunk carrying `finish_reason`) is reported as an upstream failure rather
+than a clean end of stream, so a truncated answer fails over to another key
+instead of being handed to the caller as a successful completion.
+
 ## What this module deliberately does not do
 
 - It does not ship, install or supervise OmniRoute.  The button connects to a

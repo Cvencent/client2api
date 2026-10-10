@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -400,6 +401,7 @@ func TestErrorBodiesCarryTheReferenceCodeVocabulary(t *testing.T) {
 		{"quota", core.Fail("t", "acct", core.FailureQuota, 429, errFake("credits exhausted")), 429, "quota_exhausted"},
 		{"rejected credential", core.Fail("t", "acct", core.FailureAuth, 401, errFake("bad token")), 401, "account_auth_failed"},
 		{"content block", core.Fail("t", "acct", core.FailureContentBlocked, 400, errFake("content_blocked")), 400, "content_blocked"},
+		{"context window exceeded", core.Fail("t", "acct", core.FailureContextWindow, 400, errFake("prompt too long")), 400, "context_window_exceeded"},
 		{"unclassified", errFake("boom"), http.StatusBadGateway, "upstream_error"},
 	}
 	for _, tc := range cases {
@@ -421,6 +423,20 @@ func TestErrorBodiesCarryTheReferenceCodeVocabulary(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("context window keeps the invalid-request error type", func(t *testing.T) {
+		err := core.Fail("t", "acct", core.FailureContextWindow, http.StatusBadRequest,
+			errFake("upstream prompt_too_long"))
+		srv := newTestServer(t, &testClient{name: "t", chatErr: err}, NewStats(), NewUsageStore(10))
+		rec := chat(t, srv, bufferedBody)
+		var got apiErrorEnvelope
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatalf("decode %q: %v", rec.Body.String(), err)
+		}
+		if got.Error.Type != "invalid_request_error" {
+			t.Errorf("error.type = %q, want invalid_request_error", got.Error.Type)
+		}
+	})
 
 	// The vendor's numeric business code is not a wire code: it travels inside
 	// message, which is the only place the reference keeps it too.
@@ -819,7 +835,10 @@ func TestChatPublishesPlatformAlertAfterThreeFailedRounds(t *testing.T) {
 	})
 
 	for i := 0; i < 3; i++ {
-		if rec := chat(t, srv, bufferedBody); rec.Code != http.StatusOK {
+		// Each round is a separate conversation, or the platform stickiness
+		// introduced for prompt-cache reuse would correctly keep alpha out.
+		body := strings.Replace(bufferedBody, `"hi"`, fmt.Sprintf(`"round-%d"`, i), 1)
+		if rec := chat(t, srv, body); rec.Code != http.StatusOK {
 			t.Fatalf("request %d status = %d, body %s", i+1, rec.Code, rec.Body.String())
 		}
 	}

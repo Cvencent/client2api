@@ -37,8 +37,8 @@ func TestRecentCallsShowTheReasoningEffort(t *testing.T) {
 	if h := recentHeaderCells(t, src); h <= 12 {
 		t.Errorf("最近调用只有 %d 列，思考强度这一列没加上", h)
 	}
-	if body := poolStatsFuncBody(t, src, "renderRecentRows"); !strings.Contains(body, `colspan="13"`) {
-		t.Error("空表的 colspan 没有从 12 跟到 13")
+	if body := poolStatsFuncBody(t, src, "renderRecentRows"); !strings.Contains(body, `colspan="16"`) {
+		t.Error("空表的 colspan 没有从 13 跟到 16")
 	}
 }
 
