@@ -9,6 +9,7 @@
     "gpt-4o": "trae/custom_model_gpt-5"
   },
   "disabled": [],
+  "sources": {},
   "platforms": {
     "zcode": {
       "priority": 10,

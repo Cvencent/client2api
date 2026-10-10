@@ -52,7 +52,7 @@ func checkinCapWiring(t *testing.T, src string) []string {
 	}
 
 	// 3. 客户端级入口读客户端级位：有签到能力就去试，而不是按「现在有没有按钮」拒绝。
-	if !strings.Contains(bulkFn, `if (!caps.checkin) return toast(CUR + " 没有签到能力", "err");`) {
+	if !strings.Contains(bulkFn, `if (!caps.checkin) return toast(`) {
 		miss = append(miss, "bulk 的签到分支没有按客户端级的 checkin 判断")
 	}
 	if !strings.Contains(scan, "if (!capsOf(n).checkin) return;") {

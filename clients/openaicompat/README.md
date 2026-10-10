@@ -1,4 +1,11 @@
-# openai-compat
+# onmiRoute / OpenAI-compatible relay transport
+
+The legacy module retains the routing ID `openai-compat`, configuration and
+account store; the panel displays it as `onmiRoute`. This package also registers
+the dynamic source factory: top-level `sources.<id>` definitions create
+independent live platforms with their own multi-key account pools and persisted
+`GET /models` catalogues. See the root README's custom-relay section for setup.
+New platforms use `<id>/<upstream-model>` rather than the legacy nested prefix.
 
 One module, many vendors. `openai-compat` brings the free tiers of any
 OpenAI-compatible HTTP API into the gateway as a single client. Groq, Cerebras,

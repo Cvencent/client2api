@@ -21,11 +21,57 @@ One OpenAI-compatible gateway in front of sixteen AI backends:
 | `raccoon/…` | Raccoon | SenseTime Raccoon Work |
 | `openrouter/…` | OpenRouter | OpenRouter (openrouter.ai) — multi-vendor router whose ids contain a slash; free models only by default (`free_only`) |
 | `opencode/…` | OpenCode Zen | OpenCode Zen (opencode.ai) — one OpenAI-shaped façade in front of Anthropic-, Google- and OpenAI-native models |
-| `openai-compat/…` | OpenAI-compatible sources | One config-driven module over many OpenAI-shaped free tiers: Groq, Cerebras, SiliconFlow, Mistral, NVIDIA NIM, Together, Fireworks, DeepInfra, Chutes, HuggingFace; route as `openai-compat/<provider>/<model>` |
+| `openai-compat/…` | onmiRoute | Legacy compatible sources and the local OmniRoute bridge; existing `openai-compat/<provider>/<model>` routes remain valid |
+| `<source-id>/…` | Custom relay | Hot-defined OpenAI-compatible platforms, each with its own API root, API-key pool, model scan and routing policies |
 
 Everything is served from **one** HTTP surface — `POST /v1/chat/completions`,
 `POST /v1/responses`, `GET /v1/models`, `GET /v1/status`, `GET /healthz`, plus a
 web panel at `/panel/`.
+
+## Custom Relay Platforms
+
+In **Platform Configuration**, select **Add Relay**, set a unique platform ID,
+display name and API root (for example `https://api.example.com/v1`), and
+optionally provide the first API Key. Creation, editing, disabling and removal
+take effect without restarting. Additional keys are added through that
+platform's **Account Pool**. **Scan Models** queries authenticated `GET /models`
+for each enabled key and saves the union catalogue. The account table shows
+which models each key can use; failed scans retain the last successful result.
+If the API root changes, scan again to populate its new catalogue.
+
+```json
+{
+  "sources": {
+    "my-relay": {
+      "label": "My relay",
+      "base_url": "https://api.example.com/v1",
+      "max_tokens_field": "max_tokens",
+      "disabled": false
+    }
+  },
+  "platforms": {
+    "my-relay": {
+      "priority": -10,
+      "max_in_flight": 4,
+      "max_in_flight_per_account": 2
+    }
+  }
+}
+```
+
+API roots must use HTTP(S); include the service's version prefix when needed.
+`max_tokens_field` accepts `max_tokens` or `max_completion_tokens`. IDs use
+lowercase ASCII letters, digits and hyphens, start with a letter, and cannot
+reuse a built-in platform or reserved directory name. Display names can change
+without changing routing IDs. Call `my-relay/<upstream-model>` using the
+gateway's inbound Key, or use an unqualified model/model group with the existing
+platform and account priorities. Upstream IDs containing `/` are preserved.
+
+Keys and their scanned model lists live in `data/my-relay/accounts.json`, not
+the source definition. Instance backup/restore includes both. Removing a source
+retains its account file; re-adding the same ID and API root restores that pool.
+The existing `clients.openai-compat` configuration and data remain supported;
+the panel displays that legacy module as **onmiRoute**.
 
 Cline forwards declared tools when `tool_choice` is omitted or `null`, using
 the upstream's default automatic selection. Only an explicit `"none"` suppresses
@@ -42,7 +88,7 @@ HTTP 429 endpoint outages, are classified as upstream failures.
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-Current version: **0.1.31**. Full history: [CHANGELOG.md](CHANGELOG.md).
+Current version: **0.1.32**. Full history: [CHANGELOG.md](CHANGELOG.md).
 
 ### Recent highlights (0.1.26 - 0.1.29)
 
@@ -396,7 +442,13 @@ qualified id is not rescued -- there the 404 is the honest answer.
 ## The Responses API
 
 `POST /v1/responses` serves the same models as `/v1/chat/completions` over the
-OpenAI Responses wire format. It exists for one reason: **Codex CLI no longer
+OpenAI Responses wire format. OpenCode providers using `@ai-sdk/openai-compatible`
+use `/v1/chat/completions`; providers using the Responses model from
+`@ai-sdk/openai` use `/v1/responses`. Both use a base URL ending in `/v1`.
+The Chat stream identifies the assistant in its first chunk and omits unset
+roles in subsequent deltas, including tool, finish and usage chunks.
+
+The Responses endpoint was added because **Codex CLI no longer
 speaks Chat Completions.** Its `WireApi` enum has a single variant, `Responses`,
 and `wire_api = "responses"` is the only value a provider block may name — so an
 endpoint that only implements Chat Completions makes Codex fail at the first
@@ -461,6 +513,10 @@ tool dispatch and assistant-message finalisation, so a stream that only emits
 deltas shows text and never runs a tool. A stream that breaks mid-flight emits
 `response.failed` rather than hanging.
 Items retain their IDs and indexes through deltas, `.done`, and final output.
+Every SSE payload carries an increasing `sequence_number`, including failures.
+Output text always includes `text` and `annotations` (even `""` and `[]`), and
+function-call items always include their `arguments` string, so strict SDK
+validators can read buffered replies and terminal items.
 Token-limit termination sets `status = "incomplete"` and
 `incomplete_details.reason = "max_output_tokens"` in both response modes;
 streaming emits the terminal `response.incomplete` event.

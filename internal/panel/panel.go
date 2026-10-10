@@ -207,6 +207,7 @@ func New(opts Options) http.Handler {
 	api("/panel/api/usage/save", p.handleUsageSave)
 	api("/panel/api/alerts", p.handleAlerts)
 	api("/panel/api/config", p.handleConfig)
+	api("/panel/api/sources/", p.handleSource)
 	// The whole-instance snapshot: the platform routing policy plus every
 	// account credential, so a pool can be moved between machines.  GET
 	// exports, POST restores.

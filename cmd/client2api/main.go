@@ -41,7 +41,7 @@ import (
 )
 
 // version is overridable with -ldflags "-X main.version=...".
-var version = "0.1.31"
+var version = "0.1.32"
 
 // restartHandoffEnv marks the replacement half of a panel restart.  It tells a
 // starting process to keep retrying the listen address instead of failing fast,
@@ -58,15 +58,16 @@ const restartHandoffEnv = "CLIENT2API_RESTART_HANDOFF"
 // ---------------------------------------------------------------------------
 
 type fileConfig struct {
-	Listen      string                      `json:"listen"`
-	APIKey      string                      `json:"api_key"`
-	DataDir     string                      `json:"data_dir"`
-	Proxy       string                      `json:"proxy"`
-	Aliases     map[string]string           `json:"aliases"`
-	Disabled    []string                    `json:"disabled"`
-	Platforms   map[string]platformConfig   `json:"platforms"`
-	ModelGroups map[string]modelGroupConfig `json:"model_groups"`
-	Clients     map[string]json.RawMessage  `json:"clients"`
+	Listen      string                       `json:"listen"`
+	APIKey      string                       `json:"api_key"`
+	DataDir     string                       `json:"data_dir"`
+	Proxy       string                       `json:"proxy"`
+	Aliases     map[string]string            `json:"aliases"`
+	Disabled    []string                     `json:"disabled"`
+	Platforms   map[string]platformConfig    `json:"platforms"`
+	ModelGroups map[string]modelGroupConfig  `json:"model_groups"`
+	Clients     map[string]json.RawMessage   `json:"clients"`
+	Sources     map[string]core.SourceConfig `json:"sources,omitempty"`
 
 	Schedule      scheduleConfig      `json:"schedule"`
 	Prompt        promptConfig        `json:"prompt"`
@@ -1155,6 +1156,11 @@ func run() error {
 		loaded++
 		logger.Printf("[%s] loaded", name)
 	}
+	sourceDeps := core.Deps{DataDir: cfg.DataDir, HTTPClient: httpClient, Proxy: cfg.Proxy, Guard: guard,
+		Logf: func(format string, args ...any) { logger.Printf("[sources] "+format, args...) }}
+	if err := registry.ReconcileSources(cfg.Sources, sourceDeps); err != nil {
+		return err
+	}
 	for alias, target := range cfg.Aliases {
 		registry.AddAlias(alias, target)
 		logger.Printf("alias %s -> %s", alias, target)
@@ -1272,6 +1278,9 @@ func run() error {
 			return err
 		}
 		next.applyDefaults()
+		if err := registry.ReconcileSources(next.Sources, sourceDeps); err != nil {
+			return err
+		}
 		live.Store(next.liveSnapshot())
 		n := core.ApplyLive(registry, next.liveSettings())
 		// Routing policy is hot too: a platform's priority or blacklist must
@@ -1618,6 +1627,17 @@ func loadConfigAt(path, ver string, create bool) (*fileConfig, bool, error) {
 	}
 	if err := json.Unmarshal(b, cfg); err != nil {
 		return nil, false, fmt.Errorf("%s: %w", path, err)
+	}
+	var rawSections map[string]json.RawMessage
+	if err := json.Unmarshal(b, &rawSections); err != nil {
+		return nil, false, err
+	}
+	if raw, ok := rawSections["sources"]; ok {
+		sources, err := core.ParseSources(raw)
+		if err != nil {
+			return nil, false, fmt.Errorf("%s: %w", path, err)
+		}
+		cfg.Sources = sources
 	}
 	cfg.applyEnv()
 	return cfg, false, nil

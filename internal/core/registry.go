@@ -69,10 +69,12 @@ func Build(name string, deps Deps) (Client, error) {
 // Registry holds the live module instances and resolves a requested model name
 // to (module, upstream model name).
 type Registry struct {
-	mu      sync.RWMutex
-	clients map[string]Client
-	order   []string
-	aliases map[string]string // "alias" -> "client/model"
+	sourceMu sync.Mutex
+	sources  map[string]SourceConfig
+	mu       sync.RWMutex
+	clients  map[string]Client
+	order    []string
+	aliases  map[string]string // "alias" -> "client/model"
 	// modelGroups carries operator-declared equivalent model members and
 	// optional per-group platform priorities.  modelGroupByLookup maps the
 	// group name and each member's display/canonical spelling to the group.

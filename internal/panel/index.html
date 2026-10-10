@@ -1086,7 +1086,7 @@ button.primary:active:not(:disabled) { filter: brightness(.94); }
    才是模型清单。模型动辄几百个，给清单固定高度并内部滚动，页面本身不跟着疯长。 */
 .pfplat { border: 1px solid var(--line-soft); border-radius: 9px; margin-bottom: 10px; overflow: hidden; }
 .pfhead { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; padding: 9px 12px; background: var(--surface-2); }
-.pfhead .pfname { font-weight: 600; font-size: 13px; min-width: 96px; }
+.pfhead .pfname { font-weight: 600; font-size: 13px; min-width: 96px; max-width: 100%; overflow-wrap: anywhere; }
 .pfSchedToggle { white-space: nowrap; }
 .pfSchedToggle[aria-expanded="true"] { border-color: var(--accent); color: var(--accent-text); }
 .pfSchedCount { color: var(--ink-3); font-size: 11px; }
@@ -1313,6 +1313,7 @@ input[type=checkbox] { width: 14px; height: 14px; padding: 0; accent-color: var(
 /* 窄屏下保存条的提示会被挤成两三行、按钮也被压扁；改成提示在上、按钮整行铺开。 */
 @media (max-width: 760px) {
   .savebar { flex-wrap: wrap; gap: 8px; padding: 10px 12px; }
+  #view-platforms .savebar { position: static; }
   .savebar > .hint { flex: 1 1 100%; font-size: 12px; }
   .savebar > button { flex: 1 1 100%; }
 }
@@ -2181,6 +2182,7 @@ details.cfg summary:hover, details.adv summary:hover { color: var(--accent-text)
           <h3>平台路由配置 <span class="hint">按平台设置路由优先级、模型黑名单、并发与最低余额；WorkBuddy 还带账号池治理</span></h3>
           <span class="grow"></span>
           <span class="note" id="pfNote">-</span>
+          <button class="xs" id="btnSourceAdd" type="button">添加中转站</button>
           <button class="xs" id="btnPfExport">导出</button>
           <button class="xs" id="btnPfImport">导入</button>
         </header>
@@ -2225,7 +2227,7 @@ details.cfg summary:hover, details.adv summary:hover { color: var(--accent-text)
           <button class="xs" id="btnBundleImport">从文件恢复</button>
         </header>
         <div class="pad">
-          <p class="hint">包含整份配置（监听地址 / 入站 Key / 数据目录 / 代理、账号池与冷却策略、会话粘性、提示词、模型别名、定时任务、平台路由、模块配置、面板设置）与所有平台的账号凭据；不含用量、日志与任务运行历史。导入会把配置合并进本机配置、凭据覆盖同名文件（覆盖前先备份到 data/backups/），能热加载的部分立即生效，监听 / 数据目录 / 代理 / 停用客户端 / 模块配置与账号需重启进程。文件内是明文凭据与明文 Key，请妥善保管。</p>
+          <p class="hint">包含整份配置（监听地址 / 入站 Key / 数据目录 / 代理、账号池与冷却策略、会话粘性、提示词、模型别名、定时任务、平台路由、自定义中转站、模块配置、面板设置）与所有平台的账号凭据；不含用量、日志与任务运行历史。导入会把配置合并进本机配置、凭据覆盖同名文件（覆盖前先备份到 data/backups/）。自定义中转站及其账号可以热加载；监听 / 数据目录 / 代理 / 停用客户端 / 模块配置及其他平台账号需重启进程。文件内是明文凭据与明文 Key，请妥善保管。</p>
         </div>
       </div>
     </section>
@@ -2317,6 +2319,22 @@ details.cfg summary:hover, details.adv summary:hover { color: var(--accent-text)
       <button class="xs primary" id="btnVcClose">关闭</button>
     </footer>
   </div>
+</div>
+
+<div class="veil" id="sourceVeil" hidden>
+  <form class="dlg" id="sourceForm">
+    <header><h3 id="sourceTitle">添加中转站</h3></header>
+    <div class="body">
+      <div class="fld"><label class="lb" for="sourceID">平台 ID *</label><input id="sourceID" required pattern="[a-z][a-z0-9\-]{0,63}" maxlength="64" placeholder="my-relay" autocomplete="off" spellcheck="false"></div>
+      <div class="fld"><label class="lb" for="sourceLabel">平台名称</label><input id="sourceLabel" maxlength="120" placeholder="我的中转站"></div>
+      <div class="fld"><label class="lb" for="sourceURL">API 地址 *</label><input id="sourceURL" type="url" required placeholder="https://api.example.com/v1" autocomplete="off" spellcheck="false"></div>
+      <div class="fld" id="sourceKeyField"><label class="lb" for="sourceKey">首个 API Key（可选）</label><input id="sourceKey" type="password" autocomplete="new-password" spellcheck="false"></div>
+      <div class="fld"><label class="lb" for="sourceTokens">输出上限字段</label><select id="sourceTokens"><option value="max_tokens">max_tokens</option><option value="max_completion_tokens">max_completion_tokens</option></select></div>
+      <label class="chk"><input id="sourceEnabled" type="checkbox" checked>启用平台</label>
+      <div class="state err" id="sourceError" hidden></div>
+    </div>
+    <footer><button id="btnSourceCancel" type="button">取消</button><span class="grow"></span><button class="primary" id="btnSourceSave" type="submit">保存并生效</button></footer>
+  </form>
 </div>
 
 <!-- 添加账号 -->
@@ -2661,6 +2679,111 @@ let OVER_FULL = false, BOOTING = true;
 const row = (k, v) => '<div class="row"><span class="k">' + esc(k) + '</span><span class="grow"></span><span class="v">' + esc(v) + '</span></div>';
 
 function clientInfo(n) { return SNAP.clients.find(c => c.name === n) || null; }
+let SOURCE_DEFS = {};
+function platformLabel(n) {
+  const c = clientInfo(n), source = SOURCE_DEFS[n];
+  return (source && source.label) || (c && c.label) || (n === "openai-compat" ? "onmiRoute" : n);
+}
+
+function closeSource() { hideVeil($("#sourceVeil")); $("#sourceKey").value = ""; }
+function openSource(id) {
+  const cfg = SOURCE_DEFS[id] || {};
+  $("#sourceForm").reset();
+  $("#sourceTitle").textContent = id ? "编辑中转站" : "添加中转站";
+  $("#sourceID").value = id || ""; $("#sourceID").disabled = !!id;
+  $("#sourceLabel").value = cfg.label || "";
+  $("#sourceURL").value = cfg.base_url || "";
+  $("#sourceTokens").value = cfg.max_tokens_field || "max_tokens";
+  $("#sourceEnabled").checked = !cfg.disabled;
+  $("#sourceKeyField").hidden = !!id;
+  $("#sourceError").hidden = true;
+  showVeil($("#sourceVeil"));
+  $(id ? "#sourceLabel" : "#sourceID").focus();
+}
+
+// Preserve policy edits when a source operation re-reads the platform list.
+function capturePlatformDraft() {
+  const cloneValues = el => {
+    const copy = el.cloneNode(true), original = el.querySelectorAll("input,select,textarea");
+    copy.querySelectorAll("input,select,textarea").forEach((x,i) => {
+      x.setAttribute("value", original[i].value);
+      if (original[i].checked) x.setAttribute("checked", ""); else x.removeAttribute("checked");
+    });
+    return copy.innerHTML;
+  };
+  const draft = { groups: cloneValues($("#pfGroups")), platforms: {} };
+  document.querySelectorAll("#pfBody .pfplat").forEach(p => {
+    const values = {};
+    ["pfPrio","pfMif","pfMifAcct","pfReserve"].forEach(k => { values[k] = p.querySelector("."+k).value; });
+    const models = {};
+    p.querySelectorAll(".pfm").forEach(m => { models[m.dataset.model] = m.querySelector("input").checked; });
+    const fields = {};
+    p.querySelectorAll("input[id],select[id],textarea[id]").forEach(x => { fields[x.id] = { value: x.value, checked: x.checked }; });
+    draft.platforms[p.dataset.client] = { values, models, fields, clearBlacklist: p.dataset.clearBlacklist || "", schedule: cloneValues(p.querySelector(".pfSched")), open: !p.querySelector(".pfmodels").hidden };
+  });
+  return draft;
+}
+function restorePlatformDraft(draft) {
+  if (!draft) return;
+  $("#pfGroups").innerHTML = draft.groups;
+  document.querySelectorAll("#pfBody .pfplat").forEach(p => {
+    const d = draft.platforms[p.dataset.client]; if (!d) return;
+    Object.keys(d.values).forEach(k => { p.querySelector("."+k).value = d.values[k]; });
+    p.dataset.clearBlacklist = d.clearBlacklist;
+    Object.keys(d.fields).forEach(id => { const x = document.getElementById(id); if (x) { x.value = d.fields[id].value; x.checked = d.fields[id].checked; } });
+    p.querySelectorAll(".pfm").forEach(m => { if (Object.prototype.hasOwnProperty.call(d.models, m.dataset.model)) m.querySelector("input").checked = d.models[m.dataset.model]; });
+    p.querySelector(".pfSched").innerHTML = d.schedule;
+    p.querySelector(".pfmodels").hidden = !d.open;
+    p.querySelector(".pfToggle").setAttribute("aria-expanded", String(d.open));
+    p.querySelector(".pfToggle").textContent = d.open ? "▾" : "▸";
+    pfCount(p);
+  });
+  pfSyncPrioritySchedule(); pfApply();
+}
+
+async function scanSource(id, btn) {
+  btn.disabled = true; const label = btn.textContent; btn.textContent = "扫描中…";
+  try {
+    const r = await api("/panel/api/models/refresh?client=" + encodeURIComponent(id), { method: "POST" });
+    if (!r.ok) { toast("扫描失败：" + r.err, "err"); return; }
+    const c = (r.data.clients || [])[0] || {};
+    toast(c.error ? "扫描未完成：" + c.error : "已扫描到 " + (c.models || []).length + " 个模型", c.error ? "err" : "");
+    await loadStatus(); await renderPlatforms(true);
+  } finally { btn.disabled = false; btn.textContent = label; }
+}
+
+async function saveSource(ev) {
+  ev.preventDefault();
+  const id = $("#sourceID").value.trim(), key = $("#sourceKey").value.trim();
+  const cfg = { label: $("#sourceLabel").value.trim(), base_url: $("#sourceURL").value.trim(), disabled: !$("#sourceEnabled").checked, max_tokens_field: $("#sourceTokens").value };
+  const btn = $("#btnSourceSave"), error = $("#sourceError");
+  btn.disabled = true; error.hidden = true;
+  try {
+    if (key && cfg.disabled) throw new Error("启用平台后才能添加首个 API Key");
+    const saved = await api("/panel/api/sources/" + encodeURIComponent(id), { method: "PUT", body: cfg });
+    if (!saved.ok) throw new Error(saved.err);
+    if (key) {
+      const added = await api(cbase(id) + "/accounts", { method: "POST", body: { fields: { api_key: key } } });
+      if (!added.ok) throw new Error("平台已保存，添加 Key 失败：" + added.err);
+      const scanned = await api("/panel/api/models/refresh?client=" + encodeURIComponent(id), { method: "POST" });
+      const row = ((scanned.data || {}).clients || [])[0];
+      if (!scanned.ok || (row && row.error)) toast("平台和 Key 已保存，扫描失败：" + (scanned.err || row.error), "err");
+    }
+    closeSource(); await loadStatus(); await renderPlatforms(true);
+    toast("中转站已保存并生效");
+  } catch (e) { error.hidden = false; error.textContent = e.message || String(e); }
+  finally { btn.disabled = false; }
+}
+
+async function deleteSource(id, btn) {
+  if (!confirm("删除中转站「" + platformLabel(id) + "」？账号文件会保留，重新添加同一平台 ID 可以恢复。")) return;
+  btn.disabled = true;
+  try {
+    const r = await api("/panel/api/sources/" + encodeURIComponent(id), { method: "DELETE" });
+    if (!r.ok) { toast("删除失败：" + r.err, "err"); return; }
+    await loadStatus(); await renderPlatforms(true); toast("中转站已删除");
+  } finally { btn.disabled = false; }
+}
 function capsOf(n) { const a = ACCTS[n]; if (a && a.capabilities) return a.capabilities; const c = clientInfo(n); return (c && c.capabilities) || {}; }
 
 /* ── 池 / 健康 / Redis ──────────────────────────────────────────────────
@@ -2979,7 +3102,7 @@ function renderChips() {
     const usable = groups.filter(g => { const st = accGroupStat(g); return st.enabled && st.state === "ready"; }).length;
     const label = usable + "/" + cnt;
     return '<button class="xs chip' + (n === CUR ? " on" : "") + '" data-client="' + esc(n) + '" title="' + esc((ok ? "就绪" : ((c && c.detail) || "未就绪")) + " · " + label + " 个账号可用") + '">' +
-      '<span class="pulse" style="background:' + (ok ? "var(--ok)" : "var(--bad)") + '"></span>' + esc(n) + ' <b>' + esc(label) + '</b></button>';
+      '<span class="pulse" style="background:' + (ok ? "var(--ok)" : "var(--bad)") + '"></span>' + esc(platformLabel(n)) + ' <b>' + esc(label) + '</b></button>';
   }).join("");
 }
 
@@ -3102,6 +3225,7 @@ function realmModels(n, realm) {
       if (id.slice(0, prefix.length) === prefix) out.push(id.slice(prefix.length));
       return;
     }
+    if (capsOf(n).custom_source) { out.push(id); return; }
     const i = id.indexOf(":");
     out.push(i >= 0 ? id.slice(i + 1) : id);
   });
@@ -3799,6 +3923,8 @@ function renderAccounts() {
   const rec = ACCTS[CUR] || { accounts: [], capabilities: {} };
   const list = rec.accounts || [];
   const caps = rec.capabilities || {};
+  $("#btnRefreshAll").textContent = caps.custom_source ? "扫描模型" : "刷新凭据";
+  $("#btnRefreshAll").title = caps.custom_source ? "扫描所有启用 Key 可用的模型" : "向上游续期已启用账号的登录凭据";
   const acts = caps.actions || [];
   // 余额列只在模块实现了 BalanceProvider 时存在；没有就把整列和刷新按钮一起收起
   // （和行内按钮同一条规矩：不为做不到的事留一个永远显示 "-" 的格子）。
@@ -3819,7 +3945,7 @@ function renderAccounts() {
   // 多个凭据收成一行，凭据变成它下面缩进的通道行。
   const groups = accGroups(list);
   const multi = groups.filter(g => g.rows.length > 1).length;
-  let accText = CUR + " · " + groups.length + " 个账号" + (multi ? "（其中 " + multi + " 个有多种登录方式）" : "") + (rec.unsupported ? "（该模块不支持账号管理）" : "");
+  let accText = platformLabel(CUR) + " · " + groups.length + " 个账号" + (multi ? "（其中 " + multi + " 个有多种登录方式）" : "") + (rec.unsupported ? "（该模块不支持账号管理）" : "");
   const px = poolClient(CUR);
   const hx = (px || {}).health;
   if (hx && hx.servable === false) accText += " · 不可服务" + (hx.note ? "：" + hx.note : "");
@@ -4496,10 +4622,10 @@ function bulk(kind) {
       renderAccounts(); toast("测试完成");
     })();
   } else if (kind === "checkin") {
-    if (!caps.checkin) return toast(CUR + " 没有签到能力", "err");
+    if (!caps.checkin) return toast(platformLabel(CUR) + " 没有签到能力", "err");
     checkinClient(CUR);
   } else if (kind === "balance") {
-    if (!caps.balance) return toast(CUR + " 不支持查询余额", "err");
+    if (!caps.balance) return toast(platformLabel(CUR) + " 不支持查询余额", "err");
     // 不再一次性问完全部账号：服务端每次只挑最旧的 3 个慢慢读（中间还隔着几
     // 秒），这里先留着上次的数字，再分几次回读缓存把新数字补上。
     loadBalances(CUR, true);
@@ -4527,6 +4653,12 @@ async function refreshCredentials() {
     const results = (r.data && r.data.results) || [];
     const ok = results.filter(x => x && x.ok).length;
     const failed = results.length - ok;
+    if (capsOf(n).custom_source) {
+      await loadStatus(); renderAccounts();
+      const first = results.find(x => x && !x.ok);
+      toast(first ? "模型扫描：成功 " + ok + "，失败 " + failed + "；" + first.error : "已扫描 " + ok + " 个 Key 的模型", first ? "err" : "");
+      return;
+    }
     // 余额跟着凭据一起过期：后台分批回读一遍，别让新凭据配着旧余额显示。
     loadBalances(n, true);
     if (!results.length) return toast("没有可续期的账号凭据");
@@ -5026,7 +5158,7 @@ function renderRecentRows() {
     });
     const accTip = accParts.filter(Boolean).join(" · ");
     return '<tr><td class="hint">' + esc(fmtCallTime(x.at)) + '</td>' +
-      '<td>' + esc(x.client || "-") + '</td><td>' + esc(x.model || "-") + '</td>' +
+      '<td>' + esc(platformLabel(x.client || "-")) + '</td><td>' + esc(x.model || "-") + '</td>' +
       '<td>' + (x.reasoning_effort ? '<span class="tag warn">' + esc(x.reasoning_effort) + '</span>' : '<span class="hint">-</span>') + '</td>' +
       '<td>' + sessionCell(x.session_id) + '</td>' +
       '<td title="' + esc(accTip) + '">' + esc(accName) + '</td><td>' + state + '</td>' +
@@ -5060,7 +5192,7 @@ async function renderAlerts() {
   }).catch(function () {});
   $("#alertBody").innerHTML = rows.map(function (x) {
     return '<tr><td class="hint">' + esc(fmtCallTime(x.at)) + '</td>' +
-      '<td>' + esc(x.client || "-") + '</td><td>' + esc(x.model || "-") + '</td>' +
+      '<td>' + esc(platformLabel(x.client || "-")) + '</td><td>' + esc(x.model || "-") + '</td>' +
       '<td>' + esc(x.account || "-") + '</td><td>' + esc(x.detail || x.kind || "-") + '</td>' +
       '<td class="num">' + numf(x.count || 0) + '</td></tr>';
   }).join("") || '<tr><td colspan="6" class="hint">暂无平台告警</td></tr>';
@@ -5088,7 +5220,7 @@ async function renderClients() {
   await loadAllAccounts();
   $("#pkBody").innerHTML = NAMES.map(n => {
     const c = clientInfo(n) || {}, k = capsOf(n), a = ACCTS[n] || { accounts: [] };
-    return '<tr><td><b>' + esc(n) + '</b></td>' +
+    return '<tr><td><b>' + esc(platformLabel(n)) + '</b></td>' +
       '<td>' + (c.ready ? '<span class="chip ok">ready</span>' : '<span class="chip err">no</span>') + '</td>' +
       '<td>' + yn(k.manage) + '</td><td>' + yn(k.import) + '</td><td>' + yn(k.login) + '</td>' +
       '<td>' + yn(k.sms) + '</td><td>' + yn(k.auto_login) + '</td>' +
@@ -5367,7 +5499,7 @@ async function renderModels(refresh) {
         text: haystack([c.name, m.id, nm, m.owned_by, ex]).join(" "),
         html: '<tr data-client="' + esc(c.name) + '" data-model="' + esc(m.id) + '"><td><b>' + esc(m.id) + '</b>' + (nm ? '<div class="hint">' + esc(nm) + '</div>' : '') +
           (free ? '<span class="chip ok" title="' + esc(freeTitle) + '">免费</span>' : '') + capBadges(ex) + '</td>' +
-          '<td>' + esc(c.name) + '</td>' +
+          '<td>' + esc(platformLabel(c.name)) + '</td>' +
           '<td>' + (isFallback
             ? '<span class="chip err" title="' + esc(srcTitle) + '">基线</span>'
             : '<span class="chip ok" title="' + esc(srcTitle) + '">上游</span>') + '</td>' +
@@ -5393,11 +5525,12 @@ async function renderModels(refresh) {
   // 否则每按一次「重新获取」都要重新选一遍。
   const names = cls.filter(c => (c.models || []).length).map(c => c.name).sort();
   const sel = $("#mdClient");
-  if (sel.dataset.built !== names.join(",")) {
+  const platformSignature = JSON.stringify(names.map(n => [n, platformLabel(n)]));
+  if (sel.dataset.built !== platformSignature) {
     const keep = sel.value;
-    sel.dataset.built = names.join(",");
+    sel.dataset.built = platformSignature;
     sel.innerHTML = '<option value="">全部客户端</option>' +
-      names.map(x => '<option value="' + esc(x) + '">' + esc(x) + '</option>').join("");
+      names.map(x => '<option value="' + esc(x) + '">' + esc(platformLabel(x)) + '</option>').join("");
     sel.value = names.indexOf(keep) >= 0 ? keep : "";
   }
   mdApply();
@@ -5892,7 +6025,7 @@ function pfReadModelGroups() {
   return { groups: groups };
 }
 
-async function renderPlatforms() {
+async function renderPlatforms(preserveDraft = false) {
   const [cfg, md] = await Promise.all([api("/panel/api/config"), api("/panel/api/models")]);
   const body = $("#pfBody");
   if (!cfg.ok) {
@@ -5901,6 +6034,8 @@ async function renderPlatforms() {
     return;
   }
   const c = (cfg.data && cfg.data.config) || {};
+  const draft = preserveDraft ? capturePlatformDraft() : null;
+  SOURCE_DEFS = c.sources || {};
   const policy = c.platforms || {};
   const models = {};
   ((md.data && md.data.clients) || []).forEach(x => {
@@ -5913,6 +6048,7 @@ async function renderPlatforms() {
   ((cfg.data && cfg.data.clients) || []).forEach(push);
   Object.keys(policy).forEach(push);
   Object.keys(models).forEach(push);
+  Object.keys(SOURCE_DEFS).forEach(push);
   // 号池设置住在 WorkBuddy 卡片里，OpenRouter 也复用其中三项；所以这张卡
   // 始终可达：模块没在跑或从没配过时也渲染（模型清单为空）。
   push("workbuddy");
@@ -5944,7 +6080,7 @@ async function renderPlatforms() {
     out.push('<div class="pfplat" data-client="' + esc(n) + '">');
     out.push('<div class="pfhead">' +
       '<button class="xs pfToggle" type="button" aria-expanded="false" title="展开 / 收起详情与模型清单">▸</button>' +
-      '<span class="pfname">' + esc(n) + '</span>' +
+      '<span class="pfname" title="' + esc(n) + '">' + esc(platformLabel(n)) + '</span>' +
       '<label class="sel-note">基础优先级 <input class="cfgtext pfPrio" type="number" step="1" value="' + esc(prio) + '" placeholder="0" title="可为负数；数字越小越优先，例如 -10 优先于 -5。留空使用默认 0" style="width:76px"></label>' +
       '<button class="xs pfSchedToggle" type="button" aria-expanded="false" title="按时间段覆盖基础优先级；点开编辑当前平台的分时规则">分时规则 <span class="pfSchedCount"></span></button>' +
       '<label class="sel-note" title="网关层跨账号总上限；留空默认 2，填 0 = 不限制">平台总并发 <input class="cfgtext pfMif" type="number" min="0" value="' + esc(mif) + '" placeholder="2" style="width:76px"></label>' +
@@ -5952,10 +6088,12 @@ async function renderPlatforms() {
       '<label class="sel-note" title="账号余额低于或等于这个数就暂停（不再参与路由），直到余额回升；留空或 0 = 零余额即暂停；-1 = 关闭这个保护">最低余额 <input class="cfgtext pfReserve" type="number" min="-1" value="' + esc(res) + '" placeholder="0" style="width:76px"></label>' +
       '<span class="pfcount">' + list.length + " 个模型 · 禁用 " + off.length + '</span>' +
       '<span class="grow"></span>' +
+      (SOURCE_DEFS[n] ? '<button class="xs sourceAccounts" type="button">账号池</button><button class="xs sourceScan" type="button"' + (SOURCE_DEFS[n].disabled ? ' disabled' : '') + '>扫描模型</button><button class="xs sourceEdit" type="button">编辑</button><button class="xs sourceDelete" type="button">删除</button>' : '') +
       '<button class="xs pfAll" type="button">全允许</button>' +
       '<button class="xs pfNone" type="button">全禁用</button>' +
       '</div>');
     out.push('<div class="pfmodels" hidden>');
+    if (SOURCE_DEFS[n]) out.push('<div class="hint">' + esc(n) + ' · ' + esc(SOURCE_DEFS[n].base_url) + (SOURCE_DEFS[n].disabled ? ' · 已停用' : '') + '</div>');
     // 展开区顶部是 priority_schedule 分时规则编辑器，下方才是模型清单。
     out.push(pfPriorityScheduleHTML(entry));
     if (n === "workbuddy") out.push(pfWorkBuddyPoolHTML(c));
@@ -5980,6 +6118,15 @@ async function renderPlatforms() {
   body.innerHTML = out.join("") || '<div class="hint">没有可配置的平台。</div>';
   pfApply();
   pfSyncPrioritySchedule();
+  restorePlatformDraft(draft);
+}
+
+function pfReadDisabledModels(plat, baseline) {
+  const rows = Array.from(plat.querySelectorAll(".pfm"));
+  const listed = new Set(rows.map(row => row.dataset.model.toLowerCase()));
+  const off = plat.dataset.clearBlacklist === "1" ? [] : baseline.filter(id => !listed.has(id.toLowerCase()));
+  rows.forEach(row => { if (!row.querySelector(".pfmBox").checked) off.push(row.dataset.model); });
+  return off;
 }
 
 // 过滤只改可见性，不动模型本身，所以保存时仍能读到每个平台的全量状态。
@@ -5990,7 +6137,7 @@ function pfApply() {
   const onlyOff = $("#pfOnlyOff").checked;
   document.querySelectorAll("#pfBody .pfplat").forEach(el => {
     const name = (el.dataset.client || "").toLowerCase();
-    const nameHit = q === "" || name.indexOf(q) >= 0;
+    const nameHit = q === "" || name.indexOf(q) >= 0 || platformLabel(el.dataset.client).toLowerCase().indexOf(q) >= 0;
     const localEl = el.querySelector(".pfFilter");
     const local = (localEl ? localEl.value : "").trim().toLowerCase();
     let byGlobal = 0, byLocal = 0;
@@ -6065,10 +6212,7 @@ async function savePlatforms() {
     const resRaw = resEl ? resEl.value.trim() : "";
     const res = resRaw === "" ? 0 : Number(resRaw);
     if (!Number.isInteger(res) || res < -1) { bad = name; badReason = "最低余额必须是 -1 或更大的整数"; break; }
-    const off = [];
-    el.querySelectorAll(".pfm").forEach(row => {
-      if (!row.querySelector(".pfmBox").checked) off.push(row.dataset.model);
-    });
+    const off = pfReadDisabledModels(el, baseOff);
     const nowOff = off.map(m => String(m).trim().toLowerCase()).filter(Boolean).sort();
     const sched = pfReadPrioritySchedule(el);
     if (sched.err) { bad = name; badReason = "分时规则" + sched.err; break; }
@@ -6247,17 +6391,18 @@ async function renderConfig() {
 
   out.push('<div class="cfgsec"><div class="cfghd">停用的客户端</div><div class="cfgchips" id="cfgDisabled">');
   const off = c.disabled || [];
-  (NAMES.length ? NAMES : Object.keys(c.clients || {})).forEach(n => {
+  const moduleNames = Array.from(new Set((d.registered || REG).concat(Object.keys(c.clients || {}), c.disabled || []))).filter(n => !Object.prototype.hasOwnProperty.call(c.sources || {}, n));
+  moduleNames.forEach(n => {
     out.push('<label class="cfgchip"><input type="checkbox" class="cfgdis" value="' + esc(n) + '"' +
-      (off.indexOf(n) >= 0 ? " checked" : "") + dis + '>' + esc(n) + '</label>');
+      (off.indexOf(n) >= 0 ? " checked" : "") + dis + '>' + esc(platformLabel(n)) + '</label>');
   });
   out.push('</div><div class="cfghelp">勾选后该 client 不会注册路由。</div></div>');
 
   out.push('<div class="cfgsec"><div class="cfghd">模块配置</div>');
   const cl = c.clients || {};
-  (NAMES.length ? NAMES : Object.keys(cl)).forEach(n => {
+  moduleNames.forEach(n => {
     const v = cl[n] == null ? {} : cl[n];
-    out.push('<label class="cfgrow cfgblock"><span class="k">' + esc(n) + '</span>' +
+    out.push('<label class="cfgrow cfgblock"><span class="k" title="' + esc(n) + '">' + esc(platformLabel(n)) + '</span>' +
       '<textarea class="cfgtext cfgmod" spellcheck="false" data-name="' + esc(n) + '"' + dis + '>' +
       esc(JSON.stringify(v)) + '</textarea></label>');
   });
@@ -6713,7 +6858,7 @@ function scRenderChips() {
     const own = mine.filter(r => scOwned(scKey(r.client, r.batch), r)).length;
     const ready = mine.reduce((a, r) => a + (Number(r.ready) || 0), 0);
     return '<button class="chip' + (n === SC.client ? " on" : "") + '" data-scc="' + esc(n) +
-      '" title="' + esc(ready + " 个启用账号") + '">' + esc(n) + (own ? " <b>" + own + "</b>" : "") + "</button>";
+      '" title="' + esc(ready + " 个启用账号") + '">' + esc(platformLabel(n)) + (own ? " <b>" + own + "</b>" : "") + "</button>";
   }).join("");
 }
 // 有没有还没保存的改动。保存按钮就在这一屏右上角，这里只负责把它变得显眼：
@@ -7017,7 +7162,7 @@ function qcPick(list) {
   return TB.client;
 }
 function qcChipsHTML(list, cur) {
-  return list.map(n => '<button class="chip' + (n === cur ? " on" : "") + '" data-c="' + esc(n) + '">' + esc(n) + "</button>").join("");
+  return list.map(n => '<button class="chip' + (n === cur ? " on" : "") + '" data-c="' + esc(n) + '">' + esc(platformLabel(n)) + "</button>").join("");
 }
 
 /* 原版看板账号池 header 上的四个「全部」按钮（原版 index.html:511-514，handler
@@ -7350,7 +7495,7 @@ async function renderTaskBoard(force) {
     TB.client = list.filter(ready)[0] || list[0];
   }
   $("#tbChips").innerHTML = list.map(n =>
-    '<button class="chip' + (n === TB.client ? " on" : "") + '" data-c="' + esc(n) + '">' + esc(n) + "</button>").join("");
+    '<button class="chip' + (n === TB.client ? " on" : "") + '" data-c="' + esc(n) + '">' + esc(platformLabel(n)) + "</button>").join("");
   syncSchoolBtn();
 
   // 账号优先：账号池已经拉过就直接复用，没拉过补一次；拿不到账号就退回平台全量，
@@ -7908,13 +8053,13 @@ async function renderCredits() {
     body.innerHTML = '<div class="hint">已注册的客户端都不提供积分批次明细（没有 PackageProvider）。</div>';
     return;
   }
-  $("#crNote").textContent = n + " · 读取中…";
+  $("#crNote").textContent = platformLabel(n) + " · 读取中…";
   // 明细条数与批次一起取：限制值只有配置接口知道，读失败就回落默认 5，
   // 不能因为一个展示设置让整块明细报错。
   const cfgP = api("/panel/api/config").catch(() => null);
   const r = await api(cbase(n) + "/packages");
   if (!r.ok) {
-    $("#crNote").textContent = n + " · 读取失败";
+    $("#crNote").textContent = platformLabel(n) + " · 读取失败";
     body.innerHTML = '<div class="state err">' + esc(r.err || "读取失败") + "</div>";
     return;
   }
@@ -7932,7 +8077,7 @@ async function renderCredits() {
     errs += a.errors.length;
   });
   const chans = list.length - merged.length;
-  $("#crNote").textContent = n + " · " + merged.length + " 个账号" +
+  $("#crNote").textContent = platformLabel(n) + " · " + merged.length + " 个账号" +
     (chans > 0 ? "（合并了 " + chans + " 条通道）" : "") +
     " · 合计 " + numf(remain) + " / " + numf(size) +
     " · " + pkgs + " 个批次" + (errs ? " · " + errs + " 个批次查询失败" : "");
@@ -8152,10 +8297,10 @@ async function loadSchoolVouchers() {
   const body = $("#vcBody");
   body.innerHTML = '<div class="state"><span class="dots">读取中</span></div>';
   if (!n) { $("#vcNote").textContent = ""; body.innerHTML = '<div class="state err">没有已注册的客户端</div>'; return; }
-  $("#vcNote").textContent = n + " · 读取中…";
+  $("#vcNote").textContent = platformLabel(n) + " · 读取中…";
   const r = await api(cbase(n) + "/school/vouchers");
   if (!r.ok) {
-    $("#vcNote").textContent = n;
+    $("#vcNote").textContent = platformLabel(n);
     body.innerHTML = '<div class="state err">' + esc(r.err || "读取失败") + "</div>";
     return;
   }
@@ -8180,7 +8325,7 @@ async function loadSchoolVouchers() {
       bad.map(a => esc(a.label || String(a.id).slice(0, 20)) + "（" + esc(a.error) + "）").join("、") + "</div>";
   }
   body.innerHTML = html;
-  $("#vcNote").textContent = n + " · " + (total ? total + " 张券" : "没有券码") +
+  $("#vcNote").textContent = platformLabel(n) + " · " + (total ? total + " 张券" : "没有券码") +
     (miss ? " · " + miss + " 个账号未抽中" : "");
   body.querySelectorAll("button[data-copy]").forEach(b => {
     b.addEventListener("click", async () => {
@@ -8461,7 +8606,7 @@ function openAdd() {
     if (k.manage) tags.push("手动");
     if (k.sms) tags.push("接码");
     if (k.auto_login) tags.push("自动");
-    return '<option value="' + esc(n) + '"' + (tags.length ? "" : " disabled") + '>' + esc(n) + (tags.length ? " · " + tags.join("/") : " · 不支持") + '</option>';
+    return '<option value="' + esc(n) + '"' + (tags.length ? "" : " disabled") + '>' + esc(platformLabel(n)) + (tags.length ? " · " + tags.join("/") : " · 不支持") + '</option>';
   }).join("");
   setAddTab("login");
   pickAddClient(CUR || NAMES[0]);
@@ -9973,7 +10118,7 @@ async function bundleImportFile(file) {
   if (!doc || doc.kind !== "client2api.bundle") { toast("这不是 client2api 的备份文件", "err"); return; }
   const s = bundleSummary(doc);
   const ask = "导入这份备份？\n\n导出时间：" + s.when + "\n凭据文件：" + s.files + " 个\n平台配置：" + s.plats + " 个" +
-    "\n\n同名凭据会先备份到 data/backups/，账号需重启进程后生效。";
+    "\n\n同名凭据会先备份到 data/backups/；自定义中转站账号热加载，其他平台账号需重启后生效。";
   if (!confirm(ask)) return;
   const btns = [$("#btnBundleImport"), $("#btnPfImport")].filter(Boolean);
   btns.forEach(b => { b.disabled = true; });
@@ -9985,7 +10130,7 @@ async function bundleImportFile(file) {
     if (acc.files) bits.push("账号文件 " + acc.files + " 个");
     if (acc.backed_up) bits.push("已备份 " + acc.backed_up + " 个");
     if (cfg.applied) bits.push("平台配置已生效");
-    if (d.restart_required) bits.push("账号需重启进程");
+    if (d.restart_required) bits.push("部分配置或账号需重启进程");
     toast("导入完成：" + (bits.join("，") || "没有变化"), d.restart_required ? "err" : "");
     (d.warnings || []).concat(d.errors || []).forEach(w => toast(w, "err"));
     await renderConfig();
@@ -10000,6 +10145,10 @@ $("#btnBundleImport").addEventListener("click", bundlePick);
 $("#btnPfExport").addEventListener("click", bundleExport);
 $("#btnPfImport").addEventListener("click", bundlePick);
 $("#btnPfSave").addEventListener("click", savePlatforms);
+$("#btnSourceAdd").addEventListener("click", () => openSource());
+$("#btnSourceCancel").addEventListener("click", closeSource);
+$("#sourceForm").addEventListener("submit", saveSource);
+$("#sourceVeil").addEventListener("click", ev => { if (ev.target === $("#sourceVeil")) closeSource(); });
 $("#btnPfExpand").addEventListener("click", () => pfSetAll(true));
 $("#btnPfCollapse").addEventListener("click", () => pfSetAll(false));
 $("#pfGroups").addEventListener("input", ev => {
@@ -10046,6 +10195,11 @@ $("#pfSearch").addEventListener("keydown", ev => {
 $("#pfBody").addEventListener("click", ev => {
   const plat = ev.target.closest(".pfplat");
   if (!plat) return;
+  const id = plat.dataset.client;
+  if (ev.target.closest(".sourceEdit")) { openSource(id); return; }
+  if (ev.target.closest(".sourceDelete")) { deleteSource(id, ev.target.closest("button")); return; }
+  if (ev.target.closest(".sourceScan")) { scanSource(id, ev.target.closest("button")); return; }
+  if (ev.target.closest(".sourceAccounts")) { CUR = id; ACC_PAGE = 1; location.hash = "#accounts"; go("accounts"); return; }
   if (ev.target.closest(".pfToggle")) {
     const box = plat.querySelector(".pfmodels");
     const open = box.hidden;
@@ -10078,6 +10232,7 @@ $("#pfBody").addEventListener("click", ev => {
   }
   const all = ev.target.closest(".pfAll"), none = ev.target.closest(".pfNone");
   if (!all && !none) return;
+  if (all) plat.dataset.clearBlacklist = "1";
   plat.querySelectorAll(".pfm").forEach(row => {
     const on = !!all;
     row.querySelector(".pfmBox").checked = on;
@@ -10210,6 +10365,7 @@ function closeTopVeil() {
   const v = topVeil();
   if (!v || v.dataset.lock === "1") return false;
   if (v.id === "addVeil") { closeAdd(); return true; }
+  if (v.id === "sourceVeil") { closeSource(); return true; }
   if (v.id === "noteVeil") { closeAccountNote(); return true; }
   if (v.id === "modelVeil") { closeModelsDialog(); return true; }
   if (v.id === "taskVeil") { closeTasks(); return true; }
@@ -10273,7 +10429,7 @@ function chatFillClients() {
   names.sort();
   const ai = names.indexOf(CHAT_ALIAS);
   if (ai >= 0) { names.splice(ai, 1); names.push(CHAT_ALIAS); }   // 真实客户端在前，别名垫底
-  sel.innerHTML = names.map(n => '<option value="' + esc(n) + '">' + esc(n) + "</option>").join("");
+  sel.innerHTML = names.map(n => '<option value="' + esc(n) + '">' + esc(platformLabel(n)) + "</option>").join("");
   if (want && names.indexOf(want) >= 0) sel.value = want;
 }
 

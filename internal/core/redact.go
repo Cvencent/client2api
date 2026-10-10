@@ -56,6 +56,7 @@ func RedactAny(v any) any {
 // endpoint was overlooked.  Modules are still expected not to put credentials in
 // Status at all; this is defence in depth.
 func RedactStatus(st Status) Status {
+	st.Label = Redact(st.Label)
 	st.Detail = Redact(st.Detail)
 	if len(st.Accounts) == 0 {
 		return st

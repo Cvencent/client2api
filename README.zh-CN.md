@@ -21,16 +21,58 @@
 | `raccoon/…` | Raccoon | 商汤小浣熊 Raccoon Work |
 | `openrouter/…` | OpenRouter | OpenRouter（openrouter.ai），模型 id 可包含斜杠；默认只路由免费模型（`free_only`） |
 | `opencode/…` | OpenCode Zen | OpenCode Zen（opencode.ai），在 Anthropic、Google 和 OpenAI 原生模型前提供统一 OpenAI 形状 |
-| `openai-compat/…` | OpenAI 兼容来源 | 一个配置驱动的模块，可接 Groq、Cerebras、SiliconFlow、Mistral、NVIDIA NIM、Together、Fireworks、DeepInfra、Chutes、HuggingFace；路由格式是 `openai-compat/<provider>/<model>` |
+| `openai-compat/…` | onmiRoute | 旧兼容来源与本机 OmniRoute 桥接；原有 `openai-compat/<provider>/<model>` 路由继续可用 |
+| `<source-id>/…` | 自定义中转站 | 热定义的 OpenAI 兼容平台，各自拥有 API 地址、Key 账号池、模型扫描与路由策略 |
 
 所有能力都从 **同一套 HTTP 接口**提供：`POST /v1/chat/completions`、
 `POST /v1/responses`、`GET /v1/models`、`GET /v1/status`、`GET /healthz`，
 以及 `/panel/` 管理面板。
 
+## 自定义中转站
+
+在 **平台配置 → 添加中转站** 中填写唯一的平台 ID、显示名称和 API 地址
+（如 `https://api.example.com/v1`），也可以同时填写首个 API Key。
+新增、编辑、停用和删除均立即热生效，无需重启。点击平台的 **账号池** 可添加
+更多 Key；点击 **扫描模型**，或账号池中的同名按钮，会用每个启用 Key 请求
+`GET /models` 并保存目录。模型列表合并各 Key 的可用模型，账号表会显示各 Key
+的模型权限。扫描失败保留上次成功的目录；更换 API 地址后需要重新扫描。
+
+```json
+{
+  "sources": {
+    "my-relay": {
+      "label": "我的中转站",
+      "base_url": "https://api.example.com/v1",
+      "max_tokens_field": "max_tokens",
+      "disabled": false
+    }
+  },
+  "platforms": {
+    "my-relay": {
+      "priority": -10,
+      "max_in_flight": 4,
+      "max_in_flight_per_account": 2
+    }
+  }
+}
+```
+
+API 地址只接受 HTTP(S)，需要 `/v1` 等前缀的服务请一并填写。
+输出上限字段可选 `max_tokens` 或 `max_completion_tokens`。平台 ID 以小写
+字母开头，只含小写字母、数字和连字符，不能与内置平台或保留目录重名。
+显示名称可以随时改，路由 ID 保持不变。客户端使用网关统一的入站 Key 调用
+`my-relay/上游模型名`；也可以按现有规则使用裸模型名、模型组、平台优先级、
+账号优先级和自动故障切换。上游模型名中的 `/` 原样保留。
+
+Key 与扫描目录保存在各平台的 `data/<平台ID>/accounts.json`，不放进 `sources`
+配置。整份备份包含平台定义和账号数据。删除平台保留账号文件，重新添加相同
+ID 与 API 地址即可恢复账号池。旧 `clients.openai-compat` 配置、存储与调用地址
+继续兼容，页面将这个旧模块显示为 **onmiRoute**。
+
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-当前版本：**0.1.31**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：**0.1.32**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 ### 近期重点（0.1.26 - 0.1.29）
 

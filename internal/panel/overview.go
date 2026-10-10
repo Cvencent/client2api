@@ -13,6 +13,7 @@ import (
 // /panel/api/status entry, so the dashboard needs exactly one poll.
 type overviewClient struct {
 	Name         string               `json:"name"`
+	Label        string               `json:"label,omitempty"`
 	Ready        bool                 `json:"ready"`
 	Detail       string               `json:"detail"`
 	Models       []string             `json:"models"`
@@ -104,6 +105,7 @@ func (p *panel) overviewClient(ctx context.Context, c core.Client) overviewClien
 
 	row := overviewClient{
 		Name:         st.Name,
+		Label:        st.Label,
 		Ready:        st.Ready,
 		Detail:       st.Detail,
 		Models:       models,

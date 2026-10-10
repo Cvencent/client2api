@@ -245,10 +245,10 @@ func (s *chatStream) readFailure(err error) (core.Event, error) {
 	}
 	if s.body.timedOut() {
 		msg := fmt.Sprintf("the stream stalled for %s", s.client.cfg.streamIdle())
-		return core.Event{}, core.Fail(clientName, s.accountID, core.FailureUpstream, 0, fmt.Errorf("openai-compat: %s", msg))
+		return core.Event{}, core.Fail(s.client.Name(), s.accountID, core.FailureUpstream, 0, fmt.Errorf("openai-compat: %s", msg))
 	}
-	msg := truncate(core.Redact(err.Error()), 300)
-	return core.Event{}, core.Fail(clientName, s.accountID, core.FailureUpstream, 0, fmt.Errorf("openai-compat: stream read failed: %s", msg))
+	msg := s.client.scrubFor(s.accountID, err.Error())
+	return core.Event{}, core.Fail(s.client.Name(), s.accountID, core.FailureUpstream, 0, fmt.Errorf("openai-compat: stream read failed: %s", msg))
 }
 
 func (s *chatStream) ctxErr() error {
@@ -351,7 +351,7 @@ func (s *chatStream) mergeToolCall(frag oaiToolCall) {
 }
 
 func (s *chatStream) chunkFailure(e *oaiChunkError) {
-	msg := truncate(core.Redact(strings.TrimSpace(e.Message)), 300)
+	msg := s.client.scrubFor(s.accountID, strings.TrimSpace(e.Message))
 	if msg == "" {
 		msg = "the vendor reported an error inside the stream"
 	}
@@ -363,7 +363,7 @@ func (s *chatStream) chunkFailure(e *oaiChunkError) {
 	s.failed = true
 	s.pending = append(s.pending, core.Event{
 		Type: core.EventError,
-		Err:  core.Fail(clientName, s.accountID, coreKindFor(k), code, &upstreamError{Op: "stream", Status: code, Msg: msg}),
+		Err:  core.Fail(s.client.Name(), s.accountID, coreKindFor(k), code, &upstreamError{Op: "stream", Status: code, Msg: msg}),
 	})
 	s.endStream()
 }

@@ -283,7 +283,7 @@ func TestAccPagerCountsStillUseTheFullList(t *testing.T) {
 	src := poolStatsUISource(t)
 
 	// accNote 的总账号数来自 groups.length（全量），不是 pageRows.length。
-	if !strings.Contains(src, `CUR + " · " + groups.length + " 个账号"`) {
+	if !strings.Contains(src, `platformLabel(CUR) + " · " + groups.length + " 个账号"`) {
 		t.Error("accNote 没有按全量 groups.length 计数")
 	}
 	if strings.Contains(src, `pageRows.length + " 个账号"`) {

@@ -25,6 +25,7 @@ type configResponse struct {
 	// only fail.
 	CanRestart bool     `json:"can_restart"`
 	Clients    []string `json:"clients"`
+	Registered []string `json:"registered"`
 	// Config is the raw config re-serialised after redaction.  It is `any`
 	// rather than a map so that "unknown path" renders as null, exactly as the
 	// contract says, instead of an empty object the panel would index into.
@@ -69,6 +70,7 @@ func (p *panel) configRead(w http.ResponseWriter, r *http.Request) {
 		APIKeySet:  p.opts.AuthEnabled,
 		CanRestart: p.opts.Restart != nil,
 		Clients:    []string{},
+		Registered: core.Registered(),
 		Panel:      panelSettings{PackageDetailLimit: p.opts.PackageDetailLimit},
 	}
 	if p.opts.Registry != nil {
@@ -104,6 +106,10 @@ func redactConfig(v any) any {
 	case map[string]any:
 		out := make(map[string]any, len(t))
 		for k, val := range t {
+			if k == "sources" {
+				out[k] = redactSourceDefinitions(val)
+				continue
+			}
 			if secretConfigKey.MatchString(k) {
 				out[k] = maskSecret(val)
 				continue
@@ -122,6 +128,36 @@ func redactConfig(v any) any {
 	default:
 		return v
 	}
+}
+
+func redactSourceDefinitions(v any) any {
+	sources, ok := v.(map[string]any)
+	if !ok {
+		return redactConfig(v)
+	}
+	out := make(map[string]any, len(sources))
+	for id, entry := range sources {
+		fields, ok := entry.(map[string]any)
+		if !ok {
+			out[id] = redactConfig(entry)
+			continue
+		}
+		row := make(map[string]any, len(fields))
+		for key, value := range fields {
+			switch key {
+			case "label", "base_url", "disabled", "max_tokens_field":
+				row[key] = core.RedactAny(value)
+			default:
+				if secretConfigKey.MatchString(key) {
+					row[key] = maskSecret(value)
+				} else {
+					row[key] = redactConfig(value)
+				}
+			}
+		}
+		out[id] = row
+	}
+	return out
 }
 
 // maskSecret blanks a credential value while keeping the shape the panel needs:

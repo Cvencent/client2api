@@ -133,7 +133,7 @@ func TestAccountGroupingIsWiredIntoEveryCount(t *testing.T) {
 	}
 	// accNote 的数字必须是账号数。用 list.length（凭据数）会让 zcode 显示
 	// 「3 个账号」而表里只有 2 行，两边对不上。
-	if !strings.Contains(src, `CUR + " · " + groups.length + " 个账号"`) {
+	if !strings.Contains(src, `platformLabel(CUR) + " · " + groups.length + " 个账号"`) {
 		t.Error("accNote 没有按账号数（groups.length）计数")
 	}
 	if !strings.Contains(src, `"（其中 " + multi + " 个有多种登录方式）"`) {
@@ -246,7 +246,7 @@ func TestClientChipsShowUsableOverTotalAccounts(t *testing.T) {
 		`const groups = accGroups(ACCTS[n] && ACCTS[n].accounts);`,
 		`const usable = groups.filter(g => { const st = accGroupStat(g); return st.enabled && st.state === "ready"; }).length;`,
 		`const label = usable + "/" + cnt;`,
-		`esc(n) + ' <b>' + esc(label) + '</b>`,
+		`esc(platformLabel(n)) + ' <b>' + esc(label) + '</b>`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("client chip account ratio is missing %s", want)

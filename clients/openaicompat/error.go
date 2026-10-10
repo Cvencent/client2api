@@ -190,6 +190,16 @@ func (e *upstreamError) Error() string {
 
 // scrubFor strips anything credential-shaped out of a message.
 func (c *Client) scrubFor(accountID, msg string) string {
+	for _, p := range c.cfg.Providers {
+		if p.ID == accountID && p.APIKey != "" {
+			msg = strings.ReplaceAll(msg, p.APIKey, "<redacted>")
+		}
+	}
+	if c.pool != nil {
+		if p, ok := c.pool.byID(accountID); ok && p.APIKey != "" {
+			msg = strings.ReplaceAll(msg, p.APIKey, "<redacted>")
+		}
+	}
 	msg = core.Redact(msg)
 	return truncate(msg, 300)
 }
@@ -202,7 +212,7 @@ func (c *Client) classifyHTTP(op, accountID string, status int, body []byte) err
 	}
 	k := classifyFailure(status, msg)
 	msg = c.scrubFor(accountID, msg)
-	return core.Fail(clientName, accountID, coreKindFor(k), status, &upstreamError{Op: op, Status: status, Msg: msg})
+	return core.Fail(c.Name(), accountID, coreKindFor(k), status, &upstreamError{Op: op, Status: status, Msg: msg})
 }
 
 // classifyUpstream turns a transport error into a typed failure.
@@ -217,7 +227,7 @@ func (c *Client) classifyUpstream(accountID string, err error) error {
 		k = kindServer
 	}
 	msg := truncate(core.Redact(err.Error()), 300)
-	return core.Fail(clientName, accountID, coreKindFor(k), 0, &upstreamError{Op: "request", Msg: msg})
+	return core.Fail(c.Name(), accountID, coreKindFor(k), 0, &upstreamError{Op: "request", Msg: msg})
 }
 
 func isTimeout(err error) bool {

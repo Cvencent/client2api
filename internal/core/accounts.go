@@ -214,14 +214,15 @@ type CheckinResult struct {
 // Capabilities tells the panel what a module can be asked to do.  It is built
 // by CapabilitiesOf, so the panel never inspects concrete types.
 type Capabilities struct {
-	Manage  bool            `json:"manage"`         // AccountManager
-	Import  bool            `json:"import"`         // CredentialImporter
-	Login   bool            `json:"login"`          // LoginProvider
-	Checkin bool            `json:"checkin"`        // CheckinProvider
-	Refresh bool            `json:"refresh_models"` // ModelRefresher
-	Tasks   bool            `json:"tasks"`          // TaskProvider
-	Fields  []FieldSpec     `json:"fields,omitempty"`
-	Actions []CheckinAction `json:"actions,omitempty"`
+	CustomSource bool            `json:"custom_source,omitempty"`
+	Manage       bool            `json:"manage"`         // AccountManager
+	Import       bool            `json:"import"`         // CredentialImporter
+	Login        bool            `json:"login"`          // LoginProvider
+	Checkin      bool            `json:"checkin"`        // CheckinProvider
+	Refresh      bool            `json:"refresh_models"` // ModelRefresher
+	Tasks        bool            `json:"tasks"`          // TaskProvider
+	Fields       []FieldSpec     `json:"fields,omitempty"`
+	Actions      []CheckinAction `json:"actions,omitempty"`
 
 	// CheckinReady is the narrow half of Checkin: at least one action is on
 	// offer for an account row right now.  Every other flag in this block is a
@@ -589,6 +590,7 @@ type ModelRefresher interface {
 // turns concrete types into something the panel can serialise.
 func CapabilitiesOf(ctx context.Context, c Client) Capabilities {
 	var caps Capabilities
+	_, caps.CustomSource = c.(SourceClient)
 	if am, ok := c.(AccountManager); ok {
 		caps.Manage = true
 		caps.Fields = am.AccountFields(ctx)

@@ -125,16 +125,25 @@ func (s *server) streamResponsesSSE(w http.ResponseWriter, r *http.Request, a em
 	a.stat.status = http.StatusOK
 
 	base := responseBaseFields{id: newID("resp_"), model: a.model}
+	sequence := 0
+	emit := func(kind string, payload map[string]any) bool {
+		payload["type"] = kind
+		payload["sequence_number"] = sequence
+		if err := sseFrame(w, kind, payload); err != nil {
+			return false
+		}
+		sequence++
+		flusher.Flush()
+		return true
+	}
 
 	// response.created opens the turn.  A failure to write it is fatal: nothing
 	// else can be delivered either.
-	if err := sseFrame(w, "response.created", map[string]any{
-		"type":     "response.created",
+	if !emit("response.created", map[string]any{
 		"response": base.base("in_progress", nil),
-	}); err != nil {
+	}) {
 		return
 	}
-	flusher.Flush()
 
 	// emitFailed closes a stream that broke after it had already opened.  A
 	// response.failed looks like a clean terminal event to Codex, which is
@@ -143,8 +152,7 @@ func (s *server) streamResponsesSSE(w http.ResponseWriter, r *http.Request, a em
 		msg := fmt.Sprintf("[%s] %s", client.Name(), err.Error())
 		s.fail(a.rec)
 		s.opts.Logger.Printf("responses stream: client %s: %v", client.Name(), err)
-		_ = sseFrame(w, "response.failed", map[string]any{
-			"type": "response.failed",
+		emit("response.failed", map[string]any{
 			"response": map[string]any{
 				"id":         base.id,
 				"object":     "response",
@@ -158,7 +166,6 @@ func (s *server) streamResponsesSSE(w http.ResponseWriter, r *http.Request, a em
 				},
 			},
 		})
-		flusher.Flush()
 	}
 
 	var (
@@ -169,14 +176,6 @@ func (s *server) streamResponsesSSE(w http.ResponseWriter, r *http.Request, a em
 		finish      string
 		streamErr   error
 	)
-	emit := func(kind string, payload map[string]any) bool {
-		payload["type"] = kind
-		if err := sseFrame(w, kind, payload); err != nil {
-			return false
-		}
-		flusher.Flush()
-		return true
-	}
 	addItem := func(item responseOutput) (int, bool) {
 		ix := len(output)
 		output = append(output, item)

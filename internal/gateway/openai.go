@@ -18,7 +18,7 @@ import (
 // ---------------------------------------------------------------------------
 
 type chatMessage struct {
-	Role             string          `json:"role"`
+	Role             string          `json:"role,omitempty"`
 	Content          json.RawMessage `json:"content,omitempty"`
 	Name             string          `json:"name,omitempty"`
 	ToolCalls        []chatToolCall  `json:"tool_calls,omitempty"`

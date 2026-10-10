@@ -384,7 +384,7 @@ func (p *panel) bundleImport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	reloaded := false
-	if configApplied && p.opts.Reload != nil {
+	if (configApplied || written > 0) && p.opts.Reload != nil {
 		if err := p.opts.Reload(); err != nil {
 			warnings = append(warnings, "config was written but the hot reload failed: "+err.Error())
 		} else {
@@ -397,6 +397,16 @@ func (p *panel) bundleImport(w http.ResponseWriter, r *http.Request) {
 	// was touched: otherwise a restore that carried listen/proxy/clients and
 	// wrote no accounts would claim it was done.
 	restartRequired := written > 0
+	if reloaded && p.opts.Registry != nil {
+		restartRequired = false
+		for _, f := range doc.Files {
+			c, ok := p.opts.Registry.Get(f.Client)
+			if _, hot := c.(core.SourceClient); !ok || !hot {
+				restartRequired = true
+				break
+			}
+		}
+	}
 	for _, k := range appliedKeys {
 		if coldConfigKeys[k] {
 			restartRequired = true

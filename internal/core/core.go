@@ -356,6 +356,7 @@ func SortModelParks(parks []ModelPark) []ModelPark {
 // Status is a module's self-report.
 type Status struct {
 	Name      string          `json:"name"`
+	Label     string          `json:"label,omitempty"`
 	Ready     bool            `json:"ready"`
 	Detail    string          `json:"detail,omitempty"`
 	Accounts  []AccountStatus `json:"accounts,omitempty"`

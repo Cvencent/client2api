@@ -39,7 +39,7 @@ var configWriteMu sync.Mutex
 // file keeps looking hand-written rather than being alphabetised.  Keys the
 // running binary does not know about are preserved and appended, because
 // dropping them would be silent data loss.
-var configKeyOrder = []string{"listen", "api_key", "data_dir", "proxy", "aliases", "disabled", "platforms", "model_groups", "schedule", "pool", "cooldown", "prompt", "session_sticky", "features", "panel", "clients"}
+var configKeyOrder = []string{"listen", "api_key", "data_dir", "proxy", "aliases", "disabled", "sources", "platforms", "model_groups", "schedule", "pool", "cooldown", "prompt", "session_sticky", "features", "panel", "clients"}
 
 // configSaveResponse is the GET payload plus what the save actually did.
 type configSaveResponse struct {
@@ -92,6 +92,7 @@ func (p *panel) configWrite(w http.ResponseWriter, r *http.Request) {
 			APIKeySet:  p.opts.AuthEnabled,
 			CanRestart: p.opts.Restart != nil,
 			Clients:    []string{},
+			Registered: core.Registered(),
 			Config:     redactConfig(merged),
 		},
 		Saved:   true,
@@ -386,6 +387,15 @@ func validateModelGroups(cfg map[string]any) error {
 // Without this a typo saved from the editor would only surface as a failed
 // startup, long after the save looked successful.
 func validateConfig(cfg map[string]any) error {
+	if v, ok := cfg["sources"]; ok && v != nil {
+		raw, err := json.Marshal(v)
+		if err != nil {
+			return err
+		}
+		if _, err := core.ParseSources(raw); err != nil {
+			return err
+		}
+	}
 	for _, k := range []string{"listen", "api_key", "data_dir", "proxy"} {
 		v, ok := cfg[k]
 		if !ok || v == nil {

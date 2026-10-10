@@ -70,12 +70,28 @@ func (p *panel) handleModelsRefresh(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *panel) serveModels(w http.ResponseWriter, r *http.Request, refresh bool) {
-	ctx, cancel := p.ctx(r, modelsTotalTimeout)
+	totalBudget, clientBudget := modelsTotalTimeout, modelsClientTimeout
+	if refresh && r.URL.Query().Get("client") != "" {
+		totalBudget = 90 * time.Second
+		clientBudget = 85 * time.Second
+	}
+	ctx, cancel := p.ctx(r, totalBudget)
 	defer cancel()
 
 	var clients []core.Client
 	if p.opts.Registry != nil {
 		clients = p.opts.Registry.All()
+	}
+	if name := r.URL.Query().Get("client"); name != "" {
+		var selected core.Client
+		if p.opts.Registry != nil {
+			selected, _ = p.opts.Registry.Get(name)
+		}
+		if selected == nil {
+			writeErr(w, http.StatusNotFound, "platform not found")
+			return
+		}
+		clients = []core.Client{selected}
 	}
 
 	// Every client gets its own goroutine and its own slice slot, so a slow
@@ -86,7 +102,7 @@ func (p *panel) serveModels(w http.ResponseWriter, r *http.Request, refresh bool
 		wg.Add(1)
 		p.safeGo("panel models", func() {
 			defer wg.Done()
-			cctx, ccancel := context.WithTimeout(ctx, modelsClientTimeout)
+			cctx, ccancel := context.WithTimeout(ctx, clientBudget)
 			defer ccancel()
 			out[i] = p.modelsFor(cctx, c, refresh)
 		})

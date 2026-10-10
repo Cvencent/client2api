@@ -25,9 +25,10 @@ const maxModelsBytes = 8 << 20
 
 // Client is the module.  Every provider is an account in the pool.
 type Client struct {
-	deps   core.Deps
-	cfg    Config
-	cfgErr error
+	instanceName string
+	deps         core.Deps
+	cfg          Config
+	cfgErr       error
 
 	// configProviders is the config-file half of the pool.  The panel-owned
 	// half lives in accounts.json; reloadProviders merges the two into
@@ -42,7 +43,12 @@ type Client struct {
 	lastErr string
 }
 
-func init() { core.Register(clientName, New) }
+func init() {
+	core.Register(clientName, New)
+	core.RegisterSourceFactory(func(name string, cfg core.SourceConfig, deps core.Deps) (core.SourceClient, error) {
+		return newSource(name, cfg, deps)
+	})
+}
 
 // New builds the module.
 func New(deps core.Deps) (core.Client, error) {
@@ -71,7 +77,12 @@ func (c *Client) ensure() {
 	}
 }
 
-func (c *Client) Name() string { return clientName }
+func (c *Client) Name() string {
+	if c.instanceName != "" {
+		return c.instanceName
+	}
+	return clientName
+}
 
 func (c *Client) httpClient() *http.Client {
 	if c.deps.HTTPClient != nil {
@@ -256,6 +267,7 @@ func (c *Client) Status(ctx context.Context) core.Status {
 		Accounts:  c.pool.statuses(now),
 		Models:    c.modelIDs(),
 	}
+	st.Label = "onmiRoute"
 	st.Ready = c.pool.ready(now) > 0
 	st.Detail = c.pool.summary(now)
 	if c.cfgErr != nil {

@@ -221,10 +221,10 @@ func TestAccNoteAndNavRedisAppendInsteadOfReplacing(t *testing.T) {
 
 	// 计数口径是「账号」而不是「凭据」：一个账号有多个登录通道时它仍然只有一个，
 	// 这和表里按 identity 分组后的行数必须是同一个数字。
-	if !strings.Contains(src, `CUR + " · " + groups.length + " 个账号"`) {
+	if !strings.Contains(src, `platformLabel(CUR) + " · " + groups.length + " 个账号"`) {
 		t.Error("accNote 原有的「客户端 · N 个账号」被顶掉了（而且 N 必须按账号数，不按凭据数）")
 	}
-	if !strings.Contains(acc, "let accText = CUR +") {
+	if !strings.Contains(acc, "let accText = platformLabel(CUR) +") {
 		t.Error("accNote 没有先拼出原文本、再往 accText 上追加")
 	}
 	if !strings.Contains(acc, "if (full) accText +=") {

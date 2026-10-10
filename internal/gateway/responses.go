@@ -189,10 +189,22 @@ type responseOutput struct {
 	EncryptedContent *string `json:"encrypted_content,omitempty"`
 }
 
+func (o responseOutput) MarshalJSON() ([]byte, error) {
+	type output responseOutput
+	if o.Type == "function_call" {
+		// Arguments is required on a function call even when no delta arrived.
+		return json.Marshal(struct {
+			output
+			Arguments string `json:"arguments"`
+		}{output: output(o), Arguments: o.Arguments})
+	}
+	return json.Marshal(output(o))
+}
+
 type responseOutputContent struct {
 	Type        string `json:"type"`
-	Text        string `json:"text,omitempty"`
-	Annotations []any  `json:"annotations,omitempty"`
+	Text        string `json:"text"`
+	Annotations []any  `json:"annotations"`
 }
 
 type responseOutputSummary struct {
