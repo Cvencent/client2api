@@ -19,6 +19,20 @@
       "max_in_flight_per_account": 2
     }
   },
+  "model_groups": {
+    "deepseek-v4.1-flash": {
+      "members": [
+        "opencode/deepseek-v4.1-flash",
+        "cline/cline-free/deepseek-v4.1-flash",
+        "workbuddy/cn:deepseek-v4.1-flash"
+      ],
+      "platform_priorities": {
+        "opencode": 10,
+        "cline": 20,
+        "workbuddy": 30
+      }
+    }
+  },
   "features": {
     "sanitize_blacklist_fingerprints": true
   },

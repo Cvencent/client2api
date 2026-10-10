@@ -7,6 +7,7 @@
   "extra_headers": {},
 
   "chat_timeout": "10m",
+  "queue_timeout": "60s",
   "models_timeout": "20s",
   "models_ttl": "1h",
   "idle_timeout": "2m",

@@ -32,9 +32,8 @@ func conversationKey(req *core.ChatRequest) string {
 
 // usableFor is the predicate the affinity table applies to a stored binding.
 // It delegates to the pool so "usable" means exactly what acquire() means by
-// it. OpenCode's health is per credential, not per model.
+// it, and also checks free-tier and workspace model eligibility.
 func (c *Client) usableFor(model string) func(accountID string) bool {
-	_ = model
 	return func(accountID string) bool {
 		if c == nil || c.pool == nil {
 			return false
@@ -42,7 +41,7 @@ func (c *Client) usableFor(model string) func(accountID string) bool {
 		c.pool.mu.Lock()
 		defer c.pool.mu.Unlock()
 		a := c.pool.find(strings.TrimSpace(accountID))
-		return selectable(a, c.now(), c.cfg.maxInFlight())
+		return selectable(a, c.now(), c.cfg.maxInFlight()) && c.accountSupportsModel(a, model)
 	}
 }
 
@@ -51,17 +50,40 @@ func (c *Client) usableFor(model string) func(accountID string) bool {
 // this reservation succeeds, so a busy account that was skipped cannot capture
 // the conversation.
 func (c *Client) acquireAccount(req *core.ChatRequest) (*accountRecord, error) {
+	return c.acquireAccountExcluding(req, nil)
+}
+
+func (c *Client) accountSupportsModel(a *accountRecord, model string) bool {
+	if a == nil {
+		return false
+	}
+	if model == "" {
+		return true
+	}
+	if a.authMode() == "anonymous" {
+		return anonymousModelAllowed(model, c.cfg)
+	}
+	if a.authMode() == "oauth" {
+		return !anonymousModelAllowed(model, c.cfg) &&
+			(len(a.AllowedModels) == 0 || containsString(a.AllowedModels, model))
+	}
+	return true
+}
+
+func (c *Client) acquireAccountExcluding(req *core.ChatRequest, excluded map[string]bool) (*accountRecord, error) {
 	c.ensure()
 	key := conversationKey(req)
 	limit := c.cfg.maxInFlight()
 	if key != "" && c.affinity != nil {
-		if id, ok := c.affinity.Resolve(key, c.usableFor("")); ok {
+		if id, ok := c.affinity.Resolve(key, c.usableFor(req.Model)); ok && !excluded[id] {
 			if a, err := c.pool.acquireByID(id, c.now(), limit); err == nil {
 				return a, nil
 			}
 		}
 	}
-	return c.pool.acquire(c.now(), limit)
+	return c.pool.acquireWhere(c.now(), limit, func(a *accountRecord) bool {
+		return !excluded[a.ID] && c.accountSupportsModel(a, req.Model)
+	})
 }
 
 // bindServedConversation records the account that actually received a slot.

@@ -1103,6 +1103,35 @@ func TestBuildBodyPassesToolsAndImages(t *testing.T) {
 	}
 }
 
+func TestBuildBodyKeepsToolsWithDefaultChoice(t *testing.T) {
+	for _, choice := range []string{"", "null", " \n "} {
+		t.Run(choice, func(t *testing.T) {
+			body, err := buildBody(&core.ChatRequest{
+				Model:      "cline-free/step-5-preview",
+				Messages:   []core.Message{{Role: "user", Content: "read diagnostic.txt"}},
+				Tools:      []core.Tool{{Type: "function", Name: "Read"}},
+				ToolChoice: json.RawMessage(choice),
+			}, 32000, "high")
+			if err != nil {
+				t.Fatalf("buildBody: %v", err)
+			}
+			var got struct {
+				Tools      []oaiTool       `json:"tools"`
+				ToolChoice json.RawMessage `json:"tool_choice"`
+			}
+			if err := json.Unmarshal(body, &got); err != nil {
+				t.Fatalf("decoding body: %v", err)
+			}
+			if len(got.Tools) != 1 || got.Tools[0].Function.Name != "Read" {
+				t.Fatalf("default tool choice dropped the Read tool: %s", body)
+			}
+			if len(got.ToolChoice) != 0 {
+				t.Fatalf("default tool choice should be omitted: %s", body)
+			}
+		})
+	}
+}
+
 func TestToolsSuppressedByNoneChoice(t *testing.T) {
 	body, err := buildBody(&core.ChatRequest{
 		Model:      "m",

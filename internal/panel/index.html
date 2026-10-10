@@ -1136,6 +1136,20 @@ button.primary:active:not(:disabled) { filter: brightness(.94); }
 .pfmodels .pfFilter { width: 260px; max-width: 100%; padding: 5px 10px; font-size: 12.5px; border-radius: 6px; margin-bottom: 8px; }
 .pfmodels .hint { font-size: 12px; color: var(--ink-3); }
 .pfmodels .pfNoMatch { margin-top: 6px; }
+/* 模型路由组：同一个模型在不同平台的名字绑成一组，组名和成员名互为等价名。 */
+.pfgsec { margin-bottom: 12px; }
+.pfghd { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 7px; }
+.pfghd strong { font-size: 12.5px; color: var(--ink-2); }
+.pfghd .hint { font-size: 11.5px; }
+.pfgList { display: flex; flex-direction: column; gap: 8px; }
+.pfGroup { border: 1px solid var(--line-soft); border-radius: 7px; background: var(--surface); }
+.pfghead { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 7px 9px; border-bottom: 1px solid var(--line-soft); }
+.pfgrows { display: flex; flex-direction: column; gap: 5px; padding: 8px 9px 0; }
+.pfGRow { display: grid; grid-template-columns: minmax(180px, 1fr) 96px auto; align-items: center; gap: 8px; }
+.pfGRow input { width: 100%; min-width: 0; }
+.pfGPrio { text-align: center; }
+.pfgfoot { padding: 8px 9px 9px; }
+@media (max-width: 700px) { .pfGRow { grid-template-columns: 1fr; } }
 /* WorkBuddy 是唯一有内置账号池的平台，号池配置只在它的展开区里出现。 */
 .pfwbset { margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--line-soft); }
 .pfwbhd { display: flex; align-items: baseline; gap: 8px; margin-bottom: 3px; color: var(--ink-2); font-size: 12.5px; font-weight: 600; }
@@ -1916,7 +1930,7 @@ details.cfg summary:hover, details.adv summary:hover { color: var(--accent-text)
         </header>
         <div class="tbl-wrap">
         <table class="acc md">
-          <thead><tr><th>时间</th><th>平台</th><th>模型</th><th>会话ID <span class="hint">调用方报的就原样显示，没报则按消息内容推一个</span></th><th>账号</th><th>结果</th><th>候选</th><th>输入</th><th>输出</th><th>合计</th><th>耗时</th><th>速率</th></tr></thead>
+          <thead><tr><th>时间</th><th>平台</th><th>模型</th><th>思考强度</th><th>会话ID <span class="hint">调用方报的就原样显示，没报则按消息内容推一个</span></th><th>账号</th><th>结果</th><th>候选</th><th>输入</th><th>输出</th><th>合计</th><th>耗时</th><th>速率</th></tr></thead>
           <tbody id="usRecentBody"></tbody>
         </table>
         </div>
@@ -2177,6 +2191,7 @@ details.cfg summary:hover, details.adv summary:hover { color: var(--accent-text)
           <button class="xs" id="btnPfExpand">全部展开</button>
           <button class="xs" id="btnPfCollapse">全部收起</button>
         </div>
+        <div class="pad" id="pfGroups"><div class="hint">正在读取模型路由组…</div></div>
         <div class="pad" id="pfBody"><div class="hint">正在读取平台与模型…</div></div>
         <div class="savebar">
           <span class="hint">勾选 = 允许调用，取消勾选即加入该平台黑名单；优先级填整数，可以为负数，数字越小越先路由，例如 -10 比 -5 更优先；留空使用默认 0。「平台总并发 / 网关单账号并发」与「最低余额」在平台头部，WorkBuddy 卡片里额外有账号池治理。保存后立即热加载生效，无需重启。</span>
@@ -5012,13 +5027,14 @@ function renderRecentRows() {
     const accTip = accParts.filter(Boolean).join(" · ");
     return '<tr><td class="hint">' + esc(fmtCallTime(x.at)) + '</td>' +
       '<td>' + esc(x.client || "-") + '</td><td>' + esc(x.model || "-") + '</td>' +
+      '<td>' + (x.reasoning_effort ? '<span class="tag warn">' + esc(x.reasoning_effort) + '</span>' : '<span class="hint">-</span>') + '</td>' +
       '<td>' + sessionCell(x.session_id) + '</td>' +
       '<td title="' + esc(accTip) + '">' + esc(accName) + '</td><td>' + state + '</td>' +
       '<td class="num">' + (x.candidate ? "#" + esc(String(x.candidate)) : "-") + '</td>' +
       '<td class="num">' + numf(x.prompt_tokens || 0) + '</td><td class="num">' + numf(x.completion_tokens || 0) + '</td>' +
       '<td class="num">' + numf(x.total_tokens || 0) + '</td><td class="num">' + fmtMs(x.latency_ms) + '</td>' +
       '<td class="num">' + fmtRate(x.tokens_per_second) + '</td></tr>';
-  }).join("") || '<tr><td colspan="12" class="hint">暂无调用记录</td></tr>';
+  }).join("") || '<tr><td colspan="13" class="hint">暂无调用记录</td></tr>';
   if ($("#usRecentNote")) $("#usRecentNote").textContent = rows.length + " / " + US_RECENT.length + " 条";
 }
 
@@ -5783,6 +5799,99 @@ function pfSyncPrioritySchedule() {
   });
 }
 
+// pfModelGroupMemberHTML builds one "client/model + priority" row. Priority
+// blank means "fall back to the platform's global priority".
+function pfModelGroupMemberHTML(member, prio) {
+  const m = member == null ? "" : String(member);
+  const p = prio == null ? "" : String(prio);
+  return '<div class="pfGRow">' +
+    '<input class="cfgtext pfGMember" type="text" value="' + esc(m) + '" placeholder="client/model" spellcheck="false" autocomplete="off">' +
+    '<input class="cfgtext pfGPrio" type="number" step="1" value="' + esc(p) + '" placeholder="全局" title="只作用于这个组；数字越小越优先；留空回落到平台的全局优先级">' +
+    '<button class="xs pfGDelMember" type="button" title="删除这个成员">移除</button>' +
+    '</div>';
+}
+
+// pfModelGroupHTML renders one routing group. Member rows carry their own
+// priority input, which is keyed by the member's client on save.
+function pfModelGroupHTML(name, g) {
+  const group = g || {};
+  const prios = group.platform_priorities || {};
+  const members = Array.isArray(group.members) ? group.members : [];
+  const rows = members.map(m => {
+    const client = String(m).split("/")[0];
+    return pfModelGroupMemberHTML(m, prios[client]);
+  }).join("");
+  return '<div class="pfGroup">' +
+    '<div class="pfghead"><label class="sel-note">组名 <input class="cfgtext pfGName" type="text" value="' + esc(name || "") + '" placeholder="deepseek-v4.1-flash" spellcheck="false" autocomplete="off"></label>' +
+    '<span class="grow"></span>' +
+    '<button class="xs pfGDel" type="button">删除组</button></div>' +
+    '<div class="pfgrows">' + rows + '</div>' +
+    '<div class="pfgfoot"><button class="xs pfGAddMember" type="button">新增成员</button></div>' +
+    '</div>';
+}
+
+// pfModelGroupsHTML renders the whole routing-group editor from the saved
+// config. New groups start as one blank member row.
+function pfModelGroupsHTML(groups) {
+  const keys = Object.keys(groups || {});
+  const out = ['<div class="pfgsec">'];
+  out.push('<div class="pfghd"><strong>模型路由组</strong>' +
+    '<span class="hint">组名和成员模型名等价：调哪个都路由到整组；组内平台优先级覆盖全局优先级；同一成员不能出现在两个组里。</span>' +
+    '<span class="grow"></span>' +
+    '<button class="xs pfGAdd" type="button">新增路由组</button></div>');
+  out.push('<div class="pfgList">');
+  if (!keys.length) out.push('<div class="hint">还没有路由组。新增一个组，就能把同一模型在不同平台的名字绑成等价名。</div>');
+  keys.forEach(k => out.push(pfModelGroupHTML(k, (groups || {})[k])));
+  out.push('</div></div>');
+  return out.join("");
+}
+
+// pfReadModelGroups turns the editor back into the config shape and mirrors
+// the server-side checks in panel/configwrite.go so the operator sees the exact
+// problem before a 400. The returned platform_priorities is already keyed by
+// member client; savePlatforms diffs it against the baseline to emit nulls.
+function pfReadModelGroups() {
+  const groups = {};
+  const seenNames = {};
+  const seenMembers = {};
+  const rows = Array.from(document.querySelectorAll("#pfGroups .pfGroup"));
+  for (const row of rows) {
+    const nameEl = row.querySelector(".pfGName");
+    const name = nameEl ? nameEl.value.trim() : "";
+    if (name === "") return { err: "路由组名不能为空", row: row };
+    if (name.indexOf("/") >= 0) return { err: "路由组名不能包含 /", row: row };
+    const nameKey = name.toLowerCase();
+    if (seenNames[nameKey]) return { err: "路由组名重复：" + name, row: row };
+    seenNames[nameKey] = true;
+    const members = [];
+    const priorities = {};
+    const memberRows = Array.from(row.querySelectorAll(".pfGRow"));
+    for (const item of memberRows) {
+      const mEl = item.querySelector(".pfGMember");
+      const pEl = item.querySelector(".pfGPrio");
+      const member = mEl ? mEl.value.trim() : "";
+      if (member === "") continue;
+      const slash = member.indexOf("/");
+      if (slash <= 0 || slash === member.length - 1) {
+        return { err: "成员必须是 client/model：" + member, row: item };
+      }
+      const client = member.slice(0, slash);
+      const memberKey = member.toLowerCase();
+      if (seenMembers[memberKey]) return { err: "成员重复：" + member, row: item };
+      seenMembers[memberKey] = true;
+      members.push(member);
+      const raw = pEl ? pEl.value.trim() : "";
+      if (raw === "") continue;
+      const prio = Number(raw);
+      if (!Number.isInteger(prio)) return { err: "平台优先级必须是整数：" + member, row: item };
+      priorities[client] = prio;
+    }
+    if (!members.length) return { err: "路由组至少要有一个成员：" + name, row: row };
+    groups[name] = { members: members, platform_priorities: priorities };
+  }
+  return { groups: groups };
+}
+
 async function renderPlatforms() {
   const [cfg, md] = await Promise.all([api("/panel/api/config"), api("/panel/api/models")]);
   const body = $("#pfBody");
@@ -5816,7 +5925,10 @@ async function renderPlatforms() {
     baseline: JSON.parse(JSON.stringify(policy)),
     poolBaseline: JSON.parse(JSON.stringify(c.pool || {})),
     cooldownBaseline: JSON.parse(JSON.stringify(c.cooldown || {})),
+    groupsBaseline: JSON.parse(JSON.stringify(c.model_groups || {})),
   };
+  const groupsEl = $("#pfGroups");
+  if (groupsEl) groupsEl.innerHTML = pfModelGroupsHTML(c.model_groups || {});
 
   let totalOff = 0;
   const out = [];
@@ -6007,6 +6119,40 @@ async function savePlatforms() {
   if (Object.keys(changed).length) patch.platforms = changed;
   if (Object.keys(pool).length) patch.pool = pool;
   if (Object.keys(cool).length) patch.cooldown = cool;
+  const readGroups = pfReadModelGroups();
+  if (readGroups.err) {
+    toast("模型路由组：" + readGroups.err, "err");
+    const holder = readGroups.row;
+    const field = holder && holder.querySelector ? holder.querySelector(".pfGName, .pfGMember, .pfGPrio") : null;
+    if (field) field.focus();
+    return;
+  }
+  const groups = {};
+  const groupsBase = (PF && PF.groupsBaseline) || {};
+  const baseByLower = {};
+  Object.keys(groupsBase).forEach(k => { baseByLower[k.toLowerCase()] = k; });
+  const newNames = {};
+  Object.keys(readGroups.groups).forEach(name => { newNames[name.toLowerCase()] = name; });
+  // A group the operator deleted has to be removed on disk, which is what a
+  // null in the patch means. Case-only renames keep the baseline key so the
+  // patch cannot look like two duplicate group names.
+  Object.keys(groupsBase).forEach(k => { if (!newNames[k.toLowerCase()]) groups[k] = null; });
+  Object.keys(readGroups.groups).forEach(name => {
+    const now = readGroups.groups[name];
+    const baseKey = baseByLower[name.toLowerCase()] || name;
+    const base = groupsBase[baseKey] || {};
+    const entry = {};
+    const baseMembers = Array.isArray(base.members) ? base.members : [];
+    if (JSON.stringify(now.members) !== JSON.stringify(baseMembers)) entry.members = now.members;
+    const basePrio = base.platform_priorities || {};
+    const nowPrio = now.platform_priorities || {};
+    const prioPatch = {};
+    Object.keys(nowPrio).forEach(k => { if (basePrio[k] !== nowPrio[k]) prioPatch[k] = nowPrio[k]; });
+    Object.keys(basePrio).forEach(k => { if (!(k in nowPrio)) prioPatch[k] = null; });
+    if (Object.keys(prioPatch).length) entry.platform_priorities = prioPatch;
+    if (Object.keys(entry).length) groups[baseKey] = entry;
+  });
+  if (Object.keys(groups).length) patch.model_groups = groups;
   if (!Object.keys(patch).length) {
     toast("已保存，内容没有变化");
     return;
@@ -9856,6 +10002,40 @@ $("#btnPfImport").addEventListener("click", bundlePick);
 $("#btnPfSave").addEventListener("click", savePlatforms);
 $("#btnPfExpand").addEventListener("click", () => pfSetAll(true));
 $("#btnPfCollapse").addEventListener("click", () => pfSetAll(false));
+$("#pfGroups").addEventListener("input", ev => {
+  const priority = ev.target.closest(".pfGPrio");
+  const member = ev.target.closest(".pfGMember");
+  if (!priority && !member) return;
+  const group = ev.target.closest(".pfGroup");
+  const row = ev.target.closest(".pfGRow");
+  if (!group || !row) return;
+  const platform = item => item.querySelector(".pfGMember").value.trim().split("/")[0].toLowerCase();
+  const client = platform(row);
+  if (!client) return;
+  const peers = Array.from(group.querySelectorAll(".pfGRow")).filter(item => item !== row && platform(item) === client);
+  if (priority) {
+    peers.forEach(item => { item.querySelector(".pfGPrio").value = priority.value; });
+  } else if (peers.length) {
+    row.querySelector(".pfGPrio").value = peers[0].querySelector(".pfGPrio").value;
+  }
+});
+$("#pfGroups").addEventListener("click", ev => {
+  if (ev.target.closest(".pfGAdd")) {
+    const list = $("#pfGroups").querySelector(".pfgList");
+    if (list) list.insertAdjacentHTML("beforeend", pfModelGroupHTML("", { members: [""], platform_priorities: {} }));
+    return;
+  }
+  const group = ev.target.closest(".pfGroup");
+  if (!group) return;
+  if (ev.target.closest(".pfGDel")) { group.remove(); return; }
+  if (ev.target.closest(".pfGAddMember")) {
+    const rows = group.querySelector(".pfgrows");
+    if (rows) rows.insertAdjacentHTML("beforeend", pfModelGroupMemberHTML("", ""));
+    return;
+  }
+  const remove = ev.target.closest(".pfGDelMember");
+  if (remove) { const row = remove.closest(".pfGRow"); if (row) row.remove(); }
+});
 $("#pfSearch").addEventListener("input", pfApply);
 $("#pfOnlyOff").addEventListener("change", pfApply);
 $("#pfSearch").addEventListener("keydown", ev => {

@@ -148,7 +148,7 @@ func TestAnonymousChatSendsTheHandshake(t *testing.T) {
 func TestOAuthChatIsNotHandshaken(t *testing.T) {
 	c, got := captureBodyClient(t)
 	c.pool.upsert(accountRecord{
-		ID: "opencode:oauth", AuthMode: "oauth", AccessToken: "tok",
+		ID: "opencode:oauth", AuthMode: "oauth", AccessToken: "tok", APIKey: "zen-key",
 		Enabled: true, Source: sourcePanel,
 	})
 
@@ -270,7 +270,7 @@ func TestOAuthChatSendsNoFreeTierSession(t *testing.T) {
 		return sseResponse(happySSE), nil
 	})
 	c.pool.upsert(accountRecord{
-		ID: "opencode:oauth", AuthMode: "oauth", AccessToken: "tok",
+		ID: "opencode:oauth", AuthMode: "oauth", AccessToken: "tok", APIKey: "zen-key",
 		Enabled: true, Source: sourcePanel,
 	})
 

@@ -295,10 +295,22 @@ func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, e
 
 	// Probe with a freshly refreshed OAuth token when one is about to expire.
 	if err := c.ensureFreshOAuth(ctx, acct); err != nil {
-		return finish(core.TestResult{OK: false, Error: describeError(err)}), nil
+		return finish(core.TestResult{OK: false, Error: scrubAccount(describeError(err), acct)}), nil
+	}
+	if acct.authMode() == "oauth" {
+		c.resolveWorkspace(ctx, acct)
+		c.pool.upsert(*acct)
+		c.persist()
+	}
+	if !acct.inferenceReady() {
+		return finish(core.TestResult{OK: false, Error: firstNonEmpty(acct.InferenceError, "no Zen inference credential")}), nil
 	}
 
 	model := c.probeModel(acct)
+	if acct.authMode() == "oauth" && len(acct.AllowedModels) > 0 &&
+		!containsString(acct.AllowedModels, model) {
+		model = acct.AllowedModels[0]
+	}
 	probe := &core.ChatRequest{
 		Model: model,
 		Messages: []core.Message{
@@ -331,24 +343,26 @@ func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, e
 	}
 	resp, err := c.do(ctx, spec)
 	if err != nil {
-		return finish(core.TestResult{OK: false, Model: model, Error: scrubSecret(describeError(err), acct.secret())}), nil
+		return finish(core.TestResult{OK: false, Model: model, Error: scrubAccount(describeError(err), acct)}), nil
 	}
 	if resp.StatusCode != 200 {
 		errBody := readLimited(resp.Body, maxErrorBody)
 		resp.Body.Close()
 		verdict := classify(resp.StatusCode, errBody)
+		verdict.msg = scrubAccount(verdict.msg, acct)
+		verdict.typ = scrubAccount(verdict.typ, acct)
 		c.noteFailure(acct, verdict.kind, verdict.text())
 		return finish(core.TestResult{
 			OK:    false,
 			Model: model,
-			Error: scrubSecret(fmt.Sprintf("HTTP %d: %s", resp.StatusCode, truncate(verdict.text(), 200)), acct.secret()),
+			Error: scrubAccount(fmt.Sprintf("HTTP %d: %s", resp.StatusCode, truncate(verdict.text(), 200)), acct),
 		}), nil
 	}
 
 	stream := newChatStream(c, resp.Body, acct, ctx, cancel, false)
 	text, _, _, _, _, derr := drain(stream)
 	if derr != nil {
-		msg := scrubSecret(describeError(derr), acct.secret())
+		msg := scrubAccount(describeError(derr), acct)
 		c.noteFailure(acct, kindTransport, msg)
 		return finish(core.TestResult{OK: false, Model: model, Error: msg}), nil
 	}
@@ -366,13 +380,25 @@ func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, e
 
 // RefreshAccount re-imports the credential sources.
 //
-// There is nothing to refresh on a Zen key itself — no OAuth, no session — so
-// this re-reads opencode's auth.json and the import directory, which is what
-// picks up a key the operator rotated there.
+// Console accounts re-fetch workspace inference configuration. Static keys
+// re-read the credential sources to pick up a rotated key.
 func (c *Client) RefreshAccount(ctx context.Context, id string) ([]core.RefreshResult, error) {
 	c.ensure()
-	if _, ok := c.pool.byID(id); !ok {
+	acct, ok := c.pool.byID(id)
+	if !ok {
 		return nil, fmt.Errorf("account %q not found", id)
+	}
+	if acct.authMode() == "oauth" {
+		if err := c.ensureFreshOAuth(ctx, acct); err != nil {
+			return []core.RefreshResult{{AccountID: id, Error: scrubAccount(describeError(err), acct)}}, nil
+		}
+		c.resolveWorkspace(ctx, acct)
+		c.pool.upsert(*acct)
+		if acct.inferenceReady() {
+			c.pool.clearCooldown(id)
+		}
+		c.persist()
+		return []core.RefreshResult{{AccountID: id, OK: acct.inferenceReady(), Error: acct.InferenceError}}, nil
 	}
 
 	var found []string

@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -40,7 +41,7 @@ import (
 )
 
 // version is overridable with -ldflags "-X main.version=...".
-var version = "0.1.30"
+var version = "0.1.31"
 
 // restartHandoffEnv marks the replacement half of a panel restart.  It tells a
 // starting process to keep retrying the listen address instead of failing fast,
@@ -57,14 +58,15 @@ const restartHandoffEnv = "CLIENT2API_RESTART_HANDOFF"
 // ---------------------------------------------------------------------------
 
 type fileConfig struct {
-	Listen    string                     `json:"listen"`
-	APIKey    string                     `json:"api_key"`
-	DataDir   string                     `json:"data_dir"`
-	Proxy     string                     `json:"proxy"`
-	Aliases   map[string]string          `json:"aliases"`
-	Disabled  []string                   `json:"disabled"`
-	Platforms map[string]platformConfig  `json:"platforms"`
-	Clients   map[string]json.RawMessage `json:"clients"`
+	Listen      string                      `json:"listen"`
+	APIKey      string                      `json:"api_key"`
+	DataDir     string                      `json:"data_dir"`
+	Proxy       string                      `json:"proxy"`
+	Aliases     map[string]string           `json:"aliases"`
+	Disabled    []string                    `json:"disabled"`
+	Platforms   map[string]platformConfig   `json:"platforms"`
+	ModelGroups map[string]modelGroupConfig `json:"model_groups"`
+	Clients     map[string]json.RawMessage  `json:"clients"`
 
 	Schedule      scheduleConfig      `json:"schedule"`
 	Prompt        promptConfig        `json:"prompt"`
@@ -107,6 +109,14 @@ type platformConfig struct {
 	// shows it beside the account so a broken credential can be signed in
 	// again as the right identity.  It is display metadata, not routing.
 	AccountNotes map[string]string `json:"account_notes,omitempty"`
+}
+
+// modelGroupConfig is one operator-declared equivalence group in the config
+// file. Members use the qualified client/model spelling; the projection
+// splits them into the registry's structured type.
+type modelGroupConfig struct {
+	Members            []string       `json:"members"`
+	PlatformPriorities map[string]int `json:"platform_priorities,omitempty"`
 }
 
 // platformConfigs projects the file's platforms block onto the router's own
@@ -162,6 +172,65 @@ func (c *fileConfig) platformConfigsFor(clients []core.Client) map[string]core.P
 			}
 		}
 		out[name] = cfg
+	}
+	return out
+}
+
+// modelGroups projects the file's model_groups block onto the router's
+// equivalence type. Blank names and malformed member rows are ignored here;
+// the panel validates operator writes before they reach this path.
+func (c *fileConfig) modelGroups() map[string]core.ModelGroup {
+	if len(c.ModelGroups) == 0 {
+		return map[string]core.ModelGroup{}
+	}
+
+	rawNames := make([]string, 0, len(c.ModelGroups))
+	for rawName := range c.ModelGroups {
+		rawNames = append(rawNames, rawName)
+	}
+	sort.Strings(rawNames)
+
+	out := make(map[string]core.ModelGroup, len(c.ModelGroups))
+	for _, rawName := range rawNames {
+		name := strings.ToLower(strings.TrimSpace(rawName))
+		if name == "" {
+			continue
+		}
+		if _, exists := out[name]; exists {
+			continue
+		}
+
+		raw := c.ModelGroups[rawName]
+		group := core.ModelGroup{}
+		seenMembers := make(map[string]struct{}, len(raw.Members))
+		for _, rawMember := range raw.Members {
+			client, model, ok := strings.Cut(strings.TrimSpace(rawMember), "/")
+			client = strings.TrimSpace(client)
+			model = strings.TrimSpace(model)
+			if !ok || client == "" || model == "" {
+				continue
+			}
+			key := strings.ToLower(client) + "\x00" + strings.ToLower(model)
+			if _, duplicate := seenMembers[key]; duplicate {
+				continue
+			}
+			seenMembers[key] = struct{}{}
+			group.Members = append(group.Members, core.ModelGroupMember{Client: client, Model: model})
+		}
+		if len(group.Members) == 0 {
+			continue
+		}
+
+		if len(raw.PlatformPriorities) > 0 {
+			group.PlatformPriorities = make(map[string]int, len(raw.PlatformPriorities))
+			for platform, priority := range raw.PlatformPriorities {
+				platform = strings.TrimSpace(platform)
+				if platform != "" {
+					group.PlatformPriorities[platform] = priority
+				}
+			}
+		}
+		out[name] = group
 	}
 	return out
 }
@@ -1095,6 +1164,7 @@ func run() error {
 	// blacklist.  An absent platforms block installs the default everywhere.
 	platCfgs := cfg.platformConfigsFor(registry.All())
 	registry.SetPlatformConfigs(platCfgs)
+	registry.SetModelGroups(cfg.modelGroups())
 	// A module that owns an account pool reads its own policy from the push, so
 	// the low-balance guard is armed before the first request too.
 	if n := core.ApplyPlatformPolicies(registry, platCfgs); n > 0 {
@@ -1213,6 +1283,9 @@ func run() error {
 		// and made the panel demand a restart for a one-line rename; Resolve
 		// reads the table per request, so replacing it is enough.
 		registry.SetAliases(next.Aliases)
+		// Model groups are built from the same hot config and resolver table,
+		// so adding or removing a member takes effect on the next request.
+		registry.SetModelGroups(next.modelGroups())
 		// The timetable is hot too: an operator who toggles a batch in the panel
 		// expects the next fire to obey the new file, not the one from boot.
 		sched.Reconfigure(next.schedule())

@@ -3,6 +3,7 @@ package opencode
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -40,11 +41,17 @@ func TestChatUsesAnonymousCredentialHeaders(t *testing.T) {
 }
 
 // TestTestAccountUsesOAuthHeaders proves the probe path carries the OAuth
-// bearer token and the organisation, and never falls back to a blank API key.
+// workspace's inference key and the organisation, separately from login.
 func TestTestAccountUsesOAuthHeaders(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	var got *http.Request
 	c := newFakeClient(t, Config{}, func(r *http.Request) (*http.Response, error) {
+		if strings.HasSuffix(r.URL.Path, "/api/config") {
+			if r.Header.Get("Authorization") != "Bearer oauth-access" {
+				t.Fatal("config did not use Console token")
+			}
+			return jsonResponse(200, `{"config":{"provider":{"opencode":{"options":{"apiKey":"zen-key"}}}}}`), nil
+		}
 		got = r
 		return sseResponse(
 			"data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"pong\"},\"finish_reason\":null}]}\n\n" +
@@ -70,7 +77,7 @@ func TestTestAccountUsesOAuthHeaders(t *testing.T) {
 	if got == nil {
 		t.Fatal("no request was sent")
 	}
-	if got.Header.Get("Authorization") != "Bearer oauth-access" {
+	if got.Header.Get("Authorization") != "Bearer zen-key" {
 		t.Fatalf("Authorization = %q", got.Header.Get("Authorization"))
 	}
 	if got.Header.Get("x-opencode-org-id") != "org-1" {
@@ -181,7 +188,7 @@ func TestAnonymousCredentialIsSelectable(t *testing.T) {
 	}
 }
 
-func TestOAuthCredentialIsSelectableWithoutAPIKey(t *testing.T) {
+func TestOAuthLoginWithoutInferenceKeyIsStoredButNotSelectable(t *testing.T) {
 	c := newTestClient(t, Config{})
 	if !c.pool.upsert(accountRecord{
 		ID:           "opencode:oauth:user:org",
@@ -194,11 +201,7 @@ func TestOAuthCredentialIsSelectableWithoutAPIKey(t *testing.T) {
 	}) {
 		t.Fatal("OAuth account was not stored")
 	}
-	acct, err := c.pool.acquire(testNow, 1)
-	if err != nil {
-		t.Fatalf("acquire: %v", err)
-	}
-	if acct.AccessToken != "oauth-access" || acct.OrgID != "org-1" {
-		t.Fatalf("account = %+v", acct)
+	if acct, err := c.pool.acquire(testNow, 1); err == nil || acct != nil {
+		t.Fatal("Console login alone was selectable for inference")
 	}
 }

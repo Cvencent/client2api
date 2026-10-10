@@ -105,7 +105,7 @@ origin (`auth_base_url`, default `https://opencode.ai/console`):
 | `POST` | `/auth/device/token` | none | poll for the token, and refresh it |
 | `GET` | `/api/user` | Bearer | the signed-in user |
 | `GET` | `/api/orgs` | Bearer | the orgs the user can bill |
-| `GET` | `/api/config` | Bearer + `x-opencode-org-id` | the workspace's allowed model ids |
+| `GET` | `/api/config` | Console Bearer + `x-org-id` | workspace inference credentials, address, headers and model ids |
 
 `GET /models` is deliberately called **without** a credential: it is public, and
 sending a key to an endpoint that does not need one is a leak waiting to happen.
@@ -178,12 +178,13 @@ See `config.example.json` for the complete shape.
 | `extra_models` | string[] | `[]` | appends ids to the catalogue; never removes one |
 | `extra_headers` | object | `{}` | added to every request; reserved names dropped |
 | `chat_timeout` | duration | `10m` | whole-call deadline for a chat |
+| `queue_timeout` | duration | `60s` | maximum wait for local pool/gateway account capacity; caller cancellation ends the wait |
 | `models_timeout` | duration | `20s` | deadline for `GET /models` and for the account probe |
 | `models_ttl` | duration | `1h` | how long a fetched catalogue is reused |
 | `idle_timeout` | duration | `2m` | SSE idle guard: no bytes for this long ends the stream |
 | `cooldown` | duration | `60s` | how long a throttled account parks |
 | `quota_cooldown` | duration | `12h` | how long an out-of-credit account parks |
-| `max_in_flight` | int | `4` | per-account concurrent requests before `core.ErrBusy` |
+| `max_in_flight` | int | `4` | per-account concurrent requests; excess requests wait for capacity, then return `core.ErrBusy` when the queue timeout expires |
 | `include_usage` | bool | `false` | asks for a usage frame via `stream_options` (best-effort) |
 | `disable_auth_json_discovery` | bool | `false` | turns off the on-machine `auth.json` scan |
 | `test_model` | string | `gpt-5-nano` | what the panel's "test" button asks |
@@ -266,8 +267,10 @@ Imported and panel-added credentials are written to
 ```
 
 An OAuth record carries `auth_mode`, `access_token`, `refresh_token`,
-`expires_at`, `org_id`/`org_name`, `email` and `allowed_models` instead of
-`api_key`; the anonymous free record is the fixed `opencode:anonymous` row with
+`expires_at`, `org_id`/`org_name`, `email` and `allowed_models`, plus a separate
+workspace `api_key`, `inference_base_url`, `inference_headers` and
+`inference_error`. A Console token alone is never an inference credential.
+The anonymous free record is the fixed `opencode:anonymous` row with
 `auth_mode: "anonymous"` and `api_key: "public"`.
 
 Credentials that came from the **config or the environment are not copied onto
@@ -320,13 +323,25 @@ as `URL` plus the `user_code` as `Code`, and `PollLogin` polls
 `/auth/device/token` on the server's interval, honouring
 `authorization_pending`, `slow_down` (backing off up to 60s), `expired_token`
 and `access_denied`. On success it reads `/api/user` and `/api/orgs`, picks
-the first org, and fetches `/api/config` with `x-opencode-org-id` for the
-workspace's allowed model ids. A config-fetch failure is **not** fatal: the
-account is still stored and the catalogue falls back to the public list. The
-record carries `AuthMode: "oauth"`, the access/refresh tokens, `ExpiresAt`,
-`OrgID`/`OrgName`, `Email` and `AllowedModels`. Before each chat and account
-test, `ensureFreshOAuth` refreshes the token five minutes ahead of expiry and
-rewrites the same account id.
+the first org, and fetches `/api/config` with `x-org-id`. The Console token
+authenticates this control-plane call; it is not sent as a fallback key to
+`/zen/v1/chat/completions`. The module reads `provider.opencode.options.apiKey`,
+`options.baseURL` (or the provider's `api` address), `options.headers`, and the
+workspace model list. A disabled or missing provider, absent inference
+credential, or failed configuration fetch preserves the login but reports
+the account as not ready with an explanation.
+
+`{env:OPENCODE_CONSOLE_TOKEN}` can be resolved only for a workspace-supplied
+inference address distinct from the public Zen default. Other environment
+references are reported as unsupported. Per-model provider overrides are
+excluded from this OpenAI chat adapter.
+
+The token is refreshed five minutes before expiry, with workspace configuration
+re-read under the same account id. The panel's refresh and test actions also
+re-read it, so older login-only accounts can obtain their inference configuration.
+Refresh preserves the account's enable switch; an account disabled by an older
+version must be explicitly enabled after configuration is resolved. Revoked
+configuration clears stale inference keys and model ids.
 
 The vendor sends a relative `/console/device?…` path as the verification URL;
 the module resolves it against `auth_base_url` so the panel always hands the
@@ -344,6 +359,13 @@ public catalogue is served unchanged.
 - One `Chat` call may try up to **3** accounts (`maxRotate`) before giving up.
   The last real verdict is what the caller sees: "every account is cooling down"
   is a worse answer than the 429 that caused it.
+- Busy local pool or gateway account slots are retried until `queue_timeout`
+  or the caller deadline expires. Waiting holds no account slot and does not
+  raise concurrency limits. Cooldowns and missing credentials do not queue.
+  Account retries share one queue deadline and do not retry a failed upstream
+  account repeatedly within one Chat call.
+  Free model requests skip Console accounts; anonymous accounts skip paid models,
+  and configured Console model allowlists are respected.
 - `core.NoteServedBy` is called immediately after the pick, so the panel always
   shows the account that actually served the request.
 - Failure verdicts are classified into auth / quota / rate / model / client /
@@ -352,6 +374,9 @@ public catalogue is served unchanged.
   `quota_cooldown`, throttling parks for `cooldown`. A bad request from the
   caller and an unknown model are recorded against the module, not the account —
   they say nothing about the account's health.
+- A named `server_error`, even with HTTP 429, is an upstream failure rather than
+  evidence of an account quota or rate limit. A single outage does not park the
+  account. Expired cooldowns no longer remain visually cooling due to stale errors.
 - Re-enabling an account clears its failure state, so it does not come back
   already parked.
 - `AccountRecord.Identity` is **always empty**. Zen publishes no account

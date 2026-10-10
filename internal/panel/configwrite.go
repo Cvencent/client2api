@@ -39,7 +39,7 @@ var configWriteMu sync.Mutex
 // file keeps looking hand-written rather than being alphabetised.  Keys the
 // running binary does not know about are preserved and appended, because
 // dropping them would be silent data loss.
-var configKeyOrder = []string{"listen", "api_key", "data_dir", "proxy", "aliases", "disabled", "platforms", "schedule", "pool", "cooldown", "prompt", "session_sticky", "features", "panel", "clients"}
+var configKeyOrder = []string{"listen", "api_key", "data_dir", "proxy", "aliases", "disabled", "platforms", "model_groups", "schedule", "pool", "cooldown", "prompt", "session_sticky", "features", "panel", "clients"}
 
 // configSaveResponse is the GET payload plus what the save actually did.
 type configSaveResponse struct {
@@ -281,6 +281,107 @@ func configPriorityWindowsOverlap(a, b configPriorityWindow) bool {
 	return false
 }
 
+func validateModelGroups(cfg map[string]any) error {
+	raw, ok := cfg["model_groups"]
+	if !ok || raw == nil {
+		return nil
+	}
+	groups, ok := raw.(map[string]any)
+	if !ok {
+		return errors.New("model_groups must be an object keyed by group name")
+	}
+
+	aliases := map[string]string{}
+	if av, ok := cfg["aliases"].(map[string]any); ok {
+		for alias := range av {
+			aliases[strings.ToLower(strings.TrimSpace(alias))] = alias
+		}
+	}
+
+	seenNames := map[string]string{}
+	memberOwners := map[string]string{}
+	for rawName, entry := range groups {
+		name := strings.TrimSpace(rawName)
+		if name == "" {
+			return errors.New("model group name must not be blank")
+		}
+		if strings.Contains(name, "/") {
+			return fmt.Errorf("model group name %q must not contain \"/\"", name)
+		}
+		nameKey := strings.ToLower(name)
+		if previous, exists := seenNames[nameKey]; exists {
+			return fmt.Errorf("duplicate model group name %q (already declared as %q)", name, previous)
+		}
+		if alias, exists := aliases[nameKey]; exists {
+			return fmt.Errorf("model group %q collides with alias %q", name, alias)
+		}
+		seenNames[nameKey] = name
+
+		if entry == nil {
+			continue // null clears the group in a partial patch
+		}
+		group, ok := entry.(map[string]any)
+		if !ok {
+			return fmt.Errorf("model group %q configuration must be an object", name)
+		}
+
+		membersRaw, ok := group["members"]
+		if !ok || membersRaw == nil {
+			return fmt.Errorf("model group %q must have a non-empty members array", name)
+		}
+		members, ok := membersRaw.([]any)
+		if !ok {
+			return fmt.Errorf("model group %q members must be an array", name)
+		}
+		if len(members) == 0 {
+			return fmt.Errorf("model group %q must have a non-empty members array", name)
+		}
+
+		memberPlatforms := map[string]string{}
+		for i, rawMember := range members {
+			member, ok := rawMember.(string)
+			if !ok {
+				return fmt.Errorf("model group %q members must contain only strings", name)
+			}
+			member = strings.TrimSpace(member)
+			client, model, ok := strings.Cut(member, "/")
+			client = strings.TrimSpace(client)
+			model = strings.TrimSpace(model)
+			if !ok || client == "" || model == "" {
+				return fmt.Errorf("model group %q members[%d] %q must be \"client/model\"", name, i, member)
+			}
+
+			memberKey := strings.ToLower(client) + "\x00" + strings.ToLower(model)
+			if owner, exists := memberOwners[memberKey]; exists {
+				return fmt.Errorf("duplicate member %q in model group %q (already used by %q)", member, name, owner)
+			}
+			memberOwners[memberKey] = name
+			memberPlatforms[strings.ToLower(client)] = client
+		}
+
+		if prioritiesRaw, ok := group["platform_priorities"]; ok && prioritiesRaw != nil {
+			priorities, ok := prioritiesRaw.(map[string]any)
+			if !ok {
+				return fmt.Errorf("model group %q platform_priorities must be an object", name)
+			}
+			for platform, rawPriority := range priorities {
+				if rawPriority == nil {
+					continue // null deletes one priority without touching siblings
+				}
+				platformKey := strings.ToLower(strings.TrimSpace(platform))
+				if _, exists := memberPlatforms[platformKey]; !exists {
+					return fmt.Errorf("model group %q platform priority %q is not a member platform", name, platform)
+				}
+				priority, ok := rawPriority.(float64)
+				if !ok || priority != float64(int(priority)) {
+					return fmt.Errorf("model group %q platform priority for %q must be a whole number", name, platform)
+				}
+			}
+		}
+	}
+	return nil
+}
+
 // validateConfig type-checks the document the way the process will read it.
 // Without this a typo saved from the editor would only surface as a failed
 // startup, long after the save looked successful.
@@ -311,6 +412,9 @@ func validateConfig(cfg map[string]any) error {
 				return fmt.Errorf("alias %q target %q must be \"client/model\"", alias, s)
 			}
 		}
+	}
+	if err := validateModelGroups(cfg); err != nil {
+		return err
 	}
 	if v, ok := cfg["disabled"]; ok && v != nil {
 		arr, ok := v.([]any)

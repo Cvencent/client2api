@@ -24,13 +24,25 @@ One OpenAI-compatible gateway in front of sixteen AI backends:
 | `openai-compat/…` | OpenAI-compatible sources | One config-driven module over many OpenAI-shaped free tiers: Groq, Cerebras, SiliconFlow, Mistral, NVIDIA NIM, Together, Fireworks, DeepInfra, Chutes, HuggingFace; route as `openai-compat/<provider>/<model>` |
 
 Everything is served from **one** HTTP surface — `POST /v1/chat/completions`,
-`GET /v1/models`, `GET /v1/status`, `GET /healthz`, plus a web panel at
-`/panel/`.
+`POST /v1/responses`, `GET /v1/models`, `GET /v1/status`, `GET /healthz`, plus a
+web panel at `/panel/`.
+
+Cline forwards declared tools when `tool_choice` is omitted or `null`, using
+the upstream's default automatic selection. Only an explicit `"none"` suppresses
+the tool definitions.
+
+OpenCode keeps Console login tokens separate from workspace inference keys and
+addresses. A logged-in workspace without Zen configuration remains saved but
+is not ready for inference; the account refresh/test actions explain the missing
+configuration. Overlapping OpenCode requests wait up to `queue_timeout` (default
+`60s`) for local account capacity while respecting the configured concurrency
+limits and caller cancellation. Upstream `server_error` responses, including
+HTTP 429 endpoint outages, are classified as upstream failures.
 
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-Current version: **0.1.29**. Full history: [CHANGELOG.md](CHANGELOG.md).
+Current version: **0.1.31**. Full history: [CHANGELOG.md](CHANGELOG.md).
 
 ### Recent highlights (0.1.26 - 0.1.29)
 
@@ -169,6 +181,30 @@ curl.exe -s -X POST http://127.0.0.1:8788/v1/chat/completions `
   -H "Content-Type: application/json" `
   -d '{\"model\":\"zcode/GLM-5.3\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"stream\":true}'
 ```
+
+The same models are also served over the **Responses API**, which is the only
+wire protocol Codex CLI speaks (`wire_api = "responses"`):
+
+```powershell
+curl.exe -s -X POST http://127.0.0.1:8788/v1/responses `
+  -H "Content-Type: application/json" `
+  -d '{\"model\":\"zcode/GLM-5.3\",\"input\":\"hi\",\"stream\":true}'
+```
+
+Point Codex at this gateway and it needs no translating relay in between:
+
+```toml
+model = "zcode/GLM-5.3"
+model_provider = "client2api"
+
+[model_providers.client2api]
+name = "client2api"
+base_url = "http://127.0.0.1:8788/v1"
+wire_api = "responses"
+env_key = "CLIENT2API_KEY"
+```
+
+See *The Responses API* below for what is translated and what is deliberately not.
 
 Panel: <http://127.0.0.1:8788/panel/>.
 
@@ -320,6 +356,7 @@ Three accepted forms:
 | `zcode/GLM-5.3` | explicit: module `zcode`, model `GLM-5.3` |
 | `GLM-5.3` | the unique module whose catalog lists it (ambiguous → 400 listing the owners) |
 | `gpt-4o` | whatever the `aliases` table in the config says |
+| `deepseek-v4.1-flash` | a `model_groups` group name, or a bare member model id: route across every member of that group |
 | `Auto/GLM-5.3` | aggregate every platform that serves the model, ordered by platform priority |
 
 A module always receives the **bare** model name, never the qualified one.
@@ -339,11 +376,126 @@ unchanged, and also exposes one aggregated name per model.  That name resolves
 through the same platform-priority, health, cooldown, and failover path as a
 bare request.  Use a qualified id when the request must stay on one platform.
 
+`model_groups` is the operator-defined equivalent of `Auto/`: declare the same
+model under its platform-specific ids once, and from then on the group name and
+every member id route across all available members. Group names are
+case-insensitive and must not contain `/`; a member is `client/model`, may
+belong to only one group, and cannot collide with an `aliases` key. An explicit
+`client/model` still locks that platform and never expands through a group.
+Inside a group the member platform's `platform_priorities` are tried first;
+platforms without a group priority fall back to the global
+`platforms.<name>.priority` and `priority_schedule`. Members missing from a
+live catalogue are skipped, so one flaky module cannot take the group down.
+
 When a router-chosen candidate (a bare name or `Auto/`) answers `404 model not
 found`, the gateway demotes that platform/model pair briefly and tries the next
 candidate instead of returning the 404: the caller did not choose the platform,
 so one vendor retiring an id must not fail the request.  An explicitly
 qualified id is not rescued -- there the 404 is the honest answer.
+
+## The Responses API
+
+`POST /v1/responses` serves the same models as `/v1/chat/completions` over the
+OpenAI Responses wire format. It exists for one reason: **Codex CLI no longer
+speaks Chat Completions.** Its `WireApi` enum has a single variant, `Responses`,
+and `wire_api = "responses"` is the only value a provider block may name — so an
+endpoint that only implements Chat Completions makes Codex fail at the first
+turn.
+
+The usual fix is to put a translating relay between Codex and the gateway. That
+works until the request carries **encrypted agent content** — the ciphertext a
+delegated sub-agent's message is wrapped in. A relay cannot translate what it
+cannot decrypt, so its only honest answer is a 400, and the turn ends before any
+vendor is reached. This endpoint removes the relay from that path: it speaks
+Responses natively, so there is no translation step to fail.
+
+### What is translated
+
+| Responses request | becomes |
+|---|---|
+| `instructions` | a leading `system` message |
+| `input` as a string | one `user` turn |
+| `input` as an array | ordered `core.Message`s (see below) |
+| `message` item (`user`/`assistant`/`system`/`developer`) | a message; `developer` maps to `system` |
+| `input_text` / replayed `output_text` | text content, including assistant history |
+| `input_image` with `image_url` and `detail` | an image content part |
+| `function_call` item | an `assistant` turn carrying `tool_calls` |
+| `function_call_output` item | a `tool` turn keyed by `call_id` |
+| `reasoning` item | its `summary` text, kept as the turn's reasoning |
+| `compaction` item | its plaintext summary, when it holds one |
+| `tools` (flat **or** nested under `function`) | `core.Tool` declarations |
+| built-in tools (`web_search`, …) | skipped, never fatal |
+| `reasoning.effort` / `reasoning_effort` | the request's thinking level, forwarded to upstream modules |
+| `max_output_tokens` | `max_tokens` |
+| an unknown item type | skipped, never fatal |
+
+The array form is where the two protocols genuinely differ, and the translation
+is not a field rename. Responses has no `messages` array: a tool call, its
+result and a reasoning echo are **siblings** in one flat `input` list. Chat
+models express the same facts as an assistant turn carrying `tool_calls`
+followed by `tool`-role turns, so a `function_call` opens an assistant turn and
+the matching `function_call_output` closes it. Reasoning that precedes a call is
+attached to that call's turn, which is where a Chat model expects to find it.
+
+### What is emitted
+
+Streaming follows the sequence Codex's parser requires:
+
+```
+response.created
+  response.output_item.added            (on first appearance, with a stable ID/index)
+  response.content_part.added / response.reasoning_summary_part.added
+  response.output_text.delta …          (assistant text)
+  response.reasoning_summary_text.delta … (reasoning)
+  response.function_call_arguments.delta … (tool arguments)
+  corresponding text/arguments/part.done
+  response.output_item.done             (one per reasoning / message / function_call)
+response.completed                      (carries response.id and usage)
+```
+
+Two details are load-bearing and easy to get wrong. Codex dispatches on the
+`type` field **inside** each payload rather than on the SSE `event:` header, so
+both are written from one string and can never disagree. And
+`response.output_item.done` — not `.added` — is what Codex acts on for both
+tool dispatch and assistant-message finalisation, so a stream that only emits
+deltas shows text and never runs a tool. A stream that breaks mid-flight emits
+`response.failed` rather than hanging.
+Items retain their IDs and indexes through deltas, `.done`, and final output.
+Token-limit termination sets `status = "incomplete"` and
+`incomplete_details.reason = "max_output_tokens"` in both response modes;
+streaming emits the terminal `response.incomplete` event.
+
+Non-streaming (`"stream": false`) returns one `response` object whose `output`
+array carries a `reasoning` item when there was reasoning, a `message` item, and
+one `function_call` item per call.
+
+### Encrypted agent content
+
+An item whose content is encrypted is **accepted, not rejected** — that is the
+difference this endpoint exists to make. The gateway does not try to read the
+bytes; it carries through the one fact the model can act on and drops the rest:
+
+* An `agent_message` keeps its plaintext envelope (author, recipient, task name)
+  and its text parts. The ciphertext is replaced by
+  `[encrypted agent payload omitted]`.
+* A `reasoning` item keeps its `summary` text. Its `encrypted_content` cannot be
+  replayed to any vendor but its issuer, so it is dropped rather than forwarded.
+* A `compaction` item keeps its plaintext summary when it holds one, and is
+  skipped when the field is a real ciphertext blob.
+
+The ciphertext is **never** forwarded to a vendor and never decoded into
+invented text: the gateway does not hold the key, so anything it produced would
+be fabrication. The sub-agent payload's *content* is therefore not replayed;
+what is preserved is the fact that a delegated message exists and who sent it.
+
+### Limits
+
+* **Stateless.** `store` and `previous_response_id` are accepted and ignored.
+  The caller replays its history in `input`, which is what Codex does anyway.
+* **Function tools only.** A built-in tool has no function name to forward, so
+  it is skipped.
+* **No `output_text` convenience field** on the response object; read it from
+  the `message` item's `content[0].text`.
 
 ## Configuration
 
@@ -360,6 +512,12 @@ sections below:
   "disabled": [],
   "clients": {
     "<name>": { }
+  },
+  "model_groups": {
+    "deepseek-v4.1-flash": {
+      "members": ["opencode/deepseek-v4.1-flash", "cline/cline-free/deepseek-v4.1-flash"],
+      "platform_priorities": { "opencode": 10, "cline": 20 }
+    }
   },
   "features": { "sanitize_blacklist_fingerprints": true },
   "cooldown": { "soft_rate": "600s", "soft_rate_max": "2h" },
@@ -448,6 +606,7 @@ to every module that implements `core.LiveReloader`, with no restart.
 | `pool.breaker_*` / `pool.degrade_*` / `pool.idle_weight_*` / `pool.prefer_expiring` / `pool.expiring_soon` / `pool.cost_explore_interval` | hot; acted on by workbuddy |
 | `session_sticky.enabled` / `ttl` / `gc_interval` | hot; the switch and the window reach every module that binds conversations |
 | `platforms.<name>.*` | hot; priority and the model blacklist reach routing immediately, the ceilings are enforced by the gateway, and `reserve_credits` is enforced by workbuddy |
+| `model_groups` | hot; group names and member ids start routing immediately, group priorities included |
 | `panel.package_detail_limit` | restart; the panel reads it once, at construction |
 | `schedule.*` | live (`Reconfigure`), but the running loop only reacts to the *next* wake; the `schedule` block is reported in `GET /panel/api/status` |
 
@@ -954,6 +1113,11 @@ the module's label, and the raw id is the last resort so a row never goes blank
 after an account is deleted. The hover title keeps the raw id, the module label
 and the vendor identity, so a label that only names the credential ("ZCode plan
 JWT") is still traceable to the account behind the channel.
+A **thinking effort** column records the level the caller asked for. The relay
+spelling (`reasoning_effort`), the Responses-shaped `reasoning.effort`, and the
+`client2api.reasoning_effort` option are all accepted and normalised to lower
+case; a request that names no level stays visibly empty instead of borrowing a
+module default.
 
 **Usage** is a real chart rather than a row of bars. `GET /panel/api/usage` returns
 `series` — one `UsagePoint` per bucket, carrying `t`, `scope` (`hour` or `day`),

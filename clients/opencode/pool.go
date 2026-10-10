@@ -19,27 +19,26 @@ import (
 // ---------------------------------------------------------------------------
 // The account pool.
 //
-// Zen has one credential shape: a static API key.  There is no refresh flow, no
-// OAuth, no session — so this pool is much smaller than lobsterai's.  What it
-// keeps from that module is the part that matters: in-flight accounting that
-// survives a reload, three distinguishable acquire failures, and a cooldown
-// that records WHY an account is parked so the panel can say "out of credit"
-// rather than "cooling down".
+// Console OAuth tokens authenticate workspace configuration calls. Inference
+// credentials and routing come from that configuration, independently of login.
 // ---------------------------------------------------------------------------
 
 // accountRecord is one Zen credential.
 type accountRecord struct {
-	ID            string   `json:"id"`
-	Label         string   `json:"label,omitempty"`
-	APIKey        string   `json:"api_key"`
-	AuthMode      string   `json:"auth_mode,omitempty"` // api_key|anonymous|oauth
-	AccessToken   string   `json:"access_token,omitempty"`
-	RefreshToken  string   `json:"refresh_token,omitempty"`
-	ExpiresAt     string   `json:"expires_at,omitempty"`
-	OrgID         string   `json:"org_id,omitempty"`
-	OrgName       string   `json:"org_name,omitempty"`
-	Email         string   `json:"email,omitempty"`
-	AllowedModels []string `json:"allowed_models,omitempty"`
+	ID               string            `json:"id"`
+	Label            string            `json:"label,omitempty"`
+	APIKey           string            `json:"api_key"`
+	AuthMode         string            `json:"auth_mode,omitempty"` // api_key|anonymous|oauth
+	AccessToken      string            `json:"access_token,omitempty"`
+	RefreshToken     string            `json:"refresh_token,omitempty"`
+	ExpiresAt        string            `json:"expires_at,omitempty"`
+	OrgID            string            `json:"org_id,omitempty"`
+	OrgName          string            `json:"org_name,omitempty"`
+	Email            string            `json:"email,omitempty"`
+	AllowedModels    []string          `json:"allowed_models,omitempty"`
+	InferenceBaseURL string            `json:"inference_base_url,omitempty"`
+	InferenceHeaders map[string]string `json:"inference_headers,omitempty"`
+	InferenceError   string            `json:"inference_error,omitempty"`
 
 	// Source records where the credential came from: config, env or import.
 	// It is shown in the panel so an operator can tell a pasted key from a
@@ -79,6 +78,21 @@ func (a *accountRecord) credentialPresent() bool {
 	return a != nil && (strings.TrimSpace(a.APIKey) != "" || strings.TrimSpace(a.AccessToken) != "")
 }
 
+func (a *accountRecord) inferenceReady() bool {
+	if a == nil || !a.credentialPresent() {
+		return false
+	}
+	if a.authMode() != "oauth" {
+		return true
+	}
+	if a.InferenceError != "" {
+		return false
+	}
+	return strings.TrimSpace(a.APIKey) != "" ||
+		strings.TrimSpace(a.InferenceHeaders["Authorization"]) != "" ||
+		strings.TrimSpace(a.InferenceHeaders["X-Api-Key"]) != ""
+}
+
 func (a *accountRecord) authMode() string {
 	if a == nil || strings.TrimSpace(a.AuthMode) == "" {
 		return "api_key"
@@ -99,9 +113,7 @@ func (a *accountRecord) secret() string {
 }
 
 // authSpec fills the credential headers for this account.  The credential
-// kinds are mutually exclusive: an anonymous account sends x-api-key: public,
-// an OAuth account sends a bearer token plus its organisation, and a pasted
-// key sends a bearer token (which is what the vendor's own CLI does).
+// Console tokens are never used as a fallback Zen API key.
 func (a *accountRecord) authSpec(spec requestSpec) requestSpec {
 	if a == nil {
 		return spec
@@ -110,8 +122,15 @@ func (a *accountRecord) authSpec(spec requestSpec) requestSpec {
 	case "anonymous":
 		spec.apiKey = firstNonEmpty(a.APIKey, "public")
 	case "oauth":
-		spec.bearer = a.AccessToken
+		spec.bearer = a.APIKey
 		spec.orgID = a.OrgID
+		if a.InferenceBaseURL != "" {
+			spec.url = strings.TrimRight(a.InferenceBaseURL, "/") + "/chat/completions"
+		}
+		spec.headers = make(map[string]string, len(a.InferenceHeaders))
+		for k, v := range a.InferenceHeaders {
+			spec.headers[k] = strings.ReplaceAll(v, "{env:OPENCODE_CONSOLE_TOKEN}", a.AccessToken)
+		}
 	default:
 		spec.bearer = a.APIKey
 	}
@@ -206,12 +225,17 @@ func (p *pool) onlyAnonymous() bool {
 	if len(p.accts) == 0 {
 		return false
 	}
+	found := false
 	for _, a := range p.accts {
+		if !a.Enabled || !a.inferenceReady() {
+			continue
+		}
+		found = true
 		if a.authMode() != "anonymous" {
 			return false
 		}
 	}
-	return true
+	return found
 }
 
 // hasAnonymous reports whether any account is the anonymous free credential.
@@ -244,7 +268,18 @@ func coolingDown(a *accountRecord, now time.Time) bool {
 
 // selectable reports whether an account may take a request right now.
 func selectable(a *accountRecord, now time.Time, limit int) bool {
-	return a != nil && a.Enabled && a.credentialPresent() && a.inFlight < limit && !coolingDown(a, now)
+	return a != nil && a.Enabled && a.inferenceReady() && a.inFlight < limit && !coolingDown(a, now)
+}
+
+func (p *pool) capacityBlocked(now time.Time, limit int, eligible func(*accountRecord) bool) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, a := range p.accts {
+		if a.Enabled && a.inferenceReady() && eligible(a) && !coolingDown(a, now) && a.inFlight >= limit {
+			return true
+		}
+	}
+	return false
 }
 
 // acquire reserves the least-recently-used selectable account.
@@ -253,6 +288,10 @@ func selectable(a *accountRecord, now time.Time, limit int) bool {
 // differently: no credential at all is 503 (the operator must act), while a
 // saturated pool is 429 (the caller should retry).
 func (p *pool) acquire(now time.Time, limit int) (*accountRecord, error) {
+	return p.acquireWhere(now, limit, func(*accountRecord) bool { return true })
+}
+
+func (p *pool) acquireWhere(now time.Time, limit int, eligible func(*accountRecord) bool) (*accountRecord, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -263,18 +302,28 @@ func (p *pool) acquire(now time.Time, limit int) (*accountRecord, error) {
 	}
 	enabled := 0
 	for _, a := range p.accts {
-		if a.Enabled && a.credentialPresent() {
+		if a.Enabled && a.inferenceReady() {
 			enabled++
 		}
 	}
 	if enabled == 0 {
-		return nil, fmt.Errorf("%w: every OpenCode Zen account is disabled", core.ErrNotConfigured)
+		return nil, fmt.Errorf("%w: accounts are disabled or have no Zen inference credential; refresh Console workspace configuration or add a Zen API key", core.ErrNotConfigured)
+	}
+	matching := false
+	for _, a := range p.accts {
+		if a.Enabled && a.inferenceReady() && eligible(a) {
+			matching = true
+			break
+		}
+	}
+	if !matching {
+		return nil, fmt.Errorf("%w: no OpenCode account supports the requested model", core.ErrUnsupported)
 	}
 
 	n := len(p.accts)
 	best, found := 0, false
 	for _, a := range p.accts {
-		if !selectable(a, now, limit) {
+		if !selectable(a, now, limit) || !eligible(a) {
 			continue
 		}
 		prio := core.AccountPriority("opencode", a.ID)
@@ -289,7 +338,7 @@ func (p *pool) acquire(now time.Time, limit int) (*accountRecord, error) {
 	for i := 0; i < n; i++ {
 		idx := (p.rr + i) % n
 		a := p.accts[idx]
-		if !selectable(a, now, limit) {
+		if !selectable(a, now, limit) || !eligible(a) {
 			continue
 		}
 		if core.AccountPriority("opencode", a.ID) != best {
@@ -390,6 +439,11 @@ func (p *pool) upsert(rec accountRecord) bool {
 		}
 		if rec.AccessToken != "" {
 			a.AccessToken = rec.AccessToken
+			a.APIKey = rec.APIKey
+			a.InferenceBaseURL = rec.InferenceBaseURL
+			a.InferenceHeaders = rec.InferenceHeaders
+			a.InferenceError = rec.InferenceError
+			a.AllowedModels = rec.AllowedModels
 		}
 		if rec.RefreshToken != "" {
 			a.RefreshToken = rec.RefreshToken
@@ -569,14 +623,12 @@ func stateOf(a *accountRecord, now time.Time) string {
 	switch {
 	case a == nil:
 		return "unknown"
-	case !a.Enabled || !a.credentialPresent():
+	case !a.Enabled || !a.inferenceReady():
 		return "invalid"
 	case coolingDown(a, now):
 		if a.CooldownKind == "quota" {
 			return "exhausted"
 		}
-		return "cooling"
-	case a.LastError != "":
 		return "cooling"
 	default:
 		return "ready"
@@ -587,6 +639,13 @@ func stateOf(a *accountRecord, now time.Time) string {
 func noteOf(a *accountRecord, now time.Time) string {
 	if a == nil {
 		return ""
+	}
+	if a.authMode() == "oauth" && !a.inferenceReady() {
+		note := firstNonEmpty(a.InferenceError, "Console login saved; workspace has no Zen inference credential. Refresh workspace configuration or add a Zen API key.")
+		if !a.Enabled {
+			note = "disabled; " + note
+		}
+		return note
 	}
 	if !a.Enabled {
 		return firstNonEmpty(a.LastError, "disabled")

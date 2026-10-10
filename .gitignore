@@ -56,3 +56,13 @@ client2api.pid
 
 # Linux/macOS release binaries.
 /probe
+
+# Local browser snapshots, screenshots, launcher wrappers and shell fragments.
+.playwright-cli/
+/output/playwright/*.png
+/output/playwright/pw.cmd
+/output/playwright/[{]*
+/setTimeout(r
+/v.includes(x))+1))
+/[{]const
+/[{]window.location.hash

@@ -3,6 +3,7 @@ package opencode
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -146,12 +147,13 @@ func (c *Client) httpClient() *http.Client {
 // would be cancelled by a deferred cancel the moment the headers arrived,
 // killing the body mid-stream.
 type requestSpec struct {
-	method string
-	url    string
-	body   []byte
-	bearer string
-	apiKey string
-	orgID  string
+	method  string
+	url     string
+	body    []byte
+	bearer  string
+	apiKey  string
+	orgID   string
+	headers map[string]string
 	// session is the `x-opencode-session` header.  It is set only for the
 	// anonymous free-tier handshake; see freeTierSession in freesession.go.
 	session string
@@ -191,6 +193,9 @@ func (c *Client) do(ctx context.Context, spec requestSpec) (*http.Response, erro
 		req.Header.Set("x-opencode-session-id", spec.session)
 	}
 	for k, v := range c.cfg.ExtraHeaders {
+		req.Header.Set(k, v)
+	}
+	for k, v := range spec.headers {
 		req.Header.Set(k, v)
 	}
 	req.Header.Set("User-Agent", userAgent)
@@ -306,23 +311,19 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 // down" is a worse answer than the 429 that caused it.
 func (c *Client) openChat(ctx context.Context, cancel context.CancelFunc, req *core.ChatRequest, body, freeBody []byte) (core.Stream, error) {
 	var lastErr error
+	tried := make(map[string]bool)
+	queueTimer := time.NewTimer(c.cfg.queueTimeout())
+	defer queueTimer.Stop()
 	for attempt := 0; attempt < maxRotate; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		acct, err := c.acquireAccount(req)
+		acct, err := c.acquireChatAccount(ctx, req, tried, queueTimer.C)
 		if err != nil {
 			if lastErr != nil {
 				return nil, lastErr
 			}
 			return nil, err
-		}
-		// The gateway's per-account ceiling sits above the pool's own: when the
-		// operator's limit is the tighter one, hand the pool slot back and try
-		// another account rather than holding a slot we cannot use.
-		if err := req.AcquireAccountSlot(acct.ID); err != nil {
-			c.pool.release(acct.ID)
-			continue
 		}
 		// Bind only after the slot is genuinely held, so a busy account that was
 		// skipped cannot capture the conversation.
@@ -331,11 +332,15 @@ func (c *Client) openChat(ctx context.Context, cancel context.CancelFunc, req *c
 		// panel must show, and nothing later in the request may change it.
 		core.NoteServedBy(req, acct.ID)
 
-		// An OAuth credential is refreshed in place when it is about to expire;
-		// a refresh failure is not fatal, so the request still goes out with the
-		// token we have and the vendor decides.
 		if err := c.ensureFreshOAuth(ctx, acct); err != nil {
-			c.noteError("refreshing OAuth token: " + describeError(err))
+			c.pool.release(acct.ID)
+			req.ReleaseAccountSlot()
+			return nil, err
+		}
+		if !acct.inferenceReady() {
+			c.pool.release(acct.ID)
+			req.ReleaseAccountSlot()
+			return nil, fmt.Errorf("%w: %s", core.ErrNotConfigured, acct.InferenceError)
 		}
 
 		// The anonymous credential only answers with the free-tier handshake
@@ -353,8 +358,10 @@ func (c *Client) openChat(ctx context.Context, cancel context.CancelFunc, req *c
 			spec.session = c.freeTierSession()
 		}
 		resp, err := c.do(ctx, acct.authSpec(spec))
+		tried[acct.ID] = true
 		if err != nil {
 			c.pool.release(acct.ID)
+			req.ReleaseAccountSlot()
 			lastErr = c.classifyErrFor(acct, "chat", err)
 			if !core.Retryable(core.FailureKindOf(lastErr)) {
 				return nil, lastErr
@@ -365,6 +372,7 @@ func (c *Client) openChat(ctx context.Context, cancel context.CancelFunc, req *c
 			errBody := readLimited(resp.Body, maxErrorBody)
 			resp.Body.Close()
 			c.pool.release(acct.ID)
+			req.ReleaseAccountSlot()
 			// classifyHTTP records the verdict against the account itself.
 			lastErr = c.classifyHTTP("chat", acct, resp.StatusCode, errBody)
 			if !core.Retryable(core.FailureKindOf(lastErr)) {
@@ -378,6 +386,62 @@ func (c *Client) openChat(ctx context.Context, cancel context.CancelFunc, req *c
 		return nil, lastErr
 	}
 	return nil, fmt.Errorf("%w: no OpenCode Zen account could serve the request", core.ErrBusy)
+}
+
+// acquireChatAccount waits only for active requests to release capacity.
+// Cooldowns and missing workspace credentials still return immediately. The
+// caller's deadline and the queue timeout bound every wait, with no slot held.
+func (c *Client) acquireChatAccount(ctx context.Context, req *core.ChatRequest, tried map[string]bool, queueDeadline <-chan time.Time) (*accountRecord, error) {
+	tick := time.NewTicker(25 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		capacityBlocked := false
+		excluded := make(map[string]bool)
+		for id := range tried {
+			excluded[id] = true
+		}
+		for i := 0; i < c.pool.size(); i++ {
+			acct, err := c.acquireAccountExcluding(req, excluded)
+			if err != nil {
+				if capacityBlocked {
+					break
+				}
+				if !errors.Is(err, core.ErrBusy) {
+					return nil, err
+				}
+				capacityBlocked = c.pool.capacityBlocked(c.now(), c.cfg.maxInFlight(), func(a *accountRecord) bool {
+					return !tried[a.ID] && c.accountSupportsModel(a, req.Model)
+				})
+				if !capacityBlocked {
+					return nil, err
+				}
+				break
+			}
+			if err := req.AcquireAccountSlot(acct.ID); err != nil {
+				c.pool.release(acct.ID)
+				if !errors.Is(err, core.ErrBusy) {
+					return nil, err
+				}
+				capacityBlocked = true
+				excluded[acct.ID] = true
+				continue
+			}
+			return acct, nil
+		}
+		if !capacityBlocked {
+			return nil, fmt.Errorf("%w: no OpenCode account is configured", core.ErrNotConfigured)
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-queueDeadline:
+			return nil, fmt.Errorf("%w: timed out waiting for an OpenCode account slot", core.ErrBusy)
+		case <-tick.C:
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -401,7 +465,7 @@ func (c *Client) Status(ctx context.Context) core.Status {
 		st.Detail = "no OpenCode Zen account yet; set " + apiKeyEnv +
 			", add one in the panel, or import opencode's auth.json"
 	default:
-		st.Ready = true
+		st.Ready = c.Health().Servable
 		st.Detail = c.pool.summary(now, c.cfg.maxInFlight())
 	}
 	if msg := c.lastErrorNote(); msg != "" {

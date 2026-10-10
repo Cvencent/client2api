@@ -280,13 +280,17 @@ func buildTools(req *core.ChatRequest) ([]oaiTool, json.RawMessage, bool) {
 	if len(out) == 0 {
 		return nil, nil, false
 	}
-	return out, req.ToolChoice, true
+	choice := req.ToolChoice
+	if trimmed := strings.TrimSpace(string(choice)); trimmed == "" || trimmed == "null" {
+		choice = nil
+	}
+	return out, choice, true
 }
 
 // toolsSuppressed reports whether a tool_choice of "none" was sent.
 func toolsSuppressed(choice json.RawMessage) bool {
 	trimmed := strings.TrimSpace(string(choice))
-	return trimmed == `"none"` || trimmed == "null" || trimmed == ""
+	return trimmed == `"none"`
 }
 
 // --- reasoning effort ------------------------------------------------------

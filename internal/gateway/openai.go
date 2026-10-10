@@ -62,6 +62,14 @@ type chatRequest struct {
 	User    string         `json:"user,omitempty"`
 	Options map[string]any `json:"client2api,omitempty"`
 
+	// Thinking level.  Three spellings reach this endpoint: the flat
+	// reasoning_effort a codex++ relay sends, the Responses-shaped reasoning
+	// object, and the client2api options key.  Both fields decode leniently
+	// so a caller that sends some other shape still gets a working request
+	// instead of a 400.  See reasoningEffortFor.
+	ReasoningEffort effortField `json:"reasoning_effort,omitempty"`
+	Reasoning       effortField `json:"reasoning,omitempty"`
+
 	// Conversation identity.  Clients that follow the OpenAI convention carry
 	// it in the metadata object; others put it at the top level.  Both
 	// spellings are accepted and resolved once, here, so that no module has to
@@ -173,6 +181,55 @@ type apiError struct {
 // Request translation
 // ---------------------------------------------------------------------------
 
+// effortField decodes a thinking level without ever failing the surrounding
+// request.  A level arrives either as a bare string ("xhigh") or wrapped in
+// the Responses shape ({"effort":"xhigh"}); anything else, including JSON
+// null, reads as "" rather than turning the whole body into a 400.
+type effortField string
+
+func (e *effortField) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err == nil {
+		*e = effortField(s)
+		return nil
+	}
+	var wrapped struct {
+		Effort string `json:"effort"`
+	}
+	if err := json.Unmarshal(b, &wrapped); err == nil {
+		*e = effortField(wrapped.Effort)
+	}
+	return nil
+}
+
+// reasoningEffortFor is the thinking level a request asked for, normalised to
+// the lower-case vocabulary the vendors use, or "" when it named none.
+//
+// The flat field wins because that is what the codex++ relay in front of this
+// deployment sends.  Next comes the client2api options object, which is this
+// gateway's documented channel and what an API caller sets deliberately; last
+// the Responses-shaped object, which is an incidental copy.  An empty value
+// never short-circuits the search, so a caller that sends a blank flat field
+// alongside a real options value still reads as the value it meant.
+func reasoningEffortFor(w *chatRequest) string {
+	if w == nil {
+		return ""
+	}
+	if v := normalizeEffort(string(w.ReasoningEffort)); v != "" {
+		return v
+	}
+	if w.Options != nil {
+		if s, ok := w.Options["reasoning_effort"].(string); ok {
+			if v := normalizeEffort(s); v != "" {
+				return v
+			}
+		}
+	}
+	return normalizeEffort(string(w.Reasoning))
+}
+
+func normalizeEffort(s string) string { return strings.ToLower(strings.TrimSpace(s)) }
+
 // resolveConversationID finds the caller's conversation id.  The metadata
 // object is checked before the top level, and the snake_case spelling before
 // the camelCase one.
@@ -217,7 +274,7 @@ func toCoreRequest(w *chatRequest) (*core.ChatRequest, error) {
 		Stream:         w.Stream,
 		User:           w.User,
 		ConversationID: resolveConversationID(w),
-		Options:        w.Options,
+		Options:        optionsWithReasoningEffort(w.Options, reasoningEffortFor(w)),
 	}
 	if req.MaxTokens == nil {
 		req.MaxTokens = w.MaxCompletionTokens
@@ -264,6 +321,18 @@ func toCoreRequest(w *chatRequest) (*core.ChatRequest, error) {
 		})
 	}
 	return req, nil
+}
+
+func optionsWithReasoningEffort(options map[string]any, effort string) map[string]any {
+	if effort == "" {
+		return options
+	}
+	out := make(map[string]any, len(options)+1)
+	for k, v := range options {
+		out[k] = v
+	}
+	out["reasoning_effort"] = effort
+	return out
 }
 
 // parseContent accepts either the string form or the array-of-parts form and

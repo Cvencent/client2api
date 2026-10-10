@@ -103,6 +103,7 @@ func NewServer(opts Options) *http.Server {
 	mux.HandleFunc("/healthz", s.handleHealth)
 	mux.HandleFunc("/v1/models", s.auth(s.handleModels))
 	mux.HandleFunc("/v1/chat/completions", s.auth(s.handleChat))
+	mux.HandleFunc("/v1/responses", s.auth(s.handleResponses))
 	mux.HandleFunc("/v1/status", s.auth(s.handleStatus))
 	mux.HandleFunc("/v1/", s.auth(s.handleNotFound))
 	if opts.Panel != nil {
@@ -369,6 +370,27 @@ func (s *server) handleModels(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	// Operator-declared equivalence groups are virtual models: a caller can
+	// discover the group name and the concrete platform/model members behind
+	// it without pretending the group is an upstream id.
+	for name, group := range s.opts.Registry.ModelGroups() {
+		if _, dup := seen[name]; dup {
+			continue
+		}
+		members := make([]string, 0, len(group.Members))
+		for _, member := range group.Members {
+			members = append(members, member.Client+"/"+member.Model)
+		}
+		seen[name] = struct{}{}
+		out.Data = append(out.Data, modelEntry{
+			ID:      name,
+			Object:  "model",
+			Created: created,
+			OwnedBy: "group",
+			Extra:   map[string]any{"members": members},
+		})
+	}
+
 	// The alias table is part of what this gateway serves, so it belongs in the
 	// catalogue.  Without this a caller that lists models and then requests the
 	// one it picked is fine, but a caller that reads the list cannot discover
@@ -517,154 +539,29 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 	// conversation to.  It is set here, once, so failover attempts below can
 	// copy it onto their own rows without re-deriving it.
 	rec.SessionID = sessionIDFor(req)
+	// The thinking level belongs to the call, not to the attempt, so it is
+	// resolved once here and copied onto every failover row below.
+	rec.ReasoningEffort = reasoningEffortFor(&wire)
 
-	candidates, err := s.opts.Registry.ResolveCandidates(r.Context(), wire.Model)
-	if err != nil {
-		stat.status = http.StatusNotFound
-		s.fail(&rec)
-		writeError(w, http.StatusNotFound, "invalid_request_error", err.Error())
-		return
-	}
-	// A bare model may have several platforms.  Once one has served this
-	// conversation, keep it first: trying the higher-priority sibling first
-	// would make every turn pay for a platform that already failed.  The
-	// binding never removes candidates, so a dead platform still fails over.
-	conversationKey := core.ConversationKeyOf(req)
-	if s.opts.Live != nil {
-		s.sessionPlatforms.setTTL(s.opts.Live.Load().AffinityTTL)
-	}
-	if len(candidates) > 1 {
-		if platform, ok := s.sessionPlatforms.resolve(conversationKey, func(name string) bool {
-			for _, c := range candidates {
-				if c.Client != nil && c.Client.Name() == name {
-					// A platform that cannot serve right now must not keep a
-					// sticky conversation pinned to it; the binding is only an
-					// optimisation and the healthy candidate should win.
-					if s.opts.Registry.ModelDegraded(c.Client.Name(), c.Model, time.Now()) {
-						return false
-					}
-					return true
-				}
-			}
-			return false
-		}); ok {
-			candidates = prioritizeStickyPlatform(candidates, platform)
-		}
-	}
-	client, upstreamModel := candidates[0].Client, candidates[0].Model
-	rec.Candidate = 1
-	req.Model = upstreamModel
-	maxTokensExplicit := req.MaxTokens != nil
-	// A caller that left the output budget to us gets the number the vendor
-	// publishes for this model, when the module knows it.  This has to happen
-	// after the registry resolves the alias, because the module keys its
-	// catalogue on the upstream id, and it must stay nil-conditional: an
-	// explicit max_tokens is the caller's decision and is never second-guessed.
-	//
-	// A module that answers "cannot say" leaves the field nil.  The module then
-	// sends whatever its own default is -- which is the old behaviour, and
-	// correct for a module with no published number -- rather than the gateway
-	// inventing a cap from a table it does not own.
-	if req.MaxTokens == nil {
-		if n, ok := s.resolveMaxOutputTokens(r.Context(), client, upstreamModel); ok {
-			req.MaxTokens = &n
-		}
-	}
-	rec.Client = client.Name()
-	rec.Model = client.Name() + "/" + upstreamModel
-	// The row names the resolved module and model, which is what the console
-	// reader needs in order to tell "the caller asked for something odd" apart
-	// from "the module misbehaved".
-	stat.model = rec.Model
-
-	// Attribute only what the gateway can honestly know.  The account that
-	// serves a successful request is chosen inside the module, so the gateway
-	// must not guess it; a failure names its account through core.Failure.  A
-	// realm is unambiguous only when the module advertises exactly one.
-	if h, ok := core.HealthOf(client); ok && len(h.Realms) == 1 {
-		for realm := range h.Realms {
-			rec.Realm = realm
-		}
-	}
-
-	// The module picks the credential, so only the module can name it.  The
-	// gateway hands over a slot, calls Chat, and reads what the module wrote;
-	// an empty slot means "the module did not say", which is recorded as
-	// unknown rather than guessed at.
-	// Assembled before the call so a failure can be explained with the request
-	// that caused it rather than with the error text alone.
-	hintCtx := s.hintContextFunc(r.Context(), client, upstreamModel, req.Messages)
-
-	var servedBy string
-	req.ServedBy = &servedBy
-
-	stream, err := s.openStream(r.Context(), client, req)
-	if err != nil {
-		// A failure usually names its own account through core.Failure.  When it
-		// does not, the slot still holds the last credential the module tried,
-		// which is strictly better evidence than nothing.
-		rec.Account = core.ErrorAccountID(err)
-		if rec.Account == "" {
-			rec.Account = servedBy
-		}
-		stat.uid = rec.Account
-
-		f, classified := core.AsFailure(err)
-		retryable := classified && core.Retryable(f.Kind)
-		if retryable {
-			ev := s.opts.Registry.NoteModelFailure(client.Name(), upstreamModel, time.Now())
-			s.publishPlatformAlert(client.Name(), upstreamModel, rec.Account, ev)
-		}
-		skippable := candidateUnavailable(err) || (!explicitPlatformRequest(wire.Model, client.Name()) && modelRefusal(err))
-		if (retryable || skippable) && len(candidates) > 1 && (s.opts.Guard == nil || !s.opts.Guard.IP.Active()) {
-			s.opts.Usage.RecordAttempt(UsageRecord{
-				At:        time.Now(),
-				StartedAt: rec.StartedAt,
-				Client:    client.Name(),
-				Realm:     rec.Realm,
-				Account:   rec.Account,
-				SessionID: rec.SessionID,
-				Model:     client.Name() + "/" + upstreamModel,
-				Candidate: rec.Candidate,
-				Failed:    true,
-				Attempt:   true,
-			})
-			if skippable {
-				s.opts.Registry.NoteModelUnavailable(client.Name(), upstreamModel, time.Now())
-			}
-			s.opts.Logger.Printf("chat: platform %s model %s failed (%v), trying the next platform", client.Name(), upstreamModel, err)
-			var handled bool
-			client, hintCtx, err, handled = s.serveRemainingCandidates(w, r, &wire, candidates[1:], 2, &rec, stat, req, maxTokensExplicit)
-			if handled {
-				return
-			}
-		}
-		status, _, _ := upstreamErrorShape(err)
-		stat.status = status
-		s.fail(&rec)
-		s.writeUpstreamError(w, client, hintCtx, err)
-		return
-	}
-	// A success names nothing in the error path, so this is the only place the
-	// serving account can be learned — and both the usage ledger's per-account
-	// grouping and the console row are wrong without it.
-	if servedBy != "" {
-		rec.Account = servedBy
-		stat.uid = servedBy
-	}
-	s.opts.Registry.NoteModelSuccess(client.Name(), upstreamModel, time.Now())
-	s.sessionPlatforms.bind(conversationKey, client.Name())
-	defer stream.Close()
-
-	if wire.Stream {
-		s.streamSSE(w, r, client, wire.Model, stream, wire.StreamOptions != nil && wire.StreamOptions.IncludeUsage, &rec, stat, hintCtx)
-		return
-	}
-	s.bufferCompletion(w, r, client, wire.Model, stream, &rec, stat, hintCtx)
+	s.routeAndServe(w, r, routeInput{
+		requested:    wire.Model,
+		req:          req,
+		stream:       wire.Stream,
+		modelForWire: wire.Model,
+		rec:          &rec,
+		stat:         stat,
+		emitter: chatWireEmitter{
+			includeUsage: wire.StreamOptions != nil && wire.StreamOptions.IncludeUsage,
+		},
+	})
 }
 
-// serveRemainingCandidates tries the rest of a bare-model candidate list.
-func (s *server) serveRemainingCandidates(w http.ResponseWriter, r *http.Request, wire *chatRequest, candidates []core.Candidate, firstCandidate int, rec *UsageRecord, stat *chatStat, baseReq *core.ChatRequest, maxTokensExplicit bool) (core.Client, func() core.HintContext, error, bool) {
+// serveRemainingCandidates tries the rest of a bare-model candidate list.  It
+// is called from routeAndServe once the first candidate has been refused in a
+// way that a sibling platform could plausibly serve, and it speaks only in the
+// protocol-neutral routeInput so that both endpoints fail over identically.
+func (s *server) serveRemainingCandidates(w http.ResponseWriter, r *http.Request, in routeInput, candidates []core.Candidate, firstCandidate int, maxTokensExplicit bool) (core.Client, func() core.HintContext, error, bool) {
+	rec, stat, baseReq := in.rec, in.stat, in.req
 
 	var (
 		lastClient core.Client
@@ -705,10 +602,13 @@ func (s *server) serveRemainingCandidates(w http.ResponseWriter, r *http.Request
 				stat.uid = servedBy
 			}
 			defer stream.Close()
-			if wire.Stream {
-				s.streamSSE(w, r, client, wire.Model, stream, wire.StreamOptions != nil && wire.StreamOptions.IncludeUsage, rec, stat, hintCtx)
+			// The wire model is the caller's own name; only the module sees the
+			// resolved upstream id, which already lives on rec.Model.
+			a := emitArgs{s: s, client: client, model: in.modelForWire, stream: stream, hintCtx: hintCtx, rec: rec, stat: stat}
+			if in.stream {
+				in.emitter.emitStream(w, r, a)
 			} else {
-				s.bufferCompletion(w, r, client, wire.Model, stream, rec, stat, hintCtx)
+				in.emitter.emitBuffered(w, r, a)
 			}
 			return client, hintCtx, nil, true
 		}
@@ -730,16 +630,17 @@ func (s *server) serveRemainingCandidates(w http.ResponseWriter, r *http.Request
 		// another inbound request.  The alert is evidence this happened; the
 		// usage page must show the same evidence.
 		s.opts.Usage.RecordAttempt(UsageRecord{
-			At:        time.Now(),
-			StartedAt: rec.StartedAt,
-			Client:    client.Name(),
-			Realm:     rec.Realm,
-			Account:   rec.Account,
-			SessionID: rec.SessionID,
-			Model:     client.Name() + "/" + upstreamModel,
-			Candidate: rec.Candidate,
-			Failed:    true,
-			Attempt:   true,
+			At:              time.Now(),
+			StartedAt:       rec.StartedAt,
+			Client:          client.Name(),
+			Realm:           rec.Realm,
+			Account:         rec.Account,
+			SessionID:       rec.SessionID,
+			ReasoningEffort: rec.ReasoningEffort,
+			Model:           client.Name() + "/" + upstreamModel,
+			Candidate:       rec.Candidate,
+			Failed:          true,
+			Attempt:         true,
 		})
 		lastClient, lastHint, lastErr = client, hintCtx, err
 
@@ -749,7 +650,7 @@ func (s *server) serveRemainingCandidates(w http.ResponseWriter, r *http.Request
 			ev := s.opts.Registry.NoteModelFailure(client.Name(), upstreamModel, time.Now())
 			s.publishPlatformAlert(client.Name(), upstreamModel, rec.Account, ev)
 		}
-		skippable := candidateUnavailable(err) || (!explicitPlatformRequest(wire.Model, client.Name()) && modelRefusal(err))
+		skippable := candidateUnavailable(err) || (!explicitPlatformRequest(in.requested, client.Name()) && modelRefusal(err))
 		if (!retryable && !skippable) || (s.opts.Guard != nil && s.opts.Guard.IP.Active()) {
 			return lastClient, lastHint, lastErr, false
 		}

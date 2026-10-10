@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"path"
 	"sort"
 	"strings"
 	"sync"
@@ -508,8 +510,7 @@ func (c *Client) pollOAuthOnce(ctx context.Context, sess *loginSession) loginPol
 }
 
 // finishOAuthLogin fetches the user, workspace and workspace model list, then
-// stores the credential.  A config fetch failure is not fatal: the account is
-// still usable and the model list falls back to the public catalogue.
+// stores the login separately from the workspace's inference readiness.
 func (c *Client) finishOAuthLogin(ctx context.Context, tok deviceToken) loginPollResult {
 	base := c.cfg.authBaseURL()
 	access := strings.TrimSpace(tok.AccessToken)
@@ -535,27 +536,25 @@ func (c *Client) finishOAuthLogin(ctx context.Context, tok deviceToken) loginPol
 		orgName = strings.TrimSpace(orgs[0].Name)
 	}
 
-	allowed := c.fetchAllowedModels(ctx, access, orgID)
-
 	expiresAt := c.now()
 	if tok.ExpiresIn > 0 {
 		expiresAt = expiresAt.Add(time.Duration(tok.ExpiresIn) * time.Second)
 	}
 	seed := firstNonEmpty(strings.TrimSpace(user.ID), orgID, strings.TrimSpace(tok.RefreshToken), access)
 	rec := accountRecord{
-		ID:            accountID("oauth:" + keyFingerprint(seed)),
-		Label:         firstNonEmpty(strings.TrimSpace(user.Email), orgName, "OpenCode Console"),
-		AuthMode:      "oauth",
-		AccessToken:   access,
-		RefreshToken:  strings.TrimSpace(tok.RefreshToken),
-		ExpiresAt:     expiresAt.UTC().Format(time.RFC3339),
-		OrgID:         orgID,
-		OrgName:       orgName,
-		Email:         strings.TrimSpace(user.Email),
-		AllowedModels: allowed,
-		Enabled:       true,
-		Source:        sourcePanel,
+		ID:           accountID("oauth:" + keyFingerprint(seed)),
+		Label:        firstNonEmpty(strings.TrimSpace(user.Email), orgName, "OpenCode Console"),
+		AuthMode:     "oauth",
+		AccessToken:  access,
+		RefreshToken: strings.TrimSpace(tok.RefreshToken),
+		ExpiresAt:    expiresAt.UTC().Format(time.RFC3339),
+		OrgID:        orgID,
+		OrgName:      orgName,
+		Email:        strings.TrimSpace(user.Email),
+		Enabled:      true,
+		Source:       sourcePanel,
 	}
+	c.resolveWorkspace(ctx, &rec)
 	if !c.upsertAccount(rec) {
 		return loginPollResult{outcome: loginPollFatal, message: "the credential could not be stored"}
 	}
@@ -573,6 +572,9 @@ func (c *Client) completeOAuthLogin(sess *loginSession, cred *accountRecord) {
 	sess.state = core.LoginSuccess
 	sess.accountID = cred.ID
 	sess.message = core.Redact("已登录 " + firstNonEmpty(cred.Label, cred.ID) + "，凭证已保存")
+	if !cred.inferenceReady() {
+		sess.message += "；Console 登录有效，Zen 推理配置尚不可用：" + cred.InferenceError
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -582,12 +584,19 @@ func (c *Client) completeOAuthLogin(sess *loginSession, cred *accountRecord) {
 // zenConfigResponse is the slice of GET /api/config this module reads.
 type zenConfigResponse struct {
 	Config struct {
-		Provider struct {
-			Opencode struct {
+		DisabledProviders []string `json:"disabled_providers"`
+		Provider          struct {
+			Opencode *struct {
+				API     string `json:"api"`
+				Options struct {
+					APIKey  string            `json:"apiKey"`
+					BaseURL string            `json:"baseURL"`
+					Headers map[string]string `json:"headers"`
+				} `json:"options"`
 				Whitelist []string `json:"whitelist"`
 				Models    map[string]struct {
-					Disabled bool   `json:"disabled"`
-					Provider string `json:"provider"`
+					Disabled bool            `json:"disabled"`
+					Provider json.RawMessage `json:"provider"`
 					Cost     *struct {
 						Input  float64 `json:"input"`
 						Output float64 `json:"output"`
@@ -598,28 +607,102 @@ type zenConfigResponse struct {
 	} `json:"config"`
 }
 
-// fetchAllowedModels returns the workspace's usable, non-free-tier model ids.
-// Zero-cost models are excluded: the vendor rejects them outside its own CLI
-// (FreeTierError), so serving them to an OAuth account would only produce
-// confusing failures.  A failure returns nil, never an error.
-func (c *Client) fetchAllowedModels(ctx context.Context, access, orgID string) []string {
-	if strings.TrimSpace(orgID) == "" || strings.TrimSpace(access) == "" {
-		return nil
+// resolveWorkspace replaces inference configuration, including clearing stale
+// keys and models when the workspace withdraws access. No Console response body
+// is included in errors because it may contain secrets.
+func (c *Client) resolveWorkspace(ctx context.Context, acct *accountRecord) {
+	acct.APIKey = ""
+	acct.InferenceBaseURL = ""
+	acct.InferenceHeaders = nil
+	acct.AllowedModels = nil
+	acct.InferenceError = "Console login saved; workspace has no Zen inference configuration"
+	if strings.TrimSpace(acct.OrgID) == "" || strings.TrimSpace(acct.AccessToken) == "" {
+		acct.InferenceError = "Console workspace or login token is missing; sign in again"
+		return
 	}
-	raw, status, err := c.loginJSON(ctx, http.MethodGet, c.cfg.authBaseURL()+"/api/config", access, orgID, nil)
-	if err != nil || status != http.StatusOK {
-		return nil
+	raw, status, err := c.loginJSON(ctx, http.MethodGet, c.cfg.authBaseURL()+"/api/config", acct.AccessToken, acct.OrgID, nil)
+	if err != nil {
+		acct.InferenceError = "cannot reach Console workspace configuration; refresh account to retry"
+		return
+	}
+	if status != http.StatusOK {
+		acct.InferenceError = fmt.Sprintf("Console workspace configuration returned HTTP %d; refresh account to retry", status)
+		return
 	}
 	var doc zenConfigResponse
 	if uerr := json.Unmarshal(raw, &doc); uerr != nil {
-		return nil
+		acct.InferenceError = "Console workspace configuration is not valid JSON"
+		return
 	}
 	zen := doc.Config.Provider.Opencode
+	if containsString(doc.Config.DisabledProviders, "opencode") || zen == nil {
+		acct.InferenceError = "Console login is valid; Zen provider is disabled or absent in this workspace. Enable/configure Zen in Console, then refresh the account."
+		return
+	}
+	base := strings.TrimSpace(firstNonEmpty(zen.Options.BaseURL, zen.API))
+	if base != "" && !validBaseURL(base) {
+		acct.InferenceError = "workspace Zen inference baseURL is invalid"
+		return
+	}
+	key := strings.TrimSpace(zen.Options.APIKey)
+	// Never resolve a Console token onto the default public Zen endpoint.
+	if strings.Contains(key, "{env:") {
+		if key != "{env:OPENCODE_CONSOLE_TOKEN}" || publicZenBase(base) {
+			acct.InferenceError = "workspace inference credential requires an unsupported environment reference"
+			return
+		}
+		// Retain the reference in a header so refreshed tokens are used.
+		acct.InferenceHeaders = map[string]string{"Authorization": "Bearer " + key}
+		key = ""
+	}
+	for name, value := range zen.Options.Headers {
+		name = http.CanonicalHeaderKey(strings.TrimSpace(name))
+		value = strings.TrimSpace(value)
+		if strings.ContainsAny(name+value, "\r\n") || name == "" {
+			acct.InferenceError = "workspace inference header is invalid"
+			return
+		}
+		if strings.Contains(value, "{env:") &&
+			(!strings.Contains(value, "{env:OPENCODE_CONSOLE_TOKEN}") ||
+				strings.Contains(strings.ReplaceAll(value, "{env:OPENCODE_CONSOLE_TOKEN}", ""), "{env:") ||
+				publicZenBase(base)) {
+			acct.InferenceError = "workspace inference header requires an unsupported environment reference"
+			return
+		}
+		if (name == "Authorization" || name == "X-Api-Key") &&
+			strings.Contains(value, acct.AccessToken) &&
+			publicZenBase(base) {
+			acct.InferenceError = "workspace did not supply a separate Zen inference credential"
+			return
+		}
+		if acct.InferenceHeaders == nil {
+			acct.InferenceHeaders = make(map[string]string)
+		}
+		acct.InferenceHeaders[name] = value
+	}
+	if (key == acct.AccessToken || strings.HasPrefix(key, "st_")) &&
+		publicZenBase(base) {
+		acct.InferenceError = "workspace did not supply a separate Zen API key"
+		return
+	}
+	acct.APIKey = key
+	acct.InferenceBaseURL = base
+	acct.InferenceError = ""
+	if !acct.inferenceReady() {
+		acct.InferenceError = "Console login is valid; workspace has no Zen API key. Configure Zen in Console or add a Zen API key."
+	}
 	whitelist := make(map[string]bool, len(zen.Whitelist))
 	for _, id := range zen.Whitelist {
 		whitelist[strings.TrimSpace(id)] = true
 	}
 	var out []string
+	if len(zen.Models) == 0 {
+		for id := range whitelist {
+			if id != "" && !anonymousModelAllowed(id, c.cfg) {
+				out = append(out, id)
+			}
+		}
+	}
 	for id, m := range zen.Models {
 		id = strings.TrimSpace(id)
 		if id == "" || m.Disabled {
@@ -628,7 +711,7 @@ func (c *Client) fetchAllowedModels(ctx context.Context, access, orgID string) [
 		if len(whitelist) > 0 && !whitelist[id] {
 			continue
 		}
-		if strings.TrimSpace(m.Provider) != "" {
+		if len(m.Provider) > 0 && string(m.Provider) != "null" && string(m.Provider) != `""` {
 			continue
 		}
 		if m.Cost != nil && m.Cost.Input <= 0 && m.Cost.Output <= 0 {
@@ -637,7 +720,26 @@ func (c *Client) fetchAllowedModels(ctx context.Context, access, orgID string) [
 		out = append(out, id)
 	}
 	sort.Strings(out)
-	return out
+	acct.AllowedModels = out
+	if (len(zen.Models) > 0 || len(whitelist) > 0) && len(out) == 0 {
+		acct.InferenceError = "workspace has no enabled models supported by this OpenAI chat adapter"
+	}
+}
+
+// Compare destinations rather than URL spellings before resolving Console
+// credentials. Default ports, host case and trailing slashes are equivalent.
+func publicZenBase(base string) bool {
+	if strings.TrimSpace(base) == "" {
+		return true
+	}
+	u, err := url.Parse(base)
+	if err != nil {
+		return true
+	}
+	port := u.Port()
+	defaultPort := port == "" || (u.Scheme == "https" && port == "443") || (u.Scheme == "http" && port == "80")
+	return strings.EqualFold(u.Hostname(), "opencode.ai") && defaultPort &&
+		strings.TrimRight(path.Clean(u.Path), "/") == "/zen/v1"
 }
 
 // oauthExpiring reports whether an OAuth account's access token is within the
@@ -669,12 +771,7 @@ func (c *Client) ensureFreshOAuth(ctx context.Context, acct *accountRecord) erro
 	if err != nil {
 		return err
 	}
-	acct.AccessToken = next.AccessToken
-	acct.RefreshToken = next.RefreshToken
-	acct.ExpiresAt = next.ExpiresAt
-	if len(next.AllowedModels) > 0 {
-		acct.AllowedModels = next.AllowedModels
-	}
+	*acct = *next
 	return nil
 }
 
@@ -688,7 +785,10 @@ func (c *Client) refreshOAuthToken(ctx context.Context, acct *accountRecord) (*a
 	})
 	raw, status, err := c.loginJSON(ctx, http.MethodPost, c.cfg.authBaseURL()+"/auth/device/token", "", "", body)
 	if err != nil {
-		return nil, errors.New(core.Redact("OpenCode token refresh: cannot reach the vendor: " + err.Error()))
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
+		return nil, errors.New(scrubAccount("OpenCode token refresh: cannot reach the vendor: "+err.Error(), acct))
 	}
 	if status != http.StatusOK {
 		return nil, fmt.Errorf("OpenCode token refresh: the vendor returned HTTP %d", status)
@@ -698,29 +798,17 @@ func (c *Client) refreshOAuthToken(ctx context.Context, acct *accountRecord) (*a
 		return nil, errors.New("OpenCode token refresh: the vendor returned an unrecognised response")
 	}
 	if strings.TrimSpace(tok.AccessToken) == "" {
-		return nil, fmt.Errorf("OpenCode token refresh: %s", firstNonEmpty(tok.ErrorDescription, tok.Error, "no access token"))
+		return nil, fmt.Errorf("OpenCode token refresh: %s", scrubAccount(firstNonEmpty(tok.ErrorDescription, tok.Error, "no access token"), acct))
 	}
 	expiresAt := c.now()
 	if tok.ExpiresIn > 0 {
 		expiresAt = expiresAt.Add(time.Duration(tok.ExpiresIn) * time.Second)
 	}
-	next := accountRecord{
-		ID:            acct.ID,
-		Label:         acct.Label,
-		AuthMode:      "oauth",
-		AccessToken:   strings.TrimSpace(tok.AccessToken),
-		RefreshToken:  firstNonEmpty(strings.TrimSpace(tok.RefreshToken), acct.RefreshToken),
-		ExpiresAt:     expiresAt.UTC().Format(time.RFC3339),
-		OrgID:         acct.OrgID,
-		OrgName:       acct.OrgName,
-		Email:         acct.Email,
-		AllowedModels: acct.AllowedModels,
-		Enabled:       acct.Enabled,
-		Source:        acct.Source,
-	}
-	if models := c.fetchAllowedModels(ctx, next.AccessToken, next.OrgID); len(models) > 0 {
-		next.AllowedModels = models
-	}
+	next := *acct
+	next.AccessToken = strings.TrimSpace(tok.AccessToken)
+	next.RefreshToken = firstNonEmpty(strings.TrimSpace(tok.RefreshToken), acct.RefreshToken)
+	next.ExpiresAt = expiresAt.UTC().Format(time.RFC3339)
+	c.resolveWorkspace(ctx, &next)
 	if !c.pool.upsert(next) {
 		return nil, errors.New("OpenCode token refresh: the refreshed credential could not be stored")
 	}

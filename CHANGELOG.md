@@ -6,6 +6,64 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [Unreleased]
+
+## [0.1.31] - 2026-10-10
+
+### Added
+
+- 网关新增原生 `POST /v1/responses`（OpenAI Responses 协议），与
+  `/v1/chat/completions` 共用同一批模型、同一套路由、故障转移、账号并发闸门和用量台账。
+  Codex CLI 的 `WireApi` 只剩 `Responses` 一个取值，此前必须依赖中间翻译层；本接口让
+  Codex 可以直连网关，链路里不再有会失败的那一步。
+- Responses 请求翻译：`instructions` → 前置 system 消息；`input` 数组里的
+  `function_call` / `function_call_output` 重新配对为「带 `tool_calls` 的 assistant
+  回合 + 按 `call_id` 关联的 tool 回合」；`reasoning` 的 `summary` 保留为回合推理；
+  `developer` 角色映射为 `system`；`tools` 同时接受扁平与嵌套两种写法；内置工具与未知
+  item 类型跳过而不报错。
+- Responses 响应渲染：流式按 Codex 解析器要求发出
+  `response.created` → `output_text.delta` / `reasoning_summary_text.delta` /
+  `function_call_arguments.delta` → `output_item.done` → `response.completed`
+  （携带 `response.id` 与 `usage`），中途失败发 `response.failed` 而不是挂住；非流式
+  返回单个 `response` 对象。
+- **加密的 agent 内容不再被拒。** 这是本接口存在的核心原因：`agent_message` 保留明文
+  信封与文本部分、密文替换为 `[encrypted agent payload omitted]`；`reasoning` 只保留
+  `summary`，密文丢弃；`compaction` 仅在字段确为明文摘要时保留。密文既不转发给上游，
+  也不解码成杜撰文本。
+- 新增 `model_groups` 模型分组：为不同平台的模型 ID 声明等价关系，按组设置平台优先级，
+  支持面板编辑、配置热生效、虚拟模型目录与跨平台故障转移；显式指定平台仍锁定该平台。
+- 请求支持读取 `reasoning_effort`、Responses 风格 `reasoning.effort` 与
+  `client2api.reasoning_effort`，用量记录和面板显示调用方实际请求的思考等级。
+
+### Changed
+
+- 网关的编排层（候选解析、会话粘性、平台故障转移、账号闸门、用量记录）从
+  `handleChat` 抽出为协议无关的 `routeAndServe`，两个协议各自只提供「请求翻译器」和
+  「响应渲染器」（`internal/gateway/dispatch.go`）。Chat Completions 行为不变，原有
+  网关测试全部通过。
+
+### Fixed
+
+- Cline 在 `tool_choice` 缺省、`null` 或空白时保留调用方声明的工具，修复 WorkBuddy
+  输出少量文本后结束、无法继续结构化工具调用的问题；显式 `"none"` 仍禁用工具。
+- OpenCode 分离 Console 登录凭证与工作区推理凭证，读取工作区提供的 API key、推理地址
+  和请求头；Zen 未启用或缺少配置时保留登录并明确显示未就绪，不再把登录 token
+  错发给公共 Zen 接口并因 401 禁用账号。
+- OpenCode 账号刷新和测试重新读取工作区配置，清除已撤回的推理凭证与模型列表，
+  保留账号启用开关；免费请求避开 Console 账号，并正确处理工作区模型限制。
+- OpenCode 本地并发满时等待空闲账号槽位，默认最多 `60s`（`queue_timeout`），
+  重试共用等待期限并响应取消；跳过忙碌的粘性账号，失败尝试释放所有并发槽位。
+- OpenCode 将 HTTP 429 中的 `server_error` 识别为上游故障，不再误当作账号限流；
+  同一请求不会反复尝试同一个失败账号，冷却到期后恢复正确的可用状态显示。
+- OpenCode 的流内错误、网络错误和 token 刷新错误统一对登录与推理凭证脱敏。
+- Responses 续接保留 `output_text` 助手历史，支持带图片地址与 `detail` 的
+  `input_image`；流式输出按首次出现顺序分配稳定的 item ID 与索引，在 delta 前发出
+  item/part added，并在最终输出中保留推理摘要。
+- Responses 在完成或错误事件后及时停止读取；达到 token 上限时返回
+  `response.incomplete` 与 `max_output_tokens` 原因，不再把截断结果标为成功完成。
+- Chat 与 Responses 的思考等级按与用量记录一致的优先级传给上游模块。
+- 面板模型组中同一平台的优先级输入同步，避免后一行覆盖先前的编辑。
+
 ## [0.1.30] - 2026-10-10
 
 ### Fixed

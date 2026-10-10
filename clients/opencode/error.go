@@ -155,6 +155,8 @@ func classifyType(typ string) failureKind {
 		return kindModel
 	case "freetiererror", "freetier":
 		return kindFreeTier
+	case "server_error", "servererror", "internal_server_error":
+		return kindServer
 	}
 	lower := strings.ToLower(typ)
 	switch {
@@ -291,6 +293,8 @@ func acctID(a *accountRecord) string {
 // wrong, and noteFailure deliberately does nothing for that verdict.
 func (c *Client) classifyHTTP(op string, acct *accountRecord, status int, body []byte) error {
 	v := classify(status, body)
+	v.msg = scrubAccount(v.msg, acct)
+	v.typ = scrubAccount(v.typ, acct)
 	c.noteFailure(acct, v.kind, v.text())
 	if v.kind == kindModel {
 		return fmt.Errorf("%w: %s", core.ErrUnsupported, v.text())
@@ -314,7 +318,7 @@ func (c *Client) classifyErrFor(acct *accountRecord, op string, err error) error
 		return err
 	}
 	k := kindTransport
-	msg := describeError(err)
+	msg := scrubAccount(describeError(err), acct)
 	c.noteFailure(acct, k, msg)
 	return core.Fail(clientName, acctID(acct), coreKindFor(k), 0, &upstreamError{Op: op, Msg: msg})
 }
@@ -336,6 +340,7 @@ func (c *Client) noteFailure(acct *accountRecord, k failureKind, msg string) {
 	if acct == nil {
 		return
 	}
+	msg = scrubAccount(msg, acct)
 	now := c.now()
 	switch k {
 	case kindAuth:
@@ -355,6 +360,23 @@ func (c *Client) noteFailure(acct *accountRecord, k failureKind, msg string) {
 		c.pool.noteError(acct.ID, msg, now, softErrorThreshold)
 	}
 	c.persist()
+}
+
+func scrubAccount(msg string, acct *accountRecord) string {
+	if acct == nil {
+		return core.Redact(msg)
+	}
+	for _, secret := range []string{acct.AccessToken, acct.RefreshToken, acct.APIKey} {
+		msg = scrubSecret(msg, secret)
+	}
+	for _, value := range acct.InferenceHeaders {
+		value = strings.ReplaceAll(value, "{env:OPENCODE_CONSOLE_TOKEN}", acct.AccessToken)
+		msg = scrubSecret(msg, value)
+		if strings.HasPrefix(value, "Bearer ") {
+			msg = scrubSecret(msg, strings.TrimPrefix(value, "Bearer "))
+		}
+	}
+	return msg
 }
 
 // noteSuccess clears whatever a previous failure left behind.

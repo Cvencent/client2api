@@ -24,12 +24,13 @@
 | `openai-compat/…` | OpenAI 兼容来源 | 一个配置驱动的模块，可接 Groq、Cerebras、SiliconFlow、Mistral、NVIDIA NIM、Together、Fireworks、DeepInfra、Chutes、HuggingFace；路由格式是 `openai-compat/<provider>/<model>` |
 
 所有能力都从 **同一套 HTTP 接口**提供：`POST /v1/chat/completions`、
-`GET /v1/models`、`GET /v1/status`、`GET /healthz`，以及 `/panel/` 管理面板。
+`POST /v1/responses`、`GET /v1/models`、`GET /v1/status`、`GET /healthz`，
+以及 `/panel/` 管理面板。
 
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-当前版本：**0.1.29**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：**0.1.31**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 ### 近期重点（0.1.26 - 0.1.29）
 
@@ -206,6 +207,30 @@ curl.exe -s -X POST http://127.0.0.1:8788/v1/chat/completions `
   -d '{"model":"zcode/GLM-5.3","messages":[{"role":"user","content":"hi"}],"stream":true}'
 ```
 
+同一批模型也通过 **Responses 接口**提供，而这是 Codex CLI 唯一支持的协议
+（`wire_api = "responses"`）：
+
+```powershell
+curl.exe -s -X POST http://127.0.0.1:8788/v1/responses `
+  -H "Content-Type: application/json" `
+  -d '{"model":"zcode/GLM-5.3","input":"hi","stream":true}'
+```
+
+让 Codex 直接指向本网关，中间不再需要翻译层：
+
+```toml
+model = "zcode/GLM-5.3"
+model_provider = "client2api"
+
+[model_providers.client2api]
+name = "client2api"
+base_url = "http://127.0.0.1:8788/v1"
+wire_api = "responses"
+env_key = "CLIENT2API_KEY"
+```
+
+翻译了什么、刻意不翻译什么，见下方《Responses 接口》一节。
+
 面板地址：<http://127.0.0.1:8788/panel/>。
 
 ## 部署
@@ -285,6 +310,7 @@ coding-plan API key 行不会显示领取按钮。领取成功后，之前因额
 | `zcode/GLM-5.3` | 显式指定模块 `zcode` 和模型 `GLM-5.3` |
 | `GLM-5.3` | 在唯一声明该模型的模块中路由（歧义时返回 400 并列出候选） |
 | `gpt-4o` | 使用配置里的 `aliases` |
+| `deepseek-v4.1-flash` | `model_groups` 的组名，或组内成员的裸模型名：路由到整组成员 |
 | `Auto/GLM-5.3` | 聚合所有能提供该模型的平台，并按平台优先级路由 |
 
 模块收到的永远是**裸模型名**，不包含模块前缀。
@@ -296,6 +322,106 @@ coding-plan API key 行不会显示领取按钮。领取成功后，之前因额
 `Auto/<model>` 是增量能力：原来的平台专用 id 仍然保留，同时增加一个聚合名称。
 这个名称走与普通请求相同的平台优先级、健康状态、冷却和故障切换。
 如果必须固定某个平台，就使用显式的 `平台/模型`。
+
+`model_groups` 是操作者自定义的等价名：把同一个模型在各平台的不同 id 写进一组
+后，组名和任一成员模型名都会路由到整组。组名不分大小写且不能包含 `/`；成员
+写成 `client/model`，只能属于一个组，也不能和 `aliases` 重名。显式的
+`client/model` 仍然锁定平台，不会展开成整组。组内优先用该组的
+`platform_priorities`；没配的平台回落到全局 `platforms.<name>.priority` 与
+`priority_schedule`。成员在当前目录里缺失时会被跳过，单个平台掉线不会拖垮整组。
+
+## Responses 接口
+
+`POST /v1/responses` 用 OpenAI Responses 协议提供与 `/v1/chat/completions`
+完全相同的模型。它存在只有一个原因：**Codex CLI 已经不再支持 Chat
+Completions。** 它的 `WireApi` 只有一个取值 `Responses`，供应商配置块里
+`wire_api = "responses"` 是唯一合法值——所以只实现 Chat Completions 的端点
+会让 Codex 在第一个回合就失败。
+
+常规做法是在 Codex 和网关之间插一层翻译中继。这能用，直到请求里带上
+**加密的 agent 内容**——即子代理消息被包裹的密文。中继翻译不了解密的内容，
+唯一诚实的回答就是 400，回合在还没碰到任何上游之前就结束了。本接口把这层
+中继从链路里去掉：它原生说 Responses，因此不存在会失败的翻译步骤。
+
+### 翻译了什么
+
+| Responses 请求 | 转成 |
+|---|---|
+| `instructions` | 首条 `system` 消息 |
+| `input` 为字符串 | 一条 `user` 消息 |
+| `input` 为数组 | 有序的 `core.Message`（见下） |
+| `message` 项（`user`/`assistant`/`system`/`developer`） | 一条消息；`developer` 映射为 `system` |
+| `input_text` / 续接时的 `output_text` | 文本内容，保留助手历史 |
+| 带 `image_url` 与 `detail` 的 `input_image` | 图片内容项 |
+| `function_call` 项 | 带 `tool_calls` 的 `assistant` 回合 |
+| `function_call_output` 项 | 按 `call_id` 关联的 `tool` 回合 |
+| `reasoning` 项 | 其 `summary` 文本，保留为回合的推理 |
+| `compaction` 项 | 其明文摘要（若其中有） |
+| `tools`（扁平**或**嵌在 `function` 下） | `core.Tool` 声明 |
+| 内置工具（`web_search` 等） | 跳过，不会致命 |
+| `reasoning.effort` / `reasoning_effort` | 请求的思考档位，传给上游模块 |
+| `max_output_tokens` | `max_tokens` |
+| 未知项类型 | 跳过，不会致命 |
+
+数组形式是两种协议真正不同的地方，翻译不是改字段名。Responses 没有
+`messages` 数组：工具调用、它的结果、推理回显都是同一个扁平 `input` 列表里的
+**兄弟项**。Chat 模型把同样的事实表达为「带 `tool_calls` 的 assistant 回合 +
+随后按 `call_id` 关联的 `tool` 回合」，所以一个 `function_call` 开启一个
+assistant 回合，与之匹配的 `function_call_output` 关闭它。工具调用之前的推理
+会挂到该调用所属的回合上，这正是 Chat 模型期望找到它的位置。
+
+### 发出了什么
+
+流式事件序列遵循 Codex 解析器要求：
+
+```
+response.created
+  response.output_item.added              （首次出现时分配稳定 ID 与索引）
+  response.content_part.added / response.reasoning_summary_part.added
+  response.output_text.delta …            （正文）
+  response.reasoning_summary_text.delta … （推理）
+  response.function_call_arguments.delta …（工具参数）
+  对应的 text/arguments/part.done
+  response.output_item.done               （每个 reasoning / message / function_call 一个）
+response.completed                        （携带 response.id 与 usage）
+```
+
+两个细节是承重的，很容易写错。Codex 按每个 payload **内部**的 `type` 字段分发，
+而不是按 SSE 的 `event:` 行，所以两者必须由同一个字符串写出、永不冲突。而
+`response.output_item.done`（不是 `.added`）才是 Codex 用来分发工具调用和定稿
+assistant 消息的事件——只发 delta 的流会显示文字但永远不执行工具。流中途断开
+时发 `response.failed`，不会挂住。
+每个输出项的 ID 与索引在 delta、`.done` 和最终输出中保持一致。
+达到 token 上限时，流式与非流式的响应状态都设为 `incomplete`，
+并在 `incomplete_details.reason` 中标明 `max_output_tokens`；
+流式通过 `response.incomplete` 事件结束。
+
+非流式（`"stream": false`）返回单个 `response` 对象，其 `output` 数组按顺序
+包含：有推理时的 `reasoning` 项、一个 `message` 项、以及每次调用的
+`function_call` 项。
+
+### 加密的 agent 内容
+
+内容加密的项会被**接受，而不是拒绝**——这正是本接口存在的意义。网关不去读那些
+字节；它保留模型能利用的那部分事实，其余丢弃：
+
+* `agent_message` 保留明文信封（author、recipient、任务名）与文本部分。密文替换为
+  `[encrypted agent payload omitted]`。
+* `reasoning` 项保留 `summary` 文本。其 `encrypted_content` 除了发给签发它的
+  上游之外无法回放，因此丢弃而不转发。
+* `compaction` 项在其中是明文摘要时保留，是真正的密文块时跳过。
+
+密文**绝不**转发给任何上游，也不会被解码成杜撰的文本：网关不持有密钥，任何它
+生成的内容都是伪造。因此子代理载荷的**内容**不会被回放；被保留的是「存在一条
+委派消息、以及谁发给谁」这一事实。
+
+### 限制
+
+* **无状态。** `store` 与 `previous_response_id` 接受但忽略；调用方在 `input` 里
+  回放历史——Codex 本来就是这样做的。
+* **仅函数工具。** 内置工具没有可转发的函数名，会被跳过。
+* **响应对象不带 `output_text` 便捷字段**；请从 `message` 项的
+  `content[0].text` 读取。
 
 ## 配置
 
@@ -311,6 +437,12 @@ coding-plan API key 行不会显示领取按钮。领取成功后，之前因额
   "disabled": [],
   "clients": {
     "<name>": {}
+  },
+  "model_groups": {
+    "deepseek-v4.1-flash": {
+      "members": ["opencode/deepseek-v4.1-flash", "cline/cline-free/deepseek-v4.1-flash"],
+      "platform_priorities": { "opencode": 10, "cline": 20 }
+    }
   },
   "features": { "sanitize_blacklist_fingerprints": true },
   "cooldown": { "soft_rate": "600s", "soft_rate_max": "2h" },
@@ -353,6 +485,7 @@ coding-plan API key 行不会显示领取按钮。领取成功后，之前因额
 | `pool.*` | 热更新，主要由 WorkBuddy 执行 |
 | `session_sticky.enabled` / `ttl` / `gc_interval` | 热更新，影响所有绑定会话的模块 |
 | `platforms.<name>.*` | 热更新，优先级、模型黑名单、并发上限立即生效 |
+| `model_groups` | 热更新，组名、成员名和组内优先级立即生效 |
 | `panel.package_detail_limit` | 重启生效 |
 | `schedule.*` | 通过 `Reconfigure` 生效，下一次唤醒时采用 |
 

@@ -40,6 +40,7 @@ const (
 	defaultCooldown      = 60 * time.Second
 	defaultQuotaCooldown = 12 * time.Hour
 	defaultMaxInFlight   = 4
+	defaultQueueTimeout  = time.Minute
 
 	// credentialsFile is where imported/added credentials are persisted under
 	// Deps.DataDir.  It is this module's own file; no other module reads it.
@@ -145,6 +146,7 @@ type Config struct {
 	ExtraHeaders map[string]string `json:"extra_headers"`
 
 	ChatTimeout   Duration `json:"chat_timeout"`
+	QueueTimeout  Duration `json:"queue_timeout"`
 	ModelsTimeout Duration `json:"models_timeout"`
 	ModelsTTL     Duration `json:"models_ttl"`
 	IdleTimeout   Duration `json:"idle_timeout"`
@@ -195,14 +197,18 @@ func parseConfig(raw json.RawMessage) (Config, error) {
 // reservedHeaders are the names a config-supplied header may never override:
 // the module owns authentication, content negotiation and framing.
 var reservedHeaders = map[string]bool{
-	"authorization":     true,
-	"content-type":      true,
-	"content-length":    true,
-	"accept":            true,
-	"accept-encoding":   true,
-	"user-agent":        true,
-	"host":              true,
-	"transfer-encoding": true,
+	"authorization":         true,
+	"x-api-key":             true,
+	"x-opencode-org-id":     true,
+	"x-opencode-session":    true,
+	"x-opencode-session-id": true,
+	"content-type":          true,
+	"content-length":        true,
+	"accept":                true,
+	"accept-encoding":       true,
+	"user-agent":            true,
+	"host":                  true,
+	"transfer-encoding":     true,
 }
 
 // normalize fills defaults and drops entries that cannot be used.  It never
@@ -294,6 +300,7 @@ func (cfg Config) chatURL() string { return cfg.baseURL() + "/chat/completions" 
 func (cfg Config) modelsURL() string { return cfg.baseURL() + "/models" }
 
 func (cfg Config) chatTimeout() time.Duration   { return cfg.ChatTimeout.or(defaultChatTimeout) }
+func (cfg Config) queueTimeout() time.Duration  { return cfg.QueueTimeout.or(defaultQueueTimeout) }
 func (cfg Config) modelsTimeout() time.Duration { return cfg.ModelsTimeout.or(defaultModelsTimeout) }
 func (cfg Config) modelsTTL() time.Duration     { return cfg.ModelsTTL.or(defaultModelsTTL) }
 func (cfg Config) idleTimeout() time.Duration   { return cfg.IdleTimeout.or(defaultIdleTimeout) }

@@ -73,6 +73,11 @@ type Registry struct {
 	clients map[string]Client
 	order   []string
 	aliases map[string]string // "alias" -> "client/model"
+	// modelGroups carries operator-declared equivalent model members and
+	// optional per-group platform priorities.  modelGroupByLookup maps the
+	// group name and each member's display/canonical spelling to the group.
+	modelGroups        map[string]ModelGroup
+	modelGroupByLookup map[string]string
 	// platforms carries the operator's per-platform routing policy: the
 	// priority used when several platforms serve the same bare model id, and
 	// the models this platform must not be given.  It is a blacklist: a model
@@ -165,10 +170,12 @@ func normalizeModelID(model string) string {
 // NewRegistry returns an empty registry.
 func NewRegistry() *Registry {
 	return &Registry{
-		clients:   map[string]Client{},
-		aliases:   map[string]string{},
-		platforms: map[string]platformPolicy{},
-		health:    NewPlatformHealth(),
+		clients:            map[string]Client{},
+		aliases:            map[string]string{},
+		modelGroups:        map[string]ModelGroup{},
+		modelGroupByLookup: map[string]string{},
+		platforms:          map[string]platformPolicy{},
+		health:             NewPlatformHealth(),
 	}
 }
 
@@ -521,6 +528,9 @@ type Candidate struct {
 	Client Client
 	Model  string
 	Free   bool
+	// group is the normalised model-group key that produced this
+	// candidate, or "" for an ordinary catalogue match.
+	group string
 }
 
 func modelFree(m Model) bool {
@@ -594,6 +604,12 @@ func (r *Registry) ResolveCandidates(ctx context.Context, model string) ([]Candi
 		}
 	}
 
+	// Operator-declared equivalence is considered only after an explicit
+	// platform prefix had its chance to pin the request.
+	if groupKey, group, ok := r.modelGroupForLookup(model); ok {
+		return r.resolveModelGroup(ctx, groupKey, group)
+	}
+
 	// Bare name, or a slashed id whose first segment is not a module: search
 	// every module's catalog for a match the platform policy still allows.
 	var (
@@ -635,6 +651,18 @@ func (r *Registry) ResolveCandidates(ctx context.Context, model string) ([]Candi
 	// can answer now beats one that cannot, a pair in failure cooldown is
 	// demoted, then the operator's priority, free marker and name make the
 	// order deterministic.  Status is consulted only on this multi-owner path.
+
+	return r.rankCandidates(ctx, owners), nil
+}
+
+// rankCandidates orders the multi-platform candidates that can serve one
+// request.  A group-specific priority is used when one is configured; all
+// other projects keep the existing global priority and schedule fallback.
+func (r *Registry) rankCandidates(ctx context.Context, owners []Candidate) []Candidate {
+	if len(owners) < 2 {
+		return owners
+	}
+
 	type scored struct {
 		Candidate
 		usable     bool
@@ -649,7 +677,7 @@ func (r *Registry) ResolveCandidates(ctx context.Context, model string) ([]Candi
 			usable:    r.usableNow(ctx, o.Client),
 			suppressed: r.ModelSuppressed(o.Client.Name(), o.Model, now) ||
 				r.ModelDegraded(o.Client.Name(), o.Model, now),
-			priority: r.priority(o.Client.Name()),
+			priority: r.priorityFor(o.Client.Name(), o.group),
 		}
 	}
 	sort.SliceStable(ranked, func(i, j int) bool {
@@ -673,5 +701,5 @@ func (r *Registry) ResolveCandidates(ctx context.Context, model string) ([]Candi
 	for i := range ranked {
 		out[i] = ranked[i].Candidate
 	}
-	return out, nil
+	return out
 }

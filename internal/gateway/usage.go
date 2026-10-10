@@ -101,8 +101,13 @@ type UsageRecord struct {
 	// client actually named.  See sessionIDFor.
 	SessionID string `json:"session_id,omitempty"`
 	Model     string `json:"model,omitempty"`
-	Candidate int    `json:"candidate,omitempty"` // 1-based position in a bare-model route
-	Failed    bool   `json:"failed,omitempty"`
+	// ReasoningEffort is the thinking level the caller asked for, in the
+	// vocabulary the caller used (low/medium/high/xhigh/...).  It stays empty
+	// when the request named none: the row reports what was sent rather than
+	// the module's configured default.  See reasoningEffortFor.
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
+	Candidate       int    `json:"candidate,omitempty"` // 1-based position in a bare-model route
+	Failed          bool   `json:"failed,omitempty"`
 	// Attempt marks a candidate that failed before the request moved on.
 	// It is a recent-list row, not an extra inbound request, so it must not
 	// inflate the aggregate totals.

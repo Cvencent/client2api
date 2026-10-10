@@ -78,7 +78,7 @@ func (s *oauthTestServer) handler() http.Handler {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		writeJSONTest(w, map[string]any{"config": map[string]any{"provider": map[string]any{"opencode": map[string]any{"models": map[string]any{
+		writeJSONTest(w, map[string]any{"config": map[string]any{"provider": map[string]any{"opencode": map[string]any{"options": map[string]any{"apiKey": "zen-key"}, "models": map[string]any{
 			"gpt-5.1":          map[string]any{"cost": map[string]any{"input": 1, "output": 2}},
 			"space-bunny-free": map[string]any{"cost": map[string]any{"input": 0, "output": 0}},
 			"retired-model":    map[string]any{"disabled": true},
@@ -100,6 +100,11 @@ func TestChatRefreshesAnExpiringOAuthToken(t *testing.T) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/auth/device/token"):
 			return jsonResponse(200, `{"access_token":"fresh","refresh_token":"r2","expires_in":3600}`), nil
+		case strings.HasSuffix(r.URL.Path, "/api/config"):
+			if r.Header.Get("Authorization") != "Bearer fresh" {
+				t.Fatal("configuration request did not use refreshed Console token")
+			}
+			return jsonResponse(200, `{"config":{"provider":{"opencode":{"options":{"apiKey":"zen-fresh"}}}}}`), nil
 		case strings.HasSuffix(r.URL.Path, "/chat/completions"):
 			chatAuth = r.Header.Get("Authorization")
 			return sseResponse(happySSE), nil
@@ -107,7 +112,7 @@ func TestChatRefreshesAnExpiringOAuthToken(t *testing.T) {
 		return jsonResponse(http.StatusNotFound, `{}`), nil
 	})
 	c.pool.upsert(accountRecord{
-		ID: "opencode:oauth", AuthMode: "oauth", AccessToken: "stale",
+		ID: "opencode:oauth", AuthMode: "oauth", AccessToken: "stale", APIKey: "zen-old",
 		RefreshToken: "r1", OrgID: "org-1",
 		ExpiresAt:     testNow.Add(-time.Minute).Format(time.RFC3339),
 		AllowedModels: []string{"gpt-5.1"},
@@ -119,8 +124,8 @@ func TestChatRefreshesAnExpiringOAuthToken(t *testing.T) {
 		t.Fatalf("Chat: %v", err)
 	}
 	defer stream.Close()
-	if chatAuth != "Bearer fresh" {
-		t.Fatalf("chat Authorization = %q, want the refreshed token", chatAuth)
+	if chatAuth != "Bearer zen-fresh" {
+		t.Fatal("chat did not use the refreshed workspace inference key")
 	}
 	stored, _ := c.pool.byID("opencode:oauth")
 	if stored.AccessToken != "fresh" {
@@ -171,6 +176,9 @@ func TestOAuthLoginDeviceFlow(t *testing.T) {
 	acct, ok := c.pool.byID(done.AccountID)
 	if !ok {
 		t.Fatalf("account %q was not stored", done.AccountID)
+	}
+	if acct.APIKey != "zen-key" || !acct.inferenceReady() {
+		t.Fatal("login did not resolve the workspace inference key")
 	}
 	if acct.AuthMode != "oauth" || acct.AccessToken != "access-1" || acct.RefreshToken != "refresh-1" {
 		t.Fatalf("account = %+v, want the OAuth tokens", acct)

@@ -328,7 +328,7 @@ func TestPoolStateOf(t *testing.T) {
 				CooldownUntil: testNow.Add(time.Minute).UTC().Format(time.RFC3339)},
 			"exhausted",
 		},
-		{"last error", &accountRecord{ID: "a", Enabled: true, APIKey: "sk", LastError: "boom"}, "cooling"},
+		{"last error without active cooldown", &accountRecord{ID: "a", Enabled: true, APIKey: "sk", LastError: "boom"}, "ready"},
 	}
 	for _, tc := range cases {
 		if got := stateOf(tc.rec, testNow); got != tc.want {

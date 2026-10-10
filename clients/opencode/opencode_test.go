@@ -248,7 +248,7 @@ func TestChatWithoutAccountIsNotConfigured(t *testing.T) {
 
 // A saturated pool is 429, not 503: the caller should retry.
 func TestChatWithSaturatedPoolIsBusy(t *testing.T) {
-	c := newTestClient(t, Config{MaxInFlight: 1})
+	c := newTestClient(t, Config{MaxInFlight: 1, QueueTimeout: Duration(30 * time.Millisecond)})
 	addAccount(t, c, "opencode:a", "sk-a")
 	if _, err := c.pool.acquire(testNow, 1); err != nil {
 		t.Fatalf("acquire = %v", err)

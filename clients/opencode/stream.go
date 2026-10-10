@@ -531,7 +531,7 @@ func (s *chatStream) fail(err error) error {
 		s.client.noteFailure(s.account, kindTransport, describeError(err))
 	}
 	return core.Fail(clientName, s.accountID, core.FailureUpstream, 0,
-		&upstreamError{Op: "chat stream", Msg: describeError(err)})
+		&upstreamError{Op: "chat stream", Msg: scrubAccount(describeError(err), s.account)})
 }
 
 // absorb parses one frame and queues whatever it carries.
@@ -562,7 +562,7 @@ func (s *chatStream) absorb(frame sseFrame) {
 		s.rawDone = true
 		s.queue(core.Event{
 			Type: core.EventError,
-			Err:  fmt.Errorf("%s: %s: %s", clientName, typ, core.Redact(msg)),
+			Err:  fmt.Errorf("%s: %s: %s", clientName, scrubAccount(typ, s.account), scrubAccount(msg, s.account)),
 		})
 		return
 	}
