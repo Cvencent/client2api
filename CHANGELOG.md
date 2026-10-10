@@ -8,6 +8,20 @@
 
 ## [Unreleased]
 
+## [0.1.34] - 2026-10-10
+
+### Fixed
+
+- 修复五个内置 GPT-6+ 原生模型名只绑定 OpenCode/OpenRouter，导致实际可用的自定义
+  中转站没有被路由，`gpt-6.1-sol` 等请求会直接返回
+  `model group has no available members` 的问题。
+- 模型路由组现在支持把 `Auto/<模型>` 写成动态成员，自动展开到所有实际提供该模型、
+  且未被平台黑名单排除的在线平台；显式成员与动态结果会去重。
+- `Auto` 成员的组内优先级用于调整整个 Auto 池的位置，Auto 池内部继续使用各平台
+  自己的全局优先级和 `priority_schedule` 排序。
+- 打包时的面板冒烟测试改用 DevTools 协议驱动 Edge/Chrome，避免新版 Edge 的
+  `--dump-dom` 不输出 DOM 时误判安装包不可用。
+
 ## [0.1.33] - 2026-10-10
 
 ### Added

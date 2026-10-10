@@ -169,7 +169,43 @@ func (r *Registry) modelGroupForLookup(model string) (string, ModelGroup, bool) 
 
 func (r *Registry) resolveModelGroup(ctx context.Context, groupKey string, group ModelGroup) ([]Candidate, error) {
 	owners := make([]Candidate, 0, len(group.Members))
+	seen := make(map[string]struct{}, len(group.Members))
+	autoPriority, autoPrioritySet := modelGroupPriority(group, "Auto")
+	addOwner := func(c Client, model string, free bool, dynamicAuto bool) {
+		key := strings.ToLower(c.Name()) + "\x00" + strings.ToLower(strings.TrimSpace(model))
+		if _, duplicate := seen[key]; duplicate {
+			return
+		}
+		seen[key] = struct{}{}
+		owners = append(owners, Candidate{
+			Client:          c,
+			Model:           model,
+			Free:            free,
+			group:           groupKey,
+			dynamicAuto:     dynamicAuto,
+			autoPriority:    autoPriority,
+			autoPrioritySet: autoPrioritySet,
+		})
+	}
 	for _, member := range group.Members {
+		// Auto/<model> is a dynamic member: it expands to every live platform
+		// whose catalogue serves that model. This lets a group track custom
+		// relay sources without naming each one in the config.
+		if strings.EqualFold(strings.TrimSpace(member.Client), "Auto") {
+			for _, c := range r.All() {
+				models, err := c.Models(ctx)
+				if err != nil {
+					continue
+				}
+				matched, ok, _ := selectCatalogModel(models, member.Model, !strings.ContainsAny(member.Model, "/:"), func(m Model) bool {
+					return r.ModelAllowed(c.Name(), m.ID)
+				})
+				if ok {
+					addOwner(c, matched.ID, modelFree(matched), true)
+				}
+			}
+			continue
+		}
 		c, ok := r.Get(member.Client)
 		if !ok {
 			continue
@@ -184,12 +220,7 @@ func (r *Registry) resolveModelGroup(ctx context.Context, groupKey string, group
 		if !ok {
 			continue
 		}
-		owners = append(owners, Candidate{
-			Client: c,
-			Model:  matched.ID,
-			Free:   modelFree(matched),
-			group:  groupKey,
-		})
+		addOwner(c, matched.ID, modelFree(matched), false)
 	}
 	if len(owners) == 0 {
 		return nil, fmt.Errorf("model group %q has no available members", groupKey)
@@ -202,18 +233,26 @@ func (r *Registry) priorityFor(name, group string) int {
 		r.mu.RLock()
 		groupConfig, ok := r.modelGroups[group]
 		if ok {
-			if priority, ok := groupConfig.PlatformPriorities[name]; ok {
-				r.mu.RUnlock()
+			priority, found := modelGroupPriority(groupConfig, name)
+			r.mu.RUnlock()
+			if found {
 				return priority
 			}
-			for platform, priority := range groupConfig.PlatformPriorities {
-				if strings.EqualFold(platform, name) {
-					r.mu.RUnlock()
-					return priority
-				}
-			}
+			return r.priority(name)
 		}
 		r.mu.RUnlock()
 	}
 	return r.priority(name)
+}
+
+func modelGroupPriority(group ModelGroup, platform string) (int, bool) {
+	if priority, ok := group.PlatformPriorities[platform]; ok {
+		return priority, true
+	}
+	for name, priority := range group.PlatformPriorities {
+		if strings.EqualFold(name, platform) {
+			return priority, true
+		}
+	}
+	return 0, false
 }

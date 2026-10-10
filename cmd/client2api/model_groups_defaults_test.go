@@ -38,11 +38,11 @@ func TestModelGroupsIncludeDefaultGPT6NativeNames(t *testing.T) {
 	got := cfg.modelGroups()
 
 	want := map[string][]string{
-		"gpt-6-astra":     {"opencode/gpt-6-astra"},
-		"gpt-6.1-sol":     {"opencode/gpt-6.1-sol"},
-		"gpt-6-sol":       {"opencode/gpt-6-sol", "openrouter/openai/gpt-6-sol"},
-		"gpt-6-luna":      {"opencode/gpt-6-luna", "openrouter/openai/gpt-6-luna"},
-		"gpt-6.1-sol-pro": {"openrouter/openai/gpt-6.1-sol-pro"},
+		"gpt-6-astra":     {"Auto/gpt-6-astra", "opencode/gpt-6-astra"},
+		"gpt-6.1-sol":     {"Auto/gpt-6.1-sol", "opencode/gpt-6.1-sol"},
+		"gpt-6-sol":       {"Auto/gpt-6-sol", "opencode/gpt-6-sol", "openrouter/openai/gpt-6-sol"},
+		"gpt-6-luna":      {"Auto/gpt-6-luna", "opencode/gpt-6-luna", "openrouter/openai/gpt-6-luna"},
+		"gpt-6.1-sol-pro": {"Auto/gpt-6.1-sol-pro", "openrouter/openai/gpt-6.1-sol-pro"},
 	}
 	for name, wantMembers := range want {
 		group, ok := got[name]

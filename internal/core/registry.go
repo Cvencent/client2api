@@ -533,6 +533,13 @@ type Candidate struct {
 	// group is the normalised model-group key that produced this
 	// candidate, or "" for an ordinary catalogue match.
 	group string
+	// dynamicAuto marks a candidate expanded from an Auto/<model> group
+	// member. The Auto member's group priority positions the whole expanded
+	// pool, while the platform's normal priority and schedule order the
+	// platforms inside that pool.
+	dynamicAuto     bool
+	autoPriority    int
+	autoPrioritySet bool
 }
 
 func modelFree(m Model) bool {
@@ -607,9 +614,14 @@ func (r *Registry) ResolveCandidates(ctx context.Context, model string) ([]Candi
 	}
 
 	// Operator-declared equivalence is considered only after an explicit
-	// platform prefix had its chance to pin the request.
-	if groupKey, group, ok := r.modelGroupForLookup(model); ok {
-		return r.resolveModelGroup(ctx, groupKey, group)
+	// platform prefix had its chance to pin the request. Auto/ deliberately
+	// skips groups and searches the concrete catalogues directly, otherwise a
+	// group named `gpt-x` would hijack `Auto/gpt-x` and recurse through its
+	// own dynamic Auto member.
+	if !auto {
+		if groupKey, group, ok := r.modelGroupForLookup(model); ok {
+			return r.resolveModelGroup(ctx, groupKey, group)
+		}
 	}
 
 	// Bare name, or a slashed id whose first segment is not a module: search
@@ -667,19 +679,30 @@ func (r *Registry) rankCandidates(ctx context.Context, owners []Candidate) []Can
 
 	type scored struct {
 		Candidate
-		usable     bool
-		suppressed bool
-		priority   int
+		usable        bool
+		suppressed    bool
+		priority      int
+		innerPriority int
 	}
 	ranked := make([]scored, len(owners))
 	now := time.Now()
 	for i, o := range owners {
+		priority := r.priorityFor(o.Client.Name(), o.group)
+		innerPriority := priority
+		if o.dynamicAuto {
+			innerPriority = r.priority(o.Client.Name())
+			priority = innerPriority
+			if o.autoPrioritySet {
+				priority = o.autoPriority
+			}
+		}
 		ranked[i] = scored{
 			Candidate: o,
 			usable:    r.usableNow(ctx, o.Client),
 			suppressed: r.ModelSuppressed(o.Client.Name(), o.Model, now) ||
 				r.ModelDegraded(o.Client.Name(), o.Model, now),
-			priority: r.priorityFor(o.Client.Name(), o.group),
+			priority:      priority,
+			innerPriority: innerPriority,
 		}
 	}
 	sort.SliceStable(ranked, func(i, j int) bool {
@@ -692,6 +715,9 @@ func (r *Registry) rankCandidates(ctx context.Context, owners []Candidate) []Can
 		}
 		if a.priority != b.priority {
 			return a.priority < b.priority
+		}
+		if a.innerPriority != b.innerPriority {
+			return a.innerPriority < b.innerPriority
 		}
 		if a.Free != b.Free {
 			return a.Free

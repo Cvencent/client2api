@@ -75,7 +75,7 @@ ID 与 API 地址即可恢复账号池。每个自定义中转站都是**会话�
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-当前版本：**0.1.33**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：**0.1.34**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 ### 近期重点（0.1.26 - 0.1.29）
 
@@ -370,14 +370,18 @@ coding-plan API key 行不会显示领取按钮。领取成功后，之前因额
 
 `model_groups` 是操作者自定义的等价名：把同一个模型在各平台的不同 id 写进一组
 后，组名和任一成员模型名都会路由到整组。组名不分大小写且不能包含 `/`；成员
-写成 `client/model`，只能属于一个组，也不能和 `aliases` 重名。显式的
+可以写成 `client/model` 或 `Auto/model`，只能属于一个组，也不能和 `aliases` 重名。
+`Auto/model` 会动态展开到所有实际提供该模型、且未被黑名单排除的在线平台；显式的
 `client/model` 仍然锁定平台，不会展开成整组。组内优先用该组的
 `platform_priorities`；没配的平台回落到全局 `platforms.<name>.priority` 与
 `priority_schedule`。成员在当前目录里缺失时会被跳过，单个平台掉线不会拖垮整组。
+`Auto` 的组内优先级用于调整整个 Auto 池相对其他成员的位置；池内部仍按各平台
+自己的 `priority` 与 `priority_schedule` 决定先调哪个平台。
 
 默认内置五个 GPT-6+ 路由组，让 Codex 可以直接使用不带平台前缀的原生小写名称：
 `gpt-6-astra`、`gpt-6.1-sol`、`gpt-6-sol`、`gpt-6-luna` 和
-`gpt-6.1-sol-pro`，分别映射到当前提供这些模型的 OpenCode / OpenRouter 成员。
+`gpt-6.1-sol-pro`，每个组都包含 `Auto/<模型>` 动态成员，并保留 OpenCode /
+OpenRouter 等显式兜底成员，因此自定义中转站也能自动加入路由。
 它们会显示在**平台配置 → 模型路由组**里，并带有“内置”标记；修改其中一个会
 把覆盖项写入 `model_groups`，之后以文件里的配置为准。若要在配置文件里停用某个
 默认组，写入同名条目并把 `members` 设为空数组即可。

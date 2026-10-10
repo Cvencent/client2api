@@ -41,7 +41,7 @@ import (
 )
 
 // version is overridable with -ldflags "-X main.version=...".
-var version = "0.1.33"
+var version = "0.1.34"
 
 // restartHandoffEnv marks the replacement half of a panel restart.  It tells a
 // starting process to keep retrying the listen address instead of failing fast,
@@ -125,11 +125,11 @@ type modelGroupConfig struct {
 // tables as operator-declared groups, while a config entry with the same name
 // replaces the default and an explicit empty entry suppresses it.
 var builtinGPT6ModelGroups = map[string][]string{
-	"gpt-6-astra":     {"opencode/gpt-6-astra"},
-	"gpt-6.1-sol":     {"opencode/gpt-6.1-sol"},
-	"gpt-6-sol":       {"opencode/gpt-6-sol", "openrouter/openai/gpt-6-sol"},
-	"gpt-6-luna":      {"opencode/gpt-6-luna", "openrouter/openai/gpt-6-luna"},
-	"gpt-6.1-sol-pro": {"openrouter/openai/gpt-6.1-sol-pro"},
+	"gpt-6-astra":     {"Auto/gpt-6-astra", "opencode/gpt-6-astra"},
+	"gpt-6.1-sol":     {"Auto/gpt-6.1-sol", "opencode/gpt-6.1-sol"},
+	"gpt-6-sol":       {"Auto/gpt-6-sol", "opencode/gpt-6-sol", "openrouter/openai/gpt-6-sol"},
+	"gpt-6-luna":      {"Auto/gpt-6-luna", "opencode/gpt-6-luna", "openrouter/openai/gpt-6-luna"},
+	"gpt-6.1-sol-pro": {"Auto/gpt-6.1-sol-pro", "openrouter/openai/gpt-6.1-sol-pro"},
 }
 
 // platformConfigs projects the file's platforms block onto the router's own

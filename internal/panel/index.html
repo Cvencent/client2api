@@ -6033,7 +6033,7 @@ function pfModelGroupMemberHTML(member, prio) {
   const m = member == null ? "" : String(member);
   const p = prio == null ? "" : String(prio);
   return '<div class="pfGRow">' +
-    '<input class="cfgtext pfGMember" type="text" value="' + esc(m) + '" placeholder="client/model" spellcheck="false" autocomplete="off">' +
+    '<input class="cfgtext pfGMember" type="text" value="' + esc(m) + '" placeholder="client/model 或 Auto/model" spellcheck="false" autocomplete="off">' +
     '<input class="cfgtext pfGPrio" type="number" step="1" value="' + esc(p) + '" placeholder="全局" title="只作用于这个组；数字越小越优先；留空回落到平台的全局优先级">' +
     '<button class="xs pfGDelMember" type="button" title="删除这个成员">移除</button>' +
     '</div>';
@@ -6067,7 +6067,7 @@ function pfModelGroupsHTML(groups) {
   const keys = Object.keys(groups || {});
   const out = ['<div class="pfgsec">'];
   out.push('<div class="pfghd"><strong>模型路由组</strong>' +
-    '<span class="hint">组名和成员模型名等价：调哪个都路由到整组；组内平台优先级覆盖全局优先级；同一成员不能出现在两个组里。</span>' +
+    '<span class="hint">组名和成员模型名等价：调哪个都路由到整组；成员可写 client/model，也可写 Auto/model 自动覆盖所有实际提供该模型的平台；Auto 成员填写组内优先级可调整整个 Auto 池的位置，池内仍按平台全局优先级与时段排序；同一成员不能出现在两个组里。</span>' +
     '<span class="grow"></span>' +
     '<button class="xs pfGAdd" type="button">新增路由组</button></div>');
   out.push('<div class="pfgList">');

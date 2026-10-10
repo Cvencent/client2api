@@ -93,7 +93,7 @@ HTTP 429 endpoint outages, are classified as upstream failures.
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-Current version: **0.1.33**. Full history: [CHANGELOG.md](CHANGELOG.md).
+Current version: **0.1.34**. Full history: [CHANGELOG.md](CHANGELOG.md).
 
 ### Recent highlights (0.1.26 - 0.1.29)
 
@@ -433,6 +433,13 @@ every member id route across all available members. Group names are
 case-insensitive and must not contain `/`; a member is `client/model`, may
 belong to only one group, and cannot collide with an `aliases` key. An explicit
 `client/model` still locks that platform and never expands through a group.
+`Auto/<model>` may also be used as a dynamic member: it expands to every live
+platform whose catalogue serves that model (subject to the same blacklist and
+health checks), then the concrete members listed alongside it are added and
+deduplicated. A group can use `Auto` in `platform_priorities` for those dynamic
+members to position that whole pool relative to named members; inside the pool
+the normal `platforms.<name>.priority` and `priority_schedule` still decide
+which provider is tried first.
 Inside a group the member platform's `platform_priorities` are tried first;
 platforms without a group priority fall back to the global
 `platforms.<name>.priority` and `priority_schedule`. Members missing from a
@@ -441,10 +448,12 @@ live catalogue are skipped, so one flaky module cannot take the group down.
 Five GPT-6+ groups ship as built-ins so a Codex client can ask for the native
 lowercase name with no platform prefix: `gpt-6-astra`, `gpt-6.1-sol`,
 `gpt-6-sol`, `gpt-6-luna` and `gpt-6.1-sol-pro`, mapped onto the OpenCode and
-OpenRouter members that currently serve them. They appear in **Platforms →
-Model Routing Groups** marked **built-in**. Editing one writes an override into
-`model_groups` that replaces the default from then on; a config entry with the
-same name and an explicit empty member list suppresses it.
+OpenRouter members that currently serve them, plus an `Auto/<model>` member so
+custom relays that publish the same model are discovered automatically. They
+appear in **Platforms → Model Routing Groups** marked **built-in**. Editing one
+writes an override into `model_groups` that replaces the default from then on;
+a config entry with the same name and an explicit empty member list suppresses
+it.
 
 When a router-chosen candidate (a bare name or `Auto/`) answers `404 model not
 found`, the gateway demotes that platform/model pair briefly and tries the next

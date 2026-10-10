@@ -34,6 +34,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"client2api/internal/browser"
 )
 
 // readyAttr and errorAttr are the contract between the panel shell and this
@@ -50,11 +52,6 @@ const (
 	// browserTimeout bounds one browser launch.  A browser that hangs here is
 	// skipped in favour of the next candidate instead of eating the whole run.
 	browserTimeout = 30 * time.Second
-	// virtualTimeBudget is Chrome's --virtual-time-budget.  Virtual time pauses
-	// while a fetch is in flight, so this is "page time excluding network
-	// waits".  4000ms is deliberately below the panel's 5000ms refresh timer:
-	// the smoke test wants the initial boot, not a background tick.
-	virtualTimeBudget = 4000
 )
 
 func main() {
@@ -308,52 +305,37 @@ func probeURL(ctx context.Context, client *http.Client, url string, wantShell bo
 	return nil
 }
 
-// smokeBrowser loads url in one browser and returns the serialized DOM.  Chrome
-// is tried with the modern --headless=new spelling first and the old bare
-// --headless second so both a current Edge and an older Chrome work.
-func smokeBrowser(ctx context.Context, browser, url, dir string) (string, error) {
-	profile := filepath.Join(dir, "profile-"+sanitize(filepath.Base(browser)))
-	first, firstErr := runOnce(ctx, browser, "--headless=new", url, profile)
-	if firstErr == nil || ctx.Err() != nil {
-		return first, firstErr
+// smokeBrowser loads url in one browser over CDP and returns the serialized
+// DOM.  The older --dump-dom path is unreliable on current Edge builds: Edge
+// can exit successfully without writing any DOM to stdout.  Driving the
+// DevTools endpoint also lets the gate wait for the panel's explicit boot
+// marker instead of guessing with --virtual-time-budget.
+func smokeBrowser(ctx context.Context, browserPath, url, dir string) (string, error) {
+	profileRoot := filepath.Join(dir, "profile-"+sanitize(filepath.Base(browserPath)))
+	b, err := browser.Launch(ctx, browser.LaunchOpts{
+		ExecPath:    browserPath,
+		ProfileRoot: profileRoot,
+		Headless:    true,
+		StartURL:    url,
+		Timeout:     25 * time.Second,
+	})
+	if err != nil {
+		return "", err
 	}
-	second, secondErr := runOnce(ctx, browser, "--headless", url, profile+"-legacy")
-	if secondErr != nil {
-		return "", fmt.Errorf("%v (also tried --headless: %v)", firstErr, secondErr)
-	}
-	return second, nil
-}
+	defer b.Close()
 
-func runOnce(ctx context.Context, browser, headless, url, profile string) (string, error) {
-	args := []string{
-		headless,
-		"--disable-gpu",
-		"--no-first-run",
-		"--no-default-browser-check",
-		"--disable-extensions",
-		"--disable-background-networking",
-		"--user-data-dir=" + profile,
-		fmt.Sprintf("--virtual-time-budget=%d", virtualTimeBudget),
-		"--dump-dom",
-		url,
+	page := b.Page()
+	ready := `(() => { const h = document.documentElement; return !!(h && (` +
+		`h.getAttribute("data-c2a-ready") === "1" || ` +
+		`h.getAttribute("data-c2a-boot-error") === "1")); })()`
+	ok, err := page.WaitFor(ctx, ready, 10*time.Second)
+	if err != nil {
+		return "", err
 	}
-	// A browser running as root (containers, some CI images) cannot use its own
-	// sandbox.  The page is a local build of our own panel, so the fallback is
-	// acceptable exactly there and nowhere else.
-	if runtime.GOOS == "linux" && os.Geteuid() == 0 {
-		args = append(args, "--no-sandbox")
+	if !ok {
+		return "", fmt.Errorf("panel did not finish booting before the deadline")
 	}
-	cmd := exec.CommandContext(ctx, browser, args...)
-	var out, errBuf bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &errBuf
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("%s: %v: %s", headless, err, excerpt(errBuf.String(), 0, 600))
-	}
-	if out.Len() == 0 {
-		return "", fmt.Errorf("%s: no DOM on stdout: %s", headless, excerpt(errBuf.String(), 0, 600))
-	}
-	return out.String(), nil
+	return page.EvalString(ctx, `document.documentElement ? document.documentElement.outerHTML : ""`)
 }
 
 // assertBooted is the actual assertion.  A missing ready marker is the 0.1.5

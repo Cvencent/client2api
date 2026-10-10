@@ -135,3 +135,89 @@ func TestModelGroupReturnsClearErrorWhenNoMemberIsAvailable(t *testing.T) {
 		t.Fatalf("group error = %q, want it to name the model group", err)
 	}
 }
+
+func TestModelGroupAutoMemberExpandsEveryLivePlatform(t *testing.T) {
+	r := registryWith(t,
+		&fakeClient{name: "alpha", models: []Model{{ID: "gpt-6.1-sol"}}},
+		&fakeClient{name: "beta", models: []Model{{ID: "vendor/gpt-6.1-sol"}}},
+		&fakeClient{name: "gamma", models: []Model{{ID: "other-model"}}},
+	)
+	r.SetModelGroups(map[string]ModelGroup{
+		"gpt-6.1-sol": {
+			Members: []ModelGroupMember{{Client: "Auto", Model: "gpt-6.1-sol"}},
+		},
+	})
+
+	got, err := r.ResolveCandidates(context.Background(), "gpt-6.1-sol")
+	if err != nil {
+		t.Fatalf("ResolveCandidates returned an error: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("ResolveCandidates returned %d candidates, want alpha and beta: %+v", len(got), got)
+	}
+	seen := map[string]bool{}
+	for _, candidate := range got {
+		seen[candidate.Client.Name()] = true
+	}
+	if !seen["alpha"] || !seen["beta"] {
+		t.Fatalf("dynamic Auto member did not expand every platform: %+v", got)
+	}
+}
+
+func TestModelGroupAutoMemberKeepsAutoPlatformPriority(t *testing.T) {
+	r := registryWith(t,
+		&fakeClient{name: "alpha", models: []Model{{ID: "shared-model"}}},
+		&fakeClient{name: "beta", models: []Model{{ID: "shared-model"}}},
+		&fakeClient{name: "gamma", models: []Model{{ID: "gamma-model"}}},
+	)
+	r.SetPlatformConfigs(map[string]PlatformConfig{
+		"alpha": {Priority: 20},
+		"beta":  {Priority: 10},
+		"gamma": {Priority: 0},
+	})
+	r.SetModelGroups(map[string]ModelGroup{
+		"shared": {
+			Members: []ModelGroupMember{
+				{Client: "Auto", Model: "shared-model"},
+				{Client: "gamma", Model: "gamma-model"},
+			},
+			// This moves the whole Auto pool ahead of gamma, but must not
+			// flatten the platform priority used inside that pool.
+			PlatformPriorities: map[string]int{"Auto": -100},
+		},
+	})
+
+	got, err := r.ResolveCandidates(context.Background(), "shared")
+	if err != nil {
+		t.Fatalf("ResolveCandidates returned an error: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("ResolveCandidates returned %d candidates, want three: %+v", len(got), got)
+	}
+	want := []string{"beta", "alpha", "gamma"}
+	for i, name := range want {
+		if got[i].Client.Name() != name {
+			t.Fatalf("candidate %d = %q, want %q (all candidates: %+v)", i, got[i].Client.Name(), name, got)
+		}
+	}
+}
+
+func TestAutoPrefixBypassesModelGroupLookup(t *testing.T) {
+	r := registryWith(t,
+		&fakeClient{name: "alpha", models: []Model{{ID: "gpt-6.1-sol"}}},
+		&fakeClient{name: "beta", models: []Model{{ID: "vendor/gpt-6.1-sol"}}},
+	)
+	r.SetModelGroups(map[string]ModelGroup{
+		"gpt-6.1-sol": {
+			Members: []ModelGroupMember{{Client: "Auto", Model: "gpt-6.1-sol"}},
+		},
+	})
+
+	got, err := r.ResolveCandidates(context.Background(), "Auto/gpt-6.1-sol")
+	if err != nil {
+		t.Fatalf("ResolveCandidates(Auto/gpt-6.1-sol) returned an error: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("Auto/ returned %d candidates, want alpha and beta: %+v", len(got), got)
+	}
+}
