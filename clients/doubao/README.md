@@ -15,8 +15,8 @@ over an API. There are therefore two ways to get one in:
 1. **Web login (preferred).** The account page's "web login" button launches a
    throwaway Chromium profile (Edge or Chrome) on `https://www.doubao.com`.
    Scan the QR code or enter a phone number in that window; the module reads the
-   session cookies back over CDP, verifies them against the account endpoint, and
-   stores them. The browser is closed once the login succeeds.
+   session cookies back over CDP, verifies them against the account and profile
+   endpoints, and stores them. The browser is closed once the login succeeds.
 2. **Paste a cookie.** Copy the Cookie request header from a signed-in
    `www.doubao.com` tab and paste it into the account form's 会话 Cookie field.
    Use this when no Chromium-family browser is installed.

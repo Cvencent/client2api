@@ -269,9 +269,10 @@ func truncate(s string, n int) string {
 	return s[:n] + "..."
 }
 
-// accountInfo is the reply of /alice/user/get_account_info, narrowed to the
-// fields Status and the login flow use.  A zero value means "not signed in".
+// accountInfo narrows the account/profile replies to the fields Status and the
+// login flow use. A zero value means "not signed in".
 type accountInfo struct {
+	ID         string `json:"id"`
 	UserID     string `json:"user_id"`
 	UID        string `json:"uid"`
 	Nickname   string `json:"nickname"`
@@ -280,14 +281,16 @@ type accountInfo struct {
 	IsLogin    *bool  `json:"is_login"`
 	AvatarURL  string `json:"avatar_url"`
 	ScreenName string `json:"screen_name"`
+	EntityID   string `json:"entity_id"`
+	UserName   string `json:"user_name"`
 }
 
 // displayName is a non-secret label for the account.
 func (i accountInfo) displayName() string {
-	if n := firstNonEmpty(i.Nickname, i.Name, i.ScreenName); n != "" {
+	if n := firstNonEmpty(i.Nickname, i.Name, i.ScreenName, i.UserName); n != "" {
 		return core.Redact(n)
 	}
-	if id := firstNonEmpty(i.UserID, i.UID, i.UniqueID); id != "" {
+	if id := firstNonEmpty(i.ID, i.UserID, i.UID, i.UniqueID, i.EntityID); id != "" {
 		return "uid:" + core.Redact(id)
 	}
 	return "signed in"
@@ -297,7 +300,7 @@ func (i accountInfo) displayName() string {
 // one.  A fresh web login often rotates the cookie jar for the same user, so
 // matching on the full jar would create a duplicate row every time.
 func (i accountInfo) identity() string {
-	id := firstNonEmpty(i.UserID, i.UID, i.UniqueID)
+	id := firstNonEmpty(i.ID, i.UserID, i.UID, i.UniqueID, i.EntityID)
 	if id == "" {
 		return ""
 	}
@@ -309,18 +312,31 @@ func (i accountInfo) signedIn() bool {
 	if i.IsLogin != nil {
 		return *i.IsLogin
 	}
-	return firstNonEmpty(i.UserID, i.UID, i.UniqueID, i.Nickname, i.Name) != ""
+	return firstNonEmpty(i.ID, i.UserID, i.UID, i.UniqueID, i.Nickname, i.Name, i.UserName, i.EntityID) != ""
 }
 
-// accountInfo probes one account.
+// accountInfo probes one account. The current client keeps the display name
+// and stable id on the profile brief endpoint; the older account endpoint is
+// kept as a compatibility fallback for builds that only expose that shape.
 func (u *upstream) accountInfo(ctx context.Context, acc *account) (accountInfo, error) {
 	cctx, cancel := context.WithTimeout(ctx, u.cfg.probeTimeout())
 	defer cancel()
+	var profile struct {
+		Data struct {
+			ProfileBrief accountInfo `json:"profile_brief"`
+		} `json:"data"`
+	}
+	if err := u.postJSON(cctx, acc, pathProfileBrief, map[string]any{"avatar_format": 0}, &profile); err == nil {
+		if info := profile.Data.ProfileBrief; info.signedIn() {
+			return info, nil
+		}
+	}
+
 	var out struct {
 		Data  accountInfo `json:"data"`
 		Extra accountInfo `json:"extra"`
 	}
-	if err := u.postJSON(cctx, acc, pathAccountInfo, nil, &out); err != nil {
+	if err := u.postJSON(cctx, acc, pathAccountInfo, map[string]any{}, &out); err != nil {
 		return accountInfo{}, err
 	}
 	// The reply nests the user under "data" on the current build; some builds

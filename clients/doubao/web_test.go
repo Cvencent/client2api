@@ -89,26 +89,36 @@ func TestProbeAccountRejectsAnAnonymousReply(t *testing.T) {
 	}
 }
 
-// TestProbeAccountUsesPost pins the current client's account probe. The web
-// build calls GetAccountInfo with POST; GET reaches a route that answers 404
-// once a session cookie is attached.
-func TestProbeAccountUsesPost(t *testing.T) {
+// TestProbeAccountUsesProfileBrief pins the current client's account probe:
+// the profile brief endpoint is preferred, and it carries the stable id and
+// display name the old account endpoint no longer returns.
+func TestProbeAccountUsesProfileBrief(t *testing.T) {
 	var gotMethod, gotPath string
+	var gotBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotMethod = r.Method
 		gotPath = r.URL.Path
-		_, _ = w.Write([]byte(`{"data":{"user_id":"42","nickname":"tester"}}`))
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &gotBody)
+		_, _ = w.Write([]byte(`{"data":{"profile_brief":{"id":"42","nickname":"tester"}}}`))
 	}))
 	defer srv.Close()
 	c := newWebClient(t, srv.URL)
-	if _, err := c.up.accountInfo(context.Background(), &account{ID: "a1", Cookie: "sessionid=abc"}); err != nil {
+	info, err := c.up.accountInfo(context.Background(), &account{ID: "a1", Cookie: "sessionid=abc"})
+	if err != nil {
 		t.Fatalf("accountInfo: %v", err)
 	}
 	if gotMethod != http.MethodPost {
 		t.Fatalf("method = %q, want %q", gotMethod, http.MethodPost)
 	}
-	if gotPath != pathAccountInfo {
-		t.Fatalf("path = %q, want %q", gotPath, pathAccountInfo)
+	if gotPath != pathProfileBrief {
+		t.Fatalf("path = %q, want %q", gotPath, pathProfileBrief)
+	}
+	if gotBody["avatar_format"] == nil {
+		t.Fatalf("profile body = %v, want avatar_format", gotBody)
+	}
+	if info.displayName() != "tester" || info.identity() != "db-user-42" {
+		t.Fatalf("info = %+v, want the profile brief identity", info)
 	}
 }
 

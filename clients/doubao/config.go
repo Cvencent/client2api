@@ -43,10 +43,11 @@ const (
 // Endpoints the module speaks.  Every one of them was confirmed in the desktop
 // client's bundle.
 const (
-	pathAccountInfo = "/alice/user/get_account_info"
-	pathChat        = "/samantha/chat/completion"
-	pathCreditNum   = "/commerce/benefit_supply/credit/get_credit_num_optional_tasks"
-	pathCreditUsage = "/commerce/benefit_supply/credit/get_credit_usage_history"
+	pathAccountInfo  = "/alice/user/get_account_info"
+	pathProfileBrief = "/alice/profile/self_brief"
+	pathChat         = "/samantha/chat/completion"
+	pathCreditNum    = "/commerce/benefit_supply/credit/get_credit_num_optional_tasks"
+	pathCreditUsage  = "/commerce/benefit_supply/credit/get_credit_usage_history"
 )
 
 // Defaults for every tuning knob.
