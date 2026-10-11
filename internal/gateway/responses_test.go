@@ -289,6 +289,49 @@ func TestResponses_TranslatesCodexRequestShape(t *testing.T) {
 	}
 }
 
+func TestResponses_AssistantPreambleAndCallShareOneTurn(t *testing.T) {
+	c := &testClient{name: "t", events: []core.Event{{Type: core.EventDelta, Delta: "ok"}, {Type: core.EventDone, Finish: "stop"}}}
+	srv := newTestServer(t, c, NewStats(), NewUsageStore(10))
+
+	// Codex replays the model's visible text as a message item immediately
+	// before the function_call it introduced.  Chat has one assistant turn for
+	// the pair, so the translator must not splice them into two turns.
+	body := `{
+		"model": "t/m1",
+		"input": [
+			{"type":"message","role":"user","content":[{"type":"input_text","text":"go"}]},
+			{"type":"reasoning","summary":[{"type":"summary_text","text":"I should inspect."}]},
+			{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Found it. Let me confirm."}]},
+			{"type":"function_call","call_id":"call_1","name":"exec_command","arguments":"{\"cmd\":\"make\"}"},
+			{"type":"function_call_output","call_id":"call_1","output":"ok"},
+			{"type":"message","role":"user","content":[{"type":"input_text","text":"continue"}]}
+		]
+	}`
+	rec := responses(t, srv, body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+	}
+	var assistants []core.Message
+	for _, m := range c.seen.Messages {
+		if m.Role == "assistant" {
+			assistants = append(assistants, m)
+		}
+	}
+	if len(assistants) != 1 {
+		t.Fatalf("assistant turns = %d, want 1 (preamble and call must share one turn): %+v", len(assistants), c.seen.Messages)
+	}
+	a := assistants[0]
+	if a.Content != "Found it. Let me confirm." {
+		t.Errorf("preamble text = %q", a.Content)
+	}
+	if !strings.Contains(a.Reasoning, "I should inspect.") {
+		t.Errorf("reasoning lost from the call turn: %q", a.Reasoning)
+	}
+	if len(a.ToolCalls) != 1 || a.ToolCalls[0].Name != "exec_command" {
+		t.Errorf("tool calls on the merged turn = %+v", a.ToolCalls)
+	}
+}
+
 // TestResponses_EncryptedAgentContentIsAccepted is the regression that matters:
 // the request a relay answers with 400 must be served here.
 func TestResponses_EncryptedAgentContentIsAccepted(t *testing.T) {
@@ -670,3 +713,16 @@ func TestSSEFrameTypeMatchesPayload(t *testing.T) {
 }
 
 var _ = log.New
+
+func TestAppendTailKeepsTheEnd(t *testing.T) {
+	var b strings.Builder
+	appendTail(&b, "hello ", 6)
+	appendTail(&b, "world", 6)
+	if b.String() != " world" {
+		t.Fatalf("tail = %q, want the last six bytes", b.String())
+	}
+	appendTail(&b, "", 6)
+	if b.String() != " world" {
+		t.Fatalf("empty append changed the tail: %q", b.String())
+	}
+}

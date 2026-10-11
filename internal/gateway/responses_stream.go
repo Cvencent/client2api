@@ -102,8 +102,10 @@ func (s *server) streamResponsesSSE(w http.ResponseWriter, r *http.Request, a em
 	client := a.client
 	stream := a.stream
 	var (
-		usage  *core.Usage
-		finish string
+		usage      *core.Usage
+		finish     string
+		textTail   strings.Builder
+		reasonTail strings.Builder
 	)
 	started := time.Now()
 	streamID := newID("st-")
@@ -125,8 +127,17 @@ func (s *server) streamResponsesSSE(w http.ResponseWriter, r *http.Request, a em
 		if usage != nil {
 			completionTokens = usage.CompletionTokens
 		}
-		s.opts.Logger.Printf("stream: id=%s protocol=responses client=%s model=%q terminal=%s finish=%s events=%d delta_bytes=%d reasoning_bytes=%d tool_calls=%d completion_tokens=%d ttfb=%s duration=%s",
-			streamID, client.Name(), a.model, terminal, finishText, eventCount, deltaBytes, reasoningBytes, toolCalls, completionTokens, ttfb, time.Since(started).Round(time.Millisecond))
+		// A turn that ends with "stop" and no tool call is either an ordinary
+		// answer or the failure this gateway keeps chasing: the model narrates
+		// an intent ("Let me ...") and stops before emitting the call.  Quoting
+		// the end of the visible text is the only way to tell the two apart
+		// after the fact, so the tail is logged for exactly that shape.
+		note := ""
+		if finish == "stop" && toolCalls == 0 {
+			note = fmt.Sprintf(" stop_tail=%q stop_reason_tail=%q", textTail.String(), reasonTail.String())
+		}
+		s.opts.Logger.Printf("stream: id=%s protocol=responses client=%s model=%q terminal=%s finish=%s events=%d delta_bytes=%d reasoning_bytes=%d tool_calls=%d completion_tokens=%d ttfb=%s duration=%s%s",
+			streamID, client.Name(), a.model, terminal, finishText, eventCount, deltaBytes, reasoningBytes, toolCalls, completionTokens, ttfb, time.Since(started).Round(time.Millisecond), note)
 	}()
 	// Token counts may arrive on the last event and this function has several
 	// exits; one deferred copy covers all of them.
@@ -273,6 +284,7 @@ receive:
 			deltaBytes += len(ev.Delta)
 			reasoningBytes += len(ev.Reasoning)
 			if ev.Reasoning != "" {
+				appendTail(&reasonTail, ev.Reasoning, 200)
 				if reasoningIx < 0 {
 					var ok bool
 					reasoningIx, ok = addItem(responseOutput{
@@ -297,6 +309,7 @@ receive:
 				}
 			}
 			if ev.Delta != "" {
+				appendTail(&textTail, ev.Delta, 200)
 				if textIx < 0 && !addText() {
 					return
 				}
@@ -557,4 +570,20 @@ receive:
 	a.stat.status = http.StatusOK
 	final := base.result(finish, output, usage)
 	writeJSON(w, http.StatusOK, final)
+}
+
+// appendTail keeps only the last n bytes of s in dst, so a diagnostic log line
+// can quote how a turn ended without holding the whole answer.  The cut can fall
+// mid-rune, which is acceptable because the value is only ever printed.
+func appendTail(dst *strings.Builder, s string, n int) {
+	if dst == nil || s == "" || n <= 0 {
+		return
+	}
+	dst.WriteString(s)
+	if dst.Len() <= n {
+		return
+	}
+	trimmed := dst.String()[dst.Len()-n:]
+	dst.Reset()
+	dst.WriteString(trimmed)
 }

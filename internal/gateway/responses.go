@@ -535,14 +535,29 @@ func translateResponsesInput(raw json.RawMessage) ([]core.Message, error) {
 				return nil, fmt.Errorf("input[%d].content: %w", i, err)
 			}
 			msg := core.Message{Role: role, Content: text, Parts: parts}
-			// An assistant turn claims a reasoning summary that preceded it;
-			// anything else closes the open items first so the order holds.
-			if role == "assistant" && pending == nil && pendingReasoning != "" {
-				msg.Reasoning = pendingReasoning
-				pendingReasoning = ""
-			} else {
-				flushPending()
+			if role == "assistant" {
+				// Codex replays the assistant's visible text as its own item,
+				// immediately before the function_call it introduced.  Chat
+				// expresses that whole turn as ONE assistant message carrying
+				// content, reasoning and tool_calls, so the text is held open
+				// rather than emitted: a following call attaches to it, and a
+				// following non-tool item flushes it unchanged.  Emitting the
+				// text as its own turn instead splices two assistant turns
+				// together and hands the model a history where a turn ends right
+				// after a bare preamble -- the shape it then imitates by
+				// stopping mid-task.
+				if pending != nil {
+					flushPending()
+				}
+				if pendingReasoning != "" {
+					msg.Reasoning = pendingReasoning
+					pendingReasoning = ""
+				}
+				pending = &msg
+				continue
 			}
+			// Any other role closes the open items first so the order holds.
+			flushPending()
 			out = append(out, msg)
 
 		default:

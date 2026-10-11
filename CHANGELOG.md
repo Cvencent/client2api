@@ -8,6 +8,22 @@
 
 ## [Unreleased]
 
+## [0.1.40] - 2026-10-11
+
+### Fixed
+
+- Responses 历史回放不再把模型的一句话前言拆成独立的 assistant 轮次。Codex 回放
+  `reasoning → assistant 正文 → function_call` 时会把正文单独发成一条 message，
+  旧逻辑让它和随后的函数调用变成两条连续的 assistant 消息，思考内容只挂在第一条
+  上。现在合并成一条同时带正文、思考和 `tool_calls` 的 assistant 消息，符合 Chat
+  语义，也不再给模型一段“说完一句就收尾”的历史去模仿。
+
+### Changed
+
+- Responses 流式日志在 `finish=stop` 且没有工具调用时追加 `stop_tail` 与
+  `stop_reason_tail`，把这一轮收尾处的可见正文和思考末尾（各最多 200 字节）写进
+  日志，便于区分“正常作答”与“模型说了半句就停”。
+
 ## [0.1.39] - 2026-10-11
 
 ### Fixed
