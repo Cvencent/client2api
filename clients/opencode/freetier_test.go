@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"regexp"
 	"strconv"
+	"strings"
 	"testing"
 
 	"client2api/internal/core"
@@ -282,6 +283,47 @@ func TestOAuthChatSendsNoFreeTierSession(t *testing.T) {
 
 	if sid := seen.Get("x-opencode-session"); sid != "" {
 		t.Fatalf("x-opencode-session = %q, want a signed-in account left alone", sid)
+	}
+}
+
+// A signed-in account can also reach the free catalogue: Zen accepts a free
+// model on the Console credential as long as the CLI handshake rides along.
+// The module must therefore offer free models to oauth accounts too, and send
+// the handshake on that path -- otherwise the rate-limited anonymous tier would
+// be the only route to the free models.
+func TestOAuthChatServesFreeModelWithTheHandshake(t *testing.T) {
+	var gotBody []byte
+	seen := new(http.Header)
+	c := newFakeClient(t, Config{}, func(r *http.Request) (*http.Response, error) {
+		*seen = r.Header.Clone()
+		gotBody, _ = io.ReadAll(r.Body)
+		return sseResponse(happySSE), nil
+	})
+	acct := accountRecord{
+		ID: "opencode:oauth", AuthMode: "oauth", AccessToken: "console-tok",
+		APIKey: "zen-key", AllowedModels: []string{"gpt-5.1"},
+		Enabled: true, Source: sourcePanel,
+	}
+	c.pool.upsert(acct)
+
+	if !c.accountSupportsModel(&acct, "space-bunny-free") {
+		t.Fatal("a signed-in account should support the free catalogue")
+	}
+
+	stream, err := c.Chat(context.Background(), chatRequest("space-bunny-free"))
+	if err != nil {
+		t.Fatalf("Chat = %v", err)
+	}
+	defer stream.Close()
+
+	if sid := seen.Get("x-opencode-session"); !freeSessionShape.MatchString(sid) {
+		t.Fatalf("x-opencode-session = %q, want the free-tier handshake on the signed-in path", sid)
+	}
+	body := string(gotBody)
+	for _, tool := range []string{`"bash"`, `"read"`} {
+		if !strings.Contains(body, tool) {
+			t.Errorf("free body missing %s handshake tool", tool)
+		}
 	}
 }
 

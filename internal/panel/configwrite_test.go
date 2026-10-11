@@ -556,6 +556,60 @@ func TestConfigAcceptsPerPlatformOverrides(t *testing.T) {
 }
 
 // TestConfigDeletesAPerPlatformOverride pins the "跟随全局" write: null on a
+
+func TestConfigAcceptsDailyBalanceIntervalAndCronModes(t *testing.T) {
+	path := configFile(t, baseConfig)
+	p := configPanel(path)
+
+	mustSave(t, p, `{"schedule":{"clients":{"wb":{"daily_balance":{"every_seconds":1200,"jitter_seconds":180}}}}}`)
+	interval := onDisk(t, path)["schedule"].(map[string]any)["clients"].(map[string]any)["wb"].(map[string]any)["daily_balance"].(map[string]any)
+	if interval["every_seconds"] != float64(1200) || interval["jitter_seconds"] != float64(180) {
+		t.Fatalf("interval mode did not survive: %v", interval)
+	}
+
+	mustSave(t, p, `{"schedule":{"clients":{"wb":{"daily_balance":{"cron":"*/20 * * * *","hours":null,"every_seconds":null,"jitter_seconds":null}}}}}`)
+	cron := onDisk(t, path)["schedule"].(map[string]any)["clients"].(map[string]any)["wb"].(map[string]any)["daily_balance"].(map[string]any)
+	if cron["cron"] != "*/20 * * * *" {
+		t.Fatalf("cron mode did not survive: %v", cron)
+	}
+	for _, key := range []string{"hours", "every_seconds", "jitter_seconds"} {
+		if _, ok := cron[key]; ok {
+			t.Fatalf("mode switch left %q behind: %v", key, cron)
+		}
+	}
+}
+
+func TestConfigRefusesInvalidDailyBalanceSchedule(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "bad cron",
+			body: `{"schedule":{"clients":{"wb":{"daily_balance":{"cron":"61 * * * *"}}}}}`,
+			want: "daily_balance.cron",
+		},
+		{
+			name: "jitter reaches interval",
+			body: `{"schedule":{"clients":{"wb":{"daily_balance":{"every_seconds":1200,"jitter_seconds":1200}}}}}`,
+			want: "jitter",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := configFile(t, baseConfig)
+			p := configPanel(path)
+			w, _ := doConfig(t, p, http.MethodPatch, tc.body)
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("PATCH = %d, want 400 (%s)", w.Code, w.Body.String())
+			}
+			if body := w.Body.String(); !strings.Contains(body, tc.want) {
+				t.Errorf("rejection %q does not contain %q", body, tc.want)
+			}
+		})
+	}
+}
+
 // (client, batch) pair must remove it, not merge into it.
 func TestConfigDeletesAPerPlatformOverride(t *testing.T) {
 	path := configFile(t, `{"schedule":{"enabled":true,"clients":{"wb":{"checkin":{"enabled":true,"hours":[7]}}}}}`)

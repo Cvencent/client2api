@@ -355,7 +355,10 @@ browser an absolute address.
 When the pool is not anonymous-only, every OAuth account's `AllowedModels` is
 unioned into the served catalogue so the picker offers what the signed-in
 workspace can actually use; if no OAuth account has a workspace list, the
-public catalogue is served unchanged.
+public catalogue is served unchanged. Free ids are offered regardless of the
+allowlist: a signed-in account can serve the `*-free` catalogue too, provided
+the request carries the CLI free-tier handshake, so free models are not pinned
+to the rate-limited anonymous identity.
 
 ---
 
@@ -369,8 +372,9 @@ public catalogue is served unchanged.
   raise concurrency limits. Cooldowns and missing credentials do not queue.
   Account retries share one queue deadline and do not retry a failed upstream
   account repeatedly within one Chat call.
-  Free model requests skip Console accounts; anonymous accounts skip paid models,
-  and configured Console model allowlists are respected.
+  Free model requests may be served by the anonymous identity or a signed-in
+  Console account, but always carry the CLI free-tier handshake; anonymous
+  accounts skip paid models, and a Console account's paid allowlist is respected.
 - `core.NoteServedBy` is called immediately after the pick, so the panel always
   shows the account that actually served the request.
 - Failure verdicts are classified into auth / quota / rate / model / client /

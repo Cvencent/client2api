@@ -279,10 +279,11 @@ func TestAccountPriorityColumnStaysNarrow(t *testing.T) {
 func TestAccountColumnsSplitTheTableEvenly(t *testing.T) {
 	src := string(indexHTML)
 	for _, want := range []string{
-		`#view-accounts table.acc .col-account { width: 10%; }`,
+		`#view-accounts table.acc .col-account { width: 11%; }`,
 		`#view-accounts table.acc .col-usage { width: 12%; }`,
 		`#view-accounts table.acc .col-last { width: 7%; }`,
-		`#view-accounts table.acc .col-note { width: 15%; }`,
+		`#view-accounts table.acc .col-bal { width: 7.5%; }`,
+		`#view-accounts table.acc .col-note { width: 17%; }`,
 		`#view-accounts table.acc .col-acts { width: 10%; }`,
 		`#view-accounts table.acc td.c-usage,`,
 		`#view-accounts table.acc td.c-last { overflow: hidden; }`,
@@ -297,8 +298,8 @@ func TestAccountColumnsSplitTheTableEvenly(t *testing.T) {
 	widths := regexp.MustCompile(`#view-accounts table\.acc \.col-[a-z]+ \{ width: ([0-9.]+)%; \}`).FindAllStringSubmatch(src, -1)
 	// 加列必须同时加一条宽度规则：少一条，剩下几列就按固定布局被重新划分，
 	// 看上去像某一列忽然变宽/变窄。
-	if len(widths) != 14 {
-		t.Fatalf("expected 14 account column widths, got %d", len(widths))
+	if len(widths) != 13 {
+		t.Fatalf("expected 13 account column widths, got %d", len(widths))
 	}
 	total := 0.0
 	for _, m := range widths {

@@ -57,6 +57,48 @@ func TestScheduleViewIncludesDailyBalanceForEveryRegisteredClient(t *testing.T) 
 	}
 }
 
+func TestScheduleViewReportsDailyBalanceCronAndInterval(t *testing.T) {
+	wb := newSweepClient("wb", core.TaskResult{OK: true}, liveAccount("a1"))
+	loomy := newSweepClient("loomy", core.TaskResult{OK: true}, liveAccount("l1"))
+	p := statusPanel(t, &fakeScheduler{
+		st: scheduler.Status{Enabled: true},
+		cfg: scheduler.Config{
+			Enabled: true,
+			DailyBalance: scheduler.Group{
+				Enabled: true,
+				Hours:   []int{0},
+			},
+			Clients: map[string]map[string]scheduler.Group{
+				"wb": {scheduler.DailyBalanceTaskName: {
+					Enabled: true,
+					Cron:    "*/20 * * * *",
+				}},
+				"loomy": {scheduler.DailyBalanceTaskName: {
+					Enabled: true,
+					Every:   20 * time.Minute,
+					Jitter:  3 * time.Minute,
+				}},
+			},
+		},
+	})
+	p.opts.Registry = registryOf(wb, loomy)
+
+	rows := p.scheduleRows(p.opts.Scheduler.Config(), p.opts.Scheduler.Status())
+	got := map[string]scheduleRow{}
+	for _, row := range rows {
+		if row.Batch == scheduler.DailyBalanceTaskName {
+			got[row.Client] = row
+		}
+	}
+	if row := got["wb"]; row.Cron != "*/20 * * * *" {
+		t.Fatalf("wb cron = %q, want the expression", row.Cron)
+	}
+	row := got["loomy"]
+	if row.EverySeconds != 1200 || row.JitterSeconds != 180 {
+		t.Fatalf("loomy interval = %d/%d seconds, want 1200/180", row.EverySeconds, row.JitterSeconds)
+	}
+}
+
 func TestDailyBalanceRunRouteUsesSchedulerHook(t *testing.T) {
 	c := newSweepClient("wb", core.TaskResult{OK: true}, liveAccount("a1"))
 	s := &fakeScheduler{}

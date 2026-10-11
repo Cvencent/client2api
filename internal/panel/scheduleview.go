@@ -38,10 +38,14 @@ type scheduleRow struct {
 	// Hours is the effective timetable in CST: the per-platform override
 	// when there is one, otherwise the shared group.
 	Hours []int `json:"hours"`
-	// EveryMinutes and JitterMinutes are the effective interval controls
-	// for the synthetic recovery task.  They are zero for daily batches.
+	// EverySeconds and JitterSeconds are the effective interval controls for
+	// synthetic tasks. EveryMinutes and JitterMinutes remain for older callers.
+	EverySeconds  int `json:"every_seconds,omitempty"`
+	JitterSeconds int `json:"jitter_seconds,omitempty"`
 	EveryMinutes  int `json:"every_minutes,omitempty"`
 	JitterMinutes int `json:"jitter_minutes,omitempty"`
+	// Cron is the effective cron expression for tasks using calendar syntax.
+	Cron string `json:"cron,omitempty"`
 	// AccountScope is the effective account include/exclude policy.
 	AccountScope scheduler.AccountScope `json:"account_scope"`
 	// GroupEnabled is the timetable switch (not the account count) -- the
@@ -109,6 +113,9 @@ func (p *panel) handleSchedule(w http.ResponseWriter, r *http.Request) {
 			"hours":          intsOrEmpty(g.Group.Hours),
 			"every_minutes":  int(g.Group.Every / time.Minute),
 			"jitter_minutes": int(g.Group.Jitter / time.Minute),
+			"every_seconds":  int(g.Group.Every / time.Second),
+			"jitter_seconds": int(g.Group.Jitter / time.Second),
+			"cron":           g.Group.Cron,
 		})
 	}
 
@@ -158,6 +165,9 @@ func (p *panel) scheduleRows(cfg scheduler.Config, st scheduler.Status) []schedu
 			Hours:         []int{},
 			EveryMinutes:  int(recovery.Every / time.Minute),
 			JitterMinutes: int(recovery.Jitter / time.Minute),
+			EverySeconds:  int(recovery.Every / time.Second),
+			JitterSeconds: int(recovery.Jitter / time.Second),
+			Cron:          recovery.Cron,
 			GroupEnabled:  recovery.Enabled,
 			Override:      recoveryOverride,
 			Accounts:      total,
@@ -174,13 +184,18 @@ func (p *panel) scheduleRows(cfg scheduler.Config, st scheduler.Status) []schedu
 		daily, _ := cfg.GroupFor(c.Name(), scheduler.DailyBalanceTaskName)
 		_, dailyOverride := cfg.Override(c.Name(), scheduler.DailyBalanceTaskName)
 		dailyRow := scheduleRow{
-			Client:       c.Name(),
-			Batch:        scheduler.DailyBalanceTaskName,
-			Hours:        intsOrEmpty(daily.Hours),
-			GroupEnabled: daily.Enabled,
-			Override:     dailyOverride,
-			Accounts:     total,
-			Ready:        ready,
+			Client:        c.Name(),
+			Batch:         scheduler.DailyBalanceTaskName,
+			Hours:         intsOrEmpty(daily.Hours),
+			EverySeconds:  int(daily.Every / time.Second),
+			JitterSeconds: int(daily.Jitter / time.Second),
+			EveryMinutes:  int(daily.Every / time.Minute),
+			JitterMinutes: int(daily.Jitter / time.Minute),
+			Cron:          daily.Cron,
+			GroupEnabled:  daily.Enabled,
+			Override:      dailyOverride,
+			Accounts:      total,
+			Ready:         ready,
 		}
 		if at, ok := st.NextByClient[c.Name()+"/"+scheduler.DailyBalanceTaskName]; ok && !at.IsZero() {
 			dailyRow.Next = at.Format(time.RFC3339)

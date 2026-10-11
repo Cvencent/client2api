@@ -64,10 +64,28 @@ func TestAccountPoolSortableHeadersCoverComparableColumns(t *testing.T) {
 		}
 	}
 
-	for _, nonSortable := range []string{"状态说明", "<th>字段</th>"} {
-		if strings.Contains(src, `id="accSortNote"`) || strings.Contains(src, `id="accSortFields"`) {
-			t.Errorf("non-comparable column %q became sortable", nonSortable)
+	if strings.Contains(src, `id="accSortNote"`) {
+		t.Error("non-comparable column \"状态说明\" became sortable")
+	}
+}
+
+func TestAccountPoolOmitsTheFieldsColumn(t *testing.T) {
+	src := poolStatsUISource(t)
+	for _, unwanted := range []string{"col-fields", "fieldSummary"} {
+		if strings.Contains(src, unwanted) {
+			t.Errorf("account pool still carries the removed fields column: found %q", unwanted)
 		}
+	}
+	start := strings.Index(src, `<table class="acc">`)
+	if start < 0 {
+		t.Fatal("account pool table not found")
+	}
+	end := strings.Index(src[start:], `</thead>`)
+	if end < 0 {
+		t.Fatal("account pool table header not closed")
+	}
+	if strings.Contains(src[start:start+end], "<th>字段</th>") {
+		t.Error("account pool header still has a fields column")
 	}
 }
 

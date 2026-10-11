@@ -58,7 +58,7 @@ func TestStatusNoteCellAlwaysCarriesFullTip(t *testing.T) {
 func TestStatusNoteColumnIsWiderAndWrapsTwoLines(t *testing.T) {
 	src := string(indexHTML)
 	for _, want := range []string{
-		`#view-accounts table.acc .col-note { width: 15%; }`,
+		`#view-accounts table.acc .col-note { width: 17%; }`,
 		`-webkit-line-clamp: 2;`,
 		`display: -webkit-box;`,
 	} {

@@ -114,12 +114,15 @@ const (
 type Group struct {
 	Enabled bool
 	Hours   []int // hours of day in CST, 0-23
-	// Every and Jitter are used by the synthetic recovery task. Every is
-	// the nominal interval and Jitter is the symmetric random spread around
-	// it: every=4h jitter=1h produces a delay in [3h,5h]. A non-positive
-	// jitter means no spread.
+	// Every and Jitter are used by synthetic periodic tasks. Every is the
+	// nominal interval and Jitter is the symmetric random spread around it:
+	// every=4h jitter=1h produces a delay in [3h,5h]. A non-positive jitter
+	// means no spread.
 	Every  time.Duration
 	Jitter time.Duration
+	// Cron is a 5- or 6-field cron expression in CST. It is an alternative
+	// to Hours and Every/Jitter for tasks that need a calendar expression.
+	Cron string
 	// Accounts optionally narrows the batch to selected account IDs.
 	Accounts AccountScope
 }
@@ -174,9 +177,9 @@ type Config struct {
 	// Recovery is one periodic schedule shared by every registered platform.
 	// Per-platform overrides live in Clients under RecoveryTaskName.
 	Recovery Group
-	// DailyBalance is one fixed-hour schedule shared by every registered
-	// platform: an early-morning balance sweep that picks up the credits the
-	// vendors grant at the start of their quota day.  Per-platform overrides
+	// DailyBalance is the shared balance-sweep schedule. It may use hours,
+	// an interval with jitter, or a cron expression; the task picks up credits
+	// vendors grant at the start of their quota day. Per-platform overrides
 	// live in Clients under DailyBalanceTaskName.
 	DailyBalance Group
 	// Clients overrides one platform's timetable for named batches.  The
@@ -383,34 +386,50 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("scheduler: batch %s has hours outside 0..23", strings.Join(outOfRange, ", "))
 	}
 	for _, e := range groups {
-		if !e.g.Enabled {
-			continue
-		}
-		if e.name == RecoveryTaskName {
-			if e.g.Every <= 0 {
-				return fmt.Errorf("scheduler: recovery is enabled but has no positive interval")
-			}
-			continue
-		}
-		if len(e.g.Hours) == 0 {
-			return fmt.Errorf("scheduler: batch %q is enabled but has no hours", e.name)
+		if err := validateGroupSchedule(e.name, *e.g); err != nil {
+			return err
 		}
 	}
 	for _, client := range overrides {
 		for batch, g := range c.Clients[client] {
-			if !g.Enabled {
-				continue
-			}
-			if strings.EqualFold(strings.TrimSpace(batch), RecoveryTaskName) {
-				if g.Every <= 0 {
-					return fmt.Errorf("scheduler: recovery for %s is enabled but has no positive interval", client)
-				}
-				continue
-			}
-			if len(g.Hours) == 0 {
-				return fmt.Errorf("scheduler: batch %q for %s is enabled but has no hours", batch, client)
+			if err := validateGroupSchedule(batch, g); err != nil {
+				return err
 			}
 		}
+	}
+	return nil
+}
+
+func validateGroupSchedule(name string, g Group) error {
+	if !g.Enabled {
+		return nil
+	}
+	if expr := strings.TrimSpace(g.Cron); expr != "" {
+		if err := ValidateCron(expr); err != nil {
+			return fmt.Errorf("scheduler: batch %q has invalid cron: %w", name, err)
+		}
+		return nil
+	}
+	if strings.EqualFold(strings.TrimSpace(name), RecoveryTaskName) {
+		if g.Every <= 0 {
+			return fmt.Errorf("scheduler: recovery is enabled but has no positive interval")
+		}
+		if g.Jitter < 0 || g.Jitter >= g.Every {
+			return fmt.Errorf("scheduler: recovery jitter must be non-negative and smaller than its interval")
+		}
+		return nil
+	}
+	if strings.EqualFold(strings.TrimSpace(name), DailyBalanceTaskName) {
+		if g.Every <= 0 && len(g.Hours) == 0 {
+			return fmt.Errorf("scheduler: batch %q is enabled but has no schedule", name)
+		}
+		if g.Every > 0 && (g.Jitter < 0 || g.Jitter >= g.Every) {
+			return fmt.Errorf("scheduler: batch %q jitter must be non-negative and smaller than its interval", name)
+		}
+		return nil
+	}
+	if len(g.Hours) == 0 {
+		return fmt.Errorf("scheduler: batch %q is enabled but has no hours", name)
 	}
 	return nil
 }
@@ -718,7 +737,7 @@ func (r *Runner) plan(now time.Time, cfg Config) []fire {
 		if g, known := cfg.GroupFor(c.Name(), RecoveryTaskName); known && g.Enabled && g.Every > 0 {
 			out = append(out, fire{client: c.Name(), batch: RecoveryTaskName, at: r.recoveryAt(now, c.Name(), g)})
 		}
-		if g, known := cfg.GroupFor(c.Name(), DailyBalanceTaskName); known && g.Enabled && len(g.Hours) > 0 {
+		if g, known := cfg.GroupFor(c.Name(), DailyBalanceTaskName); known && g.Enabled && dailyBalanceConfigured(g) {
 			if at := r.dailyBalanceAt(now, c.Name(), g); !at.IsZero() {
 				out = append(out, fire{client: c.Name(), batch: DailyBalanceTaskName, at: at})
 			}
@@ -735,7 +754,12 @@ func (r *Runner) plan(now time.Time, cfg Config) []fire {
 			if !known || !g.Enabled {
 				continue
 			}
-			at := NextFire(now, g.Hours, CST)
+			var at time.Time
+			if strings.TrimSpace(g.Cron) != "" {
+				at, _ = NextCron(now, g.Cron, CST)
+			} else {
+				at = NextFire(now, g.Hours, CST)
+			}
 			if at.IsZero() {
 				continue
 			}
@@ -793,11 +817,25 @@ func (r *Runner) dailyBalanceAt(now time.Time, client string, group Group) time.
 // DailyBalanceWindow.  The offset keeps every platform from hitting the vendor
 // at the same second while still landing inside the promised window.
 func dailyBalanceFire(now time.Time, group Group) time.Time {
+	if expr := strings.TrimSpace(group.Cron); expr != "" {
+		at, err := NextCron(now, expr, CST)
+		if err != nil {
+			return time.Time{}
+		}
+		return at
+	}
+	if group.Every > 0 {
+		return now.Add(recoveryDelay(group.Every, group.Jitter))
+	}
 	base := NextFire(now, group.Hours, CST)
 	if base.IsZero() || DailyBalanceWindow <= 0 {
 		return base
 	}
 	return base.Add(time.Duration(rand.Int64N(int64(DailyBalanceWindow))))
+}
+
+func dailyBalanceConfigured(group Group) bool {
+	return strings.TrimSpace(group.Cron) != "" || group.Every > 0 || len(group.Hours) > 0
 }
 
 // balanceNext reports the next balance tick.  A tick is only planned when the
@@ -935,7 +973,7 @@ func (r *Runner) tickRecovery(ctx context.Context, cfg Config, client string) {
 // plan.
 func (r *Runner) tickDailyBalance(ctx context.Context, cfg Config, client string) {
 	group, ok := cfg.GroupFor(client, DailyBalanceTaskName)
-	if !ok || !group.Enabled || len(group.Hours) == 0 {
+	if !ok || !group.Enabled || !dailyBalanceConfigured(group) {
 		return
 	}
 	r.mu.Lock()
@@ -945,7 +983,7 @@ func (r *Runner) tickDailyBalance(ctx context.Context, cfg Config, client string
 	r.dailyBalanceNext[client] = dailyBalanceFire(r.now(), group)
 	hook := r.onDailyBal
 	r.mu.Unlock()
-	r.log("[scheduler] daily balance sweep %s (window %s)", client, DailyBalanceWindow)
+	r.log("[scheduler] daily balance sweep %s (cron=%q every=%s jitter=%s window=%s)", client, group.Cron, group.Every, group.Jitter, DailyBalanceWindow)
 	if hook != nil {
 		hook(ctx, client)
 	}

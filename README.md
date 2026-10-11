@@ -99,8 +99,9 @@ people. The built-in default is `127.0.0.1`.
 
 ### Tasks, usage and accounting
 
-- Scheduled tasks with Asia/Shanghai times and per-platform overrides.
+- Scheduled tasks with Asia/Shanghai times and per-platform overrides, including second/minute/hour intervals with symmetric jitter.
 - Batch execution and a task board for supported account actions.
+- Daily balance refresh can run by time, by interval, or by a 5/6-field cron expression.
 - Recovery probes, daily balance refresh and check-in.
 - Success rate, latency, token totals, cache hit rate and recent calls.
 - Per-request session IDs and per-model / per-account statistics.

@@ -41,7 +41,7 @@ import (
 )
 
 // version is overridable with -ldflags "-X main.version=...".
-var version = "0.1.40"
+var version = "0.1.41"
 
 // restartHandoffEnv marks the replacement half of a panel restart.  It tells a
 // starting process to keep retrying the listen address instead of failing fast,
@@ -286,11 +286,12 @@ type scheduleConfig struct {
 	RecoveryEveryMinutes  *int  `json:"recovery_every_minutes"`
 	RecoveryJitterMinutes *int  `json:"recovery_jitter_minutes"`
 
-	// DailyBalance is the shared early-morning balance sweep.  A nil hour
-	// list means "the default midnight"; an explicit empty list means
-	// "never run it here".
-	DailyBalanceEnabled *bool `json:"daily_balance_enabled"`
-	DailyBalanceHours   []int `json:"daily_balance_hours"`
+	// DailyBalance is the shared balance sweep. A nil hour list means "the
+	// default midnight"; an explicit empty list means "never run it here",
+	// and an explicit cron expression takes precedence when set.
+	DailyBalanceEnabled *bool   `json:"daily_balance_enabled"`
+	DailyBalanceHours   []int   `json:"daily_balance_hours"`
+	DailyBalanceCron    *string `json:"daily_balance_cron"`
 
 	// Clients overrides the shared timetable for one platform.  The outer
 	// key is a client name, the inner key a batch name ("checkin", "travel",
@@ -308,6 +309,9 @@ type scheduleOverride struct {
 	Hours         []int                 `json:"hours"`
 	EveryMinutes  *int                  `json:"every_minutes"`
 	JitterMinutes *int                  `json:"jitter_minutes"`
+	EverySeconds  *int                  `json:"every_seconds"`
+	JitterSeconds *int                  `json:"jitter_seconds"`
+	Cron          *string               `json:"cron"`
 	Accounts      *scheduleAccountScope `json:"accounts,omitempty"`
 }
 
@@ -373,12 +377,19 @@ func (s scheduleConfig) recoveryGroup() scheduler.Group {
 	}
 }
 
-// dailyBalanceGroup projects the shared daily balance sweep.  A nil hour list
+// dailyBalanceGroup projects the shared daily balance sweep. A nil hour list
 // falls back to the default midnight; an explicit empty list stays empty, which
-// schedGroup turns into "disabled".  The distinction matters because an
-// operator who clears the hours box expects the task to stop, not to snap back
-// to midnight.
+// schedGroup turns into "disabled". A cron expression replaces the hour list
+// when it is configured, while a blank explicit cron stays disabled rather than
+// snapping back to midnight.
 func (s scheduleConfig) dailyBalanceGroup() scheduler.Group {
+	if s.DailyBalanceCron != nil {
+		expr := strings.TrimSpace(*s.DailyBalanceCron)
+		return scheduler.Group{
+			Enabled: boolOr(s.DailyBalanceEnabled, true) && expr != "",
+			Cron:    expr,
+		}
+	}
 	hours := s.DailyBalanceHours
 	if hours == nil {
 		hours = []int{defaultDailyBalanceHour}
@@ -402,7 +413,12 @@ func (s scheduleConfig) schedClients() map[string]map[string]scheduler.Group {
 			isRecovery := strings.EqualFold(strings.TrimSpace(batch), scheduler.RecoveryTaskName)
 			isDaily := strings.EqualFold(strings.TrimSpace(batch), scheduler.DailyBalanceTaskName)
 			if isRecovery {
-				if ov.Enabled == nil && ov.EveryMinutes == nil && ov.JitterMinutes == nil && ov.Accounts == nil {
+				if ov.Enabled == nil && ov.EveryMinutes == nil && ov.JitterMinutes == nil &&
+					ov.EverySeconds == nil && ov.JitterSeconds == nil && ov.Cron == nil && ov.Accounts == nil {
+					continue
+				}
+			} else if isDaily {
+				if ov.Enabled == nil && ov.Hours == nil && ov.EveryMinutes == nil && ov.JitterMinutes == nil && ov.EverySeconds == nil && ov.JitterSeconds == nil && ov.Cron == nil && ov.Accounts == nil {
 					continue
 				}
 			} else if ov.Enabled == nil && ov.Hours == nil && ov.Accounts == nil {
@@ -417,20 +433,28 @@ func (s scheduleConfig) schedClients() map[string]map[string]scheduler.Group {
 				if ov.Enabled != nil {
 					group.Enabled = *ov.Enabled
 				}
-				if ov.EveryMinutes != nil {
-					group.Every = time.Duration(*ov.EveryMinutes) * time.Minute
-				}
-				if ov.JitterMinutes != nil {
-					group.Jitter = time.Duration(*ov.JitterMinutes) * time.Minute
-				}
+				applyScheduleInterval(&group, ov)
 			} else if isDaily {
-				// The daily sweep is hour-based like a batch, so a partial override
-				// inherits the shared switch and replaces only the hours it names.
 				group = sharedDaily
-				if ov.Hours != nil {
+				switch {
+				case ov.Cron != nil:
+					group.Cron = strings.TrimSpace(*ov.Cron)
+					group.Hours = nil
+					group.Every = 0
+					group.Jitter = 0
+					group.Enabled = boolOr(ov.Enabled, true) && group.Cron != ""
+				case ov.EverySeconds != nil || ov.JitterSeconds != nil || ov.EveryMinutes != nil || ov.JitterMinutes != nil:
+					group.Cron = ""
+					group.Hours = nil
+					applyScheduleInterval(&group, ov)
+					group.Enabled = boolOr(ov.Enabled, true) && group.Every > 0
+				case ov.Hours != nil:
 					group.Hours = ov.Hours
+					group.Cron = ""
+					group.Every = 0
+					group.Jitter = 0
 					group.Enabled = boolOr(ov.Enabled, true) && len(ov.Hours) > 0
-				} else if ov.Enabled != nil {
+				default:
 					group.Enabled = *ov.Enabled
 				}
 			}
@@ -439,6 +463,19 @@ func (s scheduleConfig) schedClients() map[string]map[string]scheduler.Group {
 		}
 	}
 	return out
+}
+
+func applyScheduleInterval(group *scheduler.Group, ov scheduleOverride) {
+	if ov.EverySeconds != nil {
+		group.Every = time.Duration(*ov.EverySeconds) * time.Second
+	} else if ov.EveryMinutes != nil {
+		group.Every = time.Duration(*ov.EveryMinutes) * time.Minute
+	}
+	if ov.JitterSeconds != nil {
+		group.Jitter = time.Duration(*ov.JitterSeconds) * time.Second
+	} else if ov.JitterMinutes != nil {
+		group.Jitter = time.Duration(*ov.JitterMinutes) * time.Minute
+	}
 }
 
 func schedAccountScope(s *scheduleAccountScope) scheduler.AccountScope {

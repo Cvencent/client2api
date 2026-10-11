@@ -20,9 +20,12 @@ import (
 func TestSessionIDColumnExplainsDerivedAndEmptyValues(t *testing.T) {
 	src := poolStatsUISource(t)
 
-	// 1. 表头说清这一列的来历。
-	if !strings.Contains(src, "调用方报的就原样显示") {
-		t.Error("会话ID 表头没有说明这一列的值从哪来")
+	// 1. 表头说清这一列的来历，但不用可见说明文字撑宽整列。
+	if !strings.Contains(src, `title="调用方报的就原样显示，没报则按消息内容推一个">会话ID</th>`) {
+		t.Error("会话ID 表头没有用 title 说明这一列的值从哪来")
+	}
+	if strings.Contains(src, `会话ID <span class="hint">`) {
+		t.Error("会话ID 表头仍有可见说明文字：这一列会被撑宽，挤到后面的结果列")
 	}
 
 	// 2. 渲染函数必须把 d- 前缀当成"推导出来的"讲，而不是当成普通 id 显示。
@@ -38,5 +41,15 @@ func TestSessionIDColumnExplainsDerivedAndEmptyValues(t *testing.T) {
 	// 4. 去掉 d- 前缀后显示，避免长 hex 撑破列宽。
 	if !strings.Contains(src, `s.startsWith("d-")`) {
 		t.Error("d- 前缀应该只在 title 里保留，列里显示去掉前缀的短值")
+	}
+
+	// 5. 成功 / 失败不能因为列窄就断成两行。
+	for _, want := range []string{
+		".recent-bad { color: var(--bad); font-weight: 650; white-space: nowrap; }",
+		".recent-ok { color: var(--ok); font-weight: 650; white-space: nowrap; }",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("结果文字没有禁止换行（缺 %q）：列一窄就会把「成功 / 失败」拆成两行", want)
+		}
 	}
 }

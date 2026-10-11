@@ -155,6 +155,10 @@ func redactConfig(v any) any {
 				out[k] = redactSourceDefinitions(val)
 				continue
 			}
+			if nameKeyedConfigMap(k) {
+				out[k] = redactNameKeyedMap(val)
+				continue
+			}
 			if secretConfigKey.MatchString(k) {
 				out[k] = maskSecret(val)
 				continue
@@ -173,6 +177,36 @@ func redactConfig(v any) any {
 	default:
 		return v
 	}
+}
+
+// nameKeyedConfigMap reports whether a config key names a map whose own keys are
+// operator-chosen names or ids rather than field names.  The credential
+// heuristic must not run on those inner keys: a platform called "tokenrhythm"
+// or a client called "tokenmetrics" is a name, not a secret, and masking it
+// would hide the whole policy from the panel.  The values inside each entry are
+// still redacted by the ordinary rules.
+func nameKeyedConfigMap(key string) bool {
+	switch key {
+	case "platforms", "clients", "model_groups", "aliases",
+		"account_priorities", "account_notes", "platform_priorities":
+		return true
+	}
+	return false
+}
+
+// redactNameKeyedMap redacts the values of a name-keyed map while leaving the
+// entry names untouched.  A non-map value falls back to the normal walk, so a
+// malformed config still cannot smuggle a credential through untouched.
+func redactNameKeyedMap(v any) any {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return redactConfig(v)
+	}
+	out := make(map[string]any, len(m))
+	for name, entry := range m {
+		out[name] = redactConfig(entry)
+	}
+	return out
 }
 
 func redactSourceDefinitions(v any) any {

@@ -623,7 +623,9 @@ func (c *Client) Models(ctx context.Context) ([]core.Model, error) {
 	if !failedAt.IsZero() && time.Since(failedAt) < modelsFailCooldown {
 		return c.serveWithoutProbing(cached), nil
 	}
-	if c.pool.Ready() {
+	// Realms() reports parked realms too: a credit-exhausted account must still
+	// be able to read its catalogue, so readiness for chat is the wrong gate.
+	if len(c.pool.Realms()) > 0 {
 		models, err := c.fetchAllRealmModels()
 		if err == nil && len(models) > 0 {
 			c.storeModels(models, time.Now())
@@ -659,7 +661,7 @@ func (c *Client) RefreshModels(ctx context.Context) ([]core.Model, error) {
 		fallback = c.configuredModels()
 	}
 
-	if !c.pool.Ready() {
+	if len(c.pool.Realms()) == 0 {
 		return fallback, fmt.Errorf("workbuddy: refresh models: %w", core.ErrNotConfigured)
 	}
 	models, err := c.fetchAllRealmModels()
@@ -796,9 +798,9 @@ func (c *Client) fetchAllRealmModels() ([]core.Model, error) {
 			results[i] = result{err: errors.New(msg)}
 			done <- struct{}{}
 		}, func() {
-			a, ok := c.pool.PickForModelInRealm(nil, "", realm)
+			a, ok := c.pool.PickForMetadataInRealm(realm)
 			if !ok {
-				results[i] = result{err: fmt.Errorf("no usable %s account", realm)}
+				results[i] = result{err: fmt.Errorf("no account can read the %s catalogue", realm)}
 				done <- struct{}{}
 				return
 			}

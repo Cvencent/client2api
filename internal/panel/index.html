@@ -983,18 +983,17 @@ html { scrollbar-gutter: stable; }
 #view-accounts table.acc .mark { width: 7px; min-width: 7px; padding: 0; }
 #view-accounts table.acc { table-layout: fixed; width: 100%; }
 #view-accounts table.acc .col-mark { width: 1%; }
-#view-accounts table.acc .col-account { width: 10%; }
+#view-accounts table.acc .col-account { width: 11%; }
 #view-accounts table.acc .col-state { width: 6%; }
 #view-accounts table.acc .col-models { width: 6%; }
 #view-accounts table.acc .col-prio { width: 6.5%; }
-#view-accounts table.acc .col-bal { width: 6%; }
+#view-accounts table.acc .col-bal { width: 7.5%; }
 #view-accounts table.acc .col-rate { width: 6%; }
 #view-accounts table.acc .col-inflight { width: 4%; }
 #view-accounts table.acc .col-usage { width: 12%; }
 #view-accounts table.acc .col-last { width: 7%; }
 #view-accounts table.acc .col-expiry { width: 6%; }
-#view-accounts table.acc .col-note { width: 15%; }
-#view-accounts table.acc .col-fields { width: 4.5%; }
+#view-accounts table.acc .col-note { width: 17%; }
 #view-accounts table.acc .col-acts { width: 10%; }
 #view-accounts table.acc th.sortable { cursor: pointer; user-select: none; white-space: nowrap; transition: color .15s ease, background .15s ease; }
 #view-accounts table.acc th.sortable:hover { color: var(--accent-text); background: var(--surface-2); }
@@ -1029,13 +1028,19 @@ html { scrollbar-gutter: stable; }
 #view-accounts table.acc td > .name,
 #view-accounts table.acc td > .hint { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
 #view-accounts table.acc td > .hint { font-size: 11px; }
+/* ZCode 的 token 余额是十亿级计数，6% 固定列宽装不下完整数字；主值用紧凑
+   单位显示，这里再兜底裁掉异常长的第三方余额，避免压进后面的成功/失败列。
+   完整数字和读取时间仍在主值的 title 里。 */
+#view-accounts table.acc td.c-bal { overflow: hidden; }
+#view-accounts table.acc td.c-bal > span[title] {
+  display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis;
+}
 #view-accounts table.acc td.c-usage,
 #view-accounts table.acc td.c-last { overflow: hidden; }
 #view-accounts table.acc td.c-usage > span,
 #view-accounts table.acc td.c-last > span { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #view-accounts table.acc td .note { display: -webkit-box; max-width: 100%; overflow: hidden; text-overflow: ellipsis; -webkit-line-clamp: 2; -webkit-box-orient: vertical; white-space: normal; overflow-wrap: anywhere; line-height: 1.35; vertical-align: bottom; cursor: help; }
-/* 字段列只放一个「还有细节」的入口：整颗 chip 限宽省略，完整键值对仍在 title 里。
-   状态 chip 也命中这条规则，但它本来就只有几个字符，限宽对它没有影响。 */
+/* 表格里的 chip 只承载短结论；细节放到 title 或模型弹层，避免撑宽固定列。 */
 #view-accounts table.acc td > .chip { display: inline-block; max-width: 96px; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
 /* 单元格里的数字/时间/余额都是一个不拆行的整体，拆开反而更难读。 */
 .acc td > span[title] { white-space: nowrap; }
@@ -1173,11 +1178,15 @@ button.primary:active:not(:disabled) { filter: brightness(.94); }
    （桌面应用的内嵌浏览器侧栏常见 500px 上下）折叠成一张张卡片，免得“操作”列
    要横向拖动才看得到。规则限定在 .acc.sc / .acc.stk，账号表和模型表不受影响。 */
 #view-taskscenter .box > header { flex-wrap: wrap; row-gap: 8px; }
-.acc.sc { min-width: 860px; }
+.acc.sc { min-width: 960px; }
 .acc.sc th, .acc.sc td { padding: 9px 12px; }
 .acc.sc .hint { display: block; margin-top: 2px; font-size: 11px; color: var(--ink-3);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 240px; }
 .acc.sc .scHours { width: 104px; }
+.acc.sc .scEditor { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.acc.sc .scMode { width: 84px; }
+.acc.sc .scCron { width: 148px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+.acc.sc .scModeWrap { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 4px; }
 .acc.sc .scDur { display: inline-flex; align-items: center; gap: 5px; }
 .acc.sc .scDur > span { font-size: 11px; color: var(--ink-3); }
 .acc.sc .scEvery, .acc.sc .scJitter { width: 66px; }
@@ -1209,7 +1218,7 @@ button.primary:active:not(:disabled) { filter: brightness(.94); }
   .acc.sc td.sc-c-tag { grid-area: 1 / 3 / 2 / 4; text-align: right; }
   .acc.sc td.sc-c-task { grid-area: 2 / 1 / 3 / 4; }
   .acc.sc td.sc-c-hours { grid-area: 3 / 1 / 4 / 2; white-space: nowrap; }
-  .acc.sc td.sc-c-hours::before { content: "时点 "; color: var(--ink-3); font-size: 11.5px; }
+  .acc.sc td.sc-c-hours::before { content: "调度 "; color: var(--ink-3); font-size: 11.5px; }
   .acc.sc td.sc-c-on { grid-area: 3 / 2 / 4 / 3; white-space: nowrap; }
   .acc.sc td.sc-c-on::before { content: "启用 "; color: var(--ink-3); font-size: 11.5px; }
   .acc.sc td.sc-c-next { grid-area: 3 / 3 / 4 / 4; text-align: right; }
@@ -1379,8 +1388,8 @@ input[type=checkbox] { width: 14px; height: 14px; padding: 0; accent-color: var(
   position: absolute; top: -4px; right: -4px; min-width: 16px; height: 16px; padding: 0 4px;
   border-radius: 999px; background: var(--bad); color: #fff; font: 650 10px/16px var(--sans); text-align: center;
 }
-.recent-bad { color: var(--bad); font-weight: 650; }
-.recent-ok { color: var(--ok); font-weight: 650; }
+.recent-bad { color: var(--bad); font-weight: 650; white-space: nowrap; }
+.recent-ok { color: var(--ok); font-weight: 650; white-space: nowrap; }
 /* ── 全局交互动效：统一节奏，只动 transform / opacity / 颜色 ── */
 button, .chip, .tag, .nav a, .acc tbody tr, .qrow, .srow,
 .pfm, .vc, .pfplat, .pk-card, input, select, textarea {
@@ -1858,11 +1867,11 @@ details.cfg summary:hover, details.adv summary:hover { color: var(--accent-text)
           <colgroup>
             <col class="col-mark"><col class="col-account"><col class="col-state"><col class="col-models"><col class="col-prio">
             <col class="col-bal"><col class="col-rate"><col class="col-inflight"><col class="col-usage">
-            <col class="col-last"><col class="col-expiry"><col class="col-note"><col class="col-fields"><col class="col-acts">
+            <col class="col-last"><col class="col-expiry"><col class="col-note"><col class="col-acts">
           </colgroup>
           <thead><tr>
             <th class="mark" aria-hidden="true"></th>
-            <th class="sortable" id="accSortAccount" data-sort="account" tabindex="0" aria-sort="none" title="按账号排序">账号 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="sortable" id="accSortState" data-sort="state" tabindex="0" aria-sort="none" title="按状态排序">状态 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="c-models sortable" id="accSortModels" data-sort="models" tabindex="0" aria-sort="none" title="按模型可用情况排序">模型 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="sortable" id="accSortPrio" data-sort="prio" tabindex="0" aria-sort="none" title="按优先级排序">优先级 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="c-bal sortable" id="accSortBal" data-sort="balance" tabindex="0" aria-sort="none" title="按余额排序">余额 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="sortable" id="accSortRate" data-sort="rate" tabindex="0" aria-sort="none" title="按成功 / 失败排序">成功 / 失败 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="sortable" id="accSortInflight" data-sort="inflight" tabindex="0" aria-sort="none" title="按在途占用排序">在途 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="c-usage sortable" id="accSortUsage" data-sort="usage" tabindex="0" aria-sort="none" title="按调用次数和 token 用量排序">用量 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="c-last sortable" id="accSortLast" data-sort="last" tabindex="0" aria-sort="none" title="按最近成功时间排序">最近成功 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="sortable" id="accSortExpiry" data-sort="expiry" tabindex="0" aria-sort="none" title="按凭据到期时间排序">到期 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="c-note" title="模块返回的账号状态说明，例如冷却、限流、凭据失效；它不是右侧的账号标识">状态说明</th><th>字段</th><th class="c-acts"></th>
+            <th class="sortable" id="accSortAccount" data-sort="account" tabindex="0" aria-sort="none" title="按账号排序">账号 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="sortable" id="accSortState" data-sort="state" tabindex="0" aria-sort="none" title="按状态排序">状态 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="c-models sortable" id="accSortModels" data-sort="models" tabindex="0" aria-sort="none" title="按模型可用情况排序">模型 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="sortable" id="accSortPrio" data-sort="prio" tabindex="0" aria-sort="none" title="按优先级排序">优先级 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="c-bal sortable" id="accSortBal" data-sort="balance" tabindex="0" aria-sort="none" title="按余额排序">余额 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="sortable" id="accSortRate" data-sort="rate" tabindex="0" aria-sort="none" title="按成功 / 失败排序">成功 / 失败 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="sortable" id="accSortInflight" data-sort="inflight" tabindex="0" aria-sort="none" title="按在途占用排序">在途 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="c-usage sortable" id="accSortUsage" data-sort="usage" tabindex="0" aria-sort="none" title="按调用次数和 token 用量排序">用量 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="c-last sortable" id="accSortLast" data-sort="last" tabindex="0" aria-sort="none" title="按最近成功时间排序">最近成功 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="sortable" id="accSortExpiry" data-sort="expiry" tabindex="0" aria-sort="none" title="按凭据到期时间排序">到期 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="c-note" title="模块返回的账号状态说明，例如冷却、限流、凭据失效；它不是右侧的账号标识">状态说明</th><th class="c-acts"></th>
           </tr></thead>
           <tbody id="accBody"></tbody>
         </table>
@@ -1981,7 +1990,7 @@ details.cfg summary:hover, details.adv summary:hover { color: var(--accent-text)
         </header>
         <div class="tbl-wrap">
         <table class="acc md">
-          <thead><tr><th>时间</th><th>平台</th><th>模型</th><th>思考强度</th><th>会话ID <span class="hint">调用方报的就原样显示，没报则按消息内容推一个</span></th><th>账号</th><th>结果</th><th>候选</th><th>输入</th><th>输出</th><th>缓存 tokens</th><th>缓存命中率</th><th>花费 <span class="hint">¥/百万 tokens 计价</span></th><th>合计</th><th>耗时</th><th>速率</th></tr></thead>
+          <thead><tr><th>时间</th><th>平台</th><th>模型</th><th>思考强度</th><th title="调用方报的就原样显示，没报则按消息内容推一个">会话ID</th><th>账号</th><th>结果</th><th>候选</th><th>输入</th><th>输出</th><th>缓存 tokens</th><th>缓存命中率</th><th>花费 <span class="hint">¥/百万 tokens 计价</span></th><th>合计</th><th>耗时</th><th>速率</th></tr></thead>
           <tbody id="usRecentBody"></tbody>
         </table>
         </div>
@@ -3266,20 +3275,6 @@ function realmTag(a) {
   return ' <span class="realm-tag">' + esc(realmName(CUR, code)) + '</span>';
 }
 
-function fieldSummary(a) {
-  const f = a.fields || {};
-  // realm has its own tag beside the name; repeating it here would make the
-  // chip row look like two different facts.
-  const ks = Object.keys(f).filter(k => k !== "realm" && f[k] !== "" && f[k] != null && typeof f[k] !== "object").slice(0, 4);
-  if (!ks.length) return '<span class="hint">-</span>';
-  // 字段列曾经把最多四个 key=value 平铺成四颗 chip，宽得把整张表推出容器、逼出
-  // 横向滚动条。表里只需要一个“这里还有细节”的入口：第一项 + 计数，完整的
-  // 键值对挪进 title，需要时鼠标停一下就能看全。
-  const all = ks.map(k => k + "=" + String(f[k]));
-  return '<span class="chip" title="' + esc(all.join(" / ")) + '">' +
-    esc(all[0].slice(0, 28)) + (all.length > 1 ? " +" + (all.length - 1) : "") + '</span>';
-}
-
 // ── 账号的模型可用情况 ───────────────────────────────────────────────
 // workbuddy / trae 等模块会把被厂商限流的模型写进 Status().Accounts[].Extra
 // 的 model_cooldowns，账号池列表据此画出「模型」列：可用多少个、限流多少个，
@@ -3299,26 +3294,48 @@ function acctStatusExtra(n, a) {
   return Object.assign({}, st || {}, own || {});
 }
 
-// realmModels 取某个 realm 的模型清单（去掉 "realm:" 前缀）。overview 的
-// clients[].models 是 "cn:glm-5.3" 这种带前缀的写法，同一个模块的账号按
-// fields.realm 分服务区，模型也按前缀分开。
-function realmModels(n, realm) {
-  const c = clientInfo(n);
-  const all = (c && c.models) || [];
-  const prefix = realm ? realm + ":" : "";
+// catalogForRealm 把平台目录折成某个 realm 的模型清单。models 是 overview 的
+// clients[].models，realms 是模块 capabilities.realms 里声明过的 realm 列表。
+// 只有声明过的 code 才算前缀："cn:" 是协议，而 "nvidia/nemotron:free" 里那个
+// 冒号只是模型名的一部分，不能当成 realm 剥掉。
+//
+// 命中本 realm 前缀时优先取带前缀的条目并去掉前缀；没有命中时只回退到不带任何
+// 已声明前缀的裸 ID。这样 OpenCode / ZCode 这种目录本来就是裸 ID 的平台照常显示，
+// 而 WorkBuddy 的 global 账号不会借到 cn: 的模型。没声明 realms 的平台原样返回。
+function catalogForRealm(models, realm, realms, customSource) {
+  const all = Array.isArray(models) ? models : [];
   const out = [];
+  const push = s => { const v = s == null ? "" : String(s); if (v) out.push(v); };
+  if (customSource) { all.forEach(x => push(x)); return out; }
+  const codes = (Array.isArray(realms) ? realms : [])
+    .map(r => String((r && r.code) || ""))
+    .filter(Boolean);
+  if (!codes.length) { all.forEach(x => push(x)); return out; }
+  const want = String(realm || "");
+  if (want && codes.indexOf(want) >= 0) {
+    const prefix = want + ":";
+    all.forEach(raw => {
+      const id = String(raw || "");
+      if (id.slice(0, prefix.length) === prefix) push(id.slice(prefix.length));
+    });
+    if (out.length) return out;
+  }
   all.forEach(raw => {
     const id = String(raw || "");
     if (!id) return;
-    if (prefix) {
-      if (id.slice(0, prefix.length) === prefix) out.push(id.slice(prefix.length));
-      return;
+    for (let i = 0; i < codes.length; i++) {
+      if (id.slice(0, codes[i].length + 1) === codes[i] + ":") return;
     }
-    if (capsOf(n).custom_source) { out.push(id); return; }
-    const i = id.indexOf(":");
-    out.push(i >= 0 ? id.slice(i + 1) : id);
+    push(id);
   });
   return out;
+}
+
+// realmModels 按账号的 realm 取平台目录，供 accountModelCatalog 使用。
+function realmModels(n, realm) {
+  const c = clientInfo(n);
+  const caps = capsOf(n) || {};
+  return catalogForRealm((c && c.models) || [], realm, caps.realms, !!caps.custom_source);
 }
 
 // accountModelCatalog 取一行账号能用的模型清单。优先使用账号记录自带的
@@ -3821,6 +3838,16 @@ function balFetchedTip(ms) {
   return "，" + Math.floor(mins / 60) + " 小时前读取";
 }
 
+// balDisplayNum keeps the account row readable when a vendor reports token
+// counts in the hundreds of millions. The tooltip still carries the exact
+// amount; only the visible cell uses the compact Chinese unit.
+function balDisplayNum(n, unit) {
+  const value = Number(n) || 0;
+  if (String(unit || "").toLowerCase() !== "tokens" || Math.abs(value) < 1e6) return numf(value);
+  const divisor = Math.abs(value) >= 1e8 ? 1e8 : 1e4;
+  return Number((value / divisor).toFixed(2)).toLocaleString() + (divisor === 1e8 ? "亿" : "万");
+}
+
 function accBalanceCell(a) {
   const st = BALS[CUR];
   if (!st) return '<span class="hint">…</span>';
@@ -3860,7 +3887,7 @@ function accBalanceCell(a) {
   if (b.earliest_at) tip += "（最早到期 " + b.earliest_at + (b.earliest_remaining != null ? "，剩 " + numf(Number(b.earliest_remaining) * scale) : "") + "）";
   tip += balFetchedTip(b.fetched_at);
   if (b.unverified) tip += "；厂商的两套额度数据互相矛盾，余额暂未确认";
-  let html = '<span title="' + esc(tip) + '">' + numf(left) + u + '</span>';
+  let html = '<span title="' + esc(tip) + '">' + balDisplayNum(left, st.unit) + u + '</span>';
   if (b.unverified) html += '<span class="bal-verify">待确认</span>';
   // 厂商报了「已用」才多挂一行；进度条已经回答了「还能用多久」。
   if (used > 0) html += '<span class="bal-used">已用 ' + numf(used) + '</span>';
@@ -4058,7 +4085,7 @@ function renderAccounts() {
   syncAccStateFilter();
   $("#btnBalanceAll").hidden = !showBal;
   syncBalanceButton(CUR);
-  const cols = showBal ? 14 : 13;
+  const cols = showBal ? 13 : 12;
   if (!CUR) { tb.innerHTML = '<tr><td colspan="' + cols + '" class="hint">没有已注册的客户端</td></tr>'; $("#accNote").textContent = ""; hideAccPager(); return; }
   // accNote 是当前客户端的注解：模块说不可服务时原样带上它给的理由
   // （health.note），只要有账号在途占满就在末尾追加一句；为 0 时一个字不动。
@@ -4462,7 +4489,6 @@ function accRowHTML(a, caps, acts, showBal, chan, open, groupKey, group) {
     '<td class="c-last">' + accLastCell(a) + '</td>' +
     '<td class="num">' + accExpiryCell(a) + '</td>' +
     '<td>' + noteCell(a) + '</td>' +
-    '<td>' + fieldSummary(a) + '</td>' +
     // 按钮包一层 .actwrap：操作列靠 flex-wrap 自动换行，不用手动分组。
     '<td class="c-acts"><div class="actwrap">' + btns.join("") + '</div></td>' +
     '</tr>';
@@ -5272,6 +5298,12 @@ function usageCacheHitRate(cached, prompt, hasCached) {
   const c = Math.min(Math.max(Number(cached || 0), 0), p);
   return c / p * 100;
 }
+function fmtUsageCacheHitRate(hit) {
+  if (hit == null) return "—";
+  const n = Number(hit);
+  if (!Number.isFinite(n)) return "—";
+  return n.toFixed(1) + "%";
+}
 function renderUsageTiles(d, t, rate) {
   const total = Number(t.total_tokens || 0);
   const pt = Number(t.prompt_tokens || 0);
@@ -5298,7 +5330,7 @@ function renderUsageTiles(d, t, rate) {
       sub: "占合计 " + share(ct) + "%",
     },
     {
-      k: "缓存命中率", v: hit == null ? "—" : (hit < 1 ? hit.toFixed(1) : String(Math.round(hit))) + "%",
+      k: "缓存命中率", v: fmtUsageCacheHitRate(hit),
       tint: "accent", tintText: "accent-text",
       sub: hit == null ? "暂无缓存上报" : numf(Math.min(Math.max(cacheHit, 0), cachePrompt)) + " 已计入缓存 tokens",
     },
@@ -5455,7 +5487,7 @@ function renderRecentRows() {
     const accTip = accParts.filter(Boolean).join(" · ");
     const cacheHit = usageCacheHitRate(x.cached_tokens, x.prompt_tokens, x.has_cached_tokens);
     const cacheText = x.has_cached_tokens ? numf(x.cached_tokens || 0) : "—";
-    const cacheHitText = cacheHit == null ? "—" : (cacheHit < 1 ? cacheHit.toFixed(1) : String(Math.round(cacheHit))) + "%";
+    const cacheHitText = fmtUsageCacheHitRate(cacheHit);
     const costText = x.has_cost ? fmtUsageCost(x.cost) : "—";
     return '<tr><td class="hint">' + esc(fmtCallTime(x.at)) + '</td>' +
       '<td>' + esc(platformLabel(x.client || "-")) + '</td><td>' + esc(x.model || "-") + '</td>' +
@@ -7071,8 +7103,8 @@ const SC_BATCH_LABELS = {
   checkin: "自动签到", travel: "猫猫旅行", activity: "活跃上报",
   keepalive: "Token 保活", blackcat: "黑猫巡检", growth: "成长任务",
   recovery: "恢复探测",
-  // 每日余额刷新是第二个合成任务：固定时点（默认 0 点）+ 30 分钟随机窗口，
-  // 所以它跟普通批次一样用时点输入，不需要 recovery 那套间隔控件。
+  // 每日余额刷新既保留默认的 0 点模式，也允许改成等间隔抖动或完整 Cron；
+  // 下面 scRowHTML 会为它单独渲染模式选择器。
   daily_balance: "每日余额刷新",
 };
 const scLabel = b => SC_BATCH_LABELS[b] || b;
@@ -7081,25 +7113,34 @@ const scLabel = b => SC_BATCH_LABELS[b] || b;
 const scKey = (c, b) => c + "\u0000" + b;
 const scHoursText = h => (h || []).join(", ");
 
-function scDurationText(minutes) {
-  const n = Number(minutes);
+function scDurationText(seconds) {
+  const n = Number(seconds);
   if (!Number.isFinite(n) || n <= 0) return "0m";
-  if (n >= 60 && n % 60 === 0) return (n / 60) + "h";
-  return Math.round(n) + "m";
+  if (n >= 3600 && n % 3600 === 0) return (n / 3600) + "h";
+  if (n >= 60 && n % 60 === 0) return (n / 60) + "m";
+  return Math.round(n) + "s";
 }
 
-// parseSchedDuration accepts bare minutes plus explicit minute/hour units, so an
-// operator can type "4h", "240m", or "90" without learning a second format.
+// parseSchedDuration returns seconds. A bare number keeps the historical
+// minutes meaning; explicit s/m/h units make short jitter practical.
 function parseSchedDuration(raw) {
   const text = String(raw == null ? "" : raw).trim().toLowerCase();
   if (!text) return null;
-  const m = text.match(/^(\d+(?:\.\d+)?)\s*(m|min|分钟|h|hr|小时)?$/);
+  const m = text.match(/^(\d+(?:\.\d+)?)\s*(s|sec|秒|m|min|分钟|h|hr|小时)?$/);
   if (!m) return null;
   const value = Number(m[1]);
   if (!Number.isFinite(value) || value < 0) return null;
   const unit = m[2] || "m";
-  const minutes = /^(h|hr|小时)$/.test(unit) ? value * 60 : value;
-  return Math.round(minutes);
+  let seconds = value;
+  if (/^(h|hr|小时)$/.test(unit)) seconds = value * 3600;
+  else if (/^(m|min|分钟)$/.test(unit)) seconds = value * 60;
+  return Math.round(seconds);
+}
+
+function scRowMode(r) {
+  if (String(r.cron || "").trim()) return "cron";
+  if (Number(r.every_seconds) > 0 || Number(r.jitter_seconds) > 0) return "interval";
+  return "time";
 }
 
 // 共享（非按平台）时点：按 batch 名从 groups 里找。
@@ -7110,6 +7151,9 @@ function scShared(batch) {
     hours: g.hours || [],
     every_minutes: g.every_minutes,
     jitter_minutes: g.jitter_minutes,
+    every_seconds: g.every_seconds || 0,
+    jitter_seconds: g.jitter_seconds || 0,
+    cron: g.cron || "",
   } : { enabled: false, hours: [], every_minutes: 0, jitter_minutes: 0 };
 }
 
@@ -7129,18 +7173,34 @@ function scRowHTML(r) {
   // 切一下筛选就会被服务端值盖回去。
   const pend = SC.dirty[scKey(r.client, r.batch)] || null;
   const isRecovery = r.batch === "recovery";
-  const hours = pend ? pend.hours : scHoursText(r.hours);
-  const every = pend ? pend.every : scDurationText(r.every_minutes);
-  const jitter = pend ? pend.jitter : scDurationText(r.jitter_minutes);
+  const supportsModes = r.batch === "daily_balance";
+  const mode = supportsModes ? (pend && pend.mode ? pend.mode : scRowMode(r)) : "interval";
+  const hours = pend && pend.hours != null ? pend.hours : scHoursText(r.hours);
+  const every = pend && pend.every != null ? pend.every : scDurationText(r.every_seconds);
+  const jitter = pend && pend.jitter != null ? pend.jitter : scDurationText(r.jitter_seconds);
+  const cron = pend && pend.cron != null ? pend.cron : (r.cron || "");
   const on = pend ? pend.enabled : r.group_enabled;
   const codes = (r.codes || []).join(", ");
   const next = r.next ? schedClock(r.next) : "-";
-  const hoursControl = isRecovery
-    ? '<span class="scDur"><span>每</span><input class="cfgtext scEvery" spellcheck="false" autocomplete="off" value="' + esc(every) +
-      '" placeholder="' + esc(scDurationText(shared.every_minutes)) + '" aria-label="恢复探测间隔"><span>±</span>' +
-      '<input class="cfgtext scJitter" spellcheck="false" autocomplete="off" value="' + esc(jitter) +
-      '" placeholder="' + esc(scDurationText(shared.jitter_minutes)) + '" aria-label="恢复探测随机范围"></span>'
-    : '<input class="cfgtext scHours" spellcheck="false" autocomplete="off" value="' + esc(hours) + '" placeholder="' + esc(scHoursText(shared.hours)) + '">';
+  const sharedEvery = shared.every_seconds || (shared.every_minutes || 0) * 60;
+  const sharedJitter = shared.jitter_seconds || (shared.jitter_minutes || 0) * 60;
+  const timeControl = '<input class="cfgtext scHours" spellcheck="false" autocomplete="off" value="' + esc(hours) + '" placeholder="' + esc(scHoursText(shared.hours)) + '">';
+  const intervalControl = '<span class="scDur"><span>每</span><input class="cfgtext scEvery" spellcheck="false" autocomplete="off" value="' + esc(every) +
+    '" placeholder="' + esc(sharedEvery ? scDurationText(sharedEvery) : "20m") + '" aria-label="执行间隔"><span>±</span>' +
+    '<input class="cfgtext scJitter" spellcheck="false" autocomplete="off" value="' + esc(jitter) +
+    '" placeholder="' + esc(sharedJitter ? scDurationText(sharedJitter) : "3m") + '" aria-label="随机上下浮动"></span>';
+  const cronControl = '<input class="cfgtext scCron" spellcheck="false" autocomplete="off" value="' + esc(cron) +
+    '" placeholder="' + esc(shared.cron || "0 0 * * *") + '" aria-label="Cron 表达式">';
+  let hoursControl = timeControl;
+  if (isRecovery) {
+    hoursControl = intervalControl;
+  } else if (supportsModes) {
+    hoursControl = '<span class="scModeWrap"><select class="scMode cfgselect" aria-label="每日余额刷新配置模式">' +
+      '<option value="time"' + (mode === "time" ? " selected" : "") + '>按时刻</option>' +
+      '<option value="interval"' + (mode === "interval" ? " selected" : "") + '>按间隔</option>' +
+      '<option value="cron"' + (mode === "cron" ? " selected" : "") + '>Cron</option></select>' +
+      (mode === "cron" ? cronControl : mode === "interval" ? intervalControl : timeControl) + '</span>';
+  }
   return '<tr class="scrow" data-client="' + esc(r.client) + '" data-batch="' + esc(r.batch) + '">' +
     '<td class="sc-c-task">' + esc(scLabel(r.batch)) + '<div class="hint">' + esc(r.batch) + (codes ? " · " + esc(codes) : "") + "</div></td>" +
     '<td class="sc-c-hours">' + hoursControl + '</td>' +
@@ -7191,15 +7251,35 @@ function scUpdateBadges() {
 // schedule.clients.<平台>.<任务>。
 function scMarkDirty(tr) {
   const key = scKey(tr.dataset.client, tr.dataset.batch);
-  if (!SC.rows[key]) return;
+  const row = SC.rows[key];
+  if (!row) return;
+  const prev = SC.dirty[key] || {};
   const pend = {
     client: tr.dataset.client,
     batch: tr.dataset.batch,
     enabled: tr.querySelector(".scOn").checked,
   };
   if (tr.dataset.batch === "recovery") {
+    pend.mode = "interval";
     pend.every = tr.querySelector(".scEvery").value;
     pend.jitter = tr.querySelector(".scJitter").value;
+  } else if (tr.dataset.batch === "daily_balance") {
+    const modeEl = tr.querySelector(".scMode");
+    pend.mode = modeEl ? modeEl.value : (prev.mode || scRowMode(row));
+    // Keep all three mode values while switching so changing the select does not
+    // discard a field the operator typed before changing their mind.
+    pend.hours = prev.hours != null ? prev.hours : scHoursText(row.hours);
+    pend.every = prev.every != null ? prev.every : scDurationText(row.every_seconds || 1200);
+    pend.jitter = prev.jitter != null ? prev.jitter : scDurationText(row.jitter_seconds || 0);
+    pend.cron = prev.cron != null ? prev.cron : (row.cron || "");
+    const hoursEl = tr.querySelector(".scHours");
+    const everyEl = tr.querySelector(".scEvery");
+    const jitterEl = tr.querySelector(".scJitter");
+    const cronEl = tr.querySelector(".scCron");
+    if (hoursEl) pend.hours = hoursEl.value;
+    if (everyEl) pend.every = everyEl.value;
+    if (jitterEl) pend.jitter = jitterEl.value;
+    if (cronEl) pend.cron = cronEl.value;
   } else {
     pend.hours = tr.querySelector(".scHours").value;
   }
@@ -7273,7 +7353,7 @@ function scRenderRows() {
     '<colgroup><col style="width:26%"><col style="width:220px">' +
     '<col style="width:54px"><col style="width:88px"><col style="width:70px"><col style="width:132px"></colgroup>' +
     "<thead><tr>" +
-    "<th>任务</th><th>时点 / 间隔</th><th>启用</th><th>下一跳</th><th>自定义</th>" +
+    "<th>任务</th><th>时点 / 间隔 / Cron</th><th>启用</th><th>下一跳</th><th>自定义</th>" +
     "<th>操作</th></tr></thead><tbody>" + bodyHTML + "</tbody></table></div>";
   box.querySelectorAll(".scrow").forEach(el => {
     const key = scKey(el.dataset.client, el.dataset.batch);
@@ -7386,7 +7466,33 @@ async function scSave() {
         break;
       }
       if (!clients[pend.client]) clients[pend.client] = {};
-      clients[pend.client][pend.batch] = { enabled: !!pend.enabled, every_minutes: every, jitter_minutes: jitter };
+      clients[pend.client][pend.batch] = { enabled: !!pend.enabled, every_seconds: every, jitter_seconds: jitter, every_minutes: null, jitter_minutes: null };
+      continue;
+    }
+    if (pend.batch === "daily_balance") {
+      const mode = pend.mode || "time";
+      if (mode === "cron") {
+        const cron = String(pend.cron || "").trim();
+        if (!cron) { badKey = key; break; }
+        if (!clients[pend.client]) clients[pend.client] = {};
+        clients[pend.client][pend.batch] = { enabled: !!pend.enabled, cron: cron, hours: null, every_seconds: null, jitter_seconds: null, every_minutes: null, jitter_minutes: null };
+        continue;
+      }
+      if (mode === "interval") {
+        const every = parseSchedDuration(pend.every);
+        const jitter = parseSchedDuration(pend.jitter);
+        if (every === null || every <= 0 || jitter === null || jitter < 0 || jitter >= every) {
+          badKey = key;
+          break;
+        }
+        if (!clients[pend.client]) clients[pend.client] = {};
+        clients[pend.client][pend.batch] = { enabled: !!pend.enabled, every_seconds: every, jitter_seconds: jitter, hours: null, cron: null, every_minutes: null, jitter_minutes: null };
+        continue;
+      }
+      const hours = parseSchedHours(pend.hours);
+      if (hours === null) { badKey = key; break; }
+      if (!clients[pend.client]) clients[pend.client] = {};
+      clients[pend.client][pend.batch] = { enabled: !!pend.enabled, hours: hours, cron: null, every_seconds: null, jitter_seconds: null, every_minutes: null, jitter_minutes: null };
       continue;
     }
     const hours = parseSchedHours(pend.hours);
@@ -7398,7 +7504,13 @@ async function scSave() {
     const pend = SC.dirty[badKey] || {};
     const row = SC.rows[badKey];
     if (pend.batch === "recovery") {
-      toast("恢复探测间隔必须大于 0，随机值不能小于 0；可填 4h 或 240m", "err");
+      toast("恢复探测间隔必须大于 0，随机值不能小于 0；可填 30s、4h 或 240m", "err");
+      if (row) row.el.querySelector(".scEvery").focus();
+    } else if (pend.batch === "daily_balance" && pend.mode === "cron") {
+      toast("Cron 表达式不能为空；可填 5 段或 6 段表达式，例如 */20 * * * *", "err");
+      if (row) row.el.querySelector(".scCron").focus();
+    } else if (pend.batch === "daily_balance" && pend.mode === "interval") {
+      toast("间隔必须大于 0，随机值必须大于等于 0 且小于间隔；可填 30s、20m 或 2h", "err");
       if (row) row.el.querySelector(".scEvery").focus();
     } else {
       toast("时点只能是 0-23 的整数，用逗号分隔（例如 9, 21）", "err");
@@ -7436,19 +7548,11 @@ async function scSave() {
 
 function scFollowGlobal(tr) {
   const key = scKey(tr.dataset.client, tr.dataset.batch);
-  const shared = scShared(tr.dataset.batch);
-  if (tr.dataset.batch === "recovery") {
-    tr.querySelector(".scEvery").value = scDurationText(shared.every_minutes);
-    tr.querySelector(".scJitter").value = scDurationText(shared.jitter_minutes);
-  } else {
-    tr.querySelector(".scHours").value = scHoursText(shared.hours);
-  }
-  tr.querySelector(".scOn").checked = shared.enabled;
   SC.removed[key] = { client: tr.dataset.client, batch: tr.dataset.batch };
   delete SC.dirty[key];
-  scUpdateBadges();
-  scRenderChips();
-  scUpdateDirty();
+  // Redraw from the shared row so the mode select and its visible control always
+  // match, no matter which of the three daily-balance modes was open before.
+  scRenderRows();
 }
 
 async function scRunNow(btn) {
@@ -10296,14 +10400,16 @@ $("#scSearch").addEventListener("input", scRenderRows);
 $("#scOnlyOwn").addEventListener("change", scRenderRows);
 // 委托：规则行是运行时拼出来的，所以监听容器而不是每行。
 $("#scBody").addEventListener("input", e => {
-  if (!e.target.classList.contains("scHours") && !e.target.classList.contains("scEvery") && !e.target.classList.contains("scJitter")) return;
+  if (!e.target.classList.contains("scHours") && !e.target.classList.contains("scEvery") && !e.target.classList.contains("scJitter") && !e.target.classList.contains("scCron")) return;
   const tr = e.target.closest("tr.scrow");
   if (tr) scMarkDirty(tr);
 });
 $("#scBody").addEventListener("change", e => {
-  if (!e.target.classList.contains("scOn")) return;
+  if (!e.target.classList.contains("scOn") && !e.target.classList.contains("scMode")) return;
   const tr = e.target.closest("tr.scrow");
-  if (tr) scMarkDirty(tr);
+  if (!tr) return;
+  scMarkDirty(tr);
+  if (e.target.classList.contains("scMode")) scRenderRows();
 });
 $("#scBody").addEventListener("click", e => {
   const tr = e.target.closest("tr.scrow");

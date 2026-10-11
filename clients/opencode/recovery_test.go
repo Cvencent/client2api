@@ -238,11 +238,14 @@ func TestWorkspaceAPIAndModelProviderObjectAreDecoded(t *testing.T) {
 	}
 }
 
-func TestFreeModelSkipsConsoleAccountInMixedPool(t *testing.T) {
+// Zen serves the free catalogue to the anonymous identity and to a signed-in
+// Console account alike, but only when the CLI handshake rides along.  A mixed
+// pool may therefore route a free model to either credential; what must never
+// happen is a free-model request leaving without the handshake.
+func TestFreeModelCarriesTheHandshakeInMixedPool(t *testing.T) {
+	seen := new(http.Header)
 	c := newFakeClient(t, Config{}, func(r *http.Request) (*http.Response, error) {
-		if r.Header.Get("x-api-key") != "public" {
-			t.Fatal("free model was routed to a Console account")
-		}
+		*seen = r.Header.Clone()
 		return sseResponse(happySSE), nil
 	})
 	c.pool.upsert(accountRecord{ID: "oauth", AuthMode: "oauth", AccessToken: "console-token", APIKey: "zen-key", Enabled: true})
@@ -253,6 +256,9 @@ func TestFreeModelSkipsConsoleAccountInMixedPool(t *testing.T) {
 	}
 	if err != nil {
 		t.Fatal(err)
+	}
+	if sid := seen.Get("x-opencode-session"); !freeSessionShape.MatchString(sid) {
+		t.Fatalf("x-opencode-session = %q, want the handshake on a free-model request", sid)
 	}
 }
 

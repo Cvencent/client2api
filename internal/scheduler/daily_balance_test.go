@@ -87,3 +87,63 @@ func TestRunDailyBalanceNowWithoutAHookSaysSo(t *testing.T) {
 		t.Fatal("RunDailyBalanceNow = true without a hook, want false")
 	}
 }
+
+func TestDailyBalanceSupportsIntervalAndJitter(t *testing.T) {
+	rec := &recorder{}
+	now := time.Date(2026, 3, 4, 12, 0, 0, 0, CST)
+	clk := newFakeClock(now, rec)
+	r := New(deps(registryOf(&fakeClient{name: "fake"}), clk, rec))
+	r.Reconfigure(Config{Enabled: true, DailyBalance: Group{
+		Enabled: true,
+		Every:   20 * time.Minute,
+		Jitter:  3 * time.Minute,
+	}})
+
+	at, ok := r.Status().NextByClient["fake/"+DailyBalanceTaskName]
+	if !ok || at.IsZero() {
+		t.Fatalf("interval daily balance was not planned: %v", r.Status().NextByClient)
+	}
+	delay := at.Sub(now)
+	if delay < 17*time.Minute || delay > 23*time.Minute {
+		t.Fatalf("daily balance delay = %s, want 17m..23m", delay)
+	}
+}
+
+func TestDailyBalanceSupportsCronExpressions(t *testing.T) {
+	rec := &recorder{}
+	now := time.Date(2026, 3, 4, 12, 1, 0, 0, CST)
+	clk := newFakeClock(now, rec)
+	r := New(deps(registryOf(&fakeClient{name: "fake"}), clk, rec))
+	r.Reconfigure(Config{Enabled: true, DailyBalance: Group{
+		Enabled: true,
+		Cron:    "*/20 * * * *",
+	}})
+
+	at, ok := r.Status().NextByClient["fake/"+DailyBalanceTaskName]
+	if !ok || at.IsZero() {
+		t.Fatalf("cron daily balance was not planned: %v", r.Status().NextByClient)
+	}
+	want := time.Date(2026, 3, 4, 12, 20, 0, 0, CST)
+	if !at.Equal(want) {
+		t.Fatalf("daily balance cron fire = %s, want %s", at, want)
+	}
+}
+
+func TestValidateAcceptsCronDailyBalanceAndRejectsMalformedCron(t *testing.T) {
+	cfg := Config{Enabled: true, DailyBalance: Group{Enabled: true, Cron: "0 */20 * * * *"}}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("valid cron daily balance was rejected: %v", err)
+	}
+	cfg.DailyBalance.Cron = "not a cron"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("malformed cron daily balance was accepted")
+	}
+	cfg.DailyBalance = Group{Enabled: true, Every: 20 * time.Minute, Jitter: 20 * time.Minute}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("jitter equal to the interval was accepted")
+	}
+	cfg.DailyBalance.Jitter = 3 * time.Minute
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("valid interval daily balance was rejected: %v", err)
+	}
+}

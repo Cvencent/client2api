@@ -2,6 +2,7 @@ package main
 
 import (
 	"testing"
+	"time"
 
 	"client2api/internal/scheduler"
 )
@@ -44,3 +45,42 @@ func TestScheduleDailyBalanceDefaultsAndOverrides(t *testing.T) {
 		t.Fatalf("loomy daily_balance override = %+v, want enabled hour 1", got)
 	}
 }
+
+func TestScheduleDailyBalanceIntervalOverrideUsesSeconds(t *testing.T) {
+	cfg := fileConfig{Schedule: scheduleConfig{
+		Enabled: true,
+		Clients: map[string]map[string]scheduleOverride{
+			"loomy": {"daily_balance": {
+				EverySeconds:  intPtr(20 * 60),
+				JitterSeconds: intPtr(3 * 60),
+			}},
+		},
+	}}
+	got := cfg.schedule().Clients["loomy"][scheduler.DailyBalanceTaskName]
+	if !got.Enabled || got.Every != 20*time.Minute || got.Jitter != 3*time.Minute {
+		t.Fatalf("loomy interval daily_balance = %+v, want 20m +/- 3m", got)
+	}
+	if len(got.Hours) != 0 || got.Cron != "" {
+		t.Fatalf("interval override left another mode behind: %+v", got)
+	}
+}
+
+func TestScheduleDailyBalanceCronOverrideClearsOtherModes(t *testing.T) {
+	cfg := fileConfig{Schedule: scheduleConfig{
+		Enabled: true,
+		Clients: map[string]map[string]scheduleOverride{
+			"loomy": {"daily_balance": {
+				Cron: stringPtr("*/20 * * * *"),
+			}},
+		},
+	}}
+	got := cfg.schedule().Clients["loomy"][scheduler.DailyBalanceTaskName]
+	if !got.Enabled || got.Cron != "*/20 * * * *" {
+		t.Fatalf("loomy cron daily_balance = %+v, want the cron expression", got)
+	}
+	if len(got.Hours) != 0 || got.Every != 0 || got.Jitter != 0 {
+		t.Fatalf("cron override left another mode behind: %+v", got)
+	}
+}
+
+func stringPtr(v string) *string { return &v }

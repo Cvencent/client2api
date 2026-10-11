@@ -64,8 +64,14 @@ func (c *Client) accountSupportsModel(a *accountRecord, model string) bool {
 		return anonymousModelAllowed(model, c.cfg)
 	}
 	if a.authMode() == "oauth" {
-		return !anonymousModelAllowed(model, c.cfg) &&
-			(len(a.AllowedModels) == 0 || containsString(a.AllowedModels, model))
+		// A signed-in account can serve the free catalogue too: Zen accepts a
+		// free model on the Console credential when the CLI handshake rides
+		// along.  Free models are not part of the workspace's paid whitelist,
+		// so they are admitted before AllowedModels is consulted.
+		if anonymousModelAllowed(model, c.cfg) {
+			return true
+		}
+		return len(a.AllowedModels) == 0 || containsString(a.AllowedModels, model)
 	}
 	return true
 }

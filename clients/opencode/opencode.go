@@ -285,11 +285,13 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 	if err != nil {
 		return nil, err
 	}
-	// A request that lands on the anonymous credential needs the free-tier
-	// handshake, which is a different body from a signed-in account's.  It is
-	// built here, once, and chosen per account inside openChat.
+	// A free model needs the free-tier handshake whichever credential serves
+	// it -- the anonymous account, or a signed-in Console account (Zen accepts
+	// the free catalogue on either, but only with the CLI-shaped body and
+	// session header).  It is built here, once, and chosen per account inside
+	// openChat.
 	var freeBody []byte
-	if c.pool.hasAnonymous() {
+	if anonymousModelAllowed(req.Model, c.cfg) {
 		freeBody, err = buildFreeChatBody(c.cfg, req)
 		if err != nil {
 			return nil, err
@@ -343,8 +345,9 @@ func (c *Client) openChat(ctx context.Context, cancel context.CancelFunc, req *c
 			return nil, fmt.Errorf("%w: %s", core.ErrNotConfigured, acct.InferenceError)
 		}
 
-		// The anonymous credential only answers with the free-tier handshake
-		// applied; every other account sends the plain body.
+		// A free-model request answers only with the free-tier handshake
+		// applied, on the anonymous credential and on a signed-in one alike;
+		// a paid-model request sends the plain body.
 		// The handshake is two independent things — the body and the session
 		// header — and the gate refuses a request that carries only one.
 		spec := requestSpec{
@@ -353,7 +356,7 @@ func (c *Client) openChat(ctx context.Context, cancel context.CancelFunc, req *c
 			body:   body,
 			accept: "text/event-stream",
 		}
-		if freeBody != nil && acct.authMode() == "anonymous" {
+		if freeBody != nil {
 			spec.body = freeBody
 			spec.session = c.freeTierSession()
 		}

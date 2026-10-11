@@ -92,7 +92,8 @@ func TestBalancesUIAppliesTheServerDisplayScale(t *testing.T) {
 	if err != nil {
 		t.Skip("node is not on PATH; the scale behavior needs it to run the inline renderer")
 	}
-	body := poolStatsFuncBody(t, string(indexHTML), "accBalanceCell") + "\n}"
+	body := poolStatsFuncBody(t, string(indexHTML), "balDisplayNum") + "\n}\n" +
+		poolStatsFuncBody(t, string(indexHTML), "accBalanceCell") + "\n}"
 	blockJSON, err := json.Marshal(body)
 	if err != nil {
 		t.Fatal(err)
@@ -145,5 +146,76 @@ try {
 	}
 	if strings.Contains(got.HTML, "5,000,000") || strings.Contains(got.HTML, "6,000,000") {
 		t.Fatalf("raw quota units leaked into the row: %s", got.HTML)
+	}
+}
+
+func TestBalancesUIClipsLongValuesInsideTheBalanceColumn(t *testing.T) {
+	src := string(indexHTML)
+	for _, want := range []string{
+		"#view-accounts table.acc td.c-bal { overflow: hidden; }",
+		"display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis;",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("balance column has no overflow guard: missing %q", want)
+		}
+	}
+}
+
+func TestBalancesUICompactsLargeTokenCounts(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not on PATH; the compact balance behavior needs it to run the inline renderer")
+	}
+	body := poolStatsFuncBody(t, string(indexHTML), "balDisplayNum") + "\n}\n" +
+		poolStatsFuncBody(t, string(indexHTML), "accBalanceCell") + "\n}"
+	blockJSON, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prog := `const fs = require("fs");
+const out = process.argv[2];
+try {
+  const body = ` + string(blockJSON) + `;
+  const CUR = "zcode";
+  const BALS = { zcode: { unit: "tokens", byID: { a1: { id: "a1", credits: 102000000, credits_total: 108000000, fetched_at: Date.now() } } } };
+  const esc = s => String(s == null ? "" : s);
+  const numf = n => Number(n).toLocaleString("en-US");
+  const balFetchedTip = () => "";
+  const fn = new Function("CUR", "BALS", "esc", "numf", "balFetchedTip", body + "\nreturn accBalanceCell;")(CUR, BALS, esc, numf, balFetchedTip);
+  const html = fn({ id: "a1" });
+  fs.writeFileSync(out, JSON.stringify({ ok: true, html }));
+} catch (e) {
+  fs.writeFileSync(out, JSON.stringify({ ok: false, error: String((e && e.message) || e) }));
+}
+`
+	dir := t.TempDir()
+	script := filepath.Join(dir, "balance-tokens.js")
+	result := filepath.Join(dir, "balance-tokens.json")
+	if err := os.WriteFile(script, []byte(prog), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command(node, script, result).Run(); err != nil {
+		t.Fatalf("node could not run accBalanceCell: %v", err)
+	}
+	raw, err := os.ReadFile(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+		HTML  string `json:"html"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("decoding node result: %v\n%s", err, raw)
+	}
+	if !got.OK {
+		t.Fatalf("accBalanceCell threw: %s", got.Error)
+	}
+	if !strings.Contains(got.HTML, ">1.02亿<span class=\"u\">tokens</span>") {
+		t.Fatalf("large token balance was not compacted: %s", got.HTML)
+	}
+	if !strings.Contains(got.HTML, "剩余 102,000,000 / 总量 108,000,000") {
+		t.Fatalf("compact balance hid the exact amount from the tooltip: %s", got.HTML)
 	}
 }

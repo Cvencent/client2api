@@ -24,6 +24,14 @@ Both realms use the same paths (`/v2/chat/completions`,
 differ. The realm is stored per credential (`"realm"`, or inferred from the
 token `domain`). Nothing is hardcoded to one realm.
 
+The published catalogue is the union of both realms, with each id carrying its
+realm prefix (`cn:glm-5.3`). A catalogue refresh picks its credential per realm
+through `Pool.PickForMetadataInRealm` rather than the chat picker: a realm whose
+accounts are all parked for credit exhaustion or a rate limit still contributes
+its models, because the catalogue read spends no chat quota. Credentials judged
+invalid, risk-restricted or at fault are still skipped, and chat selection itself
+is unchanged: a parked account still cannot serve a conversation.
+
 ## Files
 
 | file | contents |

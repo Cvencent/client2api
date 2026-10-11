@@ -2,6 +2,7 @@ package panel
 
 import (
 	"os"
+	"os/exec"
 	"regexp"
 	"sort"
 	"strings"
@@ -43,7 +44,7 @@ func TestScheduleRecoveryUiControlsAndParsing(t *testing.T) {
 	src := scheduleShellSource(t)
 	for _, want := range []string{
 		`recovery:`, `"recovery"`, `class="cfgtext scEvery"`,
-		`class="cfgtext scJitter"`, `data-scc`,
+		`class="cfgtext scJitter"`, `class="scMode cfgselect"`, `class="cfgtext scCron"`, `data-scc`,
 	} {
 		if !strings.Contains(src, want) {
 			t.Errorf("recovery schedule UI is missing %q", want)
@@ -53,18 +54,37 @@ func TestScheduleRecoveryUiControlsAndParsing(t *testing.T) {
 		t.Error("recovery task has no Chinese label")
 	}
 	parse := scheduleFuncBody(t, src, "parseSchedDuration")
-	for _, want := range []string{"value * 60", "Number.isFinite", "return Math.round"} {
+	for _, want := range []string{"value * 60", "value * 3600", "Number.isFinite", "return Math.round"} {
 		if !strings.Contains(parse, want) {
 			t.Errorf("parseSchedDuration is missing %q", want)
 		}
 	}
 	save := scheduleFuncBody(t, src, "scSave")
 	for _, want := range []string{
-		"every_minutes", "jitter_minutes", "parseSchedDuration(pend.every)",
+		"every_seconds", "jitter_seconds", "every_minutes: null", "jitter_minutes: null", "parseSchedDuration(pend.every)",
 	} {
 		if !strings.Contains(save, want) {
 			t.Errorf("scSave does not persist %q", want)
 		}
+	}
+}
+
+func TestScheduleDurationParserSupportsSeconds(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not on PATH; the duration parser behavior check needs it")
+	}
+	fn := scheduleFuncBody(t, scheduleShellSource(t), "parseSchedDuration")
+	script := fn + `}
+const cases = [["30s", 30], ["20m", 1200], ["2h", 7200], ["3", 180], ["90", 5400]];
+for (const [raw, want] of cases) {
+  const got = parseSchedDuration(raw);
+  if (got !== want) throw new Error(raw + ": got " + got + ", want " + want);
+}
+`
+	cmd := exec.Command(node, "-e", script)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("parseSchedDuration behavior check failed: %v\n%s", err, out)
 	}
 }
 
@@ -358,13 +378,13 @@ func TestScheduleOverrideKeysMatchTheConfigStruct(t *testing.T) {
 			t.Errorf("scheduleOverride 缺少 json tag %q：面板写的这份自定义会被丢掉", want)
 		}
 	}
-	for _, want := range []string{"every_minutes", "jitter_minutes"} {
+	for _, want := range []string{"every_minutes", "jitter_minutes", "every_seconds", "jitter_seconds", "cron"} {
 		if !got[want] {
 			t.Errorf("scheduleOverride missing json tag %q; recovery edits would be dropped", want)
 		}
 	}
-	if len(got) != 4 {
-		t.Errorf("scheduleOverride json tags = %v, want exactly enabled/hours/every_minutes/jitter_minutes", got)
+	if len(got) != 7 {
+		t.Errorf("scheduleOverride json tags = %v, want exactly enabled/hours/every_minutes/jitter_minutes/every_seconds/jitter_seconds/cron", got)
 	}
 }
 
@@ -380,6 +400,8 @@ func TestTasksCenterScheduleEditorReadsAndWritesTheRightShape(t *testing.T) {
 		`data-scfollow`,
 		`data-scrun`,
 		`class="cfgtext scHours"`,
+		`class="scMode cfgselect"`,
+		`class="cfgtext scCron"`,
 	} {
 		if !strings.Contains(src, want) {
 			t.Errorf("任务中心的定时任务盒缺少 %q", want)
@@ -405,6 +427,50 @@ func TestTasksCenterScheduleEditorReadsAndWritesTheRightShape(t *testing.T) {
 	for _, want := range []string{"没有接入调度器", "总开关是关的", "调度器在跑"} {
 		if !strings.Contains(state, want) {
 			t.Errorf("scStateHTML 缺少 %q 这一态", want)
+		}
+	}
+}
+
+func TestTasksCenterDailyBalanceSupportsThreeScheduleModes(t *testing.T) {
+	src := scheduleShellSource(t)
+	for _, want := range []string{
+		`每日余额刷新`, `按时刻`, `按间隔`, `Cron`,
+		`every_seconds`, `jitter_seconds`,
+		`class="scMode cfgselect"`, `class="cfgtext scCron"`,
+		`clients[pend.client][pend.batch] = { enabled:`,
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("daily balance mode controls are missing %q", want)
+		}
+	}
+	save := scheduleFuncBody(t, src, "scSave")
+	for _, want := range []string{
+		`const cron = String(pend.cron || "").trim()`,
+		`const every = parseSchedDuration(pend.every)`,
+		`cron: cron, hours: null, every_seconds: null, jitter_seconds: null, every_minutes: null, jitter_minutes: null`,
+		`every_seconds: every, jitter_seconds: jitter, hours: null, cron: null, every_minutes: null, jitter_minutes: null`,
+		`hours: hours, cron: null, every_seconds: null, jitter_seconds: null, every_minutes: null, jitter_minutes: null`,
+	} {
+		if !strings.Contains(save, want) {
+			t.Errorf("scSave daily balance mode handling is missing %q", want)
+		}
+	}
+	mark := scheduleFuncBody(t, src, "scMarkDirty")
+	for _, want := range []string{
+		`tr.querySelector(".scMode")`, `tr.querySelector(".scEvery")`,
+		`tr.querySelector(".scJitter")`, `tr.querySelector(".scCron")`,
+	} {
+		if !strings.Contains(mark, want) {
+			t.Errorf("daily balance mode switching is missing %q", want)
+		}
+	}
+	listener := src[strings.Index(src, `$("#scBody").addEventListener("input"`):]
+	if end := strings.Index(listener, `$("#scBody").addEventListener("click"`); end >= 0 {
+		listener = listener[:end]
+	}
+	for _, want := range []string{`scCron`, `scMode`, `scRenderRows()`} {
+		if !strings.Contains(listener, want) {
+			t.Errorf("daily balance editor listener is missing %q", want)
 		}
 	}
 }

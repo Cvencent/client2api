@@ -524,6 +524,40 @@ func (e *poolEntry) usable(now time.Time) bool {
 	return !now.Before(e.until)
 }
 
+// usableForMetadata reports whether an entry may be spent on a metadata-only
+// upstream read such as the model catalogue.
+//
+// It is deliberately looser than usable: a credential parked for credit
+// exhaustion or a soft rate limit still authenticates, and a catalogue request
+// spends no chat quota, so its realm's models must stay visible.  A credential
+// the pool has judged invalid, risk-restricted or at fault cannot be expected to
+// answer at all, and one behind the circuit breaker must not be probed again by
+// a background refresh.
+func (e *poolEntry) usableForMetadata(now time.Time) bool {
+	if e == nil || e.auth == nil {
+		return false
+	}
+	if e.faults.Blocked(now) {
+		return false
+	}
+	switch e.state {
+	case stateInvalid, stateRisk, stateFault:
+		// These verdicts say the credential itself may be unusable, so a
+		// metadata read honours them -- but only for as long as the park lasts:
+		// once it lapses, chat would try the account again, and so may the
+		// catalogue.  A zero deadline is the "wait for an operator" case and
+		// never expires on its own.
+		if e.until.IsZero() {
+			return false
+		}
+		if e.state == stateInvalid {
+			return now.After(e.until)
+		}
+		return !now.Before(e.until)
+	}
+	return true
+}
+
 // settleExpiredCooldownLocked retires a timed account park once its deadline
 // has passed. usable() already admits such an entry, so leaving state and note
 // untouched makes the panel claim "cooling" while the picker is willing to use
@@ -1143,6 +1177,33 @@ func realmSuffix(realm string) string {
 		return ""
 	}
 	return " in realm " + realm
+}
+
+// PickForMetadataInRealm chooses a credential for a metadata-only upstream read
+// in the named realm, ignoring quota parks that only block chat.
+//
+// The catalogue path must not be gated on chat usability: an install whose
+// international account is out of credit still needs to see which models that
+// realm serves, and the catalogue request spends no chat quota.  Selection is a
+// plain scan rather than the weighted rotation, so a background refresh does not
+// move the chat cursor or mark an account as just used.
+func (p *Pool) PickForMetadataInRealm(realm string) (*Auth, bool) {
+	if p == nil {
+		return nil, false
+	}
+	now := p.now()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, e := range p.entries {
+		if e == nil || e.auth == nil || !realmMatches(e, realm) {
+			continue
+		}
+		if !e.usableForMetadata(now) {
+			continue
+		}
+		return e.auth, true
+	}
+	return nil, false
 }
 
 // Realms returns the distinct realms the pool holds accounts for, domestic

@@ -11,9 +11,11 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"client2api/internal/core"
+	"client2api/internal/scheduler"
 )
 
 // redactedPlaceholder is the sentinel GET /panel/api/config puts in place of
@@ -656,6 +658,17 @@ func validateScheduleConfig(v any) error {
 			}
 		}
 	}
+	if raw, ok := m["daily_balance_cron"]; ok && raw != nil {
+		expr, ok := raw.(string)
+		if !ok {
+			return errors.New("schedule.daily_balance_cron must be a string")
+		}
+		if strings.TrimSpace(expr) != "" {
+			if err := scheduler.ValidateCron(expr); err != nil {
+				return fmt.Errorf("schedule.daily_balance_cron: %w", err)
+			}
+		}
+	}
 	if n, ok := m["balance_refresh_minutes"]; ok && n != nil {
 		f, ok := n.(float64)
 		if !ok || f != float64(int(f)) {
@@ -695,6 +708,35 @@ func validateScheduleConfig(v any) error {
 				if err := validateScheduleHours("schedule.clients."+client+"."+batch+".hours", h); err != nil {
 					return err
 				}
+			}
+			prefix := "schedule.clients." + client + "." + batch
+			if raw, ok := om["cron"]; ok && raw != nil {
+				expr, ok := raw.(string)
+				if !ok {
+					return fmt.Errorf("%s.cron must be a string", prefix)
+				}
+				if strings.TrimSpace(expr) != "" {
+					if err := scheduler.ValidateCron(expr); err != nil {
+						return fmt.Errorf("%s.cron: %w", prefix, err)
+					}
+				}
+			}
+			every, everySet, err := scheduleIntervalValue(prefix, "every", om)
+			if err != nil {
+				return err
+			}
+			jitter, jitterSet, err := scheduleIntervalValue(prefix, "jitter", om)
+			if err != nil {
+				return err
+			}
+			if everySet && every <= 0 {
+				return fmt.Errorf("%s.every must be greater than zero", prefix)
+			}
+			if jitterSet && jitter < 0 {
+				return fmt.Errorf("%s.jitter must not be negative", prefix)
+			}
+			if everySet && jitterSet && jitter >= every {
+				return fmt.Errorf("%s.jitter must be smaller than the interval", prefix)
 			}
 			if a, ok := om["accounts"]; ok && a != nil {
 				am, ok := a.(map[string]any)
@@ -740,6 +782,31 @@ func validateScheduleHours(name string, v any) error {
 		}
 	}
 	return nil
+}
+func scheduleIntervalValue(prefix, stem string, om map[string]any) (time.Duration, bool, error) {
+	if raw, ok := om[stem+"_seconds"]; ok && raw != nil {
+		n, err := scheduleWholeNumber(prefix+"."+stem+"_seconds", raw)
+		if err != nil {
+			return 0, false, err
+		}
+		return time.Duration(n) * time.Second, true, nil
+	}
+	if raw, ok := om[stem+"_minutes"]; ok && raw != nil {
+		n, err := scheduleWholeNumber(prefix+"."+stem+"_minutes", raw)
+		if err != nil {
+			return 0, false, err
+		}
+		return time.Duration(n) * time.Minute, true, nil
+	}
+	return 0, false, nil
+}
+
+func scheduleWholeNumber(name string, v any) (int, error) {
+	f, ok := v.(float64)
+	if !ok || f != float64(int(f)) {
+		return 0, fmt.Errorf("%s must be a whole number", name)
+	}
+	return int(f), nil
 }
 
 func marshalConfigOrdered(cfg map[string]any) ([]byte, error) {

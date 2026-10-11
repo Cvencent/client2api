@@ -88,10 +88,12 @@ func TestModelColumnFallsBackToTheAccountCatalog(t *testing.T) {
 	}
 
 	// realmModels 要把 "cn:glm-5.3" 的 realm 前缀去掉，否则弹层里会前缀和账号
-	// 的 realm 标签重复，也和 model_cooldowns 里的裸模型名对不上。
+	// 的 realm 标签重复，也和 model_cooldowns 里的裸模型名对不上。它只按模块
+	// capabilities.realms 里声明过的 code 认前缀，行为用例在
+	// TestModelColumnStripsOnlyDeclaredRealmPrefixes。
 	rm := poolStatsFuncBody(t, src, "realmModels")
-	if !strings.Contains(rm, `realm + ":"`) || !strings.Contains(rm, "id.slice(prefix.length)") {
-		t.Error(`realmModels 没有按 "realm:" 前缀过滤并剥掉前缀`)
+	if !strings.Contains(rm, "catalogForRealm(") || !strings.Contains(rm, "caps.realms") {
+		t.Error("realmModels 没有把「声明过的 realm 列表」交给 catalogForRealm")
 	}
 }
 

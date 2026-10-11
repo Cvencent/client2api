@@ -55,3 +55,20 @@ func TestRecentCallsShowCacheAndCost(t *testing.T) {
 		t.Error("最近调用空表的 colspan 没有跟着新增三列从 13 更新到 16")
 	}
 }
+
+func TestUsageCacheHitRateAlwaysKeepsOneDecimal(t *testing.T) {
+	src := poolStatsUISource(t)
+	format := poolStatsFuncBody(t, src, "fmtUsageCacheHitRate")
+	if !strings.Contains(format, ".toFixed(1)") {
+		t.Error("缓存命中率没有固定保留一位小数：99.6% 会被四舍五入成 100%")
+	}
+
+	tiles := poolStatsFuncBody(t, src, "renderUsageTiles")
+	if !strings.Contains(tiles, "fmtUsageCacheHitRate(hit)") {
+		t.Error("总览磁贴没有走统一的一位小数格式化")
+	}
+	recent := poolStatsFuncBody(t, src, "renderRecentRows")
+	if !strings.Contains(recent, "fmtUsageCacheHitRate(cacheHit)") {
+		t.Error("最近调用没有走统一的一位小数格式化")
+	}
+}

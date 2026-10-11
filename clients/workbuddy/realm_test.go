@@ -167,6 +167,33 @@ func TestWorkbuddyPoolRealmsIsEmptyWithoutAccounts(t *testing.T) {
 	}
 }
 
+// TestWorkbuddyPoolMetadataPickFollowsTheParkKind pins the metadata-only
+// predicate: credit exhaustion and soft rate limits spend no chat quota, so the
+// catalogue may still be read through them, while an account the upstream has
+// risk-restricted is skipped even for metadata.
+func TestWorkbuddyPoolMetadataPickFollowsTheParkKind(t *testing.T) {
+	cn, intl := realmAuths()
+	p, clk := newPickPool([]*Auth{cn, intl})
+
+	p.MarkFailure(intl, &Error{Kind: ErrHardCredit, Status: http.StatusPaymentRequired, Msg: "no credit"})
+	if a, ok := p.PickForMetadataInRealm(realmGlobal); !ok || a.ID() != intl.ID() {
+		t.Fatalf("metadata pick in the exhausted global realm = %v/%v, want %s", a, ok, intl.ID())
+	}
+	if _, ok := p.PickForModelInRealm(nil, "", realmGlobal); ok {
+		t.Fatal("chat selection must still refuse the exhausted account")
+	}
+	// The park lapses: both chat and metadata selection may use it again.
+	clk.advance(2 * 24 * time.Hour)
+	if a, ok := p.PickForMetadataInRealm(realmGlobal); !ok || a.ID() != intl.ID() {
+		t.Fatalf("metadata pick after the credit park lapsed = %v/%v, want %s", a, ok, intl.ID())
+	}
+
+	p.MarkFailure(cn, &Error{Kind: ErrAccountFault, Status: http.StatusForbidden, Msg: "request illegal"})
+	if a, ok := p.PickForMetadataInRealm(realmCN); ok {
+		t.Fatalf("metadata pick returned %s for a risk-restricted realm", a.ID())
+	}
+}
+
 // TestWorkbuddyPoolPickForModelInRealmRefusesTheWrongRealm is the safety
 // property the filter exists for: a domestic-only model name sent to the
 // international catalogue answers 11102, so the picker must not offer a
@@ -279,6 +306,58 @@ func TestWorkbuddyCatalogueListsBothRealms(t *testing.T) {
 	if byRealm[realmCN] == byRealm[realmGlobal] {
 		t.Fatalf("both realms answered for the same host %q; the fixture did not separate them",
 			byRealm[realmCN])
+	}
+}
+
+// TestWorkbuddyCatalogueReadsThroughExhaustedAccounts pins the metadata-only
+// allowance.  A catalogue request spends no chat quota, so a realm whose every
+// account is out of credit must still publish the models it serves: hiding them
+// is what made a parked international account look like an empty platform in
+// the panel.  Chat selection is deliberately untouched -- the same accounts
+// must still be refused for an actual conversation.
+func TestWorkbuddyCatalogueReadsThroughExhaustedAccounts(t *testing.T) {
+	rt := &fakeRT{handler: func(req *http.Request) (*http.Response, error) {
+		ids := []string{req.URL.Hostname()}
+		if req.URL.Path == v3ConfigPath {
+			return jsonResponse(200, v3ConfigBody(ids...)), nil
+		}
+		return jsonResponse(200, globalEnterpriseBody(ids...)), nil
+	}}
+	files := cnAccountFiles()
+	files[intlCreds] = intlAccountFiles()[intlCreds]
+	c, _ := panelClient(t, rt, files)
+
+	for _, id := range []string{"uid-cn-0001", "uid-intl-0001"} {
+		a := c.findAuth(id)
+		if a == nil {
+			t.Fatalf("account %s was not loaded", id)
+		}
+		if _, d := c.pool.MarkFailure(a, &Error{Kind: ErrHardCredit, Status: http.StatusPaymentRequired, Msg: "no credit"}); d <= 0 {
+			t.Fatalf("parking %s for hard credit returned %v, want a positive cooldown", id, d)
+		}
+	}
+	if c.pool.Ready() {
+		t.Fatal("both accounts are credit-exhausted; chat selection must see no usable account")
+	}
+	for _, realm := range []string{realmCN, realmGlobal} {
+		if a, ok := c.pool.PickForModelInRealm(nil, "", realm); ok {
+			t.Fatalf("chat selection still picked %s in the exhausted %s realm", a.ID(), realm)
+		}
+	}
+
+	models, err := c.Models(context.Background())
+	if err != nil {
+		t.Fatalf("Models: %v", err)
+	}
+	byRealm := map[string]bool{}
+	for _, m := range models {
+		realm, bare := resolveModelRealm(m.ID)
+		if bare != "" {
+			byRealm[realm] = true
+		}
+	}
+	if !byRealm[realmCN] || !byRealm[realmGlobal] {
+		t.Fatalf("catalogue realms = %v; an exhausted realm's models must still be listed", byRealm)
 	}
 }
 
