@@ -3,7 +3,6 @@ package doubao
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"client2api/internal/core"
@@ -83,5 +82,3 @@ type creditHistoryRow struct {
 	Timestamp int64   `json:"timestamp"`
 	Reason    string  `json:"reason"`
 }
-
-var _ = strings.TrimSpace

@@ -38,9 +38,9 @@ type account struct {
 	Enabled bool
 	Source  string
 
-	// Identity is a stable, non-secret fingerprint of the cookie jar.  It is
-	// what lets the panel treat two records minted from the same session as one
-	// account; it is a hash, so it never reveals the cookie.
+	// Identity is a stable, non-secret account key: the vendor's user id when
+	// the account probe exposes one, otherwise a hash of the cookie jar.  It is
+	// what lets a re-login replace the same account instead of piling up rows.
 	Identity string
 
 	// Runtime state, guarded by the store's mutex.
@@ -57,8 +57,10 @@ func (a *account) selectable(now time.Time) bool {
 		return false
 	}
 	switch a.State {
-	case stateInvalid, stateExhausted:
+	case stateExhausted:
 		return false
+	case stateInvalid:
+		return !a.CooldownUntil.IsZero() && !now.Before(a.CooldownUntil)
 	case stateCooling:
 		return !now.Before(a.CooldownUntil)
 	default:
@@ -101,9 +103,9 @@ const stateVersion = 1
 
 // store owns every credential and its runtime state.
 type store struct {
-	mu       sync.Mutex
-	accounts []*account
-	dir      string
+	mu           sync.Mutex
+	accounts     []*account
+	dir          string
 	accountsPath string
 	statePath    string
 }
@@ -229,18 +231,29 @@ func (s *store) applyConfig(entries []account) {
 	}
 }
 
+// clearExpiredParkLocked lets a timed verdict lapse.  Auth failures use
+// stateInvalid for the panel while still carrying a cooldown, so the account
+// becomes retryable after the same deadline instead of staying dead forever.
+func clearExpiredParkLocked(a *account, now time.Time) {
+	if a.CooldownUntil.IsZero() || now.Before(a.CooldownUntil) {
+		return
+	}
+	if a.State == stateCooling || a.State == stateInvalid {
+		a.State = stateReady
+		a.LastError = ""
+		a.CooldownUntil = time.Time{}
+	}
+}
+
 // snapshot returns a copy of every account, sorted by id for a stable panel.
 func (s *store) snapshot() []account {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := make([]account, 0, len(s.accounts))
-	// Expired cooldowns lapse lazily, so a snapshot never shows a stale park.
+	// Expired parks lapse lazily, so a snapshot never shows a stale verdict.
 	now := time.Now()
 	for _, a := range s.accounts {
-		if a.State == stateCooling && !now.Before(a.CooldownUntil) {
-			a.State = stateReady
-			a.LastError = ""
-		}
+		clearExpiredParkLocked(a, now)
 		out = append(out, *a)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
@@ -254,10 +267,7 @@ func (s *store) pick() (*account, error) {
 	now := time.Now()
 	var best *account
 	for _, a := range s.accounts {
-		if a.State == stateCooling && !now.Before(a.CooldownUntil) {
-			a.State = stateReady
-			a.LastError = ""
-		}
+		clearExpiredParkLocked(a, now)
 		if !a.selectable(now) {
 			continue
 		}
@@ -299,11 +309,23 @@ func (s *store) noteSuccess(id string) {
 	_ = s.save()
 }
 
+// failureCooldown is the policy shared by every upstream call: a dead
+// credential gets the long auth cooldown, a transient failure the ordinary one.
+func (c *Client) failureCooldown(auth bool) time.Duration {
+	if auth {
+		return c.cfg.authCooldown()
+	}
+	return c.cfg.cooldown()
+}
+
 // noteFailure records an upstream failure.  auth marks a dead session; the rest
 // park for cooldown.
-func (s *store) noteFailure(id string, auth bool, err error) {
+func (s *store) noteFailure(id string, auth bool, cooldown time.Duration, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if cooldown <= 0 {
+		cooldown = defaultCooldown
+	}
 	for _, a := range s.accounts {
 		if a.ID != id {
 			continue
@@ -313,9 +335,10 @@ func (s *store) noteFailure(id string, auth bool, err error) {
 		if auth {
 			a.State = stateInvalid
 			a.LastError = noteLoginRequired
+			a.CooldownUntil = time.Now().Add(cooldown)
 		} else {
 			a.State = stateCooling
-			a.CooldownUntil = time.Now().Add(defaultCooldown)
+			a.CooldownUntil = time.Now().Add(cooldown)
 		}
 	}
 	_ = s.save()
@@ -511,7 +534,7 @@ func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, e
 		res.Error = redactErr(err)
 		res.ElapsedMS = time.Since(start).Milliseconds()
 		c.noteFailure(err)
-		c.store.noteFailure(id, isAuthError(err), err)
+		c.store.noteFailure(id, isAuthError(err), c.failureCooldown(isAuthError(err)), err)
 		return res, nil
 	}
 	res.OK = true
@@ -565,7 +588,7 @@ func accountRecord(a *account, now time.Time) core.AccountRecord {
 			"kind": "cookie",
 		},
 	}
-	if state == stateCooling && !a.CooldownUntil.IsZero() {
+	if (state == stateCooling || state == stateInvalid) && !a.CooldownUntil.IsZero() {
 		rec.ExpiresAt = a.CooldownUntil.UTC().Format(time.RFC3339)
 	}
 	if a.LastError != "" {
@@ -587,7 +610,7 @@ func accountStatus(a *account, now time.Time) core.AccountStatus {
 		State:    state,
 		Identity: a.Identity,
 	}
-	if state == stateCooling && !a.CooldownUntil.IsZero() {
+	if (state == stateCooling || state == stateInvalid) && !a.CooldownUntil.IsZero() {
 		st.ExpiresAt = a.CooldownUntil.UTC().Format(time.RFC3339)
 	}
 	if a.LastError != "" {

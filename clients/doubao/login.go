@@ -25,11 +25,20 @@ import (
 
 const (
 	loginSessionPrefix = "doubao-login-"
-	// loginSessionTTL bounds one hand-off.  The vendor has no expiry of its
-	// own on the flow, so this only stops a stale panel tab accumulating
-	// sessions forever.
-	loginSessionTTL = 30 * time.Minute
+	// maxLoginSessionTTL bounds one hand-off even if the configured timeout is
+	// absurdly large, so stale panel tabs cannot accumulate forever.
+	maxLoginSessionTTL = 30 * time.Minute
 )
+
+// loginTTL is the configured hand-off ceiling, clamped so a typo cannot
+// leave a pending session around forever.
+func (c *Client) loginTTL() time.Duration {
+	ttl := c.cfg.loginTimeout()
+	if ttl <= 0 || ttl > maxLoginSessionTTL {
+		return maxLoginSessionTTL
+	}
+	return ttl
+}
 
 // loginSession is one browser hand-off.  It holds no credential: the cookie is
 // read from the browser at the end and stored on the account, not here.
@@ -91,10 +100,11 @@ func (c *Client) PollLogin(ctx context.Context, sessionID string) (core.LoginSta
 	if s.state != core.LoginPending {
 		return loginStateOf(s), nil
 	}
-	if time.Since(s.startedAt) > loginSessionTTL {
+	ttl := c.loginTTL()
+	if time.Since(s.startedAt) > ttl {
 		st, _ := c.updateLogin(id, func(s *loginSession) {
 			s.state = core.LoginFailed
-			s.message = fmt.Sprintf("登录窗口在 %s 后过期，请重新发起网页登录。", loginSessionTTL)
+			s.message = fmt.Sprintf("登录窗口在 %s 后过期，请重新发起网页登录。", ttl)
 		})
 		c.closeLoginBrowser(s)
 		return st, nil
@@ -119,6 +129,7 @@ func (c *Client) PollLogin(ctx context.Context, sessionID string) (core.LoginSta
 		return c.keepWaiting(id, "登录页已打开，但会话还不能用："+truncate(core.Redact(verr.Error()), 160))
 	}
 	acc.Label = info.displayName()
+	acc.Identity = info.identity()
 	rec, aerr := c.store.upsert(acc)
 	if aerr != nil {
 		st, _ := c.updateLogin(id, func(s *loginSession) {
@@ -172,7 +183,7 @@ func (c *Client) putLogin(s *loginSession) {
 	if c.logins == nil {
 		c.logins = make(map[string]*loginSession)
 	}
-	cutoff := time.Now().Add(-loginSessionTTL)
+	cutoff := time.Now().Add(-c.loginTTL())
 	for id, old := range c.logins {
 		if old.startedAt.Before(cutoff) {
 			delete(c.logins, id)

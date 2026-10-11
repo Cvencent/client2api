@@ -24,7 +24,6 @@ package doubao
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -44,8 +43,8 @@ type Client struct {
 
 	// Model catalogue cache.  Models is called on every panel refresh and must
 	// stay cheap; RefreshModels is the explicit synchronous re-read.
-	modelMu  sync.Mutex
-	catalog  []core.Model
+	modelMu   sync.Mutex
+	catalog   []core.Model
 	catalogAt time.Time
 
 	// inFlight is the number of chat streams currently open.  Chat feeds it and
@@ -123,15 +122,15 @@ func (c *Client) Name() string { return "doubao" }
 // The panel and the scheduler discover capabilities by assertion, so every
 // interface this module genuinely supports is asserted here at compile time.
 var (
-	_ core.Client              = (*Client)(nil)
-	_ core.AccountManager      = (*Client)(nil)
-	_ core.LoginProvider       = (*Client)(nil)
-	_ core.BalanceProvider     = (*Client)(nil)
-	_ core.ModelRefresher      = (*Client)(nil)
-	_ core.HealthProvider      = (*Client)(nil)
-	_ core.PoolStatsReporter   = (*Client)(nil)
-	_ core.Reviver             = (*Client)(nil)
-	_ core.ConversationBinder  = (*Client)(nil)
+	_ core.Client             = (*Client)(nil)
+	_ core.AccountManager     = (*Client)(nil)
+	_ core.LoginProvider      = (*Client)(nil)
+	_ core.BalanceProvider    = (*Client)(nil)
+	_ core.ModelRefresher     = (*Client)(nil)
+	_ core.HealthProvider     = (*Client)(nil)
+	_ core.PoolStatsReporter  = (*Client)(nil)
+	_ core.Reviver            = (*Client)(nil)
+	_ core.ConversationBinder = (*Client)(nil)
 )
 
 // Models answers from the cached catalogue and falls back to the built-in list
@@ -257,5 +256,3 @@ func redactErr(err error) string {
 	}
 	return core.Redact(err.Error())
 }
-
-var _ = http.StatusOK

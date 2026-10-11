@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"client2api/internal/core"
 )
@@ -65,7 +66,7 @@ func TestHealthReadyPoolIsServable(t *testing.T) {
 func TestReviveClearsCooldown(t *testing.T) {
 	c := newTestClient(t)
 	_, _ = c.store.add(&account{ID: "a1", Cookie: "sessionid=abc", Enabled: true})
-	c.store.noteFailure("a1", false, nil)
+	c.store.noteFailure("a1", false, defaultCooldown, nil)
 	if got := c.store.snapshot()[0].State; got != stateCooling {
 		t.Fatalf("state after failure = %q, want cooling", got)
 	}
@@ -76,6 +77,83 @@ func TestReviveClearsCooldown(t *testing.T) {
 		t.Fatalf("state after revive = %q, want ready", got)
 	}
 }
+
+// TestFailureCooldownFollowsTheConfiguredPolicy pins the two cooldown classes:
+// a rejected session gets the long auth cooldown, a transient failure the
+// ordinary one.
+func TestFailureCooldownFollowsTheConfiguredPolicy(t *testing.T) {
+	c := newTestClient(t)
+	c.cfg.Cooldown = durationField("7s")
+	c.cfg.AuthCooldown = durationField("9m")
+	if got := c.failureCooldown(false); got != 7*time.Second {
+		t.Fatalf("ordinary failure cooldown = %v, want 7s", got)
+	}
+	if got := c.failureCooldown(true); got != 9*time.Minute {
+		t.Fatalf("auth failure cooldown = %v, want 9m", got)
+	}
+}
+
+// TestAuthFailureCooldownExpiresToReady pins the recovery path: an auth
+// rejection is an invalid verdict only for the configured cooldown, not a
+// permanent dead end that requires a manual revive.
+func TestAuthFailureCooldownExpiresToReady(t *testing.T) {
+	c := newTestClient(t)
+	_, _ = c.store.add(&account{ID: "a1", Cookie: "sessionid=abc", Enabled: true})
+	c.store.noteFailure("a1", true, c.failureCooldown(true), nil)
+
+	snap := c.store.snapshot()
+	if got := snap[0].State; got != stateInvalid {
+		t.Fatalf("state after auth failure = %q, want invalid", got)
+	}
+	if snap[0].CooldownUntil.IsZero() {
+		t.Fatal("auth failure did not set a cooldown deadline")
+	}
+	recs, _ := c.Accounts(context.Background())
+	if len(recs) != 1 || recs[0].State != stateInvalid || recs[0].ExpiresAt == "" {
+		t.Fatalf("account record after auth failure = %+v, want invalid with expiry", recs)
+	}
+	st := c.Status(context.Background())
+	if len(st.Accounts) != 1 || st.Accounts[0].State != stateInvalid || st.Accounts[0].ExpiresAt == "" {
+		t.Fatalf("status after auth failure = %+v, want invalid with expiry", st.Accounts)
+	}
+	if _, err := c.store.pick(); err != core.ErrNotConfigured {
+		t.Fatalf("pick during auth cooldown = %v, want ErrNotConfigured", err)
+	}
+
+	c.store.mu.Lock()
+	c.store.accounts[0].CooldownUntil = time.Now().Add(-time.Second)
+	c.store.mu.Unlock()
+
+	snap = c.store.snapshot()
+	if got := snap[0].State; got != stateReady {
+		t.Fatalf("state after auth cooldown = %q, want ready", got)
+	}
+	picked, err := c.store.pick()
+	if err != nil {
+		t.Fatalf("pick after auth cooldown: %v", err)
+	}
+	if picked.ID != "a1" {
+		t.Fatalf("picked %q after auth cooldown, want a1", picked.ID)
+	}
+	if h := c.Health(); !h.Servable || h.Ready != 1 {
+		t.Fatalf("health after auth cooldown = %+v, want servable with 1 ready", h)
+	}
+}
+
+// TestLoginTTLUsesConfigAndHasACap pins the web-login handoff bound.
+func TestLoginTTLUsesConfigAndHasACap(t *testing.T) {
+	c := newTestClient(t)
+	c.cfg.LoginTimeoutSeconds = intPtr(90)
+	if got := c.loginTTL(); got != 90*time.Second {
+		t.Fatalf("loginTTL = %v, want 90s", got)
+	}
+	c.cfg.LoginTimeoutSeconds = intPtr(int(maxLoginSessionTTL/time.Second) + 1)
+	if got := c.loginTTL(); got != maxLoginSessionTTL {
+		t.Fatalf("loginTTL = %v, want capped at %v", got, maxLoginSessionTTL)
+	}
+}
+
+func intPtr(v int) *int { return &v }
 
 // TestStatusNeverLeaksCookie pins the redaction rule: Status carries a label,
 // never the credential.

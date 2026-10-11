@@ -78,6 +78,39 @@ func TestPollLoginStoresSessionAndSucceeds(t *testing.T) {
 	}
 }
 
+// TestPollLoginReplacesTheSameUserSession pins the stable identity: a second
+// sign-in rotates the cookie jar but must update the existing account row, not
+// create another one.
+func TestPollLoginReplacesTheSameUserSession(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"data":{"user_id":"42","nickname":"tester"}}`))
+	}))
+	defer srv.Close()
+
+	first := &fakeBrowser{cookies: []browser.Cookie{
+		{Name: "sessionid", Value: "first", Domain: ".doubao.com"},
+	}}
+	withFakeLaunch(t, first, nil)
+	c := newWebClient(t, srv.URL)
+	st, _ := c.StartLogin(context.Background())
+	if _, err := c.PollLogin(context.Background(), st.SessionID); err != nil {
+		t.Fatalf("first PollLogin: %v", err)
+	}
+
+	second := &fakeBrowser{cookies: []browser.Cookie{
+		{Name: "sessionid", Value: "second", Domain: ".doubao.com"},
+	}}
+	withFakeLaunch(t, second, nil)
+	st, _ = c.StartLogin(context.Background())
+	if _, err := c.PollLogin(context.Background(), st.SessionID); err != nil {
+		t.Fatalf("second PollLogin: %v", err)
+	}
+	accounts, _ := c.Accounts(context.Background())
+	if len(accounts) != 1 {
+		t.Fatalf("got %d accounts after re-login, want 1", len(accounts))
+	}
+}
+
 // TestPollLoginStaysPendingWithoutSessionCookie pins the "browser open, not
 // signed in yet" case.
 func TestPollLoginStaysPendingWithoutSessionCookie(t *testing.T) {

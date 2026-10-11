@@ -11,7 +11,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
 
 	"client2api/internal/core"
 )
@@ -294,6 +293,17 @@ func (i accountInfo) displayName() string {
 	return "signed in"
 }
 
+// identity returns a stable, non-secret account key when the vendor exposes
+// one.  A fresh web login often rotates the cookie jar for the same user, so
+// matching on the full jar would create a duplicate row every time.
+func (i accountInfo) identity() string {
+	id := firstNonEmpty(i.UserID, i.UID, i.UniqueID)
+	if id == "" {
+		return ""
+	}
+	return "db-user-" + core.Redact(id)
+}
+
 // signedIn reports whether the reply proves a live session.
 func (i accountInfo) signedIn() bool {
 	if i.IsLogin != nil {
@@ -324,6 +334,3 @@ func (u *upstream) accountInfo(ctx context.Context, acc *account) (accountInfo, 
 	}
 	return info, nil
 }
-
-var _ = time.Second
-

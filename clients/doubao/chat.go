@@ -3,7 +3,6 @@ package doubao
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -28,14 +27,14 @@ import (
 
 // chatBody is the request the vendor expects.
 type chatBody struct {
-	Messages         []chatMessage  `json:"messages"`
-	CompletionOption completionOpt  `json:"completion_option"`
+	Messages         []chatMessage `json:"messages"`
+	CompletionOption completionOpt `json:"completion_option"`
 }
 
 type chatMessage struct {
-	Role       string `json:"role"`
-	Content    string `json:"content"`
-	ContentType int   `json:"content_type,omitempty"`
+	Role        string `json:"role"`
+	Content     string `json:"content"`
+	ContentType int    `json:"content_type,omitempty"`
 }
 
 type completionOpt struct {
@@ -136,7 +135,7 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 		cancel()
 		req.ReleaseAccountSlot()
 		c.noteFailure(err)
-		c.store.noteFailure(acc.ID, isAuthError(err), err)
+		c.store.noteFailure(acc.ID, isAuthError(err), c.failureCooldown(isAuthError(err)), err)
 		if isAuthError(err) {
 			return nil, err
 		}
@@ -358,6 +357,3 @@ func decodeStringOrObject(raw json.RawMessage) string {
 	}
 	return ""
 }
-
-var _ = errors.Is
-

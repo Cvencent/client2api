@@ -1,7 +1,6 @@
 package doubao
 
 import (
-	"context"
 	"path/filepath"
 	"testing"
 	"time"
@@ -137,6 +136,3 @@ func contains(haystack, needle string) bool {
 	}
 	return false
 }
-
-var _ = context.Background
-

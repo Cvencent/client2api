@@ -38,6 +38,16 @@ func TestExampleConfigParsesAndMatchesTheDocumentedDefaults(t *testing.T) {
 	}
 }
 
+func TestLoginTimeoutOverrideIsUsed(t *testing.T) {
+	cfg, err := parseConfig([]byte(`{"login_timeout_seconds":90}`))
+	if err != nil {
+		t.Fatalf("parseConfig: %v", err)
+	}
+	if got := cfg.loginTimeout(); got != 90*time.Second {
+		t.Errorf("login_timeout = %v, want 90s", got)
+	}
+}
+
 func TestEmptyConfigUsesDefaults(t *testing.T) {
 	cfg, err := parseConfig(nil)
 	if err != nil {

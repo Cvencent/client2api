@@ -110,4 +110,3 @@ func TestRawPostStreamsAndCarriesBody(t *testing.T) {
 		t.Fatalf("body did not reach the vendor: %v", body)
 	}
 }
-

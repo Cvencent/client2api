@@ -73,6 +73,11 @@ web login is the intended path. Environment overrides:
 
 The model catalogue is the platform's own model ids; add more under `models`.
 
+A vendor rejection marks the session `invalid` for `auth_cooldown`; the row
+shows the retry deadline, and the cooldown expiry clears the verdict and returns
+the account to rotation. A transient failure uses the shorter `cooldown`
+instead. `revive` clears either park immediately.
+
 ## Notes
 
 - No request signature (`a_bogus`/`X-Bogus`) is required: the desktop bundle's
