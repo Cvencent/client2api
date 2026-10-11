@@ -3,6 +3,7 @@ package doubao
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -38,6 +39,9 @@ const (
 	paramVersion = "2.31.4"
 	paramRegion  = "cn"
 	agentJSConv  = "str"
+	// defaultBotID is the assistant id the desktop client stamps on the action
+	// bar and chat requests.  It is the public default bot, not a secret.
+	defaultBotID = "7338286299411103781"
 )
 
 // Endpoints the module speaks.  Every one of them was confirmed in the desktop
@@ -46,8 +50,18 @@ const (
 	pathAccountInfo  = "/alice/user/get_account_info"
 	pathProfileBrief = "/alice/profile/self_brief"
 	pathChat         = "/samantha/chat/completion"
-	pathCreditNum    = "/commerce/benefit_supply/credit/get_credit_num_optional_tasks"
-	pathCreditUsage  = "/commerce/benefit_supply/credit/get_credit_usage_history"
+	// pathUserSettingGet is the endpoint whose action_bar_menu_config carries
+	// the v1 (menu_item_list) model menu the desktop client renders.
+	pathUserSettingGet = "/samantha/user/setting/get"
+	// pathActionBarBriefList is the v2 menu endpoint.  Its entry_list carries
+	// the modeConfV2 (mode_list/model_list) the current client prefers; when
+	// use_menu_conf_v2 is absent the v1 menu above is the one to use.
+	pathActionBarBriefList = "/alice/slot/action_bar_v3/brief_list"
+	// pathLaunchCore is where the client learns whether the v2 menu is on.
+	pathLaunchCore         = "/alice/user/launch/core"
+	pathConversationUpdate = "/alice/conversation/update"
+	pathCreditNum          = "/commerce/benefit_supply/credit/get_credit_num_optional_tasks"
+	pathCreditUsage        = "/commerce/benefit_supply/credit/get_credit_usage_history"
 )
 
 // Defaults for every tuning knob.
@@ -103,6 +117,24 @@ type config struct {
 	// LoginTimeoutSeconds bounds one login hand-off end to end.  Absent means
 	// 600s.
 	LoginTimeoutSeconds *int `json:"login_timeout_seconds"`
+
+	// ClientUserDataDir points at the Doubao desktop client's Chromium user-data
+	// directory (the one holding `Local State`).  Empty means the default
+	// location under %LOCALAPPDATA%.  It only matters for the `client_import`
+	// path, which reads the already-signed-in client instead of a browser
+	// sign-in.
+	ClientUserDataDir string `json:"client_user_data_dir"`
+	// ClientProfile pins which profile directory inside the user-data dir holds
+	// the session.  Empty means the one that has a live Doubao session cookie.
+	ClientProfile string `json:"client_profile"`
+
+	// DefaultModeID and DefaultModelItemKey are the routing fields a chat
+	// request carries when the caller asked for a plain model id the client has
+	// not shown.  They match the web client's own defaults.
+	DefaultModeID       string `json:"default_mode_id"`
+	DefaultModelItemKey string `json:"default_model_item_key"`
+	DefaultReplyMode    string `json:"default_reply_mode"`
+	DefaultReasoning    string `json:"default_reasoning_effort"`
 }
 
 // accountConfig is one entry of the `accounts` array.
@@ -139,6 +171,57 @@ func (c config) authCooldown() time.Duration {
 
 func (c config) modelsTTL() time.Duration {
 	return durationOr(string(c.ModelsTTL), defaultModelsTTL)
+}
+
+// clientUserDataDir resolves the desktop client's Chromium user-data directory:
+// an explicit config wins, then the environment, then the default per-user
+// location.  An empty result means the client import is unavailable.
+func (c config) clientUserDataDir() string {
+	if v := strings.TrimSpace(c.ClientUserDataDir); v != "" {
+		return v
+	}
+	if v := strings.TrimSpace(os.Getenv("CLIENT2API_DOUBAO_USER_DATA_DIR")); v != "" {
+		return v
+	}
+	local := strings.TrimSpace(os.Getenv("LOCALAPPDATA"))
+	if local == "" {
+		return ""
+	}
+	return filepath.Join(local, "Doubao", "User Data")
+}
+
+// clientProfileDir pins the profile directory, or returns "" for auto-detect.
+func (c config) clientProfileDir() string {
+	return strings.TrimSpace(c.ClientProfile)
+}
+
+// chatDefaults are the routing fields a chat request carries when the caller's
+// model resolved to nothing more specific.  They mirror the web client's own
+// defaults: mode 3 (an Agent/mode-list selection) and model item "0".
+func (c config) chatDefaults() modelRoute {
+	return modelRoute{
+		ModeID:          firstNonEmpty(strings.TrimSpace(c.DefaultModeID), "3"),
+		ModelItemKey:    firstNonEmpty(strings.TrimSpace(c.DefaultModelItemKey), "0"),
+		ReplyMode:       firstNonEmpty(strings.TrimSpace(c.DefaultReplyMode), strings.TrimSpace(c.DefaultModelItemKey), "0"),
+		ReasoningEffort: strings.TrimSpace(c.DefaultReasoning),
+	}
+}
+
+// defaultRoute is the routing the module sends when a caller asked for a model
+// the client has not advertised.  Operator overrides win; otherwise it is the
+// client's own default (mode 3 / model item "0").
+func defaultRoute(cfg config) modelRoute {
+	r := cfg.chatDefaults()
+	if r.ModeID == "" {
+		r.ModeID = defaultModeID
+	}
+	if r.ModelItemKey == "" {
+		r.ModelItemKey = defaultModelItemKey
+	}
+	if r.ReplyMode == "" {
+		r.ReplyMode = firstNonEmpty(r.ModelItemKey, r.ModeID)
+	}
+	return r
 }
 
 // browserPath resolves the executable the login drives.

@@ -8,6 +8,39 @@
 
 ## [Unreleased]
 
+## [0.1.43] - 2026-10-11
+
+### Added
+
+- **Doubao 桌面客户端接入**：面板“导入凭据”现在可以直接读取已登录的豆包桌面客户端
+  （Chromium 外壳）会话——只读打开 `Cookies` 数据库，用 Windows DPAPI 解开
+  `Local State` 里的 AES 密钥，并剥离 Chromium 127+ 的 32 字节 app-bound 头，
+  得到与网页端相同的 Cookie 会话。不写客户端配置，运行中的客户端不受影响。
+- Doubao 模型目录改为同步桌面客户端当前账号实际展示的模型菜单
+  （`action_bar_menu_config`，并兼容 v2 `menu_conf_v2`）。`/v1/models` 按
+  `mode<mode_id>_model<model_item_key>` 暴露每个菜单项，聊天请求携带客户端同样的
+  `reply_mode` / `mode_id` / `model_item_key` 路由三元组；账号还未刷新出菜单时回退到
+  客户端默认（`mode_id=3`、`model_item_key=0`）。
+
+### Fixed
+
+- **修复流式断流（半截回合被当成成功）**：模型偶尔会思考很久（本次复现是 22475 个推理
+  token、约 101KB），最后 `finish_reason=stop`，既不产出可见正文、也不产出工具调用。
+  网关此前把这种死回合包装成 `response.completed` 并附带一条空 assistant 消息，客户端
+  界面上看起来“成功但什么都没给”，只能再发一次「继续」。现在 Responses 的流式和缓冲
+  两条路径都会把“无正文且无工具调用”判为 `response.failed`，让调用方看到明确失败并可
+  重试。只有工具调用、没有正文的回合仍然照常成功。
+- **AutoClaw 登录**：发送验证码和验证码登录现在按桌面端 `AuthApiAdapter.post` 的协议补齐
+  `source_id: "autoclaw"` 与稳定的 `device_id`。此前只发送 phone/code，服务端会拒绝为
+  `400001 请求数据有问题`；现在真实接口已分别返回 `code 0 / result true` 与正常的验证码
+  业务校验。
+- AutoClaw 在没有桌面 device-id 文件时会生成版本 4 UUID，并按客户端相同的
+  `device/device-id.json` 格式持久化，确保发送验证码、登录和登录后账号调用使用同一个设备身份。
+- Doubao 账号信息探测优先使用 POST `/alice/profile/self_brief`，并保留 POST
+  `/alice/user/get_account_info` 作为兼容回退，避免带会话 Cookie 时 GET 命中 404 路由。
+- Loomy 账号探测在模型只产出推理内容、正文为空时按有效响应处理，避免把已经成功消费探测预算的
+  正常账号误判为不可用。
+
 ## [0.1.42] - 2026-10-11
 
 ### Added

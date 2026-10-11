@@ -25,6 +25,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -46,6 +47,12 @@ type Client struct {
 	modelMu   sync.Mutex
 	catalog   []core.Model
 	catalogAt time.Time
+
+	// menuMu guards menus, the per-account model menu the desktop client is
+	// showing.  Accounts can see different menus, so the catalogue is their
+	// union; a chat request resolves its model against the account it picked.
+	menuMu sync.Mutex
+	menus  map[string]clientMenu
 
 	// inFlight is the number of chat streams currently open.  Chat feeds it and
 	// PoolStats reports it, so the panel shows real process state.
@@ -119,11 +126,18 @@ func (c *Client) setPaths() {
 // Name is both the registry key and the routing prefix ("doubao/<model>").
 func (c *Client) Name() string { return "doubao" }
 
+// chatBotID is the assistant id the action-bar and chat requests carry: the
+// operator's override, else the public default bot.
+func (c *Client) chatBotID() string {
+	return firstNonEmpty(strings.TrimSpace(c.cfg.ChatBotID), defaultBotID)
+}
+
 // The panel and the scheduler discover capabilities by assertion, so every
 // interface this module genuinely supports is asserted here at compile time.
 var (
 	_ core.Client             = (*Client)(nil)
 	_ core.AccountManager     = (*Client)(nil)
+	_ core.CredentialImporter = (*Client)(nil)
 	_ core.LoginProvider      = (*Client)(nil)
 	_ core.BalanceProvider    = (*Client)(nil)
 	_ core.ModelRefresher     = (*Client)(nil)

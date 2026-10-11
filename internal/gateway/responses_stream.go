@@ -388,9 +388,19 @@ receive:
 		return
 	}
 
-	if len(output) == 0 && !addText() {
+	// A turn that produced neither visible text nor a tool call is not an
+	// answer.  The reasoning-only shape is the failure this gateway keeps
+	// chasing: the model thinks for a long time, stops ("finish=stop"), emits
+	// no call, and the old code dressed that up as response.completed with an
+	// empty message.  Codex accepted the dead turn and showed a half-answer, so
+	// the operator had to type 继续.  Reporting a failure is the honest result
+	// and the one a client can retry.
+	if !sawAnyText(output) && !sawAnyToolCall(output) {
+		terminal = "empty_completion"
+		emitFailed(errEmptyCompletion())
 		return
 	}
+
 	for i := range output {
 		output[i].Status = "completed"
 	}
@@ -522,6 +532,17 @@ receive:
 	}
 
 	base := responseBaseFields{id: newID("resp_"), model: a.model}
+
+	// Same rule as the streaming path: a turn with no visible text and no tool
+	// call is a dead turn, not an answer, however much reasoning preceded it.
+	if text.Len() == 0 && len(toolByIx) == 0 {
+		status, _, _ := upstreamErrorShape(errEmptyCompletion())
+		a.stat.status = status
+		s.fail(a.rec)
+		s.writeUpstreamError(w, client, a.hintCtx, errEmptyCompletion())
+		return
+	}
+
 	var output []responseOutput
 
 	if reasoning.Len() > 0 {
@@ -586,4 +607,37 @@ func appendTail(dst *strings.Builder, s string, n int) {
 	trimmed := dst.String()[dst.Len()-n:]
 	dst.Reset()
 	dst.WriteString(trimmed)
+}
+
+// errEmptyCompletion is the error reported when a model turn ended without
+// producing anything the caller can use: no visible text and no tool call.  It
+// is deliberately a distinct message so the operator can tell it apart from a
+// transport failure in the log and in the client's error banner.
+func errEmptyCompletion() error {
+	return errors.New("upstream returned an empty completion: the model ended the turn without text or a tool call")
+}
+
+// sawAnyText reports whether any output item carries visible assistant text.
+func sawAnyText(output []responseOutput) bool {
+	for _, item := range output {
+		if item.Type != "message" {
+			continue
+		}
+		for _, part := range item.Content {
+			if part.Text != "" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// sawAnyToolCall reports whether any output item is a function call with a name.
+func sawAnyToolCall(output []responseOutput) bool {
+	for _, item := range output {
+		if item.Type == "function_call" && item.Name != "" {
+			return true
+		}
+	}
+	return false
 }

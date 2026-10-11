@@ -5,7 +5,7 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-Current version: **0.1.42**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
+Current version: **0.1.43**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
 
 client2api is a personal, local-only OpenAI-compatible gateway. It aggregates
 the accounts and API Keys **you own** on different AI coding clients and
@@ -54,7 +54,7 @@ people. The built-in default is `127.0.0.1`.
 | `openrouter/...` | OpenRouter | OpenRouter |
 | `opencode/...` | OpenCode Zen | OpenCode Zen |
 | `kilocode/...` | Kilo Code | Kilo AI Gateway |
-| `doubao/...` | Doubao | ByteDance Doubao web app |
+| `doubao/...` | Doubao | ByteDance Doubao desktop client / web app |
 | `openai-compat/...` | onmiRoute | Legacy compatible sources |
 | `<source-id>/...` | Custom relay | Any OpenAI-compatible platform you add |
 

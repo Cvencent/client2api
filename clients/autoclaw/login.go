@@ -226,7 +226,7 @@ func (c *Client) sendVerificationCode(ctx context.Context, phone string) error {
 	ctx, cancel := withTimeout(ctx, requestTimeout)
 	defer cancel()
 	var res sendCodeReply
-	if err := c.do(ctx, http.MethodPost, pathAgentSendCode, managedIdentityHeaders(c.cfg.version()), map[string]string{"phone": p}, &res); err != nil {
+	if err := c.do(ctx, http.MethodPost, pathAgentSendCode, managedIdentityHeaders(c.cfg.version()), c.authPayload(map[string]any{"phone": p}), &res); err != nil {
 		return err
 	}
 	if !res.Result {
@@ -244,7 +244,7 @@ func (c *Client) signInWithCode(ctx context.Context, phone, code string) (creden
 	ctx, cancel := withTimeout(ctx, requestTimeout)
 	defer cancel()
 	var res loginReply
-	if err := c.do(ctx, http.MethodPost, pathAgentLogin, managedIdentityHeaders(c.cfg.version()), map[string]any{"phone": p, "code": n}, &res); err != nil {
+	if err := c.do(ctx, http.MethodPost, pathAgentLogin, managedIdentityHeaders(c.cfg.version()), c.authPayload(map[string]any{"phone": p, "code": n}), &res); err != nil {
 		return credential{}, err
 	}
 	if strings.TrimSpace(res.AccessToken) == "" || strings.TrimSpace(res.RefreshToken) == "" {
@@ -265,11 +265,33 @@ func (c *Client) signInWithCode(ctx context.Context, phone, code string) (creden
 	return cred, nil
 }
 
-// currentDeviceID reuses the device id the desktop client already generated.
-// The login endpoints do not require it, but the profile and daily-claim calls
-// send it, so the imported and freshly-logged-in accounts agree.
+// authPayload mirrors AuthApiAdapter.post: every identity-gateway auth call
+// carries source_id and the device id alongside its endpoint fields.
+func (c *Client) authPayload(fields map[string]any) map[string]any {
+	if fields == nil {
+		fields = map[string]any{}
+	}
+	fields["source_id"] = "autoclaw"
+	if id := c.currentDeviceID(); id != "" {
+		fields["device_id"] = id
+	}
+	return fields
+}
+
+// currentDeviceID returns the stable device identity shared by the login
+// handshake and the account calls. It reuses the desktop client's id, or
+// mints and persists the same document when the client has not run yet.
 func (c *Client) currentDeviceID() string {
-	return strings.TrimSpace(deviceIDFromUserData(desktopUserDataDirPath()))
+	c.deviceMu.Lock()
+	defer c.deviceMu.Unlock()
+	if id := strings.TrimSpace(c.deviceID); id != "" {
+		return id
+	}
+	id := deviceIdentity()
+	if id != "" {
+		c.deviceID = id
+	}
+	return id
 }
 
 // finishLogin enriches a fresh credential, stores it and marks the session

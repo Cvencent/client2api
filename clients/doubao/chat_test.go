@@ -46,7 +46,7 @@ func TestBuildChatBodyMapsRolesAndOptions(t *testing.T) {
 			{Role: "user", Content: "hello"},
 		},
 	}
-	raw, err := c.buildChatBody(req)
+	raw, err := c.buildChatBody(req, defaultRoute(config{}))
 	if err != nil {
 		t.Fatalf("buildChatBody: %v", err)
 	}
@@ -60,8 +60,44 @@ func TestBuildChatBodyMapsRolesAndOptions(t *testing.T) {
 	if body.Messages[0].Role != "system" || body.Messages[1].Role != "user" {
 		t.Fatalf("roles = %+v", body.Messages)
 	}
+	// A follow-up turn carries the existing conversation id and does NOT ask to
+	// create one; that is the client's own rule (need_create tracks a fresh
+	// local_conversation_id).
+	if body.ConversationID != "conv-1" {
+		t.Fatalf("conversation_id = %q, want conv-1", body.ConversationID)
+	}
+	if body.CompletionOption.NeedCreateConversation {
+		t.Fatalf("need_create_conversation = true for an existing conversation, want false")
+	}
+	// The routing trio rides on the last user message's ext.
+	last := body.Messages[len(body.Messages)-1]
+	if last.Ext == nil || last.Ext.ModeID != defaultModeID || last.Ext.ModelItemKey != defaultModelItemKey {
+		t.Fatalf("last message ext = %+v, want mode %s model %s", last.Ext, defaultModeID, defaultModelItemKey)
+	}
+	if strings.TrimSpace(last.Content) == "" || last.Content[0] != '{' {
+		t.Fatalf("content = %q, want a JSON object string", last.Content)
+	}
+}
+
+// TestBuildChatBodyStartsANewConversation pins the first-turn shape: no vendor
+// conversation id yet, so the body carries a local_conversation_id and asks the
+// server to create the conversation.
+func TestBuildChatBodyStartsANewConversation(t *testing.T) {
+	c := &Client{cfg: config{}}
+	req := &core.ChatRequest{Messages: []core.Message{{Role: "user", Content: "hi"}}}
+	raw, err := c.buildChatBody(req, defaultRoute(config{}))
+	if err != nil {
+		t.Fatalf("buildChatBody: %v", err)
+	}
+	var body chatBody
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
 	if !body.CompletionOption.NeedCreateConversation {
-		t.Fatalf("need_create_conversation = false, want true when a conversation id is present")
+		t.Fatalf("need_create_conversation = false on the first turn, want true")
+	}
+	if !strings.HasPrefix(body.LocalConversationID, "local_") {
+		t.Fatalf("local_conversation_id = %q, want local_ prefix", body.LocalConversationID)
 	}
 }
 

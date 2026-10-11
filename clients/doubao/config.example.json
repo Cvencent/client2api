@@ -11,6 +11,12 @@
   "models_ttl": "30m",
   "chat_bot_id": "",
   "models": [],
+  "client_user_data_dir": "",
+  "client_profile": "",
+  "default_mode_id": "3",
+  "default_model_item_key": "0",
+  "default_reply_mode": "0",
+  "default_reasoning_effort": "",
   "cookie": "",
   "label": "",
   "accounts": []

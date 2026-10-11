@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"client2api/internal/core"
 )
@@ -29,12 +31,28 @@ import (
 type chatBody struct {
 	Messages         []chatMessage `json:"messages"`
 	CompletionOption completionOpt `json:"completion_option"`
+	ConversationID   string        `json:"conversation_id,omitempty"`
+	// LocalConversationID is what tells the vendor to create a conversation.
+	// need_create_conversation is derived from it, exactly as the client does.
+	LocalConversationID string `json:"local_conversation_id,omitempty"`
+	LocalMessageID      string `json:"local_message_id,omitempty"`
+	MessageID           string `json:"message_id,omitempty"`
+	ReplyID             string `json:"reply_id,omitempty"`
+	SectionID           string `json:"section_id,omitempty"`
 }
 
 type chatMessage struct {
 	Role        string `json:"role"`
 	Content     string `json:"content"`
 	ContentType int    `json:"content_type,omitempty"`
+
+	LocalMessageID string `json:"local_message_id,omitempty"`
+	MessageID      string `json:"message_id,omitempty"`
+	ReplyID        string `json:"reply_id,omitempty"`
+	SectionID      string `json:"section_id,omitempty"`
+
+	// Ext carries the model routing the client puts on the message.
+	Ext *messageExt `json:"ext,omitempty"`
 }
 
 type completionOpt struct {
@@ -43,13 +61,42 @@ type completionOpt struct {
 	WithSuggest            bool `json:"with_suggest"`
 }
 
-// buildChatBody folds a core.ChatRequest into the vendor payload.
-func (c *Client) buildChatBody(req *core.ChatRequest) ([]byte, error) {
+// messageExt is the routing metadata the client attaches to the message it
+// sends.  mode_id + model_item_key + reply_mode select the model; the rest is
+// what the client always includes alongside them.
+type messageExt struct {
+	ReplyMode       string `json:"reply_mode,omitempty"`
+	ModeID          string `json:"mode_id,omitempty"`
+	ModelItemKey    string `json:"model_item_key,omitempty"`
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
+	AgentTaskParam  string `json:"agent_task_param,omitempty"`
+	LocalMessageID  string `json:"local_message_id,omitempty"`
+}
+
+// buildChatBody folds a core.ChatRequest and the resolved model route into the
+// vendor payload the desktop client sends.
+//
+// Two details are easy to get wrong and both matter:
+//
+//   - `content` is not plain text.  The client sends a JSON string such as
+//     {"type":"text","text":"hi"}; a bare string is rejected upstream with an
+//     "invalid character ... looking for beginning of value" business error.
+//   - the model routing rides on the message's `ext`, not the top level.
+//
+// The identifiers are generated the same way the client does: a fresh
+// conversation on the first turn, then the vendor's conversation id afterwards.
+func (c *Client) buildChatBody(req *core.ChatRequest, route modelRoute) ([]byte, error) {
 	if req == nil || len(req.Messages) == 0 {
 		return nil, core.ErrUnsupported
 	}
+	now := time.Now().UnixMilli()
+	localConv := ""
+	conversation := req.ConversationID
+	if conversation == "" {
+		localConv = conversationID(now)
+	}
 	msgs := make([]chatMessage, 0, len(req.Messages))
-	for _, m := range req.Messages {
+	for i, m := range req.Messages {
 		role := normaliseRole(m.Role)
 		if role == "" {
 			continue
@@ -58,18 +105,64 @@ func (c *Client) buildChatBody(req *core.ChatRequest) ([]byte, error) {
 		if strings.TrimSpace(text) == "" {
 			continue
 		}
-		msgs = append(msgs, chatMessage{Role: role, Content: text})
+		msg := chatMessage{Role: role, Content: encodeContent(text), ContentType: contentTypeText}
+		// The routing ext belongs on the message the user just sent; earlier
+		// turns are replayed without it so the conversation keeps one mode.
+		if i == len(req.Messages)-1 && role == "user" {
+			mid := strconv.FormatInt(now, 10)
+			msg.LocalMessageID = mid
+			msg.MessageID = mid
+			ext := &messageExt{
+				ReplyMode:       route.ReplyMode,
+				ModeID:          route.ModeID,
+				ModelItemKey:    route.ModelItemKey,
+				ReasoningEffort: route.ReasoningEffort,
+				LocalMessageID:  mid,
+			}
+			if route.AgentMode != "" {
+				ext.AgentTaskParam = `{"runtime_type":1}`
+			}
+			msg.Ext = ext
+		}
+		msgs = append(msgs, msg)
 	}
 	if len(msgs) == 0 {
 		return nil, core.ErrUnsupported
 	}
 	body := chatBody{
-		Messages: msgs,
+		Messages:            msgs,
+		ConversationID:      firstNonEmpty(conversation, "0"),
+		LocalConversationID: localConv,
+		LocalMessageID:      strconv.FormatInt(now, 10),
+		MessageID:           strconv.FormatInt(now, 10),
 		CompletionOption: completionOpt{
-			NeedCreateConversation: req.ConversationID != "",
+			NeedCreateConversation: localConv != "",
 		},
 	}
 	return json.Marshal(body)
+}
+
+// contentJSON is the message body the vendor decodes after its own JSON pass.
+type contentJSON struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+const contentTypeText = 2001
+
+// encodeContent renders text as the nested JSON string the vendor expects.
+func encodeContent(text string) string {
+	raw, err := json.Marshal(contentJSON{Type: "text", Text: text})
+	if err != nil {
+		return text
+	}
+	return string(raw)
+}
+
+// conversationID is the local conversation id the client mints: "local_" plus
+// a millisecond timestamp.
+func conversationID(ms int64) string {
+	return "local_" + strconv.FormatInt(ms, 10)
 }
 
 // normaliseRole maps the gateway's role names to the vendor's.
@@ -123,7 +216,7 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 	}
 	core.NoteServedBy(req, acc.ID)
 
-	body, err := c.buildChatBody(req)
+	body, err := c.buildChatBody(req, c.routeFor(acc, req.Model))
 	if err != nil {
 		req.ReleaseAccountSlot()
 		return nil, err
@@ -233,12 +326,56 @@ func (s *chatStream) endEvent() core.Event {
 	return core.Event{Type: core.EventDone, Finish: firstNonEmpty(s.finish, "stop")}
 }
 
-// vendorFrame is the envelope the vendor wraps each event in.
+// vendorFrame is the envelope the vendor wraps each event in.  event_type is a
+// string name on some builds ("CMPL") and a number on others (2001), so it is
+// kept raw and normalised by eventKind.
 type vendorFrame struct {
-	EventType string          `json:"event_type"`
+	EventType json.RawMessage `json:"event_type"`
 	EventData json.RawMessage `json:"event_data"`
 	Message   string          `json:"message"`
 	Code      int             `json:"code"`
+}
+
+// The vendor's numeric EventType values, read out of the web bundle.
+const (
+	eventNumCMPL      = 2001
+	eventNumFIN       = 2003
+	eventNumERR       = 2005
+	eventNumVUICMPL   = 2006
+	eventNumOAPICMPL  = 2007
+	eventNumBlocklist = 2022
+)
+
+// eventKind normalises event_type to one of CMPL, FIN, ERR, or "" for anything
+// that is not answer text.  Both the string and numeric encodings are accepted.
+func eventKind(raw json.RawMessage) string {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return ""
+	}
+	if trimmed[0] == '"' {
+		var s string
+		if json.Unmarshal(raw, &s) == nil {
+			switch strings.ToUpper(strings.TrimSpace(s)) {
+			case "CMPL", "VUI_CMPL", "OAPI_CMPL":
+				return "CMPL"
+			case "FIN":
+				return "FIN"
+			case "ERR", "BLOCKLIST":
+				return "ERR"
+			}
+		}
+		return ""
+	}
+	switch int(parseDecimal(raw)) {
+	case eventNumCMPL, eventNumVUICMPL, eventNumOAPICMPL:
+		return "CMPL"
+	case eventNumFIN:
+		return "FIN"
+	case eventNumERR, eventNumBlocklist:
+		return "ERR"
+	}
+	return ""
 }
 
 // absorb turns one SSE frame into zero or more queued events.
@@ -257,20 +394,84 @@ func (s *chatStream) absorb(frame sseFrame) {
 		// killing a good answer.
 		return
 	}
-	switch strings.ToUpper(strings.TrimSpace(vf.EventType)) {
+	switch eventKind(vf.EventType) {
 	case "CMPL":
-		if text, reasoning := extractText(vf.EventData); text != "" || reasoning != "" {
+		// The vendor also delivers business errors inside a CMPL frame's
+		// event_data (a non-zero code with a message and no answer text), so
+		// that case is surfaced as an error rather than dropped as empty text.
+		text, reasoning := extractText(vf.EventData)
+		if text == "" && reasoning == "" {
+			if msg, code := inlineError(vf.EventData); msg != "" {
+				s.pending = append(s.pending, core.Event{Type: core.EventError, Err: fmt.Errorf("doubao: %s (code %s)", core.Redact(msg), code)})
+				return
+			}
+		}
+		if text != "" || reasoning != "" {
 			s.pending = append(s.pending, core.Event{Type: core.EventDelta, Delta: text, Reasoning: reasoning})
 		}
 	case "FIN":
 		s.rawDone = true
 		s.pending = append(s.pending, s.endEvent())
 	case "ERR":
-		msg := firstNonEmpty(vf.Message, extractErrorMessage(vf.EventData), "the vendor reported an error on the stream")
+		inlineMsg, inlineCode := inlineError(vf.EventData)
+		msg := firstNonEmpty(vf.Message, inlineMsg, extractErrorMessage(vf.EventData), "the vendor reported an error on the stream")
+		if inlineCode != "" {
+			msg = msg + " (code " + inlineCode + ")"
+		}
 		s.pending = append(s.pending, core.Event{Type: core.EventError, Err: fmt.Errorf("doubao: %s", core.Redact(msg))})
 	default:
 		// CMD and anything else the vendor adds: not answer text.
 	}
+}
+
+// inlineError pulls the business error out of a CMPL payload: a non-zero code
+// with a message and no answer text.
+func inlineError(raw json.RawMessage) (message, code string) {
+	if len(raw) == 0 {
+		return "", ""
+	}
+	var asString string
+	if json.Unmarshal(raw, &asString) == nil {
+		trimmed := strings.TrimSpace(asString)
+		if !strings.HasPrefix(trimmed, "{") {
+			return "", ""
+		}
+		raw = json.RawMessage(trimmed)
+	}
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return "", ""
+	}
+	if n := parseDecimal(obj["code"]); n == 0 {
+		return "", ""
+	}
+	msg := firstJSONString(obj, "message", "msg")
+	if msg == "" {
+		if detail, ok := obj["error_detail"]; ok {
+			msg = nestedStringField(detail, "message", "msg")
+		}
+	}
+	if msg == "" {
+		return "", ""
+	}
+	return msg, rawScalar(obj["code"])
+}
+
+// nestedStringField reads a string field from a nested JSON object that may
+// itself arrive as a JSON string (the vendor double-encodes it).
+func nestedStringField(raw json.RawMessage, keys ...string) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var asString string
+	if json.Unmarshal(raw, &asString) == nil {
+		trimmed := strings.TrimSpace(asString)
+		if !strings.HasPrefix(trimmed, "{") {
+			return ""
+		}
+		raw = json.RawMessage(trimmed)
+	}
+	return stringField(raw, keys...)
 }
 
 // extractText pulls the visible answer and any reasoning out of one event_data

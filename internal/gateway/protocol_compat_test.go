@@ -90,15 +90,19 @@ func TestUnterminatedStreamsFailAcrossProtocols(t *testing.T) {
 		})
 	}
 }
+
+// TestResponsesPreservesRequiredEmptyOutputFields pins the wire shape of
+// output_text: `text` must always be a string and `annotations` always an
+// array, even when the string is empty.  The empty-string case used to be
+// exercised here as a successful turn, but a turn with no visible text and no
+// tool call is not an answer -- it is the silent half-turn this gateway now
+// reports as a failure (see TestResponsesEmptyTurnIsAFailure).
 func TestResponsesPreservesRequiredEmptyOutputFields(t *testing.T) {
 	for _, streaming := range []bool{false, true} {
-		for _, text := range []string{"answer", ""} {
+		for _, text := range []string{"answer"} {
 			name := "buffered"
 			if streaming {
 				name = "streaming"
-			}
-			if text == "" {
-				name += " empty text"
 			}
 			t.Run(name, func(t *testing.T) {
 				c := &testClient{name: "t", events: []core.Event{

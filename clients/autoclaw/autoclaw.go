@@ -52,6 +52,9 @@ type Client struct {
 	loginMu sync.Mutex
 	logins  map[string]*loginSession
 
+	deviceMu sync.Mutex
+	deviceID string
+
 	now      func() time.Time
 	affinity *core.Affinity
 	inFlight atomic.Int64

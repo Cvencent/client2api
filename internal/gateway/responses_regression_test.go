@@ -164,3 +164,56 @@ func TestResponsesStopsAtTerminalEvent(t *testing.T) {
 		}
 	})
 }
+
+// TestResponsesEmptyTurnIsAFailure covers the failure mode Codex shows as a
+// silent half-turn: the model streams thousands of reasoning tokens, ends with
+// finish_reason=stop, and emits neither visible text nor a tool call. The old
+// behaviour reported response.completed with an empty message, so the client
+// accepted a dead turn and the user had to type "继续" to get anything. It must
+// be reported as a failure instead, which is what a client can retry.
+func TestResponsesEmptyTurnIsAFailure(t *testing.T) {
+	for _, streaming := range []bool{false, true} {
+		t.Run(map[bool]string{false: "buffered", true: "streaming"}[streaming], func(t *testing.T) {
+			c := &testClient{name: "t", events: []core.Event{
+				{Type: core.EventDelta, Reasoning: "thinking, but never answering"},
+				{Type: core.EventDone, Finish: "stop"},
+			}}
+			srv := newTestServer(t, c, NewStats(), NewUsageStore(10))
+			body, _ := json.Marshal(map[string]any{"model": "t/m1", "input": "hi", "stream": streaming})
+			rec := responses(t, srv, string(body))
+
+			if streaming {
+				ev := firstOfType(decodeSSE(t, rec.Body.String()), "response.failed")
+				if ev == nil {
+					t.Fatalf("an empty turn was reported as a clean success: %s", rec.Body)
+				}
+				if completed := firstOfType(decodeSSE(t, rec.Body.String()), "response.completed"); completed != nil {
+					t.Fatalf("empty turn also emitted response.completed: %s", rec.Body)
+				}
+				return
+			}
+			if rec.Code == http.StatusOK {
+				t.Fatalf("an empty turn was reported as a clean success: %d %s", rec.Code, rec.Body)
+			}
+		})
+	}
+}
+
+// TestResponsesToolCallOnlyTurnStaysSuccessful is the guard: a turn whose only
+// output is a function call has no visible text either, and must still complete
+// normally.
+func TestResponsesToolCallOnlyTurnStaysSuccessful(t *testing.T) {
+	c := &testClient{name: "t", events: []core.Event{
+		{Type: core.EventToolCall, ToolCall: &core.ToolCallDelta{Index: 0, ID: "call_1", Name: "exec_command", Arguments: "{}"}},
+		{Type: core.EventDone, Finish: "tool_calls"},
+	}}
+	srv := newTestServer(t, c, NewStats(), NewUsageStore(10))
+	rec := responses(t, srv, `{"model":"t/m1","stream":true,"input":"run"}`)
+	events := decodeSSE(t, rec.Body.String())
+	if firstOfType(events, "response.failed") != nil {
+		t.Fatalf("a tool-call-only turn was failed: %s", rec.Body)
+	}
+	if firstOfType(events, "response.completed") == nil {
+		t.Fatalf("a tool-call-only turn did not complete: %s", rec.Body)
+	}
+}

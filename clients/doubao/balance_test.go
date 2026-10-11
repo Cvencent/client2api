@@ -189,7 +189,8 @@ func TestConversationAccountReportsOnlyUsable(t *testing.T) {
 	}
 }
 
-// TestRefreshModelsReturnsConfiguredCatalogue pins the catalogue override.
+// TestRefreshModelsReturnsConfiguredCatalogue pins the catalogue override: the
+// operator's `models` list is the catalogue when no account menu can be read.
 func TestRefreshModelsReturnsConfiguredCatalogue(t *testing.T) {
 	raw, err := New(core.Deps{DataDir: t.TempDir(), Config: []byte(`{"models":["doubao-seed-2.1-pro","my-model","my-model"]}`)})
 	if err != nil {

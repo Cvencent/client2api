@@ -326,7 +326,10 @@ func (u *upstream) accountInfo(ctx context.Context, acc *account) (accountInfo, 
 			ProfileBrief accountInfo `json:"profile_brief"`
 		} `json:"data"`
 	}
-	if err := u.postJSON(cctx, acc, pathProfileBrief, map[string]any{"avatar_format": 0}, &profile); err == nil {
+	// avatar_format is a string on the current build; a number is rejected with
+	// a 400 ("cannot unmarshal number ... of type string"), which used to make
+	// every signed-in session look dead.  An empty string asks for no resizing.
+	if err := u.postJSON(cctx, acc, pathProfileBrief, map[string]any{"avatar_format": ""}, &profile); err == nil {
 		if info := profile.Data.ProfileBrief; info.signedIn() {
 			return info, nil
 		}

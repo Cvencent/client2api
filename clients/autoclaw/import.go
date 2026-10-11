@@ -64,6 +64,42 @@ func desktopUserDataDirPath() string {
 	return filepath.Join(appData, autoClawUserDataDirName)
 }
 
+// deviceIdentity returns the desktop device id, creating the same
+// device/device-id.json document the Electron client keeps when none exists.
+// The generated id is stable for this user-data directory so send-code and
+// login observe one identity.
+func deviceIdentity() string {
+	dir := desktopUserDataDirPath()
+	if dir == "" {
+		return ""
+	}
+	if id := deviceIDFromUserData(dir); id != "" {
+		return id
+	}
+	id := randomUUID()
+	path := filepath.Join(dir, filepath.FromSlash(deviceFile))
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return id
+	}
+	raw, err := json.Marshal(deviceDocument{SchemaVersion: 1, DeviceID: id})
+	if err != nil {
+		return id
+	}
+	raw = append(raw, '\n')
+	tmp := path + "." + strconv.Itoa(os.Getpid()) + ".tmp"
+	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
+		return id
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		if existing := deviceIDFromUserData(dir); existing != "" {
+			return existing
+		}
+		return id
+	}
+	return id
+}
+
 func deviceIDFromUserData(dir string) string {
 	if strings.TrimSpace(dir) == "" {
 		return ""

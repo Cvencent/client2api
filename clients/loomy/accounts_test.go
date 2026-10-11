@@ -508,6 +508,43 @@ func TestTestAccountExplainsARejectedSession(t *testing.T) {
 	}
 }
 
+func TestTestAccountPassesWhenReasoningConsumedTheProbeBudget(t *testing.T) {
+	// The first catalogue model reasons before it writes content.  With a
+	// small probe budget the vendor can stop at finish_reason=length with
+	// reasoning_content populated and content still null.  That is evidence
+	// the account answered; it is not an empty reply.
+	body := "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"thinking\"},\"finish_reason\":\"length\"}]}\n\n" +
+		"data: [DONE]\n\n"
+	c := newTestClient(t, "{}", alwaysSSE(body))
+	seedAccount(t, c, "loomy-1", testToken, 0)
+
+	result, err := c.TestAccount(context.Background(), "loomy-1")
+	if err != nil {
+		t.Fatalf("TestAccount: %v", err)
+	}
+	if !result.OK {
+		t.Fatalf("OK = false: %+v", result)
+	}
+}
+
+func TestTestAccountStillFailsOnATrulyEmptyProbe(t *testing.T) {
+	body := "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n" +
+		"data: [DONE]\n\n"
+	c := newTestClient(t, "{}", alwaysSSE(body))
+	seedAccount(t, c, "loomy-1", testToken, 0)
+
+	result, err := c.TestAccount(context.Background(), "loomy-1")
+	if err != nil {
+		t.Fatalf("TestAccount: %v", err)
+	}
+	if result.OK {
+		t.Fatalf("OK = true for a truly empty probe: %+v", result)
+	}
+	if !strings.Contains(result.Error, "without any text") {
+		t.Fatalf("error = %q, want the empty-reply explanation", result.Error)
+	}
+}
+
 func TestTestAccountRejectsAnUnknownID(t *testing.T) {
 	c := newTestClient(t, "{}", alwaysJSON(200, okEnvelope("null")))
 	if _, err := c.TestAccount(context.Background(), "nope"); err == nil {

@@ -728,6 +728,7 @@ func (c *Client) probeChat(ctx context.Context, acc account, model string) (stri
 	defer stream.Close()
 
 	var reply strings.Builder
+	reasoningOnly := false
 	for {
 		event, err := stream.Recv()
 		if errors.Is(err, io.EOF) {
@@ -742,6 +743,9 @@ func (c *Client) probeChat(ctx context.Context, acc account, model string) (stri
 		switch event.Type {
 		case core.EventDelta:
 			reply.WriteString(event.Delta)
+			if event.Reasoning != "" {
+				reasoningOnly = true
+			}
 		case core.EventError:
 			if event.Err != nil {
 				if reply.Len() > 0 {
@@ -754,6 +758,9 @@ func (c *Client) probeChat(ctx context.Context, acc account, model string) (stri
 		}
 	}
 	if reply.Len() == 0 {
+		if reasoningOnly {
+			return "reasoning-only probe response", nil
+		}
 		return "", fmt.Errorf("loomy: %s answered without any text", model)
 	}
 	return reply.String(), nil
