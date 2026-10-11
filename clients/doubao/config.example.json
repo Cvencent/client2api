@@ -1,0 +1,17 @@
+{
+  "web_base": "https://www.doubao.com",
+  "browser_path": "",
+  "browser_headless": false,
+  "login_timeout_seconds": 600,
+  "request_timeout": "30s",
+  "chat_timeout": "5m",
+  "probe_timeout": "20s",
+  "cooldown": "60s",
+  "auth_cooldown": "30m",
+  "models_ttl": "30m",
+  "chat_bot_id": "",
+  "models": [],
+  "cookie": "",
+  "label": "",
+  "accounts": []
+}
