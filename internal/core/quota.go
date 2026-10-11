@@ -17,6 +17,10 @@ type Balance struct {
 	Credits int64   // credits left right now
 	Used    float64 // what the vendor reports as consumed; fractional for credit meters
 	Total   int64   // the account's capacity
+	// Scale converts Credits, Total, Expiring and EarliestRemaining from the
+	// module's storage units to the unit shown by the panel. Zero means one.
+	// Used is already expressed in display units.
+	Scale float64
 	// Unverified means Credits is the best conservative number to show, but
 	// the vendor's own reply contradicts it, so it must not be treated as a
 	// confirmed empty wallet or drive a low-balance park. WorkBuddy's trial

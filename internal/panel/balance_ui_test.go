@@ -1,6 +1,10 @@
 package panel
 
 import (
+	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -80,5 +84,66 @@ func TestBalancesUIPollsTheCacheWithoutCallingTheVendor(t *testing.T) {
 	// GET 是缓存读取；这里出现写方法就说明回读变成了另一次刷新。
 	if strings.Contains(read, "method: \"POST\"") {
 		t.Error("readBalances 用了 POST，缓存回读不再是副作用读取")
+	}
+}
+
+func TestBalancesUIAppliesTheServerDisplayScale(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not on PATH; the scale behavior needs it to run the inline renderer")
+	}
+	body := poolStatsFuncBody(t, string(indexHTML), "accBalanceCell") + "\n}"
+	blockJSON, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prog := `const fs = require("fs");
+const out = process.argv[2];
+try {
+  const body = ` + string(blockJSON) + `;
+  const CUR = "relay";
+  const BALS = { relay: { unit: "USD", byID: { a1: { id: "a1", credits: 5000000, credits_total: 6000000, used: 2, scale: 0.000002, fetched_at: Date.now() } } } };
+  const esc = s => String(s == null ? "" : s);
+  const numf = n => Number(n).toLocaleString("en-US");
+  const balFetchedTip = () => "";
+  const fn = new Function("CUR", "BALS", "esc", "numf", "balFetchedTip", body + "\nreturn accBalanceCell;")(CUR, BALS, esc, numf, balFetchedTip);
+  const html = fn({ id: "a1" });
+  fs.writeFileSync(out, JSON.stringify({ ok: true, html }));
+} catch (e) {
+  fs.writeFileSync(out, JSON.stringify({ ok: false, error: String((e && e.message) || e) }));
+}
+`
+	dir := t.TempDir()
+	script := filepath.Join(dir, "balance-scale.js")
+	result := filepath.Join(dir, "balance-scale.json")
+	if err := os.WriteFile(script, []byte(prog), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command(node, script, result).Run(); err != nil {
+		t.Fatalf("node could not run accBalanceCell: %v", err)
+	}
+	raw, err := os.ReadFile(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+		HTML  string `json:"html"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("decoding node result: %v\n%s", err, raw)
+	}
+	if !got.OK {
+		t.Fatalf("accBalanceCell threw: %s", got.Error)
+	}
+	if !strings.Contains(got.HTML, ">10<span class=\"u\">USD</span>") {
+		t.Fatalf("scaled balance = %s, want 10 USD", got.HTML)
+	}
+	if !strings.Contains(got.HTML, "剩余 10 / 总量 12") {
+		t.Fatalf("scaled tooltip = %s, want 10 / 12 USD", got.HTML)
+	}
+	if strings.Contains(got.HTML, "5,000,000") || strings.Contains(got.HTML, "6,000,000") {
+		t.Fatalf("raw quota units leaked into the row: %s", got.HTML)
 	}
 }

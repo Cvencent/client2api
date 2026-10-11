@@ -41,3 +41,43 @@ func TestSessionPlatformStickinessIgnoresEmptyKeys(t *testing.T) {
 		t.Fatalf("resolve empty key = %q,%v, want no binding", got, ok)
 	}
 }
+
+// TestSessionPlatformsListLiveRoutes pins the gateway half of the management
+// dialog: rows carry the platform and expiry, and expired rows disappear before
+// the next routing decision can touch them.
+func TestSessionPlatformsListLiveRoutes(t *testing.T) {
+	sp := newSessionPlatforms()
+	base := time.Now()
+	sp.now = func() time.Time { return base }
+	sp.bind("conv-b", "beta")
+	sp.bind("conv-a", "alpha")
+
+	got := sp.List()
+	if len(got) != 2 {
+		t.Fatalf("List = %#v, want two live routes", got)
+	}
+	if got[0].Key != "conv-a" || got[0].Platform != "alpha" {
+		t.Fatalf("first route = %#v, want conv-a/alpha", got[0])
+	}
+	if want := base.Add(sp.ttl); !got[0].ExpiresAt.Equal(want) {
+		t.Fatalf("expiry = %s, want %s", got[0].ExpiresAt, want)
+	}
+
+	sp.now = func() time.Time { return base.Add(sp.ttl + time.Second) }
+	if got := sp.List(); len(got) != 0 {
+		t.Fatalf("expired routes leaked into List: %#v", got)
+	}
+}
+
+// TestSessionPlatformsForgetReportsTheChange keeps the switch response honest:
+// a second click on an already-cleared route must not pretend it did work.
+func TestSessionPlatformsForgetReportsTheChange(t *testing.T) {
+	sp := newSessionPlatforms()
+	sp.bind("conv-1", "beta")
+	if !sp.Forget("conv-1") {
+		t.Fatal("first Forget reported no change")
+	}
+	if sp.Forget("conv-1") {
+		t.Fatal("second Forget reported a change")
+	}
+}

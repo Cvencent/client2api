@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"sort"
 	"sync"
 	"time"
 
@@ -17,12 +18,16 @@ import (
 // The table is deliberately in-memory.  A restart is a reasonable moment to
 // re-rank platforms, and the binding is an optimisation, never a correctness
 // requirement: a missing or unusable entry means "rank normally".
-type sessionPlatforms struct {
+type SessionPlatforms struct {
 	mu      sync.Mutex
 	ttl     time.Duration
 	entries map[string]sessionPlatformEntry
 	now     func() time.Time
 }
+
+// sessionPlatforms keeps the old internal spelling used by the package's
+// request path while the exported type lets the panel share the same table.
+type sessionPlatforms = SessionPlatforms
 
 type sessionPlatformEntry struct {
 	platform string
@@ -35,6 +40,13 @@ type sessionPlatformEntry struct {
 const sessionPlatformTTL = 30 * time.Minute
 
 func newSessionPlatforms() *sessionPlatforms {
+	return NewSessionPlatforms()
+}
+
+// NewSessionPlatforms returns an empty platform-stickiness table.  The caller
+// can inject one into both the gateway and the panel so an operator action sees
+// the same routes the request path uses.
+func NewSessionPlatforms() *SessionPlatforms {
 	return &sessionPlatforms{
 		ttl:     sessionPlatformTTL,
 		entries: map[string]sessionPlatformEntry{},
@@ -83,12 +95,52 @@ func (s *sessionPlatforms) resolve(conversationKey string, usable func(string) b
 
 // forget drops a binding, used when the pinned platform is known to be bad.
 func (s *sessionPlatforms) forget(conversationKey string) {
+	s.Forget(conversationKey)
+}
+
+// StickyRoute is one live conversation-to-platform binding.
+type StickyRoute struct {
+	Key       string    `json:"key"`
+	Platform  string    `json:"platform"`
+	LastSeen  time.Time `json:"last_seen"`
+	ExpiresAt time.Time `json:"expires_at,omitempty"`
+}
+
+// List returns the live platform routes in stable key order.
+func (s *SessionPlatforms) List() []StickyRoute {
+	if s == nil {
+		return nil
+	}
+	now := s.clock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]StickyRoute, 0, len(s.entries))
+	for key, e := range s.entries {
+		if s.ttl > 0 && now.Sub(e.lastSeen) > s.ttl {
+			continue
+		}
+		row := StickyRoute{Key: key, Platform: e.platform, LastSeen: e.lastSeen}
+		if s.ttl > 0 {
+			row.ExpiresAt = e.lastSeen.Add(s.ttl)
+		}
+		out = append(out, row)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
+	return out
+}
+
+// Forget drops one platform route and reports whether it existed.
+func (s *SessionPlatforms) Forget(conversationKey string) bool {
 	if s == nil || conversationKey == "" {
-		return
+		return false
 	}
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.entries[conversationKey]; !ok {
+		return false
+	}
 	delete(s.entries, conversationKey)
-	s.mu.Unlock()
+	return true
 }
 
 // setTTL retunes the idle window on a live reload.

@@ -8,6 +8,42 @@
 
 ## [Unreleased]
 
+## [0.1.37] - 2026-10-11
+
+### Added
+
+- 自定义中转站余额：平台配置新增 `balance_protocol`（`auto`/`newapi`/`sub2api`/
+  `openai_billing`/`none`）和 `balance_quota_per_usd`（默认 `500000`）。`auto`
+  依次探测 New API `/api/usage/token/`、Sub2API `/v1/usage`、New API 控制台
+  `/api/user/self`（需控制台凭据）、OpenAI Billing `credit_grants`+`subscription`。
+  账号高级字段新增 `balance_access_token`、`balance_user_id`。余额统一按 USD 显示，
+  New API 保留 quota 整数并按 `balance_quota_per_usd` 换算，Sub2API/OpenAI Billing
+  以微美元存储，面板按 `scale` 显示，并已处理无限额度与 `hard_limit_usd=100000000`
+  哨兵值。
+- Kilo Code 面板设备登录：走 Kilo 的 device grant（`POST /api/device-auth/codes`、
+  `GET /api/device-auth/codes/{code}`），登录后以 bearer token 建号并用 `kiloUserId`
+  作为稳定账号 ID；模块配置新增 `auth_base`。
+- Kilo Code 自动发现 Kilo CLI/Desktop 的登录文件 `~/.local/share/kilo/auth.json`，
+  导入后直接以已登录账号出网。
+- 粘性会话管理：账号池概览新增「粘性会话」入口，合并各模块的账号绑定与网关的平台
+  绑定，支持解绑账号粘性和强制切换（同时清账号与平台粘性）；新增面板接口
+  `/panel/api/sticky-sessions`、`/unbind`、`/switch`。
+
+### Changed
+
+- 上游 SSE 缺少终止帧不再被当作正常结束：聊天与 Responses 的流式/非流式路径把
+  「EOF 早于终止帧」上报为 `upstream_error`，避免调用方把半截响应当成功。
+- 账号「模型」列在模块不逐模型上报限流时回退到账号 `fields.models` 或平台模型目录，
+  显示「可用 N / 按平台目录全部可用」，不再留白。
+- OpenCode 账号行发布 `fields.realm`（匿名=`free`，Console=`oauth`），面板的逐行
+  重新登录据此进入正确的 device-code 流程。
+
+### Fixed
+
+- Windows 关闭浏览器时按 `--user-data-dir` 结束同一 profile 下的所有 Chromium
+  进程，修复 launcher 转交子进程后旧浏览器残留的问题。
+- Kilo Code 账号无可用凭据时的提示由「没有 API key」改为「没有可用凭据」。
+
 ## [0.1.36] - 2026-10-11
 
 ### Added

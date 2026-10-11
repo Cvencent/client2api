@@ -52,6 +52,9 @@ type Options struct {
 	// which then only the gateway can see.
 	Stats *Stats
 	Usage *UsageStore
+	// SessionPlatforms carries the gateway-level conversation-to-platform
+	// bindings.  A caller may inject one so the panel can manage the same table.
+	SessionPlatforms *SessionPlatforms
 	// NotifyAlert receives operator-facing platform health alerts.  It is
 	// called synchronously and may be nil.
 	// ModelOverrides is the operator-edited model metadata shared with the panel.
@@ -89,11 +92,14 @@ func NewServer(opts Options) *http.Server {
 	if opts.Service == "" {
 		opts.Service = DefaultService
 	}
+	if opts.SessionPlatforms == nil {
+		opts.SessionPlatforms = newSessionPlatforms()
+	}
 	s := &server{
 		opts:             opts,
 		started:          time.Now(),
 		stats:            opts.Stats,
-		sessionPlatforms: newSessionPlatforms(),
+		sessionPlatforms: opts.SessionPlatforms,
 	}
 	if s.opts.Logger == nil {
 		s.opts.Logger = log.Default()
@@ -1152,7 +1158,7 @@ func (s *server) streamSSE(w http.ResponseWriter, r *http.Request, client core.C
 		return
 	}
 
-	var finished, sawToolCall bool
+	var finished, sawToolCall, streamFailed bool
 	for {
 		if r.Context().Err() != nil {
 			return
@@ -1160,6 +1166,14 @@ func (s *server) streamSSE(w http.ResponseWriter, r *http.Request, client core.C
 		ev, err := stream.Recv()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
+				if !finished {
+					streamFailed = true
+					s.fail(rec)
+					msg := fmt.Sprintf("[%s] upstream stream ended before a terminal frame", clientName)
+					b, _ := json.Marshal(apiErrorEnvelope{Error: apiError{Message: msg, Type: "upstream_error", Code: "upstream_parse", GatewayHint: s.gatewayHint(client, "", msg, hintCtx())}})
+					fmt.Fprintf(w, "data: %s\n\n", b)
+					flusher.Flush()
+				}
 				break
 			}
 			s.fail(rec)
@@ -1258,6 +1272,9 @@ func (s *server) streamSSE(w http.ResponseWriter, r *http.Request, client core.C
 		}
 	}
 
+	if streamFailed {
+		return
+	}
 	if !finished {
 		reason := "stop"
 		send(chatChoice{Index: 0, Delta: &chatMessage{}, FinishReason: &reason}, nil)
@@ -1282,6 +1299,7 @@ func (s *server) bufferCompletion(w http.ResponseWriter, r *http.Request, client
 		usage     *core.Usage
 		finish    string
 		streamErr error
+		finished  bool
 	)
 	// Same as the streaming path: the token counts may only show up at the
 	// very end, and every exit below must carry them.
@@ -1299,7 +1317,9 @@ func (s *server) bufferCompletion(w http.ResponseWriter, r *http.Request, client
 		}
 		ev, err := stream.Recv()
 		if err != nil {
-			if !errors.Is(err, io.EOF) {
+			if errors.Is(err, io.EOF) && !finished {
+				streamErr = io.ErrUnexpectedEOF
+			} else if !errors.Is(err, io.EOF) {
 				streamErr = err
 			}
 			break
@@ -1332,6 +1352,7 @@ func (s *server) bufferCompletion(w http.ResponseWriter, r *http.Request, client
 				usage = ev.Usage
 			}
 		case core.EventDone:
+			finished = true
 			if ev.Finish != "" {
 				finish = ev.Finish
 			}

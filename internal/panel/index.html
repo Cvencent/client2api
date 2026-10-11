@@ -1693,6 +1693,51 @@ details.cfg summary:hover, details.adv summary:hover { color: var(--accent-text)
   .dlg { border-radius: 17px; }
 }
 
+.stat.sticky-tile {
+  appearance: none; position: relative; width: 100%; min-width: 0; margin: 0;
+  border: 0; border-right: 1px solid var(--hairline); border-bottom: 1px solid var(--hairline);
+  border-radius: 0; background: transparent; color: var(--ink); text-align: left; cursor: pointer;
+}
+.stat.sticky-tile::after {
+  content: ""; position: absolute; top: 18px; right: 16px; width: 7px; height: 7px;
+  border-top: 1.5px solid var(--ink-3); border-right: 1.5px solid var(--ink-3);
+  transform: rotate(45deg); transition: border-color var(--dur-quick) var(--ease-smooth), transform var(--dur-quick) var(--ease-smooth);
+}
+.stat.sticky-tile:hover:not(:disabled) {
+  border-color: var(--hairline); background: color-mix(in srgb, var(--surface-2) 78%, transparent); color: var(--ink);
+}
+.stat.sticky-tile:hover:not(:disabled)::after { border-color: var(--accent); transform: translateX(2px) rotate(45deg); }
+.stat.sticky-tile:active:not(:disabled) { transform: none; }
+.stat.sticky-tile:focus-visible { z-index: 1; outline: 3px solid color-mix(in srgb, var(--accent) 55%, transparent); outline-offset: -3px; }
+.sticky-dlg { width: min(820px, 100%); }
+.sticky-rows { display: grid; gap: 10px; }
+.sticky-row {
+  padding: 13px 14px; border: 1px solid var(--hairline); border-radius: 12px;
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+}
+.sticky-head { display: flex; align-items: flex-start; gap: 12px; }
+.sticky-key { min-width: 0; flex: 1; font: 600 13px/1.45 var(--mono); overflow-wrap: anywhere; }
+.sticky-badges { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.sticky-badge {
+  display: inline-flex; align-items: center; min-height: 24px; padding: 2px 8px;
+  border: 1px solid var(--hairline); border-radius: 999px; font-size: 11px; color: var(--ink-3);
+}
+.sticky-badge.on { border-color: color-mix(in srgb, var(--accent) 34%, var(--hairline)); background: var(--accent-soft); color: var(--accent-text); }
+.sticky-meta { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px 14px; margin-top: 11px; }
+.sticky-meta .k { display: block; margin-bottom: 2px; color: var(--ink-3); font-size: 11px; }
+.sticky-meta .v { display: block; min-width: 0; font-size: 12.5px; overflow-wrap: anywhere; }
+.sticky-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.sticky-empty { padding: 26px 16px; text-align: center; color: var(--ink-3); }
+.sticky-empty b { display: block; margin-bottom: 5px; color: var(--ink-2); }
+.sticky-empty span { display: block; font-size: 12px; }
+
+@media (max-width: 620px) {
+  .sticky-head { display: block; }
+  .sticky-badges { justify-content: flex-start; margin-top: 8px; }
+  .sticky-meta { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .sticky-actions button { flex: 1; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; }
   .view:not([hidden]), .subtab-panel:not([hidden]), .pfmodels:not([hidden]), .tab-panel:not([hidden]), .veil, .veil.on, .dlg, .toast, .ustile .meter i, .uschart-body .usreveal { animation: none !important; }
@@ -1782,7 +1827,9 @@ details.cfg summary:hover, details.adv summary:hover { color: var(--accent-text)
         <div class="stat bad"><div class="v" id="sDisabled">-</div><div class="k">已停用</div></div>
         <div class="stat"><div class="v" id="sClients">-</div><div class="k">已接入客户端</div></div>
         <div class="stat"><div class="v" id="sReady">-</div><div class="k">就绪客户端</div></div>
-        <div class="stat"><div class="v" id="sSticky">-</div><div class="k">粘性会话</div></div>
+        <button type="button" class="stat sticky-tile" id="sStickyTile" aria-haspopup="dialog" aria-controls="stickyVeil" title="查看并管理粘性会话">
+          <div class="v" id="sSticky">-</div><div class="k">粘性会话</div>
+        </button>
       </div>
 
       <div class="box">
@@ -2341,6 +2388,8 @@ details.cfg summary:hover, details.adv summary:hover { color: var(--accent-text)
       <div class="fld"><label class="lb" for="sourceURL">API 地址 *</label><input id="sourceURL" type="url" required placeholder="https://api.example.com/v1" autocomplete="off" spellcheck="false"></div>
       <div class="fld" id="sourceKeyField"><label class="lb" for="sourceKey">首个 API Key（可选）</label><input id="sourceKey" type="password" autocomplete="new-password" spellcheck="false"></div>
       <div class="fld"><label class="lb" for="sourceTokens">输出上限字段</label><select id="sourceTokens"><option value="max_tokens">max_tokens</option><option value="max_completion_tokens">max_completion_tokens</option></select></div>
+      <div class="fld"><label class="lb" for="sourceBalanceProtocol">余额协议</label><select id="sourceBalanceProtocol"><option value="auto">自动识别</option><option value="newapi">New API</option><option value="sub2api">Sub2API</option><option value="openai_billing">OpenAI Billing</option><option value="none">不查询</option></select></div>
+      <div class="fld"><label class="lb" for="sourceBalanceQuota">每美元额度</label><input id="sourceBalanceQuota" type="number" min="0" step="1" value="500000" placeholder="500000" inputmode="numeric"></div>
       <label class="chk"><input id="sourceEnabled" type="checkbox" checked>启用平台</label>
       <div class="state err" id="sourceError" hidden></div>
     </div>
@@ -2539,9 +2588,9 @@ details.cfg summary:hover, details.adv summary:hover { color: var(--accent-text)
   </div>
 </div>
 
-<!-- 模型明细：账号池「模型」列点开的只读弹层。一个账号一段，列出它所在
-     realm 的模型：可用（绿）、限流（黄，带解除时间）、该账号不支持（红）。
-     数据全部来自模块自己上报的状态，弹层不产生任何厂商调用。 -->
+<!-- 模型明细：账号池「模型」列点开的只读弹层。一个账号一段，列出该账号可用的
+     模型：可用（绿）、限流（黄，带解除时间）、该账号不支持（红）。模块没上报
+     逐模型状态时按平台目录补齐；弹层不产生任何厂商调用。 -->
 <div class="veil" id="modelVeil">
   <div class="dlg" style="width:560px">
     <header>
@@ -2552,6 +2601,24 @@ details.cfg summary:hover, details.adv summary:hover { color: var(--accent-text)
     <footer>
       <span class="grow"></span>
       <button id="btnModelClose">关闭</button>
+    </footer>
+  </div>
+</div>
+
+<!-- 粘性会话管理：列表来自模块账号绑定 + 网关平台绑定的合并视图。解绑只放开
+     账号；强制切换会同时清掉账号和平台粘性，让下一次请求重新参与路由。 -->
+<div class="veil" id="stickyVeil">
+  <div class="dlg sticky-dlg" role="dialog" aria-modal="true" aria-labelledby="stickyTitle">
+    <header>
+      <h3 id="stickyTitle">粘性会话</h3>
+      <div class="hint">强制解绑只清除账号绑定；强制切换会同时清除账号和平台绑定，下一次请求重新选择平台和账号。</div>
+    </header>
+    <div class="body" id="stickyBody">
+      <div class="sticky-rows" id="stickyRows"></div>
+    </div>
+    <footer>
+      <span class="grow"></span>
+      <button id="btnStickyClose">关闭</button>
     </footer>
   </div>
 </div>
@@ -2709,6 +2776,8 @@ function openSource(id) {
   $("#sourceLabel").value = cfg.label || "";
   $("#sourceURL").value = cfg.base_url || "";
   $("#sourceTokens").value = cfg.max_tokens_field || "max_tokens";
+  $("#sourceBalanceProtocol").value = cfg.balance_protocol || "auto";
+  $("#sourceBalanceQuota").value = cfg.balance_quota_per_usd || 500000;
   $("#sourceEnabled").checked = !cfg.disabled;
   $("#sourceKeyField").hidden = !!id;
   $("#sourceError").hidden = true;
@@ -2770,7 +2839,12 @@ async function scanSource(id, btn) {
 async function saveSource(ev) {
   ev.preventDefault();
   const id = $("#sourceID").value.trim(), key = $("#sourceKey").value.trim();
-  const cfg = { label: $("#sourceLabel").value.trim(), base_url: $("#sourceURL").value.trim(), disabled: !$("#sourceEnabled").checked, max_tokens_field: $("#sourceTokens").value };
+  const cfg = {
+    label: $("#sourceLabel").value.trim(), base_url: $("#sourceURL").value.trim(),
+    disabled: !$("#sourceEnabled").checked, max_tokens_field: $("#sourceTokens").value,
+    balance_protocol: $("#sourceBalanceProtocol").value,
+    balance_quota_per_usd: Number($("#sourceBalanceQuota").value)
+  };
   const btn = $("#btnSourceSave"), error = $("#sourceError");
   btn.disabled = true; error.hidden = true;
   try {
@@ -3207,13 +3281,13 @@ function fieldSummary(a) {
 }
 
 // ── 账号的模型可用情况 ───────────────────────────────────────────────
-// workbuddy / trae 会把被厂商限流的模型写进 Status().Accounts[].Extra 的
-// model_cooldowns，账号池列表据此画出「模型」列：可用多少个、限流多少个，
-// 点开看该账号所在 realm 的完整模型清单和每个模型的状态。
+// workbuddy / trae 等模块会把被厂商限流的模型写进 Status().Accounts[].Extra
+// 的 model_cooldowns，账号池列表据此画出「模型」列：可用多少个、限流多少个，
+// 点开看该账号的模型清单和每个模型的状态。
 //
-// 键「在不在」本身就是信号：模块报了 key（哪怕是空数组）说明它会上报模型
-// 级限流；没这个 key 的模块就是不上报，界面必须把「没有限流」和「说不了」
-// 分开，不能编一个空清单出来。
+// 没有 model_cooldowns 的模块不再整格留白：面板回退到账号自己的模型清单或平台
+// 模型目录，按「模块没拒绝过 = 可用」显示。parksReported 仍保留在 summary 里，
+// 弹层据此说明这份清单来自上报状态还是平台目录推断。
 
 // acctStatusExtra 取某一行账号的状态 extra。账号记录本身（AccountRecord）
 // 不带状态 extra，它在 GET /panel/api/status 的 Accounts[].Extra 里；账号记录
@@ -3247,6 +3321,27 @@ function realmModels(n, realm) {
   return out;
 }
 
+// accountModelCatalog 取一行账号能用的模型清单。优先使用账号记录自带的
+// fields.models；没有时按 realm 过滤平台目录；像 openaicompat 这样把模型按
+// provider 前缀发布的模块，则按账号 id 过滤并剥掉前缀，避免一个 provider 显示
+// 全平台的模型。
+function accountModelCatalog(n, a) {
+  const fields = (a && a.fields) || {};
+  const explicit = fields.models;
+  if (Array.isArray(explicit)) {
+    return explicit.map(x => String(x).trim()).filter(Boolean);
+  }
+  if (typeof explicit === "string" && explicit.trim()) {
+    return explicit.split(/[,\r\n]+/).map(x => x.trim()).filter(Boolean);
+  }
+  const realm = String(fields.realm || "");
+  const catalog = realmModels(n, realm);
+  const id = String((a && a.id) || "");
+  const prefix = id + "/";
+  const own = catalog.filter(m => m.slice(0, prefix.length) === prefix);
+  return own.length ? own.map(m => m.slice(id.length + 1)) : catalog;
+}
+
 // modelParkEntry 把一个 model_cooldowns 条目摊平成 {model, kind, until}。
 // 新服务端发结构化对象；滚动升级中被缓存的老页面可能还收到 "model until
 // 2026-…" 这种句子，兜底解析一下，别把整句当成模型名。
@@ -3277,21 +3372,23 @@ function parkRemaining(ts) {
   return hh + ":" + mm + " " + tail;
 }
 
-// acctModelSummary 汇总一行账号的模型可用情况。返回 null 表示这个模块不上报
-// 模型级限流（没有 model_cooldowns 键）；否则返回 {realm, catalog, parks,
-// avail, limited, unsupported, catalogKnown}。厂商没拒绝过的模型按「可用」算。
+// acctModelSummary 汇总一行账号的模型可用情况。模块上报了 model_cooldowns
+// 就叠加限流/不支持；没上报时用平台目录按全部可用计算。返回值里的
+// parksReported 区分这两种来源，catalogKnown 区分目录有没有取到。
 function acctModelSummary(n, a) {
   const ex = acctStatusExtra(n, a);
   const raw = ex ? ex.model_cooldowns : undefined;
-  if (!Array.isArray(raw)) return null;
+  const parksReported = Array.isArray(raw);
   const f = (a && a.fields) || {};
   const realm = String(f.realm || ex.realm || "");
-  const catalog = realmModels(n, realm);
+  const catalog = accountModelCatalog(n, a);
   const parks = {};
-  raw.forEach(p => {
-    const e = modelParkEntry(p);
-    if (e.model) parks[e.model] = e;
-  });
+  if (parksReported) {
+    raw.forEach(p => {
+      const e = modelParkEntry(p);
+      if (e.model) parks[e.model] = e;
+    });
+  }
   let avail = 0, limited = 0, unsupported = 0;
   const seen = {};
   catalog.forEach(m => {
@@ -3305,7 +3402,11 @@ function acctModelSummary(n, a) {
     if (seen[m]) return;
     if (parks[m].kind === "unsupported") unsupported++; else limited++;
   });
-  return { realm, catalog, parks, avail, limited, unsupported, catalogKnown: catalog.length > 0 };
+  return {
+    realm, catalog, parks, avail, limited, unsupported,
+    catalogKnown: catalog.length > 0,
+    parksReported: parksReported,
+  };
 }
 
 // modelSummaryBits 把三个计数拼成一行「可用 N · 限流 M · 不支持 K」。
@@ -3327,36 +3428,40 @@ function modelCellBits(avail, limited, unsupported) {
   return "不支持 " + unsupported;
 }
 
-// 模型列的格子：可用/限流/不支持三个数字，点开是明细。一个都不剩时标红，
-// 有部分限流时标黄，全可用时标绿。不上报的模块留一个「—」加说明。
+// 模型列的格子：可用/限流/不支持三个数字，点开是明细。没有逐模型上报的
+// 账号也用平台目录补齐；目录确实为空时才留白。
 function accModelsCell(n, a) {
   const sum = acctModelSummary(n, a);
-  if (!sum) return '<span class="hint" title="该平台不报模型级限流；账号的冷却请看「状态」列">—</span>';
-  if (!sum.catalogKnown && !sum.limited && !sum.unsupported) {
+  if (!sum || (!sum.catalogKnown && !sum.limited && !sum.unsupported)) {
     return '<span class="hint" title="该平台还没有上报模型目录">—</span>';
   }
   const full = modelSummaryBits(sum.avail, sum.limited, sum.unsupported);
+  const source = sum.parksReported ? "" : "；未上报逐模型状态，按平台目录全部可用";
   const short = modelCellBits(sum.avail, sum.limited, sum.unsupported);
   let cls = "ok";
   if (!sum.avail) cls = "err";
   else if (sum.limited || sum.unsupported) cls = "warn";
-  return '<button class="xs chip models-chip ' + cls + '" data-do="models" data-ids="' + esc(a.id) + '" title="' + esc(full + "；点击查看明细") + '">' + esc(short) + '</button>';
+  return '<button class="xs chip models-chip ' + cls + '" data-do="models" data-ids="' + esc(a.id) + '" title="' + esc(full + source + "；点击查看明细") + '">' + esc(short) + '</button>';
 }
 
 // 组头的模型格：把组里每个通道汇总成一行不可点的文字，明细展开后逐行看。
 function accGroupModelsCell(n, rows) {
-  let avail = 0, limited = 0, unsupported = 0, any = false, known = false;
+  let avail = 0, limited = 0, unsupported = 0, any = false, known = false, inferred = false;
   (rows || []).forEach(r => {
     const s = acctModelSummary(n, r);
     if (!s) return;
     any = true;
     if (s.catalogKnown) known = true;
+    if (!s.parksReported) inferred = true;
     avail += s.avail; limited += s.limited; unsupported += s.unsupported;
   });
-  if (!any) return '<span class="hint">—</span>';
+  if (!any || (!known && !limited && !unsupported)) {
+    return '<span class="hint" title="该平台还没有上报模型目录">—</span>';
+  }
   const text = modelSummaryBits(avail, limited, unsupported);
   const cls = (limited || unsupported) ? "warn" : "ok";
-  const tip = known ? "组里每个通道各自统计；展开后逐行查看" : "该平台还没有上报模型目录";
+  const source = inferred ? "；未上报逐模型状态的通道按平台目录全部可用" : "";
+  const tip = known ? "组里每个通道各自统计" + source + "；展开后逐行查看" : "该平台还没有上报模型目录";
   return '<span class="chip ' + cls + '" title="' + esc(text + "；" + tip) + '">' + esc(modelCellBits(avail, limited, unsupported)) + '</span>';
 }
 
@@ -3732,15 +3837,18 @@ function accBalanceCell(a) {
   if (b.credits == null) {
     return st.loading ? '<span class="hint">…</span>' : '<span class="hint" title="还没有读取过这个账号的余额">-</span>';
   }
-  const left = Number(b.credits) || 0;
-  const total = Number(b.credits_total) || 0;
+  // scale 把模块的存储整数换算成展示单位；USD 平台用微小整数保存小数，
+  // 老模块不带 scale 时按 1 处理，行为不变。used 本身已经是展示单位。
+  const scale = Number(b.scale) > 0 ? Number(b.scale) : 1;
+  const left = (Number(b.credits) || 0) * scale;
+  const total = (Number(b.credits_total) || 0) * scale;
   const u = st.unit ? '<span class="u">' + esc(st.unit) + '</span>' : "";
   const used = Number(b.used) || 0;
   if (b.unlimited) {
     let tip = "无限额度";
     if (used > 0) tip += "，已用 " + numf(used);
-    if (b.expiring > 0) tip += "，其中 " + b.expiring + " 即将过期";
-    if (b.earliest_at) tip += "（最早到期 " + b.earliest_at + (b.earliest_remaining != null ? "，剩 " + b.earliest_remaining : "") + "）";
+    if (b.expiring > 0) tip += "，其中 " + numf(Number(b.expiring) * scale) + " 即将过期";
+    if (b.earliest_at) tip += "（最早到期 " + b.earliest_at + (b.earliest_remaining != null ? "，剩 " + numf(Number(b.earliest_remaining) * scale) : "") + "）";
     tip += balFetchedTip(b.fetched_at);
     let html = '<span title="' + esc(tip) + '">无限' + u + '</span>';
     if (used > 0) html += '<span class="bal-used">已用 ' + numf(used) + '</span>';
@@ -3748,8 +3856,8 @@ function accBalanceCell(a) {
   }
   let tip = "剩余 " + numf(left) + (total > 0 ? " / 总量 " + numf(total) : "");
   if (used > 0) tip += "，已用 " + numf(used);
-  if (b.expiring > 0) tip += "，其中 " + b.expiring + " 即将过期";
-  if (b.earliest_at) tip += "（最早到期 " + b.earliest_at + (b.earliest_remaining != null ? "，剩 " + b.earliest_remaining : "") + "）";
+  if (b.expiring > 0) tip += "，其中 " + numf(Number(b.expiring) * scale) + " 即将过期";
+  if (b.earliest_at) tip += "（最早到期 " + b.earliest_at + (b.earliest_remaining != null ? "，剩 " + numf(Number(b.earliest_remaining) * scale) : "") + "）";
   tip += balFetchedTip(b.fetched_at);
   if (b.unverified) tip += "；厂商的两套额度数据互相矛盾，余额暂未确认";
   let html = '<span title="' + esc(tip) + '">' + numf(left) + u + '</span>';
@@ -3776,7 +3884,7 @@ function accGroupBalanceValue(rows) {
     if (!b || b.error) continue;
     if (b.unlimited) return Number.POSITIVE_INFINITY;
     if (b.credits == null) continue;
-    const n = Number(b.credits);
+    const n = Number(b.credits) * (Number(b.scale) > 0 ? Number(b.scale) : 1);
     const value = Number.isFinite(n) ? n : null;
     if (value != null) return value;
   }
@@ -4447,8 +4555,9 @@ function openModelsDialog(n, ids) {
     const realm = sum ? sum.realm : String(((a.fields || {}).realm) || "");
     let head = '<div class="mpark-head"><span class="nm">' + esc(accountIdentity(a)) + '</span>';
     if (realm) head += '<span class="realm-tag">' + esc(realmName(n, realm)) + '</span>';
+    const sourceNote = sum && !sum.parksReported && sum.catalogKnown ? "；未上报逐模型状态，按平台目录全部可用" : "";
     head += sum
-      ? '<span class="hint">' + esc(modelSummaryBits(sum.avail, sum.limited, sum.unsupported)) + '</span>'
+      ? '<span class="hint">' + esc(modelSummaryBits(sum.avail, sum.limited, sum.unsupported) + sourceNote) + '</span>'
       : '<span class="hint">该平台不报模型级限流</span>';
     head += '</div>';
     let grid;
@@ -4464,11 +4573,117 @@ function openModelsDialog(n, ids) {
     }
     secs.push('<div class="mpark-acct">' + head + grid + '</div>');
   });
-  $("#modelHelp").textContent = "只统计模块自己上报的状态：厂商没拒绝过的模型按可用算。";
+  $("#modelHelp").textContent = "模块上报逐模型状态时按上报显示；没上报时按平台目录全部可用。";
   $("#modelBody").innerHTML = secs.join("") || '<div class="hint">没有可显示的账号数据。</div>';
   showVeil($("#modelVeil"));
 }
 function closeModelsDialog() { hideVeil($("#modelVeil")); }
+
+/* ── 粘性会话弹层 ─────────────────────────────────────────────────────
+   列表是账号绑定和网关平台绑定的合并视图。平台绑定的 key 没有客户端归属，
+   因此切换请求允许 client 为空；解绑只对账号绑定开放。 */
+let STICKY_RETURN = null;
+
+function stickySessionRowHTML(s) {
+  const key = String((s && s.key) || "");
+  const client = String((s && s.client) || "");
+  const account = String((s && s.account) || "");
+  const platform = String((s && s.platform) || "");
+  const accountBound = !!(s && s.account_bound);
+  const platformBound = !!(s && s.platform_bound);
+  const when = ago(s && s.last_active) || "未知";
+  const clientName = client ? platformLabel(client) : "未绑定";
+  const bindState = (on, label) => '<span class="sticky-badge ' + (on ? "on" : "") + '">' + esc(label) + (on ? "已绑" : "未绑") + '</span>';
+  return '<article class="sticky-row">' +
+    '<div class="sticky-head">' +
+      '<div class="sticky-key" title="' + esc(key) + '">' + esc(key || "（空 key）") + '</div>' +
+      '<div class="sticky-badges">' + bindState(accountBound, "账号") + bindState(platformBound, "平台") + '</div>' +
+    '</div>' +
+    '<div class="sticky-meta">' +
+      '<div><span class="k">客户端</span><span class="v">' + esc(clientName) + '</span></div>' +
+      '<div><span class="k">账号</span><span class="v">' + esc(account || "未绑定") + '</span></div>' +
+      '<div><span class="k">平台</span><span class="v">' + esc(platform || "未绑定") + '</span></div>' +
+      '<div><span class="k">最近活跃</span><span class="v" title="' + esc(String((s && s.last_active) || "")) + '">' + esc(when) + '</span></div>' +
+    '</div>' +
+    '<div class="sticky-actions">' +
+      '<button class="xs" data-sticky-action="unbind" data-client="' + esc(client) + '" data-key="' + esc(key) + '"' + (accountBound && client ? "" : " disabled") + '>强制解绑</button>' +
+      '<button class="xs danger" data-sticky-action="switch" data-client="' + esc(client) + '" data-key="' + esc(key) + '"' + (accountBound || platformBound ? "" : " disabled") + '>强制切换</button>' +
+    '</div>' +
+  '</article>';
+}
+
+async function loadStickySessions() {
+  const rows = $("#stickyRows");
+  const body = $("#stickyBody");
+  body.setAttribute("aria-busy", "true");
+  rows.innerHTML = '<div class="sticky-empty">正在读取粘性会话…</div>';
+  const r = await api("/panel/api/sticky-sessions");
+  body.setAttribute("aria-busy", "false");
+  if (!r.ok) {
+    rows.innerHTML = '<div class="state err">读取失败：' + esc(r.err) + '</div>';
+    return false;
+  }
+  const sessions = (r.data && r.data.sessions) || [];
+  rows.innerHTML = sessions.length
+    ? sessions.map(stickySessionRowHTML).join("")
+    : '<div class="sticky-empty"><b>当前没有粘性会话</b><span>会话再次请求模型后，这里会显示它绑定的账号或平台。</span></div>';
+  return true;
+}
+
+async function openStickySessions() {
+  STICKY_RETURN = document.activeElement;
+  showVeil($("#stickyVeil"));
+  await loadStickySessions();
+  $("#btnStickyClose").focus();
+}
+
+function closeStickySessions() {
+  hideVeil($("#stickyVeil"));
+  if (STICKY_RETURN && document.contains(STICKY_RETURN)) STICKY_RETURN.focus();
+  STICKY_RETURN = null;
+}
+
+async function stickySessionAction(action, client, key, button) {
+  if (!button || !key || (action !== "unbind" && action !== "switch")) return;
+  const clientName = client ? platformLabel(client) : "未绑定";
+  let ask = "";
+  if (action === "unbind") {
+    ask = "确定强制解绑这个粘性会话的账号绑定？\n\n会话：" + key + "\n客户端：" + clientName +
+      "\n\n下一次请求仍会沿用平台粘性，但会重新选择该平台下的账号。";
+  } else {
+    ask = "确定强制切换这个粘性会话？\n\n会话：" + key + "\n客户端：" + clientName +
+      "\n\n将清除账号和平台粘性；下一次请求会像第一次调用一样重新选择平台和账号。";
+  }
+  if (!confirm(ask)) return;
+
+  const row = button.closest(".sticky-row");
+  const buttons = row ? Array.from(row.querySelectorAll("[data-sticky-action]")) : [button];
+  buttons.forEach(b => { b.disabled = true; });
+  const label = button.textContent;
+  button.textContent = "处理中…";
+  try {
+    const path = action === "unbind" ? "/panel/api/sticky-sessions/unbind" : "/panel/api/sticky-sessions/switch";
+    const r = await api(path, { method: "POST", body: { client: client, key: key } });
+    if (!r.ok) {
+      toast((action === "unbind" ? "解绑失败：" : "切换失败：") + r.err, "err");
+      return;
+    }
+    if (action === "unbind") {
+      toast(r.data && r.data.forgotten_account ? "已强制解绑账号；下一次请求会重新选择账号" : "这个会话的账号绑定已经不存在");
+    } else {
+      const d = r.data || {};
+      toast(d.forgotten_account || d.forgotten_platform ? "已强制切换；下一次请求会重新选择平台和账号" : "这个会话已经没有粘性绑定");
+    }
+    await loadStickySessions();
+    refreshAll(false);
+  } catch (e) {
+    toast("粘性会话操作失败：" + String(e && e.message || e), "err");
+  } finally {
+    if (document.contains(button)) button.textContent = label;
+    buttons.forEach(b => { if (document.contains(b)) b.disabled = false; });
+  }
+}
+
 async function saveAccountNote() {
   const id = NOTE.id;
   if (!id) return;
@@ -4626,14 +4841,16 @@ async function act(btn) {
           if (b.unit) st.unit = b.unit;
         }
         const u = b.unit ? " " + b.unit : "";
-        let msg = b.credits + u;
-        if (b.credits_total > 0) msg += " / " + b.credits_total + u;
+        // 余额列和按钮读同一套 scale，避免同一条账号在弹层里换一个数。
+        const bs = Number(b.scale) > 0 ? Number(b.scale) : 1;
+        let msg = numf(Number(b.credits || 0) * bs) + u;
+        if (b.credits_total > 0) msg += " / " + numf(Number(b.credits_total) * bs) + u;
         if (b.unlimited) msg = "无限" + u;
         if (b.used > 0) msg += "，已用 " + b.used;
         if (b.expiring > 0) {
-          msg += "（即将过期 " + b.expiring + (b.earliest_at ? "，最早 " + b.earliest_at : "") + "）";
+          msg += "（即将过期 " + numf(Number(b.expiring) * bs) + (b.earliest_at ? "，最早 " + b.earliest_at : "") + "）";
         } else if (b.earliest_at) {
-          msg += "（最早到期 " + b.earliest_at + (b.earliest_remaining != null ? "，剩 " + b.earliest_remaining : "") + "）";
+          msg += "（最早到期 " + b.earliest_at + (b.earliest_remaining != null ? "，剩 " + numf(Number(b.earliest_remaining) * bs) : "") + "）";
         }
         toast(n + "/" + id + " 余额：" + msg, "ok");
       } else if (r.status === 404) {
@@ -6246,7 +6463,7 @@ async function renderPlatforms(preserveDraft = false) {
       '<button class="xs pfNone" type="button">全禁用</button>' +
       '</div>');
     out.push('<div class="pfmodels" hidden>');
-    if (SOURCE_DEFS[n]) out.push('<div class="hint">' + esc(n) + ' · ' + esc(SOURCE_DEFS[n].base_url) + (SOURCE_DEFS[n].disabled ? ' · 已停用' : '') + '</div>');
+    if (SOURCE_DEFS[n]) out.push('<div class="hint">' + esc(n) + ' · ' + esc(SOURCE_DEFS[n].base_url) + ' · 余额 ' + esc(SOURCE_DEFS[n].balance_protocol || 'auto') + (SOURCE_DEFS[n].disabled ? ' · 已停用' : '') + '</div>');
     // 展开区顶部是 priority_schedule 分时规则编辑器，下方才是模型清单。
     out.push(pfPriorityScheduleHTML(entry));
     if (n === "workbuddy") out.push(pfWorkBuddyPoolHTML(c));
@@ -10445,6 +10662,14 @@ $("#addVeil").addEventListener("click", ev => { if (ev.target === $("#addVeil"))
 $("#noteVeil").addEventListener("click", ev => { if (ev.target === $("#noteVeil")) closeAccountNote(); });
 $("#modelVeil").addEventListener("click", ev => { if (ev.target === $("#modelVeil")) closeModelsDialog(); });
 $("#btnModelClose").addEventListener("click", closeModelsDialog);
+$("#sStickyTile").addEventListener("click", openStickySessions);
+$("#btnStickyClose").addEventListener("click", closeStickySessions);
+$("#stickyVeil").addEventListener("click", ev => { if (ev.target === $("#stickyVeil")) closeStickySessions(); });
+$("#stickyRows").addEventListener("click", ev => {
+  const button = ev.target.closest && ev.target.closest("[data-sticky-action]");
+  if (!button) return;
+  stickySessionAction(button.dataset.stickyAction, button.dataset.client || "", button.dataset.key || "", button);
+});
 $("#btnNoteClose").addEventListener("click", closeAccountNote);
 $("#btnNoteClear").addEventListener("click", () => { $("#noteInput").value = ""; saveAccountNote(); });
 $("#btnNoteSave").addEventListener("click", saveAccountNote);
@@ -10533,6 +10758,7 @@ function closeTopVeil() {
   if (v.id === "sourceVeil") { closeSource(); return true; }
   if (v.id === "noteVeil") { closeAccountNote(); return true; }
   if (v.id === "modelVeil") { closeModelsDialog(); return true; }
+  if (v.id === "stickyVeil") { closeStickySessions(); return true; }
   if (v.id === "taskVeil") { closeTasks(); return true; }
   if (v.id === "capVeil") { if (CAP.resolve) capSettle(false, new Error("已取消人机验证")); return true; }
   hideVeil(v);

@@ -61,7 +61,7 @@ client2api 是一个**个人自用**的 OpenAI 兼容网关。它把你自己在
 - 支持自定义 `model_groups`，把同一模型在各平台的不同名字绑成一组。
 - 平台优先级、账号优先级和按北京时间生效的分时优先级。
 - 平台级、账号级、账号内并发限制。
-- 会话粘性、重试、冷却和自动故障切换。
+- 会话粘性、重试、冷却和自动故障切换；面板可列出粘性会话，强制解绑账号，或同时清除账号和平台粘性。
 - 统一把鉴权、额度、WAF、超时、限流等错误映射为 OpenAI 形状。
 
 ### 账号与平台
@@ -72,10 +72,14 @@ client2api 是一个**个人自用**的 OpenAI 兼容网关。它把你自己在
 - ZCode 的 JWT 与 coding-plan API Key 会按同一账号聚合为多条通道。
 - 支持动态添加 OpenAI 兼容中转站，每个平台有自己的 API 地址和 Key 池。
 - 中转站支持扫描模型；扫描失败时保留上一次成功的模型目录。
+- 中转站余额刷新支持 `balance_protocol`：`auto`（默认）依次探测 New API `GET /api/usage/token/`、Sub2API `GET /v1/usage`、New API 控制台 `GET /api/user/self`（仅在配置控制台凭据时），最后是 OpenAI Billing 的 `credit_grants` 与 `subscription`。也可固定为 `newapi`、`sub2api`、`openai_billing`，或设为 `none` 关闭查询。
+- `balance_quota_per_usd`（默认 `500000`）用于把 New API 的额度单位换算成美元；Sub2API 和 OpenAI Billing 直接按美元读取。
+- 账号高级字段 `balance_access_token` 和 `balance_user_id` 可提供 New API 控制台凭据，用于普通 API Key 读不到余额的情况。
 
 ### 网页面板
 
 - 账号池
+- 账号池首页可点击「粘性会话」，查看并管理实时的账号/平台绑定
 - 对话测试
 - 用量
 - 平台告警

@@ -8,8 +8,9 @@ bearer API key.
 - **Route prefix** `kilocode/` -- `kilocode/z-ai/glm-5.3-flash` reaches the
   upstream id `z-ai/glm-5.3-flash`.
 - **Upstream wire protocol** OpenAI `POST /chat/completions`, streamed SSE.
-- **Auth** a bearer API key from `app.kilo.ai/profile`, **or nothing at all**:
-  the gateway serves free models to unauthenticated callers.
+- **Auth** a Kilo account signed in from the panel (device authorisation), a
+  bearer API key from `app.kilo.ai/profile`, **or nothing at all**: the gateway
+  serves free models to unauthenticated callers.
 - **Dependencies** standard library only.
 
 ---
@@ -33,6 +34,34 @@ bucket** (the key carries that operator's own, higher limits), and the anonymous
 identity is only used when no key is selectable.  It can be disabled from the
 panel or with `"anonymous": false`, but not removed: it is rebuilt on every
 start.
+
+---
+
+## Panel sign-in (device authorisation)
+
+The panel's "add account" for this module offers a **Kilo sign-in**, not just a
+key box.  It runs the same device grant Kilo Desktop and the `kilo` CLI use:
+
+1. the module asks the auth plane for a code
+   (`POST https://api.kilo.ai/api/device-auth/codes`);
+2. the panel shows the short code and the browser link
+   (`https://app.kilo.ai/device-auth?code=XXXX-XXXX`);
+3. the operator approves it, and the next poll
+   (`GET /api/device-auth/codes/{code}`) returns an `approved` body carrying the
+   bearer token.
+
+That token is the long-lived bearer credential Kilo's own tools store in
+`~/.local/share/kilo/auth.json`, so a signed-in account serves exactly the same
+free models the desktop client sees, under that account's own limits.  The token
+carries a `kiloUserId` claim, which becomes the account's stable pool id, so
+signing in again updates one row instead of stacking a new one.  Kilo issues the
+token with about a year of life and publishes no rotation endpoint, so the module
+keeps it as-is; a token the gateway finally rejects parks the row and the panel
+offers a fresh sign-in.
+
+Because `free_only` defaults to true, the authenticated catalogue is narrowed to
+the account's zero-cost models on the way in -- the same free-detection rule the
+anonymous path uses.
 
 ---
 
@@ -91,6 +120,7 @@ and `Status` reports not-ready rather than refusing to build.
     "kilocode": {
       "base_url": "",              // default https://api.kilo.ai/api/gateway
       "app_base": "",              // default https://app.kilo.ai
+      "auth_base": "",             // default https://api.kilo.ai (device sign-in)
 
       "api_key": "",               // single-account shorthand
       "accounts": [
@@ -129,6 +159,7 @@ and `Status` reports not-ready rather than refusing to build.
 | --- | --- | --- | --- |
 | `base_url` | string | `https://api.kilo.ai/api/gateway` | inference and catalogue endpoints |
 | `app_base` | string | `https://app.kilo.ai` | console the key-page link points at (display only) |
+| `auth_base` | string | `https://api.kilo.ai` | account/device sign-in API root |
 | `api_key` | string | -- | single-credential shorthand |
 | `accounts` | array | -- | the multi-key roster |
 | `anonymous` | bool | `true` | expose the gateway's unauthenticated free-tier identity |
@@ -182,14 +213,19 @@ one account.
 
 - the module's own credential store (`data/kilocode/credentials.json`);
 - `KILO_API_KEY`, when set;
+- the Kilo CLI/Desktop sign-in file, `~/.local/share/kilo/auth.json`, when it
+  exists: importing it adopts the machine's already-signed-in account (no key to
+  paste);
 - any conventional Kilo Code state files it can see -- `~/.kilocode/...`,
   `~/.kilo/...`, `%APPDATA%\kilocode\...`, and the VS Code globalStorage copy of
   the extension's `providers.json`.
 
 Kilo Code's own extension sign-in token lives in VS Code's storage, which is not
 a readable plaintext file, so auto-discovery of a signed-in extension session is
-**not** claimed.  The reliable paths are the anonymous free tier, a pasted API
-key, and `KILO_API_KEY`.
+**not** claimed.  For a signed-in *desktop/CLI* account, the module reads the
+plaintext `~/.local/share/kilo/auth.json` it leaves behind.  The reliable paths
+are the panel device sign-in, that imported sign-in file, a pasted API key,
+`KILO_API_KEY`, and the anonymous free tier.
 
 ---
 
@@ -247,11 +283,14 @@ credential, so neither parks the account.  A vendor refusal is surfaced through
 
 ## Verified vs assumed
 
-Live-verified **2026-10-11** against the real gateway, anonymously:
+Live-verified **2026-10-11** against the real gateway:
 
-- `GET /api/gateway/models` returned 390 ids, of which 18 were free.
-- `POST /api/gateway/chat/completions` with `kilo-auto/free` and no
-  `Authorization` header returned a real completion.
+- anonymously, `GET /api/gateway/models` returned 390 ids, of which 18 were free;
+- anonymously, `POST /api/gateway/chat/completions` with `kilo-auto/free` and no
+  `Authorization` header returned a real completion;
+- with the machine's own sign-in imported, the same catalogue was fetched over
+  `Authorization: Bearer <access token>` and the 18 free models were served under
+  the account (`TestLiveOAuthImportAndModels`).
 
 Guarded, env-driven live checks ship in `kilocode_live_test.go`:
 
@@ -261,9 +300,6 @@ KILOCODE_LIVE=1 HTTPS_PROXY=http://<proxy> go test ./clients/kilocode/ -run Live
 
 ### Known gaps
 
-- **No browser/PKCE login.**  Kilo API keys are created in the dashboard
-  (`app.kilo.ai/profile`); a login flow that redirects back into the extension is
-  not reproduced here.  Use the anonymous identity or paste a key.
 - **No balance / credits surface.**  The gateway exposes no credit endpoint the
   module could read, and a fabricated `0` would be worse than saying so.
 - **No check-in, task board or bundle import.**  The gateway has no such APIs.

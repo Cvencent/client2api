@@ -4,16 +4,23 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
 
 // Defaults.  Every one of these is overridable from `clients.kilocode`.
 const (
-	defaultBaseURL  = "https://api.kilo.ai/api/gateway"
-	defaultAppBase  = "https://app.kilo.ai"
-	defaultAgent    = "client2api/1.0 (+kilocode)"
-	defaultInFlight = 4
+	defaultBaseURL = "https://api.kilo.ai/api/gateway"
+	defaultAppBase = "https://app.kilo.ai"
+	// defaultAuthBase is the account/sign-in plane.  It is the same host as the
+	// gateway, but the device-authorisation endpoints live off /api/device-auth
+	// rather than /api/gateway, so the two are kept as separate knobs.
+	defaultAuthBase  = "https://api.kilo.ai"
+	deviceCodePath   = "/api/device-auth/codes"
+	deviceStatusPath = "/api/device-auth/codes/"
+	defaultAgent     = "client2api/1.0 (+kilocode)"
+	defaultInFlight  = 4
 )
 
 // AccountConfig is one credential written directly into the module config.
@@ -39,6 +46,10 @@ type Config struct {
 	// AppBase is the browser console the key-page link opens.  It is used for
 	// display only; no request is ever made to it.
 	AppBase string `json:"app_base"`
+	// AuthBase is the account/device-login API root.  It is separate from the
+	// gateway root because Kilo splits the two hosts (api.kilo.ai for both the
+	// gateway and the auth plane; app.kilo.ai for the browser page).
+	AuthBase string `json:"auth_base"`
 	// APIKey is the convenience form of a single credential.  Accounts is the
 	// multi-key form; both may be present.
 	APIKey   string          `json:"api_key"`
@@ -122,6 +133,12 @@ func (cfg Config) normalize() Config {
 		cfg.AppBase = defaultAppBase
 	}
 	cfg.AppBase = strings.TrimRight(cfg.AppBase, "/")
+
+	cfg.AuthBase = strings.TrimSpace(cfg.AuthBase)
+	if cfg.AuthBase == "" {
+		cfg.AuthBase = defaultAuthBase
+	}
+	cfg.AuthBase = strings.TrimRight(cfg.AuthBase, "/")
 
 	cfg.APIKey = strings.TrimSpace(cfg.APIKey)
 	cfg.Version = strings.TrimSpace(cfg.Version)
@@ -293,6 +310,27 @@ func (cfg Config) appBase() string {
 		return defaultAppBase
 	}
 	return base
+}
+
+func (cfg Config) authBaseURL() string {
+	base := strings.TrimRight(strings.TrimSpace(cfg.AuthBase), "/")
+	if base == "" {
+		return defaultAuthBase
+	}
+	return base
+}
+
+func (cfg Config) deviceAuthBase() string { return cfg.appBase() }
+
+// deviceCodeURL is POST /api/device-auth/codes: it mints a device code the
+// operator approves in a browser.
+func (cfg Config) deviceCodeURL() string { return cfg.authBaseURL() + deviceCodePath }
+
+// deviceStatusURL is GET /api/device-auth/codes/{code}: one poll of a pending
+// device authorisation.  The path parameter is the short user code the vendor
+// prints ("XXXX-XXXX"), not the opaque device code.
+func (cfg Config) deviceStatusURL(code string) string {
+	return cfg.authBaseURL() + deviceStatusPath + url.PathEscape(strings.TrimSpace(code))
 }
 
 func (cfg Config) chatURL() string   { return cfg.base() + "/chat/completions" }

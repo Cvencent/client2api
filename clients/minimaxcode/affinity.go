@@ -70,6 +70,13 @@ func (c *Client) UnbindConversation(conversationKey string) bool {
 // The model argument is accepted because the gateway's interface passes it (a
 // module whose health IS model-scoped needs it); minimaxcode's is not, so it is
 // ignored.  See usableFor.
+func (c *Client) ConversationBindings() []core.ConversationBinding {
+	if c == nil {
+		return nil
+	}
+	return c.affinity.Bindings()
+}
+
 func (c *Client) ConversationAccount(conversationKey, model string) (string, bool) {
 	if c == nil || c.affinity == nil {
 		return "", false

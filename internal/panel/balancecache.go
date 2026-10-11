@@ -37,6 +37,7 @@ type balanceEntry struct {
 	Credits           int64   `json:"credits"`
 	Used              float64 `json:"used,omitempty"`
 	Total             int64   `json:"credits_total"`
+	Scale             float64 `json:"scale,omitempty"`
 	Unverified        bool    `json:"unverified,omitempty"`
 	Unlimited         bool    `json:"unlimited,omitempty"`
 	Expiring          int64   `json:"expiring,omitempty"`
@@ -176,6 +177,7 @@ func (c *balanceCache) put(client, id string, bal core.Balance) {
 		Credits:           bal.Credits,
 		Used:              bal.Used,
 		Total:             bal.Total,
+		Scale:             bal.Scale,
 		Unverified:        bal.Unverified,
 		Unlimited:         bal.Unlimited,
 		Expiring:          bal.Expiring,

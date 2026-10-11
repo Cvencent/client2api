@@ -15,7 +15,7 @@ import (
 // 这一列就能静默地永远显示成「—」，而 Go 编译和浏览器都不会报错。所以这里
 // 钉住三件事：
 //   1. 界面读的键 == core.ModelPark 的 json tag；
-//   2. 「没有限流」和「模块不上报」真的被分开（键在不在是判据，不是长度）；
+//   2. 模块没有上报逐模型状态时，账号模型列会回退到平台模型目录，而不是留白；
 //   3. 表头、行模板、组头、弹层、事件接线都还在。
 // ---------------------------------------------------------------------------
 
@@ -43,23 +43,48 @@ func TestModelColumnReadsTheKeysModelParkSends(t *testing.T) {
 	}
 }
 
-// TestModelColumnSeparatesNothingParkedFromNotReported 钉住判据：键在不在，
-// 不是数组长不长。模块报了一个空数组 = 「现在没有模型被限流」；完全没有这个
-// 键 = 「这个模块不上报模型级限流」。把两者画成同一个样子，操作员就分不清
-// 「干净」和「看不到」。
-func TestModelColumnSeparatesNothingParkedFromNotReported(t *testing.T) {
+// TestModelColumnFallsBackToTheAccountCatalog 钉住这列的补全口径：模块上报了
+// model_cooldowns 就叠加限流/不支持；没上报这个键时，不再把整格画成「—」，
+// 而是用账号自己的模型清单或平台目录显示「可用 N」。
+//
+// 这条守卫会抓住的破坏：把 acctModelSummary 改回遇到缺失键就 return null，
+// 或让它忽略账号 fields.models / realm / provider 前缀，导致某类账号又只剩
+// 一个没有说明的「—」。
+func TestModelColumnFallsBackToTheAccountCatalog(t *testing.T) {
 	src := poolStatsUISource(t)
 	body := poolStatsFuncBody(t, src, "acctModelSummary")
-	if !strings.Contains(body, "if (!Array.isArray(raw)) return null;") {
-		t.Error("acctModelSummary 没有把「键不存在」和「空数组」分开：判据必须是 Array.isArray")
+	for _, want := range []string{
+		`const raw = ex ? ex.model_cooldowns : undefined;`,
+		`const parksReported = Array.isArray(raw);`,
+		`const catalog = accountModelCatalog(n, a);`,
+		`parksReported: parksReported,`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("acctModelSummary 缺少 %q：没有上报限流的账号不会回退到模型目录", want)
+		}
 	}
-	if !strings.Contains(body, "const catalog = realmModels(n, realm);") {
-		t.Error("acctModelSummary 没有按账号所在 realm 取模型目录")
+	if strings.Contains(body, "if (!Array.isArray(raw)) return null;") {
+		t.Error("acctModelSummary 仍在缺失 model_cooldowns 时直接返回 null：模型列会继续留白")
+	}
+
+	cat := poolStatsFuncBody(t, src, "accountModelCatalog")
+	for _, want := range []string{
+		`fields.models`,
+		`realmModels(n, realm)`,
+		`id + "/"`,
+		`slice(id.length + 1)`,
+	} {
+		if !strings.Contains(cat, want) {
+			t.Errorf("accountModelCatalog 缺少 %q：账号级模型目录没有补齐", want)
+		}
 	}
 
 	cell := poolStatsFuncBody(t, src, "accModelsCell")
-	if !strings.Contains(cell, "该平台不报模型级限流") {
-		t.Error("不上报的模块没有说明文字，只剩一个没有解释的「—」")
+	if !strings.Contains(cell, "按平台目录全部可用") {
+		t.Error("不回退到平台目录，模型列仍会只显示「—」")
+	}
+	if strings.Contains(cell, "该平台不报模型级限流") {
+		t.Error("accModelsCell 还在把可回退到平台目录的账号画成「不上报」")
 	}
 
 	// realmModels 要把 "cn:glm-5.3" 的 realm 前缀去掉，否则弹层里会前缀和账号

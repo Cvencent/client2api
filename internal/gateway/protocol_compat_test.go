@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"encoding/json"
+
 	"io"
 	"net/http"
 	"strings"
@@ -11,7 +12,7 @@ import (
 )
 
 func TestChatStreamOmitsUnsetRoleForStrictClients(t *testing.T) {
-	for _, terminal := range []string{"stop", "eof"} {
+	for _, terminal := range []string{"stop"} {
 		t.Run(terminal, func(t *testing.T) {
 			events := []core.Event{
 				{Type: core.EventDelta, Reasoning: "think"},
@@ -56,6 +57,37 @@ func TestChatStreamOmitsUnsetRoleForStrictClients(t *testing.T) {
 	}
 }
 
+func TestUnterminatedStreamsFailAcrossProtocols(t *testing.T) {
+	for _, protocol := range []string{"chat-stream", "chat-buffered", "responses-stream", "responses-buffered"} {
+		t.Run(protocol, func(t *testing.T) {
+			c := &testClient{name: "t", events: []core.Event{{Type: core.EventDelta, Delta: "partial"}}}
+			srv := newTestServer(t, c, NewStats(), NewUsageStore(10))
+			switch protocol {
+			case "chat-stream":
+				rec := chat(t, srv, `{"model":"t/m1","stream":true,"messages":[{"role":"user","content":"hi"}]}`)
+				if strings.Contains(rec.Body.String(), `"finish_reason":"stop"`) || strings.Contains(rec.Body.String(), "data: [DONE]") || !strings.Contains(rec.Body.String(), "upstream stream ended before a terminal frame") {
+					t.Fatalf("truncated stream terminal markers are wrong: %s", rec.Body)
+				}
+			case "chat-buffered":
+				rec := chat(t, srv, `{"model":"t/m1","messages":[{"role":"user","content":"hi"}]}`)
+				if rec.Code == http.StatusOK || !strings.Contains(rec.Body.String(), "unexpected EOF") {
+					t.Fatalf("truncated buffered response was not reported: %d %s", rec.Code, rec.Body)
+				}
+			case "responses-stream":
+				rec := responses(t, srv, `{"model":"t/m1","stream":true,"input":"hi"}`)
+				frames := decodeSSE(t, rec.Body.String())
+				if hasType(frames, "response.completed") || !hasType(frames, "response.failed") {
+					t.Fatalf("truncated Responses stream terminal events: %s", rec.Body)
+				}
+			case "responses-buffered":
+				rec := responses(t, srv, `{"model":"t/m1","input":"hi"}`)
+				if rec.Code == http.StatusOK || !strings.Contains(rec.Body.String(), "unexpected EOF") {
+					t.Fatalf("truncated buffered response was not reported: %d %s", rec.Code, rec.Body)
+				}
+			}
+		})
+	}
+}
 func TestResponsesPreservesRequiredEmptyOutputFields(t *testing.T) {
 	for _, streaming := range []bool{false, true} {
 		for _, text := range []string{"answer", ""} {

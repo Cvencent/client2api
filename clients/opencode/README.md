@@ -343,6 +343,11 @@ Refresh preserves the account's enable switch; an account disabled by an older
 version must be explicitly enabled after configuration is resolved. Revoked
 configuration clears stale inference keys and model ids.
 
+Each account row also publishes its login realm (`free` for anonymous, `oauth`
+for Console) in `fields.realm`. The panel's per-row link re-login uses that
+value, so an OAuth row re-enters the Console device-code flow instead of falling
+back to the module's configured default realm.
+
 The vendor sends a relative `/console/device?…` path as the verification URL;
 the module resolves it against `auth_base_url` so the panel always hands the
 browser an absolute address.

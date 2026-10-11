@@ -15,13 +15,15 @@ const storeVersion = 1
 
 // storedProvider is one panel-owned provider row.
 type storedProvider struct {
-	ID       string            `json:"id"`
-	Label    string            `json:"label,omitempty"`
-	BaseURL  string            `json:"base_url,omitempty"`
-	APIKey   string            `json:"api_key"`
-	Models   []string          `json:"models,omitempty"`
-	Headers  map[string]string `json:"extra_headers,omitempty"`
-	Disabled bool              `json:"disabled,omitempty"`
+	ID                 string            `json:"id"`
+	Label              string            `json:"label,omitempty"`
+	BaseURL            string            `json:"base_url,omitempty"`
+	APIKey             string            `json:"api_key"`
+	Models             []string          `json:"models,omitempty"`
+	Headers            map[string]string `json:"extra_headers,omitempty"`
+	BalanceAccessToken string            `json:"balance_access_token,omitempty"`
+	BalanceUserID      string            `json:"balance_user_id,omitempty"`
+	Disabled           bool              `json:"disabled,omitempty"`
 }
 
 // storePath is the module's own credential store.

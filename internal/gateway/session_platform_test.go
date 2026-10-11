@@ -11,6 +11,10 @@ import (
 )
 
 func stickyTestServer(alpha, beta core.Client) *http.Server {
+	return stickyTestServerWithPlatforms(alpha, beta, nil)
+}
+
+func stickyTestServerWithPlatforms(alpha, beta core.Client, platforms *SessionPlatforms) *http.Server {
 	reg := core.NewRegistry()
 	reg.Add(alpha)
 	reg.Add(beta)
@@ -19,11 +23,12 @@ func stickyTestServer(alpha, beta core.Client) *http.Server {
 		"beta":  {Priority: 2},
 	})
 	return NewServer(Options{
-		Registry: reg,
-		Version:  "test",
-		Logger:   log.New(io.Discard, "", 0),
-		Stats:    NewStats(),
-		Usage:    NewUsageStore(4),
+		Registry:         reg,
+		Version:          "test",
+		Logger:           log.New(io.Discard, "", 0),
+		Stats:            NewStats(),
+		Usage:            NewUsageStore(4),
+		SessionPlatforms: platforms,
 	})
 }
 
@@ -60,5 +65,31 @@ func TestStickyPlatformKeepsTheLastHealthyPlatform(t *testing.T) {
 	}
 	if beta.seen == nil {
 		t.Fatal("the conversation did not stay on its last healthy platform")
+	}
+}
+
+// TestStickyPlatformManagerIsSharedWithThePanel pins the injection point the
+// force-switch action depends on: the panel must be able to forget a route and
+// the next chat must re-rank the platforms from the beginning.
+func TestStickyPlatformManagerIsSharedWithThePanel(t *testing.T) {
+	platforms := NewSessionPlatforms()
+	alpha := &testClient{name: "alpha", chatErr: core.Fail("alpha", "a1", core.FailureUpstream, http.StatusBadGateway, errors.New("boom"))}
+	beta := &testClient{name: "beta", events: usageEvents(1, 1)}
+	srv := stickyTestServerWithPlatforms(alpha, beta, platforms)
+	body := `{"model":"m1","messages":[{"role":"user","content":"hi"}],"metadata":{"conversation_id":"conv-switch"}}`
+
+	stickyChat(t, srv, body)
+	if rows := platforms.List(); len(rows) != 1 || rows[0].Platform != "beta" {
+		t.Fatalf("routes = %#v, want the beta binding", rows)
+	}
+	if !platforms.Forget("conv-switch") {
+		t.Fatal("Forget did not clear the injected route")
+	}
+
+	alpha.seen = nil
+	beta.seen = nil
+	stickyChat(t, srv, body)
+	if alpha.seen == nil {
+		t.Fatal("the next chat skipped alpha instead of re-ranking after the platform binding was cleared")
 	}
 }

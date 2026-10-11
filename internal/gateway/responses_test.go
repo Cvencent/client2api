@@ -393,7 +393,7 @@ func TestResponses_UnknownItemTypeIsSkipped(t *testing.T) {
 }
 
 func TestResponses_MissingInputIsRejected(t *testing.T) {
-	c := &testClient{name: "t", events: []core.Event{{Type: core.EventDelta, Delta: "ok"}}}
+	c := &testClient{name: "t", events: []core.Event{{Type: core.EventDelta, Delta: "ok"}, {Type: core.EventDone, Finish: "stop"}}}
 	srv := newTestServer(t, c, NewStats(), NewUsageStore(10))
 
 	rec := responses(t, srv, `{"model":"t/m1"}`)

@@ -66,6 +66,13 @@ func (c *Client) UnbindConversation(conversationKey string) bool {
 // bound account only while that account can still serve a request; a parked,
 // cooling or exhausted account is reported absent, which the table treats as
 // "drop this binding and pick normally".
+func (c *Client) ConversationBindings() []core.ConversationBinding {
+	if c == nil {
+		return nil
+	}
+	return c.affinity.Bindings()
+}
+
 func (c *Client) ConversationAccount(conversationKey, model string) (string, bool) {
 	if c == nil {
 		return "", false

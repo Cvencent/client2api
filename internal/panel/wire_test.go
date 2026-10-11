@@ -98,6 +98,30 @@ func TestBalanceWireShapeReportsUnverified(t *testing.T) {
 	}
 }
 
+func TestBalanceWireShapeCarriesDisplayScale(t *testing.T) {
+	c := quotaClient("relay", core.AccountRecord{ID: "a1"})
+	c.balances["a1"] = core.Balance{
+		Credits: 5_000_000,
+		Used:    2,
+		Total:   6_000_000,
+		Scale:   1.0 / 500000.0,
+		Unit:    "USD",
+	}
+	p := taskPanel(t, c)
+	_, out := doTask(t, p, http.MethodPost, "/panel/api/clients/relay/accounts/a1/balance", "")
+	if out["scale"] != float64(1.0/500000.0) {
+		t.Fatalf("per-account scale = %#v, want 1/500000", out["scale"])
+	}
+
+	p.initBalanceCache()
+	seedBalanceCache(p, c.Name(), "a1", c.balances["a1"])
+	_, list := doTask(t, p, http.MethodGet, "/panel/api/clients/relay/balances", "")
+	row := rowsOf(t, list["accounts"])[0]
+	if row["scale"] != float64(1.0/500000.0) {
+		t.Fatalf("balance-row scale = %#v, want 1/500000", row["scale"])
+	}
+}
+
 func TestPackagesWireShape(t *testing.T) {
 	c := quotaClient("wb", core.AccountRecord{ID: "a1", Label: "一号", State: "ready"})
 	c.packages["a1"] = core.PackageReport{

@@ -265,6 +265,35 @@ func TestAccountRecordsMaskTheKeyAndStayIdentityLess(t *testing.T) {
 	}
 }
 
+func TestAccountRecordsExposeTheLoginRealmForRelogin(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	c := newTestClient(t, Config{})
+	c.pool.upsert(accountRecord{
+		ID:       "opencode:anonymous",
+		AuthMode: "anonymous",
+		APIKey:   "public",
+		Enabled:  true,
+	})
+	c.pool.upsert(accountRecord{
+		ID:          "opencode:oauth:user-1",
+		AuthMode:    "oauth",
+		AccessToken: "console-token",
+		APIKey:      "zen-key",
+		Enabled:     true,
+	})
+
+	byID := make(map[string]core.AccountRecord)
+	for _, rec := range c.accountRecords(testNow) {
+		byID[rec.ID] = rec
+	}
+	if got := byID["opencode:anonymous"].Fields["realm"]; got != realmFree {
+		t.Fatalf("anonymous Fields[realm] = %v, want %q", got, realmFree)
+	}
+	if got := byID["opencode:oauth:user-1"].Fields["realm"]; got != realmOAuth {
+		t.Fatalf("oauth Fields[realm] = %v, want %q", got, realmOAuth)
+	}
+}
+
 func TestAccountsListsThePool(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	c := newTestClient(t, Config{})

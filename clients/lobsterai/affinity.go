@@ -99,6 +99,13 @@ func (c *Client) UnbindConversation(conversationKey string) bool {
 }
 
 // ConversationAccount implements core.ConversationBinder.
+func (c *Client) ConversationBindings() []core.ConversationBinding {
+	if c == nil {
+		return nil
+	}
+	return c.affinity.Bindings()
+}
+
 func (c *Client) ConversationAccount(conversationKey, model string) (string, bool) {
 	if c == nil || c.affinity == nil {
 		return "", false

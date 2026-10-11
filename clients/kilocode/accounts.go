@@ -151,7 +151,7 @@ func (c *Client) TestAccount(ctx context.Context, id string) (res core.TestResul
 	defer func() { res.ElapsedMS = c.now().Sub(start).Milliseconds() }()
 
 	if !rec.hasCredential() {
-		res.Error = "this account has no API key"
+		res.Error = "this account has no usable credential"
 		return res, nil
 	}
 	model := c.probeModel()
@@ -213,7 +213,7 @@ func (c *Client) RefreshAccount(ctx context.Context, id string) ([]core.RefreshR
 	for _, rec := range targets {
 		res := core.RefreshResult{AccountID: rec.ID}
 		if !rec.hasCredential() {
-			res.Error = "this account has no API key"
+			res.Error = "this account has no usable credential"
 			out = append(out, res)
 			continue
 		}

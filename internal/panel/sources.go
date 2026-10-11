@@ -47,7 +47,8 @@ func (p *panel) handleSource(w http.ResponseWriter, r *http.Request) {
 		}
 		cfg = sources[id]
 		entry = map[string]any{"label": cfg.Label, "base_url": cfg.BaseURL,
-			"disabled": cfg.Disabled, "max_tokens_field": cfg.MaxTokensField}
+			"disabled": cfg.Disabled, "max_tokens_field": cfg.MaxTokensField,
+			"balance_protocol": cfg.BalanceProtocol, "balance_quota_per_usd": cfg.BalanceQuotaPerUSD}
 	} else {
 		cfg, err := p.readConfigMap()
 		if err != nil {

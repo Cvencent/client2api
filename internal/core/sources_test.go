@@ -44,6 +44,24 @@ func TestSourceValidation(t *testing.T) {
 	}
 }
 
+func TestSourceValidationBalanceProtocol(t *testing.T) {
+	for _, proto := range []string{"auto", "newapi", "sub2api", "openai_billing", "none"} {
+		if err := ValidateSources(map[string]SourceConfig{"relay": {BaseURL: "https://relay.example/v1", BalanceProtocol: proto}}); err != nil {
+			t.Errorf("rejected balance protocol %q: %v", proto, err)
+		}
+	}
+	for _, proto := range []string{"new-api", "openai", "bogus"} {
+		if err := ValidateSources(map[string]SourceConfig{"relay": {BaseURL: "https://relay.example/v1", BalanceProtocol: proto}}); err == nil {
+			t.Errorf("accepted balance protocol %q", proto)
+		}
+	}
+	for _, quota := range []float64{-1, -0.5} {
+		if err := ValidateSources(map[string]SourceConfig{"relay": {BaseURL: "https://relay.example/v1", BalanceQuotaPerUSD: quota}}); err == nil {
+			t.Errorf("accepted quota per USD %v", quota)
+		}
+	}
+}
+
 func TestSourceReconciliationRetainsInstancesAndRemovesRoutes(t *testing.T) {
 	// A test-specific factory avoids changing the module factory used by other tests.
 	r := NewRegistry()

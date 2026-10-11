@@ -21,6 +21,8 @@ func (s *source) AccountFields(context.Context) []core.FieldSpec {
 		{Key: "api_key", Label: "API Key", Type: "password", Required: true},
 		{Key: "label", Label: "备注", Type: "text"},
 		{Key: "models", Label: "模型列表", Type: "textarea", Advanced: true},
+		{Key: "balance_access_token", Label: "余额查询 Access Token", Type: "password", Advanced: true, Help: "部分 New API 控制台需要 Access Token 才能读取余额；聊天 API Key 能直接读时留空。"},
+		{Key: "balance_user_id", Label: "余额查询 User ID", Type: "text", Advanced: true, Help: "New API 控制台的用户 ID；只有余额查询需要它时才填写。"},
 	}
 }
 func (s *source) Accounts(context.Context) ([]core.AccountRecord, error) {
@@ -61,7 +63,15 @@ func (s *source) AddAccount(ctx context.Context, spec core.AccountSpec) (core.Ac
 			id = "key-" + hex.EncodeToString(b[:])
 		}
 	}
-	p := storedProvider{ID: id, APIKey: key, Label: firstNonEmpty(spec.Label, spec.Fields["label"]), BaseURL: strings.TrimRight(s.cfg.BaseURL, "/"), Models: splitModels(spec.Fields["models"])}
+	p := storedProvider{
+		ID:                 id,
+		APIKey:             key,
+		Label:              firstNonEmpty(spec.Label, spec.Fields["label"]),
+		BaseURL:            strings.TrimRight(s.cfg.BaseURL, "/"),
+		Models:             splitModels(spec.Fields["models"]),
+		BalanceAccessToken: strings.TrimSpace(spec.Fields["balance_access_token"]),
+		BalanceUserID:      strings.TrimSpace(spec.Fields["balance_user_id"]),
+	}
 	if spec.Enabled != nil {
 		p.Disabled = !*spec.Enabled
 	}
@@ -73,6 +83,12 @@ func (s *source) AddAccount(ctx context.Context, spec core.AccountSpec) (core.Ac
 			}
 			if spec.Enabled == nil {
 				p.Disabled = old.Disabled
+			}
+			if p.BalanceAccessToken == "" {
+				p.BalanceAccessToken = old.BalanceAccessToken
+			}
+			if p.BalanceUserID == "" {
+				p.BalanceUserID = old.BalanceUserID
 			}
 			rows[i] = p
 			found = true

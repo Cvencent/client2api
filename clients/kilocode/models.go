@@ -541,7 +541,7 @@ func (c *Client) fetchModels(ctx context.Context) ([]core.Model, error) {
 	if err != nil {
 		return nil, err
 	}
-	c.cfg.applyHeaders(req, acct.APIKey, "")
+	c.cfg.applyHeaders(req, acct.bearer(), "")
 	resp, err := c.httpClient().Do(req)
 	if err != nil {
 		return nil, c.classifyUpstream(acct.ID, err)

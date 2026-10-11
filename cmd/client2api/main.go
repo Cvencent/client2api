@@ -41,7 +41,7 @@ import (
 )
 
 // version is overridable with -ldflags "-X main.version=...".
-var version = "0.1.36"
+var version = "0.1.37"
 
 // restartHandoffEnv marks the replacement half of a panel restart.  It tells a
 // starting process to keep retrying the listen address instead of failing fast,
@@ -1405,6 +1405,7 @@ func run() error {
 		logger.Printf("model metadata overrides unavailable: %v", err)
 		modelOverrides, _ = modelmeta.OpenOverrideStore("")
 	}
+	sessionPlatforms := gateway.NewSessionPlatforms()
 
 	panelHandler := panel.New(panel.Options{
 		Registry:   registry,
@@ -1439,21 +1440,26 @@ func run() error {
 		// collapsing the rest.  applyDefaults has already resolved an unset
 		// value to the reference default, so this is never zero here.
 		PackageDetailLimit: cfg.Panel.PackageDetailLimit,
+		// The panel manages the same platform-sticky table the gateway routes
+		// through, so force-switch is a live reset rather than a bookkeeping
+		// illusion.
+		SessionPlatforms: sessionPlatforms,
 	})
 
 	srv := gateway.NewServer(gateway.Options{
-		Addr:           cfg.Listen,
-		APIKey:         cfg.APIKey,
-		Live:           live,
-		Registry:       registry,
-		Version:        version,
-		Logger:         logger,
-		Guard:          guard,
-		Panel:          panelHandler,
-		Stats:          stats,
-		Usage:          usage,
-		NotifyAlert:    notifyAlert,
-		ModelOverrides: modelOverrides,
+		Addr:             cfg.Listen,
+		APIKey:           cfg.APIKey,
+		Live:             live,
+		Registry:         registry,
+		Version:          version,
+		Logger:           logger,
+		Guard:            guard,
+		Panel:            panelHandler,
+		Stats:            stats,
+		Usage:            usage,
+		NotifyAlert:      notifyAlert,
+		ModelOverrides:   modelOverrides,
+		SessionPlatforms: sessionPlatforms,
 	})
 
 	errCh := make(chan error, 1)

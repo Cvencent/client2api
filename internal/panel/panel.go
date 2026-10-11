@@ -58,6 +58,14 @@ type Scheduler interface {
 	RunDailyBalanceNow(ctx context.Context, client string) bool
 }
 
+// SessionPlatformStore is the gateway-level half of sticky-session management.
+// The panel only needs to list routes and forget one; the concrete gateway
+// implementation shares the same table the request path uses.
+type SessionPlatformStore interface {
+	List() []gateway.StickyRoute
+	Forget(conversationKey string) bool
+}
+
 //go:embed index.html
 var indexHTML []byte
 
@@ -133,6 +141,10 @@ type Options struct {
 	// non-positive value here means "the caller did not resolve it" and the
 	// page falls back to its own copy of the default.
 	PackageDetailLimit int
+	// SessionPlatforms, when non-nil, lets the panel inspect and clear the
+	// gateway's conversation-to-platform bindings alongside each module's
+	// account bindings.
+	SessionPlatforms SessionPlatformStore
 }
 
 // clientView is a module's self-report plus what the panel is allowed to ask
@@ -205,6 +217,9 @@ func New(opts Options) http.Handler {
 	api("/panel/api/model_context", p.handleModelContext)
 	api("/panel/api/usage", p.handleUsage)
 	api("/panel/api/usage/save", p.handleUsageSave)
+	api("/panel/api/sticky-sessions", p.handleStickySessions)
+	api("/panel/api/sticky-sessions/unbind", p.handleStickySessionUnbind)
+	api("/panel/api/sticky-sessions/switch", p.handleStickySessionSwitch)
 	api("/panel/api/alerts", p.handleAlerts)
 	api("/panel/api/config", p.handleConfig)
 	api("/panel/api/sources/", p.handleSource)

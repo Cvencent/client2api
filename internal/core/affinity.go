@@ -31,6 +31,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -286,6 +287,44 @@ func (a *Affinity) Count() int {
 	return len(a.entries)
 }
 
+// ConversationBinding is the read-only view of one live affinity entry.  It is
+// deliberately account-only: platform stickiness lives in the gateway, which
+// merges its own rows with these for the management UI.
+type ConversationBinding struct {
+	Key        string    `json:"key"`
+	Account    string    `json:"account"`
+	LastActive time.Time `json:"last_active"`
+	ExpiresAt  time.Time `json:"expires_at,omitempty"`
+}
+
+// Bindings returns the live bindings in stable key order.  Expired rows are
+// omitted even when the background GC has not run yet, so a management view
+// never offers an action on a conversation that routing will not honour.
+func (a *Affinity) Bindings() []ConversationBinding {
+	if a == nil {
+		return nil
+	}
+	now := a.now()
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.disabled || len(a.entries) == 0 {
+		return nil
+	}
+	out := make([]ConversationBinding, 0, len(a.entries))
+	for key, e := range a.entries {
+		if expired(e, now, a.ttl) {
+			continue
+		}
+		row := ConversationBinding{Key: key, Account: e.account, LastActive: e.lastActive}
+		if a.ttl > 0 {
+			row.ExpiresAt = e.lastActive.Add(a.ttl)
+		}
+		out = append(out, row)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
+	return out
+}
+
 // GC drops every expired binding and reports how many it removed.  It is
 // nil-safe, and it is safe to call concurrently with Resolve.
 func (a *Affinity) GC() int {
@@ -386,6 +425,10 @@ type ConversationBinder interface {
 	BindConversation(conversationKey, accountID string)
 	// UnbindConversation forgets conversationKey, reporting whether it was bound.
 	UnbindConversation(conversationKey string) bool
+	// ConversationBindings returns the live bindings this module currently
+	// holds.  The panel merges them across modules for the operator's sticky
+	// session view.
+	ConversationBindings() []ConversationBinding
 	// ConversationAccount reports the account currently bound to a key, and only
 	// when that account is still able to serve model right now.  An unusable
 	// binding must be reported as absent -- the caller's contract is the same as

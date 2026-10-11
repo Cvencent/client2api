@@ -26,6 +26,10 @@ const (
 	sourceAnonymous = "anonymous"
 )
 
+// authModeOAuth marks a signed-in account row.  Its usable secret is the
+// access token, not a static API key.
+const authModeOAuth = "oauth"
+
 // anonymousID is the pool id of the gateway's unauthenticated free-tier
 // identity.  It is stable so the affinity table, the usage ledger and the
 // panel row all name the same account across restarts.
@@ -41,6 +45,15 @@ type accountRecord struct {
 	APIKey  string `json:"api_key,omitempty"`
 	Source  string `json:"source"`
 	AddedAt string `json:"added_at,omitempty"`
+
+	// Signed-in (Kilo account) credentials.  The access token is the bearer
+	// credential a request carries; the refresh token and expiry let the
+	// module renew it without another browser round trip.
+	AuthMode     string `json:"auth_mode,omitempty"`
+	AccessToken  string `json:"access_token,omitempty"`
+	RefreshToken string `json:"refresh_token,omitempty"`
+	ExpiresAt    string `json:"expires_at,omitempty"`
+	OAuthServer  string `json:"oauth_server,omitempty"`
 
 	// Anonymous marks the gateway's unauthenticated free-tier identity: a real
 	// selectable account that carries no key.
@@ -61,18 +74,42 @@ type accountRecord struct {
 	lastUsed time.Time
 }
 
-// hasCredential reports whether the record can carry a request at all: a
-// keyed account has a key, and the anonymous account is its own credential.
-func (a *accountRecord) hasCredential() bool { return a.APIKey != "" || a.Anonymous }
+// hasCredential reports whether the record can carry a request at all: a keyed
+// account has a key, a signed-in account has a refresh token (and normally an
+// access token), and the anonymous account is its own credential.
+func (a *accountRecord) hasCredential() bool {
+	return a.APIKey != "" || a.RefreshToken != "" || a.Anonymous
+}
+
+// authMode reports whether the record is a signed-in account.  An explicit
+// mode wins; a record with an access token is treated as OAuth even when an
+// older store omitted the field.
+func (a *accountRecord) authMode() string {
+	if a == nil {
+		return ""
+	}
+	if a.AuthMode != "" {
+		return a.AuthMode
+	}
+	if a.AccessToken != "" || a.RefreshToken != "" {
+		return authModeOAuth
+	}
+	return ""
+}
 
 // credentialRecord is the on-disk shape of credentials.json: the records the
 // module owns, and nothing else.
 type credentialRecord struct {
-	ID      string `json:"id"`
-	Label   string `json:"label"`
-	APIKey  string `json:"api_key"`
-	Source  string `json:"source"`
-	AddedAt string `json:"added_at,omitempty"`
+	ID           string `json:"id"`
+	Label        string `json:"label"`
+	APIKey       string `json:"api_key,omitempty"`
+	Source       string `json:"source"`
+	AddedAt      string `json:"added_at,omitempty"`
+	AuthMode     string `json:"auth_mode,omitempty"`
+	AccessToken  string `json:"access_token,omitempty"`
+	RefreshToken string `json:"refresh_token,omitempty"`
+	ExpiresAt    string `json:"expires_at,omitempty"`
+	OAuthServer  string `json:"oauth_server,omitempty"`
 }
 
 // healthRecord is the on-disk shape of state.json.  It has no key field at
@@ -209,7 +246,7 @@ func (p *pool) coolingDownLocked(a *accountRecord, now time.Time) bool {
 func (p *pool) pickLocked(now time.Time, limit int) *accountRecord {
 	var best *accountRecord
 	for _, a := range p.accts {
-		if a.Anonymous || !p.selectableLocked(a, now, limit) {
+		if a.Anonymous || !a.hasCredential() || !p.selectableLocked(a, now, limit) {
 			continue
 		}
 		if best == nil || a.lastUsed.Before(best.lastUsed) {
@@ -331,6 +368,11 @@ func (p *pool) upsert(rec accountRecord) {
 		a.Source = rec.Source
 		a.Anonymous = rec.Anonymous
 		a.Disabled = rec.Disabled
+		a.AuthMode = rec.AuthMode
+		a.AccessToken = rec.AccessToken
+		a.RefreshToken = rec.RefreshToken
+		a.ExpiresAt = rec.ExpiresAt
+		a.OAuthServer = rec.OAuthServer
 		p.sortLocked()
 		return
 	}
@@ -495,8 +537,10 @@ func (p *pool) stateOf(a *accountRecord, now time.Time) string {
 // site has to keep.
 func scrubNote(a *accountRecord) string {
 	note := a.Note
-	if a.APIKey != "" {
-		note = strings.ReplaceAll(note, a.APIKey, core.MaskSecret(a.APIKey))
+	for _, secret := range []string{a.APIKey, a.AccessToken, a.RefreshToken} {
+		if secret != "" {
+			note = strings.ReplaceAll(note, secret, core.MaskSecret(secret))
+		}
 	}
 	return core.Redact(note)
 }
@@ -524,6 +568,12 @@ func (p *pool) statuses(now time.Time) []core.AccountStatus {
 		}
 		if a.Anonymous {
 			extra["anonymous"] = true
+		}
+		if a.authMode() == authModeOAuth {
+			extra["oauth"] = true
+			if a.ExpiresAt != "" {
+				extra["token_expires_at"] = a.ExpiresAt
+			}
 		}
 		if a.ErrCount > 0 {
 			extra["failures"] = a.ErrCount
@@ -553,6 +603,12 @@ func (p *pool) records(now time.Time) []core.AccountRecord {
 		}
 		if a.Anonymous {
 			fields["anonymous"] = true
+		}
+		if a.authMode() == authModeOAuth {
+			fields["oauth"] = true
+			if a.ExpiresAt != "" {
+				fields["token_expires_at"] = a.ExpiresAt
+			}
 		}
 		if a.ErrCount > 0 {
 			fields["failures"] = a.ErrCount
@@ -592,7 +648,8 @@ func safeLabel(a accountRecord) string {
 			label = "key"
 		}
 	}
-	if looksLikeAPIKey(label) || (a.APIKey != "" && label == a.APIKey) {
+	if looksLikeAPIKey(label) || (a.APIKey != "" && label == a.APIKey) ||
+		(a.AccessToken != "" && label == a.AccessToken) {
 		return core.MaskSecret(label)
 	}
 	return core.Redact(label)
@@ -656,13 +713,16 @@ func loadCredentials(path string) []credentialRecord {
 	}
 	out := make([]credentialRecord, 0, len(store.Accounts))
 	for _, r := range store.Accounts {
-		if r.APIKey == "" {
+		if r.APIKey == "" && r.RefreshToken == "" {
 			continue
 		}
 		if r.Source == "" || r.Source == sourceConfig || r.Source == sourceEnv {
 			// Anything the module does not own is not durable here; treat a
 			// stray row as imported so it is at least listed.
 			r.Source = sourceImported
+		}
+		if r.AuthMode == "" && (r.AccessToken != "" || r.RefreshToken != "") {
+			r.AuthMode = authModeOAuth
 		}
 		out = append(out, r)
 	}

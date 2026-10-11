@@ -3,6 +3,7 @@ package core
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -324,6 +325,36 @@ func TestAffinityStartGCIsIdempotentAndStoppable(t *testing.T) {
 	}
 }
 
+// TestAffinityBindingsReportLiveConversations pins the read side used by the
+// panel's sticky-session dialog: active rows carry the account and expiry, and
+// idle rows disappear from the snapshot even before the next GC tick.
+func TestAffinityBindingsReportLiveConversations(t *testing.T) {
+	a, clk := testAffinity(t, 10*time.Minute)
+	a.Bind("conv-b", "acct-b")
+	clk.advance(time.Minute)
+	a.Bind("conv-a", "acct-a")
+
+	got := a.Bindings()
+	if len(got) != 2 {
+		t.Fatalf("bindings = %#v, want two live rows", got)
+	}
+	if got[0].Key != "conv-a" || got[0].Account != "acct-a" {
+		t.Fatalf("first binding = %#v, want conv-a/acct-a", got[0])
+	}
+	if got[1].Key != "conv-b" || got[1].Account != "acct-b" {
+		t.Fatalf("second binding = %#v, want conv-b/acct-b", got[1])
+	}
+	if want := got[1].LastActive.Add(10 * time.Minute); !got[1].ExpiresAt.Equal(want) {
+		t.Fatalf("expiry = %s, want %s", got[1].ExpiresAt, want)
+	}
+
+	clk.advance(11 * time.Minute)
+	got = a.Bindings()
+	if len(got) != 0 {
+		t.Fatalf("expired bindings leaked into the snapshot: %#v", got)
+	}
+}
+
 // TestAffinityConcurrentAccess exercises the map under -race: many conversations
 // resolving and binding while a GC sweep runs.
 func TestAffinityConcurrentAccess(t *testing.T) {
@@ -438,6 +469,10 @@ func TestAsConversationBinderRequiresOptIn(t *testing.T) {
 	if _, ok := b.ConversationAccount("conv-1", "model-x"); !ok {
 		t.Fatal("the discovered binder did not record the binding")
 	}
+	rows := b.ConversationBindings()
+	if len(rows) != 1 || rows[0].Key != "conv-1" || rows[0].Account != "acct-a" {
+		t.Fatalf("discovered bindings = %#v, want conv-1/acct-a", rows)
+	}
 }
 
 type affinityStub struct {
@@ -468,6 +503,17 @@ func (c *affinityStub) ConversationAccount(key, _ string) (string, bool) {
 	defer c.mu.Unlock()
 	v, ok := c.m[key]
 	return v, ok
+}
+
+func (c *affinityStub) ConversationBindings() []ConversationBinding {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]ConversationBinding, 0, len(c.m))
+	for key, account := range c.m {
+		out = append(out, ConversationBinding{Key: key, Account: account})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
+	return out
 }
 
 // TestConversationKeyOfFallsBackToContentForAnUnscopedRequest pins the shared

@@ -81,7 +81,11 @@ func (c *testClient) Chat(ctx context.Context, req *core.ChatRequest) (core.Stre
 	if c.chatErr != nil {
 		return nil, c.chatErr
 	}
-	return &fakeStream{events: c.events}, nil
+	events := c.events
+	if events == nil {
+		events = []core.Event{{Type: core.EventDone, Finish: "stop"}}
+	}
+	return &fakeStream{events: events}, nil
 }
 
 func (c *testClient) Status(ctx context.Context) core.Status {

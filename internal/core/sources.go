@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/url"
 	"path/filepath"
 	"regexp"
@@ -27,10 +28,12 @@ func ParseSources(raw []byte) (map[string]SourceConfig, error) {
 // SourceConfig defines a hot-editable OpenAI-compatible routing platform.
 // Credentials belong to its account store, never this configuration.
 type SourceConfig struct {
-	Label          string `json:"label,omitempty"`
-	BaseURL        string `json:"base_url"`
-	Disabled       bool   `json:"disabled,omitempty"`
-	MaxTokensField string `json:"max_tokens_field,omitempty"`
+	Label              string  `json:"label,omitempty"`
+	BaseURL            string  `json:"base_url"`
+	Disabled           bool    `json:"disabled,omitempty"`
+	MaxTokensField     string  `json:"max_tokens_field,omitempty"`
+	BalanceProtocol    string  `json:"balance_protocol,omitempty"`
+	BalanceQuotaPerUSD float64 `json:"balance_quota_per_usd,omitempty"`
 }
 
 type SourceClient interface {
@@ -77,6 +80,14 @@ func ValidateSources(sources map[string]SourceConfig) error {
 		}
 		if cfg.MaxTokensField != "" && cfg.MaxTokensField != "max_tokens" && cfg.MaxTokensField != "max_completion_tokens" {
 			return fmt.Errorf("source %q: max_tokens_field must be max_tokens or max_completion_tokens", id)
+		}
+		switch strings.ToLower(strings.TrimSpace(cfg.BalanceProtocol)) {
+		case "", "auto", "newapi", "sub2api", "openai_billing", "none":
+		default:
+			return fmt.Errorf("source %q: balance_protocol must be auto, newapi, sub2api, openai_billing or none", id)
+		}
+		if math.IsNaN(cfg.BalanceQuotaPerUSD) || math.IsInf(cfg.BalanceQuotaPerUSD, 0) || cfg.BalanceQuotaPerUSD < 0 {
+			return fmt.Errorf("source %q: balance_quota_per_usd must be positive when set", id)
 		}
 	}
 	return nil

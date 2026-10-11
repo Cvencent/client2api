@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"client2api/internal/core"
 )
 
 func TestSourceConfigValidationAndHotSave(t *testing.T) {
@@ -27,6 +29,42 @@ func TestSourceConfigValidationAndHotSave(t *testing.T) {
 	source := cfg["sources"].(map[string]any)["my-auth"].(map[string]any)
 	if source["max_tokens_field"] != "max_completion_tokens" || source["label"] != "自定义" {
 		t.Fatalf("source definition incorrectly redacted: %v", source)
+	}
+}
+
+func TestSourceHandlerPersistsBalanceProtocol(t *testing.T) {
+	path := configFile(t, `{}`)
+	p := configPanel(path)
+	p.opts.Registry = core.NewRegistry()
+	p.opts.Reload = func() error { return nil }
+	w := httptest.NewRecorder()
+	body := `{"base_url":"https://relay.example/v1","balance_protocol":"newapi","balance_quota_per_usd":1000000}`
+	p.handleSource(w, httptest.NewRequest(http.MethodPut, "/panel/api/sources/relay", strings.NewReader(body)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("save: %d %s", w.Code, w.Body.String())
+	}
+	src := onDisk(t, path)["sources"].(map[string]any)["relay"].(map[string]any)
+	if src["balance_protocol"] != "newapi" || src["balance_quota_per_usd"] != float64(1000000) {
+		t.Fatalf("balance config was not persisted: %v", src)
+	}
+}
+
+func TestSourceBalanceEditorIsWired(t *testing.T) {
+	src := string(indexHTML)
+	for _, want := range []string{
+		`id="sourceBalanceProtocol"`,
+		`<option value="auto">自动识别</option>`,
+		`<option value="newapi">New API</option>`,
+		`<option value="sub2api">Sub2API</option>`,
+		`<option value="openai_billing">OpenAI Billing</option>`,
+		`<option value="none">不查询</option>`,
+		`id="sourceBalanceQuota"`,
+		`balance_protocol: $("#sourceBalanceProtocol").value`,
+		`balance_quota_per_usd: Number($("#sourceBalanceQuota").value)`,
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("source balance editor is missing %q", want)
+		}
 	}
 }
 

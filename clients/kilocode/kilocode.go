@@ -69,6 +69,11 @@ type Client struct {
 	liveThreshold *int
 	liveCooldown  time.Duration
 	lastErr       string
+
+	// loginMu guards logins, the in-flight device authorisations the panel
+	// drives through core.LoginProvider.  See login.go.
+	loginMu sync.Mutex
+	logins  map[string]*loginSession
 }
 
 // New builds the module.
@@ -270,7 +275,7 @@ func (c *Client) doChat(ctx context.Context, acct accountRecord, body []byte, ho
 		return nil, fmt.Errorf("kilocode: build request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	c.cfg.applyHeaders(httpReq, acct.APIKey, mode)
+	c.cfg.applyHeaders(httpReq, acct.bearer(), mode)
 
 	resp, err := c.httpClient().Do(httpReq)
 	if err != nil {

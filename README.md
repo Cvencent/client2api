@@ -67,7 +67,7 @@ people. The built-in default is `127.0.0.1`.
 - Custom `model_groups` for binding the same model across platforms.
 - Platform priority, account priority and time-based priority schedules.
 - Per-platform and per-account concurrency limits.
-- Conversation stickiness, retries, cooldown and automatic failover.
+- Conversation stickiness, retries, cooldown and automatic failover, with panel controls to inspect live bindings and force-unbind or force-switch a session.
 - OpenAI-shaped error mapping for auth, quota, WAF, timeout and rate-limit failures.
 
 ### Accounts and platforms
@@ -78,10 +78,14 @@ people. The built-in default is `127.0.0.1`.
 - ZCode JWT / API key channels grouped under one account.
 - Dynamic OpenAI-compatible relay platforms with their own API root and Key pool.
 - Model scanning for relay platforms, with cached catalogues when a scan fails.
+- Balance refresh for relay platforms via `balance_protocol`: `auto` (default) probes New API `GET /api/usage/token/`, then Sub2API `GET /v1/usage`, then the New API console `GET /api/user/self` (only when console credentials are set), then OpenAI Billing `credit_grants` + `subscription`. Pin a single protocol with `newapi`, `sub2api` or `openai_billing`, or set `none` to skip balance reads.
+- `balance_quota_per_usd` (default `500000`) converts New API quota units to USD; Sub2API and OpenAI Billing values are read as real USD.
+- Optional per-account advanced fields `balance_access_token` and `balance_user_id` supply the New API console credentials when the plain API Key cannot read the balance.
 
 ### Panel
 
 - Accounts
+- Sticky-session management from the Accounts overview: inspect account/platform bindings, force-unbind an account, or force-switch the conversation back through normal platform and account selection
 - Chat Test
 - Usage
 - Alerts

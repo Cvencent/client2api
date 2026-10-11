@@ -59,6 +59,13 @@ func (c *Client) UnbindConversation(conversationKey string) bool {
 }
 
 // ConversationAccount implements core.ConversationBinder for the legacy client.
+func (c *Client) ConversationBindings() []core.ConversationBinding {
+	if c == nil {
+		return nil
+	}
+	return c.affinity.Bindings()
+}
+
 func (c *Client) ConversationAccount(conversationKey, model string) (string, bool) {
 	if c == nil {
 		return "", false
@@ -121,6 +128,13 @@ func (s *source) UnbindConversation(conversationKey string) bool {
 }
 
 // ConversationAccount implements core.ConversationBinder for a custom source.
+func (s *source) ConversationBindings() []core.ConversationBinding {
+	if s == nil {
+		return nil
+	}
+	return s.affinity.Bindings()
+}
+
 func (s *source) ConversationAccount(conversationKey, model string) (string, bool) {
 	if s == nil {
 		return "", false

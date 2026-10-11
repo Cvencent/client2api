@@ -169,8 +169,10 @@ func accountFields(a *accountRecord) map[string]any {
 	switch a.authMode() {
 	case "anonymous":
 		fields["key"] = "public (anonymous)"
+		fields["realm"] = realmFree
 	case "oauth":
 		fields["key"] = core.MaskSecret(a.AccessToken)
+		fields["realm"] = realmOAuth
 		if a.OrgName != "" {
 			fields["org"] = a.OrgName
 		} else if a.OrgID != "" {

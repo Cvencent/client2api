@@ -48,6 +48,13 @@ func (c *Client) UnbindConversation(conversationKey string) bool {
 // ConversationAccount implements core.ConversationBinder.  It reports the bound
 // account only while that account could still serve a request, so a parked or
 // disabled credential is reported absent rather than kept as a broken pin.
+func (c *Client) ConversationBindings() []core.ConversationBinding {
+	if c == nil {
+		return nil
+	}
+	return c.affinity.Bindings()
+}
+
 func (c *Client) ConversationAccount(conversationKey, model string) (string, bool) {
 	if c == nil || c.affinity == nil {
 		return "", false

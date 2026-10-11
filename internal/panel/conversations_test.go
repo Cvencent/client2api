@@ -3,6 +3,7 @@ package panel
 import (
 	"context"
 	"net/http"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -61,6 +62,17 @@ func (f *fakeBinderClient) ConversationAccount(key, _ string) (string, bool) {
 		return "", false
 	}
 	return id, true
+}
+
+func (f *fakeBinderClient) ConversationBindings() []core.ConversationBinding {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]core.ConversationBinding, 0, len(f.entries))
+	for key, account := range f.entries {
+		out = append(out, core.ConversationBinding{Key: key, Account: account})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
+	return out
 }
 
 func (f *fakeBinderClient) bound(key string) (string, bool) {
@@ -302,6 +314,15 @@ func (b *bareBinderClient) UnbindConversation(key string) bool {
 func (b *bareBinderClient) ConversationAccount(key, _ string) (string, bool) {
 	id, ok := b.entries[key]
 	return id, ok
+}
+
+func (b *bareBinderClient) ConversationBindings() []core.ConversationBinding {
+	out := make([]core.ConversationBinding, 0, len(b.entries))
+	for key, account := range b.entries {
+		out = append(out, core.ConversationBinding{Key: key, Account: account})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
+	return out
 }
 
 // TestCapabilitiesReportConversations: the frontend hides the per-account test

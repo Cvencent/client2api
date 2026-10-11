@@ -65,3 +65,44 @@ func TestLiveAnonymousChat(t *testing.T) {
 	}
 	t.Logf("live reply: %q", strings.TrimSpace(text))
 }
+
+// TestLiveOAuthImportAndModels imports the machine's own Kilo CLI/Desktop
+// sign-in (when one exists) and pulls the authenticated catalogue through it.
+// It is the end-to-end proof that a real sign-in token is carried as a bearer
+// credential and that the account's free models are visible.
+func TestLiveOAuthImportAndModels(t *testing.T) {
+	c := liveClient(t)
+	var authPath string
+	for _, p := range oauthCredentialPaths() {
+		if _, err := os.Stat(p); err == nil {
+			authPath = p
+			break
+		}
+	}
+	if authPath == "" {
+		t.Skip("no local Kilo sign-in file found")
+	}
+	recs, err := c.Import(context.Background(), []string{authPath}, false)
+	if err != nil {
+		t.Fatalf("Import(%s): %v", authPath, err)
+	}
+	if len(recs) == 0 {
+		t.Fatalf("no account imported from %s", authPath)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	list, err := c.RefreshModels(ctx)
+	if err != nil {
+		t.Fatalf("RefreshModels: %v", err)
+	}
+	free := 0
+	for _, m := range list {
+		if modelIsFree(m) {
+			free++
+		}
+	}
+	if free == 0 {
+		t.Fatalf("no free models in the authenticated catalogue (%d total)", len(list))
+	}
+	t.Logf("authenticated catalogue: %d free of %d models via %s", free, len(list), authPath)
+}

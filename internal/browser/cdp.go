@@ -267,6 +267,7 @@ func (b *Browser) Close() {
 			_ = b.cmd.Process.Kill()
 			_, _ = b.cmd.Process.Wait()
 		}
+		closeBrowserProfile(b.exe, b.profile)
 		if b.profile != "" {
 			_ = os.RemoveAll(b.profile)
 		}

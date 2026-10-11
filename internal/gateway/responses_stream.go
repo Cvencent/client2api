@@ -175,6 +175,7 @@ func (s *server) streamResponsesSSE(w http.ResponseWriter, r *http.Request, a em
 		toolByIx    = map[int]int{}
 		finish      string
 		streamErr   error
+		finished    bool
 	)
 	addItem := func(item responseOutput) (int, bool) {
 		ix := len(output)
@@ -213,6 +214,9 @@ receive:
 		ev, err := stream.Recv()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
+				if !finished {
+					streamErr = io.ErrUnexpectedEOF
+				}
 				break
 			}
 			streamErr = err
@@ -304,6 +308,7 @@ receive:
 			}
 
 		case core.EventDone:
+			finished = true
 			finish = ev.Finish
 			break receive
 
@@ -373,6 +378,7 @@ func (s *server) bufferResponse(w http.ResponseWriter, r *http.Request, a emitAr
 		usage     *core.Usage
 		finish    string
 		streamErr error
+		finished  bool
 	)
 	defer func() {
 		a.rec.setUsage(usage)
@@ -389,7 +395,9 @@ receive:
 		}
 		ev, err := stream.Recv()
 		if err != nil {
-			if !errors.Is(err, io.EOF) {
+			if errors.Is(err, io.EOF) && !finished {
+				streamErr = io.ErrUnexpectedEOF
+			} else if !errors.Is(err, io.EOF) {
 				streamErr = err
 			}
 			break
@@ -421,6 +429,7 @@ receive:
 				usage = ev.Usage
 			}
 		case core.EventDone:
+			finished = true
 			if ev.Finish != "" {
 				finish = ev.Finish
 			}

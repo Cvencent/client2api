@@ -1,6 +1,7 @@
 {
   "base_url": "",
   "app_base": "",
+  "auth_base": "",
 
   "api_key": "",
   "accounts": [

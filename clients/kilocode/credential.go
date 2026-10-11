@@ -38,6 +38,21 @@ func keyFingerprint(key string) string {
 // key" collapse into one account instead of two rows.
 func accountIDFor(key string) string { return clientName + ":" + keyFingerprint(key) }
 
+// oauthIDForToken is the stable pool id for a signed-in (OAuth) credential.
+// The vendor stamps kiloUserId into the token, so re-importing the same sign-in
+// or signing in again updates one row; a token without that claim falls back to
+// a fingerprint of the token itself.
+func oauthIDForToken(token string) string {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return ""
+	}
+	if sub := jwtStringClaim(token, "kiloUserId"); sub != "" {
+		return oauthAccountID(sub)
+	}
+	return oauthAccountID(token)
+}
+
 // jwtPattern matches the vendor's API keys, which are JWTs (`eyJ…` with two
 // dots).  It is deliberately anchored on the JWT header prefix so a stray
 // three-part dotted string elsewhere in a settings tree is not mistaken for a
@@ -113,6 +128,50 @@ func (c *Client) buildCredentials() []accountRecord {
 		})
 	}
 
+	// addOAuth appends a signed-in account.  Its secret is the access token,
+	// and its id derives from the vendor user id so a second sign-in updates
+	// the row instead of stacking a new one.
+	addOAuth := func(r credentialRecord) {
+		token := strings.TrimSpace(firstNonEmpty(r.AccessToken, r.RefreshToken))
+		if token == "" {
+			return
+		}
+		fp := keyFingerprint(token)
+		if seen[fp] {
+			return
+		}
+		seen[fp] = true
+		id := strings.TrimSpace(r.ID)
+		if id == "" {
+			id = oauthIDForToken(token)
+		}
+		source := strings.TrimSpace(r.Source)
+		if source == "" {
+			source = sourceImported
+		}
+		expires := strings.TrimSpace(r.ExpiresAt)
+		if expires == "" {
+			if exp := jwtExpiry(token); !exp.IsZero() {
+				expires = exp.Format(time.RFC3339)
+			}
+		}
+		added := strings.TrimSpace(r.AddedAt)
+		if added == "" {
+			added = now.UTC().Format(time.RFC3339)
+		}
+		recs = append(recs, accountRecord{
+			ID:           id,
+			Label:        strings.TrimSpace(r.Label),
+			AuthMode:     authModeOAuth,
+			AccessToken:  strings.TrimSpace(r.AccessToken),
+			RefreshToken: strings.TrimSpace(firstNonEmpty(r.RefreshToken, r.AccessToken)),
+			ExpiresAt:    expires,
+			OAuthServer:  strings.TrimSpace(r.OAuthServer),
+			Source:       source,
+			AddedAt:      added,
+		})
+	}
+
 	add(c.cfg.APIKey, "configured key", sourceConfig, false)
 	for _, a := range c.cfg.Accounts {
 		label := a.Label
@@ -123,6 +182,10 @@ func (c *Client) buildCredentials() []accountRecord {
 	}
 	add(os.Getenv(envAPIKey), envAPIKey, sourceEnv, false)
 	for _, r := range loadCredentials(c.credentialsPath()) {
+		if r.AccessToken != "" || r.RefreshToken != "" {
+			addOAuth(r)
+			continue
+		}
 		add(r.APIKey, r.Label, r.Source, false)
 	}
 	if c.cfg.anonymousEnabled() {
@@ -168,11 +231,16 @@ func (c *Client) persistCredentials() {
 			continue
 		}
 		out = append(out, credentialRecord{
-			ID:      r.ID,
-			Label:   r.Label,
-			APIKey:  r.APIKey,
-			Source:  r.Source,
-			AddedAt: r.AddedAt,
+			ID:           r.ID,
+			Label:        r.Label,
+			APIKey:       r.APIKey,
+			Source:       r.Source,
+			AddedAt:      r.AddedAt,
+			AuthMode:     r.AuthMode,
+			AccessToken:  r.AccessToken,
+			RefreshToken: r.RefreshToken,
+			ExpiresAt:    r.ExpiresAt,
+			OAuthServer:  r.OAuthServer,
 		})
 	}
 	if err := saveCredentials(c.credentialsPath(), out); err != nil {
@@ -198,7 +266,7 @@ func (c *Client) Discover(ctx context.Context) ([]core.DiscoveredCredential, err
 	store := c.credentialsPath()
 	owned := 0
 	for _, r := range loadCredentials(store) {
-		if r.APIKey != "" {
+		if r.APIKey != "" || r.AccessToken != "" || r.RefreshToken != "" {
 			owned++
 		}
 	}
@@ -228,6 +296,24 @@ func (c *Client) Discover(ctx context.Context) ([]core.DiscoveredCredential, err
 		Importable: env != "",
 		Imported:   env != "" && c.hasKey(env),
 	})
+
+	// The Kilo CLI/Desktop sign-in: the device-flow bearer token lives in a
+	// plaintext JSON file (no key to paste), so importing it is what lets this
+	// module serve the signed-in account's own catalogue and limits.
+	for _, p := range oauthCredentialPaths() {
+		token, ok := readOAuthTokenFile(p)
+		if !ok {
+			continue
+		}
+		out = append(out, core.DiscoveredCredential{
+			Path:       p,
+			Kind:       "file",
+			Label:      "Kilo sign-in (device OAuth)",
+			Note:       "the Kilo CLI/Desktop sign-in token; import it to serve this account",
+			Importable: true,
+			Imported:   c.hasOAuthToken(token),
+		})
+	}
 
 	// Locations the Kilo Code desktop/CLI tools are known (or plausibly
 	// expected) to keep state in.  The extension's sign-in token lives in VS
@@ -267,17 +353,42 @@ func conventionalCredentialPaths() []string {
 	return out
 }
 
+// oauthCredentialPaths lists the device-flow sign-in files the Kilo CLI and
+// Desktop write.  The path is fixed by the vendor's own client: it stores the
+// token under $HOME/.local/share/kilo/auth.json on every platform.
+func oauthCredentialPaths() []string {
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		return []string{filepath.Join(home, ".local", "share", "kilo", "auth.json")}
+	}
+	return nil
+}
+
 func (c *Client) hasKey(key string) bool {
 	_, ok := c.pool.byID(accountIDFor(key))
 	return ok
 }
 
+func (c *Client) hasOAuthToken(token string) bool {
+	id := oauthIDForToken(token)
+	if id == "" {
+		return false
+	}
+	_, ok := c.pool.byID(id)
+	return ok
+}
+
 // --- import ---------------------------------------------------------------
 
-// foundKey is one credential read out of a file.
+// foundKey is one credential read out of a file.  A static API key fills Key;
+// a device-flow sign-in fills the OAuth fields instead.
 type foundKey struct {
-	Key   string
-	Label string
+	Key      string
+	Label    string
+	AuthMode string
+
+	AccessToken  string
+	RefreshToken string
+	ExpiresAt    string
 }
 
 // Import reads credentials out of the named files (or, with all=true, out of
@@ -317,10 +428,45 @@ func (c *Client) Import(ctx context.Context, paths []string, all bool) ([]core.A
 			continue
 		}
 		if len(keys) == 0 {
-			failures = append(failures, fmt.Sprintf("%s: no Kilo API key found", p))
+			failures = append(failures, fmt.Sprintf("%s: no Kilo credential found", p))
 			continue
 		}
 		for _, k := range keys {
+			if k.AuthMode == authModeOAuth || k.AccessToken != "" || k.RefreshToken != "" {
+				token := strings.TrimSpace(firstNonEmpty(k.AccessToken, k.RefreshToken))
+				id := oauthIDForToken(token)
+				if id == "" {
+					continue
+				}
+				if _, ok := c.pool.byID(id); ok {
+					if rec, ok := c.panelRecordFor(id, now); ok {
+						out = append(out, rec)
+					}
+					continue
+				}
+				expires := strings.TrimSpace(k.ExpiresAt)
+				if expires == "" {
+					if exp := jwtExpiry(token); !exp.IsZero() {
+						expires = exp.Format(time.RFC3339)
+					}
+				}
+				label := firstNonEmpty(strings.TrimSpace(k.Label), "Kilo account")
+				c.pool.upsert(accountRecord{
+					ID:           id,
+					Label:        label,
+					AuthMode:     authModeOAuth,
+					AccessToken:  strings.TrimSpace(k.AccessToken),
+					RefreshToken: strings.TrimSpace(firstNonEmpty(k.RefreshToken, k.AccessToken)),
+					ExpiresAt:    expires,
+					Source:       sourceImported,
+					AddedAt:      now.UTC().Format(time.RFC3339),
+				})
+				wrote = true
+				if rec, ok := c.panelRecordFor(id, now); ok {
+					out = append(out, rec)
+				}
+				continue
+			}
 			id := accountIDFor(k.Key)
 			if _, ok := c.pool.byID(id); ok {
 				// Already known through config, environment or an earlier
@@ -394,13 +540,30 @@ func readCredentialSource(path string) ([]foundKey, error) {
 	return parseCredentialFile(data), nil
 }
 
+// readOAuthTokenFile reads a device-flow sign-in file and returns its access
+// token, or ok=false when the file is absent or does not carry one.
+func readOAuthTokenFile(path string) (string, bool) {
+	data, err := os.ReadFile(path)
+	if err != nil || len(data) > 2<<20 {
+		return "", false
+	}
+	if fk, ok := parseOAuthAuthJSON(data); ok {
+		return strings.TrimSpace(firstNonEmpty(fk.AccessToken, fk.RefreshToken)), true
+	}
+	return "", false
+}
+
 // parseCredentialFile accepts the shapes an operator plausibly has:
 //   - a bare JSON string            "eyJ…"
 //   - an object with a named field  {"api_key": "eyJ…"}
 //   - a nested object               {"data": {...}} / {"credentials": [...]}
 //   - a list of objects             {"accounts": [{"api_key": "…"}]}
+//   - a device sign-in file         {"kilo": {"type":"oauth","access":"…"}}
 //   - plain text                    anything containing a JWT
 func parseCredentialFile(data []byte) []foundKey {
+	if fk, ok := parseOAuthAuthJSON(data); ok {
+		return []foundKey{fk}
+	}
 	var out []foundKey
 	seen := make(map[string]bool)
 	push := func(key, label string) {
@@ -430,6 +593,100 @@ func parseCredentialFile(data []byte) []foundKey {
 		}
 	}
 	return out
+}
+
+// parseOAuthAuthJSON recognises the device-flow sign-in shape Kilo's own tools
+// write: either a provider-wrapped object `{"kilo":{...}}` or the bare object.
+// Only an `"type":"oauth"` object with a JWT-shaped access token qualifies, so
+// an ordinary settings file is never mistaken for a sign-in.
+func parseOAuthAuthJSON(data []byte) (foundKey, bool) {
+	var root map[string]any
+	if err := json.Unmarshal(data, &root); err != nil {
+		return foundKey{}, false
+	}
+	if fk, ok := oauthFromObject(root); ok {
+		return fk, true
+	}
+	for _, v := range root {
+		obj, ok := v.(map[string]any)
+		if !ok {
+			continue
+		}
+		if fk, ok := oauthFromObject(obj); ok {
+			return fk, true
+		}
+	}
+	return foundKey{}, false
+}
+
+func oauthFromObject(obj map[string]any) (foundKey, bool) {
+	kind, _ := obj["type"].(string)
+	if !strings.EqualFold(strings.TrimSpace(kind), "oauth") {
+		return foundKey{}, false
+	}
+	access := firstJSONString(obj, "access", "access_token", "token")
+	if !looksLikeAPIKey(access) {
+		return foundKey{}, false
+	}
+	refresh := firstJSONString(obj, "refresh", "refresh_token")
+	expires := parseExpiryValue(obj["expires"])
+	if expires == "" {
+		expires = parseExpiryValue(obj["expires_at"])
+	}
+	return foundKey{
+		AuthMode:     authModeOAuth,
+		AccessToken:  access,
+		RefreshToken: refresh,
+		ExpiresAt:    expires,
+	}, true
+}
+
+// firstJSONString returns the first non-empty string under any of keys.
+func firstJSONString(obj map[string]any, keys ...string) string {
+	for _, k := range keys {
+		if s, ok := obj[k].(string); ok && strings.TrimSpace(s) != "" {
+			return strings.TrimSpace(s)
+		}
+	}
+	return ""
+}
+
+// parseExpiryValue turns a sign-in file's `expires` into an RFC3339 string.
+// The vendor writes epoch MILLISECONDS, but a number below 1e12 is read as
+// seconds so a seconds-based mirror is also accepted.  Anything unrecognised
+// answers "", which callers treat as "no expiry".
+func parseExpiryValue(v any) string {
+	switch t := v.(type) {
+	case float64:
+		return formatEpoch(int64(t))
+	case json.Number:
+		if n, err := t.Int64(); err == nil {
+			return formatEpoch(n)
+		}
+	case string:
+		s := strings.TrimSpace(t)
+		if s == "" {
+			return ""
+		}
+		if ts, err := time.Parse(time.RFC3339, s); err == nil {
+			return ts.UTC().Format(time.RFC3339)
+		}
+		var n json.Number
+		if err := json.Unmarshal([]byte(s), &n); err == nil {
+			return parseExpiryValue(n)
+		}
+	}
+	return ""
+}
+
+func formatEpoch(n int64) string {
+	if n <= 0 {
+		return ""
+	}
+	if n < 1e12 {
+		return time.Unix(n, 0).UTC().Format(time.RFC3339)
+	}
+	return time.UnixMilli(n).UTC().Format(time.RFC3339)
 }
 
 // credentialFieldNames are checked before walking the object, because an

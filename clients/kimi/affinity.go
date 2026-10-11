@@ -94,6 +94,13 @@ func (c *Client) UnbindConversation(conversationKey string) bool {
 // ConversationAccount reports the account conversationKey is pinned to, and only
 // while that account can still serve.  An unusable binding is reported as
 // absent, never as a failure.
+func (c *Client) ConversationBindings() []core.ConversationBinding {
+	if c == nil {
+		return nil
+	}
+	return c.affinity.Bindings()
+}
+
 func (c *Client) ConversationAccount(conversationKey, model string) (string, bool) {
 	if c.affinity == nil {
 		return "", false
