@@ -106,23 +106,24 @@ func DefaultPriceAt(client, model string, at time.Time) (Price, bool) {
 	if explicitFreePriceID(model) {
 		return Price{HasPrice: true}, true
 	}
+	if explicitFreeAlias(client, model) {
+		return Price{HasPrice: true}, true
+	}
 	rawModel := strings.ToLower(strings.TrimSpace(model))
 	key := normalizePriceID(model)
 	if key == "" {
 		return Price{}, false
 	}
-	// Resolve a client-specific opaque alias before consulting either price
-	// source. Some aliases point at an official id (Raccoon's sn-deepseek...),
-	// and the official DeepSeek rate must win over the third-party aggregate
-	// row that may share the normalized id.
-	if officialKey, ok := deepSeekOfficialPriceKey(client, model); ok {
-		p, _ := deepSeekOfficialPrice(officialKey, at)
-		return p, true
-	}
 	aliases := clientPriceAliases[strings.ToLower(strings.TrimSpace(client))]
 	target := aliases[rawModel]
 	if target == "" {
 		target = aliases[key]
+	}
+	// Prefer the vendor's own list price over the aggregate snapshot. A
+	// client alias is resolved first because opaque reseller ids often do not
+	// resemble the underlying model id.
+	if p, ok := officialPrice(target, key, at); ok {
+		return p, true
 	}
 	table := pricingTable()
 	if p, ok := table[key]; ok {
@@ -141,6 +142,26 @@ func DefaultPriceAt(client, model string, at time.Time) (Price, bool) {
 		}
 		if dashed := strings.ReplaceAll(target, ".", "-"); dashed != target {
 			if p, ok := table[dashed]; ok {
+				return p, true
+			}
+		}
+	}
+	return Price{}, false
+}
+
+func officialPrice(target, key string, at time.Time) (Price, bool) {
+	for _, candidate := range []string{target, key} {
+		if candidate == "" {
+			continue
+		}
+		if p, ok := deepSeekOfficialPrice(candidate, at); ok {
+			return p, true
+		}
+		if p, ok := officialCNYPrices[candidate]; ok {
+			return p, true
+		}
+		if dashed := strings.ReplaceAll(candidate, ".", "-"); dashed != candidate {
+			if p, ok := officialCNYPrices[dashed]; ok {
 				return p, true
 			}
 		}
@@ -302,48 +323,65 @@ var clientPriceAliases = map[string]map[string]string{
 		"mmodel":        "minimax-m2.7",
 	},
 	"workbuddy": {
-		"cn:glm-5.2":                 "glm-5.2",
-		"cn:glm-5.1":                 "glm-5.1",
-		"cn:hy3":                     "hy3",
-		"cn:deepseek-v4-pro":         "deepseek-v4-pro",
-		"cn:deepseek-v4-flash":       "deepseek-v4-flash",
-		"cn:deepseek-v4.1-flash":     "deepseek-v4.1-flash",
-		"cn:glm-5.3":                 "glm-5.3",
-		"cn:glm-5.3-flash":           "glm-5.3-flash",
-		"cn:minimax-m3":              "minimax-m3",
-		"cn:glm-4.6v":                "glm-4.6v",
-		"cn:glm-4.7":                 "glm-4.7",
-		"cn:kimi-k2.6":               "kimi-k2.6",
-		"cn:kimi-k2.5":               "kimi-k2.5",
-		"cn:minimax-m2.5":            "minimax-m2.5",
-		"cn:minimax-m2.7":            "minimax-m2.7",
-		"cn:glm-4.6":                 "glm-4.6",
-		"cn:glm-5v-turbo":            "glm-5v-turbo",
-		"cn:hy4-preview":             "hy4-preview",
-		"global:hy4-preview":         "hy4-preview",
-		"global:hy3":                 "hy3",
-		"global:deepseek-v4.1-flash": "deepseek-v4.1-flash",
-		"global:gpt-5.5":             "gpt-5.5",
-		"global:gpt-5.4":             "gpt-5.4",
-		"global:gemini-3.5-flash":    "gemini-3.5-flash",
-		"global:glm-5.3-flash":       "glm-5.3-flash",
-		"global:glm-5.2":             "glm-5.2",
-		"global:gpt-5.6-terra":       "gpt-5.6-terra",
-		"global:kimi-k2.6":           "kimi-k2.6",
-		"global:gpt-6-astra":         "gpt-6-astra",
-		"global:kimi-k3":             "kimi-k3",
-		"global:glm-5.3":             "glm-5.3",
-		"global:gpt-5.6-luna":        "gpt-5.6-luna",
-		"global:gpt-5.3-codex":       "gpt-5.3-codex",
+		"cn:glm-5.2":                    "glm-5.2",
+		"cn:glm-5.1":                    "glm-5.1",
+		"cn:glm-5.0":                    "glm-5",
+		"cn:glm-5.0-turbo":              "glm-5-turbo",
+		"cn:hy3":                        "hy3",
+		"cn:hy3-x":                      "hy3",
+		"cn:hy4-preview-f":              "hy4-preview",
+		"cn:deepseek-v4-pro":            "deepseek-v4-pro",
+		"cn:deepseek-v4-flash":          "deepseek-v4-flash",
+		"cn:deepseek-v4.1-flash":        "deepseek-v4.1-flash",
+		"cn:glm-5.3":                    "glm-5.3",
+		"cn:glm-5.3-flash":              "glm-5.3-flash",
+		"cn:minimax-m3":                 "minimax-m3",
+		"cn:glm-4.6v":                   "glm-4.6v",
+		"cn:glm-4.7":                    "glm-4.7",
+		"cn:kimi-k2.6":                  "kimi-k2.6",
+		"cn:kimi-k2.5":                  "kimi-k2.5",
+		"cn:kimi-k2.7":                  "kimi-k2.7-code",
+		"cn:kimi-k3-1":                  "kimi-k3",
+		"cn:minimax-m2.5":               "minimax-m2.5",
+		"cn:minimax-m2.7":               "minimax-m2.7",
+		"cn:glm-4.6":                    "glm-4.6",
+		"cn:glm-5v-turbo":               "glm-5v-turbo",
+		"cn:hy4-preview":                "hy4-preview",
+		"global:hy4-preview":            "hy4-preview",
+		"global:hy3":                    "hy3",
+		"global:deepseek-v4.1-flash":    "deepseek-v4.1-flash",
+		"global:deepseek-v4.1-flash-sg": "deepseek-v4.1-flash",
+		"global:gpt-5.5":                "gpt-5.5",
+		"global:gpt-5.4":                "gpt-5.4",
+		"global:gemini-3.5-flash":       "gemini-3.5-flash",
+		"global:glm-5.3-flash":          "glm-5.3-flash",
+		"global:glm-5.2":                "glm-5.2",
+		"global:gpt-5.6-terra":          "gpt-5.6-terra",
+		"global:kimi-k2.6":              "kimi-k2.6",
+		"global:gpt-6-astra":            "gpt-6-astra",
+		"global:kimi-k3":                "kimi-k3",
+		"global:glm-5.3":                "glm-5.3",
+		"global:gpt-5.6-luna":           "gpt-5.6-luna",
+		"global:gpt-5.3-codex":          "gpt-5.3-codex",
 	},
 	"tabbit": {
 		"mimo-v2.6-pro":         "mimo-v2.6-pro",
 		"mimo-v2.6-flash":       "mimo-v2.6-flash",
 		"longcat-2.0":           "longcat-2.0",
-		"doubao-seed-2-1-pro":   "doubao-seed-2-1-pro-260628",
-		"doubao-seed-2-1-turbo": "doubao-seed-2-1-turbo-260628",
+		"doubao-seed-2-1-pro":   "doubao-seed-2.1-pro",
+		"doubao-seed-2-1-turbo": "doubao-seed-2.1-turbo",
 		"doubao-seed-2.0-lite":  "doubao-seed-2.0-lite",
 		"doubao-seed-2-0-lite":  "doubao-seed-2.0-lite",
+	},
+	"trae": {
+		"deepseek-v4-flash-official": "deepseek-v4-flash",
+		"deepseek-v4-pro-official":   "deepseek-v4-pro",
+		"qwen-3.7-plus":              "qwen3.7-plus",
+		"seed-code-pro-0430":         "doubao-seed-2.1-pro",
+	},
+	"kimi": {
+		"k3-agent":       "kimi-k3",
+		"k3-agent-ultra": "kimi-k3",
 	},
 	"raccoon": {
 		"sn-glm-5-3":             "glm-5.3",
@@ -357,6 +395,8 @@ var clientPriceAliases = map[string]map[string]string{
 	},
 	"qwenwork": {
 		"qwen3.8-max-preview": "qwen3.8-max",
+		"pro":                 "qwen3.8-max",
+		"flash":               "qwen3.8-flash",
 	},
 	"molly": {
 		"gpt-6-luna-low":     "gpt-6-luna",
@@ -410,6 +450,23 @@ func explicitFreePriceID(model string) bool {
 		base = base[i+1:]
 	}
 	return strings.HasPrefix(raw, "cline-free/") || strings.HasSuffix(base, "-free") || base == "free"
+}
+
+// explicitFreeAlias recognizes client catalogue aliases whose description
+// declares the route free even when the id itself does not contain "free".
+func explicitFreeAlias(client, model string) bool {
+	aliases := explicitFreePriceAliases[strings.ToLower(strings.TrimSpace(client))]
+	if len(aliases) == 0 {
+		return false
+	}
+	_, ok := aliases[strings.ToLower(strings.TrimSpace(model))]
+	return ok
+}
+
+var explicitFreePriceAliases = map[string]map[string]struct{}{
+	"tabbit": {
+		"default": {},
+	},
 }
 
 // mergePrice fills price fields when the resolved metadata has no manual or

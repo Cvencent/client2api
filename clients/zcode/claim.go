@@ -733,9 +733,12 @@ func (c *Client) CheckinActions(ctx context.Context) []core.CheckinAction {
 	return []core.CheckinAction{{
 		ID:    claimAction,
 		Label: "领取活动套餐 (claim a promotion)",
-		// 计划账单接口只认计划凭据：一个账号的编码计划 API key 是 JWT 的兄弟
-		// 通道，账号行上和它并列，但那一行不该出现这个按钮（见 panel 的
-		// checkinActionsFor）。所以把动作限定在 jwt 通道上。
+		// 计划账单接口只认计划凭据：这个动作需要一个账号里存在 jwt 通道。面板按
+		// identity 把同一账号的 JWT 和编码计划 API key 收成一组，组里只要有 jwt，
+		// 组内的每一行（包括 API key 那一行）都会长出这个按钮；点下去由
+		// claimChannelFor 解析出真正的 JWT 兄弟通道（见 panel 的 checkinActionsFor）。
+		// Channels 仍然要声明：孤立的 API key 账号（组里没有 jwt）不该有按钮，批量
+		// 计划的 CheckinActionAllowsAccount 也用它保证一个账号只领一次。
 		Channels: []string{kindJWT},
 		Help: "Reads the vendor's claimable plans and claims the highest-priority one. " +
 			"The built-in browser solver normally mints the Aliyun captcha for this automatically; " +

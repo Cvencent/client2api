@@ -63,8 +63,8 @@ func accountGroupingWiring(t *testing.T, src string) []string {
 		{"renderAccounts 没有按账号分组", "const groups = accGroups(list);"},
 		// 单通道的账号走同一条行模板，且标记为「不是通道」——这样另外五个模块
 		// 的表格和改动前逐字一致。
-		{"单通道账号没有走 accRowHTML", "return accRowHTML(g.rows[0], caps, acts, showBal, false);"},
-		{"多通道账号的子行没有标记成通道", "accRowHTML(a, caps, acts, showBal, true, open, g.key)"},
+		{"单通道账号没有走 accRowHTML", `return accRowHTML(g.rows[0], caps, acts, showBal, false, false, "", g.rows);`},
+		{"多通道账号的子行没有标记成通道", "accRowHTML(a, caps, acts, showBal, true, open, g.key, g.rows)"},
 		{"accRowHTML 没有区分通道行", `' class="acc-chan" data-chan="'`},
 	} {
 		if !strings.Contains(src, c.want) {
@@ -427,7 +427,7 @@ func collapseWiring(t *testing.T, src string) []string {
 	add("没有为 tr[hidden] 显式声明 display:none（浏览器给 tr 的 display:table-row 会盖掉它）",
 		strings.Contains(src, ".acc tbody tr[hidden] { display: none; }"))
 	add("通道行没有拿到所属分组的键（data-chan）",
-		strings.Contains(body, "accRowHTML(a, caps, acts, showBal, true, open, g.key)"))
+		strings.Contains(body, "accRowHTML(a, caps, acts, showBal, true, open, g.key, g.rows)"))
 
 	// 3. 组头是开关。
 	add("组头没有 data-grp（整行点不动）", strings.Contains(body, `'<tr class="acc-grp" data-grp="'`))

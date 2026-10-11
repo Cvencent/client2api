@@ -228,3 +228,177 @@ func TestGenericAliasIsNotMistakenForOfficialPrice(t *testing.T) {
 		t.Fatalf("generic auto alias resolved to unrelated price: %+v", price)
 	}
 }
+
+func TestOfficialVendorPricesOverrideAggregateSnapshot(t *testing.T) {
+	cases := []struct {
+		name   string
+		client string
+		model  string
+		want   Price
+	}{
+		{
+			name:   "zhipu glm 5.3",
+			client: "zcode",
+			model:  "glm-5.3",
+			want:   Price{InputPerMillion: 8, OutputPerMillion: 28, CacheReadPerMillion: 2, HasPrice: true, HasCacheRead: true},
+		},
+		{
+			name:   "alibaba qwen 3.8 max",
+			client: "qwenwork",
+			model:  "pro",
+			want:   Price{InputPerMillion: 12, OutputPerMillion: 36, CacheReadPerMillion: 1.5, HasPrice: true, HasCacheRead: true},
+		},
+		{
+			name:   "volcengine doubao 2.1 pro",
+			client: "tabbit",
+			model:  "Doubao-Seed-2.1-Pro",
+			want:   Price{InputPerMillion: 6, OutputPerMillion: 30, CacheReadPerMillion: 1.2, HasPrice: true, HasCacheRead: true},
+		},
+		{
+			name:   "tencent hy4 preview",
+			client: "lobsterai",
+			model:  "hy4-preview",
+			want:   Price{InputPerMillion: 6, OutputPerMillion: 18, CacheReadPerMillion: 0.3, HasPrice: true, HasCacheRead: true},
+		},
+		{
+			name:   "xiaomi mimo 2.6 pro",
+			client: "tabbit",
+			model:  "MiMo-V2.6-Pro",
+			want:   Price{InputPerMillion: 3, OutputPerMillion: 6, CacheReadPerMillion: 0.025, HasPrice: true, HasCacheRead: true},
+		},
+		{
+			name:   "minimax m2.7",
+			client: "qoder",
+			model:  "mmodel",
+			want:   Price{InputPerMillion: 2.16, OutputPerMillion: 8.64, CacheReadPerMillion: 0.432, HasPrice: true, HasCacheRead: true},
+		},
+		{
+			name:   "anthropic claude opus 5.5",
+			client: "anthropic",
+			model:  "claude-opus-5.5",
+			want:   Price{InputPerMillion: 28.8, OutputPerMillion: 144, CacheReadPerMillion: 1.44, HasPrice: true, HasCacheRead: true},
+		},
+		{
+			name:   "google gemini 3.8 flash",
+			client: "google",
+			model:  "gemini-3.8-flash",
+			want:   Price{InputPerMillion: 5.4, OutputPerMillion: 27, CacheReadPerMillion: 0.54, HasPrice: true, HasCacheRead: true},
+		},
+		{
+			name:   "openai gpt 6 astra",
+			client: "openai",
+			model:  "gpt-6-astra",
+			want:   Price{InputPerMillion: 72, OutputPerMillion: 360, CacheReadPerMillion: 7.2, HasPrice: true, HasCacheRead: true},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := DefaultPrice(tc.client, tc.model)
+			if !ok {
+				t.Fatalf("DefaultPrice(%q, %q) did not resolve", tc.client, tc.model)
+			}
+			if got != tc.want {
+				t.Fatalf("DefaultPrice(%q, %q) = %+v, want official %+v", tc.client, tc.model, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestOfficialAliasesFillKnownPlatformModels(t *testing.T) {
+	cases := []struct {
+		name   string
+		client string
+		model  string
+		want   Price
+	}{
+		{
+			name:   "qwenwork flash",
+			client: "qwenwork",
+			model:  "flash",
+			want:   Price{InputPerMillion: 0.8, OutputPerMillion: 2.7, CacheReadPerMillion: 0.1, HasPrice: true, HasCacheRead: true},
+		},
+		{
+			name:   "tabbit default free",
+			client: "tabbit",
+			model:  "Default",
+			want:   Price{HasPrice: true},
+		},
+		{
+			name:   "trae deepseek pro official",
+			client: "trae",
+			model:  "DeepSeek-V4-Pro-Official",
+			want:   Price{InputPerMillion: 4.5, OutputPerMillion: 13.5, CacheReadPerMillion: 0.15, HasPrice: true, HasCacheRead: true},
+		},
+		{
+			name:   "trae qwen plus",
+			client: "trae",
+			model:  "qwen-3.7-plus",
+			want:   Price{InputPerMillion: 2, OutputPerMillion: 8, CacheReadPerMillion: 0.4, HasPrice: true, HasCacheRead: true},
+		},
+		{
+			name:   "trae doubao seed pro",
+			client: "trae",
+			model:  "seed-code-pro-0430",
+			want:   Price{InputPerMillion: 6, OutputPerMillion: 30, CacheReadPerMillion: 1.2, HasPrice: true, HasCacheRead: true},
+		},
+		{
+			name:   "workbuddy glm 5",
+			client: "workbuddy",
+			model:  "cn:glm-5.0",
+			want:   Price{InputPerMillion: 4, OutputPerMillion: 18, CacheReadPerMillion: 1, HasPrice: true, HasCacheRead: true},
+		},
+		{
+			name:   "workbuddy kimi k3",
+			client: "workbuddy",
+			model:  "cn:kimi-k3-1",
+			want:   Price{InputPerMillion: 21.6, OutputPerMillion: 108, CacheReadPerMillion: 2.16, HasPrice: true, HasCacheRead: true},
+		},
+		{
+			name:   "workbuddy hy4 preview",
+			client: "workbuddy",
+			model:  "cn:hy4-preview-f",
+			want:   Price{InputPerMillion: 6, OutputPerMillion: 18, CacheReadPerMillion: 0.3, HasPrice: true, HasCacheRead: true},
+		},
+		{
+			name:   "workbuddy deepseek global",
+			client: "workbuddy",
+			model:  "global:deepseek-v4.1-flash-sg",
+			want:   Price{InputPerMillion: 1, OutputPerMillion: 4, CacheReadPerMillion: 0.02, HasPrice: true, HasCacheRead: true},
+		},
+		{
+			name:   "kimi k3 agent",
+			client: "kimi",
+			model:  "k3-agent",
+			want:   Price{InputPerMillion: 21.6, OutputPerMillion: 108, CacheReadPerMillion: 2.16, HasPrice: true, HasCacheRead: true},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := DefaultPrice(tc.client, tc.model)
+			if !ok {
+				t.Fatalf("DefaultPrice(%q, %q) did not resolve", tc.client, tc.model)
+			}
+			if got != tc.want {
+				t.Fatalf("DefaultPrice(%q, %q) = %+v, want %+v", tc.client, tc.model, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestUnknownOpaqueAliasesStayUnpriced(t *testing.T) {
+	cases := []struct {
+		client string
+		model  string
+	}{
+		{client: "workbuddy", model: "cn:auto"},
+		{client: "workbuddy", model: "global:fast-model"},
+		{client: "trae", model: "custom_model_gpt-6"},
+		{client: "cline", model: "openrouter/auto"},
+		{client: "codexoo", model: "gpt-reserve"},
+	}
+	for _, tc := range cases {
+		if price, ok := DefaultPrice(tc.client, tc.model); ok {
+			t.Fatalf("DefaultPrice(%q, %q) = %+v, want unknown", tc.client, tc.model, price)
+		}
+	}
+}

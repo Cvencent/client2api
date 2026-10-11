@@ -1,0 +1,35 @@
+{
+  "base_url": "",
+  "app_base": "",
+
+  "api_key": "",
+  "accounts": [
+    {
+      "label": "personal",
+      "api_key": "",
+      "disabled": false
+    }
+  ],
+
+  "anonymous": true,
+  "free_only": true,
+
+  "version": "",
+  "mode": "",
+  "user_agent": "",
+  "extra_headers": {},
+  "extra_models": [],
+
+  "max_tokens_field": "max_tokens",
+  "max_in_flight": 4,
+  "test_model": "kilo-auto/free",
+
+  "chat_timeout": "10m",
+  "models_timeout": "30s",
+  "stream_idle_timeout": "90s",
+  "models_ttl": "10m",
+  "cooldown": "60s",
+  "rate_cooldown": "2m",
+  "quota_cooldown": "30m",
+  "auth_cooldown": "30m"
+}

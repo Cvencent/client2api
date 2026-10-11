@@ -395,10 +395,13 @@ func TestTabbitWebStatusReusesAFreshVerdict(t *testing.T) {
 func TestTabbitWebStatusKeepsTheLastGoodVerdictWhenTheProbeRunsOutOfBudget(t *testing.T) {
 	f := newFakeWeb(t)
 	gate := &slowGateTransport{base: f.Client().Transport, path: webModelsPath}
-	// 50ms is a budget the local fake meets easily until the gate holds the
-	// catalogue back.
+	// The budget has to be comfortably above one localhost round trip: a 50ms
+	// budget made this test flaky on a loaded machine, because the fast first
+	// probe itself occasionally ran past it.  The gate below still holds the
+	// catalogue far longer than this budget, so the probe under test always
+	// runs out of it.
 	c, rec := newWebClientHTTP(t,
-		`{"transport":"web","web_base_url":"`+f.URL+`","timeouts":{"status_seconds":0.05}}`,
+		`{"transport":"web","web_base_url":"`+f.URL+`","timeouts":{"status_seconds":1}}`,
 		&http.Client{Transport: gate})
 	ctx := context.Background()
 
@@ -407,7 +410,7 @@ func TestTabbitWebStatusKeepsTheLastGoodVerdictWhenTheProbeRunsOutOfBudget(t *te
 		t.Fatalf("the first, fast probe did not verify the cookie: %+v", first)
 	}
 
-	gate.delay.Store(int64(300 * time.Millisecond))
+	gate.delay.Store(int64(5 * time.Second))
 	// Age the verdict past webVerdictTTL so Status actually spends the budget
 	// on the catalogue again, while keeping it inside webTrustWindow so it is
 	// still the last real answer.

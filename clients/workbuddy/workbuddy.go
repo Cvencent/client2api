@@ -1291,6 +1291,7 @@ func (s *wbStream) run() {
 		seenTool    = map[int]bool{}
 		nativeIndex = map[int]int{}
 		nextIndex   int
+		reachedDone bool
 	)
 
 	emitToolCall := func(idx int, id, name, args string) bool {
@@ -1396,12 +1397,24 @@ func (s *wbStream) run() {
 					}
 				}
 			}
+			if fc, ok := delta["function_call"].(map[string]any); ok && fc != nil {
+				n, _ := fc["name"].(string)
+				a, _ := fc["arguments"].(string)
+				if n != "" || a != "" {
+					i := nextIndex
+					nextIndex++
+					if !emitToolCall(i, "", n, a) {
+						return false
+					}
+				}
+			}
 		}
 		return true
 	}
 
 	readErr := ReadSSEFrames(s.body, func(obj map[string]any, done bool) error {
 		if done {
+			reachedDone = true
 			return nil
 		}
 		if !process(obj) {
@@ -1423,6 +1436,11 @@ func (s *wbStream) run() {
 			}
 		}
 	}
+	if readErr == nil && !reachedDone {
+		s.emit(core.Event{Type: core.EventError, Err: errors.New("workbuddy: upstream stream ended before a terminal frame")})
+		return
+	}
+
 	if readErr != nil && !errors.Is(readErr, errStopStream) && !errors.Is(readErr, io.EOF) {
 		if IsEmptyStreamError(readErr) && !emittedAny {
 			s.emit(core.Event{Type: core.EventError, Err: readErr})

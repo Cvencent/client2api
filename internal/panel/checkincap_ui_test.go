@@ -58,6 +58,11 @@ func checkinCapWiring(t *testing.T, src string) []string {
 	if !strings.Contains(scan, "if (!capsOf(n).checkin) return;") {
 		miss = append(miss, "scanCheckin 没有按客户端级的 checkin 筛选模块")
 	}
+	// 客户端级扫描必须按账号出队（checkinTargets），而不是把每一条凭据铺一遍：
+	// 孤立的 API key 通道会被点出一个必然失败，混合账号也会被重复签一次。
+	if !strings.Contains(scan, "checkinTargets(n).forEach") {
+		miss = append(miss, "scanCheckin 没有走 checkinTargets 按账号出队")
+	}
 	return miss
 }
 

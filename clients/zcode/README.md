@@ -277,7 +277,7 @@ The module implements nine of the optional panel capabilities:
 | `core.LoginProvider` | **yes** | browser hand-off OAuth; see `weblogin.go` |
 | `core.RealmLoginProvider` | **yes** | two sign-in realms, `zai` and `bigmodel`; see [Panel sign-in realms](#panel-sign-in-realms) |
 | `core.ModelRefresher` | **yes** | live catalogue from the vendor's config endpoint |
-| `core.CheckinProvider` | **yes** | one action, `claim` — claims a promotional plan; `Channels: ["jwt"]` keeps the panel from offering it on an account's coding-plan API key row |
+| `core.CheckinProvider` | **yes** | one action, `claim` — claims a promotional plan; `Channels: ["jwt"]` scopes it to accounts that hold a plan JWT, so an isolated coding-plan API key gets no button while an API-key row beside a JWT does (the module resolves the sibling) |
 | `core.BalanceProvider` | **yes** | per-entitlement token balances |
 | `core.PackageProvider` | **yes** | the same buckets as package rows |
 | `core.TaskProvider` | **yes** | the task board's `claim` row; see [Tasks and scheduling](#tasks-and-scheduling) |

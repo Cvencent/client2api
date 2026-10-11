@@ -4034,7 +4034,7 @@ function renderAccounts() {
   if (showBal) ensureBalances(CUR);
   tb.innerHTML = pageRows.map(g => {
     // 只有一个通道的账号照旧渲染成原来那一行：其余五个模块看起来没有任何变化。
-    if (g.rows.length === 1) return accRowHTML(g.rows[0], caps, acts, showBal, false);
+    if (g.rows.length === 1) return accRowHTML(g.rows[0], caps, acts, showBal, false, false, "", g.rows);
     const st = accGroupStat(g);
     const open = accIsOpen(CUR, g.key);
     return '<tr class="acc-grp" data-grp="' + esc(g.key) + '" aria-expanded="' + (open ? "true" : "false") + '" tabindex="0">' +
@@ -4053,7 +4053,7 @@ function renderAccounts() {
         (showBal ? '<td class="num c-bal">' + accGroupBalanceCell(g.rows) + '</td>' : '') +
         '<td colspan="' + (showBal ? cols - 6 : cols - 5) + '" class="hint">' + esc(st.on + "/" + st.of + " 个通道已启用" + (open ? "；每一行可以单独启用、停用和测试" : "；点这一行展开")) + '</td>' +
       '</tr>' +
-      g.rows.map(a => accRowHTML(a, caps, acts, showBal, true, open, g.key)).join("");
+      g.rows.map(a => accRowHTML(a, caps, acts, showBal, true, open, g.key, g.rows)).join("");
   }).join("");
   // 账号列的 hint 在 168px 列宽下会被省略号截断（id 又先截到 40 字符）。把截断后
   // 的全文回填进 title，鼠标停一下就能看全；这里统一补一次，不在行模板里再拼一遍。
@@ -4224,21 +4224,58 @@ function checkinActionTitle(x) {
 // checkinActionsFor 把客户端级的签到动作收窄到「这一行现在真能点哪些」。
 //
 // 动作清单是客户端级的（core.CheckinProvider.CheckinActions），但有些动作只对某一
-// 种凭据通道成立：zcode 的活动套餐走计划账单接口，只认计划 JWT；同一个账号的编码
-// 计划 API key 是它的兄弟通道，账号行上和它并列，但那一行根本领不了。模块用
-// CheckinAction.Channels 声明自己限定在哪些通道（值就是账号记录里的 fields.kind，
-// 比如 "jwt" / "api-key"）；没声明的动作照旧对每一行都出现。这里只过滤，不改动
-// 传入的清单。
-function checkinActionsFor(a, acts) {
-  const kind = String(((((a || {}).fields) || {}).kind) || "").toLowerCase();
+// 种凭据通道成立：zcode 的活动套餐走计划账单接口，只认计划 JWT。模块用
+// CheckinAction.Channels 声明它需要哪些通道（值就是账号记录里的 fields.kind，比如
+// "jwt" / "api-key"）；没声明的动作照旧对每一行都出现。
+//
+// 通道是按「账号」算的，不是按「行」算的：同一个账号的 JWT 和它的编码计划 API key
+// 是兄弟通道，面板按 identity 把两者收成一组，模块自己会用 sibling 解析出真正能签发
+// 的 JWT（claimChannelFor）。所以这里收整组（group 是同组的所有行），只要组里有一条
+// 通道命中，组内的每一行都放行——编码计划 API key 那一行也因此能点，点下去领的还是
+// 同一份 JWT。只有孤立的 API key 账号（组里根本没有 JWT）才不出现按钮，避免长出一
+// 个点了必然失败的领取按钮。这里只过滤，不改动传入的清单。
+function checkinActionsFor(a, acts, group) {
+  const rows = (group && group.length) ? group : [a];
+  const kinds = new Set(rows.map(r => String(((((r || {}).fields) || {}).kind) || "").toLowerCase()));
   return (acts || []).filter(x => {
     const only = (x && x.channels) || [];
     if (!only.length) return true;
-    return only.some(c => String(c).toLowerCase() === kind);
+    return only.some(c => kinds.has(String(c).toLowerCase()));
   });
 }
 
-function accRowHTML(a, caps, acts, showBal, chan, open, groupKey) {
+// checkinTargets 把「全部签到」要跑的凭据排成一队。规则有两条：
+//
+//   1. 通道不命中就整组跳过。面板按 identity 把同一账号的 JWT / API key 收成一组
+//      （accGroups），组里没有任何一条通道满足动作的声明时（比如 zcode 孤立的编码
+//      计划 API key 账号），整组不派活——否则点了必然失败，还被批量结果计成「失败」。
+//   2. 只有带通道声明的动作才按账号去重。那种动作是账号级的（zcode 的活动套餐），
+//      组里挑一条命中的通道当代表（优先挑动作声明的那条，比如 jwt），一个账号领一次。
+//      没有通道声明的动作保持旧行为：每一条已启用凭据各跑一次，不替别的模块改语义。
+//
+// 返回的 id 就是 /accounts/<id>/checkin 要用的那条凭据，label 沿用行上的名字。
+function checkinTargets(n) {
+  const acts = capsOf(n).actions || [];
+  const out = [];
+  accGroups((ACCTS[n] || {}).accounts).forEach(g => {
+    const rows = g.rows.filter(a => a.enabled);
+    if (!rows.length) return;
+    const allowed = checkinActionsFor(rows[0], acts, rows);
+    if (!allowed.length) return;
+    const scoped = allowed.some(x => ((x && x.channels) || []).length);
+    let picked = rows;
+    if (scoped) {
+      const chans = new Set();
+      allowed.forEach(x => (x.channels || []).forEach(c => chans.add(String(c).toLowerCase())));
+      const kindOf = a => String((((a || {}).fields) || {}).kind || "").toLowerCase();
+      picked = [rows.find(a => chans.has(kindOf(a))) || rows[0]];
+    }
+    picked.forEach(a => out.push({ client: n, id: a.id, label: a.label || a.id }));
+  });
+  return out;
+}
+
+function accRowHTML(a, caps, acts, showBal, chan, open, groupKey, group) {
   const btns = [];
   // 「备注」记的是这个账号登录用的手机号/邮箱，存在网关配置里（不是模块里），
   // 所以不依赖 caps.manage：只读模块的账号也能标出来，重登时才知道该用哪一个。
@@ -4257,10 +4294,10 @@ function accRowHTML(a, caps, acts, showBal, chan, open, groupKey) {
   // 所以 checkin 为真而 actions 为空是正常状态，那种情况下不该渲染按钮。
   if (caps.checkin_ready) {
     // acts 是客户端级的清单，但有些动作只对某一种凭据通道成立（zcode 的活动
-    // 套餐只认 jwt）。按这一行的通道先收窄，收窄后为空就整条都不渲染——否则
-    // 「模块有签到能力」会被误读成「这一行能签到」，一个账号的 API key 通道
-    // 就长出一个点了必然失败的领取按钮。
-    const actsFor = checkinActionsFor(a, acts);
+    // 套餐只认 jwt）。按这一行所属账号的通道先收窄（group 是同组的所有行，见
+    // checkinActionsFor），收窄后为空就整条都不渲染——否则「模块有签到能力」会
+    // 被误读成「这一行能签到」。
+    const actsFor = checkinActionsFor(a, acts, group);
     if (actsFor.length > 1) {
       actsFor.forEach(x => btns.push('<button class="xs chip" data-do="checkin" data-act="' + esc(x.id) + '" data-id="' + esc(a.id) + '" title="' + esc(checkinActionTitle(x)) + '">' + esc(checkinActionLabel(x)) + '</button>'));
     } else if (actsFor.length === 1) {
@@ -4690,8 +4727,8 @@ async function refreshCredentials() {
 
 // checkinClient runs a check-in round for one client's enabled accounts only.
 async function checkinClient(n) {
-  const list = ((ACCTS[n] || {}).accounts || []).filter(a => a.enabled);
-  if (!list.length) { toast(n + " 没有启用的账号", "err"); return; }
+  const list = checkinTargets(n);
+  if (!list.length) { toast(n + " 没有可签到的账号", "err"); return; }
   const btn = $("#btnCheckinAll");
   const keep = btn ? btn.textContent : "";
   if (btn) { btn.disabled = true; btn.textContent = "签到 0/" + list.length; }
@@ -7221,7 +7258,7 @@ async function scanCheckin() {
   const items = [];
   NAMES.forEach(n => {
     if (!capsOf(n).checkin) return;
-    ((ACCTS[n] || {}).accounts || []).forEach(a => { if (a.enabled) items.push({ client: n, id: a.id, label: a.label || a.id }); });
+    checkinTargets(n).forEach(it => items.push(it));
   });
   return items;
 }

@@ -7,6 +7,7 @@ import (
 	// Blank imports run each module's init(), which calls core.Register.
 	_ "client2api/clients/cline"
 	_ "client2api/clients/codearts"
+	_ "client2api/clients/kilocode"
 	_ "client2api/clients/kimi"
 	_ "client2api/clients/lobsterai"
 	_ "client2api/clients/loomy"

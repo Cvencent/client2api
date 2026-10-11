@@ -289,10 +289,10 @@ func processCommandLine(pid uintptr) (string, bool) {
 	// back into a pointer: same bytes, and nothing for vet to flag.
 	off := int(us.Buffer - base)
 	need := int(us.Length)
-	if need%2 != 0 || off > len(buf) || need > len(buf)-off {
+	if need%2 != 0 || off%2 != 0 || off > len(buf) || need > len(buf)-off {
 		return "", false
 	}
-	q := (*[32768]uint16)(unsafe.Pointer(&buf[off]))[:need/2]
+	q := unsafe.Slice((*uint16)(unsafe.Pointer(&buf[off])), need/2)
 	return syscall.UTF16ToString(q), true
 }
 

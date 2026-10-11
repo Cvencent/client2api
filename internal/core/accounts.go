@@ -184,8 +184,12 @@ type CheckinAction struct {
 	// record (zcode writes "jwt" / "api-key").  It exists because a
 	// vendor promotion can be gated on one channel of an account while the
 	// panel shows that account's other channels as sibling rows: ZCode's
-	// plan claim only works on the plan JWT, so the coding-plan API key row
-	// must not offer it.  Empty means "every row", which is what every
+	// plan claim only works on the plan JWT, so a lone coding-plan API key
+	// account must not offer it.  The panel groups records by
+	// AccountRecord.Identity and reads the scope as a property of the
+	// account, not of the single row: an API-key row beside a plan JWT is
+	// the same account and the module resolves that sibling itself, so it
+	// gets the button too.  Empty means "every row", which is what every
 	// module but zcode wants; the panel still reads this field, so it stays
 	// part of the wire contract and must be omitempty.
 	Channels []string `json:"channels,omitempty"`
@@ -540,8 +544,11 @@ type CheckinProvider interface {
 // A non-empty Channels list scopes the action to matching credential kinds;
 // callers use this before starting a batch so accounts that do not carry that
 // channel are skipped instead of spending an upstream call and recording a
-// misleading refusal.  When action does not name any CheckinAction, the
-// helper returns true so ordinary task codes keep running unchanged.
+// misleading refusal.  It is deliberately per-record, unlike the panel's
+// identity-aware row filter: a batch must run the action once per credential
+// that carries the channel, not once per sibling row of the same account.
+// When action does not name any CheckinAction, the helper returns true so
+// ordinary task codes keep running unchanged.
 func CheckinActionAllowsAccount(actions []CheckinAction, action string, rec AccountRecord) bool {
 	matched := false
 	for _, a := range actions {

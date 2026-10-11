@@ -8,6 +8,33 @@
 
 ## [Unreleased]
 
+## [0.1.36] - 2026-10-11
+
+### Added
+
+- 新增 Kilo Code 客户端模块：`kilocode/...` 路由接入 Kilo AI Gateway，支持账号池、
+  API Key 导入、模型刷新、限位、会话粘性和流式对话。
+- 模型价格目录新增多厂商官方人民币价表，覆盖 DeepSeek、Zhipu/BigModel、Kimi、MiniMax、
+  Qwen、Volcengine/Doubao、Tencent Hunyuan、Xiaomi MiMo、Anthropic、Google 与 OpenAI；
+  平台别名可落到对应官方价。
+
+### Changed
+
+- ZCode 活动套餐领取按账号作用域：同一账号下 JWT 行和它的 coding-plan API key 行
+  都会显示领取按钮，点 API key 行自动走 JWT 兄弟通道；批量签到/任务也按账号出队，
+  只领取一次。孤立的 API key 账号（组里没有 JWT）不显示按钮。
+- README 重写为项目介绍，新增中英文导航和 `使用教程` 页面；历史长文档保留到
+  `docs/REFERENCE.md` 与 `docs/REFERENCE.zh-CN.md`。文档定位为个人自用/学习，
+  不提供公网或服务器架设方案。
+- WorkBuddy 上游 SSE 缺少终止帧时不再静默收尾，会以错误事件结束，避免调用方把
+  半截响应当成功。
+
+### Fixed
+
+- ZCode Windows 浏览器验证码读取命令行时改用 `unsafe.Slice`，并补齐偶数偏移校验。
+- Tabbit 状态探测超时预算放宽，避免负载较高时偶发误判。
+
+
 ## [0.1.35] - 2026-10-11
 
 ### Added
