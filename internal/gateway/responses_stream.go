@@ -101,18 +101,32 @@ func sseFrame(w io.Writer, eventType string, payload any) error {
 func (s *server) streamResponsesSSE(w http.ResponseWriter, r *http.Request, a emitArgs) {
 	client := a.client
 	stream := a.stream
-	var usage *core.Usage
+	var (
+		usage  *core.Usage
+		finish string
+	)
 	started := time.Now()
 	streamID := newID("st-")
 	eventCount := 0
+	deltaBytes := 0
+	reasoningBytes := 0
+	toolCalls := 0
 	terminal := "in_progress"
 	defer func() {
 		ttfb := "-"
 		if a.stat != nil && a.stat.ttfb > 0 {
 			ttfb = a.stat.ttfb.Round(time.Millisecond).String()
 		}
-		s.opts.Logger.Printf("stream: id=%s protocol=responses client=%s model=%q terminal=%s events=%d ttfb=%s duration=%s",
-			streamID, client.Name(), a.model, terminal, eventCount, ttfb, time.Since(started).Round(time.Millisecond))
+		finishText := finish
+		if finishText == "" {
+			finishText = "-"
+		}
+		completionTokens := -1
+		if usage != nil {
+			completionTokens = usage.CompletionTokens
+		}
+		s.opts.Logger.Printf("stream: id=%s protocol=responses client=%s model=%q terminal=%s finish=%s events=%d delta_bytes=%d reasoning_bytes=%d tool_calls=%d completion_tokens=%d ttfb=%s duration=%s",
+			streamID, client.Name(), a.model, terminal, finishText, eventCount, deltaBytes, reasoningBytes, toolCalls, completionTokens, ttfb, time.Since(started).Round(time.Millisecond))
 	}()
 	// Token counts may arrive on the last event and this function has several
 	// exits; one deferred copy covers all of them.
@@ -188,13 +202,13 @@ func (s *server) streamResponsesSSE(w http.ResponseWriter, r *http.Request, a em
 	}
 
 	var (
-		output      []responseOutput
-		textIx      = -1
-		reasoningIx = -1
-		toolByIx    = map[int]int{}
-		finish      string
-		streamErr   error
-		finished    bool
+		output       []responseOutput
+		textIx       = -1
+		reasoningIx  = -1
+		toolByIx     = map[int]int{}
+		countedTools = map[int]bool{}
+		streamErr    error
+		finished     bool
 	)
 	addItem := func(item responseOutput) (int, bool) {
 		ix := len(output)
@@ -256,6 +270,8 @@ receive:
 			if ev.Delta == "" && ev.Reasoning == "" {
 				continue
 			}
+			deltaBytes += len(ev.Delta)
+			reasoningBytes += len(ev.Reasoning)
 			if ev.Reasoning != "" {
 				if reasoningIx < 0 {
 					var ok bool
@@ -298,6 +314,10 @@ receive:
 		case core.EventToolCall:
 			if ev.ToolCall == nil {
 				continue
+			}
+			if !countedTools[ev.ToolCall.Index] {
+				countedTools[ev.ToolCall.Index] = true
+				toolCalls++
 			}
 			ix, ok := toolByIx[ev.ToolCall.Index]
 			if !ok {
@@ -392,7 +412,11 @@ receive:
 		}
 	}
 	if emit("response."+final.Status, map[string]any{"response": final}) {
-		terminal = "completed"
+		if final.Status == "incomplete" {
+			terminal = "incomplete"
+		} else {
+			terminal = "completed"
+		}
 	} else {
 		s.fail(a.rec)
 	}

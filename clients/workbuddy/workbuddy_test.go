@@ -1085,11 +1085,17 @@ func TestDSMLParserFinishFlushesUnterminatedBlock(t *testing.T) {
 	}
 
 	// A truncated <invoke> with no closing tag is dropped rather than emitted
-	// with half-parsed arguments.
+	// with half-parsed arguments, but it must not disappear silently: the
+	// caller needs the raw tail to diagnose an upstream that stopped mid-call.
 	truncated := NewDSMLParser()
 	truncated.Feed(`<｜DSML｜tool_calls><｜DSML｜invoke name="f">`)
-	if _, calls := truncated.Finish(); len(calls) != 0 {
+	tailOut, calls := truncated.Finish()
+	if len(calls) != 0 {
 		t.Fatalf("truncated call must be dropped, got %v", calls)
+	}
+	wantTail := `<｜DSML｜invoke name="f">`
+	if tailOut != wantTail {
+		t.Fatalf("truncated tail = %q, want %q", tailOut, wantTail)
 	}
 }
 

@@ -416,6 +416,10 @@ func translateResponsesInput(raw json.RawMessage) ([]core.Message, error) {
 		// the function call it produced, so it must attach to that call's
 		// assistant turn rather than becoming a turn of its own.
 		pendingReasoning string
+		// callNames maps a function-call id back to the function name.  Chat's
+		// tool result carries both fields; Responses carries the name only on
+		// the call, so the name has to be recovered when the output arrives.
+		callNames = map[string]string{}
 	)
 
 	// flushPending emits whatever is open, in the order the items arrived: the
@@ -450,6 +454,9 @@ func translateResponsesInput(raw json.RawMessage) ([]core.Message, error) {
 			if pending == nil {
 				pending = &core.Message{Role: "assistant"}
 			}
+			if callID != "" && strings.TrimSpace(it.Name) != "" {
+				callNames[callID] = strings.TrimSpace(it.Name)
+			}
 			// The reasoning that preceded this call belongs to this turn.  In
 			// Chat it rides on the assistant message's reasoning_content.
 			if pending.Reasoning == "" && pendingReasoning != "" {
@@ -475,6 +482,7 @@ func translateResponsesInput(raw json.RawMessage) ([]core.Message, error) {
 			out = append(out, core.Message{
 				Role:       "tool",
 				ToolCallID: callID,
+				Name:       callNames[callID],
 				Content:    rawToText(it.Output),
 			})
 

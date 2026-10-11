@@ -108,8 +108,10 @@ people. The built-in default is `127.0.0.1`.
 - Credit composition by expiry and package/client views.
 - Platform alerts and structured runtime logs.
 - SSE termination diagnostics (`stream: id=...`) include protocol, platform/model,
-  upstream event count, first-event latency, elapsed time and terminal reason,
-  without logging conversation content or credentials. These appear after upgrading.
+  upstream event count, `finish_reason`, text/reasoning byte counts, tool-call count,
+  completion tokens, first-event latency, elapsed time and terminal reason. Output
+  limited by the caller is marked `terminal=incomplete`. Conversation content and
+  credentials are never logged. These appear after upgrading.
 
 ### Responses API
 

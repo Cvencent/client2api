@@ -110,7 +110,11 @@ func (p *Parser) Finish() (string, []Call) {
 		if calls := parseBlock(s); len(calls) > 0 {
 			return "", calls
 		}
-		return "", nil
+		// The upstream stopped in the middle of a tool-call block.  There is
+		// no complete call to execute, but silently dropping the tail makes a
+		// truncated answer look like a clean stop.  Return it as visible text
+		// so the caller can surface and diagnose the truncation.
+		return s, nil
 	}
 	return s, nil
 }

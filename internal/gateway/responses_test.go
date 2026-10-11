@@ -281,6 +281,9 @@ func TestResponses_TranslatesCodexRequestShape(t *testing.T) {
 	if toolTurn.ToolCallID != "call_abc" {
 		t.Errorf("tool turn call id = %q", toolTurn.ToolCallID)
 	}
+	if toolTurn.Name != "exec_command" {
+		t.Errorf("tool turn name = %q, want the matching call name", toolTurn.Name)
+	}
 	if toolTurn.Content != "build ok" {
 		t.Errorf("tool turn content = %q", toolTurn.Content)
 	}

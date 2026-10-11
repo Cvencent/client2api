@@ -8,6 +8,21 @@
 
 ## [Unreleased]
 
+## [0.1.39] - 2026-10-11
+
+### Fixed
+
+- 未闭合的 DSML/XML 工具调用块不再静默丢弃尾段。上游如果在一半工具调用处结束，
+  网关会保留可见尾段供客户端和日志判断，而不是把缺失内容伪装成正常完成。
+- Responses 回放 `function_call_output` 时补回对应函数名，避免要求 `name` 字段的
+  上游无法正确配对工具结果。
+
+### Changed
+
+- Responses 流诊断新增 `finish`、`delta_bytes`、`reasoning_bytes`、`tool_calls`
+  和 `completion_tokens`，并将达到输出上限的请求标记为 `terminal=incomplete`，
+  便于区分正常 `stop`、工具轮和上游提前结束。
+
 ## [0.1.38] - 2026-10-11
 
 ### Added

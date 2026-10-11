@@ -238,3 +238,43 @@ func TestResponsesStreamIncludesSequenceNumbers(t *testing.T) {
 		})
 	}
 }
+
+func TestResponsesStreamDiagnosticsDistinguishLengthFromStop(t *testing.T) {
+	var logger strings.Builder
+	c := &testClient{name: "t", events: []core.Event{
+		{Type: core.EventDelta, Delta: "partial"},
+		{Type: core.EventToolCall, ToolCall: &core.ToolCallDelta{Index: 0, Name: "f", Arguments: "{}"}},
+		{Type: core.EventUsage, Usage: &core.Usage{PromptTokens: 10, CompletionTokens: 4, TotalTokens: 14}},
+		{Type: core.EventDone, Finish: "length"},
+	}}
+	reg := core.NewRegistry()
+	reg.Add(c)
+	srv := NewServer(Options{
+		Registry: reg,
+		Version:  "test",
+		Logger:   log.New(&logger, "", 0),
+		Stats:    NewStats(),
+		Usage:    NewUsageStore(10),
+	})
+
+	rec := responses(t, srv, `{"model":"t/m1","stream":true,"input":"hi"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	got := logger.String()
+	for _, want := range []string{
+		"protocol=responses",
+		"terminal=incomplete",
+		"finish=length",
+		"delta_bytes=7",
+		"tool_calls=1",
+		"completion_tokens=4",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("diagnostics missing %q: %s", want, got)
+		}
+	}
+	if strings.Contains(got, "partial") {
+		t.Fatalf("diagnostics must not contain response content: %s", got)
+	}
+}
