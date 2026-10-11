@@ -53,6 +53,7 @@ people. The built-in default is `127.0.0.1`.
 | `openrouter/...` | OpenRouter | OpenRouter |
 | `opencode/...` | OpenCode Zen | OpenCode Zen |
 | `kilocode/...` | Kilo Code | Kilo AI Gateway |
+| `doubao/...` | Doubao | ByteDance Doubao web app |
 | `openai-compat/...` | onmiRoute | Legacy compatible sources |
 | `<source-id>/...` | Custom relay | Any OpenAI-compatible platform you add |
 
