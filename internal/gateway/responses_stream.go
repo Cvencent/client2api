@@ -102,6 +102,18 @@ func (s *server) streamResponsesSSE(w http.ResponseWriter, r *http.Request, a em
 	client := a.client
 	stream := a.stream
 	var usage *core.Usage
+	started := time.Now()
+	streamID := newID("st-")
+	eventCount := 0
+	terminal := "in_progress"
+	defer func() {
+		ttfb := "-"
+		if a.stat != nil && a.stat.ttfb > 0 {
+			ttfb = a.stat.ttfb.Round(time.Millisecond).String()
+		}
+		s.opts.Logger.Printf("stream: id=%s protocol=responses client=%s model=%q terminal=%s events=%d ttfb=%s duration=%s",
+			streamID, client.Name(), a.model, terminal, eventCount, ttfb, time.Since(started).Round(time.Millisecond))
+	}()
 	// Token counts may arrive on the last event and this function has several
 	// exits; one deferred copy covers all of them.
 	defer func() {
@@ -111,6 +123,7 @@ func (s *server) streamResponsesSSE(w http.ResponseWriter, r *http.Request, a em
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
+		terminal = "streaming_unsupported"
 		a.stat.status = http.StatusInternalServerError
 		writeError(w, http.StatusInternalServerError, "server_error", "streaming unsupported by this server")
 		return
@@ -130,6 +143,7 @@ func (s *server) streamResponsesSSE(w http.ResponseWriter, r *http.Request, a em
 		payload["type"] = kind
 		payload["sequence_number"] = sequence
 		if err := sseFrame(w, kind, payload); err != nil {
+			terminal = "downstream_write_error"
 			return false
 		}
 		sequence++
@@ -142,6 +156,7 @@ func (s *server) streamResponsesSSE(w http.ResponseWriter, r *http.Request, a em
 	if !emit("response.created", map[string]any{
 		"response": base.base("in_progress", nil),
 	}) {
+		s.fail(a.rec)
 		return
 	}
 
@@ -151,8 +166,10 @@ func (s *server) streamResponsesSSE(w http.ResponseWriter, r *http.Request, a em
 	emitFailed := func(err error) {
 		msg := fmt.Sprintf("[%s] %s", client.Name(), err.Error())
 		s.fail(a.rec)
+		status, _, _ := upstreamErrorShape(err)
+		a.stat.status = status
 		s.opts.Logger.Printf("responses stream: client %s: %v", client.Name(), err)
-		emit("response.failed", map[string]any{
+		if !emit("response.failed", map[string]any{
 			"response": map[string]any{
 				"id":         base.id,
 				"object":     "response",
@@ -165,7 +182,9 @@ func (s *server) streamResponsesSSE(w http.ResponseWriter, r *http.Request, a em
 					"message": msg,
 				},
 			},
-		})
+		}) {
+			terminal = "downstream_write_error"
+		}
 	}
 
 	var (
@@ -209,19 +228,27 @@ func (s *server) streamResponsesSSE(w http.ResponseWriter, r *http.Request, a em
 receive:
 	for {
 		if r.Context().Err() != nil {
+			terminal = "caller_canceled"
+			a.stat.status = http.StatusRequestTimeout
+			s.fail(a.rec)
 			return
 		}
 		ev, err := stream.Recv()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				if !finished {
+					terminal = "unexpected_eof"
+					a.stat.status = http.StatusBadGateway
 					streamErr = io.ErrUnexpectedEOF
 				}
 				break
 			}
+			terminal = "upstream_read_error"
+			a.stat.status = http.StatusBadGateway
 			streamErr = err
 			break
 		}
+		eventCount++
 		a.stat.noteFirstFrame(time.Now())
 
 		switch ev.Type {
@@ -321,6 +348,9 @@ receive:
 	}
 
 	if streamErr != nil {
+		if terminal == "in_progress" {
+			terminal = "upstream_error_event"
+		}
 		emitFailed(streamErr)
 		return
 	}
@@ -361,7 +391,11 @@ receive:
 			return
 		}
 	}
-	emit("response."+final.Status, map[string]any{"response": final})
+	if emit("response."+final.Status, map[string]any{"response": final}) {
+		terminal = "completed"
+	} else {
+		s.fail(a.rec)
+	}
 }
 
 // bufferResponse renders a non-streamed response: one response object whose

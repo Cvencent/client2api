@@ -5,7 +5,7 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-Current version: **0.1.36**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
+Current version: **0.1.38**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
 
 client2api is a personal, local-only OpenAI-compatible gateway. It aggregates
 the accounts and API Keys **you own** on different AI coding clients and
@@ -107,6 +107,9 @@ people. The built-in default is `127.0.0.1`.
 - CNY cost estimates, official price tables, models.dev fallback and manual overrides.
 - Credit composition by expiry and package/client views.
 - Platform alerts and structured runtime logs.
+- SSE termination diagnostics (`stream: id=...`) include protocol, platform/model,
+  upstream event count, first-event latency, elapsed time and terminal reason,
+  without logging conversation content or credentials. These appear after upgrading.
 
 ### Responses API
 

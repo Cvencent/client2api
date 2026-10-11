@@ -1107,6 +1107,18 @@ func modelSupportsImages(m core.Model) (value, stated bool) {
 func (s *server) streamSSE(w http.ResponseWriter, r *http.Request, client core.Client, model string, stream core.Stream, includeUsage bool, rec *UsageRecord, stat *chatStat, hintCtx func() core.HintContext) {
 	clientName := client.Name()
 	var usage *core.Usage
+	started := time.Now()
+	streamID := newID("st-")
+	var eventCount int
+	terminal := "in_progress"
+	defer func() {
+		ttfb := "-"
+		if stat != nil && stat.ttfb > 0 {
+			ttfb = stat.ttfb.Round(time.Millisecond).String()
+		}
+		s.opts.Logger.Printf("stream: id=%s protocol=chat client=%s model=%q terminal=%s events=%d ttfb=%s duration=%s",
+			streamID, clientName, model, terminal, eventCount, ttfb, time.Since(started).Round(time.Millisecond))
+	}()
 	// Token counts may only arrive on the last event, and this function has
 	// several early exits; one deferred copy covers all of them -- the usage
 	// record and the console row both need the number.
@@ -1117,6 +1129,7 @@ func (s *server) streamSSE(w http.ResponseWriter, r *http.Request, client core.C
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
+		terminal = "streaming_unsupported"
 		stat.status = http.StatusInternalServerError
 		writeError(w, http.StatusInternalServerError, "server_error", "streaming unsupported by this server")
 		return
@@ -1147,6 +1160,7 @@ func (s *server) streamSSE(w http.ResponseWriter, r *http.Request, client core.C
 			return false
 		}
 		if _, err := fmt.Fprintf(w, "data: %s\n\n", b); err != nil {
+			terminal = "downstream_write_error"
 			return false
 		}
 		flusher.Flush()
@@ -1155,18 +1169,24 @@ func (s *server) streamSSE(w http.ResponseWriter, r *http.Request, client core.C
 
 	// role preamble, so strict clients see a well-formed first chunk
 	if !send(chatChoice{Index: 0, Delta: &chatMessage{Role: "assistant"}}, nil) {
+		s.fail(rec)
 		return
 	}
 
 	var finished, sawToolCall, streamFailed bool
 	for {
 		if r.Context().Err() != nil {
+			terminal = "caller_canceled"
+			stat.status = http.StatusRequestTimeout
+			s.fail(rec)
 			return
 		}
 		ev, err := stream.Recv()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				if !finished {
+					terminal = "unexpected_eof"
+					stat.status = http.StatusBadGateway
 					streamFailed = true
 					s.fail(rec)
 					msg := fmt.Sprintf("[%s] upstream stream ended before a terminal frame", clientName)
@@ -1176,6 +1196,12 @@ func (s *server) streamSSE(w http.ResponseWriter, r *http.Request, client core.C
 				}
 				break
 			}
+			if finished {
+				break
+			}
+			terminal = "upstream_read_error"
+			streamFailed = true
+			stat.status = http.StatusBadGateway
 			s.fail(rec)
 			s.opts.Logger.Printf("stream: client %s: %v", clientName, err)
 			msg := fmt.Sprintf("[%s] %s", clientName, err.Error())
@@ -1192,6 +1218,7 @@ func (s *server) streamSSE(w http.ResponseWriter, r *http.Request, client core.C
 			flusher.Flush()
 			break
 		}
+		eventCount++
 		// The first event off the module is the first byte the caller waits
 		// for; noteFirstFrame keeps only the first one.
 		stat.noteFirstFrame(time.Now())
@@ -1215,6 +1242,7 @@ func (s *server) streamSSE(w http.ResponseWriter, r *http.Request, client core.C
 				continue
 			}
 			if !send(chatChoice{Index: 0, Delta: d}, nil) {
+				s.fail(rec)
 				return
 			}
 		case core.EventToolCall:
@@ -1231,6 +1259,7 @@ func (s *server) streamSSE(w http.ResponseWriter, r *http.Request, client core.C
 			d := &chatMessage{ToolCalls: []chatToolCall{tc}}
 			sawToolCall = true
 			if !send(chatChoice{Index: 0, Delta: d}, nil) {
+				s.fail(rec)
 				return
 			}
 		case core.EventUsage:
@@ -1249,9 +1278,16 @@ func (s *server) streamSSE(w http.ResponseWriter, r *http.Request, client core.C
 				reason = "tool_calls"
 			}
 			if !send(chatChoice{Index: 0, Delta: &chatMessage{}, FinishReason: &reason}, nil) {
+				s.fail(rec)
 				return
 			}
 		case core.EventError:
+			terminal = "upstream_error_event"
+			if ev.Err != nil && errors.Is(ev.Err, io.ErrUnexpectedEOF) {
+				terminal = "upstream_unexpected_eof"
+			}
+			streamFailed = true
+			stat.status = http.StatusBadGateway
 			if ev.Err != nil {
 				s.fail(rec)
 				msg := fmt.Sprintf("[%s] %s", clientName, ev.Err.Error())
@@ -1264,10 +1300,12 @@ func (s *server) streamSSE(w http.ResponseWriter, r *http.Request, client core.C
 				}})
 				fmt.Fprintf(w, "data: %s\n\n", b)
 				flusher.Flush()
+			} else {
+				s.fail(rec)
 			}
-			finished = true
+			break
 		}
-		if finished {
+		if finished || streamFailed {
 			break
 		}
 	}
@@ -1277,13 +1315,20 @@ func (s *server) streamSSE(w http.ResponseWriter, r *http.Request, client core.C
 	}
 	if !finished {
 		reason := "stop"
-		send(chatChoice{Index: 0, Delta: &chatMessage{}, FinishReason: &reason}, nil)
+		if !send(chatChoice{Index: 0, Delta: &chatMessage{}, FinishReason: &reason}, nil) {
+			s.fail(rec)
+			return
+		}
 	}
 	if includeUsage && usage != nil {
-		send(chatChoice{Index: 0, Delta: &chatMessage{}}, toWireUsage(usage))
+		if !send(chatChoice{Index: 0, Delta: &chatMessage{}}, toWireUsage(usage)) {
+			s.fail(rec)
+			return
+		}
 	}
 	fmt.Fprint(w, "data: [DONE]\n\n")
 	flusher.Flush()
+	terminal = "completed"
 }
 
 // ---------------------------------------------------------------------------

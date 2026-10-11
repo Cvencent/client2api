@@ -1,9 +1,11 @@
 package gateway
 
 import (
+	"bytes"
 	"encoding/json"
 
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"testing"
@@ -175,6 +177,39 @@ func TestResponsesPreservesEmptyFunctionArguments(t *testing.T) {
 				t.Fatal("function call missing from output")
 			}
 		})
+	}
+}
+
+func TestChatStreamErrorDoesNotEmitSuccessfulTerminal(t *testing.T) {
+	usage := NewUsageStore(10)
+	stats := NewStats()
+	logger := &bytes.Buffer{}
+	reg := core.NewRegistry()
+	reg.Add(&testClient{name: "t", events: []core.Event{
+		{Type: core.EventDelta, Delta: "partial"},
+		{Type: core.EventError, Err: io.ErrUnexpectedEOF},
+	}})
+	srv := NewServer(Options{Registry: reg, Version: "test", Logger: log.New(logger, "", 0), Stats: stats, Usage: usage})
+	rec := chat(t, srv, `{"model":"t/m1","stream":true,"messages":[{"role":"user","content":"hi"}]}`)
+	body := rec.Body.String()
+	if strings.Contains(body, `"finish_reason":"stop"`) || strings.Contains(body, "data: [DONE]") {
+		t.Fatalf("failed stream contains a successful terminal marker: %s", body)
+	}
+	if !strings.Contains(body, "upstream_error") {
+		t.Fatalf("failed stream omitted its error event: %s", body)
+	}
+	rows := usage.Snapshot()
+	if len(rows) != 1 || !rows[0].Failed {
+		t.Fatalf("failed stream not recorded as failed: %+v", rows)
+	}
+	if stats.Failures() != 1 {
+		t.Fatalf("failures = %d, want exactly one", stats.Failures())
+	}
+	if !strings.Contains(logger.String(), "protocol=chat") || !strings.Contains(logger.String(), "terminal=upstream_unexpected_eof") || !strings.Contains(logger.String(), "events=2") {
+		t.Fatalf("stream termination diagnostics missing: %s", logger.String())
+	}
+	if strings.Contains(logger.String(), "partial") {
+		t.Fatalf("diagnostics must not contain response content: %s", logger.String())
 	}
 }
 

@@ -5,7 +5,10 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-当前版本：**0.1.36**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：**0.1.38**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
+
+流式断流排查：升级后系统日志新增 `stream: id=...` 终止诊断，包含协议、平台/模型、
+上游事件数、首包耗时、总耗时及终止原因；不记录对话正文或凭据。
 
 client2api 是一个**个人自用**的 OpenAI 兼容网关。它把你自己在各个 AI 客户端/平台上拥有的账号和 API Key 聚合起来，对外只提供一套统一的 OpenAI 风格接口和网页管理面板。
 
