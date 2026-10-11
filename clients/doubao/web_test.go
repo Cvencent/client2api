@@ -89,6 +89,29 @@ func TestProbeAccountRejectsAnAnonymousReply(t *testing.T) {
 	}
 }
 
+// TestProbeAccountUsesPost pins the current client's account probe. The web
+// build calls GetAccountInfo with POST; GET reaches a route that answers 404
+// once a session cookie is attached.
+func TestProbeAccountUsesPost(t *testing.T) {
+	var gotMethod, gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		_, _ = w.Write([]byte(`{"data":{"user_id":"42","nickname":"tester"}}`))
+	}))
+	defer srv.Close()
+	c := newWebClient(t, srv.URL)
+	if _, err := c.up.accountInfo(context.Background(), &account{ID: "a1", Cookie: "sessionid=abc"}); err != nil {
+		t.Fatalf("accountInfo: %v", err)
+	}
+	if gotMethod != http.MethodPost {
+		t.Fatalf("method = %q, want %q", gotMethod, http.MethodPost)
+	}
+	if gotPath != pathAccountInfo {
+		t.Fatalf("path = %q, want %q", gotPath, pathAccountInfo)
+	}
+}
+
 // TestRawPostStreamsAndCarriesBody pins the streamed POST path used by Chat:
 // the body reaches the vendor and the response is returned unread.
 func TestRawPostStreamsAndCarriesBody(t *testing.T) {

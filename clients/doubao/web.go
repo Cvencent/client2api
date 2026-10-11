@@ -320,7 +320,7 @@ func (u *upstream) accountInfo(ctx context.Context, acc *account) (accountInfo, 
 		Data  accountInfo `json:"data"`
 		Extra accountInfo `json:"extra"`
 	}
-	if err := u.getJSON(cctx, acc, pathAccountInfo, nil, &out); err != nil {
+	if err := u.postJSON(cctx, acc, pathAccountInfo, nil, &out); err != nil {
 		return accountInfo{}, err
 	}
 	// The reply nests the user under "data" on the current build; some builds
