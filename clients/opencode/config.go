@@ -175,6 +175,12 @@ type Config struct {
 	// accounts.  Empty means the built-in list.  The vendor gates most of the
 	// *-free ids behind a paid plan, so this is an allowlist, not a pattern.
 	FreeModels []string `json:"free_models"`
+	// FreeOnly narrows the served catalogue, and the models a chat may
+	// target, to the zero-cost ids.  It is a tri-state pointer so an absent
+	// field keeps the default (on): this deployment exists to spend the
+	// vendor free quota, so a paid model must be opted into with
+	// `"free_only": false` rather than reached by accident.
+	FreeOnly *bool `json:"free_only"`
 }
 
 // parseConfig decodes the raw JSON of `clients.opencode`.
@@ -353,6 +359,16 @@ func (cfg Config) resolveAuthURL(raw string) string {
 
 // defaultRealm is the login realm StartLogin targets with no argument.
 func (cfg Config) defaultRealm() string { return normalizeLoginRealm(cfg.DefaultRealm) }
+
+// freeOnly reports whether the deployment is restricted to zero-cost models.
+// It defaults to true: an explicit `"free_only": false` is the only way to
+// reach the vendor paid catalogue.
+func (cfg Config) freeOnly() bool {
+	if cfg.FreeOnly == nil {
+		return true
+	}
+	return *cfg.FreeOnly
+}
 
 // freeModels is the allowlist of model ids an anonymous account may ask for.
 func (cfg Config) freeModels() []string {

@@ -6,6 +6,7 @@
 
   "max_attempts": 3,
   "max_concurrency": 4,
+  "free_only": true,
 
   "models_ttl": "5m",
   "models_timeout": "20s",

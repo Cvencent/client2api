@@ -93,9 +93,13 @@
     "balance_refresh_minutes": 5
   },
   "clients": {
+    "autoclaw": {
+      "auto_discover": true
+    },
     "cline": {
       "tls_profile": "chrome",
-      "tls_protocol": "http/1.1"
+      "tls_protocol": "http/1.1",
+      "free_only": true
     },
     "codearts": {},
     "kimi": {
@@ -114,7 +118,9 @@
       "tls_profile": "chrome",
       "tls_protocol": "http/1.1"
     },
-    "opencode": {},
+    "opencode": {
+      "free_only": true
+    },
     "openrouter": {
       "free_only": true
     },

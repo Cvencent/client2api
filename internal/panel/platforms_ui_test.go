@@ -55,6 +55,9 @@ func TestPlatformsViewConfiguresRouting(t *testing.T) {
 			t.Errorf("savePlatforms does not mention %q", want)
 		}
 	}
+	if !strings.Contains(save, `needsRestart`) || !strings.Contains(save, `重启进程后生效`) {
+		t.Error("savePlatforms does not report that clients.<name>.free_only needs a process restart")
+	}
 	if !strings.Contains(src, `$("#btnPfSave").addEventListener`) {
 		t.Error("the save button has no click handler")
 	}
@@ -206,5 +209,40 @@ func TestNoteCellStripsTheCooldownSuffix(t *testing.T) {
 	body := poolStatsFuncBody(t, src, "statusNoteText")
 	if !strings.Contains(body, `\s+left`) || !strings.Contains(body, `noteDurationZh`) {
 		t.Error("statusNoteText does not strip the pool's \" (… left)\" suffix before looking the note up")
+	}
+}
+
+// TestPlatformsViewConfiguresFreeOnly pins the four routers whose catalogues
+// carry a zero-cost subset.  The switch has to be visible on the platform card,
+// preserved across a draft restore, and saved as the module's own
+// clients.<name>.free_only key rather than a platform-policy field.
+func TestPlatformsViewConfiguresFreeOnly(t *testing.T) {
+	src := poolStatsUISource(t)
+	render := poolStatsFuncBody(t, src, "renderPlatforms")
+	for _, want := range []string{
+		`["kilocode", "opencode", "openrouter", "cline"].indexOf(n) >= 0`,
+		`class="pfFreeOnly"`,
+		`clientEntry.free_only === false ? "" : " checked"`,
+	} {
+		if !strings.Contains(render, want) {
+			t.Errorf("renderPlatforms does not mention %q", want)
+		}
+	}
+	draft := poolStatsFuncBody(t, src, "capturePlatformDraft")
+	if !strings.Contains(draft, `querySelector(".pfFreeOnly")`) {
+		t.Error("capturePlatformDraft drops the free-only checkbox")
+	}
+	restore := poolStatsFuncBody(t, src, "restorePlatformDraft")
+	if !strings.Contains(restore, `freeOnly.checked = d.freeOnly`) {
+		t.Error("restorePlatformDraft does not restore the free-only checkbox")
+	}
+	save := poolStatsFuncBody(t, src, "savePlatforms")
+	for _, want := range []string{
+		`clientPatch[name] = { free_only: now }`,
+		`patch.clients = clientPatch`,
+	} {
+		if !strings.Contains(save, want) {
+			t.Errorf("savePlatforms does not mention %q", want)
+		}
 	}
 }

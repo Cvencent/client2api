@@ -25,6 +25,7 @@
   "auth_base_url": "",
   "default_realm": "",
   "free_models": [],
+  "free_only": true,
 
   "accounts": [
     {

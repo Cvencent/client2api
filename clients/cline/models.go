@@ -454,6 +454,29 @@ func fallbackCatalog() []core.Model {
 	return mergeCatalog(builtinModels, nil, nil, nil, false)
 }
 
+// modelIsFree reads the catalogue entry free marker.
+func modelIsFree(m core.Model) bool {
+	if m.Extra == nil {
+		return false
+	}
+	v, _ := m.Extra["free"].(bool)
+	return v
+}
+
+// restrictToFree keeps only zero-cost entries when free_only is on.
+func restrictToFree(list []core.Model, cfg config) []core.Model {
+	if !cfg.freeOnly() {
+		return list
+	}
+	out := make([]core.Model, 0, len(list))
+	for _, m := range list {
+		if modelIsFree(m) {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
 // modelIDs lists the ids in catalogue order.
 func modelIDs(models []core.Model) []string {
 	ids := make([]string, 0, len(models))
@@ -561,13 +584,13 @@ func cloneModels(list []core.Model) []core.Model {
 func (c *Client) Models(ctx context.Context) ([]core.Model, error) {
 	now := time.Now()
 	if list, ok := c.models.cached(now, c.cfg.modelsTTL()); ok {
-		return list, nil
+		return restrictToFree(list, c.cfg), nil
 	}
 	c.refreshModelsAsync()
 	if list := c.models.snapshot(); len(list) > 0 {
-		return list, nil
+		return restrictToFree(list, c.cfg), nil
 	}
-	return fallbackCatalog(), nil
+	return restrictToFree(fallbackCatalog(), c.cfg), nil
 }
 
 // RefreshModels performs a synchronous refresh, returning the last good list (or
@@ -579,12 +602,12 @@ func (c *Client) RefreshModels(ctx context.Context) ([]core.Model, error) {
 	list, err := c.fetchModels(ctx)
 	if err == nil {
 		c.models.finishRefresh(list, nil, time.Now())
-		return list, nil
+		return restrictToFree(list, c.cfg), nil
 	}
 	if cached := c.models.snapshot(); len(cached) > 0 {
-		return cached, err
+		return restrictToFree(cached, c.cfg), err
 	}
-	return fallbackCatalog(), err
+	return restrictToFree(fallbackCatalog(), c.cfg), err
 }
 
 // refreshModelsAsync starts one background refresh at a time, throttled by

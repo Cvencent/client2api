@@ -594,10 +594,38 @@ func TestAnonymousChatRejectsAPaidModelLocally(t *testing.T) {
 	}
 }
 
-// TestOAuthWorkspaceModelsAreUnioned proves a signed-in workspace's allowed
-// models are added to the catalogue the panel serves.
-func TestOAuthWorkspaceModelsAreUnioned(t *testing.T) {
-	c := newTestClient(t, Config{})
+// TestOAuthWorkspaceModelsAreFilteredUnderFreeOnly proves free_only is applied
+// to the OAuth workspace union too: the public catalogue still survives, but
+// a paid workspace model needs an explicit `"free_only": false` opt-in.
+func TestOAuthWorkspaceModelsAreFilteredUnderFreeOnly(t *testing.T) {
+	c := newTestClient(t, Config{FreeOnly: testFreeOnlyOn()})
+	c.pool.upsert(accountRecord{
+		ID: "opencode:oauth", AuthMode: "oauth", AccessToken: "t", OrgID: "o",
+		AllowedModels: []string{"my-workspace-model"},
+		Enabled:       true, Source: sourcePanel,
+	})
+
+	models := c.servedModels(fallbackModels(c.cfg))
+	var found bool
+	for _, m := range models {
+		if m.ID == "my-workspace-model" {
+			found = true
+		}
+	}
+	if found {
+		t.Fatalf("models = %v, want the paid workspace model filtered under free_only", modelIDsOf(models))
+	}
+	if !containsModel(models, "space-bunny-free") {
+		t.Fatal("the public catalogue was dropped for an OAuth account")
+	}
+}
+
+// TestOAuthWorkspaceModelsAreUnionedWhenFreeOnlyIsOff proves the same union
+// still works when the operator opts into the paid catalogue.  free_only
+// defaults on, so the paid-catalogue behaviour needs an explicit opt-in.
+func TestOAuthWorkspaceModelsAreUnionedWhenFreeOnlyIsOff(t *testing.T) {
+	off := false
+	c := newTestClient(t, Config{FreeOnly: &off})
 	c.pool.upsert(accountRecord{
 		ID: "opencode:oauth", AuthMode: "oauth", AccessToken: "t", OrgID: "o",
 		AllowedModels: []string{"my-workspace-model"},

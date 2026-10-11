@@ -49,12 +49,14 @@ func sseResponse(body string) *http.Response {
 func newTestClient(t *testing.T, cfg Config) *Client {
 	t.Helper()
 	t.Setenv(apiKeyEnv, "")
+	if cfg.FreeOnly == nil && len(cfg.ExtraModels) == 0 && cfg.FreeModels == nil {
+		cfg.FreeOnly = testFreeOnlyOff()
+	}
 	c := &Client{cfg: cfg.normalize(), now: func() time.Time { return testNow }}
 	c.ensureOnce.Do(func() { c.pool = newPool() })
 	return c
 }
 
-// newFakeClient is a test client whose HTTP transport is fn.
 func newFakeClient(t *testing.T, cfg Config, fn roundTripFunc) *Client {
 	t.Helper()
 	c := newTestClient(t, cfg)

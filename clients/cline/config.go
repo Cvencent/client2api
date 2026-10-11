@@ -162,8 +162,12 @@ type config struct {
 	QuotaCooldown durationField `json:"quota_cooldown"`
 	RefreshMargin durationField `json:"refresh_margin"`
 
-	MaxTokens       *int          `json:"max_tokens"`
-	MaxConcurrency  *int          `json:"max_concurrency"`
+	MaxTokens      *int `json:"max_tokens"`
+	MaxConcurrency *int `json:"max_concurrency"`
+	// FreeOnly narrows the served catalogue, and the models a chat may
+	// target, to the zero-cost ids.  It is a tri-state pointer so an absent
+	// field keeps the default (on).
+	FreeOnly        *bool         `json:"free_only"`
 	ReasoningEffort string        `json:"reasoning_effort"`
 	Login           bool          `json:"login"`
 	PollInterval    durationField `json:"poll_interval"`
@@ -258,6 +262,16 @@ func (c config) maxConcurrency() int {
 		return *c.MaxConcurrency
 	}
 	return defaultMaxConcurrency
+}
+
+// freeOnly reports whether the deployment is restricted to zero-cost models.
+// It defaults to true: an explicit `"free_only": false` is the only way to
+// reach the vendor paid catalogue.
+func (c config) freeOnly() bool {
+	if c.FreeOnly == nil {
+		return true
+	}
+	return *c.FreeOnly
 }
 
 // reasoningEffort is the configured default tier, or "" when unset.  It is not

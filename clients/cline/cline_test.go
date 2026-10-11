@@ -106,6 +106,37 @@ func newTestClient(t *testing.T, f *fakeServer, extra string) *Client {
 	if extra != "" {
 		raw += "," + extra
 	}
+	if !strings.Contains(raw, `"free_only"`) {
+		raw += `,"free_only":false`
+	}
+	raw += "}"
+	deps := core.Deps{
+		DataDir:    dir,
+		Config:     json.RawMessage(raw),
+		HTTPClient: f.srv.Client(),
+		Logf:       func(format string, args ...any) { t.Logf(format, args...) },
+	}
+	built, err := New(deps)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	c, ok := built.(*Client)
+	if !ok {
+		t.Fatalf("New returned %T, want *Client", built)
+	}
+	return c
+}
+
+// newTestClientWithConfig keeps the default test fixture usable for the
+// paid-catalogue tests while letting a test opt back into the product default.
+func newTestClientWithConfig(t *testing.T, f *fakeServer, extra string) *Client {
+	t.Helper()
+	dir := t.TempDir()
+	raw := `{"api_base":"` + f.srv.URL + `","app_base":"` + f.srv.URL +
+		`","workos_base":"` + f.srv.URL + `","models_timeout":"5s","chat_timeout":"10s"`
+	if extra != "" {
+		raw += "," + extra
+	}
 	raw += "}"
 	deps := core.Deps{
 		DataDir:    dir,

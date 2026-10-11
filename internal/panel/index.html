@@ -1139,6 +1139,7 @@ button.primary:active:not(:disabled) { filter: brightness(.94); }
 .pfhead .pfcount { color: var(--ink-3); font-size: 11.5px; }
 .pfhead .pfToggle { width: 24px; padding: 0; }
 .pfmodels { padding: 10px 12px 12px; }
+.pfFreeOnlyRow { margin-bottom: 9px; padding: 7px 9px; border: 1px solid var(--line-soft); border-radius: 7px; background: var(--surface-2); }
 .pfmodels .pfFilter { width: 260px; max-width: 100%; padding: 5px 10px; font-size: 12.5px; border-radius: 6px; margin-bottom: 8px; }
 .pfmodels .hint { font-size: 12px; color: var(--ink-3); }
 .pfmodels .pfNoMatch { margin-top: 6px; }
@@ -2759,7 +2760,7 @@ const cbase = n => "/panel/api/clients/" + encodeURIComponent(n);
 const aid = id => encodeURIComponent(id);
 
 /* ── 状态 ─────────────────────────────────────────────────────────────── */
-let SNAP = { clients: [] }, OVER = null, NAMES = [], REG = [], ACCTS = {}, CUR = null, MODELS = [], VIEW = "accounts", POOL = null;
+let SNAP = { clients: [] }, OVER = null, NAMES = [], REG = [], ACCTS = {}, CUR = null, MODELS = [], MODEL_NAMES = {}, MODEL_NAMES_READY = {}, VIEW = "accounts", POOL = null;
 // OVER_FULL: the last /panel/api/overview carried the complete account list and the
 // traffic slice, so the poll must not re-ask every module for what it already has.
 // BOOT: the first refresh has not finished yet; the accounts table shows a skeleton
@@ -2808,11 +2809,12 @@ function capturePlatformDraft() {
   document.querySelectorAll("#pfBody .pfplat").forEach(p => {
     const values = {};
     ["pfPrio","pfMif","pfMifAcct","pfReserve"].forEach(k => { values[k] = p.querySelector("."+k).value; });
+    const freeOnly = p.querySelector(".pfFreeOnly");
     const models = {};
     p.querySelectorAll(".pfm").forEach(m => { models[m.dataset.model] = m.querySelector("input").checked; });
     const fields = {};
     p.querySelectorAll("input[id],select[id],textarea[id]").forEach(x => { fields[x.id] = { value: x.value, checked: x.checked }; });
-    draft.platforms[p.dataset.client] = { values, models, fields, clearBlacklist: p.dataset.clearBlacklist || "", schedule: cloneValues(p.querySelector(".pfSched")), open: !p.querySelector(".pfmodels").hidden };
+    draft.platforms[p.dataset.client] = { values, models, fields, freeOnly: freeOnly ? freeOnly.checked : null, clearBlacklist: p.dataset.clearBlacklist || "", schedule: cloneValues(p.querySelector(".pfSched")), open: !p.querySelector(".pfmodels").hidden };
   });
   return draft;
 }
@@ -2824,6 +2826,9 @@ function restorePlatformDraft(draft) {
     Object.keys(d.values).forEach(k => { p.querySelector("."+k).value = d.values[k]; });
     p.dataset.clearBlacklist = d.clearBlacklist;
     Object.keys(d.fields).forEach(id => { const x = document.getElementById(id); if (x) { x.value = d.fields[id].value; x.checked = d.fields[id].checked; } });
+    const freeOnly = p.querySelector(".pfFreeOnly");
+    if (freeOnly && d.freeOnly != null) freeOnly.checked = d.freeOnly;
+
     p.querySelectorAll(".pfm").forEach(m => { if (Object.prototype.hasOwnProperty.call(d.models, m.dataset.model)) m.querySelector("input").checked = d.models[m.dataset.model]; });
     p.querySelector(".pfSched").innerHTML = d.schedule;
     p.querySelector(".pfmodels").hidden = !d.open;
@@ -4560,10 +4565,14 @@ function closeAccountNote() {
 }
 
 /* ── 模型明细弹层 ─────────────────────────────────────────────────────
-   「模型」列点开的就是它。只读，数据全来自已经拿到的 status + overview，
-   不发任何请求，所以打开/关闭都是瞬时的。 */
-function modelCellHTML(m, p) {
-  const name = '<span class="nm" title="' + esc(m) + '">' + esc(m) + '</span>';
+   「模型」列点开的就是它。只读，数据来自已经拿到的 status + overview 和
+   一次模型名称缓存；打开/关闭是瞬时的。 */
+function modelDisplayName(client, id) {
+  return MODEL_NAMES[String(client || "") + "/" + String(id || "")] || String(id || "");
+}
+function modelCellHTML(client, m, p) {
+  const shown = modelDisplayName(client, m);
+  const name = '<span class="nm" title="' + esc(m) + '">' + esc(shown) + '</span>';
   if (!p) return '<div class="mpark-m ok"><span class="ic">✓</span>' + name + '</div>';
   if (p.kind === "unsupported") {
     return '<div class="mpark-m bad"><span class="ic">⊘</span>' + name + '<span class="st">该账号不支持</span></div>';
@@ -4571,7 +4580,20 @@ function modelCellHTML(m, p) {
   const when = p.until ? parkRemaining(p.until) : "";
   return '<div class="mpark-m limit"><span class="ic">✕</span>' + name + '<span class="st">' + esc(when ? "限流至 " + when : "限流中") + '</span></div>';
 }
+async function ensureModelNames() {
+  if (MODEL_NAMES_READY[""]) return;
+  const r = await api("/panel/api/models");
+  if (!r.ok) return;
+  ((r.data && r.data.clients) || []).forEach(c => {
+    (c.models || []).forEach(m => {
+      const nm = (m.extra || {}).display_name || (m.extra || {}).name || "";
+      if (nm) MODEL_NAMES[c.name + "/" + m.id] = nm;
+    });
+  });
+  MODEL_NAMES_READY[""] = true;
+}
 function openModelsDialog(n, ids) {
+  if (!MODEL_NAMES_READY[""]) { ensureModelNames().then(() => openModelsDialog(n, ids)); return; }
   const list = (ids || []).filter(Boolean);
   const secs = [];
   list.forEach(id => {
@@ -4593,8 +4615,8 @@ function openModelsDialog(n, ids) {
       grid = '<div class="hint">模块还没有上报模型目录。</div>';
     } else {
       const cells = [];
-      sum.catalog.forEach(m => cells.push(modelCellHTML(m, sum.parks[m])));
-      Object.keys(sum.parks).forEach(m => { if (sum.catalog.indexOf(m) < 0) cells.push(modelCellHTML(m, sum.parks[m])); });
+      sum.catalog.forEach(m => cells.push(modelCellHTML(n, m, sum.parks[m])));
+      Object.keys(sum.parks).forEach(m => { if (sum.catalog.indexOf(m) < 0) cells.push(modelCellHTML(n, m, sum.parks[m])); });
       grid = '<div class="mpark-grid">' + cells.join("") + '</div>';
     }
     secs.push('<div class="mpark-acct">' + head + grid + '</div>');
@@ -5868,6 +5890,7 @@ async function renderModels(refresh) {
       const probe = probeOf(m.id);
       if (probe) probed++;
       const nm = ex.display_name || ex.name || "";
+      if (nm) MODEL_NAMES[c.name + "/" + m.id] = nm;
       const ctx = ex.context_length || ex.context_window || 0;
       // 每一行把 HTML 和"可搜索文本"一起存下来：搜索框、客户端下拉、只看上游/只看免费这四个
       // 条件都只是在这个数组上过滤，不会再问一次上游。
@@ -5912,6 +5935,7 @@ async function renderModels(refresh) {
     });
   });
   MODELS = cls;
+  MODEL_NAMES_READY[""] = true;
   MD_ITEMS = items;
   // 刷新后模型可能增删：丢掉指向已消失模型的历史编辑，避免保存时提交幽灵行。
   const liveKeys = {};
@@ -6439,6 +6463,7 @@ async function renderPlatforms(preserveDraft = false) {
   const draft = preserveDraft ? capturePlatformDraft() : null;
   SOURCE_DEFS = c.sources || {};
   const policy = c.platforms || {};
+  const clientCfg = c.clients || {};
   const models = {};
   ((md.data && md.data.clients) || []).forEach(x => {
     models[x.name] = (x.models || []).map(m => m && m.id).filter(Boolean);
@@ -6451,6 +6476,7 @@ async function renderPlatforms(preserveDraft = false) {
   Object.keys(policy).forEach(push);
   Object.keys(models).forEach(push);
   Object.keys(SOURCE_DEFS).forEach(push);
+  Object.keys(clientCfg).forEach(push);
   // 号池设置住在 WorkBuddy 卡片里，OpenRouter 也复用其中三项；所以这张卡
   // 始终可达：模块没在跑或从没配过时也渲染（模型清单为空）。
   push("workbuddy");
@@ -6461,6 +6487,7 @@ async function renderPlatforms(preserveDraft = false) {
     models: models,
     names: names,
     baseline: JSON.parse(JSON.stringify(policy)),
+    clientBaseline: JSON.parse(JSON.stringify(clientCfg)),
     poolBaseline: JSON.parse(JSON.stringify(c.pool || {})),
     cooldownBaseline: JSON.parse(JSON.stringify(c.cooldown || {})),
     groupsBaseline: JSON.parse(JSON.stringify(c.model_groups || {})),
@@ -6474,6 +6501,8 @@ async function renderPlatforms(preserveDraft = false) {
     const off = pfDisabledOf(policy, n);
     totalOff += off.length;
     const list = models[n] || [];
+    const freeOnlyKnown = ["kilocode", "opencode", "openrouter", "cline"].indexOf(n) >= 0;
+    const clientEntry = (clientCfg[n] && typeof clientCfg[n] === "object" && !Array.isArray(clientCfg[n])) ? clientCfg[n] : {};
     const entry = policy[n] || {};
     const prio = entry.priority == null ? "" : String(entry.priority);
     const mif = entry.max_in_flight == null || entry.max_in_flight === 0 ? "" : String(entry.max_in_flight);
@@ -6495,6 +6524,7 @@ async function renderPlatforms(preserveDraft = false) {
       '<button class="xs pfNone" type="button">全禁用</button>' +
       '</div>');
     out.push('<div class="pfmodels" hidden>');
+    if (freeOnlyKnown) out.push('<label class="sel-note pfFreeOnlyRow" title="关闭后这个平台会展示并允许调用厂商目录里的付费模型"><input type="checkbox" class="pfFreeOnly"' + (clientEntry.free_only === false ? "" : " checked") + '> 只展示免费模型</label>');
     if (SOURCE_DEFS[n]) out.push('<div class="hint">' + esc(n) + ' · ' + esc(SOURCE_DEFS[n].base_url) + ' · 余额 ' + esc(SOURCE_DEFS[n].balance_protocol || 'auto') + (SOURCE_DEFS[n].disabled ? ' · 已停用' : '') + '</div>');
     // 展开区顶部是 priority_schedule 分时规则编辑器，下方才是模型清单。
     out.push(pfPriorityScheduleHTML(entry));
@@ -6661,8 +6691,20 @@ async function savePlatforms() {
     }
   }
 
+  const clientPatch = {};
+  const clientBase = (PF && PF.clientBaseline) || {};
+  for (const el of document.querySelectorAll("#pfBody .pfFreeOnly")) {
+    const name = el.closest(".pfplat").dataset.client;
+    const known = ["kilocode", "opencode", "openrouter", "cline"].indexOf(name) >= 0;
+    if (!known) continue;
+    const before = (clientBase[name] && typeof clientBase[name] === "object" && !Array.isArray(clientBase[name])) ? clientBase[name] : {};
+    const was = before.free_only === false ? false : true;
+    const now = !!el.checked;
+    if (now !== was) clientPatch[name] = { free_only: now };
+  }
   const patch = {};
   if (Object.keys(changed).length) patch.platforms = changed;
+  if (Object.keys(clientPatch).length) patch.clients = clientPatch;
   if (Object.keys(pool).length) patch.pool = pool;
   if (Object.keys(cool).length) patch.cooldown = cool;
   const readGroups = pfReadModelGroups();
@@ -6709,8 +6751,11 @@ async function savePlatforms() {
     const r = await api("/panel/api/config", { method: "PATCH", body: patch });
     if (!r.ok) { toast("保存失败：" + r.err, "err"); return; }
     const rel = await api("/panel/api/reload", { method: "POST" });
+    const needsRestart = Object.prototype.hasOwnProperty.call(patch, "clients");
     if (!rel.ok) {
       toast("配置已保存，但热加载失败（" + rel.err + "）：重启后生效", "err");
+    } else if (needsRestart) {
+      toast("已保存；其余热加载配置已生效，免费模型开关重启进程后生效。", "err");
     } else {
       toast("已保存并立即生效：" + Object.keys(patch).join("、"));
     }

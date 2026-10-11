@@ -5,6 +5,7 @@ package all
 
 import (
 	// Blank imports run each module's init(), which calls core.Register.
+	_ "client2api/clients/autoclaw"
 	_ "client2api/clients/cline"
 	_ "client2api/clients/codearts"
 	_ "client2api/clients/doubao"

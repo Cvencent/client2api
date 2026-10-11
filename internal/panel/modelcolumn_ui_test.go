@@ -129,3 +129,27 @@ func TestModelColumnIsWiredEndToEnd(t *testing.T) {
 		t.Error("Esc 关不掉模型弹层")
 	}
 }
+
+// TestModelDialogShowsFriendlyNames keeps the Qoder account-pool dialog
+// readable: the module already publishes display_name in Extra, so the cell
+// shows that name while the title stays the wire model id the gateway expects.
+func TestModelDialogShowsFriendlyNames(t *testing.T) {
+	src := poolStatsUISource(t)
+	for _, want := range []string{`MODEL_NAMES`, `display_name`, `function modelDisplayName(client, id)`} {
+		if !strings.Contains(src, want) {
+			t.Errorf("model dialog is missing %q", want)
+		}
+	}
+	cell := poolStatsFuncBody(t, src, "modelCellHTML")
+	if !strings.Contains(cell, `title="' + esc(m) + '"`) || !strings.Contains(cell, `esc(shown)`) {
+		t.Error("modelCellHTML does not keep the raw id as title while showing the friendly name")
+	}
+	dialog := poolStatsFuncBody(t, src, "openModelsDialog")
+	if !strings.Contains(dialog, "modelCellHTML(n, m, sum.parks[m])") {
+		t.Error("openModelsDialog does not pass the client into modelCellHTML")
+	}
+	render := poolStatsFuncBody(t, src, "renderModels")
+	if !strings.Contains(render, `MODEL_NAMES[c.name + "/" + m.id] = nm`) {
+		t.Error("renderModels does not cache display names for the account-pool dialog")
+	}
+}

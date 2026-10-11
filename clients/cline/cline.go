@@ -16,6 +16,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -103,6 +104,30 @@ func New(deps core.Deps) (core.Client, error) {
 // Name implements core.Client.
 func (c *Client) Name() string { return "cline" }
 
+// modelAllowed reports whether free_only admits this model id.  The served
+// catalogue is narrowed too, but an explicitly named paid id must still be
+// refused before any upstream round trip.
+func (c *Client) modelAllowed(id string) bool {
+	if !c.cfg.freeOnly() {
+		return true
+	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return false
+	}
+	for _, m := range c.models.snapshot() {
+		if m.ID == id {
+			return modelIsFree(m)
+		}
+	}
+	for _, m := range fallbackCatalog() {
+		if m.ID == id {
+			return modelIsFree(m)
+		}
+	}
+	return false
+}
+
 // setPaths joins the module's data files onto Deps.DataDir, leaving them empty
 // when there is no DataDir (in which case nothing is persisted).
 func (c *Client) setPaths() {
@@ -161,6 +186,9 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 	}
 	if strings.TrimSpace(req.Model) == "" {
 		return nil, core.ErrUnsupported
+	}
+	if c.cfg.freeOnly() && c.modelAllowed(req.Model) == false {
+		return nil, fmt.Errorf("%w: model %q is not a free Cline model (free_only is on)", core.ErrUnsupported, req.Model)
 	}
 	if c.pool.len() == 0 {
 		return nil, core.ErrNotConfigured
@@ -473,6 +501,7 @@ func (c *Client) Status(ctx context.Context) core.Status {
 	if len(models) == 0 {
 		models = fallbackCatalog()
 	}
+	models = restrictToFree(models, c.cfg)
 	st := core.Status{
 		Name:      "cline",
 		Accounts:  c.pool.snapshot(),

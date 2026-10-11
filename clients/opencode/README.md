@@ -134,6 +134,12 @@ The public list is fetched even when no credential is configured. If the live
 fetch fails, the module keeps the last known-good list and only then falls back
 to the built-in catalogue.
 
+`free_only` defaults to **on**.  While it is on, the catalogue served to the
+panel and `Models()` is narrowed to the zero-cost ids, OAuth workspace
+`allowed_models` are filtered the same way, and a chat naming a paid id is
+refused with `core.ErrUnsupported` before any upstream request.  Set
+`"free_only": false` to expose the vendor paid catalogue.
+
 ### `ModelLimitsProvider`
 
 ```go
@@ -191,6 +197,7 @@ See `config.example.json` for the complete shape.
 | `auth_base_url` | string | `https://opencode.ai/console` | OpenCode Console origin the `oauth` device-code login drives; a non-absolute `http(s)` value is discarded |
 | `default_realm` | string | `free` | the realm `StartLogin` targets when the panel sends none: `free` or `oauth`; anything else folds to `free` |
 | `free_models` | string[] | `["space-bunny-free"]` | extra zero-cost ids for an anonymous credential; vendor ids ending in `*-free` are recognized automatically |
+| `free_only` | bool | `true` | narrow the served catalogue and chat guard to zero-cost ids; set `false` to allow the paid catalogue |
 
 **Durations** accept a Go duration string (`"90s"`) or a bare JSON number read
 as seconds (`90`). A value that cannot be parsed becomes zero, and zero means

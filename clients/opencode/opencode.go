@@ -278,7 +278,7 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 	// An anonymous-only pool can only serve the free allowlist, so a paid model
 	// is refused here instead of spending an upstream round trip on a certain
 	// FreeTierError.
-	if c.pool.onlyAnonymous() && !anonymousModelAllowed(req.Model, c.cfg) {
+	if (c.cfg.freeOnly() || c.pool.onlyAnonymous()) && !anonymousModelAllowed(req.Model, c.cfg) {
 		return nil, fmt.Errorf("%w: model %q is not available to the anonymous free account", core.ErrUnsupported, req.Model)
 	}
 	body, err := buildChatBody(c.cfg, req)

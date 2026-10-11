@@ -56,6 +56,14 @@ The live `free` array is authoritative. On 2026-10-04 the vendor moved
 catalogue refresh removes the free id, and a request that still names it is
 refused with a 404.
 
+### `free_only`
+
+`free_only` defaults to **on**.  While it is on, `Models()`, `RefreshModels()`
+and `Status()` serve only entries marked `Extra["free"] == true`, and a chat
+naming a paid Cline model is refused with `core.ErrUnsupported` before any
+upstream request.  Set `"free_only": false` to expose the metered catalogue
+again.
+
 **Freeness is never decided from the model name.** The rule is the union of four
 independent signals:
 
@@ -127,6 +135,7 @@ and `Status` reports not-ready rather than refusing to build.
 
       "max_attempts": 3,           // accounts tried per request
       "max_concurrency": 4,        // in-flight chat requests before ErrBusy
+      "free_only": true,           // catalogue + chat guard limited to zero-cost ids
 
       "models_ttl": "5m",          // catalogue freshness
       "models_timeout": "20s",     // catalogue + token-endpoint timeout
@@ -180,6 +189,7 @@ and `Status` reports not-ready rather than refusing to build.
 | `workos_client_id` | string | the Cline desktop client id | identifies the app to WorkOS |
 | `max_attempts` | int | `3` | accounts tried before the request fails |
 | `max_concurrency` | int | `4` | in-flight requests; the next one gets `core.ErrBusy` |
+| `free_only` | bool | `true` | restrict the catalogue and chat guard to zero-cost ids |
 | `models_ttl` | duration | `5m` | how long a catalogue answer is fresh |
 | `models_timeout` | duration | `20s` | catalogue fetch and token exchange |
 | `chat_timeout` | duration | `10m` | the whole chat request |

@@ -5,7 +5,7 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-Current version: **0.1.38**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
+Current version: **0.1.42**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
 
 client2api is a personal, local-only OpenAI-compatible gateway. It aggregates
 the accounts and API Keys **you own** on different AI coding clients and
@@ -38,6 +38,7 @@ people. The built-in default is `127.0.0.1`.
 | Route | Client / platform | Upstream |
 |---|---|---|
 | `workbuddy/...` | WorkBuddy | Tencent WorkBuddy / CodeBuddy |
+| `autoclaw/...` | AutoClaw | AutoClaw desktop (independent platform) |
 | `trae/...` | Trae | TRAE SOLO / Trae CN |
 | `zcode/...` | ZCode | Z.AI coding plan |
 | `kimi/...` | Kimi | Kimi Code CLI |

@@ -324,6 +324,9 @@ func (c *Client) servedModels(in []core.Model) []core.Model {
 			continue
 		}
 		free := isFreeModelID(m.ID, allowed)
+		if c.cfg.freeOnly() && !free {
+			continue
+		}
 		if anonymousOnly && !free {
 			continue
 		}
@@ -352,6 +355,9 @@ func (c *Client) servedModels(in []core.Model) []core.Model {
 			for _, id := range a.AllowedModels {
 				id = strings.TrimSpace(id)
 				if id == "" || seen[id] {
+					continue
+				}
+				if c.cfg.freeOnly() && !isFreeModelID(id, allowed) {
 					continue
 				}
 				seen[id] = true
