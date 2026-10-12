@@ -44,6 +44,7 @@ type fakePage struct {
 	filled          map[string]string
 	clicked         []string
 	agreementModal  bool
+	accountTexts    []string
 	submitAttempts  int
 	requireFrame    bool
 	tabFalseCalls   int
@@ -138,6 +139,14 @@ func (p *fakePage) EvalBool(_ context.Context, expression string) (bool, error) 
 		if p.agreementModal {
 			p.agreementModal = false
 			return true, nil
+		}
+		return false, nil
+	case strings.Contains(expression, ".account-item") && strings.Contains(expression, "个人版"):
+		for _, text := range p.accountTexts {
+			if strings.Contains(text, "个人版") {
+				p.clicked = append(p.clicked, ".account-item(个人版)")
+				return true, nil
+			}
 		}
 		return false, nil
 	default:
@@ -614,6 +623,69 @@ func TestAutoLoginLogsAHeartbeatWhileConfirming(t *testing.T) {
 	}
 	if !logContains(job.snapshot().Log, "仍在等待厂商确认") {
 		t.Fatalf("log never recorded a confirming heartbeat: %v", logTexts(job.snapshot().Log))
+	}
+}
+
+func TestAutoLoginSelectsTheCNAccountAfterSubmit(t *testing.T) {
+	v := successVendor()
+	c, _ := autoLoginClient(t, v)
+	page := newFakePage()
+	page.exists[".account-item"] = true
+	page.accountTexts = []string{"企业"}
+	platform := &fakePlatform{number: core.SMSNumber{Phone: "13800009901"}, code: "111111"}
+
+	job, err := runAutoLogin(t, c, page, platform, core.AutoLoginRequest{})
+	if err != nil {
+		t.Fatalf("autoLogin: %v", err)
+	}
+	if !page.didClick(".account-item") {
+		t.Fatalf("the CN account chooser was left unselected")
+	}
+	if !logContains(job.snapshot().Log, "已选择账号") {
+		t.Fatalf("log did not record the account selection: %v", logTexts(job.snapshot().Log))
+	}
+}
+
+func TestAutoLoginPrefersTheCNPersonalAccount(t *testing.T) {
+	v := successVendor()
+	c, _ := autoLoginClient(t, v)
+	page := newFakePage()
+	page.exists[".account-item"] = true
+	page.accountTexts = []string{"企业", "个人版"}
+	platform := &fakePlatform{number: core.SMSNumber{Phone: "13800009902"}, code: "222222"}
+
+	if _, err := runAutoLogin(t, c, page, platform, core.AutoLoginRequest{}); err != nil {
+		t.Fatalf("autoLogin: %v", err)
+	}
+	if !page.didClick(".account-item(个人版)") {
+		t.Fatalf("the CN account chooser picked an enterprise account instead of the personal account")
+	}
+}
+
+func TestAutoLoginLeavesTheGlobalAccountChooserAlone(t *testing.T) {
+	v := successVendor()
+	c, _ := autoLoginClient(t, v)
+	page := newFakePage()
+	page.exists[".account-item"] = true
+	page.accountTexts = []string{"个人版"}
+	platform := &fakePlatform{number: core.SMSNumber{Phone: "13800009903"}, code: "333333"}
+
+	job := &autoJob{
+		id:        "global-account-choice",
+		realm:     realmGlobal,
+		state:     core.AutoLoginRunning,
+		step:      "starting",
+		startedAt: time.Now(),
+	}
+	err := c.autoLogin(context.Background(), job, core.AutoLoginRequest{}, smsOptsFrom(core.AutoLoginRequest{}), platform,
+		func(context.Context, browser.LaunchOpts) (autoBrowser, error) {
+			return fakeBrowser{page: page}, nil
+		})
+	if err != nil {
+		t.Fatalf("autoLogin: %v", err)
+	}
+	if page.didClick(".account-item") || page.didClick(".account-item(个人版)") {
+		t.Fatalf("the global flow touched the CN account chooser")
 	}
 }
 

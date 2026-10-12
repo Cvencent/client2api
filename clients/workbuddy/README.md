@@ -209,7 +209,10 @@ To get a usable credential, obtain a token the way the vendor CLI does (this is
 2. Open the returned `authUrl`. On the CN realm the desktop client also sets
    `loginSessionId` to a fresh UUID v4 before opening it; that value is what
    associates the browser sign-in with this plugin session. Global leaves the
-   URL unchanged.
+   URL unchanged. If the CN page stops on `/login/select`, select the
+   `个人版` account when present, otherwise the first account item. That posts
+   `/console/login/enterprise` and then `/console/auth/login?...&state=<state>`,
+   which binds the browser sign-in to the plugin state.
 3. `GET https://<auth host>/v2/plugin/auth/token?state=<state>`
 4. `GET https://<auth host>/v2/plugin/login/account?state=<state>`
 

@@ -119,8 +119,9 @@ const (
 	// renders it as a disabled div until the phone and code are accepted and
 	// only then as a button, so the disabled placeholder is excluded: a click
 	// on it is a silent no-op that must not be mistaken for a submitted login.
-	selSubmit   = `input#kc-login, button#kc-login, button.oneid-react-dialog-confirm-button, div.oneid-react-dialog-confirm-button:not(.oneid-react-is-disabled)`
-	selAgreeBox = "input.t-checkbox__former"
+	selSubmit      = `input#kc-login, button#kc-login, button.oneid-react-dialog-confirm-button, div.oneid-react-dialog-confirm-button:not(.oneid-react-is-disabled)`
+	selAgreeBox    = "input.t-checkbox__former"
+	selAccountItem = ".account-item"
 	// submitButtonText is the confirm control's label, used as a last-resort
 	// text match when the class-based selectors do not fit.
 	submitButtonText = "手机号登录"
@@ -674,6 +675,7 @@ func (c *Client) confirmAutoLogin(ctx context.Context, job *autoJob, page pageDr
 	started := time.Now()
 	lastBeat := started
 	successLogged := false
+	accountSelected := false
 	for {
 		// On a fresh profile the vendor can open a "服务条款与隐私协议" modal
 		// after the first submit click.  That first click never reaches the
@@ -693,6 +695,16 @@ func (c *Client) confirmAutoLogin(ctx context.Context, job *autoJob, page pageDr
 		body := pageBody(ctx, page)
 		if bad := firstText(body, pageErrorTexts); bad != "" {
 			return core.LoginState{}, fmt.Errorf("页面提示：%s", bad)
+		}
+		if !accountSelected && job.realm == realmCN {
+			selected, err := selectCNAccount(ctx, page)
+			if err != nil {
+				return core.LoginState{}, fmt.Errorf("选择登录账号失败：%w", err)
+			}
+			if selected {
+				job.logf("已选择账号，等待厂商绑定授权…")
+				accountSelected = true
+			}
 		}
 		// The page's own success marker is an early signal only -- the
 		// credential still has to arrive through PollLogin -- but surfacing it
@@ -831,6 +843,21 @@ func clickIfPresent(ctx context.Context, page pageDriver, selector string) (bool
 		return false, err
 	}
 	return page.Click(ctx, selector)
+}
+
+// selectCNAccount completes the vendor's account chooser.  The CN login flow
+// can stop on /login/select after SMS verification; the plugin credential is
+// bound only after an account is clicked.  Prefer the personal account, then
+// fall back to the vendor's first item.
+func selectCNAccount(ctx context.Context, page pageDriver) (bool, error) {
+	ok, err := page.Exists(ctx, selAccountItem)
+	if err != nil || !ok {
+		return false, err
+	}
+	if clicked, err := clickByText(ctx, page, selAccountItem, "个人版"); err != nil || clicked {
+		return clicked, err
+	}
+	return page.Click(ctx, selAccountItem)
 }
 
 // clickByText clicks the visible element matching selector whose text contains
