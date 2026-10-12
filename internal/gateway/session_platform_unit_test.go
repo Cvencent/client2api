@@ -49,8 +49,8 @@ func TestSessionPlatformsListLiveRoutes(t *testing.T) {
 	sp := newSessionPlatforms()
 	base := time.Now()
 	sp.now = func() time.Time { return base }
-	sp.bind("conv-b", "beta")
-	sp.bind("conv-a", "alpha")
+	sp.bindModel("conv-b", "beta", "m2")
+	sp.bindModel("conv-a", "alpha", "m1")
 
 	got := sp.List()
 	if len(got) != 2 {
@@ -58,6 +58,9 @@ func TestSessionPlatformsListLiveRoutes(t *testing.T) {
 	}
 	if got[0].Key != "conv-a" || got[0].Platform != "alpha" {
 		t.Fatalf("first route = %#v, want conv-a/alpha", got[0])
+	}
+	if got[0].Model != "m1" {
+		t.Fatalf("first route model = %q, want m1", got[0].Model)
 	}
 	if want := base.Add(sp.ttl); !got[0].ExpiresAt.Equal(want) {
 		t.Fatalf("expiry = %s, want %s", got[0].ExpiresAt, want)

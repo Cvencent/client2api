@@ -71,6 +71,14 @@ var (
 	codeButtonSettle = defaultCodeButtonSettle
 )
 
+// submitReadyTimeout bounds how long submitLogin waits for the vendor's confirm
+// control to become clickable after the code is filled.  The control is a
+// disabled div until the phone and code are accepted, and clicking that div is
+// a silent no-op; waiting for the clickable shape lets the run fail with a real
+// reason instead of sitting on "已提交登录…" until the whole-run timeout.  It is
+// a var only so the test binary can shrink it.
+var submitReadyTimeout = 8 * time.Second
+
 // defaultSMSInterval is wb-auto's --sms-interval default: the pause between two
 // checks for the texted code.
 const defaultSMSIntervalValue = 5 * time.Second
@@ -94,6 +102,12 @@ const defaultAutoPollInterval = 3 * time.Second
 // spent proving nothing. Production always runs defaultAutoPollInterval.
 var autoPollInterval = defaultAutoPollInterval
 
+// autoConfirmHeartbeat is how often confirmAutoLogin reports that it is still
+// waiting for the vendor.  Without it the panel's log box sits on the submit
+// line and looks frozen while the poll is actually alive.  It is a var only so
+// the test binary can shrink it.
+var autoConfirmHeartbeat = 15 * time.Second
+
 // The vendor's authorisation page.  Ported from wb_add_account.py's SEL_*.
 const (
 	selAgreeGate  = "button.agree-btn"
@@ -101,8 +115,15 @@ const (
 	selPhoneInput = `input#phoneNumber, input[placeholder="请输入你的手机号"]`
 	selCodeBtn    = `input.code-btn, button.code-btn, button.oneid-react-verify-code__code-btn`
 	selCodeInput  = `input#code, input[placeholder="请输入验证码"]`
-	selSubmit     = `input#kc-login, button#kc-login, div.oneid-react-dialog-confirm-button`
-	selAgreeBox   = "input.t-checkbox__former"
+	// selSubmit is the confirm control in its clickable shape.  The vendor
+	// renders it as a disabled div until the phone and code are accepted and
+	// only then as a button, so the disabled placeholder is excluded: a click
+	// on it is a silent no-op that must not be mistaken for a submitted login.
+	selSubmit   = `input#kc-login, button#kc-login, button.oneid-react-dialog-confirm-button, div.oneid-react-dialog-confirm-button:not(.oneid-react-is-disabled)`
+	selAgreeBox = "input.t-checkbox__former"
+	// submitButtonText is the confirm control's label, used as a last-resort
+	// text match when the class-based selectors do not fit.
+	submitButtonText = "手机号登录"
 )
 
 var (
@@ -113,9 +134,11 @@ var (
 	// vendor shows these inline, so waiting for the poll timeout would just
 	// delay the operator learning what went wrong.
 	pageErrorTexts = []string{
-		"验证码错误", "验证码已过期", "验证码无效", "验证码不正确",
+		"验证码错误", "验证码已过期", "验证码无效", "验证码不正确", "验证码已失效",
+		"请获取并输入验证码", "参数错误，请重新获取验证码",
+		"该手机号已经被其他账号绑定",
 		"今日发送次数已达上限", "发送过于频繁", "操作过于频繁",
-		"账号存在风险", "存在安全风险", "图形验证码",
+		"账号存在风险", "存在安全风险", "图形验证码", "滑块校验失败",
 	}
 )
 
@@ -598,8 +621,9 @@ func (c *Client) waitSMSCode(ctx context.Context, job *autoJob, opts core.SMSOpt
 	return "", fmt.Errorf("等了 %d 次仍未收到验证码", polls)
 }
 
-// submitLogin fills the code and submits, tolerating the two shapes the
-// confirm control has taken (a styled div, or a plain button by its text).
+// submitLogin fills the code and clicks the confirm control once it is
+// clickable, tolerating the shapes it has taken (a styled div while the form is
+// valid, or a plain button picked out by its text).
 func (c *Client) submitLogin(ctx context.Context, job *autoJob, page pageDriver, code string) error {
 	if !waitSelector(ctx, page, selCodeInput, 10*time.Second) {
 		return fmt.Errorf("找不到验证码输入框，厂商登录页可能已改版（%s）", pageWhere(ctx, page))
@@ -612,13 +636,23 @@ func (c *Client) submitLogin(ctx context.Context, job *autoJob, page pageDriver,
 		return errors.New("验证码输入框填写失败")
 	}
 	job.logf("已填验证码")
-	ok, err := page.Click(ctx, selSubmit)
-	if err != nil {
-		return fmt.Errorf("提交登录失败：%w", err)
+
+	// The confirm control is a disabled div until the phone and code are both
+	// accepted, and only then a clickable button.  Wait for that clickable
+	// shape so a not-yet-valid form is not clicked into a silent no-op that
+	// would be logged as a submitted login and then sit out the whole timeout.
+	submitted := false
+	if waitSelector(ctx, page, selSubmit, submitReadyTimeout) {
+		ok, cerr := page.Click(ctx, selSubmit)
+		if cerr != nil {
+			return fmt.Errorf("提交登录失败：%w", cerr)
+		}
+		submitted = ok
 	}
-	if !ok {
-		if ok2, _ := clickByText(ctx, page, "button", "手机号登录"); !ok2 {
-			return errors.New("找不到登录提交按钮，厂商登录页可能已改版")
+	if !submitted {
+		// Fall back to the plain-button shape the control has taken before.
+		if ok, _ := clickByText(ctx, page, "button", submitButtonText); !ok {
+			return errors.New("登录提交按钮在填写验证码后仍不可用（验证码可能未被页面接受或厂商登录页已改版）：" + pageWhere(ctx, page))
 		}
 	}
 	job.logf("已提交登录，等待授权结果…")
@@ -627,12 +661,27 @@ func (c *Client) submitLogin(ctx context.Context, job *autoJob, page pageDriver,
 
 // confirmAutoLogin waits for this module's own login session to produce a
 // credential, watching the page for the vendor's inline errors while it waits.
+// It logs the page's own success marker and a periodic heartbeat so the panel's
+// log does not look frozen during the (possibly minutes-long) vendor wait.
 func (c *Client) confirmAutoLogin(ctx context.Context, job *autoJob, page pageDriver, sess *panelLogin) (core.LoginState, error) {
 	ticker := time.NewTicker(autoPollInterval)
 	defer ticker.Stop()
+	started := time.Now()
+	lastBeat := started
+	successLogged := false
 	for {
-		if bad := firstText(pageBody(ctx, page), pageErrorTexts); bad != "" {
+		body := pageBody(ctx, page)
+		if bad := firstText(body, pageErrorTexts); bad != "" {
 			return core.LoginState{}, fmt.Errorf("页面提示：%s", bad)
+		}
+		// The page's own success marker is an early signal only -- the
+		// credential still has to arrive through PollLogin -- but surfacing it
+		// tells the operator the browser half is done.
+		if !successLogged {
+			if good := firstText(body, pageSuccessTexts); good != "" {
+				job.logf("页面已显示「%s」，等待厂商下发凭证…", good)
+				successLogged = true
+			}
 		}
 		st, err := c.PollLogin(ctx, sess.sessionID)
 		if err != nil {
@@ -648,6 +697,10 @@ func (c *Client) confirmAutoLogin(ctx context.Context, job *autoJob, page pageDr
 		case <-ctx.Done():
 			return core.LoginState{}, ctx.Err()
 		case <-ticker.C:
+		}
+		if autoConfirmHeartbeat <= 0 || time.Since(lastBeat) >= autoConfirmHeartbeat {
+			job.logf("仍在等待厂商确认登录…（已等待 %s）", time.Since(started).Round(time.Second))
+			lastBeat = time.Now()
 		}
 	}
 }

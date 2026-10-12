@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -15,14 +16,17 @@ type stickySessionView struct {
 	Client        string     `json:"client,omitempty"`
 	Account       string     `json:"account,omitempty"`
 	Platform      string     `json:"platform,omitempty"`
+	Model         string     `json:"model,omitempty"`
 	AccountBound  bool       `json:"account_bound"`
 	PlatformBound bool       `json:"platform_bound"`
 	LastActive    *time.Time `json:"last_active,omitempty"`
 }
 
 type stickySessionRequest struct {
-	Client string `json:"client"`
-	Key    string `json:"key"`
+	Client   string `json:"client"`
+	Key      string `json:"key"`
+	Platform string `json:"platform,omitempty"`
+	Model    string `json:"model,omitempty"`
 }
 
 // handleStickySessions lists the account and platform bindings the gateway is
@@ -64,6 +68,7 @@ func (p *panel) stickySessions() []stickySessionView {
 				}
 				if route, ok := platforms[binding.Key]; ok {
 					row.Platform = route.Platform
+					row.Model = route.Model
 					row.PlatformBound = true
 					if row.LastActive == nil || route.LastSeen.After(*row.LastActive) {
 						row.LastActive = timePtr(route.LastSeen)
@@ -81,6 +86,7 @@ func (p *panel) stickySessions() []stickySessionView {
 		rows = append(rows, stickySessionView{
 			Key:           key,
 			Platform:      route.Platform,
+			Model:         route.Model,
 			PlatformBound: true,
 			LastActive:    timePtr(route.LastSeen),
 		})
@@ -153,29 +159,96 @@ func (p *panel) handleStickySessionSwitch(w http.ResponseWriter, r *http.Request
 	}
 	in.Key = strings.TrimSpace(in.Key)
 	in.Client = strings.TrimSpace(in.Client)
+	in.Platform = strings.TrimSpace(in.Platform)
+	in.Model = strings.TrimSpace(in.Model)
 	if in.Key == "" {
 		writeErr(w, http.StatusBadRequest, "key is required")
 		return
 	}
-	forgottenAccount := false
+
+	var binder core.ConversationBinder
 	if in.Client != "" {
-		binder, ok, status := p.stickyBinder(in.Client)
+		var ok bool
+		var status int
+		binder, ok, status = p.stickyBinder(in.Client)
 		if !ok {
 			writeErr(w, status, stickyBinderError(in.Client, status))
 			return
 		}
-		forgottenAccount = binder.UnbindConversation(in.Key)
 	}
+
+	// Validate the requested target completely before mutating either layer.
+	// A typo or a platform that cannot serve the recorded model must leave the
+	// existing working binding intact.
+	if in.Platform != "" {
+		if in.Model == "" {
+			writeErr(w, http.StatusBadRequest, "model is required when platform is chosen")
+			return
+		}
+		if p == nil || p.opts.Registry == nil {
+			writeErr(w, http.StatusServiceUnavailable, "no registry")
+			return
+		}
+		target, ok := p.opts.Registry.Get(in.Platform)
+		if !ok {
+			writeErr(w, http.StatusBadRequest, "no such platform: "+in.Platform)
+			return
+		}
+		candidates, err := p.opts.Registry.ResolveCandidates(r.Context(), in.Model)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "cannot route model "+in.Model+": "+err.Error())
+			return
+		}
+		canServe := false
+		for _, candidate := range candidates {
+			if candidate.Client != nil && candidate.Client.Name() == target.Name() {
+				canServe = true
+				break
+			}
+		}
+		if !canServe {
+			writeErr(w, http.StatusBadRequest, fmt.Sprintf("platform %q cannot serve model %q", target.Name(), in.Model))
+			return
+		}
+		if p.opts.SessionPlatforms == nil {
+			writeErr(w, http.StatusServiceUnavailable, "platform sticky store unavailable")
+			return
+		}
+	}
+
+	forgottenAccount := false
 	forgottenPlatform := false
-	if p != nil && p.opts.SessionPlatforms != nil {
-		forgottenPlatform = p.opts.SessionPlatforms.Forget(in.Key)
+	pinnedPlatform := false
+	if in.Platform != "" {
+		pinnedPlatform = p.opts.SessionPlatforms.Pin(in.Key, in.Platform, in.Model)
+		if !pinnedPlatform {
+			writeErr(w, http.StatusInternalServerError, "could not pin the chosen platform")
+			return
+		}
+		if binder != nil {
+			forgottenAccount = binder.UnbindConversation(in.Key)
+		}
+	} else {
+		if binder != nil {
+			forgottenAccount = binder.UnbindConversation(in.Key)
+		}
+		if p != nil && p.opts.SessionPlatforms != nil {
+			forgottenPlatform = p.opts.SessionPlatforms.Forget(in.Key)
+		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+
+	out := map[string]any{
 		"key":                in.Key,
 		"client":             in.Client,
 		"forgotten_account":  forgottenAccount,
 		"forgotten_platform": forgottenPlatform,
-	})
+		"pinned_platform":    pinnedPlatform,
+	}
+	if in.Platform != "" {
+		out["platform"] = in.Platform
+		out["model"] = in.Model
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (p *panel) stickyBinder(name string) (core.ConversationBinder, bool, int) {

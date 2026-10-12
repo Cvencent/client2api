@@ -156,7 +156,22 @@ type UsageRecord struct {
 	// Attempt marks a candidate that failed before the request moved on.
 	// It is a recent-list row, not an extra inbound request, so it must not
 	// inflate the aggregate totals.
-	Attempt          bool    `json:"attempt,omitempty"`
+	Attempt bool `json:"attempt,omitempty"`
+	// Trimmed marks a request the gateway shortened to fit the model's context
+	// window, and says how it was shortened.  It is recorded on every trimmed
+	// request, successful or not, because silently dropping a caller's own
+	// history is not something the gateway is allowed to do quietly.
+	Trimmed     bool `json:"trimmed,omitempty"`
+	TrimDropped int  `json:"trim_dropped_messages,omitempty"`
+	// TrimmedFromTokens and TrimmedToTokens are the estimated input sizes either
+	// side of the trim, so the record shows how much was cut and not just that
+	// something was.
+	TrimmedFromTokens int64 `json:"trimmed_from_tokens,omitempty"`
+	TrimmedToTokens   int64 `json:"trimmed_to_tokens,omitempty"`
+	// ContextWindow is the window the request was budgeted against, recorded so a
+	// later reader can tell whether the trim was caused by a tight window or by
+	// a request that was simply enormous.
+	ContextWindow    int64   `json:"context_window,omitempty"`
 	PromptTokens     int     `json:"prompt_tokens,omitempty"`
 	CachedTokens     int     `json:"cached_tokens,omitempty"`
 	HasCachedTokens  bool    `json:"has_cached_tokens,omitempty"`

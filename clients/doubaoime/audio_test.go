@@ -2,9 +2,15 @@ package doubaoime
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"math"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"client2api/internal/core"
@@ -138,4 +144,74 @@ func makeTestOggPage(serial uint32, packets [][]byte) []byte {
 	out.Write(lacing)
 	out.Write(body.Bytes())
 	return out.Bytes()
+}
+
+// TestVendoredFFmpegProducesProtocolFrames exercises the ffmpeg.exe that ships
+// in the installer, not whatever happens to be on the machine.
+//
+// The existing TestFFmpegEncodesTwentyMillisecondFrames calls findFFmpeg(""),
+// which prefers PATH -- so on a developer box or a CI runner with ffmpeg
+// installed it silently tests someone else's build, and where none is
+// installed it skips entirely. That left the vendored binary untested: a
+// rebuild that dropped the opus muxer or the pcm_s16le decoder (both are easy
+// to lose to --disable-everything) would still pass CI and then fail on the
+// operator's first transcription.
+//
+// This pins the three properties the module depends on at runtime:
+//   - the exact command line in encodeWithFFmpeg is accepted,
+//   - the output is Ogg the module's parser can walk, and
+//   - it yields roughly one frame per 20 ms of audio.
+func TestVendoredFFmpegProducesProtocolFrames(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		// third_party/ffmpeg ships a Windows .exe, which cannot be exec'd on the
+		// Linux and macOS runners. The checksum test below still guards it there.
+		t.Skip("the vendored ffmpeg is a Windows binary; encode coverage runs on Windows")
+	}
+	vendored := filepath.Join("..", "..", "third_party", "ffmpeg", "ffmpeg.exe")
+	if _, err := os.Stat(vendored); err != nil {
+		t.Skipf("vendored ffmpeg is not present: %v", err)
+	}
+
+	samples := make([]int16, 16000) // one second
+	for i := range samples {
+		samples[i] = int16(6000 * math.Sin(float64(i)/8))
+	}
+	frames, err := encodeWithFFmpeg(t.Context(), vendored, samples)
+	if err != nil {
+		t.Fatalf("the bundled ffmpeg rejected the module's command line: %v", err)
+	}
+	// One second of 20 ms frames is ~50 packets. The Ogg Opus header packets are
+	// skipped by the parser, so allow slack in both directions but insist the
+	// output is a real frame stream rather than a header or an error.
+	if len(frames) < 40 || len(frames) > 60 {
+		t.Fatalf("encoded %d frames for 1s of 20ms audio, want ~50", len(frames))
+	}
+	for i, f := range frames {
+		if len(f) == 0 {
+			t.Fatalf("frame %d is empty", i)
+		}
+	}
+}
+
+// TestVendoredFFmpegChecksumMatches pins the committed binary against the
+// recorded digest. build.ps1 refuses to package a binary that fails this, and
+// so should anyone who swaps it by hand.
+func TestVendoredFFmpegChecksumMatches(t *testing.T) {
+	dir := filepath.Join("..", "..", "third_party", "ffmpeg")
+	raw, err := os.ReadFile(filepath.Join(dir, "ffmpeg.sha256"))
+	if err != nil {
+		t.Skipf("no recorded checksum: %v", err)
+	}
+	fields := strings.Fields(string(raw))
+	if len(fields) == 0 {
+		t.Fatal("ffmpeg.sha256 is empty")
+	}
+	raw2, err := os.ReadFile(filepath.Join(dir, "ffmpeg.exe"))
+	if err != nil {
+		t.Skipf("vendored ffmpeg is not present: %v", err)
+	}
+	got := sha256.Sum256(raw2)
+	if hex.EncodeToString(got[:]) != strings.ToLower(fields[0]) {
+		t.Fatalf("ffmpeg.exe sha256 = %s, want %s (see third_party/ffmpeg/README.md)", hex.EncodeToString(got[:]), fields[0])
+	}
 }

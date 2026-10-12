@@ -37,19 +37,35 @@ device id and app key. Add an (optional) block to `configs/client2api.json`:
 A missing block is fine — every value has a default. The module is also
 compiled in by the blank import in `clients/all/all.go`.
 
-### FFmpeg is required
+### FFmpeg is required, and the Windows installer bundles one
 
 The Doubao input method transports speech as Opus, and this project has no
-in-process Opus encoder (it is a `CGO_ENABLED=0` build). The module therefore
-shells out to FFmpeg to turn the input WAV into 20 ms Ogg Opus frames. It looks
-for the encoder in this order:
+in-process Opus encoder (it is a `CGO_ENABLED=0` build, and the only pure-Go
+Opus implementation ships a decoder but no importable encoder). The module
+therefore shells out to FFmpeg to turn the input WAV into 20 ms Ogg Opus
+frames. It looks for the encoder in this order:
 
 1. `ffmpeg_path` from the config block (an absolute path or a command name),
-2. `ffmpeg` on `PATH`,
-3. an `ffmpeg.exe` next to the running `client2api.exe`.
+2. an `ffmpeg.exe` next to the running `client2api.exe`,
+3. `ffmpeg` on `PATH`.
 
-When no FFmpeg is found the platform still starts, `Status()` explains the
-problem, and `/healthz` reports it as not servable. Every other platform is
+The bundled copy deliberately outranks `PATH`: it is checksum-pinned and covered
+by the test suite, whereas a system FFmpeg may be a stripped build without
+libopus.
+
+**The Windows installer ships a bundled copy**, so step 2 already succeeds after
+an ordinary install and no system FFmpeg is needed. It is a purpose-built
+1.95 MB LGPL build carrying only the Opus encoder, the Ogg/Opus muxers and the
+raw-PCM demuxer -- see `third_party/ffmpeg/README.md` for what was kept, why,
+and how to rebuild it. Its SHA256 is pinned in `ffmpeg.sha256`, checked when the
+installer packages it, and asserted by the module's tests, so a tampered or
+mispackaged copy fails before it can reach a user.
+
+The portable archives (Linux/macOS/Windows zip) do **not** bundle a binary --
+install FFmpeg through your package manager there.
+
+When no FFmpeg is found at all the platform still starts, `Status()` explains
+the problem, and `/healthz` reports it as not servable. Every other platform is
 unaffected.
 
 ## Calling it

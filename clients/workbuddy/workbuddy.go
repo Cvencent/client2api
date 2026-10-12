@@ -1286,14 +1286,15 @@ func (s *wbStream) run() {
 	}()
 
 	var (
-		usage       *core.Usage
-		finish      string
-		sawToolCall bool
-		emittedAny  bool
-		seenTool    = map[int]bool{}
-		nativeIndex = map[int]int{}
-		nextIndex   int
-		reachedDone bool
+		usage             *core.Usage
+		finish            string
+		sawToolCall       bool
+		sawNativeToolCall bool
+		emittedAny        bool
+		seenTool          = map[int]bool{}
+		nativeIndex       = map[int]int{}
+		nextIndex         int
+		reachedDone       bool
 	)
 
 	emitToolCall := func(idx int, id, name, args string) bool {
@@ -1338,33 +1339,39 @@ func (s *wbStream) run() {
 			if fr, _ := ch["finish_reason"].(string); strings.TrimSpace(fr) != "" {
 				finish = strings.TrimSpace(fr)
 			}
-			delta, ok := ch["delta"].(map[string]any)
-			if !ok {
-				continue
-			}
-			if rc, _ := delta["reasoning_content"].(string); rc != "" {
-				emittedAny = true
-				if !s.emit(core.Event{Type: core.EventDelta, Reasoning: rc}) {
-					return false
+			delta, hasDelta := ch["delta"].(map[string]any)
+			message, hasMessage := ch["message"].(map[string]any)
+
+			consumeTextFields := func(fields map[string]any) bool {
+				if fields == nil {
+					return true
 				}
-			}
-			if txt, _ := delta["content"].(string); txt != "" {
-				text, calls := s.parser.Feed(txt)
-				if text != "" {
+				if rc, _ := fields["reasoning_content"].(string); rc != "" {
 					emittedAny = true
-					if !s.emit(core.Event{Type: core.EventDelta, Delta: text}) {
+					if !s.emit(core.Event{Type: core.EventDelta, Reasoning: rc}) {
 						return false
 					}
 				}
-				for _, call := range calls {
-					idx := nextIndex
-					nextIndex++
-					if !emitToolCall(idx, "", call.Name, call.Arguments) {
-						return false
+				if txt, _ := fields["content"].(string); txt != "" {
+					text, calls := s.parser.Feed(txt)
+					if text != "" {
+						emittedAny = true
+						if !s.emit(core.Event{Type: core.EventDelta, Delta: text}) {
+							return false
+						}
+					}
+					for _, call := range calls {
+						idx := nextIndex
+						nextIndex++
+						if !emitToolCall(idx, "", call.Name, call.Arguments) {
+							return false
+						}
 					}
 				}
+				return true
 			}
-			if tcs, ok := delta["tool_calls"].([]any); ok {
+			consumeNativeToolCalls := func(tcs []any) bool {
+				sawNativeToolCall = true
 				for _, traw := range tcs {
 					tc, ok := traw.(map[string]any)
 					if !ok {
@@ -1398,15 +1405,56 @@ func (s *wbStream) run() {
 						return false
 					}
 				}
+				return true
 			}
-			if fc, ok := delta["function_call"].(map[string]any); ok && fc != nil {
+			consumeFunctionCall := func(fc map[string]any) bool {
+				if fc == nil {
+					return true
+				}
 				n, _ := fc["name"].(string)
 				a, _ := fc["arguments"].(string)
-				if n != "" || a != "" {
-					i := nextIndex
-					nextIndex++
-					if !emitToolCall(i, "", n, a) {
+				if n == "" && a == "" {
+					return true
+				}
+				i := nextIndex
+				nextIndex++
+				return emitToolCall(i, "", n, a)
+			}
+
+			if hasDelta {
+				if !consumeTextFields(delta) {
+					return false
+				}
+				if tcs, ok := delta["tool_calls"].([]any); ok && len(tcs) > 0 {
+					if !consumeNativeToolCalls(tcs) {
 						return false
+					}
+				}
+				if fc, ok := delta["function_call"].(map[string]any); ok {
+					if !consumeFunctionCall(fc) {
+						return false
+					}
+				}
+			}
+			if hasMessage {
+				// Some terminal frames carry a complete message instead of a
+				// delta.  Text only needs to be emitted when no delta arrived;
+				// the tool calls still matter after streamed prose.
+				if !hasDelta {
+					if !consumeTextFields(message) {
+						return false
+					}
+				}
+				if !sawNativeToolCall {
+					if tcs, ok := message["tool_calls"].([]any); ok && len(tcs) > 0 {
+						if !consumeNativeToolCalls(tcs) {
+							return false
+						}
+					}
+					if fc, ok := message["function_call"].(map[string]any); ok {
+						if !consumeFunctionCall(fc) {
+							return false
+						}
 					}
 				}
 			}

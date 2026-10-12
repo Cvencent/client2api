@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"sync"
@@ -149,6 +150,35 @@ func (s *server) routeAndServe(w http.ResponseWriter, r *http.Request, in routeI
 			in.req.MaxTokens = &n
 		}
 	}
+	// Now that the output budget is settled, measure the input against the
+	// model's window and shorten the history if it does not fit.  This runs
+	// before the module is called, so a request that would have been refused
+	// outright is served instead -- and a trimmed request is recorded as such.
+	maxTokensForBudget := 0
+	if in.req.MaxTokens != nil {
+		maxTokensForBudget = *in.req.MaxTokens
+	}
+	// guardRequestContext records a trim on the usage row itself, so there is
+	// nothing to copy over here.
+	if report, trimmed := s.guardRequestContext(r.Context(), in.req, client, upstreamModel, maxTokensForBudget, in.rec); trimmed || report.Impossible {
+		window := s.effectiveContextWindow(r.Context(), client, upstreamModel)
+		if report.Impossible {
+			// The newest turn alone does not fit, so there is nothing left to
+			// trim without answering a different question.  Refuse locally, with
+			// the limit spelled out, rather than paying for a refusal upstream.
+			in.rec.ContextWindow = window
+			in.stat.status = http.StatusBadRequest
+			s.fail(in.rec)
+			err := contextWindowRefusal(client, upstreamModel, window, report.BeforeTokens)
+			writeError(w, http.StatusBadRequest, "context_window_exceeded",
+				fmt.Sprintf("[%s] %s", client.Name(), err.Error()))
+			return
+		}
+		s.opts.Logger.Printf(
+			"context: trimmed %d oldest message(s) for %s/%s to fit %d tokens (about %d -> %d)",
+			report.DroppedMessages, client.Name(), upstreamModel, window,
+			report.BeforeTokens, report.AfterTokens)
+	}
 	in.rec.Client = client.Name()
 	in.rec.Model = client.Name() + "/" + upstreamModel
 	// The row names the resolved module and model, which is what the console
@@ -233,7 +263,7 @@ func (s *server) routeAndServe(w http.ResponseWriter, r *http.Request, in routeI
 		in.stat.uid = servedBy
 	}
 	s.opts.Registry.NoteModelSuccess(client.Name(), upstreamModel, time.Now())
-	s.sessionPlatforms.bind(conversationKey, client.Name())
+	s.sessionPlatforms.bindModel(conversationKey, client.Name(), upstreamModel)
 	stream = wrapStickyFailure(stream, client, conversationKey)
 	defer stream.Close()
 

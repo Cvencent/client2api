@@ -74,8 +74,22 @@ people. The built-in default is `127.0.0.1`.
 - Custom `model_groups` for binding the same model across platforms.
 - Platform priority, account priority and time-based priority schedules.
 - Per-platform and per-account concurrency limits.
-- Conversation stickiness, retries, cooldown and automatic failover, with panel controls to inspect live bindings and force-unbind or force-switch a session.
+- Conversation stickiness, retries, cooldown and automatic failover, with panel controls that show each live binding's model and can force-unbind or force-switch a session. A force-switch can clear platform/account stickiness for automatic selection again or pin a chosen platform while still auto-selecting its account.
 - OpenAI-shaped error mapping for auth, quota, WAF, timeout and rate-limit failures.
+- Context-window guard: a request larger than the model's window is shortened before
+  it is sent, so it is served instead of refused. The system prompt and the newest
+  turn are always kept; only the stale middle is dropped. Every trimmed request is
+  marked `已裁剪` in the usage log with how much was dropped and the sizes either
+  side.
+- When a vendor refuses an oversized prompt, the limit it names
+  (`prompt is too long: 100001 tokens > 100000 maximum`) is learned and persisted to
+  `data/learned_context_windows.json`, and `/v1/models` then advertises that number
+  instead of the catalogue's. This is what stops the recurrence: clients size their
+  own packing from `/v1/models`. A learned limit is shown with its own `实测`
+  (measured) source and never overrides a manual value from `model_context.json`.
+- A request whose newest turn alone exceeds the window is refused with
+  `context_window_exceeded` rather than trimmed, because cutting into the question
+  would answer a different one.
 
 ### Accounts and platforms
 
@@ -92,7 +106,7 @@ people. The built-in default is `127.0.0.1`.
 ### Panel
 
 - Accounts
-- Sticky-session management from the Accounts overview: inspect account/platform bindings, force-unbind an account, or force-switch the conversation back through normal platform and account selection
+- Sticky-session management from the Accounts overview: inspect account/platform bindings and their last model, force-unbind an account, or force-switch back to normal selection or to a chosen platform
 - Chat Test
 - Usage
 - Alerts

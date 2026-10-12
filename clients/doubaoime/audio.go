@@ -138,14 +138,20 @@ func findFFmpeg(configured string) string {
 		}
 		return ""
 	}
-	if found, err := exec.LookPath("ffmpeg"); err == nil {
-		return found
-	}
+	// A copy shipped next to the running binary outranks PATH.  The installer
+	// stages one (see third_party/ffmpeg), it is pinned by a checksum, and the
+	// test suite encodes real audio through it -- so it is the build we actually
+	// know works.  Preferring a whatever-happens-to-be-installed ffmpeg instead
+	// would make the module's behaviour depend on the machine, and a stripped
+	// distro build without libopus would fail at the first transcription.
 	if exe, err := os.Executable(); err == nil {
 		candidate := filepath.Join(filepath.Dir(exe), "ffmpeg.exe")
 		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
 			return candidate
 		}
+	}
+	if found, err := exec.LookPath("ffmpeg"); err == nil {
+		return found
 	}
 	return ""
 }

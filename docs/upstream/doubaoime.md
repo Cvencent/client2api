@@ -97,7 +97,9 @@ of `TaskRequest` frames (first `frame_state=1`, middle `3`, last `9`),
 ## 4. Audio
 
 Speech is carried as Opus. This module takes the standard WAV upload, downmixes
-and resamples to 16 kHz mono, and uses FFmpeg to produce Ogg Opus. The Ogg pages
+and resamples to 16 kHz mono, and uses FFmpeg to produce Ogg Opus (the Windows
+installer ships an Opus-only LGPL build for exactly this step; see
+`third_party/ffmpeg/README.md`). The Ogg pages
 are parsed and every non-header packet (skipping `OpusHead` / `OpusTags`) becomes
 one audio frame.
 

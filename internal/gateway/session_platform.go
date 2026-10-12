@@ -31,6 +31,7 @@ type sessionPlatforms = SessionPlatforms
 
 type sessionPlatformEntry struct {
 	platform string
+	model    string
 	lastSeen time.Time
 }
 
@@ -57,6 +58,13 @@ func NewSessionPlatforms() *SessionPlatforms {
 // bind records that platform served conversationKey.  An empty key or platform
 // is a no-op: unscoped requests keep the old rotation behaviour.
 func (s *sessionPlatforms) bind(conversationKey, platform string) {
+	s.bindModel(conversationKey, platform, "")
+}
+
+// bindModel records the platform and resolved upstream model that served
+// conversationKey. The model is display and targeting metadata; routing still
+// keys off the platform.
+func (s *sessionPlatforms) bindModel(conversationKey, platform, model string) {
 	if s == nil || conversationKey == "" || platform == "" {
 		return
 	}
@@ -65,7 +73,7 @@ func (s *sessionPlatforms) bind(conversationKey, platform string) {
 	if s.entries == nil {
 		s.entries = map[string]sessionPlatformEntry{}
 	}
-	s.entries[conversationKey] = sessionPlatformEntry{platform: platform, lastSeen: s.clock()}
+	s.entries[conversationKey] = sessionPlatformEntry{platform: platform, model: model, lastSeen: s.clock()}
 }
 
 // resolve reports the platform bound to conversationKey, and only when that
@@ -102,6 +110,7 @@ func (s *sessionPlatforms) forget(conversationKey string) {
 type StickyRoute struct {
 	Key       string    `json:"key"`
 	Platform  string    `json:"platform"`
+	Model     string    `json:"model,omitempty"`
 	LastSeen  time.Time `json:"last_seen"`
 	ExpiresAt time.Time `json:"expires_at,omitempty"`
 }
@@ -119,7 +128,7 @@ func (s *SessionPlatforms) List() []StickyRoute {
 		if s.ttl > 0 && now.Sub(e.lastSeen) > s.ttl {
 			continue
 		}
-		row := StickyRoute{Key: key, Platform: e.platform, LastSeen: e.lastSeen}
+		row := StickyRoute{Key: key, Platform: e.platform, Model: e.model, LastSeen: e.lastSeen}
 		if s.ttl > 0 {
 			row.ExpiresAt = e.lastSeen.Add(s.ttl)
 		}
@@ -127,6 +136,16 @@ func (s *SessionPlatforms) List() []StickyRoute {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
 	return out
+}
+
+// Pin rewrites one platform route without touching the account layer.  It is
+// the targeted half of the panel's force-switch action.
+func (s *SessionPlatforms) Pin(conversationKey, platform, model string) bool {
+	if s == nil || conversationKey == "" || platform == "" {
+		return false
+	}
+	s.bindModel(conversationKey, platform, model)
+	return true
 }
 
 // Forget drops one platform route and reports whether it existed.

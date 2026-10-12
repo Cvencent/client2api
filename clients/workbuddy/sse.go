@@ -299,9 +299,20 @@ func Aggregate(r io.Reader) (map[string]any, error) {
 								mergeToolCallsChunk(tcs)
 							}
 						}
-						if !gotAnyContent {
-							if m, ok := ch["message"].(map[string]any); ok {
+						if m, ok := ch["message"].(map[string]any); ok {
+							if !gotAnyContent {
 								mergeMessageFields(m)
+								continue
+							}
+							// A terminal frame may carry the complete message
+							// after the prose was streamed through delta.  Text
+							// would duplicate, but tool calls are not repeated
+							// elsewhere and must still be merged.
+							if r, _ := m["role"].(string); r != "" {
+								role = r
+							}
+							if tcs, ok := m["tool_calls"].([]any); ok {
+								mergeToolCallsChunk(tcs)
 							}
 						}
 					}

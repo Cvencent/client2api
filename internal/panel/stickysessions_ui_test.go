@@ -15,8 +15,14 @@ func TestStickySessionTileOpensADialog(t *testing.T) {
 		`id="stickyVeil"`,
 		`id="stickyRows"`,
 		`id="btnStickyClose"`,
+		`id="stickySwitchVeil"`,
+		`id="stickySwitchPlatform"`,
+		`id="stickySwitchHint"`,
+		`id="btnStickySwitchCancel"`,
+		`id="btnStickySwitchConfirm"`,
 		`data-sticky-action="unbind"`,
 		`data-sticky-action="switch"`,
+		`data-model="'`,
 	} {
 		if !strings.Contains(src, want) {
 			t.Errorf("粘性会话界面缺少 %s", want)
@@ -35,6 +41,8 @@ func TestStickySessionDialogUsesTheManagementRoutes(t *testing.T) {
 		`api("/panel/api/sticky-sessions"`,
 		`/panel/api/sticky-sessions/unbind`,
 		`/panel/api/sticky-sessions/switch`,
+		`body.platform = chosen`,
+		`body.model = target.model`,
 	} {
 		if !strings.Contains(src, want) {
 			t.Errorf("粘性会话界面没有使用管理接口 %s", want)
