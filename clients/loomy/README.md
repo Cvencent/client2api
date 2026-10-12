@@ -33,10 +33,16 @@ honestly rather than pretending otherwise:
 
 * `isLoomyRefreshable` is false, always. `RefreshAccount` **re-verifies** the
   stored session instead of renewing it, and says so in its message.
-* When the vendor answers `100002` (`登录状态失效`) the account is **parked**
-  (`dead`), not retried: retrying a dead session only burns quota on a request
-  that cannot succeed. The panel shows the account as `invalid` with the note
-  *"the vendor rejected this session; log in again and import the new token"*.
+* When a **real chat request** gets `100002` (`登录状态失效`) the account is
+  **parked** (`dead`), not retried: retrying a dead session only burns quota on
+  a request that cannot succeed. The panel shows the account as `invalid` with
+  the note *"the vendor rejected this session; log in again and import the new
+  token"*.
+* When a **side channel** -- the balance sweep, package read, catalogue
+  refresh, task report or keepalive heartbeat -- gets `100002`/`020002`, the
+  account is only cooled down, not parked. Those reads are useful evidence but
+  not authoritative enough to disable a credential that a real chat request may
+  still answer; a genuine dead session is parked by the chat path.
 * `Status` reports not-ready with *"the session has expired and Loomy has no
   refresh endpoint; log in again (SMS or WeChat) and import the new token"*.
 * `expires_at` is computed **locally** as login time + 14 days, because the
@@ -64,10 +70,10 @@ still lapsed, so a business ping proves nothing about the session's lifetime.
 This is a best effort, not a renewal. If the lifetime slides on use, the
 heartbeat keeps an idle session warm; if the vendor enforces an absolute expiry
 (or kills the session when the same account logs in somewhere else), the
-heartbeat changes nothing and the next `100002`/`020002` still parks the
-account. What it always buys is an early, honest answer: a dead session is
-discovered on the heartbeat's schedule rather than on the operator's next
-request, and the panel says "log in again".
+heartbeat changes nothing and its next `100002`/`020002` cools the account.
+What it always buys is an early, honest answer: a dead session is discovered on
+the heartbeat's schedule rather than on the operator's next request, and a real
+chat request makes the permanent `dead` verdict.
 
 ---
 
@@ -168,9 +174,10 @@ success is judged by `code`, never by the status line:
 { "code": "000000", "desc": "success", "data": { } }
 ```
 
-`000000` is success. `100002` means the session is dead (park the account, do
-not retry). `100001` is a bad request. Any other code is reported with the
-vendor's `desc`.
+`000000` is success. `100002` means the session is dead. A **chat** request that
+gets it parks the account permanently; a side-channel read that gets it cools
+the account down and leaves the chat path to make the final call. `100001` is a
+bad request. Any other code is reported with the vendor's `desc`.
 
 ### The HMAC-SHA1 signature (account endpoints only)
 
@@ -348,10 +355,12 @@ fact.
 
 `Chat` walks the candidate list up to `max_attempts` times:
 
-* success → clear the account's penalties, stamp `last_used`, and record the
-  serving account in `ChatRequest.ServedBy` (`core.NoteServedBy`).
-* `100002` / HTTP 401 / 403 → park the account for `auth_cooldown` (24 h) and
-  try the next one.
+* success → clear the account's penalties (including a concurrent `dead`
+  verdict), stamp `last_used`, and record the serving account in
+  `ChatRequest.ServedBy` (`core.NoteServedBy`).
+* `100002` / HTTP 401 / 403 → park the account permanently and try the next
+  one; `auth_cooldown` still describes the long wait when the parked account is
+  manually revived.
 * anything else → cool the account down for `cooldown` (60 s) and try the next.
 
 If every candidate fails, the caller gets the last error. If there are no
@@ -483,8 +492,8 @@ below, because that difference caught a bug the stubs could not.
 | `stream_test.go` | SSE frame parsing, `[DONE]`, usage, tool-call deltas, idle timeout, idempotent `Close` |
 | `login_test.go` | the SMS two-step flow, with the stub **recomputing the signature from the bytes it actually received** |
 | `quota_test.go` | balance, packages and the daily allowance, including the empty-ledger and already-claimed paths |
-| `onboarding_test.go` | the first-login task board: the vendor's own registry, flags and prices, a chore the registry does not know, cache-vs-failed-read, `RunTask` posting the key the vendor client posts, a repeat reported as a success that awarded nothing, an unknown code refused without a call, no account, an unknown id, and a dead session parking the account |
-| `keepalive_test.go` | the scheduled session heartbeat: it posts the session to the account service (not the business host), a `100002`/`020002` answer parks the account, a transport hiccup does not cool it, and a parked account is skipped without a call |
+| `onboarding_test.go` | the first-login task board: the vendor's own registry, flags and prices, a chore the registry does not know, cache-vs-failed-read, `RunTask` posting the key the vendor client posts, a repeat reported as a success that awarded nothing, an unknown code refused without a call, no account, an unknown id, and a side-channel rejection cooling rather than permanently parking the account |
+| `keepalive_test.go` | the scheduled session heartbeat: it posts the session to the account service (not the business host), a `100002`/`020002` answer cools without permanently parking the account, a transport hiccup does not cool it, and a parked account is skipped without a call |
 | `phonecode_test.go` | the operator-owned phone flow: the vendor texts the submitted number, the code is redeemed against the challenge's message id and stored, a malformed number spends no SMS, and unknown or expired challenges are refused |
 | `models_test.go` | the multiplier/display-name rules, both remote catalogue shapes, `isChat`, the fallback table and `ResolveModelID` |
 | `envelope_test.go` | the live code-less `/models` envelope: a code-less payload is a success, a failed envelope is still a failure, a non-JSON body is still rejected |

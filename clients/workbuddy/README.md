@@ -206,8 +206,8 @@ To get a usable credential, obtain a token the way the vendor CLI does (this is
 **not** on the request path; it is documented for completeness):
 
 1. `POST https://<auth host>/v2/plugin/auth/state?platform=workbuddy` (CN uses `web_base_cn`; global uses its chat host)
-2. Open the returned `authUrl`. On the CN realm the desktop client also appends the desktop version and sets
-   `loginSessionId` to a fresh UUID v4 before opening it; those values associate
+2. Open the returned `authUrl`. On the CN realm the browser flow appends the desktop version and preserves
+   any host-supplied `loginSessionId`; it never invents one. These values associate
    the browser sign-in with this plugin session. Global leaves the
    URL unchanged. If the CN page stops on `/login/select`, select the
    `个人版` account when present, otherwise the first account item. That posts

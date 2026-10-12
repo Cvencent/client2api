@@ -616,8 +616,11 @@ func TestRefreshAccountVerifiesRatherThanRenews(t *testing.T) {
 		t.Errorf("error = %q, want it to say the session cannot be renewed", results[0].Error)
 	}
 	acc, _ := c.store.lookup("loomy-1")
-	if !acc.dead {
-		t.Error("the rejected session was not parked")
+	if acc.dead {
+		t.Error("a cheap verification probe permanently parked the account")
+	}
+	if acc.cooldownTill.IsZero() {
+		t.Error("the rejected session was not cooled down")
 	}
 }
 

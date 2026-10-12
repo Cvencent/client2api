@@ -2,7 +2,6 @@ package workbuddy
 
 import (
 	"net/url"
-	"regexp"
 	"testing"
 
 	"client2api/internal/core"
@@ -52,9 +51,10 @@ func TestWebLoginCNMatchesDesktopClientContract(t *testing.T) {
 	}
 }
 
-func TestWebLoginCNAuthURLCarriesDesktopAuthParameters(t *testing.T) {
+func TestWebLoginCNAuthURLAddsVersionWithoutFabricatingLoginSession(t *testing.T) {
 	const state = "state-cn-login-session"
-	const authURL = "https://www.workbuddy.cn/login/?platform=workbuddy&state=" + state
+	const hostSessionID = "host-provided-session"
+	const authURL = "https://www.workbuddy.cn/login/?platform=workbuddy&state=" + state + "&loginSessionId=" + hostSessionID
 	v := &fakeVendor{
 		stateBody: stateFixture(state, authURL),
 	}
@@ -79,9 +79,8 @@ func TestWebLoginCNAuthURLCarriesDesktopAuthParameters(t *testing.T) {
 	if got, want := got.Query().Get("version"), "5.7.7"; got != want {
 		t.Fatalf("version = %q, want the desktop client version %q in %q", got, want, st.URL)
 	}
-	sessionID := got.Query().Get("loginSessionId")
-	if !regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`).MatchString(sessionID) {
-		t.Fatalf("loginSessionId = %q, want a UUID v4", sessionID)
+	if got, want := got.Query().Get("loginSessionId"), hostSessionID; got != want {
+		t.Fatalf("loginSessionId = %q, want the host-provided value %q in %q", got, want, st.URL)
 	}
 }
 

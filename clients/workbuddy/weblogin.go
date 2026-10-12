@@ -20,8 +20,6 @@ package workbuddy
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -269,36 +267,13 @@ func loginOrigin(realm string) string {
 	return originRefererCN
 }
 
-// newLoginSessionID returns the UUID v4 the desktop client puts in the
-// mainland authorisation URL.  The vendor's login page uses it to associate
-// the browser sign-in with the plugin that is polling auth/token; without it
-// the poll stays on business code 11217 until it times out.
-func newLoginSessionID() (string, error) {
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return "", err
-	}
-	b[6] = (b[6] & 0x0f) | 0x40
-	b[8] = (b[8] & 0x3f) | 0x80
-	return fmt.Sprintf("%s-%s-%s-%s-%s",
-		hex.EncodeToString(b[0:4]),
-		hex.EncodeToString(b[4:6]),
-		hex.EncodeToString(b[6:8]),
-		hex.EncodeToString(b[8:10]),
-		hex.EncodeToString(b[10:16]),
-	), nil
-}
-
-// decorateAuthURL mirrors ExternalLinkAuthenticationProvider.openAuthUrl:
-// only the workbuddy platform gets loginSessionId, and searchParams.set
-// replaces an existing value rather than appending a second one.
+// decorateAuthURL mirrors the browser-facing part of the desktop client's
+// ExternalLinkAuthenticationProvider.openAuthUrl.  The mainland page needs the
+// desktop version.  A loginSessionId belongs to the host that created the
+// desktop session, so it is preserved when present but never fabricated here.
 func (c *Client) decorateAuthURL(realm, raw string) (string, error) {
 	if realm != realmCN {
 		return raw, nil
-	}
-	sessionID, err := newLoginSessionID()
-	if err != nil {
-		return "", err
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -306,7 +281,6 @@ func (c *Client) decorateAuthURL(realm, raw string) (string, error) {
 	}
 	q := u.Query()
 	q.Set("version", c.up.clientVersion())
-	q.Set("loginSessionId", sessionID)
 	u.RawQuery = q.Encode()
 	return u.String(), nil
 }

@@ -478,14 +478,18 @@ func TestWebLoginHappyPath(t *testing.T) {
 	if st.SessionID != session {
 		t.Fatalf("session id = %q, want %q", st.SessionID, session)
 	}
-	// The default realm is cn, so the panel URL carries the desktop client's
-	// per-login UUID just like the vendor's own browser flow.
+	// The default realm is cn, so the panel URL carries the desktop version.
+	// The browser flow must not invent a loginSessionId when the vendor did not
+	// provide one.
 	gotAuth, err := url.Parse(st.URL)
 	if err != nil {
 		t.Fatalf("parse auth URL: %v", err)
 	}
-	if gotAuth.Query().Get("loginSessionId") == "" {
-		t.Fatalf("url = %q, want a loginSessionId", st.URL)
+	if gotAuth.Query().Get("version") == "" {
+		t.Fatalf("url = %q, want a version", st.URL)
+	}
+	if got := gotAuth.Query().Get("loginSessionId"); got != "" {
+		t.Fatalf("url = %q, fabricated loginSessionId %q", st.URL, got)
 	}
 	if st.Message == "" {
 		t.Fatal("a pending session must carry a message for the operator")

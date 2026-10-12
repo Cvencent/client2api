@@ -247,7 +247,7 @@ func (c *Client) Tasks(ctx context.Context, accountID string) ([]core.TaskInfo, 
 		// cancels the read in flight.  A caller that walked away is not
 		// evidence about the credential, so it must not park the account.
 		if !callerGone(err) {
-			c.penalise(acc.ID, err, time.Now().UTC())
+			c.penaliseRecoverable(acc.ID, err, time.Now().UTC())
 		}
 		return nil, err
 	}
@@ -343,7 +343,7 @@ func (c *Client) RunTask(ctx context.Context, accountID, code string) (core.Task
 		res.Error = redactErr(err)
 		if failureKind(err) == core.FailureSessionDead {
 			res.Error = "the session is expired or rejected; log in again and import the new token"
-			c.penalise(acc.ID, err, time.Now().UTC())
+			c.penaliseRecoverable(acc.ID, err, time.Now().UTC())
 		}
 		return res, nil
 	}

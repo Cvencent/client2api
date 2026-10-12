@@ -45,9 +45,18 @@ type fakePage struct {
 	clicked         []string
 	agreementModal  bool
 	accountTexts    []string
-	submitAttempts  int
-	requireFrame    bool
-	tabFalseCalls   int
+	// accountCardSelectionDelay models React committing the card's selected
+	// class a few evaluation ticks after the click.  accountButtonDisabled
+	// keeps the submit button disabled for tests that pin that state.
+	accountCardSelectionDelay   int
+	accountCardSelectionChecks  int
+	accountCardSelected         bool
+	accountCardSelectionPending bool
+	accountButtonDisabled       bool
+	accountSubmits              int
+	submitAttempts              int
+	requireFrame                bool
+	tabFalseCalls               int
 }
 
 func newFakePage() *fakePage {
@@ -76,6 +85,9 @@ func (p *fakePage) Navigate(_ context.Context, url string) error {
 func (p *fakePage) Exists(_ context.Context, selector string) (bool, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if strings.Contains(selector, ".select-account-button") && strings.Contains(selector, ":not([disabled])") {
+		return p.exists[".select-account-button"] && p.accountCardSelected && !p.accountButtonDisabled, nil
+	}
 	return p.exists[selector], nil
 }
 
@@ -89,7 +101,36 @@ func (p *fakePage) Click(_ context.Context, selector string) (bool, error) {
 	if selector == selSubmit && p.bodyAfterSubmit != "" {
 		p.body = p.bodyAfterSubmit
 	}
+	if strings.Contains(selector, ".select-account-button") {
+		if !p.accountCardSelected || p.accountButtonDisabled {
+			return false, nil
+		}
+		p.accountSubmits++
+		return p.exists[".select-account-button"], nil
+	}
+	if selector == ".select-account-card" {
+		p.startAccountCardSelection()
+	}
 	return p.exists[selector], nil
+}
+
+func (p *fakePage) startAccountCardSelection() {
+	p.accountCardSelectionChecks = 0
+	p.accountCardSelectionPending = p.accountCardSelectionDelay > 0
+	p.accountCardSelected = !p.accountCardSelectionPending
+}
+
+func (p *fakePage) accountCardIsSelected() bool {
+	if !p.accountCardSelectionPending {
+		return p.accountCardSelected
+	}
+	if p.accountCardSelectionChecks < p.accountCardSelectionDelay {
+		p.accountCardSelectionChecks++
+		return false
+	}
+	p.accountCardSelectionPending = false
+	p.accountCardSelected = true
+	return true
 }
 
 func (p *fakePage) Fill(_ context.Context, selector, value string) (bool, error) {
@@ -118,6 +159,8 @@ func (p *fakePage) EvalBool(_ context.Context, expression string) (bool, error) 
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	switch {
+	case strings.Contains(expression, "classList.contains") && strings.Contains(expression, "selected"):
+		return p.accountCardIsSelected(), nil
 	case strings.Contains(expression, "login__tab"):
 		if p.requireFrame && !strings.Contains(expression, "contentDocument") {
 			return false, nil
@@ -149,6 +192,15 @@ func (p *fakePage) EvalBool(_ context.Context, expression string) (bool, error) 
 			}
 		}
 		return false, nil
+	case strings.Contains(expression, ".select-account-card") && strings.Contains(expression, "个人版"):
+		for _, text := range p.accountTexts {
+			if strings.Contains(text, "个人版") {
+				p.clicked = append(p.clicked, ".select-account-card(个人版)")
+				p.startAccountCardSelection()
+				return true, nil
+			}
+		}
+		return false, nil
 	default:
 		return false, nil
 	}
@@ -175,6 +227,12 @@ func (p *fakePage) submitClickCount() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.submitAttempts
+}
+
+func (p *fakePage) accountSubmitCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.accountSubmits
 }
 
 // --- fake browser -----------------------------------------------------------
@@ -339,8 +397,11 @@ func TestAutoLoginHappyPath(t *testing.T) {
 	if nav.Scheme != "https" || nav.Host != "example.test" || nav.Path != "/auth" {
 		t.Fatalf("navigated to %q, want the vendor auth page", page.navURL)
 	}
-	if nav.Query().Get("loginSessionId") == "" {
-		t.Fatalf("navigated to %q without the desktop loginSessionId", page.navURL)
+	if got := nav.Query().Get("version"); got != defaultClientVersion {
+		t.Fatalf("navigated to %q with version %q, want %q", page.navURL, got, defaultClientVersion)
+	}
+	if got := nav.Query().Get("loginSessionId"); got != "" {
+		t.Fatalf("navigated to %q with fabricated loginSessionId %q", page.navURL, got)
 	}
 	// The number is rented, so it must go back.
 	if got := platform.releasedPhones(); len(got) != 1 || got[0] != "13800000000" {
@@ -643,6 +704,62 @@ func TestAutoLoginSelectsTheCNAccountAfterSubmit(t *testing.T) {
 	}
 	if !logContains(job.snapshot().Log, "已选择账号") {
 		t.Fatalf("log did not record the account selection: %v", logTexts(job.snapshot().Log))
+	}
+}
+
+// TestAutoLoginSelectsTheCNNewAccountChooserAfterSubmit pins the current
+// /login/select DOM: the account card only selects, and the start button
+// performs the enterprise login.  Missing either click leaves the plugin
+// session pending until the whole-run timeout.
+func TestAutoLoginSelectsTheCNNewAccountChooserAfterSubmit(t *testing.T) {
+	v := successVendor()
+	c, _ := autoLoginClient(t, v)
+	page := newFakePage()
+	page.exists[".select-account-card"] = true
+	page.exists[".select-account-button"] = true
+	page.accountTexts = []string{"企业", "个人版"}
+	platform := &fakePlatform{number: core.SMSNumber{Phone: "13800009904"}, code: "444444"}
+
+	job, err := runAutoLogin(t, c, page, platform, core.AutoLoginRequest{})
+	if err != nil {
+		t.Fatalf("autoLogin: %v", err)
+	}
+	if !page.didClick(".select-account-card(个人版)") {
+		t.Fatalf("the new CN account card was left unselected")
+	}
+	if page.accountSubmitCount() != 1 {
+		t.Fatalf("the new CN account chooser was left unsubmitted")
+	}
+	if !logContains(job.snapshot().Log, "已选择账号") {
+		t.Fatalf("log did not record the new account selection: %v", logTexts(job.snapshot().Log))
+	}
+}
+
+// TestSelectCNAccountWaitsForCardSelectionBeforeSubmitting reproduces the CN
+// /login/select race: React applies the card's selected class asynchronously,
+// and the submit button is disabled until that state exists.  Clicking submit
+// immediately is a no-op, so the chooser must observe the selected card first.
+func TestSelectCNAccountWaitsForCardSelectionBeforeSubmitting(t *testing.T) {
+	page := newFakePage()
+	page.exists[".select-account-card"] = true
+	page.exists[".select-account-button"] = true
+	page.accountTexts = []string{"企业", "个人版"}
+	page.accountCardSelectionDelay = 1
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	ok, err := selectCNAccount(ctx, page)
+	if err != nil {
+		t.Fatalf("selectCNAccount: %v", err)
+	}
+	if !ok {
+		t.Fatal("selectCNAccount returned false while the card became selected and the submit button enabled")
+	}
+	if got := page.accountSubmitCount(); got != 1 {
+		t.Fatalf("account submit count = %d, want 1 after the card becomes selected", got)
+	}
+	if !page.didClick(".select-account-card(个人版)") {
+		t.Fatal("the personal account card was not selected")
 	}
 }
 

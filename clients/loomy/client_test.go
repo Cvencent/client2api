@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -281,6 +282,57 @@ func TestChatTreatsABusinessErrorInA200AsAFailure(t *testing.T) {
 	}
 }
 
+func TestChatSuccessClearsAConcurrentSessionDeadPenalty(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	rt := &stubTransport{handler: func(r *http.Request, body string) *http.Response {
+		if r.URL.Path != "/api/v1/chat/completions" {
+			return jsonResponse(200, okEnvelope("null"))
+		}
+		once.Do(func() { close(started) })
+		<-release
+		return sseResponse("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\ndata: [DONE]\n\n")
+	}}
+	c := newTestClient(t, "{}", rt)
+	seedAccount(t, c, "loomy-1", testToken, 0)
+
+	done := make(chan error, 1)
+	go func() {
+		stream, err := c.Chat(context.Background(), &core.ChatRequest{
+			Model:    "deepseek-v4-flash-0731",
+			Messages: []core.Message{{Role: "user", Content: "hi"}},
+		})
+		if stream != nil {
+			_ = stream.Close()
+		}
+		done <- err
+	}()
+
+	<-started
+	c.store.penalise("loomy-1", errSessionExpired("loomy-1"), time.Now().UTC(), time.Minute)
+	penalised, _ := c.store.lookup("loomy-1")
+
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	if !penalised.dead {
+		t.Fatal("the test did not establish a concurrent dead penalty")
+	}
+
+	acc, ok := c.store.lookup("loomy-1")
+	if !ok {
+		t.Fatal("the account vanished")
+	}
+	if acc.dead {
+		t.Fatal("a successful chat left the account parked as dead")
+	}
+	if !acc.selectable(time.Now().UTC()) {
+		t.Fatal("a successful chat did not clear the dead account's penalties")
+	}
+}
+
 func TestChatFailsOverToTheSecondAccount(t *testing.T) {
 	attempts := 0
 	rt := &stubTransport{handler: func(r *http.Request, body string) *http.Response {
@@ -425,6 +477,25 @@ func TestRefreshModelsKeepsTheCatalogueWhenUpstreamFails(t *testing.T) {
 	}
 	if len(models) == 0 {
 		t.Fatal("a failed refresh emptied the catalogue; the model picker would go blank")
+	}
+}
+
+func TestARefusedModelListCoolsDownWithoutPermanentlyParkingTheAccount(t *testing.T) {
+	c := newTestClient(t, "{}", alwaysJSON(200, failureEnvelope(loomyAuthErrorCode, "登录状态失效")))
+	seedAccount(t, c, "loomy-1", testToken, 0)
+
+	if _, err := c.RefreshModels(context.Background()); err == nil {
+		t.Fatal("RefreshModels reported success on a rejected session")
+	}
+	acc, ok := c.store.lookup("loomy-1")
+	if !ok {
+		t.Fatal("the account vanished")
+	}
+	if acc.dead {
+		t.Fatal("a model-list auth failure permanently parked the account")
+	}
+	if acc.cooldownTill.IsZero() {
+		t.Fatal("the rejected session was not cooled down")
 	}
 }
 

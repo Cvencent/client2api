@@ -215,6 +215,7 @@ func (s *source) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 	}
 	tried := map[string]bool{}
 	var last error
+	cooling := false
 	conversationKey := core.ConversationKeyOf(req)
 	bound, _ := s.affinity.Resolve(conversationKey, s.usableFor(req.Model))
 	// Account-slot contention does not spend a network retry; inspect all keys.
@@ -227,11 +228,15 @@ func (s *source) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 		}
 		candidates := []storedProvider{}
 		for _, p := range s.rows {
-			if p.Disabled || tried[p.ID] || time.Now().Before(s.cooling[p.ID]) {
+			if p.Disabled || tried[p.ID] {
 				continue
 			}
 			for _, m := range p.Models {
 				if m == req.Model {
+					if time.Now().Before(s.cooling[p.ID]) {
+						cooling = true
+						break
+					}
 					candidates = append(candidates, p)
 					break
 				}
@@ -289,6 +294,9 @@ func (s *source) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 	}
 	if last != nil {
 		return nil, last
+	}
+	if cooling {
+		return nil, fmt.Errorf("%w: %s has a key for model %q but it is cooling down", core.ErrBusy, s.name, req.Model)
 	}
 	return nil, fmt.Errorf("%w: %s has no ready API key for model %q; scan models first", core.ErrNotConfigured, s.name, req.Model)
 }

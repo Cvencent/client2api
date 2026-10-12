@@ -3,6 +3,7 @@ package openaicompat
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -333,6 +334,30 @@ func TestSourceCatalogueScanPreservesChatCooldown(t *testing.T) {
 	}
 }
 
+func TestSourceChatReportsCoolingInsteadOfMissingKey(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "temporary upstream failure", http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+	c, err := newSource("relay", core.SourceConfig{BaseURL: srv.URL}, core.Deps{DataDir: t.TempDir(), HTTPClient: srv.Client()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.AddAccount(context.Background(), core.AccountSpec{Fields: map[string]string{"api_key": "demo-key", "models": "demo"}}); err != nil {
+		t.Fatal(err)
+	}
+	req := &core.ChatRequest{Model: "demo", Messages: []core.Message{{Role: "user", Content: "hi"}}}
+	if _, err := c.Chat(context.Background(), req); err == nil {
+		t.Fatal("first chat unexpectedly succeeded")
+	}
+	_, err = c.Chat(context.Background(), req)
+	if !errors.Is(err, core.ErrBusy) {
+		t.Fatalf("second chat error = %v, want core.ErrBusy while the only key is cooling", err)
+	}
+	if strings.Contains(err.Error(), "scan models first") {
+		t.Fatalf("cooling error still tells the operator to scan models: %v", err)
+	}
+}
 func TestSourceOldProbeCannotClearReplacementKeyCooldown(t *testing.T) {
 	started, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once

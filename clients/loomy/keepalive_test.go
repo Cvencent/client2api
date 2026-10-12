@@ -51,9 +51,10 @@ func TestKeepaliveHeartbeatPostsTheSessionToTheAccountService(t *testing.T) {
 	}
 }
 
-func TestKeepaliveParksADeadSession(t *testing.T) {
+func TestKeepaliveCoolsDownADeadSessionWithoutParkingIt(t *testing.T) {
 	// Both the business code and the account service's own code mean the same
-	// thing: the session is gone.
+	// thing, but a background heartbeat is not authoritative enough to
+	// permanently park a credential a real chat request may still use.
 	for _, code := range []string{"100002", "020002"} {
 		t.Run(code, func(t *testing.T) {
 			stub := alwaysJSON(http.StatusOK, failureEnvelope(code, "登录已失效，请重新登录"))
@@ -74,8 +75,14 @@ func TestKeepaliveParksADeadSession(t *testing.T) {
 			if !ok {
 				t.Fatal("account vanished")
 			}
-			if !acc.dead {
-				t.Fatalf("business code %s must park the account", code)
+			if acc.dead {
+				t.Fatalf("business code %s permanently parked the account from a heartbeat", code)
+			}
+			if acc.cooldownTill.IsZero() {
+				t.Fatalf("business code %s did not cool the account down", code)
+			}
+			if acc.selectable(time.Now().UTC()) {
+				t.Fatalf("business code %s left the account selectable during cooldown", code)
 			}
 		})
 	}

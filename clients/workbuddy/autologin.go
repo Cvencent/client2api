@@ -79,6 +79,12 @@ var (
 // a var only so the test binary can shrink it.
 var submitReadyTimeout = 8 * time.Second
 
+// accountSelectReadyTimeout bounds the two asynchronous transitions on the CN
+// account chooser: the card gaining its selected class, and the main submit
+// button becoming enabled.  Missing either transition means nothing was
+// submitted and the confirming loop should retry instead of reporting success.
+const accountSelectReadyTimeout = 3 * time.Second
+
 // defaultSMSInterval is wb-auto's --sms-interval default: the pause between two
 // checks for the texted code.
 const defaultSMSIntervalValue = 5 * time.Second
@@ -122,6 +128,14 @@ const (
 	selSubmit      = `input#kc-login, button#kc-login, button.oneid-react-dialog-confirm-button, div.oneid-react-dialog-confirm-button:not(.oneid-react-is-disabled)`
 	selAgreeBox    = "input.t-checkbox__former"
 	selAccountItem = ".account-item"
+	// selAccountCard and selAccountButton are the current /login/select
+	// controls.  The card selects an account; the button submits it.  The
+	// older account-item flow had both behaviours on the item itself.
+	selAccountCard = ".select-account-card"
+	// selAccountButton is the enabled submit button, not the disabled retry
+	// placeholder on the vendor's error page.  The card click is asynchronous,
+	// so the disabled state has to be excluded before clicking.
+	selAccountButton = `button.select-account-button.w-full:not([disabled]):not([aria-disabled='true'])`
 	// submitButtonText is the confirm control's label, used as a last-resort
 	// text match when the class-based selectors do not fit.
 	submitButtonText = "手机号登录"
@@ -702,7 +716,7 @@ func (c *Client) confirmAutoLogin(ctx context.Context, job *autoJob, page pageDr
 				return core.LoginState{}, fmt.Errorf("选择登录账号失败：%w", err)
 			}
 			if selected {
-				job.logf("已选择账号，等待厂商绑定授权…")
+				job.logf("已选择账号（%s），等待厂商绑定授权…", pageWhere(ctx, page))
 				accountSelected = true
 			}
 		}
@@ -850,6 +864,40 @@ func clickIfPresent(ctx context.Context, page pageDriver, selector string) (bool
 // bound only after an account is clicked.  Prefer the personal account, then
 // fall back to the vendor's first item.
 func selectCNAccount(ctx context.Context, page pageDriver) (bool, error) {
+	// Current /login/select flow: choose the card, then press the button that
+	// performs /console/login/enterprise.  Prefer the personal account, then
+	// fall back to the vendor's first item.
+	if ok, err := page.Exists(ctx, selAccountCard); err != nil {
+		return false, err
+	} else if ok {
+		wantText := "个人版"
+		clicked, err := clickByText(ctx, page, selAccountCard, "个人版")
+		if err != nil {
+			return false, err
+		}
+		if !clicked {
+			wantText = ""
+			clicked, err = page.Click(ctx, selAccountCard)
+			if err != nil || !clicked {
+				return clicked, err
+			}
+		}
+		// React commits the card's selected class asynchronously.  The main
+		// button stays disabled until that state exists, so clicking it now
+		// would be a silent no-op and leave the plugin session pending.
+		if !waitCNAccountCardSelected(ctx, page, wantText, accountSelectReadyTimeout) {
+			return false, nil
+		}
+		// Only the enabled w-full button submits the chooser.  The error page's
+		// retry control also carries select-account-button, hence the exact
+		// selector and the disabled checks.
+		if !waitSelector(ctx, page, selAccountButton, accountSelectReadyTimeout) {
+			return false, nil
+		}
+		return page.Click(ctx, selAccountButton)
+	}
+
+	// Older /login/select flow: the item itself submits the account.
 	ok, err := page.Exists(ctx, selAccountItem)
 	if err != nil || !ok {
 		return false, err
@@ -858,6 +906,32 @@ func selectCNAccount(ctx context.Context, page pageDriver) (bool, error) {
 		return clicked, err
 	}
 	return page.Click(ctx, selAccountItem)
+}
+
+// waitCNAccountCardSelected waits for the clicked account card to carry the
+// vendor's selected class.  A non-empty text keeps the preference for the
+// personal account; an empty text accepts whichever card was clicked.
+func waitCNAccountCardSelected(ctx context.Context, page pageDriver, text string, timeout time.Duration) bool {
+	js := `(function(){` + autoAllDocsJS +
+		`var __want=` + autoJSString(text) + `;` +
+		`for(var __di=0;__di<__autoDocs.length;__di++){` +
+		`var els=__autoDocs[__di].querySelectorAll(` + autoJSString(selAccountCard) + `);` +
+		`for(var __ei=0;__ei<els.length;__ei++){` +
+		`var el=els[__ei];var t=(el.textContent||'').replace(/\s+/g,'');` +
+		`if((__want===''||t.indexOf(__want)>=0)&&el.classList.contains('selected')){return true;}` +
+		`}}return false;})()`
+	deadline := time.Now().Add(timeout)
+	for {
+		if ok, err := page.EvalBool(ctx, js); err == nil && ok {
+			return true
+		}
+		if time.Now().After(deadline) || ctx.Err() != nil {
+			return false
+		}
+		if !sleepCtx(ctx, 300*time.Millisecond) {
+			return false
+		}
+	}
 }
 
 // clickByText clicks the visible element matching selector whose text contains

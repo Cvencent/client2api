@@ -84,3 +84,45 @@ func TestSessionPlatformsForgetReportsTheChange(t *testing.T) {
 		t.Fatal("second Forget reported a change")
 	}
 }
+
+// TestSessionPlatformsManualPinSurvivesFailoverBinding pins the force-switch
+// contract: a platform chosen in the panel is an operator decision, not the
+// last-success heuristic that an automatic failover may replace.
+func TestSessionPlatformsManualPinSurvivesFailoverBinding(t *testing.T) {
+	sp := newSessionPlatforms()
+	if !sp.Pin("conv-1", "molly", "gpt-6.1-sol") {
+		t.Fatal("Pin reported no change")
+	}
+
+	// The next request fails on Molly and succeeds on CCTQ. The automatic
+	// success hook must not silently undo the operator's choice.
+	sp.bindModel("conv-1", "cctq", "gpt-6.1-sol")
+
+	got, ok := sp.resolve("conv-1", nil)
+	if !ok || got != "molly" {
+		t.Fatalf("resolve = %q,%v, want the manual molly pin to survive failover", got, ok)
+	}
+	rows := sp.List()
+	if len(rows) != 1 || rows[0].Platform != "molly" || rows[0].Model != "gpt-6.1-sol" {
+		t.Fatalf("routes = %#v, want the molly pin preserved", rows)
+	}
+}
+
+// TestSessionPlatformsManualPinSurvivesTemporaryDegradation keeps the explicit
+// target recorded after its first upstream failure. Automatic stickiness should
+// still fall through to a healthy sibling for the current request, but the next
+// turn must retry the operator's chosen platform instead of forgetting it.
+func TestSessionPlatformsManualPinSurvivesTemporaryDegradation(t *testing.T) {
+	sp := newSessionPlatforms()
+	if !sp.Pin("conv-1", "molly", "gpt-6.1-sol") {
+		t.Fatal("Pin reported no change")
+	}
+
+	got, ok := sp.resolve("conv-1", func(name string) bool { return name != "molly" })
+	if !ok || got != "molly" {
+		t.Fatalf("resolve = %q,%v, want the degraded manual pin retained", got, ok)
+	}
+	if rows := sp.List(); len(rows) != 1 || rows[0].Platform != "molly" {
+		t.Fatalf("routes = %#v, want the manual pin retained after degradation", rows)
+	}
+}

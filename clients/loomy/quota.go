@@ -189,7 +189,7 @@ func (c *Client) AccountBalance(ctx context.Context, id string, soon time.Durati
 		// read in flight when it does, so without this guard a busy panel would
 		// park every account it looked at.
 		if !callerGone(err) {
-			c.penalise(id, err, time.Now().UTC())
+			c.penaliseRecoverable(id, err, time.Now().UTC())
 		}
 		return core.Balance{}, err
 	}
@@ -224,7 +224,7 @@ func (c *Client) AccountPackages(ctx context.Context, id string) (core.PackageRe
 		// Same rule as AccountBalance above: a caller that walked away is not
 		// evidence about the credential, so it must not park the account.
 		if !callerGone(err) {
-			c.penalise(id, err, time.Now().UTC())
+			c.penaliseRecoverable(id, err, time.Now().UTC())
 		}
 		return core.PackageReport{}, err
 	}
@@ -312,7 +312,7 @@ func (c *Client) Checkin(ctx context.Context, id, action string) (core.CheckinRe
 		res.Error = redactErr(err)
 		if failureKind(err) == core.FailureSessionDead {
 			res.Error = "the session is expired or rejected; log in again and import the new token"
-			c.penalise(id, err, time.Now().UTC())
+			c.penaliseRecoverable(id, err, time.Now().UTC())
 		}
 		return res, nil
 	}

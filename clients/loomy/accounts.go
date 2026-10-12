@@ -398,9 +398,24 @@ func (s *store) backgroundProbeDue(id string, now time.Time, delay func() time.D
 	return false
 }
 
-// penalise records a failure.  A rejected session is parked for good; anything
-// else gets a cooldown, because a rate limit or a network hiccup is temporary.
+// penalise records an authoritative chat-path failure.  A rejected session is
+// parked for good; anything else gets a cooldown, because a rate limit or a
+// network hiccup is temporary.
 func (s *store) penalise(id string, err error, now time.Time, cooldown time.Duration) {
+	s.penaliseWith(id, err, now, cooldown, true)
+}
+
+// penaliseRecoverable records a failure from a side channel such as a balance
+// sweep, catalogue refresh, task report or heartbeat.  Those calls are useful
+// evidence, but they are not authoritative enough to label a credential
+// permanently dead: the same session can answer a real chat request moments
+// later.  A session-dead answer here therefore gets an ordinary cooldown and
+// stays eligible for a real front-end probe.
+func (s *store) penaliseRecoverable(id string, err error, now time.Time, cooldown time.Duration) {
+	s.penaliseWith(id, err, now, cooldown, false)
+}
+
+func (s *store) penaliseWith(id string, err error, now time.Time, cooldown time.Duration, terminalSessionDead bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, a := range s.all {
@@ -409,7 +424,7 @@ func (s *store) penalise(id string, err error, now time.Time, cooldown time.Dura
 		}
 		a.failures++
 		a.lastError = redactErr(err)
-		if failureKind(err) == core.FailureSessionDead {
+		if terminalSessionDead && failureKind(err) == core.FailureSessionDead {
 			a.dead = true
 			a.probeAfter = time.Time{}
 		} else {
@@ -460,9 +475,10 @@ func (s *store) reset(id string, now time.Time) {
 }
 
 // resetAfterProbe clears the runtime penalties after a successful real model
-// probe.  Unlike reset, it also clears dead: a successful completion is
-// stronger evidence than an earlier vendor rejection.  Keepalive deliberately
-// keeps using reset, because accepting a session is weaker than answering chat.
+// probe or chat stream.  Unlike reset, it also clears dead: a successful
+// completion is stronger evidence than an earlier vendor rejection.  Keepalive
+// deliberately keeps using reset, because accepting a session is weaker than
+// answering chat.
 func (s *store) resetAfterProbe(id string, now time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -574,6 +590,14 @@ func (c *Client) penalise(id string, err error, now time.Time) {
 		cooldown = c.cfg.authCooldown()
 	}
 	c.store.penalise(id, err, now, cooldown)
+}
+
+// penaliseRecoverable records evidence from a side channel without letting it
+// permanently park the credential.  A genuine dead session will still be
+// discovered by the next real chat request; a transient false alarm here must
+// not disable an account that is answering chat successfully.
+func (c *Client) penaliseRecoverable(id string, err error, now time.Time) {
+	c.store.penaliseRecoverable(id, err, now, c.cfg.cooldown())
 }
 
 // logf is a nil-safe logger, so a Client built by hand in a test needs no Deps.
@@ -852,7 +876,7 @@ func (c *Client) RefreshAccount(ctx context.Context, id string) ([]core.RefreshR
 		// The cancel() above cannot be the cause: it runs after the probe has
 		// already returned.
 		if !callerGone(err) {
-			c.penalise(acc.ID, err, time.Now().UTC())
+			c.penaliseRecoverable(acc.ID, err, time.Now().UTC())
 		}
 		message := redactErr(err)
 		if failureKind(err) == core.FailureSessionDead {

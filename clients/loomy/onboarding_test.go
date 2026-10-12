@@ -468,9 +468,10 @@ func TestARunRefreshesTheBoardInsteadOfServingTheStaleOne(t *testing.T) {
 	}
 }
 
-// A session the vendor rejects is not retried: it is parked for the long auth
-// cooldown, and the result says what the operator has to do about it.
-func TestARunOnADeadSessionParksTheAccount(t *testing.T) {
+// A background task report is not authoritative enough to permanently park a
+// credential a real chat request may still use, so it only cools the account
+// down and tells the operator what the vendor said.
+func TestARunOnADeadSessionCoolsDownWithoutParkingTheAccount(t *testing.T) {
 	c := newTestClient(t, "{}", alwaysJSON(http.StatusOK, failureEnvelope("100002", "缺少 token")))
 	seedAccount(t, c, "loomy-1", testToken, 0)
 
@@ -491,7 +492,10 @@ func TestARunOnADeadSessionParksTheAccount(t *testing.T) {
 	if !ok {
 		t.Fatal("the account vanished")
 	}
-	if !acc.dead {
-		t.Error("a session the vendor rejected must be parked, not retried")
+	if acc.dead {
+		t.Error("a background task report permanently parked the account")
+	}
+	if acc.cooldownTill.IsZero() {
+		t.Error("the rejected session was not cooled down")
 	}
 }

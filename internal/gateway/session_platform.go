@@ -32,6 +32,7 @@ type sessionPlatforms = SessionPlatforms
 type sessionPlatformEntry struct {
 	platform string
 	model    string
+	manual   bool
 	lastSeen time.Time
 }
 
@@ -73,6 +74,9 @@ func (s *sessionPlatforms) bindModel(conversationKey, platform, model string) {
 	if s.entries == nil {
 		s.entries = map[string]sessionPlatformEntry{}
 	}
+	if current, ok := s.entries[conversationKey]; ok && current.manual {
+		return
+	}
 	s.entries[conversationKey] = sessionPlatformEntry{platform: platform, model: model, lastSeen: s.clock()}
 }
 
@@ -94,7 +98,7 @@ func (s *sessionPlatforms) resolve(conversationKey string, usable func(string) b
 		delete(s.entries, conversationKey)
 		return "", false
 	}
-	if usable != nil && !usable(e.platform) {
+	if usable != nil && !usable(e.platform) && !e.manual {
 		delete(s.entries, conversationKey)
 		return "", false
 	}
@@ -144,7 +148,17 @@ func (s *SessionPlatforms) Pin(conversationKey, platform, model string) bool {
 	if s == nil || conversationKey == "" || platform == "" {
 		return false
 	}
-	s.bindModel(conversationKey, platform, model)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.entries == nil {
+		s.entries = map[string]sessionPlatformEntry{}
+	}
+	s.entries[conversationKey] = sessionPlatformEntry{
+		platform: platform,
+		model:    model,
+		manual:   true,
+		lastSeen: s.clock(),
+	}
 	return true
 }
 

@@ -157,7 +157,7 @@ func TestAccountBalanceRejectsAnUnknownAccount(t *testing.T) {
 	}
 }
 
-func TestAccountBalanceParksASessionTheVendorRejects(t *testing.T) {
+func TestAccountBalanceCoolsDownWithoutParkingASessionTheVendorRejects(t *testing.T) {
 	rt := alwaysJSON(http.StatusOK, failureEnvelope(loomyAuthErrorCode, "登录状态失效"))
 	c := newTestClient(t, `{}`, rt)
 	seedAccount(t, c, "acc", testToken, 0)
@@ -169,8 +169,14 @@ func TestAccountBalanceParksASessionTheVendorRejects(t *testing.T) {
 	if !ok {
 		t.Fatal("the account vanished")
 	}
-	if !acc.dead {
-		t.Fatal("a rejected session was not parked; it will be retried forever")
+	if acc.dead {
+		t.Fatal("a balance-read auth failure permanently parked the account")
+	}
+	if acc.cooldownTill.IsZero() {
+		t.Fatal("a balance-read auth failure did not cool the account down")
+	}
+	if acc.selectable(time.Now().UTC()) {
+		t.Fatal("the account ignored the cooldown")
 	}
 }
 
@@ -404,7 +410,7 @@ func TestCheckinRejectsAnUnknownAccount(t *testing.T) {
 	}
 }
 
-func TestCheckinExplainsARejectedSession(t *testing.T) {
+func TestCheckinExplainsARejectedSessionWithoutPermanentlyParkingIt(t *testing.T) {
 	rt := alwaysJSON(http.StatusOK, failureEnvelope(loomyAuthErrorCode, "登录状态失效"))
 	c := newTestClient(t, `{}`, rt)
 	seedAccount(t, c, "acc", testToken, 0)
@@ -420,8 +426,14 @@ func TestCheckinExplainsARejectedSession(t *testing.T) {
 		t.Fatalf("Error = %q, want an instruction to log in again", res.Error)
 	}
 	acc, ok := c.store.lookup("acc")
-	if !ok || !acc.dead {
-		t.Fatal("the rejected session was not parked")
+	if !ok {
+		t.Fatal("the account vanished")
+	}
+	if acc.dead {
+		t.Fatal("a check-in auth failure permanently parked the account")
+	}
+	if acc.cooldownTill.IsZero() {
+		t.Fatal("the rejected session was not cooled down")
 	}
 }
 

@@ -322,7 +322,7 @@ func (c *Client) fetchModels(ctx context.Context) ([]core.Model, error) {
 		if callerGone(err) {
 			break
 		}
-		c.penalise(acc.ID, err, time.Now().UTC())
+		c.penaliseRecoverable(acc.ID, err, time.Now().UTC())
 	}
 	if lastErr == nil {
 		lastErr = core.ErrNotConfigured
@@ -440,7 +440,7 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 		c.bindServedConversation(&local, acc.ID)
 		stream, err := c.up.openChatStream(ctx, acc.AccessToken, body)
 		if err == nil {
-			c.store.reset(acc.ID, time.Now().UTC())
+			c.store.resetAfterProbe(acc.ID, time.Now().UTC())
 			// Tell the gateway which credential actually served this request.
 			// The slot is nil in most unit tests, and NoteServedBy is a no-op
 			// then, so this is safe to call unconditionally.

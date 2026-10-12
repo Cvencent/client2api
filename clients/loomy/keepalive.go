@@ -78,7 +78,7 @@ func (c *Client) runScheduledKeepalive(ctx context.Context, accountID string) (c
 		res.Error = redactErr(herr)
 		if failureKind(herr) == core.FailureSessionDead {
 			res.Error = "the session is expired or rejected; log in again and import the new token"
-			c.penalise(acc.ID, herr, time.Now().UTC())
+			c.penaliseRecoverable(acc.ID, herr, time.Now().UTC())
 			return res, nil
 		}
 		res.Message = "the keepalive heartbeat was not accepted"
