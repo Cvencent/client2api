@@ -52,7 +52,7 @@ func TestWebLoginCNMatchesDesktopClientContract(t *testing.T) {
 	}
 }
 
-func TestWebLoginCNAuthURLCarriesDesktopLoginSessionID(t *testing.T) {
+func TestWebLoginCNAuthURLCarriesDesktopAuthParameters(t *testing.T) {
 	const state = "state-cn-login-session"
 	const authURL = "https://www.workbuddy.cn/login/?platform=workbuddy&state=" + state
 	v := &fakeVendor{
@@ -60,6 +60,7 @@ func TestWebLoginCNAuthURLCarriesDesktopLoginSessionID(t *testing.T) {
 	}
 	c, _ := loginClient(t, v, nil)
 	c.cfg.LoginRealm = realmCN
+	c.up.ClientVersion = "5.7.7"
 
 	st := startLogin(t, c)
 	if st.SessionID != state {
@@ -74,6 +75,9 @@ func TestWebLoginCNAuthURLCarriesDesktopLoginSessionID(t *testing.T) {
 	}
 	if got.Query().Get("platform") != "workbuddy" || got.Query().Get("state") != state {
 		t.Fatalf("auth URL lost the vendor parameters: %q", st.URL)
+	}
+	if got, want := got.Query().Get("version"), "5.7.7"; got != want {
+		t.Fatalf("version = %q, want the desktop client version %q in %q", got, want, st.URL)
 	}
 	sessionID := got.Query().Get("loginSessionId")
 	if !regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`).MatchString(sessionID) {

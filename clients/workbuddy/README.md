@@ -81,7 +81,7 @@ its own data directory and uses the vendor defaults. The object below goes under
 | `billing_base_global` | string | `https://www.workbuddy.ai` | global realm billing/console host (override, independent of the chat host; the register wizard rides it too) |
 | `web_base_cn` | string | `https://www.workbuddy.cn` | cn browser-login/auth host |
 | `global_enabled` | bool | `true` | route global-realm accounts to the global host |
-| `client_version` | string | `5.5.4` | `X-Client-Version` sent upstream |
+| `client_version` | string | `5.7.7` | desktop version sent upstream and appended to the CN login URL |
 | `cli_version` | string | `2.137.1` | CLI version advertised in headers |
 | `user_agent` | string | derived from realm | full User-Agent override |
 | `client_name` | string | `WorkBuddy` | attribution name (`X-IDE-Name` etc.) |
@@ -206,9 +206,9 @@ To get a usable credential, obtain a token the way the vendor CLI does (this is
 **not** on the request path; it is documented for completeness):
 
 1. `POST https://<auth host>/v2/plugin/auth/state?platform=workbuddy` (CN uses `web_base_cn`; global uses its chat host)
-2. Open the returned `authUrl`. On the CN realm the desktop client also sets
-   `loginSessionId` to a fresh UUID v4 before opening it; that value is what
-   associates the browser sign-in with this plugin session. Global leaves the
+2. Open the returned `authUrl`. On the CN realm the desktop client also appends the desktop version and sets
+   `loginSessionId` to a fresh UUID v4 before opening it; those values associate
+   the browser sign-in with this plugin session. Global leaves the
    URL unchanged. If the CN page stops on `/login/select`, select the
    `个人版` account when present, otherwise the first account item. That posts
    `/console/login/enterprise` and then `/console/auth/login?...&state=<state>`,

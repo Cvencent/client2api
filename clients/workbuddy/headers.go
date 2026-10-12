@@ -23,8 +23,8 @@ import (
 const (
 	// defaultClientVersion is the WorkBuddy Desktop version segment used in the
 	// outbound UA and in the X-IDE-Version attribution header.  Matches the
-	// official desktop distribution (5.5.4).
-	defaultClientVersion = "5.5.4"
+	// official desktop distribution (5.7.7).
+	defaultClientVersion = "5.7.7"
 	// defaultCliVersion is the `CLI/<ver>` UA segment.  Matches the official
 	// bundled CLI (2.137.1).
 	defaultCliVersion = "2.137.1"

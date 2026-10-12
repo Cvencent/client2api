@@ -292,7 +292,7 @@ func newLoginSessionID() (string, error) {
 // decorateAuthURL mirrors ExternalLinkAuthenticationProvider.openAuthUrl:
 // only the workbuddy platform gets loginSessionId, and searchParams.set
 // replaces an existing value rather than appending a second one.
-func decorateAuthURL(realm, raw string) (string, error) {
+func (c *Client) decorateAuthURL(realm, raw string) (string, error) {
 	if realm != realmCN {
 		return raw, nil
 	}
@@ -305,6 +305,7 @@ func decorateAuthURL(realm, raw string) (string, error) {
 		return "", err
 	}
 	q := u.Query()
+	q.Set("version", c.up.clientVersion())
 	q.Set("loginSessionId", sessionID)
 	u.RawQuery = q.Encode()
 	return u.String(), nil
@@ -536,7 +537,7 @@ func (c *Client) startLoginSession(ctx context.Context, realm string) (*panelLog
 	}
 	state := strings.TrimSpace(st.State)
 	authURL := strings.TrimSpace(st.AuthURL)
-	authURL, err = decorateAuthURL(realm, authURL)
+	authURL, err = c.decorateAuthURL(realm, authURL)
 	if err != nil {
 		return nil, errors.New("auth state: the authorisation URL could not be prepared")
 	}
