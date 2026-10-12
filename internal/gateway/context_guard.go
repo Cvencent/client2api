@@ -261,6 +261,68 @@ func parseTokenCount(s string) (int64, bool) {
 	return n, true
 }
 
+// learnWindowFloor is the fraction of the largest prompt this gateway has
+// actually had SERVED for a model that a learned limit may not go below.
+//
+// It exists because a vendor's refusal number is not always the model's real
+// serving window.  A refusal can name a limit that applies to one condition --
+// a single request, one session state, one backend -- while the same model
+// serves far larger prompts moments later.  Learning 100000 from one refusal
+// when the same model was observed serving 220000 tokens an hour earlier would
+// permanently shrink the model to less than half of what it can do, and the
+// guard would then trim healthy requests for the rest of the process's life.
+//
+// The floor only ever raises the learned number back up to observed reality.  It
+// is deliberately not a second source of truth: it can make the guard more
+// permissive than one refusal suggested, and never less permissive than either
+// the vendor or the operator said.
+const learnWindowFloorNumerator = 4
+const learnWindowFloorDenominator = 5
+
+// observedPromptFloor returns the largest input size this gateway has had the
+// vendor successfully serve for a model, or 0 when it has no evidence.
+//
+// It reads the usage ledger's recent ring, which is already in memory and is
+// reloaded from disk at startup, so the floor survives a restart without this
+// package keeping any state of its own.
+//
+// Failed rows are excluded on purpose: a refusal never reached the model.
+func (s *server) observedPromptFloor(clientName, model string) int64 {
+	if s.opts.Usage == nil {
+		return 0
+	}
+	want := clientName + "/" + model
+	var max int64
+	for _, rec := range s.opts.Usage.Snapshot() {
+		if rec.Failed || rec.PromptTokens <= 0 {
+			continue
+		}
+		if rec.Client+"/"+rec.Model != want {
+			continue
+		}
+		if int64(rec.PromptTokens) > max {
+			max = int64(rec.PromptTokens)
+		}
+	}
+	return max
+}
+
+// applyLearnFloor raises a vendor-reported limit to the fraction of the largest
+// prompt actually served for this model.
+//
+// ok=false means there was no evidence to apply and the caller's number stands.
+func (s *server) applyLearnFloor(client core.Client, model string, limit int64) (int64, bool) {
+	observed := s.observedPromptFloor(client.Name(), model)
+	if observed <= 0 {
+		return limit, false
+	}
+	floor := observed * learnWindowFloorNumerator / learnWindowFloorDenominator
+	if limit >= floor {
+		return limit, false
+	}
+	return floor, true
+}
+
 // learnContextWindowFromFailure records the window a vendor reported in a
 // refusal, so later requests and every downstream client's own context
 // management are sized correctly.
@@ -289,6 +351,16 @@ func (s *server) learnContextWindowFromFailure(ctx context.Context, client core.
 			s.learnedWindows.put(client.Name(), model, limit)
 			return o.ContextLength
 		}
+	}
+	// Before believing the refusal, check it against what this model was actually
+	// observed to serve.  A refusal number that is far below a prompt the vendor
+	// has already answered is describing a narrower condition than "this model's
+	// window", and learning it verbatim would shrink the model permanently.
+	if floored, raised := s.applyLearnFloor(client, model, limit); raised {
+		s.opts.Logger.Printf(
+			"context: %s/%s reported a %d token limit, but this gateway has had it serve a %d token prompt; learning %d instead",
+			client.Name(), model, limit, s.observedPromptFloor(client.Name(), model), floored)
+		limit = floored
 	}
 	published := s.publishedContextWindow(ctx, client, model)
 	if published > 0 && limit >= published {

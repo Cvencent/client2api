@@ -186,6 +186,15 @@ func (s *server) routeAndServe(w http.ResponseWriter, r *http.Request, in routeI
 	// from "the module misbehaved".
 	in.stat.model = in.rec.Model
 
+	// Thinking policy is per candidate: xhigh is the top tier Codex sends, but
+	// some vendors call their real top tier max. Cap alignment is opt-in per
+	// model and only changes the caller's own top tier.
+	sentEffort := s.applyEffortPolicy(r.Context(), client, upstreamModel, in.req, in.rec.ReasoningEffort)
+	in.rec.SentReasoningEffort = ""
+	if sentEffort != "" && sentEffort != in.rec.ReasoningEffort {
+		in.rec.SentReasoningEffort = sentEffort
+	}
+
 	// Attribute only what the gateway can honestly know.  The account that
 	// serves a successful request is chosen inside the module, so the gateway
 	// must not guess it; a failure names its account through core.Failure.  A
@@ -227,17 +236,18 @@ func (s *server) routeAndServe(w http.ResponseWriter, r *http.Request, in routeI
 		skippable := candidateUnavailable(err) || (!explicitPlatformRequest(in.requested, client.Name()) && modelRefusal(err))
 		if (retryable || skippable) && len(candidates) > 1 && (s.opts.Guard == nil || !s.opts.Guard.IP.Active()) {
 			s.opts.Usage.RecordAttempt(UsageRecord{
-				At:              time.Now(),
-				StartedAt:       in.rec.StartedAt,
-				Client:          client.Name(),
-				Realm:           in.rec.Realm,
-				Account:         in.rec.Account,
-				SessionID:       in.rec.SessionID,
-				ReasoningEffort: in.rec.ReasoningEffort,
-				Model:           client.Name() + "/" + upstreamModel,
-				Candidate:       in.rec.Candidate,
-				Failed:          true,
-				Attempt:         true,
+				At:                  time.Now(),
+				StartedAt:           in.rec.StartedAt,
+				Client:              client.Name(),
+				Realm:               in.rec.Realm,
+				Account:             in.rec.Account,
+				SessionID:           in.rec.SessionID,
+				ReasoningEffort:     in.rec.ReasoningEffort,
+				SentReasoningEffort: in.rec.SentReasoningEffort,
+				Model:               client.Name() + "/" + upstreamModel,
+				Candidate:           in.rec.Candidate,
+				Failed:              true,
+				Attempt:             true,
 			})
 			if skippable {
 				s.opts.Registry.NoteModelUnavailable(client.Name(), upstreamModel, time.Now())

@@ -456,6 +456,32 @@ func TestNormalizeReasoningEffort(t *testing.T) {
 	}
 }
 
+// A manual effort vocabulary in the panel is the operator's authoritative
+// correction to a stale or incomplete cached ladder. The gateway marks that
+// decision on the request; WorkBuddy must let the chosen level through instead
+// of snapping it back down a second time.
+func TestPrepareBodyHonorsTheGatewaysFinalReasoningEffort(t *testing.T) {
+	efforts := map[string][]string{"m": {"low", "high"}}
+	raw := []byte(`{"model":"m","reasoning_effort":"max"}`)
+	out := prepareBodyWithEffort(raw, false, efforts, nil, true)
+
+	var obj map[string]any
+	if err := json.Unmarshal(out, &obj); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got := obj["reasoning_effort"]; got != "max" {
+		t.Fatalf("reasoning_effort = %v, want the gateway's manual max", got)
+	}
+	raw = []byte(`{"model":"m","reasoning_effort":"max"}`)
+	out = prepareBody(raw, false, efforts, nil)
+	if err := json.Unmarshal(out, &obj); err != nil {
+		t.Fatalf("unmarshal (non-final): %v", err)
+	}
+	if got := obj["reasoning_effort"]; got != "high" {
+		t.Fatalf("reasoning_effort = %v, want the module's normal snap when the gateway did not lock it", got)
+	}
+}
+
 func TestEnsureConsoleSystem(t *testing.T) {
 	out := ensureConsoleSystem([]byte(`{"messages":[{"role":"user","content":"hi"}]}`))
 	var obj map[string]any

@@ -556,6 +556,14 @@ func (c *Client) ModelMaxOutputTokens(ctx context.Context, model string) (int, b
 	return core.OutputLimitFor(models, model)
 }
 
+// ModelEfforts implements core.ModelEffortProvider. It reads the same cached
+// catalogue Models serves and never fetches, so effort policy can run inside a
+// chat request without turning a cold cache into a metadata round trip.
+func (c *Client) ModelEfforts(ctx context.Context, model string) ([]string, string, bool) {
+	models, _ := c.cachedModels()
+	return core.ModelEffortsFor(models, model)
+}
+
 // configuredModels is the operator's own list from the config file.  It is the
 // only non-upstream source of model ids: when the key is absent the catalogue is
 // exactly what upstream said, including "nothing".
@@ -876,7 +884,10 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 	// of the message list, so taking it after the pairing repair or the prompt
 	// rewrite would let it drift between steps of the same turn.  The reference
 	// draws the same line for the same reason.
-	meta := ChatMeta{ConversationID: strings.TrimSpace(req.ConversationID)}
+	meta := ChatMeta{
+		ConversationID: strings.TrimSpace(req.ConversationID),
+		EffortFinal:    req.EffortFinal,
+	}
 	if meta.ConversationID == "" {
 		meta.ConversationID = optionString(req.Options, "conversation_id", "conversationId")
 	}

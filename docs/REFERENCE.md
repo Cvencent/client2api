@@ -1490,6 +1490,16 @@ cache-read price, cached prompt tokens use it; otherwise they use the ordinary
 input price. An unknown price is rendered `—`, not `¥0`; only an explicitly
 free model is zero-cost.
 
+The same page edits each model's supported reasoning-effort levels, its default
+level, and a per-model **cap-alignment** toggle. Effort resolution is operator
+override > the module's cached catalogue > the embedded preset, so a manual
+vocabulary wins over a stale cache. Cap alignment is off by default; when it is
+on and the caller requests the top Codex level `xhigh`, the gateway promotes it
+only to a genuinely higher level the model advertises (for example WorkBuddy
+`max`). Lower requests and models whose top level is already `xhigh` are left
+alone. The usage row keeps the requested and sent levels and renders `xhigh →
+max` when they differ.
+
 The panel is protected by the gateway's top-level `api_key`
 (`configs/client2api.json:3`). Empty — the default — leaves it unauthenticated,
 which is a supported single-operator deployment. When it is set, every

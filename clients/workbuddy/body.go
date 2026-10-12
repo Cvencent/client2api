@@ -178,6 +178,10 @@ func wireTools(tools []core.Tool) []any {
 
 // prepareBody runs the full outbound rewrite pipeline.
 func prepareBody(src []byte, sanitize bool, efforts map[string][]string, defaultEfforts map[string]string) []byte {
+	return prepareBodyWithEffort(src, sanitize, efforts, defaultEfforts, false)
+}
+
+func prepareBodyWithEffort(src []byte, sanitize bool, efforts map[string][]string, defaultEfforts map[string]string, effortFinal bool) []byte {
 	if len(src) == 0 {
 		return src
 	}
@@ -216,7 +220,9 @@ func prepareBody(src []byte, sanitize bool, efforts map[string][]string, default
 	// 8. thinking / reasoning_effort
 	modelName := strField(obj, "model")
 	injectThinking(obj, lookupDefaultEffort(defaultEfforts, modelName))
-	normalizeReasoningEffort(obj, efforts)
+	if !effortFinal {
+		normalizeReasoningEffort(obj, efforts)
+	}
 
 	// 9. multi-turn reasoning consistency
 	backfillReasoningContent(obj)

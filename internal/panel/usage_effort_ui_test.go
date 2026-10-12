@@ -42,6 +42,28 @@ func TestRecentCallsShowTheReasoningEffort(t *testing.T) {
 	}
 }
 
+// 「封顶对齐」会把 Codex 的 xhigh 提升到模型真正的最高档（例如 max）。
+// 用量页既不能只显示请求值，也不能只显示下发值：操作员需要同时看见这次
+// 请求要了什么，以及网关实际发给了上游什么。
+func TestRecentCallsShowTheSentReasoningEffortWhenItChanges(t *testing.T) {
+	src := poolStatsUISource(t)
+	b, err := json.Marshal(gateway.UsageRecord{ReasoningEffort: "xhigh", SentReasoningEffort: "max"})
+	if err != nil {
+		t.Fatalf("marshal UsageRecord: %v", err)
+	}
+	if !strings.Contains(string(b), `"sent_reasoning_effort":"max"`) {
+		t.Fatalf("UsageRecord 的 JSON 里没有 sent_reasoning_effort: %s", b)
+	}
+
+	body := poolStatsFuncBody(t, src, "renderRecentRows")
+	if !strings.Contains(body, "x.sent_reasoning_effort") {
+		t.Error("renderRecentRows 没有读 x.sent_reasoning_effort：提升后的实际档位显示不出来")
+	}
+	if !strings.Contains(body, `x.reasoning_effort + " → " + x.sent_reasoning_effort`) {
+		t.Error("renderRecentRows 没有显示「请求档 → 实际下发档」")
+	}
+}
+
 // recentHeaderCells 数出「最近调用」那张表的表头列数。
 func recentHeaderCells(t *testing.T, src string) int {
 	t.Helper()

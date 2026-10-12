@@ -87,9 +87,24 @@ people. The built-in default is `127.0.0.1`.
   instead of the catalogue's. This is what stops the recurrence: clients size their
   own packing from `/v1/models`. A learned limit is shown with its own `实测`
   (measured) source and never overrides a manual value from `model_context.json`.
+- A refusal number is cross-checked against what the model was actually observed to
+  serve: a learned limit is never allowed below 80% of the largest prompt this
+  gateway has had that model answer successfully (read from the usage ledger, so it
+  survives restarts). A refusal often names a limit that applies to one condition
+  rather than the model's real window, and this stops one such refusal from
+  permanently shrinking a model to a fraction of what it demonstrably handles.
 - A request whose newest turn alone exceeds the window is refused with
   `context_window_exceeded` rather than trimmed, because cutting into the question
   would answer a different one.
+- Reasoning-effort policy is resolved per platform and model from the operator's
+  manual override, then the module's cached catalogue, then the embedded preset.
+  The model page can edit the supported levels and default, and those values are
+  authoritative over a stale module cache.
+- Cap alignment is opt-in per model and off by default. When enabled, a caller's
+  top level `xhigh` is promoted to the model's real highest level only when that
+  level is higher (for example WorkBuddy `max`); lower requests and models without
+  a higher tier are left unchanged. The usage log keeps both values and shows
+  `xhigh → max` when they differ.
 
 ### Accounts and platforms
 

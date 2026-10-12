@@ -653,6 +653,11 @@ func (s *server) serveRemainingCandidates(w http.ResponseWriter, r *http.Request
 		firstCandidate++
 		attemptReq := cloneChatRequest(baseReq)
 		attemptReq.Model = upstreamModel
+		sentEffort := s.applyEffortPolicy(r.Context(), client, upstreamModel, attemptReq, rec.ReasoningEffort)
+		rec.SentReasoningEffort = ""
+		if sentEffort != "" && sentEffort != rec.ReasoningEffort {
+			rec.SentReasoningEffort = sentEffort
+		}
 		if !maxTokensExplicit {
 			attemptReq.MaxTokens = nil
 			if n, ok := s.resolveMaxOutputTokens(r.Context(), client, upstreamModel); ok {
@@ -710,17 +715,18 @@ func (s *server) serveRemainingCandidates(w http.ResponseWriter, r *http.Request
 		// another inbound request.  The alert is evidence this happened; the
 		// usage page must show the same evidence.
 		s.opts.Usage.RecordAttempt(UsageRecord{
-			At:              time.Now(),
-			StartedAt:       rec.StartedAt,
-			Client:          client.Name(),
-			Realm:           rec.Realm,
-			Account:         rec.Account,
-			SessionID:       rec.SessionID,
-			ReasoningEffort: rec.ReasoningEffort,
-			Model:           client.Name() + "/" + upstreamModel,
-			Candidate:       rec.Candidate,
-			Failed:          true,
-			Attempt:         true,
+			At:                  time.Now(),
+			StartedAt:           rec.StartedAt,
+			Client:              client.Name(),
+			Realm:               rec.Realm,
+			Account:             rec.Account,
+			SessionID:           rec.SessionID,
+			ReasoningEffort:     rec.ReasoningEffort,
+			SentReasoningEffort: rec.SentReasoningEffort,
+			Model:               client.Name() + "/" + upstreamModel,
+			Candidate:           rec.Candidate,
+			Failed:              true,
+			Attempt:             true,
 		})
 		lastClient, lastHint, lastErr = client, hintCtx, err
 
@@ -869,6 +875,22 @@ func (s *server) openStream(ctx context.Context, client core.Client, req *core.C
 		req.ReleaseAccountSlot()
 		lastErr = err
 
+		// The context guard is told about a size refusal here, BEFORE the two
+		// early exits below, because a module that walked its whole account pool
+		// joins core.ErrPlatformExhausted onto the classified error -- workbuddy
+		// does exactly that for a non-retryable 11115.  Returning on the exhausted
+		// marker first would skip the guard entirely, and the window would never be
+		// learned no matter how many times the same request was refused.
+		if f, ok := core.AsFailure(err); ok && f.Kind == core.FailureContextWindow {
+			// The vendor named its own limit in the refusal.  Recording it fixes the
+			// cause -- the inflated window this gateway was advertising -- rather
+			// than just the symptom, so the next request for this model is budgeted
+			// correctly from the first attempt and downstream clients stop
+			// over-packing.  The request itself still fails this time; retrying it
+			// unchanged would just fail again.
+			s.learnContextWindowFromFailure(ctx, client, req.Model, err)
+		}
+
 		// The module has already walked its whole account pool.  Re-running
 		// it here would repeat the same exhausted rotation; move to the next
 		// platform instead.
@@ -878,17 +900,6 @@ func (s *server) openStream(ctx context.Context, client core.Client, req *core.C
 
 		f, classified := core.AsFailure(err)
 		if !classified {
-			return nil, err
-		}
-
-		if f.Kind == core.FailureContextWindow {
-			// The vendor named its own limit in the refusal.  Recording it fixes
-			// the cause -- the inflated window this gateway was advertising --
-			// rather than just the symptom, so the next request for this model is
-			// budgeted correctly from the start and downstream clients stop
-			// over-packing.  The request itself still fails this time; retrying it
-			// unchanged would just fail again.
-			s.learnContextWindowFromFailure(ctx, client, req.Model, err)
 			return nil, err
 		}
 

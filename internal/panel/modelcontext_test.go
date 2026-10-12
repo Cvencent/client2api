@@ -37,3 +37,37 @@ func TestModelContextOverridesRoundTrip(t *testing.T) {
 		t.Fatalf("store = %+v ok=%v", got, ok)
 	}
 }
+
+func TestModelContextEffortPolicyRoundTrip(t *testing.T) {
+	store, err := modelmeta.OpenOverrideStore("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := New(Options{ModelOverrides: store})
+
+	body := `{"clients":{"workbuddy":{"cn:glm-5.3":{"supported_efforts":["low","high","max"],"default_effort":"max","elevate_top":true}}}}`
+	req := httptest.NewRequest(http.MethodPost, "/panel/api/model_context", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	got, ok := store.Get("workbuddy", "cn:glm-5.3")
+	if !ok {
+		t.Fatal("effort policy was not stored")
+	}
+	if len(got.SupportedEfforts) != 3 || got.SupportedEfforts[2] != "max" || got.DefaultEffort != "max" || !got.ElevateTop {
+		t.Fatalf("stored effort policy = %+v", got)
+	}
+
+	rec = get(t, h, "/panel/api/model_context")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	for _, want := range []string{"supported_efforts", "default_effort", "elevate_top"} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("GET response missing %q: %s", want, rec.Body.String())
+		}
+	}
+}

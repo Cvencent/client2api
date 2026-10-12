@@ -66,3 +66,35 @@ func TestOverrideStoreCorruptFileIsEmpty(t *testing.T) {
 		t.Fatal("corrupt file produced an entry")
 	}
 }
+
+func TestOverrideStorePersistsEffortPolicy(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "model_context.json")
+	s, err := OpenOverrideStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetEfforts("workbuddy", "cn:glm-5.3", []string{"low", "High", "max", "max"}, " MAX "); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetElevateTop("workbuddy", "cn:glm-5.3", true); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := OpenOverrideStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := reopened.Get("workbuddy", "cn:glm-5.3")
+	if !ok {
+		t.Fatal("effort policy did not persist")
+	}
+	if !equalStrings(got.SupportedEfforts, []string{"low", "high", "max"}) {
+		t.Fatalf("supported efforts = %v, want [low high max]", got.SupportedEfforts)
+	}
+	if got.DefaultEffort != "max" {
+		t.Fatalf("default effort = %q, want max", got.DefaultEffort)
+	}
+	if !got.ElevateTop {
+		t.Fatal("elevate_top = false, want true")
+	}
+}

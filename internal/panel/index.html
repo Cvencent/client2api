@@ -276,6 +276,10 @@ label.fld > .hint { display: block; font-size: 11.5px; color: var(--ink-3); marg
 /* 上下文 / 最大输出是可编辑数字框：值来自服务端解析结果，来源用中文标注。 */
 .acc.md .mdedit { white-space: nowrap; }
 .acc.md .mdedit input { width: 92px; padding: 4px 6px; font-size: 12px; text-align: right; }
+.acc.md .mdedit input.mdtxt { width: 170px; text-align: left; }
+.acc.md .mdedit input.mdshort { width: 86px; text-align: left; }
+.acc.md .mdedit input[type="checkbox"] { width: auto; margin: 0; vertical-align: middle; }
+.acc.md .mdcheckline { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .acc.md .mdedit input.dirty { border-color: var(--accent); }
 .acc.md .mdedit .mdsrc { display: block; margin-top: 3px; font-size: 10.5px; color: var(--ink-3); }
 .acc.md .mdedit .mdsrc.manual { color: var(--accent); font-weight: 600; }
@@ -2227,7 +2231,7 @@ details.cfg summary:hover, details.adv summary:hover { color: var(--accent-text)
         <div class="tbl-wrap">
         <table class="acc md">
           <thead><tr>
-            <th>模型</th><th>客户端</th><th>来源</th><th>倍率</th><th>默认档</th><th>思考档位</th><th>上下文</th><th>最大输出</th><th>输入价<br><span class="hint">¥/百万 tokens</span></th><th>输出价<br><span class="hint">¥/百万 tokens</span></th><th>缓存读取价<br><span class="hint">¥/百万 tokens</span></th><th>操作</th><th>所属</th>
+            <th>模型</th><th>客户端</th><th>来源</th><th>倍率</th><th>默认档</th><th>思考档位</th><th>封顶对齐</th><th>上下文</th><th>最大输出</th><th>输入价<br><span class="hint">¥/百万 tokens</span></th><th>输出价<br><span class="hint">¥/百万 tokens</span></th><th>缓存读取价<br><span class="hint">¥/百万 tokens</span></th><th>操作</th><th>所属</th>
           </tr></thead>
           <tbody id="mdBody"></tbody>
         </table>
@@ -5655,9 +5659,12 @@ function renderRecentRows() {
     const cacheText = x.has_cached_tokens ? numf(x.cached_tokens || 0) : "—";
     const cacheHitText = fmtUsageCacheHitRate(cacheHit);
     const costText = x.has_cost ? fmtUsageCost(x.cost) : "—";
+    const effort = (x.reasoning_effort && x.sent_reasoning_effort && x.sent_reasoning_effort !== x.reasoning_effort)
+      ? x.reasoning_effort + " → " + x.sent_reasoning_effort
+      : x.reasoning_effort;
     return '<tr><td class="hint">' + esc(fmtCallTime(x.at)) + '</td>' +
       '<td>' + esc(platformLabel(x.client || "-")) + '</td><td>' + esc(x.model || "-") + trimTag + '</td>' +
-      '<td>' + (x.reasoning_effort ? '<span class="tag warn">' + esc(x.reasoning_effort) + '</span>' : '<span class="hint">-</span>') + '</td>' +
+      '<td>' + (effort ? '<span class="tag warn">' + esc(effort) + '</span>' : '<span class="hint">-</span>') + '</td>' +
       '<td>' + sessionCell(x.session_id) + '</td>' +
       '<td title="' + esc(accTip) + '">' + esc(accName) + '</td><td>' + state + '</td>' +
       '<td class="num">' + (x.candidate ? "#" + esc(String(x.candidate)) : "-") + '</td>' +
@@ -5795,25 +5802,40 @@ function rateCell(ex) {
   return '<td class="num">—</td>';
 }
 
-/* 默认档格。原版 app.js:361 的语义：上游说了默认档就挂一个绿色标签，没说就
-   画一个灰横杠 —— 「没说」和「说了某个档」是两件事。 */
-function defaultEffortCell(ex) {
-  const d = ex.reasoning_default_effort || ex.default_effort || "";
-  return "<td>" + (d ? '<span class="tag ok">' + esc(d) + "</span>" : '<span style="color:var(--ink-3)">—</span>') + "</td>";
+/* 默认档和思考档位都能在模型页手工覆盖；来源小字沿用上下文 / 价格那一套，
+   手动值时用强调色，避免操作员把上游事实误认成自己写过的值。 */
+function mdDefaultEffortCell(m) {
+  const value = m.default_effort || "";
+  const def = m.default_effort_default || "";
+  const dis = m.efforts_editable ? "" : " disabled";
+  const src = m.default_effort_source || "";
+  return '<td class="mdedit" data-field="default_effort">' +
+    '<input class="mdtxt mdshort" type="text" autocomplete="off" data-field="default_effort"' +
+    ' value="' + esc(value) + '" data-initial="' + esc(value) + '" data-default="' + esc(def) + '" placeholder="—"' + dis + '>' +
+    '<div class="mdsrc' + (src === "manual" ? " manual" : "") + '">' + esc(mdSrcText(src)) + '</div></td>';
 }
 
-/* 支持的思考档位格。原版 app.js:347-350 的语义：每档一个警示标签；可关思考
-   且确实列了档位时补一个「off（可关）」；一个档位都没有时按 supports_reasoning
-   分成「固定档 · 默认 X」与「不支持思考」两种灰字。 */
-function effortsCell(ex) {
-  const eff = Array.isArray(ex.reasoning_supported_efforts) ? ex.reasoning_supported_efforts.slice()
-    : (Array.isArray(ex.reasoning_efforts) ? ex.reasoning_efforts.slice() : []);
-  if (ex.can_disable_thinking && eff.length && eff.indexOf("off") < 0) eff.push("off（可关）");
-  const body = eff.length
-    ? eff.map(e => '<span class="tag warn">' + esc(e) + "</span>").join(" ")
-    : '<span style="color:var(--ink-3);font-size:12.5px">' +
-      (ex.supports_reasoning ? "固定档 · 默认 " + esc(ex.reasoning_default_effort || ex.default_effort || "?") : "不支持思考") + "</span>";
-  return '<td style="white-space:normal">' + body + "</td>";
+function mdEffortsCell(m) {
+  const values = Array.isArray(m.supported_efforts) ? m.supported_efforts : [];
+  const defaults = Array.isArray(m.supported_efforts_default) ? m.supported_efforts_default : [];
+  const value = values.join(", ");
+  const def = defaults.join(", ");
+  const dis = m.efforts_editable ? "" : " disabled";
+  const src = m.efforts_source || "";
+  return '<td class="mdedit" data-field="efforts">' +
+    '<input class="mdtxt" type="text" autocomplete="off" data-field="efforts"' +
+    ' value="' + esc(value) + '" data-initial="' + esc(value) + '" data-default="' + esc(def) + '" placeholder="未公开"' + dis + '>' +
+    '<div class="mdsrc' + (src === "manual" ? " manual" : "") + '">' + esc(mdSrcText(src)) + '</div></td>';
+}
+
+function mdElevateTopCell(m) {
+  const on = !!m.elevate_top;
+  const dis = m.elevate_top_editable ? "" : " disabled";
+  const label = on ? "已开启" : "默认关闭";
+  return '<td class="mdedit mdcheck" data-field="elevate_top">' +
+    '<label class="mdcheckline" title="开启后，Codex 的 xhigh 会提升到该模型真实最高档；默认关闭">' +
+    '<input class="mdtoggle" type="checkbox" data-field="elevate_top" data-initial="' + (on ? "1" : "0") + '"' + (on ? " checked" : "") + dis + '>' +
+    '<span class="mdsrc' + (on ? " manual" : "") + '">' + esc(label) + '</span></label></td>';
 }
 
 /* 能力徽标。原版 app.js:352-357 的语义，挂在模型名下面：默认 / 工具 / 视觉 /
@@ -5874,14 +5896,22 @@ let MD_EDITS = {};
 function mdKey(client, model) { return client + "\u0000" + model; }
 function mdRowKey(tr) { return mdKey(tr.dataset.client, tr.dataset.model); }
 function mdInputs(tr) {
-  const q = f => tr.querySelector('input[data-field="' + f + '"]');
+  const q = f => tr.querySelector('[data-field="' + f + '"]');
   return {
     ctx: q("context"),
     out: q("output"),
     inPrice: q("price-input"),
     outPrice: q("price-output"),
     cachePrice: q("price-cache"),
+    efforts: q("efforts"),
+    defaultEffort: q("default_effort"),
+    elevateTop: q("elevate_top"),
   };
+}
+function mdInputDirty(input) {
+  if (!input) return false;
+  if (input.type === "checkbox") return input.checked !== (input.dataset.initial === "1");
+  return input.value !== input.dataset.initial;
 }
 function mdSyncDirty() {
   const n = Object.keys(MD_EDITS).length;
@@ -5890,23 +5920,24 @@ function mdSyncDirty() {
   const note = $("#mdDirty");
   if (note) note.textContent = n ? n + " 项未保存" : "";
   document.querySelectorAll("#mdBody tr[data-client]").forEach(tr => {
-    const { ctx, out, inPrice, outPrice, cachePrice } = mdInputs(tr);
-    [ctx, out, inPrice, outPrice, cachePrice].forEach(input => {
+    const { ctx, out, inPrice, outPrice, cachePrice, efforts, defaultEffort, elevateTop } = mdInputs(tr);
+    [ctx, out, inPrice, outPrice, cachePrice, efforts, defaultEffort, elevateTop].forEach(input => {
       if (!input) return;
-      if (input.value !== input.dataset.initial) input.classList.add("dirty"); else input.classList.remove("dirty");
+      if (mdInputDirty(input)) input.classList.add("dirty"); else input.classList.remove("dirty");
     });
   });
 }
 // restore=true 表示「恢复官方默认」：保存时提交 0，服务端据此删掉手动值。
 function mdRecord(tr, restore) {
-  const { ctx, out, inPrice, outPrice, cachePrice } = mdInputs(tr);
-  if (!ctx || !out || !inPrice || !outPrice || !cachePrice) return;
+  const { ctx, out, inPrice, outPrice, cachePrice, efforts, defaultEffort, elevateTop } = mdInputs(tr);
+  const inputs = [ctx, out, inPrice, outPrice, cachePrice, efforts, defaultEffort, elevateTop];
+  if (inputs.some(input => !input)) return;
   const key = mdRowKey(tr);
-  const inputs = [ctx, out, inPrice, outPrice, cachePrice];
-  if (restore || inputs.some(input => input.value !== input.dataset.initial)) {
+  if (restore || inputs.some(mdInputDirty)) {
     MD_EDITS[key] = {
       ctx: ctx.value, out: out.value,
       inPrice: inPrice.value, outPrice: outPrice.value, cachePrice: cachePrice.value,
+      efforts: efforts.value, defaultEffort: defaultEffort.value, elevateTop: elevateTop.checked,
       restore: !!restore,
     };
   } else {
@@ -5919,14 +5950,23 @@ function mdReapplyEdits() {
   document.querySelectorAll("#mdBody tr[data-client]").forEach(tr => {
     const e = MD_EDITS[mdRowKey(tr)];
     if (!e) return;
-    const { ctx, out, inPrice, outPrice, cachePrice } = mdInputs(tr);
+    const { ctx, out, inPrice, outPrice, cachePrice, efforts, defaultEffort, elevateTop } = mdInputs(tr);
     if (ctx && ctx.value !== e.ctx) ctx.value = e.ctx;
     if (out && out.value !== e.out) out.value = e.out;
     if (inPrice && inPrice.value !== e.inPrice) inPrice.value = e.inPrice;
     if (outPrice && outPrice.value !== e.outPrice) outPrice.value = e.outPrice;
     if (cachePrice && cachePrice.value !== e.cachePrice) cachePrice.value = e.cachePrice;
+    if (efforts && efforts.value !== e.efforts) efforts.value = e.efforts;
+    if (defaultEffort && defaultEffort.value !== e.defaultEffort) defaultEffort.value = e.defaultEffort;
+    if (elevateTop && elevateTop.checked !== e.elevateTop) elevateTop.checked = e.elevateTop;
   });
   mdSyncDirty();
+}
+function parseEffortList(raw) {
+  const seen = Object.create(null);
+  return String(raw == null ? "" : raw).split(/[\s,，]+/)
+    .map(v => v.trim().toLowerCase())
+    .filter(v => v && !seen[v] && (seen[v] = true));
 }
 function mdPriceNumber(raw) {
   const s = String(raw == null ? "" : raw).trim();
@@ -5947,6 +5987,9 @@ async function mdSave() {
         context_length: 0,
         max_output_tokens: 0,
         has_price: false,
+        supported_efforts: [],
+        default_effort: "",
+        elevate_top: false,
       };
       return;
     }
@@ -5971,6 +6014,11 @@ async function mdSave() {
         if (cachePrice !== null) patch.cache_read_per_million = cachePrice;
       }
     }
+    // 只提交真正改过的档位字段：没动的手动配置继续留在服务端，不会被一次
+    // 只改价格的保存顺手清掉。
+    if (e.efforts !== it.effortsStr) patch.supported_efforts = parseEffortList(e.efforts);
+    if (e.defaultEffort !== it.defaultEffortStr) patch.default_effort = String(e.defaultEffort || "").trim().toLowerCase();
+    if (e.elevateTop !== it.elevateTop) patch.elevate_top = !!e.elevateTop;
     (clients[it.client] || (clients[it.client] = {}))[it.model] = patch;
   });
   if (!n) return;
@@ -5993,7 +6041,7 @@ async function renderModels(refresh) {
     refresh ? api("/panel/api/models/refresh", { method: "POST" }) : api("/panel/api/models"),
     api("/panel/api/model_probes"),
   ]);
-  if (!r.ok) { $("#mdNote").textContent = "获取失败：" + r.err; $("#mdBody").innerHTML = '<tr><td colspan="13" class="hint">' + esc(r.err) + '</td></tr>'; return; }
+  if (!r.ok) { $("#mdNote").textContent = "获取失败：" + r.err; $("#mdBody").innerHTML = '<tr><td colspan="14" class="hint">' + esc(r.err) + '</td></tr>'; return; }
   // 探测数据是可选增强：未配置 / 工具还没跑过 / 读取失败，都退化为无标注，
   // 绝不让它影响模型列表本身（与 /panel/api/model_probes 的空集语义一致）。
   const probes = (pr.ok && pr.data && pr.data.probes) || {};
@@ -6048,6 +6096,13 @@ async function renderModels(refresh) {
         out: m.max_output_tokens || 0,
         outStr: m.max_output_tokens > 0 ? String(m.max_output_tokens) : "",
         outSrc: m.max_output_source || "",
+        effortsStr: (Array.isArray(m.supported_efforts) ? m.supported_efforts : []).join(", "),
+        effortsDefaultStr: (Array.isArray(m.supported_efforts_default) ? m.supported_efforts_default : []).join(", "),
+        effortsSrc: m.efforts_source || "",
+        defaultEffortStr: m.default_effort || "",
+        defaultEffortDefaultStr: m.default_effort_default || "",
+        defaultEffortSrc: m.default_effort_source || "",
+        elevateTop: !!m.elevate_top,
         inPrice: m.has_price ? Number(m.input_per_million || 0) : 0,
         inPriceStr: m.has_price ? String(m.input_per_million || 0) : "",
         outPrice: m.has_price ? Number(m.output_per_million || 0) : 0,
@@ -6064,8 +6119,9 @@ async function renderModels(refresh) {
             ? '<span class="chip err" title="' + esc(srcTitle) + '">基线</span>'
             : '<span class="chip ok" title="' + esc(srcTitle) + '">上游</span>') + '</td>' +
           rateCell(ex) +
-          defaultEffortCell(ex) +
-          effortsCell(ex) +
+          mdDefaultEffortCell(m) +
+          mdEffortsCell(m) +
+          mdElevateTopCell(m) +
           mdNumCell("context", m.context_length, m.context_source, m.context_default) +
           mdNumCell("output", m.max_output_tokens, m.max_output_source, m.max_output_default, probe) +
           mdPriceCell("input", m.input_per_million, m.input_price_source, m.input_price_default, m.has_price, m.default_has_price) +
@@ -6117,7 +6173,7 @@ function mdApply() {
     (!cl || it.client === cl) && (!upOnly || it.up) && (!freeOnly || it.free) &&
     words.every(w => it.text.indexOf(w) >= 0));
   $("#mdBody").innerHTML = rows.map(it => it.html).join("") ||
-    '<tr class="filtered"><td colspan="13" class="hint">' +
+    '<tr class="filtered"><td colspan="14" class="hint">' +
     (MD_ITEMS.length ? "没有模型匹配当前筛选条件，清空搜索框即可回到全量" : "没有任何模块返回模型") + '</td></tr>';
   mdReapplyEdits();
   // 计数只在真的筛掉了东西时才着色：否则这个数字会一直在抢注意力。
@@ -10697,20 +10753,27 @@ $("#btnPk").addEventListener("click", renderClients);
 // 上下文 / 最大输出的编辑是委托式的：过滤会重建 tbody，绑定在行上会随行一起丢。
 $("#mdBody").addEventListener("input", ev => {
   const tr = ev.target.closest("tr[data-client]");
-  if (tr && ev.target.classList.contains("mdnum")) mdRecord(tr, false);
+  if (tr && (ev.target.classList.contains("mdnum") || ev.target.classList.contains("mdtxt"))) mdRecord(tr, false);
+});
+$("#mdBody").addEventListener("change", ev => {
+  const tr = ev.target.closest("tr[data-client]");
+  if (tr && ev.target.classList.contains("mdtoggle")) mdRecord(tr, false);
 });
 $("#mdBody").addEventListener("click", ev => {
   const btn = ev.target.closest(".mdRestore");
   if (!btn) return;
   const tr = btn.closest("tr[data-client]");
   if (!tr) return;
-  const { ctx, out, inPrice, outPrice, cachePrice } = mdInputs(tr);
-  if (!ctx || !out || !inPrice || !outPrice || !cachePrice) return;
+  const { ctx, out, inPrice, outPrice, cachePrice, efforts, defaultEffort, elevateTop } = mdInputs(tr);
+  if (!ctx || !out || !inPrice || !outPrice || !cachePrice || !efforts || !defaultEffort || !elevateTop) return;
   ctx.value = ctx.dataset.default;
   out.value = out.dataset.default;
   inPrice.value = inPrice.dataset.default;
   outPrice.value = outPrice.dataset.default;
   cachePrice.value = cachePrice.dataset.default;
+  efforts.value = efforts.dataset.default;
+  defaultEffort.value = defaultEffort.dataset.default;
+  elevateTop.checked = false;
   mdRecord(tr, true);
 });
 $("#btnMdSave").addEventListener("click", mdSave);

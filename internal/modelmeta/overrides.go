@@ -16,6 +16,18 @@ import (
 type Override struct {
 	ContextLength   int64 `json:"context_length,omitempty"`
 	MaxOutputTokens int64 `json:"max_output_tokens,omitempty"`
+	// SupportedEfforts is an optional manual reasoning-effort vocabulary.
+	// Nil or empty means "no manual value", so the resolved list continues to
+	// come from the module cache or the embedded table.
+	SupportedEfforts []string `json:"supported_efforts,omitempty"`
+	// DefaultEffort is an optional manual default. It is only authoritative
+	// when the resolved vocabulary contains it; Merge drops it otherwise.
+	DefaultEffort string `json:"default_effort,omitempty"`
+	// ElevateTop opts this model into cap alignment: a caller's top tier
+	// (xhigh) may be promoted to the model's actual highest tier (for example
+	// max). The zero value is deliberately off, so existing installs are
+	// unchanged until an operator enables it in the panel.
+	ElevateTop bool `json:"elevate_top,omitempty"`
 	// Prices are in CNY per million tokens. Has flags keep an explicit free
 	// model (0/0) distinct from a field that was never configured.
 	InputPerMillion     float64 `json:"input_per_million,omitempty"`
@@ -27,7 +39,8 @@ type Override struct {
 
 // IsZero reports whether the override carries no manual value.
 func (o Override) IsZero() bool {
-	return o.ContextLength <= 0 && o.MaxOutputTokens <= 0 && !o.HasPrice && !o.HasCacheRead
+	return o.ContextLength <= 0 && o.MaxOutputTokens <= 0 && len(o.SupportedEfforts) == 0 &&
+		o.DefaultEffort == "" && !o.ElevateTop && !o.HasPrice && !o.HasCacheRead
 }
 
 type overrideDoc struct {
@@ -117,6 +130,48 @@ func (s *OverrideStore) Set(client, model string, contextLength, maxOutputTokens
 	o := s.getLocked(client, model)
 	o.ContextLength = contextLength
 	o.MaxOutputTokens = maxOutputTokens
+	return s.putLocked(client, model, o)
+}
+
+// SetEfforts replaces the manual reasoning-effort vocabulary and default while
+// preserving every other override. Empty values clear those manual fields.
+// Levels are normalised to the lower-case vocabulary modules send upstream.
+func (s *OverrideStore) SetEfforts(client, model string, efforts []string, defaultEffort string) error {
+	if s == nil {
+		return errors.New("modelmeta: nil override store")
+	}
+	client, model = strings.TrimSpace(client), strings.TrimSpace(model)
+	if client == "" || model == "" {
+		return errors.New("modelmeta: client and model are required")
+	}
+	efforts = normalizeEfforts(efforts)
+	defaultEffort = strings.ToLower(strings.TrimSpace(defaultEffort))
+	if defaultEffort != "" && len(efforts) > 0 && !containsString(efforts, defaultEffort) {
+		defaultEffort = ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	o := s.getLocked(client, model)
+	o.SupportedEfforts = efforts
+	o.DefaultEffort = defaultEffort
+	return s.putLocked(client, model, o)
+}
+
+// SetElevateTop enables or disables cap alignment for one model. The flag is
+// kept independently of the manual effort vocabulary so an operator can use
+// the module's live facts while opting into the policy.
+func (s *OverrideStore) SetElevateTop(client, model string, on bool) error {
+	if s == nil {
+		return errors.New("modelmeta: nil override store")
+	}
+	client, model = strings.TrimSpace(client), strings.TrimSpace(model)
+	if client == "" || model == "" {
+		return errors.New("modelmeta: client and model are required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	o := s.getLocked(client, model)
+	o.ElevateTop = on
 	return s.putLocked(client, model, o)
 }
 
@@ -216,6 +271,21 @@ func (s *OverrideStore) putLocked(client, model string, o Override) error {
 	}
 	models[model] = o
 	return s.writeLocked()
+}
+
+func normalizeEfforts(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(in))
+	for _, effort := range in {
+		effort = strings.ToLower(strings.TrimSpace(effort))
+		if effort == "" {
+			continue
+		}
+		out = append(out, effort)
+	}
+	return dedupeStrings(out)
 }
 
 // Snapshot returns a deep copy of all overrides.

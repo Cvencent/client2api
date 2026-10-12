@@ -151,8 +151,12 @@ type UsageRecord struct {
 	// when the request named none: the row reports what was sent rather than
 	// the module's configured default.  See reasoningEffortFor.
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
-	Candidate       int    `json:"candidate,omitempty"` // 1-based position in a bare-model route
-	Failed          bool   `json:"failed,omitempty"`
+	// SentReasoningEffort is set only when cap alignment changed the caller's
+	// level for this model (for example xhigh -> max). Empty means the module
+	// received exactly ReasoningEffort.
+	SentReasoningEffort string `json:"sent_reasoning_effort,omitempty"`
+	Candidate           int    `json:"candidate,omitempty"` // 1-based position in a bare-model route
+	Failed              bool   `json:"failed,omitempty"`
 	// Attempt marks a candidate that failed before the request moved on.
 	// It is a recent-list row, not an extra inbound request, so it must not
 	// inflate the aggregate totals.

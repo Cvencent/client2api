@@ -43,3 +43,40 @@ func TestModelMaxOutputTokensReadsTheCachedCatalogue(t *testing.T) {
 		t.Fatalf("an unknown model = %d, true; want ok=false", n)
 	}
 }
+
+func TestModelEffortsReadsTheCachedCatalogue(t *testing.T) {
+	c, _ := newTestClient(t, nil)
+	ctx := context.Background()
+
+	if _, _, ok := c.ModelEfforts(ctx, "cn:m-rich"); ok {
+		t.Fatal("ModelEfforts on a cold cache reported a vocabulary")
+	}
+
+	c.modelsMu.Lock()
+	c.models = []core.Model{
+		{ID: "cn:m-rich", Extra: map[string]any{
+			"reasoning_supported_efforts": []string{"low", "high", "max"},
+			"reasoning_default_effort":    "max",
+		}},
+		{ID: "cn:m-bare"},
+	}
+	c.modelsMu.Unlock()
+
+	efforts, def, ok := c.ModelEfforts(ctx, "cn:m-rich")
+	if !ok {
+		t.Fatal("the cached catalogue carries an effort ladder but the module declined to say so")
+	}
+	if len(efforts) != 3 || efforts[0] != "low" || efforts[1] != "high" || efforts[2] != "max" {
+		t.Fatalf("efforts = %v, want [low high max]", efforts)
+	}
+	if def != "max" {
+		t.Fatalf("default effort = %q, want max", def)
+	}
+
+	if _, _, ok := c.ModelEfforts(ctx, "cn:m-bare"); ok {
+		t.Fatal("an entry without a vocabulary reported ok=true")
+	}
+	if _, _, ok := c.ModelEfforts(ctx, "cn:no-such-model"); ok {
+		t.Fatal("an unknown model reported ok=true")
+	}
+}

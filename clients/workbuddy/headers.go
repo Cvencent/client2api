@@ -244,6 +244,10 @@ type ChatMeta struct {
 	ConversationID        string
 	ConversationRequestID string
 	TraceID               string
+	// EffortFinal tells the body pipeline that the gateway already resolved
+	// the reasoning level from the panel's authoritative vocabulary. The
+	// module must not re-snap it against a possibly older cached ladder.
+	EffortFinal bool
 }
 
 // ChatHeaders adds the chat-specific account headers on top of CommonHeaders.

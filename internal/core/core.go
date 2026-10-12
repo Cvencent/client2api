@@ -131,6 +131,12 @@ type ChatRequest struct {
 	// never be copied into the body sent upstream.
 	ServedBy *string
 
+	// EffortFinal marks a reasoning level the gateway deliberately chose for
+	// this candidate. A module must not re-snap it against its own cached
+	// ladder: the panel's manual vocabulary is authoritative and may be newer
+	// than that cache. Like ServedBy, this never goes upstream.
+	EffortFinal bool
+
 	// accountAcquire is the gateway's per-account in-flight hook.  The
 	// gateway installs it before every attempt; a module calls
 	// AcquireAccountSlot right after it picks a credential and before any

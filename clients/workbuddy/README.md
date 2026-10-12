@@ -324,7 +324,8 @@ sweep does not turn every pass into another model request.
    `tool_choice` flattened to the string form the vendor accepts; `developer` →
    `system`; string `image_url` → object form; broken tool-call/tool-result
    pairing repaired; thinking/`reasoning_effort` injected and snapped to a
-   supported level; `reasoning_content` backfilled; then a prompt-cache key is
+   supported level unless the gateway marked a panel-resolved level final;
+   `reasoning_content` backfilled; then a prompt-cache key is
    injected (`wb2a-<uid8>-<sha256(uid|conversation)[:16]>`, account-salted so two
    accounts can never share a cached prefix).
 3. The SSE stream is normalised and re-emitted as `core.Event`s: text and

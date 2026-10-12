@@ -795,6 +795,12 @@ func (u *Upstream) prepareBody(body []byte, realm, uid, conversationID string) [
 	return InjectPromptCacheKey(body, uid, conversationID)
 }
 
+func (u *Upstream) prepareBodyForEffort(body []byte, realm, uid, conversationID string, effortFinal bool) []byte {
+	efforts, defs := u.effortsSnapshot(realm), u.defaultEffortsSnapshot(realm)
+	body = prepareBodyWithEffort(body, u.sanitizeOn(), efforts, defs, effortFinal)
+	return InjectPromptCacheKey(body, uid, conversationID)
+}
+
 // sanitizeOn reports whether the body scrubber should run.  Nil-safe, because
 // the offline tests build an Upstream by hand and call prepareBody on it.
 func (u *Upstream) sanitizeOn() bool {
@@ -980,7 +986,7 @@ func (u *Upstream) ChatStream(ctx context.Context, a *Auth, body []byte, clientI
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	prepared := u.prepareBody(body, a.RealmName(), a.UIDValue(), meta.ConversationID)
+	prepared := u.prepareBodyForEffort(body, a.RealmName(), a.UIDValue(), meta.ConversationID, meta.EffortFinal)
 	if u.globalOn(a) {
 		prepared = ensureConsoleSystem(prepared)
 	}

@@ -13,13 +13,20 @@ type modelContextBody struct {
 // modelContextPatch distinguishes an omitted JSON field from an explicit zero,
 // so saving one metadata field never clears another.
 type modelContextPatch struct {
-	ContextLength       *int64   `json:"context_length"`
-	MaxOutputTokens     *int64   `json:"max_output_tokens"`
-	InputPerMillion     *float64 `json:"input_per_million"`
-	OutputPerMillion    *float64 `json:"output_per_million"`
-	CacheReadPerMillion *float64 `json:"cache_read_per_million"`
-	HasPrice            *bool    `json:"has_price"`
-	HasCacheRead        *bool    `json:"has_cache_read"`
+	ContextLength       *int64    `json:"context_length"`
+	MaxOutputTokens     *int64    `json:"max_output_tokens"`
+	SupportedEfforts    *[]string `json:"supported_efforts"`
+	DefaultEffort       *string   `json:"default_effort"`
+	ElevateTop          *bool     `json:"elevate_top"`
+	InputPerMillion     *float64  `json:"input_per_million"`
+	OutputPerMillion    *float64  `json:"output_per_million"`
+	CacheReadPerMillion *float64  `json:"cache_read_per_million"`
+	HasPrice            *bool     `json:"has_price"`
+	HasCacheRead        *bool     `json:"has_cache_read"`
+}
+
+func (p modelContextPatch) touchesEfforts() bool {
+	return p.SupportedEfforts != nil || p.DefaultEffort != nil || p.ElevateTop != nil
 }
 
 func (p modelContextPatch) touchesPrice() bool {
@@ -64,6 +71,24 @@ func applyModelContextPatch(store *modelmeta.OverrideStore, client, model string
 	}
 	if patch.MaxOutputTokens != nil {
 		next.MaxOutputTokens = *patch.MaxOutputTokens
+	}
+	if patch.SupportedEfforts != nil || patch.DefaultEffort != nil {
+		efforts := next.SupportedEfforts
+		defaultEffort := next.DefaultEffort
+		if patch.SupportedEfforts != nil {
+			efforts = *patch.SupportedEfforts
+		}
+		if patch.DefaultEffort != nil {
+			defaultEffort = *patch.DefaultEffort
+		}
+		if err := store.SetEfforts(client, model, efforts, defaultEffort); err != nil {
+			return err
+		}
+	}
+	if patch.ElevateTop != nil {
+		if err := store.SetElevateTop(client, model, *patch.ElevateTop); err != nil {
+			return err
+		}
 	}
 
 	if patch.touchesPrice() {

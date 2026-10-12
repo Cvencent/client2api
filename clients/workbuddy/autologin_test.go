@@ -42,6 +42,8 @@ type fakePage struct {
 	navErr          error
 	filled          map[string]string
 	clicked         []string
+	agreementModal  bool
+	submitAttempts  int
 }
 
 func newFakePage() *fakePage {
@@ -77,6 +79,9 @@ func (p *fakePage) Click(_ context.Context, selector string) (bool, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.clicked = append(p.clicked, selector)
+	if selector == selSubmit {
+		p.submitAttempts++
+	}
 	if selector == selSubmit && p.bodyAfterSubmit != "" {
 		p.body = p.bodyAfterSubmit
 	}
@@ -113,6 +118,12 @@ func (p *fakePage) EvalBool(_ context.Context, expression string) (bool, error) 
 		return true, nil
 	case strings.Contains(expression, "t-checkbox__former"):
 		return true, nil
+	case strings.Contains(expression, "服务条款与隐私协议"):
+		if p.agreementModal {
+			p.agreementModal = false
+			return true, nil
+		}
+		return false, nil
 	default:
 		return false, nil
 	}
@@ -133,6 +144,12 @@ func (p *fakePage) didClick(selector string) bool {
 		}
 	}
 	return false
+}
+
+func (p *fakePage) submitClickCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.submitAttempts
 }
 
 // --- fake browser -----------------------------------------------------------
@@ -573,6 +590,29 @@ func TestAutoLoginFailsWhenTheConfirmButtonNeverBecomesClickable(t *testing.T) {
 	}
 	if logContains(job.snapshot().Log, "已提交登录") {
 		t.Fatalf("a no-op click was logged as a submitted login: %v", logTexts(job.snapshot().Log))
+	}
+}
+
+// TestAutoLoginAcceptsThePostSubmitAgreementModal: the current vendor page can
+// open a "服务条款与隐私协议" dialog after the first confirm click.  The first
+// click then does not reach the code verification endpoint, so the flow must
+// accept the dialog and submit again instead of waiting out the whole timeout.
+func TestAutoLoginAcceptsThePostSubmitAgreementModal(t *testing.T) {
+	v := successVendor()
+	c, _ := autoLoginClient(t, v)
+	page := newFakePage()
+	page.agreementModal = true
+	platform := &fakePlatform{number: core.SMSNumber{Phone: "13800009922"}, code: "222222"}
+
+	job, err := runAutoLogin(t, c, page, platform, core.AutoLoginRequest{})
+	if err != nil {
+		t.Fatalf("autoLogin: %v", err)
+	}
+	if got := page.submitClickCount(); got != 2 {
+		t.Fatalf("submit click count = %d, want 2 (submit, accept agreement, submit again)", got)
+	}
+	if !logContains(job.snapshot().Log, "已同意服务条款与隐私协议") {
+		t.Fatalf("log did not record the agreement dialog: %v", logTexts(job.snapshot().Log))
 	}
 }
 

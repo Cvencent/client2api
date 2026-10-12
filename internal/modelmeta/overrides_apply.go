@@ -16,6 +16,14 @@ func applyOverride(dst Meta, o Override) Meta {
 		dst.MaxOutputTokens = o.MaxOutputTokens
 		dst.FieldSources[FieldMaxOutputTokens] = SourceManual
 	}
+	if len(o.SupportedEfforts) > 0 {
+		dst.Efforts = append([]string(nil), o.SupportedEfforts...)
+		dst.FieldSources[FieldEfforts] = SourceManual
+	}
+	if o.DefaultEffort != "" {
+		dst.DefaultEffort = o.DefaultEffort
+		dst.FieldSources[FieldDefaultEffort] = SourceManual
+	}
 	if o.HasPrice {
 		dst.InputPerMillion = o.InputPerMillion
 		dst.OutputPerMillion = o.OutputPerMillion
@@ -29,6 +37,10 @@ func applyOverride(dst Meta, o Override) Meta {
 		} else {
 			delete(dst.FieldSources, FieldCacheReadPrice)
 		}
+	}
+	if dst.DefaultEffort != "" && !containsString(dst.Efforts, dst.DefaultEffort) {
+		dst.DefaultEffort = ""
+		delete(dst.FieldSources, FieldDefaultEffort)
 	}
 	dst.Source = strongestSource(dst.FieldSources)
 	return dst

@@ -670,6 +670,21 @@ func (c *Client) confirmAutoLogin(ctx context.Context, job *autoJob, page pageDr
 	lastBeat := started
 	successLogged := false
 	for {
+		// On a fresh profile the vendor can open a "服务条款与隐私协议" modal
+		// after the first submit click.  That first click never reaches the
+		// code-verification API, so accept the modal and click submit again.
+		if ok, err := acceptAgreementDialog(ctx, page); err != nil {
+			return core.LoginState{}, fmt.Errorf("处理服务条款弹窗失败：%w", err)
+		} else if ok {
+			job.logf("已同意服务条款与隐私协议，重新提交登录")
+			if clicked, cerr := page.Click(ctx, selSubmit); cerr != nil {
+				return core.LoginState{}, fmt.Errorf("重新提交登录失败：%w", cerr)
+			} else if !clicked {
+				return core.LoginState{}, errors.New("同意服务条款后找不到登录提交按钮")
+			}
+			job.logf("已提交登录，等待授权结果…")
+		}
+
 		body := pageBody(ctx, page)
 		if bad := firstText(body, pageErrorTexts); bad != "" {
 			return core.LoginState{}, fmt.Errorf("页面提示：%s", bad)
@@ -832,6 +847,24 @@ func checkAgreement(ctx context.Context, page pageDriver) (bool, error) {
 		`el.click();` +
 		`if(!el.checked){el.checked=true;el.dispatchEvent(new Event('change',{bubbles:true}));}` +
 		`return true;})()`
+	return page.EvalBool(ctx, js)
+}
+
+// acceptAgreementDialog accepts the vendor's current post-submit terms modal.
+// The modal is part of a newer login flow: clicking 手机号登录 opens it, and no
+// code-verification request is sent until its 同意 button is clicked.  Match
+// both the dialog title and the positive button so an unrelated modal cannot be
+// accepted by accident.
+func acceptAgreementDialog(ctx context.Context, page pageDriver) (bool, error) {
+	js := `(function(){` +
+		`var hs=document.querySelectorAll('.t-dialog__header-content');` +
+		`for(var i=0;i<hs.length;i++){` +
+		`var h=hs[i];if((h.textContent||'').indexOf('服务条款与隐私协议')<0){continue;}` +
+		`var d=h.closest('.t-dialog');if(!d){continue;}` +
+		`var bs=d.querySelectorAll('.t-dialog__footer button');` +
+		`for(var j=0;j<bs.length;j++){` +
+		`if((bs[j].textContent||'').trim().indexOf('同意')===0){bs[j].click();return true;}` +
+		`}}return false;})()`
 	return page.EvalBool(ctx, js)
 }
 
