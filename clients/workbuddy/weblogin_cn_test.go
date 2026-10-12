@@ -1,7 +1,9 @@
 package workbuddy
 
 import (
+	"context"
 	"net/url"
+	"regexp"
 	"testing"
 
 	"client2api/internal/core"
@@ -51,7 +53,7 @@ func TestWebLoginCNMatchesDesktopClientContract(t *testing.T) {
 	}
 }
 
-func TestWebLoginCNAuthURLAddsVersionWithoutFabricatingLoginSession(t *testing.T) {
+func TestWebLoginCNAuthURLAddsVersionAndClientLoginSession(t *testing.T) {
 	const state = "state-cn-login-session"
 	const hostSessionID = "host-provided-session"
 	const authURL = "https://www.workbuddy.cn/login/?platform=workbuddy&state=" + state + "&loginSessionId=" + hostSessionID
@@ -79,8 +81,44 @@ func TestWebLoginCNAuthURLAddsVersionWithoutFabricatingLoginSession(t *testing.T
 	if got, want := got.Query().Get("version"), "5.7.7"; got != want {
 		t.Fatalf("version = %q, want the desktop client version %q in %q", got, want, st.URL)
 	}
-	if got, want := got.Query().Get("loginSessionId"), hostSessionID; got != want {
-		t.Fatalf("loginSessionId = %q, want the host-provided value %q in %q", got, want, st.URL)
+	// The desktop client calls URL searchParams.set(), so its own per-login
+	// UUID replaces any value the vendor happened to return.
+	if got := got.Query().Get("loginSessionId"); !isUUIDv4(got) {
+		t.Fatalf("loginSessionId = %q, want a client-generated UUID v4 in %q", got, st.URL)
+	} else if got == hostSessionID {
+		t.Fatalf("loginSessionId = %q, want the host value to be replaced", got)
+	}
+
+	sess := c.loginByID(st.SessionID)
+	if sess == nil {
+		t.Fatalf("session %q disappeared", st.SessionID)
+	}
+	if got := got.Query().Get("loginSessionId"); sess.loginSessionID == "" || sess.loginSessionID != got {
+		t.Fatalf("stored loginSessionID = %q, URL value = %q, want the same stable value", sess.loginSessionID, got)
+	}
+}
+
+func TestWebLoginCNAuthURLUsesAFreshLoginSessionPerAttempt(t *testing.T) {
+	const state = "state-cn-fresh-login-session"
+	v := &fakeVendor{
+		stateBody: stateFixture(state, "https://www.workbuddy.cn/login?state="+state),
+	}
+	c, _ := loginClient(t, v, nil)
+	c.cfg.LoginRealm = realmCN
+
+	first, err := c.startLoginSession(context.Background(), realmCN)
+	if err != nil {
+		t.Fatalf("first startLoginSession: %v", err)
+	}
+	second, err := c.startLoginSession(context.Background(), realmCN)
+	if err != nil {
+		t.Fatalf("second startLoginSession: %v", err)
+	}
+	if first.loginSessionID == "" || second.loginSessionID == "" {
+		t.Fatalf("loginSessionID missing: first=%q second=%q", first.loginSessionID, second.loginSessionID)
+	}
+	if first.loginSessionID == second.loginSessionID {
+		t.Fatalf("loginSessionID reused across attempts: %q", first.loginSessionID)
 	}
 }
 
@@ -113,4 +151,10 @@ func assertCNNoAuthHeaders(t *testing.T, call vendorCall, allowAuthorization boo
 			t.Fatalf("%s = %q, want %q", name, got, want)
 		}
 	}
+}
+
+var uuidV4Pattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+
+func isUUIDv4(s string) bool {
+	return uuidV4Pattern.MatchString(s)
 }

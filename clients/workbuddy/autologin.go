@@ -79,6 +79,10 @@ var (
 // a var only so the test binary can shrink it.
 var submitReadyTimeout = 8 * time.Second
 
+// cnONEIDLoginURLTimeout bounds the CN wait for the hidden OneID iframe to
+// publish __ONEID__.loginUrl.  It is a var only so tests can shrink it.
+var cnONEIDLoginURLTimeout = 10 * time.Second
+
 // accountSelectReadyTimeout bounds the two asynchronous transitions on the CN
 // account chooser: the card gaining its selected class, and the main submit
 // button becoming enabled.  Missing either transition means nothing was
@@ -128,6 +132,10 @@ const (
 	selSubmit      = `input#kc-login, button#kc-login, button.oneid-react-dialog-confirm-button, div.oneid-react-dialog-confirm-button:not(.oneid-react-is-disabled)`
 	selAgreeBox    = "input.t-checkbox__former"
 	selAccountItem = ".account-item"
+	// selCNOneIDAccountItem is the current CN account chooser. OneID renders
+	// these entries inside the shadow root of an
+	// oneid-enterprise-login-account-list custom element.
+	selCNOneIDAccountItem = `.oneid-enterprise-login-account-list__item:not(.is-disabled)`
 	// selAccountCard and selAccountButton are the current /login/select
 	// controls.  The card selects an account; the button submits it.  The
 	// older account-item flow had both behaviours on the item itself.
@@ -136,6 +144,16 @@ const (
 	// placeholder on the vendor's error page.  The card click is asynchronous,
 	// so the disabled state has to be excluded before clicking.
 	selAccountButton = `button.select-account-button.w-full:not([disabled]):not([aria-disabled='true'])`
+	// selAccountBox is the CN account chooser container.  It is present only
+	// while the chooser is on screen, so the confirming loop can tell "waiting
+	// for the chooser" apart from "the chooser is up and needs a click".
+	selAccountBox = ".account-box"
+	// selCNDeviceConfirm is the "继续登录" button in the CN SPA's device
+	// confirmation card. The SPA opens that card after an account is chosen
+	// when the vendor requires device confirmation, and it does not call the
+	// plugin callback until the button is clicked.
+	selCNDeviceConfirm  = `.result-box button`
+	cnDeviceConfirmText = "继续登录"
 	// submitButtonText is the confirm control's label, used as a last-resort
 	// text match when the class-based selectors do not fit.
 	submitButtonText = "手机号登录"
@@ -143,7 +161,12 @@ const (
 	// vendor's login form is sometimes rendered inside an iframe; page.Click
 	// already searches frames, and these page-text helpers must do the same or
 	// they silently miss the agreement checkbox and its post-submit modal.
-	autoAllDocsJS = `var __autoDocs=[];function __autoCollect(doc){__autoDocs.push(doc);var __fs=doc.querySelectorAll('iframe,frame');for(var __fi=0;__fi<__fs.length;__fi++){try{var __child=__fs[__fi].contentDocument;if(__child){__autoCollect(__child);}}catch(e){}}}__autoCollect(document);`
+	autoAllDocsJS = `var __autoDocs=[];function __autoCollect(root){if(!root){return;}__autoDocs.push(root);` +
+		`var __all=root.querySelectorAll('*');` +
+		`for(var __ai=0;__ai<__all.length;__ai++){try{if(__all[__ai].shadowRoot){__autoCollect(__all[__ai].shadowRoot);}}catch(e){}}` +
+		`var __fs=root.querySelectorAll('iframe,frame');` +
+		`for(var __fi=0;__fi<__fs.length;__fi++){try{var __child=__fs[__fi].contentDocument;if(__child){__autoCollect(__child);}}catch(e){}}}` +
+		`__autoCollect(document);`
 )
 
 var (
@@ -578,6 +601,17 @@ func (c *Client) openPhoneLogin(ctx context.Context, job *autoJob, page pageDriv
 	if !waitSelector(ctx, page, selPhoneInput, 15*time.Second) {
 		return fmt.Errorf("找不到手机号输入框，厂商登录页可能已改版（%s）", pageWhere(ctx, page))
 	}
+	// The CN page keeps its OneID iframe hidden and copies __ONEID__.loginUrl
+	// into React state only from the iframe's load handler.  If that handler
+	// wins the race with the iframe script, the state stays undefined and the
+	// vendor later redirects to /login/undefined.  Re-run the handler once the
+	// URL exists, before spending an SMS code on the form.
+	if job.realm == realmCN {
+		if !waitCNOneIDLoginURL(ctx, page, cnONEIDLoginURLTimeout) {
+			return fmt.Errorf("OneID 登录地址未就绪，厂商登录页可能已改版（%s）", pageWhere(ctx, page))
+		}
+		job.logf("已同步 OneID 登录地址")
+	}
 	filled, err := page.Fill(ctx, selPhoneInput, phone)
 	if err != nil {
 		return fmt.Errorf("填写手机号失败：%w", err)
@@ -690,6 +724,13 @@ func (c *Client) confirmAutoLogin(ctx context.Context, job *autoJob, page pageDr
 	lastBeat := started
 	successLogged := false
 	accountSelected := false
+	deviceConfirmed := false
+	cnDiagLogged := false
+	if job.realm == realmCN {
+		// Record the SPA's own /console and /v2/plugin calls so a stuck run can
+		// name the exact step instead of only reporting that it waited.
+		installCNRequestTrace(ctx, page)
+	}
 	for {
 		// On a fresh profile the vendor can open a "服务条款与隐私协议" modal
 		// after the first submit click.  That first click never reaches the
@@ -710,14 +751,31 @@ func (c *Client) confirmAutoLogin(ctx context.Context, job *autoJob, page pageDr
 		if bad := firstText(body, pageErrorTexts); bad != "" {
 			return core.LoginState{}, fmt.Errorf("页面提示：%s", bad)
 		}
-		if !accountSelected && job.realm == realmCN {
-			selected, err := selectCNAccount(ctx, page)
-			if err != nil {
-				return core.LoginState{}, fmt.Errorf("选择登录账号失败：%w", err)
+		if job.realm == realmCN {
+			if !accountSelected {
+				selected, err := selectCNAccount(ctx, page)
+				if err != nil {
+					return core.LoginState{}, fmt.Errorf("选择登录账号失败：%w", err)
+				}
+				if selected {
+					job.logf("已选择账号（%s），等待厂商绑定授权…", pageWhere(ctx, page))
+					accountSelected = true
+				}
 			}
-			if selected {
-				job.logf("已选择账号（%s），等待厂商绑定授权…", pageWhere(ctx, page))
-				accountSelected = true
+			// The CN SPA can insert a "设备登录确认" card after the account is
+			// chosen. Its "继续登录" button is what releases the enterprise
+			// handoff and, eventually, /console/auth/login. This check is
+			// independent of accountSelected because the SPA may auto-select a
+			// single account without a DOM click.
+			if !deviceConfirmed {
+				clicked, err := clickByText(ctx, page, selCNDeviceConfirm, cnDeviceConfirmText)
+				if err != nil {
+					return core.LoginState{}, fmt.Errorf("确认设备登录失败：%w", err)
+				}
+				if clicked {
+					job.logf("已确认设备登录，等待厂商绑定授权…")
+					deviceConfirmed = true
+				}
 			}
 		}
 		// The page's own success marker is an early signal only -- the
@@ -741,12 +799,32 @@ func (c *Client) confirmAutoLogin(ctx context.Context, job *autoJob, page pageDr
 		}
 		select {
 		case <-ctx.Done():
+			if job.realm == realmCN {
+				// The timeout is the operator's only chance to see where the vendor
+				// stopped, so dump the request trace before giving up.
+				dctx, dcancel := context.WithTimeout(context.Background(), 3*time.Second)
+				if trace := cnRequestTrace(dctx, page); trace != "" {
+					job.logf("授权接口轨迹：%s", trace)
+				}
+				dcancel()
+			}
 			return core.LoginState{}, ctx.Err()
 		case <-ticker.C:
 		}
 		if autoConfirmHeartbeat <= 0 || time.Since(lastBeat) >= autoConfirmHeartbeat {
 			job.logf("仍在等待厂商确认登录…（已等待 %s）", time.Since(started).Round(time.Second))
 			lastBeat = time.Now()
+		}
+		// Name the CN page state once so a stuck run explains itself instead of
+		// just repeating the heartbeat.  It carries no phone number, code or token.
+		if job.realm == realmCN && !deviceConfirmed && !cnDiagLogged && time.Since(started) >= 20*time.Second {
+			if diag := cnConfirmDiagnostic(ctx, page); diag != "" {
+				job.logf("账号选择诊断：%s", diag)
+			}
+			if trace := cnRequestTrace(ctx, page); trace != "" {
+				job.logf("授权接口轨迹：%s", trace)
+			}
+			cnDiagLogged = true
 		}
 	}
 }
@@ -849,6 +927,34 @@ func waitSelector(ctx context.Context, page pageDriver, selector string, timeout
 	}
 }
 
+// waitCNOneIDLoginURL waits for the CN page's hidden OneID iframe to publish
+// __ONEID__.loginUrl, then replays the iframe's load event.  The vendor's React
+// page copies loginUrl into state only from that handler; when the event wins
+// the race with the iframe script, the state stays undefined and the final
+// callback becomes /login/undefined.
+func waitCNOneIDLoginURL(ctx context.Context, page pageDriver, timeout time.Duration) bool {
+	js := `(function(){try{` +
+		`var f=document.getElementById("phone-iframe");` +
+		`var w=f&&f.contentWindow;` +
+		`var u=w&&w.__ONEID__&&w.__ONEID__.loginUrl;` +
+		`if(typeof u!=="string"||!u){return false;}` +
+		`f.dispatchEvent(new Event("load"));` +
+		`return true;` +
+		`}catch(e){return false;}})()`
+	deadline := time.Now().Add(timeout)
+	for {
+		if ok, err := page.EvalBool(ctx, js); err == nil && ok {
+			return true
+		}
+		if time.Now().After(deadline) || ctx.Err() != nil {
+			return false
+		}
+		if !sleepCtx(ctx, 300*time.Millisecond) {
+			return false
+		}
+	}
+}
+
 // clickIfPresent clicks a selector only when it exists, so an optional control
 // (the agreement gate on a repeat visit) is not an error when it is absent.
 func clickIfPresent(ctx context.Context, page pageDriver, selector string) (bool, error) {
@@ -859,14 +965,94 @@ func clickIfPresent(ctx context.Context, page pageDriver, selector string) (bool
 	return page.Click(ctx, selector)
 }
 
+// cnConfirmDiagnostic names the CN page state in one short line so a stuck run
+// explains itself: which route the browser is on and which landmarks the login
+// page shows.  It carries no phone number, code, token or query string.
+func cnConfirmDiagnostic(ctx context.Context, page pageDriver) string {
+	js := `(function(){try{` + autoAllDocsJS +
+		`var items=0,oneid=0,cards=0,box=0,code=0,kc=0;` +
+		`for(var d=0;d<__autoDocs.length;d++){var doc=__autoDocs[d];` +
+		`items+=doc.querySelectorAll(` + autoJSString(selAccountItem) + `).length;` +
+		`oneid+=doc.querySelectorAll(` + autoJSString(selCNOneIDAccountItem) + `).length;` +
+		`cards+=doc.querySelectorAll(` + autoJSString(selAccountCard) + `).length;` +
+		`box+=doc.querySelectorAll(` + autoJSString(selAccountBox) + `).length;` +
+		`code+=doc.querySelectorAll(` + autoJSString(selCodeInput) + `).length;` +
+		`kc+=doc.querySelectorAll('#kc-login').length;` +
+		`}` +
+		`return JSON.stringify({path:location.pathname,items:items,oneid:oneid,cards:cards,box:box,code:code,kc:kc});` +
+		`}catch(e){return '';}})()`
+	s, err := page.EvalString(ctx, js)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(s)
+}
+
+// installCNRequestTrace patches the page's fetch/XHR so a stuck CN run can name
+// the /console and /v2/plugin calls the SPA itself made: method, route, HTTP
+// status and business code only. It never records a body, a header, a token or
+// a query string, so the resulting line can be pasted without leaking a secret.
+func installCNRequestTrace(ctx context.Context, page pageDriver) {
+	js := `(function(){try{` +
+		`if(window.__c2aWBtrace){return true;}` +
+		`var t=[];window.__c2aWBtrace=t;` +
+		`function keep(u){try{return u.indexOf('/console/')===0||u.indexOf('/v2/plugin/')===0||u.indexOf('/v1/auth/new/')===0;}catch(e){return false;}}` +
+		`function rec(m,u,s,c){try{var line=m+' '+u+' -> '+s;if(typeof c==='number'){line+=' code='+c;}t.push(line);if(t.length>60){t.shift();}}catch(e){}}` +
+		`if(typeof window.fetch==='function'){var of=window.fetch;` +
+		`window.fetch=function(input,init){var m='GET',u='';try{u=(typeof input==='string')?input:((input&&input.url)||'');m=((init&&init.method)||(input&&input.method)||'GET');}catch(e){}` +
+		`var pr;try{pr=of.apply(this,arguments);}catch(e){throw e;}` +
+		`try{var path='';try{path=new URL(u,location.href).pathname;}catch(e){}` +
+		`if(keep(path)&&pr&&typeof pr.then==='function'){pr=pr.then(function(resp){try{var cl=(resp&&typeof resp.clone==='function')?resp.clone():null;` +
+		`if(cl&&typeof cl.text==='function'){cl.text().then(function(body){var c;try{var d=JSON.parse(body);if(d&&typeof d.code==='number'){c=d.code;}}catch(e){}rec(m,path,resp.status,c);},function(){rec(m,path,resp.status);});}` +
+		`else{rec(m,path,resp.status);}}catch(e){}return resp;});}}catch(e){}` +
+		`return pr;};}` +
+		`if(window.XMLHttpRequest&&window.XMLHttpRequest.prototype){var op=window.XMLHttpRequest.prototype.open;var sd=window.XMLHttpRequest.prototype.send;` +
+		`window.XMLHttpRequest.prototype.open=function(m,u){this.__c2aM=m;this.__c2aU=u;return op.apply(this,arguments);};` +
+		`window.XMLHttpRequest.prototype.send=function(){var x=this;try{x.addEventListener('loadend',function(){try{var path='';try{path=new URL(x.__c2aU,location.href).pathname;}catch(e){}` +
+		`if(keep(path)){var c;try{var j=JSON.parse(x.responseText);if(j&&typeof j.code==='number'){c=j.code;}}catch(e){}rec(x.__c2aM||'GET',path,x.status,c);}}catch(e){}});}catch(e){}return sd.apply(this,arguments);};}` +
+		`return true;}catch(e){return false;}})()`
+	_, _ = page.EvalBool(ctx, js)
+}
+
+// cnRequestTrace renders the captured request trace, oldest first.
+func cnRequestTrace(ctx context.Context, page pageDriver) string {
+	js := `(function(){try{if(!window.__c2aWBtrace||!window.__c2aWBtrace.length){return '';}` +
+		`return window.__c2aWBtrace.slice(-10).join(' | ');}catch(e){return '';}})()`
+	s, err := page.EvalString(ctx, js)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(s)
+}
+
 // selectCNAccount completes the vendor's account chooser.  The CN login flow
 // can stop on /login/select after SMS verification; the plugin credential is
 // bound only after an account is clicked.  Prefer the personal account, then
 // fall back to the vendor's first item.
 func selectCNAccount(ctx context.Context, page pageDriver) (bool, error) {
-	// Current /login/select flow: choose the card, then press the button that
-	// performs /console/login/enterprise.  Prefer the personal account, then
-	// fall back to the vendor's first item.
+	// Current CN OneID chooser: the item's click posts /v1/auth/new/select_account
+	// and hands the flow back to WorkBuddy. The item lives in an open shadow
+	// root, so page.Exists and clickByText must search there.
+	if ok, err := page.Exists(ctx, selCNOneIDAccountItem); err != nil {
+		return false, err
+	} else if ok {
+		if clicked, err := clickByText(ctx, page, selCNOneIDAccountItem, "个人版"); err != nil || clicked {
+			return clicked, err
+		}
+		return page.Click(ctx, selCNOneIDAccountItem)
+	}
+
+	// Older CN chooser: the item itself submits the account.
+	if ok, err := page.Exists(ctx, selAccountItem); err != nil {
+		return false, err
+	} else if ok {
+		if clicked, err := clickByText(ctx, page, selAccountItem, "个人版"); err != nil || clicked {
+			return clicked, err
+		}
+		return page.Click(ctx, selAccountItem)
+	}
+
+	// International chooser: choose the card, then press the submit button.
 	if ok, err := page.Exists(ctx, selAccountCard); err != nil {
 		return false, err
 	} else if ok {
@@ -896,16 +1082,7 @@ func selectCNAccount(ctx context.Context, page pageDriver) (bool, error) {
 		}
 		return page.Click(ctx, selAccountButton)
 	}
-
-	// Older /login/select flow: the item itself submits the account.
-	ok, err := page.Exists(ctx, selAccountItem)
-	if err != nil || !ok {
-		return false, err
-	}
-	if clicked, err := clickByText(ctx, page, selAccountItem, "个人版"); err != nil || clicked {
-		return clicked, err
-	}
-	return page.Click(ctx, selAccountItem)
+	return false, nil
 }
 
 // waitCNAccountCardSelected waits for the clicked account card to carry the
@@ -940,15 +1117,20 @@ func waitCNAccountCardSelected(ctx context.Context, page pageDriver, text string
 // label; clicking the wrapper is a no-op and leaves the QR tab active.
 func clickByText(ctx context.Context, page pageDriver, selector, text string) (bool, error) {
 	js := `(function(){` + autoAllDocsJS +
+		`function __text(root){var out='';try{out+=(root.innerText||root.textContent||'');}catch(e){}` +
+		`var all=root.querySelectorAll('*');` +
+		`for(var i=0;i<all.length;i++){try{if(all[i].shadowRoot){out+=__text(all[i].shadowRoot);}}catch(e){}}` +
+		`return out.replace(/\s+/g,'');}` +
 		`var __best=null,__bestLen=-1;` +
 		`for(var __di=0;__di<__autoDocs.length;__di++){` +
 		`var els=__autoDocs[__di].querySelectorAll(` + autoJSString(selector) + `);` +
 		`for(var __ei=0;__ei<els.length;__ei++){` +
 		`var el=els[__ei];` +
-		`var t=(el.textContent||'').replace(/\s+/g,'');` +
+		`var t=__text(el);` +
 		`if(t.indexOf(` + autoJSString(text) + `)<0){continue;}` +
 		`var r=el.getBoundingClientRect();` +
-		`var s=__autoDocs[__di].defaultView.getComputedStyle(el);` +
+		`var win=__autoDocs[__di].defaultView||(__autoDocs[__di].ownerDocument&&__autoDocs[__di].ownerDocument.defaultView)||window;` +
+		`var s=win.getComputedStyle(el);` +
 		`if(r.width<=0||r.height<=0||s.visibility==='hidden'||s.display==='none'){continue;}` +
 		`if(__best===null||t.length<__bestLen){__best=el;__bestLen=t.length;}` +
 		`}}if(!__best){return false;}__best.click();return true;})()`

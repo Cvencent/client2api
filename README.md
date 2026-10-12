@@ -106,6 +106,12 @@ people. The built-in default is `127.0.0.1`.
   a higher tier are left unchanged. The usage log keeps both values and shows
   `xhigh → max` when they differ.
 
+- The embedded V4.1 defaults follow the platform-specific facts rather than one global
+  `max`: WorkBuddy CN is `low/high/max` (default `high`), WorkBuddy global is
+  `high` only, Cline uses its one global wire vocabulary, Loomy tops out at
+  `xhigh`, and Raccoon/CodeArts expose on/off thinking. Platforms that publish no
+  per-model effort ladder stay unset.
+
 ### Accounts and platforms
 
 - Account pool with enable/disable, notes, identity labels, priority and balance.

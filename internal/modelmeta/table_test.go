@@ -14,6 +14,9 @@ func TestStaticTableEntryCounts(t *testing.T) {
 		{"workbuddy", 33, "27 ids ported verbatim from model.json plus 6 effort-only ids"},
 		{"tabbit", 22, "official upstream presets plus the reference-derived gpt/deepseek/glm rows"},
 		{"kimi", 2, "the K3 agent ids carry a documented Kimi K3 window"},
+		{"cline", 2, "one global wire vocabulary for the free and metered V4.1 ids"},
+		{"loomy", 1, "the live V4.1 row five-tier vocabulary"},
+		{"raccoon", 1, "the V4.1 on/off thinking switch"},
 		{"nosuchclient", 0, "an unknown client has no static entries"},
 	}
 	for _, c := range cases {
@@ -25,7 +28,7 @@ func TestStaticTableEntryCounts(t *testing.T) {
 	want := map[string]bool{
 		"workbuddy": true, "tabbit": true, "kimi": true, "codearts": true,
 		"opencode": true, "lobsterai": true, "minimaxcode": true,
-		"qwenwork": true, "trae": true, "zcode": true,
+		"qwenwork": true, "trae": true, "zcode": true, "cline": true, "loomy": true, "raccoon": true,
 	}
 	if len(clients) != len(want) {
 		t.Fatalf("Clients() = %v, want %v", clients, want)
@@ -159,8 +162,8 @@ func TestStaticTableEffortsAreRealmSplit(t *testing.T) {
 	if len(gl.Efforts) != 1 || gl.Efforts[0] != "high" {
 		t.Fatalf("global efforts = %v, want [high] (the international edition rejects low/max)", gl.Efforts)
 	}
-	if gl.DefaultEffort != "" {
-		t.Fatalf("global default = %q, want empty: the reference sets no default there", gl.DefaultEffort)
+	if gl.DefaultEffort != "high" {
+		t.Fatalf("global default = %q, want high", gl.DefaultEffort)
 	}
 	// Context and output are realm-independent: same id, same window.
 	if cn.ContextLength != gl.ContextLength || cn.ContextLength != 1000000 {
@@ -168,6 +171,36 @@ func TestStaticTableEffortsAreRealmSplit(t *testing.T) {
 	}
 	if cn.MaxOutputTokens != gl.MaxOutputTokens || cn.MaxOutputTokens != 384000 {
 		t.Fatalf("output differs by realm: cn=%d global=%d", cn.MaxOutputTokens, gl.MaxOutputTokens)
+	}
+}
+
+func TestStaticTableV41EffortDefaults(t *testing.T) {
+	cases := []struct {
+		client  string
+		realm   string
+		model   string
+		efforts []string
+		def     string
+	}{
+		{"workbuddy", RealmCN, "deepseek-v4.1-flash", []string{"low", "high", "max"}, "high"},
+		{"workbuddy", RealmGlobal, "deepseek-v4.1-flash", []string{"high"}, "high"},
+		{"cline", RealmCN, "cline-free/deepseek-v4.1-flash", []string{"none", "minimal", "low", "medium", "high", "xhigh", "max"}, "high"},
+		{"cline", RealmCN, "deepseek/deepseek-v4.1-flash", []string{"none", "minimal", "low", "medium", "high", "xhigh", "max"}, "high"},
+		{"loomy", RealmCN, "DeepSeek-V4.1-Flash", []string{"none", "low", "medium", "high", "xhigh"}, "high"},
+		{"raccoon", RealmCN, "sn-deepseek-v4-1-flash", []string{"off", "on"}, "on"},
+		{"codearts", RealmCN, "deepseek-v4.1-flash", []string{"off", "on"}, "on"},
+	}
+	for _, tc := range cases {
+		m, ok := StaticMeta(tc.client, tc.realm, tc.model)
+		if !ok {
+			t.Fatalf("StaticMeta(%s, %s, %q) not found", tc.client, tc.realm, tc.model)
+		}
+		if !equalStrings(m.Efforts, tc.efforts) {
+			t.Errorf("%s/%s efforts = %v, want %v", tc.client, tc.model, m.Efforts, tc.efforts)
+		}
+		if m.DefaultEffort != tc.def {
+			t.Errorf("%s/%s default = %q, want %q", tc.client, tc.model, m.DefaultEffort, tc.def)
+		}
 	}
 }
 

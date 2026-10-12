@@ -70,6 +70,25 @@ func TestLiveLaunch(t *testing.T) {
 	if v, err := page.EvalString(ctx, `document.getElementById('b').textContent`); err != nil || v != "clicked" {
 		t.Fatalf("button text = %q err=%v, want clicked", v, err)
 	}
+	if _, err := page.Eval(ctx, `(() => {
+		const host = document.createElement('div');
+		host.id = 'host';
+		document.body.appendChild(host);
+		const root = host.attachShadow({mode: 'open'});
+		root.innerHTML = '<input id="shadow-input"><button id="shadow-button" onclick="this.textContent=\'shadow-clicked\'">shadow</button>';
+		return true;
+	})()`); err != nil {
+		t.Fatalf("create shadow root: %v", err)
+	}
+	if ok, err := page.Fill(ctx, "#shadow-input", "inside-shadow"); err != nil || !ok {
+		t.Fatalf("fill shadow input: ok=%v err=%v", ok, err)
+	}
+	if ok, err := page.Click(ctx, "#shadow-button"); err != nil || !ok {
+		t.Fatalf("click shadow button: ok=%v err=%v", ok, err)
+	}
+	if v, err := page.EvalString(ctx, `document.getElementById('host').shadowRoot.getElementById('shadow-button').textContent`); err != nil || v != "shadow-clicked" {
+		t.Fatalf("shadow button text = %q err=%v, want shadow-clicked", v, err)
+	}
 
 	if png, err := page.Screenshot(ctx); err != nil || len(png) < 1000 {
 		t.Fatalf("screenshot: %d bytes err=%v", len(png), err)

@@ -34,15 +34,17 @@ honestly rather than pretending otherwise:
 * `isLoomyRefreshable` is false, always. `RefreshAccount` **re-verifies** the
   stored session instead of renewing it, and says so in its message.
 * When a **real chat request** gets `100002` (`登录状态失效`) the account is
-  **parked** (`dead`), not retried: retrying a dead session only burns quota on
-  a request that cannot succeed. The panel shows the account as `invalid` with
-  the note *"the vendor rejected this session; log in again and import the new
-  token"*.
+  cooled down for `cooldown` (300 s), because a single vendor answer is not
+  strong enough evidence to disable a session that may answer moments later.
+  Three consecutive real-chat session failures without an intervening success
+  park the account (`dead`); the panel then shows `invalid` with the note
+  *"the vendor rejected this session; log in again and import the new token"*.
 * When a **side channel** -- the balance sweep, package read, catalogue
   refresh, task report or keepalive heartbeat -- gets `100002`/`020002`, the
   account is only cooled down, not parked. Those reads are useful evidence but
   not authoritative enough to disable a credential that a real chat request may
-  still answer; a genuine dead session is parked by the chat path.
+  still answer, and they do not count toward the chat-path session-failure
+  streak.
 * `Status` reports not-ready with *"the session has expired and Loomy has no
   refresh endpoint; log in again (SMS or WeChat) and import the new token"*.
 * `expires_at` is computed **locally** as login time + 14 days, because the
@@ -72,8 +74,9 @@ heartbeat keeps an idle session warm; if the vendor enforces an absolute expiry
 (or kills the session when the same account logs in somewhere else), the
 heartbeat changes nothing and its next `100002`/`020002` cools the account.
 What it always buys is an early, honest answer: a dead session is discovered on
-the heartbeat's schedule rather than on the operator's next request, and a real
-chat request makes the permanent `dead` verdict.
+the heartbeat's schedule rather than on the operator's next request, while a
+real chat request is still what decides whether the credential is permanently
+parked.
 
 ---
 
@@ -174,10 +177,12 @@ success is judged by `code`, never by the status line:
 { "code": "000000", "desc": "success", "data": { } }
 ```
 
-`000000` is success. `100002` means the session is dead. A **chat** request that
-gets it parks the account permanently; a side-channel read that gets it cools
-the account down and leaves the chat path to make the final call. `100001` is a
-bad request. Any other code is reported with the vendor's `desc`.
+`000000` is success. `100002` means the session was rejected on this call. A
+**chat** request that gets it is cooled down first and only parks the account
+after three consecutive session failures without a successful chat; a
+side-channel read that gets it cools the account down without advancing that
+streak. `100001` is a bad request. Any other code is reported with the vendor's
+`desc`.
 
 ### The HMAC-SHA1 signature (account endpoints only)
 
@@ -286,7 +291,7 @@ See `config.example.json` for a copy-paste starting point.
       "first_byte_timeout": "2m",
       "models_ttl": "30m",
       "probe_timeout": "30s",
-      "cooldown": "60s",
+      "cooldown": "300s",
       "auth_cooldown": "24h",
       "max_attempts": 3
     }
@@ -299,6 +304,10 @@ integer; an unparsable value falls back to its default rather than failing the
 module. `expires_at` accepts a millisecond timestamp, a second timestamp, or a
 date an operator would type (`2026-10-10`, `2026-10-10T00:00:00Z`); `0`/empty
 means *unknown*, which is **not** treated as expired.
+
+`auth_cooldown` is retained so existing configuration files keep loading, but
+session-dead chat responses now use `cooldown` until the consecutive-failure
+threshold parks the account.
 
 Environment overrides (each only applies when non-blank):
 
@@ -327,7 +336,7 @@ else. Nothing is written when `DataDir` is empty.
 | File | Contents |
 | --- | --- |
 | `accounts.json` | the imported credentials (`id`, `label`, `access_token`, `userid`, `phone`, `nickname`, `expires_at_ms`, `enabled`) |
-| `state.json` | per-account runtime penalties (`dead`, `failures`, `last_error`, `cooldown_until`, `probe_after`, `last_used`) |
+| `state.json` | per-account runtime penalties (`dead`, `failures`, `session_failures`, `last_error`, `cooldown_until`, `probe_after`, `last_used`) |
 
 After a transient failure, the module writes a `probe_after` timestamp into
 `state.json`. Shared background balance and renewal sweeps wait for a
@@ -336,6 +345,9 @@ ordinary cooldown still controls when a real request may select it. An
 upgrade that carries a legacy `cooldown_until` without `probe_after` gets a
 fresh quiet window on load. Manual `TestAccount` and explicit balance
 refreshes bypass the gate, and a successful manual test clears both clocks.
+An upgrade also converts the old first-chat-`100002`/`dead` verdict into one
+session failure plus a recoverable cooldown, so accounts already shown as
+`invalid` by that bug do not need to be revived by hand.
 
 Credentials from the config are tagged `origin: config` and **cannot be removed
 from the panel** (`RemoveAccount` refuses, pointing at the config file); stored
@@ -358,10 +370,10 @@ fact.
 * success → clear the account's penalties (including a concurrent `dead`
   verdict), stamp `last_used`, and record the serving account in
   `ChatRequest.ServedBy` (`core.NoteServedBy`).
-* `100002` / HTTP 401 / 403 → park the account permanently and try the next
-  one; `auth_cooldown` still describes the long wait when the parked account is
-  manually revived.
-* anything else → cool the account down for `cooldown` (60 s) and try the next.
+* `100002` / HTTP 401 / 403 → cool the account for `cooldown` and try the next
+  one. The third consecutive real-chat failure without a success parks it
+  permanently.
+* anything else → cool the account down for `cooldown` (300 s) and try the next.
 
 If every candidate fails, the caller gets the last error. If there are no
 candidates at all, it gets either an explicit *"session expired, re-import
@@ -486,8 +498,8 @@ below, because that difference caught a bug the stubs could not.
 | --- | --- |
 | `sign_test.go` | four golden HMAC-SHA1 vectors (computed by an independent PowerShell/.NET oracle), the exact nine-segment canonical string and its order, `Content-MD5`, RFC 3986 escaping, header assembly, the nonce |
 | `config_test.go` | defaults, duration flexibility, malformed config, env overrides, `expires_at` spellings, account flattening and precedence |
-| `accounts_test.go` | credential persistence round-trip, parking a rejected session across a restart, cooldown, expired-but-tried, candidate ordering, `Status` on every account state, `AddAccount`/`TestAccount`/`RefreshAccount`, removal of config-owned accounts, id derivation |
-| `client_test.go` | registration, `ErrNotConfigured`, both-auth-header discipline, `ServedBy`, business-error-in-a-200, multi-account failover, `/models` header discipline, capability assertions |
+| `accounts_test.go` | credential persistence round-trip, parking a rejected session across a restart, consecutive-session-failure persistence and legacy migration, cooldown, expired-but-tried, candidate ordering, `Status` on every account state, `AddAccount`/`TestAccount`/`RefreshAccount`, removal of config-owned accounts, id derivation |
+| `client_test.go` | registration, `ErrNotConfigured`, both-auth-header discipline, `ServedBy`, recoverable session failures, consecutive-failure parking, multi-account failover, `/models` header discipline, capability assertions |
 | `body_test.go` | `buildBody` — stream flag, empty content, structured parts, tool/tool_choice handling, reasoning effort |
 | `stream_test.go` | SSE frame parsing, `[DONE]`, usage, tool-call deltas, idle timeout, idempotent `Close` |
 | `login_test.go` | the SMS two-step flow, with the stub **recomputing the signature from the bytes it actually received** |

@@ -52,3 +52,15 @@ func TestModelsViewSavesEffortPolicy(t *testing.T) {
 		}
 	}
 }
+
+// mdInputs reads the live values that mdRecord later stores in MD_EDITS. The
+// editable td and its input/checkbox both carry data-field, so a generic
+// attribute selector returns the td first: .value and .checked are then
+// undefined, no edit is recorded, and Save stays disabled.
+func TestModelsViewInputsSelectControlsNotTheirCells(t *testing.T) {
+	src := poolStatsUISource(t)
+	inputs := poolStatsFuncBody(t, src, "mdInputs")
+	if !strings.Contains(inputs, `tr.querySelector('input[data-field="' + f + '"]')`) {
+		t.Fatal("mdInputs must select input[data-field=...], not the outer td[data-field=...]")
+	}
+}

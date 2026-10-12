@@ -163,8 +163,11 @@ func TestChatReportsAnErrorFrameFromARealServer(t *testing.T) {
 	}
 
 	acc, ok := c.store.lookup("acc")
-	if !ok || !acc.dead {
-		t.Fatal("the rejected session was not parked")
+	if !ok || acc.dead {
+		t.Fatal("one rejected session-dead response parked the account")
+	}
+	if acc.cooldownTill.IsZero() {
+		t.Fatal("the rejected session was not cooled down")
 	}
 }
 

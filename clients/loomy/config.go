@@ -81,11 +81,10 @@ const (
 	// A panel button must answer promptly.
 	defaultProbeTimeout = 30 * time.Second
 	// defaultCooldown parks an account after a rate-limit or upstream failure.
-	defaultCooldown = 60 * time.Second
-	// defaultAuthCooldown parks an account after the vendor says the session is
-	// dead.  It is long because there is nothing this module can do about it:
-	// Loomy has no refresh endpoint, so the account stays parked until the
-	// operator imports a new session.
+	defaultCooldown = 5 * time.Minute
+	// defaultAuthCooldown is retained for compatibility with existing config
+	// files.  Session-dead chat failures now use defaultCooldown until the
+	// consecutive-failure threshold parks the account.
 	defaultAuthCooldown = 24 * time.Hour
 	// defaultMaxAttempts is how many accounts one chat request may try before
 	// giving up.

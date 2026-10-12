@@ -6,7 +6,22 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
-## [Unreleased]
+## [0.1.54] - 2026-10-13
+
+### Fixed
+
+- **WorkBuddy 国内版 OneID 登录地址竞态**：隐藏的 `#phone-iframe` 有时会在
+  `__ONEID__.loginUrl` 就绪前触发 `load`，React 状态一直是 `undefined`，最后回调
+  变成 `/login/undefined` 并一直停在「等待厂商确认」。现在 CN 流程会在获取验证码前
+  等到地址就绪并补发 `load`，国际流程不变。
+- **模型与档位的修改无法保存**：模型行外层 `td` 和内部控件都带 `data-field`，
+  上一版把 `mdInputs` 的选择器放宽成 `[data-field=...]` 后先取到 `td`，输入事件
+  记录不到真实值，保存按钮一直不亮，切页重建后编辑也消失。选择器已限定回
+  `input[data-field=...]`，并补了回归测试。
+
+### Changed
+
+- **V4.1 默认思考档位按平台落库**：WorkBuddy 国内为 `low/high/max`（默认 `high`）、国际为仅 `high`；Cline 使用平台通用档位；Loomy 顶档为 `xhigh`；Raccoon/CodeArts 为开关语义。没有 per-model 依据的平台继续保持未配置。
 
 ## [0.1.53] - 2026-10-12
 

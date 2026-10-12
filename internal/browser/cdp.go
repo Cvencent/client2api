@@ -741,15 +741,24 @@ func firstLine(s string) string {
 	return s
 }
 
-// elementQueryJS finds the first matching element in the top document or in
-// any same-origin iframe.  Vendor login pages increasingly put the form in an
-// iframe; a top-level document.querySelector silently misses it.  The try/catch
-// keeps a cross-origin frame from breaking the whole lookup.
+// elementQueryJS finds the first matching element in the top document, any
+// same-origin iframe, or any open shadow root.  Vendor login pages increasingly
+// use both iframes and web components; a top-level document.querySelector
+// silently misses elements inside either boundary.  The try/catch keeps a
+// cross-origin frame from breaking the whole lookup.
 func elementQueryJS(selector string) string {
-	return `(function(){function find(doc){` +
-		`var hit=doc.querySelector(` + jsString(selector) + `);` +
+	return `(function(){var __seen=[];function seen(node){` +
+		`for(var i=0;i<__seen.length;i++){if(__seen[i]===node){return true;}}` +
+		`__seen.push(node);return false;}function find(root){` +
+		`if(!root||seen(root)){return null;}` +
+		`var hit=root.querySelector(` + jsString(selector) + `);` +
 		`if(hit){return hit;}` +
-		`var frames=doc.querySelectorAll('iframe,frame');` +
+		`var all=root.querySelectorAll('*');` +
+		`for(var i=0;i<all.length;i++){` +
+		`try{if(all[i].shadowRoot){var shadow=find(all[i].shadowRoot);if(shadow){return shadow;}}}` +
+		`catch(e){}` +
+		`}` +
+		`var frames=root.querySelectorAll('iframe,frame');` +
 		`for(var i=0;i<frames.length;i++){` +
 		`try{var child=frames[i].contentDocument;` +
 		`if(child){var nested=find(child);if(nested){return nested;}}}` +

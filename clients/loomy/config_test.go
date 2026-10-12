@@ -110,7 +110,7 @@ func TestConfigDefaults(t *testing.T) {
 		{"first_byte_timeout", cfg.firstByteTimeout(), defaultFirstByteTimeout},
 		{"models_ttl", cfg.modelsTTL(), defaultModelsTTL},
 		{"probe_timeout", cfg.probeTimeout(), defaultProbeTimeout},
-		{"cooldown", cfg.cooldown(), defaultCooldown},
+		{"cooldown", cfg.cooldown(), 5 * time.Minute},
 		{"auth_cooldown", cfg.authCooldown(), defaultAuthCooldown},
 	}
 	for _, tc := range cases {

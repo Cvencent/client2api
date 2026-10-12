@@ -32,6 +32,11 @@ const (
 
 	minBackgroundProbeDelay = 3 * time.Hour
 	backgroundProbeJitter   = 3 * time.Hour
+
+	// sessionDeadFailureLimit is how many consecutive real-chat 100002
+	// responses are required before the credential is treated as permanently
+	// dead.  One transient vendor answer must not disable a working account.
+	sessionDeadFailureLimit = 3
 )
 
 // backgroundProbeDelay spreads recovery probes over a 3..6 hour window.
@@ -65,12 +70,13 @@ type accountFile struct {
 // accountState is the runtime half, persisted separately so that a restart does
 // not silently turn a rejected session back into a healthy-looking one.
 type accountState struct {
-	Dead         bool   `json:"dead,omitempty"`
-	Failures     int    `json:"failures,omitempty"`
-	LastError    string `json:"last_error,omitempty"`
-	CooldownTill string `json:"cooldown_until,omitempty"` // RFC3339
-	ProbeAfter   string `json:"probe_after,omitempty"`    // RFC3339
-	LastUsed     string `json:"last_used,omitempty"`      // RFC3339
+	Dead            bool   `json:"dead,omitempty"`
+	Failures        int    `json:"failures,omitempty"`
+	SessionFailures int    `json:"session_failures,omitempty"`
+	LastError       string `json:"last_error,omitempty"`
+	CooldownTill    string `json:"cooldown_until,omitempty"` // RFC3339
+	ProbeAfter      string `json:"probe_after,omitempty"`    // RFC3339
+	LastUsed        string `json:"last_used,omitempty"`      // RFC3339
 }
 
 type stateFile struct {
@@ -84,12 +90,13 @@ type account struct {
 
 	// Runtime state.  None of it is a credential, and none of it survives a
 	// revive.
-	failures     int
-	cooldownTill time.Time
-	probeAfter   time.Time
-	dead         bool
-	lastError    string
-	lastUsed     time.Time
+	failures        int
+	sessionFailures int
+	cooldownTill    time.Time
+	probeAfter      time.Time
+	dead            bool
+	lastError       string
+	lastUsed        time.Time
 }
 
 // selectable reports whether the pool may hand this account a request.
@@ -140,7 +147,8 @@ func loadStore(path, statePath string) (*store, error) {
 	if err := readJSONIfPresent(statePath, &states); err != nil {
 		return s, fmt.Errorf("loomy: reading %s: %w", statePath, err)
 	}
-	migratedProbe := false
+	migratedState := false
+	now := time.Now().UTC()
 	for _, a := range s.all {
 		st, ok := states.Accounts[a.ID]
 		if !ok {
@@ -148,16 +156,29 @@ func loadStore(path, statePath string) (*store, error) {
 		}
 		a.dead = st.Dead
 		a.failures = st.Failures
+		a.sessionFailures = st.SessionFailures
 		a.lastError = st.LastError
 		a.cooldownTill = parseRFC3339(st.CooldownTill)
 		a.probeAfter = parseRFC3339(st.ProbeAfter)
+
+		// Older versions parked an account permanently on the first chat-path
+		// 100002.  That verdict was too eager: migrate it to one recorded
+		// session failure and an ordinary cooldown so a working session can
+		// recover.  States written by the new terminal threshold still carry
+		// session_failures and remain parked.
+		if st.Dead && st.SessionFailures == 0 {
+			a.dead = false
+			a.sessionFailures = 1
+			a.cooldownTill = now.Add(defaultCooldown)
+			migratedState = true
+		}
 		if a.probeAfter.IsZero() && !a.dead && !a.cooldownTill.IsZero() {
-			a.probeAfter = time.Now().UTC().Add(backgroundProbeDelay())
-			migratedProbe = true
+			a.probeAfter = now.Add(backgroundProbeDelay())
+			migratedState = true
 		}
 		a.lastUsed = parseRFC3339(st.LastUsed)
 	}
-	if migratedProbe {
+	if migratedState {
 		_ = s.saveState()
 	}
 	return s, nil
@@ -208,13 +229,14 @@ func (s *store) saveState() error {
 	}
 	file := stateFile{Accounts: map[string]accountState{}}
 	for _, a := range s.all {
-		if !a.dead && a.failures == 0 && a.lastError == "" && a.cooldownTill.IsZero() && a.probeAfter.IsZero() && a.lastUsed.IsZero() {
+		if !a.dead && a.failures == 0 && a.sessionFailures == 0 && a.lastError == "" && a.cooldownTill.IsZero() && a.probeAfter.IsZero() && a.lastUsed.IsZero() {
 			continue
 		}
 		st := accountState{
-			Dead:      a.dead,
-			Failures:  a.failures,
-			LastError: a.lastError,
+			Dead:            a.dead,
+			Failures:        a.failures,
+			SessionFailures: a.sessionFailures,
+			LastError:       a.lastError,
 		}
 		if !a.cooldownTill.IsZero() {
 			st.CooldownTill = a.cooldownTill.UTC().Format(time.RFC3339)
@@ -248,6 +270,7 @@ func (s *store) applyConfig(configured []account) {
 				// Preserve the runtime penalties: editing the label in a config
 				// file must not silently pardon a session the vendor rejected.
 				acc.failures = existing.failures
+				acc.sessionFailures = existing.sessionFailures
 				acc.cooldownTill = existing.cooldownTill
 				acc.probeAfter = existing.probeAfter
 				acc.dead = existing.dead
@@ -405,6 +428,38 @@ func (s *store) penalise(id string, err error, now time.Time, cooldown time.Dura
 	s.penaliseWith(id, err, now, cooldown, true)
 }
 
+// penaliseChat records a real chat-path failure.  A session-dead response is
+// cooled down first; only a run of consecutive real-chat failures without a
+// success in between is strong enough to park the credential permanently.
+func (s *store) penaliseChat(id string, err error, now time.Time, cooldown time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, a := range s.all {
+		if a.ID != id {
+			continue
+		}
+		a.failures++
+		a.lastError = redactErr(err)
+		if failureKind(err) == core.FailureSessionDead {
+			a.sessionFailures++
+			if a.sessionFailures >= sessionDeadFailureLimit {
+				a.dead = true
+				a.probeAfter = time.Time{}
+				if saveErr := s.saveState(); saveErr != nil {
+					_ = saveErr
+				}
+				return
+			}
+		}
+		a.cooldownTill = now.Add(cooldown)
+		a.probeAfter = now.Add(backgroundProbeDelay())
+		if saveErr := s.saveState(); saveErr != nil {
+			_ = saveErr
+		}
+		return
+	}
+}
+
 // penaliseRecoverable records a failure from a side channel such as a balance
 // sweep, catalogue refresh, task report or heartbeat.  Those calls are useful
 // evidence, but they are not authoritative enough to label a credential
@@ -426,6 +481,7 @@ func (s *store) penaliseWith(id string, err error, now time.Time, cooldown time.
 		a.lastError = redactErr(err)
 		if terminalSessionDead && failureKind(err) == core.FailureSessionDead {
 			a.dead = true
+			a.sessionFailures = sessionDeadFailureLimit
 			a.probeAfter = time.Time{}
 		} else {
 			a.cooldownTill = now.Add(cooldown)
@@ -457,6 +513,7 @@ func (s *store) reset(id string, now time.Time) {
 		}
 		clearExpiry := a.expired(now)
 		a.failures = 0
+		a.sessionFailures = 0
 		a.lastError = ""
 		a.cooldownTill = time.Time{}
 		a.probeAfter = time.Time{}
@@ -489,6 +546,7 @@ func (s *store) resetAfterProbe(id string, now time.Time) {
 		clearExpiry := a.expired(now)
 		a.dead = false
 		a.failures = 0
+		a.sessionFailures = 0
 		a.lastError = ""
 		a.cooldownTill = time.Time{}
 		a.probeAfter = time.Time{}
@@ -517,6 +575,7 @@ func (s *store) revive(id string) error {
 		}
 		a.dead = false
 		a.failures = 0
+		a.sessionFailures = 0
 		a.lastError = ""
 		a.cooldownTill = time.Time{}
 		a.probeAfter = time.Time{}
@@ -580,16 +639,10 @@ func (s *store) put(acc account) error {
 // Panel-facing account management
 // ---------------------------------------------------------------------------
 
-// penalise records a failure with the cooldown that suits it.  A session the
-// vendor has rejected is parked for the long auth cooldown rather than the
-// ordinary one, because nothing this module does will make that credential work
-// again -- only the operator importing a new session will.
+// penalise records a real chat-path failure.  A session-dead answer is cooled
+// down first; the store only parks it after a run of consecutive failures.
 func (c *Client) penalise(id string, err error, now time.Time) {
-	cooldown := c.cfg.cooldown()
-	if failureKind(err) == core.FailureSessionDead {
-		cooldown = c.cfg.authCooldown()
-	}
-	c.store.penalise(id, err, now, cooldown)
+	c.store.penaliseChat(id, err, now, c.cfg.cooldown())
 }
 
 // penaliseRecoverable records evidence from a side channel without letting it
@@ -931,6 +984,9 @@ func accountRecord(a *account, now time.Time) core.AccountRecord {
 
 	if a.failures > 0 {
 		record.Fields["failures"] = a.failures
+	}
+	if a.sessionFailures > 0 {
+		record.Fields["session_failures"] = a.sessionFailures
 	}
 	if a.lastError != "" {
 		record.Fields["last_error"] = a.lastError

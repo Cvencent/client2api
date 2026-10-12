@@ -5949,7 +5949,7 @@ let MD_EDITS = {};
 function mdKey(client, model) { return client + "\u0000" + model; }
 function mdRowKey(tr) { return mdKey(tr.dataset.client, tr.dataset.model); }
 function mdInputs(tr) {
-  const q = f => tr.querySelector('[data-field="' + f + '"]');
+  const q = f => tr.querySelector('input[data-field="' + f + '"]');
   return {
     ctx: q("context"),
     out: q("output"),

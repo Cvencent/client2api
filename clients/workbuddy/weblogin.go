@@ -20,6 +20,7 @@ package workbuddy
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -93,12 +94,13 @@ func (e *loginBusinessError) Error() string {
 
 // panelLogin is one in-flight browser authorisation.
 type panelLogin struct {
-	mu        sync.Mutex
-	sessionID string
-	realm     string
-	url       string
-	startedAt time.Time
-	expiresAt time.Time
+	mu             sync.Mutex
+	sessionID      string
+	loginSessionID string
+	realm          string
+	url            string
+	startedAt      time.Time
+	expiresAt      time.Time
 
 	state     string
 	message   string
@@ -269,9 +271,11 @@ func loginOrigin(realm string) string {
 
 // decorateAuthURL mirrors the browser-facing part of the desktop client's
 // ExternalLinkAuthenticationProvider.openAuthUrl.  The mainland page needs the
-// desktop version.  A loginSessionId belongs to the host that created the
-// desktop session, so it is preserved when present but never fabricated here.
-func (c *Client) decorateAuthURL(realm, raw string) (string, error) {
+// desktop version and a per-login UUID.  The desktop client uses
+// searchParams.set() for both, so its own values replace anything the vendor
+// returned.  The CN SPA needs loginSessionId to correlate its device-confirm
+// page with this attempt.
+func (c *Client) decorateAuthURL(realm, raw, loginSessionID string) (string, error) {
 	if realm != realmCN {
 		return raw, nil
 	}
@@ -281,8 +285,21 @@ func (c *Client) decorateAuthURL(realm, raw string) (string, error) {
 	}
 	q := u.Query()
 	q.Set("version", c.up.clientVersion())
+	q.Set("loginSessionId", loginSessionID)
 	u.RawQuery = q.Encode()
 	return u.String(), nil
+}
+
+// newLoginSessionID returns a UUID v4 in the same shape as the desktop
+// client's crypto.randomUUID().
+func newLoginSessionID() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
 }
 
 func (c *Client) loginRealm() string { return normalizeLoginRealm(c.cfg.LoginRealm) }
@@ -511,20 +528,28 @@ func (c *Client) startLoginSession(ctx context.Context, realm string) (*panelLog
 	}
 	state := strings.TrimSpace(st.State)
 	authURL := strings.TrimSpace(st.AuthURL)
-	authURL, err = c.decorateAuthURL(realm, authURL)
+	loginSessionID := ""
+	if realm == realmCN {
+		loginSessionID, err = newLoginSessionID()
+		if err != nil {
+			return nil, errors.New("auth state: the login session id could not be created")
+		}
+	}
+	authURL, err = c.decorateAuthURL(realm, authURL, loginSessionID)
 	if err != nil {
 		return nil, errors.New("auth state: the authorisation URL could not be prepared")
 	}
 
 	now := time.Now()
 	sess := &panelLogin{
-		sessionID: state,
-		realm:     realm,
-		url:       authURL,
-		startedAt: now,
-		expiresAt: now.Add(c.loginTTL()),
-		state:     core.LoginPending,
-		message:   loginWaitingMessage,
+		sessionID:      state,
+		loginSessionID: loginSessionID,
+		realm:          realm,
+		url:            authURL,
+		startedAt:      now,
+		expiresAt:      now.Add(c.loginTTL()),
+		state:          core.LoginPending,
+		message:        loginWaitingMessage,
 	}
 	c.putLogin(sess)
 	c.up.log("workbuddy: browser login started realm=%s", realm)

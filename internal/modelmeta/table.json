@@ -184,7 +184,7 @@
         "origin": "model.json",
         "efforts_by_realm": {
           "cn": { "efforts": ["low", "high", "max"], "default_effort": "high" },
-          "global": { "efforts": ["high"] }
+          "global": { "efforts": ["high"], "default_effort": "high" }
         },
         "effort_origin": "effort_catalog.go",
         "_note": "The international realm accepts ONLY [high]; sending low/max there is an HTTP 400. Kept realm-split on purpose."
@@ -431,6 +431,46 @@
         "context_length": 1048576,
         "max_output_tokens": 131072,
         "origin": "z.ai docs: 1M context / 128K output"
+      },
+      "deepseek-v4.1-flash": {
+        "efforts": ["off", "on"],
+        "default_effort": "on",
+        "effort_origin": "codearts: thinking is enabled by default; the module can send thinking.type=disabled for off"
+      }
+    }
+  },
+  "cline": {
+    "notes": "Cline remote catalogue does not publish per-model reasoning tiers; the vendor validates one global vocabulary for every model.",
+    "models": {
+      "cline-free/deepseek-v4.1-flash": {
+        "efforts": ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
+        "default_effort": "high",
+        "effort_origin": "cline/body.go reasoningEffortTable + defaultReasoningEffort"
+      },
+      "deepseek/deepseek-v4.1-flash": {
+        "efforts": ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
+        "default_effort": "high",
+        "effort_origin": "cline/body.go reasoningEffortTable + defaultReasoningEffort"
+      }
+    }
+  },
+  "loomy": {
+    "notes": "The live V4.1 row advertises the same five-tier vocabulary as the module fallback.",
+    "models": {
+      "DeepSeek-V4.1-Flash": {
+        "efforts": ["none", "low", "medium", "high", "xhigh"],
+        "default_effort": "high",
+        "effort_origin": "loomy/models.go loomyEfforts + loomyDefaultEffort"
+      }
+    }
+  },
+  "raccoon": {
+    "notes": "Raccoon exposes thinking as an enabled/disabled switch, not as named effort tiers.",
+    "models": {
+      "sn-deepseek-v4-1-flash": {
+        "efforts": ["off", "on"],
+        "default_effort": "on",
+        "effort_origin": "raccoon/body.go extraBodyFor"
       }
     }
   },

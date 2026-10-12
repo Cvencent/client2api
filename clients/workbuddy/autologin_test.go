@@ -57,6 +57,18 @@ type fakePage struct {
 	submitAttempts              int
 	requireFrame                bool
 	tabFalseCalls               int
+	// deviceConfirm models the CN "设备登录确认" step that appears after an
+	// account is chosen. The vendor keeps the plugin callback pending until
+	// "继续登录" is clicked.
+	deviceConfirm       bool
+	deviceConfirmClicks int
+	// The CN login page keeps its OneID iframe hidden and copies
+	// __ONEID__.loginUrl into React state only from the iframe's load handler.
+	// These fields model that handler winning the race with the iframe script.
+	oneidLoginURLChecks     int
+	oneidLoginURLReadyAfter int
+	oneidLoadDispatched     bool
+	oneidLoadBeforeCode     bool
 }
 
 func newFakePage() *fakePage {
@@ -95,6 +107,9 @@ func (p *fakePage) Click(_ context.Context, selector string) (bool, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.clicked = append(p.clicked, selector)
+	if selector == selCodeBtn && p.oneidLoadDispatched {
+		p.oneidLoadBeforeCode = true
+	}
 	if selector == selSubmit {
 		p.submitAttempts++
 	}
@@ -184,6 +199,29 @@ func (p *fakePage) EvalBool(_ context.Context, expression string) (bool, error) 
 			return true, nil
 		}
 		return false, nil
+	case strings.Contains(expression, "继续登录"):
+		if !p.deviceConfirm {
+			return false, nil
+		}
+		p.deviceConfirm = false
+		p.deviceConfirmClicks++
+		p.clicked = append(p.clicked, "继续登录")
+		return true, nil
+	case strings.Contains(expression, "phone-iframe") && strings.Contains(expression, "__ONEID__") && strings.Contains(expression, "dispatchEvent"):
+		p.oneidLoginURLChecks++
+		if p.oneidLoginURLChecks <= p.oneidLoginURLReadyAfter {
+			return false, nil
+		}
+		p.oneidLoadDispatched = true
+		return true, nil
+	case strings.Contains(expression, "oneid-enterprise-login-account-list__item") && strings.Contains(expression, "个人版"):
+		for _, text := range p.accountTexts {
+			if strings.Contains(text, "个人版") {
+				p.clicked = append(p.clicked, "oneid-account-item(个人版)")
+				return true, nil
+			}
+		}
+		return false, nil
 	case strings.Contains(expression, ".account-item") && strings.Contains(expression, "个人版"):
 		for _, text := range p.accountTexts {
 			if strings.Contains(text, "个人版") {
@@ -233,6 +271,12 @@ func (p *fakePage) accountSubmitCount() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.accountSubmits
+}
+
+func (p *fakePage) deviceConfirmCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.deviceConfirmClicks
 }
 
 // --- fake browser -----------------------------------------------------------
@@ -400,8 +444,8 @@ func TestAutoLoginHappyPath(t *testing.T) {
 	if got := nav.Query().Get("version"); got != defaultClientVersion {
 		t.Fatalf("navigated to %q with version %q, want %q", page.navURL, got, defaultClientVersion)
 	}
-	if got := nav.Query().Get("loginSessionId"); got != "" {
-		t.Fatalf("navigated to %q with fabricated loginSessionId %q", page.navURL, got)
+	if got := nav.Query().Get("loginSessionId"); !isUUIDv4(got) {
+		t.Fatalf("navigated to %q with loginSessionId %q, want a UUID v4", page.navURL, got)
 	}
 	// The number is rented, so it must go back.
 	if got := platform.releasedPhones(); len(got) != 1 || got[0] != "13800000000" {
@@ -776,6 +820,105 @@ func TestAutoLoginPrefersTheCNPersonalAccount(t *testing.T) {
 	}
 	if !page.didClick(".account-item(个人版)") {
 		t.Fatalf("the CN account chooser picked an enterprise account instead of the personal account")
+	}
+}
+
+// TestAutoLoginSelectsTheCNOneIDAccountFromShadowDOM reproduces the current
+// WorkBuddy CN page: the account chooser is an OneID custom element and each
+// clickable account item lives in its open shadow root.
+func TestAutoLoginSelectsTheCNOneIDAccountFromShadowDOM(t *testing.T) {
+	v := successVendor()
+	c, _ := autoLoginClient(t, v)
+	page := newFakePage()
+	page.exists[selCNOneIDAccountItem] = true
+	page.accountTexts = []string{"企业版", "个人版"}
+	platform := &fakePlatform{number: core.SMSNumber{Phone: "13800009906"}, code: "666666"}
+
+	if _, err := runAutoLogin(t, c, page, platform, core.AutoLoginRequest{}); err != nil {
+		t.Fatalf("autoLogin: %v", err)
+	}
+	if !page.didClick("oneid-account-item(个人版)") {
+		t.Fatalf("the OneID shadow-root account chooser did not pick the personal account")
+	}
+}
+
+// TestAutoLoginConfirmsTheCNDeviceLogin reproduces the CN SPA's post-account
+// confirmation gate. Clicking the account starts the enterprise handoff, but
+// the vendor renders "设备登录确认" and keeps /console/auth/login pending until
+// its "继续登录" button is clicked.
+func TestAutoLoginConfirmsTheCNDeviceLogin(t *testing.T) {
+	v := successVendor()
+	c, _ := autoLoginClient(t, v)
+	page := newFakePage()
+	page.exists[".account-item"] = true
+	page.accountTexts = []string{"个人版"}
+	page.deviceConfirm = true
+	platform := &fakePlatform{number: core.SMSNumber{Phone: "13800009905"}, code: "555555"}
+
+	job, err := runAutoLogin(t, c, page, platform, core.AutoLoginRequest{})
+	if err != nil {
+		t.Fatalf("autoLogin: %v", err)
+	}
+	if got := page.deviceConfirmCount(); got != 1 {
+		t.Fatalf("device confirmation clicks = %d, want 1", got)
+	}
+	if !logContains(job.snapshot().Log, "已选择账号") {
+		t.Fatalf("log did not record the CN account selection: %v", logTexts(job.snapshot().Log))
+	}
+	if !logContains(job.snapshot().Log, "已确认设备登录") {
+		t.Fatalf("log did not record the device confirmation: %v", logTexts(job.snapshot().Log))
+	}
+}
+
+// TestAutoLoginReplaysCNOneIDLoadAfterLoginURLAppears reproduces the current CN
+// failure where #phone-iframe's load event wins the race with
+// __ONEID__.loginUrl. The vendor's React state then stays undefined and the
+// callback becomes /login/undefined. The flow must wait for the URL and replay
+// the load event before it requests the SMS code.
+func TestAutoLoginReplaysCNOneIDLoadAfterLoginURLAppears(t *testing.T) {
+	v := successVendor()
+	c, _ := autoLoginClient(t, v)
+	page := newFakePage()
+	page.oneidLoginURLReadyAfter = 2
+	platform := &fakePlatform{number: core.SMSNumber{Phone: "13800009907"}, code: "777777"}
+
+	if _, err := runAutoLogin(t, c, page, platform, core.AutoLoginRequest{}); err != nil {
+		t.Fatalf("autoLogin: %v", err)
+	}
+	if !page.oneidLoadDispatched {
+		t.Fatalf("the CN flow never replayed the OneID iframe load after loginUrl appeared")
+	}
+	if !page.oneidLoadBeforeCode {
+		t.Fatalf("the CN flow requested the SMS code before syncing the OneID loginUrl")
+	}
+	if page.oneidLoginURLChecks < 3 {
+		t.Fatalf("OneID loginUrl checks = %d, want at least 3 (the URL was late twice)", page.oneidLoginURLChecks)
+	}
+}
+
+// TestAutoLoginDoesNotReplayTheOneIDLoadForTheGlobalRealm keeps the CN
+// workaround out of the international flow.
+func TestAutoLoginDoesNotReplayTheOneIDLoadForTheGlobalRealm(t *testing.T) {
+	v := successVendor()
+	c, _ := autoLoginClient(t, v)
+	page := newFakePage()
+	platform := &fakePlatform{number: core.SMSNumber{Phone: "13800009908"}, code: "888888"}
+	job := &autoJob{
+		id:        "global-oneid",
+		realm:     realmGlobal,
+		state:     core.AutoLoginRunning,
+		step:      "starting",
+		startedAt: time.Now(),
+	}
+	err := c.autoLogin(context.Background(), job, core.AutoLoginRequest{}, smsOptsFrom(core.AutoLoginRequest{}), platform,
+		func(context.Context, browser.LaunchOpts) (autoBrowser, error) {
+			return fakeBrowser{page: page}, nil
+		})
+	if err != nil {
+		t.Fatalf("autoLogin: %v", err)
+	}
+	if page.oneidLoginURLChecks != 0 || page.oneidLoadDispatched {
+		t.Fatalf("the global flow ran the CN OneID load workaround")
 	}
 }
 

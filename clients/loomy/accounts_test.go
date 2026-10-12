@@ -97,6 +97,59 @@ func TestARejectedSessionStaysParkedAcrossARestart(t *testing.T) {
 	}
 }
 
+func TestLegacyChatParkBecomesARecoverableCooldownOnLoad(t *testing.T) {
+	c := newTestClient(t, "{}", nil)
+	dir := filepath.Dir(c.store.path)
+	seedAccount(t, c, "loomy-1", testToken, 0)
+	legacy := stateFile{Accounts: map[string]accountState{
+		"loomy-1": {
+			Dead:      true,
+			Failures:  1,
+			LastError: "loomy: upstream 100002: login expired",
+		},
+	}}
+	if err := core.WriteJSONAtomic(c.store.statePath, legacy); err != nil {
+		t.Fatalf("write legacy state: %v", err)
+	}
+
+	reloaded := newTestClientInDir(t, dir, "{}", nil)
+	acc, ok := reloaded.store.lookup("loomy-1")
+	if !ok {
+		t.Fatal("the account vanished across the legacy-state migration")
+	}
+	if acc.dead {
+		t.Fatal("a legacy first-failure park was not migrated to a recoverable cooldown")
+	}
+	if acc.sessionFailures != 1 {
+		t.Fatalf("migrated session failures = %d, want 1", acc.sessionFailures)
+	}
+	if acc.cooldownTill.IsZero() {
+		t.Fatal("the migrated account has no cooldown")
+	}
+	if !acc.selectable(acc.cooldownTill.Add(time.Second)) {
+		t.Fatal("the migrated account does not recover after its cooldown")
+	}
+}
+
+func TestConsecutiveSessionFailuresSurviveARestart(t *testing.T) {
+	c := newTestClient(t, "{}", nil)
+	dir := filepath.Dir(c.store.path)
+	seedAccount(t, c, "loomy-1", testToken, 0)
+	c.penalise("loomy-1", errSessionExpired("loomy-1"), time.Now().UTC())
+
+	reloaded := newTestClientInDir(t, dir, "{}", nil)
+	acc, ok := reloaded.store.lookup("loomy-1")
+	if !ok {
+		t.Fatal("the account vanished across the restart")
+	}
+	if acc.dead {
+		t.Fatal("one persisted session failure parked the account")
+	}
+	if acc.sessionFailures != 1 {
+		t.Fatalf("reloaded session failures = %d, want 1", acc.sessionFailures)
+	}
+}
+
 // A 500 is not evidence that the session is gone, so it must cool down rather
 // than be parked as dead -- and the cooldown has to actually expire.
 func TestATransientFailureCoolsDownRatherThanKillingTheAccount(t *testing.T) {

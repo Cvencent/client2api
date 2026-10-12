@@ -261,10 +261,12 @@ func TestChatLeavesAnUnknownModelNameAlone(t *testing.T) {
 }
 
 // The vendor answers HTTP 200 for business failures, so a 200 alone proves
-// nothing.  A 100002 is the session dying, and it has to park the account.
+// nothing.  A single 100002 is not enough evidence to park the account for
+// good: the same session can answer again moments later.  Cool it down first.
 func TestChatTreatsABusinessErrorInA200AsAFailure(t *testing.T) {
 	c := newTestClient(t, "{}", alwaysJSON(200, failureEnvelope("100002", "缺少 token")))
 	seedAccount(t, c, "loomy-1", testToken, 0)
+	started := time.Now().UTC()
 
 	_, err := c.Chat(context.Background(), &core.ChatRequest{
 		Model:    "deepseek-v4-flash-0731",
@@ -277,8 +279,87 @@ func TestChatTreatsABusinessErrorInA200AsAFailure(t *testing.T) {
 		t.Errorf("error = %q, want the business code", err)
 	}
 	acc, _ := c.store.lookup("loomy-1")
+	if acc.dead {
+		t.Error("the account was parked after one session-dead response")
+	}
+	if acc.cooldownTill.IsZero() {
+		t.Error("the account did not cool down after the session-dead response")
+	}
+	if acc.sessionFailures != 1 {
+		t.Errorf("session failures = %d, want 1", acc.sessionFailures)
+	}
+	if acc.selectable(started.Add(4 * time.Minute)) {
+		t.Error("the account recovered before the five-minute cooldown")
+	}
+	if !acc.selectable(started.Add(6 * time.Minute)) {
+		t.Error("the account did not recover after its cooldown")
+	}
+}
+
+func TestChatParksTheAccountAfterConsecutiveSessionDeadFailures(t *testing.T) {
+	c := newTestClient(t, "{}", nil)
+	seedAccount(t, c, "loomy-1", testToken, 0)
+	now := time.Now().UTC()
+
+	for i := 1; i < sessionDeadFailureLimit; i++ {
+		c.penalise("loomy-1", errSessionExpired("loomy-1"), now.Add(time.Duration(i)*time.Minute))
+		acc, _ := c.store.lookup("loomy-1")
+		if acc.dead {
+			t.Fatalf("failure %d parked the account before the consecutive limit", i)
+		}
+		if acc.sessionFailures != i {
+			t.Fatalf("failure %d recorded %d consecutive session failures, want %d", i, acc.sessionFailures, i)
+		}
+	}
+
+	c.penalise("loomy-1", errSessionExpired("loomy-1"), now.Add(time.Duration(sessionDeadFailureLimit)*time.Minute))
+	acc, _ := c.store.lookup("loomy-1")
 	if !acc.dead {
-		t.Error("the account was not parked after the vendor rejected the session")
+		t.Fatalf("failure %d did not park the account", sessionDeadFailureLimit)
+	}
+}
+
+func TestSuccessfulChatClearsConsecutiveSessionFailures(t *testing.T) {
+	rt := alwaysSSE("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\ndata: [DONE]\n\n")
+	c := newTestClient(t, "{}", rt)
+	seedAccount(t, c, "loomy-1", testToken, 0)
+	past := time.Now().UTC().Add(-time.Hour)
+	c.penalise("loomy-1", errSessionExpired("loomy-1"), past)
+	c.penalise("loomy-1", errSessionExpired("loomy-1"), past.Add(time.Minute))
+
+	stream, err := c.Chat(context.Background(), &core.ChatRequest{
+		Model:    "deepseek-v4-flash-0731",
+		Messages: []core.Message{{Role: "user", Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	defer stream.Close()
+
+	acc, _ := c.store.lookup("loomy-1")
+	if acc.dead {
+		t.Fatal("a successful chat left the account parked")
+	}
+	if acc.sessionFailures != 0 {
+		t.Fatalf("session failures = %d after a successful chat, want 0", acc.sessionFailures)
+	}
+}
+
+func TestSideChannelSessionFailuresDoNotAdvanceTheChatStreak(t *testing.T) {
+	c := newTestClient(t, "{}", nil)
+	seedAccount(t, c, "loomy-1", testToken, 0)
+	now := time.Now().UTC()
+
+	for i := 0; i <= sessionDeadFailureLimit; i++ {
+		c.penaliseRecoverable("loomy-1", errSessionExpired("loomy-1"), now.Add(time.Duration(i)*time.Minute))
+	}
+
+	acc, _ := c.store.lookup("loomy-1")
+	if acc.dead {
+		t.Fatal("side-channel failures parked the account")
+	}
+	if acc.sessionFailures != 0 {
+		t.Fatalf("side-channel failures advanced the chat streak to %d, want 0", acc.sessionFailures)
 	}
 }
 
@@ -362,8 +443,11 @@ func TestChatFailsOverToTheSecondAccount(t *testing.T) {
 		t.Errorf("%d attempts, want 2", attempts)
 	}
 	first, _ := c.store.lookup("first")
-	if !first.dead {
-		t.Error("the rejected account was not parked")
+	if first.dead {
+		t.Error("one rejected attempt parked the first account")
+	}
+	if first.cooldownTill.IsZero() {
+		t.Error("the rejected first account did not cool down")
 	}
 	second, _ := c.store.lookup("second")
 	if second.dead {

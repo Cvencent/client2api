@@ -247,8 +247,8 @@ func TestProviderRealmSplit(t *testing.T) {
 	if want := []string{"high"}; !equalStrings(g.Efforts, want) {
 		t.Fatalf("global efforts = %v, want %v (the international edition rejects low/max)", g.Efforts, want)
 	}
-	if g.DefaultEffort != "" {
-		t.Fatalf("global default = %q, want empty", g.DefaultEffort)
+	if g.DefaultEffort != "high" {
+		t.Fatalf("global default = %q, want high", g.DefaultEffort)
 	}
 	// Context is realm-independent.
 	if g.ContextLength != m.ContextLength || g.ContextLength != 1000000 {
