@@ -150,16 +150,25 @@ func applyContextBudget(req *core.ChatRequest, budget int64) (trimReport, bool) 
 	// the accumulated stale context lives.
 	pinned := leadingSystemTurns(req.Messages)
 	keepFrom := pinned
+	fits := false
 	for keepFrom < len(req.Messages)-1 {
 		keepFrom++
 		if int64(estimateMessagesTokens(req.Messages[keepFrom:])) <= budget {
+			fits = true
 			break
 		}
 	}
-	if keepFrom >= len(req.Messages)-1 {
-		// Everything except the pinned turns is still too big.  Cutting into what
-		// is left would answer a different question, so the request is refused
-		// locally and the caller learns exactly why.
+	// fits is false only when the loop reached the final turn without a single
+	// suffix fitting.  Reaching keepFrom == len-1 is NOT the same condition:
+	// when the final turn alone is what finally fits, the break still lands on
+	// the last index.  Reading the index instead of the fit used to refuse a
+	// request the guard could have served by keeping the pinned head and the
+	// newest turn -- the shape a conversation lands in right after it gets a
+	// large tool result back (a screenshot, a big file read).
+	if !fits {
+		// Even the final turn alone cannot fit.  Cutting into it would answer
+		// a different question, so the request is refused locally and the
+		// caller learns exactly why.
 		return trimReport{Impossible: true, BeforeTokens: estimated}, false
 	}
 

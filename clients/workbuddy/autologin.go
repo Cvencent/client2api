@@ -111,7 +111,7 @@ var autoConfirmHeartbeat = 15 * time.Second
 // The vendor's authorisation page.  Ported from wb_add_account.py's SEL_*.
 const (
 	selAgreeGate  = "button.agree-btn"
-	selPhoneTab   = `div[class*="login-methods"], div[class*="login__tab"]`
+	selPhoneTab   = `div.login-methods, div[class*="login__tab"]`
 	selPhoneInput = `input#phoneNumber, input[placeholder="请输入你的手机号"]`
 	selCodeBtn    = `input.code-btn, button.code-btn, button.oneid-react-verify-code__code-btn`
 	selCodeInput  = `input#code, input[placeholder="请输入验证码"]`
@@ -124,6 +124,11 @@ const (
 	// submitButtonText is the confirm control's label, used as a last-resort
 	// text match when the class-based selectors do not fit.
 	submitButtonText = "手机号登录"
+	// autoAllDocsJS walks the top document and every same-origin iframe.  The
+	// vendor's login form is sometimes rendered inside an iframe; page.Click
+	// already searches frames, and these page-text helpers must do the same or
+	// they silently miss the agreement checkbox and its post-submit modal.
+	autoAllDocsJS = `var __autoDocs=[];function __autoCollect(doc){__autoDocs.push(doc);var __fs=doc.querySelectorAll('iframe,frame');for(var __fi=0;__fi<__fs.length;__fi++){try{var __child=__fs[__fi].contentDocument;if(__child){__autoCollect(__child);}}catch(e){}}}__autoCollect(document);`
 )
 
 var (
@@ -547,7 +552,7 @@ func (c *Client) openPhoneLogin(ctx context.Context, job *autoJob, page pageDriv
 	}
 	// Switch to the phone-code tab.  A page that already defaults to it has no
 	// such tab, which is not an error.
-	if ok, err := clickByText(ctx, page, selPhoneTab, "手机号"); err != nil {
+	if ok, err := waitClickByText(ctx, page, selPhoneTab, "手机号", 15*time.Second); err != nil {
 		return fmt.Errorf("切换手机号标签失败：%w", err)
 	} else if ok {
 		job.logf("已切到手机验证码登录")
@@ -566,7 +571,7 @@ func (c *Client) openPhoneLogin(ctx context.Context, job *autoJob, page pageDriv
 		return errors.New("手机号输入框填写失败")
 	}
 	job.logf("已填手机号 %s", phone)
-	if ok, err := checkAgreement(ctx, page); err != nil {
+	if ok, err := waitCheckAgreement(ctx, page, 5*time.Second); err != nil {
 		return fmt.Errorf("勾选协议失败：%w", err)
 	} else if ok {
 		job.logf("已勾选协议")
@@ -828,26 +833,78 @@ func clickIfPresent(ctx context.Context, page pageDriver, selector string) (bool
 	return page.Click(ctx, selector)
 }
 
-// clickByText clicks the first element matching selector whose text contains
-// text.  It is the plain-JS equivalent of Playwright's `:has-text()` pseudo
-// class, which is how wb-auto selected the phone tab.
+// clickByText clicks the visible element matching selector whose text contains
+// text, preferring the shortest match.  The vendor wraps the clickable
+// 手机号 control in a login-methods-row container which also contains the
+// label; clicking the wrapper is a no-op and leaves the QR tab active.
 func clickByText(ctx context.Context, page pageDriver, selector, text string) (bool, error) {
-	js := `(function(){var els=document.querySelectorAll(` + autoJSString(selector) + `);` +
-		`for(var i=0;i<els.length;i++){if((els[i].textContent||'').indexOf(` + autoJSString(text) + `)>=0){els[i].click();return true;}}return false;})()`
+	js := `(function(){` + autoAllDocsJS +
+		`var __best=null,__bestLen=-1;` +
+		`for(var __di=0;__di<__autoDocs.length;__di++){` +
+		`var els=__autoDocs[__di].querySelectorAll(` + autoJSString(selector) + `);` +
+		`for(var __ei=0;__ei<els.length;__ei++){` +
+		`var el=els[__ei];` +
+		`var t=(el.textContent||'').replace(/\s+/g,'');` +
+		`if(t.indexOf(` + autoJSString(text) + `)<0){continue;}` +
+		`var r=el.getBoundingClientRect();` +
+		`var s=__autoDocs[__di].defaultView.getComputedStyle(el);` +
+		`if(r.width<=0||r.height<=0||s.visibility==='hidden'||s.display==='none'){continue;}` +
+		`if(__best===null||t.length<__bestLen){__best=el;__bestLen=t.length;}` +
+		`}}if(!__best){return false;}__best.click();return true;})()`
 	return page.EvalBool(ctx, js)
+}
+
+// waitClickByText waits for an SPA control to render before trying to click it.
+// The vendor renders the login-method tabs after hydration; clicking too early
+// leaves the QR tab active while the hidden phone form can still accept values,
+// which produces a real SMS but no usable submission.
+func waitClickByText(ctx context.Context, page pageDriver, selector, text string, timeout time.Duration) (bool, error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		ok, err := clickByText(ctx, page, selector, text)
+		if err != nil || ok {
+			return ok, err
+		}
+		if time.Now().After(deadline) || ctx.Err() != nil {
+			return false, nil
+		}
+		if !sleepCtx(ctx, 300*time.Millisecond) {
+			return false, ctx.Err()
+		}
+	}
 }
 
 // checkAgreement ticks the vendor's agreement checkbox.  It clicks first and
 // falls back to writing the property, because the control is a React-managed
 // input and a bare .click() does not always move it.
 func checkAgreement(ctx context.Context, page pageDriver) (bool, error) {
-	js := `(function(){var el=document.querySelector(` + autoJSString(selAgreeBox) + `);` +
-		`if(!el){return false;}` +
+	js := `(function(){` + autoAllDocsJS +
+		`for(var __di=0;__di<__autoDocs.length;__di++){` +
+		`var el=__autoDocs[__di].querySelector(` + autoJSString(selAgreeBox) + `);` +
+		`if(!el){continue;}` +
 		`if(el.checked){return true;}` +
 		`el.click();` +
 		`if(!el.checked){el.checked=true;el.dispatchEvent(new Event('change',{bubbles:true}));}` +
-		`return true;})()`
+		`return true;}return false;})()`
 	return page.EvalBool(ctx, js)
+}
+
+// waitCheckAgreement tolerates the short window in which the phone form is
+// visible but its React-owned checkbox has not mounted yet.
+func waitCheckAgreement(ctx context.Context, page pageDriver, timeout time.Duration) (bool, error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		ok, err := checkAgreement(ctx, page)
+		if err != nil || ok {
+			return ok, err
+		}
+		if time.Now().After(deadline) || ctx.Err() != nil {
+			return false, nil
+		}
+		if !sleepCtx(ctx, 300*time.Millisecond) {
+			return false, ctx.Err()
+		}
+	}
 }
 
 // acceptAgreementDialog accepts the vendor's current post-submit terms modal.
@@ -856,15 +913,16 @@ func checkAgreement(ctx context.Context, page pageDriver) (bool, error) {
 // both the dialog title and the positive button so an unrelated modal cannot be
 // accepted by accident.
 func acceptAgreementDialog(ctx context.Context, page pageDriver) (bool, error) {
-	js := `(function(){` +
-		`var hs=document.querySelectorAll('.t-dialog__header-content');` +
+	js := `(function(){` + autoAllDocsJS +
+		`for(var __di=0;__di<__autoDocs.length;__di++){` +
+		`var hs=__autoDocs[__di].querySelectorAll('.t-dialog__header-content');` +
 		`for(var i=0;i<hs.length;i++){` +
 		`var h=hs[i];if((h.textContent||'').indexOf('服务条款与隐私协议')<0){continue;}` +
 		`var d=h.closest('.t-dialog');if(!d){continue;}` +
 		`var bs=d.querySelectorAll('.t-dialog__footer button');` +
 		`for(var j=0;j<bs.length;j++){` +
 		`if((bs[j].textContent||'').trim().indexOf('同意')===0){bs[j].click();return true;}` +
-		`}}return false;})()`
+		`}}}return false;})()`
 	return page.EvalBool(ctx, js)
 }
 

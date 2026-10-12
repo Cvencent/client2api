@@ -157,6 +157,11 @@ type UsageRecord struct {
 	SentReasoningEffort string `json:"sent_reasoning_effort,omitempty"`
 	Candidate           int    `json:"candidate,omitempty"` // 1-based position in a bare-model route
 	Failed              bool   `json:"failed,omitempty"`
+	// FailureReason is the redacted, operator-facing explanation for a failed
+	// request or candidate attempt.  It deliberately names local in-flight
+	// backpressure separately from an upstream rate limit: both surface as 429
+	// to the caller, but only one is the vendor throttling the account kit.
+	FailureReason string `json:"failure_reason,omitempty"`
 	// Attempt marks a candidate that failed before the request moved on.
 	// It is a recent-list row, not an extra inbound request, so it must not
 	// inflate the aggregate totals.

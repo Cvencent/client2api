@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -219,18 +220,18 @@ func pollLogin(t *testing.T, c *Client, sessionID string) core.LoginState {
 
 // --- realm selection --------------------------------------------------------
 
-// TestWebLoginEndpointsPerRealm pins the URLs and Origin/Referer the reference
-// implementation asserts in internal/panel/login_realm_test.go: global uses the
-// workbuddy.ai base, everything else the copilot.tencent.com base.
+// TestWebLoginEndpointsPerRealm pins the URLs and Origin/Referer. The
+// mainland desktop client points authentication at www.workbuddy.cn; the older
+// copilot.tencent.com host produces a different authUrl.
 func TestWebLoginEndpointsPerRealm(t *testing.T) {
 	cases := []struct {
 		realm    string
 		wantBase string
 		wantOrig string
 	}{
-		{"cn", "https://copilot.tencent.com", "https://www.codebuddy.cn"},
-		{"", "https://copilot.tencent.com", "https://www.codebuddy.cn"},
-		{"weird", "https://copilot.tencent.com", "https://www.codebuddy.cn"},
+		{"cn", "https://www.workbuddy.cn", "https://www.codebuddy.cn"},
+		{"", "https://www.workbuddy.cn", "https://www.codebuddy.cn"},
+		{"weird", "https://www.workbuddy.cn", "https://www.codebuddy.cn"},
 		{"global", "https://www.workbuddy.ai", "https://www.workbuddy.ai"},
 		{"intl", "https://www.workbuddy.ai", "https://www.workbuddy.ai"},
 		{"International", "https://www.workbuddy.ai", "https://www.workbuddy.ai"},
@@ -239,8 +240,8 @@ func TestWebLoginEndpointsPerRealm(t *testing.T) {
 	for _, tc := range cases {
 		t.Run("realm="+tc.realm, func(t *testing.T) {
 			realm := normalizeLoginRealm(tc.realm)
-			if got := c.up.loginBase(realm) + loginStatePath; got != tc.wantBase+"/v2/plugin/auth/state?platform=CLI" {
-				t.Fatalf("state endpoint = %q, want %q", got, tc.wantBase+"/v2/plugin/auth/state?platform=CLI")
+			if got := c.up.loginBase(realm) + loginStatePath; got != tc.wantBase+"/v2/plugin/auth/state?platform=workbuddy" {
+				t.Fatalf("state endpoint = %q, want %q", got, tc.wantBase+"/v2/plugin/auth/state?platform=workbuddy")
 			}
 			if got := c.up.loginBase(realm) + loginTokenPath; got != tc.wantBase+"/v2/plugin/auth/token?state=" {
 				t.Fatalf("token endpoint = %q", got)
@@ -266,7 +267,7 @@ func TestWebLoginRealmSelection(t *testing.T) {
 		wantRealm   string
 		domain      string
 	}{
-		{"cn", "https://copilot.tencent.com", "https://www.codebuddy.cn", realmCN, "codebuddy.cn"},
+		{"cn", "https://www.workbuddy.cn", "https://www.codebuddy.cn", realmCN, "codebuddy.cn"},
 		{"global", "https://www.workbuddy.ai", "https://www.workbuddy.ai", realmGlobal, "workbuddy.ai"},
 		{"intl", "https://www.workbuddy.ai", "https://www.workbuddy.ai", realmGlobal, "workbuddy.ai"},
 	}
@@ -288,7 +289,7 @@ func TestWebLoginRealmSelection(t *testing.T) {
 			if first.method != http.MethodPost {
 				t.Fatalf("state method = %q, want POST", first.method)
 			}
-			if want := tc.wantBase + "/v2/plugin/auth/state?platform=CLI"; first.url != want {
+			if want := tc.wantBase + "/v2/plugin/auth/state?platform=workbuddy"; first.url != want {
 				t.Fatalf("state url = %q, want %q", first.url, want)
 			}
 			if got := first.headers.Get("Origin"); got != tc.wantOrigin {
@@ -394,9 +395,9 @@ func TestWorkbuddyThePickedRealmBeatsTheConfiguredOne(t *testing.T) {
 		wantRealm  string
 	}{
 		{"cn", realmGlobal, "https://www.workbuddy.ai", realmGlobal},
-		{"global", realmCN, "https://copilot.tencent.com", realmCN},
+		{"global", realmCN, "https://www.workbuddy.cn", realmCN},
 		{"cn", "intl", "https://www.workbuddy.ai", realmGlobal},
-		{"cn", "", "https://copilot.tencent.com", realmCN},
+		{"cn", "", "https://www.workbuddy.cn", realmCN},
 		{"global", "", "https://www.workbuddy.ai", realmGlobal},
 	}
 	for _, tc := range cases {
@@ -416,7 +417,7 @@ func TestWorkbuddyThePickedRealmBeatsTheConfiguredOne(t *testing.T) {
 			if st.State != core.LoginPending {
 				t.Fatalf("state = %q, want pending", st.State)
 			}
-			if got := v.call(0).url; got != tc.wantBase+"/v2/plugin/auth/state?platform=CLI" {
+			if got := v.call(0).url; got != tc.wantBase+"/v2/plugin/auth/state?platform=workbuddy" {
 				t.Fatalf("state url = %q, want the %s host", got, tc.wantRealm)
 			}
 			if got := v.call(0).headers.Get("Origin"); got != loginOrigin(tc.wantRealm) {
@@ -448,7 +449,7 @@ func TestWorkbuddyStartLoginStillUsesTheConfiguredRealm(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartLogin: %v", err)
 	}
-	if got := v.call(0).url; got != "https://www.workbuddy.ai/v2/plugin/auth/state?platform=CLI" {
+	if got := v.call(0).url; got != "https://www.workbuddy.ai/v2/plugin/auth/state?platform=workbuddy" {
 		t.Fatalf("state url = %q, want the configured global host", got)
 	}
 	if st.Realm != realmGlobal {
@@ -477,8 +478,14 @@ func TestWebLoginHappyPath(t *testing.T) {
 	if st.SessionID != session {
 		t.Fatalf("session id = %q, want %q", st.SessionID, session)
 	}
-	if st.URL != authURL {
-		t.Fatalf("url = %q, want %q", st.URL, authURL)
+	// The default realm is cn, so the panel URL carries the desktop client's
+	// per-login UUID just like the vendor's own browser flow.
+	gotAuth, err := url.Parse(st.URL)
+	if err != nil {
+		t.Fatalf("parse auth URL: %v", err)
+	}
+	if gotAuth.Query().Get("loginSessionId") == "" {
+		t.Fatalf("url = %q, want a loginSessionId", st.URL)
 	}
 	if st.Message == "" {
 		t.Fatal("a pending session must carry a message for the operator")

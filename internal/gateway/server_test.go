@@ -377,8 +377,19 @@ func TestChatReportsBackpressureAs429(t *testing.T) {
 	if body := rec.Body.String(); !strings.Contains(body, "rate_limit_error") {
 		t.Errorf("body = %q, want it to name rate_limit_error", body)
 	}
-	if got := usage.Snapshot(); len(got) != 1 || !got[0].Failed {
+	got := usage.Snapshot()
+	if len(got) != 1 || !got[0].Failed {
 		t.Fatalf("chat failure was not recorded: %+v", got)
+	}
+	raw, err := json.Marshal(got[0])
+	if err != nil {
+		t.Fatalf("marshal usage row: %v", err)
+	}
+	if !strings.Contains(string(raw), `"failure_reason"`) {
+		t.Fatalf("usage row has no failure_reason: %s", raw)
+	}
+	if !strings.Contains(string(raw), "本地并发已满") {
+		t.Fatalf("local backpressure was not identified separately: %s", raw)
 	}
 	if stats.Failures() != 1 {
 		t.Errorf("failures = %d, want 1", stats.Failures())

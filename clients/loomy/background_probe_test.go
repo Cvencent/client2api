@@ -85,6 +85,32 @@ func TestSuccessfulAccountTestClearsEveryPenalty(t *testing.T) {
 	}
 }
 
+func TestSuccessfulAccountTestRevivesASessionPreviouslyParkedAsDead(t *testing.T) {
+	c := newTestClient(t, "{}", alwaysSSE("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\ndata: [DONE]\n\n"))
+	seedAccount(t, c, "loomy-1", testToken, 0)
+	c.store.penalise("loomy-1", errSessionExpired("loomy-1"), time.Now().UTC(), time.Minute)
+
+	result, err := c.TestAccount(context.Background(), "loomy-1")
+	if err != nil {
+		t.Fatalf("TestAccount: %v", err)
+	}
+	if !result.OK {
+		t.Fatalf("TestAccount OK = false: %+v", result)
+	}
+
+	acc, _ := c.store.lookup("loomy-1")
+	if acc.dead {
+		t.Fatalf("a successful model probe left the account parked as dead: %+v", acc)
+	}
+	records, err := c.Accounts(context.Background())
+	if err != nil {
+		t.Fatalf("Accounts: %v", err)
+	}
+	if len(records) != 1 || records[0].State != "ready" {
+		t.Fatalf("records = %+v, want one ready account after a successful probe", records)
+	}
+}
+
 func TestSessionDeadAccountIsNeverBackgroundProbed(t *testing.T) {
 	c := newTestClient(t, "{}", alwaysJSON(200, failureEnvelope("100002", "dead")))
 	seedAccount(t, c, "loomy-1", testToken, 0)

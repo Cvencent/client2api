@@ -21,7 +21,7 @@
 WorkBuddy is Tencent's coding agent. Two **realms**, independently routed:
 
 * `intl` — `www.workbuddy.ai`
-* `cn` — `copilot.tencent.com` (a.k.a. `codebuddy.cn`)
+* `cn` — chat host `copilot.tencent.com`; browser auth host `www.workbuddy.cn`
 
 An account belongs to exactly one realm; the realm is part of the credential and
 must be sent to the right host. Do **not** hardcode one realm.
@@ -42,7 +42,7 @@ Reference layout — one JSON file per account, mode 0600, atomic tmp+rename:
   layout this becomes `Deps.DataDir` (= `data/workbuddy/`), glob `*.json`.
 * Refresh: `POST /plugin/auth/token/refresh` on the realm host.
 * Acquisition (for the README / an optional helper command, not the request path):
-  * `GET /v2/plugin/auth/state?platform=CLI`
+  * `POST /v2/plugin/auth/state?platform=workbuddy`
   * `GET /v2/plugin/auth/token?state=<state>`
   * `GET /v2/plugin/login/account?state=<state>`
 

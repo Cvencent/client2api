@@ -5,12 +5,12 @@ package workbuddy
 //
 // The flow, per realm:
 //
-//	POST base + "/v2/plugin/auth/state?platform=CLI"      body {}                -> {state, authUrl}
+//	POST base + "/v2/plugin/auth/state?platform=workbuddy" body {}              -> {state, authUrl}
 //	GET  base + "/v2/plugin/auth/token?state=<state>"                            -> {accessToken, refreshToken, expiresIn, domain}
 //	GET  base + "/v2/plugin/login/account?state=<state>"  Authorization: Bearer  -> {uid, enterpriseId, nickname}
 //
-// `base` is the realm's chat host -- https://copilot.tencent.com for cn and
-// https://www.workbuddy.ai for global -- and Origin/Referer follow the realm.
+// `base` is the realm's browser-auth host -- https://www.workbuddy.cn for cn
+// and https://www.workbuddy.ai for global -- and Origin/Referer follow the realm.
 // Endpoints, header set and realm split are ported from workbuddy2api-panel
 // internal/panel/login.go:36-114 (endpoints/headers/doJSON) and
 // internal/panel/login.go:116-289 (the state/poll/persist flow); cmd/login/main.go:208-279
@@ -20,11 +20,14 @@ package workbuddy
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -34,8 +37,9 @@ import (
 )
 
 const (
-	// loginPlatform is the plugin platform selector (reference login.go:36-49).
-	loginPlatform = "CLI"
+	// loginPlatform is the plugin platform selector.  The desktop client uses
+	// "workbuddy"; "CLI" makes the vendor callback drop the state.
+	loginPlatform = "workbuddy"
 
 	loginStatePath   = "/v2/plugin/auth/state?platform=" + loginPlatform
 	loginTokenPath   = "/v2/plugin/auth/token?state="
@@ -245,17 +249,16 @@ func normalizeLoginRealm(s string) string {
 }
 
 // loginBase is the host serving the plugin auth endpoints for a realm.  The
-// reference keeps upstreamBaseCN/upstreamBaseGlobal separate (login.go:26-49);
-// here they are exactly this module's chat hosts, so the realm handling lives in
-// one place instead of being duplicated.
+// mainland desktop product uses the web host (www.workbuddy.cn) rather than the
+// chat host; global keeps its existing workbuddy.ai endpoint.
 func (u *Upstream) loginBase(realm string) string {
 	if realm == realmGlobal {
 		return u.globalChatBase()
 	}
-	if u != nil && u.ChatBaseCN != "" {
-		return u.ChatBaseCN
+	if u != nil && u.WebBaseCN != "" {
+		return u.WebBaseCN
 	}
-	return "https://copilot.tencent.com"
+	return "https://www.workbuddy.cn"
 }
 
 // loginOrigin is the Origin/Referer pair for a realm (reference login.go:29-32).
@@ -264,6 +267,47 @@ func loginOrigin(realm string) string {
 		return originRefererGlobal
 	}
 	return originRefererCN
+}
+
+// newLoginSessionID returns the UUID v4 the desktop client puts in the
+// mainland authorisation URL.  The vendor's login page uses it to associate
+// the browser sign-in with the plugin that is polling auth/token; without it
+// the poll stays on business code 11217 until it times out.
+func newLoginSessionID() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%s-%s-%s-%s-%s",
+		hex.EncodeToString(b[0:4]),
+		hex.EncodeToString(b[4:6]),
+		hex.EncodeToString(b[6:8]),
+		hex.EncodeToString(b[8:10]),
+		hex.EncodeToString(b[10:16]),
+	), nil
+}
+
+// decorateAuthURL mirrors ExternalLinkAuthenticationProvider.openAuthUrl:
+// only the workbuddy platform gets loginSessionId, and searchParams.set
+// replaces an existing value rather than appending a second one.
+func decorateAuthURL(realm, raw string) (string, error) {
+	if realm != realmCN {
+		return raw, nil
+	}
+	sessionID, err := newLoginSessionID()
+	if err != nil {
+		return "", err
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", err
+	}
+	q := u.Query()
+	q.Set("loginSessionId", sessionID)
+	u.RawQuery = q.Encode()
+	return u.String(), nil
 }
 
 func (c *Client) loginRealm() string { return normalizeLoginRealm(c.cfg.LoginRealm) }
@@ -284,10 +328,9 @@ func (c *Client) loginHTTP() *http.Client {
 
 // loginHeaders is the header set of the reference implementation
 // (login.go:54-61) plus X-CodeBuddy-Request, which this module sends on every
-// other call.  X-User-Id / X-Machine-ID / X-Domain are deliberately absent:
-// they are derived from an account, and the whole point of this flow is that no
-// account exists yet.
-func (c *Client) loginHeaders(req *http.Request, origin string) {
+// other call.  The mainland desktop client marks the no-account phase with
+// X-No-* headers; account-derived identity headers remain deliberately absent.
+func (c *Client) loginHeaders(req *http.Request, realm, origin string) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/plain, */*")
 	req.Header.Set("X-Requested-With", "XMLHttpRequest")
@@ -295,11 +338,16 @@ func (c *Client) loginHeaders(req *http.Request, origin string) {
 	req.Header.Set("Origin", origin)
 	req.Header.Set("Referer", origin+"/")
 	req.Header.Set("User-Agent", codeBuddyCLIUA)
+	if realm == realmCN {
+		req.Header.Set("X-No-User-Id", "true")
+		req.Header.Set("X-No-Enterprise-Id", "true")
+		req.Header.Set("X-No-Department-Info", "true")
+	}
 }
 
 // loginJSON performs one control-plane call and unwraps the envelope.  It never
 // puts the response body into an error: that body can contain the access token.
-func (c *Client) loginJSON(ctx context.Context, method, endpoint, bearer string, body []byte, origin string) (json.RawMessage, int, error) {
+func (c *Client) loginJSON(ctx context.Context, realm, method, endpoint, bearer string, body []byte, origin string) (json.RawMessage, int, error) {
 	var rdr io.Reader
 	if body != nil {
 		rdr = bytes.NewReader(body)
@@ -308,9 +356,14 @@ func (c *Client) loginJSON(ctx context.Context, method, endpoint, bearer string,
 	if err != nil {
 		return nil, 0, fmt.Errorf("build request: %w", err)
 	}
-	c.loginHeaders(req, origin)
+	c.loginHeaders(req, realm, origin)
 	if bearer != "" {
 		req.Header.Set("Authorization", "Bearer "+bearer)
+		if realm == realmCN {
+			req.Header.Set("X-Domain", req.URL.Host)
+		}
+	} else if realm == realmCN {
+		req.Header.Set("X-No-Authorization", "true")
 	}
 	resp, err := c.loginHTTP().Do(req)
 	if err != nil {
@@ -435,7 +488,7 @@ func (c *Client) StartLogin(ctx context.Context) (core.LoginState, error) {
 // serve the models the other realm lists.
 func (c *Client) LoginRealms(context.Context) []core.LoginRealm {
 	return []core.LoginRealm{
-		{Code: realmCN, Name: "国内版", Help: "CodeBuddy（copilot.tencent.com）：国内账号与国内模型目录"},
+		{Code: realmCN, Name: "国内版", Help: "CodeBuddy（www.workbuddy.cn）：国内账号与国内模型目录"},
 		{Code: realmGlobal, Name: "国际版", Help: "WorkBuddy（workbuddy.ai）：国际账号与国际模型目录"},
 	}
 }
@@ -470,7 +523,7 @@ func (c *Client) startLoginSession(ctx context.Context, realm string) (*panelLog
 		return nil, errors.New("no data directory: a credential could not be stored")
 	}
 	origin := loginOrigin(realm)
-	data, _, err := c.loginJSON(ctx, http.MethodPost, c.up.loginBase(realm)+loginStatePath, "", []byte("{}"), origin)
+	data, _, err := c.loginJSON(ctx, realm, http.MethodPost, c.up.loginBase(realm)+loginStatePath, "", []byte("{}"), origin)
 	if err != nil {
 		return nil, errors.New(core.Redact("auth state: " + err.Error()))
 	}
@@ -481,12 +534,18 @@ func (c *Client) startLoginSession(ctx context.Context, realm string) (*panelLog
 	if uerr := json.Unmarshal(data, &st); uerr != nil || strings.TrimSpace(st.State) == "" || strings.TrimSpace(st.AuthURL) == "" {
 		return nil, errors.New("auth state: the vendor did not return an authorisation URL")
 	}
+	state := strings.TrimSpace(st.State)
+	authURL := strings.TrimSpace(st.AuthURL)
+	authURL, err = decorateAuthURL(realm, authURL)
+	if err != nil {
+		return nil, errors.New("auth state: the authorisation URL could not be prepared")
+	}
 
 	now := time.Now()
 	sess := &panelLogin{
-		sessionID: strings.TrimSpace(st.State),
+		sessionID: state,
 		realm:     realm,
-		url:       strings.TrimSpace(st.AuthURL),
+		url:       authURL,
 		startedAt: now,
 		expiresAt: now.Add(c.loginTTL()),
 		state:     core.LoginPending,
@@ -554,7 +613,7 @@ func (c *Client) pollLoginOnce(ctx context.Context, sess *panelLogin) loginPollR
 	base := c.up.loginBase(sess.realm)
 	origin := loginOrigin(sess.realm)
 
-	raw, status, err := c.loginJSON(ctx, http.MethodGet, base+loginTokenPath+sess.sessionID, "", nil, origin)
+	raw, status, err := c.loginJSON(ctx, sess.realm, http.MethodGet, base+loginTokenPath+sess.sessionID, "", nil, origin)
 	switch loginPollVerdict(status, err) {
 	case loginPollFatal:
 		return loginPollResult{outcome: loginPollFatal, message: loginFailureMessage(err)}
@@ -579,7 +638,7 @@ func (c *Client) pollLoginOnce(ctx context.Context, sess *panelLogin) loginPollR
 		EnterpriseID string `json:"enterpriseId"`
 		Nickname     string `json:"nickname"`
 	}
-	if acctRaw, _, aerr := c.loginJSON(ctx, http.MethodGet, base+loginAccountPath+sess.sessionID, tok.AccessToken, nil, origin); aerr == nil {
+	if acctRaw, _, aerr := c.loginJSON(ctx, sess.realm, http.MethodGet, base+loginAccountPath+sess.sessionID, tok.AccessToken, nil, origin); aerr == nil {
 		_ = json.Unmarshal(acctRaw, &acct)
 	}
 	uid := strings.TrimSpace(acct.UID)

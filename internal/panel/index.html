@@ -329,6 +329,16 @@ label.fld > .hint { display: block; font-size: 11.5px; color: var(--ink-3); marg
 .ownkey #ownKeyOthers { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; }
 .ownkey #ownKeyOthers .hint { margin: 0; }
 
+/* 转写调用信息：只由 capabilities.transcription 控制的通用块，所有字段都来自
+   当前模块的 capability 数据，不在 CSS/JS 里绑定某个厂商或模型。 */
+.transcription-box { margin: 0 18px 14px; padding: 10px 12px; border: 1px solid var(--line-soft); border-radius: 8px; background: var(--surface-2); }
+.tb-call-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 3px 0; }
+.tb-call-line .k { flex: 0 0 auto; color: var(--ink-3); font-size: 12px; }
+.tb-call-line code { flex: 1 1 360px; min-width: 0; overflow-wrap: anywhere; color: var(--accent); }
+.tb-models { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.tb-models .model-route { font: 12px var(--mono); color: var(--ink-2); background: var(--surface); border: 1px solid var(--line-soft); border-radius: 5px; padding: 2px 6px; }
+.tb-models .hint { margin: 0; }
+
 /* 一键连接本机服务：面板里唯一不要求操作员先知道 Base URL 的入口。
    卡片默认只露一个主按钮，地址和 Key 收进「高级选项」，因为本机服务
    绝大多数情况下这两个值都是对的。 */
@@ -1882,6 +1892,23 @@ details.cfg summary:hover, details.adv summary:hover { color: var(--accent-text)
           <tbody id="accBody"></tbody>
         </table>
         </div>
+        <!-- 转写平台没有账号也能调用：模块用 capabilities.transcription 声明，
+             模型列表和路由前缀都由模块数据生成，面板不写具体厂商或模型。 -->
+        <div class="transcription-box" id="accTranscription" hidden>
+          <div class="tb-call">
+            <div class="tb-call-line">
+              <span class="k">转写地址</span>
+              <code id="accTranscriptionURL" class="mono"></code>
+              <button type="button" class="xs" id="btnCopyTranscriptionURL">复制</button>
+            </div>
+            <div class="tb-call-line">
+              <span class="k">模型名</span>
+              <div id="accTranscriptionModels" class="tb-models"></div>
+              <button type="button" class="xs" id="btnCopyTranscriptionModel">复制模型</button>
+            </div>
+            <div class="hint">该平台无需账号，可直接用上面的地址和模型调用。</div>
+          </div>
+        </div>
         <div class="pager" id="accPager" hidden>
           <span class="grow"></span>
           <span class="note" id="accPageInfo"></span>
@@ -1996,7 +2023,7 @@ details.cfg summary:hover, details.adv summary:hover { color: var(--accent-text)
         </header>
         <div class="tbl-wrap">
         <table class="acc md">
-          <thead><tr><th>时间</th><th>平台</th><th>模型</th><th>思考强度</th><th title="调用方报的就原样显示，没报则按消息内容推一个">会话ID</th><th>账号</th><th>结果</th><th>候选</th><th>输入</th><th>输出</th><th>缓存 tokens</th><th>缓存命中率</th><th>花费 <span class="hint">¥/百万 tokens 计价</span></th><th>合计</th><th>耗时</th><th>速率</th></tr></thead>
+          <thead><tr><th>时间</th><th>平台</th><th>模型</th><th>思考强度</th><th title="调用方报的就原样显示，没报则按消息内容推一个">会话ID</th><th>账号</th><th>结果</th><th>失败原因</th><th>候选</th><th>输入</th><th>输出</th><th>缓存 tokens</th><th>缓存命中率</th><th>花费 <span class="hint">¥/百万 tokens 计价</span></th><th>合计</th><th>耗时</th><th>速率</th></tr></thead>
           <tbody id="usRecentBody"></tbody>
         </table>
         </div>
@@ -4140,8 +4167,31 @@ function accGroupBalanceCell(rows) {
   return accBalanceCell(rows[0]);
 }
 
+function transcriptionEndpoint() {
+  return location.origin + "/v1/audio/transcriptions";
+}
+
+function renderTranscriptionCallInfo() {
+  const box = $("#accTranscription");
+  if (!box) return null;
+  const caps = (ACCTS[CUR] || {}).capabilities || {};
+  if (!caps.transcription || !CUR) { box.hidden = true; box.dataset.models = ""; return null; }
+  const endpoint = transcriptionEndpoint();
+  const routes = (caps.transcription_models || []).filter(Boolean).map(m => CUR + "/" + m);
+  $("#accTranscriptionURL").textContent = endpoint;
+  const models = $("#accTranscriptionModels");
+  models.innerHTML = routes.length
+    ? routes.map(m => '<span class="model-route">' + esc(m) + '</span>').join("")
+    : '<span class="hint">模块未列出模型</span>';
+  box.dataset.endpoint = endpoint;
+  box.dataset.models = routes.join("\n");
+  box.hidden = false;
+  return routes;
+}
+
 function renderAccounts() {
   renderChips(); renderStats();
+  renderTranscriptionCallInfo();
   const tb = $("#accBody");
   const rec = ACCTS[CUR] || { accounts: [], capabilities: {} };
   const list = rec.accounts || [];
@@ -4220,7 +4270,9 @@ function renderAccounts() {
     // 首帧：第一次 refreshAll 还没回来，ACCTS 是空的。直接画空态会先闪一句
     // 「还没有账号」再被真实行顶掉，所以首轮用一行占位。数据到了（不论有没有
     // 账号）BOOTING 都已经翻回 false，下面那句空态就是真的了。
-    const empty = rec.unsupported ? "该模块不支持账号管理" : "还没有账号，点右上角「添加账号」";
+    const empty = caps.transcription
+      ? "该平台不需要账号，可直接用上方地址调用转写"
+      : (rec.unsupported ? "该模块不支持账号管理" : "还没有账号，点右上角「添加账号」");
     tb.innerHTML = '<tr><td colspan="' + cols + '" class="hint">' + (rec.unsupported ? empty : (BOOTING ? "正在加载账号…" : empty)) + '</td></tr>';
     hideAccPager();
     return;
@@ -5667,12 +5719,13 @@ function renderRecentRows() {
       '<td>' + (effort ? '<span class="tag warn">' + esc(effort) + '</span>' : '<span class="hint">-</span>') + '</td>' +
       '<td>' + sessionCell(x.session_id) + '</td>' +
       '<td title="' + esc(accTip) + '">' + esc(accName) + '</td><td>' + state + '</td>' +
+      '<td class="hint" title="' + esc(x.failure_reason || "") + '">' + esc(x.failure_reason || "-") + '</td>' +
       '<td class="num">' + (x.candidate ? "#" + esc(String(x.candidate)) : "-") + '</td>' +
       '<td class="num">' + numf(x.prompt_tokens || 0) + '</td><td class="num">' + numf(x.completion_tokens || 0) + '</td>' +
       '<td class="num">' + cacheText + '</td><td class="num">' + cacheHitText + '</td><td class="num">' + costText + '</td>' +
       '<td class="num">' + numf(x.total_tokens || 0) + '</td><td class="num">' + fmtMs(x.latency_ms) + '</td>' +
       '<td class="num">' + fmtRate(x.tokens_per_second) + '</td></tr>';
-  }).join("") || '<tr><td colspan="16" class="hint">暂无调用记录</td></tr>';
+  }).join("") || '<tr><td colspan="17" class="hint">暂无调用记录</td></tr>';
   if ($("#usRecentNote")) $("#usRecentNote").textContent = rows.length + " / " + US_RECENT.length + " 条";
 }
 
@@ -11095,6 +11148,17 @@ $("#logChips").addEventListener("click", ev => {
   renderLogs();
 });
 $("#btnAdd").addEventListener("click", openAdd);
+$("#btnCopyTranscriptionURL").addEventListener("click", async () => {
+  const url = ($("#accTranscriptionURL").textContent || "").trim();
+  if (!url) return;
+  try { await copyText(url); toast("转写地址已复制"); } catch (e) { toast("复制失败", "err"); }
+});
+$("#btnCopyTranscriptionModel").addEventListener("click", async () => {
+  const box = $("#accTranscription");
+  const models = ((box && box.dataset.models) || "").split("\n").filter(Boolean);
+  if (!models.length) { toast("模块未列出模型", "err"); return; }
+  try { await copyText(models.join("\n")); toast(models.length > 1 ? "已复制全部模型名" : "模型名已复制"); } catch (e) { toast("复制失败", "err"); }
+});
 $("#btnCloseAdd").addEventListener("click", closeAdd);
 $("#addVeil").addEventListener("click", ev => { if (ev.target === $("#addVeil")) closeAdd(); });
 $("#noteVeil").addEventListener("click", ev => { if (ev.target === $("#noteVeil")) closeAccountNote(); });

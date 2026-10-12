@@ -459,6 +459,37 @@ func (s *store) reset(id string, now time.Time) {
 	}
 }
 
+// resetAfterProbe clears the runtime penalties after a successful real model
+// probe.  Unlike reset, it also clears dead: a successful completion is
+// stronger evidence than an earlier vendor rejection.  Keepalive deliberately
+// keeps using reset, because accepting a session is weaker than answering chat.
+func (s *store) resetAfterProbe(id string, now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, a := range s.all {
+		if a.ID != id {
+			continue
+		}
+		clearExpiry := a.expired(now)
+		a.dead = false
+		a.failures = 0
+		a.lastError = ""
+		a.cooldownTill = time.Time{}
+		a.probeAfter = time.Time{}
+		a.lastUsed = now
+		if clearExpiry {
+			a.ExpiresAtMS = 0
+			if err := s.save(); err != nil {
+				_ = err
+			}
+		}
+		if err := s.saveState(); err != nil {
+			_ = err
+		}
+		return
+	}
+}
+
 // revive clears every runtime penalty and re-enables the account.  It never
 // touches the credential.
 func (s *store) revive(id string) error {
@@ -709,7 +740,7 @@ func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, e
 
 	result.OK = true
 	result.Reply = reply
-	c.store.reset(id, time.Now().UTC())
+	c.store.resetAfterProbe(id, time.Now().UTC())
 	return result, nil
 }
 

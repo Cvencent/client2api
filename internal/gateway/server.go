@@ -586,7 +586,7 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
 	if err != nil {
 		stat.status = http.StatusBadRequest
-		s.fail(&rec)
+		s.fail(&rec, err)
 		writeError(w, http.StatusBadRequest, "invalid_request_error", "reading body: "+err.Error())
 		return
 	}
@@ -594,7 +594,7 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 	var wire chatRequest
 	if err := json.Unmarshal(body, &wire); err != nil {
 		stat.status = http.StatusBadRequest
-		s.fail(&rec)
+		s.fail(&rec, err)
 		writeError(w, http.StatusBadRequest, "invalid_request_error", "invalid JSON: "+err.Error())
 		return
 	}
@@ -605,7 +605,7 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 	req, err := toCoreRequest(&wire)
 	if err != nil {
 		stat.status = http.StatusBadRequest
-		s.fail(&rec)
+		s.fail(&rec, err)
 		writeError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return
 	}
@@ -725,6 +725,7 @@ func (s *server) serveRemainingCandidates(w http.ResponseWriter, r *http.Request
 			SentReasoningEffort: rec.SentReasoningEffort,
 			Model:               client.Name() + "/" + upstreamModel,
 			Candidate:           rec.Candidate,
+			FailureReason:       failureReason(err),
 			Failed:              true,
 			Attempt:             true,
 		})
@@ -951,11 +952,64 @@ func (s *server) rotateBase() time.Duration {
 // fail counts one failed request.  rec, when non-nil, is the usage record for
 // the same request; marking it here keeps the counter and the traffic view
 // from disagreeing.
-func (s *server) fail(rec *UsageRecord) {
+func (s *server) fail(rec *UsageRecord, cause ...error) {
 	s.stats.addFailure()
 	if rec != nil {
 		rec.Failed = true
+		if rec.FailureReason == "" && len(cause) > 0 && cause[0] != nil {
+			rec.FailureReason = failureReason(cause[0])
+		}
 	}
+}
+
+// failureReason turns a module error into the explanation kept on the recent
+// call row.  Local in-flight backpressure and an upstream rate limit both map
+// to HTTP 429 on the wire, so the row must spell out which one happened.
+func failureReason(err error) string {
+	if err == nil {
+		return ""
+	}
+	switch {
+	case errors.Is(err, core.ErrBusy):
+		return "本地并发已满：" + core.Redact(err.Error())
+	case errors.Is(err, core.ErrNotConfigured):
+		return "没有可用账号：" + core.Redact(err.Error())
+	case errors.Is(err, core.ErrUnsupported):
+		return "请求不受支持：" + core.Redact(err.Error())
+	case errors.Is(err, context.Canceled):
+		return "调用方已取消：" + core.Redact(err.Error())
+	case errors.Is(err, context.DeadlineExceeded):
+		return "请求超时：" + core.Redact(err.Error())
+	}
+	f, ok := core.AsFailure(err)
+	if !ok {
+		return core.Redact(err.Error())
+	}
+	label := string(f.Kind)
+	switch f.Kind {
+	case core.FailureWAF:
+		label = "上游安全策略拦截"
+	case core.FailureRateLimited:
+		label = "上游限流"
+	case core.FailureQuota:
+		label = "账号额度用尽"
+	case core.FailureAuth:
+		label = "账号认证失败"
+	case core.FailureSessionDead:
+		label = "会话失效"
+	case core.FailureUpstream:
+		label = "上游异常"
+	case core.FailureContentBlocked:
+		label = "内容被上游拦截"
+	case core.FailureContextWindow:
+		label = "上下文超限"
+	case core.FailureOther:
+		label = "上游拒绝"
+	}
+	if f.Status > 0 {
+		label += "（HTTP " + fmt.Sprint(f.Status) + "）"
+	}
+	return label + "：" + core.Redact(err.Error())
 }
 
 // recordUsage prices one completed request and files it in the usage ledger.

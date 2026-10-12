@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -44,6 +45,8 @@ type fakePage struct {
 	clicked         []string
 	agreementModal  bool
 	submitAttempts  int
+	requireFrame    bool
+	tabFalseCalls   int
 }
 
 func newFakePage() *fakePage {
@@ -115,10 +118,23 @@ func (p *fakePage) EvalBool(_ context.Context, expression string) (bool, error) 
 	defer p.mu.Unlock()
 	switch {
 	case strings.Contains(expression, "login__tab"):
+		if p.requireFrame && !strings.Contains(expression, "contentDocument") {
+			return false, nil
+		}
+		if p.tabFalseCalls > 0 {
+			p.tabFalseCalls--
+			return false, nil
+		}
 		return true, nil
 	case strings.Contains(expression, "t-checkbox__former"):
+		if p.requireFrame && !strings.Contains(expression, "contentDocument") {
+			return false, nil
+		}
 		return true, nil
 	case strings.Contains(expression, "服务条款与隐私协议"):
+		if p.requireFrame && !strings.Contains(expression, "contentDocument") {
+			return false, nil
+		}
 		if p.agreementModal {
 			p.agreementModal = false
 			return true, nil
@@ -307,8 +323,15 @@ func TestAutoLoginHappyPath(t *testing.T) {
 	if !page.didClick(selSubmit) {
 		t.Fatalf("never clicked submit")
 	}
-	if page.navURL != "https://example.test/auth" {
-		t.Fatalf("navigated to %q", page.navURL)
+	nav, err := url.Parse(page.navURL)
+	if err != nil {
+		t.Fatalf("parse navigated URL %q: %v", page.navURL, err)
+	}
+	if nav.Scheme != "https" || nav.Host != "example.test" || nav.Path != "/auth" {
+		t.Fatalf("navigated to %q, want the vendor auth page", page.navURL)
+	}
+	if nav.Query().Get("loginSessionId") == "" {
+		t.Fatalf("navigated to %q without the desktop loginSessionId", page.navURL)
 	}
 	// The number is rented, so it must go back.
 	if got := platform.releasedPhones(); len(got) != 1 || got[0] != "13800000000" {
@@ -479,6 +502,38 @@ func TestAutoLoginPinnedPhoneIsReused(t *testing.T) {
 	}
 }
 
+// TestAutoLoginPhoneTabSelectorAvoidsTheWrapperRow pins the live-page bug where
+// the broad class selector matched login-methods-row first.  Clicking that
+// wrapper is a no-op, so the QR tab stayed active even though the hidden phone
+// form could still receive an SMS.
+func TestAutoLoginPhoneTabSelectorAvoidsTheWrapperRow(t *testing.T) {
+	if !strings.Contains(selPhoneTab, "div.login-methods") {
+		t.Fatalf("phone tab selector no longer targets the clickable control: %q", selPhoneTab)
+	}
+	if strings.Contains(selPhoneTab, `[class*="login-methods"]`) {
+		t.Fatalf("phone tab selector can match the non-clickable wrapper row: %q", selPhoneTab)
+	}
+}
+
+// TestAutoLoginWaitsForThePhoneTabToBecomeClickable pins the live-page bug
+// where the React login-method tabs were present but not yet visible.  Giving
+// up on the first click left the QR tab active while the hidden phone form
+// still accepted a number, so an SMS could arrive but the submit was useless.
+func TestAutoLoginWaitsForThePhoneTabToBecomeClickable(t *testing.T) {
+	v := successVendor()
+	c, _ := autoLoginClient(t, v)
+	page := newFakePage()
+	page.tabFalseCalls = 3
+	platform := &fakePlatform{number: core.SMSNumber{Phone: "13800006666"}, code: "555555"}
+
+	if _, err := runAutoLogin(t, c, page, platform, core.AutoLoginRequest{}); err != nil {
+		t.Fatalf("autoLogin: %v", err)
+	}
+	if page.tabFalseCalls != 0 {
+		t.Fatalf("phone tab was not retried until it became clickable: %d false calls left", page.tabFalseCalls)
+	}
+}
+
 // TestAutoLoginStopsOnAVendorErrorItOnlySeesAfterSubmit: the vendor can reject
 // the code after the form is submitted, and the current page words that as
 // "请获取并输入验证码" rather than the generic wrong-code text.  Missing it used
@@ -602,6 +657,7 @@ func TestAutoLoginAcceptsThePostSubmitAgreementModal(t *testing.T) {
 	c, _ := autoLoginClient(t, v)
 	page := newFakePage()
 	page.agreementModal = true
+	page.requireFrame = true
 	platform := &fakePlatform{number: core.SMSNumber{Phone: "13800009922"}, code: "222222"}
 
 	job, err := runAutoLogin(t, c, page, platform, core.AutoLoginRequest{})
@@ -613,6 +669,9 @@ func TestAutoLoginAcceptsThePostSubmitAgreementModal(t *testing.T) {
 	}
 	if !logContains(job.snapshot().Log, "已同意服务条款与隐私协议") {
 		t.Fatalf("log did not record the agreement dialog: %v", logTexts(job.snapshot().Log))
+	}
+	if !logContains(job.snapshot().Log, "已勾选协议") {
+		t.Fatalf("log did not record the agreement checkbox: %v", logTexts(job.snapshot().Log))
 	}
 }
 

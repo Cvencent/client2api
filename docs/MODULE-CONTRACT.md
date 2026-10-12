@@ -249,7 +249,10 @@ routing catalogue, `Auto/<model>` aggregation or the account pool's model
 accounting. Return `core.ErrInvalidAudio` (400), `core.ErrNoSpeech` (422),
 `core.ErrNotConfigured` (503) or a `*core.Failure`, exactly as the chat path
 does; the gateway owns the HTTP mapping. Only `clients/doubaoime` implements it
-today.
+today. `CapabilitiesOf` also publishes `transcription` and the bare
+`transcription_models`; the panel prefixes each model with the current platform
+name and shows the callable address in the account pool, including when the
+module has no accounts to list.
 
 ### The account table is the panel's editing surface
 

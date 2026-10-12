@@ -18,6 +18,8 @@ them, and the realm decides the host it talks to:
 | `cn`     | `https://copilot.tencent.com` | `https://www.codebuddy.cn` |
 | `global` | `https://www.workbuddy.ai`    | `https://www.workbuddy.ai` |
 
+The CN browser-login endpoint uses the `web_base_cn` host (`https://www.workbuddy.cn`) rather than the CN chat host.
+
 Both realms use the same paths (`/v2/chat/completions`,
 `/v2/plugin/auth/token/refresh`); only the host, the `Origin`/`Referer` pair, the
 `Accept-Language`, the enterprise headers and the User-Agent product segment
@@ -77,7 +79,7 @@ its own data directory and uses the vendor defaults. The object below goes under
 | `chat_base_global` | string | `https://www.workbuddy.ai` | global realm chat host (override) |
 | `billing_base_cn` | string | `https://www.codebuddy.cn` | cn billing/console host |
 | `billing_base_global` | string | `https://www.workbuddy.ai` | global realm billing/console host (override, independent of the chat host; the register wizard rides it too) |
-| `web_base_cn` | string | `https://www.workbuddy.cn` | cn web host |
+| `web_base_cn` | string | `https://www.workbuddy.cn` | cn browser-login/auth host |
 | `global_enabled` | bool | `true` | route global-realm accounts to the global host |
 | `client_version` | string | `5.5.4` | `X-Client-Version` sent upstream |
 | `cli_version` | string | `2.137.1` | CLI version advertised in headers |
@@ -203,9 +205,13 @@ this machine alone.
 To get a usable credential, obtain a token the way the vendor CLI does (this is
 **not** on the request path; it is documented for completeness):
 
-1. `GET https://<realm host>/v2/plugin/auth/state?platform=CLI`
-2. `GET https://<realm host>/v2/plugin/auth/token?state=<state>`
-3. `GET https://<realm host>/v2/plugin/login/account?state=<state>`
+1. `POST https://<auth host>/v2/plugin/auth/state?platform=workbuddy` (CN uses `web_base_cn`; global uses its chat host)
+2. Open the returned `authUrl`. On the CN realm the desktop client also sets
+   `loginSessionId` to a fresh UUID v4 before opening it; that value is what
+   associates the browser sign-in with this plugin session. Global leaves the
+   URL unchanged.
+3. `GET https://<auth host>/v2/plugin/auth/token?state=<state>`
+4. `GET https://<auth host>/v2/plugin/login/account?state=<state>`
 
 then write the tokens into a file in `accounts_dir` in the shape above. An expired
 access token is refreshed automatically via

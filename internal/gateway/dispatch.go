@@ -101,7 +101,7 @@ func (s *server) routeAndServe(w http.ResponseWriter, r *http.Request, in routeI
 	candidates, err := s.opts.Registry.ResolveCandidates(r.Context(), in.requested)
 	if err != nil {
 		in.stat.status = http.StatusNotFound
-		s.fail(in.rec)
+		s.fail(in.rec, err)
 		writeError(w, http.StatusNotFound, "invalid_request_error", err.Error())
 		return
 	}
@@ -167,9 +167,12 @@ func (s *server) routeAndServe(w http.ResponseWriter, r *http.Request, in routeI
 			// trim without answering a different question.  Refuse locally, with
 			// the limit spelled out, rather than paying for a refusal upstream.
 			in.rec.ContextWindow = window
+			s.opts.Logger.Printf(
+				"context: refusing %s/%s: even the newest turn alone is about %d tokens, over the %d-token window",
+				client.Name(), upstreamModel, report.BeforeTokens, window)
 			in.stat.status = http.StatusBadRequest
-			s.fail(in.rec)
 			err := contextWindowRefusal(client, upstreamModel, window, report.BeforeTokens)
+			s.fail(in.rec, err)
 			writeError(w, http.StatusBadRequest, "context_window_exceeded",
 				fmt.Sprintf("[%s] %s", client.Name(), err.Error()))
 			return
@@ -246,6 +249,7 @@ func (s *server) routeAndServe(w http.ResponseWriter, r *http.Request, in routeI
 				SentReasoningEffort: in.rec.SentReasoningEffort,
 				Model:               client.Name() + "/" + upstreamModel,
 				Candidate:           in.rec.Candidate,
+				FailureReason:       failureReason(err),
 				Failed:              true,
 				Attempt:             true,
 			})
@@ -261,7 +265,7 @@ func (s *server) routeAndServe(w http.ResponseWriter, r *http.Request, in routeI
 		}
 		status, _, _ := upstreamErrorShape(err)
 		in.stat.status = status
-		s.fail(in.rec)
+		s.fail(in.rec, err)
 		s.writeUpstreamError(w, client, hintCtx, err)
 		return
 	}

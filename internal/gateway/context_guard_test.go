@@ -161,6 +161,32 @@ func TestApplyContextBudgetReportsImpossibleRatherThanCuttingTheQuestion(t *test
 	}
 }
 
+func TestApplyContextBudgetTrimsToTheFinalTurnInsteadOfRefusing(t *testing.T) {
+	// A request whose only fitting suffix is the final turn itself must be
+	// trimmed to that turn.  The guard used to read the loop landing index
+	// as "nothing fits" and refuse a request it could have served -- which
+	// is the shape a conversation hits right after a large tool result (a
+	// screenshot) comes back.
+	req := buildRequest(2, 4000)
+	final := req.Messages[len(req.Messages)-1]
+	report, trimmed := applyContextBudget(req, 1500)
+	if !trimmed {
+		t.Fatal("a request that fits with only the final turn must be trimmed, not refused")
+	}
+	if report.Impossible {
+		t.Fatal("a trimmable request must not be reported impossible")
+	}
+	if len(req.Messages) != 1 {
+		t.Fatalf("only the final turn should survive, got %d messages", len(req.Messages))
+	}
+	if req.Messages[0].Content != final.Content {
+		t.Fatal("the surviving turn must be the newest one")
+	}
+	if int64(estimateRequestTokens(req)) > 1500 {
+		t.Fatalf("trimmed request is still over budget: %d", estimateRequestTokens(req))
+	}
+}
+
 func TestApplyContextBudgetKeepsTheSystemPrompt(t *testing.T) {
 	// The system prompt is not stale history: it is the task. Dropping it would
 	// change what the model is being asked to do, so it is pinned alongside the

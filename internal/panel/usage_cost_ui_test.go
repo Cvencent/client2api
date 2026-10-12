@@ -51,8 +51,8 @@ func TestRecentCallsShowCacheAndCost(t *testing.T) {
 	if h, r := recentHeaderCells(t, src), recentRowCells(t, src); h != r {
 		t.Errorf("最近调用表头 %d 列、行模板 %d 格：新增列后整行会错位", h, r)
 	}
-	if !strings.Contains(body, `colspan="16"`) {
-		t.Error("最近调用空表的 colspan 没有跟着新增三列从 13 更新到 16")
+	if !strings.Contains(body, `colspan="17"`) {
+		t.Error("最近调用空表的 colspan 没有跟着新增列更新到 17")
 	}
 }
 

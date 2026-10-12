@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 )
 
@@ -35,6 +36,19 @@ func (c *healthyClient) Health() Health { return Health{Servable: true} }
 type liveClient struct{ plainClient }
 
 func (c *liveClient) ApplyLive(LiveSettings) {}
+
+type transcriptionClient struct {
+	plainClient
+	models []Model
+}
+
+func (c *transcriptionClient) TranscriptionModels(context.Context) []Model {
+	return c.models
+}
+
+func (c *transcriptionClient) Transcribe(context.Context, *TranscriptionRequest) (TranscriptionResult, error) {
+	return TranscriptionResult{}, nil
+}
 
 // checkinStub answers CheckinActions from a field so a test can model both
 // shapes a real module produces: an action on offer right now, and a module
@@ -141,6 +155,54 @@ func TestCapabilitiesOnANonOptedInModuleStayZero(t *testing.T) {
 	}
 	if got.Degrade || got.Batches || got.Health || got.Live {
 		t.Errorf("a bare Client reported an opt-in capability: %+v", got)
+	}
+}
+
+// TestCapabilitiesPublishTranscriptionCallInfo pins the data the account-pool
+// view needs to describe a module that has no accounts but still serves an
+// endpoint. The panel must learn both the capability and the routable model ids
+// from the module, rather than hard-coding one platform's name in JavaScript.
+func TestCapabilitiesPublishTranscriptionCallInfo(t *testing.T) {
+	plainRaw, err := json.Marshal(CapabilitiesOf(context.Background(), &plainClient{name: "plain"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var plain map[string]any
+	if err := json.Unmarshal(plainRaw, &plain); err != nil {
+		t.Fatal(err)
+	}
+	if plain["transcription"] == true {
+		t.Error("a bare Client advertised transcription")
+	}
+	if _, ok := plain["transcription_models"]; ok {
+		t.Error("a bare Client advertised transcription models")
+	}
+
+	raw, err := json.Marshal(CapabilitiesOf(context.Background(), &transcriptionClient{
+		plainClient: plainClient{name: "speech"},
+		models:      []Model{{ID: "whisper-1"}, {ID: "meeting-2"}},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Transcription       bool     `json:"transcription"`
+		TranscriptionModels []string `json:"transcription_models"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.Transcription {
+		t.Error("Transcription = false for a TranscriptionProvider")
+	}
+	want := []string{"whisper-1", "meeting-2"}
+	if len(got.TranscriptionModels) != len(want) {
+		t.Fatalf("TranscriptionModels = %v, want %v", got.TranscriptionModels, want)
+	}
+	for i := range want {
+		if got.TranscriptionModels[i] != want[i] {
+			t.Errorf("TranscriptionModels[%d] = %q, want %q", i, got.TranscriptionModels[i], want[i])
+		}
 	}
 }
 

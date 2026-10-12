@@ -1,10 +1,12 @@
 package gateway
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"testing"
 
 	"client2api/internal/core"
@@ -15,7 +17,7 @@ import (
 // succeeds elsewhere the recent list only showed the winning platform.  The
 // failed attempt must be visible without inflating the request totals.
 func TestFailedCandidateAppearsInRecentAttempts(t *testing.T) {
-	alpha := &testClient{name: "alpha", chatErr: core.Fail("alpha", "a1", core.FailureUpstream, http.StatusBadGateway, errors.New("boom"))}
+	alpha := &testClient{name: "alpha", chatErr: core.Fail("alpha", "a1", core.FailureRateLimited, http.StatusTooManyRequests, errors.New("quota exhausted"))}
 	beta := &testClient{name: "beta", events: usageEvents(1, 1)}
 	reg := core.NewRegistry()
 	reg.Add(alpha)
@@ -40,9 +42,11 @@ func TestFailedCandidateAppearsInRecentAttempts(t *testing.T) {
 
 	rows := usage.Snapshot()
 	var sawAlphaAttempt, sawBetaSuccess bool
+	var alphaAttempt UsageRecord
 	for _, row := range rows {
 		if row.Client == "alpha" && row.Failed && row.Attempt {
 			sawAlphaAttempt = true
+			alphaAttempt = row
 		}
 		if row.Client == "beta" && !row.Failed {
 			sawBetaSuccess = true
@@ -50,6 +54,16 @@ func TestFailedCandidateAppearsInRecentAttempts(t *testing.T) {
 	}
 	if !sawAlphaAttempt {
 		t.Fatalf("recent rows = %+v, want the failed alpha attempt", rows)
+	}
+	attemptJSON, err := json.Marshal(alphaAttempt)
+	if err != nil {
+		t.Fatalf("marshal failed attempt: %v", err)
+	}
+	if !strings.Contains(string(attemptJSON), `"failure_reason"`) {
+		t.Fatalf("failed attempt has no failure_reason: %s", attemptJSON)
+	}
+	if !strings.Contains(string(attemptJSON), "quota exhausted") {
+		t.Fatalf("failed attempt does not carry the upstream reason: %s", attemptJSON)
 	}
 	if !sawBetaSuccess {
 		t.Fatalf("recent rows = %+v, want the successful beta record", rows)

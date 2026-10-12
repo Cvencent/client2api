@@ -313,6 +313,14 @@ type Capabilities struct {
 	// renders the "接码" controls only for a module that opted in.
 	SMS bool `json:"sms"` // SMSProvider
 
+	// Transcription says the module implements TranscriptionProvider: it can
+	// serve OpenAI-compatible audio transcription in addition to chat.  The
+	// model ids are the module's own routable ids, without the gateway's
+	// platform prefix; the panel adds that prefix so copying one yields the
+	// exact value a caller passes to /v1/audio/transcriptions.
+	Transcription       bool     `json:"transcription"`
+	TranscriptionModels []string `json:"transcription_models,omitempty"`
+
 	// AutoLogin says the module implements AutoLoginProvider: it can run the
 	// whole vendor login itself in a browser it drives -- rent a number, fill
 	// the vendor's form, read the code the platform received, submit -- so the
@@ -642,6 +650,14 @@ func CapabilitiesOf(ctx context.Context, c Client) Capabilities {
 	}
 	if _, ok := c.(SMSProvider); ok {
 		caps.SMS = true
+	}
+	if tp, ok := c.(TranscriptionProvider); ok {
+		caps.Transcription = true
+		for _, m := range tp.TranscriptionModels(ctx) {
+			if m.ID != "" {
+				caps.TranscriptionModels = append(caps.TranscriptionModels, m.ID)
+			}
+		}
 	}
 	if _, ok := c.(AutoLoginProvider); ok {
 		caps.AutoLogin = true
