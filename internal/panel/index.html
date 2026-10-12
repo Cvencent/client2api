@@ -730,6 +730,7 @@ button.chip.on { background: var(--accent-soft); color: var(--accent); border-co
 .acc .c-bal .bar { display: block; height: 3px; margin-top: 4px; border-radius: 2px; background: var(--line-soft); overflow: hidden; }
 .acc .c-bal .bal-used { display: block; color: var(--ink-3); font-size: 10.5px; margin-top: 2px; }
 .acc .c-bal .bal-verify { display: block; color: var(--warn); font-size: 10.5px; margin-top: 1px; }
+.acc .c-bal .bal-line { display: block; color: var(--ink-3); font-size: 10.5px; margin-top: 2px; }
 .acc .c-bal .bar i { display: block; height: 100%; background: var(--ok); }
 body.hide-bal .c-bal { display: none; }
 /* 一个厂商账号一行，它下面缩进的是这个账号的各个登录通道。分组行稍微加重、通道行
@@ -2461,6 +2462,23 @@ details.cfg summary:hover, details.adv summary:hover { color: var(--accent-text)
           </div>
           <pre id="autoLog" class="auto-log" hidden></pre>
         </div>
+        <!-- 自己手机号登录：只有实现 core.PhoneCodeLoginProvider 的模块才有。
+             模块把验证码发到操作员自己的号码，操作员把收到的码填回来。 -->
+        <div id="addPhoneCode" class="sms-box" hidden>
+          <div class="row sms-head">
+            <span class="k">自己手机号登录</span>
+            <span id="phoneCodeStatus" class="hint" role="status" aria-live="polite"></span>
+          </div>
+          <div class="row">
+            <input id="phoneCodePhone" type="text" placeholder="11 位手机号（发验证码到这个号码）" style="flex:1" inputmode="numeric" autocomplete="off">
+            <button class="xs primary" id="btnPhoneCodeSend">发送验证码</button>
+          </div>
+          <div class="row" id="phoneCodeRow" hidden>
+            <input id="phoneCodeCode" type="text" placeholder="收到的验证码" style="flex:1" inputmode="numeric" autocomplete="one-time-code">
+            <button class="xs primary" id="btnPhoneCodeFinish">登录并添加</button>
+          </div>
+          <div id="phoneCodeHint" class="hint"></div>
+        </div>
         <!-- 接码：只有实现 core.SMSProvider 的模块才有。租号、取码、释放都在
              这里；浏览器登录那一步仍然由操作员在厂商页面完成（跨域页面脚本不了）。 -->
         <div id="addSms" class="sms-box" hidden>
@@ -2474,7 +2492,7 @@ details.cfg summary:hover, details.adv summary:hover { color: var(--accent-text)
             <button class="xs" id="btnSmsToken">设置 token</button>
           </div>
           <div id="smsTokenRow" class="row" hidden>
-            <input id="smsToken" type="password" placeholder="eomsg token（只存在本机浏览器）" style="flex:1">
+            <input id="smsToken" type="password" autocomplete="off" placeholder="eomsg token（只存在本机浏览器）" style="flex:1">
             <button class="xs primary" id="btnSmsTokenSave">保存</button>
           </div>
           <div id="smsProxyRow" class="row">
@@ -2641,7 +2659,7 @@ details.cfg summary:hover, details.adv summary:hover { color: var(--accent-text)
       <div class="hint">该网关已启用 api_key 鉴权，请输入配置里的密钥。</div>
     </header>
     <div class="body">
-      <input type="password" id="keyInput" placeholder="api key" style="width:100%">
+      <input type="password" id="keyInput" autocomplete="off" placeholder="api key" style="width:100%">
       <div id="keyErr" class="state err" hidden></div>
     </div>
     <footer>
@@ -3876,6 +3894,27 @@ function accBalanceCell(a) {
   const total = (Number(b.credits_total) || 0) * scale;
   const u = st.unit ? '<span class="u">' + esc(st.unit) + '</span>' : "";
   const used = Number(b.used) || 0;
+  const extraLines = (Array.isArray(b.lines) ? b.lines : []).map(line => {
+    const label = String((line && line.label) || "额度");
+    const lineUnit = String((line && line.unit) || "");
+    const usedPct = line && line.used_percent != null && Number.isFinite(Number(line.used_percent)) ? Number(line.used_percent) : null;
+    const remainPct = line && line.remaining_percent != null && Number.isFinite(Number(line.remaining_percent)) ? Number(line.remaining_percent) : null;
+    const amount = line && line.amount != null && Number.isFinite(Number(line.amount)) ? Number(line.amount) : null;
+    const lineTotal = line && line.total != null && Number.isFinite(Number(line.total)) ? Number(line.total) : null;
+    let text = label;
+    const tip = [label];
+    if (remainPct != null) {
+      text += " · 剩余 " + numf(remainPct) + "%";
+      tip.push("剩余 " + numf(remainPct) + "%");
+    } else if (amount != null) {
+      text += " · 剩余 " + numf(amount) + (lineUnit ? " " + lineUnit : "");
+      tip.push("剩余 " + numf(amount) + (lineUnit ? " " + lineUnit : ""));
+    }
+    if (usedPct != null) tip.push("已用 " + numf(usedPct) + "%");
+    if (lineTotal != null) tip.push("总量 " + numf(lineTotal) + (lineUnit ? " " + lineUnit : ""));
+    if (line && line.resets_at) tip.push("重置于 " + line.resets_at);
+    return '<span class="bal-line" title="' + esc(tip.join("，")) + '">' + esc(text) + '</span>';
+  }).join("");
   if (b.unlimited) {
     let tip = "无限额度";
     if (used > 0) tip += "，已用 " + numf(used);
@@ -3884,7 +3923,7 @@ function accBalanceCell(a) {
     tip += balFetchedTip(b.fetched_at);
     let html = '<span title="' + esc(tip) + '">无限' + u + '</span>';
     if (used > 0) html += '<span class="bal-used">已用 ' + numf(used) + '</span>';
-    return html;
+    return html + extraLines;
   }
   let tip = "剩余 " + numf(left) + (total > 0 ? " / 总量 " + numf(total) : "");
   if (used > 0) tip += "，已用 " + numf(used);
@@ -3901,7 +3940,7 @@ function accBalanceCell(a) {
     const pct = Math.max(0, Math.min(100, Math.round(left * 100 / total)));
     html += '<span class="bar"><i style="width:' + pct + '%"></i></span>';
   }
-  return html;
+  return html + extraLines;
 }
 
 // accGroupBalanceCell 在一条账号的多个通道里挑一个能看的余额。同一个账号的
@@ -4467,6 +4506,9 @@ function accRowHTML(a, caps, acts, showBal, chan, open, groupKey, group) {
         ? "用账号绑定的手机号，由接码平台自动收验证码并完成整个登录"
         : "租回账号绑定的手机号并自动取验证码，你在厂商页面确认登录";
       btns.push('<button class="xs primary" data-do="relogin" data-mode="' + phoneMode + '" data-id="' + esc(a.id) + '" title="' + phoneTitle + '">接码重登</button>');
+    }
+    if (phoneAcct && caps.phone_code) {
+      btns.push('<button class="xs" data-do="relogin" data-mode="phone-code" data-id="' + esc(a.id) + '" title="把验证码发到这个账号绑定的手机号，收到后手动填回面板完成登录">手机号重登</button>');
     }
   }
   // 余额走一次真实的厂商调用（POST 而不是 GET 就是为了说明这点），
@@ -7249,7 +7291,9 @@ function scRowHTML(r) {
   return '<tr class="scrow" data-client="' + esc(r.client) + '" data-batch="' + esc(r.batch) + '">' +
     '<td class="sc-c-task">' + esc(scLabel(r.batch)) + '<div class="hint">' + esc(r.batch) + (codes ? " · " + esc(codes) : "") + "</div></td>" +
     '<td class="sc-c-hours">' + hoursControl + '</td>' +
-    '<td class="sc-c-on"><input type="checkbox" class="scOn"' + (on ? " checked" : "") + "></td>" +
+    // 这颗开关只有 14px 见方，屏幕阅读器读不出它控制什么；aria-label 把它
+    // 接回本行的任务名，否则整列在无障碍树里是五个一模一样的匿名复选框。
+    '<td class="sc-c-on"><input type="checkbox" class="scOn" aria-label="' + esc("启用定时任务：" + scLabel(r.batch) + "（" + r.client + "）") + '"' + (on ? " checked" : "") + "></td>" +
     '<td class="sc-c-next">' + esc(next) + "</td>" +
     '<td class="sc-c-tag">' +
     (scOwned(scKey(r.client, r.batch), r) ? '<span class="chip scTag on">自定义</span>' : '<span class="scTagNone">—</span>') +
@@ -9125,6 +9169,7 @@ function openAdd() {
     if (k.manage) tags.push("手动");
     if (k.sms) tags.push("接码");
     if (k.auto_login) tags.push("自动");
+    if (k.phone_code) tags.push("手机号");
     return '<option value="' + esc(n) + '"' + (tags.length ? "" : " disabled") + '>' + esc(platformLabel(n)) + (tags.length ? " · " + tags.join("/") : " · 不支持") + '</option>';
   }).join("");
   setAddTab("login");
@@ -9159,7 +9204,8 @@ function syncAddMode() {
 }
 function closeAdd() {
   if (autoBusy()) { toast("自动添加运行中，请先点「停止」再关闭", "err"); return false; }
-  stopPoll(); stopSmsPoll(); stopAutoPoll(); releaseSms("", true); hideVeil($("#addVeil"));
+  stopPoll(); stopSmsPoll(); stopAutoPoll(); resetPhoneCode(); releaseSms("", true);
+  hideVeil($("#addVeil"));
   return true;
 }
 // renderAddRealms draws the realm picker for a module that serves more than one
@@ -9200,6 +9246,68 @@ function renderAddAuto(n) {
   const on = autoOn(n);
   $("#addAuto").hidden = !on;
   if (!on) { stopAutoPoll(); ADD.auto = null; setAutoBusy(false); }
+}
+/* ── 自己手机号登录（core.PhoneCodeLoginProvider）─────────────────
+   和接码平台无关：模块把验证码发到操作员自己的手机号，操作员把收到的
+   码填回来，模块再兑换成会话。发送和登录各一次请求，没有轮询。 */
+function phoneCodeOn(n) { return !!(capsOf(n || $("#addClient").value) || {}).phone_code; }
+function resetPhoneCode() {
+  ADD.phoneCode = null;
+  $("#phoneCodeRow").hidden = true;
+  $("#phoneCodeCode").value = "";
+  $("#phoneCodeHint").textContent = "";
+  $("#btnPhoneCodeSend").disabled = false; $("#btnPhoneCodeSend").textContent = "发送验证码";
+  $("#btnPhoneCodeFinish").disabled = false; $("#btnPhoneCodeFinish").textContent = "登录并添加";
+}
+function renderAddPhoneCode(n) {
+  const on = phoneCodeOn(n);
+  $("#addPhoneCode").hidden = !on;
+  if (!on) { resetPhoneCode(); return; }
+  $("#phoneCodeStatus").textContent = "把验证码发到你自己的号码，收到后填回来";
+  // 重登是钉住账号自己的号码：预填它，别的场景不保留上一次的输入。
+  if (ADD.mode === "restore" && ADD.restore && ADD.restore.phone) {
+    $("#phoneCodePhone").value = ADD.restore.phone;
+  } else {
+    $("#phoneCodePhone").value = "";
+  }
+  resetPhoneCode();
+}
+async function phoneCodeSend() {
+  const n = $("#addClient").value;
+  const phone = $("#phoneCodePhone").value.trim();
+  if (!/^1[3-9]\d{9}$/.test(phone)) { toast("先填 11 位手机号", "err"); return; }
+  const btn = $("#btnPhoneCodeSend");
+  btn.disabled = true; btn.textContent = "发送中…";
+  $("#phoneCodeHint").textContent = "";
+  const r = await api(cbase(n) + "/phone-code/start", { method: "POST", body: { phone } });
+  btn.disabled = false; btn.textContent = "发送验证码";
+  if (!r.ok) { $("#phoneCodeHint").textContent = "发送失败：" + r.err; toast("发送验证码失败：" + r.err, "err"); return; }
+  const d = r.data || {};
+  if (!d.id) { $("#phoneCodeHint").textContent = "模块没有返回验证码会话"; return; }
+  ADD.phoneCode = { id: d.id, phone };
+  $("#phoneCodeRow").hidden = false;
+  $("#phoneCodeCode").focus();
+  $("#phoneCodeStatus").textContent = "验证码已发送到 " + phone;
+  $("#phoneCodeHint").textContent = "把短信里的验证码填到下面。";
+}
+async function phoneCodeFinish() {
+  const n = $("#addClient").value;
+  const ch = ADD.phoneCode;
+  const code = $("#phoneCodeCode").value.trim();
+  if (!ch || !ch.id) { toast("先点「发送验证码」", "err"); return; }
+  if (!code) { toast("先填收到的验证码", "err"); return; }
+  const btn = $("#btnPhoneCodeFinish");
+  btn.disabled = true; btn.textContent = "登录中…";
+  const r = await api(cbase(n) + "/phone-code/finish", { method: "POST", body: { id: ch.id, code } });
+  btn.disabled = false; btn.textContent = "登录并添加";
+  if (!r.ok) { $("#phoneCodeHint").textContent = "登录失败：" + r.err; toast("登录失败：" + r.err, "err"); return; }
+  const rec = r.data || {};
+  resetPhoneCode();
+  await loginDone({
+    state: "success",
+    account_id: rec.id || "",
+    message: "手机号登录成功",
+  });
 }
 function stopAutoPoll() { if (ADD.autoTimer) { clearInterval(ADD.autoTimer); ADD.autoTimer = null; } }
 function autoBusy() { return !!ADD.autoBusy; }
@@ -9621,11 +9729,12 @@ function pickAddClient(n) {
   renderAddRealms(n);
   renderAddSms(n);
   renderAddAuto(n);
+  renderAddPhoneCode(n);
   renderOwnKey(n);
   renderQuickConnect(n);
   // 「浏览器登录」这一个 tab 其实是「不导入、不手填」的入口：浏览器登录、自动添加、
   // 接码三块都挂在它下面。任何一块存在，这个 tab 就得留着。
-  const canLoginTab = loginOn(n) || autoOn(n) || smsOn(n);
+  const canLoginTab = loginOn(n) || autoOn(n) || smsOn(n) || phoneCodeOn(n);
   // tab 的名字跟着模块变：没有浏览器登录、只有自动/接码的模块（loomy）叫「自动登录」
   // 才不会让人以为点下去会开一个厂商页面。
   const loginTab = $$("#addTabs .tab").find(x => x.dataset.tab === "login");
@@ -9633,7 +9742,7 @@ function pickAddClient(n) {
     // 三块都没有时（minimaxcode 这类只能导入/手填的模块）这个 tab 点开也是空的，
     // 直接藏掉；只留一个写着「接码」却没有任何内容的按钮只会让人白点一次。
     loginTab.hidden = !canLoginTab;
-    loginTab.textContent = loginOn(n) ? "浏览器登录" : (autoOn(n) ? "自动登录" : "接码");
+    loginTab.textContent = loginOn(n) ? "浏览器登录" : (autoOn(n) ? "自动登录" : (phoneCodeOn(n) ? "手机号登录" : "接码"));
   }
   // 没有声明任何手填字段、也没有一键连接目标时，手动添加页签本身就是空的：
   // 与其让操作员点进去看到一个空页，不如直接藏掉，只留下真正能完成添加的页签。
@@ -9742,18 +9851,20 @@ function openRelogin(n, id, mode) {
   if (!acc) { toast("找不到账号 " + id, "err"); return; }
   const phone = String(acc.operator_note || acc.label || "").trim();
   const phoneAcct = /^\d{6,15}$/.test(phone);
-  // 按钮自带模式：链接登录只走浏览器授权，接码重登优先走模块完整的自动登录。
-  // sms 只作为仅有 SMSProvider、没有 AutoLoginProvider 的模块回落。
+  // 按钮自带模式：链接登录只走浏览器授权，接码重登优先走模块完整的自动登录，
+  // phone-code 走操作员自己的手机号；sms 只作为仅有 SMSProvider 的回落。
   if (mode === "link" && loginOn(n)) return openBrowserRelogin(n, acc);
   if (mode === "auto" && phoneAcct && autoOn(n)) return openAutoRelogin(n, acc, phone);
   if (mode === "sms" && phoneAcct && smsOn(n) && !autoOn(n)) return openSMSRelogin(n, acc, phone);
+  if (mode === "phone-code" && phoneAcct && phoneCodeOn(n)) return openPhoneCodeRelogin(n, acc, phone);
   // 兼容旧调用（没有 mode）：优先完整自动登录，其次浏览器，最后才是面板接码。
   if (!mode) {
     if (autoOn(n) && phoneAcct) return openAutoRelogin(n, acc, phone);
     if (loginOn(n)) return openBrowserRelogin(n, acc);
     if (smsOn(n) && phoneAcct) return openSMSRelogin(n, acc, phone);
+    if (phoneCodeOn(n) && phoneAcct) return openPhoneCodeRelogin(n, acc, phone);
   }
-  toast(n + " 的账号既不能用接码重登，也没有浏览器登录，无法在面板里重新登录", "err");
+  toast(n + " 的账号不能自动重登，也没有浏览器登录，无法在面板里重新登录", "err");
 }
 
 // openReloginTarget 是所有重登共用的开场：打开弹层、锁定到该账号、把接下来要
@@ -9797,6 +9908,17 @@ async function openAutoRelogin(n, acc, phone) {
   $("#addRealm").hidden = true;
   resetAuto();
   await autoStart();
+}
+
+// 手机号重登：号码来自操作员记下的账号标识，验证码发到那部手机，由操作员
+// 手动填回。这里只预填并聚焦，不自动发送短信，避免点一下入口就消耗一条验证码。
+function openPhoneCodeRelogin(n, acc, phone) {
+  const restore = openReloginTarget(n, acc, "正在为「" + phone + "」重新登录：验证码会发到这个手机号，收到后填回面板。");
+  restore.phone = phone;
+  $("#phoneCodePhone").value = phone;
+  $("#phoneCodeHint").textContent = "";
+  $("#addRealm").hidden = true;
+  $("#phoneCodePhone").focus();
 }
 
 // 浏览器重登：为没有手机号可租的模块（cline 的设备码、codearts 的 OAuth 回调）
@@ -10853,6 +10975,9 @@ $("#ownKeyOthers").addEventListener("click", async ev => {
 $("#btnAutoStart").addEventListener("click", autoStart);
 $("#btnAutoStop").addEventListener("click", autoStop);
 $("#btnSmsGet").addEventListener("click", () => smsGet($("#smsPhone").value.trim()));
+$("#btnPhoneCodeSend").addEventListener("click", phoneCodeSend);
+$("#btnPhoneCodeFinish").addEventListener("click", phoneCodeFinish);
+$("#phoneCodeCode").addEventListener("keydown", (e) => { if (e.key === "Enter") phoneCodeFinish(); });
 $("#btnSmsQuery").addEventListener("click", smsQueryOnly);
 $("#btnSmsRelease").addEventListener("click", () => releaseSms("ok", false));
 $("#btnSmsCopyNum").addEventListener("click", () => { const p = ADD.sms && ADD.sms.phone; if (p) smsCopy(p, "号码"); });

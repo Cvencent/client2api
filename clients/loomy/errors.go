@@ -18,9 +18,16 @@ import (
 // Business codes.  Loomy answers HTTP 200 for business failures, so a code is
 // the only thing that distinguishes success from a refusal.
 const (
-	loomyOKCode         = "000000"
-	loomyAuthErrorCode  = "100002" // login invalid: the session is dead
-	loomyBadRequestCode = "100001"
+	loomyOKCode = "000000"
+	// loomyAuthErrorCode is the business gateway's "login invalid" code.
+	loomyAuthErrorCode = "100002"
+	// loomyAuthErrorCodeCAccount is the account service's own "login invalid"
+	// code.  The two hosts validate the same session with different
+	// vocabularies, and the vendor's desktop client treats either as a dead
+	// session (AUTH_ERROR_CODES = {'020002','100002'} in its account-service
+	// module), so this module must accept both.
+	loomyAuthErrorCodeCAccount = "020002"
+	loomyBadRequestCode        = "100001"
 )
 
 // envelope is the vendor's response wrapper.  The `/points/*` endpoints return
@@ -134,6 +141,7 @@ func (e *apiError) Error() string {
 // token is not even shaped like a session.
 func (e *apiError) sessionDead() bool {
 	return e.Code == loomyAuthErrorCode ||
+		e.Code == loomyAuthErrorCodeCAccount ||
 		e.Status == http.StatusUnauthorized ||
 		e.Status == http.StatusForbidden
 }

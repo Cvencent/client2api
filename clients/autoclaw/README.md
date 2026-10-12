@@ -6,6 +6,21 @@ AutoClaw 是一个独立平台，不是智谱、BigModel、ZCode 或 WorkBuddy �
 
 账号管理、本地导入、JSON 文件导入、手机号验证码登录、模型目录、余额与积分包、每日积分领取、会话粘性、健康与池统计、复活。
 
+## 余额
+
+主余额是资产网关返回的 `total_balance`，口径是积分；面板同时把每个
+`display=true` 的钱包列为一条余额明细，和桌面客户端「积分详情」里列出的
+钱包一致。也就是说，厂商返回了第二套钱包（例如名为 Token 的额度）时，它会
+作为单独一条显示，网关不会把它折算成积分，也不会在厂商没有返回时编出一个 0。
+
+积分来自 `GET /agent-assetmgr/api/v2/wallets?biz_app_id=autoclaw`，失败时回退
+`GET /agent-assetmgr/api/v1/wallet-instances?wallet_type=all&wallet_scope=all`；
+流水是只读的 `/agent-assetmgr/api/v1/ledgers_std`。截至当前安装版客户端，只有
+这一套钱包接口（另有会员信息 `/agentpay/v1/assistant/subscribe-info`，只返回
+是否会员/编码套餐），客户端里没有单独的 Token 余额接口或界面。活动页宣传的
+「送 Token」由服务端发放，是否作为一个钱包返回以接口为准；没有返回时本模块
+不会伪造 Token 余额。
+
 ## 协议
 
 - 基础头：X-Version / X-Tm / X-Product: autoclaw / X-Auth-Appid: 100003 / X-Auth-TimeStamp / X-Auth-Sign / X-Lang / X-Channel。

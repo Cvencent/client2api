@@ -9,6 +9,7 @@ import (
 	_ "client2api/clients/cline"
 	_ "client2api/clients/codearts"
 	_ "client2api/clients/doubao"
+	_ "client2api/clients/doubaoime"
 	_ "client2api/clients/kilocode"
 	_ "client2api/clients/kimi"
 	_ "client2api/clients/lobsterai"

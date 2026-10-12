@@ -178,7 +178,42 @@ func (c *Client) AccountBalance(ctx context.Context, id string, soon time.Durati
 			total += w.Balance
 		}
 	}
-	return core.Balance{Credits: total, Total: total, Unit: "积分"}, nil
+	bal := core.Balance{Credits: total, Total: total, Unit: "积分"}
+	bal.Lines = walletBalanceLines(snap.Wallets)
+	return bal, nil
+}
+
+// walletBalanceLines lists the vendor's displayable wallets beside the summed
+// credit total. AutoClaw's own credits detail renders exactly these wallets, so
+// the panel mirrors the client instead of collapsing everything into one
+// number: a non-credit wallet the vendor reports (for example a token grant)
+// shows up here on its own, and the gateway never invents a balance the vendor
+// did not send.
+func walletBalanceLines(wallets []walletLine) []core.BalanceLine {
+	if len(wallets) == 0 {
+		return nil
+	}
+	out := make([]core.BalanceLine, 0, len(wallets))
+	for _, w := range wallets {
+		amount := w.Balance
+		out = append(out, core.BalanceLine{
+			Label:  w.Name,
+			Unit:   walletUnit(w.Scope),
+			Amount: &amount,
+		})
+	}
+	return out
+}
+
+// walletUnit labels the wallet number only when the vendor's scope identifies
+// it as a credit pool; an unknown wallet (a token grant, say) keeps its own
+// display name and no invented unit.
+func walletUnit(scope string) string {
+	switch scope {
+	case "daily", "monthly", "long_term", "annual", "campaign":
+		return "积分"
+	}
+	return ""
 }
 
 // AccountPackages implements core.PackageProvider, exposing the credit pools

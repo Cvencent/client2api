@@ -140,12 +140,12 @@ func (c *Client) saveEndpointsLocked() error {
 		return err
 	}
 	blob = append(blob, '\n')
-	path := filepath.Join(dir, accountsFileName)
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, blob, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	// core.WriteFileAtomic gives this write its own temp name and renames it
+	// over the target.  The hand-rolled single fixed name (path+".tmp") was
+	// only safe while every caller happened to hold acctMu; should a second
+	// writer ever appear, two of them could interleave into one temp file and
+	// publish a half-written document.
+	return core.WriteFileAtomic(filepath.Join(dir, accountsFileName), blob)
 }
 
 // mutateEndpoints applies fn under the lock and persists only when fn reports a

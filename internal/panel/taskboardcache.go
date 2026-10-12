@@ -3,7 +3,6 @@ package panel
 import (
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -29,9 +28,12 @@ type taskBoardCacheFile struct {
 // uses it as a write-through read cache: a known account is rendered without
 // another vendor call, while a new account is fetched once and then remembered.
 type taskBoardCache struct {
-	mu      sync.Mutex
-	path    string
-	clients map[string]map[string]taskBoardCacheEntry
+	mu sync.Mutex
+	// persistMu serialises disk writes only, so a reader rendering the board
+	// never waits on a marshal plus a file create/write/rename.
+	persistMu sync.Mutex
+	path      string
+	clients   map[string]map[string]taskBoardCacheEntry
 }
 
 func newTaskBoardCache(path string) *taskBoardCache {
@@ -93,34 +95,62 @@ func (c *taskBoardCache) put(client, id string, tasks []core.TaskInfo, err error
 		e.Error = core.Redact(err.Error())
 	}
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	byID, ok := c.clients[client]
 	if !ok {
 		byID = map[string]taskBoardCacheEntry{}
 		c.clients[client] = byID
 	}
 	byID[id] = e
-	c.persistLocked()
+	c.mu.Unlock()
+
+	c.persist()
 }
 
-func (c *taskBoardCache) persistLocked() {
+// persist writes the cache to disk without holding c.mu.
+//
+// Two properties this has to keep, both of which the previous version lost:
+//
+//   - No reader blocks on I/O. The board renders straight from this cache, so
+//     holding the mutex across a MarshalIndent of the whole document plus a
+//     file rename stalled every panel read for the duration of the write.
+//   - The file on disk is always complete. The fixed temp name "path.tmp" let
+//     two concurrent writers interleave into one file and rename the result,
+//     publishing exactly the half-written document the rename exists to
+//     prevent. core.WriteFileAtomic gives each write its own temp name.
+//
+// The document is deep-copied under c.mu first: handing MarshalIndent the live
+// maps would only freeze the top-level pointers while it walks into them.
+func (c *taskBoardCache) persist() {
 	if c == nil || c.path == "" {
 		return
 	}
-	doc := taskBoardCacheFile{Version: 1, Clients: c.clients}
+	c.persistMu.Lock()
+	defer c.persistMu.Unlock()
+
+	c.mu.Lock()
+	doc := taskBoardCacheFile{Version: 1, Clients: copyTaskBoardClients(c.clients)}
+	c.mu.Unlock()
+
 	raw, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		return
 	}
-	dir := filepath.Dir(c.path)
-	if dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return
+	_ = core.WriteFileAtomic(c.path, append(raw, '\n'))
+}
+
+// copyTaskBoardClients clones the whole cache document.  It must be called with
+// c.mu held; the result is what the encoder walks without the lock.
+func copyTaskBoardClients(in map[string]map[string]taskBoardCacheEntry) map[string]map[string]taskBoardCacheEntry {
+	out := make(map[string]map[string]taskBoardCacheEntry, len(in))
+	for name, byID := range in {
+		cp := make(map[string]taskBoardCacheEntry, len(byID))
+		for id, e := range byID {
+			if len(e.Tasks) > 0 {
+				e.Tasks = append([]core.TaskInfo(nil), e.Tasks...)
+			}
+			cp[id] = e
 		}
+		out[name] = cp
 	}
-	tmp := c.path + ".tmp"
-	if err := os.WriteFile(tmp, append(raw, '\n'), 0o644); err != nil {
-		return
-	}
-	_ = os.Rename(tmp, c.path)
+	return out
 }

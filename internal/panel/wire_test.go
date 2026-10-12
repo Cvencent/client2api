@@ -36,6 +36,7 @@ func assertKeySet(t *testing.T, where string, m map[string]any, want ...string) 
 }
 
 func TestBalanceWireShape(t *testing.T) {
+	lineUsed, lineRemaining := 15.0, 85.0
 	full := quotaClient("wb", core.AccountRecord{ID: "a1", Label: "一号"})
 	full.balances["a1"] = core.Balance{
 		Credits:           1200,
@@ -44,6 +45,12 @@ func TestBalanceWireShape(t *testing.T) {
 		Expiring:          300,
 		EarliestAt:        time.Date(2026, 9, 15, 18, 30, 0, 0, time.UTC),
 		EarliestRemaining: 120,
+		Lines: []core.BalanceLine{{
+			Label:            "循环额度",
+			UsedPercent:      &lineUsed,
+			RemainingPercent: &lineRemaining,
+			ResetsAt:         "2026-10-14T20:20:26+08:00",
+		}},
 	}
 	p := taskPanel(t, full)
 	_, out := doTask(t, p, http.MethodPost, "/panel/api/clients/wb/accounts/a1/balance", "")
@@ -51,7 +58,7 @@ func TestBalanceWireShape(t *testing.T) {
 	// The reference answers ok/credits/credits_total; expiring/earliest_* are
 	// our additive buckets.  All three are read by the shell's toast.
 	assertKeySet(t, "balance", out,
-		"ok", "credits", "credits_total", "used", "expiring", "earliest_at", "earliest_remaining", "accounts")
+		"ok", "credits", "credits_total", "used", "expiring", "earliest_at", "earliest_remaining", "lines", "accounts")
 	numOf(t, out, "credits")
 	numOf(t, out, "credits_total")
 	numOf(t, out, "used")
@@ -62,6 +69,17 @@ func TestBalanceWireShape(t *testing.T) {
 	if _, ok := out["earliest_at"].(string); !ok {
 		t.Fatalf("earliest_at = %#v, want an RFC3339 string", out["earliest_at"])
 	}
+	lines, ok := out["lines"].([]any)
+	if !ok || len(lines) != 1 {
+		t.Fatalf("lines = %#v, want one additional balance line", out["lines"])
+	}
+	line, ok := lines[0].(map[string]any)
+	if !ok {
+		t.Fatalf("line = %#v, want an object", lines[0])
+	}
+	assertKeySet(t, "balance line", line, "label", "used_percent", "remaining_percent", "resets_at")
+	numOf(t, line, "used_percent")
+	numOf(t, line, "remaining_percent")
 
 	// The minimal answer: a module that reports neither bucket must not send
 	// keys the shell would render as an empty "expiring" line.
@@ -99,6 +117,7 @@ func TestBalanceWireShapeReportsUnverified(t *testing.T) {
 }
 
 func TestBalanceWireShapeCarriesDisplayScale(t *testing.T) {
+	lineUsed := 15.0
 	c := quotaClient("relay", core.AccountRecord{ID: "a1"})
 	c.balances["a1"] = core.Balance{
 		Credits: 5_000_000,
@@ -106,6 +125,10 @@ func TestBalanceWireShapeCarriesDisplayScale(t *testing.T) {
 		Total:   6_000_000,
 		Scale:   1.0 / 500000.0,
 		Unit:    "USD",
+		Lines: []core.BalanceLine{{
+			Label:       "循环额度",
+			UsedPercent: &lineUsed,
+		}},
 	}
 	p := taskPanel(t, c)
 	_, out := doTask(t, p, http.MethodPost, "/panel/api/clients/relay/accounts/a1/balance", "")
@@ -119,6 +142,9 @@ func TestBalanceWireShapeCarriesDisplayScale(t *testing.T) {
 	row := rowsOf(t, list["accounts"])[0]
 	if row["scale"] != float64(1.0/500000.0) {
 		t.Fatalf("balance-row scale = %#v, want 1/500000", row["scale"])
+	}
+	if lines, ok := row["lines"].([]any); !ok || len(lines) != 1 {
+		t.Fatalf("balance-row lines = %#v, want the line to survive the cached list", row["lines"])
 	}
 }
 

@@ -1,0 +1,10 @@
+{
+  "register_url": "https://log.snssdk.com/service/2/device_register/",
+  "settings_url": "https://is.snssdk.com/service/settings/v3/",
+  "websocket_url": "wss://frontier-audio-ime-ws.doubao.com/ocean/api/v1/ws",
+  "ffmpeg_path": "ffmpeg",
+  "request_timeout": "8s",
+  "start_timeout": "8s",
+  "result_timeout": "30s",
+  "total_timeout": "55s"
+}

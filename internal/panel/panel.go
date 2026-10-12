@@ -468,6 +468,9 @@ func (p *panel) handleClientList(w http.ResponseWriter, r *http.Request) {
 //	GET    <base>/auto-login/<id>         read one run's progress
 //	DELETE <base>/auto-login/<id>         stop a run
 //
+//	POST   <base>/phone-code/start      text a code to the operator's own phone
+//	POST   <base>/phone-code/finish     redeem that code and store the account
+//
 //	POST   <base>/accounts/<id>/checkin   {"action":"…","captcha_param":"…","captcha_region":"…"} (all optional)
 //
 //	GET    <base>/captcha                 ?action=<id> (optional)
@@ -655,6 +658,15 @@ func (p *panel) handleClientScoped(w http.ResponseWriter, r *http.Request) {
 
 	case len(segs) == 2 && segs[0] == "auto-login":
 		p.autoLoginByID(w, r, client, segs[1])
+
+	// The operator-driven phone-code login: the module texts a code to a
+	// number the operator owns and they type it back.  A module that never
+	// opted in answers 501 from the handler.
+	case len(segs) == 2 && segs[0] == "phone-code" && segs[1] == "start":
+		p.phoneCodeStart(w, r, client)
+
+	case len(segs) == 2 && segs[0] == "phone-code" && segs[1] == "finish":
+		p.phoneCodeFinish(w, r, client)
 
 	case len(segs) == 1 && segs[0] == "tasks":
 		p.taskList(w, r, client)

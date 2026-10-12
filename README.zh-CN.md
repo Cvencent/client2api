@@ -25,6 +25,7 @@ client2api 是一个**个人自用**的 OpenAI 兼容网关。它把你自己在
 
 - 聚合你自己拥有的账号和 Key，而不是提供一个公共账号池。
 - 用一个入站 API Key 统一调用 `POST /v1/chat/completions` 和 `POST /v1/responses`。
+- 为带语音能力的平台提供 `POST /v1/audio/transcriptions`：上传 WAV 即返回 `{"text": "..."}`。
 - 在平台、账号、模型别名、`Auto/<模型>` 和模型路由组之间统一调度。
 - 平台支持会话粘性时，同一会话会尽量落在同一个账号上。
 - 统一处理账号优先级、冷却、并发限制、重试和故障切换。
@@ -53,6 +54,7 @@ client2api 是一个**个人自用**的 OpenAI 兼容网关。它把你自己在
 | `opencode/...` | OpenCode Zen | OpenCode Zen |
 | `kilocode/...` | Kilo Code | Kilo AI Gateway |
 | `doubao/...` | Doubao | 字节跳动 豆包（桌面客户端 / 网页） |
+| `doubaoime/...` | Doubao IME | 豆包输入法在线语音转写（仅转写） |
 | `openai-compat/...` | onmiRoute | 旧兼容来源 |
 | `<source-id>/...` | 自定义中转站 | 自己添加的任意 OpenAI 兼容平台 |
 
@@ -61,6 +63,8 @@ client2api 是一个**个人自用**的 OpenAI 兼容网关。它把你自己在
 ### 网关与路由
 
 - OpenAI 兼容的 `POST /v1/chat/completions` 和 `POST /v1/responses`。
+- OpenAI 兼容的 `POST /v1/audio/transcriptions`（multipart 的 `file` + `model`）；
+  `GET /v1/models` 会把语音平台的模型一并列出并标记 `extra.kind = "transcription"`。
 - `GET /v1/models`、`GET /v1/status`、`GET /healthz`。
 - 所有平台共用一个入站 API Key，面板可选本地鉴权。
 - 支持 `平台/模型`、裸模型名、别名和 `Auto/<模型>` 聚合路由。

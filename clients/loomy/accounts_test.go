@@ -527,6 +527,49 @@ func TestTestAccountPassesWhenReasoningConsumedTheProbeBudget(t *testing.T) {
 	}
 }
 
+func TestTestAccountClearsAStaleLocalExpiryAfterARealModelReply(t *testing.T) {
+	// The expiry Loomy stores is a local estimate, not a server value.  A real
+	// model reply after that timestamp proves the estimate was wrong; the panel
+	// must stop showing the account as abnormal and the cleared date must survive
+	// a restart.
+	body := "data: {\"choices\":[{\"delta\":{\"content\":\"pong\"}}]}\n\ndata: [DONE]\n\n"
+	c := newTestClient(t, "{}", alwaysSSE(body))
+	dir := c.deps.DataDir
+	seedAccount(t, c, "loomy-1", testToken, time.Now().Add(-time.Hour).UnixMilli())
+
+	result, err := c.TestAccount(context.Background(), "loomy-1")
+	if err != nil {
+		t.Fatalf("TestAccount: %v", err)
+	}
+	if !result.OK {
+		t.Fatalf("OK = false: %+v", result)
+	}
+
+	acc, ok := c.store.lookup("loomy-1")
+	if !ok {
+		t.Fatal("account disappeared")
+	}
+	if acc.ExpiresAtMS != 0 {
+		t.Fatalf("ExpiresAtMS = %d, want the disproved local expiry cleared", acc.ExpiresAtMS)
+	}
+	records, err := c.Accounts(context.Background())
+	if err != nil {
+		t.Fatalf("Accounts: %v", err)
+	}
+	if len(records) != 1 || records[0].State != "ready" || records[0].ExpiresAt != "" {
+		t.Fatalf("record = %+v, want a ready account with expiry unknown", records)
+	}
+
+	reloaded := newTestClientInDir(t, dir, "{}", alwaysSSE(body))
+	reloadedAcc, ok := reloaded.store.lookup("loomy-1")
+	if !ok {
+		t.Fatal("account disappeared after reload")
+	}
+	if reloadedAcc.ExpiresAtMS != 0 {
+		t.Fatalf("reloaded ExpiresAtMS = %d, want the cleared expiry persisted", reloadedAcc.ExpiresAtMS)
+	}
+}
+
 func TestTestAccountStillFailsOnATrulyEmptyProbe(t *testing.T) {
 	body := "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n" +
 		"data: [DONE]\n\n"

@@ -2,6 +2,8 @@ package doubao
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,10 +12,22 @@ import (
 	"client2api/internal/core"
 )
 
-// TestBalanceParsesCreditsReply pins the credit -> Balance mapping.
-func TestBalanceParsesCreditsReply(t *testing.T) {
+// TestBalancePostsCreditProbeAndParsesTotalCredit pins the current vendor
+// contract: the credit endpoint rejects GET, expects {"need_tasks":false}, and
+// reports the spendable amount as data.credit_info.total_credit_num.
+func TestBalancePostsCreditProbeAndParsesTotalCredit(t *testing.T) {
+	var gotMethod, gotPath string
+	var gotBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"data":{"credit_num":120,"credit_total":200,"credit_usage_num":80}}`))
+		if r.URL.Path != pathCreditNum {
+			http.NotFound(w, r)
+			return
+		}
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &gotBody)
+		_, _ = w.Write([]byte(`{"data":{"credit_info":{"total_credit_num":120,"credit_text":"积分","credit_desc_text":"积分可用于视频生成等功能"}}}`))
 	}))
 	defer srv.Close()
 	c := newWebClient(t, srv.URL)
@@ -23,17 +37,110 @@ func TestBalanceParsesCreditsReply(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AccountBalance: %v", err)
 	}
+	if gotMethod != http.MethodPost {
+		t.Fatalf("method = %q, want POST", gotMethod)
+	}
+	if gotPath != pathCreditNum {
+		t.Fatalf("path = %q, want %q", gotPath, pathCreditNum)
+	}
+	if gotBody["need_tasks"] != false {
+		t.Fatalf("body = %#v, want need_tasks=false", gotBody)
+	}
 	if b.Credits != 120 {
 		t.Fatalf("Credits = %d, want 120", b.Credits)
 	}
-	if b.Total != 200 {
-		t.Fatalf("Total = %d, want 200", b.Total)
+	if b.Unit != "积分" {
+		t.Fatalf("Unit = %q, want 积分", b.Unit)
 	}
-	if b.Used != 80 {
-		t.Fatalf("Used = %v, want 80", b.Used)
+}
+
+// TestBalanceAddsTheMembershipQuotaLine keeps the credit balance as the
+// primary number while surfacing the membership window the desktop client
+// shows underneath it. The vendor reports percentages, so the gateway must
+// relay the percentage and reset time rather than inventing an absolute quota.
+func TestBalanceAddsTheMembershipQuotaLine(t *testing.T) {
+	const summaryPath = "/alice/commerce/sale/subscription/quota/summary/"
+	var summaryHits int
+	var summaryBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case pathCreditNum:
+			_, _ = w.Write([]byte(`{"data":{"credit_info":{"total_credit_num":120,"credit_text":"积分"}}}`))
+		case summaryPath:
+			summaryHits++
+			raw, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(raw, &summaryBody)
+			_, _ = w.Write([]byte(`{"data":{"window_limit_section":{"window_limit_groups":[{"window_limits":[{"window_type":1,"used_percent":0,"start_time":0,"end_time":0},{"window_type":2,"used_percent":15,"start_time":1791337226660,"end_time":1791942026660}]}]}}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	c := newWebClient(t, srv.URL)
+	_, _ = c.store.add(&account{ID: "a1", Cookie: "sessionid=abc", Enabled: true})
+
+	b, err := c.AccountBalance(context.Background(), "a1", 0)
+	if err != nil {
+		t.Fatalf("AccountBalance: %v", err)
 	}
-	if b.Unit == "" {
-		t.Fatalf("Unit is empty; the panel would show a bare number")
+	if b.Credits != 120 || b.Unit != "积分" {
+		t.Fatalf("primary balance = %+v, want 120 积分", b)
+	}
+	if summaryHits != 1 {
+		t.Fatalf("quota summary hits = %d, want 1", summaryHits)
+	}
+	if summaryBody["product_line"] != "membership" {
+		t.Fatalf("quota summary body = %#v, want product_line=membership", summaryBody)
+	}
+	if len(b.Lines) != 1 {
+		t.Fatalf("balance lines = %+v, want one membership line", b.Lines)
+	}
+	line := b.Lines[0]
+	if line.Label != "循环额度" {
+		t.Fatalf("line label = %q, want 循环额度", line.Label)
+	}
+	if line.UsedPercent == nil || *line.UsedPercent != 15 {
+		t.Fatalf("used percent = %v, want 15", line.UsedPercent)
+	}
+	if line.RemainingPercent == nil || *line.RemainingPercent != 85 {
+		t.Fatalf("remaining percent = %v, want 85", line.RemainingPercent)
+	}
+	wantReset := time.UnixMilli(1791942026660).In(time.FixedZone("UTC+8", 8*60*60)).Format(time.RFC3339)
+	if line.ResetsAt != wantReset {
+		t.Fatalf("resets at = %q, want %q", line.ResetsAt, wantReset)
+	}
+}
+
+// TestBalanceAddsFixedAndRollingMembershipLines pins the two package meters the
+// desktop client can show: a fixed package balance and a rolling usage window.
+// Each valid vendor window becomes its own line.
+func TestBalanceAddsFixedAndRollingMembershipLines(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case pathCreditNum:
+			_, _ = w.Write([]byte(`{"data":{"credit_info":{"total_credit_num":120,"credit_text":"积分"}}}`))
+		case pathSubscriptionQuotaSummary:
+			_, _ = w.Write([]byte(`{"data":{"window_limit_section":{"window_limit_groups":[{"window_limits":[{"window_type":1,"used_percent":40,"start_time":0,"end_time":0},{"window_type":2,"used_percent":15,"start_time":1791337226660,"end_time":1791942026660}]}]}}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	c := newWebClient(t, srv.URL)
+	_, _ = c.store.add(&account{ID: "a1", Cookie: "sessionid=abc", Enabled: true})
+
+	b, err := c.AccountBalance(context.Background(), "a1", 0)
+	if err != nil {
+		t.Fatalf("AccountBalance: %v", err)
+	}
+	if len(b.Lines) != 2 {
+		t.Fatalf("balance lines = %+v, want fixed and rolling lines", b.Lines)
+	}
+	if b.Lines[0].Label != "固定额度" || b.Lines[0].UsedPercent == nil || *b.Lines[0].UsedPercent != 40 {
+		t.Fatalf("fixed line = %+v, want 40%% used", b.Lines[0])
+	}
+	if b.Lines[1].Label != "循环额度" || b.Lines[1].RemainingPercent == nil || *b.Lines[1].RemainingPercent != 85 {
+		t.Fatalf("rolling line = %+v, want 85%% remaining", b.Lines[1])
 	}
 }
 

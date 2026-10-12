@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -34,18 +33,19 @@ const (
 const DefaultBalanceCacheFileName = "panel/balance_cache.json"
 
 type balanceEntry struct {
-	Credits           int64   `json:"credits"`
-	Used              float64 `json:"used,omitempty"`
-	Total             int64   `json:"credits_total"`
-	Scale             float64 `json:"scale,omitempty"`
-	Unverified        bool    `json:"unverified,omitempty"`
-	Unlimited         bool    `json:"unlimited,omitempty"`
-	Expiring          int64   `json:"expiring,omitempty"`
-	EarliestAt        string  `json:"earliest_at,omitempty"`
-	EarliestRemaining int64   `json:"earliest_remaining,omitempty"`
-	Unit              string  `json:"unit,omitempty"`
-	FetchedAt         int64   `json:"fetched_at"`
-	Error             string  `json:"error,omitempty"`
+	Credits           int64         `json:"credits"`
+	Used              float64       `json:"used,omitempty"`
+	Total             int64         `json:"credits_total"`
+	Scale             float64       `json:"scale,omitempty"`
+	Unverified        bool          `json:"unverified,omitempty"`
+	Unlimited         bool          `json:"unlimited,omitempty"`
+	Expiring          int64         `json:"expiring,omitempty"`
+	EarliestAt        string        `json:"earliest_at,omitempty"`
+	EarliestRemaining int64         `json:"earliest_remaining,omitempty"`
+	Unit              string        `json:"unit,omitempty"`
+	Lines             []balanceLine `json:"lines,omitempty"`
+	FetchedAt         int64         `json:"fetched_at"`
+	Error             string        `json:"error,omitempty"`
 }
 
 type balanceCacheFile struct {
@@ -91,7 +91,11 @@ type balanceClientRefresh struct {
 }
 
 type balanceCache struct {
-	mu        sync.Mutex
+	mu sync.Mutex
+	// persistMu serialises disk writes only.  It is held across the marshal
+	// and the file write, never by a reader, so the account page keeps
+	// rendering from memory while a refresh is being saved.
+	persistMu sync.Mutex
 	all       balanceProvider
 	soon      func() time.Duration
 	path      string
@@ -136,26 +140,63 @@ func (c *balanceCache) load() {
 	c.clients = doc.Clients
 }
 
-func (c *balanceCache) persistLocked() {
+// persist writes the cache to disk.
+//
+// It is called without c.mu held.  Every reader of this cache -- entry,
+// snapshot, statusForClient, and the account page's own render -- takes c.mu,
+// so marshalling the whole document and writing it while the lock was held
+// turned each vendor round trip into a stall for all of them: one account
+// refresh held the lock across a MarshalIndent of the entire cache plus a file
+// create, write and rename.
+//
+// Serializing the writers against each other is still required, but that is
+// persistMu's job, not c.mu's: a reader never waits on I/O, and a second
+// writer waits only for the first write to finish.
+func (c *balanceCache) persist() {
 	if c == nil || c.path == "" {
 		return
 	}
-	doc := balanceCacheFile{Version: 1, Clients: c.clients}
+	c.persistMu.Lock()
+	defer c.persistMu.Unlock()
+
+	// Deep-copy the document under c.mu and marshal the COPY outside it.
+	// Handing MarshalIndent the live map is not enough: taking the reference
+	// under the lock only freezes the top-level pointer, and the marshaller
+	// then walks into the per-client maps while another writer is inserting
+	// into them. Only an owned copy is safe to encode.
+	c.mu.Lock()
+	doc := balanceCacheFile{Version: 1, Clients: copyBalanceClients(c.clients)}
+	c.mu.Unlock()
+
 	raw, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		return
 	}
-	dir := filepath.Dir(c.path)
-	if dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return
+	// core.WriteFileAtomic gives every write its own temp name and renames it
+	// over the target.  The hand-rolled version used to write the single fixed
+	// name path+".tmp", which two concurrent writers could interleave into --
+	// publishing exactly the half-written document the rename exists to
+	// prevent.
+	_ = core.WriteFileAtomic(c.path, append(raw, '\n'))
+}
+
+// copyBalanceClients clones the whole cache document.  It must be called with
+// c.mu held, and the result is what a writer encodes without the lock.
+func copyBalanceClients(in map[string]map[string]balanceEntry) map[string]map[string]balanceEntry {
+	out := make(map[string]map[string]balanceEntry, len(in))
+	for name, byID := range in {
+		cp := make(map[string]balanceEntry, len(byID))
+		for id, e := range byID {
+			// Lines is a slice: copy it too, or a later append by the owner
+			// would still be visible to the encoder.
+			if len(e.Lines) > 0 {
+				e.Lines = append([]balanceLine(nil), e.Lines...)
+			}
+			cp[id] = e
 		}
+		out[name] = cp
 	}
-	tmp := c.path + ".tmp"
-	if err := os.WriteFile(tmp, append(raw, '\n'), 0o644); err != nil {
-		return
-	}
-	_ = os.Rename(tmp, c.path)
+	return out
 }
 
 func (c *balanceCache) entry(client, id string) (balanceEntry, bool) {
@@ -184,6 +225,7 @@ func (c *balanceCache) put(client, id string, bal core.Balance) {
 		EarliestAt:        formatEarliestAt(bal.EarliestAt),
 		EarliestRemaining: bal.EarliestRemaining,
 		Unit:              bal.Unit,
+		Lines:             balanceLinesFromCore(bal.Lines),
 		FetchedAt:         time.Now().UnixMilli(),
 	})
 }
@@ -200,14 +242,16 @@ func (c *balanceCache) putEntry(client, id string, e balanceEntry) {
 		return
 	}
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	byID, ok := c.clients[client]
 	if !ok {
 		byID = map[string]balanceEntry{}
 		c.clients[client] = byID
 	}
 	byID[id] = e
-	c.persistLocked()
+	c.mu.Unlock()
+
+	// Persist outside c.mu so the write never blocks a concurrent read.
+	c.persist()
 }
 
 func formatEarliestAt(t time.Time) string {
@@ -224,6 +268,12 @@ type refreshTarget struct {
 	state   string
 	enabled bool
 	fetched time.Time
+	// mod is the module resolved once when the target list was built.  A pass
+	// used to call clientByName per account, and each of those called
+	// Registry.All(), which allocates a fresh slice -- so one pass cost
+	// O(accounts x modules) allocations.  Resolving it here, once per module,
+	// removes that entirely; the name is kept alongside it for logging.
+	mod core.Client
 }
 
 // statusForClient returns the current progress for one client. It is safe to
@@ -449,12 +499,36 @@ func (c *balanceCache) runRefresh(ctx context.Context, client string, targets []
 }
 
 func (c *balanceCache) backgroundProbeAllowed(ctx context.Context, tgt refreshTarget) bool {
+	cand := tgt.mod
+	if cand == nil {
+		// A target built before this field existed (or a caller that hand-made
+		// one) still resolves by name.
+		cand = c.clientByName(tgt.client)
+	}
+	if cand == nil {
+		return false
+	}
+	return core.BackgroundProbeAllowed(ctx, cand, tgt.id)
+}
+
+// clientByName resolves one module by name.
+//
+// This is now only the fallback for a target that carries no resolved module
+// (a hand-made target, or one built before mod was populated).  The hot path --
+// a real refresh pass -- resolves each module once while it builds the target
+// list and rides along on refreshTarget.mod, because the registry hands out a
+// freshly allocated slice from every All() and scanning it per account made a
+// pass cost O(accounts x modules) allocations.
+func (c *balanceCache) clientByName(name string) core.Client {
+	if c == nil || c.all == nil {
+		return nil
+	}
 	for _, cand := range c.all.All() {
-		if cand.Name() == tgt.client {
-			return core.BackgroundProbeAllowed(ctx, cand, tgt.id)
+		if cand.Name() == name {
+			return cand
 		}
 	}
-	return false
+	return nil
 }
 
 func (c *balanceCache) noteRefreshResult(client string, revived bool, err error) {
@@ -515,19 +589,24 @@ func (c *balanceCache) targetsForClient(client string, limit int) []refreshTarge
 		if err != nil {
 			continue
 		}
+		// One snapshot per module instead of one lock round trip per account:
+		// a pool with a few hundred credentials took a few hundred mutex
+		// acquisitions here, and nothing else could read the cache meanwhile.
+		name := cand.Name()
+		known := c.snapshot(name)
 		for _, rec := range recs {
-			e, known := c.entry(cand.Name(), rec.ID)
 			fetched := time.Time{}
-			if known && e.FetchedAt > 0 {
+			if e, ok := known[rec.ID]; ok && e.FetchedAt > 0 {
 				fetched = time.UnixMilli(e.FetchedAt)
 			}
 			out = append(out, refreshTarget{
-				client:  cand.Name(),
+				client:  name,
 				id:      rec.ID,
 				label:   rec.Label,
 				state:   rec.State,
 				enabled: rec.Enabled,
 				fetched: fetched,
+				mod:     cand,
 			})
 		}
 	}
@@ -556,12 +635,9 @@ func withoutRecoverableTargets(in []refreshTarget) []refreshTarget {
 }
 
 func (c *balanceCache) refreshOne(ctx context.Context, tgt refreshTarget, policy revivePolicy) (bool, error) {
-	var client core.Client
-	for _, cand := range c.all.All() {
-		if cand.Name() == tgt.client {
-			client = cand
-			break
-		}
+	client := tgt.mod
+	if client == nil {
+		client = c.clientByName(tgt.client)
 	}
 	if client == nil {
 		return false, nil

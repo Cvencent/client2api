@@ -8,6 +8,49 @@
 
 ## [Unreleased]
 
+## [0.1.45] - 2026-10-12
+
+### Added
+
+- **新增平台 doubaoime（豆包输入法）与语音转写接口**：网关新增 OpenAI 兼容的
+  `POST /v1/audio/transcriptions`，并且新增独立平台模块 `clients/doubaoime`，把豆包输入法
+  （Android）的私有在线语音识别协议接进来：上传 WAV（16 kHz 单声道 PCM，非该格式会在
+  模块内重采样/混音），模块用 FFmpeg 编出 20 ms Ogg Opus 帧，走豆包输入法的设备注册、
+  设置/app_key 与 ASR WebSocket 私有协议，返回 `{"text": "..."}`。它需要 FFmpeg（配置
+  `ffmpeg_path`、`PATH` 或与 exe 同目录的 `ffmpeg.exe`），首次请求自动注册设备，凭据落在
+  `data/doubaoime/doubao_credentials.json`。
+- 核心新增可选能力 `core.TranscriptionProvider`：转写模型与对话目录**分离**——它们不进
+  `Client.Models()`、`Auto/<模型>` 聚合或对话号池，而是由 `GET /v1/models` 单独列出并标记
+  `extra.kind = "transcription"`。协议细节与风险见 `docs/upstream/doubaoime.md`。
+
+### Fixed
+
+- **手机号验证码登录可能被重复兑换**（Loomy）：FinishPhoneCodeLogin 原先在调用厂商
+  之前只读取 challenge、兑换成功后才删除它。两个并发的兑换请求会同时看到这条还在的
+  challenge，于是把同一个一次性验证码花两次：厂商只认第一次，失败的一方只拿到一句
+  费解的厂商报错，最坏情况还会多写一条账号。现在改成在锁内「先占住再调厂商」：把
+  challenge 标记为 in-flight 后才发起兑换，并发进来的第二个调用者会得到「该验证码正在
+  校验中」，因此一次性验证码不可能被花两次。厂商拒绝（验证码输错）时释放这个标记并保留
+  challenge，运营者可以直接重输正确验证码而不用再发一条短信；只有兑换成功才把 challenge
+  删除。
+- **余额 / 任务看板缓存的写入会卡住读取**（面板）：两个缓存此前在持有读锁的状态下
+  把整份文档 MarshalIndent 并落盘，于是每一次上游余额回写都让账号页的读取排队等
+  文件写。现在改为：锁内做一份文档深拷贝，编码和写盘都在锁外进行，写入之间用单独的
+  persistMu 串行化。账号页读缓存时不再等磁盘。
+- **缓存文件可能被写成半截**（面板 / tabbit / trae）：这些写盘路径都用固定的
+  xxx.tmp 临时文件名。两个写入者会交错写进同一个临时文件，再把它改名成正式文件，
+  正好是这次改名想避免的半截文档。现在统一走 core.WriteFileAtomic，每次写入用独立
+  临时名，并发读写另有回归测试钉住（go test -race）。
+
+### Changed
+
+- 定时任务页每行的「启用」开关补上 ria-label（含任务名与平台名）。它只有 14px
+  见方、没有可见标签，之前在无障碍树里是一串匿名复选框，屏幕阅读器只报「复选框」。
+- 面板模块（余额、任务看板）查找客户端时每账号做一次 Registry.All()（每次都新建
+  切片）改为在构建刷新目标时按模块解析一次，并把结果挂在每个 refreshTarget 上，
+  一轮刷新不再按账号重复解析；余额刷新目标的构建改为每个模块取一次缓存快照，而不是
+  每个账号加一次锁。
+
 ## [0.1.44] - 2026-10-11
 
 ### Fixed

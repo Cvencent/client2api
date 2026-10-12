@@ -117,11 +117,10 @@ func (s *accountStore) save(dir string) error {
 	if err != nil {
 		return err
 	}
-	tmp := filepath.Join(dir, accountsFileName+".tmp")
-	if err := os.WriteFile(tmp, append(buf, '\n'), 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, filepath.Join(dir, accountsFileName))
+	// core.WriteFileAtomic gives this write its own temp name and renames it
+	// over the target, so a crash can never leave a half-written accounts.json
+	// behind and two writers can never interleave into one temp file.
+	return core.WriteFileAtomic(filepath.Join(dir, accountsFileName), append(buf, '\n'))
 }
 
 // index returns the position of id, or -1.

@@ -219,3 +219,66 @@ try {
 		t.Fatalf("compact balance hid the exact amount from the tooltip: %s", got.HTML)
 	}
 }
+
+func TestBalancesUIRendersAdditionalMeters(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not on PATH; the additional-meter renderer needs it")
+	}
+	body := poolStatsFuncBody(t, string(indexHTML), "balDisplayNum") + "\n}\n" +
+		poolStatsFuncBody(t, string(indexHTML), "accBalanceCell") + "\n}"
+	blockJSON, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prog := `const fs = require("fs");
+const out = process.argv[2];
+try {
+  const body = ` + string(blockJSON) + `;
+  const CUR = "doubao";
+  const BALS = { doubao: { unit: "积分", byID: { a1: { id: "a1", credits: 120, credits_total: 0, fetched_at: Date.now(), lines: [{ label: "循环额度", used_percent: 15, remaining_percent: 85, resets_at: "2026-10-14T20:20:26+08:00" }] } } } };
+  const esc = s => String(s == null ? "" : s);
+  const numf = n => Number(n).toLocaleString("en-US");
+  const balFetchedTip = () => "";
+  const fn = new Function("CUR", "BALS", "esc", "numf", "balFetchedTip", body + "\nreturn accBalanceCell;")(CUR, BALS, esc, numf, balFetchedTip);
+  const html = fn({ id: "a1" });
+  fs.writeFileSync(out, JSON.stringify({ ok: true, html }));
+} catch (e) {
+  fs.writeFileSync(out, JSON.stringify({ ok: false, error: String((e && e.message) || e) }));
+}
+`
+	dir := t.TempDir()
+	script := filepath.Join(dir, "balance-lines.js")
+	result := filepath.Join(dir, "balance-lines.json")
+	if err := os.WriteFile(script, []byte(prog), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command(node, script, result).Run(); err != nil {
+		t.Fatalf("node could not run accBalanceCell: %v", err)
+	}
+	raw, err := os.ReadFile(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+		HTML  string `json:"html"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("decoding node result: %v\n%s", err, raw)
+	}
+	if !got.OK {
+		t.Fatalf("accBalanceCell threw: %s", got.Error)
+	}
+	for _, want := range []string{
+		"循环额度",
+		"剩余 85%",
+		"已用 15%",
+		"2026-10-14T20:20:26+08:00",
+	} {
+		if !strings.Contains(got.HTML, want) {
+			t.Fatalf("additional meter rendering lost %q: %s", want, got.HTML)
+		}
+	}
+}

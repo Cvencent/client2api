@@ -34,15 +34,16 @@ func TestReloginButtonIsWiredToTheCapabilityMatrix(t *testing.T) {
 		"if (needsRelogin(a)) {",
 		"if (caps.login) {",
 		`if (phoneAcct && (caps.auto_login || caps.sms)) {`,
+		"if (phoneAcct && caps.phone_code) {",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("accRowHTML 少了这一句能力判断：%s", want)
 		}
 	}
 
-	// 两个入口都挂 data-do="relogin"，但用 data-mode 明确区分手动和接码。
-	if n := strings.Count(body, `data-do="relogin"`); n != 2 {
-		t.Errorf("accRowHTML 里 data-do=\"relogin\" 出现 %d 次，want 2（链接 + 接码）", n)
+	// 三个入口都挂 data-do="relogin"，但用 data-mode 明确区分链接、接码和手机号。
+	if n := strings.Count(body, `data-do="relogin"`); n != 3 {
+		t.Errorf("accRowHTML 里 data-do=\"relogin\" 出现 %d 次，want 3（链接 + 接码 + 手机号）", n)
 	}
 	for _, want := range []string{
 		`data-mode="link"`,
@@ -50,6 +51,7 @@ func TestReloginButtonIsWiredToTheCapabilityMatrix(t *testing.T) {
 		`data-mode="' + phoneMode + '"`,
 		">链接重登</button>",
 		">接码重登</button>",
+		">手机号重登</button>",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("accRowHTML 少了这一条重登入口：%s", want)
@@ -112,7 +114,10 @@ func TestReloginDispatchesAndBailsOut(t *testing.T) {
 	if !strings.Contains(body, `if (mode === "sms" && phoneAcct && smsOn(n) && !autoOn(n)) return openSMSRelogin(n, acc, phone);`) {
 		t.Errorf("openRelogin 不再保留仅有 SMSProvider 时的面板接码回落")
 	}
-	if !strings.Contains(body, `toast(n + " 的账号既不能用接码重登，也没有浏览器登录，无法在面板里重新登录", "err")`) {
+	if !strings.Contains(body, `if (mode === "phone-code" && phoneAcct && phoneCodeOn(n)) return openPhoneCodeRelogin(n, acc, phone);`) {
+		t.Errorf("openRelogin 不再把手机号重登交给手动验证码流程")
+	}
+	if !strings.Contains(body, `toast(n + " 的账号不能自动重登，也没有浏览器登录，无法在面板里重新登录", "err")`) {
 		t.Errorf("openRelogin 在两条路都不通时既不报错也不返回")
 	}
 	if !strings.Contains(src, `function loginOn(n) { return !!(capsOf(n || $("#addClient").value) || {}).login; }`) {
@@ -328,13 +333,13 @@ func TestTabbitBrowserCookieCanBeReimportedFromImportTab(t *testing.T) {
 func TestAddDialogTabFollowsCapabilities(t *testing.T) {
 	body := poolStatsFuncBody(t, reloginSource(t), "pickAddClient")
 
-	if !strings.Contains(body, `const canLoginTab = loginOn(n) || autoOn(n) || smsOn(n);`) {
+	if !strings.Contains(body, `const canLoginTab = loginOn(n) || autoOn(n) || smsOn(n) || phoneCodeOn(n);`) {
 		t.Errorf("pickAddClient 不再把自动添加/接码算进「登录」tab 的存在条件")
 	}
 	if !strings.Contains(body, `loginTab.hidden = !canLoginTab;`) {
 		t.Errorf("pickAddClient 不再按能力隐藏「登录」tab")
 	}
-	if !strings.Contains(body, `loginTab.textContent = loginOn(n) ? "浏览器登录" : (autoOn(n) ? "自动登录" : "接码");`) {
+	if !strings.Contains(body, `loginTab.textContent = loginOn(n) ? "浏览器登录" : (autoOn(n) ? "自动登录" : (phoneCodeOn(n) ? "手机号登录" : "接码"));`) {
 		t.Errorf("pickAddClient 不再按能力给「登录」tab 改名")
 	}
 	if !strings.Contains(body, `const canManualTab = k.manage && (((k.fields || []).length > 0) || qcTargets(n).length > 0);`) {

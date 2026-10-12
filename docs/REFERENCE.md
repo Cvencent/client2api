@@ -5,7 +5,7 @@
 > Reference documentation for client2api.
 > For the project introduction and feature overview, see [README.md](../README.md).
 
-One OpenAI-compatible gateway in front of seventeen AI backends:
+One OpenAI-compatible gateway in front of nineteen AI backends:
 
 | route | client | what it wraps |
 |---|---|---|
@@ -25,12 +25,26 @@ One OpenAI-compatible gateway in front of seventeen AI backends:
 | `openrouter/…` | OpenRouter | OpenRouter (openrouter.ai) — multi-vendor router whose ids contain a slash; free models only by default (`free_only`) |
 | `opencode/…` | OpenCode Zen | OpenCode Zen (opencode.ai) — one OpenAI-shaped façade in front of Anthropic-, Google- and OpenAI-native models |
 | `kilocode/…` | Kilo Code | Kilo AI Gateway (api.kilo.ai) — OpenRouter-shaped multi-vendor router; free models served anonymously, keys optional |
+| `doubao/…` | Doubao | ByteDance Doubao desktop client / web app |
+| `doubaoime/…` | Doubao IME | Doubao Input Method (豆包输入法) online speech-to-text — transcription only, not chat |
 | `openai-compat/…` | onmiRoute | Legacy compatible sources and the local OmniRoute bridge; existing `openai-compat/<provider>/<model>` routes remain valid |
 | `<source-id>/…` | Custom relay | Hot-defined OpenAI-compatible platforms, each with its own API root, API-key pool, model scan and routing policies |
 
 Everything is served from **one** HTTP surface — `POST /v1/chat/completions`,
-`POST /v1/responses`, `GET /v1/models`, `GET /v1/status`, `GET /healthz`, plus a
-web panel at `/panel/`.
+`POST /v1/responses`, `POST /v1/audio/transcriptions`, `GET /v1/models`,
+`GET /v1/status`, `GET /healthz`, plus a web panel at `/panel/`.
+
+## Speech transcription
+
+`POST /v1/audio/transcriptions` accepts an OpenAI-style multipart upload
+(`file` plus `model`, optional `language` and `response_format=json`) and returns
+`{"text": "..."}`. A platform opts in by implementing `core.TranscriptionProvider`
+(`TranscriptionModels` and `Transcribe`); the only such module today is
+`doubaoime`. Transcription models are kept **out** of `Client.Models()` and the
+chat routing catalogue, then listed by `GET /v1/models` with
+`extra.kind = "transcription"` so a client can discover them without entering
+the chat pool. Errors map to 400 (bad upload or WAV), 422 (no speech), 502
+(upstream/protocol) and 504 (timeout).
 
 ## Custom Relay Platforms
 
@@ -989,6 +1003,7 @@ configuration), and the panel says so instead of implying a Redis mirror.
 | openrouter | public REST API, no upstream code read | see `clients/openrouter/README.md` |
 | opencode | public REST API; the gateway's own server source is open and was read | see `clients/opencode/README.md` |
 | openai-compat | public REST API, no upstream code read | see `clients/openaicompat/README.md` |
+| doubaoime | **clean-room** — Doubao Input Method ASR protocol reconstructed from observed traffic, no upstream code | see `clients/doubaoime/README.md` |
 
 Provenance matters here: `zcode` and `qwenwork` are written from observed
 protocol behaviour only, and `tabbit` never links GPL code. Each module's README

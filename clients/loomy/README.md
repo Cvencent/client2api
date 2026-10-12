@@ -47,6 +47,28 @@ honestly rather than pretending otherwise:
 **The operator must re-import a fresh token roughly every 14 days.** There is no
 way around this from inside the module.
 
+### The one mitigation there is: a scheduled heartbeat
+
+Because there is no refresh endpoint, the most the module can do is make sure a
+live session is never left completely idle. `keepalive.go` declares a
+`keepalive` batch that reproduces the one session-carrying call the vendor's own
+desktop client makes on the account service -- `getUserInfo`
+(`POST {account_base}/userinfo/query/baseInfo`, signed with the product
+AccessKey and carrying the session in `param.session`) -- once per account per
+keepalive slot (default 22:00 CST, editable in the task centre).
+
+It is deliberately the **account** service, not the business host: the shared
+balance sweep already hits `GET /points/records` every few minutes and sessions
+still lapsed, so a business ping proves nothing about the session's lifetime.
+
+This is a best effort, not a renewal. If the lifetime slides on use, the
+heartbeat keeps an idle session warm; if the vendor enforces an absolute expiry
+(or kills the session when the same account logs in somewhere else), the
+heartbeat changes nothing and the next `100002`/`020002` still parks the
+account. What it always buys is an early, honest answer: a dead session is
+discovered on the heartbeat's schedule rather than on the operator's next
+request, and the panel says "log in again".
+
 ---
 
 ## Where credentials come from
@@ -97,6 +119,20 @@ batch loop sends back every number it has already tried in this run as
 platform's repeats straight back, so one failed number cannot make the batch
 spin on itself.  A re-login pins the account's own number, which is asked for
 explicitly and so is never filtered by that list.
+
+### Signing in with your own phone number
+
+`core.PhoneCodeLoginProvider` is the second, operator-driven half of the same
+HTTP exchange. The operator types the phone number they own, the panel calls
+`sendMsgCode`, the vendor texts that handset, and the operator types the code
+back; `checkCode` is then redeemed and stored exactly as in the auto flow.
+
+This is deliberately not `core.SMSProvider`: the one-time-SMS platform cannot
+read a code sent to the operator's own handset, and `core.AutoLoginProvider`
+has no place for a human to type that code mid-run. The pending challenge is
+kept in memory for five minutes and never persisted. A re-login can prefill the
+account's recorded number, but the panel does not send the SMS until the
+operator presses the button.
 
 The **WeChat** login path is deliberately **not** implemented: its QR-code flow
 lives in a reference file that could not be fetched, so it could not be
@@ -358,16 +394,17 @@ stream request with a plain envelope, and a silent empty stream would be worse.
 Implemented optional interfaces: **`core.AccountManager`**, **`core.Reviver`**,
 **`core.ModelRefresher`**, **`core.BalanceProvider`**, **`core.PackageProvider`**,
 **`core.CheckinProvider`**, **`core.ModelLimitsProvider`**, **`core.TaskProvider`**,
-**`core.BatchPlanner`**, **`core.SMSProvider`**, **`core.AutoLoginProvider`**.
+**`core.BatchPlanner`**, **`core.SMSProvider`**, **`core.AutoLoginProvider`**, **`core.PhoneCodeLoginProvider`**.
 
 It also implements **`core.BackgroundProbeGate`** so shared background
 sweeps respect the per-account quiet window above without slowing down an
 operator's explicit action.
 
-`Batches()` exposes the onboarding registry as the **`growth`** batch with
-`PendingOnly` and a 10-second task gap (8-12 seconds after the scheduler's
-±20% jitter) between chores on the same account, so the vendor does not see
-an unnatural burst. The batch still runs one account at a time.
+`Batches()` declares two batches: **`keepalive`** (the session heartbeat above,
+one call per account per slot) and **`growth`** (the onboarding registry,
+`PendingOnly`, with a 10-second task gap -- 8-12 seconds after the scheduler's
+±20% jitter -- between chores on the same account, so the vendor does not see an
+unnatural burst). Both still run one account at a time.
 
 `client_test.go` asserts the ones it claims *and* the ones it must not
 (`LoginProvider`, `CredentialImporter`, `BundleImporter`), so a future change that
@@ -447,6 +484,8 @@ below, because that difference caught a bug the stubs could not.
 | `login_test.go` | the SMS two-step flow, with the stub **recomputing the signature from the bytes it actually received** |
 | `quota_test.go` | balance, packages and the daily allowance, including the empty-ledger and already-claimed paths |
 | `onboarding_test.go` | the first-login task board: the vendor's own registry, flags and prices, a chore the registry does not know, cache-vs-failed-read, `RunTask` posting the key the vendor client posts, a repeat reported as a success that awarded nothing, an unknown code refused without a call, no account, an unknown id, and a dead session parking the account |
+| `keepalive_test.go` | the scheduled session heartbeat: it posts the session to the account service (not the business host), a `100002`/`020002` answer parks the account, a transport hiccup does not cool it, and a parked account is skipped without a call |
+| `phonecode_test.go` | the operator-owned phone flow: the vendor texts the submitted number, the code is redeemed against the challenge's message id and stored, a malformed number spends no SMS, and unknown or expired challenges are refused |
 | `models_test.go` | the multiplier/display-name rules, both remote catalogue shapes, `isChat`, the fallback table and `ResolveModelID` |
 | `envelope_test.go` | the live code-less `/models` envelope: a code-less payload is a success, a failed envelope is still a failure, a non-JSON body is still rejected |
 | `cancel_test.go` | a cancelled caller must not park the account or burn the other candidates, while the module's *own* timeout still cools it down |

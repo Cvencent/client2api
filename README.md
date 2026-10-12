@@ -26,6 +26,8 @@ people. The built-in default is `127.0.0.1`.
 
 - Aggregates your own accounts across supported platforms into one account pool.
 - Serves `POST /v1/chat/completions` and `POST /v1/responses` with one inbound API Key.
+- Serves `POST /v1/audio/transcriptions` for platforms that expose speech, so a
+  WAV upload comes back as `{"text": "..."}`.
 - Routes by platform, account, model, alias, `Auto/<model>` or custom model groups.
 - Keeps one conversation on the same account where the platform supports sticky sessions.
 - Handles account priority, cooldown, concurrency limits, retries and failover.
@@ -55,6 +57,7 @@ people. The built-in default is `127.0.0.1`.
 | `opencode/...` | OpenCode Zen | OpenCode Zen |
 | `kilocode/...` | Kilo Code | Kilo AI Gateway |
 | `doubao/...` | Doubao | ByteDance Doubao desktop client / web app |
+| `doubaoime/...` | Doubao IME | Doubao Input Method (豆包输入法) online speech-to-text (transcription only) |
 | `openai-compat/...` | onmiRoute | Legacy compatible sources |
 | `<source-id>/...` | Custom relay | Any OpenAI-compatible platform you add |
 
@@ -63,6 +66,8 @@ people. The built-in default is `127.0.0.1`.
 ### Gateway and routing
 
 - OpenAI-compatible `POST /v1/chat/completions` and `POST /v1/responses`.
+- OpenAI-compatible `POST /v1/audio/transcriptions` (multipart `file` + `model`)
+  for speech platforms; `GET /v1/models` lists their models with `extra.kind = "transcription"`.
 - `GET /v1/models`, `GET /v1/status` and `GET /healthz`.
 - One inbound API Key for every platform, with optional local panel authentication.
 - Explicit `platform/model` routes, bare model names, aliases and `Auto/<model>` aggregation.

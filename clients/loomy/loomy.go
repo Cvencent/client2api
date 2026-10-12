@@ -91,6 +91,12 @@ type Client struct {
 	autoMu sync.Mutex
 	autos  map[string]*autoJob
 
+	// phoneChallenges is the in-memory table behind the operator-driven
+	// phone-code login (phonecode.go).  Entries expire with the vendor's own
+	// SMS code and are never persisted.
+	phoneMu         sync.Mutex
+	phoneChallenges map[string]*phoneChallenge
+
 	// affinity pins a conversation to the account that first served it, so a
 	// multi-turn conversation keeps the same vendor session instead of walking
 	// the LRU pool one account per turn. See affinity.go.

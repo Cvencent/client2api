@@ -105,12 +105,13 @@ type menuConfV2 struct {
 // menuModeItem is one mode in the v2 mode list.  A mode owns its own model
 // list when use_mode_model_list is set.
 type menuModeItem struct {
-	ModeID       string          `json:"mode_id"`
-	AgentMode    json.RawMessage `json:"agent_mode"`
-	Name         string          `json:"name"`
-	SelectedName string          `json:"selected_name"`
-	DefaultMode  bool            `json:"default_mode"`
-	ModelList    struct {
+	ModeID        string          `json:"mode_id"`
+	AgentMode     json.RawMessage `json:"agent_mode"`
+	Name          string          `json:"name"`
+	SelectedName  string          `json:"selected_name"`
+	DefaultMode   bool            `json:"default_mode"`
+	SupportModels []menuItem      `json:"support_models"`
+	ModelList     struct {
 		ItemList []menuItem `json:"item_list"`
 	} `json:"model_list"`
 }
@@ -166,31 +167,36 @@ func (c *Client) setAccountMenu(accountID string, m clientMenu) {
 }
 
 // pullAccountMenu asks the account for the client's model menu and parses it.
-// The current client prefers the v2 menu on action_bar_v3/brief_list; when the
-// account has not rolled into it (use_menu_conf_v2 is false) the v1
-// action_bar_menu_config on user/setting/get is the one the client renders.
-// Both are tried so a vendor rollout in either direction keeps working.
+// The current client prefers the v2 menu on action_bar_v3/brief_list. When that
+// endpoint explicitly enables use_menu_conf_v2, it is the sole menu source:
+// the client does not merge the legacy action_bar_menu_config. Only an account
+// that has not rolled into v2 uses the v1 menu on user/setting/get.
 func (c *Client) pullAccountMenu(ctx context.Context, acc *account) (clientMenu, error) {
 	ctx, cancel := context.WithTimeout(ctx, menuFetchTimeout)
 	defer cancel()
 
-	if routes := c.pullV2Menu(ctx, acc); len(routes) > 0 {
-		return newClientMenu(routes), nil
+	v2, useV2 := c.pullV2Menu(ctx, acc)
+	if useV2 {
+		if len(v2) == 0 {
+			return clientMenu{}, fmt.Errorf("doubao: v2 is enabled but the account returned an empty client model menu")
+		}
+		return newClientMenu(v2), nil
 	}
-	routes, err := c.pullV1Menu(ctx, acc)
+	v1, err := c.pullV1Menu(ctx, acc)
 	if err != nil {
 		return clientMenu{}, err
 	}
-	if len(routes) == 0 {
+	if len(v1) == 0 {
 		return clientMenu{}, fmt.Errorf("doubao: the account returned no client model menu")
 	}
-	return newClientMenu(routes), nil
+	return newClientMenu(v1), nil
 }
 
 // pullV2Menu reads action_bar_v3/brief_list and extracts the v2 menu when the
-// account has one.  A missing or switched-off menu is not an error: it simply
-// yields no routes so the caller falls back to v1.
-func (c *Client) pullV2Menu(ctx context.Context, acc *account) []modelRoute {
+// account has one. A missing or switched-off menu is not an error: enabled is
+// false so the caller falls back to v1. An enabled menu is authoritative even
+// when it parses to no routes.
+func (c *Client) pullV2Menu(ctx context.Context, acc *account) ([]modelRoute, bool) {
 	var out struct {
 		Data actionBarBrief `json:"data"`
 	}
@@ -198,17 +204,15 @@ func (c *Client) pullV2Menu(ctx context.Context, acc *account) []modelRoute {
 		"language_code": "zh",
 		"bot_id":        c.chatBotID(),
 	}, &out); err != nil {
-		return nil
+		return nil, false
 	}
 	for _, entry := range out.Data.EntryList {
 		if !entry.ActiveSwitchConf.UseMenuConfV2 {
 			continue
 		}
-		if routes := routesFromMenuConfV2(entry.ActiveSwitchConf.MenuConfV2); len(routes) > 0 {
-			return routes
-		}
+		return routesFromMenuConfV2(entry.ActiveSwitchConf.MenuConfV2), true
 	}
-	return nil
+	return nil, false
 }
 
 // pullV1Menu reads the v1 action_bar_menu_config.
@@ -231,37 +235,96 @@ func newClientMenu(routes []modelRoute) clientMenu {
 	return clientMenu{routes: routes, byKey: indexRoutes(routes), fetchedAt: time.Now()}
 }
 
-// routesFromMenuConfV2 flattens a v2 menu.  When use_mode_model_list is set each
-// mode owns its model list and the mode id is the routing mode; otherwise the
-// flat model_list is the menu.
+// routesFromMenuConfV2 flattens a v2 menu using the same branches as the
+// desktop client. When use_mode_model_list is true each mode owns its model
+// list, with the flat list used only for a mode that has no list of its own.
+// Otherwise the flat list is the candidate set and support_models assigns each
+// model to every mode that can route it.
 func routesFromMenuConfV2(cfg menuConfV2) []modelRoute {
 	var routes []modelRoute
 	seen := map[string]bool{}
-	add := func(route modelRoute) {
-		if route.Key == "" || seen[route.Key] {
-			return
+	addItems := func(modeID string, items []menuItem) {
+		for _, item := range items {
+			if modeID != "" {
+				item.ModeID = modeID
+			}
+			route, ok := routeFromItem(item, v2ModelKey)
+			if !ok {
+				continue
+			}
+			key := strings.ToLower(routeID(route))
+			if key == "" || seen[key] {
+				continue
+			}
+			seen[key] = true
+			routes = append(routes, route)
 		}
-		seen[route.Key] = true
-		routes = append(routes, route)
 	}
 	if cfg.UseModeModelList {
-		for _, mode := range cfg.ModeList.ItemList {
-			for _, item := range mode.ModelList.ItemList {
-				if item.ModeID == "" {
-					item.ModeID = mode.ModeID
-				}
-				if r, ok := routeFromItem(item); ok {
-					add(r)
-				}
-			}
+		if len(cfg.ModeList.ItemList) == 0 {
+			addItems("", cfg.ModelList.ItemList)
+			return routes
 		}
+		for _, mode := range cfg.ModeList.ItemList {
+			items := mode.ModelList.ItemList
+			if len(items) == 0 {
+				items = cfg.ModelList.ItemList
+			}
+			addItems(mode.ModeID, items)
+		}
+		return routes
+	}
+
+	if len(cfg.ModeList.ItemList) == 0 {
+		addItems("", cfg.ModelList.ItemList)
+		return routes
 	}
 	for _, item := range cfg.ModelList.ItemList {
-		if r, ok := routeFromItem(item); ok {
-			add(r)
+		assigned := false
+		modelKey := v2ModelKey(item)
+		for _, mode := range cfg.ModeList.ItemList {
+			if !modeSupportsModel(mode, modelKey) {
+				continue
+			}
+			assigned = true
+			addItems(mode.ModeID, []menuItem{item})
+		}
+		if !assigned {
+			addItems(firstNonEmpty(item.ModeID, item.DefaultMode), []menuItem{item})
 		}
 	}
 	return routes
+}
+
+// v2ModelKey mirrors the desktop client's v2 model lookup key: model_item_key
+// then item_id. The v2 selection code never consults menu_type, so an item that
+// carries both menu_type and item_id routes as its item_id.
+func v2ModelKey(item menuItem) string {
+	if key := strings.TrimSpace(item.ModelItemKey); key != "" {
+		return key
+	}
+	return rawScalar(item.ItemID)
+}
+
+// v1ModelKey mirrors the desktop client's legacy model lookup key:
+// model_item_key then menu_type then item_id.
+func v1ModelKey(item menuItem) string {
+	if key := strings.TrimSpace(item.ModelItemKey); key != "" {
+		return key
+	}
+	return firstNonEmpty(rawScalar(item.MenuType), rawScalar(item.ItemID))
+}
+
+func modeSupportsModel(mode menuModeItem, modelKey string) bool {
+	if modelKey == "" {
+		return false
+	}
+	for _, supported := range mode.SupportModels {
+		if v2ModelKey(supported) == modelKey {
+			return true
+		}
+	}
+	return false
 }
 
 // parseClientMenu turns the vendor menu JSON into routing entries.  It accepts
@@ -295,7 +358,7 @@ func parseClientMenu(raw json.RawMessage) ([]modelRoute, error) {
 	routes := make([]modelRoute, 0, len(candidates))
 	seen := map[string]bool{}
 	for _, item := range candidates {
-		route, ok := routeFromItem(item)
+		route, ok := routeFromItem(item, v1ModelKey)
 		if !ok || seen[route.Key] {
 			continue
 		}
@@ -308,13 +371,11 @@ func parseClientMenu(raw json.RawMessage) ([]modelRoute, error) {
 // routeFromItem builds one routing entry.  A v2 menu item carries mode_id and
 // model_item_key outright.  A v1 menu item is a *mode* -- it carries only
 // menu_type -- so its mode id is the module default and its model item key is
-// that menu_type, which is what the client's own router falls back to.
-func routeFromItem(item menuItem) (modelRoute, bool) {
-	model := strings.TrimSpace(item.ModelItemKey)
+// that menu_type, which is what the client's own router falls back to. The key
+// function selects the v1 or v2 lookup rule.
+func routeFromItem(item menuItem, key func(menuItem) string) (modelRoute, bool) {
+	model := key(item)
 	mode := strings.TrimSpace(item.ModeID)
-	if model == "" {
-		model = firstNonEmpty(rawScalar(item.MenuType), rawScalar(item.ItemID))
-	}
 	if model == "" && mode == "" {
 		return modelRoute{}, false
 	}
@@ -337,7 +398,7 @@ func routeFromItem(item menuItem) (modelRoute, bool) {
 	if route.ModelItemKey == "" {
 		route.ModelItemKey = defaultModelItemKey
 	}
-	route.ReplyMode = firstNonEmpty(route.ModelItemKey, route.ModeID)
+	route.ReplyMode = legacyReplyMode(route.ModeID, route.ModelItemKey)
 	if item.ReasoningEffortConf != nil {
 		route.ReasoningEffort = rawScalar(item.ReasoningEffortConf.DefaultLevel)
 	}
@@ -346,6 +407,15 @@ func routeFromItem(item menuItem) (modelRoute, bool) {
 	route.SupportsThinking = item.ReasoningEffortConf != nil ||
 		rawScalar(item.AgentMode) != "" || rawScalar(item.MenuType) != ""
 	return route, true
+}
+
+// legacyReplyMode is the client's compatibility mapping for the old
+// modeSelectValue field: mode 2 / model 4 is sent as reply_mode 3.
+func legacyReplyMode(mode, model string) string {
+	if mode == "2" && model == "4" {
+		return "3"
+	}
+	return firstNonEmpty(model, mode)
 }
 
 func indexRoutes(routes []modelRoute) map[string]modelRoute {

@@ -110,6 +110,7 @@ func NewServer(opts Options) *http.Server {
 	mux.HandleFunc("/v1/models", s.auth(s.handleModels))
 	mux.HandleFunc("/v1/chat/completions", s.auth(s.handleChat))
 	mux.HandleFunc("/v1/responses", s.auth(s.handleResponses))
+	mux.HandleFunc("/v1/audio/transcriptions", s.auth(s.handleTranscriptions))
 	mux.HandleFunc("/v1/status", s.auth(s.handleStatus))
 	mux.HandleFunc("/v1/", s.auth(s.handleNotFound))
 	if opts.Panel != nil {
@@ -356,6 +357,36 @@ func (s *server) handleModels(w http.ResponseWriter, r *http.Request) {
 				ContextLength:   meta.ContextLength,
 				MaxOutputTokens: meta.MaxOutputTokens,
 				Extra:           extra,
+			})
+		}
+	}
+	for _, c := range s.opts.Registry.All() {
+		p, ok := c.(core.TranscriptionProvider)
+		if !ok {
+			continue
+		}
+		for _, m := range p.TranscriptionModels(ctx) {
+			id := c.Name() + "/" + m.ID
+			if _, dup := seen[id]; dup {
+				continue
+			}
+			extra := map[string]any{"kind": "transcription"}
+			for k, v := range m.Extra {
+				if _, exists := extra[k]; !exists {
+					extra[k] = v
+				}
+			}
+			owned := m.OwnedBy
+			if owned == "" {
+				owned = c.Name()
+			}
+			seen[id] = struct{}{}
+			out.Data = append(out.Data, modelEntry{
+				ID:      id,
+				Object:  "model",
+				Created: created,
+				OwnedBy: owned,
+				Extra:   extra,
 			})
 		}
 	}

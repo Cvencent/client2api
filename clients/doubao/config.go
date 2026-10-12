@@ -62,6 +62,12 @@ const (
 	pathConversationUpdate = "/alice/conversation/update"
 	pathCreditNum          = "/commerce/benefit_supply/credit/get_credit_num_optional_tasks"
 	pathCreditUsage        = "/commerce/benefit_supply/credit/get_credit_usage_history"
+	// The membership quota endpoints expose the rolling usage window shown in
+	// the desktop client under the credit balance. The summary response is the
+	// smallest payload; overview is a compatibility fallback with the same
+	// window_limit_section shape.
+	pathSubscriptionQuotaSummary = "/alice/commerce/sale/subscription/quota/summary/"
+	pathSubscriptionOverview     = "/alice/commerce/sale/subscription/overview/"
 )
 
 // Defaults for every tuning knob.

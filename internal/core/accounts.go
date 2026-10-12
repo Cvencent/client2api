@@ -320,6 +320,12 @@ type Capabilities struct {
 	// flow.  It is separate from SMS on purpose: SMSProvider alone only means
 	// "this module can rent a number", which the panel drives by hand.
 	AutoLogin bool `json:"auto_login"` // AutoLoginProvider
+
+	// PhoneCode says the module implements PhoneCodeLoginProvider: the operator
+	// can sign in with a phone number they already own by typing the SMS code the
+	// vendor sends to it.  It is separate from SMS and AutoLogin on purpose:
+	// neither of those can carry a code the operator read on their own handset.
+	PhoneCode bool `json:"phone_code"` // PhoneCodeLoginProvider
 }
 
 // AccountManager lets a module expose its credential store to the panel.
@@ -639,6 +645,9 @@ func CapabilitiesOf(ctx context.Context, c Client) Capabilities {
 	}
 	if _, ok := c.(AutoLoginProvider); ok {
 		caps.AutoLogin = true
+	}
+	if _, ok := c.(PhoneCodeLoginProvider); ok {
+		caps.PhoneCode = true
 	}
 	if _, ok := c.(TaskProvider); ok {
 		caps.Tasks = true

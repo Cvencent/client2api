@@ -4,7 +4,7 @@
 
 > client2api 的详细参考文档。项目介绍和功能总览见 [README.zh-CN.md](../README.zh-CN.md)。
 
-一个 OpenAI 兼容网关，统一接入十七个 AI 客户端/平台：
+一个 OpenAI 兼容网关，统一接入十九个 AI 客户端/平台：
 
 | 路由 | 客户端 | 包装的服务 |
 |---|---|---|
@@ -24,12 +24,25 @@
 | `openrouter/…` | OpenRouter | OpenRouter（openrouter.ai），模型 id 可包含斜杠；默认只路由免费模型（`free_only`） |
 | `opencode/…` | OpenCode Zen | OpenCode Zen（opencode.ai），在 Anthropic、Google 和 OpenAI 原生模型前提供统一 OpenAI 形状 |
 | `kilocode/…` | Kilo Code | Kilo AI Gateway（api.kilo.ai），OpenRouter 形状的多厂路由；免费模型无需登录即可匿名调用，API Key 可选 |
+| `doubao/…` | Doubao | 字节跳动 豆包（桌面客户端 / 网页） |
+| `doubaoime/…` | Doubao IME | 豆包输入法在线语音转写（仅转写，不参与对话） |
 | `openai-compat/…` | onmiRoute | 旧兼容来源与本机 OmniRoute 桥接；原有 `openai-compat/<provider>/<model>` 路由继续可用 |
 | `<source-id>/…` | 自定义中转站 | 热定义的 OpenAI 兼容平台，各自拥有 API 地址、Key 账号池、模型扫描与路由策略 |
 
 所有能力都从 **同一套 HTTP 接口**提供：`POST /v1/chat/completions`、
-`POST /v1/responses`、`GET /v1/models`、`GET /v1/status`、`GET /healthz`，
-以及 `/panel/` 管理面板。
+`POST /v1/responses`、`POST /v1/audio/transcriptions`、`GET /v1/models`、
+`GET /v1/status`、`GET /healthz`，以及 `/panel/` 管理面板。
+
+## 语音转写
+
+`POST /v1/audio/transcriptions` 接收 OpenAI 风格的 multipart 上传
+（`file` 加 `model`，可选 `language` 与 `response_format=json`），返回
+`{"text": "..."}`。平台实现 `core.TranscriptionProvider`
+（`TranscriptionModels` 与 `Transcribe`）即可接入；目前只有 `doubaoime`
+实现了它。转写模型刻意 **不进入** `Client.Models()` 和对话路由目录，而是由
+`GET /v1/models` 单独列出并标记 `extra.kind = "transcription"`，客户端无需
+把它们加进对话号池即可发现。错误映射为 400（上传或 WAV 非法）、422（无有效
+语音）、502（上游/协议错误）和 504（超时）。
 
 ## 自定义中转站
 
@@ -596,6 +609,7 @@ assistant 消息的事件——只发 delta 的流会显示文字但永远不执
 | openrouter | 公共 REST API，未阅读上游代码 | 见 `clients/openrouter/README.md` |
 | opencode | 公共 REST API；阅读了其开源服务端代码 | 见 `clients/opencode/README.md` |
 | openai-compat | 公共 REST API，未阅读上游代码 | 见 `clients/openaicompat/README.md` |
+| doubaoime | **净室实现**，豆包输入法 ASR 协议由流量重建，未复用上游代码 | 见 `clients/doubaoime/README.md` |
 
 各模块能力矩阵：
 

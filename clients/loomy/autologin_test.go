@@ -19,14 +19,19 @@ import (
 type fakeVendor struct {
 	mu sync.Mutex
 
-	phone        string
-	phoneQueue   []string
-	code         string
-	msgDelivered bool
-	codeAsked    bool
-	redeemed     string
-	released     []string
-	created      int
+	phone         string
+	phoneQueue    []string
+	code          string
+	msgDelivered  bool
+	codeAsked     bool
+	sendPhone     string
+	redeemed      string
+	redeemedPhone string
+	redeemedMsgID string
+	released      []string
+	rejects       int
+	checkCalls    int
+	created       int
 }
 
 func newFakeVendor() *fakeVendor {
@@ -84,20 +89,38 @@ func (f *fakeVendor) handler() http.HandlerFunc {
 				fmt.Fprint(w, "ERROR unknown request")
 			}
 		case r.URL.Path == "/login/phone/sendMsgCode":
+			var body struct {
+				Param struct {
+					Phone string `json:"phone"`
+				} `json:"param"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
 			f.mu.Lock()
 			f.codeAsked = true
+			f.sendPhone = body.Param.Phone
 			f.mu.Unlock()
 			fmt.Fprint(w, okEnvelope(`{"msgid":"m-1"}`))
 		case r.URL.Path == "/login/phone/checkCode":
 			var body struct {
 				Param struct {
+					Phone string `json:"phone"`
 					MCode string `json:"mcode"`
+					MsgID string `json:"msgid"`
 				} `json:"param"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			f.mu.Lock()
 			f.redeemed = body.Param.MCode
+			f.redeemedPhone = body.Param.Phone
+			f.redeemedMsgID = body.Param.MsgID
+			f.checkCalls++
+			reject := f.checkCalls <= f.rejects
 			f.mu.Unlock()
+			if reject {
+				// A mistyped code is a business failure, not a transport error.
+				fmt.Fprint(w, failureEnvelope("100001", "验证码错误"))
+				return
+			}
 			fmt.Fprint(w, okEnvelope(`{"session":"`+testToken+`","userid":"`+testUserID+`"}`))
 		default:
 			http.NotFound(w, r)

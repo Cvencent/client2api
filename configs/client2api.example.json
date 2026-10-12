@@ -102,6 +102,9 @@
       "free_only": true
     },
     "codearts": {},
+    "doubaoime": {
+      "ffmpeg_path": "ffmpeg"
+    },
     "kimi": {
       "tls_profile": "node",
       "tls_protocol": "http/1.1"

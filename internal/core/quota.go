@@ -5,6 +5,21 @@ import (
 	"time"
 )
 
+// BalanceLine is an additional meter shown beside an account's primary
+// balance. Vendors often expose two different entitlement systems (for example
+// credits and a rolling usage window), so the primary Balance remains the
+// credit number and these rows carry the extra meters without changing its
+// meaning.
+type BalanceLine struct {
+	Label            string
+	Unit             string
+	Amount           *int64
+	Total            *int64
+	UsedPercent      *float64
+	RemainingPercent *float64
+	ResetsAt         string
+}
+
 // Balance is one account's live credit position.
 //
 // It has no JSON tags on purpose: the panel shapes the response (the reference
@@ -43,6 +58,9 @@ type Balance struct {
 	// percentage of a quota.  An empty Unit means the module did not say, and
 	// the panel then shows a bare number rather than inventing a name.
 	Unit string
+	// Lines carries additional meters the vendor reports beside Credits. An
+	// empty slice means the module only has the primary balance.
+	Lines []BalanceLine
 }
 
 // CreditPackage is one tranche of an account's credits.

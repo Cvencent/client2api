@@ -32,8 +32,23 @@ over an API. There are therefore three ways to get one in:
 There is no separate local model API in the desktop client: it renders the
 vendor server's own menu. The catalogue is therefore the model menu the
 signed-in account's desktop client is showing
-(`action_bar_menu_config.menu_item_list` on the current build, and the v2
-`menu_conf_v2` mode/model list when the account is rolled into it).
+`menu_conf_v2` mode/model list on the v2
+build, and the legacy `action_bar_menu_config.menu_item_list` when the account
+has not rolled into v2). The two are never merged: `action_bar_v3/brief_list`
+carries `use_menu_conf_v2`, and once that is true the v2 menu is the only
+source. An enabled but empty v2 menu is an error rather than permission to fall
+back to v1.
+
+The module follows the client's own v2 branches. When
+`use_mode_model_list=true` each mode owns its model list and the flat list is
+used only for a mode that has no list of its own; when it is false the flat list
+is the candidate set and `support_models` assigns each model to every mode that
+can route it. A model item's key is `model_item_key` then `item_id` in v2 (the
+v2 picker never reads `menu_type`) and `model_item_key` then `menu_type` then
+`item_id` in v1. The visible mode/model pair is kept as-is; only the vendor's
+`reply_mode` compatibility rule rewrites the old mode 2 / model 4 pair to
+`reply_mode=3`.
+
 `GET /v1/models` and the panel picker list one entry per menu item, named
 `mode<mode_id>_model<model_item_key>`; a chat request for one of those ids
 carries the matching `reply_mode` / `mode_id` / `model_item_key` routing triple
@@ -52,7 +67,7 @@ against the account it lands on.
 | Client import | read-only `Discover` / `Import` of the desktop client's signed-in profiles (`CredentialImporter`) |
 | Model menu | pulls the account's client model menu and routes each model |
 | Account management | list / add / enable / disable / test / remove |
-| Balance | credits from `/commerce/benefit_supply/credit/*` |
+| Balance | credits plus the package's fixed / rolling quota meters |
 | Health + pool stats | standard panel reporting |
 | Revive | clears a local cooldown/park |
 | Conversation stickiness | pins a conversation to the account that first served it |
@@ -60,6 +75,24 @@ against the account it lands on.
 Not implemented, so the panel hides the control rather than offering a button
 that cannot work: check-in, the task centre, SMS / auto login, and
 package/voucher reporting.
+
+## Balance
+
+The primary number is `data.credit_info.total_credit_num` from
+`POST /commerce/benefit_supply/credit/get_credit_num_optional_tasks`
+(`{"need_tasks":false}`), labelled with the vendor's own `credit_text` or
+`积分` when it is absent.
+
+The desktop client also shows the membership package's usage windows under the
+credit balance, so the module reads
+`/alice/commerce/sale/subscription/quota/summary/` (with
+`/alice/commerce/sale/subscription/overview/` as a compatibility fallback) and
+adds one extra meter per window: `window_type=1` renders as `固定额度`,
+`window_type=2` as `循环额度`. The meter carries the vendor's `used_percent`,
+the derived remaining percent and, when present, the reset time from
+`end_time`. A zero fixed window with no dates is the vendor's empty
+placeholder and is omitted. The quota read is optional: when it fails the
+credit balance is still shown.
 
 ## Configuration
 

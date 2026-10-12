@@ -18,16 +18,17 @@ import (
 // Compile-time proof of the optional interfaces this module really implements.
 // Every one of them is backed by a call this vendor genuinely has.
 var (
-	_ core.AccountManager      = (*Client)(nil)
-	_ core.Reviver             = (*Client)(nil)
-	_ core.ModelRefresher      = (*Client)(nil)
-	_ core.BalanceProvider     = (*Client)(nil)
-	_ core.PackageProvider     = (*Client)(nil)
-	_ core.CheckinProvider     = (*Client)(nil)
-	_ core.ModelLimitsProvider = (*Client)(nil)
-	_ core.TaskProvider        = (*Client)(nil)
-	_ core.SMSProvider         = (*Client)(nil)
-	_ core.AutoLoginProvider   = (*Client)(nil)
+	_ core.AccountManager         = (*Client)(nil)
+	_ core.Reviver                = (*Client)(nil)
+	_ core.ModelRefresher         = (*Client)(nil)
+	_ core.BalanceProvider        = (*Client)(nil)
+	_ core.PackageProvider        = (*Client)(nil)
+	_ core.CheckinProvider        = (*Client)(nil)
+	_ core.ModelLimitsProvider    = (*Client)(nil)
+	_ core.TaskProvider           = (*Client)(nil)
+	_ core.SMSProvider            = (*Client)(nil)
+	_ core.AutoLoginProvider      = (*Client)(nil)
+	_ core.PhoneCodeLoginProvider = (*Client)(nil)
 )
 
 // The vendor DOES publish an output budget: every chat row of GET /api/v1/models
@@ -66,6 +67,9 @@ func TestTheModuleUsesAutoLoginRatherThanPanelLoginOrImport(t *testing.T) {
 	}
 	if _, ok := any(c).(core.AutoLoginProvider); !ok {
 		t.Error("Client does not implement core.AutoLoginProvider, so the panel has no way to run the SMS login")
+	}
+	if _, ok := any(c).(core.PhoneCodeLoginProvider); !ok {
+		t.Error("Client does not implement core.PhoneCodeLoginProvider, so the operator cannot use their own phone")
 	}
 	if _, ok := any(c).(core.CredentialImporter); ok {
 		t.Error("Client implements core.CredentialImporter, but no Loomy desktop credential location has been verified")

@@ -16,9 +16,20 @@ import (
 func TestBalanceCachePersistsAcrossARestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "panel", "balance_cache.json")
 	reg := registryOf(quotaClient("wb", core.AccountRecord{ID: "a1"}))
+	used, remaining := 15.0, 85.0
 
 	first := newBalanceCache(reg, func() time.Duration { return 0 }, path)
-	first.put("wb", "a1", core.Balance{Credits: 42, Total: 100, Unit: "credits"})
+	first.put("wb", "a1", core.Balance{
+		Credits: 42,
+		Total:   100,
+		Unit:    "credits",
+		Lines: []core.BalanceLine{{
+			Label:            "循环额度",
+			UsedPercent:      &used,
+			RemainingPercent: &remaining,
+			ResetsAt:         "2026-10-14T20:20:26+08:00",
+		}},
+	})
 
 	// A second cache over the same file is what a gateway restart builds: the
 	// numbers the operator last saw have to come back before any vendor call.
@@ -29,6 +40,10 @@ func TestBalanceCachePersistsAcrossARestart(t *testing.T) {
 	}
 	if e.Credits != 42 || e.Total != 100 || e.Unit != "credits" {
 		t.Errorf("reloaded entry = %+v, want the stored numbers", e)
+	}
+	if len(e.Lines) != 1 || e.Lines[0].Label != "循环额度" ||
+		e.Lines[0].UsedPercent == nil || *e.Lines[0].UsedPercent != 15 {
+		t.Errorf("reloaded lines = %+v, want the quota meter", e.Lines)
 	}
 	if e.FetchedAt == 0 {
 		t.Error("fetched_at did not survive the round trip")

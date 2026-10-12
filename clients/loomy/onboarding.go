@@ -313,6 +313,13 @@ func (c *Client) Tasks(ctx context.Context, accountID string) ([]core.TaskInfo, 
 // A vendor refusal is a result with OK false; only an unknown code or an
 // unknown account is a Go error, which is what core's contract asks for.
 func (c *Client) RunTask(ctx context.Context, accountID, code string) (core.TaskResult, error) {
+	// The keepalive chore has no board row: it is a scheduled session
+	// heartbeat, not an onboarding task, so it is dispatched before the
+	// registry and the vendor is never asked about it.  See keepalive.go.
+	if strings.EqualFold(strings.TrimSpace(code), choreKeepalive) {
+		return c.runScheduledKeepalive(ctx, accountID)
+	}
+
 	chore, known := onboardingChoreFor(strings.TrimSpace(code))
 	if !known {
 		return core.TaskResult{}, fmt.Errorf("loomy: unknown task %q", code)

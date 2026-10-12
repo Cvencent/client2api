@@ -77,7 +77,7 @@ func (c *Client) RefreshModels(ctx context.Context) ([]core.Model, error) {
 		c.setAccountMenu(acc.ID, menu)
 		loaded++
 		for _, route := range menu.allModelRoutes() {
-			lk := strings.ToLower(route.Key)
+			lk := strings.ToLower(routeID(route))
 			if seen[lk] {
 				continue
 			}

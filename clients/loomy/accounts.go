@@ -253,6 +253,12 @@ func (s *store) applyConfig(configured []account) {
 				acc.dead = existing.dead
 				acc.lastError = existing.lastError
 				acc.lastUsed = existing.lastUsed
+				// A configured expiry is only a local estimate.  If a successful vendor
+				// call happened after that timestamp, the state file records it in
+				// lastUsed; do not let a restart resurrect the stale, disproved date.
+				if acc.ExpiresAtMS > 0 && !existing.lastUsed.IsZero() && existing.lastUsed.UnixMilli() >= acc.ExpiresAtMS {
+					acc.ExpiresAtMS = 0
+				}
 				s.all[j] = &acc
 				replaced = true
 				break
@@ -420,6 +426,13 @@ func (s *store) penalise(id string, err error, now time.Time, cooldown time.Dura
 }
 
 // reset clears the penalties after a successful call.
+//
+// A successful vendor call is stronger evidence than the locally-computed
+// expiry: the requested 14-day lifetime is not returned or renewed by Loomy,
+// and the server can keep accepting a session after that local timestamp.  If
+// the stored expiry has already passed, drop it so the account is treated as
+// expiry-unknown from now on; keeping it would leave a working account marked
+// abnormal forever.
 func (s *store) reset(id string, now time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -427,11 +440,18 @@ func (s *store) reset(id string, now time.Time) {
 		if a.ID != id {
 			continue
 		}
+		clearExpiry := a.expired(now)
 		a.failures = 0
 		a.lastError = ""
 		a.cooldownTill = time.Time{}
 		a.probeAfter = time.Time{}
 		a.lastUsed = now
+		if clearExpiry {
+			a.ExpiresAtMS = 0
+			if err := s.save(); err != nil {
+				_ = err
+			}
+		}
 		if err := s.saveState(); err != nil {
 			_ = err
 		}

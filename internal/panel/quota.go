@@ -97,6 +97,9 @@ func (p *panel) accountBalance(w http.ResponseWriter, r *http.Request, c core.Cl
 	if bal.Unit != "" {
 		out["unit"] = bal.Unit
 	}
+	if lines := balanceLinesFromCore(bal.Lines); len(lines) > 0 {
+		out["lines"] = lines
+	}
 	if bal.Expiring > 0 {
 		out["expiring"] = bal.Expiring
 	}
@@ -155,21 +158,54 @@ func (p *panel) reviveFundedAccount(ctx context.Context, c core.Client, id strin
 // list: the accounts page already has that list, and repeating it here would
 // make a fleet-wide read look like a state change.
 type balanceRow struct {
-	ID                string  `json:"id"`
-	Label             string  `json:"label,omitempty"`
-	State             string  `json:"state,omitempty"`
-	Credits           *int64  `json:"credits,omitempty"`
-	Used              float64 `json:"used,omitempty"`
-	Total             int64   `json:"credits_total"`
-	Scale             float64 `json:"scale,omitempty"`
-	Unverified        bool    `json:"unverified,omitempty"`
-	Unlimited         bool    `json:"unlimited,omitempty"`
-	Expiring          int64   `json:"expiring,omitempty"`
-	EarliestAt        string  `json:"earliest_at,omitempty"`
-	EarliestRemaining int64   `json:"earliest_remaining,omitempty"`
-	Error             string  `json:"error,omitempty"`
-	FetchedAt         int64   `json:"fetched_at,omitempty"`
-	Unit              string  `json:"unit,omitempty"`
+	ID                string        `json:"id"`
+	Label             string        `json:"label,omitempty"`
+	State             string        `json:"state,omitempty"`
+	Credits           *int64        `json:"credits,omitempty"`
+	Used              float64       `json:"used,omitempty"`
+	Total             int64         `json:"credits_total"`
+	Scale             float64       `json:"scale,omitempty"`
+	Unverified        bool          `json:"unverified,omitempty"`
+	Unlimited         bool          `json:"unlimited,omitempty"`
+	Expiring          int64         `json:"expiring,omitempty"`
+	EarliestAt        string        `json:"earliest_at,omitempty"`
+	EarliestRemaining int64         `json:"earliest_remaining,omitempty"`
+	Error             string        `json:"error,omitempty"`
+	FetchedAt         int64         `json:"fetched_at,omitempty"`
+	Unit              string        `json:"unit,omitempty"`
+	Lines             []balanceLine `json:"lines,omitempty"`
+}
+
+// balanceLine is one extra meter beside the primary balance. It is a separate
+// wire shape because Amount/Total and percentage windows are alternative
+// vendor contracts; the panel only forwards whichever one was reported.
+type balanceLine struct {
+	Label            string   `json:"label"`
+	Unit             string   `json:"unit,omitempty"`
+	Amount           *int64   `json:"amount,omitempty"`
+	Total            *int64   `json:"total,omitempty"`
+	UsedPercent      *float64 `json:"used_percent,omitempty"`
+	RemainingPercent *float64 `json:"remaining_percent,omitempty"`
+	ResetsAt         string   `json:"resets_at,omitempty"`
+}
+
+func balanceLinesFromCore(lines []core.BalanceLine) []balanceLine {
+	if len(lines) == 0 {
+		return nil
+	}
+	out := make([]balanceLine, 0, len(lines))
+	for _, line := range lines {
+		out = append(out, balanceLine{
+			Label:            line.Label,
+			Unit:             line.Unit,
+			Amount:           line.Amount,
+			Total:            line.Total,
+			UsedPercent:      line.UsedPercent,
+			RemainingPercent: line.RemainingPercent,
+			ResetsAt:         line.ResetsAt,
+		})
+	}
+	return out
 }
 
 // balances implements GET <base>/balances: the last known credit position of
@@ -235,6 +271,7 @@ func (p *panel) balances(w http.ResponseWriter, r *http.Request, c core.Client) 
 				row.Expiring = e.Expiring
 				row.EarliestAt = e.EarliestAt
 				row.EarliestRemaining = e.EarliestRemaining
+				row.Lines = e.Lines
 			}
 		}
 		rows = append(rows, row)
