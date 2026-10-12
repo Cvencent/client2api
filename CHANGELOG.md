@@ -8,6 +8,38 @@
 
 ## [Unreleased]
 
+## [0.1.46] - 2026-10-12
+
+### Changed
+
+- **Windows 安装包内置 Opus-only ffmpeg，语音转写开箱即用**：doubaoime 需要把 WAV
+  编成 20 ms Ogg Opus，而本项目是 CGO_ENABLED=0 构建、也没有可导入的纯 Go Opus
+  编码器（pion/opus 只有解码器），过去必须自行安装 ffmpeg。现在安装包随附一份
+  1.95 MB 的 LGPL 定制构建（只保留 libopus 编码器、ogg/opus 复用器、pcm_s16le
+  解复用器与解码器，以及 file/pipe 协议），放在 client2api.exe 旁边——正是
+  findFFmpeg 的首选位置，升级即生效，无需任何配置。findFFmpeg 的查找顺序也调整为
+  「配置 → exe 同目录 → PATH」，让经过校验、被测试覆盖的那份优先于系统里恰好装着的
+  ffmpeg（发行版裁剪版可能没有 libopus）。SHA256 钉在 third_party/ffmpeg/ffmpeg.sha256，
+  installer/build.ps1 打包前校验，clients/doubaoime 与 installer/setup 各有回归测试断言。
+  便携版压缩包（Linux/macOS/Windows zip）不含该二进制，仍需自行安装 ffmpeg。
+
+### Added
+
+- **上下文窗口守卫**：模型目录宣称的 `context_length` 常与厂商实际限制不符，请求因此
+  被拒。现在网关在**确定知道**窗口大小时才动手：先按窗口给输入预算，超预算就从最旧的
+  轮次开始丢弃（保留系统提示与最新一轮，被钉住的最后一轮绝不丢），让请求本身成功，
+  每次裁剪都记在用量行上，绝不静默丢内容；万一仍被拒，就从厂商的报错里学到它真正报的
+  上限并记录下来，让 `/v1/models` 不再宣称那个虚高的数字，下游客户端自己也不会再把
+  上下文塞爆。窗口未知时一律原样转发——悄悄改写一个本来能成功的请求，比给一个诚实的
+  400 坏得多。已学到的窗口只会向下修正，绝不因一句含糊的报错被抬高。
+
+### Fixed
+
+- **WorkBuddy 丢失工具调用**：当正文已经通过 delta 流式输出过之后，厂商在终止帧里补发的
+  `message.tool_calls` 会被整帧丢弃，于是这一轮只剩文字、工具调用凭空消失。现在终止帧
+  无论是否已有正文都会被读取：正文不重复（delta 已经给过），但工具调用只在这里出现，
+  必须合并进来。
+
 ## [0.1.45] - 2026-10-12
 
 ### Added
@@ -18,7 +50,7 @@
   模块内重采样/混音），模块用 FFmpeg 编出 20 ms Ogg Opus 帧，走豆包输入法的设备注册、
   设置/app_key 与 ASR WebSocket 私有协议，返回 `{"text": "..."}`。它需要 FFmpeg（配置
   `ffmpeg_path`、`PATH` 或与 exe 同目录的 `ffmpeg.exe`），首次请求自动注册设备，凭据落在
-  `data/doubaoime/doubao_credentials.json`。
+  `data/doubaoime/doubao_credentials.json`。（FFmpeg 的分发方式见下方 Changed。）
 - 核心新增可选能力 `core.TranscriptionProvider`：转写模型与对话目录**分离**——它们不进
   `Client.Models()`、`Auto/<模型>` 聚合或对话号池，而是由 `GET /v1/models` 单独列出并标记
   `extra.kind = "transcription"`。协议细节与风险见 `docs/upstream/doubaoime.md`。

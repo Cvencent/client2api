@@ -79,8 +79,8 @@ func TestStickyPlatformManagerIsSharedWithThePanel(t *testing.T) {
 	body := `{"model":"m1","messages":[{"role":"user","content":"hi"}],"metadata":{"conversation_id":"conv-switch"}}`
 
 	stickyChat(t, srv, body)
-	if rows := platforms.List(); len(rows) != 1 || rows[0].Platform != "beta" {
-		t.Fatalf("routes = %#v, want the beta binding", rows)
+	if rows := platforms.List(); len(rows) != 1 || rows[0].Platform != "beta" || rows[0].Model != "m1" {
+		t.Fatalf("routes = %#v, want the beta binding carrying m1", rows)
 	}
 	if !platforms.Forget("conv-switch") {
 		t.Fatal("Forget did not clear the injected route")

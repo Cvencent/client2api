@@ -16,6 +16,12 @@ configs/client2api.json
 *.exe
 *.exe~
 
+# 例外：随安装包分发的 Opus-only ffmpeg 是交付物的一部分，必须进版本库，
+# 否则别人 clone 下来打不出带语音转写的安装包。它的 SHA256 钉在
+# third_party/ffmpeg/ffmpeg.sha256：installer/build.ps1 打包前校验，
+# clients/doubaoime 的测试也会断言。
+!/third_party/ffmpeg/ffmpeg.exe
+
 # 运行期日志与临时探针产物（_gw.log / _run.out / _k.json 这类调试落盘）。
 # logs/ 单独列出来是因为它装的是真实聊天 payload（logs/*.json 里有探针发过的
 # 请求体），而 *.log 只挡住后缀为 .log 的文件，挡不住这些。

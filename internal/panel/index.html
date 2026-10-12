@@ -1734,7 +1734,7 @@ details.cfg summary:hover, details.adv summary:hover { color: var(--accent-text)
   border: 1px solid var(--hairline); border-radius: 999px; font-size: 11px; color: var(--ink-3);
 }
 .sticky-badge.on { border-color: color-mix(in srgb, var(--accent) 34%, var(--hairline)); background: var(--accent-soft); color: var(--accent-text); }
-.sticky-meta { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px 14px; margin-top: 11px; }
+.sticky-meta { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 9px 14px; margin-top: 11px; }
 .sticky-meta .k { display: block; margin-bottom: 2px; color: var(--ink-3); font-size: 11px; }
 .sticky-meta .v { display: block; min-width: 0; font-size: 12.5px; overflow-wrap: anywhere; }
 .sticky-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
@@ -2634,12 +2634,12 @@ details.cfg summary:hover, details.adv summary:hover { color: var(--accent-text)
 </div>
 
 <!-- 粘性会话管理：列表来自模块账号绑定 + 网关平台绑定的合并视图。解绑只放开
-     账号；强制切换会同时清掉账号和平台粘性，让下一次请求重新参与路由。 -->
+     账号；强制切换可选择目标平台，不选时清除账号和平台粘性并重新路由。 -->
 <div class="veil" id="stickyVeil">
   <div class="dlg sticky-dlg" role="dialog" aria-modal="true" aria-labelledby="stickyTitle">
     <header>
       <h3 id="stickyTitle">粘性会话</h3>
-      <div class="hint">强制解绑只清除账号绑定；强制切换会同时清除账号和平台绑定，下一次请求重新选择平台和账号。</div>
+      <div class="hint">强制解绑只清除账号绑定；强制切换可选择目标平台，不选则清除账号和平台绑定并重新路由。</div>
     </header>
     <div class="body" id="stickyBody">
       <div class="sticky-rows" id="stickyRows"></div>
@@ -2647,6 +2647,31 @@ details.cfg summary:hover, details.adv summary:hover { color: var(--accent-text)
     <footer>
       <span class="grow"></span>
       <button id="btnStickyClose">关闭</button>
+    </footer>
+  </div>
+</div>
+
+<!-- 强制切换确认。目标平台留空时沿用原来的清空逻辑；选择平台时只清除账号绑定，
+     并把平台粘性固定到所选目标，平台内部账号仍按优先级自动选择。 -->
+<div class="veil" id="stickySwitchVeil">
+  <div class="dlg" style="width:480px" role="dialog" aria-modal="true" aria-labelledby="stickySwitchTitle">
+    <header>
+      <h3 id="stickySwitchTitle">强制切换会话</h3>
+      <div class="hint" id="stickySwitchHint"></div>
+    </header>
+    <div class="body">
+      <label class="fld" for="stickySwitchPlatform">
+        <span class="lb">目标平台</span>
+        <select id="stickySwitchPlatform" style="width:100%">
+          <option value="">自动选择（现有逻辑）</option>
+        </select>
+        <span class="hint">不选择时清除账号和平台粘性；选择后会固定到目标平台，平台内账号仍按优先级自动选择。</span>
+      </label>
+    </div>
+    <footer>
+      <span class="grow"></span>
+      <button id="btnStickySwitchCancel">取消</button>
+      <button class="primary" id="btnStickySwitchConfirm">确认切换</button>
     </footer>
   </div>
 </div>
@@ -4673,12 +4698,14 @@ function closeModelsDialog() { hideVeil($("#modelVeil")); }
    列表是账号绑定和网关平台绑定的合并视图。平台绑定的 key 没有客户端归属，
    因此切换请求允许 client 为空；解绑只对账号绑定开放。 */
 let STICKY_RETURN = null;
+let STICKY_SWITCH = null;
 
 function stickySessionRowHTML(s) {
   const key = String((s && s.key) || "");
   const client = String((s && s.client) || "");
   const account = String((s && s.account) || "");
   const platform = String((s && s.platform) || "");
+  const model = String((s && s.model) || "");
   const accountBound = !!(s && s.account_bound);
   const platformBound = !!(s && s.platform_bound);
   const when = ago(s && s.last_active) || "未知";
@@ -4693,11 +4720,12 @@ function stickySessionRowHTML(s) {
       '<div><span class="k">客户端</span><span class="v">' + esc(clientName) + '</span></div>' +
       '<div><span class="k">账号</span><span class="v">' + esc(account || "未绑定") + '</span></div>' +
       '<div><span class="k">平台</span><span class="v">' + esc(platform || "未绑定") + '</span></div>' +
+      '<div><span class="k">模型</span><span class="v">' + esc(model || "未知") + '</span></div>' +
       '<div><span class="k">最近活跃</span><span class="v" title="' + esc(String((s && s.last_active) || "")) + '">' + esc(when) + '</span></div>' +
     '</div>' +
     '<div class="sticky-actions">' +
       '<button class="xs" data-sticky-action="unbind" data-client="' + esc(client) + '" data-key="' + esc(key) + '"' + (accountBound && client ? "" : " disabled") + '>强制解绑</button>' +
-      '<button class="xs danger" data-sticky-action="switch" data-client="' + esc(client) + '" data-key="' + esc(key) + '"' + (accountBound || platformBound ? "" : " disabled") + '>强制切换</button>' +
+      '<button class="xs danger" data-sticky-action="switch" data-client="' + esc(client) + '" data-key="' + esc(key) + '" data-model="' + esc(model) + '"' + (accountBound || platformBound ? "" : " disabled") + '>强制切换</button>' +
     '</div>' +
   '</article>';
 }
@@ -4727,23 +4755,49 @@ async function openStickySessions() {
   $("#btnStickyClose").focus();
 }
 
+function stickySwitchOptions() {
+  return NAMES.map(name => '<option value="' + esc(name) + '">' + esc(platformLabel(name)) + '</option>').join("");
+}
+
+function openStickySwitch(client, key, model, button) {
+  STICKY_SWITCH = { client: client, key: key, model: model, button: button };
+  const select = $("#stickySwitchPlatform");
+  const hasModel = !!model;
+  select.innerHTML = '<option value="">自动选择（现有逻辑）</option>' + stickySwitchOptions();
+  select.value = "";
+  select.disabled = !hasModel;
+  $("#stickySwitchHint").textContent = "会话：" + key + "；模型：" + (model || "未知") +
+    (hasModel ? "。选择目标平台后，会固定到该平台并重新选择平台内账号；不选择则清除账号和平台粘性。" :
+      "。这条旧记录没有模型信息，只能按现有逻辑自动切换。");
+  showVeil($("#stickySwitchVeil"));
+  (hasModel ? select : $("#btnStickySwitchConfirm")).focus();
+}
+
+function closeStickySwitch(refocus = true) {
+  const back = STICKY_SWITCH && STICKY_SWITCH.button;
+  hideVeil($("#stickySwitchVeil"));
+  STICKY_SWITCH = null;
+  if (refocus && back && document.contains(back)) back.focus();
+}
+
 function closeStickySessions() {
+  if (!$("#stickySwitchVeil").hidden) closeStickySwitch(false);
   hideVeil($("#stickyVeil"));
   if (STICKY_RETURN && document.contains(STICKY_RETURN)) STICKY_RETURN.focus();
   STICKY_RETURN = null;
 }
 
-async function stickySessionAction(action, client, key, button) {
-  if (!button || !key || (action !== "unbind" && action !== "switch")) return;
-  const clientName = client ? platformLabel(client) : "未绑定";
-  let ask = "";
-  if (action === "unbind") {
-    ask = "确定强制解绑这个粘性会话的账号绑定？\n\n会话：" + key + "\n客户端：" + clientName +
-      "\n\n下一次请求仍会沿用平台粘性，但会重新选择该平台下的账号。";
-  } else {
-    ask = "确定强制切换这个粘性会话？\n\n会话：" + key + "\n客户端：" + clientName +
-      "\n\n将清除账号和平台粘性；下一次请求会像第一次调用一样重新选择平台和账号。";
+async function stickySessionAction(action, client, key, model, button) {
+  if (!button || !key) return;
+  if (action === "switch") {
+    openStickySwitch(client, key, model || "", button);
+    return;
   }
+  if (action !== "unbind") return;
+
+  const clientName = client ? platformLabel(client) : "未绑定";
+  const ask = "确定强制解绑这个粘性会话的账号绑定？\n\n会话：" + key + "\n客户端：" + clientName +
+    "\n\n下一次请求仍会沿用平台粘性，但会重新选择该平台下的账号。";
   if (!confirm(ask)) return;
 
   const row = button.closest(".sticky-row");
@@ -4752,14 +4806,51 @@ async function stickySessionAction(action, client, key, button) {
   const label = button.textContent;
   button.textContent = "处理中…";
   try {
-    const path = action === "unbind" ? "/panel/api/sticky-sessions/unbind" : "/panel/api/sticky-sessions/switch";
-    const r = await api(path, { method: "POST", body: { client: client, key: key } });
+    const r = await api("/panel/api/sticky-sessions/unbind", { method: "POST", body: { client: client, key: key } });
     if (!r.ok) {
-      toast((action === "unbind" ? "解绑失败：" : "切换失败：") + r.err, "err");
+      toast("解绑失败：" + r.err, "err");
       return;
     }
-    if (action === "unbind") {
-      toast(r.data && r.data.forgotten_account ? "已强制解绑账号；下一次请求会重新选择账号" : "这个会话的账号绑定已经不存在");
+    toast(r.data && r.data.forgotten_account ? "已强制解绑账号；下一次请求会重新选择账号" : "这个会话的账号绑定已经不存在");
+    await loadStickySessions();
+    refreshAll(false);
+  } catch (e) {
+    toast("粘性会话操作失败：" + String(e && e.message || e), "err");
+  } finally {
+    if (document.contains(button)) button.textContent = label;
+    buttons.forEach(b => { if (document.contains(b)) b.disabled = false; });
+  }
+}
+
+async function submitStickySwitch() {
+  const target = STICKY_SWITCH;
+  if (!target) return;
+  const chosen = $("#stickySwitchPlatform").value;
+  if (chosen && !target.model) {
+    toast("这条记录没有模型信息，无法指定平台；请使用自动选择", "err");
+    return;
+  }
+
+  const confirmButton = $("#btnStickySwitchConfirm");
+  const cancelButton = $("#btnStickySwitchCancel");
+  const label = confirmButton.textContent;
+  confirmButton.disabled = true;
+  cancelButton.disabled = true;
+  confirmButton.textContent = "处理中…";
+  try {
+    const body = { client: target.client, key: target.key };
+    if (chosen) {
+      body.platform = chosen;
+      body.model = target.model;
+    }
+    const r = await api("/panel/api/sticky-sessions/switch", { method: "POST", body: body });
+    if (!r.ok) {
+      toast("切换失败：" + r.err, "err");
+      return;
+    }
+    closeStickySwitch(false);
+    if (chosen) {
+      toast("已切换到 " + platformLabel(chosen) + "；下一次请求会沿用该平台并重新选择账号");
     } else {
       const d = r.data || {};
       toast(d.forgotten_account || d.forgotten_platform ? "已强制切换；下一次请求会重新选择平台和账号" : "这个会话已经没有粘性绑定");
@@ -4769,8 +4860,9 @@ async function stickySessionAction(action, client, key, button) {
   } catch (e) {
     toast("粘性会话操作失败：" + String(e && e.message || e), "err");
   } finally {
-    if (document.contains(button)) button.textContent = label;
-    buttons.forEach(b => { if (document.contains(b)) b.disabled = false; });
+    if (document.contains(confirmButton)) confirmButton.textContent = label;
+    if (document.contains(confirmButton)) confirmButton.disabled = false;
+    if (document.contains(cancelButton)) cancelButton.disabled = false;
   }
 }
 
@@ -5539,6 +5631,16 @@ function renderRecentRows() {
   });
   body.innerHTML = rows.map(function (x) {
     const state = x.failed ? '<span class="recent-bad">' + (x.attempt ? "候选失败" : "失败") + '</span>' : '<span class="recent-ok">成功</span>';
+    // 网关为了塞进上下文窗口而裁掉过历史时必须显式标出：静默丢掉调用方自己的
+    // 对话内容是不允许的，所以这一行既要说明裁了多少，也要说明裁前裁后各多大。
+    const trimTip = x.trimmed
+      ? "网关已裁剪历史以适配上下文窗口：丢弃最早的 " + (x.trim_dropped_messages || 0) +
+        " 条消息，约 " + numf(x.trimmed_from_tokens || 0) + " → " + numf(x.trimmed_to_tokens || 0) + " tokens" +
+        (x.context_window ? "（窗口 " + numf(x.context_window) + "）" : "")
+      : "";
+    const trimTag = x.trimmed
+      ? ' <span class="tag warn" title="' + esc(trimTip) + '">已裁剪</span>'
+      : '';
     const accName = accountDisplayName(x.account) || "-";
     const acc = accountLookup(x.account);
     // hover 时把这一栏的原始信息都留全：裸 id、模块 label、厂商 identity（面板下发前已脱敏），
@@ -5554,7 +5656,7 @@ function renderRecentRows() {
     const cacheHitText = fmtUsageCacheHitRate(cacheHit);
     const costText = x.has_cost ? fmtUsageCost(x.cost) : "—";
     return '<tr><td class="hint">' + esc(fmtCallTime(x.at)) + '</td>' +
-      '<td>' + esc(platformLabel(x.client || "-")) + '</td><td>' + esc(x.model || "-") + '</td>' +
+      '<td>' + esc(platformLabel(x.client || "-")) + '</td><td>' + esc(x.model || "-") + trimTag + '</td>' +
       '<td>' + (x.reasoning_effort ? '<span class="tag warn">' + esc(x.reasoning_effort) + '</span>' : '<span class="hint">-</span>') + '</td>' +
       '<td>' + sessionCell(x.session_id) + '</td>' +
       '<td title="' + esc(accTip) + '">' + esc(accName) + '</td><td>' + state + '</td>' +
@@ -5728,7 +5830,7 @@ function capBadges(ex) {
 /* 上下文 / 最大输出改成可编辑数字框。值来自服务端解析后的结果，来源用中文标出；
    改动先记在 MD_EDITS 里，点「保存修改」才一次性提交。清空某个框再保存 =
    删掉该字段的手动值，回落到上游值或官方预设。 */
-const MD_SRC_LABEL = { manual: "手动", vendor: "上游", static: "预设", "models-dev": "模型库", cache: "缓存", fallback: "策略" };
+const MD_SRC_LABEL = { manual: "手动", learned: "实测", vendor: "上游", static: "预设", "models-dev": "模型库", cache: "缓存", fallback: "策略" };
 function mdSrcText(s) { return MD_SRC_LABEL[s] || "未公开"; }
 // 探测结果是可选增强：有实测就补一行小字，没有就不画。
 function mdProbeHint(pr) {
@@ -10938,10 +11040,13 @@ $("#btnModelClose").addEventListener("click", closeModelsDialog);
 $("#sStickyTile").addEventListener("click", openStickySessions);
 $("#btnStickyClose").addEventListener("click", closeStickySessions);
 $("#stickyVeil").addEventListener("click", ev => { if (ev.target === $("#stickyVeil")) closeStickySessions(); });
+$("#stickySwitchVeil").addEventListener("click", ev => { if (ev.target === $("#stickySwitchVeil")) closeStickySwitch(); });
+$("#btnStickySwitchCancel").addEventListener("click", closeStickySwitch);
+$("#btnStickySwitchConfirm").addEventListener("click", submitStickySwitch);
 $("#stickyRows").addEventListener("click", ev => {
   const button = ev.target.closest && ev.target.closest("[data-sticky-action]");
   if (!button) return;
-  stickySessionAction(button.dataset.stickyAction, button.dataset.client || "", button.dataset.key || "", button);
+  stickySessionAction(button.dataset.stickyAction, button.dataset.client || "", button.dataset.key || "", button.dataset.model || "", button);
 });
 $("#btnNoteClose").addEventListener("click", closeAccountNote);
 $("#btnNoteClear").addEventListener("click", () => { $("#noteInput").value = ""; saveAccountNote(); });
@@ -11034,6 +11139,7 @@ function closeTopVeil() {
   if (v.id === "sourceVeil") { closeSource(); return true; }
   if (v.id === "noteVeil") { closeAccountNote(); return true; }
   if (v.id === "modelVeil") { closeModelsDialog(); return true; }
+  if (v.id === "stickySwitchVeil") { closeStickySwitch(); return true; }
   if (v.id === "stickyVeil") { closeStickySessions(); return true; }
   if (v.id === "taskVeil") { closeTasks(); return true; }
   if (v.id === "capVeil") { if (CAP.resolve) capSettle(false, new Error("已取消人机验证")); return true; }

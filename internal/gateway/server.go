@@ -59,7 +59,12 @@ type Options struct {
 	// called synchronously and may be nil.
 	// ModelOverrides is the operator-edited model metadata shared with the panel.
 	ModelOverrides *modelmeta.OverrideStore
-	NotifyAlert    func(alerts.Alert)
+	// LearnedWindowsPath is where the gateway records the context windows that
+	// vendors reported in their own refusals.  Empty keeps that memory
+	// in-process only, which is the right behaviour for an embedder that has no
+	// data directory; the mechanism degrades to trimming within this run.
+	LearnedWindowsPath string
+	NotifyAlert        func(alerts.Alert)
 }
 
 type server struct {
@@ -78,6 +83,14 @@ type server struct {
 	// last served it, so failover does not ping-pong between a healthy and a
 	// broken sibling on every turn.
 	sessionPlatforms *sessionPlatforms
+	// learnedWindows holds the context windows vendors reported when they
+	// refused an oversized prompt.  It is the memory behind the context guard:
+	// a model whose published window turned out to be inflated is judged against
+	// what the vendor actually said.  See context_guard.go.
+	learnedWindows *learnedWindowStore
+	// handler is the mux this server serves.  It is kept on the struct so a test
+	// can drive the real routing without opening a listener.
+	handler http.Handler
 }
 
 // NewServer builds the gateway's http.Server.  It is deliberately transport
@@ -104,21 +117,9 @@ func NewServer(opts Options) *http.Server {
 	if s.opts.Logger == nil {
 		s.opts.Logger = log.Default()
 	}
+	s.learnedWindows = openLearnedWindowStore(opts.LearnedWindowsPath, s.opts.Logger.Printf)
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", s.handleHealth)
-	mux.HandleFunc("/v1/models", s.auth(s.handleModels))
-	mux.HandleFunc("/v1/chat/completions", s.auth(s.handleChat))
-	mux.HandleFunc("/v1/responses", s.auth(s.handleResponses))
-	mux.HandleFunc("/v1/audio/transcriptions", s.auth(s.handleTranscriptions))
-	mux.HandleFunc("/v1/status", s.auth(s.handleStatus))
-	mux.HandleFunc("/v1/", s.auth(s.handleNotFound))
-	if opts.Panel != nil {
-		mux.Handle("/panel/", opts.Panel)
-		mux.Handle("/", opts.Panel)
-	} else {
-		mux.HandleFunc("/", s.handleNotFound)
-	}
+	s.handler = s.routes()
 
 	// The timeouts mirror the reference server (cmd/server/main.go:33):
 	// ReadHeaderTimeout 30s, ReadTimeout 60s, IdleTimeout 120s.  ReadTimeout
@@ -127,11 +128,32 @@ func NewServer(opts Options) *http.Server {
 	// as long as the vendor keeps talking and a write deadline would cut it off.
 	return &http.Server{
 		Addr:              opts.Addr,
-		Handler:           mux,
+		Handler:           s.handler,
 		ReadHeaderTimeout: 30 * time.Second,
 		ReadTimeout:       60 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
+}
+
+// routes builds the request multiplexer.  It is a method rather than inline
+// construction so a test can build a server and drive its handler without going
+// through a listener.
+func (s *server) routes() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", s.handleHealth)
+	mux.HandleFunc("/v1/models", s.auth(s.handleModels))
+	mux.HandleFunc("/v1/chat/completions", s.auth(s.handleChat))
+	mux.HandleFunc("/v1/responses", s.auth(s.handleResponses))
+	mux.HandleFunc("/v1/audio/transcriptions", s.auth(s.handleTranscriptions))
+	mux.HandleFunc("/v1/status", s.auth(s.handleStatus))
+	mux.HandleFunc("/v1/", s.auth(s.handleNotFound))
+	if s.opts.Panel != nil {
+		mux.Handle("/panel/", s.opts.Panel)
+		mux.Handle("/", s.opts.Panel)
+	} else {
+		mux.HandleFunc("/", s.handleNotFound)
+	}
+	return mux
 }
 
 // ---------------------------------------------------------------------------
@@ -325,6 +347,18 @@ func (s *server) handleModels(w http.ResponseWriter, r *http.Request) {
 			// Resolve the window/output from override > vendor > official preset so
 			// a caller can size its context even when the vendor reported nothing.
 			meta := s.resolvedModelMeta(c, m.ID, m.Extra)
+			// A window this gateway learned from the vendor's own refusal outranks
+			// every published figure, including a vendor catalogue that has not
+			// caught up with a limit change.  This is the number a client sizes its
+			// own context from, so correcting it here is what actually stops an
+			// over-packed request from being built in the first place.
+			if learned := s.learnedWindows.get(c.Name(), m.ID); learned > 0 {
+				meta.ContextLength = learned
+				if meta.FieldSources == nil {
+					meta.FieldSources = map[string]string{}
+				}
+				meta.FieldSources[modelmeta.FieldContextLength] = modelmeta.SourceLearned
+			}
 			resolved[id] = meta
 			// Mirror the resolved numbers into Extra as well: some clients read the
 			// OpenAI top-level field, others look inside extra. Fill only what the
@@ -348,6 +382,14 @@ func (s *server) handleModels(w http.ResponseWriter, r *http.Request) {
 				if _, ok := extra["max_output_tokens"]; !ok && meta.MaxOutputTokens > 0 {
 					extra["max_output_tokens"] = meta.MaxOutputTokens
 				}
+			}
+			// A learned window replaces the catalogue's number in BOTH places.
+			// Leaving the vendor's inflated value inside extra would let a client
+			// that reads extra -- rather than the top-level field -- keep packing
+			// to the figure this gateway has already proven wrong, which is the
+			// exact failure the learning exists to stop.
+			if learned := s.learnedWindows.get(c.Name(), m.ID); learned > 0 && extra != nil {
+				extra["context_length"] = learned
 			}
 			out.Data = append(out.Data, modelEntry{
 				ID:              id,
@@ -633,7 +675,7 @@ func (s *server) serveRemainingCandidates(w http.ResponseWriter, r *http.Request
 		stream, err := s.openStream(r.Context(), client, attemptReq)
 		if err == nil {
 			s.opts.Registry.NoteModelSuccess(client.Name(), upstreamModel, time.Now())
-			s.sessionPlatforms.bind(core.ConversationKeyOf(baseReq), client.Name())
+			s.sessionPlatforms.bindModel(core.ConversationKeyOf(baseReq), client.Name(), upstreamModel)
 			if servedBy != "" {
 				rec.Account = servedBy
 				stat.uid = servedBy
@@ -836,6 +878,17 @@ func (s *server) openStream(ctx context.Context, client core.Client, req *core.C
 
 		f, classified := core.AsFailure(err)
 		if !classified {
+			return nil, err
+		}
+
+		if f.Kind == core.FailureContextWindow {
+			// The vendor named its own limit in the refusal.  Recording it fixes
+			// the cause -- the inflated window this gateway was advertising --
+			// rather than just the symptom, so the next request for this model is
+			// budgeted correctly from the start and downstream clients stop
+			// over-packing.  The request itself still fails this time; retrying it
+			// unchanged would just fail again.
+			s.learnContextWindowFromFailure(ctx, client, req.Model, err)
 			return nil, err
 		}
 

@@ -41,7 +41,7 @@ import (
 )
 
 // version is overridable with -ldflags "-X main.version=...".
-var version = "0.1.45"
+var version = "0.1.47"
 
 // restartHandoffEnv marks the replacement half of a panel restart.  It tells a
 // starting process to keep retrying the listen address instead of failing fast,
@@ -1497,6 +1497,12 @@ func run() error {
 		NotifyAlert:      notifyAlert,
 		ModelOverrides:   modelOverrides,
 		SessionPlatforms: sessionPlatforms,
+		// The context guard learns a model's real window from the vendor's own
+		// refusal, so it needs somewhere durable to remember it.  It lives beside
+		// the model overrides rather than inside them: a learned limit is a
+		// measurement, not an operator's decision, and must not be exported to
+		// other installations wearing a "manual" label.
+		LearnedWindowsPath: filepath.Join(cfg.DataDir, "learned_context_windows.json"),
 	})
 
 	errCh := make(chan error, 1)

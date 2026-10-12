@@ -399,3 +399,36 @@ func hasPath(paths []string, want string) bool {
 	}
 	return false
 }
+
+// TestWritePayloadInstallsTheBundledFFmpeg pins the speech-transcription
+// dependency into the installer's contract.
+//
+// clients/doubaoime needs an Opus encoder, and the Windows installer answers
+// that by shipping one in the payload rather than asking the operator to
+// install ffmpeg. Nothing about copyPayload knows that -- it walks whatever the
+// build staged -- so a change that stopped staging ffmpeg.exe (a .gitignore
+// rule, a renamed vendored path, a -NoData branch that skipped it) would
+// silently produce an installer whose transcription platform reports itself
+// not-servable on a clean machine, and nothing else would fail.
+//
+// This asserts the file lands in a fresh install, so that regression fails here
+// instead of on a user's first /v1/audio/transcriptions call.
+func TestWritePayloadInstallsTheBundledFFmpeg(t *testing.T) {
+	dir := t.TempDir()
+	if _, _, err := writePayload(dir, false); err != nil {
+		t.Fatalf("writePayload: %v", err)
+	}
+	path := filepath.Join(dir, "ffmpeg.exe")
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("the installer did not place a bundled ffmpeg next to client2api.exe: %v", err)
+	}
+	if info.Size() == 0 {
+		t.Fatal("the bundled ffmpeg is empty")
+	}
+	// findFFmpeg looks for exactly this name beside the running binary, so the
+	// module can find it without any configuration.
+	if filepath.Base(path) != "ffmpeg.exe" {
+		t.Fatalf("bundled encoder is named %q, but findFFmpeg only looks for ffmpeg.exe", filepath.Base(path))
+	}
+}

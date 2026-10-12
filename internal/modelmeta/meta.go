@@ -52,6 +52,12 @@ const (
 	// SourceFallback means the value is a policy default applied because nothing
 	// was known, not a measured capability. It is deliberately ranked weakest.
 	SourceFallback = "fallback"
+	// SourceLearned means the value was measured by this gateway: a vendor named
+	// it in its own refusal, so it outranks every published figure. It is weaker
+	// than SourceManual because no person decided it, and stronger than
+	// SourceVendor because it came from the refusal that proves the catalogue
+	// wrong rather than from the catalogue itself.
+	SourceLearned = "learned"
 )
 
 // Field names used as keys in Meta.FieldSources and by Meta.Has.
@@ -254,16 +260,18 @@ func sourceRank(src string) int {
 	switch src {
 	case SourceManual:
 		return 0
-	case SourceVendor:
+	case SourceLearned:
 		return 1
-	case SourceStatic:
+	case SourceVendor:
 		return 2
-	case SourceModelsDev:
+	case SourceStatic:
 		return 3
-	case SourceCache:
+	case SourceModelsDev:
 		return 4
-	case SourceFallback:
+	case SourceCache:
 		return 5
+	case SourceFallback:
+		return 6
 	}
 	return 50
 }

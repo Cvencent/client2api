@@ -180,6 +180,24 @@ Copy-Item -Force (Join-Path $repoRoot 'README.zh-CN.md') $PayloadDirectory
 Copy-Item -Force (Join-Path $repoRoot 'LICENSE')   $PayloadDirectory
 Copy-Item -Force (Join-Path $installerDir 'client2api.ico') $PayloadDirectory
 
+# The Opus-only ffmpeg that clients/doubaoime needs (see third_party/ffmpeg).
+# It goes next to client2api.exe, which is exactly where the module's
+# findFFmpeg() looks before falling back to PATH, so speech transcription works
+# on a machine that never installed ffmpeg.  ~2 MB, LGPL, and the checksum is
+# verified here so a tampered working copy cannot silently ship.
+$vendoredFFmpeg = Join-Path $repoRoot 'third_party\ffmpeg\ffmpeg.exe'
+if (Test-Path $vendoredFFmpeg) {
+    $expected = ((Get-Content (Join-Path $repoRoot 'third_party\ffmpeg\ffmpeg.sha256') -Raw) -split '\s+')[0]
+    $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $vendoredFFmpeg).Hash.ToLowerInvariant()
+    if ($expected -and $actual -ne $expected.ToLowerInvariant()) {
+        throw "third_party/ffmpeg/ffmpeg.exe sha256 mismatch: expected $expected, got $actual. Refusing to package it."
+    }
+    Copy-Item -Force $vendoredFFmpeg $PayloadDirectory
+    Write-Step 'staged the bundled Opus-only ffmpeg (speech transcription works without a system install)'
+} else {
+    Write-Warning 'third_party/ffmpeg/ffmpeg.exe is missing; speech transcription will need a system ffmpeg.'
+}
+
 Copy-Item -Force (Join-Path $repoRoot 'configs\client2api.example.json') (Join-Path $PayloadDirectory 'configs')
 
 if ($NoData) {

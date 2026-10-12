@@ -64,6 +64,7 @@ type Scheduler interface {
 type SessionPlatformStore interface {
 	List() []gateway.StickyRoute
 	Forget(conversationKey string) bool
+	Pin(conversationKey, platform, model string) bool
 }
 
 //go:embed index.html

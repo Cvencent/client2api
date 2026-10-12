@@ -415,6 +415,8 @@ func TestMain(m *testing.M) {
 	savedAgree, savedTab := agreeGateSettle, phoneTabSettle
 	savedExpertGap := expertSummonGap
 	savedCodeSettle := codeButtonSettle
+	savedSubmitReady := submitReadyTimeout
+	savedAutoBeat := autoConfirmHeartbeat
 
 	mpChatEventGap = time.Millisecond
 	mpChatJitter = 0
@@ -427,6 +429,8 @@ func TestMain(m *testing.M) {
 	phoneTabSettle = time.Millisecond
 	expertSummonGap = time.Millisecond
 	codeButtonSettle = time.Millisecond
+	submitReadyTimeout = time.Millisecond
+	autoConfirmHeartbeat = time.Millisecond
 
 	code := m.Run()
 
@@ -438,6 +442,8 @@ func TestMain(m *testing.M) {
 	agreeGateSettle, phoneTabSettle = savedAgree, savedTab
 	expertSummonGap = savedExpertGap
 	codeButtonSettle = savedCodeSettle
+	submitReadyTimeout = savedSubmitReady
+	autoConfirmHeartbeat = savedAutoBeat
 	os.Exit(code)
 }
 

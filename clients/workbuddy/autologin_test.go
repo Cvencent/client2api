@@ -31,13 +31,17 @@ import (
 // not a DOM: it answers the handful of queries the flow makes, which keeps the
 // test about the flow rather than about JavaScript.
 type fakePage struct {
-	mu      sync.Mutex
-	exists  map[string]bool
-	body    string
-	navURL  string
-	navErr  error
-	filled  map[string]string
-	clicked []string
+	mu     sync.Mutex
+	exists map[string]bool
+	body   string
+	// bodyAfterSubmit replaces body the instant the flow clicks submit, so the
+	// post-submit branch (vendor errors, the success marker) can be exercised
+	// without a real vendor page.
+	bodyAfterSubmit string
+	navURL          string
+	navErr          error
+	filled          map[string]string
+	clicked         []string
 }
 
 func newFakePage() *fakePage {
@@ -73,6 +77,9 @@ func (p *fakePage) Click(_ context.Context, selector string) (bool, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.clicked = append(p.clicked, selector)
+	if selector == selSubmit && p.bodyAfterSubmit != "" {
+		p.body = p.bodyAfterSubmit
+	}
 	return p.exists[selector], nil
 }
 
@@ -452,6 +459,132 @@ func TestAutoLoginPinnedPhoneIsReused(t *testing.T) {
 	}
 	if got := page.filled[selPhoneInput]; got != "13800005555" {
 		t.Fatalf("phone input = %q", got)
+	}
+}
+
+// TestAutoLoginStopsOnAVendorErrorItOnlySeesAfterSubmit: the vendor can reject
+// the code after the form is submitted, and the current page words that as
+// "请获取并输入验证码" rather than the generic wrong-code text.  Missing it used
+// to leave the run polling until the whole-run timeout.
+func TestAutoLoginStopsOnAVendorErrorItOnlySeesAfterSubmit(t *testing.T) {
+	v := successVendor()
+	c, _ := autoLoginClient(t, v)
+	page := newFakePage()
+	page.bodyAfterSubmit = "请获取并输入验证码"
+	platform := &fakePlatform{number: core.SMSNumber{Phone: "13800007777"}, code: "666666"}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	job := &autoJob{id: "post-submit-error", realm: realmCN, state: core.AutoLoginRunning, startedAt: time.Now()}
+	err := c.autoLogin(ctx, job, core.AutoLoginRequest{}, smsOptsFrom(core.AutoLoginRequest{}), platform,
+		func(context.Context, browser.LaunchOpts) (autoBrowser, error) { return fakeBrowser{page: page}, nil })
+	if err == nil {
+		t.Fatalf("autoLogin succeeded despite the post-submit vendor error")
+	}
+	if !strings.Contains(err.Error(), "请获取并输入验证码") {
+		t.Fatalf("error = %v, want the vendor's post-submit text", err)
+	}
+	if !strings.Contains(err.Error(), "页面提示") {
+		t.Fatalf("error = %v, want it reported as a page prompt, not a poll timeout", err)
+	}
+}
+
+// TestAutoLoginLogsTheVendorSuccessPageEarly pins that the page's own success
+// marker is surfaced.  pageSuccessTexts was dead code, so a run that had
+// clearly finished signing in still showed nothing until the token arrived.
+func TestAutoLoginLogsTheVendorSuccessPageEarly(t *testing.T) {
+	v := &fakeVendor{
+		stateBody: stateFixture("state-early", "https://example.test/auth"),
+		token: []vendorResp{
+			{body: `{"code":1,"msg":"login ing"}`},
+			{body: tokenFixture("access-token-abcdefgh", "refresh-token-abcdefgh", "copilot.tencent.com", 3600)},
+		},
+		account: vendorResp{body: accountFixture("uid-early", "ent-1", "Early")},
+	}
+	c, _ := autoLoginClient(t, v)
+	page := newFakePage()
+	page.bodyAfterSubmit = "登录成功"
+	platform := &fakePlatform{number: core.SMSNumber{Phone: "13800008888"}, code: "777777"}
+
+	job, err := runAutoLogin(t, c, page, platform, core.AutoLoginRequest{})
+	if err != nil {
+		t.Fatalf("autoLogin: %v", err)
+	}
+	if !logContains(job.snapshot().Log, "页面已显示") {
+		t.Fatalf("log never recorded the page success marker: %v", logTexts(job.snapshot().Log))
+	}
+}
+
+// TestAutoLoginLogsAHeartbeatWhileConfirming: once the code is submitted the
+// driver only polls the vendor and used to log nothing, so the panel froze on
+// "已提交登录，等待授权结果…" even while it was alive.
+func TestAutoLoginLogsAHeartbeatWhileConfirming(t *testing.T) {
+	old := autoConfirmHeartbeat
+	autoConfirmHeartbeat = 0 // log on every poll tick, so the test is not timing-dependent
+	t.Cleanup(func() { autoConfirmHeartbeat = old })
+
+	v := &fakeVendor{
+		stateBody: stateFixture("state-beat", "https://example.test/auth"),
+		token: []vendorResp{
+			{body: `{"code":1,"msg":"login ing"}`},
+			{body: `{"code":1,"msg":"login ing"}`},
+			{body: tokenFixture("access-token-abcdefgh", "refresh-token-abcdefgh", "copilot.tencent.com", 3600)},
+		},
+		account: vendorResp{body: accountFixture("uid-beat", "ent-1", "Beat")},
+	}
+	c, _ := autoLoginClient(t, v)
+	page := newFakePage()
+	platform := &fakePlatform{number: core.SMSNumber{Phone: "13800009900"}, code: "888888"}
+
+	job, err := runAutoLogin(t, c, page, platform, core.AutoLoginRequest{})
+	if err != nil {
+		t.Fatalf("autoLogin: %v", err)
+	}
+	if !logContains(job.snapshot().Log, "仍在等待厂商确认") {
+		t.Fatalf("log never recorded a confirming heartbeat: %v", logTexts(job.snapshot().Log))
+	}
+}
+
+// TestAutoLoginFailsWhenTheConfirmButtonNeverBecomesClickable: the vendor
+// renders the confirm control as a disabled div until the phone and code are
+// accepted, and only then as a button.  A click on the disabled div is a no-op
+// that must not be logged as a submitted login.
+func TestAutoLoginFailsWhenTheConfirmButtonNeverBecomesClickable(t *testing.T) {
+	old := submitReadyTimeout
+	submitReadyTimeout = time.Millisecond
+	t.Cleanup(func() { submitReadyTimeout = old })
+
+	v := successVendor()
+	c, _ := autoLoginClient(t, v)
+	page := newFakePage()
+	page.exists[selSubmit] = false // the clickable shape never appears
+	platform := &fakePlatform{number: core.SMSNumber{Phone: "13800009911"}, code: "999999"}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	job := &autoJob{id: "no-submit", realm: realmCN, state: core.AutoLoginRunning, startedAt: time.Now()}
+	err := c.autoLogin(ctx, job, core.AutoLoginRequest{}, smsOptsFrom(core.AutoLoginRequest{}), platform,
+		func(context.Context, browser.LaunchOpts) (autoBrowser, error) { return fakeBrowser{page: page}, nil })
+	if err == nil {
+		t.Fatalf("autoLogin succeeded although the confirm button never became clickable")
+	}
+	if !strings.Contains(err.Error(), "不可用") {
+		t.Fatalf("error = %v, want the confirm control reported as still unavailable", err)
+	}
+	if logContains(job.snapshot().Log, "已提交登录") {
+		t.Fatalf("a no-op click was logged as a submitted login: %v", logTexts(job.snapshot().Log))
+	}
+}
+
+// TestAutoLoginSubmitSelectorMatchesTheClickableConfirmShape pins the selector
+// against the current vendor DOM: the clickable control is a button, and the
+// disabled placeholder (which must not be clicked) carries the is-disabled class.
+func TestAutoLoginSubmitSelectorMatchesTheClickableConfirmShape(t *testing.T) {
+	if !strings.Contains(selSubmit, "button.oneid-react-dialog-confirm-button") {
+		t.Fatalf("selSubmit = %q, want it to match the clickable button shape", selSubmit)
+	}
+	if !strings.Contains(selSubmit, "oneid-react-is-disabled") {
+		t.Fatalf("selSubmit = %q, want the disabled placeholder excluded", selSubmit)
 	}
 }
 
