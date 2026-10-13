@@ -76,7 +76,7 @@ func (p *panel) accountExists(ctx context.Context, c core.Client, id string) boo
 // POST <base>/accounts/<id>/model-policy.
 //
 // It writes one operator decision: which models this account may be routed to
-// (a blacklist; absent means every model) and whether the account's credit-only
+// (a blacklist; absent means every model) and whether the account's account-level
 // parks are force-enabled. It mirrors reviveAccount's 501/404/400 split so a
 // stale tab cannot report success for a module or account that cannot mean it.
 func (p *panel) setAccountModelPolicy(w http.ResponseWriter, r *http.Request, c core.Client, id string) {

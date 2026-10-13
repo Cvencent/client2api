@@ -11,7 +11,7 @@ import (
 	"client2api/internal/core"
 )
 
-// modelpolicy_test.go pins the per-account model policy and its credit-only
+// modelpolicy_test.go pins the per-account model policy and its account-level
 // force override. These settings are operator decisions, so they live in the
 // credential file and survive a restart instead of disappearing with runtime
 // pool health.
@@ -120,25 +120,27 @@ func TestWorkbuddyModelPolicyBlocksOnlyTheDisabledModel(t *testing.T) {
 	}
 }
 
-func TestWorkbuddyForceEnabledLiftsOnlyCreditParks(t *testing.T) {
+// TestWorkbuddyForceEnabledFlipsAnyAccountParkToReady is the operator's actual
+// intent behind 强制启用: a human has decided the account is usable, so the pool
+// must both REPORT it as 可用 and actually ROUTE to it -- not merely relax one
+// internal check while the panel keeps showing 冷却中/账号异常. It covers the
+// account-level verdicts an operator reaches for the switch to clear.
+func TestWorkbuddyForceEnabledFlipsAnyAccountParkToReady(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		apply func(*Pool, *Auth)
-		want  bool
 	}{
 		{
 			name: "hard credit",
 			apply: func(p *Pool, a *Auth) {
 				p.MarkFailure(a, &Error{Kind: ErrHardCredit, Status: 402, Msg: "no credit"})
 			},
-			want: true,
 		},
 		{
 			name: "low credit reserve",
 			apply: func(p *Pool, a *Auth) {
 				p.SetCreditsDetailed(a, 0, 100, 0, time.Time{}, 0)
 			},
-			want: true,
 		},
 		{
 			name: "session dead",
@@ -147,41 +149,67 @@ func TestWorkbuddyForceEnabledLiftsOnlyCreditParks(t *testing.T) {
 					p.MarkFailure(a, &Error{Kind: ErrSessionDead, Status: 401, Msg: "Offline user session not found"})
 				}
 			},
-			want: false,
 		},
 		{
 			name: "risk",
 			apply: func(p *Pool, a *Auth) {
 				p.MarkFailure(a, &Error{Kind: ErrAccountFault, Status: 403, Msg: "request illegal"})
 			},
-			want: false,
 		},
 		{
 			name: "soft rate",
 			apply: func(p *Pool, a *Auth) {
 				p.MarkFailure(a, &Error{Kind: ErrSoftRate, Status: 429, RetryAfter: time.Hour, Msg: "slow down"})
 			},
-			want: false,
-		},
-		{
-			name: "model block",
-			apply: func(p *Pool, a *Auth) {
-				p.MarkModelBlocked(a, "model-x", ModelBlockReason)
-			},
-			want: false,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			a := &Auth{AccessToken: "at-111111111111", UID: "u1", ForceEnabled: true}
+			// Control: without the switch the park is real.
+			off := &Auth{AccessToken: "at-111111111111", UID: "u-off"}
+			pOff, _ := newPickPool([]*Auth{off})
+			tc.apply(pOff, off)
+			if st := statusOf(t, pOff, off.ID()); st.State == stateReady {
+				t.Fatalf("control: %s did not park the account without force", tc.name)
+			}
+
+			a := &Auth{AccessToken: "at-222222222222", UID: "u-on", ForceEnabled: true}
 			p, _ := newPickPool([]*Auth{a})
 			tc.apply(p, a)
-			if got := p.UsableForModel(a.ID(), "model-x"); got != tc.want {
-				t.Fatalf("force override usable=%v, want %v", got, tc.want)
+
+			st := statusOf(t, p, a.ID())
+			if st.State != stateReady {
+				t.Fatalf("forced %s reported state %q, want %q (可用)", tc.name, st.State, stateReady)
+			}
+			if !st.Enabled {
+				t.Fatalf("forced %s reported Enabled=false, want the account usable", tc.name)
+			}
+			if !p.UsableForModel(a.ID(), "free-model") {
+				t.Fatalf("forced %s still unusable for free-model", tc.name)
+			}
+			got, ok := p.PickForModel(nil, "free-model")
+			if !ok || got == nil || got.ID() != a.ID() {
+				t.Fatalf("forced %s was not picked; PickForModel = %v/%v", tc.name, got, ok)
 			}
 		})
 	}
 }
 
+// TestWorkbuddyForceEnabledStillHonorsPerModelParks pins the one line the
+// operator switch does NOT cross: a per-model park (11102 unsupported, 6004
+// model rate limit) is a fact about one model, not account health, so forcing
+// the account must not hand it back for that exact model.
+func TestWorkbuddyForceEnabledStillHonorsPerModelParks(t *testing.T) {
+	a := &Auth{AccessToken: "at-111111111111", UID: "u1", ForceEnabled: true}
+	p, _ := newPickPool([]*Auth{a})
+	p.MarkModelBlocked(a, "model-x", ModelBlockReason)
+
+	if p.UsableForModel(a.ID(), "model-x") {
+		t.Fatal("a per-model park was overridden by force_enabled")
+	}
+	if !p.UsableForModel(a.ID(), "model-y") {
+		t.Fatal("force_enabled must not park the account for other models")
+	}
+}
 func TestWorkbuddyForceEnabledSurvivesCreditRefresh(t *testing.T) {
 	a := &Auth{AccessToken: "at-111111111111", UID: "u1", ForceEnabled: true}
 	p := reserveTestPool(t, a)
@@ -191,6 +219,38 @@ func TestWorkbuddyForceEnabledSurvivesCreditRefresh(t *testing.T) {
 	}
 }
 
+// TestWorkbuddyForceEnableViaPolicyClearsAccountParkButKeepsModelPark pins the
+// operator's distinction: 强制启用 turns the account-level 冷却中/账号异常 into
+// 可用, but it must not spend a per-model park that belongs to one model only.
+func TestWorkbuddyForceEnableViaPolicyClearsAccountParkButKeepsModelPark(t *testing.T) {
+	c, _ := panelClient(t, nil, map[string]string{
+		"wb-policy.json": `{"accessToken":"at-111111111111","uid":"u-policy","nickname":"policy"}`,
+	})
+	a := c.findAuth("u-policy")
+	if a == nil {
+		t.Fatal("fixture account was not loaded")
+	}
+	c.pool.MarkFailure(a, &Error{Kind: ErrSoftRate, Status: 429, RetryAfter: time.Hour, Msg: "slow down"})
+	if d := c.pool.MarkModelBlocked(a, "model-x", ModelBlockReason); d <= 0 {
+		t.Fatalf("MarkModelBlocked = %v, want a per-model park", d)
+	}
+	if st := statusOf(t, c.pool, a.ID()); st.State == stateReady {
+		t.Fatalf("control: account reported %q before force enable", st.State)
+	}
+
+	if err := c.SetAccountModelPolicy(context.Background(), a.ID(), nil, true); err != nil {
+		t.Fatalf("SetAccountModelPolicy: %v", err)
+	}
+	if st := statusOf(t, c.pool, a.ID()); st.State != stateReady {
+		t.Fatalf("forced account reported %q, want %q (可用)", st.State, stateReady)
+	}
+	if !c.pool.UsableForModel(a.ID(), "model-y") {
+		t.Fatal("the forced account must be usable for other models")
+	}
+	if c.pool.UsableForModel(a.ID(), "model-x") {
+		t.Fatal("force enable must not clear a per-model park")
+	}
+}
 func TestWorkbuddyDisabledModelsAppearInAccountRecord(t *testing.T) {
 	c, _ := panelClient(t, nil, map[string]string{
 		"wb-policy.json": `{"accessToken":"at-111111111111","uid":"u-policy","disabled_models":["blocked-model"],"force_enabled":true}`,

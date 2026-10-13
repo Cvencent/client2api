@@ -352,7 +352,7 @@ func TestCheckinAndCheckinReadyAnswerDifferentQuestions(t *testing.T) {
 }
 
 // modelPolicyClient is a module that lets the panel enable/disable individual
-// models per account (and force-enable credit-only parks). It is deliberately
+// models per account (and force-enable account-level parks). It is deliberately
 // separate from plainClient so the capability and the narrowing helper can be
 // exercised without any other opt-in.
 type modelPolicyClient struct{ plainClient }

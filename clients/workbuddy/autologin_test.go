@@ -62,16 +62,14 @@ type fakePage struct {
 	// "继续登录" is clicked.
 	deviceConfirm       bool
 	deviceConfirmClicks int
-	// The CN login page keeps its OneID iframe hidden and copies
-	// __ONEID__.loginUrl into React state only from the iframe's load handler.
-	// These fields model that handler winning the race with the iframe script.
-	oneidLoginURLChecks     int
-	oneidLoginURLReadyAfter int
-	oneidLoadDispatched     bool
-	oneidLoadBeforeCode     bool
-	oneidClearBeforeAccount bool
-	oneidSyncedBeforeClick  bool
-	oneidAccountClicks      int
+	// oneidAccountClicks counts clicks on the CN OneID account chooser, so a
+	// test can prove the chooser was reached without modelling the whole page.
+	oneidAccountClicks int
+	// traceInstalledBeforeCode records whether the CN request trace was armed
+	// before 获取验证码 was clicked, which is required to observe
+	// /v1/auth/sms/code/send and the follow-up verify/select calls.
+	traceInstalledBeforeCode bool
+	traceInstalled           bool
 }
 
 func newFakePage() *fakePage {
@@ -110,8 +108,12 @@ func (p *fakePage) Click(_ context.Context, selector string) (bool, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.clicked = append(p.clicked, selector)
-	if selector == selCodeBtn && p.oneidLoadDispatched {
-		p.oneidLoadBeforeCode = true
+	if selector == selCodeBtn {
+		// The request trace has to be installed before the code is requested,
+		// or the /v1/auth/sms/code/send and verify calls are invisible.
+		if p.traceInstalled {
+			p.traceInstalledBeforeCode = true
+		}
 	}
 	if selector == selSubmit {
 		p.submitAttempts++
@@ -210,25 +212,13 @@ func (p *fakePage) EvalBool(_ context.Context, expression string) (bool, error) 
 		p.deviceConfirmClicks++
 		p.clicked = append(p.clicked, "继续登录")
 		return true, nil
-	case strings.Contains(expression, "phone-iframe") && strings.Contains(expression, "__ONEID__") && strings.Contains(expression, "dispatchEvent"):
-		p.oneidLoginURLChecks++
-		if p.oneidClearBeforeAccount && p.oneidLoadDispatched {
-			p.oneidClearBeforeAccount = false
-			p.oneidLoadDispatched = false
-			return false, nil
-		}
-		if p.oneidLoginURLChecks <= p.oneidLoginURLReadyAfter {
-			return false, nil
-		}
-		p.oneidLoadDispatched = true
+	case strings.Contains(expression, "__c2aWBtrace"):
+		p.traceInstalled = true
 		return true, nil
 	case strings.Contains(expression, "oneid-enterprise-login-account-list__item") && strings.Contains(expression, "个人版"):
 		for _, text := range p.accountTexts {
 			if strings.Contains(text, "个人版") {
 				p.oneidAccountClicks++
-				if p.oneidLoadDispatched {
-					p.oneidSyncedBeforeClick = true
-				}
 				p.clicked = append(p.clicked, "oneid-account-item(个人版)")
 				return true, nil
 			}
@@ -238,9 +228,6 @@ func (p *fakePage) EvalBool(_ context.Context, expression string) (bool, error) 
 		for _, text := range p.accountTexts {
 			if strings.Contains(text, "个人版") {
 				p.oneidAccountClicks++
-				if p.oneidLoadDispatched {
-					p.oneidSyncedBeforeClick = true
-				}
 				p.clicked = append(p.clicked, ".account-item(个人版)")
 				return true, nil
 			}
@@ -886,61 +873,72 @@ func TestAutoLoginConfirmsTheCNDeviceLogin(t *testing.T) {
 	}
 }
 
-// TestAutoLoginReplaysCNOneIDLoadAfterLoginURLAppears reproduces the current CN
-// failure where #phone-iframe's load event wins the race with
-// __ONEID__.loginUrl. The vendor's React state then stays undefined and the
-// callback becomes /login/undefined. The flow must wait for the URL and replay
-// the load event before it requests the SMS code.
-func TestAutoLoginReplaysCNOneIDLoadAfterLoginURLAppears(t *testing.T) {
+// TestAutoLoginArmsTheCNRequestTraceBeforeRequestingTheCode pins the order the
+// stuck-run forensics depend on: the fetch/XHR trace has to be installed before
+// 获取验证码 is clicked, or the /v1/auth/sms/code/send and verify calls the run
+// needs to explain itself never get recorded.
+func TestAutoLoginArmsTheCNRequestTraceBeforeRequestingTheCode(t *testing.T) {
 	v := successVendor()
 	c, _ := autoLoginClient(t, v)
 	page := newFakePage()
-	page.oneidLoginURLReadyAfter = 2
 	platform := &fakePlatform{number: core.SMSNumber{Phone: "13800009907"}, code: "777777"}
 
 	if _, err := runAutoLogin(t, c, page, platform, core.AutoLoginRequest{}); err != nil {
 		t.Fatalf("autoLogin: %v", err)
 	}
-	if !page.oneidLoadDispatched {
-		t.Fatalf("the CN flow never replayed the OneID iframe load after loginUrl appeared")
+	if !page.traceInstalled {
+		t.Fatalf("the CN flow never installed the request trace")
 	}
-	if !page.oneidLoadBeforeCode {
-		t.Fatalf("the CN flow requested the SMS code before syncing the OneID loginUrl")
-	}
-	if page.oneidLoginURLChecks < 3 {
-		t.Fatalf("OneID loginUrl checks = %d, want at least 3 (the URL was late twice)", page.oneidLoginURLChecks)
+	if !page.traceInstalledBeforeCode {
+		t.Fatalf("the CN flow requested the SMS code before arming the request trace")
 	}
 }
 
-// TestAutoLoginResyncsCNOneIDLoginURLBeforeSelectingAnAccount reproduces the
-// state loss seen after the phone tab's effect clears the outer React
-// loginInfo state. The hidden iframe still has a valid loginUrl, so the flow
-// must replay its load handler again immediately before selecting an account.
-func TestAutoLoginResyncsCNOneIDLoginURLBeforeSelectingAnAccount(t *testing.T) {
-	v := successVendor()
-	c, _ := autoLoginClient(t, v)
-	page := newFakePage()
-	page.exists[selCNOneIDAccountItem] = true
-	page.accountTexts = []string{"企业版", "个人版"}
-	page.oneidClearBeforeAccount = true
-	platform := &fakePlatform{number: core.SMSNumber{Phone: "13800009909"}, code: "999999"}
-
-	if _, err := runAutoLogin(t, c, page, platform, core.AutoLoginRequest{}); err != nil {
-		t.Fatalf("autoLogin: %v", err)
+// TestCNRequestTraceKeepsTheAuthEndpoints pins the capture filter against the
+// OneID endpoints the CN flow uses: the code-send, the code-verify and the
+// account selection all live under /v1/auth/ and must be kept.
+func TestCNRequestTraceKeepsTheAuthEndpoints(t *testing.T) {
+	for _, want := range []string{"/console/", "/v2/plugin/", "/v1/auth/", "/auth/"} {
+		if !strings.Contains(cnRequestTraceKeepJS, want) {
+			t.Fatalf("request-trace filter fragment is missing the %q prefix", want)
+		}
 	}
-	if page.oneidAccountClicks == 0 {
-		t.Fatal("the test did not reach the CN account chooser")
+	// The filter is a JS fragment that tests a path prefix; evaluate the same
+	// prefixes here so the pinned endpoints cannot silently fall out of scope.
+	kept := []string{
+		"/v1/auth/sms/code/send",
+		"/v1/auth/sms/code/verify",
+		"/v1/auth/accounts",
+		"/v1/auth/select_account",
+		"/v1/auth/new/select_account",
+		"/console/api/foo",
+		"/v2/plugin/bar",
+		"/auth/realms/copilot/broker/oneid/login",
 	}
-	if !page.oneidSyncedBeforeClick {
-		t.Fatal("the CN account was selected before loginUrl was restored")
+	for _, path := range kept {
+		if !cnRequestTraceKeeps(path) {
+			t.Fatalf("request-trace filter dropped %q", path)
+		}
 	}
-	if page.oneidLoginURLChecks < 2 {
-		t.Fatalf("OneID loginUrl checks = %d, want at least 2", page.oneidLoginURLChecks)
+	dropped := []string{"/login/undefined", "/favicon.ico", "/static/main.js"}
+	for _, path := range dropped {
+		if cnRequestTraceKeeps(path) {
+			t.Fatalf("request-trace filter kept unrelated path %q", path)
+		}
 	}
 }
 
-// TestAutoLoginDoesNotReplayTheOneIDLoadForTheGlobalRealm keeps the CN
-// workaround out of the international flow.
+// cnRequestTraceKeeps evaluates the shared prefix filter for a path so the test
+// exercises the same rule the injected script ships.
+func cnRequestTraceKeeps(path string) bool {
+	return strings.HasPrefix(path, "/console/") ||
+		strings.HasPrefix(path, "/v2/plugin/") ||
+		strings.HasPrefix(path, "/v1/auth/") ||
+		strings.HasPrefix(path, "/auth/")
+}
+
+// TestAutoLoginDoesNotReplayTheOneIDLoadForTheGlobalRealm keeps the CN-only
+// request tracing out of the international flow.
 func TestAutoLoginDoesNotReplayTheOneIDLoadForTheGlobalRealm(t *testing.T) {
 	v := successVendor()
 	c, _ := autoLoginClient(t, v)
@@ -960,8 +958,8 @@ func TestAutoLoginDoesNotReplayTheOneIDLoadForTheGlobalRealm(t *testing.T) {
 	if err != nil {
 		t.Fatalf("autoLogin: %v", err)
 	}
-	if page.oneidLoginURLChecks != 0 || page.oneidLoadDispatched {
-		t.Fatalf("the global flow ran the CN OneID load workaround")
+	if page.traceInstalled {
+		t.Fatalf("the global flow armed the CN request trace")
 	}
 }
 

@@ -101,22 +101,23 @@ people. The built-in default is `127.0.0.1`.
   manual override, then the module's cached catalogue, then the embedded preset.
   The model page can edit the supported levels and default, and those values are
   authoritative over a stale module cache.
-- Cap alignment is on by default for every V4.1 Flash entry in the embedded
-  table and off for everything else; the panel still lets an operator turn it
-  off or restore the default per model. When it is on, a caller's top level
-  `xhigh` is promoted to the model's real highest level only when that level is
-  higher (for example WorkBuddy, Cline and OpenRouter `max`). Lower requests and models
-  whose top level is already `xhigh` - Loomy, for example - are left unchanged
-  rather than sent a value the vendor never advertised. The usage log keeps both
-  values and shows `xhigh → max` when they differ.
+- Cap alignment is on by default for every model on every platform; the panel
+  still lets an operator turn it off or restore the default per model. When it is
+  on, a caller's top level `xhigh` is promoted to the model's real highest level
+  only when that level is higher (for example WorkBuddy, Cline and OpenRouter
+  `max`). Lower requests and models whose top level is already `xhigh` - Loomy,
+  for example - are left unchanged rather than sent a value the vendor never
+  advertised. A model with no published effort ladder is also harmless: the
+  default is on, but the gateway has nothing higher to send. The usage log keeps
+  both values and shows `xhigh → max` when they differ.
 
-- The embedded V4.1 defaults follow the platform-specific facts rather than one global
-  `max`: WorkBuddy CN is `low/high/max` (default `high`), WorkBuddy global is
-  `high` only, Cline uses its one global wire vocabulary, OpenRouter publishes
-  `low/high/max`, Loomy tops out at `xhigh`, and Raccoon/CodeArts expose
-  on/off thinking. Platforms that publish no per-model effort ladder keep the
-  effort list unset; cap alignment still defaults on for every V4.1 Flash row,
-  but is a no-op there. Only rows whose real top level is above `xhigh` change
+- The embedded effort defaults still follow the platform-specific facts rather
+  than one global `max`: WorkBuddy CN is `low/high/max` (default `high`),
+  WorkBuddy global is `high` only, Cline uses its one global wire vocabulary,
+  OpenRouter publishes `low/high/max`, Loomy tops out at `xhigh`, and
+  Raccoon/CodeArts expose on/off thinking. Platforms that publish no per-model
+  effort ladder keep the effort list unset; cap alignment is still on for those
+  models but is a no-op. Only rows whose real top level is above `xhigh` change
   the request.
 
 ### Accounts and platforms

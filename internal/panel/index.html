@@ -2654,7 +2654,7 @@ details.cfg summary:hover, details.adv summary:hover { color: var(--accent-text)
 
 <!-- 模型明细：账号池「模型」列点开的弹层。一个账号一段，列出该账号的模型：
      勾选 = 允许路由到它（默认全勾），取消勾选 = 该账号不再被路由到它；配「强制
-     启用」可只绕过零积分/额度耗尽的冷却（不绕过 session 失效、风控和限流）。
+     启用」让这个账号无视账号级健康判定（冷却/额度/风控/session 等）直接可用；只有逐模型限流仍然生效。
      模块没上报逐模型状态时按平台目录补齐。不支持该能力的模块保持只读显示。 -->
 <div class="veil" id="modelVeil">
   <div class="dlg" style="width:640px">
@@ -3483,8 +3483,8 @@ function accountDisabledModels(a) {
   return dm.map(m => String(m).trim().toLowerCase()).filter(Boolean);
 }
 
-// accountForceEnabled 返回操作员是否对这个账号开了「强制启用」（只绕过零积分 /
-// 额度耗尽的冷却，不绕过 session 失效、风控和限流）。
+// accountForceEnabled 返回操作员是否对这个账号开了「强制启用」（把账号级健康判定
+// 全部改为可用；只有逐模型限流不受影响）。
 function accountForceEnabled(a) {
   return !!(((a && a.fields) || {}).force_enabled);
 }
@@ -4721,7 +4721,7 @@ function closeAccountNote() {
 /* ── 模型明细弹层 ─────────────────────────────────────────────────────
    「模型」列点开的就是它。支持模型策略的模块（capabilities.model_policy）：
    勾选 = 允许路由到它，取消勾选 = 该账号不再被路由到它（默认全勾）；「强制启用」
-   只绕过零积分/额度耗尽的冷却（不绕过 session 失效、风控和限流）。不支持的模块
+   把账号级冷却/异常状态改为可用；逐模型限流仍然生效。不支持的模块
    保持只读显示。数据来自已经拿到的 status + overview 和一次模型名称缓存。 */
 let MODEL_POLICY = null;
 
@@ -4783,7 +4783,7 @@ function openModelsDialog(n, ids) {
       : '<span class="hint">该平台不报模型级限流</span>';
     if (editable) {
       head += '<span class="grow"></span>' +
-        '<label class="sel-note mpark-force" title="只绕过零积分和额度耗尽的冷却；session 失效、风控、限流不绕过">' +
+        '<label class="sel-note mpark-force" title="无视账号级冷却/额度/风控/异常，直接标记为可用；逐模型限流仍按原样生效">' +
         '<input type="checkbox" class="mparkForce"' + (sum && sum.forceEnabled ? " checked" : "") + '> 强制启用</label>' +
         '<button class="xs" type="button" data-mpark-all="1">全选</button>' +
         '<button class="xs" type="button" data-mpark-all="0">全不选</button>';

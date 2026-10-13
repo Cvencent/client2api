@@ -54,7 +54,7 @@ type Auth struct {
 
 	// DisabledModels is the operator's blacklist for this credential.
 	DisabledModels []string
-	// ForceEnabled is the operator's override for credit-only parks.
+	// ForceEnabled is the operator's override for account-level parks.
 	ForceEnabled bool
 }
 
@@ -323,7 +323,7 @@ func (a *Auth) NicknameValue() string {
 	return a.Nickname
 }
 
-// ForceEnabledValue reports the operator's credit-only override.
+// ForceEnabledValue reports the operator's account-level override.
 func (a *Auth) ForceEnabledValue() bool {
 	if a == nil {
 		return false

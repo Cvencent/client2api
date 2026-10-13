@@ -522,9 +522,24 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 		if callerGone(err) {
 			break
 		}
+		// A 402 from the chat endpoint is the vendor's authoritative
+		// insufficient-credit verdict. The first call already got one retry
+		// above, so the second refusal is enough to park the account as
+		// low-credit instead of entering the ordinary 30s/1m/2m ladder.
+		if failureKind(err) == core.FailureQuota && c.reserveCreditLimit() >= 0 {
+			if c.store.markChatCreditExhausted(acc.ID, err) {
+				lastErr = err
+				continue
+			}
+		}
 		if !c.store.penaliseChatWithStage(acc.ID, err, time.Now().UTC(), stage, c.cfg.cooldown()) {
+			// The stage compare-and-swap lost: a concurrent request for this same
+			// account already advanced (or reset) its cooldown ladder between our
+			// read and this write. The account is handled either way, so keep the
+			// error as a fallback and move on to the next candidate instead of
+			// abandoning the whole rotation.
 			lastErr = err
-			break
+			continue
 		}
 	}
 	if lastErr == nil && busy {

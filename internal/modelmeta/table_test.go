@@ -236,6 +236,26 @@ func TestStaticTableV41ElevateDefaults(t *testing.T) {
 	}
 }
 
+// TestStaticElevateTopDefaultsOnForEveryModel pins the current operator policy:
+// cap alignment is enabled out of the box for every model on every platform.
+// Models with no published tier above xhigh are harmless no-ops; models that do
+// publish max get promoted by the gateway. An explicit panel override still wins
+// over this default.
+func TestStaticElevateTopDefaultsOnForEveryModel(t *testing.T) {
+	for _, tc := range []struct {
+		client string
+		model  string
+	}{
+		{"workbuddy", "gpt-5.5"},
+		{"zcode", "glm-5.3"},
+		{"kimi", "kimi-k3"},
+		{"nosuchclient", "unknown-model"},
+	} {
+		if !StaticElevateTop(tc.client, tc.model) {
+			t.Errorf("StaticElevateTop(%s, %q) = false, want the all-model default on", tc.client, tc.model)
+		}
+	}
+}
 func TestStaticTableRealmMissingMeansNoVocabulary(t *testing.T) {
 	// glm-5.1 exists in the CN effort table only. The global realm still knows its
 	// window (context is realm-independent) but must not be handed CN efforts.

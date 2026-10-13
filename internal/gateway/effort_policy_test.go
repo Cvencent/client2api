@@ -69,7 +69,7 @@ func TestElevateTopPromotesXHighToTheModelsHighestTier(t *testing.T) {
 	}
 }
 
-func TestElevateTopStaysOffWithoutAnEmbeddedDefault(t *testing.T) {
+func TestElevateTopDefaultsOnWithoutAnEmbeddedTableRow(t *testing.T) {
 	store, err := modelmeta.OpenOverrideStore("")
 	if err != nil {
 		t.Fatal(err)
@@ -86,11 +86,11 @@ func TestElevateTopStaysOffWithoutAnEmbeddedDefault(t *testing.T) {
 	if rec := chat(t, srv, body); rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	if got := base.seen.Options["reasoning_effort"]; got != "xhigh" {
-		t.Fatalf("module reasoning_effort = %v, want xhigh while the toggle is off", got)
+	if got := base.seen.Options["reasoning_effort"]; got != "max" {
+		t.Fatalf("module reasoning_effort = %v, want max from the all-model default", got)
 	}
-	if base.seen.EffortFinal {
-		t.Fatal("an unchanged level was marked final")
+	if !base.seen.EffortFinal {
+		t.Fatal("the all-model promotion was not marked final")
 	}
 }
 

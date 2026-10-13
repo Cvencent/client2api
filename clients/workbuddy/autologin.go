@@ -79,15 +79,6 @@ var (
 // a var only so the test binary can shrink it.
 var submitReadyTimeout = 8 * time.Second
 
-// cnONEIDLoginURLTimeout bounds the CN wait for the hidden OneID iframe to
-// publish __ONEID__.loginUrl.  It is a var only so tests can shrink it.
-var cnONEIDLoginURLTimeout = 10 * time.Second
-
-// cnONEIDSyncSettle lets React commit the loginInfo state after the hidden
-// iframe's load handler is replayed and before the account chooser reads it.
-// It is a var only so tests can shrink it.
-var cnONEIDSyncSettle = 300 * time.Millisecond
-
 // accountSelectReadyTimeout bounds the two asynchronous transitions on the CN
 // account chooser: the card gaining its selected class, and the main submit
 // button becoming enabled.  Missing either transition means nothing was
@@ -130,11 +121,14 @@ const (
 	selPhoneInput = `input#phoneNumber, input[placeholder="请输入你的手机号"]`
 	selCodeBtn    = `input.code-btn, button.code-btn, button.oneid-react-verify-code__code-btn`
 	selCodeInput  = `input#code, input[placeholder="请输入验证码"]`
-	// selSubmit is the confirm control in its clickable shape.  The vendor
-	// renders it as a disabled div until the phone and code are accepted and
-	// only then as a button, so the disabled placeholder is excluded: a click
-	// on it is a silent no-op that must not be mistaken for a submitted login.
-	selSubmit      = `input#kc-login, button#kc-login, button.oneid-react-dialog-confirm-button, div.oneid-react-dialog-confirm-button:not(.oneid-react-is-disabled)`
+	// selSubmit is the confirm control in a clickable shape.  The vendor renders
+	// it as a disabled div while the form is invalid, so the disabled placeholder
+	// is excluded: a click on it is a silent no-op that must not be mistaken for
+	// a submitted login.  Beware that the vendor also enables this control as
+	// soon as both fields are non-empty, before the SMS code is actually
+	// verified, so "enabled" alone does not prove the code was accepted -- the
+	// /v1/auth/sms/code/verify call in the request trace is the real proof.
+	selSubmit      = `input#kc-login:not([disabled]), button#kc-login:not([disabled]), button.oneid-react-dialog-confirm-button:not(.oneid-react-is-disabled):not([disabled]):not([aria-disabled='true']), div.oneid-react-dialog-confirm-button:not(.oneid-react-is-disabled)`
 	selAgreeBox    = "input.t-checkbox__former"
 	selAccountItem = ".account-item"
 	// selCNOneIDAccountItem is the current CN account chooser. OneID renders
@@ -552,6 +546,11 @@ func (c *Client) autoLogin(
 	if err := c.openPhoneLogin(ctx, job, page, sess.url, phone); err != nil {
 		return err
 	}
+	if job.realm == realmCN {
+		// Record the OneID code-send, code-verify and account-selection calls
+		// before the first SMS request, so a stuck run can name the exact step.
+		installCNRequestTrace(ctx, page)
+	}
 	if err := c.requestSMSCode(ctx, job, page); err != nil {
 		return err
 	}
@@ -605,17 +604,6 @@ func (c *Client) openPhoneLogin(ctx context.Context, job *autoJob, page pageDriv
 	}
 	if !waitSelector(ctx, page, selPhoneInput, 15*time.Second) {
 		return fmt.Errorf("找不到手机号输入框，厂商登录页可能已改版（%s）", pageWhere(ctx, page))
-	}
-	// The CN page keeps its OneID iframe hidden and copies __ONEID__.loginUrl
-	// into React state only from the iframe's load handler.  If that handler
-	// wins the race with the iframe script, the state stays undefined and the
-	// vendor later redirects to /login/undefined.  Re-run the handler once the
-	// URL exists, before spending an SMS code on the form.
-	if job.realm == realmCN {
-		if !waitCNOneIDLoginURL(ctx, page, cnONEIDLoginURLTimeout) {
-			return fmt.Errorf("OneID 登录地址未就绪，厂商登录页可能已改版（%s）", pageWhere(ctx, page))
-		}
-		job.logf("已同步 OneID 登录地址")
 	}
 	filled, err := page.Fill(ctx, selPhoneInput, phone)
 	if err != nil {
@@ -731,11 +719,7 @@ func (c *Client) confirmAutoLogin(ctx context.Context, job *autoJob, page pageDr
 	accountSelected := false
 	deviceConfirmed := false
 	cnDiagLogged := false
-	if job.realm == realmCN {
-		// Record the SPA's own /console and /v2/plugin calls so a stuck run can
-		// name the exact step instead of only reporting that it waited.
-		installCNRequestTrace(ctx, page)
-	}
+	lastCNTrace := ""
 	for {
 		// On a fresh profile the vendor can open a "服务条款与隐私协议" modal
 		// after the first submit click.  That first click never reaches the
@@ -758,12 +742,6 @@ func (c *Client) confirmAutoLogin(ctx context.Context, job *autoJob, page pageDr
 		}
 		if job.realm == realmCN {
 			if !accountSelected {
-				if !syncCNOneIDLoginURL(ctx, page, cnONEIDLoginURLTimeout) {
-					return core.LoginState{}, fmt.Errorf("OneID 登录地址未就绪，厂商登录页可能已改版（%s）", pageWhere(ctx, page))
-				}
-				if !sleepCtx(ctx, cnONEIDSyncSettle) {
-					return core.LoginState{}, ctx.Err()
-				}
 				selected, err := selectCNAccount(ctx, page)
 				if err != nil {
 					return core.LoginState{}, fmt.Errorf("选择登录账号失败：%w", err)
@@ -811,10 +789,11 @@ func (c *Client) confirmAutoLogin(ctx context.Context, job *autoJob, page pageDr
 		select {
 		case <-ctx.Done():
 			if job.realm == realmCN {
-				// The timeout is the operator's only chance to see where the vendor
-				// stopped, so dump the request trace before giving up.
+				// The trace is normally already in the log (logged whenever it
+				// changes), but a run that stopped producing calls since the last
+				// tick still deserves a final snapshot before we give up.
 				dctx, dcancel := context.WithTimeout(context.Background(), 3*time.Second)
-				if trace := cnRequestTrace(dctx, page); trace != "" {
+				if trace := cnRequestTrace(dctx, page); trace != "" && trace != lastCNTrace {
 					job.logf("授权接口轨迹：%s", trace)
 				}
 				dcancel()
@@ -828,14 +807,24 @@ func (c *Client) confirmAutoLogin(ctx context.Context, job *autoJob, page pageDr
 		}
 		// Name the CN page state once so a stuck run explains itself instead of
 		// just repeating the heartbeat.  It carries no phone number, code or token.
-		if job.realm == realmCN && !deviceConfirmed && !cnDiagLogged && time.Since(started) >= 20*time.Second {
+		if job.realm == realmCN && !cnDiagLogged && time.Since(started) >= 15*time.Second {
 			if diag := cnConfirmDiagnostic(ctx, page); diag != "" {
 				job.logf("账号选择诊断：%s", diag)
 			}
-			if trace := cnRequestTrace(ctx, page); trace != "" {
-				job.logf("授权接口轨迹：%s", trace)
-			}
 			cnDiagLogged = true
+		}
+		// Re-arm the trace every tick so a page navigation that swapped in fresh
+		// window objects keeps recording, then print it whenever it changes.  The
+		// operator can see exactly which step the vendor stopped at: a missing
+		// sms/code/verify means the code was never accepted, a verify with no
+		// /v1/auth/accounts means no accounts came back, and an accounts count of
+		// 0 means the account chooser had nothing to show.
+		if job.realm == realmCN {
+			installCNRequestTrace(ctx, page)
+			if trace := cnRequestTrace(ctx, page); trace != "" && trace != lastCNTrace {
+				job.logf("授权接口轨迹：%s", trace)
+				lastCNTrace = trace
+			}
 		}
 	}
 }
@@ -938,44 +927,6 @@ func waitSelector(ctx context.Context, page pageDriver, selector string, timeout
 	}
 }
 
-// waitCNOneIDLoginURL waits for the CN page's hidden OneID iframe to publish
-// __ONEID__.loginUrl, then replays the iframe's load event.
-func waitCNOneIDLoginURL(ctx context.Context, page pageDriver, timeout time.Duration) bool {
-	return syncCNOneIDLoginURL(ctx, page, timeout)
-}
-
-// syncCNOneIDLoginURL replays the hidden iframe's load handler and reports
-// whether it ran against a live loginUrl.  The account-selection callback reads
-// the outer React loginInfo state, which can be cleared after the phone tab is
-// selected even while the iframe still exposes loginUrl.  Replaying the
-// handler immediately before an account click restores that state without
-// opening a new page or requesting another SMS code.
-func syncCNOneIDLoginURL(ctx context.Context, page pageDriver, timeout time.Duration) bool {
-	js := `(function(){try{` +
-		`var fs=document.querySelectorAll("#phone-iframe");` +
-		`var ok=false;` +
-		`for(var i=0;i<fs.length;i++){var f=fs[i];` +
-		`var w=f&&f.contentWindow;` +
-		`var u=w&&w.__ONEID__&&w.__ONEID__.loginUrl;` +
-		`if(typeof u!=="string"||!u){continue;}` +
-		`f.dispatchEvent(new Event("load"));` +
-		`ok=true;}` +
-		`return ok;` +
-		`}catch(e){return false;}})()`
-	deadline := time.Now().Add(timeout)
-	for {
-		if ok, err := page.EvalBool(ctx, js); err == nil && ok {
-			return true
-		}
-		if time.Now().After(deadline) || ctx.Err() != nil {
-			return false
-		}
-		if !sleepCtx(ctx, 300*time.Millisecond) {
-			return false
-		}
-	}
-}
-
 // clickIfPresent clicks a selector only when it exists, so an optional control
 // (the agreement gate on a repeat visit) is not an error when it is absent.
 func clickIfPresent(ctx context.Context, page pageDriver, selector string) (bool, error) {
@@ -991,16 +942,25 @@ func clickIfPresent(ctx context.Context, page pageDriver, selector string) (bool
 // page shows.  It carries no phone number, code, token or query string.
 func cnConfirmDiagnostic(ctx context.Context, page pageDriver) string {
 	js := `(function(){try{` + autoAllDocsJS +
-		`var items=0,oneid=0,cards=0,box=0,code=0,kc=0;` +
+		`var items=0,oneid=0,cards=0,box=0,code=0,kc=0,phone=0;` +
 		`for(var d=0;d<__autoDocs.length;d++){var doc=__autoDocs[d];` +
 		`items+=doc.querySelectorAll(` + autoJSString(selAccountItem) + `).length;` +
 		`oneid+=doc.querySelectorAll(` + autoJSString(selCNOneIDAccountItem) + `).length;` +
 		`cards+=doc.querySelectorAll(` + autoJSString(selAccountCard) + `).length;` +
 		`box+=doc.querySelectorAll(` + autoJSString(selAccountBox) + `).length;` +
 		`code+=doc.querySelectorAll(` + autoJSString(selCodeInput) + `).length;` +
+		`phone+=doc.querySelectorAll(` + autoJSString(selPhoneInput) + `).length;` +
 		`kc+=doc.querySelectorAll('#kc-login').length;` +
 		`}` +
-		`return JSON.stringify({path:location.pathname,items:items,oneid:oneid,cards:cards,box:box,code:code,kc:kc});` +
+		// oneidState probes the hidden OneID iframe's component, which is a
+		// custom element living in a shadow root; it reports whether the phone
+		// step thinks the code was sent and where its account list is.
+		`var oneidState="";try{var f=document.getElementById("phone-iframe");var w=f&&f.contentWindow;var d2=w&&w.document;` +
+		`if(d2){var ph=d2.querySelector("oneid-phone-login");var sr=ph&&ph.shadowRoot;` +
+		`var lu=(w&&w.__ONEID__&&w.__ONEID__.loginUrl)||"";oneidState=JSON.stringify({sent:!!(ph&&ph.isCodeSent),policy:!!(ph&&ph.policyChecked),inShadow:!!sr,loginUrl:lu?"yes":"no",body:(d2.body?d2.body.innerText:"").replace(/\s+/g," ").slice(0,80)});}` +
+		`}catch(e){oneidState="err";}` +
+		`var top=(document.body?document.body.innerText:"").replace(/\s+/g," ").slice(0,80);` +
+		`return JSON.stringify({path:location.pathname,items:items,oneid:oneid,cards:cards,box:box,code:code,phone:phone,kc:kc,top:top,oneidState:oneidState});` +
 		`}catch(e){return '';}})()`
 	s, err := page.EvalString(ctx, js)
 	if err != nil {
@@ -1009,36 +969,79 @@ func cnConfirmDiagnostic(ctx context.Context, page pageDriver) string {
 	return strings.TrimSpace(s)
 }
 
-// installCNRequestTrace patches the page's fetch/XHR so a stuck CN run can name
-// the /console and /v2/plugin calls the SPA itself made: method, route, HTTP
-// status and business code only. It never records a body, a header, a token or
-// a query string, so the resulting line can be pasted without leaking a secret.
+// cnTraceSinkKey is the sessionStorage key the CN request trace mirrors into.
+// sessionStorage survives a same-origin full-page navigation, which a plain
+// window global does not, so a run that gets bounced through an intermediate
+// route still keeps the calls that explain what happened.
+const cnTraceSinkKey = "__c2aWBtrace"
+
+// cnRequestTraceKeepJS is the path filter shared by the injected trace and the
+// test that pins which endpoints are kept.  It keeps the plugin-auth calls and
+// the OneID auth calls (the SMS send/verify and the account selection live
+// under /v1/auth/) and drops everything else.
+const cnRequestTraceKeepJS = "u.indexOf('/console/')===0||u.indexOf('/v2/plugin/')===0||u.indexOf('/v1/auth/')===0||u.indexOf('/auth/')===0"
+
+// installCNRequestTrace patches fetch/XHR on the top window and every
+// same-origin frame so a stuck CN run can name the OneID SMS send/verify and
+// account-selection calls no matter which window issued them.  It records
+// method + path + HTTP status, plus only a few non-identifying answer fields
+// (business code, account count, next step) -- never a body with a token, a
+// header or a query string -- and mirrors each line into sessionStorage so a
+// page navigation does not erase the evidence.
 func installCNRequestTrace(ctx context.Context, page pageDriver) {
 	js := `(function(){try{` +
-		`if(window.__c2aWBtrace){return true;}` +
-		`var t=[];window.__c2aWBtrace=t;` +
-		`function keep(u){try{return u.indexOf('/console/')===0||u.indexOf('/v2/plugin/')===0||u.indexOf('/v1/auth/new/')===0;}catch(e){return false;}}` +
-		`function rec(m,u,s,c){try{var line=m+' '+u+' -> '+s;if(typeof c==='number'){line+=' code='+c;}t.push(line);if(t.length>60){t.shift();}}catch(e){}}` +
-		`if(typeof window.fetch==='function'){var of=window.fetch;` +
-		`window.fetch=function(input,init){var m='GET',u='';try{u=(typeof input==='string')?input:((input&&input.url)||'');m=((init&&init.method)||(input&&input.method)||'GET');}catch(e){}` +
+		`var keep=function(u){try{return ` + cnRequestTraceKeepJS + `;}catch(e){return false;}};` +
+		`sinkKey=` + autoJSString(cnTraceSinkKey) + `;` +
+		// meta extracts a few non-identifying answer fields so the trace can say
+		// "accounts=2" or "next=login" without recording the response body.
+		`var meta=function(body){try{var d=JSON.parse(body),p=[];` +
+		`if(d&&typeof d.code==="number"){p.push("code="+d.code);}` +
+		`if(d&&Array.isArray(d.accounts)){p.push("accounts="+d.accounts.length);}` +
+		`if(d&&typeof d.next_step==="string"){p.push("next="+d.next_step);}` +
+		`if(d&&d.personal_extract_result&&typeof d.personal_extract_result.result==="string"){p.push("extract="+d.personal_extract_result.result);}` +
+		`if(d&&d.errCode!=null&&d.errCode!==""){p.push("err="+String(d.errCode).slice(0,24));}` +
+		`if(d&&d.errMessage){p.push("msg="+String(d.errMessage).replace(/[^\\u4e00-\\u9fffA-Za-z0-9 _-]/g,"").slice(0,24));}` +
+		`if(d&&typeof d.loginUrl==="string"){p.push("loginUrl="+(d.loginUrl?"yes":"no"));}` +
+		`if(d&&typeof d.redirect_uri==="string"){p.push("redirect="+(d.redirect_uri?"yes":"no"));}` +
+		`return p.join(" ");}catch(e){return "";}};` +
+		`var sink=function(w,t,line){try{t.push(line);if(t.length>60){t.shift();}` +
+		`var all=[];try{all=JSON.parse(w.sessionStorage.getItem(sinkKey)||"[]")||[];}catch(e){all=[];}` +
+		`all.push(line);if(all.length>60){all=all.slice(-60);}` +
+		`try{w.sessionStorage.setItem(sinkKey,JSON.stringify(all));}catch(e){}}catch(e){}};` +
+		`var patch=function(w){try{if(!w||w.__c2aWBtrace){return;}var t=[];try{w.__c2aWBtrace=t;}catch(e){}` +
+		`var rec=function(m,u,st,extra){try{var line=m+" "+u+" -> "+st;if(extra){line+=" "+extra;}sink(w,t,line);}catch(e){}};` +
+		`if(typeof w.fetch==="function"){var of=w.fetch;` +
+		`w.fetch=function(input,init){var m="GET",u="";try{u=(typeof input==="string")?input:((input&&input.url)||"");m=((init&&init.method)||(input&&input.method)||"GET");}catch(e){}` +
 		`var pr;try{pr=of.apply(this,arguments);}catch(e){throw e;}` +
-		`try{var path='';try{path=new URL(u,location.href).pathname;}catch(e){}` +
-		`if(keep(path)&&pr&&typeof pr.then==='function'){pr=pr.then(function(resp){try{var cl=(resp&&typeof resp.clone==='function')?resp.clone():null;` +
-		`if(cl&&typeof cl.text==='function'){cl.text().then(function(body){var c;try{var d=JSON.parse(body);if(d&&typeof d.code==='number'){c=d.code;}}catch(e){}rec(m,path,resp.status,c);},function(){rec(m,path,resp.status);});}` +
+		`try{var path="";try{path=new URL(u,w.location.href).pathname;}catch(e){}` +
+		`if(keep(path)&&pr&&typeof pr.then==="function"){pr=pr.then(function(resp){try{var cl=(resp&&typeof resp.clone==="function")?resp.clone():null;` +
+		`if(cl&&typeof cl.text==="function"){cl.text().then(function(body){rec(m,path,resp.status,meta(body));},function(){rec(m,path,resp.status);});}` +
 		`else{rec(m,path,resp.status);}}catch(e){}return resp;});}}catch(e){}` +
 		`return pr;};}` +
-		`if(window.XMLHttpRequest&&window.XMLHttpRequest.prototype){var op=window.XMLHttpRequest.prototype.open;var sd=window.XMLHttpRequest.prototype.send;` +
-		`window.XMLHttpRequest.prototype.open=function(m,u){this.__c2aM=m;this.__c2aU=u;return op.apply(this,arguments);};` +
-		`window.XMLHttpRequest.prototype.send=function(){var x=this;try{x.addEventListener('loadend',function(){try{var path='';try{path=new URL(x.__c2aU,location.href).pathname;}catch(e){}` +
-		`if(keep(path)){var c;try{var j=JSON.parse(x.responseText);if(j&&typeof j.code==='number'){c=j.code;}}catch(e){}rec(x.__c2aM||'GET',path,x.status,c);}}catch(e){}});}catch(e){}return sd.apply(this,arguments);};}` +
+		`if(w.XMLHttpRequest&&w.XMLHttpRequest.prototype){var op=w.XMLHttpRequest.prototype.open;var sd=w.XMLHttpRequest.prototype.send;` +
+		`w.XMLHttpRequest.prototype.open=function(m,u){this.__c2aM=m;this.__c2aU=u;return op.apply(this,arguments);};` +
+		`w.XMLHttpRequest.prototype.send=function(){var x=this;try{x.addEventListener("loadend",function(){try{var path="";try{path=new URL(x.__c2aU,w.location.href).pathname;}catch(e){}` +
+		`if(keep(path)){rec(x.__c2aM||"GET",path,x.status,meta(x.responseText));}}catch(e){}});}catch(e){}return sd.apply(this,arguments);};}` +
+		`}catch(e){}};` +
+		`patch(window);` +
+		`try{var fs=document.querySelectorAll("iframe,frame");for(var i=0;i<fs.length;i++){try{patch(fs[i].contentWindow);}catch(e){}}}catch(e){}` +
 		`return true;}catch(e){return false;}})()`
 	_, _ = page.EvalBool(ctx, js)
 }
 
-// cnRequestTrace renders the captured request trace, oldest first.
+// selectCNAccount completes the vendor's account chooser.  The CN login flow
+// can stop on /login/select after SMS verification; the plugin credential is
+// bound only after an account is clicked.  Prefer the personal account, then
+// fall back to the vendor's first item.
+// cnRequestTrace renders the captured request trace, oldest first.  It prefers
+// the sessionStorage mirror (which survives navigation) and falls back to the
+// live window global.
 func cnRequestTrace(ctx context.Context, page pageDriver) string {
-	js := `(function(){try{if(!window.__c2aWBtrace||!window.__c2aWBtrace.length){return '';}` +
-		`return window.__c2aWBtrace.slice(-10).join(' | ');}catch(e){return '';}})()`
+	js := `(function(){try{` +
+		`var all=[];try{all=JSON.parse(sessionStorage.getItem(` + autoJSString(cnTraceSinkKey) + `)||"[]")||[];}catch(e){all=[];}` +
+		`if((!all||!all.length)&&window.__c2aWBtrace&&window.__c2aWBtrace.length){all=window.__c2aWBtrace;}` +
+		`if(!all||!all.length){return '';}` +
+		`return all.slice(-12).join(' | ');}catch(e){return '';}})()`
 	s, err := page.EvalString(ctx, js)
 	if err != nil {
 		return ""
@@ -1046,10 +1049,6 @@ func cnRequestTrace(ctx context.Context, page pageDriver) string {
 	return strings.TrimSpace(s)
 }
 
-// selectCNAccount completes the vendor's account chooser.  The CN login flow
-// can stop on /login/select after SMS verification; the plugin credential is
-// bound only after an account is clicked.  Prefer the personal account, then
-// fall back to the vendor's first item.
 func selectCNAccount(ctx context.Context, page pageDriver) (bool, error) {
 	// Current CN OneID chooser: the item's click posts /v1/auth/new/select_account
 	// and hands the flow back to WorkBuddy. The item lives in an open shadow

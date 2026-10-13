@@ -515,14 +515,17 @@ func (e *poolEntry) usable(now time.Time) bool {
 	if e == nil || e.auth == nil {
 		return false
 	}
+	// 强制启用 is the operator's override: a human has decided this account is
+	// usable, so every *account-level* verdict is set aside — the classified
+	// cooldown, the reserve park, the breaker and the degrade park. It does not
+	// cross into a per-model park, which is a fact about one model rather than
+	// about the account's health; that filter lives on the pick path
+	// (modelCooled), not here.
+	if e.auth.ForceEnabledValue() {
+		return true
+	}
 	if e.faults.Blocked(now) {
 		return false
-	}
-	if e.forceCreditBypass() {
-		// ForceEnabled is deliberately narrow: it only overrides the two
-		// credit-exhaustion parks. Credential death, risk control, rate limits
-		// and per-model parks keep their own verdicts.
-		return true
 	}
 	if e.state == stateInvalid {
 		return now.After(e.until)
@@ -530,17 +533,13 @@ func (e *poolEntry) usable(now time.Time) bool {
 	return !now.Before(e.until)
 }
 
-// forceCreditBypass reports whether this entry is a credit park the operator
-// chose to override. The state and note are kept for the panel, but routing
-// treats the account as usable while ForceEnabled is on.
-func (e *poolEntry) forceCreditBypass() bool {
-	if e == nil || e.auth == nil || !e.auth.ForceEnabledValue() {
-		return false
-	}
-	if e.state != stateExhausted {
-		return false
-	}
-	return e.note == reserveCreditNote || e.note == ErrHardCredit.String()
+// forceOverride reports whether the operator's 强制启用 switch is on for this
+// account. When it is, every account-level park is set aside: the pool both
+// routes to the account and reports it as 可用. Per-model parks are not
+// covered here -- they are a property of one model, not of account health, and
+// stay enforced on the pick path.
+func (e *poolEntry) forceOverride() bool {
+	return e != nil && e.auth != nil && e.auth.ForceEnabledValue()
 }
 
 // usableForMetadata reports whether an entry may be spent on a metadata-only
@@ -1473,6 +1472,51 @@ func (p *Pool) MarkNonChatSuccess(a *Auth) {
 	}
 }
 
+// clearAccountVerdicts resets every account-level penalty: the classified
+// cooldown, its exhausted/invalid verdict, the failure counters, the breaker and
+// the degrade park. Per-model parks are deliberately untouched; they are facts
+// about one model, not about the account's health.
+func (e *poolEntry) clearAccountVerdicts() {
+	if e == nil {
+		return
+	}
+	e.state = stateReady
+	e.until = time.Time{}
+	e.note = ""
+	e.fails = 0
+	e.sessionDeadFails = 0
+	e.faults.Revive()
+	// A cleared account starts a fresh rotation: an accumulator carried over
+	// from before the park would bias its share for rounds to come.
+	e.current = 0
+}
+
+// ForceEnableAccount turns an account-level 冷却中/账号异常 verdict into the
+// operator's explicit "可用" decision. It clears account health only so a
+// per-model 11102 unsupported park or 6004 model rate limit still protects the
+// exact model it was recorded for.
+//
+// It reports whether the pool knows the account at all. An unknown id is the
+// caller's 404, so a silent no-op would be wrong.
+func (p *Pool) ForceEnableAccount(a *Auth) bool {
+	if p == nil || a == nil {
+		return false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	e := p.findLocked(a)
+	if e == nil {
+		return false
+	}
+	e.clearAccountVerdicts()
+	// A record still staged from disk would re-park the account on the next
+	// Replace, so the override has to reach it too.
+	delete(p.pending, e.auth.ID())
+	p.dirty = true
+	p.saveLocked()
+	return true
+}
+
 // Revive clears every runtime penalty recorded for one account: the cooldown or
 // park (with its exhausted/invalid verdict), the failure counter, the
 // session-death streak and every per-model park.  It is what the panel's
@@ -1493,19 +1537,8 @@ func (p *Pool) Revive(a *Auth) bool {
 	if e == nil {
 		return false
 	}
-	e.state = stateReady
-	e.until = time.Time{}
-	e.note = ""
-	e.fails = 0
-	e.sessionDeadFails = 0
+	e.clearAccountVerdicts()
 	e.modelCool = nil
-	// The breaker and the degrade park are penalties like any other, so the
-	// operator's override has to reach them; a revive that left a six-hour
-	// breaker standing would look broken from the panel.
-	e.faults.Revive()
-	// A revived account starts a fresh rotation: an accumulator carried over
-	// from before the park would bias its share for rounds to come.
-	e.current = 0
 	// A record still staged from disk would re-park the account on the next
 	// Replace, so the override has to reach it too.
 	delete(p.pending, e.auth.ID())
@@ -1572,6 +1605,16 @@ func (p *Pool) MarkFailure(a *Auth, err error) (ErrKind, time.Duration) {
 	defer p.mu.Unlock()
 	if e := p.findLocked(a); e != nil {
 		e.fails++
+		// 强制启用 means the operator keeps the account in rotation even when
+		// the vendor refuses it: record the failure for the panel, but do not
+		// re-park the account. Otherwise the next failed call would undo the
+		// override and drop the account back to 冷却中/账号异常.
+		if e.forceOverride() {
+			e.note = kind.String()
+			p.dirty = true
+			p.saveLocked()
+			return kind, d
+		}
 		if kind == ErrSessionDead {
 			// A dead session is usually a stale token that a refresh repairs,
 			// which is why the first strikes only cool the account briefly.
@@ -1938,7 +1981,13 @@ func (p *Pool) Snapshot() []core.AccountStatus {
 		if state == "" {
 			state = stateUnknown
 		}
-		if !e.usable(now) {
+		// 强制启用 reports the account the way the pool will actually route it:
+		// 可用 / Enabled, rather than the raw verdict the account earned. The
+		// operator asked for the override precisely because the raw verdict was
+		// 冷却中/账号异常 and they wanted to spend it anyway.
+		if e.auth.ForceEnabledValue() {
+			state = stateReady
+		} else if !e.usable(now) {
 			if state == stateReady || state == stateUnknown {
 				state = stateCooling
 			}

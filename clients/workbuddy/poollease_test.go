@@ -423,6 +423,38 @@ func TestWorkbuddyPoolStatsReportTheLiveCounters(t *testing.T) {
 	}
 }
 
+// TestWorkbuddyChatServesAForcedAccountThatIsFullyParked is the end-to-end face
+// of 强制启用: with every account 冷却中, a forced account is actually picked and
+// served instead of the client answering "no usable account". Without the
+// override this is exactly the scenario that produced 客户端没有可用的账号.
+func TestWorkbuddyChatServesAForcedAccountThatIsFullyParked(t *testing.T) {
+	rt := &fakeRT{}
+	c, _ := newTestClient(t, rt)
+	auth := c.findAuthByUID("uid-test-0001")
+	if auth == nil {
+		t.Fatal("the fixture holds no known account")
+	}
+
+	// Control: an account cooled by an ordinary 冷却中 verdict (a soft rate
+	// limit) with force off leaves the client with nothing. This is the case the
+	// old credit-only override did NOT cover, so it is what actually proves the
+	// switch now means "usable".
+	c.pool.MarkFailure(auth, &Error{Kind: ErrSoftRate, Status: 429, RetryAfter: time.Hour, Msg: "slow down"})
+	if _, err := c.Chat(context.Background(), chatRequest()); !errors.Is(err, core.ErrNotConfigured) && !errors.Is(err, core.ErrPlatformExhausted) {
+		t.Fatalf("control Chat = %v, want a no-usable-account error", err)
+	}
+	before := len(rt.calls)
+
+	// Operator forces the account on: the same request must now reach upstream.
+	auth.SetModelPolicy(nil, true)
+	if _, err := c.Chat(context.Background(), chatRequest()); err != nil {
+		t.Fatalf("forced Chat = %v, want the account to be served", err)
+	}
+	if len(rt.calls) <= before {
+		t.Fatalf("forced Chat made no upstream call: the account was still treated as unusable")
+	}
+}
+
 // TestWorkbuddyChatRefusesAModelEveryAccountIsParkedFor is the end-to-end face
 // of the same rule: when the pool has no account left for the requested model,
 // Chat must not spend an upstream call re-asking a question the vendor already

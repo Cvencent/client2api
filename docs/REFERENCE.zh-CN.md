@@ -729,7 +729,7 @@ assistant 消息的事件——只发 delta 的流会显示文字但永远不执
 * 能力字段按“操作员手动值 > 模块上报值 > 官方预设”解析；价格同样遵循该顺序。各厂商官方价表覆盖 DeepSeek、Zhipu、Kimi、MiniMax、Qwen、Volcengine、Tencent、MiMo、Anthropic、Google 和 OpenAI；缺失时再回退到 2026-10-10 的 models.dev 快照，并按 1 美元 = 7.20 元换算；DeepSeek Flash 和 Pro 直接使用 DeepSeek 官方人民币价和北京时间峰谷时段。模型列表显示 DeepSeek 空闲价，完成的请求按完成时刻所处的时段计价。
 * 缓存读取价存在时，缓存输入按缓存价计算，未缓存输入按输入价计算；没有缓存价时，全部输入都按输入价计算。未知价不会被当成 0 元。
 * 手动值保存在 `data/model_context.json`，升级不会丢失，可恢复为官方默认值。`/v1/models` 仍返回上下文和最大输出字段，OpenAI 兼容客户端可直接读取。
-* 思考档位也保存在同一份手动配置里，并优先于模块缓存和内置预设。“封顶对齐”对内置表里所有 V4.1 Flash 条目默认开启、其余模型默认关闭，仍可按模型手动关闭或恢复默认；开启后只有请求为 `xhigh` 且模型真实最高档更高时才提升（例如 WorkBuddy、Cline、OpenRouter 的 `max`），其他档位和最高档本来就是 `xhigh` 的模型（例如 Loomy）不变，不会下发厂商从未公布的档位。
+* 思考档位也保存在同一份手动配置里，并优先于模块缓存和内置预设。“封顶对齐”对所有平台、所有模型默认开启，仍可按模型手动关闭或恢复默认；开启后只有请求为 `xhigh` 且模型真实最高档更高时才提升（例如 WorkBuddy、Cline、OpenRouter 的 `max`），其他档位和最高档本来就是 `xhigh` 的模型（例如 Loomy）不变，不会下发厂商从未公布的档位；没有公布思考档位的模型默认开启同样安全，实际为空操作。
 
 面板鉴权使用顶层 `api_key`。为空时不做鉴权；设置后所有 `/panel/api/*`
 都要求 `Authorization: Bearer <key>` 或 `X-Api-Key: <key>`。

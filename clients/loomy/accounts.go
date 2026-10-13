@@ -537,6 +537,35 @@ func (s *store) penaliseChatWithStage(id string, err error, now time.Time, stage
 	return false
 }
 
+// markChatCreditExhausted records the second, confirmed credit refusal on the
+// chat path. Unlike penaliseChatWithStage this is not a timed cooldown: it is
+// the same durable low-credit park a zero balance read creates, so the account
+// cannot re-enter rotation merely because a short transient cooldown lapsed.
+func (s *store) markChatCreditExhausted(id string, err error) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, a := range s.all {
+		if a.ID != id {
+			continue
+		}
+		a.lowCredit = true
+		a.lastError = redactErr(err)
+		// A funding verdict supersedes a transient chat-ladder park. Keep the
+		// failure count for the panel's diagnostic history, but clear the
+		// timed cooldown and its stage so lowCredit is the only reason this
+		// account is parked.
+		a.cooldownStage = 0
+		a.cooldownTill = time.Time{}
+		a.probeAfter = time.Time{}
+		a.sessionFailures = 0
+		if saveErr := s.saveState(); saveErr != nil {
+			_ = saveErr
+		}
+		return true
+	}
+	return false
+}
+
 func (s *store) cooldownStage(id string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()

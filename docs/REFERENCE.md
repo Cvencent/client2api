@@ -847,8 +847,13 @@ Background sweeps remember that decision for six hours per account, so a
 contradictory zero is not probed on every pass. A park the vendor earned
 with a real refusal keeps its own deadline.
 
-The guard currently has a pool-side implementation in workbuddy, the reference's
-credit-parking model; a module without a balance-aware pool ignores it.
+The guard has a pool-side implementation in workbuddy and loomy. In loomy an
+HTTP 402 / insufficient-credit chat refusal is also treated as the vendor's
+authoritative zero-balance verdict: after the same-account retry it parks the
+account with the same low-credit state, so the transient 30s/1m/2m chat
+cooldown ladder cannot put an unfunded account back into rotation. A funded
+balance read or a successful daily check-in clears the park. A module without
+a balance-aware pool ignores the setting.
 
 `account_priorities` is the per-account routing order inside one platform.
 It maps the account id shown by that module to an integer; lower numbers
@@ -1506,13 +1511,14 @@ free model is zero-cost.
 The same page edits each model's supported reasoning-effort levels, its default
 level, and a per-model **cap-alignment** toggle. Effort resolution is operator
 override > the module's cached catalogue > the embedded preset, so a manual
-vocabulary wins over a stale cache. Cap alignment defaults on for every V4.1
-Flash row in the embedded table and off otherwise; when it is on and the caller
-requests the top Codex level `xhigh`, the gateway promotes it only to a
-genuinely higher level the model advertises (for example WorkBuddy, Cline and
-OpenRouter `max`). Lower requests and models whose top level is already `xhigh` (Loomy's
-V4.1 Flash, whose vendor catalog advertises nothing above it) are left alone
-rather than sent an invented value. The usage row keeps the requested and sent
+vocabulary wins over a stale cache. Cap alignment defaults on for every model
+on every platform; when it is on and the caller requests the top Codex level
+`xhigh`, the gateway promotes it only to a genuinely higher level the model
+advertises (for example WorkBuddy, Cline and OpenRouter `max`). Lower requests
+and models whose top level is already `xhigh` (Loomy's V4.1 Flash, whose vendor
+catalog advertises nothing above it) are left alone rather than sent an invented
+value. A model with no published effort ladder is also safe: the default is on,
+but there is no higher level to send. The usage row keeps the requested and sent
 levels and renders `xhigh → max` when they differ.
 
 The panel is protected by the gateway's top-level `api_key`

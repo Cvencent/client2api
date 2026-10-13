@@ -10,14 +10,49 @@ import (
 func TestDeveloperRoleMapsToSystem(t *testing.T) {
 	req := &core.ChatRequest{Messages: []core.Message{{Role: "developer", Content: "be terse"}, {Role: "user", Content: "hi"}}}
 	body := buildChatBody(req, "zai_auto", true)
+	// The desktop marker is prepended because the caller supplied no system
+	// prompt of its own, so the developer message follows it.
+	if len(body.Messages) != 3 {
+		t.Fatalf("messages = %d", len(body.Messages))
+	}
+	if body.Messages[0].Role != "system" || !contentHasMarker(body.Messages[0].Content) {
+		t.Errorf("desktop system marker missing: %+v", body.Messages[0])
+	}
+	if body.Messages[1].Role != "system" {
+		t.Errorf("developer should map to system, got %q", body.Messages[1].Role)
+	}
+	if body.Messages[2].Role != "user" {
+		t.Errorf("user role changed: %q", body.Messages[2].Role)
+	}
+}
+
+func TestDesktopSystemPromptInjected(t *testing.T) {
+	// A plain OpenAI request carrying no system prompt must be padded with the
+	// managed proxy marker, otherwise AutoClaw answers 406 Not Acceptable.
+	req := &core.ChatRequest{Messages: []core.Message{{Role: "user", Content: "hi"}}}
+	body := buildChatBody(req, "zai_auto", true)
 	if len(body.Messages) != 2 {
 		t.Fatalf("messages = %d", len(body.Messages))
 	}
-	if body.Messages[0].Role != "system" {
-		t.Errorf("developer should map to system, got %q", body.Messages[0].Role)
+	if body.Messages[0].Role != "system" || !contentHasMarker(body.Messages[0].Content) {
+		t.Fatalf("marker not prepended: %+v", body.Messages[0])
 	}
 	if body.Messages[1].Role != "user" {
-		t.Errorf("user role changed: %q", body.Messages[1].Role)
+		t.Fatalf("user message lost: %+v", body.Messages[1])
+	}
+}
+
+func TestDesktopSystemPromptNotDuplicated(t *testing.T) {
+	req := &core.ChatRequest{Messages: []core.Message{
+		{Role: "system", Content: desktopSystemPromptMarker + " Be brief."},
+		{Role: "user", Content: "hi"},
+	}}
+	body := buildChatBody(req, "zai_auto", true)
+	if len(body.Messages) != 2 {
+		t.Fatalf("messages = %d, want 2", len(body.Messages))
+	}
+	if body.Messages[0].Role != "system" {
+		t.Fatalf("first role = %q", body.Messages[0].Role)
 	}
 }
 

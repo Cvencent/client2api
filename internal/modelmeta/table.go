@@ -239,28 +239,19 @@ func StaticMeta(client, realm, model string) (Meta, bool) {
 	return m, true
 }
 
-// StaticElevateTop reports whether the embedded table opts this model into cap
-// alignment by default. The policy is a property of the model, not of the realm
-// that serves it, so it is not realm-split.
+// StaticElevateTop reports whether cap alignment is enabled by default for this
+// model. The current policy enables it for every model on every platform: a
+// model whose published ladder has no tier above xhigh is simply a no-op, while
+// a model that publishes max gets promoted. The embedded per-row flag remains
+// accepted for forward compatibility, but it is no longer required.
 func StaticElevateTop(client, model string) bool {
-	e, ok := static().entry(client, model)
-	if !ok {
-		// Realm-qualified ids (cn:model / global:model) name the same model, and
-		// this policy belongs to the model rather than to one realm's ladder.
-		if prefix, rest, cut := strings.Cut(strings.TrimSpace(model), ":"); cut && rest != "" {
-			switch prefix {
-			case RealmCN, RealmGlobal:
-				e, ok = static().entry(client, rest)
-			}
-		}
-	}
-	return ok && e.ElevateTopDefault
+	return true
 }
 
 // ElevateTop resolves cap alignment for one model: an explicit operator choice
-// in the override store wins, then the embedded table's per-model default, then
-// off. It is the single source of truth shared by the gateway's effort policy
-// and the model panel, so what the panel shows is what the gateway does.
+// in the override store wins, then the all-model default (on). It is the single
+// source of truth shared by the gateway's effort policy and the model panel, so
+// what the panel shows is what the gateway does.
 func ElevateTop(client, model string, store *OverrideStore) bool {
 	if store != nil {
 		if o, ok := store.Get(client, model); ok {

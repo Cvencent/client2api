@@ -376,7 +376,7 @@ func (c *Client) SetAccountEnabled(ctx context.Context, id string, enabled bool)
 	return nil
 }
 
-// SetAccountModelPolicy replaces one account's model blacklist and credit-only
+// SetAccountModelPolicy replaces one account's model blacklist and account-level
 // force override. It writes the credential file so the operator's choice
 // survives a restart, then reloads the live pool without dropping its health
 // state.
@@ -397,6 +397,9 @@ func (c *Client) SetAccountModelPolicy(ctx context.Context, id string, disabledM
 		return err
 	}
 	c.refreshAccounts(true)
+	if forceEnabled {
+		c.pool.ForceEnableAccount(a)
+	}
 	return nil
 }
 

@@ -19,6 +19,19 @@ type chatBody struct {
 	ToolChoice  json.RawMessage `json:"tool_choice,omitempty"`
 }
 
+// The AutoClaw managed proxy rejects any chat request whose leading system
+// message does not contain the marker below with an opaque 406 Not Acceptable,
+// before authentication is evaluated.  The desktop client always sends its
+// own system prompt, so plain OpenAI requests must be padded with it.
+//
+// Evidence (2026-10-13): an exact byte-for-byte desktop replay returned 200;
+// removing this sentence flipped the same request to 406; re-adding it flipped
+// it back to 200.  Substring match, case sensitive.
+const (
+	desktopSystemPrompt       = "You are AutoClaw. Answer the user directly and concisely."
+	desktopSystemPromptMarker = "You are AutoClaw. Answer the user directly and concisely"
+)
+
 type chatMessage struct {
 	Role             string         `json:"role"`
 	Content          any            `json:"content,omitempty"`
@@ -114,7 +127,33 @@ func buildChatBody(req *core.ChatRequest, model string, stream bool) chatBody {
 	if len(req.ToolChoice) > 0 && string(req.ToolChoice) != "null" {
 		body.ToolChoice = req.ToolChoice
 	}
+	body.Messages = ensureDesktopSystemPrompt(body.Messages)
 	return body
+}
+
+// ensureDesktopSystemPrompt guarantees the leading system marker the managed
+// proxy requires, without disturbing a caller that already supplies it.
+func ensureDesktopSystemPrompt(msgs []chatMessage) []chatMessage {
+	if len(msgs) > 0 && msgs[0].Role == "system" && contentHasMarker(msgs[0].Content) {
+		return msgs
+	}
+	padded := make([]chatMessage, 0, len(msgs)+1)
+	padded = append(padded, chatMessage{Role: "system", Content: desktopSystemPrompt})
+	return append(padded, msgs...)
+}
+
+func contentHasMarker(content any) bool {
+	switch v := content.(type) {
+	case string:
+		return strings.Contains(v, desktopSystemPromptMarker)
+	case []map[string]any:
+		for _, part := range v {
+			if text, ok := part["text"].(string); ok && strings.Contains(text, desktopSystemPromptMarker) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func messageContent(m core.Message) any {

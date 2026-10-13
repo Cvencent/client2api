@@ -336,13 +336,22 @@ is the way to set them:
   `PickForModelInRealm` and out of the affinity predicate
   `UsableForModelInRealm`, so a sticky conversation bound to the account is not
   handed back for a model the operator closed.
-- `force_enabled` — the operator's override for **credit-only** parks. It lifts
-  exactly two verdicts: the zero/低余额 reserve park (`low_credit`) and an
-  exhausted-quota park (`ErrHardCredit`, the vendor's 402). It does **not**
-  override a dead session, risk control, a soft rate limit, a WAF block, a
-  tripped breaker or a per-model park — those keep their own recovery evidence.
-  This is what lets an international account with zero paid credit keep serving
-  the free models the vendor still allows.
+- `force_enabled` — the operator's override for account health.  A human has
+  decided the account is usable, so it sets aside **every account-level verdict**
+  at once: the classified cooldown, the zero/低余额 reserve park (`low_credit`),
+  the exhausted-quota park (`ErrHardCredit`, the vendor's 402), a dead-session
+  park, risk control, a soft rate limit, the breaker and the degrade park.  The
+  pool then *reports* the account as `ready` (可用) and actually routes to it,
+  instead of merely relaxing one internal check while the panel kept showing
+  冷却中/账号异常.  A failed forced call is still counted in the failure column
+  but does not re-park the account — otherwise the next failure would undo the
+  override.
+
+  The one thing it does **not** cross is a per-model park (`11102` unsupported,
+  `6004` model rate limit): that is a fact about one model, not about the
+  account's health, so a forced account is still not handed back for the exact
+  model the vendor refused.  This is what lets an international account with
+  zero paid credit keep serving the free models the vendor still allows.
 
 ## Request path
 

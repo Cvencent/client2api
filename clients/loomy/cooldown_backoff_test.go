@@ -117,6 +117,124 @@ func TestChatEscalatesCooldownThenMarksTheAccountAbnormal(t *testing.T) {
 	}
 }
 
+// A credit refusal is an account-funding verdict, not a transient chat
+// failure. It must park the account until a funded balance refresh or
+// check-in clears lowCredit, rather than rejoining the pool when the
+// 30s/1m/2m cooldown ladder expires.
+func TestChatCreditExhaustionParksUntilTheBalanceRecovers(t *testing.T) {
+	withChatRetryDelay(t, time.Millisecond)
+	calls := 0
+	refusal := `{"error":{"message":"积分余额不足，请获取积分后再试","type":"insufficient_quota","code":402,` +
+		`"metadata":{"provider_name":"loomy"}}}`
+	rt := &stubTransport{handler: func(r *http.Request, _ string) *http.Response {
+		if r.URL.Path != "/api/v1/chat/completions" {
+			return jsonResponse(200, okEnvelope("null"))
+		}
+		calls++
+		return jsonResponse(http.StatusPaymentRequired, refusal)
+	}}
+	c := newTestClient(t, "{}", rt)
+	seedAccount(t, c, "loomy-1", testToken, 0)
+
+	if _, err := c.Chat(context.Background(), &core.ChatRequest{
+		Model:    "deepseek-v4-flash-0731",
+		Messages: []core.Message{{Role: "user", Content: "hi"}},
+	}); err == nil {
+		t.Fatal("Chat reported success on an HTTP 402 credit refusal")
+	}
+	if calls != 2 {
+		t.Fatalf("chat calls = %d, want the same-account retry before parking", calls)
+	}
+
+	acc, _ := c.store.lookup("loomy-1")
+	if !acc.lowCredit {
+		t.Fatalf("HTTP 402 did not mark lowCredit: %+v", acc)
+	}
+	if acc.cooldownStage != 0 || acc.failures != 0 {
+		t.Fatalf("HTTP 402 advanced the transient cooldown ladder: %+v", acc)
+	}
+	if acc.selectable(time.Now().UTC().Add(24 * time.Hour)) {
+		t.Fatal("a zero-credit account recovered when the transient cooldown expired")
+	}
+	record := accountRecord(&acc, time.Now().UTC())
+	if record.State != "cooling" || record.Fields["low_credit"] != true {
+		t.Fatalf("HTTP 402 account record = %+v, want cooling with low_credit", record)
+	}
+}
+
+// A credit verdict on one account must still allow the same request to fail
+// over to another funded account. Parking is account-scoped, not a platform
+// circuit breaker.
+func TestChatCreditExhaustionStillFailsOverToAFundedAccount(t *testing.T) {
+	withChatRetryDelay(t, time.Millisecond)
+	refusal := `{"error":{"message":"积分余额不足，请获取积分后再试","type":"insufficient_quota","code":402}}`
+	rt := &stubTransport{handler: func(r *http.Request, _ string) *http.Response {
+		if r.URL.Path != "/api/v1/chat/completions" {
+			return jsonResponse(200, okEnvelope("null"))
+		}
+		if r.Header.Get("token") == testToken {
+			return jsonResponse(http.StatusPaymentRequired, refusal)
+		}
+		return sseResponse("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\ndata: [DONE]\n\n")
+	}}
+	c := newTestClient(t, "{}", rt)
+	seedAccount(t, c, "empty", testToken, 0)
+	seedAccount(t, c, "funded", testTokenTwo, 0)
+
+	var served string
+	stream, err := c.Chat(context.Background(), &core.ChatRequest{
+		Model:    "deepseek-v4-flash-0731",
+		Messages: []core.Message{{Role: "user", Content: "hi"}},
+		ServedBy: &served,
+	})
+	if err != nil {
+		t.Fatalf("Chat did not fail over after a credit refusal: %v", err)
+	}
+	defer stream.Close()
+
+	if served != "funded" {
+		t.Fatalf("ServedBy = %q, want the funded account", served)
+	}
+	empty, _ := c.store.lookup("empty")
+	if !empty.lowCredit {
+		t.Fatalf("the credit-refused account was not parked: %+v", empty)
+	}
+	funded, _ := c.store.lookup("funded")
+	if funded.lowCredit || !funded.selectable(time.Now().UTC()) {
+		t.Fatalf("the funded account was affected by another account's verdict: %+v", funded)
+	}
+}
+
+// reserve_credits=-1 disables the low-credit guard, so an HTTP 402 must still
+// follow the ordinary retry/cooldown ladder instead of creating a park the
+// operator explicitly turned off.
+func TestChatCreditRefusalRespectsADisabledBalanceGuard(t *testing.T) {
+	withChatRetryDelay(t, time.Millisecond)
+	refusal := `{"error":{"message":"积分余额不足，请获取积分后再试","type":"insufficient_quota","code":402}}`
+	c := newTestClient(t, "{}", &stubTransport{handler: func(r *http.Request, _ string) *http.Response {
+		if r.URL.Path != "/api/v1/chat/completions" {
+			return jsonResponse(200, okEnvelope("null"))
+		}
+		return jsonResponse(http.StatusPaymentRequired, refusal)
+	}})
+	seedAccount(t, c, "loomy-1", testToken, 0)
+	c.ApplyPlatformPolicy(core.PlatformConfig{ReserveCredits: -1})
+
+	if _, err := c.Chat(context.Background(), &core.ChatRequest{
+		Model:    "deepseek-v4-flash-0731",
+		Messages: []core.Message{{Role: "user", Content: "hi"}},
+	}); err == nil {
+		t.Fatal("Chat reported success on a refused request")
+	}
+	acc, _ := c.store.lookup("loomy-1")
+	if acc.lowCredit {
+		t.Fatalf("reserve_credits=-1 did not disable the chat-path low-credit park: %+v", acc)
+	}
+	if acc.cooldownStage != 1 {
+		t.Fatalf("cooldown stage = %d, want the ordinary first stage", acc.cooldownStage)
+	}
+}
+
 // A lost race for one account's in-flight slot is not a failed switch. The
 // request must skip that account and keep the full upstream attempt budget for
 // the next one.
@@ -250,4 +368,54 @@ func forceCooldownExpired(t *testing.T, c *Client, id string) {
 		}
 	}
 	t.Fatalf("account %q vanished while expiring its cooldown", id)
+}
+
+// A lost stage compare-and-swap must not abort the whole rotation.
+//
+// Two requests can read the same starting stage for one account and both fail.
+// The first to write advances the ladder; the second finds the stage already
+// moved, so penaliseChatWithStage reports false. That only means the account is
+// already handled -- it is not evidence that the remaining accounts are bad, so
+// the request has to keep failing over instead of returning the first error.
+func TestChatKeepsFailingOverWhenTheCooldownStageRaceIsLost(t *testing.T) {
+	withChatRetryDelay(t, time.Millisecond)
+	var c *Client
+	var firstCalls int
+	rt := &stubTransport{handler: func(r *http.Request, _ string) *http.Response {
+		if r.URL.Path != "/api/v1/chat/completions" {
+			return jsonResponse(200, okEnvelope("null"))
+		}
+		if r.Header.Get("token") != testToken {
+			return sseResponse("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\ndata: [DONE]\n\n")
+		}
+		firstCalls++
+		if firstCalls == 2 {
+			// A concurrent request wins the stage CAS for this same account:
+			// the ladder moves 0 -> 1 between Chat's read and its final write.
+			c.store.penaliseChatWithStage("first", errSessionExpired("first"), time.Now().UTC(), 0, time.Minute)
+		}
+		return jsonResponse(200, failureEnvelope("100002", "temporary refusal"))
+	}}
+	c = newTestClient(t, "{}", rt)
+	seedAccount(t, c, "first", testToken, 0)
+	seedAccount(t, c, "second", testTokenTwo, 0)
+
+	var served string
+	stream, err := c.Chat(context.Background(), &core.ChatRequest{
+		Model:    "deepseek-v4-flash-0731",
+		Messages: []core.Message{{Role: "user", Content: "hi"}},
+		ServedBy: &served,
+	})
+	if err != nil {
+		t.Fatalf("Chat: %v (a lost cooldown-stage CAS aborted the rotation)", err)
+	}
+	defer stream.Close()
+
+	if served != "second" {
+		t.Fatalf("ServedBy = %q, want second (the request should fail over)", served)
+	}
+	first, _ := c.store.lookup("first")
+	if first.cooldownStage != 1 {
+		t.Fatalf("first account cooldown stage = %d, want 1", first.cooldownStage)
+	}
 }

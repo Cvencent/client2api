@@ -107,6 +107,44 @@ func TestModelsListPublishesEffortPolicyAndManualProvenance(t *testing.T) {
 	}
 }
 
+// TestModelsListDefaultsCapAlignmentOnForNonV41Models pins the all-model
+// default: any ordinary catalogue row is shown with the box checked before the
+// operator touches it, and unchecking it becomes an explicit off that still lets
+// the row restore the default.
+func TestModelsListDefaultsCapAlignmentOnForNonV41Models(t *testing.T) {
+	store, err := modelmeta.OpenOverrideStore("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &fakeClient{name: "zcode", models: []core.Model{{ID: "glm-5.3"}}}
+	h := New(Options{Registry: registryOf(client), ModelOverrides: store})
+	rec := get(t, h, "/panel/api/models")
+	var got modelsReport
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	m := got.Clients[0].Models[0]
+	if !m.ElevateTop || !m.ElevateTopDefault {
+		t.Fatalf("elevate = %v default = %v, want both true for a non-V4.1 row", m.ElevateTop, m.ElevateTopDefault)
+	}
+	if m.ElevateTopManual {
+		t.Fatal("an untouched row was reported as a manual elevate choice")
+	}
+
+	if err := store.SetElevateTop("zcode", "glm-5.3", false); err != nil {
+		t.Fatal(err)
+	}
+	rec = get(t, h, "/panel/api/models")
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	m = got.Clients[0].Models[0]
+	if m.ElevateTop || !m.ElevateTopDefault || !m.ElevateTopManual {
+		t.Fatalf("after explicit off: elevate=%v default=%v manual=%v, want false/true/true",
+			m.ElevateTop, m.ElevateTopDefault, m.ElevateTopManual)
+	}
+}
+
 // TestModelsListPublishesV41CapAlignmentDefaults pins what the row checkbox
 // shows before the operator touches it: the embedded V4.1 Flash default is on,
 // but it is not a manual value, so the panel can still say "restore default".

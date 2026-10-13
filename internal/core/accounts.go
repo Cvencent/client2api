@@ -367,7 +367,7 @@ type AccountManager interface {
 }
 
 // AccountModelPolicyManager lets a module apply an operator's per-account model
-// policy: which models the account may be routed to, and whether a credit-only
+// policy: which models the account may be routed to, and whether an account-level
 // park (zero balance or an exhausted quota) is overridden. It is deliberately
 // separate from AccountManager -- model selection is orthogonal to listing and
 // testing credentials, and forcing it onto every module would break the ones
@@ -375,7 +375,7 @@ type AccountManager interface {
 type AccountModelPolicyManager interface {
 	Client
 	// SetAccountModelPolicy replaces one account's disabled-model blacklist
-	// and credit-only force flag.  An empty blacklist means every model is
+	// and account-level force flag.  An empty blacklist means every model is
 	// allowed, which is the default for an account the operator never
 	// configured.  The change must survive a restart.
 	SetAccountModelPolicy(ctx context.Context, id string, disabledModels []string, forceEnabled bool) error
