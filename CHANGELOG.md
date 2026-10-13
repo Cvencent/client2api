@@ -6,6 +6,22 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.1.60] - 2026-10-13
+
+### Fixed
+
+- **Auto/DeepSeek-V4.1-Flash 在同一平台只展开一个 realm，导致跳过可用的 WorkBuddy
+  国际账号**：WorkBuddy 的模型目录同时发布 `cn:deepseek-v4.1-flash` 和
+  `global:deepseek-v4.1-flash` 两个等价条目。旧逻辑在 `Auto/` 路由时对每个平台只取
+  第一个匹配项，`cn:` 在目录中排在前面时，候选就固定成 `workbuddy/cn:...`；国内账号
+  不可用时会直接跳过整个 WorkBuddy，虽然 global 账号仍可服务该模型。现在 `Auto/`
+  和模型组里的动态 `Auto` 成员会保留同平台的全部 realm 等价候选，按平台健康、
+  成员优先和既有优先级顺序回退；普通裸名请求仍保持每平台一个最佳等价项。
+
+### Installer
+
+- `client2api-setup-0.1.60.exe`（空包，不含账号凭据或本机配置）
+- 升级会保留现有 `configs/` 和 `data/`
 ## [0.1.59] - 2026-10-13
 
 ### Fixed

@@ -200,11 +200,13 @@ func (r *Registry) resolveModelGroup(ctx context.Context, groupKey string, group
 				if err != nil {
 					continue
 				}
-				matched, ok, _ := selectCatalogModel(models, member.Model, !strings.ContainsAny(member.Model, "/:"), func(m Model) bool {
+				matched, ok, _ := selectCatalogModels(models, member.Model, !strings.ContainsAny(member.Model, "/:"), func(m Model) bool {
 					return r.ModelAllowed(c.Name(), m.ID)
 				})
 				if ok {
-					addOwner(c, matched.ID, matched.Extra, modelFree(matched), true, false)
+					for _, candidate := range matched {
+						addOwner(c, candidate.ID, candidate.Extra, modelFree(candidate), true, false)
+					}
 				}
 			}
 			continue

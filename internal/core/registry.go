@@ -662,6 +662,27 @@ func (r *Registry) ResolveCandidates(ctx context.Context, model string) ([]Candi
 		if err != nil {
 			continue
 		}
+		if auto {
+			matched, ok, blocked := selectCatalogModels(models, model, !strings.ContainsAny(model, "/:"), func(m Model) bool {
+				return r.ModelAllowed(c.Name(), m.ID)
+			})
+			if !ok {
+				if blocked {
+					disabled = append(disabled, c.Name())
+				}
+				continue
+			}
+			for _, candidate := range matched {
+				owners = append(owners, Candidate{
+					Client:    c,
+					Model:     candidate.ID,
+					Free:      modelFree(candidate),
+					Catalogue: true,
+					Extra:     candidate.Extra,
+				})
+			}
+			continue
+		}
 		matched, ok, blocked := selectCatalogModel(models, model, !strings.ContainsAny(model, "/:"), func(m Model) bool {
 			return r.ModelAllowed(c.Name(), m.ID)
 		})

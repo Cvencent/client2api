@@ -1,6 +1,9 @@
 package core
 
-import "strings"
+import (
+	"sort"
+	"strings"
+)
 
 // modelDisplayID strips the vendor namespace from a model id while preserving
 // the vendor's spelling.  Cline's `cline-free/deepseek-v4.1-flash`,
@@ -42,6 +45,52 @@ func CanonicalModelID(model string) string { return canonicalModelID(model) }
 // all name the same underlying model.
 func canonicalModelID(model string) string {
 	return normalizeModelID(modelDisplayID(model))
+}
+
+// selectCatalogModels returns every catalogue entry that can satisfy a
+// requested id on one platform.  Exact ids still collapse to themselves; the
+// only expansion is the namespace-equivalent fallback, where several realm
+// ids can name the same bare model.  Returning all of them lets the caller
+// try the sibling realm when the first one has no usable account.
+func selectCatalogModels(models []Model, requested string, allowEquivalent bool, allowed func(Model) bool) ([]Model, bool, bool) {
+	exactFound := false
+	for _, m := range models {
+		if !strings.EqualFold(strings.TrimSpace(m.ID), requested) {
+			continue
+		}
+		exactFound = true
+		if allowed(m) {
+			return []Model{m}, true, false
+		}
+	}
+	if exactFound || !allowEquivalent {
+		return nil, false, exactFound
+	}
+
+	key := canonicalModelID(requested)
+	var (
+		matches []Model
+		blocked bool
+	)
+	for _, m := range models {
+		if canonicalModelID(m.ID) != key {
+			continue
+		}
+		if !allowed(m) {
+			blocked = true
+			continue
+		}
+		matches = append(matches, m)
+	}
+	if len(matches) > 0 {
+		// Preserve the historical "free sibling first" preference while
+		// keeping the remaining equivalents available for failover.
+		sort.SliceStable(matches, func(i, j int) bool {
+			return modelFree(matches[i]) && !modelFree(matches[j])
+		})
+		return matches, true, false
+	}
+	return nil, false, blocked
 }
 
 // selectCatalogModel picks the entry a platform should receive for a request.
