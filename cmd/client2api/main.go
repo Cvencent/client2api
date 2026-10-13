@@ -41,7 +41,7 @@ import (
 )
 
 // version is overridable with -ldflags "-X main.version=...".
-var version = "0.1.60"
+var version = "0.1.61"
 
 // restartHandoffEnv marks the replacement half of a panel restart.  It tells a
 // starting process to keep retrying the listen address instead of failing fast,
@@ -1277,6 +1277,11 @@ func run() error {
 		balancePath = filepath.Join(cfg.DataDir, filepath.FromSlash(panel.DefaultBalanceCacheFileName))
 	}
 	balances := panel.NewBalanceStore(registry, balanceSoon, balancePath)
+	checkinPath := ""
+	if cfg.DataDir != "" {
+		checkinPath = filepath.Join(cfg.DataDir, filepath.FromSlash(panel.DefaultCheckinStateFileName))
+	}
+	checkins := panel.NewCheckinStore(checkinPath, time.Now)
 
 	// platformSweep is the per-platform recovery/daily work: refresh every
 	// account's balance -- including the parked ones a fresh credit grant could
@@ -1321,6 +1326,7 @@ func run() error {
 		},
 		OnRecoveryProbe:     platformSweep,
 		OnDailyBalanceProbe: platformSweep,
+		OnCheckinResult:     checkins.Record,
 	})
 	sched.Reconfigure(cfg.schedule())
 	logger.Printf("schedule: enabled=%v checkin=%v travel=%v activity=%v keepalive=%v blackcat=%v growth=%v",
@@ -1501,6 +1507,10 @@ func run() error {
 		// column and its "last read" stamp match the reads the task centre
 		// already paid for instead of waiting for a page visit.
 		Balances: balances,
+		// The scheduler and the panel share one daily check-in state, so a
+		// scheduled success greys the same row an operator would otherwise
+		// click again.
+		Checkins: checkins,
 		// How many credit batches the credits view shows per account before
 		// collapsing the rest.  applyDefaults has already resolved an unset
 		// value to the reference default, so this is never zero here.

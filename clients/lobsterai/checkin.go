@@ -96,6 +96,7 @@ func (c *Client) Checkin(ctx context.Context, id, action string) (core.CheckinRe
 	}
 	activity := objectOf(slot["activity"])
 	if firstString(slot, "slotState") != "available" || activity == nil {
+		res.Skipped = true
 		res.Error = "no LobsterAI activity is available right now"
 		return finish(res), nil
 	}
@@ -122,6 +123,7 @@ func (c *Client) Checkin(ctx context.Context, id, action string) (core.CheckinRe
 	}
 	actions := stringsOf(actCtx["actions"], "action", "id", "type", "name")
 	if !containsString(actions, checkinUpstreamAction) {
+		res.Skipped = true
 		res.Error = fmt.Sprintf("the activity does not offer a %s action", checkinUpstreamAction)
 		return finish(res), nil
 	}

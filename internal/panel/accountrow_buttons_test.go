@@ -29,6 +29,7 @@ func accRowWiring(t *testing.T, src string) []string {
 	t.Helper()
 	var miss []string
 	row := poolStatsFuncBody(t, src, "accRowHTML")
+	checkinBtn := poolStatsFuncBody(t, src, "checkinButtonHTML")
 	toggle := poolStatsFuncBody(t, src, "accToggleButton")
 
 	// 1. 合并后的按钮由 accToggleButton 独家渲染，accRowHTML 里不该再有第二个
@@ -63,10 +64,10 @@ func accRowWiring(t *testing.T, src string) []string {
 	}
 
 	// 5. 签到标签必须走翻译层，不能直接把模块给的 label 显示出去。
-	if !strings.Contains(row, "checkinActionLabel(") {
-		miss = append(miss, "accRowHTML 没有用 checkinActionLabel 翻译签到标签")
+	if !strings.Contains(checkinBtn, "checkinActionLabel(") {
+		miss = append(miss, "checkinButtonHTML 没有用 checkinActionLabel 翻译签到标签")
 	}
-	if strings.Contains(row, `esc(acts[0] ? acts[0].label : "签到")`) {
+	if strings.Contains(checkinBtn, `esc(acts[0] ? acts[0].label : "签到")`) {
 		miss = append(miss, "单一签到动作的按钮仍在直接用模块给的 label")
 	}
 	if !strings.Contains(src, "function checkinActionLabel(") {

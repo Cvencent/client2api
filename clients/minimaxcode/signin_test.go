@@ -225,6 +225,9 @@ func TestCheckinRefusesToClaimWhenNoDayIsToday(t *testing.T) {
 	if res.OK {
 		t.Fatalf("reported success for a panel with no current day: %+v", res)
 	}
+	if !res.Skipped {
+		t.Error("a day the vendor cannot claim was not marked unavailable")
+	}
 	if !strings.Contains(res.Error, "Asia/Shanghai") {
 		t.Errorf("error %q does not name the timezone that failed to line up", res.Error)
 	}

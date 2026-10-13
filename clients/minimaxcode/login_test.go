@@ -90,6 +90,14 @@ func TestLoginDeviceFlowAdoptsTheCredential(t *testing.T) {
 			return jsonResponse(http.StatusOK,
 				`{"access_token":"mmoat_login","refresh_token":"mmrt_login",`+
 					`"token_type":"Bearer","expires_in":3600}`), nil
+		case "/v1/api/user/info":
+			if got := req.Header.Get("Authorization"); got != "Bearer mmoat_login" {
+				return jsonResponse(http.StatusUnauthorized,
+					`{"statusInfo":{"code":1,"message":"bad token"}}`), nil
+			}
+			return jsonResponse(http.StatusOK,
+				`{"data":{"userInfo":{"userID":"user-login","realUserID":"9001",`+
+					`"subUserName":"MiniMaxLogin"}},"statusInfo":{"code":0}}`), nil
 		}
 		return jsonResponse(http.StatusNotFound, `{"error":"not_found"}`), nil
 	})
@@ -219,6 +227,74 @@ func TestLoginDeviceFlowAdoptsTheCredential(t *testing.T) {
 	}
 }
 
+// TestLoginAddsDistinctRowsForDistinctMiniMaxUsers pins the multi-account
+// contract: the device-code flow must identify the signed-in MiniMax user, not
+// just the account service and client id.  Without that identity, a second
+// user's login silently overwrites the first user's row.
+func TestLoginAddsDistinctRowsForDistinctMiniMaxUsers(t *testing.T) {
+	var tokenCalls int
+	c, _ := newTestClient(t, loginConfig(), func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/oauth2/device/code":
+			return jsonResponse(http.StatusOK,
+				`{"user_code":"ABCD-EFGH","device_code":"dev-123",`+
+					`"verification_uri":"https://account.minimax.cn/device",`+
+					`"expires_in":600,"interval":1}`), nil
+		case "/oauth2/token":
+			tokenCalls++
+			if tokenCalls == 1 {
+				return jsonResponse(http.StatusOK,
+					`{"access_token":"mmoat_user_a","refresh_token":"mmrt_user_a",`+
+						`"expires_in":3600}`), nil
+			}
+			return jsonResponse(http.StatusOK,
+				`{"access_token":"mmoat_user_b","refresh_token":"mmrt_user_b",`+
+					`"expires_in":3600}`), nil
+		case "/v1/api/user/info":
+			switch req.Header.Get("Authorization") {
+			case "Bearer mmoat_user_a":
+				return jsonResponse(http.StatusOK,
+					`{"data":{"userInfo":{"userID":"user-a","realUserID":"1001",`+
+						`"subUserName":"MiniMaxUserA"}},"statusInfo":{"code":0}}`), nil
+			case "Bearer mmoat_user_b":
+				return jsonResponse(http.StatusOK,
+					`{"data":{"userInfo":{"userID":"user-b","realUserID":"1002",`+
+						`"subUserName":"MiniMaxUserB"}},"statusInfo":{"code":0}}`), nil
+			}
+			return jsonResponse(http.StatusUnauthorized, `{"statusInfo":{"code":1}}`), nil
+		}
+		return jsonResponse(http.StatusNotFound, `{"error":"not_found"}`), nil
+	})
+
+	completeLogin := func() core.LoginState {
+		t.Helper()
+		st, err := c.StartLogin(context.Background())
+		if err != nil {
+			t.Fatalf("StartLogin: %v", err)
+		}
+		forcePoll(t, c, st.SessionID)
+		done, err := c.PollLogin(context.Background(), st.SessionID)
+		if err != nil {
+			t.Fatalf("PollLogin: %v", err)
+		}
+		if done.State != core.LoginSuccess {
+			t.Fatalf("poll state = %q (%s), want success", done.State, done.Message)
+		}
+		return done
+	}
+
+	first := completeLogin()
+	second := completeLogin()
+	if first.AccountID == second.AccountID {
+		t.Fatalf("two MiniMax users shared account id %q", first.AccountID)
+	}
+
+	rows := c.pool.recordsForPanel()
+	if len(rows) != 2 {
+		t.Fatalf("panel has %d rows after two logins, want 2: %+v", len(rows), rows)
+	}
+}
+
 // TestLoginCNUserCodeVariant covers the shape the CN service has been observed
 // to answer with: no device code, an expiry in milliseconds, and polling keyed
 // by the user code.  Polling with an empty device_code would fail on exactly
@@ -233,6 +309,14 @@ func TestLoginCNUserCodeVariant(t *testing.T) {
 		case "/oauth2/token":
 			return jsonResponse(http.StatusOK,
 				`{"access_token":"mmoat_cn","refresh_token":"mmrt_cn","expires_in":1200}`), nil
+		case "/v1/api/user/info":
+			if got := req.Header.Get("Authorization"); got != "Bearer mmoat_cn" {
+				return jsonResponse(http.StatusUnauthorized,
+					`{"statusInfo":{"code":1,"message":"bad token"}}`), nil
+			}
+			return jsonResponse(http.StatusOK,
+				`{"data":{"userInfo":{"userID":"user-cn","realUserID":"9002",`+
+					`"subUserName":"MiniMaxCN"}},"statusInfo":{"code":0}}`), nil
 		}
 		return jsonResponse(http.StatusNotFound, `{"error":"not_found"}`), nil
 	})

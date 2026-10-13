@@ -217,6 +217,7 @@ type checkinOnly struct {
 	name     string
 	accounts []core.AccountRecord
 	rec      *recorder
+	result   core.CheckinResult
 }
 
 func (c *checkinOnly) Name() string { return c.name }
@@ -265,7 +266,17 @@ func (c *checkinOnly) Checkin(ctx context.Context, id, action string) (core.Chec
 	if c.rec != nil {
 		c.rec.add("checkin:" + id + "/" + action)
 	}
-	return core.CheckinResult{OK: true, AccountID: id, Action: action}, nil
+	res := c.result
+	if res.AccountID == "" {
+		res.AccountID = id
+	}
+	if res.Action == "" {
+		res.Action = action
+	}
+	if res.Message == "" && res.Error == "" && !res.OK && !res.Skipped {
+		res.OK = true
+	}
+	return res, nil
 }
 
 type scopedCheckinOnly struct {
@@ -2131,4 +2142,37 @@ func TestScheduledBatchesForOnePlatformStaySerial(t *testing.T) {
 	}
 	cancel()
 	waitDone()
+}
+
+func TestSyntheticCheckinPublishesDefinitiveResult(t *testing.T) {
+	logs := &recorder{}
+	clk := newFakeClock(cstMidnight, logs)
+	c := &checkinOnly{
+		name:     "ci",
+		accounts: []core.AccountRecord{{ID: "a", Enabled: true}, {ID: "b", Enabled: true}},
+		rec:      logs,
+		result:   core.CheckinResult{OK: true, Action: "daily", Message: "checked in"},
+	}
+	d := deps(registryOf(c), clk, logs)
+	var got []string
+	d.OnCheckinResult = func(client, account, action string, res core.CheckinResult) {
+		state := "failure"
+		switch {
+		case res.Skipped:
+			state = "unavailable"
+		case res.OK:
+			state = "done"
+		}
+		got = append(got, client+"/"+account+"/"+action+"/"+state)
+	}
+	r := New(d)
+	r.Reconfigure(Config{})
+
+	rep, ok := r.RunBatchNow(context.Background(), "ci", core.CheckinBatchName)
+	if !ok || rep.Ran != 2 {
+		t.Fatalf("RunBatchNow = %+v, ok=%v; want two runs", rep, ok)
+	}
+	if want := []string{"ci/a/daily/done", "ci/b/daily/done"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("published results = %v, want %v", got, want)
+	}
 }

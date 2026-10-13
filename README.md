@@ -137,6 +137,9 @@ people. The built-in default is `127.0.0.1`.
 - Accounts
 - Sticky-session management from the Accounts overview: inspect account/platform bindings and their last model, force-unbind an account, or force-switch back to normal selection or to a chosen platform
 - Chat Test
+- Chat Test switches to a microphone transcription check when the selected model is a
+  speech model (for example `doubaoime/...`): the recording is posted to
+  `POST /v1/audio/transcriptions` and the raw status code and response body are shown
 - Usage
 - Alerts
 - Credits
@@ -153,6 +156,7 @@ people. The built-in default is `127.0.0.1`.
 - Batch execution and a task board for supported account actions.
 - Daily balance refresh can run by time, by interval, or by a 5/6-field cron expression.
 - Recovery probes, daily balance refresh and check-in.
+- A check-in the vendor settles (already done today, or the vendor says the account cannot check in today) greys out that account's button for the rest of the Shanghai day and is skipped by batch runs; transient network/auth errors stay clickable and reset automatically at the next Shanghai day.
 - Success rate, latency, token totals, cache hit rate and recent calls.
 - Per-request session IDs and per-model / per-account statistics.
 - CNY cost estimates, official price tables, models.dev fallback and manual overrides.

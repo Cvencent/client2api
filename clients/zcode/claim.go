@@ -787,12 +787,10 @@ func (c *Client) Checkin(ctx context.Context, id, action string) (core.CheckinRe
 		return done()
 	}
 	if len(plans) == 0 {
-		// Nothing to claim is the steady state, not a refusal.  The vendor
-		// hands the daily plan out once, so every sweep after the first sees an
-		// empty list; reporting that as OK false would leave the board
-		// permanently red and bury the runs that really did go wrong.  The
-		// vendor's own code is still relayed, because the panel shows it.
-		res.OK = true
+		// Nothing to claim is a definitive answer for today, not a transport
+		// failure.  Mark it skipped so the panel can disable the action until
+		// the next Shanghai day instead of inviting the same empty click.
+		res.Skipped = true
 		res.Code = claimCodeUnavailable
 		res.Message = "nothing is claimable right now"
 		return done()
@@ -853,12 +851,17 @@ func (c *Client) Checkin(ctx context.Context, id, action string) (core.CheckinRe
 		// the vendor said there is nothing left to do.  Every other code stays
 		// a refusal -- not eligible, quota used up and a rejected argument all
 		// say something is wrong with this account or this call.
-		if last.code == claimCodeAlreadyClaimed {
+		switch last.code {
+		case claimCodeAlreadyClaimed:
 			// Already holding the plan is just as much proof that the quota is
 			// back as a fresh grant, so a verdict recorded before the claim (a
 			// 1005 quota limit, say) must not keep the account parked.
 			res.OK = true
 			c.pool.clearPenalty(acct.ID)
+		case claimCodeNoPlan, claimCodeUnavailable, claimCodeNotEligible, claimCodeDailyQuota:
+			// These are explicit vendor answers that this account cannot claim
+			// right now.  Keep them out of the retry loop for the day.
+			res.Skipped = true
 		}
 		return done()
 	}

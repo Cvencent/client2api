@@ -240,6 +240,9 @@ func TestWorkbuddyCheckinCNRefusalIsAResult(t *testing.T) {
 	if res.OK {
 		t.Fatal("OK = true for a refusal")
 	}
+	if !res.Skipped {
+		t.Error("a vendor-refused check-in was not marked unavailable")
+	}
 	if res.Code != 40001 {
 		t.Errorf("Code = %d, want 40001", res.Code)
 	}
@@ -427,6 +430,9 @@ func TestWorkbuddyCheckinRealmMismatchIsAResult(t *testing.T) {
 			}
 			if res.OK {
 				t.Fatal("OK = true for a realm mismatch")
+			}
+			if !res.Skipped {
+				t.Error("a realm mismatch was not marked unavailable")
 			}
 			if !strings.Contains(res.Error, tc.hint) {
 				t.Errorf("Error = %q, want it to point at %q", res.Error, tc.hint)

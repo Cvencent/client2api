@@ -66,6 +66,10 @@ type AccountRecord struct {
 	ExpiresAt string         `json:"expires_at,omitempty"`
 	Note      string         `json:"note,omitempty"`
 	Fields    map[string]any `json:"fields,omitempty"` // non-secret extras
+	// Checkins is display-only state filled by the panel.  Modules leave it
+	// empty; the panel attaches today's definitive outcome for each action so
+	// the account row can disable an already-completed or unavailable button.
+	Checkins map[string]CheckinStatus `json:"checkins,omitempty"`
 	// Identity is the vendor's own id for the account this credential belongs
 	// to, when the module can determine it.  It is what lets the panel show one
 	// account once instead of once per credential: two records that report the
@@ -214,6 +218,22 @@ type CheckinResult struct {
 	ElapsedMS int64          `json:"elapsed_ms,omitempty"`
 	At        string         `json:"at,omitempty"` // RFC3339, when it finished
 }
+
+// CheckinStatus is the panel's persisted view of one daily check-in action.
+// It only records definitive answers: a successful/no-op completion, or a
+// vendor answer that the action cannot be performed today.  Transport, auth
+// and rate-limit failures are deliberately absent.
+type CheckinStatus struct {
+	State   string `json:"state"` // done | unavailable
+	Message string `json:"message,omitempty"`
+	At      string `json:"at,omitempty"`
+}
+
+// Definitive daily check-in states.
+const (
+	CheckinStateDone        = "done"
+	CheckinStateUnavailable = "unavailable"
+)
 
 // Capabilities tells the panel what a module can be asked to do.  It is built
 // by CapabilitiesOf, so the panel never inspects concrete types.

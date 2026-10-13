@@ -206,6 +206,9 @@ func TestTabbitCheckinReportsAnAlreadyClaimedDayAsARefusal(t *testing.T) {
 	if res.OK {
 		t.Fatalf("a declined sign-in was reported as OK: %+v", res)
 	}
+	if !res.Skipped {
+		t.Error("a vendor-declined sign-in was not marked unavailable")
+	}
 	if res.Error == "" {
 		t.Error("a declined sign-in carried no explanation")
 	}

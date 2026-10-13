@@ -190,8 +190,9 @@ back into that store, while a row the panel signed in itself owns its pair in
   already past). A healthy token is never re-rotated.
 * `POST <oauth_token_url>` with
   `{"grant_type":"refresh_token","refresh_token":"…","client_id":"…"}`.
-* The client id is taken from the account's own id first, then `oauth_client_id`,
-  then `mcode_tool` (the CLI) and `mcode-public` (the store), in that order.
+* The client id is taken from the credential's stored `client_id` first, then
+  `oauth_client_id`, then `mcode_tool` (the CLI) and `mcode-public` (the store),
+  in that order.
 * On success the new `accessToken` / `refreshToken` / `expiresAtMs` /
   `generation` are written back **atomically to the same `auth.json`**, as an
   edit of one record inside a decoded `map[string]any` — every other field, every
@@ -287,9 +288,15 @@ Account ids are stable:
 * hand-added accounts get `minimaxcode:managed:<8 hex>`, where the hex is the
   first 4 bytes of the SHA-256 of the credential, or the `id` you supply;
 * discovered credentials get `minimaxcode:<buildEnv>/<region>/<clientId>`;
-* credentials the panel signed in get that same `<buildEnv>/<region>/<clientId>`
-  id, so a sign-in takes over the row discovery would have produced instead of
-  standing beside it.
+* credentials the panel signed in get
+  `minimaxcode:user/<region>/<12-char base64url hash>` derived from the vendor's
+  `realUserID` (falling back to `userID`), so two MiniMax users in the same
+  region no longer collide. The raw vendor user id is never stored in the
+  panel-visible id.
+
+  A discovered row keeps its location-based `<buildEnv>/<region>/<clientId>` id.
+  A panel-signed-in row therefore cannot be merged with a discovered row by id;
+  the two can coexist when they describe the same account.
 
 `AccountRecord.Fields` carries only non-secret metadata: `source`, `origin`, a
 `tag` (the same 8-hex fingerprint), and `refreshable: true` when the row holds a
@@ -355,9 +362,11 @@ request: a `401` leaves it `invalid`, a `429` leaves it `cooling`.
    polls to the vendor's interval, so the panel's 2 s cadence cannot turn into
    `slow_down`;
 3. once the operator approves in a browser, the token endpoint returns an
-   access/refresh pair, which is written to `managed_accounts.json` under the
-   same `<buildEnv>/<region>/<clientId>` id discovery builds -- so signing in
-   again replaces a broken row instead of stacking a second one beside it.
+   access/refresh pair. The module then calls `<model origin>/v1/api/user/info`
+   with that access token, derives a stable per-user id from `realUserID`
+   (falling back to `userID`), and uses `subUserName` as the label. The
+   credential is written to `managed_accounts.json`; signing in a different
+   MiniMax user adds a row instead of overwriting the first one.
 
 The CN service has been observed to answer the device-authorization request
 with a `user_code` and an expiry in milliseconds but **no** `device_code`; the
@@ -508,11 +517,10 @@ than two.
 * **The TLS profile is an inference.** See *Transport fingerprint*: MiniMax Code
   is an Electron app, `chrome` is the nearest preset, and no MiniMax handshake
   was captured to confirm it. The request headers, however, are from a capture.
-* **The sign-in flow is not live-verified.** The device-code endpoints, the
-  `mcode-public` client id, the scopes and the CN `user_code` variant were
-  recovered from the desktop bundle; the module's own start/poll/complete path is
-  pinned by a scripted transport, but no real authorization has been completed
-  from this machine.
+* **The sign-in flow is live-verified on CN.** The device-code flow, the
+  `mcode-public` client id, the scopes, the CN `user_code` variant and the
+  user-info identity lookup have completed against `account.minimax.cn`. The
+  international host is configurable but has not been live-verified here.
 * **The `User-Agent` is an inference.** The capture recorded no UA; a Chromium
   one is sent in place of Go's.
 * **No model-list endpoint.** `RefreshModels` re-reads a **local file**; it is not
@@ -572,7 +580,7 @@ touched). The transport was real; the upstream was the vendor.
 | --- | --- |
 | `GET /healthz` | `"clients":[…,"minimaxcode",…]`; startup log: `[minimaxcode] minimaxcode: tls handshake imitates the chrome client` / `[minimaxcode] loaded` / `clients: 14 loaded, 0 skipped, registered=14` |
 | `GET /v1/models` | `minimaxcode/MiniMax-M2.7`, `minimaxcode/MiniMax-M2.7-highspeed`, `minimaxcode/MiniMax-M3`, `minimaxcode/MiniMax-M3.1-Flash-Preview` |
-| `GET /panel/api/clients/minimaxcode/capabilities` | `manage`, `import`, `refresh_models` true; every other flag false |
+| `GET /panel/api/clients/minimaxcode/capabilities` | `manage`, `import`, `refresh_models`, `login` true; every other flag false |
 | `GET /panel/api/clients/minimaxcode/accounts` | one row: `minimaxcode:prod/cn/mcode-public`, label `MiniMax558560`, `state: "ready"`, `expires_at: "2026-09-29T16:38:28Z"`, fields `{origin, refreshable:true, source:"discovered", tag:"9cdfd475"}` — **no token** |
 | `POST /v1/chat/completions` (non-streaming, `MiniMax-M3`, `max_tokens:32`) | **200** in 1444 ms — `"content":"Hey there, friend!"`, `finish_reason:"stop"`, `usage {prompt_tokens:169, completion_tokens:6, total_tokens:175, prompt_tokens_details:{cached_tokens:128}}` |
 | `POST /v1/chat/completions` (streaming, `MiniMax-M3`, `max_tokens:48`) | **200** in 701 ms, 1098 bytes — deltas `"1"`, `", 2, "`, `"3."`, then `finish_reason:"stop"`, then `[DONE]` |

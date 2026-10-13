@@ -126,12 +126,14 @@ func (c *Client) Checkin(ctx context.Context, id, action string) (core.CheckinRe
 	switch action {
 	case checkinActionCN:
 		if global {
+			res.Skipped = true
 			res.Error = "the daily check-in exists only on the CN realm; use " + checkinActionIntl
 			return res, nil
 		}
 		return c.checkinCN(ctx, a, res), nil
 	case checkinActionIntl:
 		if !global {
+			res.Skipped = true
 			res.Error = "daily activity is reported only by the international realm; use " + checkinActionCN
 			return res, nil
 		}
@@ -178,6 +180,7 @@ func (c *Client) checkinCN(ctx context.Context, a *Auth, res core.CheckinResult)
 		return res
 	}
 
+	res.Skipped = true
 	res.Error = fmt.Sprintf("the upstream refused the check-in: code=%d %s", env.Code, res.Message)
 	return res
 }

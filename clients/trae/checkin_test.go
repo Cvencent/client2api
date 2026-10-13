@@ -265,6 +265,9 @@ func TestTraeCheckinDisabledIsAResult(t *testing.T) {
 	if res.OK {
 		t.Fatal("OK = true for a disabled campaign")
 	}
+	if !res.Skipped {
+		t.Error("a disabled campaign was not marked unavailable")
+	}
 	if !strings.Contains(res.Error, "not enabled") {
 		t.Errorf("Error = %q", res.Error)
 	}

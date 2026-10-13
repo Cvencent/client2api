@@ -153,18 +153,52 @@ try {
 	}
 }
 
-// checkinTargetsSource 拉出「全部签到」的出队函数，连同它依赖的 accGroups 与
-// checkinActionsFor。三者都不引用 CUR / esc，只有 capsOf 和 ACCTS 是外部名字，
-// node 侧用桩替掉。
-func checkinTargetsSource(t *testing.T) (accGroups, actionsFor, targets string) {
+// checkinStatusForSource pulls out the row/group status lookup.  It is a pure
+// function so the node harness can exercise it with real checkins maps.
+func checkinStatusForSource(t *testing.T, src string) string {
+	t.Helper()
+	start := strings.Index(src, "function checkinStatusFor(")
+	if start < 0 {
+		t.Fatal("index.html has no function checkinStatusFor")
+	}
+	rest := src[start:]
+	end := strings.Index(rest, "\n}")
+	if end < 0 {
+		t.Fatal("checkinStatusFor looks unterminated")
+	}
+	return rest[:end+2]
+}
+
+// TestAccountRowsDisableDefinitiveCheckinStates pins the operator-visible
+// contract: once the vendor has settled today's action, the row must not offer
+// another click.  The exact wording matters because it is how the operator
+// tells "already checked in" apart from "not available today".
+func TestAccountRowsDisableDefinitiveCheckinStates(t *testing.T) {
+	src := poolStatsUISource(t)
+	row := poolStatsFuncBody(t, src, "accRowHTML")
+	if !strings.Contains(row, "checkinStatusFor(") || !strings.Contains(row, "checkinButtonHTML(") {
+		t.Fatal("accRowHTML does not route its buttons through the daily status helper")
+	}
+	for _, want := range []string{"今日已签到", "今日不可签", " disabled"} {
+		if !strings.Contains(src, want) {
+			t.Errorf("the row-button helper is missing %q; a settled check-in would stay clickable", want)
+		}
+	}
+}
+
+// checkinTargetsSource 拉出「全部签到」的出队函数，连同它依赖的 accGroups、
+// checkinActionsFor 与 checkinStatusFor。它们都不引用 CUR / esc，只有 capsOf 和
+// ACCTS 是外部名字，node 侧用桩替掉。
+func checkinTargetsSource(t *testing.T) (accGroups, actionsFor, statusFor, targets string) {
 	t.Helper()
 	src := poolStatsUISource(t)
 	// poolStatsFuncBody 截到行首的 "}" 之前（不含它），node 那边需要成对的括号，
 	// 所以这里把收尾的大括号补回来。
 	accGroups = poolStatsFuncBody(t, src, "accGroups") + "\n}"
 	actionsFor = checkinActionsForSource(t, src)
+	statusFor = checkinStatusForSource(t, src)
 	targets = poolStatsFuncBody(t, src, "checkinTargets") + "\n}"
-	return accGroups, actionsFor, targets
+	return accGroups, actionsFor, statusFor, targets
 }
 
 // TestCheckinTargetsRunsEachAccountOnce 用 node 跑真实的 checkinTargets。
@@ -177,8 +211,8 @@ func TestCheckinTargetsRunsEachAccountOnce(t *testing.T) {
 	if err != nil {
 		t.Skip("node is not on PATH; the batch scheduler behavior needs it to run the inline source")
 	}
-	accGroups, actionsFor, targets := checkinTargetsSource(t)
-	blocks, err := json.Marshal([]string{accGroups, actionsFor, targets})
+	accGroups, actionsFor, statusFor, targets := checkinTargetsSource(t)
+	blocks, err := json.Marshal([]string{accGroups, actionsFor, statusFor, targets})
 	if err != nil {
 		t.Fatalf("encoding the source blocks for node: %v", err)
 	}
@@ -186,12 +220,12 @@ func TestCheckinTargetsRunsEachAccountOnce(t *testing.T) {
 	prog := `const fs = require("fs");
 const out = process.argv[2];
 try {
-  const [accGroups, actionsFor, targets] = ` + string(blocks) + `;
+  const [accGroups, actionsFor, statusFor, targets] = ` + string(blocks) + `;
   const ACCTS = {};
   const CAPS = {};
   const capsOf = n => CAPS[n] || {};
   const load = new Function("ACCTS", "capsOf",
-    accGroups + "\n" + actionsFor + "\n" + targets + "\nreturn {checkinTargets, checkinActionsFor};");
+    accGroups + "\n" + actionsFor + "\n" + statusFor + "\n" + targets + "\nreturn {checkinTargets, checkinActionsFor, checkinStatusFor};");
   const api = load(ACCTS, capsOf);
 
   const zcaps = { actions: [{ id: "claim", channels: ["jwt"] }] };
@@ -202,15 +236,21 @@ try {
   const kimiA = { id: "kimi-a", label: "web", enabled: true, identity: "k-1", fields: {} };
   const kimiB = { id: "kimi-b", label: "cli", enabled: true, identity: "k-1", fields: {} };
   const parked = { id: "jwt-2", label: "parked", enabled: false, identity: "u-3", fields: { kind: "jwt" } };
+  const done = { id: "done", label: "done", enabled: true, identity: "d-1", fields: {}, checkins: { daily: { state: "done", message: "already checked in" } } };
+  const unavailable = { id: "unavailable", label: "unavailable", enabled: true, identity: "d-2", fields: {}, checkins: { daily: { state: "unavailable", message: "not offered today" } } };
+  const retry = { id: "retry", label: "retry", enabled: true, identity: "d-3", fields: {} };
 
   ACCTS.zcode = { accounts: [keyRow, jwtRow, loneKey, parked] };
   CAPS.zcode = zcaps;
   ACCTS.kimi = { accounts: [kimiA, kimiB] };
   CAPS.kimi = dailyCaps;
+  ACCTS.status = { accounts: [done, unavailable, retry] };
+  CAPS.status = dailyCaps;
 
   const z = api.checkinTargets("zcode").map(x => x.id + ":" + x.label);
   const k = api.checkinTargets("kimi").map(x => x.id);
-  fs.writeFileSync(out, JSON.stringify({ ok: true, z, k }));
+  const s = api.checkinTargets("status").map(x => x.id + ":" + x.action);
+  fs.writeFileSync(out, JSON.stringify({ ok: true, z, k, s }));
 } catch (e) {
   fs.writeFileSync(out, JSON.stringify({ ok: false, error: String((e && e.stack) || e) }));
 }
@@ -233,6 +273,7 @@ try {
 		Error string   `json:"error"`
 		Z     []string `json:"z"`
 		K     []string `json:"k"`
+		S     []string `json:"s"`
 	}
 	if err := json.Unmarshal(raw, &got); err != nil {
 		t.Fatalf("decoding the node result: %v\n%s", err, raw)
@@ -247,5 +288,24 @@ try {
 	// 没有通道声明的动作照旧每条已启用凭据各跑一次，顺序保持。
 	if strings.Join(got.K, ",") != "kimi-a,kimi-b" {
 		t.Errorf("kimi targets = %v, want both daily rows in order", got.K)
+	}
+	// Definitive outcomes are not retried, and every queued item carries the
+	// action id so the batch can call the action the row was showing.
+	if strings.Join(got.S, ",") != "retry:daily" {
+		t.Errorf("settled targets = %v, want only the retryable row with its action id", got.S)
+	}
+}
+
+// TestCheckinBatchSendsTheSelectedAction guards the batch transport.  A batch
+// that posts {} lets the module choose its default action, which is wrong for a
+// client with more than one action and impossible to correlate with the
+// disabled row the operator just saw.
+func TestCheckinBatchSendsTheSelectedAction(t *testing.T) {
+	src := poolStatsUISource(t)
+	for _, name := range []string{"checkinClient", "ckRun"} {
+		body := poolStatsFuncBody(t, src, name)
+		if !strings.Contains(body, "action: a.action") && !strings.Contains(body, "action: it.action") {
+			t.Errorf("%s does not send the selected action id", name)
+		}
 	}
 }

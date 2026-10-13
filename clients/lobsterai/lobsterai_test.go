@@ -928,6 +928,9 @@ func TestCheckinRefusalIsAResultNotAnError(t *testing.T) {
 	if res.OK {
 		t.Error("a refusal was reported as success")
 	}
+	if !res.Skipped {
+		t.Error("a vendor-unavailable activity was not marked skipped")
+	}
 	if res.Error == "" {
 		t.Error("a refusal carried no explanation")
 	}

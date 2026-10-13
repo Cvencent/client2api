@@ -503,6 +503,7 @@ func (c *Client) Checkin(ctx context.Context, id, action string) (core.CheckinRe
 		// with no current day means the zone does not line up with the account.
 		// Claiming anyway would be a blind post, and reporting success would be
 		// a lie.
+		res.Skipped = true
 		res.Error = fmt.Sprintf("the vendor marked no day as today for timezone %q; set this client's \"timezone\" to the account's own zone",
 			c.cfg.signinTimezone())
 		res.Data = map[string]any{"timezone": c.cfg.signinTimezone(), "days": len(panel.Days)}
@@ -519,6 +520,7 @@ func (c *Client) Checkin(ctx context.Context, id, action string) (core.CheckinRe
 		return c.finishSignin(res, start), nil
 	}
 	if today.Status != signinDayClaimable {
+		res.Skipped = true
 		res.Error = fmt.Sprintf("the vendor offers nothing to claim today (day %d is %s)", today.DayNo, signinDayStatusName(today.Status))
 		res.Data = map[string]any{"day_no": today.DayNo, "status": today.Status}
 		return c.finishSignin(res, start), nil

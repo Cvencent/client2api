@@ -221,12 +221,15 @@ func (c *Client) Checkin(ctx context.Context, id, action string) (core.CheckinRe
 	case checkinStatusClaimable:
 		// The only branch that writes.
 	case checkinStatusDisabled:
+		res.Skipped = true
 		res.Error = "the vendor has the daily check-in switched off for this account (status=DISABLED)"
 		return c.finishCheckin(res, start), nil
 	case checkinStatusNotStarted:
+		res.Skipped = true
 		res.Error = "the check-in campaign has not started yet (status=NOT_STARTED)"
 		return c.finishCheckin(res, start), nil
 	case checkinStatusEnded:
+		res.Skipped = true
 		res.Error = "the check-in campaign has ended (status=ENDED)"
 		return c.finishCheckin(res, start), nil
 	default:

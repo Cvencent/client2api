@@ -211,6 +211,7 @@ func (c *Client) Checkin(ctx context.Context, id, action string) (core.CheckinRe
 	// the refusal as a refusal: the operator must not be told they got a reward
 	// that never landed.
 	if !reply.Granted {
+		res.Skipped = true
 		res.Error = signInRefusal(reply)
 		return finishSignIn(res, start), nil
 	}

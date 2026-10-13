@@ -133,9 +133,10 @@ func (c *Client) Checkin(ctx context.Context, id, action string) (core.CheckinRe
 
 	if !reply.Granted {
 		// The vendor's own client treats this as "nothing to show", not as an
-		// error. It is still a refusal for us: no points moved. We do not guess
-		// at why — the reply carries no reason, and the client documents no
-		// window.
+		// error.  For the panel it is a definitive no for today: no points
+		// moved, and retrying the same request cannot change that answer.  The
+		// reply carries no reason, so the message keeps both possibilities.
+		res.Skipped = true
 		res.Error = "the vendor did not grant the daily 300 login points this time (granted:false; already claimed today or outside the grant window)"
 		return c.finishCheckin(res, start), nil
 	}

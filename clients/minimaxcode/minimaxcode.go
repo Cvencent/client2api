@@ -526,9 +526,9 @@ func renewable(a Account) bool {
 	return a.ExpiresAt.IsZero() || !a.ExpiresAt.After(time.Now().Add(refreshLeeway))
 }
 
-// refreshClientIDs lists the OAuth client ids to try, in order.  The store's own
-// id comes first because it is the one the credential was issued to; the CLI's
-// id is the documented alternative and is only tried after that fails.
+// refreshClientIDs lists the OAuth client ids to try, in order.  The credential's
+// own client id comes first because it is the one it was issued to; the CLI's id
+// is the documented alternative and is only tried after that fails.
 func (c *Client) refreshClientIDs(acct Account) []string {
 	var out []string
 	seen := map[string]bool{}
@@ -539,9 +539,6 @@ func (c *Client) refreshClientIDs(acct Account) []string {
 		}
 		seen[v] = true
 		out = append(out, v)
-	}
-	if parts := strings.Split(acct.ID, "/"); len(parts) > 0 {
-		add(parts[len(parts)-1])
 	}
 	// A row the panel signed in records the exact client the credential was
 	// minted for, so that one is tried before the guesses below.  Presenting

@@ -121,7 +121,7 @@ func TestCSPNamesTheInlineScriptByHash(t *testing.T) {
 	if strings.Contains(scriptSrc, "'unsafe-inline'") {
 		t.Errorf("script-src = %q, must not allow inline script", scriptSrc)
 	}
-	for _, d := range []string{"default-src 'none'", "frame-ancestors 'none'", "base-uri 'none'", "form-action 'none'", "connect-src 'self'"} {
+	for _, d := range []string{"default-src 'none'", "frame-ancestors 'none'", "base-uri 'none'", "form-action 'none'", "connect-src 'self'", "media-src 'self' blob:"} {
 		if !strings.Contains(policy, d) {
 			t.Errorf("policy is missing %q\npolicy: %s", d, policy)
 		}
@@ -147,7 +147,7 @@ func TestCSPFallsBackInsteadOfBlankingThePanel(t *testing.T) {
 		t.Fatalf("a document without an isolatable script must fall back to allowing inline script, got %q", policy)
 	}
 	// The other directives are unaffected by the fallback.
-	for _, d := range []string{"default-src 'none'", "frame-ancestors 'none'", "base-uri 'none'"} {
+	for _, d := range []string{"default-src 'none'", "frame-ancestors 'none'", "base-uri 'none'", "media-src 'self' blob:"} {
 		if !strings.Contains(policy, d) {
 			t.Errorf("fallback policy is missing %q", d)
 		}

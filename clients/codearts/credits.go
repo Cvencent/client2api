@@ -102,6 +102,7 @@ func (c *Client) Checkin(ctx context.Context, accountID, action string) (core.Ch
 		return finish(res, nil)
 	}
 	if !info.hasCreditPackage() {
+		res.Skipped = true
 		res.Message = "this account has no credit package, so it has nothing to claim"
 		res.Data = map[string]any{"status": "inactive"}
 		return finish(res, nil)
@@ -114,6 +115,7 @@ func (c *Client) Checkin(ctx context.Context, accountID, action string) (core.Ch
 	}
 	activity, ok := findDailyLogin(items)
 	if !ok {
+		res.Skipped = true
 		res.Message = "the vendor did not offer a daily sign-in activity"
 		return finish(res, nil)
 	}
@@ -124,6 +126,7 @@ func (c *Client) Checkin(ctx context.Context, accountID, action string) (core.Ch
 		return finish(res, nil)
 	}
 	if !activity.Claimable {
+		res.Skipped = true
 		res.Message = "the daily sign-in is not claimable right now"
 		res.Data = map[string]any{"status": activity.Status}
 		return finish(res, nil)

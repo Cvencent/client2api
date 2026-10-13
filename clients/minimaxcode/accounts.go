@@ -331,10 +331,9 @@ func (c *Client) AddAccount(ctx context.Context, spec core.AccountSpec) (core.Ac
 // adoptLoginCredential installs the credential a panel sign-in just minted and
 // returns the row as the panel should show it.
 //
-// The id is the same <buildEnv>/<region>/<clientId> triple discovery builds, so
-// signing in from the panel lands on the row that already stands for this
-// MiniMax Code account -- a second login replaces the credential instead of
-// stacking up a duplicate row beside a broken one.
+// The id is the per-user id resolved from the vendor's user-info response, so a
+// second login for the same MiniMax user replaces that user's credential while a
+// different user adds a separate row instead of overwriting the first one.
 //
 // When that row came from the desktop client's store, the managed copy takes it
 // over and the store link is dropped.  That is deliberate: this module never

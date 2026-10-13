@@ -11,6 +11,22 @@ import (
 	"client2api/internal/core"
 )
 
+func TestRefreshClientIDsUsesStoredClientForUserAccount(t *testing.T) {
+	c, _ := newTestClient(t, loginConfig(), nil)
+	got := c.refreshClientIDs(Account{
+		ID:       "minimaxcode:user/cn/abcdefghijkl",
+		ClientID: oauthClientIDDesktop,
+	})
+	if len(got) == 0 || got[0] != oauthClientIDDesktop {
+		t.Fatalf("refresh client ids = %q, want %q first", got, oauthClientIDDesktop)
+	}
+	for _, id := range got {
+		if id == "abcdefghijkl" {
+			t.Fatalf("refresh client ids treated the user identity hash as a client id: %q", got)
+		}
+	}
+}
+
 // A row the panel signed in itself keeps its refresh token in this module's own
 // store (managed_accounts.json) and has no desktop auth.json behind it.  The
 // renewal path has to treat that store as a durable home: the access token

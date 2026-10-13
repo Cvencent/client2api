@@ -955,6 +955,9 @@ func (p *panel) runCheckinBatch(ctx context.Context, id string, c core.Client, b
 		stepCtx, cancel := context.WithTimeout(ctx, batchStepTimeout)
 		res, cerr := cp.Checkin(stepCtx, a.ID, "")
 		cancel()
+		if cerr == nil {
+			p.recordCheckinResult(c.Name(), a.ID, "", res)
+		}
 		step.ElapsedMS = time.Since(started).Milliseconds()
 		if cerr != nil {
 			step.Error = core.Redact(cerr.Error())

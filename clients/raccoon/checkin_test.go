@@ -249,6 +249,9 @@ func TestCheckinTreatsNotGrantedAsARefusalNotAnError(t *testing.T) {
 	if !strings.Contains(res.Error, "did not grant") {
 		t.Errorf("Error = %q, want it to say the vendor granted nothing", res.Error)
 	}
+	if !res.Skipped {
+		t.Error("skipped = false for granted:false, want the vendor's definitive no as unavailable")
+	}
 	if strings.Contains(res.Error, "once per day") {
 		t.Errorf("Error = %q, but the client documents no such window: the reward window is the vendor's business, and guessing at it would be a fabricated claim", res.Error)
 	}

@@ -40,6 +40,10 @@ var (
 //   - connect-src 'self': the page's fetch() may only call this server, so a
 //     compromised page cannot post the API key anywhere else.
 //   - img-src 'self' data: for the favicon and the inline SVG chevron.
+//   - media-src 'self' blob: the Chat Test transcription pane plays back the
+//     clip it just recorded straight from a blob URL, without ever sending the
+//     bytes to disk.  Blob URLs are same-origin by construction; no external
+//     media origin is opened.
 //   - frame-src 'self': the shell frames exactly one document of ours, the
 //     captcha page at /panel/captcha (see captcha.go).  Without this directive
 //     the frame would fall back to default-src 'none' and the captcha widget
@@ -62,7 +66,7 @@ func csp(doc []byte) string {
 		// TestCSPNamesTheInlineScriptFailsIfItCannotHashed keeps this from
 		// becoming permanent by accident.
 		return "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; " +
-			"connect-src 'self'; img-src 'self' data:; frame-src 'self'; form-action 'none'; " +
+			"connect-src 'self'; img-src 'self' data:; media-src 'self' blob:; frame-src 'self'; form-action 'none'; " +
 			"frame-ancestors 'none'; base-uri 'none'"
 	}
 	// HTML parsers normalize CRLF and lone CR to LF before CSP hashes the
@@ -70,7 +74,7 @@ func csp(doc []byte) string {
 	// not emit a hash that every browser rejects.
 	sum := sha256.Sum256(normalizeScriptLineEndings(body))
 	return "default-src 'none'; script-src 'self' 'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'; " +
-		"style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; frame-src 'self'; " +
+		"style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; media-src 'self' blob:; frame-src 'self'; " +
 		"form-action 'none'; frame-ancestors 'none'; base-uri 'none'"
 }
 

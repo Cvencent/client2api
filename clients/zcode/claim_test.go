@@ -609,8 +609,8 @@ func TestCheckinReportsNothingClaimable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Checkin: %v", err)
 	}
-	if !res.OK {
-		t.Fatalf("res = %+v, want OK true: an empty preview is not a failure", res)
+	if res.OK || !res.Skipped {
+		t.Fatalf("res = %+v, want an unavailable skipped result", res)
 	}
 	if res.Code != claimCodeUnavailable {
 		t.Errorf("code = %d, want %d", res.Code, claimCodeUnavailable)

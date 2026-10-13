@@ -898,6 +898,18 @@ details.cfg summary { cursor: pointer; color: var(--ink-3); font-size: 12.5px; }
 .chatrow { display: flex; gap: 10px; align-items: flex-end; margin-top: 14px; }
 .chatrow textarea { flex: 1; min-width: 0; resize: vertical; font: 13px/1.55 var(--sans); }
 .chatbtns { display: flex; flex-direction: column; gap: 6px; }
+/* 语音转写测试：设置行里三个对话专用参数用 display:contents 展开，好让整块被
+   hidden 一次收起；选中转写模型时下面换成录音面板。 */
+.chat-opts { display: contents; }
+.chatrec { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.chatrec .note { font-variant-numeric: tabular-nums; }
+#btnChatRecord.rec { background: var(--bad-soft); border-color: var(--bad); color: var(--bad); }
+#chatTransAudio { width: 100%; margin-bottom: 12px; }
+.chattransout {
+  margin: 0; min-height: 132px; max-height: 46vh; overflow: auto; white-space: pre-wrap;
+  word-break: break-word; background: var(--surface-2); border: 1px solid var(--line-soft);
+  border-radius: 8px; padding: 10px 12px; font: 12.5px/1.6 var(--mono); color: var(--ink-2);
+}
 
 /* ── 可用性打磨 ───────────────────────────────────────────────────────── */
 /* 一、长表可滚动 + 粘性表头。模型表有 800+ 行，之前整张表平铺在页面里，往下翻两
@@ -1946,19 +1958,31 @@ details.cfg summary:hover, details.adv summary:hover { color: var(--accent-text)
           <label class="sel-note">客户端 <select id="chatClient"></select></label>
           <label class="sel-note">模型 <select id="chatModel"></select></label>
           <label class="sel-note">筛选 <input id="chatModelFilt" type="search" placeholder="缩小模型列表" spellcheck="false" autocomplete="off"></label>
-          <label class="sel-note">账号 <select id="chatAccount"></select></label>
-          <label class="sel-note">max_tokens <input id="chatMax" type="number" min="1" max="1000000" value="512" style="width:92px"></label>
-          <label class="sel-note">温度 <input id="chatTemp" type="number" min="0" max="2" step="0.1" value="0.7" style="width:74px"></label>
-          <label class="sel-note"><input id="chatStream" type="checkbox" checked> 流式</label>
+          <label class="sel-note" id="chatAccountRow">账号 <select id="chatAccount"></select></label>
+          <span id="chatChatOpts" class="chat-opts">
+            <label class="sel-note">max_tokens <input id="chatMax" type="number" min="1" max="1000000" value="512" style="width:92px"></label>
+            <label class="sel-note">温度 <input id="chatTemp" type="number" min="0" max="2" step="0.1" value="0.7" style="width:74px"></label>
+            <label class="sel-note"><input id="chatStream" type="checkbox" checked> 流式</label>
+          </span>
+          <!-- 只有选中转写模型时才出现：对话测试的其它参数对它没有意义。 -->
+          <label class="sel-note" id="chatResponseFormatRow" hidden>response_format
+            <select id="chatResponseFormat">
+              <option value="json" selected>json</option>
+              <option value="text">text</option>
+              <option value="verbose_json">verbose_json</option>
+              <option value="srt">srt</option>
+              <option value="vtt">vtt</option>
+            </select>
+          </label>
         </div>
-        <div class="pad" style="padding-top:0">
+        <div class="pad" id="chatSysRow" style="padding-top:0">
           <label class="sel-note" style="display:block">系统提示
             <input id="chatSys" type="text" placeholder="留空则不发送 system 消息" style="width:100%;margin-top:5px">
           </label>
         </div>
       </div>
 
-      <div class="box">
+      <div class="box" id="chatTurn">
         <header>
           <h3>对话</h3>
           <div class="chips" id="chatTags"></div>
@@ -1975,6 +1999,23 @@ details.cfg summary:hover, details.adv summary:hover { color: var(--accent-text)
               <button id="btnChatStop" disabled>停止</button>
             </div>
           </div>
+        </div>
+      </div>
+
+      <!-- 语音转写：和对话面板互斥，由模型条目的 extra.kind 决定显示哪一个。 -->
+      <div class="box" id="chatTranscribe" hidden>
+        <header>
+          <h3>语音转写</h3>
+          <span class="grow"></span>
+          <span class="note" id="chatTransDiag"></span>
+        </header>
+        <div class="pad chatrec" style="padding-bottom:0">
+          <button class="primary" id="btnChatRecord">开始录音</button>
+          <span class="note" id="chatRecordStatus" aria-live="polite"></span>
+        </div>
+        <div class="pad" style="padding-top:0">
+          <audio id="chatTransAudio" controls hidden aria-label="回听刚才的录音"></audio>
+          <pre class="chattransout" id="chatTransOut" aria-live="polite"></pre>
         </div>
       </div>
     </section>
@@ -4535,6 +4576,32 @@ function checkinActionsFor(a, acts, group) {
   });
 }
 
+// checkinStatusFor 读取今天这个动作的最终状态。状态按具体凭据 id 持久化，
+// 但动作可能声明在账号组级别（zcode 的 JWT/API key 兄弟通道）：组里任何一行
+// 已经签过或确认不可签，整组都该显示同一个结果，避免点兄弟通道再试一次。
+function checkinStatusFor(a, action, group) {
+  const key = String(action || "");
+  const rows = (group && group.length) ? group : [a];
+  for (const row of rows) {
+    const st = row && row.checkins && row.checkins[key];
+    if (st && (st.state === "done" || st.state === "unavailable")) return st;
+  }
+  return null;
+}
+
+function checkinStatusText(st) {
+  return st && st.state === "done" ? "今日已签到" : "今日不可签";
+}
+
+// checkinButtonHTML 是行内签到按钮的唯一渲染点。最终状态存在时按钮必须 disabled，
+// 文案直接告诉操作员今天为什么不用再点；厂商原话放进 title，方便排查 404 / 拒签。
+function checkinButtonHTML(a, x, st, primary) {
+  const label = st ? checkinStatusText(st) : checkinActionLabel(x);
+  const title = [checkinActionTitle(x), st && st.message ? st.message : ""].filter(Boolean).join(" · ");
+  const cls = "xs" + (!st && primary ? " primary" : (!primary ? " chip" : ""));
+  const dis = st ? " disabled" : "";
+  return '<button class="' + cls + '" data-do="checkin" data-act="' + esc(x.id) + '" data-id="' + esc(a.id) + '" title="' + esc(title) + '"' + dis + '>' + esc(label) + '</button>';
+}
 // checkinTargets 把「全部签到」要跑的凭据排成一队。规则有两条：
 //
 //   1. 通道不命中就整组跳过。面板按 identity 把同一账号的 JWT / API key 收成一组
@@ -4553,19 +4620,27 @@ function checkinTargets(n) {
     if (!rows.length) return;
     const allowed = checkinActionsFor(rows[0], acts, rows);
     if (!allowed.length) return;
-    const scoped = allowed.some(x => ((x && x.channels) || []).length);
-    let picked = rows;
-    if (scoped) {
-      const chans = new Set();
-      allowed.forEach(x => (x.channels || []).forEach(c => chans.add(String(c).toLowerCase())));
-      const kindOf = a => String((((a || {}).fields) || {}).kind || "").toLowerCase();
-      picked = [rows.find(a => chans.has(kindOf(a))) || rows[0]];
-    }
-    picked.forEach(a => out.push({ client: n, id: a.id, label: a.label || a.id }));
+    allowed.forEach(x => {
+      if (checkinStatusFor(rows[0], x.id, rows)) return;
+      let picked = rows;
+      const only = (x && x.channels) || [];
+      if (only.length) {
+        const chans = new Set(only.map(c => String(c).toLowerCase()));
+        const kindOf = a => String((((a || {}).fields) || {}).kind || "").toLowerCase();
+        const row = rows.find(a => chans.has(kindOf(a)));
+        if (!row) return;
+        picked = [row];
+      }
+      picked.forEach(a => out.push({
+        client: n,
+        id: a.id,
+        label: a.label || a.id,
+        action: x.id,
+      }));
+    });
   });
   return out;
 }
-
 function accRowHTML(a, caps, acts, showBal, chan, open, groupKey, group) {
   const btns = [];
   // 「备注」记的是这个账号登录用的手机号/邮箱，存在网关配置里（不是模块里），
@@ -4589,14 +4664,11 @@ function accRowHTML(a, caps, acts, showBal, chan, open, groupKey, group) {
     // checkinActionsFor），收窄后为空就整条都不渲染——否则「模块有签到能力」会
     // 被误读成「这一行能签到」。
     const actsFor = checkinActionsFor(a, acts, group);
-    if (actsFor.length > 1) {
-      actsFor.forEach(x => btns.push('<button class="xs chip" data-do="checkin" data-act="' + esc(x.id) + '" data-id="' + esc(a.id) + '" title="' + esc(checkinActionTitle(x)) + '">' + esc(checkinActionLabel(x)) + '</button>'));
-    } else if (actsFor.length === 1) {
-      // 单一签到动作：中文标签在窄列里也可能被省略号截断，所以 title 里留
-      // 模块自己的原话。
-      const one = actsFor[0];
-      btns.push('<button class="xs primary" data-do="checkin" data-act="' + esc(one.id || "") + '" data-id="' + esc(a.id) + '" title="' + esc(checkinActionTitle(one)) + '">' + esc(checkinActionLabel(one)) + '</button>');
-    }
+    const primary = actsFor.length === 1;
+    actsFor.forEach(x => {
+      const st = checkinStatusFor(a, x.id, group);
+      btns.push(checkinButtonHTML(a, x, st, primary));
+    });
   }
   // 重登：比「恢复」多一步真实的重新登录，因为 session-dead 的账号光清
   // 标记是活不过来的。只要模块会登录，就给一个手动链接入口；如果模块还会
@@ -5191,7 +5263,8 @@ async function act(btn) {
       r = await api(cbase(n) + "/accounts/" + aid(id) + "/checkin", { method: "POST", body });
       if (r.ok) {
         const x = r.data.result || {};
-        toast(n + "/" + id + " 签到" + (x.ok ? "成功" : "未成功") + (x.message ? "：" + x.message : "") + (x.error ? "（" + x.error + "）" : ""), x.ok ? "" : "err");
+        const state = x.ok ? (x.data && x.data.already_done ? "今日已签到" : "成功") : (x.skipped ? "今日不可签" : "未成功");
+        toast(n + "/" + id + " 签到" + state + (x.message ? "：" + x.message : "") + (x.error ? "（" + x.error + "）" : ""), x.ok || x.skipped ? "" : "err");
       } else toast("签到失败：" + r.err, "err");
     } else if (doIt === "revive") {
       btn.textContent = "恢复中…";
@@ -5323,15 +5396,17 @@ async function checkinClient(n) {
   const btn = $("#btnCheckinAll");
   const keep = btn ? btn.textContent : "";
   if (btn) { btn.disabled = true; btn.textContent = "签到 0/" + list.length; }
-  let done = 0, ok = 0, already = 0, failed = 0;
+  let done = 0, ok = 0, already = 0, unavailable = 0, failed = 0;
   try {
     for (const a of list) {
       if (btn) btn.textContent = "签到 " + (done + 1) + "/" + list.length;
-      const r = await api(cbase(n) + "/accounts/" + aid(a.id) + "/checkin", { method: "POST", body: {} });
+      const r = await api(cbase(n) + "/accounts/" + aid(a.id) + "/checkin", { method: "POST", body: { action: a.action } });
       const x = (r.ok && r.data && r.data.result) || {};
       if (r.ok) {
         applyAccounts(n, r.data);
-        if (x.ok) ok++;
+        if (x.ok && x.data && x.data.already_done) already++;
+        else if (x.ok) ok++;
+        else if (x.skipped) unavailable++;
         else if (/已签|已经|already|已领取/.test(String(x.message || x.error || ""))) already++;
         else failed++;
       } else failed++;
@@ -5342,9 +5417,8 @@ async function checkinClient(n) {
     if (btn) { btn.disabled = false; btn.textContent = keep || "全部签到"; }
   }
   renderAccounts();
-  toast(n + " 签到：成功 " + ok + "，已签到 " + already + "，失败 " + failed, failed ? "err" : "");
+  toast(n + " 签到：成功 " + ok + "，已签到 " + already + "，不可签 " + unavailable + "，失败 " + failed, failed ? "err" : "");
 }
-
 /* ── 用量 / 客户端 / 模型 ─────────────────────────────────────────────── */
 const numf = n => (n == null ? "-" : Number(n).toLocaleString());
 function usageRows(list, cols) {
@@ -8036,22 +8110,25 @@ async function ckRun() {
   const items = await scanCheckin();
   if (!items.length) { toast("没有可签到的账号", "err"); return; }
   $("#ckProg").hidden = false; $("#ckEmpty").hidden = true;
-  let done = 0, ok = 0;
+  let done = 0, ok = 0, already = 0, unavailable = 0, failed = 0;
   const out = [];
   for (const it of items) {
-    const r = await api(cbase(it.client) + "/accounts/" + aid(it.id) + "/checkin", { method: "POST", body: {} });
+    const r = await api(cbase(it.client) + "/accounts/" + aid(it.id) + "/checkin", { method: "POST", body: { action: it.action } });
     const x = (r.ok && r.data.result) || {};
-    if (r.ok && x.ok) ok++;
-    out.push('<div class="row"><span class="k">' + esc(it.client) + '</span><span class="grow"></span><span class="v">' + esc(it.label) + ' — ' + esc(x.ok ? (x.message || "成功") : (x.error || x.message || r.err || "失败")) + '</span></div>');
+    let state = "";
+    if (r.ok && x.ok && x.data && x.data.already_done) { already++; state = "今日已签到"; }
+    else if (r.ok && x.ok) { ok++; state = x.message || "成功"; }
+    else if (r.ok && x.skipped) { unavailable++; state = "今日不可签：" + (x.message || x.error || "厂商当前不提供"); }
+    else { failed++; state = x.error || x.message || r.err || "失败"; }
+    out.push('<div class="row"><span class="k">' + esc(it.client) + '</span><span class="grow"></span><span class="v">' + esc(it.label) + ' — ' + esc(state) + '</span></div>');
     done++;
     $("#ckBarFill").style.width = Math.round(done / items.length * 100) + "%";
     $("#ckProgText").textContent = done + " / " + items.length;
     $("#ckList").innerHTML = out.join("");
   }
-  toast("签到完成：" + ok + "/" + items.length + " 成功", ok === items.length ? "" : "err");
+  toast("签到完成：成功 " + ok + "，已签到 " + already + "，不可签 " + unavailable + "，失败 " + failed, failed ? "err" : "");
   await loadAllAccounts(); renderAccounts();
 }
-
 /* ── 成长任务队列 ──────────────────────────────────────────────────────
    移植自原版（app.js 的 groupItems/qrowHTML/renderQueue/updateProgress/
    groupsFromQueue/startQueuePolling/reattachQueueView），差别只在多客户端：
@@ -11444,6 +11521,8 @@ window.addEventListener("keydown", ev => {
 // “友好封装”：要看的就是 API 调用方能看到的东西，所以状态码、error.code、
 // usage、finish_reason 全部原样展示。
 const CHAT = { models: [], key: "", msgs: [], busy: false, ctrl: null };
+// 语音转写测试的运行时状态。recorder 非空 = 正在录音；busy = 上传中。
+const TRANS = { recorder: null, stream: null, chunks: [], started: 0, timer: 0, model: "", busy: false, starting: false, drop: false };
 
 // /v1/models 里有三类条目：带斜杠的 "客户端/模型"、虚拟的 "Auto/模型"，以及
 // 不带斜杠的别名（owned_by=alias，例如 gpt-4o → trae/custom_model_gpt-5，来自
@@ -11462,6 +11541,197 @@ function chatText(content) {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) return content.map(p => (p && (p.text || p.content)) || "").join("");
   return content == null ? "" : String(content);
+}
+
+function chatSelectedModel() {
+  const id = $("#chatModel").value;
+  return CHAT.models.find(m => m.id === id) || null;
+}
+
+// /v1/models 的转写条目自带 extra.kind；别名条目没有 kind，但 extra.target 指向的
+// 真实条目有。这样判定跟平台/模型名无关，以后新增语音模块不用再改这里。
+function chatModelKind(entry) {
+  if (!entry) return "";
+  const extra = entry.extra || {};
+  if (extra.kind) return String(extra.kind);
+  const target = extra.target ? String(extra.target) : "";
+  if (target) {
+    const hit = CHAT.models.find(m => m.id === target);
+    if (hit && hit.extra && hit.extra.kind) return String(hit.extra.kind);
+  }
+  return "";
+}
+
+function chatIsTranscription(entry) { return chatModelKind(entry) === "transcription"; }
+
+// 模型决定这个页签测什么：普通模型是对话，转写模型换成录音面板。
+function chatModeSync() {
+  const trans = chatIsTranscription(chatSelectedModel());
+  $("#chatTurn").hidden = trans;
+  $("#chatTranscribe").hidden = !trans;
+  $("#chatChatOpts").hidden = trans;
+  $("#chatSysRow").hidden = trans;
+  $("#chatAccountRow").hidden = trans;
+  $("#chatResponseFormatRow").hidden = !trans;
+  $("#chatNote").textContent = trans ? "走真实网关 /v1/audio/transcriptions" : "走真实网关 /v1/chat/completions";
+  // 切回对话时把还在录的音频掐掉，并标记为丢弃：那段音频属于刚才的转写模型，
+  // 不该在切走以后才偷偷上传。
+  if (!trans && TRANS.recorder) { TRANS.drop = true; chatRecordStop(); }
+  if (!trans) $("#chatRecordStatus").textContent = "";
+}
+
+// 容器按浏览器能力挑：Chrome/Edge 出 WebM-Opus，Safari 只出 MP4；网关两种都能解。
+function chatRecordMime() {
+  const prefer = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"];
+  for (const m of prefer) {
+    try { if (MediaRecorder.isTypeSupported(m)) return m; } catch (e) { }
+  }
+  return "";
+}
+
+function chatMicError(e) {
+  const name = (e && e.name) || "";
+  if (name === "NotAllowedError" || name === "SecurityError") return "麦克风权限被拒绝；浏览器只允许在 127.0.0.1 或 HTTPS 页面录音";
+  if (name === "NotFoundError" || name === "DevicesNotFoundError") return "没有找到可用的麦克风";
+  return "无法打开麦克风：" + String((e && e.message) || e);
+}
+
+async function chatRecordStart() {
+  if (TRANS.busy || TRANS.recorder || TRANS.starting) return;
+  if (!chatIsTranscription(chatSelectedModel())) return;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof MediaRecorder === "undefined") {
+    chatTransDraw("", 0, 0, "这个浏览器不支持录音，需要 MediaRecorder 和安全上下文（127.0.0.1 或 HTTPS）");
+    return;
+  }
+  TRANS.starting = true;
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e) {
+    TRANS.starting = false;
+    chatTransDraw("", 0, 0, chatMicError(e));
+    return;
+  }
+  TRANS.starting = false;
+  // 等权限的这段时间里可能已经切走；那段授权不该开出一个录错模型的录音。
+  if (!chatIsTranscription(chatSelectedModel())) {
+    stream.getTracks().forEach(t => { try { t.stop(); } catch (e) { } });
+    return;
+  }
+  const mime = chatRecordMime();
+  let rec;
+  try {
+    rec = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+  } catch (e) {
+    stream.getTracks().forEach(t => { try { t.stop(); } catch (e2) { } });
+    chatTransDraw("", 0, 0, "无法开始录音：" + String((e && e.message) || e));
+    return;
+  }
+  TRANS.model = $("#chatModel").value;
+  TRANS.stream = stream;
+  TRANS.recorder = rec;
+  TRANS.chunks = [];
+  TRANS.drop = false;
+  rec.ondataavailable = ev => { if (ev.data && ev.data.size) TRANS.chunks.push(ev.data); };
+  rec.onerror = ev => {
+    TRANS.drop = true;
+    chatRecordStop();
+    chatTransDraw("", 0, 0, "录音失败：" + String((ev && ev.error && ev.error.name) || "未知错误"));
+  };
+  rec.onstop = () => chatRecordFinish(rec.mimeType || mime);
+  rec.start();
+  TRANS.started = performance.now();
+  TRANS.timer = setInterval(chatRecordTick, 200);
+  $("#btnChatRecord").textContent = "停止并转写";
+  $("#btnChatRecord").classList.add("rec");
+  $("#chatRecordStatus").textContent = "录音中 0.0 秒";
+  chatTransDraw("", 0, 0, "");
+}
+
+function chatRecordTick() {
+  if (!TRANS.recorder) return;
+  $("#chatRecordStatus").textContent = "录音中 " + ((performance.now() - TRANS.started) / 1000).toFixed(1) + " 秒";
+}
+
+function chatRecordStop() {
+  const rec = TRANS.recorder;
+  TRANS.recorder = null;
+  if (TRANS.timer) { clearInterval(TRANS.timer); TRANS.timer = 0; }
+  if (rec) { try { if (rec.state !== "inactive") rec.stop(); } catch (e) { } }
+  if (TRANS.stream) {
+    TRANS.stream.getTracks().forEach(t => { try { t.stop(); } catch (e) { } });
+    TRANS.stream = null;
+  }
+  $("#btnChatRecord").textContent = "开始录音";
+  $("#btnChatRecord").classList.remove("rec");
+}
+
+// 停止即上传：录到的音频只活在这个页签里，不落盘，也没有"选文件"这一步。
+async function chatRecordFinish(mime) {
+  const drop = TRANS.drop;
+  TRANS.drop = false;
+  const chunks = TRANS.chunks;
+  TRANS.chunks = [];
+  $("#chatRecordStatus").textContent = "";
+  if (drop || !chunks.length) return;
+  const type = mime || (chunks[0] && chunks[0].type) || "audio/webm";
+  const blob = new Blob(chunks, { type: type });
+  if (!blob.size) { chatTransDraw("", 0, 0, "没有录到音频"); return; }
+  const audio = $("#chatTransAudio");
+  if (audio.dataset.url) URL.revokeObjectURL(audio.dataset.url);
+  const url = URL.createObjectURL(blob);
+  audio.src = url;
+  audio.dataset.url = url;
+  audio.hidden = false;
+  await chatTranscribe(blob, "speech." + (type.indexOf("mp4") >= 0 ? "m4a" : "webm"));
+}
+
+async function chatTranscribe(blob, filename) {
+  const fd = new FormData();
+  fd.append("file", blob, filename);
+  fd.append("model", TRANS.model || $("#chatModel").value);
+  fd.append("response_format", $("#chatResponseFormat").value || "json");
+  const h = {};
+  if (KEY) h["Authorization"] = "Bearer " + KEY;
+  TRANS.busy = true;
+  const btn = $("#btnChatRecord");
+  btn.disabled = true;
+  $("#chatRecordStatus").textContent = "转写中…";
+  const t0 = performance.now();
+  let res, txt = "";
+  try {
+    res = await fetch("/v1/audio/transcriptions", { method: "POST", headers: h, body: fd, cache: "no-store" });
+    txt = await res.text();
+  } catch (e) {
+    TRANS.busy = false; btn.disabled = false;
+    $("#chatRecordStatus").textContent = "";
+    chatTransDraw("", 0, performance.now() - t0, "请求失败：" + String((e && e.message) || e));
+    return;
+  }
+  TRANS.busy = false; btn.disabled = false;
+  $("#chatRecordStatus").textContent = "";
+  if (res.status === 401 || res.status === 403) showKey();
+  let note = "";
+  if (!res.ok) {
+    let code = "", msg = txt;
+    try { const er = (JSON.parse(txt) || {}).error || {}; code = er.code || ""; msg = er.message || txt; } catch (e) { }
+    note = msg + (code ? "（code=" + code + "）" : "");
+  }
+  chatTransDraw(txt, res.status, performance.now() - t0, note);
+}
+
+// 和对话测试同一原则：状态码和响应体原样展示，JSON 只做缩进，不改内容。
+function chatTransDraw(body, status, ms, note) {
+  const out = $("#chatTransOut"), diag = $("#chatTransDiag");
+  let text = body == null ? "" : String(body);
+  try { text = JSON.stringify(JSON.parse(text), null, 2); } catch (e) { }
+  out.textContent = (note ? note + "\n\n" : "") + text;
+  diag.textContent = status ? "HTTP " + status + " · " + Math.round(ms) + " ms" : (note ? "请求失败" : "");
+}
+
+function chatRecordToggle() {
+  if (TRANS.recorder) chatRecordStop();
+  else chatRecordStart();
 }
 
 async function chatModels() {
@@ -11491,6 +11761,7 @@ function chatFillModels() {
   // 过滤前的选中项只要还在结果里就保留，否则回到第一项 —— 否则每敲一个字都会
   // 把用户已经选好的模型悄悄换掉。
   if (want && rows.some(e => e.value === want)) sel.value = want;
+  chatModeSync();
 }
 
 // chatModelRows 是模型下拉的数据源：先按客户端分组，再按筛选框里的词过滤。多个
@@ -11578,6 +11849,7 @@ function chatSettle(out, status, t0, ttft, usage, finish) {
 
 async function chatSend() {
   if (CHAT.busy) return;
+  if (chatIsTranscription(chatSelectedModel())) return;
   const input = $("#chatInput"), text = (input.value || "").trim();
   if (!text) return;
   const model = $("#chatModel").value;
@@ -11682,10 +11954,11 @@ $("#chatModelFilt").addEventListener("keydown", ev => {
   ev.target.value = "";
   chatFillModels();
 });
-$("#chatModel").addEventListener("change", () => { CHAT.key = ""; });
+$("#chatModel").addEventListener("change", () => { CHAT.key = ""; chatModeSync(); });
 $("#chatAccount").addEventListener("change", () => { CHAT.key = ""; });
 $("#btnChatSend").addEventListener("click", () => chatSend());
 $("#btnChatStop").addEventListener("click", () => { if (CHAT.ctrl) CHAT.ctrl.abort(); });
+$("#btnChatRecord").addEventListener("click", () => chatRecordToggle());
 $("#btnChatClear").addEventListener("click", () => { CHAT.msgs = []; CHAT.key = ""; chatDiag(""); chatDraw(); });
 $("#chatInput").addEventListener("keydown", ev => {
   if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); chatSend(); }

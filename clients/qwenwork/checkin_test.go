@@ -218,6 +218,9 @@ func TestCheckinNeverWritesWhenTheCampaignIsOff(t *testing.T) {
 			if res.OK {
 				t.Errorf("ok = true for status %s, want a refusal", tc.status)
 			}
+			if !res.Skipped {
+				t.Errorf("skipped = false for status %s, want an unavailable state", tc.status)
+			}
 			if !strings.Contains(res.Error, tc.want) {
 				t.Errorf("error = %q, want it to name %s", res.Error, tc.want)
 			}

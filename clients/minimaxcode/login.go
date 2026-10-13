@@ -349,9 +349,15 @@ func (c *Client) pollDeviceToken(ctx context.Context, s *loginSession) (core.Log
 		}
 	}
 
+	user, err := c.fetchLoginUser(ctx, access)
+	if err != nil {
+		s.finish(core.LoginFailed, "登录成功，但无法读取账号身份："+err.Error(), "")
+		return s.snapshot(), nil
+	}
+
 	region := c.cfg.oauthRegion()
-	id := accountID("prod", region, oauthClientIDDesktop)
-	label := firstNonEmpty(desktopUserLabel(), fmt.Sprintf("MiniMax Code (%s)", region))
+	id := userAccountID(region, loginIdentityKey(user.Identity))
+	label := firstNonEmpty(user.Label, fmt.Sprintf("MiniMax Code (%s)", region))
 
 	rec, err := c.adoptLoginCredential(id, label, oauthClientIDDesktop, access, refresh, expiresAt)
 	if err != nil {
@@ -368,6 +374,120 @@ func (c *Client) pollDeviceToken(ctx context.Context, s *loginSession) (core.Log
 	s.finish(core.LoginSuccess, message, rec.ID)
 	c.logf("minimaxcode: sign-in %s finished as %s", s.id, rec.ID)
 	return s.snapshot(), nil
+}
+
+// loginUser is the stable identity of the MiniMax account that just approved a
+// device-code sign-in.  The vendor's userID and realUserID are the values its
+// own desktop client uses to address the account; subUserName is only the
+// display label.
+type loginUser struct {
+	Identity string
+	Label    string
+}
+
+// fetchLoginUser asks the MiniMax account API who owns an access token.
+//
+// Device-code authorization returns only credentials, not the user.  Treating
+// the account-service/client-id pair as the identity makes every MiniMax user
+// in one region collide on the same row, so the panel has to resolve the token
+// to the vendor's user before it can decide whether this is a new account or a
+// re-login of an existing one.
+func (c *Client) fetchLoginUser(ctx context.Context, access string) (loginUser, error) {
+	access = strings.TrimSpace(access)
+	if access == "" {
+		return loginUser{}, errors.New("no access token was returned")
+	}
+	endpoint := c.loginUserInfoURL()
+	if endpoint == "" {
+		return loginUser{}, errors.New("cannot derive the user-info endpoint from the configured base URL")
+	}
+
+	reqCtx, cancel := context.WithTimeout(ctx, loginRequestTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return loginUser{}, fmt.Errorf("cannot build the user-info request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+access)
+	req.Header.Set("Accept", "application/json")
+	if defaultUserAgent != "" {
+		req.Header.Set("User-Agent", defaultUserAgent)
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return loginUser{}, fmt.Errorf("the user-info endpoint could not be reached: %w", err)
+	}
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		return loginUser{}, fmt.Errorf("the user-info endpoint answered HTTP %d", resp.StatusCode)
+	}
+
+	var doc struct {
+		Data struct {
+			UserInfo struct {
+				UserID      string `json:"userID"`
+				RealUserID  string `json:"realUserID"`
+				SubUserName string `json:"subUserName"`
+			} `json:"userInfo"`
+		} `json:"data"`
+		StatusInfo struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		} `json:"statusInfo"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return loginUser{}, fmt.Errorf("the user-info endpoint returned an unreadable body: %w", err)
+	}
+	if doc.StatusInfo.Code != 0 {
+		msg := strings.TrimSpace(doc.StatusInfo.Message)
+		if msg == "" {
+			msg = "the vendor rejected the user-info request"
+		}
+		return loginUser{}, errors.New(msg)
+	}
+	identity := firstNonEmpty(doc.Data.UserInfo.RealUserID, doc.Data.UserInfo.UserID)
+	if identity == "" {
+		return loginUser{}, errors.New("the user-info response carried no user id")
+	}
+	return loginUser{
+		Identity: identity,
+		Label:    strings.TrimSpace(doc.Data.UserInfo.SubUserName),
+	}, nil
+}
+
+// loginUserInfoURL is the account API the desktop client calls after a sign-in.
+// It lives on the model endpoint's origin, not the OAuth account host.
+func (c *Client) loginUserInfoURL() string {
+	u, err := url.Parse(c.baseURL(nil))
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return ""
+	}
+	query := url.Values{
+		"device_platform": {"web"},
+		"biz_id":          {"3"},
+		"app_id":          {"3001"},
+		"client":          {"desktop"},
+	}
+	return u.Scheme + "://" + u.Host + "/v1/api/user/info?" + query.Encode()
+}
+
+// loginIdentityKey keeps the vendor's raw user id out of panel-visible account
+// ids while remaining stable across access-token rotations.
+func loginIdentityKey(identity string) string {
+	sum := sha256.Sum256([]byte("minimaxcode-user\x00" + strings.TrimSpace(identity)))
+	return base64.RawURLEncoding.EncodeToString(sum[:9])
+}
+
+// userAccountID names one signed-in MiniMax user.  The region is kept in the id
+// because the same vendor user id can exist in both account services.
+func userAccountID(region, identityKey string) string {
+	region = strings.TrimSpace(region)
+	if region == "" {
+		region = "default"
+	}
+	return name + ":user/" + region + "/" + identityKey
 }
 
 // snapshot renders the session for the panel.

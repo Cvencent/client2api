@@ -143,6 +143,10 @@ type Options struct {
 	// makes the panel create a private cache, which is what tests and
 	// embedders without a scheduler get.
 	Balances *BalanceStore
+	// Checkins is the process-wide daily check-in state shared with the
+	// scheduler.  Nil makes the panel create a private persistent store from
+	// DataDir, which is what tests and embedders without a scheduler want.
+	Checkins *CheckinStore
 	// PackageDetailLimit is how many credit batches the credits view shows per
 	// account before collapsing the rest behind a toggle.  It is resolved
 	// against its default by the caller, so the panel only reports it; a
@@ -198,6 +202,7 @@ func New(opts Options) http.Handler {
 	mux := http.NewServeMux()
 	p := &panel{opts: opts, runs: newTaskRuns(), sweeps: newBatchRuns(), chores: newTaskQueues(), taskLocks: newAccountLocks()}
 	p.initBalanceCache()
+	p.initCheckins()
 	p.initTaskBoardCache()
 	p.queue = newBatchQueue(p.sweeps)
 	p.queue.run = p.execSweep
@@ -284,6 +289,9 @@ type panel struct {
 	// refresh that moves the column forward a few accounts at a time.
 	// Created in New; nil when the panel has no registry (some tests).
 	balanceCache *balanceCache
+	// checkins is today's definitive check-in state for every account.  It is
+	// shared with the scheduler when one is wired.
+	checkins *CheckinStore
 	// taskBoardCache is the last task list seen for each account.  The board
 	// reads it before asking a vendor, so revisiting the page only fetches
 	// accounts that have never been seen.
@@ -361,6 +369,7 @@ func balanceHandler(opts Options) (*panel, http.Handler) {
 	mux := http.NewServeMux()
 	p := &panel{opts: opts, runs: newTaskRuns(), sweeps: newBatchRuns(), chores: newTaskQueues(), taskLocks: newAccountLocks()}
 	p.initBalanceCache()
+	p.initCheckins()
 	p.initTaskBoardCache()
 	p.queue = newBatchQueue(p.sweeps)
 	p.queue.run = p.execSweep
@@ -784,6 +793,7 @@ func (p *panel) accounts(w http.ResponseWriter, r *http.Request, c core.Client) 
 		}
 		p.decorateAccountPriorities(c.Name(), list)
 		p.decorateAccountNotes(c.Name(), list)
+		p.decorateAccountCheckins(c.Name(), list)
 		out := map[string]any{
 			"client":       c.Name(),
 			"accounts":     redactAccounts(list),
@@ -948,6 +958,7 @@ func (p *panel) checkin(w http.ResponseWriter, r *http.Request, c core.Client, i
 			res.Data[k] = core.Redact(s)
 		}
 	}
+	p.recordCheckinResult(c.Name(), res.AccountID, strings.TrimSpace(body.Action), res)
 	out := map[string]any{"result": res}
 	if am, ok := core.AsAccountManager(c); ok {
 		out["accounts"] = p.relist(ctx, am)
@@ -1266,6 +1277,7 @@ func (p *panel) relistErr(ctx context.Context, am core.AccountManager) ([]core.A
 	}
 	p.decorateAccountPriorities(am.Name(), list)
 	p.decorateAccountNotes(am.Name(), list)
+	p.decorateAccountCheckins(am.Name(), list)
 	return redactAccounts(list), nil
 }
 
@@ -1317,6 +1329,10 @@ func redactAccount(a core.AccountRecord) core.AccountRecord {
 		if v, ok := core.RedactAny(a.Fields).(map[string]any); ok {
 			a.Fields = v
 		}
+	}
+	for action, st := range a.Checkins {
+		st.Message = core.Redact(st.Message)
+		a.Checkins[action] = st
 	}
 	return a
 }

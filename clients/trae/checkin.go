@@ -169,6 +169,7 @@ func (c *Client) Checkin(ctx context.Context, id, action string) (core.CheckinRe
 	}
 	st := status.state()
 	if !st.Enable {
+		res.Skipped = true
 		res.Error = "daily check-in is not enabled for this account"
 		if msg := status.message(); msg != "" {
 			res.Error += ": " + msg

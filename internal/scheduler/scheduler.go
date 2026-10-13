@@ -518,6 +518,10 @@ type Deps struct {
 	// JSON so the panel can still show yesterday's runs after a restart.
 	// Empty keeps the history in memory for the life of the process.
 	HistoryPath string
+	// OnCheckinResult receives every check-in result that actually ran.  The
+	// host persists definitive outcomes so the panel can disable an account's
+	// button for the rest of the day.
+	OnCheckinResult func(client, account, action string, res core.CheckinResult)
 }
 
 // Runner fires batches at their scheduled hours.
@@ -545,6 +549,7 @@ type Runner struct {
 	onBal      func(ctx context.Context)
 	onRecovery func(ctx context.Context, client string)
 	onDailyBal func(ctx context.Context, client string)
+	onCheckin  func(client, account, action string, res core.CheckinResult)
 
 	// wake lets Reconfigure disturb a Run that is blocked because nothing is
 	// scheduled at all.
@@ -587,6 +592,7 @@ func New(deps Deps) *Runner {
 		onBal:      deps.OnBalanceRefresh,
 		onRecovery: deps.OnRecoveryProbe,
 		onDailyBal: deps.OnDailyBalanceProbe,
+		onCheckin:  deps.OnCheckinResult,
 		wake:       make(chan struct{}, 1),
 	}
 	r.historyPath = deps.HistoryPath
@@ -1713,6 +1719,14 @@ func (r *Runner) runCheckinBatchAs(ctx context.Context, c core.Client, b core.Ba
 			r.log("[scheduler] %s/%s account %q checkin failed: %v", rep.Client, rep.Batch, acc, cerr)
 			continue
 		}
+		if r.onCheckin != nil {
+			action := strings.TrimSpace(res.Action)
+			if action == "" && len(checkinActions) > 0 {
+				action = checkinActions[0].ID
+			}
+			r.onCheckin(rep.Client, acc, action, res)
+		}
+
 		if !res.OK {
 			if res.Skipped {
 				rep.Skipped++

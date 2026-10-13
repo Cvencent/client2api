@@ -5,6 +5,7 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -62,5 +63,61 @@ func TestAccountBalanceReportsRemainingTotalAndUsed(t *testing.T) {
 	}
 	if bal.Credits != 5499 || bal.Total != 5500 || math.Abs(bal.Used-0.08) > 0.0001 {
 		t.Fatalf("balance = %+v, want credits=5499 total=5500 used=0.08", bal)
+	}
+}
+func TestCheckinMarksAnUnavailableDailyActionSkipped(t *testing.T) {
+	tests := []struct {
+		name    string
+		stats   string
+		items   string
+		wantMsg string
+	}{
+		{
+			name:    "no credit package",
+			stats:   `{"package":{"is_credit_package":false}}`,
+			wantMsg: "no credit package",
+		},
+		{
+			name:    "no daily activity",
+			stats:   `{"package":{"is_credit_package":true}}`,
+			items:   `{"code":0,"data":{"items":[{"campaignId":1,"type":"OTHER","claimable":true,"status":"CLAIMABLE"}]}}`,
+			wantMsg: "did not offer a daily sign-in",
+		},
+		{
+			name:    "not claimable",
+			stats:   `{"package":{"is_credit_package":true}}`,
+			items:   `{"code":0,"data":{"items":[{"campaignId":1,"type":"USER_LOGIN","claimable":false,"status":"LOCKED"}]}}`,
+			wantMsg: "not claimable",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case statisticsPath:
+					_, _ = w.Write([]byte(tc.stats))
+				case deliveryPath:
+					_, _ = w.Write([]byte(tc.items))
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer srv.Close()
+			c := newTestClient(t, `{"base_url":`+jsonString(srv.URL)+`,"access_key_id":"AK","secret_access_key":"SK","security_token":"TOK"}`)
+			entries := c.pool.all()
+			if len(entries) != 1 {
+				t.Fatalf("pool entries = %d, want 1", len(entries))
+			}
+			res, err := c.Checkin(context.Background(), entries[0].id(), checkinActionID)
+			if err != nil {
+				t.Fatalf("Checkin: %v", err)
+			}
+			if res.OK || !res.Skipped {
+				t.Fatalf("result = %+v, want an unavailable skipped result", res)
+			}
+			if !strings.Contains(res.Message, tc.wantMsg) {
+				t.Errorf("message = %q, want it to mention %q", res.Message, tc.wantMsg)
+			}
+		})
 	}
 }
