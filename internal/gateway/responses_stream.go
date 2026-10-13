@@ -338,8 +338,9 @@ receive:
 				if callID == "" {
 					callID = newID("call_")
 				}
+				name, namespace := namespacedCall(a.toolNames, ev.ToolCall.Name)
 				ix, ok = addItem(responseOutput{
-					Type: "function_call", ID: newID("fc_"), CallID: callID, Name: ev.ToolCall.Name,
+					Type: "function_call", ID: newID("fc_"), CallID: callID, Name: name, Namespace: namespace,
 				})
 				if !ok {
 					return
@@ -351,7 +352,7 @@ receive:
 				tc.CallID = ev.ToolCall.ID
 			}
 			if ev.ToolCall.Name != "" {
-				tc.Name = ev.ToolCall.Name
+				tc.Name, tc.Namespace = namespacedCall(a.toolNames, ev.ToolCall.Name)
 			}
 			tc.Arguments += ev.ToolCall.Arguments
 			if ev.ToolCall.Arguments != "" {
@@ -578,12 +579,14 @@ receive:
 		if callID == "" {
 			callID = newID("call_")
 		}
+		name, namespace := namespacedCall(a.toolNames, tc.Name)
 		output = append(output, responseOutput{
 			Type:      "function_call",
 			ID:        "fc_" + callID,
 			Status:    "completed",
 			CallID:    callID,
-			Name:      tc.Name,
+			Name:      name,
+			Namespace: namespace,
 			Arguments: tc.Arguments,
 		})
 	}

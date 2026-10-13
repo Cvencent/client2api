@@ -487,15 +487,23 @@ Responses natively, so there is no translation step to fail.
 | `message` item (`user`/`assistant`/`system`/`developer`) | a message; `developer` maps to `system` |
 | `input_text` / replayed `output_text` | text content, including assistant history |
 | `input_image` with `image_url` and `detail` | an image content part |
-| `function_call` item | an `assistant` turn carrying `tool_calls` |
+| `function_call` item | an `assistant` turn carrying `tool_calls`; a namespaced call uses the name the vendor was offered |
 | `function_call_output` item | a `tool` turn keyed by `call_id` |
 | `reasoning` item | its `summary` text, kept as the turn's reasoning |
 | `compaction` item | its plaintext summary, when it holds one |
-| `tools` (flat **or** nested under `function`) | `core.Tool` declarations |
+| `tools` (flat, nested under `function`, or a `namespace` container) | `core.Tool` declarations; a namespace's children flatten to `namespace__child` |
 | built-in tools (`web_search`, …) | skipped, never fatal |
 | `reasoning.effort` / `reasoning_effort` | the request's thinking level, forwarded to upstream modules |
 | `max_output_tokens` | `max_tokens` |
 | an unknown item type | skipped, never fatal |
+
+A **namespace** tool is how Codex groups one tool server's children, e.g.
+`{"type":"namespace","name":"mcp__codegraph","tools":[…]}`. Chat has no
+namespaces and cannot call a container that carries no schema, so each child is
+declared as `namespace__child` and a call to that name is split back into the
+`(namespace, name)` pair Codex dispatches on. Forwarding the container unchanged
+offers the vendor a function named after the server, and every call to it comes
+back as `unsupported call`.
 
 The array form is where the two protocols genuinely differ, and the translation
 is not a field rename. Responses has no `messages` array: a tool call, its
@@ -532,7 +540,10 @@ Items retain their IDs and indexes through deltas, `.done`, and final output.
 Every SSE payload carries an increasing `sequence_number`, including failures.
 Output text always includes `text` and `annotations` (even `""` and `[]`), and
 function-call items always include their `arguments` string, so strict SDK
-validators can read buffered replies and terminal items.
+validators can read buffered replies and terminal items. A call into a tool
+namespace also carries `namespace` beside `name`: Codex dispatches on that pair,
+so the flattened name it was declared under is split back before the item is
+emitted.
 Token-limit termination sets `status = "incomplete"` and
 `incomplete_details.reason = "max_output_tokens"` in both response modes;
 streaming emits the terminal `response.incomplete` event.
@@ -1495,12 +1506,14 @@ free model is zero-cost.
 The same page edits each model's supported reasoning-effort levels, its default
 level, and a per-model **cap-alignment** toggle. Effort resolution is operator
 override > the module's cached catalogue > the embedded preset, so a manual
-vocabulary wins over a stale cache. Cap alignment is off by default; when it is
-on and the caller requests the top Codex level `xhigh`, the gateway promotes it
-only to a genuinely higher level the model advertises (for example WorkBuddy
-`max`). Lower requests and models whose top level is already `xhigh` are left
-alone. The usage row keeps the requested and sent levels and renders `xhigh →
-max` when they differ.
+vocabulary wins over a stale cache. Cap alignment defaults on for every V4.1
+Flash row in the embedded table and off otherwise; when it is on and the caller
+requests the top Codex level `xhigh`, the gateway promotes it only to a
+genuinely higher level the model advertises (for example WorkBuddy, Cline and
+OpenRouter `max`). Lower requests and models whose top level is already `xhigh` (Loomy's
+V4.1 Flash, whose vendor catalog advertises nothing above it) are left alone
+rather than sent an invented value. The usage row keeps the requested and sent
+levels and renders `xhigh → max` when they differ.
 
 The panel is protected by the gateway's top-level `api_key`
 (`configs/client2api.json:3`). Empty — the default — leaves it unauthenticated,

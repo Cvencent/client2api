@@ -614,6 +614,9 @@ func (c *Client) openChat(ctx context.Context, release context.CancelFunc, req *
 		if err := req.AcquireAccountSlot(e.acct.id()); err != nil {
 			skip[e.acct.id()] = true
 			busy = true
+			// A full account is not an upstream attempt. Keep the request's
+			// switch budget for an account that can actually be called.
+			i--
 			continue
 		}
 		// Name the credential for the gateway's usage ledger and console row.

@@ -480,6 +480,62 @@ func TestChatForcesStreamAndAggregatesForANonStreamingCaller(t *testing.T) {
 	}
 }
 
+// TestChatSkipsAnAccountWhoseGatewaySlotIsBusy pins local contention: an
+// account whose per-account in-flight slot is already taken never reached the
+// vendor, so the request moves to the next credential without penalising it and
+// without spending one of its rotation attempts.
+func TestChatSkipsAnAccountWhoseGatewaySlotIsBusy(t *testing.T) {
+	f := newFixture(t, nil, sseHandler(sseScript))
+	first := addAccount(t, f.client, "access-1")
+	second := addAccount(t, f.client, "access-2")
+
+	var served string
+	req := &core.ChatRequest{
+		Model:    "deepseek-v4-pro",
+		Messages: []core.Message{{Role: "user", Content: "hi"}},
+		ServedBy: &served,
+	}
+	var busyID string
+	req.SetAccountAcquirer(func(id string) (func(), error) {
+		if busyID == "" {
+			busyID = id
+			return nil, core.ErrBusy
+		}
+		return func() {}, nil
+	})
+
+	stream, err := f.client.Chat(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	if _, _, _, _, _, err := drainSSE(stream); err != nil {
+		t.Fatalf("drainSSE: %v", err)
+	}
+
+	chats := 0
+	for _, c := range f.rec.all() {
+		if c.path == "/api/proxy/v1/chat/completions" {
+			chats++
+		}
+	}
+	if chats != 1 {
+		t.Fatalf("chat requests = %d, want one call on the free account", chats)
+	}
+	if busyID != first.ID && busyID != second.ID {
+		t.Fatalf("the busy id %q is not one of the fixture accounts", busyID)
+	}
+	want := second.ID
+	if busyID == second.ID {
+		want = first.ID
+	}
+	if served != want {
+		t.Fatalf("ServedBy = %q, want %q (busy %q)", served, want, busyID)
+	}
+	if rec := f.client.pool.byID(busyID); rec == nil || rec.CooldownUntil != "" || rec.ErrCount != 0 {
+		t.Fatalf("the busy account was penalised: %+v", rec)
+	}
+}
+
 // TestChatSSEBodyIsNotEnveloped pins the one endpoint that breaks the vendor's
 // own convention: the chat response is bare SSE, so applying the envelope check
 // to it would fail every request.

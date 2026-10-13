@@ -55,6 +55,11 @@ type tableEntry struct {
 	EffortsByRealm  map[string]effortSpec `json:"efforts_by_realm,omitempty"`
 	Origin          string                `json:"origin,omitempty"`
 	EffortOrigin    string                `json:"effort_origin,omitempty"`
+	// ElevateTopDefault opts this model into cap alignment out of the box: the
+	// caller's top tier (xhigh) is promoted to the model's real highest tier
+	// (for example max). The zero value is off, and an operator's deliberate
+	// choice in the override store always wins over this default.
+	ElevateTopDefault bool `json:"elevate_top_default,omitempty"`
 }
 
 // clientTable is one client's section of the table.
@@ -232,4 +237,37 @@ func StaticMeta(client, realm, model string) (Meta, bool) {
 		return Meta{}, false
 	}
 	return m, true
+}
+
+// StaticElevateTop reports whether the embedded table opts this model into cap
+// alignment by default. The policy is a property of the model, not of the realm
+// that serves it, so it is not realm-split.
+func StaticElevateTop(client, model string) bool {
+	e, ok := static().entry(client, model)
+	if !ok {
+		// Realm-qualified ids (cn:model / global:model) name the same model, and
+		// this policy belongs to the model rather than to one realm's ladder.
+		if prefix, rest, cut := strings.Cut(strings.TrimSpace(model), ":"); cut && rest != "" {
+			switch prefix {
+			case RealmCN, RealmGlobal:
+				e, ok = static().entry(client, rest)
+			}
+		}
+	}
+	return ok && e.ElevateTopDefault
+}
+
+// ElevateTop resolves cap alignment for one model: an explicit operator choice
+// in the override store wins, then the embedded table's per-model default, then
+// off. It is the single source of truth shared by the gateway's effort policy
+// and the model panel, so what the panel shows is what the gateway does.
+func ElevateTop(client, model string, store *OverrideStore) bool {
+	if store != nil {
+		if o, ok := store.Get(client, model); ok {
+			if on, explicit := o.ExplicitElevateTop(); explicit {
+				return on
+			}
+		}
+	}
+	return StaticElevateTop(client, model)
 }

@@ -71,3 +71,44 @@ func (p *panel) accountExists(ctx context.Context, c core.Client, id string) boo
 	}
 	return false
 }
+
+// setAccountModelPolicy implements
+// POST <base>/accounts/<id>/model-policy.
+//
+// It writes one operator decision: which models this account may be routed to
+// (a blacklist; absent means every model) and whether the account's credit-only
+// parks are force-enabled. It mirrors reviveAccount's 501/404/400 split so a
+// stale tab cannot report success for a module or account that cannot mean it.
+func (p *panel) setAccountModelPolicy(w http.ResponseWriter, r *http.Request, c core.Client, id string) {
+	mp, ok := core.AsAccountModelPolicy(c)
+	if !ok {
+		writeErr(w, http.StatusNotImplemented, c.Name()+" has no per-account model policy")
+		return
+	}
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "use POST")
+		return
+	}
+	var body struct {
+		DisabledModels []string `json:"disabled_models"`
+		ForceEnabled   bool     `json:"force_enabled"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	ctx, cancel := p.ctx(r, 30*time.Second)
+	defer cancel()
+	if err := mp.SetAccountModelPolicy(ctx, id, body.DisabledModels, body.ForceEnabled); err != nil {
+		if !p.accountExists(ctx, c, id) {
+			writeErr(w, http.StatusNotFound, "account not found")
+			return
+		}
+		writeErr(w, http.StatusBadRequest, core.Redact(err.Error()))
+		return
+	}
+	out := map[string]any{"ok": true}
+	if am, ok := core.AsAccountManager(c); ok {
+		out["accounts"] = p.relist(ctx, am)
+	}
+	writeJSON(w, http.StatusOK, out)
+}

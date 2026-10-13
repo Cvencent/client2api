@@ -561,6 +561,9 @@ func (p *Pool) reserveBlockedLocked(e *poolEntry) bool {
 	if p == nil || e == nil || p.reserveCredits < 0 || !e.creditsKnown {
 		return false
 	}
+	if e.forceCreditBypass() {
+		return false
+	}
 	return e.credits <= p.reserveCredits
 }
 
@@ -571,6 +574,13 @@ func (p *Pool) reserveBlockedLocked(e *poolEntry) bool {
 func (p *Pool) applyReserveLocked(e *poolEntry, now time.Time) bool {
 	if p == nil || e == nil || e.state == stateInvalid {
 		return false
+	}
+	if e.forceCreditBypass() {
+		// Keep the saved balance and the visible credit park, but do not let
+		// the guard turn it back into an unavailable account.
+		if e.state == stateExhausted && (e.note == reserveCreditNote || e.note == ErrHardCredit.String()) {
+			return false
+		}
 	}
 	parked := e.state == stateExhausted && e.note == reserveCreditNote
 	if p.reserveBlockedLocked(e) {
@@ -683,6 +693,9 @@ func (p *Pool) CooldownUntilTomorrow4AM(a *Auth, reason string) time.Duration {
 	defer p.mu.Unlock()
 	e := p.findLocked(a)
 	if e == nil {
+		return 0
+	}
+	if e.forceCreditBypass() {
 		return 0
 	}
 	e.state = stateExhausted

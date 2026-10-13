@@ -267,6 +267,10 @@ than the credential:
 | `Retry-After`, `X-Ratelimit-Reset`, `Retry-After-Ms` | — | lengthens the park above | — | — | Sanity-capped at 2 h so a broken or hostile header cannot park an account for a week. It can only ever **lengthen**, never shorten. |
 | a COSY-session build failure | client | none | `ready` | yes | A local crypto failure, not the credential's fault. Counts as an attempt. |
 
+An account at its per-account in-flight ceiling is skipped before the vendor is
+called: it is not parked and it does not spend one of the `max_attempts`
+calls.
+
 Order matters in the classifier: `402` is always quota; `429` is quota only
 when the body says so; `5xx` before the generic `4xx` branch.
 

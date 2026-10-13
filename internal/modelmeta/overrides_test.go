@@ -132,3 +132,71 @@ func TestOverrideStorePersistsEffortPolicy(t *testing.T) {
 		t.Fatal("elevate_top = false, want true")
 	}
 }
+
+// TestOverrideStoreLegacyElevateTopCountsAsExplicit pins the upgrade path: the
+// first release of cap alignment wrote only elevate_top:true. That entry was an
+// operator decision, so it must keep overriding a model whose embedded default
+// later changes instead of being read as "never configured".
+func TestOverrideStoreLegacyElevateTopCountsAsExplicit(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "model_context.json")
+	legacy := `{"clients":{"loomy":{"DeepSeek-V4.1-Flash":{"elevate_top":true}}}}`
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := OpenOverrideStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := s.Get("loomy", "DeepSeek-V4.1-Flash")
+	if !ok {
+		t.Fatal("legacy entry was dropped")
+	}
+	on, explicit := got.ExplicitElevateTop()
+	if !on || !explicit {
+		t.Fatalf("legacy ExplicitElevateTop = (%v, %v), want (true, true)", on, explicit)
+	}
+	if !ElevateTop("loomy", "DeepSeek-V4.1-Flash", s) {
+		t.Fatal("legacy elevate_top:true resolved to off")
+	}
+}
+
+// TestOverrideStoreExplicitElevateTopOffBeatsEmbeddedDefault pins the other
+// half of the precedence chain: a deliberate "off" survives a model whose
+// embedded table now defaults the policy on, and "restore default" brings the
+// embedded default back instead of pinning a permanent off.
+func TestOverrideStoreExplicitElevateTopOffBeatsEmbeddedDefault(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "model_context.json")
+	s, err := OpenOverrideStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !StaticElevateTop("loomy", "DeepSeek-V4.1-Flash") {
+		t.Fatal("the fixture model must default the policy on")
+	}
+	if err := s.SetElevateTop("loomy", "DeepSeek-V4.1-Flash", false); err != nil {
+		t.Fatal(err)
+	}
+	if ElevateTop("loomy", "DeepSeek-V4.1-Flash", s) {
+		t.Fatal("an explicit off did not beat the embedded default")
+	}
+	reopened, err := OpenOverrideStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := reopened.Get("loomy", "DeepSeek-V4.1-Flash")
+	if !ok {
+		t.Fatal("the explicit off was not persisted")
+	}
+	if on, explicit := got.ExplicitElevateTop(); on || !explicit {
+		t.Fatalf("persisted ExplicitElevateTop = (%v, %v), want (false, true)", on, explicit)
+	}
+	if ElevateTop("loomy", "DeepSeek-V4.1-Flash", reopened) {
+		t.Fatal("the persisted explicit off did not beat the embedded default")
+	}
+	if err := reopened.ClearElevateTop("loomy", "DeepSeek-V4.1-Flash"); err != nil {
+		t.Fatal(err)
+	}
+	if !ElevateTop("loomy", "DeepSeek-V4.1-Flash", reopened) {
+		t.Fatal("restore default did not fall back to the embedded default")
+	}
+}

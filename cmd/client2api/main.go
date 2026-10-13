@@ -41,7 +41,7 @@ import (
 )
 
 // version is overridable with -ldflags "-X main.version=...".
-var version = "0.1.56"
+var version = "0.1.57"
 
 // restartHandoffEnv marks the replacement half of a panel restart.  It tells a
 // starting process to keep retrying the listen address instead of failing fast,
@@ -1465,6 +1465,8 @@ func run() error {
 		modelOverrides, _ = modelmeta.OpenOverrideStore("")
 	}
 	sessionPlatforms := gateway.NewSessionPlatforms()
+	sessionPlatforms.StartGC()
+	defer sessionPlatforms.StopGC()
 
 	panelHandler := panel.New(panel.Options{
 		Registry:   registry,

@@ -271,11 +271,21 @@ func (c *Client) openChat(ctx context.Context, cancel context.CancelFunc, req *c
 	c.refreshVersionAsync()
 	version := c.clientVersion(ctx)
 	var lastErr error
+	busySeen := map[string]bool{}
 	for attempt := 0; attempt < maxRotate; attempt++ {
 		if err := ctx.Err(); err != nil {
 			break
 		}
-		acct, err := c.acquireAccount(req, "")
+		var acct *accountRecord
+		var err error
+		if len(busySeen) > 0 {
+			// Once a bound account has lost the gateway-slot race, do not let
+			// affinity hand the same account straight back on the retry.
+			// Rotate through the pool instead.
+			acct, err = c.pool.acquire(c.now(), c.cfg.maxInFlight())
+		} else {
+			acct, err = c.acquireAccount(req, "")
+		}
 		if err != nil {
 			if lastErr != nil {
 				return nil, lastErr
@@ -287,6 +297,16 @@ func (c *Client) openChat(ctx context.Context, cancel context.CancelFunc, req *c
 		// before spending a token refresh on it.
 		if err := req.AcquireAccountSlot(acct.ID); err != nil {
 			c.pool.release(acct.ID)
+			if busySeen[acct.ID] {
+				if lastErr != nil {
+					return nil, lastErr
+				}
+				return nil, fmt.Errorf("%w: no LobsterAI account has a free in-flight slot", core.ErrBusy)
+			}
+			busySeen[acct.ID] = true
+			// A full account is not an upstream attempt. Keep the request's
+			// switch budget for an account that can actually be called.
+			attempt--
 			continue
 		}
 		// Bind only after the slot is genuinely held, so a busy account that was

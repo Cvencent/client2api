@@ -530,6 +530,12 @@ type Candidate struct {
 	Client Client
 	Model  string
 	Free   bool
+	// Catalogue reports that this candidate came from a live catalogue match,
+	// and Extra carries that entry's metadata. The gateway uses it to resolve
+	// context and output limits without asking the module for the same
+	// catalogue again on the request path.
+	Catalogue bool
+	Extra     map[string]any
 	// group is the normalised model-group key that produced this
 	// candidate, or "" for an ordinary catalogue match.
 	group string
@@ -624,10 +630,16 @@ func (r *Registry) ResolveCandidates(ctx context.Context, model string) ([]Candi
 	if !auto && qualified && prefix != "" && rest != "" {
 		if c, found := r.Get(prefix); found {
 			upstream := rest
+			var (
+				matchedExtra map[string]any
+				catalogueHit bool
+			)
 			if models, err := c.Models(ctx); err == nil {
 				for _, m := range models {
 					if strings.EqualFold(strings.TrimSpace(m.ID), rest) {
 						upstream = m.ID
+						matchedExtra = m.Extra
+						catalogueHit = true
 						break
 					}
 				}
@@ -635,7 +647,7 @@ func (r *Registry) ResolveCandidates(ctx context.Context, model string) ([]Candi
 			if !r.ModelAllowed(c.Name(), upstream) {
 				return nil, fmt.Errorf("model %q is disabled on client %q; re-enable it in the platform configuration or qualify another client", upstream, c.Name())
 			}
-			return []Candidate{{Client: c, Model: upstream}}, nil
+			return []Candidate{{Client: c, Model: upstream, Catalogue: catalogueHit, Extra: matchedExtra}}, nil
 		}
 	}
 
@@ -659,7 +671,13 @@ func (r *Registry) ResolveCandidates(ctx context.Context, model string) ([]Candi
 			}
 			continue
 		}
-		owners = append(owners, Candidate{Client: c, Model: matched.ID, Free: modelFree(matched)})
+		owners = append(owners, Candidate{
+			Client:    c,
+			Model:     matched.ID,
+			Free:      modelFree(matched),
+			Catalogue: true,
+			Extra:     matched.Extra,
+		})
 	}
 
 	switch len(owners) {

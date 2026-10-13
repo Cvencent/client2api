@@ -102,4 +102,46 @@ func TestModelsListPublishesEffortPolicyAndManualProvenance(t *testing.T) {
 	if !m.EffortsEditable || !m.ElevateTopEditable {
 		t.Fatal("a wired override store must make the effort policy editable")
 	}
+	if !m.ElevateTopManual {
+		t.Fatal("a stored elevate_top choice must be reported as manual")
+	}
+}
+
+// TestModelsListPublishesV41CapAlignmentDefaults pins what the row checkbox
+// shows before the operator touches it: the embedded V4.1 Flash default is on,
+// but it is not a manual value, so the panel can still say "restore default".
+func TestModelsListPublishesV41CapAlignmentDefaults(t *testing.T) {
+	store, err := modelmeta.OpenOverrideStore("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &fakeClient{name: "cline", models: []core.Model{{ID: "cline-free/deepseek-v4.1-flash"}}}
+	h := New(Options{Registry: registryOf(client), ModelOverrides: store})
+	rec := get(t, h, "/panel/api/models")
+	var got modelsReport
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	m := got.Clients[0].Models[0]
+	if !m.ElevateTop || !m.ElevateTopDefault {
+		t.Fatalf("elevate = %v default = %v, want both true", m.ElevateTop, m.ElevateTopDefault)
+	}
+	if m.ElevateTopManual {
+		t.Fatal("an untouched row was reported as a manual elevate choice")
+	}
+
+	// Unchecking the box is an explicit off, and the row must say so while the
+	// embedded default stays visible for "restore default".
+	if err := store.SetElevateTop("cline", "cline-free/deepseek-v4.1-flash", false); err != nil {
+		t.Fatal(err)
+	}
+	rec = get(t, h, "/panel/api/models")
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	m = got.Clients[0].Models[0]
+	if m.ElevateTop || !m.ElevateTopDefault || !m.ElevateTopManual {
+		t.Fatalf("after explicit off: elevate=%v default=%v manual=%v, want false/true/true",
+			m.ElevateTop, m.ElevateTopDefault, m.ElevateTopManual)
+	}
 }

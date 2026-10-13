@@ -92,6 +92,10 @@ type balanceClientRefresh struct {
 
 type balanceCache struct {
 	mu sync.Mutex
+	// dirty is set whenever putEntry changes the in-memory document without
+	// writing it. A refresh pass clears the flag with one persist at the end,
+	// which turns an N-account sweep from N whole-file rewrites into one.
+	dirty bool
 	// persistMu serialises disk writes only.  It is held across the marshal
 	// and the file write, never by a reader, so the account page keeps
 	// rendering from memory while a refresh is being saved.
@@ -195,6 +199,7 @@ func (c *balanceCache) persist() {
 	// into them. Only an owned copy is safe to encode.
 	c.mu.Lock()
 	doc := balanceCacheFile{Version: 1, Clients: copyBalanceClients(c.clients)}
+	c.dirty = false
 	c.mu.Unlock()
 
 	raw, err := json.MarshalIndent(doc, "", "  ")
@@ -243,7 +248,12 @@ func (c *balanceCache) entry(client, id string) (balanceEntry, bool) {
 }
 
 func (c *balanceCache) put(client, id string, bal core.Balance) {
-	c.putEntry(client, id, balanceEntry{
+	c.putNoPersist(client, id, bal)
+	c.persist()
+}
+
+func (c *balanceCache) putNoPersist(client, id string, bal core.Balance) {
+	c.putEntryNoPersist(client, id, balanceEntry{
 		Credits:           bal.Credits,
 		Used:              bal.Used,
 		Total:             bal.Total,
@@ -260,13 +270,27 @@ func (c *balanceCache) put(client, id string, bal core.Balance) {
 }
 
 func (c *balanceCache) putError(client, id string, err error) {
-	c.putEntry(client, id, balanceEntry{
+	c.putErrorNoPersist(client, id, err)
+	c.persist()
+}
+
+func (c *balanceCache) putErrorNoPersist(client, id string, err error) {
+	c.putEntryNoPersist(client, id, balanceEntry{
 		FetchedAt: time.Now().UnixMilli(),
 		Error:     core.Redact(err.Error()),
 	})
 }
 
 func (c *balanceCache) putEntry(client, id string, e balanceEntry) {
+	c.putEntryNoPersist(client, id, e)
+	// Persist outside c.mu so the write never blocks a concurrent read.
+	c.persist()
+}
+
+// putEntryNoPersist updates the in-memory document and marks it dirty without
+// touching disk. A refresh pass owns the write at its end, so N account results
+// become one whole-file write instead of N.
+func (c *balanceCache) putEntryNoPersist(client, id string, e balanceEntry) {
 	if c == nil {
 		return
 	}
@@ -277,10 +301,33 @@ func (c *balanceCache) putEntry(client, id string, e balanceEntry) {
 		c.clients[client] = byID
 	}
 	byID[id] = e
+	c.dirty = true
 	c.mu.Unlock()
+}
 
-	// Persist outside c.mu so the write never blocks a concurrent read.
-	c.persist()
+// markDirty records that putEntry changed the document. A caller that owns a
+// whole refresh pass uses it to replace the per-entry persist with one write at
+// the end; the flag is cleared by persist.
+func (c *balanceCache) markDirty() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	c.dirty = true
+	c.mu.Unlock()
+}
+
+// persistIfDirty writes once if anything changed since the last flush.
+func (c *balanceCache) persistIfDirty() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	dirty := c.dirty
+	c.mu.Unlock()
+	if dirty {
+		c.persist()
+	}
 }
 
 func formatEarliestAt(t time.Time) string {
@@ -503,6 +550,7 @@ func (c *balanceCache) refresh(ctx context.Context, limit int, force bool) bool 
 
 func (c *balanceCache) runRefresh(ctx context.Context, client string, targets []refreshTarget, policy revivePolicy, background bool) {
 	vendorCalls := 0
+	defer c.persistIfDirty()
 	for _, tgt := range targets {
 		if ctx.Err() != nil {
 			c.finishRefresh(client, ctx.Err())
@@ -679,10 +727,10 @@ func (c *balanceCache) refreshOne(ctx context.Context, tgt refreshTarget, policy
 	defer cancel()
 	bal, err := bp.AccountBalance(bctx, tgt.id, c.soon())
 	if err != nil {
-		c.putError(tgt.client, tgt.id, err)
+		c.putErrorNoPersist(tgt.client, tgt.id, err)
 		return false, err
 	}
-	c.put(tgt.client, tgt.id, bal)
+	c.putNoPersist(tgt.client, tgt.id, bal)
 
 	if policy == reviveOff || !balanceIsFunded(bal) || !balanceCanReviveState(tgt.state) {
 		return false, nil

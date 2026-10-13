@@ -28,6 +28,11 @@ type Override struct {
 	// max). The zero value is deliberately off, so existing installs are
 	// unchanged until an operator enables it in the panel.
 	ElevateTop bool `json:"elevate_top,omitempty"`
+	// ElevateTopExplicit records that the operator made a deliberate
+	// cap-alignment choice. It is what lets an explicit "off" survive a model
+	// whose embedded table defaults the policy on: without it, "off" and "never
+	// configured" would be indistinguishable and the default would win.
+	ElevateTopExplicit bool `json:"elevate_top_explicit,omitempty"`
 	// Prices are in CNY per million tokens. Has flags keep an explicit free
 	// model (0/0) distinct from a field that was never configured.
 	InputPerMillion     float64 `json:"input_per_million,omitempty"`
@@ -40,7 +45,18 @@ type Override struct {
 // IsZero reports whether the override carries no manual value.
 func (o Override) IsZero() bool {
 	return o.ContextLength <= 0 && o.MaxOutputTokens <= 0 && len(o.SupportedEfforts) == 0 &&
-		o.DefaultEffort == "" && !o.ElevateTop && !o.HasPrice && !o.HasCacheRead
+		o.DefaultEffort == "" && !o.ElevateTop && !o.ElevateTopExplicit &&
+		!o.HasPrice && !o.HasCacheRead
+}
+
+// ExplicitElevateTop reports the operator's cap-alignment choice and whether
+// they made one at all. The second result distinguishes a deliberate "off" from
+// "never configured", which lets an embedded default apply only in the latter.
+func (o Override) ExplicitElevateTop() (on bool, explicit bool) {
+	// Files written before ElevateTopExplicit existed carry only
+	// elevate_top:true. That was still a deliberate operator choice, so it must
+	// keep overriding an embedded default instead of being read as "unset".
+	return o.ElevateTop, o.ElevateTopExplicit || o.ElevateTop
 }
 
 type overrideDoc struct {
@@ -172,6 +188,26 @@ func (s *OverrideStore) SetElevateTop(client, model string, on bool) error {
 	defer s.mu.Unlock()
 	o := s.getLocked(client, model)
 	o.ElevateTop = on
+	o.ElevateTopExplicit = true
+	return s.putLocked(client, model, o)
+}
+
+// ClearElevateTop drops the operator's cap-alignment choice so the model falls
+// back to the embedded table's per-model default. It backs the panel's
+// "restore default" action.
+func (s *OverrideStore) ClearElevateTop(client, model string) error {
+	if s == nil {
+		return errors.New("modelmeta: nil override store")
+	}
+	client, model = strings.TrimSpace(client), strings.TrimSpace(model)
+	if client == "" || model == "" {
+		return errors.New("modelmeta: client and model are required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	o := s.getLocked(client, model)
+	o.ElevateTop = false
+	o.ElevateTopExplicit = false
 	return s.putLocked(client, model, o)
 }
 

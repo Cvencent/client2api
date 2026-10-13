@@ -262,7 +262,8 @@ func TestChatLeavesAnUnknownModelNameAlone(t *testing.T) {
 
 // The vendor answers HTTP 200 for business failures, so a 200 alone proves
 // nothing.  A single 100002 is not enough evidence to park the account for
-// good: the same session can answer again moments later.  Cool it down first.
+// good: the module retries it once after five seconds, then gives it the first
+// short cooldown.
 func TestChatTreatsABusinessErrorInA200AsAFailure(t *testing.T) {
 	c := newTestClient(t, "{}", alwaysJSON(200, failureEnvelope("100002", "缺少 token")))
 	seedAccount(t, c, "loomy-1", testToken, 0)
@@ -285,37 +286,38 @@ func TestChatTreatsABusinessErrorInA200AsAFailure(t *testing.T) {
 	if acc.cooldownTill.IsZero() {
 		t.Error("the account did not cool down after the session-dead response")
 	}
-	if acc.sessionFailures != 1 {
-		t.Errorf("session failures = %d, want 1", acc.sessionFailures)
+	if acc.cooldownStage != 1 {
+		t.Errorf("cooldown stage = %d, want 1", acc.cooldownStage)
 	}
-	if acc.selectable(started.Add(4 * time.Minute)) {
-		t.Error("the account recovered before the five-minute cooldown")
+	if acc.selectable(started.Add(29 * time.Second)) {
+		t.Error("the account recovered before the 30-second cooldown")
 	}
-	if !acc.selectable(started.Add(6 * time.Minute)) {
+	if !acc.selectable(started.Add(31 * time.Second)) {
 		t.Error("the account did not recover after its cooldown")
 	}
 }
 
-func TestChatParksTheAccountAfterConsecutiveSessionDeadFailures(t *testing.T) {
+func TestPenaliseChatMarksTheAccountAbnormalOnTheFourthFailure(t *testing.T) {
 	c := newTestClient(t, "{}", nil)
 	seedAccount(t, c, "loomy-1", testToken, 0)
 	now := time.Now().UTC()
+	wantStages := []int{1, 2, 3}
 
-	for i := 1; i < sessionDeadFailureLimit; i++ {
+	for i := 1; i <= 3; i++ {
 		c.penalise("loomy-1", errSessionExpired("loomy-1"), now.Add(time.Duration(i)*time.Minute))
 		acc, _ := c.store.lookup("loomy-1")
-		if acc.dead {
-			t.Fatalf("failure %d parked the account before the consecutive limit", i)
+		if acc.abnormal {
+			t.Fatalf("failure %d marked the account abnormal before the fourth round", i)
 		}
-		if acc.sessionFailures != i {
-			t.Fatalf("failure %d recorded %d consecutive session failures, want %d", i, acc.sessionFailures, i)
+		if acc.cooldownStage != wantStages[i-1] {
+			t.Fatalf("failure %d cooldown stage = %d, want %d", i, acc.cooldownStage, wantStages[i-1])
 		}
 	}
 
-	c.penalise("loomy-1", errSessionExpired("loomy-1"), now.Add(time.Duration(sessionDeadFailureLimit)*time.Minute))
+	c.penalise("loomy-1", errSessionExpired("loomy-1"), now.Add(4*time.Minute))
 	acc, _ := c.store.lookup("loomy-1")
-	if !acc.dead {
-		t.Fatalf("failure %d did not park the account", sessionDeadFailureLimit)
+	if !acc.abnormal {
+		t.Fatal("the fourth failure did not mark the account abnormal")
 	}
 }
 
@@ -391,7 +393,7 @@ func TestChatSuccessClearsAConcurrentSessionDeadPenalty(t *testing.T) {
 	}()
 
 	<-started
-	c.store.penalise("loomy-1", errSessionExpired("loomy-1"), time.Now().UTC(), time.Minute)
+	c.store.penaliseWith("loomy-1", errSessionExpired("loomy-1"), time.Now().UTC(), time.Minute, true)
 	penalised, _ := c.store.lookup("loomy-1")
 
 	close(release)
@@ -439,15 +441,15 @@ func TestChatFailsOverToTheSecondAccount(t *testing.T) {
 	}
 	defer stream.Close()
 
-	if attempts != 2 {
-		t.Errorf("%d attempts, want 2", attempts)
+	if attempts != 3 {
+		t.Errorf("%d attempts, want 3 (the first account gets one retry before failover)", attempts)
 	}
 	first, _ := c.store.lookup("first")
 	if first.dead {
 		t.Error("one rejected attempt parked the first account")
 	}
-	if first.cooldownTill.IsZero() {
-		t.Error("the rejected first account did not cool down")
+	if first.cooldownStage != 1 {
+		t.Error("the rejected first account did not advance to the first cooldown stage")
 	}
 	second, _ := c.store.lookup("second")
 	if second.dead {

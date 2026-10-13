@@ -350,3 +350,58 @@ func TestCheckinAndCheckinReadyAnswerDifferentQuestions(t *testing.T) {
 		})
 	}
 }
+
+// modelPolicyClient is a module that lets the panel enable/disable individual
+// models per account (and force-enable credit-only parks). It is deliberately
+// separate from plainClient so the capability and the narrowing helper can be
+// exercised without any other opt-in.
+type modelPolicyClient struct{ plainClient }
+
+func (c *modelPolicyClient) SetAccountModelPolicy(context.Context, string, []string, bool) error {
+	return nil
+}
+
+// TestCapabilitiesReportAccountModelPolicy pins both halves of the contract the
+// panel keys on: the Go flag the capability matrix reads, and its wire name.
+// A wrong JSON tag would let the panel render a "模型启用" button on every
+// module and 404 on all but one, which is exactly the "unimplemented looks
+// broken" failure this capability reporting exists to prevent.
+func TestCapabilitiesReportAccountModelPolicy(t *testing.T) {
+	if CapabilitiesOf(context.Background(), &plainClient{name: "plain"}).ModelPolicy {
+		t.Error("a bare Client advertised per-account model policy")
+	}
+	got := CapabilitiesOf(context.Background(), &modelPolicyClient{plainClient{name: "mp"}})
+	if !got.ModelPolicy {
+		t.Fatal("ModelPolicy = false for a module that can set per-account model policy")
+	}
+	raw, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	if m["model_policy"] != true {
+		t.Errorf("JSON model_policy = %v, want true", m["model_policy"])
+	}
+	if plain := CapabilitiesOf(context.Background(), &plainClient{name: "plain"}); plain.ModelPolicy {
+		t.Errorf("plain capabilities reported ModelPolicy: %+v", plain)
+	}
+}
+
+// TestAsAccountModelPolicyRefusesAPlainClient is the narrowing the panel route
+// relies on: a module without the capability must answer 501, not be handed a
+// call it cannot serve.
+func TestAsAccountModelPolicyRefusesAPlainClient(t *testing.T) {
+	if _, ok := AsAccountModelPolicy(&plainClient{name: "plain"}); ok {
+		t.Error("AsAccountModelPolicy accepted a client without the capability")
+	}
+	mp, ok := AsAccountModelPolicy(&modelPolicyClient{plainClient{name: "mp"}})
+	if !ok {
+		t.Fatal("AsAccountModelPolicy refused a capable client")
+	}
+	if err := mp.SetAccountModelPolicy(context.Background(), "id", []string{"m"}, true); err != nil {
+		t.Fatalf("SetAccountModelPolicy: %v", err)
+	}
+}

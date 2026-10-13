@@ -609,6 +609,10 @@ same account inside one call:
 | `429` | rate limited | cool the account, try the next |
 | anything else | — | try the next |
 
+An account whose per-account in-flight slot is already held is skipped before
+the vendor is called: it is not blamed and it does not spend one of the
+`max_account_attempts` calls.
+
 Order matters: the envelope codes are checked first, `402` before the keyword
 scan, and `429` **before** the keyword scan — so a `429` whose body happens to
 say "quota exceeded" stays a rate limit instead of wrongly exhausting the account.

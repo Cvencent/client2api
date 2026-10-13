@@ -105,6 +105,12 @@ type Client struct {
 	// inFlight is the number of chat streams currently open.  Chat feeds it
 	// through core.TrackStream, so PoolStats reports real concurrency.
 	inFlight atomic.Int64
+
+	// reserveCredits is the platform's low-balance guard.  It follows the
+	// same contract as WorkBuddy: zero parks a known zero balance, a
+	// negative value disables the guard, and an unknown balance stays usable.
+	reserveMu      sync.Mutex
+	reserveCredits int
 }
 
 // New builds the client.  It never fails for a missing or malformed credential:
@@ -168,6 +174,33 @@ func (c *Client) setPaths() {
 
 // Name is both the registry key and the routing prefix ("loomy/<model>").
 func (c *Client) Name() string { return "loomy" }
+
+// ApplyPlatformPolicy implements core.PlatformPolicyApplier.  Only the
+// low-balance guard belongs to the module's pool; routing priority and
+// per-platform in-flight ceilings stay in the gateway.
+func (c *Client) ApplyPlatformPolicy(cfg core.PlatformConfig) {
+	if c == nil {
+		return
+	}
+	c.reserveMu.Lock()
+	c.reserveCredits = cfg.ReserveCredits
+	c.reserveMu.Unlock()
+	// Turning the guard off must release accounts it already parked.  Keep the
+	// removal scoped to lowCredit so any unrelated rate-limit or session
+	// cooldown keeps running.
+	if cfg.ReserveCredits < 0 && c.store != nil {
+		c.store.clearLowCredit()
+	}
+}
+
+func (c *Client) reserveCreditLimit() int {
+	if c == nil {
+		return 0
+	}
+	c.reserveMu.Lock()
+	defer c.reserveMu.Unlock()
+	return c.reserveCredits
+}
 
 // newUpstream builds the HTTP layer.  The two clients differ in exactly one
 // way: the streaming one has no overall timeout, because a stream lives as long
@@ -421,11 +454,15 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 
 	attempts := c.cfg.maxAttempts()
 	var lastErr error
+	// issued counts upstream account attempts, not candidates examined.  A
+	// lost race for an account's in-flight slot is skipped without spending
+	// one of the request's switch attempts.
+	issued := 0
 	// busy records that every candidate we reached was at its per-account
 	// in-flight ceiling.
 	busy := false
-	for i, acc := range candidates {
-		if i >= attempts {
+	for _, acc := range candidates {
+		if issued >= attempts {
 			break
 		}
 		// Take the account's slot before the network call, not after: the
@@ -435,10 +472,30 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 			busy = true
 			continue
 		}
+		issued++
 		// Bind only after the slot is genuinely held, so a conversation cannot be
 		// pinned to an account that was skipped because it was already busy.
 		c.bindServedConversation(&local, acc.ID)
+		stage := c.store.cooldownStage(acc.ID)
 		stream, err := c.up.openChatStream(ctx, acc.AccessToken, body)
+		if err == nil {
+			c.store.resetAfterProbe(acc.ID, time.Now().UTC())
+			core.NoteServedBy(req, acc.ID)
+			c.inFlight.Add(1)
+			return core.TrackStream(stream, func() { c.inFlight.Add(-1) }), nil
+		}
+		if callerGone(err) {
+			break
+		}
+
+		// A single failed open is not enough evidence to take the account out
+		// of rotation.  Give the same credential one short follow-up attempt;
+		// only a second failure advances the cooldown ladder.
+		if err := waitForChatRetry(ctx, chatRetryDelay); err != nil {
+			lastErr = err
+			break
+		}
+		stream, err = c.up.openChatStream(ctx, acc.AccessToken, body)
 		if err == nil {
 			c.store.resetAfterProbe(acc.ID, time.Now().UTC())
 			// Tell the gateway which credential actually served this request.
@@ -462,7 +519,13 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 			break
 		}
 
-		c.penalise(acc.ID, err, time.Now().UTC())
+		if callerGone(err) {
+			break
+		}
+		if !c.store.penaliseChatWithStage(acc.ID, err, time.Now().UTC(), stage, c.cfg.cooldown()) {
+			lastErr = err
+			break
+		}
 	}
 	if lastErr == nil && busy {
 		return nil, core.ErrBusy
@@ -472,6 +535,20 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 	}
 	c.noteFailure(lastErr)
 	return nil, lastErr
+}
+
+func waitForChatRetry(ctx context.Context, delay time.Duration) error {
+	if delay <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 // cachedOrFallback is the catalogue the request is resolved against.
@@ -525,6 +602,10 @@ func (c *Client) unavailableError(now time.Time) error {
 		if a.dead || a.expired(now) {
 			return errSessionExpired(a.ID)
 		}
+		if a.abnormal {
+			return errors.Join(core.ErrPlatformExhausted,
+				fmt.Errorf("loomy: account %s is marked abnormal after repeated chat failures; revive it after fixing the cause", a.ID))
+		}
 	}
 	return errors.Join(core.ErrPlatformExhausted, errors.New("loomy: every account is parked or cooling down; retry shortly"))
 }
@@ -545,7 +626,7 @@ func (c *Client) Status(ctx context.Context) core.Status {
 
 	accounts := c.store.snapshot()
 	records := make([]core.AccountStatus, 0, len(accounts))
-	usable, gone := 0, 0
+	usable, gone, abnormal := 0, 0, 0
 	for i := range accounts {
 		records = append(records, accountStatus(&accounts[i], now))
 		if accounts[i].selectable(now) {
@@ -553,6 +634,9 @@ func (c *Client) Status(ctx context.Context) core.Status {
 		}
 		if accounts[i].dead || accounts[i].expired(now) {
 			gone++
+		}
+		if accounts[i].abnormal {
+			abnormal++
 		}
 	}
 	st.Accounts = records
@@ -566,6 +650,9 @@ func (c *Client) Status(ctx context.Context) core.Status {
 		st.Ready = false
 		st.Detail = "the session has expired and Loomy has no refresh endpoint; log in " +
 			"again (SMS or WeChat) and import the new token"
+	case usable == 0 && abnormal > 0:
+		st.Ready = false
+		st.Detail = "every account is marked abnormal after repeated failures; revive it after fixing the cause, or log in again"
 	case usable == 0:
 		st.Ready = false
 		st.Detail = "every account is parked or cooling down"

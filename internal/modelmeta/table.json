@@ -187,6 +187,7 @@
           "global": { "efforts": ["high"], "default_effort": "high" }
         },
         "effort_origin": "effort_catalog.go",
+        "elevate_top_default": true,
         "_note": "The international realm accepts ONLY [high]; sending low/max there is an HTTP 400. Kept realm-split on purpose."
       },
       "gpt-6-astra": {
@@ -350,7 +351,8 @@
       "DeepSeek-V4.1-Flash": {
         "context_length": 1048576,
         "max_output_tokens": 384000,
-        "origin": "api-docs.deepseek.com: 1M context / 384K output"
+        "origin": "api-docs.deepseek.com: 1M context / 384K output",
+        "elevate_top_default": true
       },
       "DeepSeek-V4-Flash": {
         "context_length": 1048576,
@@ -435,7 +437,8 @@
       "deepseek-v4.1-flash": {
         "efforts": ["off", "on"],
         "default_effort": "on",
-        "effort_origin": "codearts: thinking is enabled by default; the module can send thinking.type=disabled for off"
+        "effort_origin": "codearts: thinking is enabled by default; the module can send thinking.type=disabled for off",
+        "elevate_top_default": true
       }
     }
   },
@@ -445,22 +448,25 @@
       "cline-free/deepseek-v4.1-flash": {
         "efforts": ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
         "default_effort": "high",
-        "effort_origin": "cline/body.go reasoningEffortTable + defaultReasoningEffort"
+        "effort_origin": "cline/body.go reasoningEffortTable + defaultReasoningEffort",
+        "elevate_top_default": true
       },
       "deepseek/deepseek-v4.1-flash": {
         "efforts": ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
         "default_effort": "high",
-        "effort_origin": "cline/body.go reasoningEffortTable + defaultReasoningEffort"
+        "effort_origin": "cline/body.go reasoningEffortTable + defaultReasoningEffort",
+        "elevate_top_default": true
       }
     }
   },
   "loomy": {
-    "notes": "The live V4.1 row advertises the same five-tier vocabulary as the module fallback.",
+    "notes": "The live V4.1 row advertises the same five-tier vocabulary as the module fallback: xhigh is its real highest tier, so cap alignment stays a no-op rather than inventing max.",
     "models": {
       "DeepSeek-V4.1-Flash": {
         "efforts": ["none", "low", "medium", "high", "xhigh"],
         "default_effort": "high",
-        "effort_origin": "loomy/models.go loomyEfforts + loomyDefaultEffort"
+        "effort_origin": "loomy/models.go loomyEfforts + loomyDefaultEffort",
+        "elevate_top_default": true
       }
     }
   },
@@ -470,7 +476,22 @@
       "sn-deepseek-v4-1-flash": {
         "efforts": ["off", "on"],
         "default_effort": "on",
-        "effort_origin": "raccoon/body.go extraBodyFor"
+        "effort_origin": "raccoon/body.go extraBodyFor",
+        "elevate_top_default": true
+      }
+    }
+  },
+  "openrouter": {
+    "notes": "OpenRouter publishes V4.1 Flash as low/high/max; xhigh is not advertised.",
+    "models": {
+      "deepseek/deepseek-v4.1-flash": {
+        "context_length": 1048576,
+        "max_output_tokens": 943718,
+        "efforts": ["low", "high", "max"],
+        "default_effort": "high",
+        "effort_origin": "openrouter.ai/api/v1/models reasoning.supported_efforts (2026-10-13)",
+        "origin": "openrouter.ai/api/v1/models: 1M context / 943718 max completion tokens",
+        "elevate_top_default": true
       }
     }
   },
@@ -500,7 +521,8 @@
       "deepseek-flash": {
         "context_length": 1048576,
         "max_output_tokens": 384000,
-        "origin": "api-docs.deepseek.com: 1M context / 384K output"
+        "origin": "api-docs.deepseek.com: 1M context / 384K output",
+        "elevate_top_default": true
       },
       "deepseek-v4-pro": {
         "context_length": 1048576,
@@ -695,7 +717,8 @@
       "deepseek-v4.1-flash": {
         "context_length": 1048576,
         "max_output_tokens": 384000,
-        "origin": "api-docs.deepseek.com: 1M context / 384K output"
+        "origin": "api-docs.deepseek.com: 1M context / 384K output",
+        "elevate_top_default": true
       },
       "DeepSeek-V4-Flash-Official": {
         "context_length": 1048576,

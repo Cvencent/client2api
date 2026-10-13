@@ -364,15 +364,18 @@ func TestTranscriptionRequiresFile(t *testing.T) {
 	}
 }
 
-func TestTranscriptionMapsNoSpeech(t *testing.T) {
+func TestTranscriptionNoSpeechReturnsEmptySuccess(t *testing.T) {
 	srv := newTranscriptionServer(t, &fakeTranscriptionClient{
 		name:   "speech",
 		models: []core.Model{{ID: "whisper-1"}},
 		err:    core.ErrNoSpeech,
 	})
 	rec := transcriptionRequest(t, srv, "whisper-1", "json", []byte("audio"))
-	if rec.Code != http.StatusUnprocessableEntity {
+	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
+	}
+	if got := strings.TrimSpace(rec.Body.String()); got != `{"text":""}` {
+		t.Fatalf("body = %q, want empty transcription response", got)
 	}
 }
 

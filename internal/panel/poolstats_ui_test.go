@@ -27,6 +27,10 @@ import (
 func poolStatsUISource(t *testing.T) string {
 	t.Helper()
 	src := string(indexHTML)
+	// The checkout may have Windows line endings.  Browser text and the
+	// string assertions below both use LF, so normalize before matching.
+	src = strings.ReplaceAll(src, "\r\n", "\n")
+	src = strings.ReplaceAll(src, "\r", "\n")
 	if strings.TrimSpace(src) == "" {
 		t.Fatal("index.html was not embedded")
 	}

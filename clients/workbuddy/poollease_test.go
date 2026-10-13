@@ -3,8 +3,11 @@ package workbuddy
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -231,6 +234,63 @@ func TestWorkbuddyChatRefusesWhenEveryAccountIsAtItsCeiling(t *testing.T) {
 	}
 	if got := len(rt.calls); got != 0 {
 		t.Fatalf("Chat made %d upstream call(s) while refusing for backpressure", got)
+	}
+}
+
+// TestWorkbuddyChatSkipsAGatewayBusyAccount is the two-account half of the same
+// rule: when the gateway's per-account ceiling refuses one credential, the
+// request moves to the next one instead of spending its upstream budget on an
+// account it never reached -- and the skipped account earns no penalty.
+func TestWorkbuddyChatSkipsAGatewayBusyAccount(t *testing.T) {
+	rt := &fakeRT{handler: func(*http.Request) (*http.Response, error) {
+		return sseResponse(200, sseFixture, nil), nil
+	}}
+	dir := t.TempDir()
+	for i, uid := range []string{"uid-test-0001", "uid-test-0002"} {
+		data := credJSON("access-token-"+uid, "refresh-token-"+uid, "cn",
+			"copilot.tencent.com", uid, time.Now().Add(24*time.Hour).Unix())
+		path := filepath.Join(dir, fmt.Sprintf("cred-%d.json", i))
+		if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+			t.Fatalf("write credential: %v", err)
+		}
+	}
+	raw, err := New(core.Deps{DataDir: dir, HTTPClient: &http.Client{Transport: rt}})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	c, ok := raw.(*Client)
+	if !ok {
+		t.Fatalf("New returned %T", raw)
+	}
+	if got := c.pool.Len(); got != 2 {
+		t.Fatalf("pool holds %d account(s), want 2", got)
+	}
+
+	req := chatRequest()
+	var served string
+	req.ServedBy = &served
+	var busyID string
+	req.SetAccountAcquirer(func(id string) (func(), error) {
+		if busyID == "" {
+			busyID = id
+			return nil, core.ErrBusy
+		}
+		return func() {}, nil
+	})
+
+	stream, err := c.Chat(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	defer stream.Close()
+	if got := len(rt.calls); got != 1 {
+		t.Fatalf("upstream call(s) = %d, want exactly one on the free account", got)
+	}
+	if served == "" || served == busyID {
+		t.Fatalf("ServedBy = %q, the busy account was %q", served, busyID)
+	}
+	if !c.pool.UsableForModelInRealm(busyID, "claude-sonnet-4", "") {
+		t.Fatalf("busy account %q was taken out of rotation", busyID)
 	}
 }
 

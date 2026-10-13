@@ -13,16 +13,20 @@ type modelContextBody struct {
 // modelContextPatch distinguishes an omitted JSON field from an explicit zero,
 // so saving one metadata field never clears another.
 type modelContextPatch struct {
-	ContextLength       *int64    `json:"context_length"`
-	MaxOutputTokens     *int64    `json:"max_output_tokens"`
-	SupportedEfforts    *[]string `json:"supported_efforts"`
-	DefaultEffort       *string   `json:"default_effort"`
-	ElevateTop          *bool     `json:"elevate_top"`
-	InputPerMillion     *float64  `json:"input_per_million"`
-	OutputPerMillion    *float64  `json:"output_per_million"`
-	CacheReadPerMillion *float64  `json:"cache_read_per_million"`
-	HasPrice            *bool     `json:"has_price"`
-	HasCacheRead        *bool     `json:"has_cache_read"`
+	ContextLength    *int64    `json:"context_length"`
+	MaxOutputTokens  *int64    `json:"max_output_tokens"`
+	SupportedEfforts *[]string `json:"supported_efforts"`
+	DefaultEffort    *string   `json:"default_effort"`
+	ElevateTop       *bool     `json:"elevate_top"`
+	// ElevateTopDefault clears the operator's cap-alignment choice so the model
+	// falls back to its embedded default. It is what "restore default" sends:
+	// writing elevate_top:false instead would pin a manual "off".
+	ElevateTopDefault   *bool    `json:"elevate_top_default"`
+	InputPerMillion     *float64 `json:"input_per_million"`
+	OutputPerMillion    *float64 `json:"output_per_million"`
+	CacheReadPerMillion *float64 `json:"cache_read_per_million"`
+	HasPrice            *bool    `json:"has_price"`
+	HasCacheRead        *bool    `json:"has_cache_read"`
 }
 
 func (p modelContextPatch) touchesEfforts() bool {
@@ -87,6 +91,11 @@ func applyModelContextPatch(store *modelmeta.OverrideStore, client, model string
 	}
 	if patch.ElevateTop != nil {
 		if err := store.SetElevateTop(client, model, *patch.ElevateTop); err != nil {
+			return err
+		}
+	}
+	if patch.ElevateTopDefault != nil {
+		if err := store.ClearElevateTop(client, model); err != nil {
 			return err
 		}
 	}

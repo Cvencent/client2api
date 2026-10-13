@@ -52,6 +52,13 @@ type modelInfo struct {
 	MaxOutputEditable       bool           `json:"max_output_editable"`
 	EffortsEditable         bool           `json:"efforts_editable"`
 	ElevateTopEditable      bool           `json:"elevate_top_editable"`
+	// ElevateTopDefault is the embedded per-model policy with no operator
+	// choice applied. The row shows it so "restore default" can bring back an
+	// on-by-default model instead of silently writing a manual "off".
+	ElevateTopDefault bool `json:"elevate_top_default"`
+	// ElevateTopManual reports that the operator recorded an explicit
+	// cap-alignment choice, so the row can say "manual" instead of "default".
+	ElevateTopManual bool `json:"elevate_top_manual"`
 	// ContextDefault / MaxOutputDefault is the value that would apply with no
 	// manual override (upstream value, else the official preset). It is what the
 	// row's "restore default" button writes back, and zero means unknown.
@@ -200,10 +207,14 @@ func (p *panel) modelsFor(ctx context.Context, c core.Client, refresh bool) clie
 		plain := modelmeta.New(modelmeta.Options{Client: c.Name(), Realm: realm})
 		meta := provider.Merge(m.ID, vendor)
 		base := plain.Merge(m.ID, vendor)
-		elevateTop := false
+		// The effective policy is the shared resolver, so the checkbox reflects
+		// what the gateway will actually do (an embedded default applies unless
+		// the operator recorded an explicit choice).
+		elevateTop := modelmeta.ElevateTop(c.Name(), m.ID, p.opts.ModelOverrides)
+		elevateTopManual := false
 		if p.opts.ModelOverrides != nil {
 			if o, ok := p.opts.ModelOverrides.Get(c.Name(), m.ID); ok {
-				elevateTop = o.ElevateTop
+				_, elevateTopManual = o.ExplicitElevateTop()
 			}
 		}
 		row.Models = append(row.Models, modelInfo{
@@ -221,6 +232,8 @@ func (p *panel) modelsFor(ctx context.Context, c core.Client, refresh bool) clie
 			SupportedEffortsDefault: append([]string(nil), base.Efforts...),
 			DefaultEffortDefault:    base.DefaultEffort,
 			ElevateTop:              elevateTop,
+			ElevateTopDefault:       modelmeta.StaticElevateTop(c.Name(), m.ID),
+			ElevateTopManual:        elevateTopManual,
 			InputPerMillion:         meta.InputPerMillion,
 			OutputPerMillion:        meta.OutputPerMillion,
 			CacheReadPerMillion:     meta.CacheReadPerMillion,

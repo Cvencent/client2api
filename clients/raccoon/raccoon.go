@@ -401,6 +401,9 @@ func (c *Client) openChat(ctx context.Context, cancel context.CancelFunc, req *c
 		if err := req.AcquireAccountSlot(e.acct.id()); err != nil {
 			skip[e.acct.id()] = true
 			busy = true
+			// A full account is not an upstream attempt. Keep the request's
+			// switch budget for an account that can actually be called.
+			i--
 			continue
 		}
 		skip[e.acct.id()] = true

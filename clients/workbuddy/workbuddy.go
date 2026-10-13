@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"client2api/internal/browser"
 	"client2api/internal/core"
 )
 
@@ -415,6 +416,14 @@ func New(deps core.Deps) (core.Client, error) {
 	// client: there is no Close on core.Client to hang a stop from.
 	c.affinity = core.NewAffinity(0)
 	c.affinity.StartGC()
+	// A forced process kill cannot run Close, so recover space at startup from
+	// profiles old enough to be nobody's live session. The in-use scan keeps a
+	// second instance's browser from being deleted under it.
+	if removed, err := browser.CleanupStaleProfiles(c.browserProfileRoot(), 24*time.Hour, browser.ProfileInUse); err != nil {
+		deps.Log("workbuddy: stale browser profile cleanup: %v", err)
+	} else if removed > 0 {
+		deps.Log("workbuddy: reclaimed %d stale browser profile(s)", removed)
+	}
 	c.refreshAccounts(true)
 	c.loadModelCache()
 	return c, nil
@@ -952,6 +961,10 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 		// race for the last slot is not a failure — the account is skipped and
 		// the rotation tries the next one.
 		if !c.pool.Acquire(a) {
+			// The pool ceiling is the same kind of local contention as the
+			// gateway's per-account ceiling: skip this account, but do not
+			// spend one of the request's upstream attempts on it.
+			i--
 			continue
 		}
 		// The gateway's per-account ceiling may be tighter than the pool's own.
@@ -959,6 +972,7 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 		if err := req.AcquireAccountSlot(a.ID()); err != nil {
 			c.pool.Release(a)
 			busy = true
+			i--
 			continue
 		}
 		// Tell the gateway which credential is about to be used.  On a retry the

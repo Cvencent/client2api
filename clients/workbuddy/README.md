@@ -177,9 +177,15 @@ One JSON file per account in `accounts_dir`, mode 0600, written atomically
     "domain": "copilot.tencent.com",
     "realm": "cn"
   },
-  "account": { "uid": "…", "enterpriseId": "…", "nickname": "…" }
+  "account": { "uid": "…", "enterpriseId": "…", "nickname": "…" },
+  "disabled_models": [],
+  "force_enabled": false
 }
 ```
+
+`disabled_models` is the operator's per-account model blacklist (see
+「Per-account model policy」 below). It is written at the top level of the
+credential file, so a hand-written flat document may carry the same two keys.
 
 A flat document with the same keys is also accepted, so a credential exported by
 another tool can usually be dropped in unchanged. Unparseable files are skipped,
@@ -316,6 +322,27 @@ the same real Auto model call as the panel's Test button.  Success marks the
 account usable; failure applies the normal cooling, credit or risk verdict.
 The decision is reused for six hours per account so a background balance
 sweep does not turn every pass into another model request.
+
+### Per-account model policy
+
+Two operator decisions live in each credential file and survive a restart; the
+panel's 「模型」 dialog (`POST /panel/api/clients/workbuddy/accounts/<id>/model-policy`)
+is the way to set them:
+
+- `disabled_models` — a blacklist of bare model ids this account must not be
+  routed to. Absent or empty means *every* model is allowed, which is the
+  default; the panel draws it as all-checked. The blacklist is enforced in the
+  real pick path, not just the UI: a disabled model is filtered out of
+  `PickForModelInRealm` and out of the affinity predicate
+  `UsableForModelInRealm`, so a sticky conversation bound to the account is not
+  handed back for a model the operator closed.
+- `force_enabled` — the operator's override for **credit-only** parks. It lifts
+  exactly two verdicts: the zero/低余额 reserve park (`low_credit`) and an
+  exhausted-quota park (`ErrHardCredit`, the vendor's 402). It does **not**
+  override a dead session, risk control, a soft rate limit, a WAF block, a
+  tripped breaker or a per-model park — those keep their own recovery evidence.
+  This is what lets an international account with zero paid credit keep serving
+  the free models the vendor still allows.
 
 ## Request path
 
@@ -545,7 +572,8 @@ overrides the model id). They are skipped on this machine — see
   "no ceiling" for the per-account value, while the global one falls back to it
   when unset, so "unset" and "allow nothing" are different values. An account at
   its ceiling is **skipped by the picker** (`Pick`, `PickForModel`, `Find`) rather
-  than queued for; a slot is held for as long as the response body is open and
+  than queued for, without spending one of the request's `max_attempts` calls or
+  earning a failure record; a slot is held for as long as the response body is open and
   released exactly once when it closes (`leasedStream`), so a client that
   abandons a stream cannot leak a slot. When every usable account is at its
   ceiling `Chat` answers `core.ErrBusy`, which the gateway reports as 429 with

@@ -288,6 +288,8 @@ queue reports `working`. A `queue_full` or `error` status ends the attempt.
 `openStream` tries up to `max_attempts` accounts. For each attempt it picks an
 available account, records it as tried, and calls `NoteServedBy` **before**
 sending, so a failure part-way through still reports which account was used.
+An account whose per-account in-flight slot is already held is skipped before
+that point: it never reaches the vendor and does not spend an attempt.
 
 - An auth rejection (`401`/`403`, `APIG.0602`, or invalid-token wording)
   triggers **one** silent refresh and resend, which does not consume an attempt.

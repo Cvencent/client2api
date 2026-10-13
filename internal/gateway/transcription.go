@@ -141,11 +141,18 @@ func (s *server) handleTranscriptions(w http.ResponseWriter, r *http.Request) {
 		ResponseFormat: responseFormat,
 	})
 	if err != nil {
+		if errors.Is(err, core.ErrNoSpeech) {
+			writeTranscriptionResult(w, responseFormat, core.TranscriptionResult{})
+			return
+		}
 		s.writeTranscriptionError(w, provider, err)
 		return
 	}
 	if strings.TrimSpace(result.Text) == "" {
-		writeError(w, http.StatusUnprocessableEntity, "invalid_request_error", "no speech was recognised")
+		writeTranscriptionResult(w, responseFormat, core.TranscriptionResult{
+			Language: result.Language,
+			Duration: result.Duration,
+		})
 		return
 	}
 	writeTranscriptionResult(w, responseFormat, result)
@@ -283,8 +290,6 @@ func (s *server) writeTranscriptionError(w http.ResponseWriter, provider core.Tr
 	switch {
 	case errors.Is(err, core.ErrInvalidAudio):
 		status, typ = http.StatusBadRequest, "invalid_request_error"
-	case errors.Is(err, core.ErrNoSpeech):
-		status, typ = http.StatusUnprocessableEntity, "invalid_request_error"
 	case errors.Is(err, core.ErrNotConfigured):
 		status, typ = http.StatusServiceUnavailable, "invalid_request_error"
 	case errors.Is(err, core.ErrUnsupported):

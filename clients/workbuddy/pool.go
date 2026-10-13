@@ -518,10 +518,29 @@ func (e *poolEntry) usable(now time.Time) bool {
 	if e.faults.Blocked(now) {
 		return false
 	}
+	if e.forceCreditBypass() {
+		// ForceEnabled is deliberately narrow: it only overrides the two
+		// credit-exhaustion parks. Credential death, risk control, rate limits
+		// and per-model parks keep their own verdicts.
+		return true
+	}
 	if e.state == stateInvalid {
 		return now.After(e.until)
 	}
 	return !now.Before(e.until)
+}
+
+// forceCreditBypass reports whether this entry is a credit park the operator
+// chose to override. The state and note are kept for the panel, but routing
+// treats the account as usable while ForceEnabled is on.
+func (e *poolEntry) forceCreditBypass() bool {
+	if e == nil || e.auth == nil || !e.auth.ForceEnabledValue() {
+		return false
+	}
+	if e.state != stateExhausted {
+		return false
+	}
+	return e.note == reserveCreditNote || e.note == ErrHardCredit.String()
 }
 
 // usableForMetadata reports whether an entry may be spent on a metadata-only
@@ -982,6 +1001,13 @@ func (p *Pool) UsableForModelInRealm(accountID, model, realm string) bool {
 		if e == nil || e.auth == nil || !e.usable(now) || !realmMatches(e, realm) {
 			continue
 		}
+		// An account the operator disabled for this model is not a candidate
+		// for it, so it must not set the priority tier either. Counting it
+		// would let a blacklisted high-priority account price every allowed
+		// account out of the model.
+		if !e.auth.ModelAllowed(model) {
+			continue
+		}
 		prio := core.AccountPriority("workbuddy", e.auth.ID())
 		if !found || prio < best {
 			best, found = prio, true
@@ -995,6 +1021,9 @@ func (p *Pool) UsableForModelInRealm(accountID, model, realm string) bool {
 			return false
 		}
 		if !realmMatches(e, realm) {
+			return false
+		}
+		if !e.auth.ModelAllowed(model) {
 			return false
 		}
 		if core.AccountPriority("workbuddy", e.auth.ID()) != best {
@@ -1066,6 +1095,9 @@ func (p *Pool) PickForModelInRealm(skip map[string]bool, model, realm string) (*
 			continue
 		}
 		if !realmMatches(e, realm) {
+			continue
+		}
+		if model != "" && !e.auth.ModelAllowed(model) {
 			continue
 		}
 		if skip[e.auth.ID()] {

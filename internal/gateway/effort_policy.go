@@ -37,11 +37,10 @@ func (s *server) applyEffortPolicy(ctx context.Context, client core.Client, mode
 	if requested != effortXHigh || client == nil {
 		return requested
 	}
-	if s.opts.ModelOverrides == nil {
-		return requested
-	}
-	o, ok := s.opts.ModelOverrides.Get(client.Name(), model)
-	if !ok || !o.ElevateTop {
+	// Cap alignment is a per-model policy with an embedded default: an operator
+	// may switch it off explicitly, but a model whose table opts in stays on even
+	// with no override store wired at all.
+	if !modelmeta.ElevateTop(client.Name(), model, s.opts.ModelOverrides) {
 		return requested
 	}
 	efforts, _, ok := s.resolveModelEfforts(ctx, client, model)

@@ -292,6 +292,9 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 		if err := req.AcquireAccountSlot(a.ID()); err != nil {
 			skip[a.ID()] = true
 			busy = true
+			// A full account is not an upstream attempt. Keep the request's
+			// switch budget for an account that can actually be called.
+			attempt--
 			continue
 		}
 		// Name the credential for the gateway's usage ledger and console row.

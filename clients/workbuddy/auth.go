@@ -51,6 +51,11 @@ type Auth struct {
 	LastDailyChat string
 
 	FilePath string
+
+	// DisabledModels is the operator's blacklist for this credential.
+	DisabledModels []string
+	// ForceEnabled is the operator's override for credit-only parks.
+	ForceEnabled bool
 }
 
 // On-disk document.  The reference file nests token fields under "auth" and
@@ -62,8 +67,10 @@ type authDoc struct {
 	DeviceToken string      `json:"device_token,omitempty"`
 	// Daily-reward stamps sit at the top level, matching the key names the
 	// reference implementation writes (lastCheckin / lastDailyChat).
-	LastCheckin   string `json:"lastCheckin,omitempty"`
-	LastDailyChat string `json:"lastDailyChat,omitempty"`
+	LastCheckin    string   `json:"lastCheckin,omitempty"`
+	LastDailyChat  string   `json:"lastDailyChat,omitempty"`
+	DisabledModels []string `json:"disabled_models,omitempty"`
+	ForceEnabled   bool     `json:"force_enabled,omitempty"`
 }
 
 type authCore struct {
@@ -75,23 +82,27 @@ type authCore struct {
 }
 
 type authAccount struct {
-	UID          string `json:"uid"`
-	EnterpriseID string `json:"enterpriseId"`
-	Nickname     string `json:"nickname"`
+	UID            string   `json:"uid"`
+	EnterpriseID   string   `json:"enterpriseId"`
+	Nickname       string   `json:"nickname"`
+	DisabledModels []string `json:"disabled_models,omitempty"`
+	ForceEnabled   bool     `json:"force_enabled,omitempty"`
 }
 
 type flatDoc struct {
-	AccessToken   string `json:"accessToken"`
-	RefreshToken  string `json:"refreshToken"`
-	ExpiresAt     int64  `json:"expiresAt"`
-	Domain        string `json:"domain"`
-	Realm         string `json:"realm"`
-	UID           string `json:"uid"`
-	EnterpriseID  string `json:"enterpriseId"`
-	Nickname      string `json:"nickname"`
-	DeviceToken   string `json:"device_token"`
-	LastCheckin   string `json:"lastCheckin"`
-	LastDailyChat string `json:"lastDailyChat"`
+	AccessToken    string   `json:"accessToken"`
+	RefreshToken   string   `json:"refreshToken"`
+	ExpiresAt      int64    `json:"expiresAt"`
+	Domain         string   `json:"domain"`
+	Realm          string   `json:"realm"`
+	UID            string   `json:"uid"`
+	EnterpriseID   string   `json:"enterpriseId"`
+	Nickname       string   `json:"nickname"`
+	DeviceToken    string   `json:"device_token"`
+	LastCheckin    string   `json:"lastCheckin"`
+	LastDailyChat  string   `json:"lastDailyChat"`
+	DisabledModels []string `json:"disabled_models,omitempty"`
+	ForceEnabled   bool     `json:"force_enabled,omitempty"`
 }
 
 // ParseAuth accepts either document shape.  An accessToken is mandatory: a file
@@ -119,6 +130,8 @@ func ParseAuth(raw []byte) (*Auth, error) {
 		a.DeviceToken = strings.TrimSpace(doc.DeviceToken)
 		a.LastCheckin = strings.TrimSpace(doc.LastCheckin)
 		a.LastDailyChat = strings.TrimSpace(doc.LastDailyChat)
+		a.DisabledModels = normalizeDisabledModels(doc.DisabledModels)
+		a.ForceEnabled = doc.ForceEnabled
 	} else {
 		var doc flatDoc
 		if err := json.Unmarshal(raw, &doc); err != nil {
@@ -135,6 +148,8 @@ func ParseAuth(raw []byte) (*Auth, error) {
 		a.DeviceToken = strings.TrimSpace(doc.DeviceToken)
 		a.LastCheckin = strings.TrimSpace(doc.LastCheckin)
 		a.LastDailyChat = strings.TrimSpace(doc.LastDailyChat)
+		a.DisabledModels = normalizeDisabledModels(doc.DisabledModels)
+		a.ForceEnabled = doc.ForceEnabled
 	}
 	if a.AccessToken == "" {
 		return nil, errors.New("parse_error: missing accessToken")
@@ -172,7 +187,38 @@ func (a *Auth) SaveAtomic() error {
 	}
 	doc.LastCheckin = a.LastCheckin
 	doc.LastDailyChat = a.LastDailyChat
+	doc.DisabledModels = normalizeDisabledModels(a.DisabledModels)
+	doc.ForceEnabled = a.ForceEnabled
 	return core.WriteJSONAtomic(a.FilePath, doc)
+}
+
+// normalizeDisabledModels trims, strips realm prefixes, deduplicates and sorts a
+// model policy so the same operator choice has one stable on-disk spelling.
+func normalizeDisabledModels(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	seen := map[string]bool{}
+	out := make([]string, 0, len(in))
+	for _, raw := range in {
+		model := strings.ToLower(strings.TrimSpace(raw))
+		if model == "" {
+			continue
+		}
+		if i := strings.IndexByte(model, ':'); i >= 0 {
+			prefix := model[:i]
+			if prefix == realmCN || prefix == realmGlobal {
+				model = strings.TrimSpace(model[i+1:])
+			}
+		}
+		if model == "" || seen[model] {
+			continue
+		}
+		seen[model] = true
+		out = append(out, model)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // LoadAccounts reads every "*.json" file in dir and keeps the ones that parse
@@ -275,6 +321,56 @@ func (a *Auth) NicknameValue() string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.Nickname
+}
+
+// ForceEnabledValue reports the operator's credit-only override.
+func (a *Auth) ForceEnabledValue() bool {
+	if a == nil {
+		return false
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.ForceEnabled
+}
+
+// DisabledModelsValue returns a copy of the blacklist.
+func (a *Auth) DisabledModelsValue() []string {
+	if a == nil {
+		return nil
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]string(nil), a.DisabledModels...)
+}
+
+// ModelAllowed reports whether the operator left this bare model enabled.
+func (a *Auth) ModelAllowed(model string) bool {
+	if a == nil {
+		return false
+	}
+	model = strings.ToLower(strings.TrimSpace(model))
+	if model == "" {
+		return true
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, dis := range a.DisabledModels {
+		if strings.EqualFold(strings.TrimSpace(dis), model) {
+			return false
+		}
+	}
+	return true
+}
+
+// SetModelPolicy replaces the operator's per-account model policy.
+func (a *Auth) SetModelPolicy(disabled []string, force bool) {
+	if a == nil {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.DisabledModels = normalizeDisabledModels(disabled)
+	a.ForceEnabled = force
 }
 
 // LastCheckinValue returns the local stamp of the last CN check-in, or "".
@@ -433,16 +529,18 @@ func (a *Auth) Snapshot() *Auth {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return &Auth{
-		AccessToken:  a.AccessToken,
-		RefreshToken: a.RefreshToken,
-		ExpiresAt:    a.ExpiresAt,
-		Domain:       a.Domain,
-		Realm:        a.Realm,
-		UID:          a.UID,
-		EnterpriseID: a.EnterpriseID,
-		Nickname:     a.Nickname,
-		DeviceToken:  a.DeviceToken,
-		FilePath:     a.FilePath,
+		AccessToken:    a.AccessToken,
+		RefreshToken:   a.RefreshToken,
+		ExpiresAt:      a.ExpiresAt,
+		Domain:         a.Domain,
+		Realm:          a.Realm,
+		UID:            a.UID,
+		EnterpriseID:   a.EnterpriseID,
+		Nickname:       a.Nickname,
+		DeviceToken:    a.DeviceToken,
+		DisabledModels: append([]string(nil), a.DisabledModels...),
+		ForceEnabled:   a.ForceEnabled,
+		FilePath:       a.FilePath,
 	}
 }
 

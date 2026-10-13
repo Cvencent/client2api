@@ -386,6 +386,30 @@ func (s *server) learnContextWindowFromFailure(ctx context.Context, client core.
 	return limit
 }
 
+// catalogueExtraContextKey carries the metadata the resolver already read for
+// one candidate. It is request-scoped on purpose: the catalogue can change at
+// any time, and a cross-request cache would serve stale context windows.
+type catalogueExtraContextKey struct{}
+
+type catalogueExtraContext struct {
+	extra map[string]any
+}
+
+func withCatalogueExtra(ctx context.Context, candidate core.Candidate) context.Context {
+	if !candidate.Catalogue {
+		return ctx
+	}
+	return context.WithValue(ctx, catalogueExtraContextKey{}, catalogueExtraContext{extra: candidate.Extra})
+}
+
+func catalogueExtraFromContext(ctx context.Context) (map[string]any, bool) {
+	v, ok := ctx.Value(catalogueExtraContextKey{}).(catalogueExtraContext)
+	if !ok {
+		return nil, false
+	}
+	return v.extra, true
+}
+
 // publishedContextWindow is the window the catalogue currently advertises for a
 // model, ignoring anything this gateway has already learned.
 //
@@ -402,6 +426,9 @@ func (s *server) publishedContextWindow(ctx context.Context, client core.Client,
 		if o, ok := s.opts.ModelOverrides.Get(client.Name(), model); ok && o.ContextLength > 0 {
 			return o.ContextLength
 		}
+	}
+	if extra, ok := catalogueExtraFromContext(ctx); ok {
+		return s.resolvedModelMeta(client, model, extra).ContextLength
 	}
 	if models, err := client.Models(ctx); err == nil {
 		for _, m := range models {

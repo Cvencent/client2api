@@ -17,6 +17,7 @@ func TestStaticTableEntryCounts(t *testing.T) {
 		{"cline", 2, "one global wire vocabulary for the free and metered V4.1 ids"},
 		{"loomy", 1, "the live V4.1 row five-tier vocabulary"},
 		{"raccoon", 1, "the V4.1 on/off thinking switch"},
+		{"openrouter", 1, "the live V4.1 low/high/max vocabulary"},
 		{"nosuchclient", 0, "an unknown client has no static entries"},
 	}
 	for _, c := range cases {
@@ -28,7 +29,8 @@ func TestStaticTableEntryCounts(t *testing.T) {
 	want := map[string]bool{
 		"workbuddy": true, "tabbit": true, "kimi": true, "codearts": true,
 		"opencode": true, "lobsterai": true, "minimaxcode": true,
-		"qwenwork": true, "trae": true, "zcode": true, "cline": true, "loomy": true, "raccoon": true,
+		"qwenwork": true, "trae": true, "zcode": true, "cline": true, "loomy": true,
+		"raccoon": true, "openrouter": true,
 	}
 	if len(clients) != len(want) {
 		t.Fatalf("Clients() = %v, want %v", clients, want)
@@ -189,6 +191,7 @@ func TestStaticTableV41EffortDefaults(t *testing.T) {
 		{"loomy", RealmCN, "DeepSeek-V4.1-Flash", []string{"none", "low", "medium", "high", "xhigh"}, "high"},
 		{"raccoon", RealmCN, "sn-deepseek-v4-1-flash", []string{"off", "on"}, "on"},
 		{"codearts", RealmCN, "deepseek-v4.1-flash", []string{"off", "on"}, "on"},
+		{"openrouter", RealmCN, "deepseek/deepseek-v4.1-flash", []string{"low", "high", "max"}, "high"},
 	}
 	for _, tc := range cases {
 		m, ok := StaticMeta(tc.client, tc.realm, tc.model)
@@ -200,6 +203,35 @@ func TestStaticTableV41EffortDefaults(t *testing.T) {
 		}
 		if m.DefaultEffort != tc.def {
 			t.Errorf("%s/%s default = %q, want %q", tc.client, tc.model, m.DefaultEffort, tc.def)
+		}
+	}
+}
+
+// TestStaticTableV41ElevateDefaults pins the operator's "default on for every
+// V4.1 Flash" rule to the embedded table. A row whose own vocabulary has no
+// tier above xhigh still enables the policy: it is simply a no-op there, and
+// the table must never invent a max the vendor did not publish.
+func TestStaticTableV41ElevateDefaults(t *testing.T) {
+	cases := []struct {
+		client string
+		model  string
+	}{
+		{"workbuddy", "deepseek-v4.1-flash"},
+		{"workbuddy", "cn:deepseek-v4.1-flash"},
+		{"workbuddy", "global:deepseek-v4.1-flash"},
+		{"tabbit", "DeepSeek-V4.1-Flash"},
+		{"codearts", "deepseek-v4.1-flash"},
+		{"cline", "cline-free/deepseek-v4.1-flash"},
+		{"cline", "deepseek/deepseek-v4.1-flash"},
+		{"loomy", "DeepSeek-V4.1-Flash"},
+		{"raccoon", "sn-deepseek-v4-1-flash"},
+		{"trae", "deepseek-v4.1-flash"},
+		{"openrouter", "deepseek/deepseek-v4.1-flash"},
+		{"lobsterai", "deepseek-flash"},
+	}
+	for _, tc := range cases {
+		if !StaticElevateTop(tc.client, tc.model) {
+			t.Errorf("StaticElevateTop(%s, %q) = false, want the V4.1 default on", tc.client, tc.model)
 		}
 	}
 }

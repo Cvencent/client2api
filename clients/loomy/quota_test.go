@@ -333,14 +333,17 @@ func TestCheckinClaimsTheDailyAllowance(t *testing.T) {
 	}
 
 	reqs := rt.requests()
-	if len(reqs) != 1 {
-		t.Fatalf("sent %d requests, want 1", len(reqs))
+	if len(reqs) != 2 {
+		t.Fatalf("sent %d requests, want check-in plus balance refresh", len(reqs))
 	}
 	if got := reqs[0].Method + " " + reqs[0].URL.Path; got != "POST "+firstLogin {
 		t.Fatalf("request = %q, want POST %s", got, firstLogin)
 	}
-	if body := strings.TrimSpace(rt.lastBody()); body != "{}" {
-		t.Fatalf("body = %q, want {}", body)
+	if got := reqs[1].Method + " " + reqs[1].URL.Path; got != "GET "+pointsPath {
+		t.Fatalf("request = %q, want GET %s after the grant", got, pointsPath)
+	}
+	if body := strings.TrimSpace(rt.sentBodies()[0]); body != "{}" {
+		t.Fatalf("grant body = %q, want {}", body)
 	}
 }
 

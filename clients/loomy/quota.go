@@ -197,6 +197,7 @@ func (c *Client) AccountBalance(ctx context.Context, id string, soon time.Durati
 	if err != nil {
 		return core.Balance{}, err
 	}
+	c.applyBalanceGuard(id, detail.Available)
 
 	// The ceiling the two pools could hold today: the permanent credit plus one
 	// day's allowance.  Without a reported quota there is no ceiling to show, so
@@ -232,6 +233,7 @@ func (c *Client) AccountPackages(ctx context.Context, id string) (core.PackageRe
 	if err != nil {
 		return core.PackageReport{}, err
 	}
+	c.applyBalanceGuard(id, detail.Available)
 
 	// The permanent pool's size is not reported anywhere, so its size is what is
 	// left: claiming a larger size would be a fabricated number, and a size
@@ -335,6 +337,16 @@ func (c *Client) Checkin(ctx context.Context, id, action string) (core.CheckinRe
 	}
 	if outcome.HasDailyQuota {
 		res.Data["daily_quota"] = outcome.DailyQuota
+	}
+
+	// The daily grant is the recovery path for a zero-balance account.  Read
+	// the ledger back once so the pool reacts to the credit that just landed;
+	// the check-in reply itself is not a full balance snapshot.  A read
+	// failure leaves the account parked, because no funded number was proven.
+	if snap, rerr := c.up.creditSnapshot(ctx, acc.AccessToken); rerr == nil {
+		if detail, derr := snap.detail(); derr == nil {
+			c.applyBalanceGuard(id, detail.Available)
+		}
 	}
 	return res, nil
 }

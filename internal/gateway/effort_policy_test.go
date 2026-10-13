@@ -69,7 +69,7 @@ func TestElevateTopPromotesXHighToTheModelsHighestTier(t *testing.T) {
 	}
 }
 
-func TestElevateTopStaysOffByDefault(t *testing.T) {
+func TestElevateTopStaysOffWithoutAnEmbeddedDefault(t *testing.T) {
 	store, err := modelmeta.OpenOverrideStore("")
 	if err != nil {
 		t.Fatal(err)
@@ -91,6 +91,92 @@ func TestElevateTopStaysOffByDefault(t *testing.T) {
 	}
 	if base.seen.EffortFinal {
 		t.Fatal("an unchanged level was marked final")
+	}
+}
+
+// TestElevateTopEmbeddedDefaultNeedsNoOverrideStore pins the shipped default:
+// workbuddy's V4.1 Flash row opts into cap alignment inside the binary, so the
+// promotion happens even when the panel store was never wired or never touched.
+func TestElevateTopEmbeddedDefaultNeedsNoOverrideStore(t *testing.T) {
+	base := &testClient{name: "workbuddy", catalogue: []core.Model{{ID: "cn:deepseek-v4.1-flash"}}}
+	srv := newEffortPolicyServer(t, base, nil)
+
+	body := `{"model":"cn:deepseek-v4.1-flash","reasoning_effort":"xhigh","messages":[{"role":"user","content":"hi"}]}`
+	if rec := chat(t, srv, body); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if got := base.seen.Options["reasoning_effort"]; got != "max" {
+		t.Fatalf("module reasoning_effort = %v, want the embedded default to promote xhigh to max", got)
+	}
+	if !base.seen.EffortFinal {
+		t.Fatal("the embedded promotion was not marked final")
+	}
+}
+
+// OpenRouter's live V4.1 Flash row publishes low/high/max, so the embedded
+// default must promote xhigh even when the panel store was never wired.
+func TestElevateTopEmbeddedDefaultOpenRouter(t *testing.T) {
+	base := &testClient{name: "openrouter", catalogue: []core.Model{{ID: "deepseek/deepseek-v4.1-flash"}}}
+	srv := newEffortPolicyServer(t, base, nil)
+
+	body := `{"model":"deepseek/deepseek-v4.1-flash","reasoning_effort":"xhigh","messages":[{"role":"user","content":"hi"}]}`
+	if rec := chat(t, srv, body); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if got := base.seen.Options["reasoning_effort"]; got != "max" {
+		t.Fatalf("module reasoning_effort = %v, want the embedded default to promote xhigh to max", got)
+	}
+	if !base.seen.EffortFinal {
+		t.Fatal("the embedded promotion was not marked final")
+	}
+}
+
+// TestElevateTopEmbeddedDefaultNeverInventsMax guards the realm split: the
+// international V4.1 Flash row accepts only high, so the on-by-default policy
+// must leave the caller's xhigh alone rather than sending a value that 400s.
+func TestElevateTopEmbeddedDefaultNeverInventsMax(t *testing.T) {
+	base := &testClient{name: "workbuddy", catalogue: []core.Model{{ID: "global:deepseek-v4.1-flash"}}}
+	srv := newEffortPolicyServer(t, base, nil)
+
+	body := `{"model":"global:deepseek-v4.1-flash","reasoning_effort":"xhigh","messages":[{"role":"user","content":"hi"}]}`
+	if rec := chat(t, srv, body); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if got := base.seen.Options["reasoning_effort"]; got != "xhigh" {
+		t.Fatalf("module reasoning_effort = %v, want xhigh when the realm publishes no higher tier", got)
+	}
+}
+
+// TestElevateTopExplicitOffBeatsEmbeddedDefault and restore: an operator who
+// unchecks the box must keep xhigh, and "restore default" must bring the
+// embedded promotion back instead of pinning a permanent off.
+func TestElevateTopExplicitOffBeatsEmbeddedDefault(t *testing.T) {
+	store, err := modelmeta.OpenOverrideStore("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetElevateTop("cline", "cline-free/deepseek-v4.1-flash", false); err != nil {
+		t.Fatal(err)
+	}
+	base := &testClient{name: "cline", catalogue: []core.Model{{ID: "cline-free/deepseek-v4.1-flash"}}}
+	srv := newEffortPolicyServer(t, base, store)
+
+	body := `{"model":"cline-free/deepseek-v4.1-flash","reasoning_effort":"xhigh","messages":[{"role":"user","content":"hi"}]}`
+	if rec := chat(t, srv, body); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if got := base.seen.Options["reasoning_effort"]; got != "xhigh" {
+		t.Fatalf("module reasoning_effort = %v, want xhigh after an explicit off", got)
+	}
+
+	if err := store.ClearElevateTop("cline", "cline-free/deepseek-v4.1-flash"); err != nil {
+		t.Fatal(err)
+	}
+	if rec := chat(t, srv, body); rec.Code != http.StatusOK {
+		t.Fatalf("restore status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if got := base.seen.Options["reasoning_effort"]; got != "max" {
+		t.Fatalf("module reasoning_effort = %v, want max after restore default", got)
 	}
 }
 

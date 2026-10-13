@@ -145,8 +145,8 @@ func TestConsecutiveSessionFailuresSurviveARestart(t *testing.T) {
 	if acc.dead {
 		t.Fatal("one persisted session failure parked the account")
 	}
-	if acc.sessionFailures != 1 {
-		t.Fatalf("reloaded session failures = %d, want 1", acc.sessionFailures)
+	if acc.cooldownStage != 1 {
+		t.Fatalf("reloaded cooldown stage = %d, want 1", acc.cooldownStage)
 	}
 }
 

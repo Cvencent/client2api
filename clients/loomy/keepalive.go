@@ -65,7 +65,7 @@ func (c *Client) runScheduledKeepalive(ctx context.Context, accountID string) (c
 	// A credential the vendor already rejected, one the operator parked, or one
 	// with no token has nothing to keep alive: a heartbeat would only spend a
 	// call to learn what the pool already knows.
-	if acc.dead || !acc.Enabled || strings.TrimSpace(acc.AccessToken) == "" {
+	if acc.dead || acc.abnormal || !acc.Enabled || strings.TrimSpace(acc.AccessToken) == "" {
 		res.Skipped = true
 		res.Message = "the account is parked or disabled; skipping the keepalive heartbeat"
 		return res, nil

@@ -471,6 +471,7 @@ func (p *panel) handleClientList(w http.ResponseWriter, r *http.Request) {
 //	DELETE <base>/accounts/<id>
 //	POST   <base>/accounts/<id>/test
 //	POST   <base>/accounts/<id>/enabled    {enabled}
+//	POST   <base>/accounts/<id>/model-policy  {disabled_models[],force_enabled}
 //	GET    <base>/discover
 //	POST   <base>/import                   {paths?, all?}
 //	POST   <base>/login
@@ -573,6 +574,9 @@ func (p *panel) handleClientScoped(w http.ResponseWriter, r *http.Request) {
 
 	case len(segs) == 3 && segs[0] == "accounts" && segs[2] == "enabled":
 		p.setEnabled(w, r, client, segs[1])
+
+	case len(segs) == 3 && segs[0] == "accounts" && segs[2] == "model-policy":
+		p.setAccountModelPolicy(w, r, client, segs[1])
 
 	case len(segs) == 3 && segs[0] == "accounts" && segs[2] == "checkin":
 		p.checkin(w, r, client, segs[1])

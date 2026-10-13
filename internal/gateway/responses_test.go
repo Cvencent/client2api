@@ -413,6 +413,150 @@ func TestResponses_FlatAndNestedToolsBothAccepted(t *testing.T) {
 	}
 }
 
+// TestResponses_NamespaceToolsAreFlattenedForTheVendor: Codex declares each MCP
+// server's tools as one {"type":"namespace"} container.  A Chat vendor has no
+// namespaces, so the children must be declared as ordinary functions -- and the
+// container itself must never be.  It carries no schema, and a call to it lands
+// as the name Codex refuses with "unsupported call".
+func TestResponses_NamespaceToolsAreFlattenedForTheVendor(t *testing.T) {
+	c := &testClient{name: "t", events: []core.Event{{Type: core.EventDelta, Delta: "ok"}, {Type: core.EventDone, Finish: "stop"}}}
+	srv := newTestServer(t, c, NewStats(), NewUsageStore(10))
+
+	body := `{
+		"model": "t/m1",
+		"input": "hi",
+		"tools": [
+			{"type":"namespace","name":"mcp__codegraph","description":"CodeGraph tools.","tools":[
+				{"type":"function","name":"codegraph_status","description":"status","parameters":{"type":"object","properties":{}}},
+				{"type":"function","name":"codegraph_search","description":"search","parameters":{"type":"object"}}
+			]},
+			{"type":"function","name":"exec_command","parameters":{"type":"object"}}
+		]
+	}`
+	if rec := responses(t, srv, body); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+	}
+
+	got := map[string]core.Tool{}
+	for _, tool := range c.seen.Tools {
+		got[tool.Name] = tool
+	}
+	for _, want := range []string{"mcp__codegraph__codegraph_status", "mcp__codegraph__codegraph_search", "exec_command"} {
+		if _, ok := got[want]; !ok {
+			t.Fatalf("tool %q missing; module saw %+v", want, c.seen.Tools)
+		}
+	}
+	if _, ok := got["mcp__codegraph"]; ok {
+		t.Fatalf("the namespace container was declared as a tool: %+v", c.seen.Tools)
+	}
+	if d := got["mcp__codegraph__codegraph_status"].Description; d != "status" {
+		t.Errorf("child description lost: %q", d)
+	}
+	if got["mcp__codegraph__codegraph_status"].Parameters == nil {
+		t.Error("child schema lost")
+	}
+}
+
+// TestResponses_NamespacedCallIsSplitBackIntoThePair: the vendor answers with the
+// flattened name, but Codex dispatches on the (namespace, name) pair.  Sending
+// the flat name alone is exactly the shape Codex rejects as an unsupported call.
+func TestResponses_NamespacedCallIsSplitBackIntoThePair(t *testing.T) {
+	tools := `"tools":[{"type":"namespace","name":"mcp__codegraph","tools":[{"type":"function","name":"codegraph_status","parameters":{"type":"object"}}]}]`
+
+	for _, stream := range []bool{true, false} {
+		label := "buffered"
+		if stream {
+			label = "stream"
+		}
+		t.Run(label, func(t *testing.T) {
+			c := &testClient{name: "t", events: []core.Event{
+				{Type: core.EventToolCall, ToolCall: &core.ToolCallDelta{Index: 0, ID: "call_1", Name: "mcp__codegraph__codegraph_status"}},
+				{Type: core.EventToolCall, ToolCall: &core.ToolCallDelta{Index: 0, Arguments: "{}"}},
+				{Type: core.EventDone, Finish: "tool_calls"},
+			}}
+			srv := newTestServer(t, c, NewStats(), NewUsageStore(10))
+
+			streamFlag := "false"
+			if stream {
+				streamFlag = "true"
+			}
+			rec := responses(t, srv, `{"model":"t/m1","input":"status please","stream":`+streamFlag+`,`+tools+`}`)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+			}
+
+			var name, namespace any
+			if stream {
+				done := firstOfType(decodeSSE(t, rec.Body.String()), "response.output_item.done")
+				if done == nil {
+					t.Fatalf("no output_item.done; events = %v", sseType(decodeSSE(t, rec.Body.String())))
+				}
+				item := done["item"].(map[string]any)
+				name, namespace = item["name"], item["namespace"]
+			} else {
+				var resp responseObject
+				if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+					t.Fatalf("decode: %v; body = %s", err, rec.Body)
+				}
+				var call *responseOutput
+				for i := range resp.Output {
+					if resp.Output[i].Type == "function_call" {
+						call = &resp.Output[i]
+					}
+				}
+				if call == nil {
+					t.Fatalf("no function_call in %+v", resp.Output)
+				}
+				name, namespace = call.Name, call.Namespace
+			}
+
+			if name != "codegraph_status" {
+				t.Errorf("name = %v, want the child name codegraph_status", name)
+			}
+			if namespace != "mcp__codegraph" {
+				t.Errorf("namespace = %v, want mcp__codegraph", namespace)
+			}
+		})
+	}
+}
+
+// TestResponses_ReplayedNamespacedCallKeepsTheVendorName: Codex replays the call
+// it made as a (namespace, name) pair.  The Chat history has to spell it the way
+// the vendor was offered it, or the assistant turn cites a tool the model never
+// saw and the tool result no longer lines up.
+func TestResponses_ReplayedNamespacedCallKeepsTheVendorName(t *testing.T) {
+	c := &testClient{name: "t", events: []core.Event{{Type: core.EventDelta, Delta: "ok"}, {Type: core.EventDone, Finish: "stop"}}}
+	srv := newTestServer(t, c, NewStats(), NewUsageStore(10))
+
+	body := `{
+		"model": "t/m1",
+		"input": [
+			{"type":"message","role":"user","content":"status?"},
+			{"type":"function_call","id":"fc_1","call_id":"call_1","name":"codegraph_status","namespace":"mcp__codegraph","arguments":"{}"},
+			{"type":"function_call_output","call_id":"call_1","output":"{\"ok\":true}"}
+		]
+	}`
+	if rec := responses(t, srv, body); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+	}
+
+	var callName, resultName string
+	for _, m := range c.seen.Messages {
+		if len(m.ToolCalls) > 0 {
+			callName = m.ToolCalls[0].Name
+		}
+		if m.Role == "tool" {
+			resultName = m.Name
+		}
+	}
+	if want := "mcp__codegraph__codegraph_status"; callName != want {
+		t.Errorf("replayed call name = %q, want %q", callName, want)
+	}
+	if resultName != callName {
+		t.Errorf("tool result name = %q, want it to match the call name %q", resultName, callName)
+	}
+}
+
 func TestResponses_BuiltinToolIsSkippedNotFatal(t *testing.T) {
 	c := &testClient{name: "t", events: []core.Event{{Type: core.EventDelta, Delta: "ok"}, {Type: core.EventDone, Finish: "stop"}}}
 	srv := newTestServer(t, c, NewStats(), NewUsageStore(10))

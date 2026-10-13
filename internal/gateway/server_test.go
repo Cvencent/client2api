@@ -1010,3 +1010,29 @@ func TestModelRefusalForANamedPlatformIsNotHidden(t *testing.T) {
 		t.Fatal("an explicitly named platform's refusal was retried elsewhere")
 	}
 }
+
+func TestChatBodyAboveTheLimitIsRejected(t *testing.T) {
+	c := &testClient{name: "alpha"}
+	srv := newTestServer(t, c, NewStats(), NewUsageStore(4))
+
+	// A stream of JSON string chunks keeps the fixture itself from needing a
+	// single 64 MiB in-memory representation. The decoder must stop once
+	// MaxBytesReader trips, before the request reaches model routing.
+	prefix := `{"model":"m1","messages":[{"role":"user","content":"`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	req.Header.Set("Content-Type", "application/json")
+	req.Body = io.NopCloser(io.MultiReader(
+		strings.NewReader(prefix),
+		strings.NewReader(strings.Repeat("x", maxBodyBytes)),
+		strings.NewReader(`"}]}`),
+	))
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("oversized body status = %d, want 400", rec.Code)
+	}
+	if c.modelsCalls != 0 {
+		t.Fatalf("oversized body reached the catalogue %d times", c.modelsCalls)
+	}
+}

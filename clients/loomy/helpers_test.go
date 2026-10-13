@@ -4,12 +4,22 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"client2api/internal/core"
 )
+
+func TestMain(m *testing.M) {
+	old := chatRetryDelay
+	chatRetryDelay = time.Millisecond
+	code := m.Run()
+	chatRetryDelay = old
+	os.Exit(code)
+}
 
 // Shared fixtures for the module's tests.  Nothing here touches the network:
 // every test injects a stubTransport, and the only files written go to the

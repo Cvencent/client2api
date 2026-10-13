@@ -220,6 +220,7 @@ type CheckinResult struct {
 type Capabilities struct {
 	CustomSource bool            `json:"custom_source,omitempty"`
 	Manage       bool            `json:"manage"`         // AccountManager
+	ModelPolicy  bool            `json:"model_policy"`   // AccountModelPolicyManager
 	Import       bool            `json:"import"`         // CredentialImporter
 	Login        bool            `json:"login"`          // LoginProvider
 	Checkin      bool            `json:"checkin"`        // CheckinProvider
@@ -363,6 +364,21 @@ type AccountManager interface {
 	// empty.  It reports per-account outcomes and only fails wholesale when
 	// the request itself is malformed.
 	RefreshAccount(ctx context.Context, id string) ([]RefreshResult, error)
+}
+
+// AccountModelPolicyManager lets a module apply an operator's per-account model
+// policy: which models the account may be routed to, and whether a credit-only
+// park (zero balance or an exhausted quota) is overridden. It is deliberately
+// separate from AccountManager -- model selection is orthogonal to listing and
+// testing credentials, and forcing it onto every module would break the ones
+// that do not route per model.
+type AccountModelPolicyManager interface {
+	Client
+	// SetAccountModelPolicy replaces one account's disabled-model blacklist
+	// and credit-only force flag.  An empty blacklist means every model is
+	// allowed, which is the default for an account the operator never
+	// configured.  The change must survive a restart.
+	SetAccountModelPolicy(ctx context.Context, id string, disabledModels []string, forceEnabled bool) error
 }
 
 // CredentialImporter lets a module pull credentials out of the vendor's own
@@ -616,6 +632,9 @@ func CapabilitiesOf(ctx context.Context, c Client) Capabilities {
 		caps.Manage = true
 		caps.Fields = am.AccountFields(ctx)
 	}
+	if _, ok := c.(AccountModelPolicyManager); ok {
+		caps.ModelPolicy = true
+	}
 	if _, ok := c.(CredentialImporter); ok {
 		caps.Import = true
 	}
@@ -718,6 +737,14 @@ func CapabilitiesOf(ctx context.Context, c Client) Capabilities {
 func AsAccountManager(c Client) (AccountManager, bool) {
 	am, ok := c.(AccountManager)
 	return am, ok
+}
+
+// AsAccountModelPolicy narrows a registered client to the per-account model
+// policy surface, so the panel can answer 501 instead of panicking when a
+// module never opted in.
+func AsAccountModelPolicy(c Client) (AccountModelPolicyManager, bool) {
+	mp, ok := c.(AccountModelPolicyManager)
+	return mp, ok
 }
 
 // AsCredentialImporter narrows a registered client.

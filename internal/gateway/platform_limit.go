@@ -18,6 +18,7 @@ package gateway
 import (
 	"context"
 	"sync"
+	"time"
 
 	"client2api/internal/core"
 )
@@ -51,15 +52,48 @@ func (l *platformLimiter) release() {
 	}
 }
 
-// limiterFor returns the limiter for a platform, creating it on first use and
-// updating its ceiling when the operator reloads the config.
-func (s *server) limiterFor(name string) *platformLimiter {
+// limiterSweepInterval bounds how often the idle limiter maps are compacted.
+// Account ids can be transient (a pool rebuild or a re-login changes them), so
+// without a sweep, one entry per historical credential would stay for the
+// process lifetime. A live limiter is never evicted.
+const limiterSweepInterval = 10 * time.Minute
+
+// sweepLimitersLocked drops limiter entries that are idle and therefore
+// cannot affect an in-flight request. Callers hold s.limMu.
+func (s *server) sweepLimitersLocked(now time.Time) {
+	if !s.limiterSweep.IsZero() && now.Before(s.limiterSweep) {
+		return
+	}
+	s.limiterSweep = now.Add(limiterSweepInterval)
+	for name, l := range s.limiters {
+		l.mu.Lock()
+		idle := l.used == 0
+		l.mu.Unlock()
+		if idle {
+			delete(s.limiters, name)
+		}
+	}
+	for key, l := range s.accountLimiters {
+		l.mu.Lock()
+		idle := l.used == 0
+		l.mu.Unlock()
+		if idle {
+			delete(s.accountLimiters, key)
+		}
+	}
+}
+
+// takePlatformLimiter resolves, refreshes and acquires one platform slot while
+// holding limMu, so an idle sweep cannot detach the limiter between lookup and
+// acquisition. The returned release func is nil when max is zero.
+func (s *server) takePlatformLimiter(name string) (func(), error) {
 	max := 0
 	if s.opts.Registry != nil {
 		max = s.opts.Registry.MaxInFlightFor(name)
 	}
 	s.limMu.Lock()
 	defer s.limMu.Unlock()
+	s.sweepLimitersLocked(time.Now())
 	if s.limiters == nil {
 		s.limiters = map[string]*platformLimiter{}
 	}
@@ -70,8 +104,18 @@ func (s *server) limiterFor(name string) *platformLimiter {
 	}
 	l.mu.Lock()
 	l.max = max
+	if l.max <= 0 {
+		l.mu.Unlock()
+		return func() {}, nil
+	}
+	if l.used >= l.max {
+		l.mu.Unlock()
+		return nil, core.ErrBusy
+	}
+	l.used++
 	l.mu.Unlock()
-	return l
+	var once sync.Once
+	return func() { once.Do(l.release) }, nil
 }
 
 // acquirePlatformSlot takes one in-flight slot for the platform.  When every
@@ -79,12 +123,7 @@ func (s *server) limiterFor(name string) *platformLimiter {
 // a Retry-After, and which the account-rotation loop deliberately does not
 // retry (retrying a saturated platform would only deepen the backlog).
 func (s *server) acquirePlatformSlot(name string) (func(), error) {
-	l := s.limiterFor(name)
-	if !l.acquire() {
-		return nil, core.ErrBusy
-	}
-	var once sync.Once
-	return func() { once.Do(l.release) }, nil
+	return s.takePlatformLimiter(name)
 }
 
 // releaseStream wraps a stream so its platform slot is returned on Close.  The
@@ -119,10 +158,10 @@ type accountKey struct {
 	account  string
 }
 
-// accountLimiterFor returns the per-account limiter for a platform, creating
-// it on first use and refreshing its ceiling from the live policy so the
-// operator's edit counts against the very next attempt.
-func (s *server) accountLimiterFor(platform, accountID string) *platformLimiter {
+// takeAccountLimiter resolves, refreshes and acquires one per-account slot
+// while holding limMu, so an idle sweep cannot detach the limiter between
+// lookup and acquisition. The returned release func is nil when max is zero.
+func (s *server) takeAccountLimiter(platform, accountID string) (func(), error) {
 	max := 0
 	if s.opts.Registry != nil {
 		max = s.opts.Registry.MaxInFlightPerAccountFor(platform)
@@ -130,6 +169,7 @@ func (s *server) accountLimiterFor(platform, accountID string) *platformLimiter 
 	key := accountKey{platform: platform, account: accountID}
 	s.limMu.Lock()
 	defer s.limMu.Unlock()
+	s.sweepLimitersLocked(time.Now())
 	if s.accountLimiters == nil {
 		s.accountLimiters = map[accountKey]*platformLimiter{}
 	}
@@ -140,8 +180,18 @@ func (s *server) accountLimiterFor(platform, accountID string) *platformLimiter 
 	}
 	l.mu.Lock()
 	l.max = max
+	if l.max <= 0 {
+		l.mu.Unlock()
+		return func() {}, nil
+	}
+	if l.used >= l.max {
+		l.mu.Unlock()
+		return nil, core.ErrBusy
+	}
+	l.used++
 	l.mu.Unlock()
-	return l
+	var once sync.Once
+	return func() { once.Do(l.release) }, nil
 }
 
 // acquireAccountSlot takes one in-flight slot for (platform, account).  When
@@ -152,12 +202,7 @@ func (s *server) acquireAccountSlot(platform, accountID string) (func(), error) 
 	if accountID == "" {
 		return func() {}, nil
 	}
-	l := s.accountLimiterFor(platform, accountID)
-	if !l.acquire() {
-		return nil, core.ErrBusy
-	}
-	var once sync.Once
-	return func() { once.Do(l.release) }, nil
+	return s.takeAccountLimiter(platform, accountID)
 }
 
 // withPlatformSlot acquires a slot for the platform and returns a release func

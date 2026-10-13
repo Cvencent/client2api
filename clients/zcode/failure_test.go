@@ -314,3 +314,43 @@ func TestCancelledCallerStopsTheLoopAndReturnsAClassifiedError(t *testing.T) {
 		t.Errorf("kind = %q, want %q", f.Kind, core.FailureWAF)
 	}
 }
+
+// An account that loses the gateway's per-account in-flight race never reached
+// the vendor, so it must be skipped without burning one of the request's
+// upstream attempts and without being parked.
+func TestZcodeChatSkipsABusyAccountWithoutSpendingAnAttempt(t *testing.T) {
+	transport := &fakeTransport{handler: func(*http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, nonStreamFixture), nil
+	}}
+	c := newFailureClient(t, nil, 2, transport)
+
+	var served string
+	req := &core.ChatRequest{
+		Model:    "GLM-5.3",
+		Messages: []core.Message{{Role: "user", Content: "hi"}},
+		ServedBy: &served,
+	}
+	var busyID string
+	req.SetAccountAcquirer(func(id string) (func(), error) {
+		if busyID == "" {
+			busyID = id
+			return nil, core.ErrBusy
+		}
+		return func() {}, nil
+	})
+
+	stream, err := c.Chat(t.Context(), req)
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	defer stream.Close()
+	if got := transport.count(); got != 1 {
+		t.Fatalf("upstream calls = %d, want exactly one on the free account", got)
+	}
+	if served == "" || served == busyID {
+		t.Fatalf("ServedBy = %q, the busy account was %q", served, busyID)
+	}
+	if !c.pool.usableByID(busyID) {
+		t.Fatalf("busy account %q was taken out of rotation", busyID)
+	}
+}

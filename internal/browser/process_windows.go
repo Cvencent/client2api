@@ -55,7 +55,7 @@ func browserProcessIDs(image, profile string) []uint32 {
 		if !strings.EqualFold(windows.UTF16ToString(entry.ExeFile[:]), image) {
 			continue
 		}
-		if line, ok := processCommandLine(entry.ProcessID); ok && strings.Contains(line, profile) {
+		if line, ok := processCommandLine(entry.ProcessID); ok && strings.Contains(strings.ToLower(line), strings.ToLower(profile)) {
 			pids = append(pids, entry.ProcessID)
 		}
 	}

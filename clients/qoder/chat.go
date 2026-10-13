@@ -245,7 +245,14 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 
 	tried := map[string]bool{}
 	var lastErr error
-	for i := 0; i < len(candidates) && i < maxChatAttempts; i++ {
+	// issued counts actual upstream attempts. A busy account is skipped
+	// without consuming one of those attempts, so a concurrent request can
+	// continue down the candidate list instead of failing on the lock race.
+	issued := 0
+	for i := 0; i < len(candidates); i++ {
+		if issued >= maxChatAttempts {
+			break
+		}
 		acc := candidates[i]
 		if tried[acc.ID] {
 			continue
@@ -276,6 +283,7 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 			cancel()
 			return nil, err
 		}
+		issued++
 		resp, err := c.openChat(chatCtx, acc, body)
 		if err != nil {
 			req.ReleaseAccountSlot()

@@ -71,3 +71,32 @@ func TestModelContextEffortPolicyRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+// TestModelContextRestoreDefaultClearsManualElevateChoice pins what the row's
+// "restore default" action posts for a model with an embedded default: it must
+// drop the manual choice rather than write elevate_top:false, or a V4.1 Flash
+// row could never be turned back on by restoring defaults.
+func TestModelContextRestoreDefaultClearsManualElevateChoice(t *testing.T) {
+	store, err := modelmeta.OpenOverrideStore("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetElevateTop("cline", "cline-free/deepseek-v4.1-flash", false); err != nil {
+		t.Fatal(err)
+	}
+	h := New(Options{ModelOverrides: store})
+
+	body := `{"clients":{"cline":{"cline-free/deepseek-v4.1-flash":{"elevate_top_default":true}}}}`
+	req := httptest.NewRequest(http.MethodPost, "/panel/api/model_context", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if _, ok := store.Get("cline", "cline-free/deepseek-v4.1-flash"); ok {
+		t.Fatal("restore default left a manual entry behind")
+	}
+	if !modelmeta.ElevateTop("cline", "cline-free/deepseek-v4.1-flash", store) {
+		t.Fatal("restore default did not fall back to the embedded V4.1 default")
+	}
+}

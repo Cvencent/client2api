@@ -23,6 +23,12 @@ type SessionPlatforms struct {
 	ttl     time.Duration
 	entries map[string]sessionPlatformEntry
 	now     func() time.Time
+
+	// gcMu guards only the GC goroutine lifecycle, so StartGC/StopGC never
+	// contend with the request path.
+	gcMu    sync.Mutex
+	stopGC  chan struct{}
+	gcEvery time.Duration
 }
 
 // sessionPlatforms keeps the old internal spelling used by the package's
@@ -40,6 +46,8 @@ type sessionPlatformEntry struct {
 // mirrors core.DefaultAffinityTTL so the gateway and the modules age their
 // conversation state on the same clock.
 const sessionPlatformTTL = 30 * time.Minute
+
+const sessionPlatformGCInterval = 5 * time.Minute
 
 func newSessionPlatforms() *sessionPlatforms {
 	return NewSessionPlatforms()
@@ -184,6 +192,87 @@ func (s *sessionPlatforms) setTTL(d time.Duration) {
 	s.mu.Lock()
 	s.ttl = d
 	s.mu.Unlock()
+	s.setGCInterval(d)
+}
+
+func (s *sessionPlatforms) setGCInterval(d time.Duration) {
+	if s == nil || d <= 0 {
+		return
+	}
+	s.gcMu.Lock()
+	s.gcEvery = d
+	s.gcMu.Unlock()
+}
+
+// GC drops every expired, non-manual binding and reports how many it removed.
+// Manual pins are operator state, not idle heuristics, so the sweep leaves them
+// alone just as resolve does.
+func (s *SessionPlatforms) GC() int {
+	if s == nil {
+		return 0
+	}
+	now := s.clock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ttl <= 0 {
+		return 0
+	}
+	removed := 0
+	for key, e := range s.entries {
+		if e.manual {
+			continue
+		}
+		if now.Sub(e.lastSeen) > s.ttl {
+			delete(s.entries, key)
+			removed++
+		}
+	}
+	return removed
+}
+
+// StartGC launches the idle sweep. It is idempotent and nil-safe.
+func (s *SessionPlatforms) StartGC() {
+	if s == nil {
+		return
+	}
+	s.gcMu.Lock()
+	defer s.gcMu.Unlock()
+	if s.stopGC != nil {
+		return
+	}
+	stop := make(chan struct{})
+	s.stopGC = stop
+	every := s.gcEvery
+	if every <= 0 {
+		every = sessionPlatformGCInterval
+	}
+	core.GoSafe("session platform sweep", nil, func() {
+		t := time.NewTicker(every)
+		defer t.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-t.C:
+				s.GC()
+			}
+		}
+	})
+}
+
+// StopGC stops the idle sweep. Calling it without StartGC, or twice, is
+// harmless, and it is nil-safe.
+func (s *SessionPlatforms) StopGC() {
+	if s == nil {
+		return
+	}
+	s.gcMu.Lock()
+	defer s.gcMu.Unlock()
+	if s.stopGC == nil {
+		return
+	}
+	close(s.stopGC)
+	s.stopGC = nil
 }
 
 func (s *sessionPlatforms) clock() time.Time {

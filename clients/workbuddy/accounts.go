@@ -163,9 +163,11 @@ func (c *Client) poolRecords() []core.AccountRecord {
 			State:   st.State,
 			Note:    st.Note,
 			Fields: map[string]any{
-				"realm":  a.RealmName(),
-				"file":   filepath.Base(a.FilePath),
-				"origin": originFile,
+				"realm":           a.RealmName(),
+				"file":            filepath.Base(a.FilePath),
+				"origin":          originFile,
+				"disabled_models": a.DisabledModelsValue(),
+				"force_enabled":   a.ForceEnabledValue(),
 			},
 		}
 		if exp := a.ExpiryTime(); !exp.IsZero() {
@@ -369,6 +371,30 @@ func (c *Client) SetAccountEnabled(ctx context.Context, id string, enabled bool)
 	}
 	if err := os.Rename(a.FilePath, a.FilePath+disabledSuffix); err != nil {
 		return fmt.Errorf("cannot park %s: %w", filepath.Base(a.FilePath), err)
+	}
+	c.refreshAccounts(true)
+	return nil
+}
+
+// SetAccountModelPolicy replaces one account's model blacklist and credit-only
+// force override. It writes the credential file so the operator's choice
+// survives a restart, then reloads the live pool without dropping its health
+// state.
+func (c *Client) SetAccountModelPolicy(ctx context.Context, id string, disabledModels []string, forceEnabled bool) error {
+	if strings.TrimSpace(id) == "" {
+		return errors.New("account id is required")
+	}
+	c.refreshAccounts(false)
+	a := c.findAuth(id)
+	if a == nil {
+		if _, parked := c.findDisabled(id); parked {
+			return fmt.Errorf("account %q is parked; enable it before changing model policy", id)
+		}
+		return fmt.Errorf("account %q not found", id)
+	}
+	a.SetModelPolicy(disabledModels, forceEnabled)
+	if err := a.SaveAtomic(); err != nil {
+		return err
 	}
 	c.refreshAccounts(true)
 	return nil

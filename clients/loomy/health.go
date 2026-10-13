@@ -35,7 +35,7 @@ func (c *Client) Health() core.Health {
 	for i := range accounts {
 		a := &accounts[i]
 		switch {
-		case a.dead || !a.Enabled:
+		case a.dead || a.abnormal || !a.Enabled:
 			h.Disabled++
 		case a.selectable(now):
 			h.Ready++

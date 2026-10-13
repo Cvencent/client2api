@@ -53,6 +53,10 @@ type routeInput struct {
 	stat *chatStat
 	// emitter renders a successful stream in the caller's wire protocol.
 	emitter chatEmitter
+	// toolNames maps each namespaced tool's flattened Chat name back to the
+	// (namespace, name) pair it was declared as.  Only the Responses protocol
+	// has namespaces, so every other caller leaves it nil.
+	toolNames map[string]namespacedTool
 }
 
 // emitArgs is what an emitter needs to render one successful attempt.
@@ -62,8 +66,11 @@ type emitArgs struct {
 	model   string
 	stream  core.Stream
 	hintCtx func() core.HintContext
-	rec     *UsageRecord
-	stat    *chatStat
+	// toolNames is the table routeInput carries, passed through so a vendor's
+	// flattened call can be put back into the pair Codex dispatches on.
+	toolNames map[string]namespacedTool
+	rec       *UsageRecord
+	stat      *chatStat
 }
 
 // chatEmitter renders a core.Stream in one wire protocol.  The two methods
@@ -132,6 +139,7 @@ func (s *server) routeAndServe(w http.ResponseWriter, r *http.Request, in routeI
 		}
 	}
 	client, upstreamModel := candidates[0].Client, candidates[0].Model
+	attemptCtx := withCatalogueExtra(r.Context(), candidates[0])
 	in.rec.Candidate = 1
 	in.req.Model = upstreamModel
 	maxTokensExplicit := in.req.MaxTokens != nil
@@ -146,7 +154,7 @@ func (s *server) routeAndServe(w http.ResponseWriter, r *http.Request, in routeI
 	// correct for a module with no published number -- rather than the gateway
 	// inventing a cap from a table it does not own.
 	if in.req.MaxTokens == nil {
-		if n, ok := s.resolveMaxOutputTokens(r.Context(), client, upstreamModel); ok {
+		if n, ok := s.resolveMaxOutputTokens(attemptCtx, client, upstreamModel); ok {
 			in.req.MaxTokens = &n
 		}
 	}
@@ -160,8 +168,8 @@ func (s *server) routeAndServe(w http.ResponseWriter, r *http.Request, in routeI
 	}
 	// guardRequestContext records a trim on the usage row itself, so there is
 	// nothing to copy over here.
-	if report, trimmed := s.guardRequestContext(r.Context(), in.req, client, upstreamModel, maxTokensForBudget, in.rec); trimmed || report.Impossible {
-		window := s.effectiveContextWindow(r.Context(), client, upstreamModel)
+	if report, trimmed := s.guardRequestContext(attemptCtx, in.req, client, upstreamModel, maxTokensForBudget, in.rec); trimmed || report.Impossible {
+		window := s.effectiveContextWindow(attemptCtx, client, upstreamModel)
 		if report.Impossible {
 			// The newest turn alone does not fit, so there is nothing left to
 			// trim without answering a different question.  Refuse locally, with
@@ -192,7 +200,7 @@ func (s *server) routeAndServe(w http.ResponseWriter, r *http.Request, in routeI
 	// Thinking policy is per candidate: xhigh is the top tier Codex sends, but
 	// some vendors call their real top tier max. Cap alignment is opt-in per
 	// model and only changes the caller's own top tier.
-	sentEffort := s.applyEffortPolicy(r.Context(), client, upstreamModel, in.req, in.rec.ReasoningEffort)
+	sentEffort := s.applyEffortPolicy(attemptCtx, client, upstreamModel, in.req, in.rec.ReasoningEffort)
 	in.rec.SentReasoningEffort = ""
 	if sentEffort != "" && sentEffort != in.rec.ReasoningEffort {
 		in.rec.SentReasoningEffort = sentEffort
@@ -214,12 +222,12 @@ func (s *server) routeAndServe(w http.ResponseWriter, r *http.Request, in routeI
 	// unknown rather than guessed at.
 	// Assembled before the call so a failure can be explained with the request
 	// that caused it rather than with the error text alone.
-	hintCtx := s.hintContextFunc(r.Context(), client, upstreamModel, in.req.Messages)
+	hintCtx := s.hintContextFunc(attemptCtx, client, upstreamModel, in.req.Messages)
 
 	var servedBy string
 	in.req.ServedBy = &servedBy
 
-	stream, err := s.openStream(r.Context(), client, in.req)
+	stream, err := s.openStream(attemptCtx, client, in.req)
 	if err != nil {
 		// A failure usually names its own account through core.Failure.  When it
 		// does not, the slot still holds the last credential the module tried,
@@ -281,7 +289,7 @@ func (s *server) routeAndServe(w http.ResponseWriter, r *http.Request, in routeI
 	stream = wrapStickyFailure(stream, client, conversationKey)
 	defer stream.Close()
 
-	a := emitArgs{s: s, client: client, model: in.modelForWire, stream: stream, hintCtx: hintCtx, rec: in.rec, stat: in.stat}
+	a := emitArgs{s: s, client: client, model: in.modelForWire, stream: stream, hintCtx: hintCtx, toolNames: in.toolNames, rec: in.rec, stat: in.stat}
 	if in.stream {
 		in.emitter.emitStream(w, r, a)
 		return

@@ -79,6 +79,10 @@ type server struct {
 	// accountLimiters is the second brake, keyed by (platform, account): the
 	// operator's per-account ceiling.  limMu also guards this map.
 	accountLimiters map[accountKey]*platformLimiter
+	// limiterSweep is the next time a refill may evict idle limiter entries.
+	// It keeps the hot path to one time comparison per request and bounds the
+	// bookkeeping for transient account ids without touching live slots.
+	limiterSweep time.Time
 	// sessionPlatforms keeps a bare-model conversation on the platform that
 	// last served it, so failover does not ping-pong between a healthy and a
 	// broken sibling on every turn.
@@ -583,16 +587,9 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 	stat := newChatStat(rec.StartedAt, "", false)
 	defer stat.done()
 
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
-	if err != nil {
-		stat.status = http.StatusBadRequest
-		s.fail(&rec, err)
-		writeError(w, http.StatusBadRequest, "invalid_request_error", "reading body: "+err.Error())
-		return
-	}
-
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 	var wire chatRequest
-	if err := json.Unmarshal(body, &wire); err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&wire); err != nil {
 		stat.status = http.StatusBadRequest
 		s.fail(&rec, err)
 		writeError(w, http.StatusBadRequest, "invalid_request_error", "invalid JSON: "+err.Error())
@@ -649,18 +646,19 @@ func (s *server) serveRemainingCandidates(w http.ResponseWriter, r *http.Request
 	)
 	for _, candidate := range candidates {
 		client, upstreamModel := candidate.Client, candidate.Model
+		attemptCtx := withCatalogueExtra(r.Context(), candidate)
 		rec.Candidate = firstCandidate
 		firstCandidate++
 		attemptReq := cloneChatRequest(baseReq)
 		attemptReq.Model = upstreamModel
-		sentEffort := s.applyEffortPolicy(r.Context(), client, upstreamModel, attemptReq, rec.ReasoningEffort)
+		sentEffort := s.applyEffortPolicy(attemptCtx, client, upstreamModel, attemptReq, rec.ReasoningEffort)
 		rec.SentReasoningEffort = ""
 		if sentEffort != "" && sentEffort != rec.ReasoningEffort {
 			rec.SentReasoningEffort = sentEffort
 		}
 		if !maxTokensExplicit {
 			attemptReq.MaxTokens = nil
-			if n, ok := s.resolveMaxOutputTokens(r.Context(), client, upstreamModel); ok {
+			if n, ok := s.resolveMaxOutputTokens(attemptCtx, client, upstreamModel); ok {
 				attemptReq.MaxTokens = &n
 			}
 		}
@@ -674,10 +672,10 @@ func (s *server) serveRemainingCandidates(w http.ResponseWriter, r *http.Request
 		}
 		stat.model = rec.Model
 
-		hintCtx := s.hintContextFunc(r.Context(), client, upstreamModel, attemptReq.Messages)
+		hintCtx := s.hintContextFunc(attemptCtx, client, upstreamModel, attemptReq.Messages)
 		var servedBy string
 		attemptReq.ServedBy = &servedBy
-		stream, err := s.openStream(r.Context(), client, attemptReq)
+		stream, err := s.openStream(attemptCtx, client, attemptReq)
 		if err == nil {
 			s.opts.Registry.NoteModelSuccess(client.Name(), upstreamModel, time.Now())
 			s.sessionPlatforms.bindModel(core.ConversationKeyOf(baseReq), client.Name(), upstreamModel)

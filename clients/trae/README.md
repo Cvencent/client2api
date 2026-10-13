@@ -320,6 +320,10 @@ waits `core.SleepCtx(ctx, core.JitterDur(core.BackoffFrom(base, attempt)))` with
 context dies.  trae has no config knob for this — `cooldown_sec` is the pool's
 per-account cooldown, not an inter-attempt wait.
 
+Skipping an account whose per-account in-flight slot is already held is not an
+attempt: it consumes none of the `attempts` budget and does not pace the
+rotation.
+
 ## Known gaps
 
 - **The catalogue over-advertises.** `/v1/models` mirrors the upstream list, and

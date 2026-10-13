@@ -410,15 +410,21 @@ Completions。** 它的 `WireApi` 只有一个取值 `Responses`，供应商配�
 | `message` 项（`user`/`assistant`/`system`/`developer`） | 一条消息；`developer` 映射为 `system` |
 | `input_text` / 续接时的 `output_text` | 文本内容，保留助手历史 |
 | 带 `image_url` 与 `detail` 的 `input_image` | 图片内容项 |
-| `function_call` 项 | 带 `tool_calls` 的 `assistant` 回合 |
+| `function_call` 项 | 带 `tool_calls` 的 `assistant` 回合；命名空间调用的名字用上游见过的那个 |
 | `function_call_output` 项 | 按 `call_id` 关联的 `tool` 回合 |
 | `reasoning` 项 | 其 `summary` 文本，保留为回合的推理 |
 | `compaction` 项 | 其明文摘要（若其中有） |
-| `tools`（扁平**或**嵌在 `function` 下） | `core.Tool` 声明 |
+| `tools`（扁平、嵌在 `function` 下，或 `namespace` 容器） | `core.Tool` 声明；命名空间的子工具摊平成 `namespace__child` |
 | 内置工具（`web_search` 等） | 跳过，不会致命 |
 | `reasoning.effort` / `reasoning_effort` | 请求的思考档位，传给上游模块 |
 | `max_output_tokens` | `max_tokens` |
 | 未知项类型 | 跳过，不会致命 |
+
+**命名空间**工具是 Codex 给一台工具服务器的子工具分组的方式，例如
+`{"type":"namespace","name":"mcp__codegraph","tools":[…]}`。Chat 上游没有命名
+空间，也无法调用一个不带 schema 的容器，所以每个子工具按 `namespace__child`
+声明，回包时再拆回 Codex 派发所需的 `(namespace, name)` 二元组。把容器原样
+发上去，等于给上游一个以服务器命名的函数，任何调用都会变成 `unsupported call`。
 
 数组形式是两种协议真正不同的地方，翻译不是改字段名。Responses 没有
 `messages` 数组：工具调用、它的结果、推理回显都是同一个扁平 `input` 列表里的
@@ -449,6 +455,8 @@ response.completed                        （携带 response.id 与 usage）
 assistant 消息的事件——只发 delta 的流会显示文字但永远不执行工具。流中途断开
 时发 `response.failed`，不会挂住。
 每个输出项的 ID 与索引在 delta、`.done` 和最终输出中保持一致。
+进入命名空间的工具调用在 `name` 之外还带 `namespace`：Codex 按这个二元组分发，
+所以声明时摊平的名字会在发出前拆回去。
 达到 token 上限时，流式与非流式的响应状态都设为 `incomplete`，
 并在 `incomplete_details.reason` 中标明 `max_output_tokens`；
 流式通过 `response.incomplete` 事件结束。
@@ -721,7 +729,7 @@ assistant 消息的事件——只发 delta 的流会显示文字但永远不执
 * 能力字段按“操作员手动值 > 模块上报值 > 官方预设”解析；价格同样遵循该顺序。各厂商官方价表覆盖 DeepSeek、Zhipu、Kimi、MiniMax、Qwen、Volcengine、Tencent、MiMo、Anthropic、Google 和 OpenAI；缺失时再回退到 2026-10-10 的 models.dev 快照，并按 1 美元 = 7.20 元换算；DeepSeek Flash 和 Pro 直接使用 DeepSeek 官方人民币价和北京时间峰谷时段。模型列表显示 DeepSeek 空闲价，完成的请求按完成时刻所处的时段计价。
 * 缓存读取价存在时，缓存输入按缓存价计算，未缓存输入按输入价计算；没有缓存价时，全部输入都按输入价计算。未知价不会被当成 0 元。
 * 手动值保存在 `data/model_context.json`，升级不会丢失，可恢复为官方默认值。`/v1/models` 仍返回上下文和最大输出字段，OpenAI 兼容客户端可直接读取。
-* 思考档位也保存在同一份手动配置里，并优先于模块缓存和内置预设。“封顶对齐”按模型单独开启、默认关闭；开启后只有请求为 `xhigh` 且模型真实最高档更高时才提升，其他档位和没有更高档的模型不变。
+* 思考档位也保存在同一份手动配置里，并优先于模块缓存和内置预设。“封顶对齐”对内置表里所有 V4.1 Flash 条目默认开启、其余模型默认关闭，仍可按模型手动关闭或恢复默认；开启后只有请求为 `xhigh` 且模型真实最高档更高时才提升（例如 WorkBuddy、Cline、OpenRouter 的 `max`），其他档位和最高档本来就是 `xhigh` 的模型（例如 Loomy）不变，不会下发厂商从未公布的档位。
 
 面板鉴权使用顶层 `api_key`。为空时不做鉴权；设置后所有 `/panel/api/*`
 都要求 `Authorization: Bearer <key>` 或 `X-Api-Key: <key>`。

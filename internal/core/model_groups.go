@@ -171,7 +171,7 @@ func (r *Registry) resolveModelGroup(ctx context.Context, groupKey string, group
 	owners := make([]Candidate, 0, len(group.Members))
 	seen := make(map[string]struct{}, len(group.Members))
 	autoPriority, autoPrioritySet := modelGroupPriority(group, "Auto")
-	addOwner := func(c Client, model string, free bool, dynamicAuto bool, preferred bool) {
+	addOwner := func(c Client, model string, extra map[string]any, free bool, dynamicAuto bool, preferred bool) {
 		key := strings.ToLower(c.Name()) + "\x00" + strings.ToLower(strings.TrimSpace(model))
 		if _, duplicate := seen[key]; duplicate {
 			return
@@ -181,6 +181,8 @@ func (r *Registry) resolveModelGroup(ctx context.Context, groupKey string, group
 			Client:          c,
 			Model:           model,
 			Free:            free,
+			Catalogue:       true,
+			Extra:           extra,
 			group:           groupKey,
 			dynamicAuto:     dynamicAuto,
 			autoPriority:    autoPriority,
@@ -202,7 +204,7 @@ func (r *Registry) resolveModelGroup(ctx context.Context, groupKey string, group
 					return r.ModelAllowed(c.Name(), m.ID)
 				})
 				if ok {
-					addOwner(c, matched.ID, modelFree(matched), true, false)
+					addOwner(c, matched.ID, matched.Extra, modelFree(matched), true, false)
 				}
 			}
 			continue
@@ -221,7 +223,7 @@ func (r *Registry) resolveModelGroup(ctx context.Context, groupKey string, group
 		if !ok {
 			continue
 		}
-		addOwner(c, matched.ID, modelFree(matched), false, memberMatchesRequest(member, requested))
+		addOwner(c, matched.ID, matched.Extra, modelFree(matched), false, memberMatchesRequest(member, requested))
 	}
 	if len(owners) == 0 {
 		return nil, fmt.Errorf("model group %q has no available members", groupKey)

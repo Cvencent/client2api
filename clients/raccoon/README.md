@@ -350,6 +350,9 @@ refuses to replay it on another account (it would fail identically everywhere).
 `TestAClientErrorNeverParksAHealthyAccount` pins this and
 `TestAnAuthErrorStillParksTheAccount` pins that an auth failure still parks.
 
+A credential at its per-account in-flight ceiling is skipped before any vendor
+call: it is not parked and it does not spend one of the `max_attempts` attempts.
+
 ### Optional `core` interfaces
 
 | Interface | Implemented | Notes |

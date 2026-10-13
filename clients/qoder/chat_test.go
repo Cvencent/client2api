@@ -269,3 +269,59 @@ func TestProbeChatReportsAnEmptyAnswer(t *testing.T) {
 		t.Fatal("an empty stream was reported as a successful probe")
 	}
 }
+
+// TestChatSkipsABusyAccountWithoutSpendingAnAttempt pins the failover rule: an
+// account whose gateway in-flight slot is already taken is skipped, not blamed,
+// and the request keeps its upstream attempt budget for the next candidate.
+func TestChatSkipsABusyAccountWithoutSpendingAnAttempt(t *testing.T) {
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(probeSSEFrame))
+	}))
+	defer server.Close()
+
+	a1 := account{storedAccount: storedAccount{ID: "a1", Token: "dt-1", UserID: "u-1", Enabled: true}}
+	a2 := account{storedAccount: storedAccount{ID: "a2", Token: "dt-2", UserID: "u-2", Enabled: true}}
+	c := &Client{
+		cfg:      config{GatewayBase: server.URL},
+		up:       newUpstream(config{OpenAPIBase: server.URL}, server.Client(), nil),
+		store:    &store{all: []*account{&a1, &a2}},
+		sessions: map[string]sessionEntry{},
+	}
+
+	var served string
+	req := &core.ChatRequest{
+		Model:    "auto",
+		Messages: []core.Message{{Role: "user", Content: "hi"}},
+		ServedBy: &served,
+	}
+	var busyID string
+	req.SetAccountAcquirer(func(id string) (func(), error) {
+		if busyID == "" {
+			busyID = id
+			return nil, core.ErrBusy
+		}
+		return func() {}, nil
+	})
+
+	stream, err := c.Chat(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	defer stream.Close()
+	if calls != 1 {
+		t.Fatalf("upstream calls = %d, want exactly one on the free account", calls)
+	}
+	if served == "" || served == busyID {
+		t.Fatalf("ServedBy = %q, the busy account was %q", served, busyID)
+	}
+	busy, ok := c.store.lookup(busyID)
+	if !ok {
+		t.Fatalf("busy account %q is gone from the store", busyID)
+	}
+	if busy.dead || !busy.cooldownTill.IsZero() {
+		t.Fatalf("the busy account was penalised: %+v", busy)
+	}
+}

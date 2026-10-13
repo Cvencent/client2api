@@ -423,6 +423,68 @@ func TestChatSendsBearerForKey(t *testing.T) {
 	}
 }
 
+// A key that loses the gateway's per-account in-flight race is skipped, not
+// blamed: the request keeps its rotation budget for a key that can answer, and
+// the skipped key earns no cooldown or failure record.
+func TestChatSkipsAKeyWhoseGatewaySlotIsBusy(t *testing.T) {
+	var calls int
+	var seenAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		seenAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer srv.Close()
+
+	c := newTestClient(t, `{"base_url":"`+srv.URL+`","anonymous":false}`, srv.Client())
+	now := c.now().UTC().Format(time.RFC3339)
+	c.pool.upsert(accountRecord{ID: "k1", Label: "one", APIKey: "key-one", Source: sourcePanel, AddedAt: now})
+	c.pool.upsert(accountRecord{ID: "k2", Label: "two", APIKey: "key-two", Source: sourcePanel, AddedAt: now})
+
+	var served string
+	req := &core.ChatRequest{
+		Model:    "kilo-auto/free",
+		Messages: []core.Message{{Role: "user", Content: "hi"}},
+		ServedBy: &served,
+	}
+	var busyID string
+	req.SetAccountAcquirer(func(id string) (func(), error) {
+		if busyID == "" {
+			busyID = id
+			return nil, core.ErrBusy
+		}
+		return func() {}, nil
+	})
+
+	stream, err := c.Chat(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	_ = stream.Close()
+	if calls != 1 {
+		t.Fatalf("upstream calls = %d, want one call on the free key", calls)
+	}
+	if busyID != "k1" && busyID != "k2" {
+		t.Fatalf("the busy id %q is not one of the fixture keys", busyID)
+	}
+	wantAuth := "Bearer key-two"
+	wantID := "k2"
+	if busyID == "k2" {
+		wantAuth = "Bearer key-one"
+		wantID = "k1"
+	}
+	if seenAuth != wantAuth {
+		t.Fatalf("Authorization = %q, want %q (busy %q)", seenAuth, wantAuth, busyID)
+	}
+	if served != wantID {
+		t.Fatalf("ServedBy = %q, want %q", served, wantID)
+	}
+	if rec, ok := c.pool.byID(busyID); !ok || rec.CooldownUntil != "" || rec.Disabled || rec.LastError != "" {
+		t.Fatalf("the busy key was penalised: %+v", rec)
+	}
+}
+
 func TestChatStreamToolCallFragmentsMerge(t *testing.T) {
 	fixture := "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"lookup\",\"arguments\":\"{\\\"a\\\":\"}}]}}]}\n\n" +
 		"data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"1}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n" +

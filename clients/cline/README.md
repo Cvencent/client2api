@@ -187,7 +187,7 @@ and `Status` reports not-ready rather than refusing to build.
 | `app_base` | string | `https://app.cline.bot` | the browser URL the device flow prints |
 | `workos_base` | string | `https://api.workos.com` | device authorisation endpoints |
 | `workos_client_id` | string | the Cline desktop client id | identifies the app to WorkOS |
-| `max_attempts` | int | `3` | accounts tried before the request fails |
+| `max_attempts` | int | `3` | upstream calls before the request fails; a credential skipped at its in-flight ceiling does not consume one |
 | `max_concurrency` | int | `4` | in-flight requests; the next one gets `core.ErrBusy` |
 | `free_only` | bool | `true` | restrict the catalogue and chat guard to zero-cost ids |
 | `models_ttl` | duration | `5m` | how long a catalogue answer is fresh |
@@ -529,8 +529,9 @@ never block.
   `accessToken`, `token`, `refreshToken` and `clientId` so that whichever spelling
   the upstream expects is present. The measured evidence covers the *response*,
   not the request field names.
-- **`max_attempts` counts accounts, not HTTP attempts.** A token rotation retry
-  does not consume one.
+- **`max_attempts` counts upstream calls, not accounts examined.** A token
+  rotation retry does not consume one, and neither does skipping a credential
+  whose in-flight slot is already taken.
 - **The `-race` result is now measured**, not merely reasoned: the module is part
   of the repository-wide `go test -race ./...` baseline, which passes with zero
   `WARNING: DATA RACE` (the production build still uses `CGO_ENABLED=0`; the race

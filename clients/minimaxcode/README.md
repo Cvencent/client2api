@@ -435,6 +435,10 @@ same account inside one call:
 | `5xx` | upstream | cool the account, try the next |
 | anything else | — | try the next |
 
+An account at its per-account in-flight ceiling is skipped before the vendor is
+called: it is not blamed and it does not spend one of the `max_account_attempts`
+calls.
+
 Order matters: the HTTP status is decided first, so a `429` whose body happens to
 say "quota exceeded" stays a rate limit instead of wrongly exhausting the
 account.

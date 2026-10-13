@@ -25,7 +25,7 @@ func TestModelsViewEditsEffortPolicy(t *testing.T) {
 	if !strings.Contains(src, `>封顶对齐</th>`) {
 		t.Error("model table header is missing the cap-alignment column")
 	}
-	for _, want := range []string{`data-field="efforts"`, `data-field="default_effort"`, `data-field="elevate_top"`, "默认关闭"} {
+	for _, want := range []string{`data-field="efforts"`, `data-field="default_effort"`, `data-field="elevate_top"`, "默认开启", "手动开启"} {
 		if !strings.Contains(src, want) {
 			t.Errorf("model table is missing %q", want)
 		}

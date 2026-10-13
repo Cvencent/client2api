@@ -33,18 +33,19 @@ honestly rather than pretending otherwise:
 
 * `isLoomyRefreshable` is false, always. `RefreshAccount` **re-verifies** the
   stored session instead of renewing it, and says so in its message.
-* When a **real chat request** gets `100002` (`登录状态失效`) the account is
-  cooled down for `cooldown` (300 s), because a single vendor answer is not
-  strong enough evidence to disable a session that may answer moments later.
-  Three consecutive real-chat session failures without an intervening success
-  park the account (`dead`); the panel then shows `invalid` with the note
-  *"the vendor rejected this session; log in again and import the new token"*.
+* A **real chat request** that fails is retried once, on the same credential,
+  after `5 s`: one failed call is not strong enough evidence to disable a
+  session that may answer moments later. Only a second failure in the same
+  round advances the fixed cooldown ladder -- `30 s` on the first failed round,
+  `1 min` on the second, `2 min` on the third. A fourth failed round marks the
+  account `abnormal` instead of handing it yet another cooldown; the panel then
+  shows `invalid` and asks the operator to revive it after fixing the cause or
+  to log in again. Any successful chat clears both the stage and the flag.
 * When a **side channel** -- the balance sweep, package read, catalogue
   refresh, task report or keepalive heartbeat -- gets `100002`/`020002`, the
   account is only cooled down, not parked. Those reads are useful evidence but
   not authoritative enough to disable a credential that a real chat request may
-  still answer, and they do not count toward the chat-path session-failure
-  streak.
+  still answer, and they do not advance the chat path's cooldown ladder.
 * `Status` reports not-ready with *"the session has expired and Loomy has no
   refresh endpoint; log in again (SMS or WeChat) and import the new token"*.
 * `expires_at` is computed **locally** as login time + 14 days, because the
@@ -178,11 +179,12 @@ success is judged by `code`, never by the status line:
 ```
 
 `000000` is success. `100002` means the session was rejected on this call. A
-**chat** request that gets it is cooled down first and only parks the account
-after three consecutive session failures without a successful chat; a
-side-channel read that gets it cools the account down without advancing that
-streak. `100001` is a bad request. Any other code is reported with the vendor's
-`desc`.
+**chat** request that gets it is retried once after `5 s` on the same account,
+and only a second failure advances the account one step along the fixed
+cooldown ladder (`30 s`, `1 min`, `2 min`); a fourth failed round marks the
+account `abnormal`. A side-channel read that gets it cools the account down for
+`cooldown` without touching that ladder. `100001` is a bad request. Any other
+code is reported with the vendor's `desc`.
 
 ### The HMAC-SHA1 signature (account endpoints only)
 
@@ -253,6 +255,13 @@ records `['none','low','medium','high','xhigh']` and a default of `high` — the
 latter deliberately not the vendor's own `low`, matching the reference, because
 the gateway sends the module-declared default when the user picks nothing.
 
+The live catalogue for DeepSeek V4.1 Flash publishes the same five tiers and
+`xhigh` is its real ceiling: an unknown spelling such as `max` is accepted by
+the endpoint but ignored (it falls back to the platform default, which is
+`low`). Cap alignment is therefore a no-op for this row — mapping `xhigh` to
+`max` would weaken the request rather than raise it, so the embedded table
+keeps the five advertised tiers.
+
 ---
 
 ## Configuration
@@ -305,9 +314,11 @@ module. `expires_at` accepts a millisecond timestamp, a second timestamp, or a
 date an operator would type (`2026-10-10`, `2026-10-10T00:00:00Z`); `0`/empty
 means *unknown*, which is **not** treated as expired.
 
-`auth_cooldown` is retained so existing configuration files keep loading, but
-session-dead chat responses now use `cooldown` until the consecutive-failure
-threshold parks the account.
+`auth_cooldown` is retained so existing configuration files keep loading, but it
+is no longer consulted: chat failures follow the fixed `30 s` -> `1 min` ->
+`2 min` ladder described above, and `cooldown` (default `5m`) governs the
+side-channel failures -- balance sweep, catalogue refresh, package read, task
+report and keepalive.
 
 Environment overrides (each only applies when non-blank):
 
@@ -336,7 +347,7 @@ else. Nothing is written when `DataDir` is empty.
 | File | Contents |
 | --- | --- |
 | `accounts.json` | the imported credentials (`id`, `label`, `access_token`, `userid`, `phone`, `nickname`, `expires_at_ms`, `enabled`) |
-| `state.json` | per-account runtime penalties (`dead`, `failures`, `session_failures`, `last_error`, `cooldown_until`, `probe_after`, `last_used`) |
+| `state.json` | per-account runtime penalties (`dead`, `abnormal`, `failures`, `session_failures`, `cooldown_stage`, `last_error`, `cooldown_until`, `probe_after`, `last_used`, `low_credit`) |
 
 After a transient failure, the module writes a `probe_after` timestamp into
 `state.json`. Shared background balance and renewal sweeps wait for a
@@ -348,6 +359,19 @@ refreshes bypass the gate, and a successful manual test clears both clocks.
 An upgrade also converts the old first-chat-`100002`/`dead` verdict into one
 session failure plus a recoverable cooldown, so accounts already shown as
 `invalid` by that bug do not need to be revived by hand.
+
+An account marked `abnormal` by the chat ladder stays out of the pool until the
+operator revives it (panel action) or logs in again and imports a fresh token.
+The flag is persisted, so a restart does not quietly return it to rotation.
+
+When a successful balance read reports an available balance at or below the
+platform's `reserve_credits`, the account is parked as `low_credit`. That park
+survives restarts and is deliberately **not** cleared by a keepalive, model
+list, or successful chat probe: those calls prove the session works, not that
+it can pay for a completion. It clears only when a later balance read reports
+credit above the reserve, when the daily check-in refreshes the ledger and
+shows a funded balance, or when the operator explicitly revives the account.
+`reserve_credits = -1` disables this guard.
 
 Credentials from the config are tagged `origin: config` and **cannot be removed
 from the panel** (`RemoveAccount` refuses, pointing at the config file); stored
@@ -365,20 +389,28 @@ locally-expired accounts ranked **last**. Expiry only reorders; it never
 withholds, because the local expiry is a guess and the server's `100002` is the
 fact.
 
-`Chat` walks the candidate list up to `max_attempts` times:
+`Chat` walks the candidate list, spending at most `max_attempts` upstream calls:
 
+* A candidate whose per-account in-flight slot is already taken is **skipped**
+  before any traffic reaches the vendor: it is not penalised, not cooled down,
+  and it does **not** spend one of the `max_attempts` calls. The walk simply
+  continues to the next candidate, so a herd of simultaneous requests fans out
+  across the pool instead of recording local "concurrency full" failures
+  against an account.
 * success → clear the account's penalties (including a concurrent `dead`
   verdict), stamp `last_used`, and record the serving account in
   `ChatRequest.ServedBy` (`core.NoteServedBy`).
-* `100002` / HTTP 401 / 403 → cool the account for `cooldown` and try the next
-  one. The third consecutive real-chat failure without a success parks it
-  permanently.
-* anything else → cool the account down for `cooldown` (300 s) and try the next.
+* failure → wait `5 s` and retry the same account once. Only when that retry
+  fails as well does the round count: `100002` / HTTP 401 / 403 and every other
+  upstream error advance the account one step along `30 s` → `1 min` → `2 min`,
+  and a fourth failed round marks it `abnormal`. A caller that has gone away
+  (`ctx.Err() != nil`) stops the walk without penalising anything.
 
-If every candidate fails, the caller gets the last error. If there are no
-candidates at all, it gets either an explicit *"session expired, re-import
-required"* error naming the account, or *"every account is parked or cooling
-down; retry shortly"*.
+If every candidate fails, the caller gets the last error; if every candidate was
+merely busy, it gets `core.ErrBusy`. If there are no candidates at all, it gets
+either an explicit *"session expired, re-import required"* error naming the
+account, the *"marked abnormal"* refusal, or *"every account is parked or
+cooling down; retry shortly"*.
 
 ---
 
@@ -469,7 +501,11 @@ and `soon` is deliberately ignored rather than answered with an invention.
 `Checkin` posts `POST /points/first-login` with `{}` — Loomy's daily gift
 allowance. It is a real endpoint the reference drives, not a fabricated
 check-in. An already-claimed day is reported as a **success** with
-`granted: 0`, not as an error.
+`granted: 0`, not as an error. After a successful grant it reads
+`GET /points/records` once more and applies the low-balance guard to the fresh
+available balance, so an account parked at zero returns to the pool as soon as
+the check-in actually funds it. If the follow-up read fails or still reports a
+balance at or below the reserve, the account stays parked.
 
 ---
 
@@ -484,7 +520,7 @@ go vet ./clients/loomy/           # must exit 0
 go test -count=1 -timeout 20m ./clients/loomy/
 ```
 
-166 top-level test functions, all fixture-driven: every one injects an
+235 top-level test functions, all fixture-driven: every one injects an
 `http.RoundTripper` stub (`helpers_test.go`) or runs against an `httptest` server
 on a loopback socket, and every file written goes to `t.TempDir()`. **No test
 touches the network**, and none needs a live account.
@@ -498,8 +534,9 @@ below, because that difference caught a bug the stubs could not.
 | --- | --- |
 | `sign_test.go` | four golden HMAC-SHA1 vectors (computed by an independent PowerShell/.NET oracle), the exact nine-segment canonical string and its order, `Content-MD5`, RFC 3986 escaping, header assembly, the nonce |
 | `config_test.go` | defaults, duration flexibility, malformed config, env overrides, `expires_at` spellings, account flattening and precedence |
-| `accounts_test.go` | credential persistence round-trip, parking a rejected session across a restart, consecutive-session-failure persistence and legacy migration, cooldown, expired-but-tried, candidate ordering, `Status` on every account state, `AddAccount`/`TestAccount`/`RefreshAccount`, removal of config-owned accounts, id derivation |
-| `client_test.go` | registration, `ErrNotConfigured`, both-auth-header discipline, `ServedBy`, recoverable session failures, consecutive-failure parking, multi-account failover, `/models` header discipline, capability assertions |
+| `accounts_test.go` | credential persistence round-trip, parking a rejected session across a restart, cooldown-stage and `abnormal` persistence, legacy migration, cooldown, expired-but-tried, candidate ordering, `Status` on every account state, `AddAccount`/`TestAccount`/`RefreshAccount`, removal of config-owned accounts, id derivation |
+| `client_test.go` | registration, `ErrNotConfigured`, both-auth-header discipline, `ServedBy`, recoverable session failures, the 5 s same-account retry, the `30 s`/`1 min`/`2 min` ladder and the fourth-round `abnormal` verdict, multi-account failover, `/models` header discipline, capability assertions |
+| `cooldown_backoff_test.go` | one failed round advances exactly one cooldown stage, the ladder and its persistence across a restart, the fourth round marking the account abnormal (panel state `invalid`), and a candidate that loses its per-account in-flight lock being skipped without a failure, a cooldown or a spent `max_attempts` call |
 | `body_test.go` | `buildBody` — stream flag, empty content, structured parts, tool/tool_choice handling, reasoning effort |
 | `stream_test.go` | SSE frame parsing, `[DONE]`, usage, tool-call deltas, idle timeout, idempotent `Close` |
 | `login_test.go` | the SMS two-step flow, with the stub **recomputing the signature from the bytes it actually received** |

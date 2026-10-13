@@ -231,3 +231,56 @@ func TestPerAccountCeilingRefusesUntilTheStreamCloses(t *testing.T) {
 		t.Fatalf("third request status = %d, want 200 after the slot was released", third.Code)
 	}
 }
+
+func TestLimiterSweepRemovesIdleEntriesButKeepsLiveSlots(t *testing.T) {
+	srv := &server{}
+	now := time.Unix(1700000000, 0)
+	srv.limiters = map[string]*platformLimiter{
+		"idle":   {max: 1},
+		"active": {max: 1, used: 1},
+	}
+	srv.accountLimiters = map[accountKey]*platformLimiter{
+		{platform: "p", account: "idle"}:   {max: 1},
+		{platform: "p", account: "active"}: {max: 1, used: 1},
+	}
+	srv.limiterSweep = now.Add(-time.Second)
+
+	srv.sweepLimitersLocked(now)
+
+	if _, ok := srv.limiters["idle"]; ok {
+		t.Fatal("idle platform limiter was not swept")
+	}
+	if _, ok := srv.limiters["active"]; !ok {
+		t.Fatal("active platform limiter was swept")
+	}
+	if _, ok := srv.accountLimiters[accountKey{platform: "p", account: "idle"}]; ok {
+		t.Fatal("idle account limiter was not swept")
+	}
+	if _, ok := srv.accountLimiters[accountKey{platform: "p", account: "active"}]; !ok {
+		t.Fatal("active account limiter was swept")
+	}
+}
+
+func TestTakePlatformLimiterDoesNotLoseSlotsAcrossSweep(t *testing.T) {
+	reg := core.NewRegistry()
+	reg.Add(&testClient{name: "p"})
+	reg.SetPlatformConfigs(map[string]core.PlatformConfig{"p": {MaxInFlight: 1}})
+	srv := &server{opts: Options{Registry: reg}}
+
+	release, err := srv.acquirePlatformSlot("p")
+	if err != nil {
+		t.Fatalf("first acquire: %v", err)
+	}
+	srv.limMu.Lock()
+	srv.limiterSweep = time.Now().Add(-time.Second)
+	srv.sweepLimitersLocked(time.Now())
+	srv.limMu.Unlock()
+
+	if _, err := srv.acquirePlatformSlot("p"); err != core.ErrBusy {
+		t.Fatalf("second acquire error = %v, want ErrBusy while the slot is live", err)
+	}
+	release()
+	if _, err := srv.acquirePlatformSlot("p"); err != nil {
+		t.Fatalf("acquire after release: %v", err)
+	}
+}

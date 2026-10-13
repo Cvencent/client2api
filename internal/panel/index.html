@@ -1026,7 +1026,8 @@ html { scrollbar-gutter: stable; }
 #view-accounts table.acc td.c-models .models-chip.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
 #view-accounts table.acc td.c-models .models-chip.err { background: var(--bad-soft); color: var(--bad); border-color: transparent; }
 /* 模型弹层：一个账号一段，下面是模型格子。绿色可用、黄色限流（带解除时间）、
-   红色不支持。整个弹层只读，没有需要提交的东西，所以页脚只有一个关闭按钮。 */
+   红色不支持、灰色已关闭。支持 model_policy 的模块每格是复选框（勾选=允许），
+   页脚多一个保存按钮；不支持的模块仍是只读。 */
 .mpark-acct { margin: 0 0 16px; }
 .mpark-acct:last-child { margin-bottom: 0; }
 .mpark-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 7px; }
@@ -1040,6 +1041,10 @@ html { scrollbar-gutter: stable; }
 .mpark-m.ok .ic { color: var(--ok); }
 .mpark-m.limit .ic, .mpark-m.limit .st { color: var(--warn); }
 .mpark-m.bad .ic, .mpark-m.bad .st { color: var(--bad); }
+.mpark-m.off { opacity: .55; }
+.mpark-m.off .nm { color: var(--ink-3); text-decoration: line-through; }
+.mpark-m input[type="checkbox"] { flex: none; }
+.mpark-force { flex: none; display: inline-flex; align-items: center; gap: 4px; }
 #view-accounts table.acc td > .name,
 #view-accounts table.acc td > .hint { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
 #view-accounts table.acc td > .hint { font-size: 11px; }
@@ -2647,11 +2652,12 @@ details.cfg summary:hover, details.adv summary:hover { color: var(--accent-text)
   </div>
 </div>
 
-<!-- 模型明细：账号池「模型」列点开的只读弹层。一个账号一段，列出该账号可用的
-     模型：可用（绿）、限流（黄，带解除时间）、该账号不支持（红）。模块没上报
-     逐模型状态时按平台目录补齐；弹层不产生任何厂商调用。 -->
+<!-- 模型明细：账号池「模型」列点开的弹层。一个账号一段，列出该账号的模型：
+     勾选 = 允许路由到它（默认全勾），取消勾选 = 该账号不再被路由到它；配「强制
+     启用」可只绕过零积分/额度耗尽的冷却（不绕过 session 失效、风控和限流）。
+     模块没上报逐模型状态时按平台目录补齐。不支持该能力的模块保持只读显示。 -->
 <div class="veil" id="modelVeil">
-  <div class="dlg" style="width:560px">
+  <div class="dlg" style="width:640px">
     <header>
       <h3>模型可用情况</h3>
       <div class="hint" id="modelHelp"></div>
@@ -2660,6 +2666,7 @@ details.cfg summary:hover, details.adv summary:hover { color: var(--accent-text)
     <footer>
       <span class="grow"></span>
       <button id="btnModelClose">关闭</button>
+      <button id="btnModelSave" class="primary" hidden>保存</button>
     </footer>
   </div>
 </div>
@@ -3468,9 +3475,24 @@ function parkRemaining(ts) {
   return hh + ":" + mm + " " + tail;
 }
 
+// accountDisabledModels 返回操作员为这个账号关掉的模型（裸名小写）。字段不存在
+// 就是全开；契约见 clients/workbuddy 的 disabled_models 黑名单。
+function accountDisabledModels(a) {
+  const dm = ((a && a.fields) || {}).disabled_models;
+  if (!Array.isArray(dm)) return [];
+  return dm.map(m => String(m).trim().toLowerCase()).filter(Boolean);
+}
+
+// accountForceEnabled 返回操作员是否对这个账号开了「强制启用」（只绕过零积分 /
+// 额度耗尽的冷却，不绕过 session 失效、风控和限流）。
+function accountForceEnabled(a) {
+  return !!(((a && a.fields) || {}).force_enabled);
+}
+
 // acctModelSummary 汇总一行账号的模型可用情况。模块上报了 model_cooldowns
-// 就叠加限流/不支持；没上报时用平台目录按全部可用计算。返回值里的
-// parksReported 区分这两种来源，catalogKnown 区分目录有没有取到。
+// 就叠加限流/不支持；没上报时用平台目录按全部可用计算。操作员关掉的模型另计
+// 为 blocked（已关闭），既不算可用也不算限流。返回值里的 parksReported 区分这
+// 两种来源，catalogKnown 区分目录有没有取到。
 function acctModelSummary(n, a) {
   const ex = acctStatusExtra(n, a);
   const raw = ex ? ex.model_cooldowns : undefined;
@@ -3478,6 +3500,8 @@ function acctModelSummary(n, a) {
   const f = (a && a.fields) || {};
   const realm = String(f.realm || ex.realm || "");
   const catalog = accountModelCatalog(n, a);
+  const off = accountDisabledModels(a);
+  const isOff = m => off.indexOf(String(m).trim().toLowerCase()) >= 0;
   const parks = {};
   if (parksReported) {
     raw.forEach(p => {
@@ -3485,10 +3509,11 @@ function acctModelSummary(n, a) {
       if (e.model) parks[e.model] = e;
     });
   }
-  let avail = 0, limited = 0, unsupported = 0;
+  let avail = 0, limited = 0, unsupported = 0, blocked = 0;
   const seen = {};
   catalog.forEach(m => {
     seen[m] = true;
+    if (isOff(m)) { blocked++; return; }
     const p = parks[m];
     if (!p) { avail++; return; }
     if (p.kind === "unsupported") unsupported++; else limited++;
@@ -3496,69 +3521,74 @@ function acctModelSummary(n, a) {
   // 目录之外的 park 也要算进去：模块可能为了一个已经下架的模型还在倒计时。
   Object.keys(parks).forEach(m => {
     if (seen[m]) return;
-    if (parks[m].kind === "unsupported") unsupported++; else limited++;
+    if (isOff(m)) blocked++;
+    else if (parks[m].kind === "unsupported") unsupported++; else limited++;
   });
   return {
-    realm, catalog, parks, avail, limited, unsupported,
+    realm, catalog, parks, avail, limited, unsupported, blocked, off,
     catalogKnown: catalog.length > 0,
     parksReported: parksReported,
+    forceEnabled: accountForceEnabled(a),
   };
 }
 
-// modelSummaryBits 把三个计数拼成一行「可用 N · 限流 M · 不支持 K」。
-function modelSummaryBits(avail, limited, unsupported) {
+// modelSummaryBits 把四个计数拼成一行「可用 N · 已关闭 K · 限流 M · 不支持 J」。
+function modelSummaryBits(avail, limited, unsupported, blocked) {
   const bits = ["可用 " + avail];
+  if (blocked) bits.push("已关闭 " + blocked);
   if (limited) bits.push("限流 " + limited);
   if (unsupported) bits.push("不支持 " + unsupported);
   return bits.join(" · ");
 }
 
 // modelCellBits 是「模型」列里那颗 chip 的可见文字。列只有 6%，装不下
-// 「可用 12 · 限流 2」，而被限流的账号最该一眼看见的正是「有限流」这件事：
-// 有问题时只显示问题本身，完整拆分挂在 title 上，明细在弹层里。
-function modelCellBits(avail, limited, unsupported) {
+// 「可用 12 · 限流 2」，有问题时只显示问题本身，完整拆分挂在 title 上，
+// 明细在弹层里。
+function modelCellBits(avail, limited, unsupported, blocked) {
   const bad = limited + unsupported;
-  if (!bad) return "可用 " + avail;
-  if (limited && unsupported) return "受限 " + bad;
-  if (limited) return "限流 " + limited;
-  return "不支持 " + unsupported;
+  if (!bad && !blocked) return "可用 " + avail;
+  const parts = [];
+  if (blocked) parts.push("已关闭 " + blocked);
+  if (limited) parts.push("限流 " + limited);
+  if (unsupported) parts.push("不支持 " + unsupported);
+  return parts.join(" · ");
 }
 
-// 模型列的格子：可用/限流/不支持三个数字，点开是明细。没有逐模型上报的
+// 模型列的格子：可用/已关闭/限流/不支持几个数字，点开是明细。没有逐模型上报的
 // 账号也用平台目录补齐；目录确实为空时才留白。
 function accModelsCell(n, a) {
   const sum = acctModelSummary(n, a);
-  if (!sum || (!sum.catalogKnown && !sum.limited && !sum.unsupported)) {
+  if (!sum || (!sum.catalogKnown && !sum.limited && !sum.unsupported && !sum.blocked)) {
     return '<span class="hint" title="该平台还没有上报模型目录">—</span>';
   }
-  const full = modelSummaryBits(sum.avail, sum.limited, sum.unsupported);
+  const full = modelSummaryBits(sum.avail, sum.limited, sum.unsupported, sum.blocked);
   const source = sum.parksReported ? "" : "；未上报逐模型状态，按平台目录全部可用";
-  const short = modelCellBits(sum.avail, sum.limited, sum.unsupported);
+  const short = modelCellBits(sum.avail, sum.limited, sum.unsupported, sum.blocked);
   let cls = "ok";
   if (!sum.avail) cls = "err";
-  else if (sum.limited || sum.unsupported) cls = "warn";
+  else if (sum.limited || sum.unsupported || sum.blocked) cls = "warn";
   return '<button class="xs chip models-chip ' + cls + '" data-do="models" data-ids="' + esc(a.id) + '" title="' + esc(full + source + "；点击查看明细") + '">' + esc(short) + '</button>';
 }
 
 // 组头的模型格：把组里每个通道汇总成一行不可点的文字，明细展开后逐行看。
 function accGroupModelsCell(n, rows) {
-  let avail = 0, limited = 0, unsupported = 0, any = false, known = false, inferred = false;
+  let avail = 0, limited = 0, unsupported = 0, blocked = 0, any = false, known = false, inferred = false;
   (rows || []).forEach(r => {
     const s = acctModelSummary(n, r);
     if (!s) return;
     any = true;
     if (s.catalogKnown) known = true;
     if (!s.parksReported) inferred = true;
-    avail += s.avail; limited += s.limited; unsupported += s.unsupported;
+    avail += s.avail; limited += s.limited; unsupported += s.unsupported; blocked += s.blocked;
   });
-  if (!any || (!known && !limited && !unsupported)) {
+  if (!any || (!known && !limited && !unsupported && !blocked)) {
     return '<span class="hint" title="该平台还没有上报模型目录">—</span>';
   }
-  const text = modelSummaryBits(avail, limited, unsupported);
-  const cls = (limited || unsupported) ? "warn" : "ok";
+  const text = modelSummaryBits(avail, limited, unsupported, blocked);
+  const cls = (limited || unsupported || blocked) ? "warn" : "ok";
   const source = inferred ? "；未上报逐模型状态的通道按平台目录全部可用" : "";
   const tip = known ? "组里每个通道各自统计" + source + "；展开后逐行查看" : "该平台还没有上报模型目录";
-  return '<span class="chip ' + cls + '" title="' + esc(text + "；" + tip) + '">' + esc(modelCellBits(avail, limited, unsupported)) + '</span>';
+  return '<span class="chip ' + cls + '" title="' + esc(text + "；" + tip) + '">' + esc(modelCellBits(avail, limited, unsupported, blocked)) + '</span>';
 }
 
 // ago renders an RFC3339 stamp as "多久以前".  The gateway reports the account's
@@ -3738,6 +3768,7 @@ function statusNoteText(n, a) {
     [/^executable binding registered by this module in (.+); it pins (.+) as the kimi CLI, and is used only when clients\.kimi\.binary is empty$/i, (x) => "已登记 Kimi CLI 绑定：" + x[2] + "（记录在 " + x[1] + "，仅在 clients.kimi.binary 为空时使用）"],
     [/^this account is marked dead after /i, "账号已被判定失效；请悬停查看原因和恢复方式"],
     [/^this account is cooling down after /i, "账号正在冷却；到期后会自动恢复"],
+    [/^credit balance is at or below the reserve; waiting for a funded balance refresh or daily check-in$/i, "积分不足，已暂停；等待余额恢复或每日签到"],
     [/^this account carries an unreadable health state /i, "账号健康状态无法读取；请在面板重新启用"],
     [/^refresh token rejected/i, "刷新令牌被上游拒绝，需要重新登录"],
     [/^\d+\s+session dead$/i, "会话失效"],
@@ -4688,14 +4719,27 @@ function closeAccountNote() {
 }
 
 /* ── 模型明细弹层 ─────────────────────────────────────────────────────
-   「模型」列点开的就是它。只读，数据来自已经拿到的 status + overview 和
-   一次模型名称缓存；打开/关闭是瞬时的。 */
+   「模型」列点开的就是它。支持模型策略的模块（capabilities.model_policy）：
+   勾选 = 允许路由到它，取消勾选 = 该账号不再被路由到它（默认全勾）；「强制启用」
+   只绕过零积分/额度耗尽的冷却（不绕过 session 失效、风控和限流）。不支持的模块
+   保持只读显示。数据来自已经拿到的 status + overview 和一次模型名称缓存。 */
+let MODEL_POLICY = null;
+
 function modelDisplayName(client, id) {
   return MODEL_NAMES[String(client || "") + "/" + String(id || "")] || String(id || "");
 }
-function modelCellHTML(client, m, p) {
+
+// modelCellHTML 画一个模型格子。editable 为真时渲染复选框（勾选=允许），
+// disabled 表示操作员关掉了这个模型（覆盖 park 状态）。
+function modelCellHTML(client, m, p, editable, disabled) {
   const shown = modelDisplayName(client, m);
   const name = '<span class="nm" title="' + esc(m) + '">' + esc(shown) + '</span>';
+  if (editable) {
+    const cls = disabled ? "off" : (p ? (p.kind === "unsupported" ? "bad" : "limit") : "ok");
+    return '<label class="mpark-m ' + cls + '" data-model="' + esc(m) + '" title="' + esc(m) + '">' +
+      '<input type="checkbox" class="mparkBox"' + (disabled ? "" : " checked") + '>' + name + '</label>';
+  }
+  if (disabled) return '<div class="mpark-m off"><span class="ic">⊘</span>' + name + '<span class="st">已关闭</span></div>';
   if (!p) return '<div class="mpark-m ok"><span class="ic">✓</span>' + name + '</div>';
   if (p.kind === "unsupported") {
     return '<div class="mpark-m bad"><span class="ic">⊘</span>' + name + '<span class="st">该账号不支持</span></div>';
@@ -4703,6 +4747,7 @@ function modelCellHTML(client, m, p) {
   const when = p.until ? parkRemaining(p.until) : "";
   return '<div class="mpark-m limit"><span class="ic">✕</span>' + name + '<span class="st">' + esc(when ? "限流至 " + when : "限流中") + '</span></div>';
 }
+
 async function ensureModelNames() {
   if (MODEL_NAMES_READY[""]) return;
   const r = await api("/panel/api/models");
@@ -4715,40 +4760,131 @@ async function ensureModelNames() {
   });
   MODEL_NAMES_READY[""] = true;
 }
+
 function openModelsDialog(n, ids) {
   if (!MODEL_NAMES_READY[""]) { ensureModelNames().then(() => openModelsDialog(n, ids)); return; }
   const list = (ids || []).filter(Boolean);
+  const editable = !!(capsOf(n) || {}).model_policy;
+  MODEL_POLICY = { client: n, ids: list, editable: editable, original: {} };
   const secs = [];
   list.forEach(id => {
     const a = accById(n, id);
     if (!a) return;
     const sum = acctModelSummary(n, a);
+    const off = ((sum && sum.off) || accountDisabledModels(a)).slice();
+    const offSet = m => off.indexOf(String(m).trim().toLowerCase()) >= 0;
+    MODEL_POLICY.original[id] = off.slice();
     const realm = sum ? sum.realm : String(((a.fields || {}).realm) || "");
     let head = '<div class="mpark-head"><span class="nm">' + esc(accountIdentity(a)) + '</span>';
     if (realm) head += '<span class="realm-tag">' + esc(realmName(n, realm)) + '</span>';
     const sourceNote = sum && !sum.parksReported && sum.catalogKnown ? "；未上报逐模型状态，按平台目录全部可用" : "";
     head += sum
-      ? '<span class="hint">' + esc(modelSummaryBits(sum.avail, sum.limited, sum.unsupported) + sourceNote) + '</span>'
+      ? '<span class="hint">' + esc(modelSummaryBits(sum.avail, sum.limited, sum.unsupported, sum.blocked) + sourceNote) + '</span>'
       : '<span class="hint">该平台不报模型级限流</span>';
+    if (editable) {
+      head += '<span class="grow"></span>' +
+        '<label class="sel-note mpark-force" title="只绕过零积分和额度耗尽的冷却；session 失效、风控、限流不绕过">' +
+        '<input type="checkbox" class="mparkForce"' + (sum && sum.forceEnabled ? " checked" : "") + '> 强制启用</label>' +
+        '<button class="xs" type="button" data-mpark-all="1">全选</button>' +
+        '<button class="xs" type="button" data-mpark-all="0">全不选</button>';
+    }
     head += '</div>';
     let grid;
     if (!sum) {
       grid = '<div class="hint">这个模块不上报单个模型的限流状态；整个账号一起冷却时请看「状态」列。</div>';
-    } else if (!sum.catalog.length && !sum.limited && !sum.unsupported) {
+    } else if (!sum.catalog.length && !sum.limited && !sum.unsupported && !sum.blocked) {
       grid = '<div class="hint">模块还没有上报模型目录。</div>';
     } else {
-      const cells = [];
-      sum.catalog.forEach(m => cells.push(modelCellHTML(n, m, sum.parks[m])));
-      Object.keys(sum.parks).forEach(m => { if (sum.catalog.indexOf(m) < 0) cells.push(modelCellHTML(n, m, sum.parks[m])); });
+      // 目录里的模型 + 只出现在 park / 黑名单里的模型一起画，去重后逐个成格。
+      const models = sum.catalog.slice();
+      const seen = {};
+      models.forEach(m => { seen[String(m).trim().toLowerCase()] = true; });
+      Object.keys(sum.parks).forEach(m => {
+        const k = String(m).trim().toLowerCase();
+        if (!seen[k]) { seen[k] = true; models.push(m); }
+      });
+      off.forEach(m => { if (!seen[m]) { seen[m] = true; models.push(m); } });
+      const cells = models.map(m => modelCellHTML(n, m, sum.parks[m], editable, offSet(m)));
       grid = '<div class="mpark-grid">' + cells.join("") + '</div>';
     }
-    secs.push('<div class="mpark-acct">' + head + grid + '</div>');
+    secs.push('<div class="mpark-acct" data-id="' + esc(a.id) + '">' + head + grid + '</div>');
   });
-  $("#modelHelp").textContent = "模块上报逐模型状态时按上报显示；没上报时按平台目录全部可用。";
+  $("#modelHelp").textContent = editable
+    ? "勾选 = 允许这个账号被路由到该模型（默认全勾）；取消勾选 = 不再路由到它。"
+    : "模块上报逐模型状态时按上报显示；没上报时按平台目录全部可用。";
+  $("#btnModelSave").hidden = !editable;
   $("#modelBody").innerHTML = secs.join("") || '<div class="hint">没有可显示的账号数据。</div>';
   showVeil($("#modelVeil"));
 }
-function closeModelsDialog() { hideVeil($("#modelVeil")); }
+
+function closeModelsDialog() {
+  MODEL_POLICY = null;
+  $("#btnModelSave").hidden = true;
+  hideVeil($("#modelVeil"));
+}
+// setupModelPolicyBody 给模型弹层挂一次事件委托：全选/全不选两个按钮和复选框
+// 只改可见状态，保存时才发一次请求。绑定在弹层容器上，弹层每次重画 innerHTML
+// 都不会丢事件。
+function setupModelPolicyBody() {
+  const body = $("#modelBody");
+  if (!body) return;
+  body.addEventListener("click", ev => {
+    const t = ev.target.closest && ev.target.closest("button[data-mpark-all]");
+    if (!t) return;
+    const sec = t.closest(".mpark-acct");
+    if (!sec) return;
+    const on = t.dataset.mparkAll === "1";
+    sec.querySelectorAll(".mparkBox").forEach(box => { box.checked = on; });
+    sec.querySelectorAll(".mpark-m").forEach(row => { row.classList.toggle("off", !on && !!row.querySelector(".mparkBox")); });
+  });
+  body.addEventListener("change", ev => {
+    const box = ev.target.closest && ev.target.closest(".mparkBox");
+    if (!box) return;
+    const row = box.closest(".mpark-m");
+    if (row) row.classList.toggle("off", !box.checked);
+  });
+}
+
+// saveModelsPolicy 把每个账号弹层里的勾选状态收集成 disabled_models 黑名单，
+// 连同「强制启用」一起写回。目录里看不到、但磁盘上仍被关掉的模型会保留，
+// 不会因为这次保存被静默重新打开。
+async function saveModelsPolicy() {
+  if (!MODEL_POLICY || !MODEL_POLICY.editable) return;
+  const n = MODEL_POLICY.client;
+  const btn = $("#btnModelSave");
+  const was = btn.textContent;
+  btn.disabled = true; btn.textContent = "保存中…";
+  let failedId = "";
+  for (const id of MODEL_POLICY.ids) {
+    const sec = Array.from(document.querySelectorAll("#modelBody .mpark-acct")).find(s => s.dataset.id === String(id));
+    if (!sec) continue;
+    const rows = Array.from(sec.querySelectorAll(".mpark-m"));
+    const shown = [];
+    const disabled = [];
+    rows.forEach(row => {
+      const low = String(row.dataset.model || "").trim().toLowerCase();
+      if (!low) return;
+      shown.push(low);
+      const box = row.querySelector(".mparkBox");
+      if (box && !box.checked) disabled.push(low);
+    });
+    (MODEL_POLICY.original[id] || []).forEach(m => {
+      if (shown.indexOf(m) < 0 && disabled.indexOf(m) < 0) disabled.push(m);
+    });
+    disabled.sort();
+    const forceEl = sec.querySelector(".mparkForce");
+    const force = !!(forceEl && forceEl.checked);
+    const r = await api(cbase(n) + "/accounts/" + aid(id) + "/model-policy",
+      { method: "POST", body: { disabled_models: disabled, force_enabled: force } });
+    if (!r.ok) { failedId = id; break; }
+    applyAccounts(n, r.data);
+  }
+  btn.disabled = false; btn.textContent = was;
+  if (failedId) { toast("保存「" + failedId + "」的模型策略失败", "err"); return; }
+  toast("模型策略已保存");
+  closeModelsDialog();
+  await refreshAll();
+}
 
 /* ── 粘性会话弹层 ─────────────────────────────────────────────────────
    列表是账号绑定和网关平台绑定的合并视图。平台绑定的 key 没有客户端归属，
@@ -5884,11 +6020,15 @@ function mdEffortsCell(m) {
 function mdElevateTopCell(m) {
   const on = !!m.elevate_top;
   const dis = m.elevate_top_editable ? "" : " disabled";
-  const label = on ? "已开启" : "默认关闭";
+  // 只有服务端明确记录过手动值时才写「手动」；否则这一档显示它实际来自
+  // 内置默认还是本来就关着，操作员才能分清「默认开」和「我开过」。
+  const src = m.elevate_top_manual ? "manual" : "";
+  const label = on ? (src === "manual" ? "手动开启" : "默认开启") : "关闭";
+  const def = m.elevate_top_default ? "1" : "0";
   return '<td class="mdedit mdcheck" data-field="elevate_top">' +
-    '<label class="mdcheckline" title="开启后，Codex 的 xhigh 会提升到该模型真实最高档；默认关闭">' +
-    '<input class="mdtoggle" type="checkbox" data-field="elevate_top" data-initial="' + (on ? "1" : "0") + '"' + (on ? " checked" : "") + dis + '>' +
-    '<span class="mdsrc' + (on ? " manual" : "") + '">' + esc(label) + '</span></label></td>';
+    '<label class="mdcheckline" title="开启后，Codex 的 xhigh 会提升到该模型真实最高档；V4.1 Flash 默认开启">' +
+    '<input class="mdtoggle" type="checkbox" data-field="elevate_top" data-initial="' + (on ? "1" : "0") + '" data-default="' + def + '"' + (on ? " checked" : "") + dis + '>' +
+    '<span class="mdsrc' + (src === "manual" ? " manual" : "") + '">' + esc(label) + '</span></label></td>';
 }
 
 /* 能力徽标。原版 app.js:352-357 的语义，挂在模型名下面：默认 / 工具 / 视觉 /
@@ -6042,7 +6182,9 @@ async function mdSave() {
         has_price: false,
         supported_efforts: [],
         default_effort: "",
-        elevate_top: false,
+        // 恢复默认不是手动关掉，而是清掉手动选择：V4.1 Flash 这类内置默认
+        // 开启的模型必须回到「默认开启」，否则会被钉死成永久关闭。
+        elevate_top_default: true,
       };
       return;
     }
@@ -10826,7 +10968,8 @@ $("#mdBody").addEventListener("click", ev => {
   cachePrice.value = cachePrice.dataset.default;
   efforts.value = efforts.dataset.default;
   defaultEffort.value = defaultEffort.dataset.default;
-  elevateTop.checked = false;
+  // 回到内置默认，而不是关掉：内置默认开启的模型必须保持勾选。
+  elevateTop.checked = elevateTop.dataset.default === "1";
   mdRecord(tr, true);
 });
 $("#btnMdSave").addEventListener("click", mdSave);
@@ -11167,6 +11310,8 @@ $("#addVeil").addEventListener("click", ev => { if (ev.target === $("#addVeil"))
 $("#noteVeil").addEventListener("click", ev => { if (ev.target === $("#noteVeil")) closeAccountNote(); });
 $("#modelVeil").addEventListener("click", ev => { if (ev.target === $("#modelVeil")) closeModelsDialog(); });
 $("#btnModelClose").addEventListener("click", closeModelsDialog);
+$("#btnModelSave").addEventListener("click", saveModelsPolicy);
+setupModelPolicyBody();
 $("#sStickyTile").addEventListener("click", openStickySessions);
 $("#btnStickyClose").addEventListener("click", closeStickySessions);
 $("#stickyVeil").addEventListener("click", ev => { if (ev.target === $("#stickyVeil")) closeStickySessions(); });

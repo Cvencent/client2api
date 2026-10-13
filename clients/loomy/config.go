@@ -83,8 +83,8 @@ const (
 	// defaultCooldown parks an account after a rate-limit or upstream failure.
 	defaultCooldown = 5 * time.Minute
 	// defaultAuthCooldown is retained for compatibility with existing config
-	// files.  Session-dead chat failures now use defaultCooldown until the
-	// consecutive-failure threshold parks the account.
+	// files.  Real-chat failures now use the fixed 30s/1m/2m cooldown ladder
+	// and the fourth failed round marks the account abnormal.
 	defaultAuthCooldown = 24 * time.Hour
 	// defaultMaxAttempts is how many accounts one chat request may try before
 	// giving up.

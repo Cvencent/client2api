@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -96,6 +95,12 @@ type responsesTool struct {
 		Description string          `json:"description,omitempty"`
 		Parameters  json.RawMessage `json:"parameters,omitempty"`
 	} `json:"function,omitempty"`
+	// Tools carries a namespace declaration's children.  Codex groups every MCP
+	// server's tools -- and its own namespaced built-ins -- under
+	// {"type":"namespace"}, with ordinary function declarations inside.  They are
+	// flattened on the way to a vendor, because a namespace is a container and
+	// Chat neither has nor can validate a tool that carries no schema.
+	Tools []responsesTool `json:"tools,omitempty"`
 }
 
 // responsesInputItem is one element of the Input array.  Type is the
@@ -120,6 +125,10 @@ type responsesInputItem struct {
 	CallID    string          `json:"call_id,omitempty"`
 	Name      string          `json:"name,omitempty"`
 	Arguments json.RawMessage `json:"arguments,omitempty"`
+	// Namespace names the tool namespace a call belongs to.  Codex addresses a
+	// namespaced tool as the pair (namespace, name); a vendor only ever sees the
+	// flattened name, so the pair is the half this gateway has to restore.
+	Namespace string          `json:"namespace,omitempty"`
 	Output    json.RawMessage `json:"output,omitempty"`
 
 	// Summary is the reasoning summary on a reasoning item, carried as parts.
@@ -176,8 +185,13 @@ type responseOutput struct {
 	Content []responseOutputContent `json:"content,omitempty"`
 
 	// function_call
-	CallID    string `json:"call_id,omitempty"`
-	Name      string `json:"name,omitempty"`
+	CallID string `json:"call_id,omitempty"`
+	Name   string `json:"name,omitempty"`
+	// Namespace accompanies Name when the call addresses a tool inside a
+	// namespace; Codex dispatches on the pair, so a call the vendor made under
+	// the flattened name is split back before it is sent.  A plain function call
+	// leaves this empty.
+	Namespace string `json:"namespace,omitempty"`
 	Arguments string `json:"arguments,omitempty"`
 
 	// reasoning
@@ -344,6 +358,27 @@ func toCoreRequestFromResponses(w *responsesRequest) (*core.ChatRequest, error) 
 	req.Messages = append(req.Messages, messages...)
 
 	for _, t := range w.Tools {
+		// A namespace is a container, not a tool: it has a name but no schema of
+		// its own.  Forwarding it unchanged would offer the vendor a function
+		// called `mcp__codegraph` with nothing behind it, and every call to that
+		// phantom would be refused as an unsupported call.  Its children are the
+		// tools, so the children are what gets declared.
+		if children := t.namespaceChildren(); len(children) > 0 {
+			namespace := strings.TrimSpace(t.Name)
+			for _, child := range children {
+				childName, childDesc, childParams := child.resolved()
+				if childName == "" {
+					continue
+				}
+				req.Tools = append(req.Tools, core.Tool{
+					Type:        "function",
+					Name:        chatToolName(namespace, childName),
+					Description: childDesc,
+					Parameters:  childParams,
+				})
+			}
+			continue
+		}
 		name, desc, params := t.resolved()
 		if name == "" {
 			// A built-in tool (web_search, file_search, computer_use …) has no
@@ -363,6 +398,75 @@ func toCoreRequestFromResponses(w *responsesRequest) (*core.ChatRequest, error) 
 		return nil, fmt.Errorf("input must not be empty")
 	}
 	return req, nil
+}
+
+// namespacedTool records where a flattened Chat-visible tool name came from.
+// The Responses protocol addresses a namespaced tool as the pair (namespace,
+// name) while Chat has one flat namespace, so the pair has to be remembered
+// rather than re-derived: a namespace of its own can contain the separator.
+type namespacedTool struct {
+	Namespace string
+	Name      string
+}
+
+// chatToolName flattens a (namespace, name) pair into the single name a Chat
+// vendor sees.  The spelling is the one Codex itself used for MCP tools before
+// it grew namespaces (`mcp__server__tool`), so a model that has met those names
+// reads this one the same way.
+func chatToolName(namespace, name string) string {
+	return strings.TrimSpace(namespace) + "__" + strings.TrimSpace(name)
+}
+
+// namespaceChildren returns the tools a namespace declaration carries, or nil
+// when the declaration is an ordinary function.  A child with no name is not
+// addressable in either protocol, so it is dropped rather than declared.
+func (t responsesTool) namespaceChildren() []responsesTool {
+	if !strings.EqualFold(strings.TrimSpace(t.Type), "namespace") {
+		return nil
+	}
+	var children []responsesTool
+	for _, child := range t.Tools {
+		if strings.TrimSpace(child.Name) == "" {
+			continue
+		}
+		children = append(children, child)
+	}
+	return children
+}
+
+// namespacedTools indexes every namespace child by its flattened name.  The
+// first declaration of a name wins, which keeps the table — and the tool list
+// built from it — stable for a caller that declared the same name twice.
+func namespacedTools(tools []responsesTool) map[string]namespacedTool {
+	var out map[string]namespacedTool
+	for _, t := range tools {
+		children := t.namespaceChildren()
+		if len(children) == 0 {
+			continue
+		}
+		namespace := strings.TrimSpace(t.Name)
+		for _, child := range children {
+			flat := chatToolName(namespace, child.Name)
+			if out == nil {
+				out = make(map[string]namespacedTool, len(children))
+			}
+			if _, ok := out[flat]; ok {
+				continue
+			}
+			out[flat] = namespacedTool{Namespace: namespace, Name: strings.TrimSpace(child.Name)}
+		}
+	}
+	return out
+}
+
+// namespacedCall splits a vendor-side tool name back into the pair Codex
+// dispatches on.  A name that was not declared as a namespace child is passed
+// through untouched, which is every ordinary function call.
+func namespacedCall(names map[string]namespacedTool, name string) (string, string) {
+	if ref, ok := names[strings.TrimSpace(name)]; ok {
+		return ref.Name, ref.Namespace
+	}
+	return name, ""
 }
 
 // resolved reads a tool's name/description/parameters from whichever shape it
@@ -454,8 +558,15 @@ func translateResponsesInput(raw json.RawMessage) ([]core.Message, error) {
 			if pending == nil {
 				pending = &core.Message{Role: "assistant"}
 			}
-			if callID != "" && strings.TrimSpace(it.Name) != "" {
-				callNames[callID] = strings.TrimSpace(it.Name)
+			callName := strings.TrimSpace(it.Name)
+			if namespace := strings.TrimSpace(it.Namespace); namespace != "" && callName != "" {
+				// Codex names the pair, the vendor names the flattening of it: the
+				// history has to use the vendor's spelling or the replayed call no
+				// longer matches the tool list the vendor answered.
+				callName = chatToolName(namespace, callName)
+			}
+			if callID != "" && callName != "" {
+				callNames[callID] = callName
 			}
 			// The reasoning that preceded this call belongs to this turn.  In
 			// Chat it rides on the assistant message's reasoning_content.
@@ -466,7 +577,7 @@ func translateResponsesInput(raw json.RawMessage) ([]core.Message, error) {
 			pending.ToolCalls = append(pending.ToolCalls, core.ToolCall{
 				ID:        callID,
 				Type:      "function",
-				Name:      strings.TrimSpace(it.Name),
+				Name:      callName,
 				Arguments: rawToArgumentString(it.Arguments),
 			})
 
@@ -794,16 +905,9 @@ func (s *server) handleResponses(w http.ResponseWriter, r *http.Request) {
 	stat := newChatStat(rec.StartedAt, "", false)
 	defer stat.done()
 
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
-	if err != nil {
-		stat.status = http.StatusBadRequest
-		s.fail(&rec)
-		writeError(w, http.StatusBadRequest, "invalid_request_error", "reading body: "+err.Error())
-		return
-	}
-
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 	var wire responsesRequest
-	if err := json.Unmarshal(body, &wire); err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&wire); err != nil {
 		stat.status = http.StatusBadRequest
 		s.fail(&rec)
 		writeError(w, http.StatusBadRequest, "invalid_request_error", "invalid JSON: "+err.Error())
@@ -827,6 +931,7 @@ func (s *server) handleResponses(w http.ResponseWriter, r *http.Request) {
 	s.routeAndServe(w, r, routeInput{
 		requested:    wire.Model,
 		req:          req,
+		toolNames:    namespacedTools(wire.Tools),
 		stream:       wire.Stream,
 		modelForWire: wire.Model,
 		rec:          &rec,

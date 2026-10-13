@@ -1128,6 +1128,51 @@ func TestChatGivesUpWithTheLastFailureAfterRotating(t *testing.T) {
 	}
 }
 
+// A key that loses the gateway's per-account in-flight race never reached the
+// vendor, so it must not be blamed for a switch failure: the request skips it
+// and keeps its attempt budget for a key that can actually answer.
+func TestChatSkipsAKeyWhoseGatewaySlotIsBusy(t *testing.T) {
+	up := &fakeUpstream{handle: func(*http.Request, string) reply { return reply{body: sseBasic} }}
+	c := newTestClient(t, twoKeysCfg(), up)
+
+	var served string
+	req := simpleReq("m")
+	req.ServedBy = &served
+	var busyKey string
+	req.SetAccountAcquirer(func(id string) (func(), error) {
+		if busyKey == "" {
+			busyKey = id
+			return nil, core.ErrBusy
+		}
+		return func() {}, nil
+	})
+
+	stream, err := c.Chat(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	text, _, _, _, _, err := drainStream(stream)
+	if err != nil {
+		t.Fatalf("drain: %v", err)
+	}
+	if text != "Hello world" {
+		t.Fatalf("text = %q", text)
+	}
+	if up.count() != 1 {
+		t.Fatalf("requests = %d, want one call on the free key", up.count())
+	}
+	sentID := accountIDFor(strings.TrimPrefix(up.requestAt(0).Header.Get("Authorization"), "Bearer "))
+	if sentID == busyKey {
+		t.Fatalf("the call went to the busy key %q", busyKey)
+	}
+	if served != sentID {
+		t.Fatalf("ServedBy = %q, want %q", served, sentID)
+	}
+	if rec := c.mustByID(t, busyKey); rec.CooldownUntil != "" || rec.Disabled {
+		t.Fatalf("the busy key was penalised: %+v", rec)
+	}
+}
+
 func TestChatMapsTransportFailureToUpstream(t *testing.T) {
 	up := &fakeUpstream{handle: func(*http.Request, string) reply { return reply{err: errors.New("dial tcp: connection refused")} }}
 	c := newTestClient(t, cfgWithKey(testKey), up)

@@ -211,8 +211,19 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 	}
 
 	var lastErr error
+	busySeen := map[string]bool{}
 	for attempt := 0; attempt < maxRotate; attempt++ {
-		acct, err := c.acquireAccount(req)
+		var acct accountRecord
+		var err error
+		if len(busySeen) > 0 {
+			// Once a bound key has lost the gateway-slot race, do not let
+			// affinity hand the same key straight back on the retry. Rotate
+			// through the pool instead; the binding remains untouched until a
+			// key actually serves the request.
+			acct, err = c.pool.acquire(c.now(), c.limit())
+		} else {
+			acct, err = c.acquireAccount(req)
+		}
 		if err != nil {
 			if lastErr != nil {
 				return nil, lastErr
@@ -223,6 +234,16 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 		// when it refuses, give the pool slot back and try another key.
 		if err := req.AcquireAccountSlot(acct.ID); err != nil {
 			c.pool.release(acct.ID)
+			if busySeen[acct.ID] {
+				if lastErr != nil {
+					return nil, lastErr
+				}
+				return nil, fmt.Errorf("%w: no OpenRouter credential has a free in-flight slot", core.ErrBusy)
+			}
+			busySeen[acct.ID] = true
+			// A full account is not an upstream attempt. Keep the request's
+			// switch budget for a key that can actually be called.
+			attempt--
 			continue
 		}
 		// The account is settled here, before the response is known: the

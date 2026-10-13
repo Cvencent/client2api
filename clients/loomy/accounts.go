@@ -33,11 +33,35 @@ const (
 	minBackgroundProbeDelay = 3 * time.Hour
 	backgroundProbeJitter   = 3 * time.Hour
 
-	// sessionDeadFailureLimit is how many consecutive real-chat 100002
-	// responses are required before the credential is treated as permanently
-	// dead.  One transient vendor answer must not disable a working account.
+	// sessionDeadFailureLimit is the historical 100002 threshold.  Chat now
+	// uses the shorter cooldown ladder below for every real-chat failure; the
+	// constant remains for legacy state and side-channel callers.
 	sessionDeadFailureLimit = 3
+
+	// Chat failures use a short retry followed by a short, escalating
+	// cooldown.  The fourth failed round is terminal: the account is marked
+	// abnormal instead of being handed another cooldown.
+	chatCooldownStage1 = 30 * time.Second
+	chatCooldownStage2 = time.Minute
+	chatCooldownStage3 = 2 * time.Minute
 )
+
+// chatRetryDelay is the pause before the one same-account retry.  It is a
+// variable so tests do not have to sleep for five seconds.
+var chatRetryDelay = 5 * time.Second
+
+func chatCooldownForStage(stage int) (time.Duration, bool) {
+	switch stage {
+	case 1:
+		return chatCooldownStage1, true
+	case 2:
+		return chatCooldownStage2, true
+	case 3:
+		return chatCooldownStage3, true
+	default:
+		return 0, false
+	}
+}
 
 // backgroundProbeDelay spreads recovery probes over a 3..6 hour window.
 // The variable is deliberately injectable from tests; production uses the
@@ -71,12 +95,15 @@ type accountFile struct {
 // not silently turn a rejected session back into a healthy-looking one.
 type accountState struct {
 	Dead            bool   `json:"dead,omitempty"`
+	Abnormal        bool   `json:"abnormal,omitempty"`
 	Failures        int    `json:"failures,omitempty"`
 	SessionFailures int    `json:"session_failures,omitempty"`
+	CooldownStage   int    `json:"cooldown_stage,omitempty"`
 	LastError       string `json:"last_error,omitempty"`
 	CooldownTill    string `json:"cooldown_until,omitempty"` // RFC3339
 	ProbeAfter      string `json:"probe_after,omitempty"`    // RFC3339
 	LastUsed        string `json:"last_used,omitempty"`      // RFC3339
+	LowCredit       bool   `json:"low_credit,omitempty"`
 }
 
 type stateFile struct {
@@ -92,9 +119,12 @@ type account struct {
 	// revive.
 	failures        int
 	sessionFailures int
+	cooldownStage   int
 	cooldownTill    time.Time
 	probeAfter      time.Time
+	lowCredit       bool
 	dead            bool
+	abnormal        bool
 	lastError       string
 	lastUsed        time.Time
 }
@@ -106,7 +136,7 @@ type account struct {
 // vendor.  A credential the vendor has already rejected is not: retrying it on
 // every request would turn one honest failure into a stream of them.
 func (a *account) selectable(now time.Time) bool {
-	if !a.Enabled || a.dead {
+	if !a.Enabled || a.dead || a.abnormal || a.lowCredit {
 		return false
 	}
 	if strings.TrimSpace(a.AccessToken) == "" {
@@ -155,8 +185,10 @@ func loadStore(path, statePath string) (*store, error) {
 			continue
 		}
 		a.dead = st.Dead
+		a.abnormal = st.Abnormal
 		a.failures = st.Failures
 		a.sessionFailures = st.SessionFailures
+		a.cooldownStage = st.CooldownStage
 		a.lastError = st.LastError
 		a.cooldownTill = parseRFC3339(st.CooldownTill)
 		a.probeAfter = parseRFC3339(st.ProbeAfter)
@@ -176,6 +208,7 @@ func loadStore(path, statePath string) (*store, error) {
 			a.probeAfter = now.Add(backgroundProbeDelay())
 			migratedState = true
 		}
+		a.lowCredit = st.LowCredit
 		a.lastUsed = parseRFC3339(st.LastUsed)
 	}
 	if migratedState {
@@ -229,14 +262,17 @@ func (s *store) saveState() error {
 	}
 	file := stateFile{Accounts: map[string]accountState{}}
 	for _, a := range s.all {
-		if !a.dead && a.failures == 0 && a.sessionFailures == 0 && a.lastError == "" && a.cooldownTill.IsZero() && a.probeAfter.IsZero() && a.lastUsed.IsZero() {
+		if !a.dead && !a.abnormal && a.failures == 0 && a.sessionFailures == 0 && a.cooldownStage == 0 && a.lastError == "" && a.cooldownTill.IsZero() && a.probeAfter.IsZero() && a.lastUsed.IsZero() && !a.lowCredit {
 			continue
 		}
 		st := accountState{
 			Dead:            a.dead,
+			Abnormal:        a.abnormal,
 			Failures:        a.failures,
 			SessionFailures: a.sessionFailures,
+			CooldownStage:   a.cooldownStage,
 			LastError:       a.lastError,
+			LowCredit:       a.lowCredit,
 		}
 		if !a.cooldownTill.IsZero() {
 			st.CooldownTill = a.cooldownTill.UTC().Format(time.RFC3339)
@@ -271,9 +307,12 @@ func (s *store) applyConfig(configured []account) {
 				// file must not silently pardon a session the vendor rejected.
 				acc.failures = existing.failures
 				acc.sessionFailures = existing.sessionFailures
+				acc.cooldownStage = existing.cooldownStage
 				acc.cooldownTill = existing.cooldownTill
 				acc.probeAfter = existing.probeAfter
+				acc.lowCredit = existing.lowCredit
 				acc.dead = existing.dead
+				acc.abnormal = existing.abnormal
 				acc.lastError = existing.lastError
 				acc.lastUsed = existing.lastUsed
 				// A configured expiry is only a local estimate.  If a successful vendor
@@ -378,7 +417,7 @@ func (s *store) firstExpired(now time.Time) (account, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, a := range s.all {
-		if a.dead || a.expired(now) {
+		if a.dead || a.abnormal || a.expired(now) {
 			return *a, true
 		}
 	}
@@ -395,7 +434,10 @@ func (s *store) backgroundProbeDue(id string, now time.Time, delay func() time.D
 		if a.ID != id {
 			continue
 		}
-		if !a.Enabled || a.dead || strings.TrimSpace(a.AccessToken) == "" || a.expired(now) {
+		if !a.Enabled || a.dead || a.abnormal || strings.TrimSpace(a.AccessToken) == "" || a.expired(now) {
+			return false
+		}
+		if a.lowCredit {
 			return false
 		}
 		if now.Before(a.cooldownTill) {
@@ -440,24 +482,70 @@ func (s *store) penaliseChat(id string, err error, now time.Time, cooldown time.
 		}
 		a.failures++
 		a.lastError = redactErr(err)
-		if failureKind(err) == core.FailureSessionDead {
-			a.sessionFailures++
-			if a.sessionFailures >= sessionDeadFailureLimit {
-				a.dead = true
-				a.probeAfter = time.Time{}
-				if saveErr := s.saveState(); saveErr != nil {
-					_ = saveErr
-				}
-				return
+		a.sessionFailures = 0
+		nextStage := a.cooldownStage + 1
+		if delay, ok := chatCooldownForStage(nextStage); ok {
+			a.cooldownStage = nextStage
+			a.cooldownTill = now.Add(delay)
+			a.probeAfter = now.Add(backgroundProbeDelay())
+			if saveErr := s.saveState(); saveErr != nil {
+				_ = saveErr
 			}
+			return
 		}
-		a.cooldownTill = now.Add(cooldown)
-		a.probeAfter = now.Add(backgroundProbeDelay())
+		a.abnormal = true
+		a.cooldownTill = time.Time{}
+		a.probeAfter = time.Time{}
 		if saveErr := s.saveState(); saveErr != nil {
 			_ = saveErr
 		}
 		return
 	}
+}
+
+// penaliseChatWithStage records one failed round using the caller-supplied
+// stage.  The stage is read and written under the store lock so concurrent
+// requests for one account cannot overwrite each other's successful reset.
+func (s *store) penaliseChatWithStage(id string, err error, now time.Time, stage int, cooldown time.Duration) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, a := range s.all {
+		if a.ID != id {
+			continue
+		}
+		if a.cooldownStage != stage {
+			return false
+		}
+		a.failures++
+		a.lastError = redactErr(err)
+		a.sessionFailures = 0
+		nextStage := a.cooldownStage + 1
+		if delay, ok := chatCooldownForStage(nextStage); ok {
+			a.cooldownStage = nextStage
+			a.cooldownTill = now.Add(delay)
+			a.probeAfter = now.Add(backgroundProbeDelay())
+		} else {
+			a.abnormal = true
+			a.cooldownTill = time.Time{}
+			a.probeAfter = time.Time{}
+		}
+		if saveErr := s.saveState(); saveErr != nil {
+			_ = saveErr
+		}
+		return true
+	}
+	return false
+}
+
+func (s *store) cooldownStage(id string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, a := range s.all {
+		if a.ID == id {
+			return a.cooldownStage
+		}
+	}
+	return 0
 }
 
 // penaliseRecoverable records a failure from a side channel such as a balance
@@ -514,6 +602,7 @@ func (s *store) reset(id string, now time.Time) {
 		clearExpiry := a.expired(now)
 		a.failures = 0
 		a.sessionFailures = 0
+		a.cooldownStage = 0
 		a.lastError = ""
 		a.cooldownTill = time.Time{}
 		a.probeAfter = time.Time{}
@@ -545,8 +634,10 @@ func (s *store) resetAfterProbe(id string, now time.Time) {
 		}
 		clearExpiry := a.expired(now)
 		a.dead = false
+		a.abnormal = false
 		a.failures = 0
 		a.sessionFailures = 0
+		a.cooldownStage = 0
 		a.lastError = ""
 		a.cooldownTill = time.Time{}
 		a.probeAfter = time.Time{}
@@ -574,11 +665,14 @@ func (s *store) revive(id string) error {
 			continue
 		}
 		a.dead = false
+		a.abnormal = false
 		a.failures = 0
 		a.sessionFailures = 0
+		a.cooldownStage = 0
 		a.lastError = ""
 		a.cooldownTill = time.Time{}
 		a.probeAfter = time.Time{}
+		a.lowCredit = false
 		a.Enabled = true
 		if err := s.save(); err != nil {
 			return err
@@ -599,6 +693,63 @@ func (s *store) setEnabled(id string, enabled bool) error {
 		return s.save()
 	}
 	return fmt.Errorf("loomy: no account %q", id)
+}
+
+// applyBalance records the last balance verdict against the platform's
+// low-balance guard.  It owns only the dedicated lowCredit park: a rate-limit
+// or session cooldown keeps its own clock, and a successful balance read must
+// not clear it by accident.
+func (s *store) applyBalance(id string, credits int64, reserve int) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, a := range s.all {
+		if a.ID != id {
+			continue
+		}
+		if reserve < 0 {
+			if !a.lowCredit {
+				return false
+			}
+			a.lowCredit = false
+			_ = s.saveState()
+			return true
+		}
+		if credits <= int64(reserve) {
+			if a.lowCredit {
+				return false
+			}
+			a.lowCredit = true
+			_ = s.saveState()
+			return true
+		}
+		if !a.lowCredit {
+			return false
+		}
+		a.lowCredit = false
+		_ = s.saveState()
+		return true
+	}
+	return false
+}
+
+// clearLowCredit removes only the low-balance park.  It is used when the
+// operator disables the guard at run time: the account may still be cooling
+// from a separate vendor verdict, and that clock must stay untouched.
+func (s *store) clearLowCredit() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cleared := 0
+	for _, a := range s.all {
+		if !a.lowCredit {
+			continue
+		}
+		a.lowCredit = false
+		cleared++
+	}
+	if cleared > 0 {
+		_ = s.saveState()
+	}
+	return cleared
 }
 
 func (s *store) remove(id string) error {
@@ -651,6 +802,16 @@ func (c *Client) penalise(id string, err error, now time.Time) {
 // not disable an account that is answering chat successfully.
 func (c *Client) penaliseRecoverable(id string, err error, now time.Time) {
 	c.store.penaliseRecoverable(id, err, now, c.cfg.cooldown())
+}
+
+// applyBalanceGuard parks or revives an account after a balance read.  It only
+// owns the low-credit park, so a balance refresh cannot accidentally clear a
+// rate-limit or session cooldown.
+func (c *Client) applyBalanceGuard(id string, credits int64) bool {
+	if c == nil || c.store == nil {
+		return false
+	}
+	return c.store.applyBalance(id, credits, c.reserveCreditLimit())
 }
 
 // logf is a nil-safe logger, so a Client built by hand in a test needs no Deps.
@@ -970,6 +1131,9 @@ func accountRecord(a *account, now time.Time) core.AccountRecord {
 	case a.dead:
 		record.State = "invalid"
 		record.Note = "the vendor rejected this session; log in again and import the new token"
+	case a.abnormal:
+		record.State = "invalid"
+		record.Note = "the account was marked abnormal after repeated chat failures; revive it after fixing the cause, or log in again"
 	case !a.Enabled:
 		record.State = "cooling"
 		record.Note = "parked by the operator"
@@ -977,6 +1141,11 @@ func accountRecord(a *account, now time.Time) core.AccountRecord {
 		record.State = "invalid"
 		record.Note = "the session expired (Loomy sessions last 14 days and cannot be renewed); " +
 			"log in again and import the new token"
+	case a.lowCredit:
+		record.State = "cooling"
+		record.Note = "credit balance is at or below the reserve; waiting for a funded " +
+			"balance refresh or daily check-in"
+		record.Fields["low_credit"] = true
 	case !a.cooldownTill.IsZero() && now.Before(a.cooldownTill):
 		record.State = "cooling"
 		record.Note = "cooling down for another " + humanAge(a.cooldownTill.Sub(now))

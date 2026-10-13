@@ -308,6 +308,8 @@ enabled, carries a token, is not parked, and is under `max_in_flight`.
 failure kind rotates**, including 404 and an unrecognised 4xx — the
 production-validated reference does the same (`handler.go:218-243`), because
 stopping on the first error turns one bad account into a total outage.
+An account at its in-flight ceiling is skipped before the vendor is called,
+without consuming one of those three slots.
 
 | Upstream condition | Kind | Effect | Retry another account |
 | --- | --- | --- | --- |

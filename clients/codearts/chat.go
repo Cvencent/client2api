@@ -96,6 +96,9 @@ func (c *Client) openStream(ctx context.Context, req *core.ChatRequest, release 
 		// skipped, not blamed, so the next account is tried.
 		if err := req.AcquireAccountSlot(acctID); err != nil {
 			busy = true
+			// A full account is not an upstream attempt. Keep the request's
+			// switch budget for an account that can actually be called.
+			i--
 			continue
 		}
 		// Bind only after the slot is genuinely held, so a busy account that was

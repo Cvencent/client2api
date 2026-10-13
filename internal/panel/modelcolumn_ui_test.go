@@ -145,7 +145,7 @@ func TestModelDialogShowsFriendlyNames(t *testing.T) {
 		t.Error("modelCellHTML does not keep the raw id as title while showing the friendly name")
 	}
 	dialog := poolStatsFuncBody(t, src, "openModelsDialog")
-	if !strings.Contains(dialog, "modelCellHTML(n, m, sum.parks[m])") {
+	if !strings.Contains(dialog, "modelCellHTML(n, m, sum.parks[m]") {
 		t.Error("openModelsDialog does not pass the client into modelCellHTML")
 	}
 	render := poolStatsFuncBody(t, src, "renderModels")
