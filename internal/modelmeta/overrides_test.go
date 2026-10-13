@@ -49,6 +49,40 @@ func TestOverrideStorePersistsAndDeletes(t *testing.T) {
 	}
 }
 
+// TestOverrideStoreReplaceRestoresAnExportedSnapshot pins the bundle path:
+// restoring a snapshot must replace every override (including entries the
+// target had that the bundle does not) and persist it for the next start.
+func TestOverrideStoreReplaceRestoresAnExportedSnapshot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "model_context.json")
+	s, err := OpenOverrideStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Set("zcode", "stale", 1, 2); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := map[string]map[string]Override{
+		"zcode": {"GLM-5.3": {ContextLength: 200000, MaxOutputTokens: 8192}},
+	}
+	if err := s.Replace(snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s.Get("zcode", "stale"); ok {
+		t.Fatal("Replace kept an override the snapshot did not carry")
+	}
+	got, ok := s.Get("zcode", "GLM-5.3")
+	if !ok || got.ContextLength != 200000 || got.MaxOutputTokens != 8192 {
+		t.Fatalf("got %+v ok=%v", got, ok)
+	}
+	reopened, err := OpenOverrideStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := reopened.Get("zcode", "GLM-5.3"); !ok || got.ContextLength != 200000 {
+		t.Fatalf("reopened %+v ok=%v", got, ok)
+	}
+}
+
 func TestOverrideStoreCorruptFileIsEmpty(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "model_context.json")
 	if err := os.WriteFile(path, []byte("not json"), 0o600); err != nil {

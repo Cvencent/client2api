@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Rebuilds the vendored Opus-only ffmpeg.exe in this directory.
+    Rebuilds the vendored speech-input ffmpeg.exe in this directory.
 
 .DESCRIPTION
     Not part of a normal release build -- ffmpeg.exe is committed, and only
@@ -65,12 +65,12 @@ function Invoke-Bash {
 
 if (-not (Test-Path (Join-Path $work "opus-$opusVersion"))) {
     Write-Host "==> fetching opus $opusVersion"
-    Invoke-Bash "cd '$msys' && curl -fsSLO 'https://downloads.xiph.org/releases/opus/opus-$opusVersion.tar.gz' && tar xf opus-$opusVersion.tar.gz"
+    Invoke-Bash "cd '$msys' && curl --ssl-no-revoke -fsSLO 'https://downloads.xiph.org/releases/opus/opus-$opusVersion.tar.gz' && tar xf opus-$opusVersion.tar.gz"
 }
 
 if (-not (Test-Path (Join-Path $work "ffmpeg-$ffmpegVersion"))) {
     Write-Host "==> fetching ffmpeg $ffmpegVersion"
-    Invoke-Bash "cd '$msys' && curl -fsSLO 'https://ffmpeg.org/releases/ffmpeg-$ffmpegVersion.tar.xz' && tar xf ffmpeg-$ffmpegVersion.tar.xz"
+    Invoke-Bash "cd '$msys' && curl --ssl-no-revoke -fsSLO 'https://ffmpeg.org/releases/ffmpeg-$ffmpegVersion.tar.xz' && tar xf ffmpeg-$ffmpegVersion.tar.xz"
 }
 
 # The 8.3 short path is what keeps libtool's shell invocations working; see the
@@ -82,29 +82,32 @@ Invoke-Bash "cd '$msys/opus-$opusVersion' && SHELL=/bin/sh CONFIG_SHELL=/bin/sh 
 Invoke-Bash "cd '$msys/opus-$opusVersion' && '$make' -j4 SHELL='$shortShell' >/dev/null 2>&1"
 Invoke-Bash "cd '$msys/opus-$opusVersion' && '$make' install SHELL='$shortShell' >/dev/null 2>&1"
 
-Write-Host "==> configuring ffmpeg (opus encode only)"
+    Write-Host "==> configuring ffmpeg (speech decode + opus encode)"
 # --disable-everything first, then re-enable exactly what encodeWithFFmpeg in
 # clients/doubaoime/audio.go touches.  Adding a component here means adding it
 # to that Go function too, or the module will fail at runtime.
 $configure = @(
-    "cd '$msys/ffmpeg-$ffmpegVersion'"
-    "PKG_CONFIG_PATH='$msys/opus-install/lib/pkgconfig'"
-    'SHELL=/bin/sh CONFIG_SHELL=/bin/sh'
     './configure'
     '--disable-everything'
     '--disable-doc --disable-debug --disable-ffplay'
     '--disable-network --disable-autodetect --disable-x86asm'
     '--disable-avdevice'
     '--enable-libopus --enable-encoder=libopus'
+    '--enable-swresample --enable-filter=aresample'
     '--enable-muxer=ogg --enable-muxer=opus'
-    '--enable-demuxer=pcm_s16le --enable-demuxer=wav'
-    '--enable-decoder=pcm_s16le'
+    '--enable-muxer=pcm_s16le --enable-encoder=pcm_s16le'
+    '--enable-demuxer=wav --enable-demuxer=pcm_s16le'
+    '--enable-demuxer=mp3 --enable-demuxer=mov --enable-demuxer=ogg'
+    '--enable-demuxer=matroska --enable-demuxer=flac'
+    '--enable-decoder=pcm_s16le --enable-decoder=mp3 --enable-decoder=aac'
+    '--enable-decoder=flac --enable-decoder=vorbis --enable-decoder=opus'
+    '--enable-parser=aac --enable-parser=flac --enable-parser=mpegaudio --enable-parser=opus --enable-parser=vorbis'
     '--enable-protocol=file --enable-protocol=pipe'
     '--enable-version3'
     "prefix='$msys/ffmpeg-install'"
     '> /dev/null'
 ) -join ' '
-Invoke-Bash $configure
+Invoke-Bash "cd '$msys/ffmpeg-$ffmpegVersion' && PKG_CONFIG_PATH='$msys/opus-install/lib/pkgconfig' SHELL=/bin/sh CONFIG_SHELL=/bin/sh $configure"
 
 Write-Host "==> building ffmpeg"
 Invoke-Bash "cd '$msys/ffmpeg-$ffmpegVersion' && '$make' -j4 SHELL='$shortShell' >/dev/null 2>&1"

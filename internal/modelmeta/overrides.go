@@ -313,6 +313,38 @@ func (s *OverrideStore) Snapshot() map[string]map[string]Override {
 	return out
 }
 
+// Replace swaps the whole override document for the supplied snapshot and
+// persists it. It is the restore path: unlike Set it also drops entries the
+// incoming document does not carry, so a bundle is authoritative for what the
+// target had configured.
+func (s *OverrideStore) Replace(snapshot map[string]map[string]Override) error {
+	if s == nil {
+		return errors.New("modelmeta: nil override store")
+	}
+	next := overrideDoc{Clients: map[string]map[string]Override{}}
+	for client, models := range snapshot {
+		client = strings.TrimSpace(client)
+		if client == "" {
+			continue
+		}
+		out := map[string]Override{}
+		for model, o := range models {
+			model = strings.TrimSpace(model)
+			if model == "" || o.IsZero() {
+				continue
+			}
+			out[model] = o
+		}
+		if len(out) > 0 {
+			next.Clients[client] = out
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.doc = next
+	return s.writeLocked()
+}
+
 func (s *OverrideStore) writeLocked() error {
 	if s.path == "" {
 		return nil

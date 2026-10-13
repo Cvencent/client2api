@@ -737,7 +737,7 @@ func (s *server) serveRemainingCandidates(w http.ResponseWriter, r *http.Request
 			ev := s.opts.Registry.NoteModelFailure(client.Name(), upstreamModel, time.Now())
 			s.publishPlatformAlert(client.Name(), upstreamModel, rec.Account, ev)
 		}
-		skippable := candidateUnavailable(err) || (!explicitPlatformRequest(in.requested, client.Name()) && modelRefusal(err))
+		skippable := candidateUnavailable(err) || (!hardPlatformPin(in.requested, candidate) && modelRefusal(err))
 		if (!retryable && !skippable) || (s.opts.Guard != nil && s.opts.Guard.IP.Active()) {
 			return lastClient, lastHint, lastErr, false
 		}
@@ -765,6 +765,15 @@ func modelRefusal(err error) bool {
 func explicitPlatformRequest(model, client string) bool {
 	prefix, rest, ok := strings.Cut(strings.TrimSpace(model), "/")
 	return ok && rest != "" && strings.EqualFold(prefix, client)
+}
+
+// hardPlatformPin reports whether a request must not fail over to another
+// platform.  A qualified id that is an ordinary catalogue match is a hard pin:
+// the caller picked one platform and a refusal is the honest answer.  A
+// qualified id that is a model-group member is not a pin -- it only says which
+// member to try first -- so a refusal still falls through to its siblings.
+func hardPlatformPin(model string, candidate core.Candidate) bool {
+	return candidate.GroupKey() == "" && explicitPlatformRequest(model, candidate.Client.Name())
 }
 
 // ErrPlatformExhausted is the module's explicit statement that it has already

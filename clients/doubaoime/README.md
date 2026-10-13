@@ -11,7 +11,7 @@ The module serves exactly one thing the rest of the gateway cannot express:
 
 ```text
 POST /v1/audio/transcriptions   (multipart/form-data)
-    -> WAV 16 kHz mono PCM
+    -> WAV 16 kHz mono PCM (other supported containers are decoded with FFmpeg)
     -> FFmpeg Ogg Opus (20 ms frames)
     -> Doubao IME private ASR WebSocket protocol
     -> {"text": "..."}
@@ -55,11 +55,12 @@ libopus.
 
 **The Windows installer ships a bundled copy**, so step 2 already succeeds after
 an ordinary install and no system FFmpeg is needed. It is a purpose-built
-1.95 MB LGPL build carrying only the Opus encoder, the Ogg/Opus muxers and the
-raw-PCM demuxer -- see `third_party/ffmpeg/README.md` for what was kept, why,
-and how to rebuild it. Its SHA256 is pinned in `ffmpeg.sha256`, checked when the
-installer packages it, and asserted by the module's tests, so a tampered or
-mispackaged copy fails before it can reach a user.
+~3.4 MB LGPL build carrying the Opus encoder, the Ogg/Opus and raw-PCM muxers,
+and decoders for the common transcription upload containers -- see
+`third_party/ffmpeg/README.md` for what was kept, why, and how to rebuild it.
+Its SHA256 is pinned in `ffmpeg.sha256`, checked when the installer packages it,
+and asserted by the module's tests, so a tampered or mispackaged copy fails
+before it can reach a user.
 
 The portable archives (Linux/macOS/Windows zip) do **not** bundle a binary --
 install FFmpeg through your package manager there.
@@ -85,6 +86,21 @@ curl.exe -s -X POST http://127.0.0.1:8790/v1/audio/transcriptions `
 tagged with `extra.kind = "transcription"`, so a client can discover the routing
 name without being told. A bare `whisper-1` also resolves when only one
 transcription provider serves it.
+
+The endpoint is multipart, with the same shape as OpenAI's
+`POST /v1/audio/transcriptions`. The upload can be WAV, FLAC, MP3, MP4/M4A,
+OGG, or WebM. WAV is decoded in-process; every other container is decoded by
+FFmpeg and then resampled to 16 kHz mono before it reaches Doubao.
+
+`response_format` accepts `json` (the default), `text`, `srt`, `verbose_json`,
+and `vtt`. `verbose_json` carries the audio duration and one whole-utterance
+segment; Doubao does not expose real word timestamps, so `words` is omitted
+rather than fabricated. `diarized_json`, `timestamp_granularities`,
+`include=logprobs`, streaming, diarization, language lists, keyword biasing,
+chunking controls, prompt biasing, and non-zero temperature are rejected with
+HTTP 400 because this upstream cannot implement them. In particular, a non-empty
+`prompt` is refused rather than silently accepted: Doubao cannot use it for word
+hints or style control.
 
 ## Config
 
@@ -115,9 +131,11 @@ the failure is surfaced. Tokens, cookies and audio are never logged.
 
 ## Input rules
 
-- The upload must be a RIFF/WAVE file with 16-bit PCM samples. Anything else is
-  rejected with HTTP 400 before any network call.
-- Multi-channel input is downmixed and resampled to 16 kHz mono in-process.
+- WAV must be RIFF/WAVE with 16-bit PCM samples. FLAC, MP3, MP4/M4A, OGG and
+  WebM are decoded by FFmpeg; a format with no matching decoder is rejected
+  with HTTP 400.
+- Multi-channel and non-16 kHz input is downmixed and resampled to 16 kHz mono
+  before the Opus encoding step.
 - An all-silent clip, or an upstream reply with no text, becomes HTTP 422.
 
 ## Provenance and risk

@@ -218,27 +218,65 @@ func readConfigMap(path string) (map[string]any, error) {
 
 // mergeConfig applies a patch over a base document without mutating either.
 func mergeConfig(base, patch map[string]any) map[string]any {
+	return mergeConfigIn(base, patch, "")
+}
+
+// mergeConfigIn is mergeConfig with the namespace the current map belongs to.
+// Model-group names are case-insensitive everywhere else -- the registry
+// lowercases them and the validator compares them case-insensitively -- so a
+// save that echoes the normalized lowercase name must fold onto the mixed-case
+// key already on disk rather than creating a second, duplicate-looking entry.
+// Every other key keeps exact-match merge semantics.
+func mergeConfigIn(base, patch map[string]any, namespace string) map[string]any {
 	out := make(map[string]any, len(base)+len(patch))
 	for k, v := range base {
 		out[k] = v
 	}
 	for k, pv := range patch {
+		key := k
+		if namespace == "model_groups" {
+			key = matchConfigKey(out, k)
+		}
 		if pv == nil {
-			delete(out, k)
+			delete(out, key)
 			continue
 		}
 		if isRedacted(pv) {
 			continue // keep whatever is on disk
 		}
-		if bm, ok := out[k].(map[string]any); ok {
+		if bm, ok := out[key].(map[string]any); ok {
 			if pm, ok := pv.(map[string]any); ok {
-				out[k] = mergeConfig(bm, pm)
+				out[key] = mergeConfigIn(bm, pm, childConfigNamespace(namespace, key))
 				continue
 			}
 		}
-		out[k] = pv
+		out[key] = pv
 	}
 	return out
+}
+
+// matchConfigKey returns the existing key a case-insensitive patch key should
+// land on, preserving the operator's original casing when one is already there.
+func matchConfigKey(base map[string]any, key string) string {
+	if _, ok := base[key]; ok {
+		return key
+	}
+	fold := strings.ToLower(strings.TrimSpace(key))
+	for name := range base {
+		if strings.ToLower(strings.TrimSpace(name)) == fold {
+			return name
+		}
+	}
+	return key
+}
+
+// childConfigNamespace returns the namespace a nested object is merged in, so
+// only model_group names receive case-insensitive matching.
+func childConfigNamespace(parent, key string) string {
+	if parent == "" && key == "model_groups" {
+		return "model_groups"
+	}
+	return ""
 }
 
 // isRedacted reports whether a patch value is the "unchanged" sentinel.  Only a

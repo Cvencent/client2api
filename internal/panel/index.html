@@ -2327,7 +2327,7 @@ details.cfg summary:hover, details.adv summary:hover { color: var(--accent-text)
           <button class="xs" id="btnBundleImport">从文件恢复</button>
         </header>
         <div class="pad">
-          <p class="hint">包含整份配置（监听地址 / 入站 Key / 数据目录 / 代理、账号池与冷却策略、会话粘性、提示词、模型别名、定时任务、平台路由、自定义中转站、模块配置、面板设置）与所有平台的账号凭据；不含用量、日志与任务运行历史。导入会把配置合并进本机配置、凭据覆盖同名文件（覆盖前先备份到 data/backups/）。自定义中转站及其账号可以热加载；监听 / 数据目录 / 代理 / 停用客户端 / 模块配置及其他平台账号需重启进程。文件内是明文凭据与明文 Key，请妥善保管。</p>
+          <p class="hint">包含整份配置（监听地址 / 入站 Key / 数据目录 / 代理、账号池与冷却策略、会话粘性、提示词、模型别名、定时任务、平台路由、自定义中转站、模块配置、面板设置）、模型上下文与价格等手工覆盖，以及所有平台的账号凭据（含已停用的账号）；不含用量、日志、任务运行历史、学习到的上下文窗口和设备身份。导入会把配置合并进本机配置、模型覆盖整体替换、凭据覆盖同名文件（覆盖前先备份到 data/backups/）。自定义中转站及其账号可以热加载；监听 / 数据目录 / 代理 / 停用客户端 / 模块配置及其他平台账号需重启进程。若 WorkBuddy 配置了自定义 accounts_dir，其账号不在快照内，导出时会提示。文件内是明文凭据与明文 Key，请妥善保管。</p>
         </div>
       </div>
     </section>
@@ -10960,6 +10960,7 @@ async function bundleExport() {
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 10000);
     toast("已导出 " + s.files + " 个凭据文件、" + s.plats + " 个平台配置");
+    ((r.data && r.data.warnings) || []).forEach(w => toast(w, "err"));
   } finally {
     btns.forEach(b => { b.disabled = false; });
   }
@@ -10986,23 +10987,25 @@ async function bundleImportFile(file) {
   if (!doc || doc.kind !== "client2api.bundle") { toast("这不是 client2api 的备份文件", "err"); return; }
   const s = bundleSummary(doc);
   const ask = "导入这份备份？\n\n导出时间：" + s.when + "\n凭据文件：" + s.files + " 个\n平台配置：" + s.plats + " 个" +
-    "\n\n同名凭据会先备份到 data/backups/；自定义中转站账号热加载，其他平台账号需重启后生效。";
+    "\n\n同名凭据会先备份到 data/backups/；模型覆盖整体替换；自定义中转站账号热加载，其他平台账号需重启后生效。";
   if (!confirm(ask)) return;
   const btns = [$("#btnBundleImport"), $("#btnPfImport")].filter(Boolean);
   btns.forEach(b => { b.disabled = true; });
   try {
     const r = await api("/panel/api/bundle", { method: "POST", body: text });
     if (!r.ok) { toast("导入失败：" + r.err, "err"); return; }
-    const d = r.data || {}, acc = d.accounts || {}, cfg = d.config || {};
+    const d = r.data || {}, acc = d.accounts || {}, cfg = d.config || {}, mc = d.model_context || {};
     const bits = [];
     if (acc.files) bits.push("账号文件 " + acc.files + " 个");
     if (acc.backed_up) bits.push("已备份 " + acc.backed_up + " 个");
     if (cfg.applied) bits.push("平台配置已生效");
+    if (mc.applied) bits.push("模型覆盖已生效");
     if (d.restart_required) bits.push("部分配置或账号需重启进程");
     toast("导入完成：" + (bits.join("，") || "没有变化"), d.restart_required ? "err" : "");
     (d.warnings || []).concat(d.errors || []).forEach(w => toast(w, "err"));
     await renderConfig();
     if (VIEW === "platforms") await renderPlatforms();
+    if (VIEW === "models") await renderModels();
   } finally {
     btns.forEach(b => { b.disabled = false; });
   }

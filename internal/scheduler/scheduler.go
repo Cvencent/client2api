@@ -900,26 +900,44 @@ func (r *Runner) Run(ctx context.Context) {
 		}
 
 		now = r.now()
-		for _, f := range fires {
-			if f.at.After(now) {
-				continue
+		handled := make([]bool, len(fires))
+		// drainDue dispatches every firing in this plan that has come due.
+		// It re-reads the clock after each handler: a platform sweep can
+		// block this goroutine for minutes, and any firing that lands inside
+		// that window must still go out.
+		drainDue := func() {
+			for i := range fires {
+				if handled[i] || fires[i].at.After(now) {
+					continue
+				}
+				handled[i] = true
+				if strings.EqualFold(fires[i].batch, RecoveryTaskName) {
+					r.tickRecovery(ctx, cfg, fires[i].client)
+				} else if strings.EqualFold(fires[i].batch, DailyBalanceTaskName) {
+					r.tickDailyBalance(ctx, cfg, fires[i].client)
+				} else {
+					r.dispatchBatch(ctx, fires[i].client, fires[i].batch)
+				}
+				now = r.now()
+				if ctx.Err() != nil {
+					return
+				}
 			}
-			if strings.EqualFold(f.batch, RecoveryTaskName) {
-				r.tickRecovery(ctx, cfg, f.client)
-			} else if strings.EqualFold(f.batch, DailyBalanceTaskName) {
-				r.tickDailyBalance(ctx, cfg, f.client)
-			} else {
-				r.dispatchBatch(ctx, f.client, f.batch)
-			}
-			if ctx.Err() != nil {
-				return
-			}
+		}
+		drainDue()
+		if ctx.Err() != nil {
+			return
 		}
 		if hasBal && !balDue.After(now) {
 			r.tickBalance(ctx, cfg)
 			if ctx.Err() != nil {
 				return
 			}
+			// The balance sweep can run across the next batch hour.  A fresh
+			// plan() would roll that hour forward as if it had fired; this
+			// plan still carries it, so drain once more before recomputing.
+			now = r.now()
+			drainDue()
 		}
 	}
 }

@@ -27,7 +27,8 @@ people. The built-in default is `127.0.0.1`.
 - Aggregates your own accounts across supported platforms into one account pool.
 - Serves `POST /v1/chat/completions` and `POST /v1/responses` with one inbound API Key.
 - Serves `POST /v1/audio/transcriptions` for platforms that expose speech, so a
-  WAV upload comes back as `{"text": "..."}`.
+  WAV/FLAC/MP3/MP4/M4A/OGG/WebM upload comes back as `{"text": "..."}` (or
+  text, SRT, verbose JSON, VTT).
 - Routes by platform, account, model, alias, `Auto/<model>` or custom model groups.
 - Keeps one conversation on the same account where the platform supports sticky sessions.
 - Handles account priority, cooldown, concurrency limits, retries and failover.

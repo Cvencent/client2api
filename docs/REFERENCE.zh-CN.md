@@ -36,12 +36,14 @@
 ## 语音转写
 
 `POST /v1/audio/transcriptions` 接收 OpenAI 风格的 multipart 上传
-（`file` 加 `model`，可选 `language` 与 `response_format=json`），返回
-`{"text": "..."}`。平台实现 `core.TranscriptionProvider`
+（`file` 加 `model`，可选 `language` 与 `response_format`），返回
+`{"text": "..."}`、纯文本、SRT、verbose JSON 或 VTT。平台实现 `core.TranscriptionProvider`
 （`TranscriptionModels` 与 `Transcribe`）即可接入；目前只有 `doubaoime`
 实现了它。转写模型刻意 **不进入** `Client.Models()` 和对话路由目录，而是由
 `GET /v1/models` 单独列出并标记 `extra.kind = "transcription"`，客户端无需
-把它们加进对话号池即可发现。错误映射为 400（上传或 WAV 非法）、422（无有效
+把它们加进对话号池即可发现。`doubaoime` 接受 WAV、FLAC、MP3、MP4/M4A、OGG
+和 WebM；WAV 在进程内解码，其余容器由内置 FFmpeg 解码。错误映射为
+400（上传或音频非法）、422（无有效
 语音）、502（上游/协议错误）和 504（超时）。
 
 ## 自定义中转站

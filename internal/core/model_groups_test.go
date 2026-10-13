@@ -46,11 +46,17 @@ func TestModelGroupMemberNameRoutesWholeGroup(t *testing.T) {
 		},
 	})
 
-	for _, requested := range []string{"shared", "alpha-model", "beta-model"} {
-		gotClient, gotModel := resolveOK(t, r, requested)
-		if gotClient != "beta" || gotModel != "beta-model" {
-			t.Fatalf("Resolve(%q) = (%q, %q), want (beta, beta-model)", requested, gotClient, gotModel)
-		}
+	// The bare group name follows the configured priority.
+	if gotClient, gotModel := resolveOK(t, r, "shared"); gotClient != "beta" || gotModel != "beta-model" {
+		t.Fatalf("Resolve(shared) = (%q, %q), want (beta, beta-model)", gotClient, gotModel)
+	}
+	// Naming a member routes through the whole group but prefers that member,
+	// even when the operator ranked a sibling higher.
+	if gotClient, gotModel := resolveOK(t, r, "alpha-model"); gotClient != "alpha" || gotModel != "alpha-model" {
+		t.Fatalf("Resolve(alpha-model) = (%q, %q), want (alpha, alpha-model)", gotClient, gotModel)
+	}
+	if gotClient, gotModel := resolveOK(t, r, "beta-model"); gotClient != "beta" || gotModel != "beta-model" {
+		t.Fatalf("Resolve(beta-model) = (%q, %q), want (beta, beta-model)", gotClient, gotModel)
 	}
 }
 

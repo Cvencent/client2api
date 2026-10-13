@@ -37,13 +37,15 @@ Everything is served from **one** HTTP surface — `POST /v1/chat/completions`,
 ## Speech transcription
 
 `POST /v1/audio/transcriptions` accepts an OpenAI-style multipart upload
-(`file` plus `model`, optional `language` and `response_format=json`) and returns
-`{"text": "..."}`. A platform opts in by implementing `core.TranscriptionProvider`
+(`file` plus `model`, optional `language` and `response_format`) and returns
+`{"text": "..."}`, plain text, SRT, verbose JSON, or VTT. A platform opts in by implementing `core.TranscriptionProvider`
 (`TranscriptionModels` and `Transcribe`); the only such module today is
 `doubaoime`. Transcription models are kept **out** of `Client.Models()` and the
 chat routing catalogue, then listed by `GET /v1/models` with
 `extra.kind = "transcription"` so a client can discover them without entering
-the chat pool. Errors map to 400 (bad upload or WAV), 422 (no speech), 502
+the chat pool. The `doubaoime` module accepts WAV, FLAC, MP3, MP4/M4A, OGG and
+WebM; WAV is decoded in-process and the rest are decoded by the bundled FFmpeg.
+Errors map to 400 (bad upload or audio), 422 (no speech), 502
 (upstream/protocol) and 504 (timeout).
 
 ## Custom Relay Platforms

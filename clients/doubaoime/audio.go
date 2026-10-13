@@ -23,6 +23,106 @@ type wavAudio struct {
 	bitsPerSample int
 }
 
+func decodeAudio(ctx context.Context, ffmpeg string, raw []byte) (wavAudio, error) {
+	if len(raw) >= 12 && string(raw[0:4]) == "RIFF" && string(raw[8:12]) == "WAVE" {
+		return decodeWAV(raw)
+	}
+	_, ok := detectAudioFormat(raw)
+	if !ok {
+		return wavAudio{}, fmt.Errorf("%w: unrecognised audio container", core.ErrInvalidAudio)
+	}
+	if ffmpeg == "" {
+		return wavAudio{}, core.Fail("doubaoime", "", core.FailureOther, http.StatusBadGateway,
+			errors.New("doubaoime: this audio format needs an ffmpeg build with decoders for it; set ffmpeg_path"))
+	}
+	return decodeAudioWithFFmpeg(ctx, ffmpeg, raw)
+}
+
+func detectAudioFormat(raw []byte) (string, bool) {
+	if len(raw) >= 4 && string(raw[0:4]) == "fLaC" {
+		return "flac", true
+	}
+	if len(raw) >= 4 && string(raw[0:4]) == "OggS" {
+		return "ogg", true
+	}
+	if len(raw) >= 4 && (string(raw[0:4]) == "ID3\x04" || string(raw[0:4]) == "ID3\x03" || (len(raw) >= 2 && raw[0] == 0xff && raw[1]&0xe0 == 0xe0)) {
+		return "mp3", true
+	}
+	if len(raw) >= 12 && string(raw[4:8]) == "ftyp" {
+		return "mp4", true
+	}
+	if len(raw) >= 4 && raw[0] == 0x1a && raw[1] == 0x45 && raw[2] == 0xdf && raw[3] == 0xa3 {
+		return "webm", true
+	}
+	return "", false
+}
+
+func decodeAudioWithFFmpeg(ctx context.Context, ffmpeg string, raw []byte) (wavAudio, error) {
+	format, ok := detectAudioFormat(raw)
+	if !ok {
+		return wavAudio{}, fmt.Errorf("%w: unrecognised audio container", core.ErrInvalidAudio)
+	}
+
+	// MP4/M4A commonly stores its "moov" atom at the end of the file, which
+	// cannot be read from a non-seekable pipe. Give FFmpeg a real temporary
+	// file so container probing works the same way it does for a normal
+	// player. The extension is only a hint; FFmpeg still probes the bytes.
+	file, err := os.CreateTemp("", "client2api-audio-*."+audioFileExtension(format))
+	if err != nil {
+		return wavAudio{}, core.Fail("doubaoime", "", core.FailureOther, http.StatusInternalServerError,
+			fmt.Errorf("doubaoime: creating temporary audio file: %w", err))
+	}
+	path := file.Name()
+	defer func() {
+		_ = file.Close()
+		_ = os.Remove(path)
+	}()
+	if _, err := file.Write(raw); err != nil {
+		return wavAudio{}, core.Fail("doubaoime", "", core.FailureOther, http.StatusInternalServerError,
+			fmt.Errorf("doubaoime: writing temporary audio file: %w", err))
+	}
+	if err := file.Close(); err != nil {
+		return wavAudio{}, core.Fail("doubaoime", "", core.FailureOther, http.StatusInternalServerError,
+			fmt.Errorf("doubaoime: closing temporary audio file: %w", err))
+	}
+
+	cmd := exec.CommandContext(ctx, ffmpeg,
+		"-hide_banner", "-loglevel", "error",
+		"-i", path,
+		"-vn", "-f", "s16le", "-ar", "16000", "-ac", "1",
+		"pipe:1",
+	)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			msg = err.Error()
+		}
+		return wavAudio{}, fmt.Errorf("%w: ffmpeg could not decode the audio: %s", core.ErrInvalidAudio, core.Redact(msg))
+	}
+	if len(out) < 2 {
+		return wavAudio{}, fmt.Errorf("%w: ffmpeg produced no PCM audio", core.ErrInvalidAudio)
+	}
+	samples := make([]int16, len(out)/2)
+	for i := range samples {
+		samples[i] = int16(binary.LittleEndian.Uint16(out[i*2 : i*2+2]))
+	}
+	return wavAudio{samples: samples, sampleRate: 16000, channels: 1, bitsPerSample: 16}, nil
+}
+
+func audioFileExtension(format string) string {
+	switch format {
+	case "mp4":
+		return "m4a"
+	case "webm":
+		return "webm"
+	default:
+		return format
+	}
+}
+
 func decodeWAV(raw []byte) (wavAudio, error) {
 	if len(raw) < 12 || string(raw[0:4]) != "RIFF" || string(raw[8:12]) != "WAVE" {
 		return wavAudio{}, fmt.Errorf("%w: not a RIFF/WAVE file", core.ErrInvalidAudio)

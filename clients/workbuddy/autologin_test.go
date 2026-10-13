@@ -69,9 +69,9 @@ type fakePage struct {
 	oneidLoginURLReadyAfter int
 	oneidLoadDispatched     bool
 	oneidLoadBeforeCode     bool
-	oneidRemountAfterLoad   bool
-	oneidRemounts           int
-	oneidFinalLoadDispatched bool
+	oneidClearBeforeAccount bool
+	oneidSyncedBeforeClick  bool
+	oneidAccountClicks      int
 }
 
 func newFakePage() *fakePage {
@@ -212,23 +212,23 @@ func (p *fakePage) EvalBool(_ context.Context, expression string) (bool, error) 
 		return true, nil
 	case strings.Contains(expression, "phone-iframe") && strings.Contains(expression, "__ONEID__") && strings.Contains(expression, "dispatchEvent"):
 		p.oneidLoginURLChecks++
-		if p.oneidRemountAfterLoad && p.oneidLoadDispatched {
-			p.oneidRemounts++
+		if p.oneidClearBeforeAccount && p.oneidLoadDispatched {
+			p.oneidClearBeforeAccount = false
 			p.oneidLoadDispatched = false
-			p.oneidRemountAfterLoad = false
 			return false, nil
 		}
 		if p.oneidLoginURLChecks <= p.oneidLoginURLReadyAfter {
 			return false, nil
 		}
 		p.oneidLoadDispatched = true
-		if p.oneidRemounts > 0 {
-			p.oneidFinalLoadDispatched = true
-		}
 		return true, nil
 	case strings.Contains(expression, "oneid-enterprise-login-account-list__item") && strings.Contains(expression, "个人版"):
 		for _, text := range p.accountTexts {
 			if strings.Contains(text, "个人版") {
+				p.oneidAccountClicks++
+				if p.oneidLoadDispatched {
+					p.oneidSyncedBeforeClick = true
+				}
 				p.clicked = append(p.clicked, "oneid-account-item(个人版)")
 				return true, nil
 			}
@@ -237,6 +237,10 @@ func (p *fakePage) EvalBool(_ context.Context, expression string) (bool, error) 
 	case strings.Contains(expression, ".account-item") && strings.Contains(expression, "个人版"):
 		for _, text := range p.accountTexts {
 			if strings.Contains(text, "个人版") {
+				p.oneidAccountClicks++
+				if p.oneidLoadDispatched {
+					p.oneidSyncedBeforeClick = true
+				}
 				p.clicked = append(p.clicked, ".account-item(个人版)")
 				return true, nil
 			}
@@ -908,27 +912,33 @@ func TestAutoLoginReplaysCNOneIDLoadAfterLoginURLAppears(t *testing.T) {
 	}
 }
 
-// TestAutoLoginReplaysCNOneIDLoadAfterTheIframeRemounts reproduces the state
-// loss seen after the first load replay: React clears loginInfo and remounts
-// the hidden iframe. The new instance needs its own load replay before the
-// account chooser can use loginUrl.
-func TestAutoLoginReplaysCNOneIDLoadAfterTheIframeRemounts(t *testing.T) {
+// TestAutoLoginResyncsCNOneIDLoginURLBeforeSelectingAnAccount reproduces the
+// state loss seen after the phone tab's effect clears the outer React
+// loginInfo state. The hidden iframe still has a valid loginUrl, so the flow
+// must replay its load handler again immediately before selecting an account.
+func TestAutoLoginResyncsCNOneIDLoginURLBeforeSelectingAnAccount(t *testing.T) {
 	v := successVendor()
 	c, _ := autoLoginClient(t, v)
 	page := newFakePage()
-	page.oneidRemountAfterLoad = true
+	page.exists[selCNOneIDAccountItem] = true
+	page.accountTexts = []string{"企业版", "个人版"}
+	page.oneidClearBeforeAccount = true
 	platform := &fakePlatform{number: core.SMSNumber{Phone: "13800009909"}, code: "999999"}
 
 	if _, err := runAutoLogin(t, c, page, platform, core.AutoLoginRequest{}); err != nil {
 		t.Fatalf("autoLogin: %v", err)
 	}
-	if page.oneidRemounts == 0 {
-		t.Fatal("the test did not model the iframe remount")
+	if page.oneidAccountClicks == 0 {
+		t.Fatal("the test did not reach the CN account chooser")
 	}
-	if !page.oneidFinalLoadDispatched {
-		t.Fatal("the CN flow never replayed the load on the remounted iframe")
+	if !page.oneidSyncedBeforeClick {
+		t.Fatal("the CN account was selected before loginUrl was restored")
+	}
+	if page.oneidLoginURLChecks < 2 {
+		t.Fatalf("OneID loginUrl checks = %d, want at least 2", page.oneidLoginURLChecks)
 	}
 }
+
 // TestAutoLoginDoesNotReplayTheOneIDLoadForTheGlobalRealm keeps the CN
 // workaround out of the international flow.
 func TestAutoLoginDoesNotReplayTheOneIDLoadForTheGlobalRealm(t *testing.T) {

@@ -110,3 +110,67 @@ func TestConfigPatchRejectsMalformedModelGroups(t *testing.T) {
 		})
 	}
 }
+
+// Model_group names are case-insensitive (the registry lowercases them and the
+// validator compares them case-insensitively), but the on-disk key keeps the
+// operator's original casing. A save from the panel echoes the normalized
+// lowercase name, so the merge must fold it onto the existing key instead of
+// adding a second, duplicate-looking entry.
+func TestConfigPatchFoldsMixedCaseModelGroupOntoExistingKey(t *testing.T) {
+	path := configFile(t, `{
+		"listen": "127.0.0.1:8788",
+		"model_groups": {"DeepSeek-Flash": {"members": ["Auto/deepseek-v4.1-flash"]}},
+		"clients": {}
+	}`)
+	mustSave(t, configPanel(path), `{"model_groups":{"deepseek-flash":{"members":[
+		"Auto/deepseek-v4.1-flash",
+		"lobsterai/deepseek-v4-flash",
+		"tokenrhythm/deepseek-flash",
+		"raccoon/sn-deepseek-v4-1-flash",
+		"workbuddy/global:deepseek-v4.1-flash"
+	]}}}`)
+
+	groups := onDisk(t, path)["model_groups"].(map[string]any)
+	if len(groups) != 1 {
+		t.Fatalf("model_groups = %v, want the mixed-case key folded onto one entry", groups)
+	}
+	group, ok := groups["DeepSeek-Flash"].(map[string]any)
+	if !ok {
+		t.Fatalf("the on-disk key casing was not preserved: %v", groups)
+	}
+	members, _ := group["members"].([]any)
+	want := []string{
+		"Auto/deepseek-v4.1-flash",
+		"lobsterai/deepseek-v4-flash",
+		"tokenrhythm/deepseek-flash",
+		"raccoon/sn-deepseek-v4-1-flash",
+		"workbuddy/global:deepseek-v4.1-flash",
+	}
+	if len(members) != len(want) {
+		t.Fatalf("members = %v, want %v", members, want)
+	}
+	for i, m := range members {
+		if m != want[i] {
+			t.Fatalf("members[%d] = %v, want %v", i, m, want[i])
+		}
+	}
+}
+
+// Deleting a group sends a null for the panel's normalized lowercase name; it
+// has to remove the mixed-case key that is actually on disk.
+func TestConfigPatchDeletesMixedCaseModelGroupByNormalizedName(t *testing.T) {
+	path := configFile(t, `{
+		"listen": "127.0.0.1:8788",
+		"model_groups": {"DeepSeek-Flash": {"members": ["Auto/deepseek-v4.1-flash"]}},
+		"clients": {}
+	}`)
+	mustSave(t, configPanel(path), `{"model_groups":{"deepseek-flash":null}}`)
+
+	groups, _ := onDisk(t, path)["model_groups"].(map[string]any)
+	if _, stale := groups["DeepSeek-Flash"]; stale {
+		t.Fatalf("the mixed-case group survived a delete: %v", groups)
+	}
+	if len(groups) != 0 {
+		t.Fatalf("model_groups = %v, want it empty after the delete", groups)
+	}
+}

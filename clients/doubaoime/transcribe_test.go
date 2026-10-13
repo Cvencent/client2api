@@ -4,8 +4,13 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -107,6 +112,115 @@ func TestTranscribeRejectsInvalidWAVBeforeNetwork(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "invalid audio") {
 		t.Fatalf("error = %v", err)
 	}
+}
+
+func TestTranscribeRejectsPromptBeforeNetwork(t *testing.T) {
+	c := newTestClient(t, `{"ffmpeg_path":"missing"}`)
+	_, err := c.Transcribe(t.Context(), &core.TranscriptionRequest{
+		File:   makeTestWAV(16000, 1, 16, []int16{200, 400, 200}),
+		Prompt: "OpenAI, GPT",
+	})
+	if err == nil || !strings.Contains(err.Error(), "prompt is not supported") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestDecodeAudioUsesFFmpegForNonWAV(t *testing.T) {
+	ffmpeg := findFFmpeg("")
+	if ffmpeg == "" {
+		t.Skip("ffmpeg is not installed")
+	}
+	pcm := make([]int16, 16000)
+	for i := range pcm {
+		pcm[i] = int16(600 * math.Sin(float64(i)/8))
+	}
+	dir := t.TempDir()
+	wavPath := filepath.Join(dir, "audio.wav")
+	if err := os.WriteFile(wavPath, makeTestWAV(16000, 1, 16, pcm), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	oggPath := filepath.Join(dir, "audio.ogg")
+	cmd := exec.CommandContext(t.Context(), ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", wavPath, "-c:a", "libopus", oggPath)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("create ogg fixture: %v: %s", err, out)
+	}
+	raw, err := os.ReadFile(oggPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := decodeAudio(t.Context(), ffmpeg, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.samples) == 0 || got.sampleRate != 16000 || got.channels != 1 {
+		t.Fatalf("decoded audio = %+v", got)
+	}
+}
+
+func TestVendoredFFmpegDecodesCommonUploadFormats(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("the vendored ffmpeg is a Windows binary")
+	}
+	ffmpeg := filepath.Join("..", "..", "third_party", "ffmpeg", "ffmpeg.exe")
+	if _, err := os.Stat(ffmpeg); err != nil {
+		t.Skipf("vendored ffmpeg is not present: %v", err)
+	}
+	systemFFmpeg := findFFmpeg("")
+	if systemFFmpeg == "" || samePath(systemFFmpeg, ffmpeg) {
+		t.Skip("a full ffmpeg is needed to create the format fixtures")
+	}
+
+	pcm := make([]int16, 16000)
+	for i := range pcm {
+		pcm[i] = int16(6000 * math.Sin(float64(i)/8))
+	}
+	dir := t.TempDir()
+	wavPath := filepath.Join(dir, "source.wav")
+	if err := os.WriteFile(wavPath, makeTestWAV(16000, 1, 16, pcm), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		ext string
+		enc []string
+	}{
+		{"mp3", []string{"-c:a", "libmp3lame"}},
+		{"m4a", []string{"-c:a", "aac"}},
+		{"ogg", []string{"-c:a", "libvorbis"}},
+		{"flac", []string{"-c:a", "flac"}},
+		{"webm", []string{"-c:a", "libopus"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.ext, func(t *testing.T) {
+			path := filepath.Join(dir, "sample."+tc.ext)
+			args := []string{"-hide_banner", "-loglevel", "error", "-y", "-i", wavPath}
+			args = append(args, tc.enc...)
+			args = append(args, path)
+			if out, err := exec.CommandContext(t.Context(), systemFFmpeg, args...).CombinedOutput(); err != nil {
+				t.Skipf("the system ffmpeg cannot create a %s fixture: %v: %s", tc.ext, err, out)
+			}
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := decodeAudio(t.Context(), ffmpeg, raw)
+			if err != nil {
+				t.Fatalf("decode %s: %v", tc.ext, err)
+			}
+			if len(got.samples) < 1000 || got.sampleRate != 16000 || got.channels != 1 {
+				t.Fatalf("decoded %s audio = %d samples, %d Hz, %d channels", tc.ext, len(got.samples), got.sampleRate, got.channels)
+			}
+		})
+	}
+}
+
+func samePath(a, b string) bool {
+	absoluteA, errA := filepath.Abs(a)
+	absoluteB, errB := filepath.Abs(b)
+	if errA != nil || errB != nil {
+		return a == b
+	}
+	return strings.EqualFold(filepath.Clean(absoluteA), filepath.Clean(absoluteB))
 }
 
 func TestTranscribeSurfacesLifecycleErrorStatus(t *testing.T) {

@@ -3,6 +3,9 @@ package doubaoime
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"net/http"
+	"strings"
 
 	"client2api/internal/core"
 )
@@ -11,7 +14,11 @@ func (c *Client) Transcribe(ctx context.Context, req *core.TranscriptionRequest)
 	if req == nil || len(req.File) == 0 {
 		return core.TranscriptionResult{}, core.ErrInvalidAudio
 	}
-	wav, err := decodeWAV(req.File)
+	if strings.TrimSpace(req.Prompt) != "" {
+		return core.TranscriptionResult{}, core.Fail("doubaoime", "", core.FailureOther, http.StatusBadRequest,
+			fmt.Errorf("%w: prompt is not supported by the Doubao IME upstream", core.ErrUnsupported))
+	}
+	wav, err := decodeAudio(ctx, c.ffmpegPath, req.File)
 	if err != nil {
 		return core.TranscriptionResult{}, err
 	}
@@ -47,7 +54,17 @@ func (c *Client) Transcribe(ctx context.Context, req *core.TranscriptionRequest)
 	if err != nil {
 		return core.TranscriptionResult{}, err
 	}
-	return core.TranscriptionResult{Text: text, Language: req.Language}, nil
+	duration := float64(len(samples)) / 16000
+	var segments []core.TranscriptionSegment
+	if text != "" && duration > 0 {
+		segments = []core.TranscriptionSegment{{ID: 0, Start: 0, End: duration, Text: text}}
+	}
+	return core.TranscriptionResult{
+		Text:     text,
+		Language: req.Language,
+		Duration: duration,
+		Segments: segments,
+	}, nil
 }
 
 func (c *Client) transcribeFrames(ctx context.Context, creds cachedCredentials, frames [][]byte) (string, error) {

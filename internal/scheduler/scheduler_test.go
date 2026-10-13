@@ -86,6 +86,15 @@ func (c *fakeClock) Sleep(ctx context.Context, d time.Duration) bool {
 	return ctx.Err() == nil
 }
 
+// advance moves the clock without recording a sleep.  Hooks use it to model
+// work that keeps the scheduler goroutine busy for a while, e.g. a balance
+// sweep that runs across the next batch hour.
+func (c *fakeClock) advance(d time.Duration) {
+	c.mu.Lock()
+	c.now = c.now.Add(d)
+	c.mu.Unlock()
+}
+
 func (c *fakeClock) durations() []time.Duration {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -1186,6 +1195,77 @@ func TestBalanceRefreshTick(t *testing.T) {
 	if !st.Next[BalanceTickName].Equal(want) {
 		t.Fatalf("Status().Next[%q] = %s, want %s", BalanceTickName, st.Next[BalanceTickName], want)
 	}
+}
+
+// A slow balance sweep must not swallow the next batch hour.  The live
+// incident was concrete: the 5-minute tick fired at 08:59:39, its sweep ran
+// past 09:00:00, and the 09:00 check-in plan was silently rolled forward to
+// 21:00 without ever dispatching.
+func TestSlowBalanceSweepDoesNotSkipTheNextBatchHour(t *testing.T) {
+	logs := &recorder{}
+	clk := newFakeClock(time.Date(2026, 3, 4, 8, 54, 39, 0, CST), logs)
+	f := &fakeClient{
+		name:    "fake",
+		batches: []core.Batch{oneBatch(batchCheckin, "c1")},
+		rec:     logs,
+	}
+	d := deps(registryOf(f), clk, logs)
+	// The sweep starts 21 seconds before the check-in hour and runs across
+	// it, exactly like the deployed one did.
+	d.OnBalanceRefresh = func(context.Context) { clk.advance(42 * time.Second) }
+	r := New(d)
+	cfg := Config{Enabled: true, Checkin: Group{Enabled: true, Hours: []int{9}}}
+	cfg.BalanceRefresh.Enabled = true
+	cfg.BalanceRefresh.Every = 5 * time.Minute
+	r.Reconfigure(cfg)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// The fake clock advances instantly, so the run loop can outpace the lane
+	// worker and cancel the batch before its task ever runs.  Stop only once
+	// the check-in has really executed, giving the worker real time to get
+	// there.
+	var stopping atomic.Bool
+	clk.onSleep = func() bool {
+		if len(clk.durations()) < 2 {
+			return true
+		}
+		if !stopping.CompareAndSwap(false, true) {
+			return true
+		}
+		deadline := time.Now().Add(2 * time.Second)
+		for {
+			for _, event := range logs.all() {
+				if event == "/c1" {
+					cancel()
+					return false
+				}
+			}
+			if time.Now().After(deadline) {
+				cancel()
+				return false
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}
+
+	done := make(chan struct{})
+	go func() {
+		r.Run(ctx)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return after its context died")
+	}
+
+	for _, event := range logs.all() {
+		if event == "/c1" {
+			return
+		}
+	}
+	t.Fatalf("the 09:00 check-in never ran; events = %v", logs.all())
 }
 
 // ---------------------------------------------------------------------------

@@ -540,7 +540,16 @@ type Candidate struct {
 	dynamicAuto     bool
 	autoPriority    int
 	autoPrioritySet bool
+	// preferred marks the member the caller named explicitly (a qualified
+	// client/model inside a group). It is tried before the sibling members
+	// unless it is currently demoted, so an exact request wins while a known
+	// failure still fails over to the group.
+	preferred bool
 }
+
+// GroupKey reports the model group that produced this candidate, or "" for an
+// ordinary catalogue match.
+func (c Candidate) GroupKey() string { return c.group }
 
 func modelFree(m Model) bool {
 	free, _ := m.Extra["free"].(bool)
@@ -595,6 +604,23 @@ func (r *Registry) ResolveCandidates(ctx context.Context, model string) ([]Candi
 	}
 
 	prefix, rest, qualified := strings.Cut(model, "/")
+
+	// Operator-declared equivalence is considered before the hard platform
+	// pin. A qualified id that is a group member is both a preference and an
+	// equivalence entry: resolve the whole group and mark the named member
+	// preferred, so the request starts on the platform the caller wrote and
+	// still falls back to its siblings. Auto/ deliberately skips groups and
+	// searches the concrete catalogues directly, otherwise a group named
+	// `gpt-x` would hijack `Auto/gpt-x` and recurse through its own dynamic
+	// Auto member. A qualified id that is not a group member keeps the old
+	// hard-pin behaviour -- an explicit platform choice with no group is
+	// answered honestly rather than hidden behind failover.
+	if !auto {
+		if groupKey, group, ok := r.modelGroupForLookup(model); ok {
+			return r.resolveModelGroup(ctx, groupKey, group, model)
+		}
+	}
+
 	if !auto && qualified && prefix != "" && rest != "" {
 		if c, found := r.Get(prefix); found {
 			upstream := rest
@@ -610,17 +636,6 @@ func (r *Registry) ResolveCandidates(ctx context.Context, model string) ([]Candi
 				return nil, fmt.Errorf("model %q is disabled on client %q; re-enable it in the platform configuration or qualify another client", upstream, c.Name())
 			}
 			return []Candidate{{Client: c, Model: upstream}}, nil
-		}
-	}
-
-	// Operator-declared equivalence is considered only after an explicit
-	// platform prefix had its chance to pin the request. Auto/ deliberately
-	// skips groups and searches the concrete catalogues directly, otherwise a
-	// group named `gpt-x` would hijack `Auto/gpt-x` and recurse through its
-	// own dynamic Auto member.
-	if !auto {
-		if groupKey, group, ok := r.modelGroupForLookup(model); ok {
-			return r.resolveModelGroup(ctx, groupKey, group)
 		}
 	}
 
@@ -712,6 +727,12 @@ func (r *Registry) rankCandidates(ctx context.Context, owners []Candidate) []Can
 		}
 		if a.suppressed != b.suppressed {
 			return !a.suppressed
+		}
+		// An explicit member is preferred only while it is not demoted: a
+		// cached "cannot serve right now" case must fall through to a healthy
+		// sibling instead of spending another round on the known-bad member.
+		if a.preferred != b.preferred {
+			return a.preferred
 		}
 		if a.priority != b.priority {
 			return a.priority < b.priority

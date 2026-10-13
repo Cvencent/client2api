@@ -236,7 +236,7 @@ func (s *server) routeAndServe(w http.ResponseWriter, r *http.Request, in routeI
 			ev := s.opts.Registry.NoteModelFailure(client.Name(), upstreamModel, time.Now())
 			s.publishPlatformAlert(client.Name(), upstreamModel, in.rec.Account, ev)
 		}
-		skippable := candidateUnavailable(err) || (!explicitPlatformRequest(in.requested, client.Name()) && modelRefusal(err))
+		skippable := candidateUnavailable(err) || (!hardPlatformPin(in.requested, candidates[0]) && modelRefusal(err))
 		if (retryable || skippable) && len(candidates) > 1 && (s.opts.Guard == nil || !s.opts.Guard.IP.Active()) {
 			s.opts.Usage.RecordAttempt(UsageRecord{
 				At:                  time.Now(),

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"client2api/internal/core"
+	"client2api/internal/modelmeta"
 )
 
 // bundle.go implements the whole-instance snapshot: the config file plus every
@@ -69,12 +70,17 @@ var coldConfigKeys = map[string]bool{
 	"disabled": true, "clients": true,
 }
 
-// bundleCredentialNames are the file names modules use for their credential
-// store inside their own data directory.
+// bundleCredentialNames are the file names that hold credentials in most
+// modules' data directories.
 var bundleCredentialNames = map[string]bool{
 	"accounts.json":         true,
 	"credentials.json":      true,
 	"managed_accounts.json": true,
+	// Modules that name their store after themselves rather than the file's
+	// role. Each name is an explicit decision, not a guess: a new cache file
+	// must never slip into a snapshot because its name looked credential-ish.
+	"kimi-token.json":         true,
+	"doubao_credentials.json": true,
 }
 
 // bundleStateNames are files that live next to a credential store but are not
@@ -90,6 +96,17 @@ var bundleStateNames = map[string]bool{
 	"sidecar.json": true,
 }
 
+// bundleStateByName marks a file that is runtime state in one module while a
+// sibling module uses the same name for its credentials. accounts.json is the
+// only such collision today: cline/openrouter/opencode/qwenwork store their
+// credentials there, but kimi/zcode/minimaxcode keep enabled flags, tombstones
+// and cooldown history there and store the real credentials elsewhere.
+var bundleStateByName = map[string]map[string]bool{
+	"kimi":        {"accounts.json": true},
+	"zcode":       {"accounts.json": true},
+	"minimaxcode": {"accounts.json": true},
+}
+
 // bundleDoc is the snapshot as it travels.
 type bundleDoc struct {
 	Kind       string         `json:"kind"`
@@ -97,7 +114,14 @@ type bundleDoc struct {
 	ExportedAt string         `json:"exported_at"`
 	Source     bundleSource   `json:"source"`
 	Config     map[string]any `json:"config,omitempty"`
-	Files      []bundleFile   `json:"files"`
+	// ModelContext is the operator's manual model metadata (context/output,
+	// reasoning effort, prices). It travels beside the account files because it
+	// is a decision, unlike learned_context_windows.json which is a measurement.
+	ModelContext map[string]map[string]modelmeta.Override `json:"model_context,omitempty"`
+	// Warnings is export-side advice the operator must see, not a failure:
+	// today the only source is a module store the scanner cannot reach.
+	Warnings []string     `json:"warnings,omitempty"`
+	Files    []bundleFile `json:"files"`
 }
 
 // bundleSource records where the document came from, so an operator holding
@@ -161,12 +185,40 @@ func (p *panel) bundleExport(w http.ResponseWriter, r *http.Request) {
 		if snapshot := bundleConfigSnapshot(cfg); len(snapshot) > 0 {
 			doc.Config = snapshot
 		}
+		doc.Warnings = append(doc.Warnings, bundleScanWarnings(cfg)...)
+	}
+	// Manual model metadata is an operator decision, so it restores with the
+	// rest of the configuration. learned_context_windows.json is a measurement
+	// and deliberately stays behind.
+	if p.opts.ModelOverrides != nil {
+		if snapshot := p.opts.ModelOverrides.Snapshot(); len(snapshot) > 0 {
+			doc.ModelContext = snapshot
+		}
 	}
 	w.Header().Set("Content-Disposition",
 		`attachment; filename="`+bundleFilePrefix+time.Now().UTC().Format("20060102-150405")+`.json"`)
 	// The body is a credential dump: never let anything cache it.
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, doc)
+}
+
+// bundleScanWarnings reports module stores the scanner cannot reach. A bundle
+// only walks <data_dir>/<client>, so a module that points elsewhere would
+// otherwise export a snapshot that silently lacks those accounts; saying so is
+// better than letting the operator discover it after a restore.
+func bundleScanWarnings(cfg map[string]any) []string {
+	clients, _ := cfg["clients"].(map[string]any)
+	wb, _ := clients["workbuddy"].(map[string]any)
+	if wb == nil {
+		return nil
+	}
+	dir, _ := wb["accounts_dir"].(string)
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return nil
+	}
+	return []string{fmt.Sprintf(
+		"clients.workbuddy.accounts_dir is %q, which is outside the scanned data directory: this bundle does not include the WorkBuddy accounts stored there", dir)}
 }
 
 // collectAccountFiles walks the data directory one level deep -- every module
@@ -241,10 +293,24 @@ func (p *panel) collectAccountFiles() ([]bundleFile, error) {
 // a new cache file can never leak into a snapshot as if it were an account.
 func bundleCredentialFile(client, name string) bool {
 	lower := strings.ToLower(strings.TrimSpace(name))
-	if lower == "" || strings.HasPrefix(lower, ".") || !strings.HasSuffix(lower, ".json") {
+	client = strings.ToLower(strings.TrimSpace(client))
+	if lower == "" || strings.HasPrefix(lower, ".") {
+		return false
+	}
+	// workbuddy parks a disabled account by renaming wb-<uid>.json to
+	// wb-<uid>.json.disabled, so recognising only the ".json" suffix would drop
+	// every account the operator deliberately switched off. The file is still
+	// the same credential document; the suffix is only a switch.
+	if client == "workbuddy" && strings.HasSuffix(lower, ".json.disabled") {
+		return true
+	}
+	if !strings.HasSuffix(lower, ".json") {
 		return false
 	}
 	if bundleStateNames[lower] {
+		return false
+	}
+	if byModule := bundleStateByName[client]; byModule != nil && byModule[lower] {
 		return false
 	}
 	if bundleCredentialNames[lower] {
@@ -252,7 +318,7 @@ func bundleCredentialFile(client, name string) bool {
 	}
 	// workbuddy keeps one document per account at the module root, named after
 	// the account's uid.  Its own state file (pool.json) is filtered above.
-	return strings.EqualFold(client, "workbuddy")
+	return client == "workbuddy"
 }
 
 // bundleClients lists the modules that contributed a file, in order.
@@ -383,6 +449,21 @@ func (p *panel) bundleImport(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	modelContextApplied := false
+	if len(doc.ModelContext) > 0 {
+		switch {
+		case p.opts.ModelOverrides == nil:
+			warnings = append(warnings,
+				"the bundle carries model metadata overrides, but this process has no override store, so they were not applied")
+		default:
+			if err := p.opts.ModelOverrides.Replace(doc.ModelContext); err != nil {
+				errs = append(errs, "model_context: "+err.Error())
+			} else {
+				modelContextApplied = true
+			}
+		}
+	}
+
 	reloaded := false
 	if (configApplied || written > 0) && p.opts.Reload != nil {
 		if err := p.opts.Reload(); err != nil {
@@ -444,7 +525,8 @@ func (p *panel) bundleImport(w http.ResponseWriter, r *http.Request) {
 			"backed_up": backedUp,
 			"clients":   bundleClients(doc.Files),
 		},
-		"config": map[string]any{"applied": configApplied, "keys": appliedKeys},
+		"config":        map[string]any{"applied": configApplied, "keys": appliedKeys},
+		"model_context": map[string]any{"applied": modelContextApplied},
 	}
 	if backupDir != "" && backedUp > 0 {
 		res["backup"] = backupDir

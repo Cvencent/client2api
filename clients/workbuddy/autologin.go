@@ -83,10 +83,10 @@ var submitReadyTimeout = 8 * time.Second
 // publish __ONEID__.loginUrl.  It is a var only so tests can shrink it.
 var cnONEIDLoginURLTimeout = 10 * time.Second
 
-// cnONEIDStableFor keeps watching the CN login page after a successful load
-// replay so a React remount cannot immediately discard the value. It is a var
-// only so tests can shrink it.
-var cnONEIDStableFor = 1500 * time.Millisecond
+// cnONEIDSyncSettle lets React commit the loginInfo state after the hidden
+// iframe's load handler is replayed and before the account chooser reads it.
+// It is a var only so tests can shrink it.
+var cnONEIDSyncSettle = 300 * time.Millisecond
 
 // accountSelectReadyTimeout bounds the two asynchronous transitions on the CN
 // account chooser: the card gaining its selected class, and the main submit
@@ -758,6 +758,12 @@ func (c *Client) confirmAutoLogin(ctx context.Context, job *autoJob, page pageDr
 		}
 		if job.realm == realmCN {
 			if !accountSelected {
+				if !syncCNOneIDLoginURL(ctx, page, cnONEIDLoginURLTimeout) {
+					return core.LoginState{}, fmt.Errorf("OneID 登录地址未就绪，厂商登录页可能已改版（%s）", pageWhere(ctx, page))
+				}
+				if !sleepCtx(ctx, cnONEIDSyncSettle) {
+					return core.LoginState{}, ctx.Err()
+				}
 				selected, err := selectCNAccount(ctx, page)
 				if err != nil {
 					return core.LoginState{}, fmt.Errorf("选择登录账号失败：%w", err)
@@ -933,11 +939,18 @@ func waitSelector(ctx context.Context, page pageDriver, selector string, timeout
 }
 
 // waitCNOneIDLoginURL waits for the CN page's hidden OneID iframe to publish
-// __ONEID__.loginUrl, then replays the iframe's load event.  The vendor's React
-// page copies loginUrl into state only from that handler; when the event wins
-// the race with the iframe script, the state stays undefined and the final
-// callback becomes /login/undefined.
+// __ONEID__.loginUrl, then replays the iframe's load event.
 func waitCNOneIDLoginURL(ctx context.Context, page pageDriver, timeout time.Duration) bool {
+	return syncCNOneIDLoginURL(ctx, page, timeout)
+}
+
+// syncCNOneIDLoginURL replays the hidden iframe's load handler and reports
+// whether it ran against a live loginUrl.  The account-selection callback reads
+// the outer React loginInfo state, which can be cleared after the phone tab is
+// selected even while the iframe still exposes loginUrl.  Replaying the
+// handler immediately before an account click restores that state without
+// opening a new page or requesting another SMS code.
+func syncCNOneIDLoginURL(ctx context.Context, page pageDriver, timeout time.Duration) bool {
 	js := `(function(){try{` +
 		`var fs=document.querySelectorAll("#phone-iframe");` +
 		`var ok=false;` +
@@ -950,24 +963,11 @@ func waitCNOneIDLoginURL(ctx context.Context, page pageDriver, timeout time.Dura
 		`return ok;` +
 		`}catch(e){return false;}})()`
 	deadline := time.Now().Add(timeout)
-	stableFor := cnONEIDStableFor
-	if stableFor > timeout {
-		stableFor = timeout
-	}
-	var lastOK time.Time
 	for {
-		now := time.Now()
 		if ok, err := page.EvalBool(ctx, js); err == nil && ok {
-			if lastOK.IsZero() {
-				lastOK = now
-			}
-			if now.Sub(lastOK) >= stableFor {
-				return true
-			}
-		} else {
-			lastOK = time.Time{}
+			return true
 		}
-		if now.After(deadline) || ctx.Err() != nil {
+		if time.Now().After(deadline) || ctx.Err() != nil {
 			return false
 		}
 		if !sleepCtx(ctx, 300*time.Millisecond) {

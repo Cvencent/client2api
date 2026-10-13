@@ -19,13 +19,32 @@ type TranscriptionRequest struct {
 	ContentType    string
 	Model          string
 	Language       string
+	Prompt         string
 	ResponseFormat string
+}
+
+// TranscriptionWord is one timed word in a verbose transcription result.
+type TranscriptionWord struct {
+	Word  string
+	Start float64
+	End   float64
+}
+
+// TranscriptionSegment is one timed text segment in a verbose result.
+type TranscriptionSegment struct {
+	ID    int
+	Start float64
+	End   float64
+	Text  string
 }
 
 // TranscriptionResult is the vendor-neutral result returned to the gateway.
 type TranscriptionResult struct {
 	Text     string
 	Language string
+	Duration float64
+	Words    []TranscriptionWord
+	Segments []TranscriptionSegment
 }
 
 // TranscriptionProvider is the optional capability implemented by a platform

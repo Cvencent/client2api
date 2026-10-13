@@ -9,6 +9,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"client2api/internal/modelmeta"
 )
 
 // bundle_test.go covers the whole-instance snapshot: what an export picks up,
@@ -27,10 +29,16 @@ func writeBundleFile(t *testing.T, path, body string) {
 
 // bundlePanel builds the smallest panel the two handlers need.
 func bundlePanel(dataDir, configPath string) *panel {
-	return &panel{
+	p := &panel{
 		opts:   Options{DataDir: dataDir, ConfigPath: configPath, Version: "test", Listen: "127.0.0.1:0"},
 		chores: newTaskQueues(),
 	}
+	if dataDir != "" {
+		if store, err := modelmeta.OpenOverrideStore(filepath.Join(dataDir, "model_context.json")); err == nil {
+			p.opts.ModelOverrides = store
+		}
+	}
+	return p
 }
 
 // bundleExport calls GET /panel/api/bundle and decodes the document.
@@ -74,10 +82,24 @@ func bundleSourceDir(t *testing.T) string {
 	dir := t.TempDir()
 	writeBundleFile(t, filepath.Join(dir, "cline", "accounts.json"), `{"accounts":[{"id":"a1","access_token":"tok-cline"}]}`)
 	writeBundleFile(t, filepath.Join(dir, "cline", "state.json"), `{"accounts":{"a1":{"failures":3}}}`)
+	// kimi's accounts.json is runtime state; its credential is kimi-token.json.
+	writeBundleFile(t, filepath.Join(dir, "kimi", "accounts.json"), `{"version":3,"enabled":{"cli-login":false}}`)
+	writeBundleFile(t, filepath.Join(dir, "kimi", "kimi-token.json"), `{"access_token":"tok-kimi"}`)
+	// zcode keeps runtime state and tombstones in accounts.json; the operator's
+	// credentials live in managed_accounts.json.
+	writeBundleFile(t, filepath.Join(dir, "zcode", "accounts.json"), `{"version":2,"accounts":[{"id":"z1","state":"cooling"}]}`)
+	writeBundleFile(t, filepath.Join(dir, "zcode", "managed_accounts.json"), `{"version":1,"accounts":[{"id":"z1","jwt":"jwt-z"}]}`)
+	// minimaxcode follows the same split.
+	writeBundleFile(t, filepath.Join(dir, "minimaxcode", "accounts.json"), `{"version":1,"accounts":[{"id":"m1","state":"invalid"}]}`)
+	writeBundleFile(t, filepath.Join(dir, "minimaxcode", "managed_accounts.json"), `{"version":1,"accounts":[{"id":"m1","token":"tok-m"}]}`)
+	// doubaoime names its store after the module rather than accounts.json.
+	writeBundleFile(t, filepath.Join(dir, "doubaoime", "doubao_credentials.json"), `{"device_id":"dev-1","app_key":"key-1"}`)
 	writeBundleFile(t, filepath.Join(dir, "workbuddy", "wb-1.json"), `{"uid":"wb-1","access_token":"tok-wb"}`)
+	writeBundleFile(t, filepath.Join(dir, "workbuddy", "wb-parked.json.disabled"), `{"uid":"wb-parked","access_token":"tok-parked"}`)
 	writeBundleFile(t, filepath.Join(dir, "workbuddy", "pool.json"), `{"round_robin":0}`)
 	writeBundleFile(t, filepath.Join(dir, "workbuddy", "cache", "models.json"), `{"models":[]}`)
 	writeBundleFile(t, filepath.Join(dir, "openrouter", "credentials.json"), `{"api_key":"sk-or-1"}`)
+	writeBundleFile(t, filepath.Join(dir, "model_context.json"), `{"clients":{"zcode":{"GLM-5.3":{"context_length":200000}}}}`)
 	writeBundleFile(t, filepath.Join(dir, "usage.json"), `{"requests":999}`)
 	return dir
 }
@@ -118,10 +140,18 @@ func TestBundleExportCarriesCredentialFilesAndSkipsHistory(t *testing.T) {
 	for _, f := range doc.Files {
 		got[f.Client+"/"+f.Name] = string(f.Data)
 	}
+	if o := doc.ModelContext["zcode"]["GLM-5.3"]; o.ContextLength != 200000 {
+		t.Errorf("export dropped model_context: %#v", doc.ModelContext)
+	}
 	want := map[string]string{
-		"cline/accounts.json":         `{"accounts":[{"id":"a1","access_token":"tok-cline"}]}`,
-		"openrouter/credentials.json": `{"api_key":"sk-or-1"}`,
-		"workbuddy/wb-1.json":         `{"uid":"wb-1","access_token":"tok-wb"}`,
+		"cline/accounts.json":               `{"accounts":[{"id":"a1","access_token":"tok-cline"}]}`,
+		"doubaoime/doubao_credentials.json": `{"device_id":"dev-1","app_key":"key-1"}`,
+		"kimi/kimi-token.json":              `{"access_token":"tok-kimi"}`,
+		"minimaxcode/managed_accounts.json": `{"version":1,"accounts":[{"id":"m1","token":"tok-m"}]}`,
+		"openrouter/credentials.json":       `{"api_key":"sk-or-1"}`,
+		"workbuddy/wb-1.json":               `{"uid":"wb-1","access_token":"tok-wb"}`,
+		"workbuddy/wb-parked.json.disabled": `{"uid":"wb-parked","access_token":"tok-parked"}`,
+		"zcode/managed_accounts.json":       `{"version":1,"accounts":[{"id":"z1","jwt":"jwt-z"}]}`,
 	}
 	if len(got) != len(want) {
 		t.Fatalf("exported %d files (%v), want %d", len(got), bundleKeys(got), len(want))
@@ -131,13 +161,21 @@ func TestBundleExportCarriesCredentialFilesAndSkipsHistory(t *testing.T) {
 			t.Errorf("exported %s = %q, want %q", k, got[k], v)
 		}
 	}
-	for _, unwanted := range []string{"cline/state.json", "workbuddy/pool.json", "workbuddy/cache/models.json", "usage.json"} {
+	for _, unwanted := range []string{
+		"cline/state.json",
+		"kimi/accounts.json",
+		"minimaxcode/accounts.json",
+		"workbuddy/pool.json",
+		"workbuddy/cache/models.json",
+		"zcode/accounts.json",
+		"usage.json",
+	} {
 		if _, ok := got[unwanted]; ok {
 			t.Errorf("export carried %s, which is state or history, not an account", unwanted)
 		}
 	}
-	if len(doc.Source.Clients) != 3 {
-		t.Errorf("source.clients = %v, want the three modules that own credentials", doc.Source.Clients)
+	if len(doc.Source.Clients) != 7 {
+		t.Errorf("source.clients = %v, want the seven modules that own credentials", doc.Source.Clients)
 	}
 	// The whole config travels, not a platform-policy subset: a restore that
 	// brought the accounts back but left the pool tuning, prompt policy and
@@ -190,6 +228,26 @@ func bundleKeys(m map[string]string) []string {
 	return out
 }
 
+// TestBundleExportWarnsAboutACustomWorkbuddyAccountsDir pins the honest-report
+// rule: a bundle scans <data_dir>/workbuddy, so an accounts_dir pointing
+// elsewhere would otherwise produce a snapshot that silently lacks every
+// WorkBuddy account.
+func TestBundleExportWarnsAboutACustomWorkbuddyAccountsDir(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(t.TempDir(), "client2api.json")
+	writeBundleFile(t, cfg, `{"data_dir":"data","clients":{"workbuddy":{"accounts_dir":"D:/elsewhere/wb"}}}`)
+	rec, doc := bundleExport(t, bundlePanel(dir, cfg))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("export = HTTP %d (%s), want 200", rec.Code, rec.Body.String())
+	}
+	if len(doc.Warnings) == 0 {
+		t.Fatalf("export carried a custom accounts_dir without warning: %#v", doc)
+	}
+	if !strings.Contains(strings.Join(doc.Warnings, " "), "accounts_dir") {
+		t.Errorf("warnings = %v, want one naming accounts_dir", doc.Warnings)
+	}
+}
+
 func TestBundleExportRefusesWithoutADataDir(t *testing.T) {
 	rec, _ := bundleExport(t, bundlePanel("", bundleSourceConfig(t)))
 	if rec.Code != http.StatusBadRequest {
@@ -207,6 +265,12 @@ func TestBundleImportRestoresAccountsPlatformsAndBacksUp(t *testing.T) {
 	writeBundleFile(t, cfg, `{"listen":"127.0.0.1:9999","data_dir":"data","platforms":{"cline":{"priority":9}},"unknown_future_section":{"keep":true}}`)
 
 	p := bundlePanel(dst, cfg)
+	if p.opts.ModelOverrides == nil {
+		t.Fatal("bundlePanel did not open the destination override store")
+	}
+	if err := p.opts.ModelOverrides.Set("zcode", "stale", 1, 2); err != nil {
+		t.Fatal(err)
+	}
 	reloads := 0
 	p.opts.Reload = func() error { reloads++; return nil }
 
@@ -250,6 +314,12 @@ func TestBundleImportRestoresAccountsPlatformsAndBacksUp(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dst, "cline", "state.json")); !os.IsNotExist(err) {
 		t.Errorf("import created cline/state.json; state must not travel")
 	}
+	// The parked WorkBuddy account travels as the file WorkBuddy will read.
+	if raw, err := os.ReadFile(filepath.Join(dst, "workbuddy", "wb-parked.json.disabled")); err != nil {
+		t.Errorf("parked WorkBuddy account was not restored: %v", err)
+	} else if string(raw) != `{"uid":"wb-parked","access_token":"tok-parked"}` {
+		t.Errorf("parked WorkBuddy account = %q", raw)
+	}
 
 	// The overwritten file is recoverable.
 	backup, _ := out["backup"].(string)
@@ -262,6 +332,18 @@ func TestBundleImportRestoresAccountsPlatformsAndBacksUp(t *testing.T) {
 	}
 	if string(old) != `{"accounts":[{"id":"old"}]}` {
 		t.Errorf("backup holds %q, want the file that was replaced", old)
+	}
+
+	// Manual model metadata is restored, not merely carried: the target's
+	// override for another model must be gone, and the bundle's must be live.
+	if p.opts.ModelOverrides == nil {
+		t.Fatal("the panel had no override store to restore into")
+	}
+	if _, ok := p.opts.ModelOverrides.Get("zcode", "stale"); ok {
+		t.Error("import kept an override the bundle did not carry")
+	}
+	if got, ok := p.opts.ModelOverrides.Get("zcode", "GLM-5.3"); !ok || got.ContextLength != 200000 {
+		t.Errorf("import did not restore model_context: %+v ok=%v", got, ok)
 	}
 
 	// The whole config file is merged: the bundle's own settings win, and a key
@@ -430,6 +512,41 @@ func TestBundleImportRestoresAccountsWithoutAConfigPath(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dst, "cline", "accounts.json")); err != nil {
 		t.Errorf("accounts were not restored: %v", err)
+	}
+}
+
+// TestBundleImportWarnsWhenModelContextHasNoStore mirrors the config warning:
+// a snapshot carrying overrides must say they were not applied rather than
+// answering as if the restore had succeeded.
+func TestBundleImportWarnsWhenModelContextHasNoStore(t *testing.T) {
+	dst := t.TempDir()
+	cfg := filepath.Join(t.TempDir(), "client2api.json")
+	writeBundleFile(t, cfg, `{"listen":"127.0.0.1:9999"}`)
+	p := bundlePanel(dst, cfg)
+	p.opts.ModelOverrides = nil
+	p.opts.Reload = func() error { return nil }
+	rec, out := bundleImport(t, p, bundleDoc{
+		Kind: bundleKind, Version: bundleVersion,
+		ModelContext: map[string]map[string]modelmeta.Override{
+			"zcode": {"GLM-5.3": {ContextLength: 200000}},
+		},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("import = HTTP %d (%s), want 200", rec.Code, rec.Body.String())
+	}
+	mc, _ := out["model_context"].(map[string]any)
+	if applied, _ := mc["applied"].(bool); applied {
+		t.Errorf("model_context reported applied with no store: %v", mc)
+	}
+	warnings, _ := out["warnings"].([]any)
+	found := false
+	for _, w := range warnings {
+		if s, _ := w.(string); strings.Contains(s, "model metadata overrides") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a warning about the unapplied model context, got %v", out["warnings"])
 	}
 }
 

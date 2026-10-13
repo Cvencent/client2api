@@ -25,7 +25,7 @@ client2api 是一个**个人自用**的 OpenAI 兼容网关。它把你自己在
 
 - 聚合你自己拥有的账号和 Key，而不是提供一个公共账号池。
 - 用一个入站 API Key 统一调用 `POST /v1/chat/completions` 和 `POST /v1/responses`。
-- 为带语音能力的平台提供 `POST /v1/audio/transcriptions`：上传 WAV 即返回 `{"text": "..."}`。
+- 为带语音能力的平台提供 `POST /v1/audio/transcriptions`：上传 WAV/FLAC/MP3/MP4/M4A/OGG/WebM 可返回 `{"text": "..."}`、纯文本、SRT、verbose JSON 或 VTT。
 - 在平台、账号、模型别名、`Auto/<模型>` 和模型路由组之间统一调度。
 - 平台支持会话粘性时，同一会话会尽量落在同一个账号上。
 - 统一处理账号优先级、冷却、并发限制、重试和故障切换。

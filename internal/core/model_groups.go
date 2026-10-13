@@ -167,11 +167,11 @@ func (r *Registry) modelGroupForLookup(model string) (string, ModelGroup, bool) 
 	return "", ModelGroup{}, false
 }
 
-func (r *Registry) resolveModelGroup(ctx context.Context, groupKey string, group ModelGroup) ([]Candidate, error) {
+func (r *Registry) resolveModelGroup(ctx context.Context, groupKey string, group ModelGroup, requested string) ([]Candidate, error) {
 	owners := make([]Candidate, 0, len(group.Members))
 	seen := make(map[string]struct{}, len(group.Members))
 	autoPriority, autoPrioritySet := modelGroupPriority(group, "Auto")
-	addOwner := func(c Client, model string, free bool, dynamicAuto bool) {
+	addOwner := func(c Client, model string, free bool, dynamicAuto bool, preferred bool) {
 		key := strings.ToLower(c.Name()) + "\x00" + strings.ToLower(strings.TrimSpace(model))
 		if _, duplicate := seen[key]; duplicate {
 			return
@@ -185,6 +185,7 @@ func (r *Registry) resolveModelGroup(ctx context.Context, groupKey string, group
 			dynamicAuto:     dynamicAuto,
 			autoPriority:    autoPriority,
 			autoPrioritySet: autoPrioritySet,
+			preferred:       preferred,
 		})
 	}
 	for _, member := range group.Members {
@@ -201,7 +202,7 @@ func (r *Registry) resolveModelGroup(ctx context.Context, groupKey string, group
 					return r.ModelAllowed(c.Name(), m.ID)
 				})
 				if ok {
-					addOwner(c, matched.ID, modelFree(matched), true)
+					addOwner(c, matched.ID, modelFree(matched), true, false)
 				}
 			}
 			continue
@@ -220,7 +221,7 @@ func (r *Registry) resolveModelGroup(ctx context.Context, groupKey string, group
 		if !ok {
 			continue
 		}
-		addOwner(c, matched.ID, modelFree(matched), false)
+		addOwner(c, matched.ID, modelFree(matched), false, memberMatchesRequest(member, requested))
 	}
 	if len(owners) == 0 {
 		return nil, fmt.Errorf("model group %q has no available members", groupKey)
@@ -243,6 +244,42 @@ func (r *Registry) priorityFor(name, group string) int {
 		r.mu.RUnlock()
 	}
 	return r.priority(name)
+}
+
+// memberMatchesRequest reports whether the caller's requested spelling names
+// this member. Any of the router's equivalence keys counts, so writing
+// `DeepSeek-V4.1-Flash`, `cn:deepseek-v4.1-flash` or `deepseek-v4.1-flash`
+// prefers the same member.
+func memberMatchesRequest(member ModelGroupMember, requested string) bool {
+	requested = strings.TrimSpace(requested)
+	if requested == "" {
+		return false
+	}
+	keys := make([]string, 0, 4)
+	for _, candidate := range []string{member.Model, member.Client + "/" + member.Model} {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		keys = append(keys,
+			normalizeModelID(candidate),
+			normalizeModelID(modelDisplayID(candidate)),
+			canonicalModelID(candidate),
+		)
+	}
+	targets := []string{
+		normalizeModelID(requested),
+		normalizeModelID(modelDisplayID(requested)),
+		canonicalModelID(requested),
+	}
+	for _, want := range targets {
+		for _, key := range keys {
+			if want != "" && key == want {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func modelGroupPriority(group ModelGroup, platform string) (int, bool) {
