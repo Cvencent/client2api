@@ -41,7 +41,7 @@ import (
 )
 
 // version is overridable with -ldflags "-X main.version=...".
-var version = "0.1.54"
+var version = "0.1.55"
 
 // restartHandoffEnv marks the replacement half of a panel restart.  It tells a
 // starting process to keep retrying the listen address instead of failing fast,
@@ -930,6 +930,11 @@ func (c *fileConfig) poolTuning() *core.PoolTuning {
 	}
 }
 
+// balancePublish records one successful balance read in the panel's display
+// cache. Nil keeps a sweep module-only, which is what a caller that renders no
+// account page wants.
+type balancePublish func(client, id string, bal core.Balance)
+
 // refreshBalances asks every module that can report a balance for one, account
 // by account.
 //
@@ -941,18 +946,18 @@ func (c *fileConfig) poolTuning() *core.PoolTuning {
 //
 // Capability-gated on both halves: a module that cannot report balances, or
 // cannot list its accounts, is skipped rather than guessed at.
-func refreshBalances(ctx context.Context, reg *core.Registry, soon time.Duration, logger *log.Logger) {
-	refreshBalancesMatching(ctx, reg, "", soon, logger, false, false)
+func refreshBalances(ctx context.Context, reg *core.Registry, soon time.Duration, logger *log.Logger, publish balancePublish) {
+	refreshBalancesMatching(ctx, reg, "", soon, logger, false, false, publish)
 }
 
 // refreshBalancesForClient is the scheduled recovery sweep.  It is scoped to
 // one platform, includes accounts parked in recoverable states, and bypasses
 // the module's quiet-probe gate because the scheduler already paced the probe.
-func refreshBalancesForClient(ctx context.Context, reg *core.Registry, client string, soon time.Duration, logger *log.Logger, includeRecoverable bool) {
-	refreshBalancesMatching(ctx, reg, client, soon, logger, includeRecoverable, includeRecoverable)
+func refreshBalancesForClient(ctx context.Context, reg *core.Registry, client string, soon time.Duration, logger *log.Logger, includeRecoverable bool, publish balancePublish) {
+	refreshBalancesMatching(ctx, reg, client, soon, logger, includeRecoverable, includeRecoverable, publish)
 }
 
-func refreshBalancesMatching(ctx context.Context, reg *core.Registry, client string, soon time.Duration, logger *log.Logger, includeRecoverable, ignoreGate bool) {
+func refreshBalancesMatching(ctx context.Context, reg *core.Registry, client string, soon time.Duration, logger *log.Logger, includeRecoverable, ignoreGate bool, publish balancePublish) {
 	client = strings.TrimSpace(client)
 	for _, c := range reg.All() {
 		if client != "" && !strings.EqualFold(c.Name(), client) {
@@ -985,10 +990,17 @@ func refreshBalancesMatching(ctx context.Context, reg *core.Registry, client str
 			// failure can actually be classified; here we only need the
 			// accounts that still answer.
 			bctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-			_, err := bp.AccountBalance(bctx, acct.ID, soon)
+			bal, err := bp.AccountBalance(bctx, acct.ID, soon)
 			cancel()
 			if err != nil {
 				logf(logger, "[%s] balance sweep %s: %v", c.Name(), core.MaskSecret(acct.ID), err)
+				continue
+			}
+			// A successful sweep read is as real as a page visit: publish the
+			// number into the panel's cache so the account column and its
+			// "last read" stamp move without anyone opening the page.
+			if publish != nil {
+				publish(c.Name(), acct.ID, bal)
 			}
 		}
 	}
@@ -1248,17 +1260,31 @@ func run() error {
 	// own BatchPlan and never names a task code itself.  A module that plans
 	// nothing is simply never scheduled.
 	//
+	// The panel renders the account column from one persistent balance cache.
+	// The scheduled sweeps below are another writer: a successful read must
+	// land in the same store the page shows, or the column keeps its old "last
+	// read" stamp even though the sweep refreshed the module's pool. Build it
+	// here so the scheduler hooks and the panel share one store.
+	balanceSoon := func() time.Duration {
+		soon := dur(cfg.Pool.ExpiringSoon, 168*time.Hour)
+		if d := live.Load().ExpiringSoon; d > 0 {
+			soon = d
+		}
+		return soon
+	}
+	balancePath := ""
+	if cfg.DataDir != "" {
+		balancePath = filepath.Join(cfg.DataDir, filepath.FromSlash(panel.DefaultBalanceCacheFileName))
+	}
+	balances := panel.NewBalanceStore(registry, balanceSoon, balancePath)
+
 	// platformSweep is the per-platform recovery/daily work: refresh every
 	// account's balance -- including the parked ones a fresh credit grant could
 	// free -- and renew the idle credentials whose expiry crept inside the
 	// module's refresh margin.  The daily sweep and the periodic recovery probe
 	// are the same work at different cadences, so they share one closure.
 	platformSweep := func(ctx context.Context, client string) {
-		soon := dur(cfg.Pool.ExpiringSoon, 168*time.Hour)
-		if d := live.Load().ExpiringSoon; d > 0 {
-			soon = d
-		}
-		refreshBalancesForClient(ctx, registry, client, soon, logger, true)
+		refreshBalancesForClient(ctx, registry, client, balanceSoon(), logger, true, balances.Publish)
 		refreshExpiringAccountsForClient(ctx, registry, client, time.Now(), logger)
 	}
 
@@ -1275,11 +1301,7 @@ func run() error {
 			// account.  The second refreshes the model lists, where the vendors
 			// that do expose credits put them.  Modules without a capability
 			// are skipped by the type assertion.
-			soon := dur(cfg.Pool.ExpiringSoon, 168*time.Hour)
-			if d := live.Load().ExpiringSoon; d > 0 {
-				soon = d
-			}
-			refreshBalances(ctx, registry, soon, logger)
+			refreshBalances(ctx, registry, balanceSoon(), logger, balances.Publish)
 			// An idle credential never reaches the chat path's proactive
 			// refresh, so the same sweep window also renews the accounts whose
 			// own expiry has crept inside their module's refresh margin.
@@ -1473,6 +1495,10 @@ func run() error {
 		// scheduler's window in here, and this is where the operator actually
 		// set it, so the dashboard and the pool agree on one number.
 		ExpiringSoon: dur(cfg.Pool.ExpiringSoon, 168*time.Hour),
+		// The scheduled sweeps publish into this same store, so the account
+		// column and its "last read" stamp match the reads the task centre
+		// already paid for instead of waiting for a page visit.
+		Balances: balances,
 		// How many credit batches the credits view shows per account before
 		// collapsing the rest.  applyDefaults has already resolved an unset
 		// value to the reference default, so this is never zero here.

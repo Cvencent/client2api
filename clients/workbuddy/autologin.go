@@ -83,6 +83,11 @@ var submitReadyTimeout = 8 * time.Second
 // publish __ONEID__.loginUrl.  It is a var only so tests can shrink it.
 var cnONEIDLoginURLTimeout = 10 * time.Second
 
+// cnONEIDStableFor keeps watching the CN login page after a successful load
+// replay so a React remount cannot immediately discard the value. It is a var
+// only so tests can shrink it.
+var cnONEIDStableFor = 1500 * time.Millisecond
+
 // accountSelectReadyTimeout bounds the two asynchronous transitions on the CN
 // account chooser: the card gaining its selected class, and the main submit
 // button becoming enabled.  Missing either transition means nothing was
@@ -934,19 +939,35 @@ func waitSelector(ctx context.Context, page pageDriver, selector string, timeout
 // callback becomes /login/undefined.
 func waitCNOneIDLoginURL(ctx context.Context, page pageDriver, timeout time.Duration) bool {
 	js := `(function(){try{` +
-		`var f=document.getElementById("phone-iframe");` +
+		`var fs=document.querySelectorAll("#phone-iframe");` +
+		`var ok=false;` +
+		`for(var i=0;i<fs.length;i++){var f=fs[i];` +
 		`var w=f&&f.contentWindow;` +
 		`var u=w&&w.__ONEID__&&w.__ONEID__.loginUrl;` +
-		`if(typeof u!=="string"||!u){return false;}` +
+		`if(typeof u!=="string"||!u){continue;}` +
 		`f.dispatchEvent(new Event("load"));` +
-		`return true;` +
+		`ok=true;}` +
+		`return ok;` +
 		`}catch(e){return false;}})()`
 	deadline := time.Now().Add(timeout)
+	stableFor := cnONEIDStableFor
+	if stableFor > timeout {
+		stableFor = timeout
+	}
+	var lastOK time.Time
 	for {
+		now := time.Now()
 		if ok, err := page.EvalBool(ctx, js); err == nil && ok {
-			return true
+			if lastOK.IsZero() {
+				lastOK = now
+			}
+			if now.Sub(lastOK) >= stableFor {
+				return true
+			}
+		} else {
+			lastOK = time.Time{}
 		}
-		if time.Now().After(deadline) || ctx.Err() != nil {
+		if now.After(deadline) || ctx.Err() != nil {
 			return false
 		}
 		if !sleepCtx(ctx, 300*time.Millisecond) {

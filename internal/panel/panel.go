@@ -136,6 +136,13 @@ type Options struct {
 	// invent one -- the reference derives this from its scheduler, we derive it
 	// from pool.expiring_soon, because that is where the operator set it.
 	ExpiringSoon time.Duration
+	// Balances is the process-wide last-known balance cache the accounts page
+	// renders. A host that also runs scheduled sweeps builds it with
+	// NewBalanceStore and passes the same store to those sweeps, so their
+	// successful reads move the column and its "last read" stamp too. Nil
+	// makes the panel create a private cache, which is what tests and
+	// embedders without a scheduler get.
+	Balances *BalanceStore
 	// PackageDetailLimit is how many credit batches the credits view shows per
 	// account before collapsing the rest behind a toggle.  It is resolved
 	// against its default by the caller, so the panel only reports it; a
@@ -314,7 +321,17 @@ func (p *panel) ctx(r *http.Request, d time.Duration) (context.Context, context.
 // initBalanceCache wires the last-known-balance store.  Split out of New so a
 // test can build the same panel and seed the cache before the first request.
 func (p *panel) initBalanceCache() {
-	if p == nil || p.opts.Registry == nil {
+	if p == nil {
+		return
+	}
+	// A host that also runs scheduled balance sweeps passes the store those
+	// sweeps publish into. Adopting it is what keeps the column, its "last
+	// read" stamp and the module pool on one reading.
+	if p.opts.Balances != nil {
+		p.balanceCache = p.opts.Balances.cache
+		return
+	}
+	if p.opts.Registry == nil {
 		return
 	}
 	cachePath := ""

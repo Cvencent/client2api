@@ -122,6 +122,35 @@ func newBalanceCache(all balanceProvider, soon func() time.Duration, path string
 	return c
 }
 
+// BalanceStore is the process-wide last-known-balance cache behind the
+// accounts page. A host that also runs scheduled sweeps constructs it first
+// and hands it to both the panel and the sweeps, so a number the sweep just
+// read is the same number the column renders instead of a private copy only
+// page visits advance.
+type BalanceStore struct {
+	cache *balanceCache
+}
+
+// NewBalanceStore opens the persistent cache the accounts page reads. A nil
+// registry returns nil: an embedder with no clients has no balances to show,
+// and the panel keeps its existing "no cache" behaviour.
+func NewBalanceStore(reg *core.Registry, soon func() time.Duration, path string) *BalanceStore {
+	if reg == nil {
+		return nil
+	}
+	return &BalanceStore{cache: newBalanceCache(reg, soon, path)}
+}
+
+// Publish records one successful vendor read for an account. Failures are
+// deliberately not published: the sweep's log already names them, and a
+// background hiccup must not replace a good cached number with an error row.
+func (s *BalanceStore) Publish(client, id string, bal core.Balance) {
+	if s == nil || s.cache == nil {
+		return
+	}
+	s.cache.put(client, id, bal)
+}
+
 func (c *balanceCache) load() {
 	if c == nil || c.path == "" {
 		return

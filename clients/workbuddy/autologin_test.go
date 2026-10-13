@@ -69,6 +69,9 @@ type fakePage struct {
 	oneidLoginURLReadyAfter int
 	oneidLoadDispatched     bool
 	oneidLoadBeforeCode     bool
+	oneidRemountAfterLoad   bool
+	oneidRemounts           int
+	oneidFinalLoadDispatched bool
 }
 
 func newFakePage() *fakePage {
@@ -209,10 +212,19 @@ func (p *fakePage) EvalBool(_ context.Context, expression string) (bool, error) 
 		return true, nil
 	case strings.Contains(expression, "phone-iframe") && strings.Contains(expression, "__ONEID__") && strings.Contains(expression, "dispatchEvent"):
 		p.oneidLoginURLChecks++
+		if p.oneidRemountAfterLoad && p.oneidLoadDispatched {
+			p.oneidRemounts++
+			p.oneidLoadDispatched = false
+			p.oneidRemountAfterLoad = false
+			return false, nil
+		}
 		if p.oneidLoginURLChecks <= p.oneidLoginURLReadyAfter {
 			return false, nil
 		}
 		p.oneidLoadDispatched = true
+		if p.oneidRemounts > 0 {
+			p.oneidFinalLoadDispatched = true
+		}
 		return true, nil
 	case strings.Contains(expression, "oneid-enterprise-login-account-list__item") && strings.Contains(expression, "个人版"):
 		for _, text := range p.accountTexts {
@@ -896,6 +908,27 @@ func TestAutoLoginReplaysCNOneIDLoadAfterLoginURLAppears(t *testing.T) {
 	}
 }
 
+// TestAutoLoginReplaysCNOneIDLoadAfterTheIframeRemounts reproduces the state
+// loss seen after the first load replay: React clears loginInfo and remounts
+// the hidden iframe. The new instance needs its own load replay before the
+// account chooser can use loginUrl.
+func TestAutoLoginReplaysCNOneIDLoadAfterTheIframeRemounts(t *testing.T) {
+	v := successVendor()
+	c, _ := autoLoginClient(t, v)
+	page := newFakePage()
+	page.oneidRemountAfterLoad = true
+	platform := &fakePlatform{number: core.SMSNumber{Phone: "13800009909"}, code: "999999"}
+
+	if _, err := runAutoLogin(t, c, page, platform, core.AutoLoginRequest{}); err != nil {
+		t.Fatalf("autoLogin: %v", err)
+	}
+	if page.oneidRemounts == 0 {
+		t.Fatal("the test did not model the iframe remount")
+	}
+	if !page.oneidFinalLoadDispatched {
+		t.Fatal("the CN flow never replayed the load on the remounted iframe")
+	}
+}
 // TestAutoLoginDoesNotReplayTheOneIDLoadForTheGlobalRealm keeps the CN
 // workaround out of the international flow.
 func TestAutoLoginDoesNotReplayTheOneIDLoadForTheGlobalRealm(t *testing.T) {

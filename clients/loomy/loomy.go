@@ -416,7 +416,7 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 	now := time.Now().UTC()
 	candidates := c.orderedCandidates(&local, local.Model)
 	if len(candidates) == 0 {
-		return nil, c.unavailableError(now)
+		return nil, errors.Join(core.ErrPlatformExhausted, c.unavailableError(now))
 	}
 
 	attempts := c.cfg.maxAttempts()
@@ -526,7 +526,7 @@ func (c *Client) unavailableError(now time.Time) error {
 			return errSessionExpired(a.ID)
 		}
 	}
-	return errors.New("loomy: every account is parked or cooling down; retry shortly")
+	return errors.Join(core.ErrPlatformExhausted, errors.New("loomy: every account is parked or cooling down; retry shortly"))
 }
 
 // ---------------------------------------------------------------------------

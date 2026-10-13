@@ -417,6 +417,7 @@ func TestMain(m *testing.M) {
 	savedCodeSettle := codeButtonSettle
 	savedSubmitReady := submitReadyTimeout
 	savedAutoBeat := autoConfirmHeartbeat
+	savedCNStable := cnONEIDStableFor
 
 	mpChatEventGap = time.Millisecond
 	mpChatJitter = 0
@@ -431,6 +432,7 @@ func TestMain(m *testing.M) {
 	codeButtonSettle = time.Millisecond
 	submitReadyTimeout = time.Millisecond
 	autoConfirmHeartbeat = time.Millisecond
+	cnONEIDStableFor = time.Millisecond
 
 	code := m.Run()
 
@@ -444,6 +446,7 @@ func TestMain(m *testing.M) {
 	codeButtonSettle = savedCodeSettle
 	submitReadyTimeout = savedSubmitReady
 	autoConfirmHeartbeat = savedAutoBeat
+	cnONEIDStableFor = savedCNStable
 	os.Exit(code)
 }
 

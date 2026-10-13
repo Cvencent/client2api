@@ -50,6 +50,40 @@ func TestBalanceCachePersistsAcrossARestart(t *testing.T) {
 	}
 }
 
+// A scheduled sweep lives outside the panel and cannot call its private
+// refresh. It has to feed the very cache the accounts page renders, or it can
+// read every account successfully while the column still says "last read 8
+// hours ago".
+func TestBalanceStoreFeedsThePanelColumn(t *testing.T) {
+	c := quotaClient("wb", core.AccountRecord{ID: "a1", State: "ready"})
+	reg := registryOf(c)
+	store := NewBalanceStore(reg, func() time.Duration { return 0 }, filepath.Join(t.TempDir(), "panel", "balance_cache.json"))
+	store.Publish("wb", "a1", core.Balance{Credits: 42, Total: 100, Unit: "credits"})
+
+	p, h := balanceHandler(Options{Registry: reg, Balances: store, Started: time.Now()})
+	// The GET schedules its own gentle pass; throttle it so the published read
+	// is the only possible source of the number under assertion.
+	p.balanceCache.lastSoft = time.Now()
+
+	body := decodeMap(t, get(t, h, "/panel/api/clients/wb/balances"))
+	rows := rowsOf(t, body["accounts"])
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want one", len(rows))
+	}
+	if rows[0]["credits"] != float64(42) || rows[0]["credits_total"] != float64(100) {
+		t.Fatalf("published row = %v/%v, want 42/100", rows[0]["credits"], rows[0]["credits_total"])
+	}
+	if body["unit"] != "credits" {
+		t.Fatalf("unit = %v, want the published label", body["unit"])
+	}
+	if got, ok := rows[0]["fetched_at"].(float64); !ok || got <= 0 {
+		t.Fatalf("fetched_at = %v, want the stamp the publish just wrote", rows[0]["fetched_at"])
+	}
+	if soon := c.seenSoon(); len(soon) != 0 {
+		t.Fatalf("/balances asked the vendor %v; the published store already had the number", soon)
+	}
+}
+
 func TestBalanceCacheMissesNoErrorRow(t *testing.T) {
 	// An error row has no credits but still proves the account was tried; it has
 	// to persist too, or the row falls back to "never read" after a restart.

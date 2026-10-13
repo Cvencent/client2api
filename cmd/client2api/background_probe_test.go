@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -18,6 +19,7 @@ type gatedSweepClient struct {
 	allowed      map[string]bool
 	gateCalls    []string
 	balanceCalls []string
+	balanceErr   map[string]error
 }
 
 func (f *gatedSweepClient) BackgroundProbeDue(_ context.Context, id string) bool {
@@ -31,6 +33,9 @@ func (f *gatedSweepClient) AccountBalance(_ context.Context, id string, _ time.D
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.balanceCalls = append(f.balanceCalls, id)
+	if err := f.balanceErr[id]; err != nil {
+		return core.Balance{}, err
+	}
 	return core.Balance{Credits: 1, Total: 10}, nil
 }
 
@@ -44,6 +49,37 @@ func (f *gatedSweepClient) GateCalls() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]string(nil), f.gateCalls...)
+}
+
+// A scheduled sweep's successful read is a real balance read for the panel
+// too: the sweep used to feed only the module's pool, so the account page kept
+// its old "last read" stamp. A failure must not publish a zero over the last
+// good number.
+func TestRefreshBalancesPublishesSuccessfulReadsOnly(t *testing.T) {
+	f := &gatedSweepClient{
+		renewFakeClient: &renewFakeClient{
+			name: "workbuddy",
+			accounts: []core.AccountRecord{
+				{ID: "good", Enabled: true, State: "ready"},
+				{ID: "bad", Enabled: true, State: "ready"},
+			},
+		},
+		allowed:    map[string]bool{"good": true, "bad": true},
+		balanceErr: map[string]error{"bad": errors.New("vendor refused")},
+	}
+	reg := core.NewRegistry()
+	reg.Add(f)
+
+	var published []string
+	refreshBalances(context.Background(), reg, 0, quietLogger(), func(client, id string, bal core.Balance) {
+		if bal.Credits != 1 || bal.Total != 10 {
+			t.Errorf("published %s/%s = %+v, want the vendor's 1/10", client, id, bal)
+		}
+		published = append(published, client+"/"+id)
+	})
+	if len(published) != 1 || published[0] != "workbuddy/good" {
+		t.Fatalf("published %v, want only workbuddy/good", published)
+	}
 }
 
 func TestRefreshBalancesHonoursBackgroundProbeGate(t *testing.T) {
@@ -60,7 +96,7 @@ func TestRefreshBalancesHonoursBackgroundProbeGate(t *testing.T) {
 	reg := core.NewRegistry()
 	reg.Add(f)
 
-	refreshBalances(context.Background(), reg, 0, quietLogger())
+	refreshBalances(context.Background(), reg, 0, quietLogger(), nil)
 
 	if got := f.AccountBalanceCalls(); len(got) != 1 || got[0] != "due" {
 		t.Fatalf("balance sweep called %v, want only the due account", got)
@@ -85,7 +121,7 @@ func TestRefreshBalancesSkipsRecoverableAccounts(t *testing.T) {
 	reg := core.NewRegistry()
 	reg.Add(f)
 
-	refreshBalances(context.Background(), reg, 0, quietLogger())
+	refreshBalances(context.Background(), reg, 0, quietLogger(), nil)
 
 	if got := f.AccountBalanceCalls(); len(got) != 1 || got[0] != "ready" {
 		t.Fatalf("background balance sweep called %v, want only ready", got)
@@ -107,7 +143,7 @@ func TestRecoveryBalanceSweepIncludesRecoverableAndBypassesGate(t *testing.T) {
 	reg := core.NewRegistry()
 	reg.Add(f)
 
-	refreshBalancesForClient(context.Background(), reg, "loomy", 0, quietLogger(), true)
+	refreshBalancesForClient(context.Background(), reg, "loomy", 0, quietLogger(), true, nil)
 
 	if got := f.AccountBalanceCalls(); len(got) != 2 || got[0] != "ready" || got[1] != "cooling" {
 		t.Fatalf("recovery balance sweep called %v, want ready+cooling without the gate", got)
