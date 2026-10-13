@@ -6,6 +6,24 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.1.59] - 2026-10-13
+
+### Fixed
+
+- **AutoClaw 面板对话测试/普通 OpenAI 客户端调用仍然 406**：0.1.58 只补了上游要求的
+  system 标记，但托管代理还有第二个硬性条件——body 里的最大输出 token 必须写成
+  `max_completion_tokens`。只要出现 `max_tokens` 且小于 10000，上游就在鉴权前返回
+  空体 `406 Not Acceptable`（网关转 502）。面板「对话测试」默认下发 `max_tokens=512`，
+  因此升级后仍然失败。现在 `clients/autoclaw/body.go` 统一改用
+  `max_completion_tokens`，调用方给的值原样透传，只是换成上游认的字段名。
+  实测字段矩阵：`max_completion_tokens` 任意值 200；`max_tokens<10000` 406；
+  两个同时存在也 406。桌面端本来就只用 `max_completion_tokens`，所以一直正常。
+
+### Installer
+
+- `client2api-setup-0.1.59.exe`（空包，不含账号凭据或本机配置）
+- 升级会保留现有 `configs/` 和 `data/`
+
 ## [0.1.58] - 2026-10-13
 
 ### Changed

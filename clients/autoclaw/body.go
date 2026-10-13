@@ -8,15 +8,15 @@ import (
 )
 
 type chatBody struct {
-	Model       string          `json:"model"`
-	Messages    []chatMessage   `json:"messages"`
-	Stream      bool            `json:"stream"`
-	MaxTokens   *int            `json:"max_tokens,omitempty"`
-	Temperature *float64        `json:"temperature,omitempty"`
-	TopP        *float64        `json:"top_p,omitempty"`
-	Stop        []string        `json:"stop,omitempty"`
-	Tools       []chatTool      `json:"tools,omitempty"`
-	ToolChoice  json.RawMessage `json:"tool_choice,omitempty"`
+	Model               string          `json:"model"`
+	Messages            []chatMessage   `json:"messages"`
+	Stream              bool            `json:"stream"`
+	MaxCompletionTokens *int            `json:"max_completion_tokens,omitempty"`
+	Temperature         *float64        `json:"temperature,omitempty"`
+	TopP                *float64        `json:"top_p,omitempty"`
+	Stop                []string        `json:"stop,omitempty"`
+	Tools               []chatTool      `json:"tools,omitempty"`
+	ToolChoice          json.RawMessage `json:"tool_choice,omitempty"`
 }
 
 // The AutoClaw managed proxy rejects any chat request whose leading system
@@ -65,13 +65,13 @@ type chatToolCallFunctionBody struct {
 
 func buildChatBody(req *core.ChatRequest, model string, stream bool) chatBody {
 	body := chatBody{
-		Model:       model,
-		Messages:    make([]chatMessage, 0, len(req.Messages)),
-		Stream:      stream,
-		MaxTokens:   req.MaxTokens,
-		Temperature: req.Temperature,
-		TopP:        req.TopP,
-		Stop:        req.Stop,
+		Model:               model,
+		Messages:            make([]chatMessage, 0, len(req.Messages)),
+		Stream:              stream,
+		MaxCompletionTokens: req.MaxTokens,
+		Temperature:         req.Temperature,
+		TopP:                req.TopP,
+		Stop:                req.Stop,
 	}
 	for _, m := range req.Messages {
 		role := strings.TrimSpace(m.Role)

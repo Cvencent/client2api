@@ -2,6 +2,7 @@ package autoclaw
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"client2api/internal/core"
@@ -53,6 +54,28 @@ func TestDesktopSystemPromptNotDuplicated(t *testing.T) {
 	}
 	if body.Messages[0].Role != "system" {
 		t.Fatalf("first role = %q", body.Messages[0].Role)
+	}
+}
+
+func TestChatBodyUsesCompletionTokenField(t *testing.T) {
+	// AutoClaw's managed proxy rejects any body carrying `max_tokens`, and for
+	// values below 10000 it answers an opaque 406 before authentication. The
+	// accepted spelling is `max_completion_tokens`, which the desktop client
+	// uses for every request. A small caller limit must therefore still arrive
+	// as max_completion_tokens, never as max_tokens.
+	maxTok := 512
+	req := &core.ChatRequest{
+		Messages:  []core.Message{{Role: "user", Content: "hi"}},
+		MaxTokens: &maxTok,
+	}
+	body := buildChatBody(req, "zai_auto", true)
+	raw, _ := json.Marshal(body)
+	got := string(raw)
+	if strings.Contains(got, `"max_tokens"`) {
+		t.Fatalf("body must not carry max_tokens: %s", got)
+	}
+	if !strings.Contains(got, `"max_completion_tokens":512`) {
+		t.Fatalf("max_completion_tokens missing: %s", got)
 	}
 }
 
