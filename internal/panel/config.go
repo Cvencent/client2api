@@ -43,6 +43,11 @@ type configResponse struct {
 	// would then have to keep its own copy of the default -- which is exactly
 	// how the two drift apart.  The page reads this field, and only this field.
 	Panel panelSettings `json:"panel"`
+	// ModuleSchema is the panel's curated, plain-language description of what
+	// each module reads under clients.<name>.  The config file keeps that section
+	// as raw JSON because every module decides its own keys; this table is what
+	// lets the page render labelled controls instead of an unlabelled blob.
+	ModuleSchema map[string][]moduleOption `json:"module_schema"`
 }
 
 // panelSettings is the resolved dashboard presentation config.  Every field is
@@ -70,14 +75,15 @@ func (p *panel) handleConfig(w http.ResponseWriter, r *http.Request) {
 // configRead reports the configuration as it is on disk, redacted.
 func (p *panel) configRead(w http.ResponseWriter, r *http.Request) {
 	resp := configResponse{
-		Path:       p.opts.ConfigPath,
-		Version:    p.opts.Version,
-		Addr:       p.opts.Listen,
-		APIKeySet:  p.opts.AuthEnabled,
-		CanRestart: p.opts.Restart != nil,
-		Clients:    []string{},
-		Registered: core.Registered(),
-		Panel:      panelSettings{PackageDetailLimit: p.opts.PackageDetailLimit},
+		Path:         p.opts.ConfigPath,
+		Version:      p.opts.Version,
+		Addr:         p.opts.Listen,
+		APIKeySet:    p.opts.AuthEnabled,
+		CanRestart:   p.opts.Restart != nil,
+		Clients:      []string{},
+		Registered:   core.Registered(),
+		Panel:        panelSettings{PackageDetailLimit: p.opts.PackageDetailLimit},
+		ModuleSchema: moduleOptions,
 	}
 	if p.opts.Registry != nil {
 		resp.Clients = p.opts.Registry.Names()

@@ -89,19 +89,23 @@ func TestSaveConfigSendsOnlyWhatTheOperatorChanged(t *testing.T) {
 		t.Error("saveConfig 剪空之后仍然会发请求（后端会以 empty patch 400 拒绝）")
 	}
 
-	// ②b 模块配置节里的 {} 必须归一成 null（删节 = 用模块默认值）。面板把没有
-	// 配置节的模块画成 {}，操作员「清空这一节」的自然写法就是留下一个 {}；可
-	// mergeConfig 是递归合并，{} 合进一个非空节等于什么都没做——面板画着 {}
-	// 说「这就是默认」，保存却对已有的节毫无作用，操作员会以为重置成功了。
-	// 断整行而不是几个片段：片段式断言连 `if (false && …)` 这种被关掉的
-	// 分支都认，等于没守。
-	const norm = `if (c && typeof c === "object" && !Array.isArray(c) && !Object.keys(c).length) clients[name] = null;`
-	if !strings.Contains(save, norm) {
-		t.Errorf("saveConfig 没有把空对象形式的模块配置节归一成 null：\n想要 %s\n对着有内容的节写 {} 会被 mergeConfig 静默吃掉，操作员会以为重置成功了", norm)
+	// ②b 模块配置现在按 schema 画出控件，保存时先把控件和「其它键」合成为完整
+	// 对象，再和磁盘上的原值做逐键 diff；没有变化的空表单不会生成任何 patch，
+	// 清空控件或「其它键」则通过 modDiffPatch 对已有键发 null。不能退回旧路径把
+	// 整节对象直接 merge 进去，否则空对象会被递归合并静默吃掉，操作员会以为
+	// 重置成功了。具体纯函数行为由 moduleconfig_ui_test.go 的 Node 用例覆盖。
+	for _, want := range []string{
+		"modBuildValue(",
+		"modDiffPatch(onDisk, built.value)",
+		"if (Object.keys(diff).length) clients[name] = diff;",
+	} {
+		if !strings.Contains(save, want) {
+			t.Errorf("saveConfig 没有走新的模块配置保存路径，缺少 %q", want)
+		}
 	}
-	// 帮助文案也得说实话，否则操作员仍会以为 {} 能重置。
-	if !strings.Contains(ui, "留空或写 <code>{}</code> 都表示删除该模块的配置节") {
-		t.Error("模块配置节的帮助文案还在说「{} 表示全部使用模块默认值」——那是假的，写 {} 不会重置一节")
+	// 帮助文案也得说清楚怎么恢复默认；空控件和空「其它键」都应该被操作员看懂。
+	if !strings.Contains(ui, "清空所有控件并把「其它键」留空或写成 <code>{}</code>") {
+		t.Error("模块配置卡片没有说明如何恢复整张卡片的默认值")
 	}
 
 	// ③ 剪枝规则本身。null 是「删键」，删一个本来就空/不存在的键不是改动；

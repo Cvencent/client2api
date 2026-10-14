@@ -88,14 +88,15 @@ func (p *panel) configWrite(w http.ResponseWriter, r *http.Request) {
 
 	resp := configSaveResponse{
 		configResponse: configResponse{
-			Path:       p.opts.ConfigPath,
-			Version:    p.opts.Version,
-			Addr:       p.opts.Listen,
-			APIKeySet:  p.opts.AuthEnabled,
-			CanRestart: p.opts.Restart != nil,
-			Clients:    []string{},
-			Registered: core.Registered(),
-			Config:     redactConfig(merged),
+			Path:         p.opts.ConfigPath,
+			Version:      p.opts.Version,
+			Addr:         p.opts.Listen,
+			APIKeySet:    p.opts.AuthEnabled,
+			CanRestart:   p.opts.Restart != nil,
+			Clients:      []string{},
+			Registered:   core.Registered(),
+			Config:       redactConfig(merged),
+			ModuleSchema: moduleOptions,
 		},
 		Saved:   true,
 		Changed: changed,

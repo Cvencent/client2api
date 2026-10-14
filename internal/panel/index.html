@@ -873,7 +873,10 @@ details.cfg summary { cursor: pointer; color: var(--ink-3); font-size: 12.5px; }
 
 .cfgblock { align-items: flex-start; }
 .cfgblock > .k { padding-top: 8px; }
-.cfgblock .cfgmod { font-family: var(--mono); font-size: 12px; line-height: 1.6; min-height: 54px; resize: vertical; }
+.cfgblock .cfgmod, .cfgblock .cfgmodextra { font-family: var(--mono); font-size: 12px; line-height: 1.6; min-height: 54px; resize: vertical; }
+.cfgmodcard > summary { display: flex; align-items: center; }
+.cfgmodcard > summary .hint { margin-left: 8px; }
+.cfgmodcard[open] > summary { margin-bottom: 8px; }
 .savebar .grow { flex: 1; }
 
 /* 一次性批量按钮行：只在选中的客户端声明了 caps.batches 时才出现。 */
@@ -7234,6 +7237,149 @@ async function savePlatforms() {
   }
 }
 
+/* ── 模块配置表单 ───────────────────────────────────────────────────────
+   clients.<模块> 在配置里是一段「模块自己解析」的 JSON，面板不知道里面有什么，
+   所以过去每个模块只能甩一个裸 textarea 给操作员。现在按后端的 module_schema
+   （internal/panel/moduleconfig.go）画出带中文标签和说明的控件，没被控件覆盖
+   的键原样留在「其它键」里。三条口径：
+     · 控件留空 = 删掉这个键，回到模块内置默认值（与配置页其它字段一致）；
+     · 表单列出的键以表单为准，「其它键」里同名的会被表单覆盖；
+     · 值不是控件能表达的类型（对象、对象数组）时，这一项退回「其它键」——
+       宁可让操作员手改 JSON，也不能把它显示成字符串再写回去。 */
+
+// modDisplayValue 把配置里的值放进控件：数组按逗号渲染，凭据占位符原样显示。
+// 保存时占位符原样回传，configwrite.go 认这个字符串并保留磁盘上的真值。
+function modDisplayValue(raw) {
+  if (raw == null) return "";
+  if (raw === REDACTED) return REDACTED;
+  if (Array.isArray(raw)) {
+    if (!raw.length) return "";
+    if (raw.every(x => x === REDACTED)) return REDACTED;
+    return raw.map(x => String(x)).join(", ");
+  }
+  return String(raw);
+}
+
+// modFormFits 判断一个已存在的值能不能由该控件安全表示。没配过（undefined）
+// 永远可以；类型对不上的退回「其它键」。
+function modFormFits(kind, raw, choices) {
+  if (raw == null || raw === REDACTED) return true;
+  switch (kind) {
+    case "bool": return typeof raw === "boolean";
+    case "choice": return typeof raw === "string" &&
+      (!Array.isArray(choices) || choices.some(c => String(c.value) === raw));
+    case "number": return typeof raw === "number" && Number.isFinite(raw);
+    case "list": return Array.isArray(raw) && raw.every(x => typeof x === "string");
+    default: return typeof raw === "string";
+  }
+}
+
+// modOptionValue 把一个控件的输入变成 JSON 值。set=false 表示操作员清了这一格，
+// 也就是「删掉这个键、回到默认」。
+function modOptionValue(kind, raw) {
+  const s = String(raw == null ? "" : raw).trim();
+  if (s === "") return { set: false };
+  if (s === REDACTED) return { set: true, value: s };
+  if (kind === "bool") return { set: true, value: s === "true" };
+  if (kind === "number") {
+    const n = Number(s);
+    if (!Number.isFinite(n)) return { error: "必须是数字" };
+    return { set: true, value: n };
+  }
+  if (kind === "list") {
+    return { set: true, value: s.split(",").map(x => x.trim()).filter(Boolean) };
+  }
+  return { set: true, value: s };
+}
+
+// modBuildValue 合成一个模块的完整配置对象：先铺「其它键」，再让表单覆盖它。
+function modBuildValue(edits, extraRaw) {
+  const out = {};
+  const extra = String(extraRaw == null ? "" : extraRaw).trim();
+  if (extra && extra !== "{}") {
+    let parsed;
+    try { parsed = JSON.parse(extra); }
+    catch (e) { return { error: "「其它键」不是合法 JSON：" + e.message }; }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { error: "「其它键」必须是一个 JSON 对象，例如 {\"base_url\":\"https://…\"}" };
+    }
+    Object.assign(out, parsed);
+  }
+  for (const e of (edits || [])) {
+    const r = modOptionValue(e.kind, e.raw);
+    if (r.error) return { error: "「" + e.key + "」" + r.error };
+    if (!r.set) { delete out[e.key]; continue; }
+    out[e.key] = r.value;
+  }
+  return { value: out };
+}
+
+// modDiffPatch 只回写真正变了的键：删掉的键发 null（configwrite.go 的合并语义是
+// 「null 删键」），没动的键一个都不发，免得一次空保存把整节重写一遍。
+function modDiffPatch(baseline, next) {
+  const base = (baseline && typeof baseline === "object" && !Array.isArray(baseline)) ? baseline : {};
+  const out = {};
+  for (const k of Object.keys(next)) {
+    const has = Object.prototype.hasOwnProperty.call(base, k);
+    if (!has || JSON.stringify(base[k]) !== JSON.stringify(next[k])) out[k] = next[k];
+  }
+  for (const k of Object.keys(base)) {
+    if (!Object.prototype.hasOwnProperty.call(next, k)) out[k] = null;
+  }
+  return out;
+}
+
+// modRowHTML 画一个配置项。bool 与 choice 都画成下拉，第一项是「默认」——
+// 它就是「删掉这个键、用模块内置值」。
+function modRowHTML(mod, o, obj, dis) {
+  const has = Object.prototype.hasOwnProperty.call(obj, o.key);
+  const value = modDisplayValue(has ? obj[o.key] : undefined);
+  const base = ' class="cfgtext cfgmodctl" data-mod="' + esc(mod) + '" data-key="' + esc(o.key) +
+    '" data-kind="' + esc(o.kind) + '"' + dis;
+  let control;
+  if (o.kind === "choice" || o.kind === "bool") {
+    const opts = o.kind === "bool"
+      ? [{ value: "", label: "默认（用模块内置值）" }, { value: "true", label: "开" }, { value: "false", label: "关" }]
+      : [{ value: "", label: "默认（用模块内置值）" }].concat(o.choices || []);
+    control = '<select' + base + '>' + opts.map(c =>
+      '<option value="' + esc(c.value) + '"' + (String(c.value) === value ? " selected" : "") + '>' +
+      esc(c.label) + '</option>').join("") + '</select>';
+  } else {
+    const type = o.kind === "number" ? "number" : "text";
+    control = '<input' + base + ' type="' + type + '" spellcheck="false" value="' + esc(value) + '">';
+  }
+  return '<label class="cfgrow"><span class="k">' + esc(o.label) + '</span>' + control +
+    '<span class="cfghelp">' + esc(o.help || "") + '</span></label>';
+}
+
+// modCardHTML 画一个模块的卡片：上面是能看懂的控件，下面是没被控件覆盖的键。
+function modCardHTML(name, value, opts, dis) {
+  const obj = (value && typeof value === "object" && !Array.isArray(value)) ? value : {};
+  const list = opts || [];
+  const form = [], moved = [];
+  list.forEach(o => {
+    if (modFormFits(o.kind, obj[o.key], o.choices)) form.push(o); else moved.push(o.key);
+  });
+  const covered = new Set(form.map(o => o.key));
+  const extra = {};
+  Object.keys(obj).forEach(k => { if (!covered.has(k)) extra[k] = obj[k]; });
+  const rows = form.map(o => modRowHTML(name, o, obj, dis)).join("");
+  const note = moved.length
+    ? '<div class="cfghelp">这些项的值不是表单能编辑的类型，已放回下面的「其它键」：<code>' +
+      esc(moved.join(", ")) + '</code></div>'
+    : "";
+  const noForm = list.length ? "" :
+    '<div class="cfghelp">这个模块还没有整理出常用项，全部设置都在下面的「其它键」里。</div>';
+  return '<details class="cfg cfgmodcard" data-name="' + esc(name) + '"><summary>' +
+    esc(platformLabel(name)) +
+    '<span class="hint">已设置 ' + Object.keys(obj).length + ' 项</span></summary>' +
+    noForm + rows + note +
+    '<label class="cfgrow cfgblock"><span class="k">其它键（JSON）</span>' +
+    '<textarea class="cfgtext cfgmodextra" spellcheck="false" data-name="' + esc(name) + '"' + dis + '>' +
+    esc(JSON.stringify(extra)) + '</textarea>' +
+    '<span class="cfghelp">上面表单没列出的键原样放在这里，不动它就行。留空或 <code>{}</code> 都表示没有其它键。</span></label>' +
+    '</details>';
+}
 async function renderConfig() {
   const p = await api("/panel/api/config");
   const form = $("#cfgForm");
@@ -7316,13 +7462,14 @@ async function renderConfig() {
 
   out.push('<div class="cfgsec"><div class="cfghd">模块配置</div>');
   const cl = c.clients || {};
+  const modSchema = d.module_schema || {};
   moduleNames.forEach(n => {
     const v = cl[n] == null ? {} : cl[n];
-    out.push('<label class="cfgrow cfgblock"><span class="k" title="' + esc(n) + '">' + esc(platformLabel(n)) + '</span>' +
-      '<textarea class="cfgtext cfgmod" spellcheck="false" data-name="' + esc(n) + '"' + dis + '>' +
-      esc(JSON.stringify(v)) + '</textarea></label>');
+    out.push(modCardHTML(n, v, modSchema[n] || [], dis));
   });
-  out.push('<div class="cfghelp">每个 client 自己的 JSON 配置；留空或写 <code>{}</code> 都表示删除该模块的配置节、全部使用模块默认值。</div></div>');
+  out.push('<div class="cfghelp">每个模块一张卡片，里面是按该模块真实支持的配置项整理的常用设置：' +
+    '某一格留空 = 用模块内置默认值；要把整张卡片恢复默认，清空所有控件并把「其它键」留空或写成 <code>{}</code>。表单没覆盖到的键留在卡片底部的「其它键」里，照着原样别动即可。' +
+    '模块配置保存后需要<strong>重启进程</strong>才生效。</div></div>');
 
   out.push('<details class="cfg"><summary>查看脱敏后的完整配置（只读）</summary><pre class="cfgjson">' +
     esc(JSON.stringify(c, null, 2)) + '</pre></details>');
@@ -7489,20 +7636,28 @@ async function saveConfig() {
   }
 
 
-  const clients = {}, mods = document.querySelectorAll(".cfgmod");
-  for (const t of mods) {
-    const name = t.dataset.name, raw = t.value.trim();
-    if (!raw) { clients[name] = null; continue; }
-    try { clients[name] = JSON.parse(raw); }
-    catch (e) { toast("「" + name + "」的 JSON 无效：" + e.message, "err"); t.focus(); return; }
-    // 空对象和空文本框是一个意思：删掉这一节，全部走模块默认值。
-    // 不能原样发 {}：configwrite.go 的 mergeConfig 是递归合并，空对象合进一个
-    // 非空节等于什么都没做 —— 面板画着 {} 说「这就是默认」，保存却对已有的节
-    // 毫无作用，操作员会以为重置成功了。
-    const c = clients[name];
-    if (c && typeof c === "object" && !Array.isArray(c) && !Object.keys(c).length) clients[name] = null;
+  // 模块配置：卡片上的控件是主，没被控件覆盖的键走卡片底部的「其它键」JSON。
+  // 只回写真正变了的键（删掉的键发 null，configwrite.go 的合并语义按 null 删键），
+  // 没动的键一个都不发 —— 否则一次空保存会把整节重写一遍。
+  const clients = {}, cards = document.querySelectorAll(".cfgmodcard");
+  for (const card of cards) {
+    const name = card.dataset.name;
+    const onDisk = ((CFG.config || {}).clients || {})[name] || {};
+    const edits = [];
+    card.querySelectorAll(".cfgmodctl").forEach(el => {
+      edits.push({ key: el.dataset.key, kind: el.dataset.kind, raw: el.value });
+    });
+    const extraEl = card.querySelector(".cfgmodextra");
+    const built = modBuildValue(edits, extraEl ? extraEl.value : "");
+    if (built.error) {
+      toast("「" + platformLabel(name) + "」配置无效：" + built.error, "err");
+      if (extraEl) extraEl.focus();
+      return;
+    }
+    const diff = modDiffPatch(onDisk, built.value);
+    if (Object.keys(diff).length) clients[name] = diff;
   }
-  if (mods.length) patch.clients = clients;
+  if (cards.length) patch.clients = clients;
 
   // 只发操作员真正改过的部分。不剪的话，一次「什么都没改」的保存会把表单里
   // 那批默认值（缺键的排程组开关、会话粘性、指纹清洗、生效的 package_detail_limit、

@@ -147,7 +147,10 @@ people. The built-in default is `127.0.0.1`.
 - Task Center
 - Models and Profiles
 - Platform Configuration
-- Config
+- Config: each `clients.<module>` section is rendered as labelled controls for the
+  common settings. An empty control restores the module default, and keys the
+  panel does not yet describe stay available under `Other keys (JSON)`. Module
+  config changes take effect after restarting the process.
 - Runtime Log
 
 ### Tasks, usage and accounting
