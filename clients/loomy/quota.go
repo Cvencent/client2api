@@ -182,15 +182,9 @@ func (c *Client) AccountBalance(ctx context.Context, id string, soon time.Durati
 
 	snap, err := c.up.creditSnapshot(ctx, acc.AccessToken)
 	if err != nil {
-		// A balance read is one more piece of evidence about the credential, so
-		// a rejection here parks the account rather than being thrown away --
-		// unless the caller is the one that left, which says nothing about the
-		// credential.  The panel reads balances on every redraw and cancels the
-		// read in flight when it does, so without this guard a busy panel would
-		// park every account it looked at.
-		if !callerGone(err) {
-			c.penaliseRecoverable(id, err, time.Now().UTC())
-		}
+		// A balance read is display-only.  Report the failure to the caller,
+		// but never cool, park, or otherwise change the credential: the chat
+		// path and the explicit Test action are the health authorities.
 		return core.Balance{}, err
 	}
 	detail, err := snap.detail()
@@ -222,11 +216,7 @@ func (c *Client) AccountPackages(ctx context.Context, id string) (core.PackageRe
 
 	snap, err := c.up.creditSnapshot(ctx, acc.AccessToken)
 	if err != nil {
-		// Same rule as AccountBalance above: a caller that walked away is not
-		// evidence about the credential, so it must not park the account.
-		if !callerGone(err) {
-			c.penaliseRecoverable(id, err, time.Now().UTC())
-		}
+		// Same rule as AccountBalance above: a package read is display-only.
 		return core.PackageReport{}, err
 	}
 	detail, err := snap.detail()

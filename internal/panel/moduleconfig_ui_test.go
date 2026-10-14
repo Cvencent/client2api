@@ -36,25 +36,47 @@ func modHelperSource(t *testing.T, src string) string {
 	return rest[:end]
 }
 
-// TestModuleConfigUsesSchemaDrivenControls 是静态接线断言：渲染要走 modCardHTML，
-// 保存要走 modBuildValue / modDiffPatch，旧的 .cfgmod 裸 JSON 选择器必须消失。
+// TestModuleConfigUsesSchemaDrivenControls 是静态接线断言：平台页的每张平台卡片里
+// 要嵌一张模块配置卡（modCardHTML + module_schema），保存要走 modBuildValue /
+// modDiffPatch，旧的 .cfgmod 裸 JSON 选择器必须消失；全局配置页不再画模块卡片。
 func TestModuleConfigUsesSchemaDrivenControls(t *testing.T) {
 	src := poolStatsUISource(t)
-	render := poolStatsFuncBody(t, src, "renderConfig")
+	render := poolStatsFuncBody(t, src, "renderPlatforms")
 	if !strings.Contains(render, "modCardHTML(") {
-		t.Error("renderConfig 没有走 modCardHTML，模块配置还是裸 JSON")
+		t.Error("renderPlatforms 没有走 modCardHTML，模块配置还是裸 JSON")
 	}
 	if !strings.Contains(render, "module_schema") {
-		t.Error("renderConfig 没有读后端的 module_schema")
+		t.Error("renderPlatforms 没有读后端的 module_schema")
 	}
-	save := poolStatsFuncBody(t, src, "saveConfig")
+	save := poolStatsFuncBody(t, src, "savePlatforms")
 	for _, want := range []string{"modBuildValue(", "modDiffPatch(", `.cfgmodcard`} {
 		if !strings.Contains(save, want) {
-			t.Errorf("saveConfig 没有用 %q", want)
+			t.Errorf("savePlatforms 没有用 %q", want)
 		}
 	}
 	if strings.Contains(save, `querySelectorAll(".cfgmod")`) {
-		t.Error("saveConfig 还在读旧的 .cfgmod 裸 JSON 文本框")
+		t.Error("savePlatforms 还在读旧的 .cfgmod 裸 JSON 文本框")
+	}
+	// 模块配置已经整体搬去「平台配置」页；全局配置页再画一遍会形成两个入口，
+	// 而且那边的 CFG.baseline 剪枝不认 clients.<name> 的逐键 diff。
+	renderCfg := poolStatsFuncBody(t, src, "renderConfig")
+	if strings.Contains(renderCfg, "modCardHTML(") {
+		t.Error("renderConfig 又渲染了模块卡片：clients.<模块> 只在「平台配置」页编辑")
+	}
+	saveCfg := poolStatsFuncBody(t, src, "saveConfig")
+	if strings.Contains(saveCfg, ".cfgmodcard") || strings.Contains(saveCfg, "patch.clients") {
+		t.Error("saveConfig 又在保存模块配置：它已经跟着卡片搬去「平台配置」页了")
+	}
+	// 生成的控件要带稳定 id，平台页的草稿保存才不依赖 DOM 节点的身份。
+	if !strings.Contains(src, `modDomID(mod, o.key)`) || !strings.Contains(src, `modDomID(name, "__extra")`) {
+		t.Error("模块配置控件没有稳定 id：capturePlatformDraft 的刷新保稿会丢编辑")
+	}
+	// 卡片嵌在平台卡片里，标题不能再用模块名（外面已经有一个）；恢复默认的口径
+	// 也要写在卡片里，否则操作员不知道清空控件等于回到内置值。
+	for _, want := range []string{"'模块配置'", "清空所有控件并把「其它键」留空或写成"} {
+		if !strings.Contains(src, want) {
+			t.Errorf("模块配置卡片缺少 %q", want)
+		}
 	}
 	modHelperSource(t, src) // 辅助函数必须都在，且可截取
 }

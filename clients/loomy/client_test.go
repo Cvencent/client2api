@@ -566,8 +566,8 @@ func TestRefreshModelsKeepsTheCatalogueWhenUpstreamFails(t *testing.T) {
 	}
 }
 
-func TestARefusedModelListCoolsDownWithoutPermanentlyParkingTheAccount(t *testing.T) {
-	c := newTestClient(t, "{}", alwaysJSON(200, failureEnvelope(loomyAuthErrorCode, "登录状态失效")))
+func TestARefusedModelListDoesNotChangeAccountHealth(t *testing.T) {
+	c := newTestClient(t, "{}", alwaysJSON(200, failureEnvelope(loomyAuthErrorCode, "session rejected")))
 	seedAccount(t, c, "loomy-1", testToken, 0)
 
 	if _, err := c.RefreshModels(context.Background()); err == nil {
@@ -577,11 +577,17 @@ func TestARefusedModelListCoolsDownWithoutPermanentlyParkingTheAccount(t *testin
 	if !ok {
 		t.Fatal("the account vanished")
 	}
-	if acc.dead {
-		t.Fatal("a model-list auth failure permanently parked the account")
+	if acc.dead || acc.abnormal {
+		t.Fatalf("a model-list failure parked the account: dead=%t abnormal=%t", acc.dead, acc.abnormal)
 	}
-	if acc.cooldownTill.IsZero() {
-		t.Fatal("the rejected session was not cooled down")
+	if acc.failures != 0 || acc.lastError != "" {
+		t.Fatalf("a model-list failure recorded a health failure: failures=%d last_error=%q", acc.failures, acc.lastError)
+	}
+	if !acc.cooldownTill.IsZero() || !acc.probeAfter.IsZero() {
+		t.Fatalf("a model-list failure changed the probe timers: cooldown=%s probe_after=%s", acc.cooldownTill, acc.probeAfter)
+	}
+	if !acc.selectable(time.Now().UTC()) {
+		t.Fatal("a model-list failure made the account unselectable")
 	}
 }
 

@@ -110,7 +110,7 @@ func (p *panel) overviewClient(ctx context.Context, c core.Client) overviewClien
 		Detail:       st.Detail,
 		Models:       models,
 		Accounts:     []core.AccountRecord{},
-		Capabilities: core.CapabilitiesOf(ctx, c),
+		Capabilities: p.capabilities(ctx, c),
 	}
 
 	// Accounts are only available from a module that manages them; a module

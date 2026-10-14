@@ -577,8 +577,8 @@ func (s *store) cooldownStage(id string) int {
 	return 0
 }
 
-// penaliseRecoverable records a failure from a side channel such as a balance
-// sweep, catalogue refresh, task report or heartbeat.  Those calls are useful
+// penaliseRecoverable records a failure from a side channel such as a
+// catalogue refresh, task report or heartbeat.  Those calls are useful
 // evidence, but they are not authoritative enough to label a credential
 // permanently dead: the same session can answer a real chat request moments
 // later.  A session-dead answer here therefore gets an ordinary cooldown and

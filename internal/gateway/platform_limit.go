@@ -17,6 +17,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -194,13 +195,23 @@ func (s *server) takeAccountLimiter(platform, accountID string) (func(), error) 
 	return func() { once.Do(l.release) }, nil
 }
 
-// acquireAccountSlot takes one in-flight slot for (platform, account).  When
-// the account is at its ceiling it returns core.ErrBusy, and the module then
-// picks another account; a platform whose every account is full reports busy.
-// An empty account id means the module did not name one, so nothing is gated.
-func (s *server) acquireAccountSlot(platform, accountID string) (func(), error) {
+// acquireAccountSlot takes one in-flight slot for (platform, account), after
+// checking the operator's per-account model policy.  model is the upstream id
+// this attempt will ask the vendor for.
+//
+// When the account is at its ceiling it returns core.ErrBusy, and the module
+// then picks another account; a platform whose every account is full reports
+// busy.  A model the operator switched off for this account is reported the
+// same way on purpose: another account may still serve it, which is exactly
+// what a module does with ErrBusy, and once no account is left the gateway
+// fails over to the next platform that offers the model.  An empty account id
+// means the module did not name one, so nothing is gated.
+func (s *server) acquireAccountSlot(platform, accountID, model string) (func(), error) {
 	if accountID == "" {
 		return func() {}, nil
+	}
+	if s.opts.ModelPolicies.IsDisabled(platform, accountID, model) {
+		return nil, &modelPolicyRefusal{model: model}
 	}
 	return s.takeAccountLimiter(platform, accountID)
 }
@@ -213,4 +224,28 @@ func (s *server) withPlatformSlot(ctx context.Context, name string) (func(), err
 		return nil, err
 	}
 	return s.acquirePlatformSlot(name)
+}
+
+// modelPolicyRefusal is the operator's blacklist refusing one account.  It
+// wraps core.ErrBusy on purpose: every module already reacts to ErrBusy by
+// picking another account, and a module that later reports "no account could
+// serve" must be able to fail over to a platform that still can.  It is a
+// distinct type only so the usage row and logs can say "switched off" instead
+// of the misleading "local concurrency is full".
+type modelPolicyRefusal struct {
+	model string
+}
+
+func (e *modelPolicyRefusal) Error() string {
+	return "model " + e.model + " is switched off for this account by the account model policy"
+}
+
+func (e *modelPolicyRefusal) Unwrap() error { return core.ErrBusy }
+
+// IsModelPolicyRefusal reports whether err came from the operator's per-account
+// model blacklist rather than a full in-flight slot.  Both are backpressure on
+// the wire; only the explanation differs.
+func IsModelPolicyRefusal(err error) bool {
+	var refusal *modelPolicyRefusal
+	return errors.As(err, &refusal)
 }

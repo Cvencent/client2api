@@ -268,6 +268,13 @@ type Capabilities struct {
 	// one cannot necessarily do the other.
 	Bundle bool `json:"import_bundle"`
 
+	// ModelPolicyStore marks a module whose per-account model blacklist is kept
+	// in the panel's shared store instead of by the module itself.  The panel
+	// sets it for a module that manages accounts while the deployment wired
+	// that store; the model dialog then offers the same checkboxes, but without
+	// the account-level force switch, which only a module can honour.
+	ModelPolicyStore bool `json:"model_policy_store"`
+
 	// Realms is non-empty only for a RealmLoginProvider: the panel renders a
 	// realm picker from it, and hides the picker entirely when it is empty.
 	Realms []LoginRealm `json:"realms,omitempty"`

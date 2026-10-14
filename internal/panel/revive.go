@@ -79,9 +79,17 @@ func (p *panel) accountExists(ctx context.Context, c core.Client, id string) boo
 // (a blacklist; absent means every model) and whether the account's account-level
 // parks are force-enabled. It mirrors reviveAccount's 501/404/400 split so a
 // stale tab cannot report success for a module or account that cannot mean it.
+//
+// A module that implements core.AccountModelPolicyManager stores the decision
+// itself -- WorkBuddy needs to, because it knows which realm a model belongs to
+// and can force an account-level park back to ready.  Every other module goes
+// through the shared store the gateway's account hook reads, which is what
+// lets the model dialog work on all platforms.  The force flag stays with the
+// module: only it can override its own account-level parks, and a request that
+// carries one anyway is ignored rather than half-honoured.
 func (p *panel) setAccountModelPolicy(w http.ResponseWriter, r *http.Request, c core.Client, id string) {
-	mp, ok := core.AsAccountModelPolicy(c)
-	if !ok {
+	mp, moduleOwns := core.AsAccountModelPolicy(c)
+	if !moduleOwns && p.opts.ModelPolicies == nil {
 		writeErr(w, http.StatusNotImplemented, c.Name()+" has no per-account model policy")
 		return
 	}
@@ -98,13 +106,27 @@ func (p *panel) setAccountModelPolicy(w http.ResponseWriter, r *http.Request, c 
 	}
 	ctx, cancel := p.ctx(r, 30*time.Second)
 	defer cancel()
-	if err := mp.SetAccountModelPolicy(ctx, id, body.DisabledModels, body.ForceEnabled); err != nil {
+	if moduleOwns {
+		if err := mp.SetAccountModelPolicy(ctx, id, body.DisabledModels, body.ForceEnabled); err != nil {
+			if !p.accountExists(ctx, c, id) {
+				writeErr(w, http.StatusNotFound, "account not found")
+				return
+			}
+			writeErr(w, http.StatusBadRequest, core.Redact(err.Error()))
+			return
+		}
+	} else {
+		// The store is keyed by a live account id, so a stale tab writing a
+		// policy for an account that is gone is answered 404 exactly as the
+		// module path would.
 		if !p.accountExists(ctx, c, id) {
 			writeErr(w, http.StatusNotFound, "account not found")
 			return
 		}
-		writeErr(w, http.StatusBadRequest, core.Redact(err.Error()))
-		return
+		if err := p.opts.ModelPolicies.Set(c.Name(), id, body.DisabledModels); err != nil {
+			writeErr(w, http.StatusBadRequest, core.Redact(err.Error()))
+			return
+		}
 	}
 	out := map[string]any{"ok": true}
 	if am, ok := core.AsAccountManager(c); ok {

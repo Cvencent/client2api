@@ -181,17 +181,56 @@ func (cfg Config) normalize() Config {
 
 // builtinProviders maps a provider id to its documented OpenAI-compatible
 // base URL.  An id not in this table must carry its own base_url in config.
+//
+// This is the module's provider registry: a vendor (or a gateway fronting
+// one) whose OpenAI-compatible root is a published constant belongs here, so
+// an operator adds it with an id and a key and nothing else.  Roots that are
+// account-specific (Cloudflare's account path, Vertex's project and location)
+// carry a {placeholder} the operator replaces in base_url.
 var builtinProviders = map[string]string{
-	"groq":        "https://api.groq.com/openai/v1",
-	"cerebras":    "https://api.cerebras.ai/v1",
-	"siliconflow": "https://api.siliconflow.com/v1",
-	"mistral":     "https://api.mistral.ai/v1",
-	"nvidia":      "https://integrate.api.nvidia.com/v1",
-	"together":    "https://api.together.xyz/v1",
-	"fireworks":   "https://api.fireworks.ai/inference/v1",
-	"deepinfra":   "https://api.deepinfra.com/v1/openai",
-	"chutes":      "https://llm.chutes.ai/v1",
-	"huggingface": "https://router.huggingface.co/v1",
+	// Western hosts.
+	"groq":              "https://api.groq.com/openai/v1",
+	"cerebras":          "https://api.cerebras.ai/v1",
+	"siliconflow":       "https://api.siliconflow.com/v1",
+	"mistral":           "https://api.mistral.ai/v1",
+	"mistral_codestral": "https://codestral.mistral.ai/v1",
+	"nvidia":            "https://integrate.api.nvidia.com/v1",
+	"nvidia_nim":        "https://integrate.api.nvidia.com/v1",
+	"together":          "https://api.together.xyz/v1",
+	"fireworks":         "https://api.fireworks.ai/inference/v1",
+	"deepinfra":         "https://api.deepinfra.com/v1/openai",
+	"chutes":            "https://llm.chutes.ai/v1",
+	"huggingface":       "https://router.huggingface.co/v1",
+	"sambanova":         "https://api.sambanova.ai/v1",
+	"nebius":            "https://api.tokenfactory.nebius.com/v1",
+	"hyperbolic":        "https://api.hyperbolic.xyz/v1",
+	"novita":            "https://api.novita.ai/openai/v1",
+	"scaleway":          "https://api.scaleway.ai/v1",
+	"vercel":            "https://ai-gateway.vercel.sh/v1",
+	"perplexity":        "https://api.perplexity.ai",
+	"xai":               "https://api.x.ai/v1",
+	"deepseek":          "https://api.deepseek.com",
+	// Chinese hosts.
+	"qwencloud":        "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+	"zai":              "https://api.z.ai/api/coding/paas/v4",
+	"zai_api":          "https://api.z.ai/api/paas/v4",
+	"glm":              "https://open.bigmodel.cn/api/coding/paas/v4",
+	"glm-cn":           "https://open.bigmodel.cn/api/coding/paas/v4",
+	"kimi":             "https://api.moonshot.ai/v1",
+	"moonshot":         "https://api.moonshot.ai/v1",
+	"minimax":          "https://api.minimax.io/v1",
+	"minimax-cn":       "https://api.minimaxi.com/v1",
+	"baidu":            "https://qianfan.baidubce.com/v2",
+	"tencent":          "https://api.hunyuan.cloud.tencent.com/v1",
+	"volcengine-ark":   "https://ark.cn-beijing.volces.com/api/coding/v3",
+	"xiaomi-tokenplan": "https://token-plan-sgp.xiaomimimo.com/v1",
+	// Account-specific roots; the operator replaces the placeholder.
+	"cloudflare": "https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1",
+	"vertex":     "https://aiplatform.googleapis.com/v1/projects/{project_id}/locations/{location}/endpoints/openapi",
+	// Loopback servers: no account and no key required.
+	"ollama":   "http://127.0.0.1:11434/v1",
+	"lmstudio": "http://127.0.0.1:1234/v1",
+	"llamacpp": "http://127.0.0.1:8080/v1",
 }
 
 // builtinBaseURL resolves a provider id to its known API root.
@@ -207,16 +246,47 @@ func builtinBaseURL(id string) string {
 // simply renders no "get a key" link.  Keep it next to builtinProviders so
 // adding a source is still a one-file change.
 var keyPages = map[string]string{
-	"groq":        "https://console.groq.com/keys",
-	"cerebras":    "https://cloud.cerebras.ai/",
-	"siliconflow": "https://cloud.siliconflow.cn/account/ak",
-	"mistral":     "https://console.mistral.ai/api-keys/",
-	"nvidia":      "https://build.nvidia.com/",
-	"together":    "https://api.together.ai/settings/api-keys",
-	"fireworks":   "https://fireworks.ai/account/api-keys",
-	"deepinfra":   "https://deepinfra.com/dash/api_keys",
-	"chutes":      "https://chutes.ai/app/api-keys",
-	"huggingface": "https://huggingface.co/settings/tokens",
+	"groq":              "https://console.groq.com/keys",
+	"cerebras":          "https://cloud.cerebras.ai/",
+	"siliconflow":       "https://cloud.siliconflow.cn/account/ak",
+	"mistral":           "https://console.mistral.ai/api-keys/",
+	"mistral_codestral": "https://console.mistral.ai/api-keys/",
+	"nvidia":            "https://build.nvidia.com/",
+	"nvidia_nim":        "https://build.nvidia.com/settings/api-keys",
+	"together":          "https://api.together.ai/settings/api-keys",
+	"fireworks":         "https://fireworks.ai/account/api-keys",
+	"deepinfra":         "https://deepinfra.com/dash/api_keys",
+	"chutes":            "https://chutes.ai/app/api-keys",
+	"huggingface":       "https://huggingface.co/settings/tokens",
+	"sambanova":         "https://cloud.sambanova.ai/apis",
+	"nebius":            "https://tokenfactory.nebius.com/project/api-keys",
+	"hyperbolic":        "https://app.hyperbolic.xyz/settings",
+	"novita":            "https://novita.ai/settings/key-management",
+	"scaleway":          "https://console.scaleway.com/iam/api-keys",
+	"vercel":            "https://vercel.com/docs/ai-gateway",
+	"perplexity":        "https://www.perplexity.ai/settings/api",
+	"xai":               "https://console.x.ai/team/default/api-keys",
+	"deepseek":          "https://platform.deepseek.com/api_keys",
+	"qwencloud":         "https://home.qwencloud.com/api-keys",
+	"zai":               "https://z.ai/manage-apikey/apikey-list",
+	"zai_api":           "https://z.ai/manage-apikey/apikey-list",
+	"glm":               "https://open.bigmodel.cn/usercenter/apikeys",
+	"glm-cn":            "https://open.bigmodel.cn/usercenter/apikeys",
+	"kimi":              "https://platform.moonshot.cn/console/api-keys",
+	"moonshot":          "https://platform.moonshot.cn/console/api-keys",
+	"minimax":           "https://platform.minimax.io/user-center/basic-information/interface-key",
+	"minimax-cn":        "https://platform.minimaxi.com/user-center/basic-information/interface-key",
+	"baidu":             "https://console.bce.baidu.com/qianfan/ais/console/applicationConsole/application",
+	"tencent":           "https://console.cloud.tencent.com/hunyuan/api-key",
+	"volcengine-ark":    "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey",
+	"xiaomi-tokenplan":  "https://mimo.xiaomi.com",
+	"cloudflare":        "https://dash.cloudflare.com/profile/api-tokens",
+	"vertex":            "https://cloud.google.com/docs/authentication/set-up-adc-local-dev-environment",
+	// Loopback servers need no credential, but the picker still offers them,
+	// so each points at its own install/setup page rather than rendering no link.
+	"ollama":   "https://ollama.com/download",
+	"lmstudio": "https://lmstudio.ai/",
+	"llamacpp": "https://github.com/ggml-org/llama.cpp",
 }
 
 // builtinKeyPage resolves a provider id to its key-creation page.
@@ -280,6 +350,118 @@ var builtinModels = map[string][]string{
 	"huggingface": {
 		"meta-llama/Llama-3.3-70B-Instruct",
 		"Qwen/Qwen2.5-72B-Instruct",
+	},
+	"sambanova": {
+		"Meta-Llama-3.3-70B-Instruct",
+		"DeepSeek-V3-0324",
+		"Qwen3-32B",
+	},
+	"nebius": {
+		"meta-llama/Llama-3.3-70B-Instruct",
+		"Qwen/Qwen3-30B-A3B",
+		"deepseek-ai/DeepSeek-V3",
+	},
+	"hyperbolic": {
+		"deepseek-ai/DeepSeek-V3",
+		"deepseek-ai/DeepSeek-R1",
+		"Qwen/QwQ-32B",
+		"meta-llama/Llama-3.3-70B-Instruct",
+	},
+	"novita": {
+		"deepseek/deepseek-v3",
+		"meta-llama/llama-3.3-70b-instruct",
+	},
+	"scaleway": {
+		"deepseek/deepseek-r1-distill-llama-70b",
+		"llama-3.3-70b-instruct",
+	},
+	"vercel": {
+		"openai/gpt-5.5",
+		"anthropic/claude-sonnet-4",
+	},
+	"perplexity": {
+		"sonar-pro",
+		"sonar",
+	},
+	"xai": {
+		"grok-4",
+		"grok-4-fast-reasoning",
+		"grok-3",
+	},
+	"deepseek": {
+		"deepseek-v4-pro",
+		"deepseek-v4.1-flash",
+		"deepseek-chat",
+		"deepseek-reasoner",
+	},
+	"mistral_codestral": {
+		"codestral-latest",
+	},
+	"qwencloud": {
+		"qwen3.8-max-preview",
+		"qwen3.7-max",
+		"qwen3.7-plus",
+		"qwen3.6-flash",
+	},
+	"zai": {
+		"glm-5.3",
+		"glm-5.3-flash",
+		"glm-5.2",
+		"glm-5.1",
+	},
+	"zai_api": {
+		"glm-5.3",
+		"glm-5.3-flash",
+		"glm-5.2",
+	},
+	"glm": {
+		"glm-5.3",
+		"glm-5.3-flash",
+		"glm-5.2",
+		"glm-5.1",
+	},
+	"glm-cn": {
+		"glm-5.3",
+		"glm-5.3-flash",
+		"glm-5.2",
+		"glm-5.1",
+	},
+	"kimi": {
+		"kimi-k2.5",
+	},
+	"moonshot": {
+		"kimi-k2.5",
+	},
+	"minimax": {
+		"MiniMax-M3",
+		"MiniMax-M2.7",
+		"MiniMax-M2.5",
+	},
+	"minimax-cn": {
+		"MiniMax-M3",
+		"MiniMax-M2.7",
+		"MiniMax-M2.5",
+	},
+	"baidu": {
+		"deepseek-v4-pro",
+		"deepseek-v4-flash",
+		"glm-5.2",
+		"kimi-k2.6",
+	},
+	"tencent": {
+		"hunyuan-turbos-latest",
+		"hunyuan-t1-latest",
+	},
+	"volcengine-ark": {
+		"Doubao-Seed-2.0-Code",
+		"Doubao-Seed-2.0-pro",
+		"Doubao-Seed-Code",
+		"DeepSeek-V4-Flash",
+	},
+	"xiaomi-tokenplan": {
+		"mimo-v2.5-pro",
+		"mimo-v2.5",
+		"mimo-v2-pro",
 	},
 }
 

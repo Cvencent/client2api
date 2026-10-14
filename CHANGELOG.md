@@ -6,6 +6,37 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.1.63] - 2026-10-14
+
+### Added
+
+- **Gemini / Google Cloud Code Assist 平台**：新增 `gemini/...` 模块，支持 Google OAuth
+  登录、账号发现与刷新、额度查询、Cloud Code Assist 请求翻译和流式返回；对外模型为
+  `gemini/gemini-3.8-flash`，上游自动映射 low / medium / high / tiered 档位。
+- **Anthropic 入站接口**：新增 `POST /v1/messages` 与
+  `POST /v1/messages/count_tokens`，支持 Claude Code 的字符串或 block content、system、
+  tools、tool result、thinking、usage、流式 SSE、非流式响应和 Anthropic 风格错误。
+- **ZCode 验证码预取池**：新增 `captcha_pool` 与 `captcha_pool_ttl_seconds`，请求可先取
+  预取参数并后台补充；外部命令和内置浏览器共用同一 mint 路径。连续 mint 失败会进入
+  退避，避免继续消耗设备额度。
+- **可选出口中继 `egress`**：支持现有 HTTP/SOCKS 代理 URL，或由本进程托管 mihomo
+  并加载订阅；启用的 `egress` 优先于顶层 `proxy`，订阅 URL 在面板中脱敏。
+- **聚合渠道注册表数据源**：Opencode 兼容模块嵌入渠道注册表，自动吸收可用的
+  `openai-chat` 渠道；手工表优先，原生 Anthropic / Responses 渠道不会被错误导入。
+
+### Changed
+
+- **账号逐模型启停扩展到所有平台**：WorkBuddy 继续使用模块自己的 realm 感知策略，
+  其余平台使用网关共享策略库；账号模型弹窗会显示限流解除时间和剩余时间。
+- **Loomy 余额、套餐与模型目录刷新改为展示用途**：读取失败只在该账号行报错，不再
+  让刷新动作错误地让账号冷却、异常或停用。
+- **平台配置页整理**：模块配置、WorkBuddy 提示词和指纹清洗控件收进对应平台卡片；
+  全局配置页只保留真正的全局项。腾讯系内容级指纹改写继续默认开启。
+
+### Installer
+
+- `client2api-setup-0.1.63.exe`（发布资产使用不含本机账号凭据和配置的空包）
+- 升级会保留现有 `configs/`、`data/`、账号池、用量和任务数据。
 ## [0.1.62] - 2026-10-14
 
 ### Added

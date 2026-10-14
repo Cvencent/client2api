@@ -126,3 +126,42 @@ func TestParseConfigDurations(t *testing.T) {
 		t.Errorf("streamIdle = %v", cfg.streamIdle())
 	}
 }
+
+// The registry grew from the aggregator catalogue, so spot-check a few of the
+// new roots and confirm every offered id still resolves to a base URL.  A row
+// added to the picker without a base URL would send requests to a relative
+// path, which fails only at request time.
+func TestBuiltinRegistryHasRootForEveryOfferedProvider(t *testing.T) {
+	for _, id := range builtinProviderIDs() {
+		if id == "azure_openai" {
+			continue // account-specific root with no constant; base_url is required
+		}
+		if builtinBaseURL(id) == "" {
+			t.Errorf("offered provider %q has no built-in base URL", id)
+		}
+	}
+	for id, want := range map[string]string{
+		"sambanova": "https://api.sambanova.ai/v1",
+		"nebius":    "https://api.tokenfactory.nebius.com/v1",
+		"xai":       "https://api.x.ai/v1",
+		"deepseek":  "https://api.deepseek.com",
+		"glm-cn":    "https://open.bigmodel.cn/api/coding/paas/v4",
+		"kimi":      "https://api.moonshot.ai/v1",
+		"tencent":   "https://api.hunyuan.cloud.tencent.com/v1",
+		"ollama":    "http://127.0.0.1:11434/v1",
+	} {
+		if got := builtinBaseURL(id); got != want {
+			t.Errorf("builtinBaseURL(%q) = %q, want %q", id, got, want)
+		}
+	}
+}
+
+// A built-in provider's cold-start table must not be empty, or the picker
+// offers a source that serves nothing until a live listing succeeds.
+func TestBuiltinModelsCoverKnownProviders(t *testing.T) {
+	for _, id := range []string{"sambanova", "nebius", "xai", "deepseek", "zai", "kimi", "minimax", "tencent"} {
+		if len(builtinModels[id]) == 0 {
+			t.Errorf("provider %q has an empty cold-start table", id)
+		}
+	}
+}

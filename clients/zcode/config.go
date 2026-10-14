@@ -142,6 +142,8 @@ type Config struct {
 	CaptchaCommand string   `json:"captcha_command"`
 	CaptchaArgs    []string `json:"captcha_args"`
 	CaptchaRegion  string   `json:"captcha_region"`
+	CaptchaPool    *bool    `json:"captcha_pool"`
+	CaptchaPoolTTL int      `json:"captcha_pool_ttl_seconds"`
 
 	// CaptchaBrowser mints the parameter with the machine's own Edge or
 	// Chrome instead of running captcha_command.  It defaults to on, because
@@ -213,6 +215,21 @@ func (c *Config) captchaBrowser() bool {
 		return true
 	}
 	return *c.CaptchaBrowser
+}
+
+// captchaPool reports whether the opt-in prefetch pool is enabled.  Default
+// off: the pool roughly doubles mint consumption on a device-level quota, so
+// an operator must turn it on deliberately.
+func (c *Config) captchaPoolEnabled() bool {
+	return c.CaptchaPool != nil && *c.CaptchaPool
+}
+
+// captchaPoolTTL is how long an unused pooled parameter may wait.
+func (c *Config) captchaPoolTTL() time.Duration {
+	if c.CaptchaPoolTTL > 0 {
+		return time.Duration(c.CaptchaPoolTTL) * time.Second
+	}
+	return defaultCaptchaPoolTTL
 }
 
 func (c *Config) injectSystemBlocks() bool {

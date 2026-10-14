@@ -56,7 +56,7 @@ func TestPlatformsViewConfiguresRouting(t *testing.T) {
 		}
 	}
 	if !strings.Contains(save, `needsRestart`) || !strings.Contains(save, `重启进程后生效`) {
-		t.Error("savePlatforms does not report that clients.<name>.free_only needs a process restart")
+		t.Error("savePlatforms does not report that clients.<name> module settings need a process restart")
 	}
 	if !strings.Contains(src, `$("#btnPfSave").addEventListener`) {
 		t.Error("the save button has no click handler")
@@ -212,34 +212,48 @@ func TestNoteCellStripsTheCooldownSuffix(t *testing.T) {
 	}
 }
 
-// TestPlatformsViewConfiguresFreeOnly pins the four routers whose catalogues
-// carry a zero-cost subset.  The switch has to be visible on the platform card,
-// preserved across a draft restore, and saved as the module's own
-// clients.<name>.free_only key rather than a platform-policy field.
-func TestPlatformsViewConfiguresFreeOnly(t *testing.T) {
+// TestPlatformsViewConfiguresModuleSettings pins module-level settings
+// (clients.<name>) inside each platform card.  The schema-driven card is the
+// generic replacement for one-off switches such as free_only: every module's
+// own keys are rendered from module_schema, survive a draft restore through
+// stable control ids, and are saved as a per-key diff under clients.<name>
+// rather than being flattened into the platform policy.
+func TestPlatformsViewConfiguresModuleSettings(t *testing.T) {
 	src := poolStatsUISource(t)
 	render := poolStatsFuncBody(t, src, "renderPlatforms")
 	for _, want := range []string{
-		`["kilocode", "opencode", "openrouter", "cline"].indexOf(n) >= 0`,
-		`class="pfFreeOnly"`,
-		`clientEntry.free_only === false ? "" : " checked"`,
+		`cfg.data.module_schema`,
+		`modCardHTML(n, clientEntry, modSchema[n] || [], "")`,
+		`clientBaseline`,
 	} {
 		if !strings.Contains(render, want) {
 			t.Errorf("renderPlatforms does not mention %q", want)
 		}
 	}
+	// 一锤定音：旧的 free_only 专用复选框已经由通用模块卡片取代，不能再回来。
+	if strings.Contains(render, "pfFreeOnly") {
+		t.Error("renderPlatforms still renders the bespoke free_only checkbox; module_schema now covers it")
+	}
+
+	// 通用控件的稳定 id 让 capture/restore 这对草稿函数不必认识每个字段。
 	draft := poolStatsFuncBody(t, src, "capturePlatformDraft")
-	if !strings.Contains(draft, `querySelector(".pfFreeOnly")`) {
-		t.Error("capturePlatformDraft drops the free-only checkbox")
+	if !strings.Contains(draft, `input[id],select[id],textarea[id]`) {
+		t.Error("capturePlatformDraft does not snapshot id-bearing controls (module card edits would be lost on refresh)")
+	}
+	if strings.Contains(draft, "pfFreeOnly") {
+		t.Error("capturePlatformDraft still special-cases the removed free_only checkbox")
 	}
 	restore := poolStatsFuncBody(t, src, "restorePlatformDraft")
-	if !strings.Contains(restore, `freeOnly.checked = d.freeOnly`) {
-		t.Error("restorePlatformDraft does not restore the free-only checkbox")
+	if !strings.Contains(restore, "d.fields") {
+		t.Error("restorePlatformDraft does not restore id-bearing controls (module card edits would be lost on refresh)")
 	}
+
 	save := poolStatsFuncBody(t, src, "savePlatforms")
 	for _, want := range []string{
-		`clientPatch[name] = { free_only: now }`,
-		`patch.clients = clientPatch`,
+		`querySelectorAll("#pfBody .cfgmodcard")`,
+		"modBuildValue(",
+		"modDiffPatch(",
+		"patch.clients = clientPatch",
 	} {
 		if !strings.Contains(save, want) {
 			t.Errorf("savePlatforms does not mention %q", want)

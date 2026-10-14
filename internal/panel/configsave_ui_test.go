@@ -11,16 +11,14 @@ import (
 // ---------------------------------------------------------------------------
 //
 // 配置页渲染的是**生效值**，不是文件里写了什么：缺键时排程组开关、
-// session_sticky.enabled、sanitize_blacklist_fingerprints 都画成「开」，
-// panel.package_detail_limit 画的是服务端解析后的默认值，没有配置节的模块
-// 画成 {}。而 saveConfig 是「表单形状」的：它把看得见的每个字段都塞进 patch。
+// session_sticky.enabled 都画成「开」，panel.package_detail_limit 画的是
+// 服务端解析后的默认值。而 saveConfig 是「表单形状」的：它把看得见的每个
+// 字段都塞进 patch。
 //
 // 两边单独看都对，合起来就是：点一次「保存配置」、什么都不改，文件里会凭空
-// 多出 7 个空模块节和 6 个 schedule.*_enabled，外加 pool.prefer_expiring、
-// session_sticky.enabled、panel.package_detail_limit，显式写成空串的
-// prompt.file 还会被删掉；然后页面如实报告「已保存 clients、panel、pool、
-// prompt、schedule、session_sticky（重启后生效）」——如实报告的是一批操作员
-// 从没做过的改动，还附带一句「请重启进程」。
+// 多出 6 个 schedule.*_enabled，外加 session_sticky.enabled、
+// panel.package_detail_limit；然后页面如实报告一批操作员从没做过的改动，
+// 还附带一句「请重启进程」。
 //
 // 修法是渲染时记一份基线（CFG.baseline），保存前剪掉跟基线相同的字段。
 // 这个测试守两件事：①每个「缺键画默认值」的控件都在基线里登记了（漏一个就
@@ -42,10 +40,8 @@ func TestSaveConfigSendsOnlyWhatTheOperatorChanged(t *testing.T) {
 
 	// ① 基线登记齐了。画默认值的每一处都得有对应登记，漏掉一处就退回幻象改动。
 	for _, site := range []string{
-		"sticky.enabled == null",                  // 会话粘性
-		"sanitize_blacklist_fingerprints == null", // 出站指纹清洗
+		"sticky.enabled == null", // 会话粘性
 		"pnl.package_detail_limit != null ? pnl.package_detail_limit : pnlEff.package_detail_limit", // 面板
-		"cl[n] == null ? {} : cl[n]", // 模块配置节
 	} {
 		if !strings.Contains(render, site) {
 			t.Errorf("renderConfig 里找不到默认值渲染点 %q：基线是按这些点登记的，改动后要同步", site)
@@ -56,7 +52,6 @@ func TestSaveConfigSendsOnlyWhatTheOperatorChanged(t *testing.T) {
 	}
 	for _, path := range []string{
 		`"session_sticky.enabled"`,
-		`"features.sanitize_blacklist_fingerprints"`,
 		`"panel.package_detail_limit"`,
 	} {
 		if !strings.Contains(render, "setBase("+path) {
@@ -71,8 +66,16 @@ func TestSaveConfigSendsOnlyWhatTheOperatorChanged(t *testing.T) {
 	if codeRefs(render, "pool.prefer_expiring") {
 		t.Error("renderConfig 又引用了 pool.prefer_expiring：这个输入框早已搬去平台配置页，本函数里根本没有 pool 变量，引用它会让整张配置页抛 ReferenceError 白屏")
 	}
-	if !strings.Contains(render, `setBase("clients." + n, cl[n] == null ? {} : cl[n])`) {
-		t.Error("渲染基线漏了模块配置节：缺失的节画成 {}，保存时会凭空多出空节")
+	// 模块配置、号池、提示词与指纹清洗都搬去了「平台配置」页：那边 savePlatforms
+	// 用 PF.clientBaseline / PF.poolBaseline / PF.promptBaseline / PF.featuresBaseline
+	// 自己剪枝。配置页再出现这些键就是两个入口互相覆盖。
+	if strings.Contains(render, "modCardHTML(") || strings.Contains(render, `setBase("clients.`) {
+		t.Error("配置页又在渲染/登记 clients.<模块>：它已经整体搬去「平台配置」页")
+	}
+	for _, gone := range []string{`setBase("features.sanitize_blacklist_fingerprints"`, "cfgPromptMode", "cfgPromptFile", "cfgSanitizeFingerprints"} {
+		if strings.Contains(render, gone) {
+			t.Errorf("配置页又出现了 %q：提示词/指纹清洗只作用于 WorkBuddy，应在「平台配置」页", gone)
+		}
 	}
 
 	// ② 保存前剪枝，剪空不发请求。
@@ -89,23 +92,13 @@ func TestSaveConfigSendsOnlyWhatTheOperatorChanged(t *testing.T) {
 		t.Error("saveConfig 剪空之后仍然会发请求（后端会以 empty patch 400 拒绝）")
 	}
 
-	// ②b 模块配置现在按 schema 画出控件，保存时先把控件和「其它键」合成为完整
-	// 对象，再和磁盘上的原值做逐键 diff；没有变化的空表单不会生成任何 patch，
-	// 清空控件或「其它键」则通过 modDiffPatch 对已有键发 null。不能退回旧路径把
-	// 整节对象直接 merge 进去，否则空对象会被递归合并静默吃掉，操作员会以为
-	// 重置成功了。具体纯函数行为由 moduleconfig_ui_test.go 的 Node 用例覆盖。
-	for _, want := range []string{
-		"modBuildValue(",
-		"modDiffPatch(onDisk, built.value)",
-		"if (Object.keys(diff).length) clients[name] = diff;",
-	} {
-		if !strings.Contains(save, want) {
-			t.Errorf("saveConfig 没有走新的模块配置保存路径，缺少 %q", want)
+	// ②b 模块配置的保存路径已经搬去 savePlatforms（见 platforms_ui_test.go 与
+	// moduleconfig_ui_test.go）；全局 saveConfig 不能再碰它，否则同一份
+	// clients.<模块> 会被两个页面各写一半。
+	for _, gone := range []string{"modBuildValue(", "modDiffPatch(", "patch.clients", `querySelectorAll(".cfgmodcard")`} {
+		if strings.Contains(save, gone) {
+			t.Errorf("saveConfig 仍在保存模块配置（%q）：应交给「平台配置」页", gone)
 		}
-	}
-	// 帮助文案也得说清楚怎么恢复默认；空控件和空「其它键」都应该被操作员看懂。
-	if !strings.Contains(ui, "清空所有控件并把「其它键」留空或写成 <code>{}</code>") {
-		t.Error("模块配置卡片没有说明如何恢复整张卡片的默认值")
 	}
 
 	// ③ 剪枝规则本身。null 是「删键」，删一个本来就空/不存在的键不是改动；

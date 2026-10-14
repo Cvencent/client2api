@@ -27,10 +27,12 @@ import (
 
 	"client2api/internal/alerts"
 	"client2api/internal/core"
+	"client2api/internal/egress"
 	"client2api/internal/gateway"
 	"client2api/internal/livecfg"
 	"client2api/internal/logfile"
 	"client2api/internal/modelmeta"
+	"client2api/internal/modelpolicy"
 	"client2api/internal/panel"
 	"client2api/internal/scheduler"
 	"client2api/internal/tray"
@@ -41,7 +43,7 @@ import (
 )
 
 // version is overridable with -ldflags "-X main.version=...".
-var version = "0.1.62"
+var version = "0.1.63"
 
 // restartHandoffEnv marks the replacement half of a panel restart.  It tells a
 // starting process to keep retrying the listen address instead of failing fast,
@@ -62,6 +64,7 @@ type fileConfig struct {
 	APIKey      string                       `json:"api_key"`
 	DataDir     string                       `json:"data_dir"`
 	Proxy       string                       `json:"proxy"`
+	Egress      egress.Config                `json:"egress"`
 	Aliases     map[string]string            `json:"aliases"`
 	Disabled    []string                     `json:"disabled"`
 	Platforms   map[string]platformConfig    `json:"platforms"`
@@ -1112,6 +1115,9 @@ func run() error {
 		cfg.Proxy = *proxyFlag
 	}
 	cfg.applyDefaults()
+	if err := cfg.Egress.Validate(); err != nil {
+		return fmt.Errorf("egress: %w", err)
+	}
 	if err := core.EnsureDir(cfg.DataDir); err != nil {
 		return fmt.Errorf("data dir: %w", err)
 	}
@@ -1178,7 +1184,26 @@ func run() error {
 		logger.Printf("usage: could not load history: %v", err)
 	}
 	usage.Start()
-	httpClient, err := newHTTPClient(cfg.Proxy)
+
+	// The egress relay is optional and startup-only: a client proxy is used
+	// as-is, while a subscription is handed to a managed mihomo process.  The
+	// effective outlet is the single value every module receives, including
+	// modules that build their own HTTP clients instead of reusing HTTPClient.
+	var egressMgr *egress.Manager
+	if cfg.Egress.Enabled {
+		egressMgr, err = egress.Start(context.Background(), cfg.Egress, cfg.DataDir, logger.Printf)
+		if err != nil {
+			return fmt.Errorf("egress: %w", err)
+		}
+		defer egressMgr.Close()
+	}
+	outlet := cfg.Proxy
+	if egressMgr != nil {
+		if effective := egressMgr.Outlet(); effective != "" {
+			outlet = effective
+		}
+	}
+	httpClient, err := newHTTPClient(outlet)
 	if err != nil {
 		return err
 	}
@@ -1212,7 +1237,7 @@ func run() error {
 			DataDir:    modDir,
 			Config:     cfg.Clients[name],
 			HTTPClient: httpClient,
-			Proxy:      cfg.Proxy,
+			Proxy:      outlet,
 			Guard:      guard,
 			Logf:       func(format string, args ...any) { logger.Printf("["+name+"] "+format, args...) },
 		}
@@ -1228,7 +1253,7 @@ func run() error {
 		loaded++
 		logger.Printf("[%s] loaded", name)
 	}
-	sourceDeps := core.Deps{DataDir: cfg.DataDir, HTTPClient: httpClient, Proxy: cfg.Proxy, Guard: guard,
+	sourceDeps := core.Deps{DataDir: cfg.DataDir, HTTPClient: httpClient, Proxy: outlet, Guard: guard,
 		Logf: func(format string, args ...any) { logger.Printf("[sources] "+format, args...) }}
 	if err := registry.ReconcileSources(cfg.Sources, sourceDeps); err != nil {
 		return err
@@ -1460,6 +1485,9 @@ func run() error {
 			// browser before the listener goes away.
 			time.Sleep(700 * time.Millisecond)
 			logger.Printf("restart: handing over to a fresh process")
+			if egressMgr != nil {
+				egressMgr.Close()
+			}
 			os.Exit(0)
 		}()
 		return nil
@@ -1469,6 +1497,16 @@ func run() error {
 	if err != nil {
 		logger.Printf("model metadata overrides unavailable: %v", err)
 		modelOverrides, _ = modelmeta.OpenOverrideStore("")
+	}
+	// One store, two readers: the panel writes an operator's per-account model
+	// blacklist and the gateway refuses the account for those models on the
+	// next request, which is what makes the model dialog work on platforms
+	// whose module keeps no policy of its own.  A read-only data dir must not
+	// stop the process from starting, so a failure degrades to memory.
+	modelPolicies, err := modelpolicy.Open(filepath.Join(cfg.DataDir, "account_model_policies.json"), logger.Printf)
+	if err != nil {
+		logger.Printf("account model policies unavailable: %v", err)
+		modelPolicies, _ = modelpolicy.Open("")
 	}
 	sessionPlatforms := gateway.NewSessionPlatforms()
 	sessionPlatforms.StartGC()
@@ -1494,6 +1532,9 @@ func run() error {
 		Alerts:         alertStore,
 		Scheduler:      sched,
 		ModelOverrides: modelOverrides,
+		// The operator's per-account model blacklist, shared with the gateway
+		// so a save in the model dialog takes effect on the next request.
+		ModelPolicies: modelPolicies,
 		// Same rule as the usage file: the probe results live in the data
 		// directory, so the probe tool and the panel agree without a second
 		// path setting.  Missing file = no annotation, never an error.
@@ -1534,6 +1575,7 @@ func run() error {
 		Usage:            usage,
 		NotifyAlert:      notifyAlert,
 		ModelOverrides:   modelOverrides,
+		ModelPolicies:    modelPolicies,
 		SessionPlatforms: sessionPlatforms,
 		// The context guard learns a model's real window from the vendor's own
 		// refusal, so it needs somewhere durable to remember it.  It lives beside

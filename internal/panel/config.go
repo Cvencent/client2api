@@ -169,6 +169,10 @@ func redactConfig(v any) any {
 				out[k] = maskSecret(val)
 				continue
 			}
+			if k == "egress" {
+				out[k] = redactEgressConfig(val)
+				continue
+			}
 			out[k] = redactConfig(val)
 		}
 		return out
@@ -183,6 +187,21 @@ func redactConfig(v any) any {
 	default:
 		return v
 	}
+}
+
+// redactEgressConfig masks the subscription/proxy URL, which is a bearer
+// credential for most providers, while leaving mode and the executable path
+// visible so the config page can still explain what is configured.
+func redactEgressConfig(v any) any {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return redactConfig(v)
+	}
+	out := redactConfig(m).(map[string]any)
+	if raw, ok := m["url"]; ok && raw != nil {
+		out["url"] = maskSecret(raw)
+	}
+	return out
 }
 
 // nameKeyedConfigMap reports whether a config key names a map whose own keys are

@@ -102,6 +102,33 @@ Config-level knobs: the timeout/cooldown durations, `max_in_flight`,
 | `deepinfra` | `https://api.deepinfra.com/v1/openai` | `meta-llama/Meta-Llama-3.3-70B-Instruct` |
 | `chutes` | `https://llm.chutes.ai/v1` | `deepseek-ai/DeepSeek-V3` |
 | `huggingface` | `https://router.huggingface.co/v1` | `meta-llama/Llama-3.3-70B-Instruct` |
+| `sambanova` | `https://api.sambanova.ai/v1` | `Meta-Llama-3.3-70B-Instruct` |
+| `nebius` | `https://api.tokenfactory.nebius.com/v1` | `meta-llama/Llama-3.3-70B-Instruct` |
+| `hyperbolic` | `https://api.hyperbolic.xyz/v1` | `deepseek-ai/DeepSeek-V3` |
+| `novita` | `https://api.novita.ai/openai/v1` | `deepseek/deepseek-v3` |
+| `scaleway` | `https://api.scaleway.ai/v1` | `deepseek/deepseek-r1-distill-llama-70b` |
+| `vercel` | `https://ai-gateway.vercel.sh/v1` | `openai/gpt-5.5` |
+| `perplexity` | `https://api.perplexity.ai` | `sonar-pro`, `sonar` |
+| `xai` | `https://api.x.ai/v1` | `grok-4`, `grok-3` |
+| `deepseek` | `https://api.deepseek.com` | `deepseek-v4-pro`, `deepseek-reasoner` |
+| `mistral_codestral` | `https://codestral.mistral.ai/v1` | `codestral-latest` |
+| `qwencloud` | `https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1` | `qwen3.8-max-preview` |
+| `zai` | `https://api.z.ai/api/coding/paas/v4` | `glm-5.3`, `glm-5.2` |
+| `zai_api` | `https://api.z.ai/api/paas/v4` | `glm-5.3` |
+| `glm` / `glm-cn` | `https://open.bigmodel.cn/api/coding/paas/v4` | `glm-5.3` |
+| `kimi` / `moonshot` | `https://api.moonshot.ai/v1` | `kimi-k2.5` |
+| `minimax` | `https://api.minimax.io/v1` | `MiniMax-M3`, `MiniMax-M2.7` |
+| `minimax-cn` | `https://api.minimaxi.com/v1` | `MiniMax-M3` |
+| `baidu` | `https://qianfan.baidubce.com/v2` | `deepseek-v4-pro`, `kimi-k2.6` |
+| `tencent` | `https://api.hunyuan.cloud.tencent.com/v1` | `hunyuan-turbos-latest` |
+| `volcengine-ark` | `https://ark.cn-beijing.volces.com/api/coding/v3` | `Doubao-Seed-2.0-Code` |
+| `xiaomi-tokenplan` | `https://token-plan-sgp.xiaomimimo.com/v1` | `mimo-v2.5-pro` |
+| `nvidia_nim` | `https://integrate.api.nvidia.com/v1` | alias of `nvidia` |
+| `cloudflare` | `https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1` | replace `{account_id}` in `base_url` |
+| `vertex` | `https://aiplatform.googleapis.com/v1/projects/{project_id}/locations/{location}/endpoints/openapi` | replace the placeholders in `base_url` |
+| `ollama` | `http://127.0.0.1:11434/v1` | no key |
+| `lmstudio` | `http://127.0.0.1:1234/v1` | no key |
+| `llamacpp` | `http://127.0.0.1:8080/v1` | no key |
 
 The cold-start tables are deliberately short: they are the ids the vendor
 documents, so a fresh process can serve something before any live listing
@@ -112,6 +139,17 @@ Cloudflare Workers AI, OpenRouter-compatible gateways, and local servers
 `base_url`; they are not in the built-in table because their root is
 account-specific.
 
+### Registry-backed providers
+
+`registry.json` is vendored from the upstream channel catalogue and embedded in
+the binary. It is a data source, not a second hand-maintained provider table:
+only rows with `format: "openai-chat"` and a concrete `baseUrl` are imported.
+`anthropic-messages` and `openai-responses` rows are skipped because this
+module does not speak those wires. The hand-written table above always wins, so
+existing provider ids, base URLs and aliases never change under it. `auth.url`
+supplies the "get a key" link; a keyless row falls back to its `website`.
+Examples added this way include `agnes`, `alibaba_cloud`, `cohere`, and the
+keyless `opencode` row.
 ## Panel: accounts = providers
 
 The module implements `core.AccountManager`, so the panel can add, list,

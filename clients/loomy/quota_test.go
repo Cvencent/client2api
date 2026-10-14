@@ -157,26 +157,52 @@ func TestAccountBalanceRejectsAnUnknownAccount(t *testing.T) {
 	}
 }
 
-func TestAccountBalanceCoolsDownWithoutParkingASessionTheVendorRejects(t *testing.T) {
-	rt := alwaysJSON(http.StatusOK, failureEnvelope(loomyAuthErrorCode, "登录状态失效"))
-	c := newTestClient(t, `{}`, rt)
-	seedAccount(t, c, "acc", testToken, 0)
+func TestBalanceReadFailuresDoNotChangeAccountHealth(t *testing.T) {
+	cases := []struct {
+		name string
+		read func(*Client) error
+	}{
+		{
+			name: "AccountBalance",
+			read: func(c *Client) error {
+				_, err := c.AccountBalance(context.Background(), "acc", 0)
+				return err
+			},
+		},
+		{
+			name: "AccountPackages",
+			read: func(c *Client) error {
+				_, err := c.AccountPackages(context.Background(), "acc")
+				return err
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rt := alwaysJSON(http.StatusOK, failureEnvelope(loomyAuthErrorCode, "session rejected"))
+			c := newTestClient(t, `{}`, rt)
+			seedAccount(t, c, "acc", testToken, 0)
 
-	if _, err := c.AccountBalance(context.Background(), "acc", 0); err == nil {
-		t.Fatal("AccountBalance accepted a rejected session")
-	}
-	acc, ok := c.store.lookup("acc")
-	if !ok {
-		t.Fatal("the account vanished")
-	}
-	if acc.dead {
-		t.Fatal("a balance-read auth failure permanently parked the account")
-	}
-	if acc.cooldownTill.IsZero() {
-		t.Fatal("a balance-read auth failure did not cool the account down")
-	}
-	if acc.selectable(time.Now().UTC()) {
-		t.Fatal("the account ignored the cooldown")
+			if err := tc.read(c); err == nil {
+				t.Fatalf("%s accepted a rejected session", tc.name)
+			}
+			acc, ok := c.store.lookup("acc")
+			if !ok {
+				t.Fatal("the account vanished")
+			}
+			if acc.dead || acc.abnormal {
+				t.Fatalf("%s parked the account: dead=%t abnormal=%t", tc.name, acc.dead, acc.abnormal)
+			}
+			if acc.failures != 0 || acc.lastError != "" {
+				t.Fatalf("%s recorded a health failure: failures=%d last_error=%q", tc.name, acc.failures, acc.lastError)
+			}
+			if !acc.cooldownTill.IsZero() || !acc.probeAfter.IsZero() {
+				t.Fatalf("%s changed the probe timers: cooldown=%s probe_after=%s", tc.name, acc.cooldownTill, acc.probeAfter)
+			}
+			if !acc.selectable(time.Now().UTC()) {
+				t.Fatalf("%s made the account unselectable", tc.name)
+			}
+		})
 	}
 }
 

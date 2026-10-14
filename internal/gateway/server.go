@@ -18,6 +18,7 @@ import (
 	"client2api/internal/hint"
 	"client2api/internal/livecfg"
 	"client2api/internal/modelmeta"
+	"client2api/internal/modelpolicy"
 )
 
 const maxBodyBytes = 64 << 20 // 64 MiB, generous for long agent transcripts
@@ -59,6 +60,10 @@ type Options struct {
 	// called synchronously and may be nil.
 	// ModelOverrides is the operator-edited model metadata shared with the panel.
 	ModelOverrides *modelmeta.OverrideStore
+	// ModelPolicies is the operator's per-account model blacklist, shared with
+	// the panel.  Nil leaves the account hook enforcing only the in-flight
+	// ceilings.  See platform_limit.go for how it is consulted.
+	ModelPolicies *modelpolicy.Store
 	// LearnedWindowsPath is where the gateway records the context windows that
 	// vendors reported in their own refusals.  Empty keeps that memory
 	// in-process only, which is the right behaviour for an embedder that has no
@@ -148,6 +153,8 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("/v1/models", s.auth(s.handleModels))
 	mux.HandleFunc("/v1/chat/completions", s.auth(s.handleChat))
 	mux.HandleFunc("/v1/responses", s.auth(s.handleResponses))
+	mux.HandleFunc("/v1/messages", s.auth(s.handleMessages))
+	mux.HandleFunc("/v1/messages/count_tokens", s.auth(s.handleCountTokens))
 	mux.HandleFunc("/v1/audio/transcriptions", s.auth(s.handleTranscriptions))
 	mux.HandleFunc("/v1/status", s.auth(s.handleStatus))
 	mux.HandleFunc("/v1/", s.auth(s.handleNotFound))
@@ -870,7 +877,7 @@ func (s *server) openStream(ctx context.Context, client core.Client, req *core.C
 		// account slot right after picking a credential; when every account is
 		// full it reports busy, which is returned here as backpressure.
 		req.SetAccountAcquirer(func(accountID string) (func(), error) {
-			return s.acquireAccountSlot(client.Name(), accountID)
+			return s.acquireAccountSlot(client.Name(), accountID, req.Model)
 		})
 		// A retry reuses the same request, so drop any lease a previous attempt
 		// left behind before the module runs again.
@@ -977,6 +984,8 @@ func failureReason(err error) string {
 		return ""
 	}
 	switch {
+	case IsModelPolicyRefusal(err):
+		return "模型已被账号策略关闭：" + core.Redact(err.Error())
 	case errors.Is(err, core.ErrBusy):
 		return "本地并发已满：" + core.Redact(err.Error())
 	case errors.Is(err, core.ErrNotConfigured):

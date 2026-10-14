@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"sort"
 	"strconv"
@@ -41,7 +42,7 @@ var configWriteMu sync.Mutex
 // file keeps looking hand-written rather than being alphabetised.  Keys the
 // running binary does not know about are preserved and appended, because
 // dropping them would be silent data loss.
-var configKeyOrder = []string{"listen", "api_key", "data_dir", "proxy", "aliases", "disabled", "sources", "platforms", "model_groups", "schedule", "pool", "cooldown", "prompt", "session_sticky", "features", "panel", "clients"}
+var configKeyOrder = []string{"listen", "api_key", "data_dir", "proxy", "egress", "aliases", "disabled", "sources", "platforms", "model_groups", "schedule", "pool", "cooldown", "prompt", "session_sticky", "features", "panel", "clients"}
 
 // configSaveResponse is the GET payload plus what the save actually did.
 type configSaveResponse struct {
@@ -324,6 +325,78 @@ func configPriorityWindowsOverlap(a, b configPriorityWindow) bool {
 	return false
 }
 
+// validateEgressConfig validates only the shape and URL schemes the gateway
+// reads.  The egress package owns the runtime policy; refusing an obviously
+// unusable block here keeps a save from creating a config that cannot start.
+func validateEgressConfig(cfg map[string]any) error {
+	raw, ok := cfg["egress"]
+	if !ok || raw == nil {
+		return nil
+	}
+	m, ok := raw.(map[string]any)
+	if !ok {
+		return errors.New("egress must be an object")
+	}
+	enabled := false
+	if v, ok := m["enabled"]; ok && v != nil {
+		b, ok := v.(bool)
+		if !ok {
+			return errors.New("egress.enabled must be a boolean")
+		}
+		enabled = b
+	}
+	mode := "subscription"
+	if v, ok := m["mode"]; ok && v != nil {
+		s, ok := v.(string)
+		if !ok {
+			return errors.New("egress.mode must be a string")
+		}
+		mode = strings.ToLower(strings.TrimSpace(s))
+	}
+	if mode == "" {
+		mode = "subscription"
+	}
+	if mode != "client" && mode != "subscription" {
+		return errors.New("egress.mode must be client or subscription")
+	}
+	urlText := ""
+	if v, ok := m["url"]; ok && v != nil {
+		s, ok := v.(string)
+		if !ok {
+			return errors.New("egress.url must be a string")
+		}
+		urlText = strings.TrimSpace(s)
+	}
+	if v, ok := m["mihomo_path"]; ok && v != nil {
+		if _, ok := v.(string); !ok {
+			return errors.New("egress.mihomo_path must be a string")
+		}
+	}
+	if !enabled {
+		return nil
+	}
+	if urlText == "" {
+		return errors.New("egress.url must not be empty when egress is enabled")
+	}
+	u, err := url.Parse(urlText)
+	if err != nil {
+		return fmt.Errorf("egress.url: %w", err)
+	}
+	if mode == "client" {
+		switch u.Scheme {
+		case "http", "https", "socks5", "socks5h":
+		default:
+			return fmt.Errorf("egress.url: unsupported proxy scheme %q; use http, https, socks5 or socks5h", u.Scheme)
+		}
+	} else if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("egress.url: unsupported subscription scheme %q; use http or https", u.Scheme)
+	}
+	if u.Hostname() == "" {
+		return errors.New("egress.url must include a host")
+	}
+	return nil
+}
+
 func validateModelGroups(cfg map[string]any) error {
 	raw, ok := cfg["model_groups"]
 	if !ok || raw == nil {
@@ -437,6 +510,9 @@ func validateConfig(cfg map[string]any) error {
 		if _, err := core.ParseSources(raw); err != nil {
 			return err
 		}
+	}
+	if err := validateEgressConfig(cfg); err != nil {
+		return err
 	}
 	for _, k := range []string{"listen", "api_key", "data_dir", "proxy"} {
 		v, ok := cfg[k]

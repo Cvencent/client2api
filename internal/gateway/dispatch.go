@@ -53,6 +53,11 @@ type routeInput struct {
 	stat *chatStat
 	// emitter renders a successful stream in the caller's wire protocol.
 	emitter chatEmitter
+	// writeProtocolError, when non-nil, renders a pre-stream failure envelope
+	// in the caller's wire protocol.  Nil selects the OpenAI-shaped default,
+	// which is what the Chat and Responses endpoints use.  The Anthropic
+	// endpoint supplies its own because Claude Code parses that shape.
+	writeProtocolError func(w http.ResponseWriter, status int, typ, msg string)
 	// toolNames maps each namespaced tool's flattened Chat name back to the
 	// (namespace, name) pair it was declared as.  Only the Responses protocol
 	// has namespaces, so every other caller leaves it nil.
@@ -100,16 +105,34 @@ func (e chatWireEmitter) emitBuffered(w http.ResponseWriter, r *http.Request, a 
 	a.s.bufferCompletion(w, r, a.client, a.model, a.stream, a.rec, a.stat, a.hintCtx)
 }
 
+// protocolError renders a failure in the request's own wire protocol, falling
+// back to the OpenAI-shaped envelope the Chat and Responses endpoints use.
+func (in routeInput) protocolError(w http.ResponseWriter, status int, typ, msg string) {
+	if in.writeProtocolError != nil {
+		in.writeProtocolError(w, status, typ, msg)
+		return
+	}
+	writeError(w, status, typ, msg)
+}
+
 // routeAndServe is the shared body of every completion endpoint: resolve the
 // model, honour conversation stickiness, try the candidates in order, and hand
 // the winning stream to the protocol's emitter.  Every failure writes the
 // protocol's error envelope before returning.
 func (s *server) routeAndServe(w http.ResponseWriter, r *http.Request, in routeInput) {
+	s.routeAndServeMessages(w, r, in, writeError)
+}
+
+// routeAndServeMessages is routeAndServe with the failure envelope supplied by
+// the caller, so a protocol whose error shape differs from OpenAI's still
+// shares the entire routing, stickiness, failover and accounting path.
+func (s *server) routeAndServeMessages(w http.ResponseWriter, r *http.Request, in routeInput, writeErr func(http.ResponseWriter, int, string, string)) {
+	in.writeProtocolError = writeErr
 	candidates, err := s.opts.Registry.ResolveCandidates(r.Context(), in.requested)
 	if err != nil {
 		in.stat.status = http.StatusNotFound
 		s.fail(in.rec, err)
-		writeError(w, http.StatusNotFound, "invalid_request_error", err.Error())
+		in.protocolError(w, http.StatusNotFound, "invalid_request_error", err.Error())
 		return
 	}
 	// A bare model may have several platforms.  Once one has served this
@@ -181,7 +204,7 @@ func (s *server) routeAndServe(w http.ResponseWriter, r *http.Request, in routeI
 			in.stat.status = http.StatusBadRequest
 			err := contextWindowRefusal(client, upstreamModel, window, report.BeforeTokens)
 			s.fail(in.rec, err)
-			writeError(w, http.StatusBadRequest, "context_window_exceeded",
+			in.protocolError(w, http.StatusBadRequest, "context_window_exceeded",
 				fmt.Sprintf("[%s] %s", client.Name(), err.Error()))
 			return
 		}

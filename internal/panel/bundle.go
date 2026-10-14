@@ -66,7 +66,7 @@ const (
 // Keep in sync with CFG_RESTART_KEYS in index.html; bundle_test.go pins the two
 // lists to each other so a key added on one side cannot go stale.
 var coldConfigKeys = map[string]bool{
-	"listen": true, "data_dir": true, "proxy": true,
+	"listen": true, "data_dir": true, "proxy": true, "egress": true,
 	"disabled": true, "clients": true,
 }
 
@@ -118,6 +118,11 @@ type bundleDoc struct {
 	// reasoning effort, prices). It travels beside the account files because it
 	// is a decision, unlike learned_context_windows.json which is a measurement.
 	ModelContext map[string]map[string]modelmeta.Override `json:"model_context,omitempty"`
+	// AccountModelPolicies is the operator's per-account model blacklist for
+	// every platform whose module does not keep one itself. It is a decision,
+	// so it travels with the bundle exactly as model_context does; restoring
+	// it is what keeps an unswitched model from silently coming back on.
+	AccountModelPolicies map[string]map[string][]string `json:"account_model_policies,omitempty"`
 	// Warnings is export-side advice the operator must see, not a failure:
 	// today the only source is a module store the scanner cannot reach.
 	Warnings []string     `json:"warnings,omitempty"`
@@ -193,6 +198,11 @@ func (p *panel) bundleExport(w http.ResponseWriter, r *http.Request) {
 	if p.opts.ModelOverrides != nil {
 		if snapshot := p.opts.ModelOverrides.Snapshot(); len(snapshot) > 0 {
 			doc.ModelContext = snapshot
+		}
+	}
+	if p.opts.ModelPolicies != nil {
+		if snapshot := p.opts.ModelPolicies.Snapshot(); len(snapshot) > 0 {
+			doc.AccountModelPolicies = snapshot
 		}
 	}
 	w.Header().Set("Content-Disposition",
@@ -449,6 +459,21 @@ func (p *panel) bundleImport(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	modelPolicyApplied := false
+	if len(doc.AccountModelPolicies) > 0 {
+		switch {
+		case p.opts.ModelPolicies == nil:
+			warnings = append(warnings,
+				"the bundle carries per-account model policies, but this process has no policy store, so they were not applied")
+		default:
+			if err := p.opts.ModelPolicies.Replace(doc.AccountModelPolicies); err != nil {
+				errs = append(errs, "account_model_policies: "+err.Error())
+			} else {
+				modelPolicyApplied = true
+			}
+		}
+	}
+
 	modelContextApplied := false
 	if len(doc.ModelContext) > 0 {
 		switch {
@@ -525,8 +550,9 @@ func (p *panel) bundleImport(w http.ResponseWriter, r *http.Request) {
 			"backed_up": backedUp,
 			"clients":   bundleClients(doc.Files),
 		},
-		"config":        map[string]any{"applied": configApplied, "keys": appliedKeys},
-		"model_context": map[string]any{"applied": modelContextApplied},
+		"config":                 map[string]any{"applied": configApplied, "keys": appliedKeys},
+		"model_context":          map[string]any{"applied": modelContextApplied},
+		"account_model_policies": map[string]any{"applied": modelPolicyApplied},
 	}
 	if backupDir != "" && backedUp > 0 {
 		res["backup"] = backupDir

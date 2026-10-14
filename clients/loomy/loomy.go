@@ -342,20 +342,14 @@ func (c *Client) fetchModels(ctx context.Context) ([]core.Model, error) {
 			return coreModels(models, false), nil
 		}
 		lastErr = err
-		// The same rule the Chat loop below spells out: a caller that walked
-		// away is not evidence about the credential, and retrying the remaining
-		// candidates would just burn them on a request nobody is waiting for.
-		//
-		// This only ever fires for a real caller leaving.  Models() runs
-		// fetchModels on a WithTimeout child of the caller's context, so a
-		// caller cancellation propagates in as context.Canceled while our own
-		// models deadline arrives as DeadlineExceeded and still parks the
-		// account; refreshModelsAsync passes a background context, which has no
-		// ancestor that could be cancelled at all.
+		// A model-list refresh is display-only catalogue maintenance, not
+		// chat-path evidence.  Report the failure to the caller and try the
+		// next candidate, but never cool or park a credential because the
+		// catalogue endpoint had a bad moment.  A caller that walked away is
+		// likewise not evidence about the credential, so stop retrying it.
 		if callerGone(err) {
 			break
 		}
-		c.penaliseRecoverable(acc.ID, err, time.Now().UTC())
 	}
 	if lastErr == nil {
 		lastErr = core.ErrNotConfigured

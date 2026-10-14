@@ -199,24 +199,17 @@ func TestACancelledCallerDoesNotParkTheAccountOnTheTaskBoard(t *testing.T) {
 	assertNotParked(t, c, "loomy-1")
 }
 
-// The counterpart: a deadline *we* set is evidence about the credential -- the
-// vendor did not answer in time -- so it must still cool the account down.
-// Only context.Canceled means the caller left.
-func TestOurOwnBalanceTimeoutStillCoolsTheAccountDown(t *testing.T) {
+// A deadline we set on a display-only balance read is not evidence about the
+// credential.  The read has to fail visibly, but only the chat path and the
+// explicit Test action may cool the account down.
+func TestBalanceReadTimeoutDoesNotCoolTheAccountDown(t *testing.T) {
 	c := newTestClient(t, `{"request_timeout":"20ms"}`, deadlineTransport{})
 	seedAccount(t, c, "loomy-1", testToken, 0)
 
 	if _, err := c.AccountBalance(context.Background(), "loomy-1", 0); err == nil {
 		t.Fatal("AccountBalance succeeded although the transport never answered")
 	}
-
-	acc, _ := c.store.lookup("loomy-1")
-	if acc.dead {
-		t.Error("a timeout parked the account as dead")
-	}
-	if acc.selectable(time.Now()) {
-		t.Error("our own request timeout did not cool the account down")
-	}
+	assertNotParked(t, c, "loomy-1")
 }
 
 // assertNotParked fails if a caller that walked away left any mark at all on

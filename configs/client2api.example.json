@@ -3,6 +3,12 @@
   "api_key": "",
   "data_dir": "data",
   "proxy": "",
+  "egress": {
+    "enabled": false,
+    "mode": "subscription",
+    "url": "",
+    "mihomo_path": ""
+  },
   "aliases": {
     "claude-sonnet-4": "workbuddy/claude-sonnet-4",
     "glm-5.3": "zcode/GLM-5.3",
@@ -145,6 +151,8 @@
     "zcode": {
       "captcha_browser": true,
       "captcha_browser_path": "",
+      "captcha_pool": false,
+      "captcha_pool_ttl_seconds": 30,
       "tls_profile": "chrome",
       "tls_protocol": "http/1.1"
     }

@@ -49,6 +49,7 @@ people. The built-in default is `127.0.0.1`.
 | `qwenwork/...` | QwenWork | Qwen Office / QoderWork CN |
 | `tabbit/...` | Tabbit | Tabbit Browser |
 | `minimaxcode/...` | MiniMax Code | MiniMax Code |
+| `gemini/...` | Gemini | Google Cloud Code Assist (Antigravity) |
 | `cline/...` | Cline | Cline |
 | `lobsterai/...` | LobsterAI | Youdao LobsterAI |
 | `codearts/...` | CodeArts | Huawei CodeArts |
@@ -66,7 +67,7 @@ people. The built-in default is `127.0.0.1`.
 
 ### Gateway and routing
 
-- OpenAI-compatible `POST /v1/chat/completions` and `POST /v1/responses`.
+- OpenAI-compatible `POST /v1/chat/completions`, `POST /v1/responses`, and inbound Anthropic `POST /v1/messages` / `POST /v1/messages/count_tokens`.
 - OpenAI-compatible `POST /v1/audio/transcriptions` (multipart `file` + `model`)
   for speech platforms; `GET /v1/models` lists their models with `extra.kind = "transcription"`.
 - `GET /v1/models`, `GET /v1/status` and `GET /healthz`.
@@ -75,6 +76,7 @@ people. The built-in default is `127.0.0.1`.
 - Custom `model_groups` for binding the same model across platforms.
 - Platform priority, account priority and time-based priority schedules.
 - Per-platform and per-account concurrency limits.
+- Per-account per-model enable/disable from the account's model dialog, on every platform: WorkBuddy keeps its module-side policy (including "force enable"), the others write a shared blacklist the gateway's account hook enforces on the next request. A rate-limited model shows when it will be released and how long is left.
 - Conversation stickiness, retries, cooldown and automatic failover, with panel controls that show each live binding's model and can force-unbind or force-switch a session. A force-switch can clear platform/account stickiness for automatic selection again or pin a chosen platform while still auto-selecting its account.
 - OpenAI-shaped error mapping for auth, quota, WAF, timeout and rate-limit failures.
 - Context-window guard: a request larger than the model's window is shortened before
@@ -125,6 +127,7 @@ people. The built-in default is `127.0.0.1`.
 - Account pool with enable/disable, notes, identity labels, priority and balance.
 - Manual import, local credential discovery, bundle import and browser/device login where supported.
 - Re-login, revive, test, check-in, balance refresh and account deletion.
+- Loomy balance, package and model-catalogue refreshes are display-only: a failed read is reported on that row and does not cool down, park, or disable the account; a real chat request or the explicit Test action is what changes account health.
 - ZCode JWT / API key channels grouped under one account.
 - Dynamic OpenAI-compatible relay platforms with their own API root and Key pool.
 - Model scanning for relay platforms, with cached catalogues when a scan fails.
@@ -147,10 +150,15 @@ people. The built-in default is `127.0.0.1`.
 - Task Center
 - Models and Profiles
 - Platform Configuration
-- Config: each `clients.<module>` section is rendered as labelled controls for the
-  common settings. An empty control restores the module default, and keys the
-  panel does not yet describe stay available under `Other keys (JSON)`. Module
-  config changes take effect after restarting the process.
+- Config keeps only genuinely global settings: listen address, inbound API Key,
+  data directory, upstream proxy, session stickiness, panel display, aliases and
+  disabled clients. Platform Configuration owns everything platform-specific:
+  routing, blacklists, concurrency, model groups, each module's own
+  `clients.<module>` section (rendered as labelled controls inside that
+  platform's card) and the WorkBuddy-only prompt/fingerprint controls. An empty
+  control restores the module default, and keys the panel does not yet describe
+  stay available under `Other keys (JSON)`. Module config changes take effect
+  after restarting the process.
 - Runtime Log
 
 ### Tasks, usage and accounting

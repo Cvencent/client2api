@@ -4,7 +4,7 @@
 
 > client2api 的详细参考文档。项目介绍和功能总览见 [README.zh-CN.md](../README.zh-CN.md)。
 
-一个 OpenAI 兼容网关，统一接入十九个 AI 客户端/平台：
+一个 OpenAI 兼容网关，统一接入二十个 AI 客户端/平台：
 
 | 路由 | 客户端 | 包装的服务 |
 |---|---|---|
@@ -16,6 +16,7 @@
 | `qwenwork/…` | QwenWork | 千问办公 / QoderWork CN 桌面端 |
 | `tabbit/…` | Tabbit | Tabbit 浏览器（通过本地 sidecar） |
 | `minimaxcode/…` | MiniMax Code | MiniMax Code 桌面端（上游为 Anthropic Messages） |
+| `gemini/…` | Gemini | Google Cloud Code Assist / Antigravity 免费线 |
 | `cline/…` | Cline | Cline（cline.bot），WorkOS 凭据，OpenAI 形状上游 |
 | `lobsterai/…` | LobsterAI | 有道龙虾 LobsterAI，OpenAI 形状，仅 SSE |
 | `codearts/…` | CodeArts | 华为 CodeArts IDE 模型服务（SDK-HMAC-SHA256） |
@@ -30,8 +31,9 @@
 | `<source-id>/…` | 自定义中转站 | 热定义的 OpenAI 兼容平台，各自拥有 API 地址、Key 账号池、模型扫描与路由策略 |
 
 所有能力都从 **同一套 HTTP 接口**提供：`POST /v1/chat/completions`、
-`POST /v1/responses`、`POST /v1/audio/transcriptions`、`GET /v1/models`、
-`GET /v1/status`、`GET /healthz`，以及 `/panel/` 管理面板。
+`POST /v1/responses`、Anthropic 入站 `POST /v1/messages` 与
+`POST /v1/messages/count_tokens`、`POST /v1/audio/transcriptions`、
+`GET /v1/models`、`GET /v1/status`、`GET /healthz`，以及 `/panel/` 管理面板。
 
 ## 语音转写
 
@@ -498,6 +500,7 @@ assistant 消息的事件——只发 delta 的流会显示文字但永远不执
   "api_key": "",
   "data_dir": "data",
   "proxy": "",
+  "egress": { "enabled": false, "mode": "subscription", "url": "", "mihomo_path": "" },
   "aliases": { "gpt-4o": "trae/custom_model_gpt-5" },
   "disabled": [],
   "clients": {
@@ -517,12 +520,20 @@ assistant 消息的事件——只发 delta 的流会显示文字但永远不执
 ```
 
 * `api_key` 为空表示**不校验入站请求**。只要端口不只监听 loopback，就应该设置。
-* `clients.<name>` 原样交给模块，每个模块自己定义自己读取的键。配置页会把
-  常用键按模块渲染成中文标签、输入框或下拉框，并在每一项下面说明用途。控件留空
-  表示删掉这个键、回到模块内置默认值；面板尚未整理的键会原样留在卡片底部的
-  `其它键（JSON）` 中，照着原样保留即可。保存模块配置后需要重启进程生效。
+* `clients.<name>` 原样交给模块，每个模块自己定义自己读取的键。面板在
+  **平台配置 → 平台与模型** 的每张平台卡片里按 `module_schema` 渲染该模块的常用键：
+  中文标签、输入框或下拉框，并在每一项下面说明用途。控件留空表示删掉这个键、回到
+  模块内置默认值；面板尚未整理的键会原样留在卡片底部的 `其它键（JSON）` 中，
+  照着原样保留即可。保存模块配置后需要重启进程生效。
+* `prompt.*` 与 `features.sanitize_blacklist_fingerprints` 目前只作用于 WorkBuddy，
+  面板把它们和账号池设置一起放在 WorkBuddy 的平台卡片里；它们随热加载生效。
 * `proxy` 会应用到所有模块的厂商请求。带指纹客户端的模块在设置代理时强制使用
   HTTP/1.1，因为 `x/net/http2` 无法穿过该代理。
+* `egress` 是可选的托管出口。`client` 模式接受 `http`、`https`、`socks5` 或
+  `socks5h` 代理 URL；`subscription` 模式会把订阅交给本地 mihomo，并把网关
+  流量指向它的 loopback mixed port。启用 `egress` 时优先于 `proxy`；
+  `mihomo_path` 可以显式指定，留空则从 PATH / Clash Verge 常见目录查找。
+  订阅 URL 属于凭据，面板会脱敏显示。
 
 ### 环境变量覆盖
 
@@ -556,6 +567,11 @@ assistant 消息的事件——只发 delta 的流会显示文字但永远不执
 | `model_groups` | 热更新，组名、成员名和组内优先级立即生效 |
 | `panel.package_detail_limit` | 重启生效 |
 | `schedule.*` | 通过 `Reconfigure` 生效，下一次唤醒时采用 |
+
+面板上只有真正全局的键留在 **配置** 页：监听地址、入站 Key、数据目录、上游代理、
+会话粘性、面板展示、模型别名、停用客户端。平台路由（优先级、分时规则、模型黑名单、
+并发上限、最低余额）、模型路由组、每个模块自己的 `clients.<模块>`，以及上面提到的
+WorkBuddy 提示词与指纹清洗，都在 **平台配置** 页里按平台/模块编辑。
 
 `platforms.<name>.priority` 和 `platforms.<name>.account_priorities` 都接受负数。
 数字越小优先级越高，例如 `-10` 优先于 `-5`，默认是 `0`。
@@ -684,7 +700,7 @@ assistant 消息的事件——只发 delta 的流会显示文字但永远不执
 
 任务中心：
 
-* 定时任务按平台分 Tab，每个平台只编辑自己的任务，不再把二十个平台平铺成一整屏；
+* 定时任务按平台分 Tab，每个平台只编辑自己的任务，不再把所有平台平铺成一整屏；
   没有自定义的行会继承共享时点并以 placeholder 回显。“全局默认”编辑块已移除，改动会显示
   “有未保存的改动”，统一走右上角“保存并生效”。
 * 定时任务、批量执行和任务看板共用账号选择：先选账号，再查看或执行该账号的任务；

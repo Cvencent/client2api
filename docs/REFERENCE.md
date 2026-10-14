@@ -5,7 +5,7 @@
 > Reference documentation for client2api.
 > For the project introduction and feature overview, see [README.md](../README.md).
 
-One OpenAI-compatible gateway in front of nineteen AI backends:
+One OpenAI-compatible gateway in front of twenty AI backends:
 
 | route | client | what it wraps |
 |---|---|---|
@@ -17,6 +17,7 @@ One OpenAI-compatible gateway in front of nineteen AI backends:
 | `qwenwork/…` | QwenWork | Qwen Office / QoderWork CN desktop agent |
 | `tabbit/…` | Tabbit | Tabbit Browser (via a sidecar) |
 | `minimaxcode/…` | MiniMax Code | MiniMax Code desktop agent (Anthropic Messages upstream) |
+| `gemini/…` | Gemini | Google Cloud Code Assist / Antigravity free tier |
 | `cline/…` | Cline | Cline (cline.bot) — WorkOS credential, OpenAI-shaped upstream |
 | `lobsterai/…` | LobsterAI | Youdao LobsterAI — OpenAI-shaped, SSE only |
 | `codearts/…` | CodeArts | Huawei CodeArts IDE model service (SDK-HMAC-SHA256) |
@@ -31,8 +32,9 @@ One OpenAI-compatible gateway in front of nineteen AI backends:
 | `<source-id>/…` | Custom relay | Hot-defined OpenAI-compatible platforms, each with its own API root, API-key pool, model scan and routing policies |
 
 Everything is served from **one** HTTP surface — `POST /v1/chat/completions`,
-`POST /v1/responses`, `POST /v1/audio/transcriptions`, `GET /v1/models`,
-`GET /v1/status`, `GET /healthz`, plus a web panel at `/panel/`.
+`POST /v1/responses`, inbound Anthropic `POST /v1/messages` and
+`POST /v1/messages/count_tokens`, `POST /v1/audio/transcriptions`,
+`GET /v1/models`, `GET /v1/status`, `GET /healthz`, plus a web panel at `/panel/`.
 
 ## Speech transcription
 
@@ -591,6 +593,7 @@ sections below:
   "api_key": "",
   "data_dir": "data",
   "proxy": "",
+  "egress": { "enabled": false, "mode": "subscription", "url": "", "mihomo_path": "" },
   "aliases": { "gpt-4o": "trae/custom_model_gpt-5" },
   "disabled": [],
   "clients": {
@@ -616,6 +619,13 @@ sections below:
 * `proxy` is applied to every module's vendor transport. A module that builds its
   own fingerprinted client forces HTTP/1.1 whenever a proxy is set, because
   `x/net/http2` cannot traverse one.
+* `egress` is the optional managed outlet. `client` mode accepts an
+  `http`, `https`, `socks5` or `socks5h` proxy URL. `subscription` mode starts a
+  local mihomo binary with the URL as a proxy provider, then routes the gateway
+  through its loopback mixed port. An enabled `egress` takes precedence over
+  `proxy`; `mihomo_path` may be set explicitly or left empty for PATH / Clash
+  Verge discovery. The subscription URL is a credential and is redacted in the
+  panel.
 
 ### Environment overrides
 

@@ -269,46 +269,70 @@ func TestVisibleViewIsPolledLikeTheReference(t *testing.T) {
 
 // 参考的 CFG_MAP 把 session_sticky_enabled / prompt_mode / prompt_file /
 // sanitize_blacklist_fingerprints 列成独立一组；本仓此前只暴露了 session_sticky.ttl，
-// 另外三项在文件里能写、页面却看不见，等于「只能手改 JSON 才用得上」。这个测试把
-// 渲染端和回写端一起钉住：只加输入框不加回写，等于改了也存不下去。
+// 另外三项在文件里能写、页面却看不见，等于「只能手改 JSON 才用得上」。
+//
+// 这一轮按「配置属不属于全局」重新分家：session_sticky.* 所有模块共用，留在全局
+// 配置页；prompt.* 与 features.sanitize_blacklist_fingerprints 只由 WorkBuddy 读，
+// 搬进「平台配置」页的 WorkBuddy 卡片。渲染端和回写端都跟着搬，只加输入框不加
+// 回写等于改了存不下去。
 func TestConfigPageExposesTheSessionAndPromptKnobs(t *testing.T) {
 	src := poolStatsUISource(t)
 	render := poolStatsFuncBody(t, src, "renderConfig")
 	save := poolStatsFuncBody(t, src, "saveConfig")
+	pfRender := poolStatsFuncBody(t, src, "pfWorkBuddyPoolHTML")
+	pfSave := poolStatsFuncBody(t, src, "savePlatforms")
 
-	for _, id := range []string{"cfgStickyEnabled", "cfgPromptMode", "cfgPromptFile", "cfgSanitizeFingerprints"} {
-		if !strings.Contains(render, `"`+id+`"`) {
-			t.Errorf("renderConfig 不渲染 %s：这一项只能手改 JSON 才用得上", id)
+	// 会话粘性是全局项：还在全局配置页，而且渲染/回写都要有。
+	if !strings.Contains(render, `"cfgStickyEnabled"`) {
+		t.Error("renderConfig 不渲染 cfgStickyEnabled：这一项只能手改 JSON 才用得上")
+	}
+	if !strings.Contains(save, `$("#cfgStickyEnabled")`) {
+		t.Error("saveConfig 不回写 cfgStickyEnabled：输入框改了也存不下去")
+	}
+	// 提示词与指纹清洗是 WorkBuddy 的模块行为，跟着账号池设置进了平台卡片。
+	for _, id := range []string{"cfgPromptMode", "cfgPromptFile", "cfgSanitizeFingerprints"} {
+		if !strings.Contains(pfRender, `"`+id+`"`) {
+			t.Errorf("pfWorkBuddyPoolHTML 不渲染 %s：这一项只能手改 JSON 才用得上", id)
 		}
-		if !strings.Contains(save, `$("#`+id+`")`) {
-			t.Errorf("saveConfig 不回写 %s：输入框改了也存不下去", id)
+		if !strings.Contains(pfSave, `$("#`+id+`")`) {
+			t.Errorf("savePlatforms 不回写 %s：输入框改了也存不下去", id)
+		}
+		if strings.Contains(render, id) || strings.Contains(save, id) {
+			t.Errorf("%s 还留在全局配置页：它只作用于 WorkBuddy，应在「平台配置」页", id)
 		}
 	}
 	// 两个开关必须走页面的 cfgCheck，否则样式与其它开关不一致。
-	for _, call := range []string{`cfgCheck("cfgStickyEnabled"`, `cfgCheck("cfgSanitizeFingerprints"`} {
-		if !strings.Contains(render, call) {
-			t.Errorf("renderConfig 没有用 %s 渲染开关", call)
-		}
+	if !strings.Contains(render, `cfgCheck("cfgStickyEnabled"`) {
+		t.Error("renderConfig 没有用 cfgCheck 渲染会话粘性开关")
+	}
+	if !strings.Contains(pfRender, `pfWBCheck("cfgSanitizeFingerprints"`) {
+		t.Error("pfWorkBuddyPoolHTML 没有用 pfWBCheck 渲染指纹清洗开关")
+	}
+	if !strings.Contains(pfRender, `pfWBText("cfgPromptMode"`) || !strings.Contains(pfRender, `pfWBText("cfgPromptFile"`) {
+		t.Error("pfWorkBuddyPoolHTML 没有用 pfWBText 渲染提示词模式/文件")
 	}
 	// 文件里没有这个键时页面必须显示「开」，与 Go 侧 applyDefaults 的默认一致；
 	// 显示成「关」会让操作员一保存就把功能关掉。
 	if !strings.Contains(render, "sticky.enabled == null ? true") {
 		t.Error("会话粘性开关在键缺失时没有按「开」显示，与 applyDefaults 的默认不一致")
 	}
-	if !strings.Contains(render, "sanitize_blacklist_fingerprints == null ? true") {
+	if !strings.Contains(pfRender, "sanitize_blacklist_fingerprints == null ? true") {
 		t.Error("指纹清洗开关在键缺失时没有按「开」显示，与 Go 侧 boolOr(..., true) 不一致")
 	}
 	// 两个 *bool 必须显式回写：Go 侧缺省是「开」，不回写就等于关不掉。
 	if !strings.Contains(save, `sticky.enabled = $("#cfgStickyEnabled").checked`) {
 		t.Error("session_sticky.enabled 没有显式回写：勾掉之后关不掉")
 	}
-	if !strings.Contains(save, `features.sanitize_blacklist_fingerprints = $("#cfgSanitizeFingerprints").checked`) {
+	if !strings.Contains(pfSave, `features.sanitize_blacklist_fingerprints = !!sanEl.checked`) {
 		t.Error("features.sanitize_blacklist_fingerprints 没有显式回写：勾掉之后关不掉")
 	}
-	// 顶层键名必须是参考的那三个，写错了服务端会当未知键原样保留（静默失效）。
-	for _, want := range []string{"patch.session_sticky", "patch.prompt", "patch.features"} {
-		if !strings.Contains(save, want) {
-			t.Errorf("saveConfig 没有写 %s", want)
+	// 顶层键名必须是参考的那几个，写错了服务端会当未知键原样保留（静默失效）。
+	if !strings.Contains(save, "patch.session_sticky") {
+		t.Error("saveConfig 没有写 patch.session_sticky")
+	}
+	for _, want := range []string{"patch.prompt", "patch.features"} {
+		if !strings.Contains(pfSave, want) {
+			t.Errorf("savePlatforms 没有写 %s", want)
 		}
 	}
 }

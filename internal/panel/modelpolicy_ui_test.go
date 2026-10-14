@@ -78,3 +78,61 @@ func TestModelPolicySavePostsTheBlacklist(t *testing.T) {
 		t.Error("保存按钮没有接线")
 	}
 }
+
+// TestModelDialogShowsRateLimitExpiryForEditablePlatforms pins the bug the
+// operator reported: WorkBuddy has model_policy, so its cells are checkboxes --
+// and the editable branch used to colour the cell yellow without ever writing
+// the expiry. The read-only branch showed "限流至 ...", the editable one did
+// not. Both must now share parkStateHTML.
+func TestModelDialogShowsRateLimitExpiryForEditablePlatforms(t *testing.T) {
+	src := poolStatsUISource(t)
+	cell := poolStatsFuncBody(t, src, "modelCellHTML")
+	state := poolStatsFuncBody(t, src, "parkStateHTML")
+	for _, want := range []string{"限流至", "限流中", "该账号不支持"} {
+		if !strings.Contains(state, want) {
+			t.Errorf("parkStateHTML 缺少 %q：弹层状态文案不全", want)
+		}
+	}
+	// 只读分支的 unsupported 格用固定的「该账号不支持」，可编辑分支必须由
+	// parkStateHTML 补上同一句，不能只染色。
+	if strings.Contains(cell, `state = disabled ? '<span class="st">已关闭</span>' : ""`) {
+		t.Error("可编辑分支丢掉了不支持状态文案")
+	}
+	// Editable cells must render the state text, not only the class.
+	if !strings.Contains(cell, "parkStateHTML(p)") {
+		t.Error("modelCellHTML 的可编辑分支没有渲染限流状态文字")
+	}
+}
+
+// TestModelDialogOffersSharedStoreAsEditable pins the second half: a module
+// without its own policy is editable when the deployment advertises the
+// shared model_policy_store, and the force switch stays module-only.
+func TestModelDialogOffersSharedStoreAsEditable(t *testing.T) {
+	src := poolStatsUISource(t)
+	dialog := poolStatsFuncBody(t, src, "openModelsDialog")
+	for _, want := range []string{
+		"caps.model_policy_store", // 共享 store 的能力位
+		"modulePolicy",            // 模块策略与共享策略分开
+		"editable = modulePolicy", // 共享策略也可编辑
+	} {
+		if !strings.Contains(dialog, want) {
+			t.Errorf("openModelsDialog 缺少 %q：共享 store 的平台不可编辑", want)
+		}
+	}
+	// 强制启用只在模块自己实现策略时出现。
+	if !strings.Contains(dialog, "if (modulePolicy)") {
+		t.Error("强制启用开关没有按模块策略能力收窄")
+	}
+}
+
+// TestSharedStoreSaveStillSendsForceKey pins that the POST body keeps the
+// force_enabled key even for shared-store platforms. The panel route ignores
+// it there, but dropping the key would make the two save paths diverge from
+// the module contract in a way the module path tests do not catch.
+func TestSharedStoreSaveStillSendsForceKey(t *testing.T) {
+	src := poolStatsUISource(t)
+	svc := poolStatsFuncBody(t, src, "saveModelsPolicy")
+	if !strings.Contains(svc, `force_enabled: force`) {
+		t.Error("saveModelsPolicy 不再发送 force_enabled，两条保存路径开始漂移")
+	}
+}

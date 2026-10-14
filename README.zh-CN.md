@@ -24,7 +24,7 @@ client2api 是一个**个人自用**的 OpenAI 兼容网关。它把你自己在
 ## 项目定位
 
 - 聚合你自己拥有的账号和 Key，而不是提供一个公共账号池。
-- 用一个入站 API Key 统一调用 `POST /v1/chat/completions` 和 `POST /v1/responses`。
+- 用一个入站 API Key 统一调用 `POST /v1/chat/completions`、`POST /v1/responses`，以及 Anthropic 入站 `POST /v1/messages` / `POST /v1/messages/count_tokens`。
 - 为带语音能力的平台提供 `POST /v1/audio/transcriptions`：上传 WAV/FLAC/MP3/MP4/M4A/OGG/WebM 可返回 `{"text": "..."}`、纯文本、SRT、verbose JSON 或 VTT。
 - 在平台、账号、模型别名、`Auto/<模型>` 和模型路由组之间统一调度。
 - 平台支持会话粘性时，同一会话会尽量落在同一个账号上。
@@ -45,6 +45,7 @@ client2api 是一个**个人自用**的 OpenAI 兼容网关。它把你自己在
 | `qwenwork/...` | QwenWork | 千问办公 / QoderWork CN |
 | `tabbit/...` | Tabbit | Tabbit 浏览器 |
 | `minimaxcode/...` | MiniMax Code | MiniMax Code |
+| `gemini/...` | Gemini | Google Cloud Code Assist（Antigravity） |
 | `cline/...` | Cline | Cline |
 | `lobsterai/...` | LobsterAI | 有道龙虾 LobsterAI |
 | `codearts/...` | CodeArts | 华为 CodeArts |
@@ -86,6 +87,8 @@ client2api 是一个**个人自用**的 OpenAI 兼容网关。它把你自己在
 - 账号池支持启用/停用、备注、身份标识、优先级和余额显示。
 - 支持手动添加、本地凭据发现、整包导入，以及模块支持时的浏览器/设备登录。
 - 支持重新登录、恢复、测试、签到、刷新余额和删除账号。
+- 「模型」列点开可以逐账号启用/禁用单个模型，所有平台都可编辑：WorkBuddy 沿用模块自己的模型策略（含「强制启用」），其余平台写入网关共享的账号模型黑名单，在下一次请求选取账号时生效。限流中的模型会显示解除时刻和剩余时间。
+- Loomy 的余额、套餐和模型目录刷新只用于展示：读取失败只在该行报错，不会让账号冷却、异常或停用；账号健康只由真实对话请求或手动「测试」决定。
 - ZCode 的 JWT 与 coding-plan API Key 会按同一账号聚合为多条通道。
 - 支持动态添加 OpenAI 兼容中转站，每个平台有自己的 API 地址和 Key 池。
 - 中转站支持扫描模型；扫描失败时保留上一次成功的模型目录。

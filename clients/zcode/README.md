@@ -75,6 +75,8 @@ key is optional; an absent or malformed object degrades to the defaults below
       "captcha_region": "",
       "captcha_browser": true,
       "captcha_browser_path": "",
+      "captcha_pool": false,
+      "captcha_pool_ttl_seconds": 30,
       "identity": { /* see below */ }
     }
   }
@@ -101,6 +103,8 @@ key is optional; an absent or malformed object degrades to the defaults below
 | `captcha_region` | string | `""` | Force the Aliyun region instead of reading it from the endpoint. Does not suppress the scene read — see [Captcha paths](#captcha-paths). |
 | `captcha_browser` | bool | `true` | Mint the Aliyun parameter with the machine's Edge or Chrome in a throwaway off-screen window. Requires a desktop session; set `false` on a headless server. |
 | `captcha_browser_path` | string | `""` | Pin the browser executable when auto-detection picks the wrong one or finds none. Ignored when `captcha_browser` is false. |
+| `captcha_pool` | bool | `false` | Opt in to a one-slot prefetch pool. A parameter is consumed by the first request that takes it and the pool replenishes through the same `captcha_command` / browser path. Off by default because it roughly doubles mint consumption against Aliyun device quota. |
+| `captcha_pool_ttl_seconds` | int | `30` | How long an unused pooled parameter may wait before it is discarded. |
 | `identity` | object | see below | Header identity of the companion desktop client. |
 
 ### `accounts[]` entries
@@ -686,6 +690,34 @@ transcribed into `system.go`; the reference's `zcode_system.json` file itself wa
 not copied.
 
 ---
+
+## Captcha prefetch pool
+
+The default cache reuses one parameter for 45 seconds. That is fine for a
+short burst but wrong for an agent loop, where a parameter is spent once and
+the next turn arrives later. Set `captcha_pool: true` to switch to a one-slot
+prefetch pool instead: `solveCaptcha` consumes the pooled parameter, starts a
+background refill, and only falls back to a synchronous mint when the slot is
+empty. The refill uses the same `captcha_command` / built-in browser path and
+the same mint-failure breaker. An upstream `3007` invalidates the slot, so a
+refused parameter is never handed to a second request. The pool is deliberately
+off by default because it consumes Aliyun device quota faster.
+
+## Captcha mint backoff
+
+The captcha parameter is a device-level resource: Aliyun caps how many a single
+machine may mint in an hour, and repeating a doomed mint only deepens the
+deficit. `captcha_backoff.go` therefore counts *produce* failures (browser did
+not answer, widget returned no parameter, `captcha_command` exited non-zero).
+Three consecutive failures close the mint path for one minute; each further
+failure doubles the cooldown up to 30 minutes. A successful mint clears the
+streak. An upstream `3007` refusal of an already-minted parameter is not
+counted, because that may be a vendor-side wobble rather than a device
+reputation failure.
+
+While the breaker is open `solveCaptcha` returns
+`core.ErrNotConfigured`, so callers try another account or report the channel
+unavailable instead of spending further device quota.
 
 ## Known gaps
 

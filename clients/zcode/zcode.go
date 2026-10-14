@@ -52,6 +52,12 @@ type Client struct {
 	// A field rather than a direct call so a test can substitute one without
 	// launching Edge.
 	mintBrowser func(context.Context, regionInfo) (string, error)
+	// captchaGate is the mint-failure circuit breaker.  It protects the
+	// device-level mint quota from a doomed retry loop; see captcha_backoff.go.
+	captchaGate *captchaBackoff
+	// captchaPool is the opt-in prefetch pool.  Nil keeps the legacy
+	// short-lived cache path exactly as it was before this field existed.
+	captchaPool *captchaPool
 
 	// inFlight is the number of chat streams currently open.  The success
 	// path feeds it through core.TrackStream so PoolStats reports real
@@ -101,13 +107,17 @@ func New(deps core.Deps) (core.Client, error) {
 		deps.Log("zcode: the jwt captcha will be minted with %s", p.browser.exe)
 	}
 	c := &Client{
-		deps:     deps,
-		cfg:      cfg,
-		http:     hc,
-		pool:     p,
-		models:   newModelCache(),
-		logins:   &loginSessions{},
-		affinity: core.NewAffinity(0),
+		deps:        deps,
+		cfg:         cfg,
+		http:        hc,
+		pool:        p,
+		models:      newModelCache(),
+		logins:      &loginSessions{},
+		affinity:    core.NewAffinity(0),
+		captchaGate: newCaptchaBackoff(),
+	}
+	if cfg.captchaPoolEnabled() {
+		c.captchaPool = newCaptchaPool(cfg.captchaPoolTTL())
 	}
 	if p.browser != nil {
 		c.mintBrowser = p.browser.solve
@@ -252,6 +262,9 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 				// The parameter this attempt carried was refused, so it is not
 				// reusable: drop it, then give the same account another go.
 				c.captcha.invalidate()
+				if c.captchaPool != nil {
+					c.captchaPool.invalidate()
+				}
 				delete(exclude, acct.ID)
 			}
 			// Risk control is judged from the egress IP, not the credential:
@@ -501,9 +514,9 @@ func setHeader(h http.Header, key, value string) {
 //  1. A param the operator's own browser just minted (the panel's claim button)
 //     wins over anything this process can arrange: they watched it succeed,
 //     against the real risk engine, on this exact network.
-//  2. A parameter minted a moment ago is reused for captchaParamTTL.  The
-//     vendor accepts one for a window, and starting a browser per turn would
-//     add seconds to every request.
+//  2. With captcha_pool on, one unused parameter prefetched in the background
+//     is taken and consumed; without it, a parameter minted a moment ago is
+//     reused for captchaParamTTL.
 //  3. captcha_command, when the operator pointed at a solver.
 //  4. The built-in browser mint (captcha_browser.go), which is what lets an
 //     ordinary install use the JWT channel with no setup at all.
@@ -521,26 +534,124 @@ func (c *Client) solveCaptcha(ctx context.Context) (param, region string, err er
 		return sol.Param, region, nil
 	}
 
+	if c.captchaPool != nil {
+		return c.solveCaptchaPooled(ctx)
+	}
+
 	if cached, ok := c.captcha.get(time.Now()); ok {
 		return cached.param, cached.region, nil
 	}
 
+	// The breaker sits in front of both local mint paths.  A produce failure
+	// is a statement about this device, not about a credential, so when it is
+	// open no account rotation can help and a fresh mint would only deepen the
+	// device-quota deficit.  See captcha_backoff.go.
+	now := time.Now()
+	if remain := c.captchaGate.remaining(now); remain > 0 {
+		return "", "", fmt.Errorf("%w: the captcha solver is cooling down for %s after repeated mint failures: %s",
+			core.ErrNotConfigured, remain.Round(time.Second), c.captchaHint())
+	}
+
+	if c.captchaConfigured() {
+		if c.mintBrowser != nil {
+			c.captcha.lockMint()
+			defer c.captcha.unlockMint()
+			if cached, ok := c.captcha.get(time.Now()); ok {
+				return cached.param, cached.region, nil
+			}
+		}
+		param, region, err := c.mintCaptcha(ctx)
+		if err != nil {
+			return "", "", err
+		}
+		c.captchaGate.noteSuccess()
+		c.captcha.put(param, region, time.Now())
+		return param, region, nil
+	}
+
+	return "", "", fmt.Errorf("%w: the jwt channel needs an Aliyun captcha solver: %s", core.ErrNotConfigured, c.captchaHint())
+}
+
+// solveCaptchaPooled takes a pooled parameter when one is ready, otherwise
+// mints synchronously.  Every successful take starts one background refill;
+// the refill uses its own context so a finished request cannot cancel it.
+func (c *Client) solveCaptchaPooled(ctx context.Context) (param, region string, err error) {
+	if pooled, ok := c.captchaPool.take(time.Now()); ok {
+		c.prefetchCaptcha()
+		return pooled.param, pooled.region, nil
+	}
+	param, region, err = c.mintCaptchaNow(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	c.prefetchCaptcha()
+	return param, region, nil
+}
+
+// prefetchCaptcha fills the pool without blocking the request path.  A failure
+// is an optimization miss: it is logged and deliberately not returned.
+func (c *Client) prefetchCaptcha() {
+	if c.captchaPool == nil || !c.captchaConfigured() {
+		return
+	}
+	if !c.captchaPool.beginPrefetch() {
+		return
+	}
+	go func() {
+		defer c.captchaPool.endPrefetch()
+		ctx, cancel := context.WithTimeout(context.Background(), captchaMintTimeout)
+		defer cancel()
+		if remain := c.captchaGate.remaining(time.Now()); remain > 0 {
+			return
+		}
+		param, region, err := c.mintCaptcha(ctx)
+		if err != nil {
+			c.deps.Log("zcode: captcha prefetch failed (the next request will mint synchronously): %v", err)
+			return
+		}
+		c.captchaGate.noteSuccess()
+		c.captchaPool.put(param, region, time.Now())
+	}()
+}
+
+// mintCaptchaNow is the synchronous mint path shared by the pool and legacy
+// cache code.  It returns the breaker's refusal unchanged so callers can
+// distinguish "not configured" from a vendor failure.
+func (c *Client) mintCaptchaNow(ctx context.Context) (param, region string, err error) {
+	now := time.Now()
+	if remain := c.captchaGate.remaining(now); remain > 0 {
+		return "", "", fmt.Errorf("%w: the captcha solver is cooling down for %s after repeated mint failures: %s",
+			core.ErrNotConfigured, remain.Round(time.Second), c.captchaHint())
+	}
+	param, region, err = c.mintCaptcha(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	c.captchaGate.noteSuccess()
+	return param, region, nil
+}
+
+// captchaConfigured reports whether a local mint path exists.  It is what lets
+// the pool distinguish an operator-disabled feature from a machine whose
+// browser is simply not installed yet.
+func (c *Client) captchaConfigured() bool {
+	return strings.TrimSpace(c.cfg.CaptchaCommand) != "" || c.mintBrowser != nil
+}
+
+// mintCaptcha runs one local solver to completion.  It is shared by the
+// synchronous path and the pool's background refill, so both spend the same
+// device quota and obey the same circuit breaker.
+func (c *Client) mintCaptcha(ctx context.Context) (param, region string, err error) {
 	if name := strings.TrimSpace(c.cfg.CaptchaCommand); name != "" {
 		info := c.pool.regionFor(ctx)
 		param, err := c.solveCaptchaCommand(ctx, name, info)
 		if err != nil {
+			c.noteCaptchaMintFailure(time.Now())
 			return "", "", err
 		}
-		c.captcha.put(param, info.Region, time.Now())
 		return param, info.Region, nil
 	}
-
 	if c.mintBrowser != nil {
-		c.captcha.lockMint()
-		defer c.captcha.unlockMint()
-		if cached, ok := c.captcha.get(time.Now()); ok {
-			return cached.param, cached.region, nil
-		}
 		if err := ctx.Err(); err != nil {
 			return "", "", err
 		}
@@ -550,13 +661,25 @@ func (c *Client) solveCaptcha(ctx context.Context) (param, region string, err er
 			if ctx.Err() != nil {
 				return "", "", ctx.Err()
 			}
+			c.noteCaptchaMintFailure(time.Now())
 			return "", "", fmt.Errorf("%w: %v", core.ErrNotConfigured, err)
 		}
-		c.captcha.put(param, info.Region, time.Now())
 		return param, info.Region, nil
 	}
-
 	return "", "", fmt.Errorf("%w: the jwt channel needs an Aliyun captcha solver: %s", core.ErrNotConfigured, c.captchaHint())
+}
+
+// noteCaptchaMintFailure feeds one produce failure into the breaker and logs
+// the moment it opens, so an operator can tell a solver that is down from one
+// that is merely slow.
+func (c *Client) noteCaptchaMintFailure(now time.Time) {
+	if c.captchaGate == nil {
+		return
+	}
+	if cooldown := c.captchaGate.noteFailure(now); cooldown > 0 {
+		c.deps.Log("zcode: the captcha solver failed to mint %d times in a row; pausing mint attempts for %s",
+			captchaBackoffThreshold, cooldown.Round(time.Second))
+	}
 }
 
 // captchaHint explains which knob is missing, so the panel's note points at the

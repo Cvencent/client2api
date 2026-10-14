@@ -23,6 +23,7 @@ import (
 	"client2api/internal/gateway"
 	"client2api/internal/livecfg"
 	"client2api/internal/modelmeta"
+	"client2api/internal/modelpolicy"
 	"client2api/internal/scheduler"
 )
 
@@ -109,7 +110,11 @@ type Options struct {
 	// with the gateway so edits made in the panel take effect on the next
 	// request without a restart.
 	ModelOverrides *modelmeta.OverrideStore
-	Live           *livecfg.Holder
+	// ModelPolicies is the operator's per-account model blacklist, shared with
+	// the gateway.  Nil leaves the model dialog read-only except for modules
+	// that implement core.AccountModelPolicyManager themselves.
+	ModelPolicies *modelpolicy.Store
+	Live          *livecfg.Holder
 	// Guard exposes the process-level egress-IP and degraded-prompt state.
 	Guard *core.Guard
 	// Stats, Usage and Logs are the gateway's instrumentation, shared by
@@ -406,7 +411,7 @@ func (p *panel) handleStatus(w http.ResponseWriter, r *http.Request) {
 		for _, c := range p.opts.Registry.All() {
 			view := clientView{
 				Status:       core.RedactStatus(c.Status(ctx)),
-				Capabilities: core.CapabilitiesOf(ctx, c),
+				Capabilities: p.capabilities(ctx, c),
 			}
 			// Both are optional capabilities, so a module that has neither is
 			// simply reported as such instead of as zeroes.
@@ -558,7 +563,7 @@ func (p *panel) handleClientScoped(w http.ResponseWriter, r *http.Request) {
 	case len(segs) == 1 && segs[0] == "capabilities":
 		ctx, cancel := p.ctx(r, 10*time.Second)
 		defer cancel()
-		writeJSON(w, http.StatusOK, core.CapabilitiesOf(ctx, client))
+		writeJSON(w, http.StatusOK, p.capabilities(ctx, client))
 
 	// One-click companion-service connections.  Probe is read-only and may
 	// be called repeatedly before anything is created; Connect is the only
@@ -794,10 +799,11 @@ func (p *panel) accounts(w http.ResponseWriter, r *http.Request, c core.Client) 
 		p.decorateAccountPriorities(c.Name(), list)
 		p.decorateAccountNotes(c.Name(), list)
 		p.decorateAccountCheckins(c.Name(), list)
+		p.decorateAccountModelPolicies(c.Name(), list)
 		out := map[string]any{
 			"client":       c.Name(),
 			"accounts":     redactAccounts(list),
-			"capabilities": core.CapabilitiesOf(ctx, c),
+			"capabilities": p.capabilities(ctx, c),
 		}
 		// Only present when the gateway has actually seen traffic for some
 		// account: an empty object would make the table render zeroes for
@@ -1278,7 +1284,48 @@ func (p *panel) relistErr(ctx context.Context, am core.AccountManager) ([]core.A
 	p.decorateAccountPriorities(am.Name(), list)
 	p.decorateAccountNotes(am.Name(), list)
 	p.decorateAccountCheckins(am.Name(), list)
+	p.decorateAccountModelPolicies(am.Name(), list)
 	return redactAccounts(list), nil
+}
+
+// capabilities is core.CapabilitiesOf plus the one flag only the deployment
+// can answer: whether the panel holds a store for a per-account model
+// blacklist when the module does not own one itself.  A module that implements
+// core.AccountModelPolicyManager keeps its own -- WorkBuddy does, because its
+// model ids carry a realm -- so the fallback flag is deliberately not set for
+// it.
+func (p *panel) capabilities(ctx context.Context, c core.Client) core.Capabilities {
+	caps := core.CapabilitiesOf(ctx, c)
+	if p != nil && p.opts.ModelPolicies != nil && caps.Manage && !caps.ModelPolicy {
+		caps.ModelPolicyStore = true
+	}
+	return caps
+}
+
+// decorateAccountModelPolicies fills in the operator's per-account blacklist
+// for a module whose policy lives in the panel's shared store rather than in
+// the module's own file.  A record that already carries disabled_models owns
+// the field -- the module listed it itself -- and is left untouched.
+func (p *panel) decorateAccountModelPolicies(platform string, list []core.AccountRecord) {
+	if p == nil || p.opts.ModelPolicies == nil {
+		return
+	}
+	for i := range list {
+		if _, owned := list[i].Fields["disabled_models"]; owned {
+			continue
+		}
+		disabled := p.opts.ModelPolicies.Disabled(platform, list[i].ID)
+		if len(disabled) == 0 {
+			continue
+		}
+		if list[i].Fields == nil {
+			list[i].Fields = map[string]any{}
+		}
+		// A string slice, not []any: redactAccounts only walks the latter, so
+		// this keeps the operator's model ids verbatim while everything else
+		// still goes through redaction.
+		list[i].Fields["disabled_models"] = append([]string(nil), disabled...)
+	}
 }
 
 func (p *panel) decorateAccountPriorities(platform string, list []core.AccountRecord) {

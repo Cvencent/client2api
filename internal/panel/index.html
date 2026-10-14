@@ -285,6 +285,12 @@ label.fld > .hint { display: block; font-size: 11.5px; color: var(--ink-3); marg
 .acc.md .mdedit .mdsrc.manual { color: var(--accent); font-weight: 600; }
 .acc.md .mdacts { white-space: nowrap; }
 .acc.md .mdacts button { padding: 3px 7px; font-size: 11.5px; }
+/* 模型列里的复制标签：模型名保持可选，按钮只负责把完整的 client/model
+   放进剪贴板；按钮的命中区保持现有表内小按钮的密度。 */
+.acc.md .mdmodel { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.acc.md .mdmodel > b { min-width: 0; overflow-wrap: anywhere; }
+.acc.md .mdCopy { flex: none; padding: 2px 6px; font-size: 11px; color: var(--ink-3); }
+.acc.md .mdCopy:hover:not(:disabled) { color: var(--accent-text); border-color: var(--accent); }
 .who { min-width: 118px; max-width: 200px; }
 #taskTable .who { max-width: 360px; }
 #taskTable .who .nm, #taskTable .who .id { white-space: normal; word-break: break-all; }
@@ -1041,25 +1047,66 @@ html { scrollbar-gutter: stable; }
 #view-accounts table.acc td.c-models .models-chip.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
 #view-accounts table.acc td.c-models .models-chip.err { background: var(--bad-soft); color: var(--bad); border-color: transparent; }
 /* 模型弹层：一个账号一段，下面是模型格子。绿色可用、黄色限流（带解除时间）、
-   红色不支持、灰色已关闭。支持 model_policy 的模块每格是复选框（勾选=允许），
-   页脚多一个保存按钮；不支持的模块仍是只读。 */
+   红色不支持、灰色已关闭。模块自己支持 model_policy，或部署接上了共享的
+   model_policy_store 时，每格是复选框（勾选=允许），页脚多一个保存按钮；
+   两者都没有的模块仍是只读。 */
 .mpark-acct { margin: 0 0 16px; }
 .mpark-acct:last-child { margin-bottom: 0; }
 .mpark-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 7px; }
 .mpark-head .nm { font-weight: 620; font-size: 13.5px; }
 .mpark-head .hint { font-size: 11.5px; }
-.mpark-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); gap: 6px; }
-.mpark-m { display: flex; align-items: center; gap: 7px; padding: 7px 10px; border: 1px solid var(--line-soft); border-radius: 7px; background: var(--surface-2); font-size: 12px; min-width: 0; }
-.mpark-m .ic { flex: none; width: 13px; text-align: center; font-weight: 700; }
-.mpark-m .nm { flex: 1 1 auto; min-width: 0; font: 11.5px/1.35 var(--mono); color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mpark-m .st { flex: none; font-size: 11px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.mpark-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(225px, 1fr)); gap: 6px; }
+.mpark-m {
+  display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: center;
+  column-gap: 7px; padding: 6px 9px; border: 1px solid var(--line-soft);
+  border-radius: 6px; background: var(--surface-2); font-size: 12px; min-width: 0;
+  transition: border-color var(--dur-panel) var(--ease-smooth), background var(--dur-panel) var(--ease-smooth);
+}
+.mpark-m:hover { border-color: color-mix(in srgb, var(--ink-3) 45%, var(--line-soft)); }
+.mpark-m .ic { width: 16px; text-align: center; font-weight: 700; font-size: 12px; }
+.mpark-m .nm {
+  min-width: 0; font: 11.5px/1.35 var(--mono); color: var(--ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mpark-m .st {
+  min-width: 0; font-size: 11px; color: var(--ink-3); font-variant-numeric: tabular-nums;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .mpark-m.ok .ic { color: var(--ok); }
 .mpark-m.limit .ic, .mpark-m.limit .st { color: var(--warn); }
 .mpark-m.bad .ic, .mpark-m.bad .st { color: var(--bad); }
 .mpark-m.off { opacity: .55; }
 .mpark-m.off .nm { color: var(--ink-3); text-decoration: line-through; }
-.mpark-m input[type="checkbox"] { flex: none; }
-.mpark-force { flex: none; display: inline-flex; align-items: center; gap: 4px; }
+.mpark-m .mparkBox {
+  appearance: none; -webkit-appearance: none; width: 16px; height: 16px; margin: 0;
+  border: 1.5px solid color-mix(in srgb, var(--ink-3) 55%, var(--line)); border-radius: 4px;
+  background: var(--surface); cursor: pointer; position: relative; flex: none;
+}
+.mpark-m .mparkBox:hover { border-color: var(--accent); }
+.mpark-m .mparkBox:checked { border-color: var(--accent); background: var(--accent); }
+.mpark-m .mparkBox:checked::after {
+  content: ""; position: absolute; left: 4.5px; top: 1.5px; width: 4px; height: 8px;
+  border: solid #fff; border-width: 0 1.8px 1.8px 0; transform: rotate(45deg);
+}
+.mpark-m .mparkBox:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.mpark-force {
+  flex: none; display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px;
+  color: var(--ink-3); cursor: pointer; user-select: none;
+}
+.mpark-force:hover { color: var(--ink-2); }
+.mpark-force .mparkForce {
+  appearance: none; -webkit-appearance: none; position: relative; width: 26px; height: 15px;
+  margin: 0; border-radius: 999px; border: 1px solid var(--line); background: var(--surface-2);
+  cursor: pointer; transition: background var(--dur-panel) var(--ease-smooth), border-color var(--dur-panel) var(--ease-smooth);
+}
+.mpark-force .mparkForce::after {
+  content: ""; position: absolute; left: 1.5px; top: 1.5px; width: 10px; height: 10px;
+  border-radius: 50%; background: var(--ink-3);
+  transition: transform var(--dur-panel) var(--ease-smooth), background var(--dur-panel) var(--ease-smooth);
+}
+.mpark-force .mparkForce:checked { background: var(--accent); border-color: var(--accent); }
+.mpark-force .mparkForce:checked::after { transform: translateX(11px); background: #fff; }
+.mpark-force .mparkForce:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 #view-accounts table.acc td > .name,
 #view-accounts table.acc td > .hint { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
 #view-accounts table.acc td > .hint { font-size: 11px; }
@@ -1174,7 +1221,6 @@ button.primary:active:not(:disabled) { filter: brightness(.94); }
 .pfhead .pfcount { color: var(--ink-3); font-size: 11.5px; }
 .pfhead .pfToggle { width: 24px; padding: 0; }
 .pfmodels { padding: 10px 12px 12px; }
-.pfFreeOnlyRow { margin-bottom: 9px; padding: 7px 9px; border: 1px solid var(--line-soft); border-radius: 7px; background: var(--surface-2); }
 .pfmodels .pfFilter { width: 260px; max-width: 100%; padding: 5px 10px; font-size: 12.5px; border-radius: 6px; margin-bottom: 8px; }
 .pfmodels .hint { font-size: 12px; color: var(--ink-3); }
 .pfmodels .pfNoMatch { margin-top: 6px; }
@@ -1609,7 +1655,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 .box, .stats, .uschart, .pfplat, .chat-setup, .tblbar, .pager, .savebar, .pk-card, .sms-box, .auto-box, .ownkey, .qc-box, .qc-card, .logbox, .cfgjson, .auto-log, .vc, .mpark-m {
   border-color: var(--hairline);
 }
-.box, .stats, .uschart, .pfplat, .pk-card, .sms-box, .auto-box, .ownkey, .qc-box, .qc-card, .logbox, .cfgjson, .auto-log, .vc, .mpark-m {
+.box, .stats, .uschart, .pfplat, .pk-card, .sms-box, .auto-box, .ownkey, .qc-box, .qc-card, .logbox, .cfgjson, .auto-log, .vc {
   border-radius: var(--radius-panel); box-shadow: var(--shadow-panel);
 }
 .box {
@@ -1781,6 +1827,899 @@ details.cfg summary:hover, details.adv summary:hover { color: var(--accent-text)
   .sticky-badges { justify-content: flex-start; margin-top: 8px; }
   .sticky-meta { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .sticky-actions button { flex: 1; }
+}
+
+/* ==========================================================================
+   Final polish pass
+   Same tokens, same DOM. Unifies the remaining raw-looking pages: config
+   sections, task center, platform cards, usage tiles, logs and empty states.
+   Appended last so it wins over the earlier visual layers.
+   ========================================================================== */
+
+/* -- 1. Shared surfaces & quiet hover ------------------------------------
+   One border, one radius, one shadow scale. Hover lifts by at most 1px so
+   cards stop bouncing when the pointer crosses a grid. */
+.box, .stats, .uschart, .pfplat, .pk-card, .sms-box, .auto-box, .ownkey,
+.qc-box, .qc-card, .vc {
+  border-color: var(--hairline);
+  box-shadow: var(--shadow-panel);
+}
+.box:hover { border-color: var(--hairline); box-shadow: var(--shadow-panel); }
+.vc, .pfplat, .pk-card { transition: border-color var(--dur-panel) var(--ease-smooth), box-shadow var(--dur-panel) var(--ease-smooth), transform var(--dur-panel) var(--ease-smooth); }
+.vc:hover, .pfplat:hover, .pk-card:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--hairline));
+  box-shadow: var(--shadow-panel);
+}
+
+.tblbar, .pager, .savebar { border-color: var(--hairline); }
+.tblbar .note, .pager .note, .box > header .note { color: var(--ink-3); }
+.box > header { background: color-mix(in srgb, var(--surface-2) 42%, transparent); }
+.box > header h3 > .hint { font-weight: 400; }
+
+/* -- 2. Config form ------------------------------------------------------
+   Sections read as labeled bands; each header gets a small accent marker so
+   the eye can find the next group while scrolling a 4000px form. */
+.cfgsec { border-top: 1px solid var(--hairline); padding-top: 16px; margin-top: 18px; }
+.cfgsec:first-child { border-top: none; padding-top: 0; margin-top: 0; }
+.cfghd { align-items: center; margin-bottom: 10px; color: var(--ink-2); font-size: 12.5px; font-weight: 650; letter-spacing: .01em; }
+.cfghd::before { content: ""; order: 0; width: 8px; height: 8px; border-radius: 3px; background: color-mix(in srgb, var(--accent) 72%, var(--surface-2)); flex: none; }
+.cfghd::after { background: var(--hairline); }
+.cfgrow { padding: 6px 0; }
+.cfgrow > .k { color: var(--ink-2); font-weight: 500; }
+.cfghelp { color: var(--ink-3); }
+.cfghelp code { background: color-mix(in srgb, var(--surface-2) 86%, transparent); border-color: var(--hairline); }
+.cfgtext { background: color-mix(in srgb, var(--surface) 92%, transparent); }
+
+/* -- 3. Platform routing cards -------------------------------------------
+   Header, schedule and model list get three distinct surface levels so a
+   collapsed card and an expanded one are visually unambiguous. */
+.pfplat { background: color-mix(in srgb, var(--surface) 84%, transparent); }
+.pfhead { padding: 11px 13px; background: color-mix(in srgb, var(--surface-2) 74%, transparent); border-bottom: 1px solid var(--hairline); }
+.pfhead .pfname { font-weight: 650; }
+.pfSched { background: color-mix(in srgb, var(--surface-2) 52%, transparent); border-top-color: var(--hairline); }
+.pfSchedHead strong { color: var(--ink); }
+.pfSchedRow { border-color: var(--hairline); background: color-mix(in srgb, var(--surface) 88%, transparent); }
+.pfmodels { background: color-mix(in srgb, var(--surface) 90%, transparent); }
+.pfmodels .pfFilter { background: color-mix(in srgb, var(--surface-2) 82%, transparent); }
+.pfGroup { border-color: var(--hairline); background: color-mix(in srgb, var(--surface-2) 46%, transparent); }
+.pfghead { border-bottom-color: var(--hairline); }
+.pfGRow input { border-radius: 8px; }
+.pfm { border-radius: 999px; background: color-mix(in srgb, var(--surface-2) 82%, transparent); transition: border-color var(--dur-quick) var(--ease-smooth), background var(--dur-quick) var(--ease-smooth), color var(--dur-quick) var(--ease-smooth); }
+.pfm:hover { border-color: color-mix(in srgb, var(--accent) 52%, var(--hairline)); background: var(--accent-soft); color: var(--accent-text); }
+
+/* -- 4. Task center ------------------------------------------------------
+   Queue groups, progress bars, account bars and empty states share a
+   consistent rhythm; rows highlight with the same left inset as tables. */
+#view-taskscenter .box > header { background: color-mix(in srgb, var(--surface-2) 42%, transparent); }
+.qgroup { padding: 2px 0 12px; }
+.qgroup header { padding: 11px 16px 7px; }
+.qgroup header .nm { font-weight: 650; }
+.qgroup header .cnt { color: var(--ink-3); }
+.qrow { border-radius: 0; transition: background-color var(--dur-quick) var(--ease-smooth), box-shadow var(--dur-quick) var(--ease-smooth); }
+.qrow:hover { background: color-mix(in srgb, var(--accent) 5%, var(--surface-2)); box-shadow: inset 3px 0 0 color-mix(in srgb, var(--accent) 62%, transparent); }
+.qrow .code { color: var(--ink-3); }
+.srow { transition: background-color var(--dur-quick) var(--ease-smooth), box-shadow var(--dur-quick) var(--ease-smooth); }
+.srow:hover { background: color-mix(in srgb, var(--accent) 5%, var(--surface-2)); box-shadow: inset 3px 0 0 color-mix(in srgb, var(--accent) 62%, transparent); }
+.shead { color: var(--ink-3); border-bottom-color: var(--hairline); }
+.tb-accounts { background: color-mix(in srgb, var(--surface-2) 52%, transparent); border-bottom: 1px solid var(--hairline); }
+.qprog .qbar { height: 6px; background: color-mix(in srgb, var(--line) 60%, transparent); }
+.qprog .qbar i { background: linear-gradient(90deg, var(--accent), var(--accent-hover)); }
+.qprog .note { color: var(--ink-2); font-size: 12px; }
+.tc-empty { margin: 6px 16px 16px; padding: 34px 18px; border: 1px dashed var(--hairline); border-radius: 14px; background: color-mix(in srgb, var(--surface-2) 40%, transparent); }
+.tc-empty svg { width: 38px; height: 38px; padding: 9px; box-sizing: content-box; border-radius: 50%; background: color-mix(in srgb, var(--surface) 80%, transparent); opacity: 1; color: var(--ink-3); }
+.tc-empty .t { font-weight: 620; color: var(--ink-2); }
+.tc-empty .d { color: var(--ink-3); }
+#scBody .state, #scRunsBody .state { padding: 22px 16px; }
+
+/* -- 5. Usage overview tiles ---------------------------------------------
+   Metric cards become real tiles instead of flat grey boxes. */
+#usChart { gap: 12px; }
+#usChart > .row { border-color: var(--hairline); border-radius: 12px; background: color-mix(in srgb, var(--surface-2) 58%, transparent); padding: 12px 14px; transition: border-color var(--dur-quick) var(--ease-smooth), background var(--dur-quick) var(--ease-smooth); }
+#usChart > .row:hover { border-color: color-mix(in srgb, var(--accent) 30%, var(--hairline)); background: color-mix(in srgb, var(--surface-2) 78%, transparent); }
+#usChart > .row .k { color: var(--ink-3); letter-spacing: .01em; }
+#usChart > .row .v { margin-top: 5px; font-family: var(--sans); font-weight: 660; letter-spacing: -.02em; }
+.uschart { border-radius: var(--radius-panel); }
+.uschart-hd { border-bottom-color: var(--hairline); background: color-mix(in srgb, var(--surface-2) 46%, transparent); }
+
+/* -- 6. Logs & JSON panes ------------------------------------------------
+   Keep the terminal feel; only align the chrome with the rest of the panel. */
+.logbox, #logBox { border-color: var(--hairline); background: color-mix(in srgb, var(--bg) 72%, var(--surface-2)); }
+.logbox .l, #logBox .ln { border-bottom-color: color-mix(in srgb, var(--line) 46%, transparent); }
+.logbox .l:last-child, #logBox .ln:last-child { border-bottom: none; }
+.cfgjson { border-color: var(--hairline); background: color-mix(in srgb, var(--bg) 60%, var(--surface-2)); }
+
+/* -- 7. Empty states & hints ---------------------------------------------
+   One muted treatment everywhere a list can come back empty. */
+.empty { padding: 44px 20px; color: var(--ink-3); }
+.empty .big { font-size: 26px; line-height: 1; margin-bottom: 10px; }
+.chk { color: var(--ink-2); }
+
+/* -- 8. Narrow screens ---------------------------------------------------
+   Toolbars, filters, config labels and headers stack instead of crushing. */
+@media (max-width: 760px) {
+  .box > header { align-items: flex-start; }
+  .box > header .grow { display: none; }
+  .box > header > .note { flex: 1 1 100%; }
+  .tblbar, .pager { row-gap: 8px; }
+  .tblbar input[type="search"] { flex: 1 1 100%; max-width: none; }
+  .tblbar .chips { flex-wrap: wrap; }
+  .cfgrow { align-items: flex-start; }
+  .cfgrow > .k { flex: 1 1 100%; padding-bottom: 1px; }
+  .cfgrow .cfghelp { margin-left: 0; }
+  .cfgrow > .cfgtext { flex: 1 1 100%; max-width: none; }
+  .pfhead { align-items: flex-start; }
+  .pfSched, .pfmodels { padding: 11px; }
+  #view-taskscenter .tblbar .chips { flex: 1 1 100%; }
+  .qrow { grid-template-columns: 1fr; gap: 4px; padding: 10px 14px; }
+  .qrow .prog, .qrow .st { text-align: left; justify-content: flex-start; }
+  .qrow .msg { white-space: normal; }
+  .srow { grid-template-columns: 1fr; gap: 8px; }
+}
+@media (max-width: 560px) {
+  .tc-empty { margin: 4px 12px 14px; padding: 26px 14px; }
+  #usChart > .row { padding: 11px 12px; }
+}
+
+/* -- 9. Chat tester ------------------------------------------------------
+   The setup row reads as one labeled tool band, messages become real bubbles
+   (mine right, model left) and the composer is a single framed control. */
+#view-chat .chat-setup {
+  padding: 13px 18px; gap: 9px 18px;
+  background: color-mix(in srgb, var(--surface-2) 46%, transparent);
+  border-bottom: 1px solid var(--hairline);
+}
+#view-chat .chat-setup .sel-note { color: var(--ink-3); font-size: 11.5px; letter-spacing: .01em; }
+#view-chat .sel-note select, #view-chat .sel-note input[type="search"],
+#view-chat .sel-note input[type="number"], #view-chat .sel-note input[type="text"] { border-radius: 9px; }
+#view-chat .sel-note input[type="search"] { width: 200px; }
+#view-chat #chatSysRow { padding: 12px 18px 16px; background: color-mix(in srgb, var(--surface-2) 46%, transparent); }
+
+#view-chat .chatlog { padding: 4px 2px; gap: 14px; }
+.chatmsg .who { flex: 0 0 48px; font-weight: 650; letter-spacing: .02em; }
+.chatmsg .bub {
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface-2) 88%, transparent);
+  box-shadow: 0 1px 2px rgba(0,0,0,.04);
+}
+.chatmsg .bub .meta {
+  margin-top: 8px; padding-top: 6px; font-size: 10.5px;
+  border-top: 1px solid color-mix(in srgb, var(--line-soft) 70%, transparent);
+}
+/* 我发的消息贴右：整行反向排列，头像列与气泡左右互换，DOM 不动。 */
+.chatmsg.me { flex-direction: row-reverse; }
+.chatmsg.me .who { text-align: left; color: var(--accent-text); }
+.chatmsg.me .bub {
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+  border-color: color-mix(in srgb, var(--accent) 20%, transparent);
+}
+.chatmsg.err .who { color: var(--bad-text); }
+
+/* 输入区套一层容器，聚焦时整块亮起，textarea 自己退成无边框。 */
+#view-chat .chatrow {
+  gap: 12px; margin-top: 16px; padding: 9px; align-items: stretch;
+  border: 1px solid var(--hairline); border-radius: 16px;
+  background: color-mix(in srgb, var(--surface-2) 52%, transparent);
+  transition: border-color var(--dur-quick) var(--ease-smooth), box-shadow var(--dur-quick) var(--ease-smooth);
+}
+#view-chat .chatrow:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--hairline));
+  box-shadow: var(--focus-ring);
+}
+#view-chat .chatrow textarea {
+  border-color: transparent; background: transparent; box-shadow: none;
+  border-radius: 10px; padding: 8px 10px; min-height: 72px;
+}
+#view-chat .chatrow textarea:hover:not(:focus), #view-chat .chatrow textarea:focus { border-color: transparent; box-shadow: none; }
+#view-chat .chatbtns { gap: 8px; }
+#view-chat .chatbtns button { min-width: 86px; }
+#view-chat .chattransout { border-radius: 12px; background: color-mix(in srgb, var(--surface-2) 78%, transparent); }
+
+/* -- 10. Platform alerts -------------------------------------------------
+   A quiet status table: time recedes, platform leads, empty state centers. */
+#view-alerts .acc thead th { letter-spacing: .02em; }
+#view-alerts .acc tbody td:first-child { white-space: nowrap; font-variant-numeric: tabular-nums; }
+#view-alerts .acc tbody td:nth-child(2) { font-weight: 620; }
+#view-alerts .acc tbody td:nth-child(3) { font-family: var(--mono); font-size: 12.5px; }
+#view-alerts .acc tbody td:last-child { font-variant-numeric: tabular-nums; color: var(--ink-2); }
+#view-alerts .acc tbody td[colspan] { padding: 44px 20px; text-align: center; color: var(--ink-3); }
+#view-alerts .acc tbody tr:hover td[colspan] { background: transparent; box-shadow: none; }
+
+/* -- 11. Credits ---------------------------------------------------------
+   The expiry distribution becomes a framed panel, account cards get a little
+   more air, and the collapsed package groups read as inline disclosures. */
+#pkExpiry:not(:empty) { padding-bottom: 4px; }
+#pkExpiry:not(:empty) .pk-expiry-chart {
+  padding: 12px 10px 6px; border: 1px solid var(--hairline); border-radius: 14px;
+  background: color-mix(in srgb, var(--surface-2) 44%, transparent);
+}
+#pkExpiry .pk-expiry-hdr { padding: 0 8px; margin-bottom: 6px; font-weight: 600; letter-spacing: .01em; }
+#pkExpiry .pk-expiry-row {
+  min-height: 32px; padding: 0 8px; border-radius: 8px;
+  transition: background-color var(--dur-quick) var(--ease-smooth);
+}
+#pkExpiry .pk-expiry-row:hover { background: color-mix(in srgb, var(--surface) 72%, transparent); }
+#pkExpiry .pk-expiry-row > b { color: var(--ink-2); }
+#pkExpiry .pk-expiry-legend { margin-top: 10px; padding: 0 8px; }
+#pkExpiry .pk-expiry-foot { margin: 10px 8px 0; padding-top: 9px; }
+
+#crBody .pk-grid { margin-bottom: 16px; }
+#crBody .pk-card { border-radius: 14px; padding: 14px 15px; background: color-mix(in srgb, var(--surface) 86%, transparent); }
+#crBody .pk-card .who { margin-bottom: 9px; }
+#crBody .pk-card .realm { padding: 1px 7px; border: 1px solid var(--hairline); border-radius: 999px; }
+#crBody .pk-card .big { font-size: 26px; letter-spacing: -.02em; }
+#crBody .pk-card .mixbar { height: 8px; margin-top: 9px; }
+#crBody .pk-card .expirybar { height: 5px; margin-top: 5px; }
+#crBody .pk-legend { margin-top: 9px; line-height: 1.7; }
+
+#crBody .pk-group-summary td {
+  padding: 10px 14px; border-top: 1px solid var(--hairline);
+  background: color-mix(in srgb, var(--surface-2) 78%, transparent);
+}
+#crBody .pk-group-summary b { font-weight: 650; }
+#crBody .pk-more td { padding: 0; background: color-mix(in srgb, var(--surface-2) 56%, transparent); }
+#crBody .pk-group-toggle { padding: 10px 14px; color: var(--ink-2); font-size: 12.5px; }
+#crBody .pk-group-toggle::before {
+  content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 9px;
+  border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg) translateY(-1px);
+  transition: transform var(--dur-quick) var(--ease-smooth);
+}
+#crBody .pk-group-toggle[aria-expanded="true"]::before { transform: rotate(45deg) translateY(-1px); }
+#crBody .pk-hidden-row td { color: var(--ink-3); background: color-mix(in srgb, var(--surface-2) 26%, transparent); }
+
+/* -- 12. Client capability matrix ----------------------------------------
+   A wide yes/no grid scans better with centered flags and a numeric column. */
+#view-packages .acc thead th:not(:first-child) { text-align: center; }
+#view-packages .acc tbody td:not(:first-child) { text-align: center; }
+#view-packages .acc tbody td:first-child { font-weight: 600; }
+#view-packages .acc tbody td .chip { min-height: 22px; padding: 1px 8px; font-size: 11px; }
+#view-packages .acc tbody td[colspan] { padding: 44px 20px; color: var(--ink-3); }
+
+@media (max-width: 560px) {
+  #view-chat .chat-setup { padding: 12px 14px; }
+  #view-chat .sel-note input[type="search"] { width: 100%; }
+  #view-chat .chatrow { padding: 8px; }
+  #pkExpiry:not(:empty) .pk-expiry-chart { padding: 10px 6px 4px; }
+  #crBody .pk-card { flex-basis: 100%; }
+}
+
+/* ==========================================================================
+   Workbench consistency pass
+   Final page-level rhythm and control polish. Presentation only: no DOM,
+   data flow, permissions, or feature behavior moves here. It comes last so
+   the earlier visual layers keep their individual intent.
+   ========================================================================== */
+
+/* -- 1. Page rhythm -------------------------------------------------------
+   Clear hierarchy from workspace chrome to page body. Values stay compact
+   because this is an operations console, not a marketing surface. */
+.topbar {
+  min-height: 58px;
+  padding: 12px 26px;
+  gap: 12px;
+  box-shadow: 0 1px 0 var(--hairline), 0 8px 26px -26px rgba(0,0,0,.34);
+}
+.topbar h2 {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  font-size: 16px;
+  font-weight: 680;
+  line-height: 1.25;
+}
+.topbar .sep { color: var(--line); }
+.topbar .meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+}
+.view { padding: 26px 26px 80px; }
+
+/* -- 2. Shared surface ladder --------------------------------------------
+   Panel, raised, soft and inset are four deliberate levels. Hierarchy comes
+   from borders and surface color first; shadows stay almost imperceptible. */
+.box,
+.stats,
+.uschart,
+.pfplat,
+.pk-card,
+.sms-box,
+.auto-box,
+.ownkey,
+.qc-box,
+.qc-card,
+.logbox,
+.cfgjson,
+.auto-log,
+.vc {
+  border-color: var(--hairline);
+  box-shadow: var(--shadow-panel);
+}
+.box {
+  margin-bottom: 18px;
+  background: var(--material-strong);
+}
+.box:hover {
+  border-color: var(--hairline);
+  box-shadow: var(--shadow-panel);
+}
+.vc,
+.pfplat,
+.pk-card {
+  background: color-mix(in srgb, var(--surface) 86%, transparent);
+}
+.vc:hover,
+.pfplat:hover,
+.pk-card:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--hairline));
+  box-shadow: var(--shadow-panel);
+}
+
+/* -- 3. Page and panel headers -------------------------------------------
+   A title is a title, a toolbar is a toolbar, and a hint must not steal the
+   action row. Long titles and filters reflow instead of clipping. */
+.box > header {
+  min-height: 54px;
+  padding: 13px 18px;
+  gap: 10px 12px;
+  background: color-mix(in srgb, var(--surface-2) 44%, transparent);
+  border-bottom-color: var(--hairline);
+}
+.box > header h3 {
+  min-width: 0;
+  font-size: 13.5px;
+  font-weight: 660;
+  line-height: 1.35;
+}
+.box > header h3 .hint,
+.box > header .note {
+  min-width: 0;
+  font-size: 11.5px;
+  font-weight: 400;
+}
+.box > header .note {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.box > header .grow { min-width: 12px; }
+.box .pad { padding: 18px; }
+
+/* -- 4. Toolbar and pager -------------------------------------------------
+   One row for search, filter, count and actions; wrapping is a fallback, not
+   the normal desktop layout. */
+.tblbar,
+.pager {
+  min-height: 46px;
+  padding: 10px 18px;
+  gap: 8px 10px;
+  background: color-mix(in srgb, var(--surface) 76%, transparent);
+  border-color: var(--hairline);
+}
+.tblbar input,
+.tblbar select,
+.pager select,
+.box > header input.filt {
+  min-height: 34px;
+}
+.tblbar .note,
+.pager .note,
+.box > header .note,
+.box > header .hint {
+  color: var(--ink-3);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+.tblbar .grow,
+.pager .grow { min-width: 10px; }
+.tblbar input[type="search"] {
+  flex: 1 1 240px;
+  min-width: 180px;
+  max-width: 420px;
+}
+
+/* -- 5. Controls ----------------------------------------------------------
+   Buttons, inputs and chips share one height family. Focus stays visible in
+   both themes, and pressed states do not move surrounding layout. */
+button,
+input,
+select,
+textarea {
+  border-color: var(--hairline);
+}
+button {
+  min-height: 36px;
+  padding: 7px 13px;
+  border-radius: var(--radius-control);
+  color: var(--ink-2);
+  background: color-mix(in srgb, var(--surface-2) 84%, transparent);
+}
+button:hover:not(:disabled) {
+  color: var(--accent-text);
+  border-color: color-mix(in srgb, var(--accent) 52%, var(--hairline));
+  background: color-mix(in srgb, var(--accent-soft) 74%, var(--surface));
+}
+button:disabled {
+  opacity: .48;
+  cursor: not-allowed;
+}
+button.primary {
+  color: var(--accent-ink);
+  border-color: color-mix(in srgb, var(--accent) 86%, black);
+  background: linear-gradient(180deg, var(--accent-hover), var(--accent));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.18), 0 8px 18px -14px color-mix(in srgb, var(--accent) 80%, transparent);
+}
+button.primary:hover:not(:disabled) {
+  color: var(--accent-ink);
+  border-color: var(--accent-active);
+  background: linear-gradient(180deg, var(--accent-hover), var(--accent-active));
+}
+button.xs {
+  min-height: 28px;
+  padding: 3px 10px;
+  border-radius: 8px;
+}
+input,
+select,
+textarea {
+  min-height: 36px;
+  border-radius: var(--radius-control);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+}
+textarea { min-height: 72px; }
+input:focus,
+select:focus,
+textarea:focus,
+button:focus-visible,
+summary:focus-visible,
+a:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+}
+.chip,
+.tag,
+.realm-tag,
+.lch,
+kbd {
+  min-height: 24px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+.chip {
+  padding: 3px 10px;
+  color: var(--ink-2);
+  background: color-mix(in srgb, var(--surface-2) 82%, transparent);
+  border: 1px solid var(--hairline);
+}
+.chip.ok,
+.tag.ok {
+  color: var(--ok-text);
+  background: var(--ok-soft);
+  border-color: color-mix(in srgb, var(--ok) 22%, transparent);
+}
+.chip.warn,
+.tag.warn {
+  color: var(--warn-text);
+  background: var(--warn-soft);
+  border-color: color-mix(in srgb, var(--warn) 22%, transparent);
+}
+.chip.err,
+.tag.bad {
+  color: var(--bad-text);
+  background: var(--bad-soft);
+  border-color: color-mix(in srgb, var(--bad) 22%, transparent);
+}
+.tag.mute {
+  color: var(--ink-3);
+  background: color-mix(in srgb, var(--surface-2) 76%, transparent);
+  border-color: var(--hairline);
+}
+
+/* Keep letter spacing neutral across the workspace type scale. */
+.brand .name,
+.topbar h2,
+.box > header h3,
+.stat .v,
+.ustile .v,
+#usChart > .row .v,
+#crBody .pk-card .big,
+.usage-total b {
+  letter-spacing: 0;
+}
+
+/* Compact editors inside tables and tool cards keep their existing density. */
+.acc input,
+.sms-box input,
+.ownkey input,
+.qc-card input,
+.chat-setup input,
+.chat-setup select {
+  min-height: 0;
+}
+
+/* -- 6. Tables ------------------------------------------------------------
+   Tables stay dense, but the header, row rhythm and hover state now match
+   every other workbench page. The first column stays steady and readable. */
+.tbl-wrap { background: transparent; }
+.acc { color: var(--ink-2); }
+.acc th,
+.acc td {
+  border-bottom-color: var(--hairline);
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+.acc thead th {
+  color: var(--ink-3);
+  background: color-mix(in srgb, var(--surface-2) 88%, transparent);
+  font-size: 11.5px;
+  font-weight: 620;
+  letter-spacing: 0;
+}
+.acc tbody tr {
+  transition: background-color var(--dur-quick) var(--ease-smooth), box-shadow var(--dur-quick) var(--ease-smooth);
+}
+.acc tbody tr:hover {
+  background: color-mix(in srgb, var(--accent) 5%, var(--surface-2));
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--accent) 62%, transparent);
+}
+.acc tbody tr.acc-grp {
+  background: color-mix(in srgb, var(--surface-2) 92%, transparent);
+  font-weight: 600;
+}
+.acc tbody tr.acc-grp td { border-bottom-color: var(--hairline); }
+.acc .name { font-weight: 620; }
+.acc .num,
+.acc .mdsrc,
+.acc .usage-line,
+.acc .usage-item,
+.acc .cred .n { font-variant-numeric: tabular-nums; }
+.acc td > .hint,
+.acc td > .note { color: var(--ink-3); }
+.acc td [title] {
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+/* The account table has its own fixed-width recipe; keep the density, but
+   make the status rail read as information instead of alarm decoration. */
+#view-accounts table.acc .mark {
+  width: 5px;
+  min-width: 5px;
+}
+#view-accounts table.acc .mark i {
+  width: 3px;
+  margin-left: 1px;
+  min-height: 30px;
+  border-radius: 999px;
+  opacity: .72;
+}
+#view-accounts table.acc tbody tr:hover .mark i { opacity: 1; }
+#view-accounts table.acc .c-acts button {
+  min-height: 26px;
+  padding: 2px 7px;
+  border-radius: 8px;
+}
+
+/* -- 7. Status, empty and loading states ---------------------------------
+   State is never color alone: the text remains visible in every treatment. */
+.models-chip,
+.qc-state,
+.sticky-badge,
+.st,
+.status {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.models-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11.5px;
+}
+.empty {
+  padding: 42px 20px;
+  color: var(--ink-3);
+}
+.empty .big {
+  margin-bottom: 8px;
+  color: var(--ink-2);
+  font-size: 22px;
+  line-height: 1;
+}
+.tc-empty {
+  margin: 4px 0 0;
+  padding: 30px 18px;
+  border: 1px dashed var(--hairline);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface-2) 38%, transparent);
+}
+.tc-empty svg {
+  color: var(--ink-3);
+  background: color-mix(in srgb, var(--surface) 78%, transparent);
+  opacity: 1;
+}
+.tc-empty .t { color: var(--ink-2); }
+.tc-empty .d { color: var(--ink-3); }
+.state {
+  min-height: 22px;
+  padding: 2px 0;
+}
+.state.ok { color: var(--ok-text); }
+.state.err { color: var(--bad-text); }
+.filtered td,
+.acc tbody tr.filtered td {
+  color: var(--ink-3);
+  font-size: 12.5px;
+}
+
+/* -- 8. Long-form configuration ------------------------------------------
+   The configuration page is the densest page in the panel. Each section gets
+   a stable boundary and every row gets enough separation to scan by label. */
+.cfgsec {
+  padding-top: 18px;
+  margin-top: 20px;
+  border-top: 1px solid var(--hairline);
+}
+.cfgsec:first-child {
+  padding-top: 0;
+  margin-top: 0;
+  border-top: 0;
+}
+.cfghd {
+  gap: 9px;
+  margin-bottom: 10px;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  font-weight: 660;
+  line-height: 1.4;
+}
+.cfghd::after {
+  height: 1px;
+  background: var(--hairline);
+}
+.cfgrow {
+  gap: 10px;
+  padding: 7px 0;
+}
+.cfgrow > .k {
+  flex-basis: 116px;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  font-weight: 520;
+}
+.cfgrow .cfghelp {
+  margin-left: 126px;
+  color: var(--ink-3);
+  line-height: 1.6;
+}
+.cfgtext {
+  min-height: 36px;
+  border-radius: var(--radius-control);
+}
+.cfghelp code {
+  color: var(--ink-2);
+  background: color-mix(in srgb, var(--surface-2) 88%, transparent);
+  border-color: var(--hairline);
+}
+
+/* -- 9. Remaining workbench pages ----------------------------------------
+   Keep each page's own layout, but align its cards and bands to the same
+   spacing scale used everywhere else. */
+.stats {
+  margin-bottom: 18px;
+  background: var(--material-strong);
+}
+.stat {
+  min-height: 84px;
+  padding: 15px 18px;
+  border-right-color: var(--hairline);
+  border-bottom-color: var(--hairline);
+}
+.stat:hover { background: color-mix(in srgb, var(--surface-2) 76%, transparent); }
+.stat .v {
+  color: var(--ink);
+  font-size: 24px;
+  line-height: 1.15;
+}
+.stat .k {
+  margin-top: 5px;
+  color: var(--ink-3);
+  font-size: 11.5px;
+}
+.uschart {
+  border-radius: var(--radius-panel);
+  background: var(--material-strong);
+}
+.uschart-hd {
+  min-height: 46px;
+  padding: 10px 14px;
+  border-bottom-color: var(--hairline);
+  background: color-mix(in srgb, var(--surface-2) 44%, transparent);
+}
+#usChart { gap: 12px; }
+#usChart > .row {
+  min-height: 82px;
+  padding: 12px 14px;
+  border-color: var(--hairline);
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--surface-2) 54%, transparent);
+}
+#usChart > .row:hover {
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--hairline));
+  background: color-mix(in srgb, var(--surface-2) 74%, transparent);
+}
+#usChart > .row .v {
+  color: var(--ink);
+  font-size: 20px;
+  line-height: 1.25;
+}
+.pfplat { border-radius: var(--radius-panel); }
+.pfhead {
+  min-height: 48px;
+  padding: 11px 14px;
+  border-bottom-color: var(--hairline);
+  background: color-mix(in srgb, var(--surface-2) 62%, transparent);
+}
+.pfhead .pfname { font-weight: 660; }
+.pfSched,
+.pfmodels { border-color: var(--hairline); }
+.pfGroup {
+  border-color: var(--hairline);
+  background: color-mix(in srgb, var(--surface-2) 40%, transparent);
+}
+.logbox,
+#logBox,
+.cfgjson {
+  border-color: var(--hairline);
+  background: color-mix(in srgb, var(--bg) 72%, var(--surface-2));
+}
+.logbox .l,
+#logBox .ln { border-bottom-color: color-mix(in srgb, var(--line) 48%, transparent); }
+.alert-badge { box-shadow: 0 0 0 2px var(--surface); }
+#pkExpiry:not(:empty) .pk-expiry-chart {
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface-2) 42%, transparent);
+}
+#crBody .pk-card {
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+}
+#crBody .pk-card .big { color: var(--ink); }
+
+/* -- 10. Dialogs and model detail ----------------------------------------
+   Keep the intentionally compact 6px model cells. The dialog chrome follows
+   the same surface ladder so read-only and editable views stay coherent. */
+.veil { background: rgba(0,0,0,.42); }
+.dlg {
+  border: 1px solid var(--hairline);
+  border-radius: 20px;
+  background: var(--material-strong);
+  box-shadow: var(--shadow-float);
+}
+.dlg header {
+  padding: 16px 20px 13px;
+  border-bottom-color: var(--hairline);
+  background: color-mix(in srgb, var(--surface-2) 48%, transparent);
+}
+.dlg footer {
+  padding: 13px 20px;
+  border-top-color: var(--hairline);
+  background: color-mix(in srgb, var(--surface-2) 48%, transparent);
+}
+.dlg .tabs {
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--surface-2) 82%, transparent);
+}
+.dlg .tabs .tab.on {
+  color: var(--accent-text);
+  background: var(--surface);
+}
+.mpark-acct + .mpark-acct {
+  padding-top: 16px;
+  border-top: 1px solid var(--hairline);
+}
+.mpark-head { margin-bottom: 8px; }
+.mpark-head .nm {
+  color: var(--ink);
+  font-weight: 660;
+}
+.mpark-grid { gap: 7px; }
+.mpark-m {
+  min-height: 34px;
+  border-color: var(--hairline);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--surface-2) 76%, transparent);
+}
+.mpark-m:hover { border-color: color-mix(in srgb, var(--ink-3) 46%, var(--hairline)); }
+.mpark-m .nm { color: var(--ink-2); }
+.mpark-m .st { color: var(--ink-3); }
+
+/* -- 11. Responsive discipline -------------------------------------------
+   Reflow labels and toolbars before the page can overflow. No horizontal
+   page scroll; wide tables keep their own local scroll container. */
+@media (max-width: 980px) {
+  .view { padding: 22px 20px 72px; }
+  .topbar { padding: 12px 20px; }
+  .cfgrow > .k { flex-basis: 104px; }
+  .cfgrow .cfghelp { margin-left: 114px; }
+}
+@media (max-width: 760px) {
+  .topbar {
+    min-height: 0;
+    padding: 11px 12px;
+  }
+  .topbar .meta,
+  .topbar .sep { display: none; }
+  .view { padding: 18px 12px 64px; }
+  .box { margin-bottom: 14px; }
+  .box > header {
+    min-height: 0;
+    padding: 12px 14px;
+    align-items: flex-start;
+  }
+  .box > header h3 { flex: 1 1 100%; }
+  .box > header > .note { flex: 1 1 100%; }
+  .tblbar,
+  .pager { padding: 10px 12px; }
+  .tblbar input[type="search"] {
+    flex: 1 1 100%;
+    min-width: 0;
+    max-width: none;
+  }
+  .tblbar .chips,
+  .pager .chips {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+  }
+  .cfgsec {
+    padding-top: 15px;
+    margin-top: 17px;
+  }
+  .cfgrow {
+    align-items: flex-start;
+    gap: 7px;
+  }
+  .cfgrow > .k {
+    flex: 1 1 100%;
+    padding-bottom: 0;
+  }
+  .cfgrow .cfghelp {
+    flex: 1 1 100%;
+    margin-left: 0;
+  }
+  .pfhead,
+  .pfSched,
+  .pfmodels {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+  .dlg { border-radius: 17px; }
+  .dlg header,
+  .dlg footer {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+  .dlg .body { padding: 16px; }
+}
+@media (max-width: 560px) {
+  .view { padding: 16px 10px 58px; }
+  .box > header { padding: 11px 12px; }
+  .tblbar,
+  .pager { padding: 9px 12px; }
+  .stat { min-height: 76px; padding: 13px 14px; }
+  #usChart > .row { min-height: 74px; padding: 11px 12px; }
+  #pkExpiry:not(:empty) .pk-expiry-chart { padding: 10px 6px 4px; }
+  .mpark-grid { grid-template-columns: 1fr; }
+  .mpark-m { min-height: 36px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -2934,12 +3873,11 @@ function capturePlatformDraft() {
   document.querySelectorAll("#pfBody .pfplat").forEach(p => {
     const values = {};
     ["pfPrio","pfMif","pfMifAcct","pfReserve"].forEach(k => { values[k] = p.querySelector("."+k).value; });
-    const freeOnly = p.querySelector(".pfFreeOnly");
     const models = {};
     p.querySelectorAll(".pfm").forEach(m => { models[m.dataset.model] = m.querySelector("input").checked; });
     const fields = {};
     p.querySelectorAll("input[id],select[id],textarea[id]").forEach(x => { fields[x.id] = { value: x.value, checked: x.checked }; });
-    draft.platforms[p.dataset.client] = { values, models, fields, freeOnly: freeOnly ? freeOnly.checked : null, clearBlacklist: p.dataset.clearBlacklist || "", schedule: cloneValues(p.querySelector(".pfSched")), open: !p.querySelector(".pfmodels").hidden };
+    draft.platforms[p.dataset.client] = { values, models, fields, clearBlacklist: p.dataset.clearBlacklist || "", schedule: cloneValues(p.querySelector(".pfSched")), open: !p.querySelector(".pfmodels").hidden };
   });
   return draft;
 }
@@ -2951,9 +3889,6 @@ function restorePlatformDraft(draft) {
     Object.keys(d.values).forEach(k => { p.querySelector("."+k).value = d.values[k]; });
     p.dataset.clearBlacklist = d.clearBlacklist;
     Object.keys(d.fields).forEach(id => { const x = document.getElementById(id); if (x) { x.value = d.fields[id].value; x.checked = d.fields[id].checked; } });
-    const freeOnly = p.querySelector(".pfFreeOnly");
-    if (freeOnly && d.freeOnly != null) freeOnly.checked = d.freeOnly;
-
     p.querySelectorAll(".pfm").forEach(m => { if (Object.prototype.hasOwnProperty.call(d.models, m.dataset.model)) m.querySelector("input").checked = d.models[m.dataset.model]; });
     p.querySelector(".pfSched").innerHTML = d.schedule;
     p.querySelector(".pfmodels").hidden = !d.open;
@@ -4794,14 +5729,26 @@ function closeAccountNote() {
 }
 
 /* ── 模型明细弹层 ─────────────────────────────────────────────────────
-   「模型」列点开的就是它。支持模型策略的模块（capabilities.model_policy）：
-   勾选 = 允许路由到它，取消勾选 = 该账号不再被路由到它（默认全勾）；「强制启用」
-   把账号级冷却/异常状态改为可用；逐模型限流仍然生效。不支持的模块
-   保持只读显示。数据来自已经拿到的 status + overview 和一次模型名称缓存。 */
+   「模型」列点开的就是它。可编辑有两种来源：模块自己的
+   capabilities.model_policy（WorkBuddy，另有「强制启用」），或部署接上的共享
+   capabilities.model_policy_store（其余平台，黑名单由网关的账号钩子执行）。
+   勾选 = 允许路由到它，取消勾选 = 该账号不再被路由到它（默认全勾）；逐模型
+   限流仍然生效并显示解除时间。两种都没有的模块保持只读显示。数据来自已经
+   拿到的 status + overview 和一次模型名称缓存。 */
 let MODEL_POLICY = null;
 
 function modelDisplayName(client, id) {
   return MODEL_NAMES[String(client || "") + "/" + String(id || "")] || String(id || "");
+}
+
+// parkStateHTML 是限流格子的状态文字。可编辑和只读两条分支共用它：原先可编辑
+// 模式只把格子染黄、不写字，于是支持模型开关的平台（WorkBuddy）反而看不到限流
+// 到几点，而只读平台能看到。until 缺失时只说「限流中」，不编造时间。
+function parkStateHTML(p) {
+  if (!p) return "";
+  if (p.kind === "unsupported") return '<span class="st">该账号不支持</span>';
+  const when = p.until ? parkRemaining(p.until) : "";
+  return '<span class="st">' + esc(when ? "限流至 " + when : "限流中") + '</span>';
 }
 
 // modelCellHTML 画一个模型格子。editable 为真时渲染复选框（勾选=允许），
@@ -4811,16 +5758,16 @@ function modelCellHTML(client, m, p, editable, disabled) {
   const name = '<span class="nm" title="' + esc(m) + '">' + esc(shown) + '</span>';
   if (editable) {
     const cls = disabled ? "off" : (p ? (p.kind === "unsupported" ? "bad" : "limit") : "ok");
+    const state = disabled ? '<span class="st">已关闭</span>' : parkStateHTML(p);
     return '<label class="mpark-m ' + cls + '" data-model="' + esc(m) + '" title="' + esc(m) + '">' +
-      '<input type="checkbox" class="mparkBox"' + (disabled ? "" : " checked") + '>' + name + '</label>';
+      '<input type="checkbox" class="mparkBox"' + (disabled ? "" : " checked") + '>' + name + state + '</label>';
   }
   if (disabled) return '<div class="mpark-m off"><span class="ic">⊘</span>' + name + '<span class="st">已关闭</span></div>';
   if (!p) return '<div class="mpark-m ok"><span class="ic">✓</span>' + name + '</div>';
   if (p.kind === "unsupported") {
     return '<div class="mpark-m bad"><span class="ic">⊘</span>' + name + '<span class="st">该账号不支持</span></div>';
   }
-  const when = p.until ? parkRemaining(p.until) : "";
-  return '<div class="mpark-m limit"><span class="ic">✕</span>' + name + '<span class="st">' + esc(when ? "限流至 " + when : "限流中") + '</span></div>';
+  return '<div class="mpark-m limit"><span class="ic">✕</span>' + name + parkStateHTML(p) + '</div>';
 }
 
 async function ensureModelNames() {
@@ -4839,8 +5786,15 @@ async function ensureModelNames() {
 function openModelsDialog(n, ids) {
   if (!MODEL_NAMES_READY[""]) { ensureModelNames().then(() => openModelsDialog(n, ids)); return; }
   const list = (ids || []).filter(Boolean);
-  const editable = !!(capsOf(n) || {}).model_policy;
-  MODEL_POLICY = { client: n, ids: list, editable: editable, original: {} };
+  // model_policy: the module keeps its own blacklist and can also force an
+  // account-level park back to ready.  model_policy_store: the module keeps no
+  // policy, so the panel's shared store does; the gateway's account hook
+  // enforces it.  Both offer the same checkboxes, only the module path offers
+  // the force switch.
+  const caps = capsOf(n) || {};
+  const modulePolicy = !!caps.model_policy;
+  const editable = modulePolicy || !!caps.model_policy_store;
+  MODEL_POLICY = { client: n, ids: list, editable: editable, modulePolicy: modulePolicy, original: {} };
   const secs = [];
   list.forEach(id => {
     const a = accById(n, id);
@@ -4857,10 +5811,12 @@ function openModelsDialog(n, ids) {
       ? '<span class="hint">' + esc(modelSummaryBits(sum.avail, sum.limited, sum.unsupported, sum.blocked) + sourceNote) + '</span>'
       : '<span class="hint">该平台不报模型级限流</span>';
     if (editable) {
-      head += '<span class="grow"></span>' +
-        '<label class="sel-note mpark-force" title="无视账号级冷却/额度/风控/异常，直接标记为可用；逐模型限流仍按原样生效">' +
-        '<input type="checkbox" class="mparkForce"' + (sum && sum.forceEnabled ? " checked" : "") + '> 强制启用</label>' +
-        '<button class="xs" type="button" data-mpark-all="1">全选</button>' +
+      head += '<span class="grow"></span>';
+      if (modulePolicy) {
+        head += '<label class="sel-note mpark-force" title="无视账号级冷却/额度/风控/异常，直接标记为可用；逐模型限流仍按原样生效">' +
+          '<input type="checkbox" class="mparkForce"' + (sum && sum.forceEnabled ? " checked" : "") + '> 强制启用</label>';
+      }
+      head += '<button class="xs" type="button" data-mpark-all="1">全选</button>' +
         '<button class="xs" type="button" data-mpark-all="0">全不选</button>';
     }
     head += '</div>';
@@ -4885,7 +5841,8 @@ function openModelsDialog(n, ids) {
     secs.push('<div class="mpark-acct" data-id="' + esc(a.id) + '">' + head + grid + '</div>');
   });
   $("#modelHelp").textContent = editable
-    ? "勾选 = 允许这个账号被路由到该模型（默认全勾）；取消勾选 = 不再路由到它。"
+    ? "勾选 = 允许这个账号被路由到该模型（默认全勾）；取消勾选 = 不再路由到它。" +
+      (modulePolicy ? "「强制启用」绕过账号级冷却，逐模型限流仍生效。" : "保存后立即在该平台生效。")
     : "模块上报逐模型状态时按上报显示；没上报时按平台目录全部可用。";
   $("#btnModelSave").hidden = !editable;
   $("#modelBody").innerHTML = secs.join("") || '<div class="hint">没有可显示的账号数据。</div>';
@@ -6305,6 +7262,14 @@ async function mdSave() {
 // 重排，永远不重新请求上游 —— 800 多行每次输入都去问一遍厂商是不可接受的。
 let MD_ITEMS = [];
 
+// mdCopyButton copies the exact routed id rather than the friendly display
+// name in the cell, so it can be pasted into an API client unchanged.
+function mdCopyButton(client, model) {
+  const full = client + "/" + model;
+  return '<button class="xs mdCopy" type="button" data-copy-model="' + esc(full) +
+    '" title="复制完整模型名" aria-label="复制完整模型名：' + esc(full) + '">复制</button>';
+}
+
 async function renderModels(refresh) {
   // /panel/api/models keeps the client boundary that /v1/models flattens away,
   // and POST /panel/api/models/refresh is the only path that asks upstream.
@@ -6384,7 +7349,7 @@ async function renderModels(refresh) {
         up: !isFallback,
         free: free,
         text: haystack([c.name, m.id, nm, m.owned_by, ex]).join(" "),
-        html: '<tr data-client="' + esc(c.name) + '" data-model="' + esc(m.id) + '"><td><b>' + esc(m.id) + '</b>' + (nm ? '<div class="hint">' + esc(nm) + '</div>' : '') +
+        html: '<tr data-client="' + esc(c.name) + '" data-model="' + esc(m.id) + '"><td><div class="mdmodel"><b>' + esc(m.id) + '</b>' + mdCopyButton(c.name, m.id) + '</div>' + (nm ? '<div class="hint">' + esc(nm) + '</div>' : '') +
           (free ? '<span class="chip ok" title="' + esc(freeTitle) + '">免费</span>' : '') + capBadges(ex) + '</td>' +
           '<td>' + esc(platformLabel(c.name)) + '</td>' +
           '<td>' + (isFallback
@@ -6471,7 +7436,7 @@ let CFG = null;
 // 需要重启才能生效的键：监听地址、数据目录、上游代理、停用客户端、模块配置。
 // 别名不在这里 —— 路由表是按请求读的，保存后热加载就能生效。
 // 与 Go 侧的 coldConfigKeys 保持一致（bundle_test.go 会交叉校验）。
-const CFG_RESTART_KEYS = { listen: 1, data_dir: 1, proxy: 1, disabled: 1, clients: 1 };
+const CFG_RESTART_KEYS = { listen: 1, data_dir: 1, proxy: 1, egress: 1, disabled: 1, clients: 1 };
 // 最近一次保存里需要重启才生效的键。保存后 5s 轮询会重画配置页，这个状态得
 // 活过重画，否则「重启进程」按钮刚点亮就被刷回普通样式。
 let CFG_PENDING_RESTART = [];
@@ -6656,9 +7621,10 @@ function pfWBCheck(id, label, checked, help) {
 
 function pfWorkBuddyPoolHTML(c) {
   const pool = c.pool || {}, cool = c.cooldown || {};
+  const prompt = c.prompt || {}, fts = c.features || {};
   return '<div class="pfwbset">' +
-    '<div class="pfwbhd">WorkBuddy 账号池与流量治理' +
-    '<span class="hint">WorkBuddy 全部生效；其他自带号池的模块复用其中三项</span></div>' +
+    '<div class="pfwbhd">WorkBuddy 账号池与请求处理' +
+    '<span class="hint">账号池设置主要作用于 WorkBuddy；号池三项会被其他自带号池的模块复用</span></div>' +
     '<div class="pfwbgrid">' +
     pfWBNum("cfgPoolMaxInFlight", "号池单账号在途", pool.max_in_flight, "3",
       "模块内部每账号并发；<code>0</code> = 不限制。") +
@@ -6683,9 +7649,17 @@ function pfWorkBuddyPoolHTML(c) {
       "窗口内按最早到期优先；<code>0</code> 关闭。") +
     pfWBCheck("cfgPoolPreferExpiring", "快过期积分优先", !!pool.prefer_expiring,
       "关闭后完全不使用到期信息选号。") +
+    pfWBText("cfgPromptMode", "提示词模式", prompt.mode, "passthrough",
+      "<code>passthrough</code> / <code>custom</code>（用下面的文件替换系统提示词）/ <code>append</code>（追加在首条 system 之后）；只作用于 WorkBuddy。") +
+    pfWBText("cfgPromptFile", "提示词文件", prompt.file, "prompts/custom.txt",
+      "custom 模式读取的提示词文件；只作用于 WorkBuddy。") +
+    pfWBCheck("cfgSanitizeFingerprints", "出站指纹清洗（顶层热开关）",
+      fts.sanitize_blacklist_fingerprints == null ? true : !!fts.sanitize_blacklist_fingerprints,
+      "关闭后不再改写 WorkBuddy 请求体里的指纹字段；键缺失时按「开」显示，保存后热加载。" +
+      "这里设置过就会覆盖模块配置里的 <code>clients.workbuddy.sanitize_fingerprints</code>。") +
     '</div>' +
     '<div class="pfwbnote">「号池单账号在途」「连续失败熔断阈值」「熔断基础时长」对 OpenRouter' +
-    ' 等自带号池的模块同样生效，其余项只作用于 WorkBuddy。WorkBuddy 请求会先取这里的号池槽位，' +
+    ' 等自带号池的模块同样生效，其余项只作用于 WorkBuddy。提示词和指纹清洗也只作用于 WorkBuddy。WorkBuddy 请求会先取这里的号池槽位，' +
     '再取上方的「网关单账号并发」，两层同时生效、通常取更小值。留空表示删除该键、回到内置默认值。</div>' +
     '</div>';
 }
@@ -6936,6 +7910,7 @@ async function renderPlatforms(preserveDraft = false) {
   SOURCE_DEFS = c.sources || {};
   const policy = c.platforms || {};
   const clientCfg = c.clients || {};
+  const modSchema = cfg.data.module_schema || {};
   const models = {};
   ((md.data && md.data.clients) || []).forEach(x => {
     models[x.name] = (x.models || []).map(m => m && m.id).filter(Boolean);
@@ -6962,6 +7937,8 @@ async function renderPlatforms(preserveDraft = false) {
     clientBaseline: JSON.parse(JSON.stringify(clientCfg)),
     poolBaseline: JSON.parse(JSON.stringify(c.pool || {})),
     cooldownBaseline: JSON.parse(JSON.stringify(c.cooldown || {})),
+    promptBaseline: JSON.parse(JSON.stringify(c.prompt || {})),
+    featuresBaseline: JSON.parse(JSON.stringify(c.features || {})),
     groupsBaseline: JSON.parse(JSON.stringify(c.model_groups || {})),
   };
   const groupsEl = $("#pfGroups");
@@ -6973,7 +7950,6 @@ async function renderPlatforms(preserveDraft = false) {
     const off = pfDisabledOf(policy, n);
     totalOff += off.length;
     const list = models[n] || [];
-    const freeOnlyKnown = ["kilocode", "opencode", "openrouter", "cline"].indexOf(n) >= 0;
     const clientEntry = (clientCfg[n] && typeof clientCfg[n] === "object" && !Array.isArray(clientCfg[n])) ? clientCfg[n] : {};
     const entry = policy[n] || {};
     const prio = entry.priority == null ? "" : String(entry.priority);
@@ -6996,11 +7972,11 @@ async function renderPlatforms(preserveDraft = false) {
       '<button class="xs pfNone" type="button">全禁用</button>' +
       '</div>');
     out.push('<div class="pfmodels" hidden>');
-    if (freeOnlyKnown) out.push('<label class="sel-note pfFreeOnlyRow" title="关闭后这个平台会展示并允许调用厂商目录里的付费模型"><input type="checkbox" class="pfFreeOnly"' + (clientEntry.free_only === false ? "" : " checked") + '> 只展示免费模型</label>');
     if (SOURCE_DEFS[n]) out.push('<div class="hint">' + esc(n) + ' · ' + esc(SOURCE_DEFS[n].base_url) + ' · 余额 ' + esc(SOURCE_DEFS[n].balance_protocol || 'auto') + (SOURCE_DEFS[n].disabled ? ' · 已停用' : '') + '</div>');
     // 展开区顶部是 priority_schedule 分时规则编辑器，下方才是模型清单。
     out.push(pfPriorityScheduleHTML(entry));
     if (n === "workbuddy") out.push(pfWorkBuddyPoolHTML(c));
+    out.push(modCardHTML(n, clientEntry, modSchema[n] || [], ""));
     if (list.length) out.push('<div class="pfwbhd" style="margin-top:10px">模型清单</div>');
     if (!list.length) {
       out.push('<div class="hint">这个平台没有可调用的模型（模块未上报目录）。</div>');
@@ -7135,11 +8111,13 @@ async function savePlatforms() {
     return;
   }
 
-  const pool = {}, cool = {};
+  const pool = {}, cool = {}, prompt = {}, features = {};
   const wb = document.querySelector('#pfBody .pfplat[data-client="workbuddy"]');
   if (wb) {
     const bPool = (PF && PF.poolBaseline) || {};
     const bCool = (PF && PF.cooldownBaseline) || {};
+    const bPrompt = (PF && PF.promptBaseline) || {};
+    const bFeatures = (PF && PF.featuresBaseline) || {};
     const ok =
       readNumField("cfgPoolMaxInFlight", "max_in_flight", pool, bPool, true) &&
       readNumField("cfgPoolMaxInFlightGlobal", "max_in_flight_global", pool, bPool, true) &&
@@ -7161,24 +8139,51 @@ async function savePlatforms() {
       const now = !!pref.checked;
       if (now !== !!bPool.prefer_expiring) pool.prefer_expiring = now;
     }
+    const modeEl = $("#cfgPromptMode");
+    if (modeEl) {
+      const raw = modeEl.value.trim();
+      if (raw === "") { if ("mode" in bPrompt) prompt.mode = null; }
+      else if (raw !== bPrompt.mode) prompt.mode = raw;
+    }
+    const fileEl = $("#cfgPromptFile");
+    if (fileEl) {
+      const raw = fileEl.value.trim();
+      if (raw === "") { if ("file" in bPrompt) prompt.file = null; }
+      else if (raw !== bPrompt.file) prompt.file = raw;
+    }
+    const sanEl = $("#cfgSanitizeFingerprints");
+    if (sanEl) {
+      const was = bFeatures.sanitize_blacklist_fingerprints == null ? true : !!bFeatures.sanitize_blacklist_fingerprints;
+      if (!!sanEl.checked !== was) features.sanitize_blacklist_fingerprints = !!sanEl.checked;
+    }
   }
 
   const clientPatch = {};
   const clientBase = (PF && PF.clientBaseline) || {};
-  for (const el of document.querySelectorAll("#pfBody .pfFreeOnly")) {
-    const name = el.closest(".pfplat").dataset.client;
-    const known = ["kilocode", "opencode", "openrouter", "cline"].indexOf(name) >= 0;
-    if (!known) continue;
+  for (const card of document.querySelectorAll("#pfBody .cfgmodcard")) {
+    const name = card.dataset.name;
     const before = (clientBase[name] && typeof clientBase[name] === "object" && !Array.isArray(clientBase[name])) ? clientBase[name] : {};
-    const was = before.free_only === false ? false : true;
-    const now = !!el.checked;
-    if (now !== was) clientPatch[name] = { free_only: now };
+    const edits = [];
+    card.querySelectorAll(".cfgmodctl").forEach(el => {
+      edits.push({ key: el.dataset.key, kind: el.dataset.kind, raw: el.value });
+    });
+    const extraEl = card.querySelector(".cfgmodextra");
+    const built = modBuildValue(edits, extraEl ? extraEl.value : "");
+    if (built.error) {
+      toast("「" + platformLabel(name) + "」配置无效：" + built.error, "err");
+      if (extraEl) extraEl.focus();
+      return;
+    }
+    const diff = modDiffPatch(before, built.value);
+    if (Object.keys(diff).length) clientPatch[name] = diff;
   }
   const patch = {};
   if (Object.keys(changed).length) patch.platforms = changed;
   if (Object.keys(clientPatch).length) patch.clients = clientPatch;
   if (Object.keys(pool).length) patch.pool = pool;
   if (Object.keys(cool).length) patch.cooldown = cool;
+  if (Object.keys(prompt).length) patch.prompt = prompt;
+  if (Object.keys(features).length) patch.features = features;
   const readGroups = pfReadModelGroups();
   if (readGroups.err) {
     toast("模型路由组：" + readGroups.err, "err");
@@ -7227,7 +8232,7 @@ async function savePlatforms() {
     if (!rel.ok) {
       toast("配置已保存，但热加载失败（" + rel.err + "）：重启后生效", "err");
     } else if (needsRestart) {
-      toast("已保存；其余热加载配置已生效，免费模型开关重启进程后生效。", "err");
+      toast("已保存；其余热加载配置已生效，模块配置重启进程后生效。", "err");
     } else {
       toast("已保存并立即生效：" + Object.keys(patch).join("、"));
     }
@@ -7329,12 +8334,21 @@ function modDiffPatch(baseline, next) {
   return out;
 }
 
+// modDomID gives every generated control a stable id so the platform page can
+// preserve an operator draft across a background refresh without depending on
+// the surrounding card being the same DOM node.
+function modDomID(mod, key) {
+  const safe = s => String(s == null ? "" : s).replace(/[^A-Za-z0-9_-]/g, "_");
+  return "cfgmod-" + safe(mod) + "-" + safe(key);
+}
+
 // modRowHTML 画一个配置项。bool 与 choice 都画成下拉，第一项是「默认」——
 // 它就是「删掉这个键、用模块内置值」。
 function modRowHTML(mod, o, obj, dis) {
   const has = Object.prototype.hasOwnProperty.call(obj, o.key);
   const value = modDisplayValue(has ? obj[o.key] : undefined);
-  const base = ' class="cfgtext cfgmodctl" data-mod="' + esc(mod) + '" data-key="' + esc(o.key) +
+  const help = modRowHelp(o);
+  const base = ' id="' + esc(modDomID(mod, o.key)) + '" class="cfgtext cfgmodctl" data-mod="' + esc(mod) + '" data-key="' + esc(o.key) +
     '" data-kind="' + esc(o.kind) + '"' + dis;
   let control;
   if (o.kind === "choice" || o.kind === "bool") {
@@ -7349,7 +8363,18 @@ function modRowHTML(mod, o, obj, dis) {
     control = '<input' + base + ' type="' + type + '" spellcheck="false" value="' + esc(value) + '">';
   }
   return '<label class="cfgrow"><span class="k">' + esc(o.label) + '</span>' + control +
-    '<span class="cfghelp">' + esc(o.help || "") + '</span></label>';
+    '<span class="cfghelp">' + esc(help) + '</span></label>';
+}
+
+// modRowHelp decides whether a schema option is a module-level switch that also
+// has a hot top-level twin.  WorkBuddy is the one module where that is true:
+// clients.workbuddy.sanitize_fingerprints is read at construction time, while
+// features.sanitize_blacklist_fingerprints overrides it and is applied live.
+// Saying so on both controls keeps an operator from wondering why the hot
+// switch and the module switch disagree.
+function modRowHelp(o) {
+  if (!o || o.key !== "sanitize_fingerprints" || o.kind !== "bool") return o && o.help || "";
+  return "模块自己的开关，重启后生效；顶层的「出站指纹清洗（顶层热开关）」一旦设置会覆盖这里，并立即热加载生效。";
 }
 
 // modCardHTML 画一个模块的卡片：上面是能看懂的控件，下面是没被控件覆盖的键。
@@ -7370,12 +8395,15 @@ function modCardHTML(name, value, opts, dis) {
     : "";
   const noForm = list.length ? "" :
     '<div class="cfghelp">这个模块还没有整理出常用项，全部设置都在下面的「其它键」里。</div>';
+  // 这张卡片现在嵌在「平台配置」的平台卡片里，平台名外面已经有了，标题只说功能。
   return '<details class="cfg cfgmodcard" data-name="' + esc(name) + '"><summary>' +
-    esc(platformLabel(name)) +
+    '模块配置' +
     '<span class="hint">已设置 ' + Object.keys(obj).length + ' 项</span></summary>' +
+    '<div class="cfghelp">留空 = 用模块内置默认值；要把整张卡片恢复默认，清空所有控件并把「其它键」留空或写成 <code>{}</code>。' +
+    '模块配置保存后需要<strong>重启进程</strong>才生效。</div>' +
     noForm + rows + note +
     '<label class="cfgrow cfgblock"><span class="k">其它键（JSON）</span>' +
-    '<textarea class="cfgtext cfgmodextra" spellcheck="false" data-name="' + esc(name) + '"' + dis + '>' +
+    '<textarea id="' + esc(modDomID(name, "__extra")) + '" class="cfgtext cfgmodextra" spellcheck="false" data-name="' + esc(name) + '"' + dis + '>' +
     esc(JSON.stringify(extra)) + '</textarea>' +
     '<span class="cfghelp">上面表单没列出的键原样放在这里，不动它就行。留空或 <code>{}</code> 都表示没有其它键。</span></label>' +
     '</details>';
@@ -7394,8 +8422,8 @@ async function renderConfig() {
   $("#cfgPath").textContent = d.path || "（网关未提供配置路径）";
   // 到底哪个键要重启，saveConfig 保存后按实际改动逐个说；这里只说默认那条规则。
   $("#cfgNote").textContent = editable
-	? ("保存到 " + d.path + "。账号池 / 会话粘性 / 提示词 / 指纹清洗 / 入站 Key 保存后立即生效；" +
-	   "监听地址、数据目录、上游代理、停用客户端与模块配置需要重启进程。")
+	? ("保存到 " + d.path + "。会话粘性 / 入站 Key 保存后立即生效；" +
+	   "监听地址、数据目录、上游代理、停用客户端需要重启进程。平台与模块配置在「平台配置」页。")
 	: "本进程启动时没有指定 -config，没有可写入的配置文件，只能查看。";
   $("#btnCfgSave").disabled = !editable;
   // 重启按钮只在宿主真的接了重启钩子时出现；没接就干脆不画，而不是留一个
@@ -7413,24 +8441,25 @@ async function renderConfig() {
     "显示为 <code>" + esc(REDACTED) + "</code> 表示保持磁盘上的原值；想清空就直接清空输入框。"));
   out.push(cfgText("cfgDataDir", "数据目录", c.data_dir, "data"));
   out.push(cfgText("cfgProxy", "上游代理", c.proxy, "http://127.0.0.1:8080"));
+  const eg = c.egress || {};
+  out.push(cfgCheck("cfgEgressEnabled", "出口中继", !!eg.enabled,
+    "开启后所有上游请求走下方出口；与「上游代理」同时配置时以出口中继为准。"));
+  out.push(cfgText("cfgEgressMode", "出口模式", eg.mode || "subscription", "client 或 subscription",
+    "<code>client</code> 直连已有 HTTP/SOCKS 代理；<code>subscription</code> 由本进程托管 mihomo 订阅。"));
+  out.push(cfgText("cfgEgressURL", "出口地址 / 订阅链接", eg.url, "http://127.0.0.1:8080 或订阅 URL",
+    "订阅 URL 视为凭据，保存后页面只显示 <code>" + esc(REDACTED) + "</code>。"));
+  out.push(cfgText("cfgEgressMihomoPath", "mihomo 路径", eg.mihomo_path, "留空自动查找",
+    "仅订阅模式使用；留空时从 PATH、Clash Verge 常见安装目录查找。"));
   out.push('</div>');
 
-  // 会话粘性与提示词：参考的 CFG_MAP 把 session_sticky_enabled / prompt_mode /
-  // prompt_file / sanitize_blacklist_fingerprints 列成独立一组。目标此前只暴露了
-  // session_sticky.ttl，其余三项在文件里一直可写、页面却看不见，等于「只能手改
-  // JSON 才用得上」。补上之后配置页的功能面才与参考一致。
-  const prm = c.prompt || {}, fts = c.features || {};
-  out.push('<div class="cfgsec"><div class="cfghd">会话粘性与提示词</div>');
+  // 会话粘性影响所有声明了 affinity 的模块，所以留在全局配置页。
+  // prompt.* 与 features.sanitize_blacklist_fingerprints 只由 WorkBuddy 消费，
+  // 已经和账号池设置一起收进「平台配置 · WorkBuddy」卡片。
+  out.push('<div class="cfgsec"><div class="cfghd">会话粘性</div>');
   const sticky = c.session_sticky || {};
   out.push(cfgText("cfgStickyTTL", "会话粘性 TTL", cfgFieldText(sticky.ttl), "30m"));
   out.push(cfgCheck("cfgStickyEnabled", "会话粘性路由", sticky.enabled == null ? true : !!sticky.enabled,
     "关闭后完全不做粘性：每次请求都重新选号，而不是把粘性窗口设为 0。"));
-  out.push(cfgText("cfgPromptMode", "提示词模式", cfgFieldText(prm.mode), "passthrough",
-    "<code>passthrough</code> / <code>custom</code>（用下面的文件替换系统提示词）/ <code>append</code>（追加在首条 system 之后）。"));
-  out.push(cfgText("cfgPromptFile", "提示词文件", cfgFieldText(prm.file), "prompts/custom.txt"));
-  out.push(cfgCheck("cfgSanitizeFingerprints", "出站指纹清洗",
-    fts.sanitize_blacklist_fingerprints == null ? true : !!fts.sanitize_blacklist_fingerprints,
-    "关闭后不再改写请求体里的指纹字段。"));
   out.push('</div>');
 
   // 面板自己的展示设置。放共享配置而不是客户端块，因为面板是共享的。
@@ -7460,16 +8489,7 @@ async function renderConfig() {
   });
   out.push('</div><div class="cfghelp">勾选后该 client 不会注册路由。</div></div>');
 
-  out.push('<div class="cfgsec"><div class="cfghd">模块配置</div>');
-  const cl = c.clients || {};
-  const modSchema = d.module_schema || {};
-  moduleNames.forEach(n => {
-    const v = cl[n] == null ? {} : cl[n];
-    out.push(modCardHTML(n, v, modSchema[n] || [], dis));
-  });
-  out.push('<div class="cfghelp">每个模块一张卡片，里面是按该模块真实支持的配置项整理的常用设置：' +
-    '某一格留空 = 用模块内置默认值；要把整张卡片恢复默认，清空所有控件并把「其它键」留空或写成 <code>{}</code>。表单没覆盖到的键留在卡片底部的「其它键」里，照着原样别动即可。' +
-    '模块配置保存后需要<strong>重启进程</strong>才生效。</div></div>');
+  out.push('<div class="cfghelp">平台自己的模块配置、号池、提示词和指纹清洗已移到「平台配置」页；这里只保留全局路由与面板设置。</div>');
 
   out.push('<details class="cfg"><summary>查看脱敏后的完整配置（只读）</summary><pre class="cfgjson">' +
     esc(JSON.stringify(c, null, 2)) + '</pre></details>');
@@ -7478,12 +8498,10 @@ async function renderConfig() {
   //
   // 表单里有一批控件画的是**内置默认值**，而不是文件里的值：文件里没有
   // *_enabled 这个键时排程组开关画成「开」（见上面 :2465 的说明），
-  // session_sticky.enabled / sanitize_blacklist_fingerprints 同理，
-  // package_detail_limit 画的是服务端解析后的生效值，没有配置节的模块画成 {}。
+  // session_sticky.enabled 同理；package_detail_limit 画的是服务端解析后的生效值。
   // 而 saveConfig 是「表单形状」的：它把看得见的每个字段都塞进 patch。两者一撞，
-  // 一次「什么都没改」的保存就会把这些默认值实体化进文件——凭空多出 7 个空模块节
-  // 和 6 个 schedule.*_enabled，再如实报告「已保存 clients、panel、pool、prompt、
-  // schedule、session_sticky（重启后生效）」。如实报告的是操作员从没做过的改动，
+  // 一次「什么都没改」的保存就会把这些默认值实体化进文件——凭空多出
+  // schedule.*_enabled，再如实报告一次操作员从没做过的改动，
   // 还附带一句「请重启进程」。
   //
   // 所以这里额外记一份「画的时候用的是什么值」，saveConfig 拿它剪掉没变的字段。
@@ -7505,13 +8523,8 @@ async function renderConfig() {
   // renderConfig 读它就是 ReferenceError，整张配置页直接白屏、连保存按钮都点不到。
   // savePlatforms 自己用 PF.poolBaseline 剪掉没改动的字段，这里不需要再记一次。
   setBase("session_sticky.enabled", sticky.enabled == null ? true : !!sticky.enabled);
-  setBase("features.sanitize_blacklist_fingerprints",
-    fts.sanitize_blacklist_fingerprints == null ? true : !!fts.sanitize_blacklist_fingerprints);
   setBase("panel.package_detail_limit",
     pnl.package_detail_limit != null ? pnl.package_detail_limit : pnlEff.package_detail_limit);
-  (NAMES.length ? NAMES : Object.keys(cl)).forEach(n => {
-    setBase("clients." + n, cl[n] == null ? {} : cl[n]);
-  });
   CFG.baseline = baseline;
 
   form.innerHTML = out.join("");
@@ -7571,6 +8584,15 @@ async function saveConfig() {
   if ($("#cfgListen")) patch.listen = val("#cfgListen");
   if ($("#cfgDataDir")) patch.data_dir = val("#cfgDataDir");
   if ($("#cfgProxy")) patch.proxy = val("#cfgProxy");
+  if ($("#cfgEgressEnabled")) {
+    const eg = {};
+    eg.enabled = $("#cfgEgressEnabled").checked;
+    eg.mode = val("#cfgEgressMode") || "subscription";
+    const eu = $("#cfgEgressURL");
+    if (eu) eg.url = eu.value.trim();
+    eg.mihomo_path = val("#cfgEgressMihomoPath");
+    patch.egress = eg;
+  }
   if ($("#cfgKey")) patch.api_key = $("#cfgKey").value.trim();
 
   const aliases = {}, kept = {};
@@ -7599,21 +8621,6 @@ async function saveConfig() {
     sticky.enabled = $("#cfgStickyEnabled").checked;
     if (Object.keys(sticky).length) patch.session_sticky = sticky;
   }
-  // 会话粘性与提示词：提示词模式/文件是文本，空串 = 删键回到内置默认；两个开关
-  // 一律显式回写（Go 侧缺省是「开」，不回写就等于没改）。
-  if ($("#cfgPromptMode")) {
-    const onDisk = CFG.config || {};
-    const bPrompt = onDisk.prompt || {}, bFeatures = onDisk.features || {};
-    const prompt = {}, features = {};
-    const mode = $("#cfgPromptMode").value.trim();
-    if (mode === "") { if ("mode" in bPrompt) prompt.mode = null; } else { prompt.mode = mode; }
-    const file = $("#cfgPromptFile").value.trim();
-    if (file === "") { if ("file" in bPrompt) prompt.file = null; } else { prompt.file = file; }
-    features.sanitize_blacklist_fingerprints = $("#cfgSanitizeFingerprints").checked;
-    if (Object.keys(prompt).length) patch.prompt = prompt;
-    if (Object.keys(features).length) patch.features = features;
-  }
-
   // 面板展示设置：非负整数，留空 = 删掉该键回到默认 5。0 是合法输入（服务端会
   // 解析成默认值），所以只有空字符串才当删除。
   if ($("#cfgPanelPkgDetailLimit")) {
@@ -7636,32 +8643,9 @@ async function saveConfig() {
   }
 
 
-  // 模块配置：卡片上的控件是主，没被控件覆盖的键走卡片底部的「其它键」JSON。
-  // 只回写真正变了的键（删掉的键发 null，configwrite.go 的合并语义按 null 删键），
-  // 没动的键一个都不发 —— 否则一次空保存会把整节重写一遍。
-  const clients = {}, cards = document.querySelectorAll(".cfgmodcard");
-  for (const card of cards) {
-    const name = card.dataset.name;
-    const onDisk = ((CFG.config || {}).clients || {})[name] || {};
-    const edits = [];
-    card.querySelectorAll(".cfgmodctl").forEach(el => {
-      edits.push({ key: el.dataset.key, kind: el.dataset.kind, raw: el.value });
-    });
-    const extraEl = card.querySelector(".cfgmodextra");
-    const built = modBuildValue(edits, extraEl ? extraEl.value : "");
-    if (built.error) {
-      toast("「" + platformLabel(name) + "」配置无效：" + built.error, "err");
-      if (extraEl) extraEl.focus();
-      return;
-    }
-    const diff = modDiffPatch(onDisk, built.value);
-    if (Object.keys(diff).length) clients[name] = diff;
-  }
-  if (cards.length) patch.clients = clients;
-
   // 只发操作员真正改过的部分。不剪的话，一次「什么都没改」的保存会把表单里
-  // 那批默认值（缺键的排程组开关、会话粘性、指纹清洗、生效的 package_detail_limit、
-  // 空的模块配置节）一起写进文件，然后如实报告「改了 6 项，需要重启」。
+  // 那批默认值（缺键的排程组开关、会话粘性、生效的 package_detail_limit）
+  // 一起写进文件，然后如实报告「改了 6 项，需要重启」。
   // 剪完为空就什么都不发：后端对空 patch 是 400，而这里该说的是「内容没有变化」。
   const pruned = pruneUnchanged(patch, CFG.baseline || (CFG.config || {}));
   if (!Object.keys(pruned).length) {
@@ -11187,6 +12171,16 @@ $("#mdBody").addEventListener("change", ev => {
   if (tr && ev.target.classList.contains("mdtoggle")) mdRecord(tr, false);
 });
 $("#mdBody").addEventListener("click", ev => {
+  const copyBtn = ev.target.closest(".mdCopy");
+  if (copyBtn) {
+    const full = copyBtn.dataset.copyModel || "";
+    if (!full) return;
+    copyText(full).then(
+      () => toast("已复制客户端/模型名", "ok"),
+      () => toast("复制失败，请手动选中模型名", "err")
+    );
+    return;
+  }
   const btn = ev.target.closest(".mdRestore");
   if (!btn) return;
   const tr = btn.closest("tr[data-client]");
