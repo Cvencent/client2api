@@ -639,8 +639,6 @@ func (r *Registry) ResolveCandidates(ctx context.Context, model string) ([]Candi
 		}
 	}
 
-
-
 	// Bare name, or a slashed id whose first segment is not a module: search
 	// every module's catalog for a match the platform policy still allows.
 	var (

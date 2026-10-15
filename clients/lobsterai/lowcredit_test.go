@@ -22,6 +22,7 @@ func addAccountWithUID(t *testing.T, c *Client, token, uid string) core.AccountR
 	}
 	return rec
 }
+
 // A hard-credit verdict must park the account out of rotation, not just write a
 // note: a zero-credit account keeps answering HTTP 200 with "免费额度已用完"
 // inside the stream, so a pool that keeps selecting it repeats the failure on
@@ -67,6 +68,7 @@ func TestFundedBalanceClearsTheHardCreditPark(t *testing.T) {
 		t.Fatalf("ready accounts = %d, want 1: a funded balance read did not clear the park", got)
 	}
 }
+
 // The reported symptom: two zero-credit accounts were tried over and over while
 // other platforms could have served the request.  Once both are parked the
 // module must say so instead of burning another round on the same verdict.
