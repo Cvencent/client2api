@@ -4,11 +4,12 @@
 
 > client2api 的详细参考文档。项目介绍和功能总览见 [README.zh-CN.md](../README.zh-CN.md)。
 
-一个 OpenAI 兼容网关，统一接入二十个 AI 客户端/平台：
+一个 OpenAI 兼容网关，统一接入二十多个 AI 客户端/平台：
 
 | 路由 | 客户端 | 包装的服务 |
 |---|---|---|
 | `workbuddy/…` | WorkBuddy | 腾讯 WorkBuddy / CodeBuddy（国际版 + 国内版） |
+| `autoclaw/…` | AutoClaw | AutoClaw 桌面端（独立平台） |
 | `trae/…` | Trae | TRAE SOLO / Trae CN |
 | `zcode/…` | ZCode | Z.AI coding plan（上游为 Anthropic Messages） |
 | `kimi/…` | Kimi | Kimi Code CLI |
@@ -47,6 +48,18 @@
 和 WebM；WAV 在进程内解码，其余容器由内置 FFmpeg 解码。错误映射为
 400（上传或音频非法）、422（无有效
 语音）、502（上游/协议错误）和 504（超时）。
+
+## Anthropic Messages
+
+`POST /v1/messages` 和 `POST /v1/messages/count_tokens` 提供 Anthropic Messages
+协议，供 Claude Code 和 Anthropic SDK 客户端使用。入站会翻译字符串或 block
+content、system、tools、tool result、thinking、usage、流式 SSE、非流式响应和
+Anthropic 风格错误，再交给与 OpenAI 兼容入口相同的内部对话请求。
+`count_tokens` 只做本地估算，不请求上游。
+
+鉴权接受网关入站 Key：可以放在 `x-api-key`，也可以写成
+`Authorization: Bearer ...`。客户端里的 Anthropic Base URL 应指向网关根地址，
+不要手工拼 `/v1/messages`；路径由客户端自己追加。
 
 ## 自定义中转站
 
@@ -95,9 +108,27 @@ ID 与 API 地址即可恢复账号池。每个自定义中转站都是**会话�
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-当前版本：**0.1.36**。完整更新记录见 [CHANGELOG.md](../CHANGELOG.md)。
+当前版本：**0.1.67**。完整更新记录见 [CHANGELOG.md](../CHANGELOG.md)。
 
-### 近期重点（0.1.26 - 0.1.29）
+### 近期重点（0.1.63 - 0.1.67）
+
+* **Anthropic Messages 入站**：Claude Code 和 Anthropic SDK 可以使用
+  `POST /v1/messages` 与 `count_tokens`，支持 tools、tool result、thinking、
+  usage、SSE 和 Anthropic 风格错误。
+* **Gemini / Google Cloud Code Assist**：支持 Google OAuth 登录、账号发现与刷新、
+  额度查询、Cloud Code Assist 请求翻译和流式返回。
+* **最终对外模型白名单**：`exposed_models` 过滤完整对外目录和所有调用入口；
+  在 **模型与档位 → 对外模型** 中编辑并热重载。
+* **账号模型策略与 429 停靠**：可按账号禁用单个模型、查看限流解除时间，并把
+  `(平台, 账号, 模型)` 冷却 60 秒，连续失败翻倍，封顶 30 分钟或使用厂商的
+  `Retry-After`。
+* **路由链预演**：平台配置 → 链路测试只做本地静态预演，不读账号状态、不发上游请求。
+* **托管出口中继**：可以走已有 HTTP/SOCKS 代理，也可以由本进程托管 mihomo 加载订阅。
+* **ZCode 验证码预取**：通过 `captcha_pool` 和 `captcha_pool_ttl_seconds` 开启单槽参数池。
+* **流式与路由修复**：HTTP 200 SSE 流内的可重试错误会在提交前切换候选；零余额账号退出
+  轮换；显式 `platform/model` 不会被模型组静默改道；Responses 空回合自动重试一次。
+
+### 较早重点（0.1.26 - 0.1.29）
 
 * **面板统一成一套精致工作台视觉**：11 个页面共用近似 Apple 的材质、亮暗语义色、
   页面和面板过渡、统一控件状态和响应式布局，并支持减少动画模式。
@@ -636,6 +667,7 @@ WorkBuddy 提示词与指纹清洗，都在 **平台配置** 页里按平台/模
 | 模块 | 许可与来源 | 说明 |
 |---|---|---|
 | workbuddy | MIT 上游，移植 | 见 `clients/workbuddy/README.md` |
+| autoclaw | 独立桌面平台；协议和凭据格式从客户端行为观察 | 见 `clients/autoclaw/README.md` |
 | trae | MIT 上游，移植 | 见 `clients/trae/README.md` |
 | zcode | AGPL 上游，**净室重写** | 见 `clients/zcode/README.md` |
 | kimi | MIT 上游，移植 | 见 `clients/kimi/README.md` |
@@ -643,6 +675,7 @@ WorkBuddy 提示词与指纹清洗，都在 **平台配置** 页里按平台/模
 | qwenwork | **无许可证**，**净室重写** | 见 `clients/qwenwork/README.md` |
 | tabbit | GPL-3.0 上游，**仅 sidecar，不复用代码** | 见 `clients/tabbit/README.md` |
 | minimaxcode | **无上游**，**净室重写** | 见 `clients/minimaxcode/README.md` |
+| gemini | 公共 Google OAuth / Cloud Code Assist 协议；仓库不内置 Google OAuth 客户端 | 见 `clients/gemini/README.md` |
 | cline | **净室实现**，协议由流量重建 | 见 `clients/cline/README.md` |
 | lobsterai | **净室实现** | 见 `clients/lobsterai/README.md` |
 | codearts | MIT 上游，移植（仅线路协议） | 见 `clients/codearts/README.md` |
@@ -650,6 +683,8 @@ WorkBuddy 提示词与指纹清洗，都在 **平台配置** 页里按平台/模
 | raccoon | MIT 上游，移植（仅线路协议） | 见 `clients/raccoon/README.md` |
 | openrouter | 公共 REST API，未阅读上游代码 | 见 `clients/openrouter/README.md` |
 | opencode | 公共 REST API；阅读了其开源服务端代码 | 见 `clients/opencode/README.md` |
+| kilocode | 公共 REST API，未阅读上游代码 | 见 `clients/kilocode/README.md` |
+| doubao | Web API 与桌面客户端凭据格式从客户端行为观察；线路流程由模块自行实现 | 见 `clients/doubao/README.md` |
 | openai-compat | 公共 REST API，未阅读上游代码 | 见 `clients/openaicompat/README.md` |
 | doubaoime | **净室实现**，豆包输入法 ASR 协议由流量重建，未复用上游代码 | 见 `clients/doubaoime/README.md` |
 
@@ -658,6 +693,7 @@ WorkBuddy 提示词与指纹清洗，都在 **平台配置** 页里按平台/模
 | 模块 | 管理 | 导入 | 登录 | 签到 |
 |---|---|---|---|---|
 | workbuddy | 是 | 是 | 是，轮询厂商登录状态 | 是，国内 `daily-checkin` / 国际 `daily-activity` |
+| autoclaw | 是 | 是，桌面 safeStorage/DPAPI、JSON 和整包导入 | 是，本机回环手机号 + 短信验证码登录 | 是，每日积分领取 |
 | trae | 是 | 是 | 是，本机 loopback 回调 | 是，仅国内 `daily-checkin` |
 | zcode | 是 | 是 | 是，设备轮询 | 是，支持浏览器验证码 |
 | kimi | 是 | 是 | 是，RFC 8628 设备授权 | 否 |
@@ -665,6 +701,7 @@ WorkBuddy 提示词与指纹清洗，都在 **平台配置** 页里按平台/模
 | qwenwork | 是 | 否 | 是，PKCE 设备流 | 是，Sash 每日签到 |
 | tabbit | 是 | 是 | 是，交给 Tabbit 浏览器 | 是，每日 `sign-in`（`desktop_pet` 场景，通常每日 3% 额度） |
 | minimaxcode | 是 | 是 | 是，RFC 8628 设备授权 | 否 |
+| gemini | 是 | 是，Google OAuth 令牌发现与导入 | 是，Google OAuth 本机回调 | 否，额度是 5 小时/周滚动窗口，没有签到 |
 | cline | 是 | 是 | 是，WorkOS 设备码 | 否 |
 | lobsterai | 是 | 是 | 是，浏览器交接 | 是，每日签到 |
 | codearts | 是 | 否 | 是，门户登录 | 是，每日签到 |
@@ -672,6 +709,8 @@ WorkBuddy 提示词与指纹清洗，都在 **平台配置** 页里按平台/模
 | raccoon | 是 | 是 | 是，本机二维码/短信页 | 是，领取每日 300 积分（桌面登录发放接口） |
 | opencode | 是 | 是 | 是，匿名免费或 Console 设备码 | 否 |
 | openrouter | 是 | 是 | 是，浏览器 PKCE | 否 |
+| kilocode | 是 | 是，API Key、`KILO_API_KEY`、Kilo CLI/Desktop 登录文件，或内置匿名凭据 | 是，设备授权；也支持 API Key 和匿名免费访问 | 否，无签到、余额或任务接口 |
+| doubao | 是 | 是，桌面客户端 Cookie 只读导入 | 是，受控浏览器网页登录 | 否，未实现签到、任务中心或短信/自动登录 |
 | openai-compat | 是 | 否 | 否 | 否 |
 
 能力标志全部来自类型断言（`core.CapabilitiesOf`）。模块没有实现某个接口，
@@ -779,6 +818,8 @@ GET    /panel/api/overview
 GET    /panel/api/logs?lines=N
 GET    /panel/api/models
 POST   /panel/api/models/refresh
+GET    /panel/api/exposed_models
+POST   /panel/api/route_plan
 GET    /panel/api/model_probes
 GET    /panel/api/usage?window=HOURS
 POST   /panel/api/usage/save

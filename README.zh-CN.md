@@ -5,7 +5,7 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-当前版本：**0.1.43**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：**0.1.67**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 流式断流排查：升级后系统日志新增 `stream: id=...` 终止诊断，包含协议、平台/模型、
 上游事件数、`finish_reason`、正文/推理字节数、工具调用数、completion token、
@@ -29,6 +29,7 @@ client2api 是一个**个人自用**的 OpenAI 兼容网关。它把你自己在
 - 在平台、账号、模型别名、`Auto/<模型>` 和模型路由组之间统一调度。
 - 平台支持会话粘性时，同一会话会尽量落在同一个账号上。
 - 统一处理账号优先级、冷却、并发限制、重试和故障切换。
+- 可选出口中继：可以走已有的 HTTP/SOCKS 代理，也可以由本进程托管 mihomo 并加载订阅。
 - 通过网页面板管理账号、任务、用量、模型、积分、日志和配置。
 - 支持 Windows 安装包、便携发布包和源码本地构建。
 - 凭据和运行数据都只保存在本机 `data/` 目录。
@@ -38,6 +39,7 @@ client2api 是一个**个人自用**的 OpenAI 兼容网关。它把你自己在
 | 路由 | 客户端 / 平台 | 上游服务 |
 |---|---|---|
 | `workbuddy/...` | WorkBuddy | 腾讯 WorkBuddy / CodeBuddy（国际版 + 国内版） |
+| `autoclaw/...` | AutoClaw | AutoClaw 桌面端（独立平台） |
 | `trae/...` | Trae | TRAE SOLO / Trae CN |
 | `zcode/...` | ZCode | Z.AI coding plan |
 | `kimi/...` | Kimi | Kimi Code CLI |
@@ -64,6 +66,7 @@ client2api 是一个**个人自用**的 OpenAI 兼容网关。它把你自己在
 ### 网关与路由
 
 - OpenAI 兼容的 `POST /v1/chat/completions` 和 `POST /v1/responses`。
+- Anthropic Messages 入站兼容 `POST /v1/messages` 与 `POST /v1/messages/count_tokens`，支持 Claude Code 常用的字符串或 block content、system、tools、tool result、thinking、usage、流式 SSE、非流式响应和 Anthropic 风格错误；任何能处理翻译后对话请求的平台都可以服务它。
 - OpenAI 兼容的 `POST /v1/audio/transcriptions`（multipart 的 `file` + `model`）；
   `GET /v1/models` 会把语音平台的模型一并列出并标记 `extra.kind = "transcription"`。
 - `GET /v1/models`、`GET /v1/status`、`GET /healthz`。
@@ -77,9 +80,11 @@ client2api 是一个**个人自用**的 OpenAI 兼容网关。它把你自己在
   `GET /v1/models` 和所有调用入口（对话、Responses、Messages、count_tokens、语音转写），
   被隐藏的 ID 即使按名字调用也会被拒绝。
 - 平台优先级、账号优先级和按北京时间生效的分时优先级。
+- 可选 `egress` 出口中继。`client` 模式接受 HTTP、HTTPS、SOCKS5 或 SOCKS5H 代理地址；`subscription` 模式会把订阅 URL 交给本进程托管的 mihomo，并把网关流量指向它的 loopback mixed port。启用后优先于顶层 `proxy`；修改这个配置需要重启进程。
 - 平台级、账号级、账号内并发限制。
 - 会话粘性、重试、冷却和自动故障切换；面板会列出粘性会话使用的模型，可强制解绑账号，也可在强制切换时指定目标平台；不指定时则清除账号和平台粘性并重新按优先级选择。
 - 统一把鉴权、额度、WAF、超时、限流等错误映射为 OpenAI 形状。
+- 部分厂商会在 HTTP 200 的 SSE 流里返回额度、鉴权、限流或 WAF 错误。网关会在提交流之前先读第一帧；如果这是可重试错误，就关闭该流并交给下一个候选平台，而不是把 502 直接丢给调用方。零余额账号会退出轮换，直到充值、签到或余额刷新读到正数。
 - 思考档位按“平台 + 模型”解析：优先级为手动配置、模块缓存目录、内置预设；
   “模型与档位”页可以查看和修改支持的档位及默认档，手动值优先于可能过期的模块缓存。
 - “封顶对齐”现在对所有平台、所有模型默认开启；面板仍可按模型手动关闭或恢复默认。
@@ -93,6 +98,8 @@ client2api 是一个**个人自用**的 OpenAI 兼容网关。它把你自己在
 - 账号池支持启用/停用、备注、身份标识、优先级和余额显示。
 - 支持手动添加、本地凭据发现、整包导入，以及模块支持时的浏览器/设备登录。
 - 支持重新登录、恢复、测试、签到、刷新余额和删除账号。
+- Gemini / Google Cloud Code Assist 支持 Google OAuth 登录、账号发现与刷新、额度查询，以及 Cloud Code Assist 请求翻译和流式返回。
+- ZCode 可以选择开启单槽验证码参数预取池：请求取用新鲜参数，后台立即补充；默认关闭，因为预取大约会让设备额度消耗翻倍。对应配置是 `captcha_pool` 和 `captcha_pool_ttl_seconds`。
 - 「模型」列点开可以逐账号启用/禁用单个模型，所有平台都可编辑：WorkBuddy 沿用模块自己的模型策略（含「强制启用」），其余平台写入网关共享的账号模型黑名单，在下一次请求选取账号时生效。限流中的模型会显示解除时刻和剩余时间。
 - 任何上游 429 都会给「平台 + 账号 + 模型」记一段冷却：首次 60 秒，连续失败翻倍，封顶 30 分钟；上游给了 `Retry-After` 就优先用它（同样封顶）。冷却期间网关拒绝该账号的这个模型，模块会换账号或换平台，不再撞同一个限流；账号的模型弹窗会显示解除时刻和剩余时间。模块每次尝试都通过 `core.ChatRequest.NoteAccountFailure` 上报时，即使它已经轮转到别的账号成功也会记上；没有上报的模块由网关在整体失败时兜底记录。
 - Loomy 的余额、套餐和模型目录刷新只用于展示：读取失败只在该行报错，不会让账号冷却、异常或停用；账号健康只由真实对话请求或手动「测试」决定。
@@ -119,6 +126,7 @@ client2api 是一个**个人自用**的 OpenAI 兼容网关。它把你自己在
   全选/反选/清空、逐项勾选；保存后写入 `exposed_models` 并热重载，无需重启。配置里存在、
   但当前目录没有的 ID 会保留成 `missing` 行，保存不会丢。
 - 平台配置
+- 平台配置页包含路由链预演：输入模型名后显示静态故障切换顺序、实际模型、优先级和优先级来源；只做本地预演，不发上游请求、不读账号状态。
 - 配置
 - 运行日志
 

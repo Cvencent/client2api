@@ -5,7 +5,7 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-Current version: **0.1.43**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
+Current version: **0.1.67**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
 
 client2api is a personal, local-only OpenAI-compatible gateway. It aggregates
 the accounts and API Keys **you own** on different AI coding clients and
@@ -25,10 +25,14 @@ people. The built-in default is `127.0.0.1`.
 ## What It Does
 
 - Aggregates your own accounts across supported platforms into one account pool.
-- Serves `POST /v1/chat/completions` and `POST /v1/responses` with one inbound API Key.
+- Serves `POST /v1/chat/completions`, `POST /v1/responses`, and inbound Anthropic
+  `POST /v1/messages` / `POST /v1/messages/count_tokens` with one inbound API Key.
 - Serves `POST /v1/audio/transcriptions` for platforms that expose speech, so a
   WAV/FLAC/MP3/MP4/M4A/OGG/WebM upload comes back as `{"text": "..."}` (or
   text, SRT, verbose JSON, VTT).
+- Can route all upstream traffic through an optional managed egress relay:
+  use an existing HTTP/SOCKS proxy, or let the process manage mihomo from a
+  subscription.
 - Routes by platform, account, model, alias, `Auto/<model>` or custom model groups.
 - Keeps one conversation on the same account where the platform supports sticky sessions.
 - Handles account priority, cooldown, concurrency limits, retries and failover.
@@ -68,6 +72,10 @@ people. The built-in default is `127.0.0.1`.
 ### Gateway and routing
 
 - OpenAI-compatible `POST /v1/chat/completions`, `POST /v1/responses`, and inbound Anthropic `POST /v1/messages` / `POST /v1/messages/count_tokens`.
+- The Anthropic Messages ingress supports Claude Code's string or block
+  content, system prompts, tools, tool results, thinking, usage, streaming SSE,
+  non-streaming responses and Anthropic-shaped errors. It can be served by any
+  module that can handle the translated chat request.
 - OpenAI-compatible `POST /v1/audio/transcriptions` (multipart `file` + `model`)
   for speech platforms; `GET /v1/models` lists their models with `extra.kind = "transcription"`.
 - `GET /v1/models`, `GET /v1/status` and `GET /healthz`.
@@ -91,6 +99,11 @@ people. The built-in default is `127.0.0.1`.
   and every call entry point (chat, responses, messages, count_tokens and audio
   transcriptions), so a hidden id is not callable even when it is named directly.
 - Platform priority, account priority and time-based priority schedules.
+- Optional `egress` relay. `client` mode accepts an HTTP, HTTPS, SOCKS5 or
+  SOCKS5H proxy URL; `subscription` mode hands a subscription URL to a managed
+  mihomo process and points gateway traffic at its loopback mixed port. An
+  enabled `egress` takes precedence over the top-level `proxy`; changing this
+  block requires a restart.
 - Per-platform and per-account concurrency limits.
 - Per-account per-model enable/disable from the account's model dialog, on every platform: WorkBuddy keeps its module-side policy (including "force enable"), the others write a shared blacklist the gateway's account hook enforces on the next request. A rate-limited model shows when it will be released and how long is left.
 - Any upstream 429 parks the `(platform, account, model)` triple for a cooldown: 60 seconds at first, doubling per consecutive failure and capped at 30 minutes, or the vendor's own `Retry-After` when it sent one (also capped). The gateway refuses that account for that model while the park is live, so a module rotates to another account or platform instead of walking back into the same rate limit, and the account's model dialog shows when the park is released and how much time is left. A module that reports every attempt through `core.ChatRequest.NoteAccountFailure` is covered even when it recovers on another account; the rest fall back to the gateway's terminal-failure record.
@@ -164,6 +177,13 @@ people. The built-in default is `127.0.0.1`.
 - Account pool with enable/disable, notes, identity labels, priority and balance.
 - Manual import, local credential discovery, bundle import and browser/device login where supported.
 - Re-login, revive, test, check-in, balance refresh and account deletion.
+- Gemini / Google Cloud Code Assist accounts support Google OAuth login,
+  account discovery and refresh, quota reads, and Cloud Code Assist request
+  translation with streaming responses.
+- ZCode can opt into a one-slot captcha-parameter prefetch pool. A request takes
+  the fresh parameter and the pool replenishes in the background; the pool is
+  off by default because prefetching roughly doubles device-quota consumption.
+  Tune it with `captcha_pool` and `captcha_pool_ttl_seconds`.
 - Loomy balance, package and model-catalogue refreshes are display-only: a failed read is reported on that row and does not cool down, park, or disable the account; a real chat request or the explicit Test action is what changes account health.
 - ZCode JWT / API key channels grouped under one account.
 - Dynamic OpenAI-compatible relay platforms with their own API root and Key pool.
@@ -192,8 +212,9 @@ people. The built-in default is `127.0.0.1`.
   catalogue is kept as a `missing` row so a save cannot drop it.
 - Platform Configuration
 - Config keeps only genuinely global settings: listen address, inbound API Key,
-  data directory, upstream proxy, session stickiness, panel display, aliases and
-  disabled clients. Platform Configuration owns everything platform-specific:
+  data directory, upstream proxy, optional egress relay, session stickiness,
+  panel display, aliases and disabled clients. Platform Configuration owns
+  everything platform-specific:
   routing, blacklists, concurrency, model groups, each module's own
   `clients.<module>` section (rendered as labelled controls inside that
   platform's card) and the WorkBuddy-only prompt/fingerprint controls. An empty

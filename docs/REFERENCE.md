@@ -5,11 +5,12 @@
 > Reference documentation for client2api.
 > For the project introduction and feature overview, see [README.md](../README.md).
 
-One OpenAI-compatible gateway in front of twenty AI backends:
+One OpenAI-compatible gateway in front of more than twenty AI backends:
 
 | route | client | what it wraps |
 |---|---|---|
 | `workbuddy/…` | WorkBuddy | Tencent WorkBuddy / CodeBuddy (intl + cn realms) |
+| `autoclaw/…` | AutoClaw | AutoClaw desktop (independent platform) |
 | `trae/…` | Trae | TRAE SOLO / Trae CN |
 | `zcode/…` | ZCode | Z.AI coding plan (Anthropic Messages upstream) |
 | `kimi/…` | Kimi | Kimi Code CLI |
@@ -49,6 +50,19 @@ the chat pool. The `doubaoime` module accepts WAV, FLAC, MP3, MP4/M4A, OGG and
 WebM; WAV is decoded in-process and the rest are decoded by the bundled FFmpeg.
 Errors map to 400 (bad upload or audio), 422 (no speech), 502
 (upstream/protocol) and 504 (timeout).
+
+## Anthropic Messages
+
+`POST /v1/messages` and `POST /v1/messages/count_tokens` expose the Anthropic
+Messages wire shape for Claude Code and Anthropic SDK clients. The ingress
+translates string or block content, system prompts, tools, tool results,
+thinking, usage, streaming SSE, non-streaming responses and Anthropic-shaped
+errors into the same internal chat request used by the OpenAI-compatible
+endpoints. `count_tokens` is a local estimate and does not call upstream.
+
+Authentication accepts the gateway's inbound key either as `x-api-key` or as
+`Authorization: Bearer ...`. Point the client's Anthropic base URL at the
+gateway root, not at `/v1/messages`; the client appends the path itself.
 
 ## Custom Relay Platforms
 
@@ -115,9 +129,34 @@ HTTP 429 endpoint outages, are classified as upstream failures.
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-Current version: **0.1.36**. Full history: [CHANGELOG.md](../CHANGELOG.md).
+Current version: **0.1.67**. Full history: [CHANGELOG.md](../CHANGELOG.md).
 
-### Recent highlights (0.1.26 - 0.1.29)
+### Recent highlights (0.1.63 - 0.1.67)
+
+* **Anthropic Messages ingress:** Claude Code and Anthropic SDK clients can use
+  `POST /v1/messages` and `count_tokens`, including tools, tool results,
+  thinking, usage, SSE and Anthropic-shaped errors.
+* **Gemini / Google Cloud Code Assist:** Google OAuth login, account discovery
+  and refresh, quota reads, Cloud Code Assist translation and streaming.
+* **Final outward model whitelist:** `exposed_models` filters the completed
+  catalogue and every call entry point, with a hot-reloaded selector under
+  **Models and Profiles → Exposed Models**.
+* **Per-account model policy and 429 parking:** disable a model on one account,
+  see when a rate limit is released, and park the `(platform, account, model)`
+  triple for 60 seconds, doubling to a 30-minute cap or the vendor's
+  `Retry-After`.
+* **Route-plan preview:** Platform Configuration → Link Test statically replays
+  failover order without reading account state or calling upstream.
+* **Managed egress:** route all upstream traffic through an existing HTTP/SOCKS
+  proxy or a subscription managed by a local mihomo process.
+* **ZCode captcha prefetch:** opt into a one-slot parameter pool with
+  `captcha_pool` and `captcha_pool_ttl_seconds`.
+* **Stream and routing fixes:** retryable errors carried inside an HTTP 200 SSE
+  stream fail over before commit, zero-credit accounts leave rotation, explicit
+  `platform/model` pins are not silently redirected by model groups, and empty
+  Responses turns retry once.
+
+### Earlier highlights (0.1.26 - 0.1.29)
 
 * **The panel has one polished workspace design:** all eleven views now share an Apple-like
   material system, semantic light/dark colors, smoother page and panel transitions, consistent
@@ -179,7 +218,7 @@ That is enforced mechanically, not by convention:
 * No `clients/*` package may import another `clients/*` package.
 * Every module registers itself from `init()` via `core.Register`.
 * `clients/all/all.go` is the **only** file that knows the full list — it is
-  nothing but seventeen blank imports.
+  nothing but one blank import per registered client module.
 * `cmd/client2api/main.go` builds each module in turn; **if one fails to
   construct, it is logged and skipped**, and the process keeps running with the
   rest.
@@ -187,14 +226,13 @@ That is enforced mechanically, not by convention:
 
 So: to add a client you create `clients/<name>/`, add one import line, and touch
 nothing else. To remove one you delete the directory and the line. To rewrite one
-you never look at the other thirteen.
+you never look at the other modules.
 
 See [`docs/MODULE-CONTRACT.md`](MODULE-CONTRACT.md) for the interface, and
 [`docs/upstream/<name>.md`](upstream) for a client's protocol notes where one
-exists — six of the original seven have a dossier there (workbuddy, trae,
-qwenwork, tabbit, kimi, zcode). The seven added later (cline, lobsterai, codearts,
-loomy, raccoon, openrouter, opencode), plus minimaxcode, document their protocol
-inside their own `clients/<name>/README.md`.
+exists — several early modules have a dossier there (workbuddy, trae, qwenwork,
+tabbit, kimi, zcode). Later modules document their protocol inside their own
+`clients/<name>/README.md`.
 
 ## Build
 
@@ -1033,6 +1071,7 @@ configuration), and the panel says so instead of implying a Redis mirror.
 | module | licence position | state |
 |---|---|---|
 | workbuddy | MIT upstream, ported | see `clients/workbuddy/README.md` |
+| autoclaw | independent desktop platform; protocol and credential format observed from the client | see `clients/autoclaw/README.md` |
 | trae | MIT upstream, ported | see `clients/trae/README.md` |
 | zcode | AGPL upstream → **clean-room rewrite** | see `clients/zcode/README.md` |
 | kimi | MIT upstream, ported | see `clients/kimi/README.md` |
@@ -1040,6 +1079,7 @@ configuration), and the panel says so instead of implying a Redis mirror.
 | qwenwork | **no licence** → **clean-room rewrite** | see `clients/qwenwork/README.md` |
 | tabbit | GPL-3.0 upstream → **sidecar only, no code reuse** | see `clients/tabbit/README.md` |
 | minimaxcode | **no upstream** → **clean-room rewrite** | see `clients/minimaxcode/README.md` |
+| gemini | public Google OAuth / Cloud Code Assist protocol; repository embeds no Google OAuth client | see `clients/gemini/README.md` |
 | cline | **clean-room** — protocol reconstructed from observed traffic | see `clients/cline/README.md` |
 | lobsterai | **clean-room** — from a TypeScript integration plan for another project | see `clients/lobsterai/README.md` |
 | codearts | MIT upstream, ported (wire protocol only) | see `clients/codearts/README.md` |
@@ -1047,6 +1087,8 @@ configuration), and the panel says so instead of implying a Redis mirror.
 | raccoon | MIT upstream, ported (wire protocol only) | see `clients/raccoon/README.md` |
 | openrouter | public REST API, no upstream code read | see `clients/openrouter/README.md` |
 | opencode | public REST API; the gateway's own server source is open and was read | see `clients/opencode/README.md` |
+| kilocode | public REST API, no upstream code read | see `clients/kilocode/README.md` |
+| doubao | web API and desktop credential format observed from the client; module implements the wire flow itself | see `clients/doubao/README.md` |
 | openai-compat | public REST API, no upstream code read | see `clients/openaicompat/README.md` |
 | doubaoime | **clean-room** — Doubao Input Method ASR protocol reconstructed from observed traffic, no upstream code | see `clients/doubaoime/README.md` |
 
@@ -1363,6 +1405,7 @@ renderer never calls it either — so there is nothing honest to implement from.
 | module | manage | import | login | check-in |
 |---|---|---|---|---|
 | workbuddy | yes | yes | yes — polls `/v2/plugin/auth/state` → `/token` and opens `copilot.tencent.com/login` | yes — `daily-checkin` (CN) and `daily-activity` (intl) |
+| autoclaw | yes | yes — Electron safeStorage/DPAPI desktop import, JSON and bundle import | yes — loopback phone + SMS-code login | yes — daily points claim |
 | trae | yes | yes | yes — loopback redirect on `127.0.0.1`, opens `www.trae.cn/authorization` | yes — `daily-checkin` (CN only) |
 | zcode | yes | yes | yes — polls `POST {api}/oauth/cli/init` → `GET …/poll/{flow_id}` | yes — claims the promotion via the built-in Edge/Chrome captcha solver; `captcha_command` is the headless fallback |
 | kimi | yes | yes | yes — RFC 8628 device grant against `auth.kimi.com`; the CLI is not required | no — no such endpoint exists |
@@ -1370,6 +1413,7 @@ renderer never calls it either — so there is nothing honest to implement from.
 | qwenwork | yes | no — nothing on disk holds a usable token | yes — PKCE device flow | yes — `daily`, against the Sash check-in API |
 | tabbit | yes | yes | yes — browser hand-off: opens the sign-in page inside the Tabbit browser through its own launcher, then reads the session cookie back (`local_app` + `handoff_path`; with no launcher it falls back to returning the URL) | yes — daily `sign-in` for the `desktop_pet` scene (normally 3% credit), with a fresh `request_no` idempotency key |
 | minimaxcode | yes | yes | yes — RFC 8628 device grant against `account.minimax.cn`, PKCE, with the CN `user_code` variant; the desktop GUI is not required | no — the product has no check-in |
+| gemini | yes | yes — Google OAuth token discovery and import | yes — Google OAuth loopback callback | no — quota is a rolling 5-hour/weekly window, not a check-in |
 | cline | yes | yes | yes — WorkOS device-code flow, the same client id the desktop app uses | no — no such endpoint exists |
 | lobsterai | yes | yes | yes — browser hand-off; the module returns the URL and watches for the credential it leaves behind | yes — a daily check-in action |
 | codearts | yes | no — the IDE plugin keeps no discoverable credential file | yes — the portal's own sign-in, driven as a pending session | yes — the daily check-in |
@@ -1377,9 +1421,11 @@ renderer never calls it either — so there is nothing honest to implement from.
 | raccoon | yes | yes | yes — loopback QR/SMS page with a stdlib QR encoder; WeChat scan or SMS, phone encrypted host-side | yes — `login-points`, the desktop login grant that claims the daily 300 credits |
 | opencode | yes | yes — the `opencode` entry of `~/.local/share/opencode/auth.json`, plus every `*.json` in `<data_dir>/import/` | yes — two realms: anonymous free (`x-api-key: public`) and Console device-code OAuth | no — Zen has no check-in and no task API |
 | openrouter | yes | yes — `OPENROUTER_API_KEY`, the conventional credential files, an `env:NAME` reference, or a pasted key | yes — browser PKCE; the issued key is stored like a pasted one | no — the vendor has no check-in |
+| kilocode | yes | yes — API key, `KILO_API_KEY`, Kilo CLI/Desktop sign-in file, or the built-in anonymous credential | yes — device authorisation; API keys and anonymous free access are also supported | no — no check-in, balance, or task API |
+| doubao | yes | yes — read-only desktop-client cookie import | yes — controlled browser web login | no — check-in, task centre, SMS/auto login are not implemented |
 | openai-compat | yes | no — a bare API key is pasted, not discovered on disk | no — the operator pastes one key per provider | no — a generic OpenAI-shaped endpoint has no check-in |
 
-Of the **original seven** modules, six expose a login and were verified against
+The first-generation modules include six that expose a login and were verified against
 the live vendor endpoints from a running gateway, not just from tests: each
 `POST /panel/api/clients/<name>/login` returns a real `state: "pending"` with a
 working browser URL (`kimi` also returns the user code to confirm). `tabbit` is
@@ -1391,21 +1437,17 @@ RFC 8628 device grant recovered from its desktop bundle; unlike the six above it
 has only been exercised against a scripted transport, so a real sign-in from
 this machine is still the open item.
 
-The **seven modules added later** (`cline`, `lobsterai`, `codearts`, `loomy`,
-`raccoon`, `openrouter`, `opencode`) are a different story, and the table above
-says only what their code implements. None of them has been exercised against a
-live account — no account exists for any of them on this machine, and for
-`openrouter` and `opencode` there is no API key in the environment either — so
-every wire fact in their READMEs is derived from a reference implementation or
-from the vendor's own traffic and is pinned by fixtures, not by a real session.
-Their READMEs mark those claims `[unverified]` rather than asserting them. The
-`raccoon`, `openrouter` and `opencode` now also have login flows, but those are
-hermetic-tested only (`httptest` and fake transports); no live vendor sign-in
-has been completed from this machine, so a real QR scan, a real PKCE redirect
-and a real device-code authorisation are still open items. The one exception is
-the *unauthenticated* half of the two new backends: the model catalogues and the
-endpoint-existence probes were run live, because neither vendor requires a key
-to list models.
+The later modules are a different story, and the table above says only what
+their code implements. Not every one has been exercised against a live account:
+for several there is no account or API key on this machine, so wire facts in
+their READMEs are derived from a reference implementation or the vendor's own
+traffic and are pinned by fixtures rather than a real session. Their READMEs
+mark those claims `[unverified]` rather than asserting them. The router-style
+modules also have hermetic-tested login flows, but no live vendor sign-in has
+been completed from this machine, so a real QR scan, PKCE redirect or device-code
+authorisation remains an open item. The unauthenticated catalogue probes for the
+router-style backends were run live, because listing models does not require a
+key.
 
 The capability flags are derived by type assertion on the registered client
 (`core.CapabilitiesOf`), so a module that does not implement an interface simply
@@ -1579,6 +1621,8 @@ GET    /panel/api/overview
 GET    /panel/api/logs?lines=N                           entries carry {ts,ch,text}
 GET    /panel/api/models
 POST   /panel/api/models/refresh
+GET    /panel/api/exposed_models                         the final catalogue plus the selected whitelist
+POST   /panel/api/route_plan                             {"model":"…","catalogs":{…}}; static only
 GET    /panel/api/model_probes                          (optional; the probe file)
 GET    /panel/api/usage?window=HOURS
 POST   /panel/api/usage/save
