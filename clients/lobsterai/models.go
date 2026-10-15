@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"strings"
 
@@ -105,11 +106,12 @@ func containsModel(models []core.Model, id string) bool {
 // seen to type it as a number OR as null (nine of the 29 live rows send null);
 // toInt covers both, and a null simply leaves the fallback in place.
 type modelEntry struct {
-	ModelID       string `json:"modelId"`
-	ID            string `json:"id"`
-	Provider      string `json:"provider"`
-	ModelName     string `json:"modelName"`
-	ContextWindow any    `json:"contextWindow"`
+	ModelID        string `json:"modelId"`
+	ID             string `json:"id"`
+	Provider       string `json:"provider"`
+	ModelName      string `json:"modelName"`
+	ContextWindow  any    `json:"contextWindow"`
+	CostMultiplier any    `json:"costMultiplier"`
 }
 
 // parseModelList projects the upstream data array into core models.
@@ -128,7 +130,11 @@ func parseModelList(raw json.RawMessage) ([]core.Model, error) {
 		if n, ok := toInt(entry.ContextWindow); ok && n > 0 {
 			contextLength = int64(n)
 		}
-		out = append(out, newModel(id, entry.Provider, contextLength, strings.TrimSpace(entry.ModelName)))
+		model := newModel(id, entry.Provider, contextLength, strings.TrimSpace(entry.ModelName))
+		if n, ok := toFloat(entry.CostMultiplier); ok && n > 0 && !math.IsInf(n, 0) && !math.IsNaN(n) {
+			model.Extra["cost_multiplier"] = n
+		}
+		out = append(out, model)
 	}
 	return out, nil
 }

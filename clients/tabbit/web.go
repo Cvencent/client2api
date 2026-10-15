@@ -669,19 +669,19 @@ func (c *Client) webCreateRoom(ctx context.Context, wa webAuth) (string, error) 
 
 // webModelEntry is one entry of the vendor's own catalogue.
 type webModelEntry struct {
-	DisplayName       string  `json:"display_name"`
-	Icon              string  `json:"icon"`
-	Description       string  `json:"description"`
-	SupportsImages    bool    `json:"supports_images"`
-	SupportsTools     bool    `json:"supports_tools"`
-	SupportThinking   bool    `json:"support_thinking"`
-	UseThinking       bool    `json:"use_thinking"`
-	ModelAccessType   string  `json:"model_access_type"`
-	SunsetSoon        bool    `json:"sunset_soon"`
-	DisplayLabel      string  `json:"display_label"`
-	DisplayMultiplier float64 `json:"display_multiplier"`
-	SortOrder         int     `json:"sort_order"`
-	CreatedAt         string  `json:"created_at"`
+	DisplayName       string   `json:"display_name"`
+	Icon              string   `json:"icon"`
+	Description       string   `json:"description"`
+	SupportsImages    bool     `json:"supports_images"`
+	SupportsTools     bool     `json:"supports_tools"`
+	SupportThinking   bool     `json:"support_thinking"`
+	UseThinking       bool     `json:"use_thinking"`
+	ModelAccessType   string   `json:"model_access_type"`
+	SunsetSoon        bool     `json:"sunset_soon"`
+	DisplayLabel      string   `json:"display_label"`
+	DisplayMultiplier *float64 `json:"display_multiplier"`
+	SortOrder         int      `json:"sort_order"`
+	CreatedAt         string   `json:"created_at"`
 }
 
 // webFetchModels reads the real catalogue from the vendor.  The identifier is
@@ -746,8 +746,8 @@ func parseWebModels(raw []byte, prefix string) ([]core.Model, error) {
 		if m.ModelAccessType != "" {
 			extra["model_access_type"] = m.ModelAccessType
 		}
-		if m.DisplayMultiplier != 0 {
-			extra["display_multiplier"] = m.DisplayMultiplier
+		if m.DisplayMultiplier != nil && *m.DisplayMultiplier >= 0 {
+			extra["display_multiplier"] = *m.DisplayMultiplier
 		}
 		if m.DisplayLabel != "" {
 			extra["display_label"] = m.DisplayLabel

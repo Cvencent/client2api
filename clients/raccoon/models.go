@@ -245,10 +245,12 @@ func fallbackModels() []core.Model {
 	for _, b := range builtinModels {
 		eff, base := b.Effective, b.Base
 		extra := map[string]any{
-			"display_name":      displayName(b.ID, b.Description, &eff, &base),
-			"context_length":    b.ContextWindow,
-			"max_output_tokens": b.MaxTokens,
-			"fallback":          true,
+			"display_name":                 displayName(b.ID, b.Description, &eff, &base),
+			"context_length":               b.ContextWindow,
+			"max_output_tokens":            b.MaxTokens,
+			"fallback":                     true,
+			"billing_effective_multiplier": eff,
+			"billing_multiplier":           base,
 		}
 		if b.SupportsImage {
 			extra["vision"] = true

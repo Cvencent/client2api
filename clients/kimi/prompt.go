@@ -356,13 +356,39 @@ var defaultPromptClient = &http.Client{Timeout: 30 * time.Second}
 // concurrency slot forever.  (The injected client has none, which is why the
 // callers that can block pass a context deadline.)
 func (c *Client) httpClient() *http.Client {
-	if c.vendorClient != nil {
-		return c.vendorClient
+	c.decompOnce.Do(func() {
+		var base *http.Client
+		switch {
+		case c.vendorClient != nil:
+			base = c.vendorClient
+		case c.deps.HTTPClient != nil:
+			base = c.deps.HTTPClient
+		default:
+			base = defaultPromptClient
+		}
+		c.decodedClient = withDecompression(base)
+	})
+	return c.decodedClient
+}
+
+// withDecompression returns a shallow copy of base whose transport decodes br,
+// gzip and deflate responses.  The copy shares base's Transport, Jar, Timeout
+// and connection pool -- only the RoundTripper is wrapped -- so a client the
+// caller injected keeps its own settings and pooled connections.
+func withDecompression(base *http.Client) *http.Client {
+	if base == nil {
+		base = defaultPromptClient
 	}
-	if c.deps.HTTPClient != nil {
-		return c.deps.HTTPClient
+	out := *base
+	rt := out.Transport
+	if rt == nil {
+		rt = http.DefaultTransport
 	}
-	return defaultPromptClient
+	if _, already := rt.(decompressTransport); !already {
+		rt = decompressTransport{base: rt}
+	}
+	out.Transport = rt
+	return &out
 }
 
 func extForMIME(mime string) string {

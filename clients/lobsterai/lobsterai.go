@@ -175,11 +175,11 @@ func (c *Client) loadAccounts() []accountRecord {
 }
 
 func (c *Client) httpClient() *http.Client {
-	if c.deps.HTTPClient != nil {
-		return c.deps.HTTPClient
-	}
 	if c.vendorClient != nil {
 		return c.vendorClient
+	}
+	if c.deps.HTTPClient != nil {
+		return c.deps.HTTPClient
 	}
 	return defaultHTTPClient
 }

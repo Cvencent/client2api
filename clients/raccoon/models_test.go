@@ -284,6 +284,12 @@ func TestFallbackModels(t *testing.T) {
 		if m.Extra["fallback"] != true {
 			t.Errorf("%s: must be marked fallback", m.ID)
 		}
+		if _, ok := m.Extra["billing_effective_multiplier"]; !ok {
+			t.Errorf("%s: fallback row must carry its effective multiplier", m.ID)
+		}
+		if _, ok := m.Extra["billing_multiplier"]; !ok {
+			t.Errorf("%s: fallback row must carry its base multiplier", m.ID)
+		}
 		if _, ok := core.ModelOutputLimit(m); !ok {
 			t.Errorf("%s: built-in row must carry a usable max_output_tokens", m.ID)
 		}

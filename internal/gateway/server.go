@@ -684,6 +684,21 @@ func (s *server) serveRemainingCandidates(w http.ResponseWriter, r *http.Request
 		attemptReq.ServedBy = &servedBy
 		stream, err := s.openStream(attemptCtx, client, attemptReq)
 		if err == nil {
+			// Some vendors answer an exhausted account with HTTP 200 and put the
+			// refusal inside the stream.  Nothing has been written to the caller
+			// yet at this point, so the first frame is still free to read: when
+			// it is a classified retryable refusal the stream is closed and the
+			// next platform gets the request instead of the caller being handed
+			// a failure a healthy sibling could have avoided.
+			probe, probeErr := probeFirstFrame(stream)
+			if probeErr != nil {
+				stream.Close()
+				s.noteFailedCandidate(rec, client, upstreamModel, probeErr)
+				lastClient, lastHint, lastErr = client, hintCtx, probeErr
+				s.opts.Logger.Printf("chat: platform %s model %s failed inside stream (%v), trying the next platform", client.Name(), upstreamModel, probeErr)
+				continue
+			}
+			stream = withProbedFrame(stream, probe)
 			s.opts.Registry.NoteModelSuccess(client.Name(), upstreamModel, time.Now())
 			s.sessionPlatforms.bindModel(core.ConversationKeyOf(baseReq), client.Name(), upstreamModel)
 			if servedBy != "" {
@@ -749,6 +764,84 @@ func (s *server) serveRemainingCandidates(w http.ResponseWriter, r *http.Request
 		s.opts.Logger.Printf("chat: platform %s model %s failed (%v), trying the next platform", client.Name(), upstreamModel, err)
 	}
 	return lastClient, lastHint, lastErr, false
+}
+
+// probeFirstFrame reads the first frame of an opened stream to learn whether the
+// platform answered with a refusal it dressed up as a 200.
+//
+// It only ever consumes one frame, and only when that frame is a classified
+// retryable failure: a delta, a tool call or an unclassified error is left for
+// the emitter, which knows how to render it.  The frame is handed back to the
+// caller so it can be put back in front of the stream -- a probe that eats a
+// real answer would silently truncate it.
+func probeFirstFrame(stream core.Stream) (core.Event, error) {
+	ev, err := stream.Recv()
+	if err != nil {
+		// A transport error before any byte is the same verdict as one from
+		// Chat: nothing was rendered, so the request may still be served by a
+		// sibling platform.
+		return core.Event{}, err
+	}
+	if ev.Type != core.EventError || ev.Err == nil {
+		return ev, nil
+	}
+	f, ok := core.AsFailure(ev.Err)
+	if !ok || !core.Retryable(f.Kind) {
+		// A content-policy or unclassified refusal is the platform's answer and
+		// must be shown as such, not retried behind the caller's back.
+		return ev, nil
+	}
+	return core.Event{}, ev.Err
+}
+
+// withProbedFrame puts a frame the probe already read back in front of the
+// stream, so the emitter sees the stream exactly as the module produced it.
+func withProbedFrame(stream core.Stream, probe core.Event) core.Stream {
+	if probe == (core.Event{}) {
+		return stream
+	}
+	return &probedStream{Stream: stream, head: probe}
+}
+
+// probedStream is a stream with one already-read frame in front.
+type probedStream struct {
+	core.Stream
+	head    core.Event
+	emitted bool
+}
+
+func (s *probedStream) Recv() (core.Event, error) {
+	if !s.emitted {
+		s.emitted = true
+		return s.head, nil
+	}
+	return s.Stream.Recv()
+}
+
+// noteFailedCandidate records one platform's in-stream refusal: the failure
+// counter, the platform alert, and the usage row a reader would otherwise
+// expect to find for an attempt that was actually made.
+func (s *server) noteFailedCandidate(rec *UsageRecord, client core.Client, model string, err error) {
+	rec.Account = core.ErrorAccountID(err)
+	if f, ok := core.AsFailure(err); ok && core.Retryable(f.Kind) {
+		ev := s.opts.Registry.NoteModelFailure(client.Name(), model, time.Now())
+		s.publishPlatformAlert(client.Name(), model, rec.Account, ev)
+	}
+	s.opts.Usage.RecordAttempt(UsageRecord{
+		At:                  time.Now(),
+		StartedAt:           rec.StartedAt,
+		Client:              client.Name(),
+		Realm:               rec.Realm,
+		Account:             rec.Account,
+		SessionID:           rec.SessionID,
+		ReasoningEffort:     rec.ReasoningEffort,
+		SentReasoningEffort: rec.SentReasoningEffort,
+		Model:               client.Name() + "/" + model,
+		Candidate:           rec.Candidate,
+		FailureReason:       failureReason(err),
+		Failed:              true,
+		Attempt:             true,
+	})
 }
 
 // candidateUnavailable reports whether a candidate can be skipped without

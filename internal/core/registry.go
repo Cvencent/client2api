@@ -621,35 +621,25 @@ func (r *Registry) ResolveCandidates(ctx context.Context, model string) ([]Candi
 	// Auto member. A qualified id that is not a group member keeps the old
 	// hard-pin behaviour -- an explicit platform choice with no group is
 	// answered honestly rather than hidden behind failover.
+	// An explicit "client/model" is the caller naming one platform.  It is
+	// honoured before the model-group lookup, so writing loomy/DeepSeek-V4.1-Flash
+	// keeps the request on loomy even though the same id also sits in a group:
+	// a group is an operator's failover chain, not something that may override
+	// the platform the caller picked.  Auto/ deliberately skips this, because
+	// Auto/<id> is the gateway's own routing name.
+	if !auto && qualified && prefix != "" && rest != "" {
+		if c, found := r.Get(prefix); found {
+			return r.resolveQualifiedCandidate(ctx, c, rest)
+		}
+	}
+
 	if !auto {
 		if groupKey, group, ok := r.modelGroupForLookup(model); ok {
 			return r.resolveModelGroup(ctx, groupKey, group, model)
 		}
 	}
 
-	if !auto && qualified && prefix != "" && rest != "" {
-		if c, found := r.Get(prefix); found {
-			upstream := rest
-			var (
-				matchedExtra map[string]any
-				catalogueHit bool
-			)
-			if models, err := c.Models(ctx); err == nil {
-				for _, m := range models {
-					if strings.EqualFold(strings.TrimSpace(m.ID), rest) {
-						upstream = m.ID
-						matchedExtra = m.Extra
-						catalogueHit = true
-						break
-					}
-				}
-			}
-			if !r.ModelAllowed(c.Name(), upstream) {
-				return nil, fmt.Errorf("model %q is disabled on client %q; re-enable it in the platform configuration or qualify another client", upstream, c.Name())
-			}
-			return []Candidate{{Client: c, Model: upstream, Catalogue: catalogueHit, Extra: matchedExtra}}, nil
-		}
-	}
+
 
 	// Bare name, or a slashed id whose first segment is not a module: search
 	// every module's catalog for a match the platform policy still allows.
@@ -721,6 +711,32 @@ func (r *Registry) ResolveCandidates(ctx context.Context, model string) ([]Candi
 	// order deterministic.  Status is consulted only on this multi-owner path.
 
 	return r.rankCandidates(ctx, owners), nil
+}
+
+// resolveQualifiedCandidate is the hard-pin half of ResolveCandidates: the
+// caller named one platform, so that platform is the whole answer.  The
+// catalogue is still consulted, because the operator may write the display
+// spelling while the vendor wants its own id.
+func (r *Registry) resolveQualifiedCandidate(ctx context.Context, c Client, rest string) ([]Candidate, error) {
+	upstream := rest
+	var (
+		matchedExtra map[string]any
+		catalogueHit bool
+	)
+	if models, err := c.Models(ctx); err == nil {
+		for _, m := range models {
+			if strings.EqualFold(strings.TrimSpace(m.ID), rest) {
+				upstream = m.ID
+				matchedExtra = m.Extra
+				catalogueHit = true
+				break
+			}
+		}
+	}
+	if !r.ModelAllowed(c.Name(), upstream) {
+		return nil, fmt.Errorf("model %q is disabled on client %q; re-enable it in the platform configuration or qualify another client", upstream, c.Name())
+	}
+	return []Candidate{{Client: c, Model: upstream, Catalogue: catalogueHit, Extra: matchedExtra}}, nil
 }
 
 // rankCandidates orders the multi-platform candidates that can serve one

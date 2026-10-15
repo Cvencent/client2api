@@ -73,12 +73,39 @@ people. The built-in default is `127.0.0.1`.
 - `GET /v1/models`, `GET /v1/status` and `GET /healthz`.
 - One inbound API Key for every platform, with optional local panel authentication.
 - Explicit `platform/model` routes, bare model names, aliases and `Auto/<model>` aggregation.
-- Custom `model_groups` for binding the same model across platforms.
+- Custom `model_groups` for binding the same model across platforms. A group is a
+  failover chain reached by a bare name (or the group name itself): every member is
+  tried in priority order, and a member the caller spelled out explicitly is tried
+  first. Writing `platform/model` is the caller naming one platform, so it is answered
+  by that platform alone even when the same id is also a group member: a group never
+  silently redirects an explicit platform choice, and a failure on it is reported as
+  that platform's own failure rather than hidden behind a switch. `Auto/<model>` keeps
+  its own meaning and skips groups, searching the concrete catalogues directly.
 - Platform priority, account priority and time-based priority schedules.
 - Per-platform and per-account concurrency limits.
 - Per-account per-model enable/disable from the account's model dialog, on every platform: WorkBuddy keeps its module-side policy (including "force enable"), the others write a shared blacklist the gateway's account hook enforces on the next request. A rate-limited model shows when it will be released and how long is left.
 - Conversation stickiness, retries, cooldown and automatic failover, with panel controls that show each live binding's model and can force-unbind or force-switch a session. A force-switch can clear platform/account stickiness for automatic selection again or pin a chosen platform while still auto-selecting its account.
 - OpenAI-shaped error mapping for auth, quota, WAF, timeout and rate-limit failures.
+- Failover also covers failures a platform reports after the stream has already been
+  opened. Some vendors answer a spent quota with HTTP 200 and an SSE frame carrying
+  the error, so the gateway reads the first frame before committing to the platform:
+  if that frame is a retryable error (an out-of-credit account, an auth failure, a
+  rate limit, a WAF block), the stream is closed and the request is served by the
+  next candidate instead of being forwarded as a 502. The frame already read is not
+  lost, it is handed to whichever platform answers.
+- An out-of-credit account is parked out of the rotation rather than put in a
+  time-based cooldown, because a zero balance does not come back on its own. On
+  LobsterAI the Chinese free-quota messages ("免费额度已用完", "请升级套餐") are read
+  this way: the account stops being selected for new requests, the panel shows it as
+  已耗尽, and the next balance refresh that reports a positive credit clears the park
+  automatically. A platform that still has a usable account is therefore preferred
+  over one that has none, whatever the configured priority says.
+- WorkBuddy tool schemas: a tool declared with empty `parameters` (`{}`) is
+  normalized to `{"type":"object","properties":{}}` before it goes upstream.
+  DeepSeek V4.1 Flash rejects the empty object with HTTP 400 / business code
+  `11129` ("invalid function call parameters"); the other WorkBuddy models
+  tolerate it, which is why the failure looked model-specific. A tool with no
+  real arguments and a tool with real properties are both unaffected.
 - Context-window guard: a request larger than the model's window is shortened before
   it is sent, so it is served instead of refused. The system prompt and the newest
   turn are always kept; only the stale middle is dropped. Every trimmed request is
@@ -159,6 +186,12 @@ people. The built-in default is `127.0.0.1`.
   control restores the module default, and keys the panel does not yet describe
   stay available under `Other keys (JSON)`. Module config changes take effect
   after restarting the process.
+- The Platform Configuration route-plan test: enter a model name (for example
+  Auto/MIMO-2.6Flash) and the panel shows the static failover chain - which
+  platform would be tried first, which one comes next, the effective priority
+  and where it comes from (platform priority, a time window, a model group or
+  the dynamic Auto pool). It is a local replay of the routing rules only: no
+  upstream call is made and no account state is read.
 - Runtime Log
 
 ### Tasks, usage and accounting

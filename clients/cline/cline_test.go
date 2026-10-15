@@ -242,6 +242,124 @@ func TestNormalizeTokenAddsPrefixOnce(t *testing.T) {
 	}
 }
 
+// --- desktop identity headers ---------------------------------------------
+
+// TestClientIdentityHeadersMatchTheDesktopClient pins the identity block.  The
+// bundled sidecar installs DESKTOP_CLIENT_CONTEXT on startup, so its
+// buildClineClientHeaders() sends X-CLIENT-TYPE "cline-desktop" (never the
+// "cline-sdk" fallback) and the Cline/0.0.40 UA plus platform block.
+func TestClientIdentityHeadersMatchTheDesktopClient(t *testing.T) {
+	f := newFakeServer(t)
+	f.json(refreshPath, http.StatusOK, grantBody("workos:a", "r", "2030-01-01T00:00:00.000Z", "usr-1", "a@b.c", "Ada", "Lovelace"))
+	c := newTestClient(t, f, `"access_token":"workos:old","refresh_token":"r"`)
+
+	if _, err := c.refresh(context.Background(), "r"); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	got := f.requestsFor(refreshPath)
+	if len(got) != 1 {
+		t.Fatalf("refresh requests = %d, want 1", len(got))
+	}
+	h := got[0].Header
+	for name, want := range map[string]string{
+		"User-Agent":         "Cline/0.0.40",
+		"X-Client-Type":      "cline-desktop",
+		"X-Client-Version":   "0.0.40",
+		"X-Platform":         "Cline Desktop",
+		"X-Platform-Version": "0.0.40",
+		"Http-Referer":       "https://cline.bot",
+		"X-Title":            "Cline",
+		"X-Is-Multiroot":     "false",
+	} {
+		if value := h.Get(name); value != want {
+			t.Errorf("%s = %q, want %q", name, value, want)
+		}
+	}
+	if got := h.Get("X-Client-Type"); got == "cline-sdk" {
+		t.Fatal("account requests still announce the SDK fallback instead of the desktop identity")
+	}
+}
+
+// TestChatCarriesCoreVersionAndTaskID pins the inference-only block:
+// buildClineRequestHeaders() adds X-CORE-VERSION (the bundled @cline/core
+// version) and X-Task-ID (the session id), neither of which is sent on account
+// calls.
+func TestChatCarriesCoreVersionAndTaskID(t *testing.T) {
+	f := newFakeServer(t)
+	f.handle(chatPath, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	})
+	c := newTestClient(t, f, `"access_token":"workos:tok","account_id":"usr-1"`)
+
+	s, err := c.Chat(context.Background(), &core.ChatRequest{
+		Model:          "m",
+		ConversationID: "conv-42",
+		Messages:       []core.Message{{Role: "user", Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	_ = s.Close()
+
+	got := f.requestsFor(chatPath)
+	if len(got) != 1 {
+		t.Fatalf("chat requests = %d, want 1", len(got))
+	}
+	h := got[0].Header
+	if v := h.Get("X-Core-Version"); v != "0.0.89" {
+		t.Errorf("X-Core-Version = %q, want 0.0.89", v)
+	}
+	if v := h.Get("X-Task-ID"); v != "conv-42" {
+		t.Errorf("X-Task-ID = %q, want the caller's conversation id", v)
+	}
+	if v := h.Get("X-Client-Type"); v != "cline-desktop" {
+		t.Errorf("X-Client-Type = %q, want cline-desktop on the inference call too", v)
+	}
+}
+
+// TestChatOmitsTaskIDWithoutAConversation keeps the module from inventing a
+// session id: an unscoped request sends the core version but no X-Task-ID.
+func TestChatOmitsTaskIDWithoutAConversation(t *testing.T) {
+	f := newFakeServer(t)
+	f.handle(chatPath, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	})
+	c := newTestClient(t, f, `"access_token":"workos:tok","account_id":"usr-1"`)
+
+	s, err := c.Chat(context.Background(), &core.ChatRequest{Model: "m"})
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	_ = s.Close()
+
+	h := f.requestsFor(chatPath)[0].Header
+	if _, present := h["X-Task-Id"]; present {
+		t.Errorf("X-Task-ID was sent (%q) for a request that named no conversation", h.Get("X-Task-ID"))
+	}
+}
+
+// TestAccountCallsOmitTheInferenceHeaders is the other half: X-CORE-VERSION and
+// X-Task-ID belong only to buildClineRequestHeaders(), not the account service.
+func TestAccountCallsOmitTheInferenceHeaders(t *testing.T) {
+	f := newFakeServer(t)
+	f.json(userInfoPath, http.StatusOK, `{"data":{"clineUserId":"usr-1"}}`)
+	c := newTestClient(t, f, `"access_token":"workos:t","account_id":"usr-1"`)
+
+	acct := account{AccessToken: "workos:t", AccountID: "usr-1"}
+	if _, err := c.whoAmI(context.Background(), acct); err != nil {
+		t.Fatalf("whoAmI: %v", err)
+	}
+	h := f.requestsFor(userInfoPath)[0].Header
+	if _, present := h["X-Core-Version"]; present {
+		t.Error("X-CORE-VERSION leaked onto an account request")
+	}
+	if _, present := h["X-Task-Id"]; present {
+		t.Error("X-Task-ID leaked onto an account request")
+	}
+}
+
 // --- the camelCase refresh body -------------------------------------------
 
 // TestRefreshBodyUsesCamelCase decodes the body the module actually sent.  The

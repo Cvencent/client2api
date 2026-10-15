@@ -36,13 +36,37 @@ var errEmptyGrant = errors.New("cline: token endpoint returned no access token")
 
 // --- request plumbing ------------------------------------------------------
 
-// applyClientHeaders sets the four headers the official client sends on every
-// request, inference and account alike.
+// applyClientHeaders sets the identity headers the official desktop client
+// sends on every request, inference and account alike.
+//
+// The desktop sidecar installs DESKTOP_CLIENT_CONTEXT before it does anything
+// else, so buildClineClientHeaders()/buildClineRequestHeaders() resolve every
+// one of these from that identity: X-CLIENT-TYPE is "cline-desktop" (not the
+// "cline-sdk" fallback used only when no identity is installed) and the
+// platform block is the desktop context.
 func applyClientHeaders(req *http.Request) {
 	req.Header.Set("HTTP-Referer", headerReferer)
 	req.Header.Set("X-Title", headerTitle)
 	req.Header.Set("X-IS-MULTIROOT", headerMultiRoot)
 	req.Header.Set("X-CLIENT-TYPE", headerClientType)
+	req.Header.Set("User-Agent", "Cline/"+clientVersion)
+	req.Header.Set("X-CLIENT-VERSION", clientVersion)
+	req.Header.Set("X-PLATFORM", clientPlatform)
+	req.Header.Set("X-PLATFORM-VERSION", clientVersion)
+}
+
+// applyChatHeaders adds what buildClineRequestHeaders() sets on an inference
+// call but not on an account or catalogue call: the bundled @cline/core version
+// and the task id.  The CLI sends `X-Task-ID: <sessionId>` where sessionId is
+// the task's own id, so a caller-supplied conversation id is the closest
+// available analogue; when the caller names no conversation the header is left
+// off rather than invented, because a made-up id would be a fresh tell.
+func applyChatHeaders(req *http.Request, taskID string) {
+	applyClientHeaders(req)
+	req.Header.Set("X-CORE-VERSION", coreVersion)
+	if id := strings.TrimSpace(taskID); id != "" {
+		req.Header.Set("X-Task-ID", id)
+	}
 }
 
 // doJSON performs one JSON request and returns the response status, headers and

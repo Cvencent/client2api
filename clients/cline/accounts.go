@@ -276,7 +276,7 @@ func (c *Client) probeChat(ctx context.Context, acct account, model string) (str
 	if err != nil {
 		return "", err
 	}
-	resp, err := c.chatStream(ctx, acct, body)
+	resp, err := c.chatStream(ctx, acct, body, taskIDFor(req))
 	if err != nil {
 		return "", err
 	}

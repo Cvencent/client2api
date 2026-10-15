@@ -233,6 +233,29 @@ func newWebClientHTTP(t *testing.T, cfgJSON string, hc *http.Client) (*Client, c
 	return c, rec
 }
 
+func TestParseWebModelsKeepsZeroDisplayMultiplier(t *testing.T) {
+	raw := []byte(`{"models":[` +
+		`{"display_name":"Default","model_access_type":"free_unlimited","display_multiplier":0},` +
+		`{"display_name":"GLM-5.3","model_access_type":"free_metered","display_multiplier":1}` +
+		`],"status":"success"}`)
+	models, err := parseWebModels(raw, "")
+	if err != nil {
+		t.Fatalf("parseWebModels: %v", err)
+	}
+	if len(models) != 2 {
+		t.Fatalf("models = %#v, want two entries", models)
+	}
+	if got := models[0].Extra["display_multiplier"]; got != float64(0) {
+		t.Fatalf("Default display_multiplier = %#v, want 0 (a real free rate)", got)
+	}
+	if got := models[0].Extra["model_access_type"]; got != "free_unlimited" {
+		t.Fatalf("Default model_access_type = %#v", got)
+	}
+	if got := models[1].Extra["display_multiplier"]; got != float64(1) {
+		t.Fatalf("GLM display_multiplier = %#v, want 1", got)
+	}
+}
+
 // TestTabbitWebChatStreamsThroughTheVendorProtocol walks the whole request path
 // the module claims to implement: create a room, open the join stream, submit
 // the run, take the live deltas until the run completes, and throw the room

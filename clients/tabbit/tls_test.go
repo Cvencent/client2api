@@ -1,8 +1,10 @@
 package tabbit
 
 import (
+	"net/http"
 	"testing"
 
+	"client2api/internal/core"
 	"client2api/internal/fingerprint"
 )
 
@@ -34,5 +36,53 @@ func TestTabbitNamedTLSProfileBuildsItsOwnClient(t *testing.T) {
 	c := newTestClient(t, `{"transport":"web","tls_profile":"chrome"}`, nil)
 	if c.cfg.tlsProfile() != fingerprint.ProfileChrome {
 		t.Fatalf("tls_profile was not read: %q", c.cfg.tlsProfile())
+	}
+	if c.vendorClient == nil {
+		t.Fatal("a named tls_profile must build the dedicated vendor client")
+	}
+}
+
+func TestTabbitAnUnsetTLSProfileKeepsTheSharedClient(t *testing.T) {
+	shared := &http.Client{}
+	got, err := New(core.Deps{
+		DataDir:    t.TempDir(),
+		HTTPClient: shared,
+		Logf:       func(string, ...any) {},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	c, ok := got.(*Client)
+	if !ok {
+		t.Fatalf("New returned %T, want *Client", got)
+	}
+	if c.vendorClient != nil {
+		t.Fatal("an unset tls_profile must not build a replacement client")
+	}
+	if c.httpClient() != shared {
+		t.Fatal("an unset tls_profile must keep the shared client so the default behaves as before")
+	}
+}
+
+func TestTabbitAnUnknownTLSProfileFallsBackToTheSharedClient(t *testing.T) {
+	shared := &http.Client{}
+	got, err := New(core.Deps{
+		DataDir:    t.TempDir(),
+		Config:     []byte(`{"tls_profile":"netscape"}`),
+		HTTPClient: shared,
+		Logf:       func(string, ...any) {},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	c, ok := got.(*Client)
+	if !ok {
+		t.Fatalf("New returned %T, want *Client", got)
+	}
+	if c.vendorClient != nil {
+		t.Fatal("an unbuildable profile must not leave a replacement client installed")
+	}
+	if c.httpClient() != shared {
+		t.Fatal("an unbuildable profile must fall back to the shared client")
 	}
 }

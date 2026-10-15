@@ -75,3 +75,30 @@ client2api.pid
 
 # 面板 smoke 测试的临时工作目录：里面会落一份活的 config + data/ 拷贝，禁止入库。
 /output/tmp-c2a/
+
+# 一次性排查留下的 shell 重定向碎片和探针工作目录。这些文件名本身就是命令片段
+# （`0){n++`、`console.log(JSON.stringify({ip` 这类），git status 里会和真实改动混在
+# 一起，`git add -A` 会把它们连同账号探针输出一起提交。根目录下的 `[!({0-9]` 开头
+# 只可能是这类碎片：仓库里没有任何合法文件长这样。
+/.tmp-*
+/.codex_tmp/
+/tmp_*.go
+/tmp_*.json
+/cmd/*-temp/
+/output/playwright/*.js
+/[0-9]*
+/[{]*
+/[(]*
+/[!]*
+/console.log(*
+/db.prepare(s).all(...p)
+/globalThis.fetch'
+/attempts'
+/s.destroy()
+/s.src)})`
+/strftime
+/JSON.stringify({w
+/x.type
+/!loop.has(x.name)
+/output/*.jsonl
+/output/playwright/*.txt

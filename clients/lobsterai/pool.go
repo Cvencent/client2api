@@ -37,6 +37,11 @@ type accountRecord struct {
 	CooldownUntil string `json:"cooldown_until,omitempty"`
 	LastError     string `json:"last_error,omitempty"`
 	ErrCount      int    `json:"err_count,omitempty"`
+	// LowCredit is the vendor's own zero-credit verdict: the account is parked
+	// out of rotation because the balance is gone, which is not a credential
+	// fault and not a temporary rate limit.  It is persisted so a restart does
+	// not send the next request straight back into the same refusal.
+	LowCredit bool `json:"low_credit,omitempty"`
 
 	// Runtime-only state.  Unexported, so it never reaches the file, and
 	// guarded by the pool's mutex rather than one of its own: an account is
@@ -182,6 +187,9 @@ func (p *pool) selectable(a *accountRecord, now time.Time, limit int) bool {
 		return false
 	}
 	if a.inFlight >= limit {
+		return false
+	}
+	if a.LowCredit {
 		return false
 	}
 	return !coolingDown(a, now)
@@ -405,6 +413,43 @@ func (p *pool) setNote(id, note string) bool {
 	return true
 }
 
+// setLowCredit records the vendor's zero-credit verdict and parks the account
+// out of rotation.  It owns only that flag: an unrelated rate-limit clock keeps
+// running, because the two verdicts are independent facts about the account.
+func (p *pool) setLowCredit(id string, reason string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	a := p.find(id)
+	if a == nil || (a.LowCredit && a.CooldownUntil == "") {
+		if a != nil && a.LowCredit && a.CooldownUntil != "" {
+			// A stale cooldown from an earlier verdict must not outlive the
+			// zero-credit park, or the account stays unselectable for longer
+			// than the verdict says.
+			a.CooldownUntil = ""
+			a.LastError = truncate(reason, 300)
+			return true
+		}
+		return false
+	}
+	a.LowCredit = true
+	a.CooldownUntil = ""
+	a.LastError = truncate(reason, 300)
+	return true
+}
+
+// clearLowCredit lifts a zero-credit park.  A balance read that proves credit
+// is back is the only thing that calls it, alongside an explicit revive.
+func (p *pool) clearLowCredit(id string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	a := p.find(id)
+	if a == nil || !a.LowCredit {
+		return false
+	}
+	a.LowCredit = false
+	return true
+}
+
 // setCooldown parks an account until the given time.
 func (p *pool) setCooldown(id string, until time.Time, reason string) bool {
 	p.mu.Lock()
@@ -511,6 +556,10 @@ func stateOf(a *accountRecord, now time.Time) string {
 		return "invalid"
 	case coolingDown(a, now):
 		return "cooling"
+	case a.LowCredit:
+		// The panel's own vocabulary: a zero balance is "exhausted", which is
+		// what separates it from a rate limit that time will clear.
+		return "exhausted"
 	case a.LastError != "":
 		return "cooling"
 	default:

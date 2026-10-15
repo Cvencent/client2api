@@ -59,14 +59,15 @@ var fallbackModels = []fallbackModel{
 
 // remoteModel is one entry of the vendor's catalogue after normalisation.
 type remoteModel struct {
-	ID               string
-	Name             string // display name, multiplier included
-	ContextWindow    int
-	MaxOutputTokens  int // the vendor's advertised output budget, 0 when it publishes none
-	SupportsImage    bool
-	SupportsThinking bool
-	Efforts          []string
-	DefaultEffort    string
+	ID                string
+	Name              string // display name, multiplier included
+	DisplayMultiplier *float64
+	ContextWindow     int
+	MaxOutputTokens   int // the vendor's advertised output budget, 0 when it publishes none
+	SupportsImage     bool
+	SupportsThinking  bool
+	Efforts           []string
+	DefaultEffort     string
 }
 
 // rawModelEntry is one entry of the vendor's JSON list, read defensively: the
@@ -109,6 +110,7 @@ func (row rawModelEntry) model() (remoteModel, bool) {
 		ID:   id,
 		Name: displayName(rawName),
 	}
+	m.DisplayMultiplier = multiplierFromName(m.Name)
 	if n, ok := numberValue(row.ContextLength); ok && n > 0 {
 		m.ContextWindow = int(n)
 	}
@@ -194,11 +196,17 @@ func parseRemoteModels(raw json.RawMessage) ([]remoteModel, error) {
 func coreModels(models []remoteModel, fallback bool) []core.Model {
 	out := make([]core.Model, 0, len(models))
 	for _, m := range models {
+		if m.DisplayMultiplier == nil {
+			m.DisplayMultiplier = multiplierFromName(m.Name)
+		}
 		extra := map[string]any{
 			"display_name":   m.Name,
 			"context_length": m.ContextWindow,
 			"vision":         m.SupportsImage,
 			"reasoning":      m.SupportsThinking,
+		}
+		if m.DisplayMultiplier != nil {
+			extra["display_multiplier"] = *m.DisplayMultiplier
 		}
 		// The budget is published only when the vendor published one.  Writing a
 		// zero here would be worse than omitting the key: core.ModelOutputLimit
@@ -225,7 +233,7 @@ func coreModels(models []remoteModel, fallback bool) []core.Model {
 func fallbackCatalogue() []core.Model {
 	models := make([]remoteModel, 0, len(fallbackModels))
 	for _, m := range fallbackModels {
-		models = append(models, remoteModel{
+		model := remoteModel{
 			ID:            m.ID,
 			Name:          m.Name,
 			ContextWindow: m.ContextWindow,
@@ -237,9 +245,26 @@ func fallbackCatalogue() []core.Model {
 			SupportsThinking: true,
 			Efforts:          append([]string(nil), loomyEfforts...),
 			DefaultEffort:    loomyDefaultEffort,
-		})
+		}
+		model.DisplayMultiplier = multiplierFromName(model.Name)
+		models = append(models, model)
 	}
 	return coreModels(models, true)
+}
+
+// multiplierFromName extracts the numeric multiplier from an already-normalised
+// display name. It is deliberately tolerant: an absent or malformed rate means
+// "unknown", never zero.
+func multiplierFromName(name string) *float64 {
+	_, rate := splitRate(name)
+	if rate == "" {
+		return nil
+	}
+	n, err := strconv.ParseFloat(strings.TrimPrefix(strings.ToLower(rate), "x"), 64)
+	if err != nil || n < 0 {
+		return nil
+	}
+	return &n
 }
 
 // ---------------------------------------------------------------------------

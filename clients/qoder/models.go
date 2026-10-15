@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
+	"strconv"
 	"strings"
 	"time"
 
@@ -35,6 +37,9 @@ type modelInfo struct {
 	DisplayName   string
 	ContextLength int
 	MaxOutput     int
+	PriceFactor   *float64
+	OriginalPrice *float64
+	Promotion     *modelPromotion
 	Reasoning     bool
 	Vision        bool
 	Default       bool
@@ -42,24 +47,98 @@ type modelInfo struct {
 	New           bool
 }
 
+// modelPromotion is the vendor's off-peak campaign. `active` is only a
+// snapshot: when the window is present, promotionActiveNow recomputes it from
+// the current UTC+8 wall clock.
+type modelPromotion struct {
+	Active                     bool     `json:"active"`
+	DiscountFactor             *float64 `json:"discount_factor"`
+	BeforePromotionPriceFactor *float64 `json:"before_promotion_price_factor"`
+	WindowStart                string   `json:"window_start"`
+	WindowEnd                  string   `json:"window_end"`
+}
+
+func floatPtr(v float64) *float64 { return &v }
+
+func promotionActiveNow(p *modelPromotion, now time.Time) bool {
+	if p == nil {
+		return false
+	}
+	start, okStart := qoderClockMinutes(p.WindowStart)
+	end, okEnd := qoderClockMinutes(p.WindowEnd)
+	if !okStart || !okEnd {
+		return p.Active
+	}
+	// Qoder publishes the window in UTC+8, so compute against that wall clock
+	// instead of the host's local timezone.
+	utc8 := now.UTC().Add(8 * time.Hour)
+	minutes := utc8.Hour()*60 + utc8.Minute()
+	if start <= end {
+		return minutes >= start && minutes < end
+	}
+	return minutes >= start || minutes < end
+}
+
+func qoderClockMinutes(s string) (int, bool) {
+	parts := strings.Split(strings.TrimSpace(s), ":")
+	if len(parts) != 2 {
+		return 0, false
+	}
+	h, err := strconv.Atoi(parts[0])
+	if err != nil || h < 0 || h > 23 {
+		return 0, false
+	}
+	m, err := strconv.Atoi(parts[1])
+	if err != nil || m < 0 || m > 59 {
+		return 0, false
+	}
+	return h*60 + m, true
+}
+
+// qoderBillingValue renders the same three states as the vendor picker: free,
+// an in-window original->discounted pair, or a plain factor.
+func qoderBillingValue(m modelInfo, now time.Time) (base, current *float64, label string, free bool) {
+	if m.PriceFactor == nil {
+		return nil, nil, "", false
+	}
+	if *m.PriceFactor == 0 {
+		return floatPtr(0), floatPtr(0), "", true
+	}
+	p := m.Promotion
+	if p != nil && p.DiscountFactor != nil && p.BeforePromotionPriceFactor != nil {
+		before := *p.BeforePromotionPriceFactor
+		if before > 0 {
+			if promotionActiveNow(p, now) {
+				current := math.Round(before*(*p.DiscountFactor)*10000) / 10000
+				return floatPtr(before), floatPtr(current), "错峰折扣", false
+			}
+			return floatPtr(before), floatPtr(before), "", false
+		}
+	}
+	if m.OriginalPrice != nil && *m.OriginalPrice > 0 && *m.PriceFactor != *m.OriginalPrice {
+		return m.OriginalPrice, m.PriceFactor, "", false
+	}
+	return m.PriceFactor, m.PriceFactor, "", false
+}
+
 // builtinModels is the fallback catalogue: the chat group of the vendor's list
 // as this module last confirmed it.
 func builtinModels() []modelInfo {
 	return []modelInfo{
-		{ID: "auto", DisplayName: "Auto", ContextLength: 200000, Reasoning: true, Vision: true, Default: true},
-		{ID: "qmodel_38max", DisplayName: "Qwen3.8-Max", ContextLength: 180000, Reasoning: true, Vision: true, Free: true, New: true},
-		{ID: "qfmodel", DisplayName: "Qwen3.8-Flash", ContextLength: 180000, Reasoning: true, Vision: true, New: true},
-		{ID: "qmodel_latest", DisplayName: "Qwen3.7-Max", ContextLength: 180000, Reasoning: true, Vision: true},
-		{ID: "qmodel", DisplayName: "Qwen3.7-Plus", ContextLength: 180000, Reasoning: true, Vision: true},
-		{ID: "q37fmodel", DisplayName: "Qwen3.7-Flash", ContextLength: 180000, Reasoning: true, Vision: true},
-		{ID: "dmodel", DisplayName: "DeepSeek-V4-Pro", ContextLength: 96000},
-		{ID: "dfmodel", DisplayName: "DeepSeek-Flash", ContextLength: 180000},
-		{ID: "gmodel", DisplayName: "GLM-5.3", ContextLength: 180000},
-		{ID: "gfmodel", DisplayName: "GLM-5.3-Flash", ContextLength: 1000000},
-		{ID: "gm51model", DisplayName: "GLM-5.2", ContextLength: 180000},
-		{ID: "kmodel_latest", DisplayName: "Kimi-K3", ContextLength: 180000},
-		{ID: "kmodel", DisplayName: "Kimi-K2.8-Preview", ContextLength: 180000},
-		{ID: "mmodel", DisplayName: "MiniMax-M2.7", ContextLength: 180000},
+		{ID: "auto", DisplayName: "Auto", ContextLength: 200000, PriceFactor: floatPtr(0.5), Reasoning: true, Vision: true, Default: true},
+		{ID: "qmodel_38max", DisplayName: "Qwen3.8-Max", ContextLength: 180000, PriceFactor: floatPtr(0.2), Promotion: &modelPromotion{Active: true, DiscountFactor: floatPtr(0.4), BeforePromotionPriceFactor: floatPtr(0.5), WindowStart: "22:00", WindowEnd: "08:00"}, Reasoning: true, Vision: true, Free: true, New: true},
+		{ID: "qfmodel", DisplayName: "Qwen3.8-Flash", ContextLength: 180000, PriceFactor: floatPtr(0), OriginalPrice: floatPtr(0.1), Reasoning: true, Vision: true, New: true},
+		{ID: "qmodel_latest", DisplayName: "Qwen3.7-Max", ContextLength: 180000, PriceFactor: floatPtr(0.1), OriginalPrice: floatPtr(0.5), Promotion: &modelPromotion{Active: true, DiscountFactor: floatPtr(0.2), BeforePromotionPriceFactor: floatPtr(0.5), WindowStart: "22:00", WindowEnd: "08:00"}, Reasoning: true, Vision: true},
+		{ID: "qmodel", DisplayName: "Qwen3.7-Plus", ContextLength: 180000, PriceFactor: floatPtr(0.04), Promotion: &modelPromotion{Active: true, DiscountFactor: floatPtr(0.4), BeforePromotionPriceFactor: floatPtr(0.1), WindowStart: "22:00", WindowEnd: "08:00"}, Reasoning: true, Vision: true},
+		{ID: "q37fmodel", DisplayName: "Qwen3.7-Flash", ContextLength: 180000, PriceFactor: floatPtr(0.1), Reasoning: true, Vision: true},
+		{ID: "dmodel", DisplayName: "DeepSeek-V4-Pro", ContextLength: 96000, PriceFactor: floatPtr(0.5)},
+		{ID: "dfmodel", DisplayName: "DeepSeek-Flash", ContextLength: 180000, PriceFactor: floatPtr(0.1)},
+		{ID: "gmodel", DisplayName: "GLM-5.3", ContextLength: 180000, PriceFactor: floatPtr(0.8)},
+		{ID: "gfmodel", DisplayName: "GLM-5.3-Flash", ContextLength: 1000000, PriceFactor: floatPtr(0.1)},
+		{ID: "gm51model", DisplayName: "GLM-5.2", ContextLength: 180000, PriceFactor: floatPtr(0.6)},
+		{ID: "kmodel_latest", DisplayName: "Kimi-K3", ContextLength: 180000, PriceFactor: floatPtr(1.4)},
+		{ID: "kmodel", DisplayName: "Kimi-K2.8-Preview", ContextLength: 180000, PriceFactor: floatPtr(0.8)},
+		{ID: "mmodel", DisplayName: "MiniMax-M2.7", ContextLength: 180000, PriceFactor: floatPtr(0.2)},
 	}
 }
 
@@ -232,6 +311,18 @@ func catalogue(infos []modelInfo) []core.Model {
 		if m.Free {
 			extra["free"] = true
 		}
+		if base, current, label, free := qoderBillingValue(m, time.Now()); base != nil {
+			extra["credits"] = strconv.FormatFloat(*base, 'f', -1, 64)
+			if free {
+				extra["credits"] = "免费"
+			} else if current != nil && *current != *base {
+				extra["promo_credits"] = strconv.FormatFloat(*current, 'f', -1, 64)
+				extra["promo_factor"] = *current / *base
+			}
+			if label != "" {
+				extra["promo_label"] = label
+			}
+		}
 		out = append(out, core.Model{ID: id, OwnedBy: "qoder", Extra: extra})
 	}
 	return out
@@ -254,16 +345,20 @@ type gatewayModelList struct {
 }
 
 type gatewayModel struct {
-	Key             string `json:"key"`
-	DisplayName     string `json:"display_name"`
-	Enable          *bool  `json:"enable"`
-	IsReasoning     bool   `json:"is_reasoning"`
-	IsVL            bool   `json:"is_vl"`
-	IsDefault       bool   `json:"is_default"`
-	IsFree          bool   `json:"is_free"`
-	IsNew           bool   `json:"is_new"`
-	MaxInputTokens  int    `json:"max_input_tokens"`
-	MaxOutputTokens int    `json:"max_output_tokens"`
+	Key             string          `json:"key"`
+	DisplayName     string          `json:"display_name"`
+	Enable          *bool           `json:"enable"`
+	IsReasoning     bool            `json:"is_reasoning"`
+	IsVL            bool            `json:"is_vl"`
+	IsDefault       bool            `json:"is_default"`
+	IsFree          bool            `json:"is_free"`
+	IsNew           bool            `json:"is_new"`
+	MaxInputTokens  int             `json:"max_input_tokens"`
+	MaxOutputTokens int             `json:"max_output_tokens"`
+	PriceFactor     *float64        `json:"price_factor"`
+	OriginalPrice   *float64        `json:"original_price_factor"`
+	BeforePrice     *float64        `json:"before_promotion_price_factor"`
+	Promotion       *modelPromotion `json:"promotion"`
 }
 
 // chatModels turns the vendor's chat group into a catalogue, dropping disabled
@@ -290,9 +385,21 @@ func (l gatewayModelList) chatModels() []modelInfo {
 			Default:       m.IsDefault,
 			Free:          m.IsFree,
 			New:           m.IsNew,
+			PriceFactor:   m.PriceFactor,
+			OriginalPrice: firstNonNilFloat(m.OriginalPrice, m.BeforePrice),
+			Promotion:     m.Promotion,
 		})
 	}
 	return out
+}
+
+func firstNonNilFloat(values ...*float64) *float64 {
+	for _, v := range values {
+		if v != nil {
+			return v
+		}
+	}
+	return nil
 }
 
 // ModelMaxOutputTokens implements core.ModelLimitsProvider.  The catalogue is

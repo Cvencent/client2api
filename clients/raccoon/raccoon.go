@@ -127,10 +127,6 @@ func (c *Client) setPaths() {
 
 func (c *Client) httpClient() *http.Client {
 	c.httpOnce.Do(func() {
-		if c.deps.HTTPClient != nil {
-			c.httpc = c.deps.HTTPClient
-			return
-		}
 		if fp := c.cfg.tlsProfile(); fp != fingerprint.ProfileNone {
 			if fhc, ferr := fingerprint.New(fingerprint.Options{
 				Profile:  fp,
@@ -143,6 +139,10 @@ func (c *Client) httpClient() *http.Client {
 			} else {
 				c.deps.Log("raccoon: tls fingerprint %q ignored: %v", string(fp), ferr)
 			}
+		}
+		if c.deps.HTTPClient != nil {
+			c.httpc = c.deps.HTTPClient
+			return
 		}
 		tr := &http.Transport{
 			Proxy:                 http.ProxyFromEnvironment,

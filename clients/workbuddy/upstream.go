@@ -287,7 +287,8 @@ var (
 
 const (
 	badParamsMarkerMsg  = "Unmarshal chat params failed"
-	badParamsMarkerCode = `"code":11101`
+	badParamsCode       = "11101"
+	functionParamsCode  = "11129"
 	modelBlockCode      = "11102"
 	modelBlockMsgMarker = "service info not found"
 	// ModelBlockReason is the operator-facing explanation for code 11102.
@@ -532,7 +533,7 @@ func Classify(status int, body string) ErrKind {
 	// The marker check is deliberately NOT status-gated: upstream reports
 	// parameter problems as HTTP 200 carrying a business envelope, and doJSON
 	// classifies those by re-running Classify over the envelope message.
-	if strings.Contains(body, badParamsMarkerMsg) || strings.Contains(body, badParamsMarkerCode) {
+	if strings.Contains(body, badParamsMarkerMsg) || hasBusinessCode(body, badParamsCode) || hasBusinessCode(body, functionParamsCode) {
 		return ErrBadParams
 	}
 	if status >= 400 {

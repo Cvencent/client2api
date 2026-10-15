@@ -192,7 +192,15 @@ here is guessed from a name.
 | `x-msh-device-id` | a version-4 uuid | see below |
 | `accept-language` | `*` | — |
 | `sec-fetch-mode` | `cors` | — |
+| `accept-encoding` | `br, gzip, deflate` | the CLI offers all three on every vendor call |
 | `x-stainless-*` | `retry-count: 0`, `lang: js`, `package-version: 6.34.0`, `os`, `arch`, `runtime: node`, `runtime-version: v24.15.0` | the OpenAI Node SDK the CLI bundles |
+
+`Accept-Encoding` is set explicitly to the CLI's `br, gzip, deflate`. `net/http`
+would otherwise advertise only `gzip`, and once `Accept-Encoding` is set by the
+caller it stops decoding responses automatically — so the module wraps whichever
+base client it selects in a `decompressTransport` (`decompress.go`) that decodes
+`br`, `gzip` and `deflate` (both zlib-framed and raw) before the SSE/JSON parser
+sees them. See "Compression".
 
 `x-stainless-os` and `x-stainless-arch` are the Node spellings (`Windows`, `x64`),
 not Go's — `nodePlatform()` and `nodeArch()` do the mapping, and there is a test
@@ -216,6 +224,18 @@ installation rather than two. Resolution order:
 
 The `<home_dir>/device_id` file is read but never written, so the gateway cannot
 mutate the CLI's state.
+
+### Compression
+
+The CLI offers `br, gzip, deflate` and decodes whichever the vendor returns.
+`net/http`'s automatic gzip handling only applies to the `gzip` it advertises
+itself, so the module cannot rely on it once it matches the CLI's header. The
+selected base client — the impersonating `vendorClient`, the injected
+`Deps.HTTPClient`, or the bounded default — is therefore wrapped in a
+`decompressTransport` exactly once (`httpClient()` caches the result in
+`decodedClient`). `RoundTrip` decodes the body, clears `Content-Encoding` and
+`Content-Length`, and leaves connection reuse intact. Tests cover gzip,
+zlib-framed deflate, raw deflate and brotli.
 
 ### What is deliberately *not* reproduced
 

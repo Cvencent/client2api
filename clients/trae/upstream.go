@@ -424,10 +424,129 @@ func (c *Client) refreshToken(ctx context.Context, a *Auth) error {
 
 // modelEntry is one entry of the upstream model catalogue.
 type modelEntry struct {
-	ConfigName    string `json:"config_name"`
-	DisplayConfig struct {
+	ConfigName           string          `json:"config_name"`
+	DisplayContactConfig json.RawMessage `json:"display_contact_config"`
+	DisplayConfig        struct {
 		DisplayName string `json:"display_name"`
 	} `json:"display_config"`
+	Features billingConfig `json:"features"`
+}
+
+// billingConfig is the common shape used by both places TRAE publishes the
+// billing fields: the `features` object and the nested JSON string
+// `display_contact_config`.
+type billingConfig struct {
+	ConsumptionRate struct {
+		Enable *bool `json:"enable"`
+		Data   struct {
+			Rate *float64 `json:"rate"`
+		} `json:"data"`
+	} `json:"consumption_rate"`
+	ActivityDiscount struct {
+		Enable *bool `json:"enable"`
+		Data   struct {
+			Current struct {
+				DiscountType    string   `json:"discount_type"`
+				ConsumptionRate *float64 `json:"consumption_rate"`
+				BeforeRate      *float64 `json:"before_consumption_rate"`
+				Discount        *float64 `json:"discount"`
+				EndAt           *int64   `json:"end_at"`
+			} `json:"current"`
+		} `json:"data"`
+	} `json:"activity_discount"`
+}
+
+// traeBillingConfig merges the two published spellings. `features` is used as
+// the base and the display_contact_config string wins field-by-field when it
+// carries the field; a malformed string is ignored rather than blanking the
+// model.
+func (e modelEntry) traeBillingConfig() billingConfig {
+	cfg := e.Features
+	raw := bytes.TrimSpace(e.DisplayContactConfig)
+	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+		return cfg
+	}
+	var nested string
+	if raw[0] == '"' {
+		if err := json.Unmarshal(raw, &nested); err != nil {
+			return cfg
+		}
+		raw = []byte(strings.TrimSpace(nested))
+	}
+	if len(raw) == 0 || raw[0] != '{' {
+		return cfg
+	}
+	var parsed billingConfig
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return cfg
+	}
+	if parsed.ConsumptionRate.Enable != nil {
+		cfg.ConsumptionRate.Enable = parsed.ConsumptionRate.Enable
+	}
+	if parsed.ConsumptionRate.Data.Rate != nil {
+		cfg.ConsumptionRate.Data.Rate = parsed.ConsumptionRate.Data.Rate
+	}
+	if parsed.ActivityDiscount.Enable != nil {
+		cfg.ActivityDiscount.Enable = parsed.ActivityDiscount.Enable
+	}
+	if parsed.ActivityDiscount.Data.Current.DiscountType != "" {
+		cfg.ActivityDiscount.Data.Current.DiscountType = parsed.ActivityDiscount.Data.Current.DiscountType
+	}
+	if parsed.ActivityDiscount.Data.Current.ConsumptionRate != nil {
+		cfg.ActivityDiscount.Data.Current.ConsumptionRate = parsed.ActivityDiscount.Data.Current.ConsumptionRate
+	}
+	if parsed.ActivityDiscount.Data.Current.BeforeRate != nil {
+		cfg.ActivityDiscount.Data.Current.BeforeRate = parsed.ActivityDiscount.Data.Current.BeforeRate
+	}
+	if parsed.ActivityDiscount.Data.Current.Discount != nil {
+		cfg.ActivityDiscount.Data.Current.Discount = parsed.ActivityDiscount.Data.Current.Discount
+	}
+	if parsed.ActivityDiscount.Data.Current.EndAt != nil {
+		cfg.ActivityDiscount.Data.Current.EndAt = parsed.ActivityDiscount.Data.Current.EndAt
+	}
+	return cfg
+}
+
+// traeBilling reads the model's base credit rate and the currently effective
+// activity discount. The vendor hides both under features and uses
+// discount_type=none plus before==after when no campaign is active; neither may
+// be rendered as a live discount.
+func (e modelEntry) traeBilling(now time.Time) (base, current float64, label string, ok bool) {
+	f := e.traeBillingConfig()
+	if f.ConsumptionRate.Enable != nil && !*f.ConsumptionRate.Enable {
+		return 0, 0, "", false
+	}
+	if f.ConsumptionRate.Data.Rate == nil || *f.ConsumptionRate.Data.Rate < 0 {
+		return 0, 0, "", false
+	}
+	base = *f.ConsumptionRate.Data.Rate
+	current = base
+
+	d := f.ActivityDiscount.Data.Current
+	if f.ActivityDiscount.Enable != nil && !*f.ActivityDiscount.Enable {
+		return base, current, "", true
+	}
+	typ := strings.ToLower(strings.TrimSpace(d.DiscountType))
+	if typ == "" || typ == "none" || d.ConsumptionRate == nil || d.BeforeRate == nil {
+		return base, current, "", true
+	}
+	if *d.BeforeRate <= 0 || *d.BeforeRate <= *d.ConsumptionRate {
+		return base, current, "", true
+	}
+	if d.EndAt != nil && *d.EndAt > 0 && !time.Unix(*d.EndAt, 0).After(now) {
+		return base, current, "", true
+	}
+	base = *d.BeforeRate
+	current = *d.ConsumptionRate
+	switch typ {
+	case "limited":
+		label = "限时折扣"
+	case "subsidy":
+		label = "补贴价"
+	case "off_peak":
+		label = "错峰折扣"
+	}
+	return base, current, label, true
 }
 
 // fetchModels asks the upstream for the model catalogue of the configured
@@ -458,8 +577,22 @@ func (c *Client) fetchModels(ctx context.Context, a *Auth) ([]core.Model, error)
 			continue
 		}
 		m := core.Model{ID: name, OwnedBy: c.name}
+		extra := map[string]any{}
 		if e.DisplayConfig.DisplayName != "" {
-			m.Extra = map[string]any{"name": e.DisplayConfig.DisplayName}
+			extra["name"] = e.DisplayConfig.DisplayName
+		}
+		base, current, label, ok := e.traeBilling(c.now())
+		if ok {
+			extra["consumption_rate"] = base
+			if current != base {
+				extra["consumption_rate_current"] = current
+			}
+			if label != "" {
+				extra["promo_label"] = label
+			}
+		}
+		if len(extra) > 0 {
+			m.Extra = extra
 		}
 		out = append(out, m)
 	}

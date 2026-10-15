@@ -150,6 +150,41 @@ func TestGatewayChatModelsKeepsChatGroupAndDedupes(t *testing.T) {
 	}
 }
 
+func TestQoderBillingUsesPriceFactorAndUTC8Promotion(t *testing.T) {
+	raw := `{"chat":[
+		{"key":"qfmodel","display_name":"Qwen3.8-Flash","enable":true,"price_factor":0,"original_price_factor":0.1},
+		{"key":"qmodel_latest","display_name":"Qwen3.7-Max","enable":true,"price_factor":0.1,"original_price_factor":0.5,"promotion":{"active":false,"discount_factor":0.2,"before_promotion_price_factor":0.5,"window_start":"22:00","window_end":"08:00"}},
+		{"key":"flat","display_name":"Flat","enable":true,"price_factor":1.25}
+	]}`
+	var list gatewayModelList
+	if err := json.Unmarshal([]byte(raw), &list); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	infos := list.chatModels()
+	if len(infos) != 3 {
+		t.Fatalf("chatModels = %#v, want three entries", infos)
+	}
+	if infos[0].PriceFactor == nil || *infos[0].PriceFactor != 0 {
+		t.Fatalf("qfmodel price factor = %v, want 0 (free is a real value)", infos[0].PriceFactor)
+	}
+	if infos[1].Promotion == nil || infos[1].Promotion.WindowStart != "22:00" || infos[1].Promotion.WindowEnd != "08:00" {
+		t.Fatalf("qmodel_latest promotion = %#v", infos[1].Promotion)
+	}
+
+	inWindow := time.Date(2026, 9, 21, 14, 0, 0, 0, time.UTC) // 22:00 UTC+8
+	atCutoff := time.Date(2026, 9, 21, 16, 0, 0, 0, time.UTC) // 00:00 UTC+8, inside
+	outside := time.Date(2026, 9, 21, 8, 0, 0, 0, time.UTC)   // 16:00 UTC+8
+	if !promotionActiveNow(infos[1].Promotion, inWindow) {
+		t.Error("the promotion must be active at 22:00 UTC+8")
+	}
+	if !promotionActiveNow(infos[1].Promotion, atCutoff) {
+		t.Error("a window crossing midnight must be active at 00:00 UTC+8")
+	}
+	if promotionActiveNow(infos[1].Promotion, outside) {
+		t.Error("the promotion must be inactive at 16:00 UTC+8")
+	}
+}
+
 // TestChatBodyCarriesUsageAndSessionContext pins the body the gateway is signed
 // over: stream_options must ask for usage, and metadata.context must carry the
 // caller's session ids so the vendor attributes the spend correctly.

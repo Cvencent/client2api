@@ -374,6 +374,14 @@ type Client struct {
 	// using Deps.HTTPClient and behaves exactly as before.  See New.
 	vendorClient *http.Client
 
+	// decompOnce guards decodedClient, the httpClient() result.  Because this
+	// module sends `Accept-Encoding: br, gzip, deflate` (as the CLI does),
+	// net/http no longer decodes responses for it, so whichever base client is
+	// chosen is wrapped in a decompressTransport exactly once.  See
+	// decompress.go.
+	decompOnce    sync.Once
+	decodedClient *http.Client
+
 	mu      sync.Mutex
 	lastErr string
 

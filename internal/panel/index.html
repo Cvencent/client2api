@@ -3269,6 +3269,7 @@ kbd {
         <div class="subtabs pfSubtabs" data-subtabs="platforms" role="tablist" aria-label="平台路由配置视图">
           <button class="chip subtab on" type="button" id="platforms-tab-groups" role="tab" aria-selected="true" aria-controls="platforms-panel-groups" data-subtab="groups">模型路由组</button>
           <button class="chip subtab" type="button" id="platforms-tab-rules" role="tab" aria-selected="false" aria-controls="platforms-panel-rules" data-subtab="rules" tabindex="-1">平台与模型</button>
+          <button class="chip subtab" type="button" id="platforms-tab-plan" role="tab" aria-selected="false" aria-controls="platforms-panel-plan" data-subtab="plan" tabindex="-1">链路测试</button>
         </div>
         <div class="subtab-panel" data-subtab-panel="platforms-groups" id="platforms-panel-groups" role="tabpanel" aria-labelledby="platforms-tab-groups">
           <div class="pad" id="pfGroups"><div class="hint">正在读取模型路由组…</div></div>
@@ -3282,6 +3283,14 @@ kbd {
             <button class="xs" id="btnPfCollapse">全部收起</button>
           </div>
           <div class="pad" id="pfBody"><div class="hint">正在读取平台与模型…</div></div>
+        </div>
+        <div class="subtab-panel" data-subtab-panel="platforms-plan" id="platforms-panel-plan" role="tabpanel" aria-labelledby="platforms-tab-plan" hidden>
+          <div class="tblbar">
+            <input id="rpModel" type="search" placeholder="模型名，例如 Auto/MIMO-2.6Flash" spellcheck="false" autocomplete="off" style="min-width:280px">
+            <button class="xs" id="btnRpTest">测试链路</button>
+            <span class="hint">只做本地静态预演，不调用上游、不看账号状态。</span>
+          </div>
+          <div class="pad" id="rpResult"><div class="hint">输入模型名后点「测试链路」，查看平台的调用顺序。</div></div>
         </div>
         <div class="savebar">
           <span class="hint">勾选 = 允许调用，取消勾选即加入该平台黑名单；优先级填整数，可以为负数，数字越小越先路由，例如 -10 比 -5 更优先；留空使用默认 0。「平台总并发 / 网关单账号并发」与「最低余额」在平台头部，WorkBuddy 卡片里额外有账号池治理。保存后立即热加载生效，无需重启。</span>
@@ -6998,29 +7007,94 @@ function outCell(ex, pr) {
     esc(stale) + "</div></td>";
 }
 
-/* 倍率格。原版只有 workbuddy 一家，键名固定；这里同一格要同时认 workbuddy 的
-   credits/promo_* 与 tabbit 的 display_multiplier。语义与原版一致：有生效优惠
-   （既给了折扣对象又给了优惠价）时显示优惠价、把牌价划掉、挂上优惠名与悬浮
-   说明；只有优惠名没有折扣对象（错峰类）时显示牌价加一个警示标签；都没有就
-   显示牌价；牌价也没有才落到客户端自报的倍数。 */
+/* 倍率格。每个平台把同一个事实放进了不同字段：workbuddy 的 credits/promo_*、
+   tabbit 的 display_multiplier、raccoon 的 billing_*、qwenwork 的 credits、
+   autoclaw 的 credit_consumption_level、trae 的 consumption_rate/discount，
+   以及 loomy 只放在 display_name 里的 "· xN"。这里做一层统一读取：
+   有生效优惠（既给了折扣对象又给了优惠价）时显示优惠价、把牌价划掉、挂上
+   优惠名与悬浮说明；只有优惠名没有折扣对象（错峰类）时显示牌价加警示标签；
+   只有牌价就显示牌价。无法拆成数字的文本倍率按原文显示，避免把「高」这类
+   客户端分级伪装成数值。 */
+function rateNumber(v) {
+  if (typeof v === "number") return isFinite(v) ? v : null;
+  if (typeof v !== "string") return null;
+  const m = v.trim().match(/^(?:x|×)?\s*([0-9]+(?:\.[0-9]+)?)(?:\s*(?:x|×))?$/i);
+  return m ? Number(m[1]) : null;
+}
+
+function rateIsFree(v) {
+  if (typeof v === "number") return v === 0;
+  if (typeof v !== "string") return false;
+  const s = v.trim().toLowerCase();
+  if (!s) return false;
+  if (s === "免费" || s === "free" || s === "free_unlimited") return true;
+  const n = rateNumber(v);
+  return n === 0;
+}
+
+function fmtRate(v) {
+  const n = rateNumber(v);
+  if (n === null) return String(v || "").trim();
+  if (n === 0) return "免费";
+  return "x" + String(n);
+}
+
+function ratePromoFactor(ex) {
+  let base = rateNumber(ex.billing_multiplier);
+  if (base === null) base = rateNumber(ex.consumption_rate);
+  let effective = rateNumber(ex.billing_effective_multiplier);
+  if (effective === null) effective = rateNumber(ex.consumption_rate_current);
+  if (base && base > 0 && effective !== null && effective >= 0 && effective < base) return effective / base;
+  return null;
+}
+
+function rateListPrice(ex) {
+  if (ex.credits !== undefined && ex.credits !== null && String(ex.credits).trim() !== "") return fmtRate(ex.credits);
+  if (ex.billing_multiplier !== undefined && ex.billing_multiplier !== null) return fmtRate(ex.billing_multiplier);
+  if (ex.consumption_rate !== undefined && ex.consumption_rate !== null) return fmtRate(ex.consumption_rate);
+  if (ex.cost_multiplier !== undefined && ex.cost_multiplier !== null) return fmtRate(ex.cost_multiplier);
+  return "";
+}
+
+function rateEffectivePrice(ex) {
+  if (ex.promo_credits !== undefined && ex.promo_credits !== null && String(ex.promo_credits).trim() !== "") return fmtRate(ex.promo_credits);
+  if (ex.billing_effective_multiplier !== undefined && ex.billing_effective_multiplier !== null) return fmtRate(ex.billing_effective_multiplier);
+  const c = ex.consumption_rate_current;
+  if (c !== undefined && c !== null) return fmtRate(c);
+  return "";
+}
+
+function rateFromDisplayName(ex) {
+  const name = String(ex.display_name || "");
+  const m = name.match(/[·(（]\s*(?:x|×)\s*([0-9]+(?:\.[0-9]+)?)\s*[)）]?\s*$/i);
+  return m ? Number(m[1]) : null;
+}
+
 function rateCell(ex) {
-  const list = ex.credits || "";
-  const promo = ex.promo_credits || "";
+  const list = rateListPrice(ex);
+  const promo = rateEffectivePrice(ex);
+  const factor = ex.promo_factor !== undefined && ex.promo_factor !== null ? ex.promo_factor : ratePromoFactor(ex);
   const label = ex.promo_label || "";
   const note = ex.promo_note || "";
-  const factor = ex.promo_factor;
   if (factor !== undefined && factor !== null && promo) {
     return '<td class="num"><span title="' + esc(note) + '" style="cursor:help"><b>' + esc(promo) + "</b>" +
       (label ? ' <span class="tag ok">' + esc(label) + "</span>" : "") +
       (list ? ' <s style="color:var(--ink-3);font-size:11.5px">' + esc(list) + "</s>" : "") + "</span></td>";
   }
-  if (label) {
-    return '<td class="num">' + esc(list || "—") + ' <span class="tag warn">' + esc(label) + "</span></td>";
+  if (list) return '<td class="num">' + esc(list) + (label ? ' <span class="tag warn">' + esc(label) + "</span>" : "") + "</td>";
+  const mult = ex.display_multiplier !== undefined && ex.display_multiplier !== null ? ex.display_multiplier : rateFromDisplayName(ex);
+  if (mult !== undefined && mult !== null) {
+    if (rateIsFree(mult)) return '<td class="num"><span style="color:var(--ink-3)">免费</span></td>';
+    const parsed = rateNumber(mult);
+    const text = parsed === null ? esc(String(mult)) : "×" + esc(String(parsed));
+    return '<td class="num" title="客户端自报的计费倍数"><span style="color:var(--ink-3)">' + text + "</span></td>";
   }
-  if (list) return '<td class="num">' + esc(list) + "</td>";
-  const mult = ex.display_multiplier;
-  if (typeof mult === "number" && mult !== 0) {
-    return '<td class="num" title="客户端自报的计费倍数"><span style="color:var(--ink-3)">×' + esc(String(mult)) + "</span></td>";
+  if (rateIsFree(ex.model_access_type)) {
+    return '<td class="num" title="客户端自报的免费访问类型"><span style="color:var(--ink-3)">免费</span></td>';
+  }
+  const level = ex.credit_consumption_level;
+  if (level !== undefined && level !== null && String(level).trim() !== "") {
+    return '<td class="num" title="客户端自报的倍率分级"><span style="color:var(--ink-3)">' + esc(String(level)) + "</span></td>";
   }
   return '<td class="num">—</td>';
 }
@@ -8001,6 +8075,42 @@ async function renderPlatforms(preserveDraft = false) {
   restorePlatformDraft(draft);
 }
 
+function runRoutePlan() {
+  const btn = $("#btnRpTest");
+  const input = $("#rpModel");
+  const out = $("#rpResult");
+  const model = (input && input.value || "").trim();
+  if (!model) { if (out) out.innerHTML = '<div class="hint">先输入模型名。</div>'; return; }
+  const catalogs = {};
+  Object.keys(PF.models || {}).forEach(name => {
+    const list = (PF.models[name] || []).map(id => ({ id: id }));
+    if (list.length) catalogs[name] = list;
+  });
+  btn.disabled = true;
+  btn.textContent = "解析中…";
+  api("/panel/api/route_plan", { method: "POST", body: { model: model, catalogs: catalogs } })
+    .then(r => {
+      if (!r.ok || !r.data) { out.innerHTML = '<div class="state err">' + esc(r.err || "解析失败") + '</div>'; return; }
+      const steps = r.data.steps || [];
+      if (!steps.length) { out.innerHTML = '<div class="hint">没有平台能服务这个模型。</div>'; return; }
+      const rows = [];
+      rows.push('<div class="pfwbhd" style="margin:2px 0 8px">路由链 · ' + esc(r.data.model || model) + '</div>');
+      steps.forEach(s => {
+        const tag = s.preferred ? ' <span class="tag ok">首选</span>' : "";
+        const free = s.free ? ' <span class="tag ok">免费</span>' : "";
+        rows.push('<div class="pfplat" style="margin-bottom:6px"><div class="pfhead">' +
+          '<span class="pfname">#' + s.position + ' · ' + esc(platformLabel(s.platform)) + '</span>' +
+          '<span class="pfcount">实际模型 ' + esc(s.model_id) + ' · 优先级 ' + s.priority + ' · ' + esc(s.priority_source_name || s.priority_source || "") + '</span>' +
+          (s.group ? '<span class="pfcount">组 ' + esc(s.group) + '</span>' : "") +
+          (s.auto_pool ? '<span class="pfcount">Auto 池成员</span>' : "") +
+          (s.schedule_hit ? '<span class="pfcount">分时命中 ' + esc(s.schedule_hit) + '</span>' : "") +
+          tag + free + '<span class="grow"></span></div></div>');
+      });
+      rows.push('<div class="hint">顺序为静态预演：实际请求还会受账号可用性、冷却与健康状态影响；这里不读账号，也不发上游请求。</div>');
+      out.innerHTML = rows.join("");
+    })
+    .finally(() => { btn.disabled = false; btn.textContent = "测试链路"; });
+}
 function pfReadDisabledModels(plat, baseline) {
   const rows = Array.from(plat.querySelectorAll(".pfm"));
   const listed = new Set(rows.map(row => row.dataset.model.toLowerCase()));
@@ -12385,6 +12495,7 @@ $("#btnBundleImport").addEventListener("click", bundlePick);
 $("#btnPfExport").addEventListener("click", bundleExport);
 $("#btnPfImport").addEventListener("click", bundlePick);
 $("#btnPfSave").addEventListener("click", savePlatforms);
+$("#btnRpTest").addEventListener("click", runRoutePlan);
 $("#btnSourceAdd").addEventListener("click", () => openSource());
 $("#btnSourceCancel").addEventListener("click", closeSource);
 $("#sourceForm").addEventListener("submit", saveSource);
@@ -13204,3 +13315,6 @@ window.addEventListener("unhandledrejection", ev => panelBootError(ev.reason));
 </script>
 </body>
 </html>
+
+
+

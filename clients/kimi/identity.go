@@ -258,6 +258,10 @@ func applyIdentityHeaders(h http.Header, id deviceIdentity, withSDK bool) {
 	h.Set("x-msh-device-id", id.id)
 	h.Set("accept-language", "*")
 	h.Set("sec-fetch-mode", "cors")
+	// The CLI offers all three codings on every vendor call.  net/http would
+	// otherwise add `Accept-Encoding: gzip` itself and, worse, claim it only
+	// supports gzip -- a small but real difference from the Node client.
+	h.Set("Accept-Encoding", "br, gzip, deflate")
 
 	if withSDK {
 		h.Set("x-stainless-retry-count", "0")

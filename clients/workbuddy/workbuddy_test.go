@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -736,6 +737,8 @@ func TestClassify(t *testing.T) {
 		{"server", 503, "upstream exploded", ErrServer},
 		{"bad params", 400, "Unmarshal chat params failed", ErrBadParams},
 		{"bad params code", 400, `{"code":11101,"msg":"bad"}`, ErrBadParams},
+		{"function params code", 400, `{"code":11129,"msg":"invalid function call parameters"}`, ErrBadParams},
+		{"nested function params code", 400, `{"code":1,"extError":{"code":"invalid_function_parameters","message":"invalid function call parameters","ext":{"code":11129}}}`, ErrBadParams},
 		{"content blocked", 400, "blocked by security policy", ErrContentBlocked},
 		{"account fault", 400, "request illegal", ErrAccountFault},
 		{"trial", 400, "trial not activated", ErrAccountFault},
@@ -902,6 +905,36 @@ func TestRetryableKind(t *testing.T) {
 	if retryableKind(ErrBadParams) || retryableKind(ErrContentBlocked) ||
 		retryableKind(ErrImageInvalid) || retryableKind(ErrPromptTooLong) {
 		t.Fatal("request-shape failures must not be retried")
+	}
+}
+
+// TestBadParamsDoesNotDegradePoolAccount pins the distinction that matters for
+// an upstream function-parameter rejection: it is scoped to the request, not
+// the credential, so every WorkBuddy account must stay in rotation.
+func TestBadParamsDoesNotDegradePoolAccount(t *testing.T) {
+	a := &Auth{AccessToken: "at-111111111111", UID: "u-bad-params"}
+	p := NewPool([]*Auth{a}, 0)
+	policy := core.DefaultFaultPolicy()
+	policy.DegradeThreshold = 1
+	policy.DegradeCooldown = time.Minute
+	p.SetPolicy(policy)
+
+	classified := Classify(http.StatusBadRequest, `{"code":11129,"msg":"invalid function call parameters"}`)
+	kind, d := p.MarkFailureForModel(a, "deepseek-v4.1-flash", &Error{
+		Kind:   classified,
+		Status: http.StatusBadRequest,
+		Msg:    "invalid function call parameters",
+	})
+	if kind != ErrBadParams || d != 0 {
+		t.Fatalf("bad params = (%v, %v), want (%v, 0)", kind, d, ErrBadParams)
+	}
+
+	got := p.Snapshot()[0]
+	if got.State != stateReady || !got.Enabled {
+		t.Fatalf("account after bad params = state %q enabled %t, want ready and enabled", got.State, got.Enabled)
+	}
+	if strings.Contains(got.Note, "degrade") {
+		t.Fatalf("account was degraded by a request-shape failure: %q", got.Note)
 	}
 }
 
@@ -2091,6 +2124,56 @@ func TestMonitorBodyIdleTimeout(t *testing.T) {
 func TestParseAuthRejectsUnrelatedJSON(t *testing.T) {
 	if _, err := ParseAuth([]byte(`{"unrelated":1}`)); err == nil {
 		t.Fatal("expected an error for a document without an access token")
+	}
+}
+
+// TestWireToolsReplaceEmptyParameterSchema pins the request shape DeepSeek
+// V4.1 Flash accepts.  It rejects a function whose parameters are literally
+// `{}` with business code 11129, even though other WorkBuddy models tolerate
+// it.  An empty schema and an omitted schema mean the same thing, so both must
+// go out as an explicit empty object schema.
+func TestWireToolsKeepsNonEmptyParameterSchema(t *testing.T) {
+	original := `{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false}`
+	tools := wireTools([]core.Tool{
+		{Type: "function", Name: "real", Parameters: json.RawMessage(original)},
+	})
+	tool, _ := tools[0].(map[string]any)
+	fn, _ := tool["function"].(map[string]any)
+	got, err := json.Marshal(fn["parameters"])
+	if err != nil {
+		t.Fatalf("marshal parameters: %v", err)
+	}
+	var gotObj, wantObj any
+	if err := json.Unmarshal(got, &gotObj); err != nil {
+		t.Fatalf("unmarshal got: %v", err)
+	}
+	if err := json.Unmarshal([]byte(original), &wantObj); err != nil {
+		t.Fatalf("unmarshal want: %v", err)
+	}
+	if !reflect.DeepEqual(gotObj, wantObj) {
+		t.Fatalf("parameters = %s, want %s", got, original)
+	}
+}
+
+func TestWireToolsReplaceEmptyParameterSchema(t *testing.T) {
+	tools := wireTools([]core.Tool{
+		{Type: "function", Name: "empty", Parameters: json.RawMessage(`{}`)},
+		{Type: "function", Name: "missing"},
+	})
+	if len(tools) != 2 {
+		t.Fatalf("tools = %d, want 2", len(tools))
+	}
+	for i, raw := range tools {
+		tool, _ := raw.(map[string]any)
+		fn, _ := tool["function"].(map[string]any)
+		params, _ := fn["parameters"].(map[string]any)
+		if params["type"] != "object" {
+			t.Fatalf("tool %d parameters = %#v, want an explicit object schema", i, params)
+		}
+		properties, ok := params["properties"].(map[string]any)
+		if !ok || len(properties) != 0 {
+			t.Fatalf("tool %d properties = %#v, want an empty object", i, params["properties"])
+		}
 	}
 }
 

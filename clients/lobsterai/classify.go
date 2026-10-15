@@ -34,6 +34,7 @@ var hardCreditMarkers = []string{
 	"quota exceeded", "quota exhaust", "payment required", "credit not enough",
 	"not enough credit", "freecreditsused", "free credits used",
 	"积分不足", "额度不足", "余额不足", "积分用完", "额度用尽", "没有积分", "积分耗尽",
+	"免费额度已用完", "请升级套餐", "免费额度用完",
 }
 
 // sessionDeadMarkers mean "this credential will never work again": the account
@@ -177,7 +178,10 @@ func (c *Client) noteFailure(acct *accountRecord, k failureKind, msg string) {
 	now := c.now()
 	switch k {
 	case kindHardCredit:
-		c.pool.setCooldown(acct.ID, now.Add(c.cfg.quotaCooldown()), msg)
+		// A zero balance is not a temporary state, so the park is a flag rather
+		// than a clock: cooling it down for hours would only delay the moment
+		// the next request repeats the same refusal.
+		c.pool.setLowCredit(acct.ID, msg)
 	case kindSoftRate:
 		c.pool.setCooldown(acct.ID, now.Add(c.cfg.cooldown()), msg)
 	case kindNotFound:

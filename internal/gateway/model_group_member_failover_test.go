@@ -12,9 +12,9 @@ import (
 	"client2api/internal/livecfg"
 )
 
-// Naming a group member is a preference, not a hard platform pin: if that
-// member answers "this model does not exist here", the gateway must fall
-// through to the other members of the same group.
+// A bare group name is the operator's failover chain: if its first member
+// answers "this model does not exist here", the gateway must fall through to
+// the other members of the same group.
 func TestChatFailsOverFromGroupMemberRefusal(t *testing.T) {
 	alpha := &testClient{
 		name:      "alpha",
@@ -57,11 +57,18 @@ func TestChatFailsOverFromGroupMemberRefusal(t *testing.T) {
 		}),
 	})
 
-	rec := chat(t, srv, `{"model":"alpha/alpha-model","messages":[{"role":"user","content":"hi"}]}`)
+	rec := chat(t, srv, `{"model":"shared","messages":[{"role":"user","content":"hi"}]}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
 	}
 	if beta.seen == nil {
 		t.Fatal("the sibling group member never received the failover")
+	}
+
+	// An explicit platform choice is answered by that platform: the group is not
+	// allowed to override the caller, even when the named member refuses.
+	rec = chat(t, srv, `{"model":"alpha/alpha-model","messages":[{"role":"user","content":"hi"}]}`)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("explicit alpha status = %d, want 404: %s", rec.Code, rec.Body.String())
 	}
 }

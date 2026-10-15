@@ -80,6 +80,12 @@ func (c *Client) AccountBalance(ctx context.Context, id string, soon time.Durati
 		Unit:    "积分",
 	}
 	c.noteSuccess(acct)
+	// A funded read is the proof that lifts a zero-credit park: the vendor's
+	// own number, not a clock the gateway invented.  This is what lets a park
+	// heal by itself when the operator tops the account up.
+	if credits > 0 && c.pool.clearLowCredit(acct.ID) {
+		c.persist()
+	}
 
 	// creditItems[] is a list of {type, creditsRemaining, expiresAt}.  It is
 	// what makes the "expiring soon" bucket possible; the total above already

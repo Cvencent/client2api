@@ -1127,6 +1127,48 @@ func TestModelsReadTheVendorsPublishedContextWindow(t *testing.T) {
 	}
 }
 
+func TestModelsReadTheVendorsCostMultiplier(t *testing.T) {
+	const body = `{"code":0,"message":"success","data":[
+		{"modelId":"priced","modelName":"Priced","provider":"LobsterAI","apiFormat":"openai","costMultiplier":0.05},
+		{"modelId":"one","modelName":"One","provider":"LobsterAI","apiFormat":"openai","costMultiplier":1},
+		{"modelId":"free-reported","modelName":"Free","provider":"LobsterAI","apiFormat":"openai","costMultiplier":0},
+		{"modelId":"missing","modelName":"Missing","provider":"LobsterAI","apiFormat":"openai"},
+		{"modelId":"negative","modelName":"Negative","provider":"LobsterAI","apiFormat":"openai","costMultiplier":-1}
+	]}`
+	f := newFixture(t, nil, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/models/available" {
+			http.NotFound(w, r)
+			return
+		}
+		io.WriteString(w, body)
+	})
+	addAccount(t, f.client, "access-1")
+
+	models, err := f.client.Models(context.Background())
+	if err != nil {
+		t.Fatalf("Models: %v", err)
+	}
+	got := map[string]core.Model{}
+	for _, m := range models {
+		got[m.ID] = m
+	}
+	if n := got["priced"].Extra["cost_multiplier"]; n != 0.05 {
+		t.Errorf("priced cost_multiplier = %#v, want 0.05", n)
+	}
+	if n := got["one"].Extra["cost_multiplier"]; n != float64(1) {
+		t.Errorf("one cost_multiplier = %#v, want 1", n)
+	}
+	if _, ok := got["free-reported"].Extra["cost_multiplier"]; ok {
+		t.Error("a zero costMultiplier must be omitted: the vendor documents it as no usable rate")
+	}
+	if _, ok := got["missing"].Extra["cost_multiplier"]; ok {
+		t.Error("a missing costMultiplier must not be invented")
+	}
+	if _, ok := got["negative"].Extra["cost_multiplier"]; ok {
+		t.Error("a negative costMultiplier must be rejected")
+	}
+}
+
 // --- config -----------------------------------------------------------------
 
 func TestConfigDefaultsAndGuards(t *testing.T) {

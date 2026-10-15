@@ -1479,11 +1479,16 @@ it as an `extra` object on the entry (omitted entirely when the module published
 none, so a plain catalogue stays byte-for-byte OpenAI), and `/panel/api/models`
 passes the same map through. The column reads, in order: an in-force campaign
 (`promo_credits` with `promo_label` and the struck-through list price, the
-campaign's hover text as the tooltip), then a badge-only campaign
-(`promo_label` beside the list price), then the list price (`credits`), then a
-bare multiplier (`display_multiplier`, which is what tabbit publishes). A model
-with none of them renders `—`. What each module puts in `Extra` is its own
-business — see the per-client READMEs.
+campaign's tooltip), then a badge-only campaign (`promo_label` beside the list
+price), then the list price (`credits`, with Raccoon/TRAE/Qoder variants folded
+in), then a bare multiplier (`display_multiplier`, `cost_multiplier`, or the
+multiplier embedded in a display name). A numeric zero is rendered as `免费`,
+not `x0`; `free_unlimited` is free, while `free_metered` is not treated as a
+multiplier. A model with none of them renders `—`. What each module puts in
+`Extra` is its own business — see the per-client READMEs. Platforms with no
+vendor multiplier field (CodeArts, Kimi, Gemini, Doubao, ZCode, Cline, Kilo,
+OpenCode, OpenRouter) deliberately stay blank rather than substituting price or
+a free flag for a rate.
 
 Every `/v1/models` entry also carries a resolved `context_length` and
 `max_output_tokens`, and the same two numbers are mirrored into `extra`. The

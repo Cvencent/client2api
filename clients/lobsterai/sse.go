@@ -301,7 +301,11 @@ func (s *chatStream) absorb(frame sseFrame) {
 		msg := firstNonEmpty(chunk.Error.Message, chunk.Error.Type, "upstream reported an error on the stream")
 		s.pending = append(s.pending, core.Event{
 			Type: core.EventError,
-			Err:  fmt.Errorf("%s: %s", clientName, msg),
+			// A classified refusal is what lets the gateway fail over to
+			// another platform: this stream is answered with HTTP 200, so
+			// without a *core.Failure here the error reads as "this platform
+			// answered" and the request dies on the first platform.
+			Err: s.client.classifyErrFor(s.account, fmt.Errorf("%s: %s", clientName, msg)),
 		})
 		return
 	}

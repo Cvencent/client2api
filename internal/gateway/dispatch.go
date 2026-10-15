@@ -303,6 +303,41 @@ func (s *server) routeAndServeMessages(w http.ResponseWriter, r *http.Request, i
 	// A success names nothing in the error path, so this is the only place the
 	// serving account can be learned — and both the usage ledger's per-account
 	// grouping and the console row are wrong without it.
+	// A vendor may answer an exhausted account with HTTP 200 and the refusal
+	// inside the stream.  Nothing has reached the caller yet, so reading the
+	// first frame here is free: a classified retryable verdict closes that
+	// stream and hands the request to the next platform instead of the caller.
+	probe, probeErr := probeFirstFrame(stream)
+	if probeErr != nil {
+		stream.Close()
+		in.rec.Account = core.ErrorAccountID(probeErr)
+		if in.rec.Account == "" {
+			in.rec.Account = servedBy
+		}
+		in.stat.uid = in.rec.Account
+		f, classified := core.AsFailure(probeErr)
+		retryable := classified && core.Retryable(f.Kind)
+		if retryable {
+			ev := s.opts.Registry.NoteModelFailure(client.Name(), upstreamModel, time.Now())
+			s.publishPlatformAlert(client.Name(), upstreamModel, in.rec.Account, ev)
+		}
+		if (retryable || candidateUnavailable(probeErr)) && len(candidates) > 1 && (s.opts.Guard == nil || !s.opts.Guard.IP.Active()) {
+			s.noteFailedCandidate(in.rec, client, upstreamModel, probeErr)
+			s.opts.Logger.Printf("chat: platform %s model %s failed inside stream (%v), trying the next platform", client.Name(), upstreamModel, probeErr)
+			var handled bool
+			client, hintCtx, probeErr, handled = s.serveRemainingCandidates(w, r, in, candidates[1:], 2, maxTokensExplicit)
+			if handled {
+				return
+			}
+		}
+		status, _, _ := upstreamErrorShape(probeErr)
+		in.stat.status = status
+		s.fail(in.rec, probeErr)
+		s.writeUpstreamError(w, client, hintCtx, probeErr)
+		return
+	}
+	stream = withProbedFrame(stream, probe)
+
 	if servedBy != "" {
 		in.rec.Account = servedBy
 		in.stat.uid = servedBy

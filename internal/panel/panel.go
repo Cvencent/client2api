@@ -256,6 +256,7 @@ func New(opts Options) http.Handler {
 	// let a POST fall through to the catch-all and come back as a bare
 	// "404 page not found" instead of the 405 every other route answers.
 	api("/panel/api/model_probes", p.handleModelProbes)
+	api("/panel/api/route_plan", p.handleRoutePlan)
 
 	// The captcha document.  It is a page, not JSON, and it is framed by the
 	// shell -- so it gets its own headers (captcha.go) rather than the shell's

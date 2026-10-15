@@ -105,6 +105,33 @@ func toInt(v any) (int, bool) {
 	}
 }
 
+// toFloat renders a decoded JSON value as a float64. It mirrors toInt so the
+// catalogue can accept a number or a numeric string without changing shape.
+func toFloat(v any) (float64, bool) {
+	switch t := v.(type) {
+	case nil:
+		return 0, false
+	case int:
+		return float64(t), true
+	case int64:
+		return float64(t), true
+	case int32:
+		return float64(t), true
+	case float64:
+		return t, true
+	case float32:
+		return float64(t), true
+	case json.Number:
+		n, err := t.Float64()
+		return n, err == nil
+	case string:
+		n, err := strconv.ParseFloat(strings.TrimSpace(t), 64)
+		return n, err == nil
+	default:
+		return 0, false
+	}
+}
+
 // firstString returns the first key present in m, rendered as a string.
 func firstString(m map[string]any, keys ...string) string {
 	for _, k := range keys {

@@ -36,8 +36,14 @@ const (
 	// request, inference and account alike.
 	headerReferer    = "https://cline.bot"
 	headerTitle      = "Cline"
-	headerClientType = "cline-sdk"
+	headerClientType = "cline-desktop"
 	headerMultiRoot  = "false"
+	clientName       = "cline-desktop"
+	clientVersion    = "0.0.40"
+	clientPlatform   = "Cline Desktop"
+	// coreVersion is the @cline/core version the bundled sidecar reports as
+	// X-CORE-VERSION on inference calls (package.json of @cline/core).
+	coreVersion = "0.0.89"
 )
 
 // File names inside Deps.DataDir.

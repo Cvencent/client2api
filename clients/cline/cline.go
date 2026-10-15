@@ -140,12 +140,10 @@ func (c *Client) setPaths() {
 	c.loginPath = filepath.Join(dir, loginFile)
 }
 
-// httpClient returns the client every request goes through: the host's when one
-// was supplied, otherwise this module's own.
+// httpClient returns the client every request goes through: a configured
+// fingerprint transport first, then the host-supplied client, then this
+// module's own.
 func (c *Client) httpClient() *http.Client {
-	if c.deps.HTTPClient != nil {
-		return c.deps.HTTPClient
-	}
 	c.httpOnce.Do(func() {
 		if fp := c.cfg.tlsProfile(); fp != fingerprint.ProfileNone {
 			if fhc, ferr := fingerprint.New(fingerprint.Options{
@@ -159,6 +157,10 @@ func (c *Client) httpClient() *http.Client {
 			} else {
 				c.deps.Log("cline: tls fingerprint %q ignored: %v", string(fp), ferr)
 			}
+		}
+		if c.deps.HTTPClient != nil {
+			c.ownClient = c.deps.HTTPClient
+			return
 		}
 		c.ownClient = &http.Client{
 			Transport: &http.Transport{
@@ -295,7 +297,7 @@ func (c *Client) openChat(ctx context.Context, release context.CancelFunc, req *
 		}
 		issued++
 
-		resp, err := c.chatStream(ctx, e.acct, body)
+		resp, err := c.chatStream(ctx, e.acct, body, taskIDFor(req))
 		if err == nil {
 			c.pool.markUsed(e)
 			c.noteUpstream(true, "")
@@ -344,14 +346,28 @@ func (c *Client) openChat(ctx context.Context, release context.CancelFunc, req *
 	return nil, core.ErrNotConfigured
 }
 
+// taskIDFor resolves the value for the inference-only X-Task-ID header.  The
+// desktop client sends its own session id there; a gateway request has no such
+// id, so the caller's conversation id is the analogue.  An empty result means
+// "send no header", never an invented id.
+func taskIDFor(req *core.ChatRequest) string {
+	if req == nil {
+		return ""
+	}
+	if id := strings.TrimSpace(req.ConversationID); id != "" {
+		return id
+	}
+	return strings.TrimSpace(req.ConversationRequestID)
+}
+
 // chatStream performs one upstream attempt.  A non-200 response becomes a
 // classified error; a vendor refusal is a normal result, not a Go error.
-func (c *Client) chatStream(ctx context.Context, acct account, body []byte) (*http.Response, error) {
+func (c *Client) chatStream(ctx context.Context, acct account, body []byte, taskID string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.cfg.endpoint(chatPath), bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
-	applyClientHeaders(req)
+	applyChatHeaders(req, taskID)
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+acct.AccessToken)

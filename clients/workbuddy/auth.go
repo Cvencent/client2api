@@ -40,6 +40,8 @@ type Auth struct {
 	UID          string
 	EnterpriseID string
 	Nickname     string
+	AuthMethod   string
+	IdSource     string
 	DeviceToken  string
 
 	// Daily-reward bookkeeping.  Both are local wall-clock stamps written by
@@ -85,6 +87,8 @@ type authAccount struct {
 	UID            string   `json:"uid"`
 	EnterpriseID   string   `json:"enterpriseId"`
 	Nickname       string   `json:"nickname"`
+	AuthMethod     string   `json:"authMethod,omitempty"`
+	IdSource       string   `json:"idSource,omitempty"`
 	DisabledModels []string `json:"disabled_models,omitempty"`
 	ForceEnabled   bool     `json:"force_enabled,omitempty"`
 }
@@ -98,6 +102,8 @@ type flatDoc struct {
 	UID            string   `json:"uid"`
 	EnterpriseID   string   `json:"enterpriseId"`
 	Nickname       string   `json:"nickname"`
+	AuthMethod     string   `json:"authMethod,omitempty"`
+	IdSource       string   `json:"idSource,omitempty"`
 	DeviceToken    string   `json:"device_token"`
 	LastCheckin    string   `json:"lastCheckin"`
 	LastDailyChat  string   `json:"lastDailyChat"`
@@ -127,6 +133,8 @@ func ParseAuth(raw []byte) (*Auth, error) {
 		a.UID = strings.TrimSpace(doc.Account.UID)
 		a.EnterpriseID = strings.TrimSpace(doc.Account.EnterpriseID)
 		a.Nickname = doc.Account.Nickname
+		a.AuthMethod = strings.TrimSpace(doc.Account.AuthMethod)
+		a.IdSource = strings.TrimSpace(doc.Account.IdSource)
 		a.DeviceToken = strings.TrimSpace(doc.DeviceToken)
 		a.LastCheckin = strings.TrimSpace(doc.LastCheckin)
 		a.LastDailyChat = strings.TrimSpace(doc.LastDailyChat)
@@ -145,6 +153,8 @@ func ParseAuth(raw []byte) (*Auth, error) {
 		a.UID = strings.TrimSpace(doc.UID)
 		a.EnterpriseID = strings.TrimSpace(doc.EnterpriseID)
 		a.Nickname = doc.Nickname
+		a.AuthMethod = strings.TrimSpace(doc.AuthMethod)
+		a.IdSource = strings.TrimSpace(doc.IdSource)
 		a.DeviceToken = strings.TrimSpace(doc.DeviceToken)
 		a.LastCheckin = strings.TrimSpace(doc.LastCheckin)
 		a.LastDailyChat = strings.TrimSpace(doc.LastDailyChat)
@@ -180,6 +190,8 @@ func (a *Auth) SaveAtomic() error {
 			UID:          a.UID,
 			EnterpriseID: a.EnterpriseID,
 			Nickname:     a.Nickname,
+			AuthMethod:   a.AuthMethod,
+			IdSource:     a.IdSource,
 		},
 	}
 	if a.DeviceToken != "" {
@@ -312,6 +324,24 @@ func (a *Auth) EnterpriseIDValue() string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.EnterpriseID
+}
+
+func (a *Auth) AuthMethodValue() string {
+	if a == nil {
+		return ""
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return strings.TrimSpace(a.AuthMethod)
+}
+
+func (a *Auth) IdSourceValue() string {
+	if a == nil {
+		return ""
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return strings.TrimSpace(a.IdSource)
 }
 
 func (a *Auth) NicknameValue() string {
@@ -537,6 +567,8 @@ func (a *Auth) Snapshot() *Auth {
 		UID:            a.UID,
 		EnterpriseID:   a.EnterpriseID,
 		Nickname:       a.Nickname,
+		AuthMethod:     a.AuthMethod,
+		IdSource:       a.IdSource,
 		DeviceToken:    a.DeviceToken,
 		DisabledModels: append([]string(nil), a.DisabledModels...),
 		ForceEnabled:   a.ForceEnabled,

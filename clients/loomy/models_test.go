@@ -216,6 +216,9 @@ func TestCoreModelsCarriesDisplayNameAndMultiplier(t *testing.T) {
 	if got := m.Extra["display_name"]; got != "Model One · x2.0" {
 		t.Errorf("display_name = %v", got)
 	}
+	if got := m.Extra["display_multiplier"]; got != float64(2) {
+		t.Errorf("display_multiplier = %v, want 2", got)
+	}
 	if got := m.Extra["context_length"]; got != 4096 {
 		t.Errorf("context_length = %v", got)
 	}

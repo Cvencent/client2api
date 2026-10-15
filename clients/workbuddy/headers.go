@@ -3,7 +3,9 @@ package workbuddy
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -266,6 +268,7 @@ func (u *Upstream) ChatHeaders(req *http.Request, a *Auth, clientIP string, meta
 		req.Header.Set("X-No-User-Id", "1")
 	}
 	// Security red line: never carry X-Refresh-Token on a chat request.
+	u.injectIdentityHeaders(req, a)
 	if a != nil && !a.IsGlobal() {
 		if eid := a.EnterpriseIDValue(); eid != "" {
 			req.Header.Set("X-Enterprise-Id", eid)
@@ -288,6 +291,41 @@ func (u *Upstream) ChatHeaders(req *http.Request, a *Auth, clientIP string, meta
 
 // injectGlobalChatHeaders declares the international client shape for accounts
 // with no enterprise id.
+// injectIdentityHeaders mirrors the official runIdentityHeaders() helper.
+// Only fields actually present on the stored account are sent; an absent
+// method or idSource is not guessed.
+func (u *Upstream) injectIdentityHeaders(req *http.Request, a *Auth) {
+	if a == nil {
+		return
+	}
+	uid, enterpriseID := a.UIDValue(), a.EnterpriseIDValue()
+	method, idSource := a.AuthMethodValue(), a.IdSourceValue()
+	if method != "" {
+		req.Header.Set("X-Auth-Method", method)
+	}
+	if idSource != "" {
+		req.Header.Set("X-Id-Source", idSource)
+	}
+	if uid == "" || (enterpriseID == "" && idSource == "" && method == "") {
+		return
+	}
+	info := map[string]string{"uin": uid}
+	if enterpriseID != "" {
+		info["owner_uin"] = enterpriseID
+	}
+	if idSource != "" {
+		info["id_source"] = idSource
+	}
+	if method != "" {
+		info["token_source"] = method
+	}
+	raw, err := json.Marshal(info)
+	if err != nil {
+		return
+	}
+	req.Header.Set("X-Userinfo", base64.StdEncoding.EncodeToString(raw))
+}
+
 func (u *Upstream) injectGlobalChatHeaders(req *http.Request, a *Auth) {
 	if a == nil || !a.IsGlobal() {
 		return
@@ -311,19 +349,20 @@ func (u *Upstream) injectConversationHeaders(req *http.Request, meta ChatMeta) {
 	req.Header.Set("X-Conversation-Request-ID", convReqID)
 	req.Header.Set("X-Conversation-Message-ID", messageID)
 	req.Header.Set("X-Request-ID", messageID)
-	req.Header.Set("X-Root-Request-ID", convReqID)
+	req.Header.Set("X-Agent-Intent", "craft")
+	req.Header.Set("X-Agent-Type", "main")
+	req.Header.Set("X-Private-Data", "false")
+
 	traceID := meta.TraceID
-	if traceID == "" {
-		traceID = convReqID
+	if !validTraceID(traceID) {
+		traceID = messageID
 	}
+	spanID := newMessageID()[:16]
 	req.Header.Set("X-Trace-ID", traceID)
-	b3Trace := convReqID
-	if !validTraceID(b3Trace) {
-		b3Trace = messageID
-	}
-	req.Header.Set("X-B3-TraceId", b3Trace)
-	req.Header.Set("X-B3-SpanId", messageID[:16])
+	req.Header.Set("X-B3-TraceId", traceID)
+	req.Header.Set("X-B3-SpanId", spanID)
 	req.Header.Set("X-B3-Sampled", "1")
+	req.Header.Set("b3", traceID+"-"+spanID+"-1")
 }
 
 // validTraceID reports whether s is a legal B3 trace id (16 or 32 hex chars).
@@ -345,8 +384,12 @@ func validTraceID(s string) bool {
 // gateway shape.
 func (u *Upstream) injectAttribution(req *http.Request) {
 	name := u.attributionClientName()
-	if name == "SaaS" {
-		req.Header.Set("X-Product", "SaaS")
+	if name == "WorkBuddy" {
+		// The main desktop conversation adapter does not set X-Product or
+		// X-Agent-Purpose. X-IDE-* is set from the client info provider.
+		req.Header.Set("X-IDE-Name", name)
+		req.Header.Set("X-IDE-Type", name)
+		req.Header.Set("X-IDE-Version", u.clientVersion())
 		return
 	}
 	req.Header.Set("X-Agent-Purpose", "conversation")
@@ -355,7 +398,6 @@ func (u *Upstream) injectAttribution(req *http.Request) {
 	req.Header.Set("X-IDE-Version", u.clientVersion())
 	req.Header.Set("X-Product", name)
 }
-
 func (u *Upstream) injectClientIP(req *http.Request, clientIP string) {
 	if u == nil || !u.PassthroughIP || clientIP == "" {
 		return

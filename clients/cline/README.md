@@ -9,6 +9,39 @@ model catalogues into one list.
 - **Auth** a WorkOS device-code flow exchanged for a Cline token (`workos:eyJ…`).
 - **Dependencies** standard library only.
 
+### Client identity (measured against Cline Desktop 0.0.40)
+
+The bundled `code-sidecar.exe` installs `DESKTOP_CLIENT_CONTEXT` at startup, so
+**every** request it makes carries the desktop identity, not the SDK fallback:
+
+```
+User-Agent: Cline/0.0.40
+X-CLIENT-TYPE: cline-desktop
+X-CLIENT-VERSION: 0.0.40
+X-PLATFORM: Cline Desktop
+X-PLATFORM-VERSION: 0.0.40
+HTTP-Referer: https://cline.bot
+X-Title: Cline
+X-IS-MULTIROOT: false
+```
+
+`cline-sdk` appears in the bundle only as `DEFAULT_CLINE_REQUEST_HEADERS`, used
+when no identity is installed; an earlier revision sent it on every call and was
+therefore distinguishable from the real desktop.
+
+Inference calls (`buildClineRequestHeaders`) add two headers the account and
+catalogue calls do not:
+
+```
+X-CORE-VERSION: 0.0.89   # the bundled @cline/core version
+X-Task-ID: <sessionId>   # the task's own id
+```
+
+This module sends `X-CORE-VERSION` on chat and maps `X-Task-ID` from the
+caller's conversation id (or, failing that, the turn id). When the caller names
+no conversation the header is omitted rather than invented, because a fabricated
+id would itself be a tell.
+
 Cline's own client is the reference for every detail below. Where the vendor
 deviates from the OpenAI convention (a prefixed bearer token, a camelCase refresh
 body, an account id that is *not* the JWT subject) this module follows the
@@ -83,7 +116,7 @@ with the less obvious 404 when the official header is:
 | request | answer |
 | --- | --- |
 | `POST /api/v1/chat/completions`, no `X-CLIENT-TYPE` | `403` `... is only available via Cline product surfaces ...` |
-| the same request with `X-CLIENT-TYPE: cline-sdk` (the header this module sends, as the official client does) | `404` `{"error":"model not found","success":false}` |
+| the same request with `X-CLIENT-TYPE: cline-desktop` (the header this module sends, as the official desktop client does) | `404` `{"error":"model not found","success":false}` |
 
 The header is what the official client sends, so the module keeps sending it.
 Ids the vendor still lists in the free array -- `cline-free/mimo-v2.6-flash` is

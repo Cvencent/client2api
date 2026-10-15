@@ -166,14 +166,26 @@ func wireTools(tools []core.Tool) []any {
 		if len(t.Parameters) > 0 {
 			var params any
 			if err := json.Unmarshal(t.Parameters, &params); err == nil {
+				// DeepSeek V4.1 Flash rejects an empty tool schema with
+				// "invalid function call parameters" (code 11129) while other
+				// models tolerate it, so "{}" is normalized to the explicit
+				// empty-object schema the upstream already accepts.
+				if obj, ok := params.(map[string]any); ok && len(obj) == 0 {
+					params = emptyToolParameters()
+				}
 				fn["parameters"] = params
 			}
 		} else {
-			fn["parameters"] = map[string]any{"type": "object", "properties": map[string]any{}}
+			fn["parameters"] = emptyToolParameters()
 		}
 		out = append(out, map[string]any{"type": typ, "function": fn})
 	}
 	return out
+}
+
+// emptyToolParameters is the canonical schema for a tool that takes no arguments.
+func emptyToolParameters() map[string]any {
+	return map[string]any{"type": "object", "properties": map[string]any{}}
 }
 
 // prepareBody runs the full outbound rewrite pipeline.
