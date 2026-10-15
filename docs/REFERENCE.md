@@ -441,6 +441,12 @@ platforms without a group priority fall back to the global
 `platforms.<name>.priority` and `priority_schedule`. Members missing from a
 live catalogue are skipped, so one flaky module cannot take the group down.
 
+`exposed_models` sits on top of all of this. It does not change how a request
+routes; it decides which final ids the gateway admits at all. The value is the
+list of ids a caller may use, matched against the request's original model string
+before any resolution, so `Auto/GLM-5.3`, a group name, an alias and an explicit
+`platform/model` are each allowed or denied on their own.
+
 Five GPT-6+ groups ship as built-ins so a Codex client can ask for the native
 lowercase name with no platform prefix: `gpt-6-astra`, `gpt-6.1-sol`,
 `gpt-6-sol`, `gpt-6-luna` and `gpt-6.1-sol-pro`, mapped onto the OpenCode and
@@ -595,6 +601,7 @@ sections below:
   "proxy": "",
   "egress": { "enabled": false, "mode": "subscription", "url": "", "mihomo_path": "" },
   "aliases": { "gpt-4o": "trae/custom_model_gpt-5" },
+  "exposed_models": null,
   "disabled": [],
   "clients": {
     "<name>": { }
@@ -626,6 +633,15 @@ sections below:
   `proxy`; `mihomo_path` may be set explicitly or left empty for PATH / Clash
   Verge discovery. The subscription URL is a credential and is redacted in the
   panel.
+* `exposed_models` is the final outward model whitelist. It is applied **after**
+  routing builds the full catalogue, so it filters `platform/model` ids,
+  `Auto/<model>` names, `model_groups` names, aliases and transcription ids, and
+  each final id is its own switch -- exposing a group member does not expose the
+  group name, and exposing an alias target does not expose the alias. Matching is
+  case-insensitive and ignores surrounding space. `null` (the default, or the key
+  absent) serves every final model; `[]` serves none. The whitelist gates
+  `GET /v1/models` and every call entry point, so a hidden id is rejected even
+  when it is named directly. Edited from **Models and Profiles -> Exposed Models**.
 
 ### Environment overrides
 
@@ -700,6 +716,7 @@ to every module that implements `core.LiveReloader`, with no restart.
 | `session_sticky.enabled` / `ttl` / `gc_interval` | hot; the switch and the window reach every module that binds conversations |
 | `platforms.<name>.*` | hot; priority and the model blacklist reach routing immediately, the ceilings are enforced by the gateway, and `reserve_credits` is enforced by workbuddy |
 | `model_groups` | hot; group names and member ids start routing immediately, group priorities included |
+| `exposed_models` | hot; a reload re-reads the whitelist and it takes effect on the next request |
 | `panel.package_detail_limit` | restart; the panel reads it once, at construction |
 | `schedule.*` | live (`Reconfigure`), but the running loop only reacts to the *next* wake; the `schedule` block is reported in `GET /panel/api/status` |
 

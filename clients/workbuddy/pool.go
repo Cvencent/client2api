@@ -616,24 +616,28 @@ func (p *Pool) Ready() bool {
 	return false
 }
 
-// UsableRealm reports whether the pool holds at least one usable account in
-// realm, ignoring per-model parks and occupancy.  It answers "does this install
-// have anything for this realm at all", which is what lets the chat path tell
-// the two ways a pick comes up empty apart: a realm no account serves (a
-// configuration problem) and a realm whose accounts are all parked for the
-// model that was asked for (a platform that is configured but busy).
+// HasRealm reports whether the pool holds any account for realm, usable or not.
+// It is the question the chat path has to answer to tell the two ways a pick
+// comes up empty apart: a realm no account serves at all (a configuration
+// problem) and a realm whose accounts all exist but are parked -- cooled,
+// credit-exhausted or risk-flagged (a platform that is configured but cannot
+// take the request right now).
+//
+// It deliberately ignores park state and occupancy.  An account that is merely
+// cooling is still an account this install is configured with, so reporting the
+// realm as "not configured" would send the operator hunting for a credential
+// that is already there.
 //
 // The empty realm means "any realm", exactly as realmMatches does, so a bare
 // model name keeps the soft preference it has everywhere else.
-func (p *Pool) UsableRealm(realm string) bool {
+func (p *Pool) HasRealm(realm string) bool {
 	if p == nil {
 		return false
 	}
-	now := p.now()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for _, e := range p.entries {
-		if e == nil || e.auth == nil || !e.usable(now) || !realmMatches(e, realm) {
+		if e == nil || e.auth == nil || !realmMatches(e, realm) {
 			continue
 		}
 		return true

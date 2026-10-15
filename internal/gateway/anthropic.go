@@ -1028,6 +1028,11 @@ func (s *server) handleCountTokens(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request_error", "invalid JSON: "+err.Error())
 		return
 	}
+	if !s.exposedModelAllowed(wire.Model) {
+		writeError(w, http.StatusNotFound, "invalid_request_error",
+			fmt.Sprintf("model %q is not exposed by this gateway", wire.Model))
+		return
+	}
 	req, err := toCoreRequestFromAnthropic(&wire)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request_error", err.Error())

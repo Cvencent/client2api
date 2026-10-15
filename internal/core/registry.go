@@ -86,6 +86,12 @@ type Registry struct {
 	// absent from disabled is allowed.  A platform with no entry keeps the
 	// documented default -- priority 0, nothing disabled.
 	platforms map[string]platformPolicy
+	// exposedModels is the operator's final outward-facing catalogue policy.
+	// A missing block means "all models"; an explicitly empty block means
+	// "none".  Keys are normalized with normalizeModelID.
+	exposedModels           map[string]struct{}
+	exposedModelIDs         []string
+	exposedModelsConfigured bool
 	// health suppresses a (platform, model) pair after repeated failed rounds.
 	health *PlatformHealth
 }
@@ -177,6 +183,7 @@ func NewRegistry() *Registry {
 		modelGroups:        map[string]ModelGroup{},
 		modelGroupByLookup: map[string]string{},
 		platforms:          map[string]platformPolicy{},
+		exposedModels:      map[string]struct{}{},
 		health:             NewPlatformHealth(),
 	}
 }
@@ -311,6 +318,75 @@ func (r *Registry) ModelAllowed(platform, model string) bool {
 	}
 	_, disabled := pol.disabled[normalizeModelID(model)]
 	return !disabled
+}
+
+// SetExposedModels replaces the final outward-facing model policy.  configured
+// distinguishes a missing setting ("all models") from an explicit empty list
+// ("no models"), which JSON null and [] must not collapse into each other.
+// Matching is case-insensitive and ignores surrounding space, but the original
+// display spelling is retained for the panel.
+func (r *Registry) SetExposedModels(models []string, configured bool) {
+	next := make(map[string]struct{}, len(models))
+	display := make([]string, 0, len(models))
+	for _, raw := range models {
+		id := strings.TrimSpace(raw)
+		if id == "" {
+			continue
+		}
+		key := normalizeModelID(id)
+		if _, duplicate := next[key]; duplicate {
+			continue
+		}
+		next[key] = struct{}{}
+		display = append(display, id)
+	}
+	r.mu.Lock()
+	r.exposedModels = next
+	r.exposedModelIDs = display
+	r.exposedModelsConfigured = configured
+	r.mu.Unlock()
+}
+
+// ExposedModelsConfigured reports whether the operator has explicitly enabled
+// the final-model whitelist.  False means every final model is allowed.
+func (r *Registry) ExposedModelsConfigured() bool {
+	if r == nil {
+		return false
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.exposedModelsConfigured
+}
+
+// ExposedModelIDs returns the operator's selected final model ids in the
+// spelling they were configured with.
+func (r *Registry) ExposedModelIDs() []string {
+	if r == nil {
+		return nil
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return append([]string(nil), r.exposedModelIDs...)
+}
+
+// ExposedModelAllowed reports whether one final model id is visible and
+// callable.  With no explicit policy every id is allowed; with an explicit
+// empty policy every id is denied.
+func (r *Registry) ExposedModelAllowed(model string) bool {
+	if r == nil {
+		return true
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if !r.exposedModelsConfigured {
+		return true
+	}
+	key := normalizeModelID(model)
+	if key == "" {
+		return false
+	}
+	_, ok := r.exposedModels[key]
+	return ok
 }
 
 // platformPriorityCST keeps time-window matching independent of the host's

@@ -23,6 +23,7 @@ import (
 	"client2api/internal/gateway"
 	"client2api/internal/livecfg"
 	"client2api/internal/modelmeta"
+	"client2api/internal/modelpark"
 	"client2api/internal/modelpolicy"
 	"client2api/internal/scheduler"
 )
@@ -114,7 +115,11 @@ type Options struct {
 	// the gateway.  Nil leaves the model dialog read-only except for modules
 	// that implement core.AccountModelPolicyManager themselves.
 	ModelPolicies *modelpolicy.Store
-	Live          *livecfg.Holder
+	// ModelParks is the gateway's model-scoped rate-limit memory, shared so
+	// the model dialog can show a 429 even for modules that publish no
+	// per-model parks of their own.  Nil disables the merge.
+	ModelParks *modelpark.Store
+	Live       *livecfg.Holder
 	// Guard exposes the process-level egress-IP and degraded-prompt state.
 	Guard *core.Guard
 	// Stats, Usage and Logs are the gateway's instrumentation, shared by
@@ -232,6 +237,7 @@ func New(opts Options) http.Handler {
 	api("/panel/api/logs", p.handleLogs)
 	api("/panel/api/models", p.handleModelsList)
 	api("/panel/api/models/refresh", p.handleModelsRefresh)
+	api("/panel/api/exposed_models", p.handleExposedModels)
 	api("/panel/api/model_context", p.handleModelContext)
 	api("/panel/api/usage", p.handleUsage)
 	api("/panel/api/usage/save", p.handleUsageSave)
@@ -414,6 +420,7 @@ func (p *panel) handleStatus(w http.ResponseWriter, r *http.Request) {
 				Status:       core.RedactStatus(c.Status(ctx)),
 				Capabilities: p.capabilities(ctx, c),
 			}
+			mergeModelParks(&view.Status, c.Name(), p.opts.ModelParks)
 			// Both are optional capabilities, so a module that has neither is
 			// simply reported as such instead of as zeroes.
 			if ps, ok := core.PoolStatsOf(c); ok {

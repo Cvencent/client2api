@@ -50,9 +50,15 @@ Close() error                // must be idempotent
   prefix (`zcode/GLM-5.3`).
 * `req.Model` arrives **already stripped** of the `<client>/` prefix. Never
   re-add or re-strip it.
-* `Chat` returns `core.ErrNotConfigured` when no usable credential exists.
-  The gateway maps that to HTTP 503. Return `core.ErrUnsupported` for a request
-  shape you cannot express upstream → HTTP 400. Any other error → HTTP 502.
+* `Chat` returns `core.ErrNotConfigured` when the install holds no credential
+  for the request at all — the configuration problem the gateway maps to HTTP
+  503. A pool whose credentials exist but are all parked right now (cooled,
+  credit-exhausted, or parked for this model) is a different answer: return
+  `core.ErrPlatformExhausted`, so the router moves on to the next platform
+  without the console telling the operator to fix a configuration that is fine.
+  Every usable account at its in-flight ceiling is `core.ErrBusy` instead (HTTP
+  429). Return `core.ErrUnsupported` for a request shape you cannot express
+  upstream → HTTP 400. Any other error → HTTP 502.
 * **Name the credential that served the turn.** `req.ServedBy` is a `*string`
   the gateway allocates per request; call `core.NoteServedBy(req, id)` at the
   point you pick the account, and it is read exactly once after `Chat` returns.
@@ -71,6 +77,16 @@ Close() error                // must be idempotent
     than silence.
   * Like `ConversationID`, this is a gateway↔module channel. Never copy it into
     the upstream body, and never read it as input.
+* **Report every upstream failure you absorb.** `req.NoteAccountFailure(id, err)`
+  is a no-op unless the gateway installed its hook (unit tests and embedders run
+  without one), so call it unconditionally right after an attempt fails and
+  before you rotate. The gateway parks `(platform, account, model)` for a
+  `core.FailureRateLimited` even when a later account serves the request, which
+  is what makes the panel show the model as limited instead of available. Put
+  the vendor's own `Retry-After` on the `core.Failure` (`Failure.RetryAfter`);
+  the gateway caps it before parking. A module that never calls this still gets
+  the gateway's terminal-failure fallback, but a 429 it recovered from is then
+  invisible.
 * `Recv` emits `core.EventDelta` / `EventToolCall` / `EventUsage` /
   `EventDone` / `EventError`. It returns `io.EOF` **once** at clean end.
   Do not return `io.EOF` and then keep going.

@@ -253,6 +253,10 @@ func TestConfigPatchRejectsBadInput(t *testing.T) {
 		{"client config that is not an object", `{"clients":{"kimi":"device"}}`, "must be an object"},
 		{"disabled that is not an array", `{"disabled":"kimi"}`, "must be an array"},
 		{"disabled holding a non-string", `{"disabled":[1]}`, "only client names"},
+		{"exposed_models that is not an array", `{"exposed_models":"Auto/m1"}`, "must be an array"},
+		{"exposed_models holding a non-string", `{"exposed_models":[1]}`, "model id string"},
+		{"exposed_models holding an empty id", `{"exposed_models":[" "]}`, "must not be empty"},
+		{"exposed_models holding case-insensitive duplicates", `{"exposed_models":["Auto/m1","auto/M1"]}`, "duplicates"},
 		{"listen that is not a string", `{"listen":8788}`, "must be a string"},
 		{"malformed JSON", `{"listen":`, "invalid JSON"},
 	}
@@ -273,6 +277,22 @@ func TestConfigPatchRejectsBadInput(t *testing.T) {
 				t.Errorf("the file changed despite a rejected patch:\nbefore=%v\nafter=%v", before, after)
 			}
 		})
+	}
+}
+
+func TestConfigPatchPersistsExplicitEmptyExposedModels(t *testing.T) {
+	path := configFile(t, baseConfig)
+	p := configPanel(path)
+
+	mustSave(t, p, `{"exposed_models":[]}`)
+	got, ok := onDisk(t, path)["exposed_models"].([]any)
+	if !ok || len(got) != 0 {
+		t.Fatalf("exposed_models = %#v, want an explicit empty array", onDisk(t, path)["exposed_models"])
+	}
+
+	mustSave(t, p, `{"exposed_models":null}`)
+	if _, exists := onDisk(t, path)["exposed_models"]; exists {
+		t.Fatalf("null did not remove exposed_models: %v", onDisk(t, path))
 	}
 }
 

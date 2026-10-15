@@ -381,6 +381,10 @@ pwsh -File installer\build.ps1 -NoData    # 空数据包，可对外分发
 `Auto` 的组内优先级用于调整整个 Auto 池相对其他成员的位置；池内部仍按各平台
 自己的 `priority` 与 `priority_schedule` 决定先调哪个平台。
 
+`exposed_models` 是叠在这一切之上的一层：它不改变请求怎么路由，只决定网关最终放行哪些 ID。
+它的值是允许调用方使用的 ID 列表，在解析之前就和请求里的原始模型名匹配，因此
+`Auto/GLM-5.3`、组名、别名和显式的 `平台/模型` 各自独立地允许或拒绝。
+
 默认内置五个 GPT-6+ 路由组，让 Codex 可以直接使用不带平台前缀的原生小写名称：
 `gpt-6-astra`、`gpt-6.1-sol`、`gpt-6-sol`、`gpt-6-luna` 和
 `gpt-6.1-sol-pro`，每个组都包含 `Auto/<模型>` 动态成员，并保留 OpenCode /
@@ -502,6 +506,7 @@ assistant 消息的事件——只发 delta 的流会显示文字但永远不执
   "proxy": "",
   "egress": { "enabled": false, "mode": "subscription", "url": "", "mihomo_path": "" },
   "aliases": { "gpt-4o": "trae/custom_model_gpt-5" },
+  "exposed_models": null,
   "disabled": [],
   "clients": {
     "<name>": {}
@@ -534,6 +539,13 @@ assistant 消息的事件——只发 delta 的流会显示文字但永远不执
   流量指向它的 loopback mixed port。启用 `egress` 时优先于 `proxy`；
   `mihomo_path` 可以显式指定，留空则从 PATH / Clash Verge 常见目录查找。
   订阅 URL 属于凭据，面板会脱敏显示。
+* `exposed_models` 是对外模型白名单。它作用在路由**之后**：网关先按路由结果生成完整
+  的对外目录，再只放行被勾选的最终 ID。所以它过滤的是 `平台/模型`、`Auto/<模型>`、
+  `model_groups` 组名、别名和转写模型这些最终结果，而且每个最终 ID 独立控制——勾了组内
+  成员不会自动开放组名，勾了别名目标不会自动开放别名。匹配忽略大小写和首尾空格。
+  `null`（默认，或该键缺失）表示全部开放，`[]` 表示全部关闭。白名单同时作用于
+  `GET /v1/models` 和所有调用入口，被隐藏的 ID 即使按名字调用也会被拒绝。
+  在 **模型与档位 → 对外模型** 里编辑。
 
 ### 环境变量覆盖
 
@@ -565,6 +577,7 @@ assistant 消息的事件——只发 delta 的流会显示文字但永远不执
 | `session_sticky.enabled` / `ttl` / `gc_interval` | 热更新，影响所有绑定会话的模块 |
 | `platforms.<name>.*` | 热更新，优先级、模型黑名单、并发上限立即生效 |
 | `model_groups` | 热更新，组名、成员名和组内优先级立即生效 |
+| `exposed_models` | 热更新，重载后下一次请求即按新白名单放行 |
 | `panel.package_detail_limit` | 重启生效 |
 | `schedule.*` | 通过 `Reconfigure` 生效，下一次唤醒时采用 |
 

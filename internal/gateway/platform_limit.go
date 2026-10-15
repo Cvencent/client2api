@@ -213,6 +213,12 @@ func (s *server) acquireAccountSlot(platform, accountID, model string) (func(), 
 	if s.opts.ModelPolicies.IsDisabled(platform, accountID, model) {
 		return nil, &modelPolicyRefusal{model: model}
 	}
+	if s.opts.ModelParks != nil {
+		if park, ok := s.opts.ModelParks.Active(platform, accountID, model); ok {
+			return nil, &modelParkRefusal{model: model, until: park.Until}
+		}
+	}
+
 	return s.takeAccountLimiter(platform, accountID)
 }
 
@@ -241,6 +247,32 @@ func (e *modelPolicyRefusal) Error() string {
 }
 
 func (e *modelPolicyRefusal) Unwrap() error { return core.ErrBusy }
+
+// modelParkRefusal is the gateway's transient model-scoped rate-limit window
+// refusing one (account, model) attempt.  It wraps core.ErrBusy for the same
+// reason modelPolicyRefusal does: every module already reacts to ErrBusy by
+// picking another account, and a module that runs out of accounts must be able
+// to fail over to the next platform.
+type modelParkRefusal struct {
+	model string
+	until string
+}
+
+func (e *modelParkRefusal) Error() string {
+	if e.until == "" {
+		return "model " + e.model + " is rate limited on this account"
+	}
+	return "model " + e.model + " is rate limited on this account until " + e.until
+}
+
+func (e *modelParkRefusal) Unwrap() error { return core.ErrBusy }
+
+// IsModelParkRefusal reports whether err came from the gateway's model-scoped
+// rate-limit memory rather than a full in-flight slot.
+func IsModelParkRefusal(err error) bool {
+	var refusal *modelParkRefusal
+	return errors.As(err, &refusal)
+}
 
 // IsModelPolicyRefusal reports whether err came from the operator's per-account
 // model blacklist rather than a full in-flight slot.  Both are backpressure on

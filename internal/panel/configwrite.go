@@ -42,7 +42,7 @@ var configWriteMu sync.Mutex
 // file keeps looking hand-written rather than being alphabetised.  Keys the
 // running binary does not know about are preserved and appended, because
 // dropping them would be silent data loss.
-var configKeyOrder = []string{"listen", "api_key", "data_dir", "proxy", "egress", "aliases", "disabled", "sources", "platforms", "model_groups", "schedule", "pool", "cooldown", "prompt", "session_sticky", "features", "panel", "clients"}
+var configKeyOrder = []string{"listen", "api_key", "data_dir", "proxy", "egress", "aliases", "exposed_models", "disabled", "sources", "platforms", "model_groups", "schedule", "pool", "cooldown", "prompt", "session_sticky", "features", "panel", "clients"}
 
 // configSaveResponse is the GET payload plus what the save actually did.
 type configSaveResponse struct {
@@ -539,6 +539,28 @@ func validateConfig(cfg map[string]any) error {
 			if !strings.Contains(s, "/") {
 				return fmt.Errorf("alias %q target %q must be \"client/model\"", alias, s)
 			}
+		}
+	}
+	if v, ok := cfg["exposed_models"]; ok && v != nil {
+		arr, ok := v.([]any)
+		if !ok {
+			return errors.New("exposed_models must be an array of final model ids or null")
+		}
+		seen := make(map[string]struct{}, len(arr))
+		for i, raw := range arr {
+			id, ok := raw.(string)
+			if !ok {
+				return fmt.Errorf("exposed_models[%d] must be a model id string", i)
+			}
+			id = strings.TrimSpace(id)
+			if id == "" {
+				return fmt.Errorf("exposed_models[%d] must not be empty", i)
+			}
+			key := strings.ToLower(id)
+			if _, duplicate := seen[key]; duplicate {
+				return fmt.Errorf("exposed_models[%d] duplicates %q (model ids are case-insensitive)", i, id)
+			}
+			seen[key] = struct{}{}
 		}
 	}
 	if err := validateModelGroups(cfg); err != nil {

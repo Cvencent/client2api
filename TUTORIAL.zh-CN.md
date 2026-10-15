@@ -329,6 +329,7 @@ Responses 接口支持 `instructions`、字符串或数组形式的 `input`、�
   "data_dir": "data",
   "proxy": "",
   "aliases": {},
+  "exposed_models": null,
   "disabled": [],
   "clients": {},
   "model_groups": {},
@@ -339,7 +340,7 @@ Responses 接口支持 `instructions`、字符串或数组形式的 `input`、�
 }
 ```
 
-关键字段：`listen` 是监听地址，个人使用建议保持 `127.0.0.1`；`api_key` 是入站 Key，为空表示不鉴权；`data_dir` 是账号和运行数据目录；`proxy` 是所有上游请求使用的代理；`aliases` 是模型别名；`disabled` 是停用模块；`clients` 是各模块自己的配置；`model_groups` 是模型路由组覆盖；`cooldown` 是软限流和冷却时间；`prompt` 是提示词处理模式；`schedule` 是计划任务默认配置。
+关键字段：`listen` 是监听地址，个人使用建议保持 `127.0.0.1`；`api_key` 是入站 Key，为空表示不鉴权；`data_dir` 是账号和运行数据目录；`proxy` 是所有上游请求使用的代理；`aliases` 是模型别名；`exposed_models` 是对外模型白名单（`null` 表示全部开放，`[]` 表示全部关闭，平时在 **模型与档位 → 对外模型** 里勾选，不必手改）；`disabled` 是停用模块；`clients` 是各模块自己的配置；`model_groups` 是模型路由组覆盖；`cooldown` 是软限流和冷却时间；`prompt` 是提示词处理模式；`schedule` 是计划任务默认配置。
 模块自己的 `clients.<模块>` 配置不在配置页，而在 **平台配置 → 平台与模型** 里：
 展开某个平台卡片，里面的「模块配置」就是该模块的常用项，已经整理成中文控件。输入框
 用于地址、路径、模型清单等，布尔项和固定取值项使用下拉框，说明文字会写在控件下面。

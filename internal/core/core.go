@@ -147,6 +147,12 @@ type ChatRequest struct {
 	// nil.  The gateway returns it when the module gives the slot back or when
 	// the stream it produced is closed.
 	accountRelease func()
+	// accountFailed is the gateway's per-attempt failure hook.  A module that
+	// rotates through several accounts calls NoteAccountFailure after every
+	// upstream failure, so the gateway can park that (account, model) pair even
+	// when the module recovers on the next account.  Unexported for the same
+	// reason as accountAcquire.
+	accountFailed func(accountID string, err error)
 }
 
 // NoteServedBy records the credential that served a request in the slot the
@@ -169,6 +175,28 @@ func (r *ChatRequest) SetAccountAcquirer(fn func(accountID string) (func(), erro
 		return
 	}
 	r.accountAcquire = fn
+}
+
+// SetAccountFailureReporter installs the per-attempt failure hook.  It is
+// called by the gateway once per attempt; a module never calls it.  A nil fn
+// disables the hook, which is the state a unit test or an embedder runs in.
+func (r *ChatRequest) SetAccountFailureReporter(fn func(accountID string, err error)) {
+	if r == nil {
+		return
+	}
+	r.accountFailed = fn
+}
+
+// NoteAccountFailure reports one upstream failure the module absorbed, so the
+// gateway can park that (account, model) pair even when a later account served
+// the request.  A module calls it right after it decides an attempt failed and
+// before it rotates.  A nil request, a missing hook, an empty account id and a
+// nil error are no-ops, so a module can call it unconditionally.
+func (r *ChatRequest) NoteAccountFailure(accountID string, err error) {
+	if r == nil || r.accountFailed == nil || accountID == "" || err == nil {
+		return
+	}
+	r.accountFailed(accountID, err)
 }
 
 // AcquireAccountSlot takes the per-account in-flight slot for accountID.  A
@@ -220,6 +248,7 @@ func (r *ChatRequest) ClearAccountHook() {
 	}
 	r.accountAcquire = nil
 	r.accountRelease = nil
+	r.accountFailed = nil
 }
 
 // Usage is token accounting reported by the upstream.

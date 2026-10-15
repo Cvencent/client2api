@@ -18,6 +18,7 @@ import (
 	"client2api/internal/hint"
 	"client2api/internal/livecfg"
 	"client2api/internal/modelmeta"
+	"client2api/internal/modelpark"
 	"client2api/internal/modelpolicy"
 )
 
@@ -64,6 +65,11 @@ type Options struct {
 	// the panel.  Nil leaves the account hook enforcing only the in-flight
 	// ceilings.  See platform_limit.go for how it is consulted.
 	ModelPolicies *modelpolicy.Store
+	// ModelParks is the gateway's own model-scoped rate-limit memory, shared
+	// with the panel.  It complements ModelPolicies: the blacklist is the
+	// operator's permanent choice, while a park is a transient window learned
+	// from an upstream 429.  Nil disables the fallback.
+	ModelParks *modelpark.Store
 	// LearnedWindowsPath is where the gateway records the context windows that
 	// vendors reported in their own refusals.  Empty keeps that memory
 	// in-process only, which is the right behaviour for an embedder that has no
@@ -100,6 +106,13 @@ type server struct {
 	// handler is the mux this server serves.  It is kept on the struct so a test
 	// can drive the real routing without opening a listener.
 	handler http.Handler
+}
+
+// exposedModelAllowed reports whether the final outward-facing model policy
+// permits this request id.  A nil registry is an embedder/test without a
+// policy and keeps the historical allow-all behaviour.
+func (s *server) exposedModelAllowed(model string) bool {
+	return s == nil || s.opts.Registry == nil || s.opts.Registry.ExposedModelAllowed(model)
 }
 
 // NewServer builds the gateway's http.Server.  It is deliberately transport
@@ -519,6 +532,15 @@ func (s *server) handleModels(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sort.Slice(out.Data, func(i, j int) bool { return out.Data[i].ID < out.Data[j].ID })
+	if s.opts.Registry != nil {
+		filtered := out.Data[:0]
+		for _, entry := range out.Data {
+			if s.opts.Registry.ExposedModelAllowed(entry.ID) {
+				filtered = append(filtered, entry)
+			}
+		}
+		out.Data = filtered
+	}
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -972,6 +994,13 @@ func (s *server) openStream(ctx context.Context, client core.Client, req *core.C
 		req.SetAccountAcquirer(func(accountID string) (func(), error) {
 			return s.acquireAccountSlot(client.Name(), accountID, req.Model)
 		})
+
+		// A module that rotates through several accounts reports every
+		// upstream failure here, so a 429 that a later account recovered from
+		// still parks the pair that produced it.
+		req.SetAccountFailureReporter(func(accountID string, err error) {
+			s.parkRateLimited(client.Name(), accountID, req.Model, err)
+		})
 		// A retry reuses the same request, so drop any lease a previous attempt
 		// left behind before the module runs again.
 		req.ReleaseAccountSlot()
@@ -1011,6 +1040,13 @@ func (s *server) openStream(ctx context.Context, client core.Client, req *core.C
 			return nil, err
 		}
 
+		// The module gave up: park the (account, model) pair it blamed so the
+		// next request does not walk straight back into the same 429.  This is
+		// the fallback for modules that do not report per-attempt failures.
+		if f.Kind == core.FailureRateLimited {
+			s.parkRateLimited(client.Name(), f.Account, req.Model, err)
+		}
+
 		if f.Kind == core.FailureContentBlocked {
 			if guard != nil {
 				guard.ReportContentBlock()
@@ -1043,6 +1079,23 @@ func (s *server) openStream(ctx context.Context, client core.Client, req *core.C
 			return nil, lastErr
 		}
 	}
+}
+
+// parkRateLimited records one model-scoped rate-limit window in the gateway's
+// shared park store.  It is called from the per-attempt reporter a module may
+// install and from the terminal failure path, so the two cannot drift.
+func (s *server) parkRateLimited(platform, account, model string, err error) {
+	if s.opts.ModelParks == nil || account == "" || model == "" || err == nil {
+		return
+	}
+	f, ok := core.AsFailure(err)
+	if !ok || f.Kind != core.FailureRateLimited {
+		return
+	}
+	if f.Client != "" {
+		platform = f.Client
+	}
+	s.opts.ModelParks.Park(platform, account, model, core.Redact(err.Error()), core.RetryAfterOf(err))
 }
 
 // rotateBase is the un-jittered first backoff, honouring a live override.
@@ -1079,6 +1132,8 @@ func failureReason(err error) string {
 	switch {
 	case IsModelPolicyRefusal(err):
 		return "模型已被账号策略关闭：" + core.Redact(err.Error())
+	case IsModelParkRefusal(err):
+		return "模型限流冷却中：" + core.Redact(err.Error())
 	case errors.Is(err, core.ErrBusy):
 		return "本地并发已满：" + core.Redact(err.Error())
 	case errors.Is(err, core.ErrNotConfigured):
@@ -1092,6 +1147,12 @@ func failureReason(err error) string {
 	}
 	f, ok := core.AsFailure(err)
 	if !ok {
+		// A module that walked its whole pool without producing a classified
+		// refusal says only "platform exhausted".  Name it in the operator's
+		// language instead of echoing the sentinel's English text.
+		if errors.Is(err, core.ErrPlatformExhausted) {
+			return "平台暂无可用账号：" + core.Redact(err.Error())
+		}
 		return core.Redact(err.Error())
 	}
 	label := string(f.Kind)

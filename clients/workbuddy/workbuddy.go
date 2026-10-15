@@ -1013,13 +1013,14 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 		return nil, core.ErrBusy
 	}
 	// Nothing was attempted and nothing refused: the picker simply found no
-	// account for this model.  A realm this install serves no account in is
-	// the configuration problem ErrNotConfigured has always meant; a realm
-	// whose accounts are all parked for this model is a platform that is
-	// configured but cannot take the request, which the router may skip
-	// without blaming an account.
+	// account for this model.  A realm this install holds no account for at all
+	// is the configuration problem ErrNotConfigured has always meant; a realm
+	// whose accounts exist but are all parked -- cooled for this model, out of
+	// credit, or flagged by the vendor -- is a platform that is configured but
+	// cannot take the request, which the router may skip without blaming an
+	// account.
 	for _, realm := range route.realms {
-		if c.pool.UsableRealm(realm) {
+		if c.pool.HasRealm(realm) {
 			return nil, core.ErrPlatformExhausted
 		}
 	}

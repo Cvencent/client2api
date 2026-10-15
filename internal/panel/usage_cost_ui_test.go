@@ -72,3 +72,28 @@ func TestUsageCacheHitRateAlwaysKeepsOneDecimal(t *testing.T) {
 		t.Error("最近调用没有走统一的一位小数格式化")
 	}
 }
+
+// 倍率格也需要一个 xN 格式化器，但它绝不能叫 fmtRate：JS 的函数声明会提升，
+// 同名的后一个定义会覆盖前一个，最近调用里的 tokens/s 就会被渲染成 xN。
+func TestTokenRateFormatterIsNotShadowedByMultiplierFormatter(t *testing.T) {
+	src := poolStatsUISource(t)
+	if got := strings.Count(src, "function fmtRate("); got != 1 {
+		t.Fatalf("fmtRate 定义了 %d 次；后一个会覆盖前一个，最近调用会把 tok/s 显示成倍率", got)
+	}
+
+	rate := poolStatsFuncBody(t, src, "fmtRate")
+	if !strings.Contains(rate, ".toFixed(1)") || !strings.Contains(rate, `" tok/s"`) {
+		t.Fatalf("fmtRate 不是 tokens/s 格式化器：%s", rate)
+	}
+
+	multiplier := poolStatsFuncBody(t, src, "fmtMultiplier")
+	if !strings.Contains(multiplier, `return "x"`) {
+		t.Fatalf("fmtMultiplier 不是倍率格式化器：%s", multiplier)
+	}
+	for _, name := range []string{"rateListPrice", "rateEffectivePrice"} {
+		body := poolStatsFuncBody(t, src, name)
+		if !strings.Contains(body, "fmtMultiplier(") {
+			t.Errorf("%s 没有使用 fmtMultiplier：倍率格会失去 xN 显示", name)
+		}
+	}
+}

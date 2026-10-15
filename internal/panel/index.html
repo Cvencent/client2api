@@ -285,6 +285,10 @@ label.fld > .hint { display: block; font-size: 11.5px; color: var(--ink-3); marg
 .acc.md .mdedit .mdsrc.manual { color: var(--accent); font-weight: 600; }
 .acc.md .mdacts { white-space: nowrap; }
 .acc.md .mdacts button { padding: 3px 7px; font-size: 11.5px; }
+.acc.md .excheck { width: 52px; text-align: center; }
+.acc.md .excheck input { width: auto; margin: 0; vertical-align: middle; }
+.tblbar.exmode { padding-top: 8px; padding-bottom: 8px; }
+.tblbar.exmode .note { font-weight: 600; }
 /* 模型列里的复制标签：模型名保持可选，按钮只负责把完整的 client/model
    放进剪贴板；按钮的命中区保持现有表内小按钮的密度。 */
 .acc.md .mdmodel { display: flex; align-items: center; gap: 6px; min-width: 0; }
@@ -3224,6 +3228,11 @@ kbd {
 
     <!-- 模型与档位 -->
     <section class="view" id="view-models" hidden>
+      <div class="subtabs pfSubtabs" data-subtabs="models" role="tablist" aria-label="模型与档位视图">
+        <button class="chip subtab on" type="button" id="models-tab-capability" role="tab" aria-selected="true" aria-controls="models-panel-capability" data-subtab="capability">模型能力</button>
+        <button class="chip subtab" type="button" id="models-tab-exposed" role="tab" aria-selected="false" aria-controls="models-panel-exposed" data-subtab="exposed" tabindex="-1">对外模型</button>
+      </div>
+      <div class="subtab-panel" data-subtab-panel="models-capability" id="models-panel-capability" role="tabpanel" aria-labelledby="models-tab-capability">
       <div class="box">
         <header>
           <h3>模型能力 <span class="hint">模型由各客户端模块从上游实时拉取；拉取失败时保留上一份可用目录</span></h3>
@@ -3250,6 +3259,48 @@ kbd {
           </tr></thead>
           <tbody id="mdBody"></tbody>
         </table>
+        </div>
+      </div>
+      </div>
+      <div class="subtab-panel" data-subtab-panel="models-exposed" id="models-panel-exposed" role="tabpanel" aria-labelledby="models-tab-exposed" hidden>
+        <div class="box">
+          <header>
+            <h3>对外模型 <span class="hint">这里控制 /v1/models 和实际调用；未配置时全部开放</span></h3>
+            <span class="grow"></span>
+            <span class="note" id="exNote">读取中…</span>
+            <button class="xs" id="btnExRefresh">重新读取</button>
+            <button class="xs" id="btnExSave" disabled>保存并生效</button>
+          </header>
+          <div class="tblbar">
+            <input id="exSearch" type="search" placeholder="搜索模型名 / 来源 / 目标 / 成员（/）" spellcheck="false" autocomplete="off">
+            <select id="exKind">
+              <option value="">全部类型</option>
+              <option value="platform">平台模型</option>
+              <option value="auto">Auto</option>
+              <option value="group">模型组</option>
+              <option value="alias">别名</option>
+              <option value="transcription">转写</option>
+              <option value="missing">已配置但当前不可用</option>
+            </select>
+            <label class="chk"><input type="checkbox" id="exSelectedOnly">只看已选</label>
+            <span class="grow"></span>
+            <button class="xs" id="btnExAll" type="button">全选</button>
+            <button class="xs" id="btnExNone" type="button">清空</button>
+            <button class="xs" id="btnExInvert" type="button">反选</button>
+            <span class="note" id="exCount"></span>
+          </div>
+          <div class="tblbar exmode">
+            <span class="note">开放方式</span>
+            <label class="chk"><input type="radio" name="exMode" id="exModeAll" value="all">全部模型</label>
+            <label class="chk"><input type="radio" name="exMode" id="exModeSelected" value="selected">仅勾选模型</label>
+            <span class="hint">选择“全部模型”会删除 exposed_models 配置；选择“仅勾选模型”后，空选择表示一个模型也不对外。</span>
+          </div>
+          <div class="tbl-wrap">
+            <table class="acc md">
+              <thead><tr><th class="excheck">对外</th><th>模型</th><th>类型</th><th>平台</th><th>目标 / 成员</th></tr></thead>
+              <tbody id="exBody"></tbody>
+            </table>
+          </div>
         </div>
       </div>
     </section>
@@ -7032,7 +7083,7 @@ function rateIsFree(v) {
   return n === 0;
 }
 
-function fmtRate(v) {
+function fmtMultiplier(v) {
   const n = rateNumber(v);
   if (n === null) return String(v || "").trim();
   if (n === 0) return "免费";
@@ -7049,18 +7100,18 @@ function ratePromoFactor(ex) {
 }
 
 function rateListPrice(ex) {
-  if (ex.credits !== undefined && ex.credits !== null && String(ex.credits).trim() !== "") return fmtRate(ex.credits);
-  if (ex.billing_multiplier !== undefined && ex.billing_multiplier !== null) return fmtRate(ex.billing_multiplier);
-  if (ex.consumption_rate !== undefined && ex.consumption_rate !== null) return fmtRate(ex.consumption_rate);
-  if (ex.cost_multiplier !== undefined && ex.cost_multiplier !== null) return fmtRate(ex.cost_multiplier);
+  if (ex.credits !== undefined && ex.credits !== null && String(ex.credits).trim() !== "") return fmtMultiplier(ex.credits);
+  if (ex.billing_multiplier !== undefined && ex.billing_multiplier !== null) return fmtMultiplier(ex.billing_multiplier);
+  if (ex.consumption_rate !== undefined && ex.consumption_rate !== null) return fmtMultiplier(ex.consumption_rate);
+  if (ex.cost_multiplier !== undefined && ex.cost_multiplier !== null) return fmtMultiplier(ex.cost_multiplier);
   return "";
 }
 
 function rateEffectivePrice(ex) {
-  if (ex.promo_credits !== undefined && ex.promo_credits !== null && String(ex.promo_credits).trim() !== "") return fmtRate(ex.promo_credits);
-  if (ex.billing_effective_multiplier !== undefined && ex.billing_effective_multiplier !== null) return fmtRate(ex.billing_effective_multiplier);
+  if (ex.promo_credits !== undefined && ex.promo_credits !== null && String(ex.promo_credits).trim() !== "") return fmtMultiplier(ex.promo_credits);
+  if (ex.billing_effective_multiplier !== undefined && ex.billing_effective_multiplier !== null) return fmtMultiplier(ex.billing_effective_multiplier);
   const c = ex.consumption_rate_current;
-  if (c !== undefined && c !== null) return fmtRate(c);
+  if (c !== undefined && c !== null) return fmtMultiplier(c);
   return "";
 }
 
@@ -7493,6 +7544,159 @@ function mdApply() {
     ? (filtered ? "筛出 " + rows.length + " / " + MD_ITEMS.length + " 行" : MD_ITEMS.length + " 行")
     : "";
   $("#mdCount").style.color = filtered ? "var(--accent)" : "";
+}
+
+/* ── 对外模型选择 ─────────────────────────────────────────────────────── */
+// 这里编辑的是 /v1/models 的最终结果，不是上游目录。普通平台模型、Auto、
+// 模型组、别名和转写模型都各自占一行；即使两个虚拟模型指向同一个目标，也必须
+// 分别勾选，调用入口和列表才会保持一致。
+const EX_KIND_LABELS = {
+  platform: "平台模型",
+  auto: "Auto",
+  group: "模型组",
+  alias: "别名",
+  transcription: "转写",
+  missing: "已配置但当前不可用",
+};
+let EX_ITEMS = [];
+let EX_SELECTED = new Set();
+let EX_MODE = "all";
+let EX_BASELINE = null;
+let EX_LOADED = false;
+let EX_LOADING = false;
+
+function exKey(id) { return String(id == null ? "" : id).trim().toLowerCase(); }
+function exKindLabel(kind) { return EX_KIND_LABELS[kind] || kind || "模型"; }
+function exItemText(it) {
+  return [it.id, exKindLabel(it.kind), it.platform, it.target].concat(it.members || []).join(" ").toLowerCase();
+}
+function exSameSelection(a, b) {
+  if (!a || !b || a.size !== b.size) return false;
+  for (const key of a) if (!b.has(key)) return false;
+  return true;
+}
+function exDirty() {
+  if (!EX_BASELINE) return false;
+  return EX_MODE !== EX_BASELINE.mode || !exSameSelection(EX_SELECTED, EX_BASELINE.selected);
+}
+function exSelectedNow(it) { return EX_MODE === "all" || EX_SELECTED.has(exKey(it.id)); }
+function exSyncDirty() {
+  const btn = $("#btnExSave");
+  if (btn) btn.disabled = EX_LOADING || !exDirty();
+}
+function exSetMode(mode, rerender) {
+  EX_MODE = mode === "selected" ? "selected" : "all";
+  const all = $("#exModeAll"), selected = $("#exModeSelected");
+  if (all) all.checked = EX_MODE === "all";
+  if (selected) selected.checked = EX_MODE === "selected";
+  if (rerender !== false) exApply();
+}
+function exVisibleItems() {
+  const q = ($("#exSearch").value || "").trim().toLowerCase();
+  const kind = $("#exKind").value;
+  const selectedOnly = $("#exSelectedOnly").checked;
+  const words = q ? q.split(/\s+/) : [];
+  return EX_ITEMS.filter(it =>
+    (!kind || it.kind === kind) && (!selectedOnly || exSelectedNow(it)) &&
+    words.every(w => exItemText(it).indexOf(w) >= 0));
+}
+function exApply() {
+  const rows = exVisibleItems();
+  $("#exBody").innerHTML = rows.map(it => {
+    const key = exKey(it.id);
+    const checked = exSelectedNow(it);
+    const disabled = EX_MODE === "all" ? " disabled" : "";
+    const members = (it.members || []).map(m => esc(m)).join("、");
+    let target = "";
+    if (it.kind === "missing") target = '<span class="hint">配置中保留，当前目录未返回；仍会参与过滤</span>';
+    else if (it.target) target = esc(it.target);
+    else if (members) target = members;
+    else target = '<span class="hint">—</span>';
+    const chipClass = it.kind === "missing" ? " err" : (it.kind === "auto" ? " ok" : "");
+    return '<tr data-ex-key="' + esc(key) + '"><td class="excheck"><input class="exchk" type="checkbox" data-ex-id="' + esc(it.id) + '"' +
+      (checked ? " checked" : "") + disabled + '></td>' +
+      '<td><b>' + esc(it.id) + '</b></td>' +
+      '<td><span class="chip' + chipClass + '">' + esc(exKindLabel(it.kind)) + '</span></td>' +
+      '<td>' + (it.platform ? esc(platformLabel(it.platform)) : '<span class="hint">—</span>') + '</td>' +
+      '<td>' + target + '</td></tr>';
+  }).join("") || '<tr class="filtered"><td colspan="5" class="hint">' +
+    (EX_ITEMS.length ? "没有模型匹配当前筛选条件" : "当前没有可配置的对外模型") + '</td></tr>';
+
+  const selectedCount = EX_MODE === "all" ? EX_ITEMS.length : EX_ITEMS.filter(it => EX_SELECTED.has(exKey(it.id))).length;
+  $("#exCount").textContent = (rows.length === EX_ITEMS.length ? "" : "筛出 " + rows.length + " / " + EX_ITEMS.length + " 行 · ") +
+    (EX_MODE === "all" ? "全部开放" : "已选 " + selectedCount + " / " + EX_ITEMS.length);
+  $("#exNote").textContent = EX_LOADING ? "读取中…" : (EX_MODE === "all" ? "当前全部开放" : "当前仅开放已勾选模型");
+  exSyncDirty();
+}
+function exToggleVisible(action) {
+  if (!EX_ITEMS.length) return;
+  if (EX_MODE === "all") exSetMode("selected", false);
+  const keys = exVisibleItems().map(it => exKey(it.id));
+  if (action === "all") keys.forEach(k => EX_SELECTED.add(k));
+  else if (action === "none") keys.forEach(k => EX_SELECTED.delete(k));
+  else keys.forEach(k => { if (EX_SELECTED.has(k)) EX_SELECTED.delete(k); else EX_SELECTED.add(k); });
+  exApply();
+}
+async function renderExposedModels(force) {
+  if (EX_LOADING) return;
+  if (EX_LOADED && !force) { exApply(); return; }
+  EX_LOADING = true;
+  exSyncDirty();
+  const r = await api("/panel/api/exposed_models");
+  if (!r.ok) {
+    EX_LOADING = false;
+    $("#exNote").textContent = "读取失败：" + r.err;
+    $("#exBody").innerHTML = '<tr><td colspan="5" class="hint">' + esc(r.err) + '</td></tr>';
+    exSyncDirty();
+    return;
+  }
+  const data = r.data || {};
+  const configured = !!data.configured;
+  const selectedRaw = Array.isArray(data.selected) ? data.selected : [];
+  const items = (Array.isArray(data.models) ? data.models : []).map(it => Object.assign({}, it));
+  const known = new Set(items.map(it => exKey(it.id)));
+  selectedRaw.forEach(id => {
+    const key = exKey(id);
+    if (key && !known.has(key)) {
+      known.add(key);
+      items.push({ id: id, kind: "missing", stale: true });
+    }
+  });
+  items.sort((a, b) => String(a.id).localeCompare(String(b.id)));
+  EX_ITEMS = items;
+  EX_SELECTED = new Set(selectedRaw.map(exKey).filter(Boolean));
+  EX_MODE = configured ? "selected" : "all";
+  if (!configured) EX_SELECTED = new Set(items.map(it => exKey(it.id)).filter(Boolean));
+  EX_BASELINE = { mode: EX_MODE, selected: new Set(EX_SELECTED) };
+  EX_LOADED = true;
+  EX_LOADING = false;
+  exSetMode(EX_MODE);
+  exApply();
+}
+async function exSave() {
+  if (!exDirty() || EX_LOADING) return;
+  EX_LOADING = true;
+  exSyncDirty();
+  const byKey = new Map(EX_ITEMS.map(it => [exKey(it.id), it.id]));
+  const selected = Array.from(EX_SELECTED).map(k => byKey.get(k) || k).sort((a, b) => a.localeCompare(b));
+  const body = { exposed_models: EX_MODE === "all" ? null : selected };
+  const saved = await api("/panel/api/config", { method: "PATCH", body: body });
+  if (!saved.ok) {
+    EX_LOADING = false;
+    exSyncDirty();
+    toast("保存失败：" + saved.err, "err");
+    return;
+  }
+  const reloaded = await api("/panel/api/reload", { method: "POST" });
+  EX_LOADING = false;
+  if (!reloaded.ok) {
+    exSyncDirty();
+    toast("配置已保存，但热加载失败：" + reloaded.err, "err");
+    return;
+  }
+  EX_BASELINE = { mode: EX_MODE, selected: new Set(EX_SELECTED) };
+  exApply();
+  toast(EX_MODE === "all" ? "已开放全部对外模型" : "已保存 " + selected.length + " 个对外模型", "ok");
 }
 
 /* Editing is safe because the document the server hands out is redacted: every
@@ -12163,6 +12367,29 @@ $("#mdSearch").addEventListener("keydown", ev => {
 $("#mdClient").addEventListener("change", mdApply);
 $("#mdUpOnly").addEventListener("change", mdApply);
 $("#mdFreeOnly").addEventListener("change", mdApply);
+$("#btnExRefresh").addEventListener("click", () => renderExposedModels(true));
+$("#btnExSave").addEventListener("click", exSave);
+$("#btnExAll").addEventListener("click", () => exToggleVisible("all"));
+$("#btnExNone").addEventListener("click", () => exToggleVisible("none"));
+$("#btnExInvert").addEventListener("click", () => exToggleVisible("invert"));
+$("#exSearch").addEventListener("input", exApply);
+$("#exSearch").addEventListener("keydown", ev => {
+  if (ev.key !== "Escape" || !ev.target.value) return;
+  ev.target.value = "";
+  exApply();
+});
+$("#exKind").addEventListener("change", exApply);
+$("#exSelectedOnly").addEventListener("change", exApply);
+$$('input[name="exMode"]').forEach(el => el.addEventListener("change", () => exSetMode(el.value)));
+$("#exBody").addEventListener("change", ev => {
+  const input = ev.target.closest(".exchk");
+  if (!input) return;
+  if (EX_MODE === "all") exSetMode("selected", false);
+  const key = exKey(input.dataset.exId || "");
+  if (!key) return;
+  if (input.checked) EX_SELECTED.add(key); else EX_SELECTED.delete(key);
+  exApply();
+});
 
 /* ── 弹窗层级 ─────────────────────────────────────────────────────────── */
 // 弹窗是后开的在上，DOM 里也靠后，所以最后一个带 .on 的就是最上面那一层。Esc 的
@@ -13226,6 +13453,9 @@ $("#chatInput").addEventListener("keydown", ev => {
 
 const USAGE_SUBTABS = setupSubtabs("usage", () => {
   if (VIEW === "usage") renderUsage();
+});
+const MODEL_SUBTABS = setupSubtabs("models", name => {
+  if (VIEW === "models" && name === "exposed") renderExposedModels();
 });
 setupSubtabs("platforms");
 const TASKS_SUBTABS = setupSubtabs("taskscenter", name => {

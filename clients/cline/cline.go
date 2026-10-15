@@ -330,6 +330,13 @@ func (c *Client) openChat(ctx context.Context, release context.CancelFunc, req *
 		}
 
 		c.pool.markFailureWith(e, ue.Kind, ue.Message, ue.RetryAfter)
+
+		// Tell the gateway about this attempt even though the loop may still
+		// recover on another account: the gateway parks the (account, model)
+		// pair so the next request does not walk back into the same 429.
+		failure := core.Fail("cline", e.acct.id(), failureKind(ue.Kind), ue.Status, ue)
+		failure.RetryAfter = ue.RetryAfter
+		req.NoteAccountFailure(e.acct.id(), failure)
 		skip[e.acct.id()] = true
 		lastErr, lastAcct = ue, e.acct
 		if !retryable(ue.Kind) {
@@ -451,11 +458,15 @@ func classifyTerminal(err error, acct account) error {
 	}
 	kind := kindClient
 	status := 0
+	var retryAfter time.Duration
 	if ue, ok := asUpstreamError(err); ok {
 		kind = ue.Kind
 		status = ue.Status
+		retryAfter = ue.RetryAfter
 	}
-	return core.Fail("cline", acct.id(), failureKind(kind), status, err)
+	f := core.Fail("cline", acct.id(), failureKind(kind), status, err)
+	f.RetryAfter = retryAfter
+	return f
 }
 
 // noteUpstream records the last upstream verdict so Status can distinguish

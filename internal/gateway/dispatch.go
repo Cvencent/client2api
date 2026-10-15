@@ -128,6 +128,13 @@ func (s *server) routeAndServe(w http.ResponseWriter, r *http.Request, in routeI
 // shares the entire routing, stickiness, failover and accounting path.
 func (s *server) routeAndServeMessages(w http.ResponseWriter, r *http.Request, in routeInput, writeErr func(http.ResponseWriter, int, string, string)) {
 	in.writeProtocolError = writeErr
+	if !s.exposedModelAllowed(in.requested) {
+		err := fmt.Errorf("model %q is not exposed by this gateway", in.requested)
+		in.stat.status = http.StatusNotFound
+		s.fail(in.rec, err)
+		in.protocolError(w, http.StatusNotFound, "invalid_request_error", err.Error())
+		return
+	}
 	candidates, err := s.opts.Registry.ResolveCandidates(r.Context(), in.requested)
 	if err != nil {
 		in.stat.status = http.StatusNotFound
@@ -345,6 +352,16 @@ func (s *server) routeAndServeMessages(w http.ResponseWriter, r *http.Request, i
 	s.opts.Registry.NoteModelSuccess(client.Name(), upstreamModel, time.Now())
 	s.sessionPlatforms.bindModel(conversationKey, client.Name(), upstreamModel)
 	stream = wrapStickyFailure(stream, client, conversationKey)
+	// A turn that ends with "stop" and nothing to act on is the shape that
+	// silently closes an agent loop; one more attempt is spent on it before the
+	// caller is told the turn is over.  See deadturn.go.
+	stream = wrapDeadTurnRetry(stream, in.req, func() (core.Stream, error) {
+		next, err := s.openStream(attemptCtx, client, in.req)
+		if err != nil {
+			return nil, err
+		}
+		return wrapStickyFailure(next, client, conversationKey), nil
+	}, s.opts.Logger.Printf)
 	defer stream.Close()
 
 	a := emitArgs{s: s, client: client, model: in.modelForWire, stream: stream, hintCtx: hintCtx, toolNames: in.toolNames, rec: in.rec, stat: in.stat}

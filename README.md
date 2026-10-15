@@ -81,9 +81,19 @@ people. The built-in default is `127.0.0.1`.
   silently redirects an explicit platform choice, and a failure on it is reported as
   that platform's own failure rather than hidden behind a switch. `Auto/<model>` keeps
   its own meaning and skips groups, searching the concrete catalogues directly.
+- An operator-set outward model whitelist (`exposed_models`). The gateway builds the
+  full final catalogue first -- `platform/model` ids, `Auto/<model>` names,
+  `model_groups` names, aliases and transcription ids -- then serves only the ids the
+  operator selected. Each final id is its own switch: selecting a group member does not
+  expose the group name, and selecting an alias target does not expose the alias.
+  Matching is case-insensitive and ignores surrounding space. Unset means every final
+  model is served; an explicit `[]` means none is. The whitelist gates `GET /v1/models`
+  and every call entry point (chat, responses, messages, count_tokens and audio
+  transcriptions), so a hidden id is not callable even when it is named directly.
 - Platform priority, account priority and time-based priority schedules.
 - Per-platform and per-account concurrency limits.
 - Per-account per-model enable/disable from the account's model dialog, on every platform: WorkBuddy keeps its module-side policy (including "force enable"), the others write a shared blacklist the gateway's account hook enforces on the next request. A rate-limited model shows when it will be released and how long is left.
+- Any upstream 429 parks the `(platform, account, model)` triple for a cooldown: 60 seconds at first, doubling per consecutive failure and capped at 30 minutes, or the vendor's own `Retry-After` when it sent one (also capped). The gateway refuses that account for that model while the park is live, so a module rotates to another account or platform instead of walking back into the same rate limit, and the account's model dialog shows when the park is released and how much time is left. A module that reports every attempt through `core.ChatRequest.NoteAccountFailure` is covered even when it recovers on another account; the rest fall back to the gateway's terminal-failure record.
 - Conversation stickiness, retries, cooldown and automatic failover, with panel controls that show each live binding's model and can force-unbind or force-switch a session. A force-switch can clear platform/account stickiness for automatic selection again or pin a chosen platform while still auto-selecting its account.
 - OpenAI-shaped error mapping for auth, quota, WAF, timeout and rate-limit failures.
 - Failover also covers failures a platform reports after the stream has already been
@@ -175,7 +185,11 @@ people. The built-in default is `127.0.0.1`.
 - Credits
 - Packages
 - Task Center
-- Models and Profiles
+- Models and Profiles, which holds model capabilities and an Exposed Models tab. The
+  Exposed Models tab picks which final ids leave the gateway: search, filter by kind,
+  select all / invert / clear, and per-row checkboxes. Saving writes `exposed_models`
+  and reloads with no restart; an id that is configured but missing from the current
+  catalogue is kept as a `missing` row so a save cannot drop it.
 - Platform Configuration
 - Config keeps only genuinely global settings: listen address, inbound API Key,
   data directory, upstream proxy, session stickiness, panel display, aliases and
@@ -224,6 +238,14 @@ The Responses API is translated natively for Codex and compatible clients:
 - Reasoning summaries and encrypted agent content handling.
 - Streaming event ordering required by the Codex parser.
 - Stateless operation and `previous_response_id` compatibility behavior.
+- A dead turn -- `finish_reason=stop` with no tool call and nothing the caller can
+  act on, either no visible text at all or a short fragment after a long
+  deliberation on a request that offered tools -- is retried once upstream
+  instead of being handed back as a finished turn, which is the shape that made
+  Codex close the turn and wait for the operator to type the next prompt.
+- A tool-call block a model wrote as text that the parser cannot read is surfaced
+  as visible text instead of being dropped, so a swallowed call cannot look like
+  a clean stop.
 
 See the detailed reference for translation rules and limitations.
 

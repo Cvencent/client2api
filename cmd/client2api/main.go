@@ -32,6 +32,7 @@ import (
 	"client2api/internal/livecfg"
 	"client2api/internal/logfile"
 	"client2api/internal/modelmeta"
+	"client2api/internal/modelpark"
 	"client2api/internal/modelpolicy"
 	"client2api/internal/panel"
 	"client2api/internal/scheduler"
@@ -43,7 +44,7 @@ import (
 )
 
 // version is overridable with -ldflags "-X main.version=...".
-var version = "0.1.65"
+var version = "0.1.66"
 
 // restartHandoffEnv marks the replacement half of a panel restart.  It tells a
 // starting process to keep retrying the listen address instead of failing fast,
@@ -60,17 +61,18 @@ const restartHandoffEnv = "CLIENT2API_RESTART_HANDOFF"
 // ---------------------------------------------------------------------------
 
 type fileConfig struct {
-	Listen      string                       `json:"listen"`
-	APIKey      string                       `json:"api_key"`
-	DataDir     string                       `json:"data_dir"`
-	Proxy       string                       `json:"proxy"`
-	Egress      egress.Config                `json:"egress"`
-	Aliases     map[string]string            `json:"aliases"`
-	Disabled    []string                     `json:"disabled"`
-	Platforms   map[string]platformConfig    `json:"platforms"`
-	ModelGroups map[string]modelGroupConfig  `json:"model_groups"`
-	Clients     map[string]json.RawMessage   `json:"clients"`
-	Sources     map[string]core.SourceConfig `json:"sources,omitempty"`
+	Listen        string                       `json:"listen"`
+	APIKey        string                       `json:"api_key"`
+	DataDir       string                       `json:"data_dir"`
+	Proxy         string                       `json:"proxy"`
+	Egress        egress.Config                `json:"egress"`
+	Aliases       map[string]string            `json:"aliases"`
+	ExposedModels *[]string                    `json:"exposed_models"`
+	Disabled      []string                     `json:"disabled"`
+	Platforms     map[string]platformConfig    `json:"platforms"`
+	ModelGroups   map[string]modelGroupConfig  `json:"model_groups"`
+	Clients       map[string]json.RawMessage   `json:"clients"`
+	Sources       map[string]core.SourceConfig `json:"sources,omitempty"`
 
 	Schedule      scheduleConfig      `json:"schedule"`
 	Prompt        promptConfig        `json:"prompt"`
@@ -141,6 +143,17 @@ var builtinGPT6ModelGroups = map[string][]string{
 // map, which installs the documented default everywhere.
 func (c *fileConfig) platformConfigs() map[string]core.PlatformConfig {
 	return c.platformConfigsFor(nil)
+}
+
+// exposedModels projects the optional final-model policy.  A nil pointer means
+// the key was absent (or JSON null), which keeps the historical allow-all
+// behaviour.  A non-nil pointer, including an empty slice, is an explicit
+// operator choice and is passed through to the registry unchanged.
+func (c *fileConfig) exposedModels() ([]string, bool) {
+	if c == nil || c.ExposedModels == nil {
+		return nil, false
+	}
+	return append([]string(nil), (*c.ExposedModels)...), true
 }
 
 // platformConfigsFor is platformConfigs plus the set of live clients.  A
@@ -1268,6 +1281,8 @@ func run() error {
 	platCfgs := cfg.platformConfigsFor(registry.All())
 	registry.SetPlatformConfigs(platCfgs)
 	registry.SetModelGroups(cfg.modelGroups())
+	exposed, exposedConfigured := cfg.exposedModels()
+	registry.SetExposedModels(exposed, exposedConfigured)
 	// A module that owns an account pool reads its own policy from the push, so
 	// the low-balance guard is armed before the first request too.
 	if n := core.ApplyPlatformPolicies(registry, platCfgs); n > 0 {
@@ -1408,6 +1423,8 @@ func run() error {
 		// Model groups are built from the same hot config and resolver table,
 		// so adding or removing a member takes effect on the next request.
 		registry.SetModelGroups(next.modelGroups())
+		exposed, exposedConfigured := next.exposedModels()
+		registry.SetExposedModels(exposed, exposedConfigured)
 		// The timetable is hot too: an operator who toggles a batch in the panel
 		// expects the next fire to obey the new file, not the one from boot.
 		sched.Reconfigure(next.schedule())
@@ -1508,6 +1525,11 @@ func run() error {
 		logger.Printf("account model policies unavailable: %v", err)
 		modelPolicies, _ = modelpolicy.Open("")
 	}
+
+	// The gateway's transient per-model rate-limit memory, shared with the
+	// panel so the model dialog can show a 429 a module only recorded as an
+	// account-level cooldown.  Runtime-only on purpose.
+	modelParks := modelpark.New()
 	sessionPlatforms := gateway.NewSessionPlatforms()
 	sessionPlatforms.StartGC()
 	defer sessionPlatforms.StopGC()
@@ -1535,6 +1557,7 @@ func run() error {
 		// The operator's per-account model blacklist, shared with the gateway
 		// so a save in the model dialog takes effect on the next request.
 		ModelPolicies: modelPolicies,
+		ModelParks:    modelParks,
 		// Same rule as the usage file: the probe results live in the data
 		// directory, so the probe tool and the panel agree without a second
 		// path setting.  Missing file = no annotation, never an error.
@@ -1576,6 +1599,7 @@ func run() error {
 		NotifyAlert:      notifyAlert,
 		ModelOverrides:   modelOverrides,
 		ModelPolicies:    modelPolicies,
+		ModelParks:       modelParks,
 		SessionPlatforms: sessionPlatforms,
 		// The context guard learns a model's real window from the vendor's own
 		// refusal, so it needs somewhere durable to remember it.  It lives beside

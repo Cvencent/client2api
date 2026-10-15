@@ -2,6 +2,7 @@ package core
 
 import (
 	"errors"
+	"time"
 )
 
 // FailureKind classifies an upstream refusal so that the gateway and the
@@ -55,7 +56,11 @@ type Failure struct {
 	Client  string      `json:"client,omitempty"`
 	Account string      `json:"account,omitempty"`
 	Status  int         `json:"status,omitempty"`
-	Err     error       `json:"-"`
+	// RetryAfter, when positive, is the vendor's own Retry-After hint for a
+	// rate limit or overload.  It is a hint, not a promise: the gateway caps
+	// it before parking anything.
+	RetryAfter time.Duration `json:"retry_after,omitempty"`
+	Err        error         `json:"-"`
 }
 
 func (f *Failure) Error() string {
@@ -128,6 +133,15 @@ func FailureKindOf(err error) FailureKind {
 		return f.Kind
 	}
 	return FailureOther
+}
+
+// RetryAfterOf returns the vendor's Retry-After hint carried by err, or 0 when
+// the error is not a classified failure or carries no hint.
+func RetryAfterOf(err error) time.Duration {
+	if f, ok := AsFailure(err); ok {
+		return f.RetryAfter
+	}
+	return 0
 }
 
 // Retryable reports whether the gateway should try another account for this

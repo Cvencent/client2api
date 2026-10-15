@@ -393,6 +393,43 @@ func TestWorkbuddyChatRefusesARealmNoAccountServes(t *testing.T) {
 	}
 }
 
+// TestWorkbuddyChatDistinguishesAParkedRealmFromAnUnconfiguredOne pins the two
+// ways a pick comes up empty.  A realm this install holds no account for is the
+// configuration problem ErrNotConfigured has always meant; a realm whose
+// accounts exist but are all parked right now is a platform that is merely
+// busy, which the router must be able to tell apart so the console does not
+// blame the operator's configuration for a credit cooldown.
+func TestWorkbuddyChatDistinguishesAParkedRealmFromAnUnconfiguredOne(t *testing.T) {
+	// A domestic-only install asked for the global realm: still no account.
+	domestic, _ := panelClient(t, &fakeRT{}, cnAccountFiles())
+	if _, err := domestic.Chat(context.Background(), &core.ChatRequest{
+		Model:    "global:glm-5.2",
+		Messages: []core.Message{{Role: "user", Content: "hi"}},
+	}); !errors.Is(err, core.ErrNotConfigured) {
+		t.Fatalf("a realm with no account = %v, want core.ErrNotConfigured", err)
+	}
+
+	// The same install with its only domestic account cooled: the realm is
+	// configured, so the honest answer is "platform exhausted", not "no account".
+	rt := &fakeRT{}
+	c, _ := panelClient(t, rt, cnAccountFiles())
+	auth := c.findAuthByUID("uid-cn-0001")
+	if auth == nil {
+		t.Fatal("the fixture holds no known account")
+	}
+	c.pool.MarkFailure(auth, &Error{Kind: ErrSoftRate, Status: 429, RetryAfter: time.Hour, Msg: "slow down"})
+	before := len(rt.calls)
+	if _, err := c.Chat(context.Background(), &core.ChatRequest{
+		Model:    "cn:glm-5.2",
+		Messages: []core.Message{{Role: "user", Content: "hi"}},
+	}); !errors.Is(err, core.ErrPlatformExhausted) {
+		t.Fatalf("a cooled realm = %v, want core.ErrPlatformExhausted", err)
+	}
+	if len(rt.calls) != before {
+		t.Fatalf("a cooled realm still made %d upstream call(s)", len(rt.calls)-before)
+	}
+}
+
 // TestWorkbuddyChatRejectsARealmWithNoModelName covers the degenerate prefix:
 // "global:" names a realm and no model, which is not a request the vendor can
 // answer.

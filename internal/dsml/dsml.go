@@ -66,7 +66,15 @@ loop:
 			inner := s[:closeLoc[0]]
 			p.replaceBuf(s[closeLoc[1]:])
 			p.inBlock = false
-			calls = append(calls, parseBlock(inner)...)
+			parsed := parseBlock(inner)
+			if len(parsed) == 0 {
+				// A block that closed but yielded no call would otherwise vanish.
+				// That turns "the model tried to call a tool and the gateway could
+				// not read it" into a clean-looking stop, so the text is handed back
+				// the same way Finish already hands back an unterminated block.
+				out.WriteString(inner)
+			}
+			calls = append(calls, parsed...)
 			continue
 		}
 		openLoc := reOpenCalls.FindStringIndex(s)
@@ -81,7 +89,12 @@ loop:
 			out.WriteString(s[:invokeLoc[0]])
 			block := s[invokeLoc[0]:invokeLoc[1]]
 			p.replaceBuf(s[invokeLoc[1]:])
-			calls = append(calls, parseBlock(block)...)
+			parsed := parseBlock(block)
+			if len(parsed) == 0 {
+				// A nameless invoke is the other silent-drop path.
+				out.WriteString(block)
+			}
+			calls = append(calls, parsed...)
 		default:
 			keep := partialTagTail(s)
 			if keep >= len(s) {

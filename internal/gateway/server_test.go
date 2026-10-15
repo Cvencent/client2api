@@ -61,6 +61,13 @@ type testClient struct {
 	// modelsCalls counts catalogue reads, so a test can prove that a request
 	// which never fails does not pay for one.
 	modelsCalls int
+	// chatCalls counts Chat invocations, so a test can prove how many upstream
+	// attempts one client request actually cost.
+	chatCalls int
+	// callEvents, when set, gives every Chat call its own event list.  The last
+	// list repeats for any call beyond the ones supplied, so a test can pin
+	// "the first attempt dies and every later attempt succeeds".
+	callEvents [][]core.Event
 }
 
 func (c *testClient) Name() string { return c.name }
@@ -80,6 +87,14 @@ func (c *testClient) Chat(ctx context.Context, req *core.ChatRequest) (core.Stre
 	core.NoteServedBy(req, c.servedBy)
 	if c.chatErr != nil {
 		return nil, c.chatErr
+	}
+	c.chatCalls++
+	if c.callEvents != nil {
+		ix := c.chatCalls - 1
+		if ix >= len(c.callEvents) {
+			ix = len(c.callEvents) - 1
+		}
+		return &fakeStream{events: c.callEvents[ix]}, nil
 	}
 	events := c.events
 	if events == nil {
