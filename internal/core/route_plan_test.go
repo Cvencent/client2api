@@ -206,6 +206,43 @@ func TestResolveStaticCatalogGroupAutoMemberExpandsPool(t *testing.T) {
 	}
 }
 
+func TestResolveStaticCatalogGroupAutoMemberDoesNotOutrankExplicitPriority(t *testing.T) {
+	r := registryWith(t,
+		&countingClient{name: "beta", models: []Model{{ID: "gpt-x"}}},
+		&countingClient{name: "alpha", models: []Model{{ID: "vendor-gpt-x"}}},
+	)
+	r.SetPlatformConfigs(map[string]PlatformConfig{
+		"alpha": {Priority: -3},
+		"beta":  {Priority: 2},
+	})
+	r.SetModelGroups(map[string]ModelGroup{
+		"gpt-x": {
+			Members: []ModelGroupMember{
+				{Client: "alpha", Model: "vendor-gpt-x"},
+				{Client: "Auto", Model: "gpt-x"},
+			},
+			PlatformPriorities: map[string]int{"alpha": -3},
+		},
+	})
+
+	steps, _ := planPlatforms(t, r, "gpt-x")
+	if len(steps) != 2 {
+		t.Fatalf("got %d steps, want 2: %+v", len(steps), steps)
+	}
+	if steps[0].Platform != "alpha" {
+		t.Fatalf("chain = %v, want alpha first by explicit priority", steps)
+	}
+	if steps[0].Priority != -3 || steps[0].Source != RoutePlanSourceGroup {
+		t.Fatalf("first step = %+v, want group priority -3", steps[0])
+	}
+	if steps[1].Platform != "beta" || !steps[1].AutoPool {
+		t.Fatalf("second step = %+v, want beta in the Auto pool", steps[1])
+	}
+	if steps[1].Preferred {
+		t.Fatalf("Auto pool members must not be marked preferred: %+v", steps[1])
+	}
+}
+
 func TestResolveStaticCatalogPrefersFreeOnTie(t *testing.T) {
 	r := registryWith(t,
 		&countingClient{name: "beta", models: []Model{{ID: "gpt-x"}}},

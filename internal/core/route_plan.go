@@ -228,11 +228,10 @@ func (r *Registry) planGroupMember(group ModelGroup, groupKey, name string, mode
 		}
 
 		step := RoutePlanStep{
-			Platform:  name,
-			ModelID:   m.ID,
-			Free:      modelFree(m),
-			Group:     groupKey,
-			Preferred: memberMatchesRequest(member, requested),
+			Platform: name,
+			ModelID:  m.ID,
+			Free:     modelFree(m),
+			Group:    groupKey,
 		}
 		// The Auto member expands to every platform that serves the model.
 		// The runtime sorts the pool members by each platform's own priority
@@ -246,6 +245,7 @@ func (r *Registry) planGroupMember(group ModelGroup, groupKey, name string, mode
 		if isAuto {
 			return &step, true
 		}
+		step.Preferred = memberMatchesRequest(member, requested)
 		if p, found := modelGroupPriority(group, name); found {
 			step.Priority = p
 			step.Source = RoutePlanSourceGroup
