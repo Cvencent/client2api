@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"client2api/internal/core"
+	"client2api/internal/smscap"
 )
 
 // The platform this build ships with.  Its model gateway is the Huawei
@@ -18,7 +19,7 @@ import (
 // override the label and the URL, but the platform itself needs no entry.
 const (
 	officeAceSourceID       = "officeace"
-	officeAceSourceLabel    = "OfficeAce（华为 AgentArts）"
+	officeAceSourceLabel    = "华为"
 	officeAceDefaultBaseURL = "https://modelgw-0009.officeace.cn-southwest-2.huaweicloud-agentarts.com/v2"
 )
 
@@ -39,6 +40,16 @@ type officeAceSource struct {
 
 	loginMu sync.Mutex
 	logins  map[string]*officeAceLoginSession
+
+	// SMS and auto-login state.  The platform token and per-call overrides
+	// travel through core.SMSOpts/core.AutoLoginRequest, so no credential is
+	// added to SourceConfig.  smsBase is only set by tests.
+	smsBase string
+	smsRot  smscap.Rotator
+
+	autoMu     sync.Mutex
+	autoJobs   map[string]*officeAceAutoJob
+	autoDriver officeAceAutoDriver
 }
 
 // officeAceLocalSource is the wrapper that can additionally read the logins

@@ -33,6 +33,12 @@ type Client struct {
 	// defaultClient is used when the harness did not hand us one.
 	defaultClient *http.Client
 
+	// proxyMu guards proxyClient, which is installed when clients.gemini.proxy
+	// (or a proxy supplied with the login start) must override the shared
+	// process-wide HTTP client for every Gemini request.
+	proxyMu     sync.RWMutex
+	proxyClient *http.Client
+
 	// probedProject caches the loadCodeAssist answer per account so a request
 	// does not re-probe on every turn when the vendor returned an empty
 	// project (which is the free tier's normal answer).
@@ -80,6 +86,7 @@ func New(deps core.Deps) (core.Client, error) {
 		cfg = Config{}
 	}
 	c.cfg = cfg.normalize()
+	c.setProxy(c.cfg.Proxy)
 	c.sig = newSigStore(sigStorePath(deps.DataDir))
 	c.affinity = core.NewAffinity(0)
 	c.affinity.StartGC()
@@ -123,6 +130,12 @@ func (c *Client) ensure() {
 func (c *Client) Name() string { return clientName }
 
 func (c *Client) httpClient() *http.Client {
+	c.proxyMu.RLock()
+	proxyClient := c.proxyClient
+	c.proxyMu.RUnlock()
+	if proxyClient != nil {
+		return proxyClient
+	}
 	if c.deps.HTTPClient != nil {
 		return c.deps.HTTPClient
 	}
@@ -130,6 +143,20 @@ func (c *Client) httpClient() *http.Client {
 		return c.defaultClient
 	}
 	return &http.Client{Transport: newTransport(c.deps.Proxy)}
+}
+
+// setProxy installs or clears the module-specific egress.  An empty proxy
+// deliberately falls back to the shared process client, so clearing the
+// setting in the panel restores the gateway-wide route.
+func (c *Client) setProxy(proxy string) {
+	proxy = strings.TrimSpace(proxy)
+	var client *http.Client
+	if proxy != "" {
+		client = &http.Client{Transport: newTransport(proxy)}
+	}
+	c.proxyMu.Lock()
+	c.proxyClient = client
+	c.proxyMu.Unlock()
 }
 
 func (c *Client) credentialsPath() string { return clientPath(c.deps.DataDir, credentialsFile) }

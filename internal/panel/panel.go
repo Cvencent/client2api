@@ -1185,7 +1185,7 @@ func (p *panel) startLogin(w http.ResponseWriter, r *http.Request, c core.Client
 	// before.  A body we cannot read is refused rather than silently
 	// defaulted: an account added to the wrong realm is a credential that can
 	// never serve the models the operator wanted.
-	realm, err := loginRealmBody(r)
+	body, err := loginRequestBody(r)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -1193,8 +1193,20 @@ func (p *panel) startLogin(w http.ResponseWriter, r *http.Request, c core.Client
 	ctx, cancel := p.ctx(r, 60*time.Second)
 	defer cancel()
 	var st core.LoginState
-	if rp, ok := core.AsRealmLoginProvider(c); ok && realm != "" {
-		st, err = rp.StartLoginRealm(ctx, realm)
+	if pp, ok := core.AsProxyLoginProvider(c); ok && body.ProxyGiven {
+		st, err = pp.StartLoginWithProxy(ctx, body.Proxy)
+		if err == nil && strings.TrimSpace(p.opts.ConfigPath) != "" {
+			_, _, serr := writeConfigKeys(p.opts.ConfigPath, map[string]any{
+				"clients": map[string]any{c.Name(): map[string]any{"proxy": body.Proxy}},
+			})
+			if serr != nil {
+				cancel()
+				writeErr(w, http.StatusInternalServerError, "login started, but saving clients."+c.Name()+".proxy failed: "+serr.Error())
+				return
+			}
+		}
+	} else if rp, ok := core.AsRealmLoginProvider(c); ok && body.Realm != "" {
+		st, err = rp.StartLoginRealm(ctx, body.Realm)
 	} else {
 		st, err = lp.StartLogin(ctx)
 	}
@@ -1209,24 +1221,42 @@ func (p *panel) startLogin(w http.ResponseWriter, r *http.Request, c core.Client
 // loginRealmBody reads the optional {"realm":"..."} body of a login start.  An
 // absent or empty body means "the module's configured default", which is what
 // every caller before the realm picker sent.
-func loginRealmBody(r *http.Request) (string, error) {
+type loginStartBody struct {
+	Realm      string `json:"realm"`
+	Proxy      string `json:"proxy"`
+	ProxyGiven bool   `json:"-"`
+}
+
+func loginRequestBody(r *http.Request) (loginStartBody, error) {
 	if r.Body == nil {
-		return "", nil
+		return loginStartBody{}, nil
 	}
 	raw, err := io.ReadAll(io.LimitReader(r.Body, 1<<12))
 	if err != nil {
-		return "", errors.New("the request body could not be read")
+		return loginStartBody{}, errors.New("the request body could not be read")
 	}
 	if len(bytes.TrimSpace(raw)) == 0 {
-		return "", nil
+		return loginStartBody{}, nil
 	}
-	var body struct {
-		Realm string `json:"realm"`
+	var fields map[string]json.RawMessage
+	if uerr := json.Unmarshal(raw, &fields); uerr != nil {
+		return loginStartBody{}, errors.New(`the request body must be JSON: {"realm":"cn"|"global","proxy":"http://127.0.0.1:7890"}`)
 	}
+	var body loginStartBody
 	if uerr := json.Unmarshal(raw, &body); uerr != nil {
-		return "", errors.New(`the request body must be JSON: {"realm":"cn"|"global"}`)
+		return loginStartBody{}, errors.New(`the request body must be JSON: {"realm":"cn"|"global","proxy":"http://127.0.0.1:7890"}`)
 	}
-	return strings.TrimSpace(body.Realm), nil
+	_, body.ProxyGiven = fields["proxy"]
+	body.Realm = strings.TrimSpace(body.Realm)
+	body.Proxy = strings.TrimSpace(body.Proxy)
+	return body, nil
+}
+
+// loginRealmBody is kept as the narrow helper used by callers that only need
+// the realm.  It has the same optional-body semantics as loginRequestBody.
+func loginRealmBody(r *http.Request) (string, error) {
+	body, err := loginRequestBody(r)
+	return body.Realm, err
 }
 
 // loginRegions answers which realms an account can be added to for one module.

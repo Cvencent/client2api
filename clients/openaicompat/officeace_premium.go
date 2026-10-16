@@ -24,11 +24,13 @@ import (
 )
 
 const (
-	officeAcePremiumPathSubscription = "/v1/subscription"
-	officeAcePremiumPathBonusClaim   = "/v1/subscription/bonus/claim"
-	officeAcePremiumPathProjects     = "/v3/projects"
-	officeAcePremiumPathSecurityTok  = "/v3.0/OS-CREDENTIAL/securitytokens"
-	officeAcePremiumTokenPath        = "/v1/oauth2/tokens"
+	officeAcePremiumPathSubscription       = "/v1/subscription"
+	officeAcePremiumPathSubscriptionPeriod = "/v1/subscription/period"
+	officeAcePremiumPathBonusClaim         = "/v1/subscription/bonus/claim"
+	officeAcePremiumPathProjects           = "/v3/projects"
+	officeAcePremiumPathSecurityTok        = "/v3.0/OS-CREDENTIAL/securitytokens"
+	officeAcePremiumTokenPath              = "/v1/oauth2/tokens"
+	officeAceTrialSKUCode                  = "officeace.personal.package.trial"
 	// officeAceSignerSignatureCode is Huawei APIG's "signature is stale" error.
 	officeAceSignerStaleCode = "APIG.0301"
 	officeAceV3DurationSecs  = 24 * 60 * 60
@@ -122,9 +124,16 @@ func officeAceRegionFromBaseURL(base string) string {
 // A non-2xx status is data, not an error: callers explain it.  An expired or
 // rejected credential is refreshed once and the request is retried.
 func (p *officeAcePremium) cloudFetch(ctx context.Context, method, path string, body []byte, headers map[string]string) ([]byte, int, error) {
-	base := p.origin()
+	return p.cloudFetchBase(ctx, p.origin(), method, path, body, headers)
+}
+
+// cloudFetchBase is cloudFetch against an explicit cloud root.  OfficeAce's
+// subscription and SKU order endpoints live on the claw service rather than
+// the account's model gateway, while the premium summary lives on the gateway.
+func (p *officeAcePremium) cloudFetchBase(ctx context.Context, base, method, path string, body []byte, headers map[string]string) ([]byte, int, error) {
+	base = strings.TrimRight(strings.TrimSpace(base), "/")
 	if base == "" {
-		return nil, 0, errors.New("officeace: 这个账号没有记录模型网关地址")
+		return nil, 0, errors.New("officeace: 云端地址为空")
 	}
 	endpoint := base + path
 	if p.sess.ProjectID == "" {
@@ -456,6 +465,132 @@ func (p *officeAcePremium) subscription(ctx context.Context) (officeAceSubscript
 		return officeAceSubscription{}, fmt.Errorf("officeace: 解析订阅信息失败：%w", err)
 	}
 	return sub, nil
+}
+
+// ensureOfficeAceTrial gives a fresh OfficeAce login the same free personal
+// trial the desktop client creates after the invitation/subscription step.
+// The cloud account can already have model credentials at that point, so this
+// runs independently of subscribe() and is idempotent for existing trials.
+func (o *officeAceSource) ensureOfficeAceTrial(ctx context.Context, accountID string) error {
+	p, err := o.premiumFor(accountID)
+	if err != nil {
+		return err
+	}
+	sub, err := p.subscription(ctx)
+	if err != nil {
+		return err
+	}
+	if sub.hasTrial() {
+		return nil
+	}
+	atomicProductID, err := p.trialAtomicProductID(ctx)
+	if err != nil {
+		return err
+	}
+	return p.createTrialOrder(ctx, atomicProductID)
+}
+
+func (s officeAceSubscription) hasTrial() bool {
+	for _, sku := range s.Skus {
+		if strings.EqualFold(strings.TrimSpace(sku.Code), officeAceTrialSKUCode) {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *officeAcePremium) trialAtomicProductID(ctx context.Context) (string, error) {
+	path := "/v1/skus/" + officeAceTrialSKUCode + "?is_query_sales_cycle=true&is_query_resource_rating=false"
+	raw, status, err := p.cloudFetchBase(ctx, p.src.endpoints().ClawBase, http.MethodGet, path, nil, map[string]string{"Accept": "application/json"})
+	if err != nil {
+		return "", err
+	}
+	if status != http.StatusOK {
+		return "", fmt.Errorf("officeace: 查询个人体验版 SKU 失败：%s", officeAceHTTPError(status, raw))
+	}
+	var doc struct {
+		ProductSalesCycles []struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+		} `json:"product_sales_cycles"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return "", fmt.Errorf("officeace: 解析个人体验版 SKU 失败：%w", err)
+	}
+	for _, cycle := range doc.ProductSalesCycles {
+		if id := strings.TrimSpace(cycle.ID); id != "" && (cycle.Status == "" || strings.EqualFold(cycle.Status, "ONSALE")) {
+			return id, nil
+		}
+	}
+	return "", errors.New("officeace: 个人体验版没有可购买的销售周期")
+}
+
+type officeAceTrialOrder struct {
+	ServiceType          string                    `json:"service_type"`
+	SubscribePeriodType  int                       `json:"subscribe_period_type"`
+	SubscribePeriodValue int                       `json:"subscribe_period_value"`
+	AutoRenewal          int                       `json:"auto_renewal"`
+	AutoPay              int                       `json:"auto_pay"`
+	SubscribeSKUInfo     officeAceTrialSKUInfo     `json:"subscribe_sku_info"`
+	AgreementList        []officeAceTrialAgreement `json:"agreement_list"`
+}
+
+type officeAceTrialSKUInfo struct {
+	SubscribeQuantity        int    `json:"subscribe_quantity"`
+	SubscribeSKUCode         string `json:"subscribe_sku_code"`
+	SubscribeSubProductCode  string `json:"subscribe_sub_product_code"`
+	SubscribeAtomicProductID string `json:"subscribe_atomic_product_id"`
+}
+
+type officeAceTrialAgreement struct {
+	AgreeDeclaration int    `json:"agree_declaration"`
+	Version          string `json:"version"`
+	PrivacyStatement string `json:"privacy_statement"`
+}
+
+func (p *officeAcePremium) createTrialOrder(ctx context.Context, atomicProductID string) error {
+	order := officeAceTrialOrder{
+		ServiceType:          "hws.service.type.agentarts",
+		SubscribePeriodType:  2,
+		SubscribePeriodValue: 1,
+		AutoRenewal:          1,
+		AutoPay:              1,
+		SubscribeSKUInfo: officeAceTrialSKUInfo{
+			SubscribeQuantity:        1,
+			SubscribeSKUCode:         officeAceTrialSKUCode,
+			SubscribeSubProductCode:  "hws.resource.type.agentarts.platform",
+			SubscribeAtomicProductID: strings.TrimSpace(atomicProductID),
+		},
+		AgreementList: []officeAceTrialAgreement{{
+			AgreeDeclaration: 1,
+			Version:          "1.0",
+			PrivacyStatement: "/declaration/agentarts.html",
+		}},
+	}
+	body, err := json.Marshal(order)
+	if err != nil {
+		return err
+	}
+	raw, status, err := p.cloudFetchBase(ctx, p.src.endpoints().ClawBase, http.MethodPost, officeAcePremiumPathSubscriptionPeriod, body, map[string]string{"Accept": "application/json"})
+	if err != nil {
+		return err
+	}
+	if status != http.StatusOK {
+		return fmt.Errorf("officeace: 创建个人体验版订单失败：%s", officeAceHTTPError(status, raw))
+	}
+	var result struct {
+		Status       string `json:"status"`
+		FailedReason string `json:"failed_reason"`
+	}
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &result); err != nil {
+			return fmt.Errorf("officeace: 解析个人体验版订单结果失败：%w", err)
+		}
+	}
+	if strings.EqualFold(strings.TrimSpace(result.Status), "FAILED") {
+		return fmt.Errorf("officeace: 创建个人体验版订单失败：%s", strings.TrimSpace(result.FailedReason))
+	}
+	return nil
 }
 
 // claimBonus posts the daily claim and returns the bonuses the cloud reported

@@ -183,6 +183,41 @@ func TestOfficeAcePremiumCheckinBalancePackages(t *testing.T) {
 	}
 }
 
+func TestOfficeAceEnsureTrialSkipsExistingEntitlement(t *testing.T) {
+	var skuCalls, orderCalls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == officeAcePremiumPathSubscription:
+			_, _ = io.WriteString(w, officeAcePremiumSubscriptionJSON)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/skus/"+officeAceTrialSKUCode:
+			skuCalls.Add(1)
+			http.Error(w, "an existing trial must not query the SKU", http.StatusInternalServerError)
+		case r.Method == http.MethodPost && r.URL.Path == officeAcePremiumPathSubscriptionPeriod:
+			orderCalls.Add(1)
+			http.Error(w, "an existing trial must not be ordered again", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	o := officeAcePremiumSource(t, srv)
+	id := officeAceAddAccountWithSession(t, o, srv, officeAceStoredSession{
+		Region:        "cn-southwest-2",
+		AccessKey:     "access",
+		SecretKey:     "secret",
+		SecurityToken: "sec-token",
+		ProjectID:     "project-1",
+		ExpiresAt:     time.Now().Add(6 * time.Hour).UTC().Format(time.RFC3339),
+	})
+	if err := o.ensureOfficeAceTrial(context.Background(), id); err != nil {
+		t.Fatalf("ensure trial: %v", err)
+	}
+	if skuCalls.Load() != 0 || orderCalls.Load() != 0 {
+		t.Fatalf("existing trial caused sku=%d order=%d calls", skuCalls.Load(), orderCalls.Load())
+	}
+}
+
 func TestOfficeAceCheckinRequiresASession(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)

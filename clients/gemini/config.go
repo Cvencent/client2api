@@ -53,6 +53,12 @@ type Config struct {
 	// kernel for a free one, which is what the reference does.
 	LoginPort int `json:"login_port,omitempty"`
 
+	// Proxy overrides the process-wide outbound proxy for this module.  Google
+	// OAuth and Cloud Code can be unreachable through a direct route while the
+	// rest of the gateway still reaches its vendors normally, so Gemini needs
+	// an egress of its own.  Empty keeps the shared client.
+	Proxy string `json:"proxy,omitempty"`
+
 	// ExtraHeaders are added to every upstream request.  A key colliding with an
 	// authentication or identity header is ignored.
 	ExtraHeaders map[string]string `json:"extra_headers,omitempty"`
@@ -121,6 +127,7 @@ func (cfg Config) normalize() Config {
 	out.ClientID = strings.TrimSpace(out.ClientID)
 	out.ClientSecret = strings.TrimSpace(out.ClientSecret)
 	out.Project = strings.TrimSpace(out.Project)
+	out.Proxy = strings.TrimSpace(out.Proxy)
 	if out.LoginPort < 0 || out.LoginPort > 65535 {
 		out.LoginPort = 0
 	}

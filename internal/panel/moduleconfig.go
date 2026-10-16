@@ -143,6 +143,7 @@ var moduleOptions = map[string][]moduleOption{
 		{Key: "client_secret", Label: "Google OAuth Client Secret", Kind: optText, Help: "与 Client ID 配套；留空用模块内置值。"},
 		{Key: "project", Label: "Cloud Code 项目 ID", Kind: optText, Help: "留空时先探测账号绑定的项目，再退回默认项目。"},
 		{Key: "login_port", Label: "登录回调端口", Kind: optNumber, Help: "面板登录时本地监听的端口。留空由系统分配。"},
+		{Key: "proxy", Label: "专属代理", Kind: optText, Help: "Gemini 登录、刷新令牌和推理请求走这个代理；留空使用全局代理或直连。"},
 	},
 	"kilocode": {
 		{Key: "free_only", Label: "只用免费模型", Kind: optBool, Help: freeOnlyHelp},

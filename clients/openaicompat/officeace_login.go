@@ -13,6 +13,8 @@ package openaicompat
 //  5. GET  {claw}/v1/claw/client-permission-validate -> identity + model_info
 //  6. POST {claw}/v1/claw/client-subscription        -> model_info for a login
 //     that has not subscribed yet
+//  7. POST {claw}/v1/subscription/period             -> free 个人体验版
+//     entitlement (500 credits and 200 searches)
 //
 // Steps 5 and 6 are signed with the temporary access key/secret
 // (SDK-HMAC-SHA256, see officeace_sign.go); the model_info they return carries
@@ -50,7 +52,7 @@ const (
 	// exchange the premium routes need, which is a different host from the
 	// OAuth token endpoint above.
 	officeAceKeystoneBase = "https://iam.myhuaweicloud.com"
-	officeAceRedirectPath  = "/v1/claw/auth/callback"
+	officeAceRedirectPath = "/v1/claw/auth/callback"
 
 	// officeAceLoginTTL bounds one interactive sign-in.  The cloud expires its
 	// state after ten minutes, so a session that outlives that can never
@@ -397,8 +399,8 @@ type officeAceToken struct {
 	// RefreshExpiresAt is present only when the cloud said so; the login stores
 	// an estimate otherwise.
 	RefreshExpiresAt string
-	Subject       string
-	UserName      string
+	Subject          string
+	UserName         string
 
 	// The IAM v3 credential is minted separately (see fetchOfficeAceV3Credential)
 	// and kept on the token so one code path can persist both credentials.
@@ -457,7 +459,7 @@ func parseOfficeAceToken(raw []byte) (officeAceToken, error) {
 		IDToken          string     `json:"id_token"`
 		RefreshToken     string     `json:"refresh_token"`
 		RefreshExpiresAt string     `json:"refresh_expires_at"`
-		Data         struct {
+		Data             struct {
 			Credentials      credential `json:"credentials"`
 			IDToken          string     `json:"id_token"`
 			RefreshToken     string     `json:"refresh_token"`
@@ -603,6 +605,9 @@ func (d *officeAcePermissionDocument) payload() *officeAcePermissionDocument {
 func (d *officeAcePermissionDocument) model() officeAceModelInfo {
 	if d == nil {
 		return officeAceModelInfo{}
+	}
+	if payload := d.payload(); payload != d {
+		return payload.model()
 	}
 	if d.ModelInfo != nil {
 		return *d.ModelInfo
@@ -830,6 +835,13 @@ func (o *officeAceSource) completeLogin(ctx context.Context, session *officeAceL
 		return fmt.Errorf("officeace: 保存账号失败：%w", err)
 	}
 	o.persistLoginSession(workCtx, eps, rec.ID, token, session.key, identity, baseURL)
+	// The desktop client creates the free personal trial after the model
+	// credentials exist, so this must not be conditional on subscribe() above.
+	// It is best-effort: the account can already chat even if the order call
+	// fails, and a later login retries the same idempotent check.
+	if err := o.ensureOfficeAceTrial(workCtx, rec.ID); err != nil {
+		o.source.deps.Log("%s: signed in %s, but the free trial entitlement could not be created: %v", officeAceSourceID, rec.ID, core.Redact(err.Error()))
+	}
 	o.scanModels(workCtx, rec.ID)
 	o.source.deps.Log("%s: Huawei account signed in (%s)", officeAceSourceID, rec.ID)
 	session.finish(core.LoginSuccess, "已用华为账号登录并写入平台账号池", rec.ID)

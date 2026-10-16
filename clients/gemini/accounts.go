@@ -244,6 +244,18 @@ func (c *Client) Import(ctx context.Context, paths []string, all bool) ([]core.A
 // StartLogin implements core.LoginProvider.  It starts the OAuth flow and
 // returns the URL immediately.
 func (c *Client) StartLogin(ctx context.Context) (core.LoginState, error) {
+	return c.startLogin()
+}
+
+// StartLoginWithProxy implements the panel's optional proxy-aware login path.
+// The proxy applies to this flow and every later Gemini request in this
+// process; the panel persists it as clients.gemini.proxy for the next start.
+func (c *Client) StartLoginWithProxy(ctx context.Context, proxy string) (core.LoginState, error) {
+	c.setProxy(proxy)
+	return c.startLogin()
+}
+
+func (c *Client) startLogin() (core.LoginState, error) {
 	c.ensure()
 	session, err := c.startOAuthFlow()
 	if err != nil {

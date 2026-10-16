@@ -244,6 +244,23 @@ func (c *realmClient) StartLoginRealm(_ context.Context, realm string) (LoginSta
 	return LoginState{State: LoginPending, Realm: realm}, nil
 }
 
+// proxyLoginClient opts into the module-specific login egress path.
+type proxyLoginClient struct{ plainClient }
+
+func (c *proxyLoginClient) StartLogin(context.Context) (LoginState, error) {
+	return LoginState{State: LoginPending}, nil
+}
+
+func (c *proxyLoginClient) PollLogin(context.Context, string) (LoginState, error) {
+	return LoginState{}, nil
+}
+
+func (c *proxyLoginClient) CancelLogin(context.Context, string) error { return nil }
+
+func (c *proxyLoginClient) StartLoginWithProxy(context.Context, string) (LoginState, error) {
+	return LoginState{State: LoginPending}, nil
+}
+
 // TestARealmAwareLoginReportsItsRealms pins the two facts the panel needs to
 // decide whether to render the picker at all: that the module has a login, and
 // which realms it can add an account to.  A single-realm module must report the
@@ -292,6 +309,32 @@ func TestAsRealmLoginProviderRefusesAPlainLogin(t *testing.T) {
 	}
 	if st.Realm != "global" {
 		t.Errorf("Realm = %q, want global carried back on the state", st.Realm)
+	}
+}
+
+// TestCapabilitiesReportTheModuleLoginProxy pins the capability the panel uses
+// to render the proxy field.  Hard-coding "gemini" in JavaScript would make the
+// shared login dialog vendor-aware and leave every future module unable to opt
+// into the same escape hatch.
+func TestCapabilitiesReportTheModuleLoginProxy(t *testing.T) {
+	plain := CapabilitiesOf(context.Background(), &plainLoginClient{plainClient{name: "pl"}})
+	if plain.LoginProxy {
+		t.Fatalf("a plain LoginProvider advertised a login proxy: %+v", plain)
+	}
+	got := CapabilitiesOf(context.Background(), &proxyLoginClient{plainClient{name: "px"}})
+	if !got.Login || !got.LoginProxy {
+		t.Fatalf("proxy-aware login capabilities = %+v, want Login and LoginProxy", got)
+	}
+	raw, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	if m["login_proxy"] != true {
+		t.Fatalf("JSON login_proxy = %v, want true", m["login_proxy"])
 	}
 }
 

@@ -576,6 +576,67 @@ func timeNowPlusHour() string {
 	return time.Now().Add(time.Hour).UTC().Format("2006-01-02T15:04:05Z07:00")
 }
 
+// TestGeminiProxyOverridesSharedHTTPClient pins the Gemini-only proxy escape
+// hatch. The process usually injects one shared HTTPClient built from the
+// gateway-level proxy, but Google sign-in and inference must be able to use a
+// different egress (for example, a proxy that handles Google when the global
+// route is direct).
+func TestGeminiProxyOverridesSharedHTTPClient(t *testing.T) {
+	var proxyHits int
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proxyHits++
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, `data: {"response":{"candidates":[{"content":{"parts":[{"text":"via-proxy"}]}}]}}`+"\n\n")
+		_, _ = io.WriteString(w, `data: [DONE]`+"\n\n")
+	}))
+	defer proxy.Close()
+
+	shared := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		t.Fatal("Gemini used the shared HTTPClient instead of its configured proxy")
+		return nil, nil
+	})}
+	c, err := New(core.Deps{
+		DataDir:    t.TempDir(),
+		Config:     json.RawMessage(`{"proxy":"` + proxy.URL + `","accounts":[{"access_token":"tok","refresh_token":"r","expiry":"` + timeNowPlusHour() + `"}]}`),
+		HTTPClient: shared,
+		Logf:       func(string, ...any) {},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	g := c.(*Client)
+	g.pool.mu.Lock()
+	g.pool.accts[0].Project = "proj"
+	g.pool.mu.Unlock()
+	restore := overrideEndpoints("http://gemini.invalid")
+	defer restore()
+
+	stream, err := g.Chat(context.Background(), &core.ChatRequest{
+		Model:    upstreamFlash,
+		Messages: []core.Message{{Role: "user", Content: "hello"}},
+	})
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	events := collect(t, stream)
+	text := ""
+	for _, ev := range events {
+		if ev.Type == core.EventDelta {
+			text += ev.Delta
+		}
+	}
+	if text != "via-proxy" {
+		t.Fatalf("text = %q, want via-proxy", text)
+	}
+	if proxyHits == 0 {
+		t.Fatal("the Gemini proxy was not used")
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
 // overrideEndpoints points both inference hosts at a fake server for the
 // duration of a test.
 func overrideEndpoints(url string) func() {

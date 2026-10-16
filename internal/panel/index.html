@@ -3535,6 +3535,11 @@ kbd {
       <div id="addTabLogin" class="tab-panel">
         <div id="addNotice" class="state" hidden></div>
         <div id="addRealm" class="realm-row" hidden></div>
+        <div id="addProxyRow" class="fld" hidden>
+          <label class="lb" for="addProxy">Gemini 专属代理</label>
+          <input id="addProxy" type="text" spellcheck="false" autocomplete="off" placeholder="http://127.0.0.1:7890 或 socks5://127.0.0.1:1080">
+          <span class="hint">登录、刷新令牌和推理都会走它；留空使用全局代理或直连。保存后会写入 <code>clients.gemini.proxy</code>。</span>
+        </div>
         <!-- 用自己的 API Key：只有声明了 capabilities.direct_key 的模块才有（见
              core.DirectKeyProvider）。浏览器登录签发的是厂商发给本应用的 Key，厂商
              按本应用限流/计额；操作员自己的 Key 算在他自己的账号上。两者不是同一
@@ -11246,6 +11251,17 @@ $("#btnKey").addEventListener("click", async () => {
 
 /* ── 添加账号弹层 ─────────────────────────────────────────────────────── */
 const ADD = { tab: "login", session: null, timer: null, creds: [], realm: "", sms: null, smsTimer: null, mode: "add", restore: null, auto: null, autoTimer: null, autoSeen: 0, autoBatch: null, autoDone: "", autoBusy: false, handoff: "" };
+function loginProxyOn(n) { return !!(capsOf(n || $("#addClient").value) || {}).login_proxy; }
+function addProxyValue() { const el = $("#addProxy"); return el ? el.value.trim() : ""; }
+function renderAddProxy(n) {
+  const box = $("#addProxyRow");
+  if (!box) return;
+  const on = loginProxyOn(n);
+  box.hidden = !on;
+  if (!on) { const el = $("#addProxy"); if (el) el.value = ""; return; }
+  const el = $("#addProxy");
+  if (el && !el.value) el.value = LS.get("gemproxy", "");
+}
 function openAdd() {
   // 重登复用这个弹层，所以每次打开都先把标题和那句说明擦干净；openReloginTarget
   // 会在 openAdd 之后再按需要改写它们。
@@ -11274,6 +11290,7 @@ function openAdd() {
 function syncAddMode() {
   const restore = ADD.mode === "restore";
   const n = $("#addClient").value;
+  renderAddProxy(n);
   $("#addTabs").hidden = restore;
   $("#addClientField").hidden = restore;
   $("#autoBatchRow").hidden = restore;
@@ -11819,6 +11836,7 @@ function pickAddClient(n) {
   const k = capsOf(n) || {};
   $("#addClient").value = n;
   renderAddRealms(n);
+  renderAddProxy(n);
   renderAddSms(n);
   renderAddAuto(n);
   renderAddPhoneCode(n);
@@ -11905,9 +11923,15 @@ function stopPoll() { if (ADD.timer) { clearInterval(ADD.timer); ADD.timer = nul
 async function startLogin() {
   const n = $("#addClient").value; stopPoll(); resetLogin();
   setLoginBusy(true);
-  // The realm only goes on the wire when the module actually offers a choice; an
-  // empty body keeps every pre-picker caller on its configured default.
-  const r = await api(cbase(n) + "/login", { method: "POST", body: ADD.realm ? { realm: ADD.realm } : {} });
+  // The realm and module-specific proxy only go on the wire when the module
+  // actually offers them; an empty body keeps pre-picker callers unchanged.
+  const body = {};
+  if (ADD.realm) body.realm = ADD.realm;
+  if (loginProxyOn(n)) {
+    body.proxy = addProxyValue();
+    LS.set("gemproxy", addProxyValue());
+  }
+  const r = await api(cbase(n) + "/login", { method: "POST", body });
   setLoginBusy(false);
   if (!r.ok) { $("#addErr").hidden = false; $("#addErr").textContent = "登录失败：" + r.err; return; }
   const st = r.data || {};

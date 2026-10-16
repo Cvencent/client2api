@@ -108,6 +108,47 @@ func (f *fakePlainLoginClient) startCount() int {
 	return f.starts
 }
 
+// fakeProxyLoginClient is a login module that accepts an egress proxy with the
+// start request.  Gemini is the first such module: OAuth token exchange and
+// Cloud Code inference can both be unreachable through the gateway-wide route.
+type fakeProxyLoginClient struct {
+	*fakeAccountClient
+
+	mu      sync.Mutex
+	proxies []string
+}
+
+func proxyLoginClient(name string) *fakeProxyLoginClient {
+	return &fakeProxyLoginClient{fakeAccountClient: &fakeAccountClient{fakeClient: &fakeClient{name: name}}}
+}
+
+func (f *fakeProxyLoginClient) StartLogin(context.Context) (core.LoginState, error) {
+	return f.begin("")
+}
+
+func (f *fakeProxyLoginClient) StartLoginWithProxy(_ context.Context, proxy string) (core.LoginState, error) {
+	return f.begin(proxy)
+}
+
+func (f *fakeProxyLoginClient) begin(proxy string) (core.LoginState, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.proxies = append(f.proxies, proxy)
+	return core.LoginState{SessionID: "sess-proxy", State: core.LoginPending, URL: "https://example.test/auth"}, nil
+}
+
+func (f *fakeProxyLoginClient) PollLogin(context.Context, string) (core.LoginState, error) {
+	return core.LoginState{State: core.LoginPending}, nil
+}
+
+func (f *fakeProxyLoginClient) CancelLogin(context.Context, string) error { return nil }
+
+func (f *fakeProxyLoginClient) began() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.proxies...)
+}
+
 func loginPanel(t *testing.T, clients ...core.Client) http.Handler {
 	t.Helper()
 	return New(Options{
@@ -276,6 +317,68 @@ func TestStartLoginRealmIsIgnoredByAModuleWithNoRealmSupport(t *testing.T) {
 	}
 	if got := decodeMap(t, rec)["realm"]; got != nil {
 		t.Errorf("a single-realm module reported realm %v, want none", got)
+	}
+}
+
+// TestStartLoginCarriesTheModuleProxy pins the Gemini escape hatch at the HTTP
+// boundary.  Rendering a proxy field without carrying it into the module would
+// leave the OAuth flow on the shared route and reproduce the "waiting for
+// authorization" hang the field exists to fix.
+func TestStartLoginCarriesTheModuleProxy(t *testing.T) {
+	c := proxyLoginClient("gemini")
+	h := loginPanel(t, c)
+
+	caps := decodeMap(t, hitRoute(t, h, http.MethodGet, "/panel/api/clients/gemini/capabilities", ""))
+	if caps["login_proxy"] != true {
+		t.Fatalf("capabilities did not advertise login_proxy: %v", caps)
+	}
+	rec := hitRoute(t, h, http.MethodPost, "/panel/api/clients/gemini/login", `{"proxy":"http://127.0.0.1:7890"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if got := c.began(); len(got) != 1 || got[0] != "http://127.0.0.1:7890" {
+		t.Fatalf("module saw proxies %v, want the configured proxy", got)
+	}
+}
+
+// TestStartLoginPersistsTheModuleProxy keeps the setting useful after the
+// OAuth callback has finished.  Token refresh and inference run long after the
+// dialog closes, and a fresh process must read the same egress from its config.
+func TestStartLoginPersistsTheModuleProxy(t *testing.T) {
+	path := configFile(t, `{"clients":{"gemini":{}}}`)
+	h := New(Options{Registry: registryOf(proxyLoginClient("gemini")), ConfigPath: path, Version: "test", Listen: "127.0.0.1:0", Started: time.Now()})
+
+	rec := hitRoute(t, h, http.MethodPost, "/panel/api/clients/gemini/login", `{"proxy":"socks5://127.0.0.1:1080"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	clients, _ := onDisk(t, path)["clients"].(map[string]any)
+	gemini, _ := clients["gemini"].(map[string]any)
+	if gemini["proxy"] != "socks5://127.0.0.1:1080" {
+		t.Fatalf("clients.gemini.proxy = %v, want the configured proxy", gemini["proxy"])
+	}
+}
+
+// TestStartLoginCanClearTheModuleProxy distinguishes an omitted proxy from an
+// explicit empty value.  Leaving the field blank must be able to restore the
+// shared route, otherwise an operator who once configured a dead proxy could
+// never turn it off from the account dialog.
+func TestStartLoginCanClearTheModuleProxy(t *testing.T) {
+	path := configFile(t, `{"clients":{"gemini":{"proxy":"http://127.0.0.1:7890"}}}`)
+	c := proxyLoginClient("gemini")
+	h := New(Options{Registry: registryOf(c), ConfigPath: path, Version: "test", Listen: "127.0.0.1:0", Started: time.Now()})
+
+	rec := hitRoute(t, h, http.MethodPost, "/panel/api/clients/gemini/login", `{"proxy":""}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if got := c.began(); len(got) != 1 || got[0] != "" {
+		t.Fatalf("module saw proxies %v, want one explicit empty proxy", got)
+	}
+	clients, _ := onDisk(t, path)["clients"].(map[string]any)
+	gemini, _ := clients["gemini"].(map[string]any)
+	if gemini["proxy"] != "" {
+		t.Fatalf("clients.gemini.proxy = %v, want it cleared", gemini["proxy"])
 	}
 }
 

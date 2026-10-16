@@ -243,6 +243,7 @@ type Capabilities struct {
 	ModelPolicy  bool            `json:"model_policy"`   // AccountModelPolicyManager
 	Import       bool            `json:"import"`         // CredentialImporter
 	Login        bool            `json:"login"`          // LoginProvider
+	LoginProxy   bool            `json:"login_proxy"`    // ProxyLoginProvider
 	Checkin      bool            `json:"checkin"`        // CheckinProvider
 	Refresh      bool            `json:"refresh_models"` // ModelRefresher
 	Tasks        bool            `json:"tasks"`          // TaskProvider
@@ -459,6 +460,15 @@ type LoginProvider interface {
 	CancelLogin(ctx context.Context, sessionID string) error
 }
 
+// ProxyLoginProvider is a LoginProvider whose OAuth flow can use an egress
+// proxy chosen for this one module.  It is opt-in separately because most
+// vendors reach their token endpoint through the gateway-wide route; Gemini is
+// the exception when Google is blocked while the other upstreams are not.
+type ProxyLoginProvider interface {
+	LoginProvider
+	StartLoginWithProxy(ctx context.Context, proxy string) (LoginState, error)
+}
+
 // DirectKeyProvider marks a module whose browser login mints a credential the
 // VENDOR scopes to this application -- so the vendor's limits for this
 // application are the ones that apply -- but which also accepts the operator's
@@ -671,6 +681,9 @@ func CapabilitiesOf(ctx context.Context, c Client) Capabilities {
 	if _, ok := c.(LoginProvider); ok {
 		caps.Login = true
 	}
+	if _, ok := c.(ProxyLoginProvider); ok {
+		caps.LoginProxy = true
+	}
 	if dk, ok := c.(DirectKeyProvider); ok {
 		caps.DirectKey = dk.DirectKeyField(ctx)
 	}
@@ -792,6 +805,13 @@ func AsBundleImporter(c Client) (BundleImporter, bool) {
 func AsLoginProvider(c Client) (LoginProvider, bool) {
 	lp, ok := c.(LoginProvider)
 	return lp, ok
+}
+
+// AsProxyLoginProvider narrows a registered client to the optional
+// module-specific proxy-aware OAuth entry point.
+func AsProxyLoginProvider(c Client) (ProxyLoginProvider, bool) {
+	pp, ok := c.(ProxyLoginProvider)
+	return pp, ok
 }
 
 // AsRealmLoginProvider narrows a registered client to the realm-aware login
