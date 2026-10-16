@@ -55,6 +55,12 @@ type ProviderConfig struct {
 	// serves the built-in defaults for the id (or nothing for an unknown id
 	// unless extra_models fills it).
 	Models []string `json:"models"`
+	// ProbeModels is an optional, non-catalogue hint for TestAccount.  A
+	// provider can advertise non-chat models first (for example an OCR model
+	// or an audio model), so probing the first catalogue entry is not safe.
+	// This list is snapshotted from the vendor's model metadata and lets the
+	// account test pick a text chat model without hiding the full catalogue.
+	ProbeModels []string `json:"-"`
 	// ExtraHeaders are appended to every request to this provider.
 	ExtraHeaders map[string]string `json:"extra_headers"`
 
@@ -489,6 +495,16 @@ func (p ProviderConfig) modelsFor(cfgExtraModels []string) []string {
 		return table
 	}
 	return cfgExtraModels
+}
+
+// probeModelsFor resolves the list TestAccount may probe with.  An explicit
+// probe list comes from /models metadata; otherwise fall back to the normal
+// catalogue and keep the historic first-model behaviour.
+func (p ProviderConfig) probeModelsFor(cfgExtraModels []string) []string {
+	if len(p.ProbeModels) > 0 {
+		return p.ProbeModels
+	}
+	return p.modelsFor(cfgExtraModels)
 }
 
 // --- duration knobs ---------------------------------------------------------

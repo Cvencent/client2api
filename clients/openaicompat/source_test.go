@@ -397,3 +397,110 @@ func TestSourceOldProbeCannotClearReplacementKeyCooldown(t *testing.T) {
 		t.Fatal("old probe erased replacement key cooldown")
 	}
 }
+
+func TestSourceProbeSkipsNonChatModels(t *testing.T) {
+	var probed atomic.Value
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/models":
+			fmt.Fprint(w, `{"data":[
+				{"id":"Clef","output":["decision"],"architecture":{"output_modalities":["decision"]}},
+				{"id":"GLM-5.3-Flash","output":["text"],"architecture":{"output_modalities":["text"]}}
+			]}`)
+		case "/chat/completions":
+			var body struct {
+				Model string `json:"model"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Error(err)
+				return
+			}
+			probed.Store(body.Model)
+			if body.Model != "GLM-5.3-Flash" {
+				http.Error(w, `{"error":{"message":"not a chat model"}}`, http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"pong\"}}]}\n\ndata: [DONE]\n\n")
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	c, err := newSource("radeoncloud", core.SourceConfig{BaseURL: srv.URL}, core.Deps{DataDir: t.TempDir(), HTTPClient: srv.Client()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := c.AddAccount(context.Background(), core.AccountSpec{Fields: map[string]string{"api_key": "demo-key"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.RefreshModels(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	res, err := c.TestAccount(context.Background(), a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.OK {
+		t.Fatalf("probe failed: %+v", res)
+	}
+	if got, _ := probed.Load().(string); got != "GLM-5.3-Flash" {
+		t.Fatalf("probed model = %q, want GLM-5.3-Flash", got)
+	}
+	models, err := c.Models(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(models) != 2 || models[0].ID != "Clef" || models[1].ID != "GLM-5.3-Flash" {
+		t.Fatalf("probe filtering hid or reordered the catalogue: %v", models)
+	}
+}
+
+func TestSourceProbeFallsBackWhenStoredFirstModelIsNotChat(t *testing.T) {
+	var probed atomic.Value
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			return
+		}
+		var body struct {
+			Model string `json:"model"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+			return
+		}
+		probed.Store(body.Model)
+		if body.Model == "Clef" {
+			http.Error(w, `{"error":{"message":"Model Clef is not a chat model; call /v1/systemone instead of /v1/chat/completions"}}`, http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"pong\"}}]}\n\ndata: [DONE]\n\n")
+	}))
+	defer srv.Close()
+
+	c, err := newSource("radeoncloud", core.SourceConfig{BaseURL: srv.URL}, core.Deps{DataDir: t.TempDir(), HTTPClient: srv.Client()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := c.AddAccount(context.Background(), core.AccountSpec{Fields: map[string]string{
+		"api_key": "demo-key",
+		"models":  "Clef, GLM-5.3-Flash",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := c.TestAccount(context.Background(), a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.OK {
+		t.Fatalf("legacy account probe failed: %+v", res)
+	}
+	if got, _ := probed.Load().(string); got != "GLM-5.3-Flash" {
+		t.Fatalf("probed model = %q, want GLM-5.3-Flash", got)
+	}
+}

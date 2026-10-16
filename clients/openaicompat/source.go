@@ -146,7 +146,7 @@ func (s *source) transportLocked() *Client {
 	return &Client{instanceName: s.name, deps: s.deps, cfg: Config{MaxTokensField: field, Providers: providers}, pool: s.pool, now: time.Now}
 }
 func (s *source) providerLocked(p storedProvider) ProviderConfig {
-	return ProviderConfig{ID: p.ID, APIKey: p.APIKey, AppSecret: p.AppSecret, BaseURL: s.accountBaseLocked(p), Models: append([]string(nil), p.Models...), Label: p.Label, Disabled: p.Disabled}
+	return ProviderConfig{ID: p.ID, APIKey: p.APIKey, AppSecret: p.AppSecret, BaseURL: s.accountBaseLocked(p), Models: append([]string(nil), p.Models...), ProbeModels: append([]string(nil), p.ProbeModels...), Label: p.Label, Disabled: p.Disabled}
 }
 
 // accountBaseLocked is the effective API root for one stored account.  An

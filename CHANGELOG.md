@@ -6,6 +6,23 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.1.74] - 2026-10-16
+
+### Fixed
+
+- **RadeonCloud 账号「测试」不再误选 `Clef` 导致 400**：平台的 `GET /models` 把
+  不可走 `/v1/chat/completions` 的辅助模型放在列表第一位（`Clef` 的
+  `output_modalities` 是 `decision`），旧逻辑固定拿第一项做最小对话探测，于是密钥正常
+  也会报「Model Clef is not a chat model」。现在扫描时单独记录明确支持文本输出的模型，
+  「测试」优先从这些模型里选一个；完整模型目录和路由行为不变，`Clef` 仍可按需查看和
+  选择。升级前已经扫描过的账号即使还没有这份元数据，探测遇到上游明确的
+  「not a chat model」后也会自动尝试列表里的下一个模型，不必强制重扫。
+
+### Installer
+
+- `client2api-setup-0.1.74.exe`（空包，不含账号凭据或本机配置）
+- 升级会保留现有 `configs/`、`data/`、账号池、用量和任务数据。
+
 ## [0.1.73] - 2026-10-16
 
 ### Added

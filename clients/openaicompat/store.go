@@ -21,6 +21,7 @@ type storedProvider struct {
 	APIKey             string            `json:"api_key"`
 	AppSecret          string            `json:"app_secret,omitempty"`
 	Models             []string          `json:"models,omitempty"`
+	ProbeModels        []string          `json:"probe_models,omitempty"`
 	Headers            map[string]string `json:"extra_headers,omitempty"`
 	BalanceAccessToken string            `json:"balance_access_token,omitempty"`
 	BalanceUserID      string            `json:"balance_user_id,omitempty"`
@@ -88,6 +89,7 @@ func storedToConfig(p storedProvider) ProviderConfig {
 		APIKey:       p.APIKey,
 		AppSecret:    p.AppSecret,
 		Models:       p.Models,
+		ProbeModels:  p.ProbeModels,
 		ExtraHeaders: p.Headers,
 		Disabled:     p.Disabled,
 	}
@@ -102,6 +104,7 @@ func configToStored(p ProviderConfig) storedProvider {
 		APIKey:    p.APIKey,
 		AppSecret: p.AppSecret,
 		Models:    p.Models,
+		ProbeModels: p.ProbeModels,
 		Headers:   p.ExtraHeaders,
 		Disabled:  p.Disabled,
 	}

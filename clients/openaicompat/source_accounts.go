@@ -251,18 +251,28 @@ func (s *source) scan(ctx context.Context, p storedProvider, transport *Client, 
 		return fmt.Errorf("models response must contain a data array")
 	}
 	var list []struct {
-		ID string `json:"id"`
+		ID           string   `json:"id"`
+		Output       []string `json:"output"`
+		Architecture struct {
+			OutputModalities []string `json:"output_modalities"`
+		} `json:"architecture"`
 	}
 	if err := json.Unmarshal(env.Data, &list); err != nil {
 		return fmt.Errorf("invalid models data: %w", err)
 	}
 	models := []string{}
+	probeModels := []string{}
 	seen := map[string]bool{}
+	probed := map[string]bool{}
 	for _, m := range list {
 		id := strings.TrimSpace(m.ID)
 		if id != "" && !seen[id] {
 			seen[id] = true
 			models = append(models, id)
+			if modelSupportsChat(m.Output, m.Architecture.OutputModalities) && !probed[id] {
+				probed[id] = true
+				probeModels = append(probeModels, id)
+			}
 		}
 	}
 	s.mu.Lock()
@@ -277,6 +287,7 @@ func (s *source) scan(ctx context.Context, p storedProvider, transport *Client, 
 	for i := range rows {
 		if rows[i].ID == p.ID && rows[i].APIKey == p.APIKey {
 			rows[i].Models = models
+			rows[i].ProbeModels = probeModels
 			rows[i].BaseURL = prov.base()
 			if err := s.saveLocked(rows); err != nil {
 				return err
@@ -285,6 +296,22 @@ func (s *source) scan(ctx context.Context, p storedProvider, transport *Client, 
 		}
 	}
 	return fmt.Errorf("account changed during model scan; scan again")
+}
+
+// modelSupportsChat reports whether a model catalogue entry advertises a text
+// chat output. Unknown metadata is treated as chat-capable so older providers
+// keep their existing probe behaviour; an explicit non-text output is not.
+func modelSupportsChat(output, outputModalities []string) bool {
+	modalities := append(append([]string(nil), output...), outputModalities...)
+	if len(modalities) == 0 {
+		return true
+	}
+	for _, modality := range modalities {
+		if strings.EqualFold(strings.TrimSpace(modality), "text") {
+			return true
+		}
+	}
+	return false
 }
 func (s *source) RefreshAccount(ctx context.Context, id string) ([]core.RefreshResult, error) {
 	s.mu.Lock()

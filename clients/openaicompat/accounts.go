@@ -287,7 +287,10 @@ func (c *Client) panelRecord(id string) (core.AccountRecord, bool) {
 	return core.AccountRecord{}, false
 }
 
-// probeProvider issues one short streaming completion for a provider.
+// probeProvider issues one short streaming completion for a provider.  If the
+// vendor explicitly rejects the selected model as not chat-capable, it tries
+// the next candidate.  Providers whose /models response predates modality
+// metadata keep working after an upgrade without a mandatory rescan.
 func (c *Client) probeProvider(ctx context.Context, prov ProviderConfig, rec providerRecord) core.TestResult {
 	res := core.TestResult{AccountID: rec.ID}
 	start := c.now()
@@ -301,41 +304,58 @@ func (c *Client) probeProvider(ctx context.Context, prov ProviderConfig, rec pro
 	prov.AppSecret = rec.AppSecret
 	prov.Disabled = false
 
-	model := c.probeModel(prov)
-	res.Model = model
+	models := probeCandidates(prov.probeModelsFor(c.cfg.ExtraModels))
+	model := firstNonEmpty(models...)
 	if model == "" {
 		res.Error = "this provider has no model to probe with; add one to its models list"
 		return res
 	}
 
-	body, err := buildChatBody(c.cfg, prov, model, &core.ChatRequest{
-		Model:    model,
-		Stream:   true,
-		Messages: []core.Message{{Role: "user", Content: "Reply with the single word: pong"}},
-	})
-	if err != nil {
-		res.Error = truncate(core.Redact(err.Error()), 300)
-		return res
-	}
+	var lastErr string
+	for _, model := range models {
+		res.Model = model
+		body, err := buildChatBody(c.cfg, prov, model, &core.ChatRequest{
+			Model:    model,
+			Stream:   true,
+			Messages: []core.Message{{Role: "user", Content: "Reply with the single word: pong"}},
+		})
+		if err != nil {
+			res.Error = truncate(core.Redact(err.Error()), 300)
+			return res
+		}
 
-	probeCtx, cancel := context.WithTimeout(ctxOrBackground(ctx), c.cfg.modelsTimeout())
-	defer cancel()
-	stream, err := c.doChat(probeCtx, prov, rec.ID, body)
-	if err != nil {
-		res.Error = truncate(core.Redact(err.Error()), 300)
+		probeCtx, cancel := context.WithTimeout(ctxOrBackground(ctx), c.cfg.modelsTimeout())
+		stream, err := c.doChat(probeCtx, prov, rec.ID, body)
+		if err != nil {
+			cancel()
+			lastErr = truncate(core.Redact(err.Error()), 300)
+			res.Error = lastErr
+			if isNotChatModelError(err) {
+				continue
+			}
+			return res
+		}
+		text, _, _, _, _, derr := drainStream(stream)
+		cancel()
+		res.Reply = truncate(text, 200)
+		if derr != nil {
+			lastErr = truncate(core.Redact(derr.Error()), 300)
+			res.Error = lastErr
+			return res
+		}
+		if strings.TrimSpace(text) == "" {
+			lastErr = "the vendor accepted the request but returned no text"
+			res.Error = lastErr
+			return res
+		}
+		res.OK = true
+		res.Error = ""
 		return res
 	}
-	text, _, _, _, _, derr := drainStream(stream)
-	res.Reply = truncate(text, 200)
-	if derr != nil {
-		res.Error = truncate(core.Redact(derr.Error()), 300)
-		return res
+	if lastErr == "" {
+		lastErr = "this provider has no chat model to probe with"
 	}
-	if strings.TrimSpace(text) == "" {
-		res.Error = "the vendor accepted the request but returned no text"
-		return res
-	}
-	res.OK = true
+	res.Error = lastErr
 	return res
 }
 
@@ -366,15 +386,33 @@ func (c *Client) checkProvider(ctx context.Context, prov ProviderConfig, rec pro
 	return ""
 }
 
-// probeModel picks the cheapest probe target: the first model the provider
-// advertises, falling back to the built-in catalogue.
-func (c *Client) probeModel(prov ProviderConfig) string {
-	for _, m := range prov.modelsFor(c.cfg.ExtraModels) {
-		if strings.TrimSpace(m) != "" {
-			return strings.TrimSpace(m)
+// probeCandidates trims and de-duplicates probe model candidates while
+// preserving catalogue order (the vendor's own preference order).
+func probeCandidates(models []string) []string {
+	out := make([]string, 0, len(models))
+	seen := make(map[string]bool, len(models))
+	for _, m := range models {
+		m = strings.TrimSpace(m)
+		if m == "" || seen[m] {
+			continue
 		}
+		seen[m] = true
+		out = append(out, m)
 	}
-	return ""
+	return out
+}
+
+// isNotChatModelError recognises the explicit upstream refusal RadeonCloud
+// returns for helper models such as Clef.  Only this marker makes the probe
+// advance to another model; auth, quota and rate-limit failures still report
+// the real account state immediately.
+func isNotChatModelError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "not a chat model") ||
+		strings.Contains(msg, "not a chat-completion model")
 }
 
 // splitModels parses a comma- or newline-separated model list from a form.
