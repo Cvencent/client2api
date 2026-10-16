@@ -32,9 +32,14 @@ func conversationKey(req *core.ChatRequest) string {
 
 // usableFor is the predicate the affinity table applies to a stored binding.
 // It delegates to the pool so "usable" means exactly what pick() means by it.
-// CodeArts' health is per credential, not per model.
 func (c *Client) usableFor(model string) func(accountID string) bool {
-	_ = model
+	return c.usableForRequest(model, false)
+}
+
+// usableForRequest is usableFor for a request that may be for a free model.
+// The pair park a free-model refusal leaves behind is consulted there, so a
+// sticky conversation is not handed back the exact model the vendor refused.
+func (c *Client) usableForRequest(model string, freeModel bool) func(accountID string) bool {
 	return func(accountID string) bool {
 		if c == nil || c.pool == nil {
 			return false
@@ -42,26 +47,30 @@ func (c *Client) usableFor(model string) func(accountID string) bool {
 		c.pool.mu.Lock()
 		defer c.pool.mu.Unlock()
 		e := c.pool.findLocked(strings.TrimSpace(accountID))
-		return c.pool.availableLocked(e, time.Now())
+		return c.pool.availableLockedFor(e, time.Now(), freeModel, model)
 	}
 }
 
 // pickAccount chooses the next candidate, preferring a live conversation
 // binding. The binding is written by Chat only after this pick is accepted.
-func (c *Client) pickAccount(req *core.ChatRequest, skip map[string]bool) *entry {
+func (c *Client) pickAccount(req *core.ChatRequest, skip map[string]bool, freeModel bool) *entry {
 	key := conversationKey(req)
+	model := ""
+	if req != nil {
+		model = req.Model
+	}
 	if key != "" && c.affinity != nil {
-		if id, ok := c.affinity.Resolve(key, c.usableFor("")); ok {
+		if id, ok := c.affinity.Resolve(key, c.usableForRequest(model, freeModel)); ok {
 			c.pool.mu.Lock()
 			e := c.pool.findLocked(id)
-			usable := e != nil && !skip[id] && c.pool.availableLocked(e, time.Now())
+			usable := e != nil && !skip[id] && c.pool.availableLockedFor(e, time.Now(), freeModel, model)
 			c.pool.mu.Unlock()
 			if usable {
 				return e
 			}
 		}
 	}
-	return c.pool.pick(skip)
+	return c.pool.pickFor(skip, freeModel, model)
 }
 
 // bindServedConversation records the credential that actually received the

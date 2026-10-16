@@ -533,6 +533,43 @@ func (e *poolEntry) usable(now time.Time) bool {
 	return !now.Before(e.until)
 }
 
+// creditParked reports whether this entry is parked because the account has no
+// money: either the vendor answered "insufficient credit" or the low-balance
+// guard saw a wallet at or below the reserve.  Only these two parks are
+// evidence about the balance; every other park is a verdict about the
+// credential or the request and keeps applying to free models too.
+func (e *poolEntry) creditParked() bool {
+	if e == nil || e.state != stateExhausted {
+		return false
+	}
+	return e.note == reserveCreditNote || e.note == ErrHardCredit.String()
+}
+
+// usableForFreeModel reports whether an entry may serve a model the vendor
+// charges nothing for.  It is usable() plus one exception: a credit park does
+// not disqualify the account, because the request spends no credit.
+//
+// Everything else still applies unchanged -- the breaker, the degrade park, a
+// risk flag, a dead session, a rate limit and the operator's own disable switch
+// all park the credential itself, and a free model does not prove the
+// credential good again.  The per-model park is checked on the pick path, not
+// here, exactly as it is for a paid model.
+func (e *poolEntry) usableForFreeModel(now time.Time) bool {
+	if e == nil || e.auth == nil {
+		return false
+	}
+	if e.forceOverride() {
+		return true
+	}
+	if e.faults.Blocked(now) {
+		return false
+	}
+	if !now.Before(e.until) {
+		return true
+	}
+	return e.creditParked()
+}
+
 // forceOverride reports whether the operator's 强制启用 switch is on for this
 // account. When it is, every account-level park is set aside: the pool both
 // routes to the account and reports it as 可用. Per-model parks are not
@@ -993,15 +1030,29 @@ func (p *Pool) UsableForModel(accountID, model string) bool {
 // be handed back for a model the account's realm does not serve: the binding
 // would look healthy and then answer 11102 on every turn.
 func (p *Pool) UsableForModelInRealm(accountID, model, realm string) bool {
+	return p.UsableForModelInRealmFor(accountID, model, realm, false)
+}
+
+// UsableForModelInRealmFor is UsableForModelInRealm with the caller's pricing
+// verdict: a model the vendor charges nothing for is not gated by a credit
+// park, so a conversation bound to a broke-but-working account keeps its
+// binding instead of being re-bound on every turn.
+func (p *Pool) UsableForModelInRealmFor(accountID, model, realm string, freeModel bool) bool {
 	if p == nil || accountID == "" {
 		return false
 	}
 	now := p.now()
+	usable := func(e *poolEntry) bool {
+		if freeModel {
+			return e.usableForFreeModel(now)
+		}
+		return e.usable(now)
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	best, found := 0, false
 	for _, e := range p.entries {
-		if e == nil || e.auth == nil || !e.usable(now) || !realmMatches(e, realm) {
+		if e == nil || e.auth == nil || !usable(e) || !realmMatches(e, realm) {
 			continue
 		}
 		// An account the operator disabled for this model is not a candidate
@@ -1020,7 +1071,7 @@ func (p *Pool) UsableForModelInRealm(accountID, model, realm string) bool {
 		if e == nil || e.auth == nil || e.auth.ID() != accountID {
 			continue
 		}
-		if !e.usable(now) {
+		if !usable(e) {
 			return false
 		}
 		if !realmMatches(e, realm) {
@@ -1068,6 +1119,15 @@ func (p *Pool) PickForModel(skip map[string]bool, model string) (*Auth, bool) {
 	return p.PickForModelInRealm(skip, model, "")
 }
 
+// PickForModelFor is PickForModel for a request the router has already priced:
+// freeModel says the vendor charges nothing for this model, so an account
+// parked for an empty wallet is still a candidate.  Every other park keeps
+// applying, and so does the per-model park -- an account that was refused this
+// exact model stays out until its own window lapses.
+func (p *Pool) PickForModelFor(skip map[string]bool, model string, freeModel bool) (*Auth, bool) {
+	return p.PickForModelInRealmFor(skip, model, "", freeModel)
+}
+
 // PickForModelInRealm is PickForModel restricted to one realm.
 //
 // The realm is a hard filter here, because the caller is the only layer that
@@ -1076,6 +1136,13 @@ func (p *Pool) PickForModel(skip map[string]bool, model string) (*Auth, bool) {
 // exists.  The soft-preference fallback for a bare model name lives in Chat,
 // which owns that knowledge.  An empty realm keeps the pre-realm behaviour.
 func (p *Pool) PickForModelInRealm(skip map[string]bool, model, realm string) (*Auth, bool) {
+	return p.PickForModelInRealmFor(skip, model, realm, false)
+}
+
+// PickForModelInRealmFor is PickForModelInRealm with the caller's pricing
+// verdict.  See PickForModelFor for what freeModel changes and what it does
+// not.
+func (p *Pool) PickForModelInRealmFor(skip map[string]bool, model, realm string, freeModel bool) (*Auth, bool) {
 	if p == nil {
 		return nil, false
 	}
@@ -1083,6 +1150,14 @@ func (p *Pool) PickForModelInRealm(skip map[string]bool, model, realm string) (*
 		return p.Pick(skip)
 	}
 	now := p.now()
+	usable := func(e *poolEntry) bool {
+		if freeModel {
+			// A free model spends no credit, so only the parks that say
+			// something about the credential itself still exclude the account.
+			return e.usableForFreeModel(now)
+		}
+		return e.usable(now)
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -1094,7 +1169,7 @@ func (p *Pool) PickForModelInRealm(skip map[string]bool, model, realm string) (*
 	for i := 0; i < n; i++ {
 		idx := (p.cursor + i) % n
 		e := p.entries[idx]
-		if e == nil || e.auth == nil || !e.usable(now) {
+		if e == nil || e.auth == nil || !usable(e) {
 			continue
 		}
 		if !realmMatches(e, realm) {
@@ -1424,6 +1499,14 @@ func betterCandidate(a, b scoredEntry) bool {
 // MarkSuccess call site -- chat, check-in, every batch chore -- already reports
 // the successes the axes need to hear about.
 func (p *Pool) MarkSuccess(a *Auth) {
+	p.markSuccess(a, false)
+}
+
+// markSuccess records one successful chat.  keepCreditPark marks a success on a
+// free model, which proves the credential works and nothing about the wallet:
+// the credit park -- and only it -- stays in force so a paid model is still
+// gated until the balance really rises.
+func (p *Pool) markSuccess(a *Auth, keepCreditPark bool) {
 	if p == nil || a == nil {
 		return
 	}
@@ -1438,6 +1521,18 @@ func (p *Pool) MarkSuccess(a *Auth) {
 		// successful request.
 		wasBlocked := e.faults.Blocked(now)
 		e.faults.NoteSuccess()
+		if keepCreditPark && e.creditParked() {
+			// The credential answered, so the failure counters have earned
+			// their reset.  The balance has not changed, so the park and the
+			// note the operator reads stay exactly where they were.
+			e.fails = 0
+			e.sessionDeadFails = 0
+			if wasBlocked {
+				p.dirty = true
+			}
+			p.saveLocked()
+			return
+		}
 		// This runs on every successful request, so only a real transition is
 		// worth marking: an account that is already ready stays unwritten.
 		if wasBlocked || e.state != stateReady || !e.until.IsZero() || e.note != "" || e.fails != 0 || e.sessionDeadFails != 0 {
@@ -1564,10 +1659,18 @@ func (p *Pool) Revive(a *Auth) bool {
 // encodes the vendor's own reset and a success elsewhere must not cut that
 // window short.
 func (p *Pool) MarkSuccessForModel(a *Auth, model string) {
+	p.MarkSuccessForModelFor(a, model, false)
+}
+
+// MarkSuccessForModelFor is MarkSuccessForModel with the router's pricing
+// verdict.  A free model that succeeds is real evidence about the credential
+// and the model, but none at all about the balance: an account parked for an
+// empty wallet must stay parked for the models that would charge it.
+func (p *Pool) MarkSuccessForModelFor(a *Auth, model string, freeModel bool) {
 	if p == nil || a == nil {
 		return
 	}
-	p.MarkSuccess(a)
+	p.markSuccess(a, freeModel)
 	if model == "" {
 		return
 	}
@@ -1801,6 +1904,57 @@ func (p *Pool) MarkModelBlocked(a *Auth, model, reason string) time.Duration {
 	e.parkModel(model, modelCooldown{Until: now.Add(ttl), Reason: reason, Hits: hits, Kind: core.ModelParkUnsupported})
 	p.log("workbuddy: model %s parked on account %s for %v (%s, hit %d)",
 		model, core.MaskSecret(a.ID()), ttl.Round(time.Second), reason, hits)
+	return ttl
+}
+
+// freeModelCreditReason labels the park a free model earns when the vendor
+// refuses it for a credit reason.  Like the other reason strings it is fixed
+// text: the vendor's own message is never kept, because it can echo request
+// material.
+const freeModelCreditReason = "free model refused: credit"
+
+// MarkFreeModelUnavailable parks one (account, model) pair after the vendor
+// refused a model it advertises as free.
+//
+// This is the counterweight to letting free models through a credit park.  A
+// zero-balance account may still serve what the vendor gives away, but when the
+// vendor answers "insufficient credit" to the free model itself, that is a fact
+// about this pair and nothing else: the account's other free models are
+// untouched, and the account-level park (if any) is left exactly as it was.
+//
+// The horizon is the same quota day the credit park uses -- the vendor hands
+// out its sign-in grants at 09:00 and 21:00 and rolls the day over at 04:00 --
+// so the pair is probed again when a balance could plausibly have appeared,
+// rather than on a timer this module invented.
+func (p *Pool) MarkFreeModelUnavailable(a *Auth, model string) time.Duration {
+	if p == nil || a == nil || model == "" {
+		return 0
+	}
+	now := p.now()
+	until := nextDay4AM(now)
+	if !until.After(now) {
+		until = now.Add(longCreditCooldown)
+	}
+	ttl := until.Sub(now)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	e := p.findLocked(a)
+	if e == nil {
+		return 0
+	}
+	e.pruneModelCool(now)
+	hits := 1
+	if prev, ok := e.modelCool[model]; ok && prev.Reason == freeModelCreditReason {
+		hits = prev.Hits + 1
+	}
+	e.parkModel(model, modelCooldown{
+		Until:  until,
+		Reason: freeModelCreditReason,
+		Hits:   hits,
+		Kind:   core.ModelParkUnsupported,
+	})
+	p.log("workbuddy: free model %s was refused on account %s (%s); parked for %v",
+		model, core.MaskSecret(a.ID()), freeModelCreditReason, ttl.Round(time.Second))
 	return ttl
 }
 

@@ -207,15 +207,17 @@ func (e *upstreamError) Error() string {
 }
 
 // classifyHTTP turns a non-2xx response into a typed failure, and records the
-// account-side consequence.
-func (c *Client) classifyHTTP(op, accountID string, status int, body []byte) error {
+// account-side consequence.  adm says what the failed call was: a zero-cost
+// model cannot produce a wallet verdict, so the same status means different
+// things depending on it.
+func (c *Client) classifyHTTP(op, accountID string, status int, body []byte, adm admission) error {
 	code, msg := parseErrorEnvelope(body)
 	if msg == "" {
 		msg = truncate(strings.TrimSpace(string(body)), 300)
 	}
 	k := classifyFailure(status, code, msg)
 	msg = c.scrubFor(accountID, msg)
-	c.noteFailure(accountID, k, msg)
+	c.noteFailure(accountID, k, msg, adm)
 	return core.Fail(clientName, accountID, coreKindFor(k), status, &upstreamError{Op: op, Status: status, Msg: msg})
 }
 
@@ -240,7 +242,7 @@ func (c *Client) scrubFor(accountID, msg string) string {
 // that classifies as "nothing is wrong with the account" is deliberately
 // re-labelled as a server-side problem: a credential whose network path is
 // broken is worth resting, and core.Retryable(FailureUpstream) is true.
-func (c *Client) classifyUpstream(accountID string, err error) error {
+func (c *Client) classifyUpstream(accountID string, err error, adm admission) error {
 	if err == nil {
 		return nil
 	}
@@ -254,7 +256,7 @@ func (c *Client) classifyUpstream(accountID string, err error) error {
 	if k == kindNone {
 		k = kindServer
 	}
-	c.noteFailure(accountID, k, msg)
+	c.noteFailure(accountID, k, msg, adm)
 	return core.Fail(clientName, accountID, coreKindFor(k), 0, &upstreamError{Op: "request", Msg: msg})
 }
 
@@ -265,10 +267,18 @@ func isTimeout(err error) bool {
 
 // --- consequences ---------------------------------------------------------
 
-// noteFailure records what a verdict means for the account.  Only the verdicts
-// that are genuinely about capacity write a cooldown: a panel badge that says
-// "rate limited for an hour" after a 400 is worse than no badge at all.
-func (c *Client) noteFailure(accountID string, k failureKind, msg string) {
+// noteFailure records what a verdict means for the account.
+//
+// Only verdicts that are genuinely about capacity write a park, and every park
+// is scoped to what the verdict actually proved:
+//
+//   - an empty wallet (credit) benches the PAID ids only -- a zero-cost model
+//     spends no credit and must keep routing here;
+//   - the vendor's free-tier counter benches the ZERO-COST ids only -- paid
+//     ids still work;
+//   - a zero-cost model the key cannot serve at all benches just that
+//     (key, model) pair, so the other free ids on the key stay reachable.
+func (c *Client) noteFailure(accountID string, k failureKind, msg string, adm admission) {
 	if accountID == "" {
 		return
 	}
@@ -276,11 +286,18 @@ func (c *Client) noteFailure(accountID string, k failureKind, msg string) {
 	redacted := c.scrubFor(accountID, msg)
 	switch k {
 	case kindCredit:
-		c.pool.setCooldown(accountID, now.Add(c.cfg.quotaCooldown()), redacted)
-		c.pool.setNote(accountID, "out of credit: "+redacted)
+		if adm.free {
+			// A free id needs no credit, so a credit refusal here is not a
+			// wallet verdict: this key simply cannot serve THIS model.
+			c.pool.parkModel(accountID, adm.model, now.Add(c.cfg.quotaCooldown()), redacted)
+			c.pool.setNote(accountID, "free model unavailable: "+redacted)
+			break
+		}
+		c.pool.setCreditPark(accountID, now.Add(c.cfg.quotaCooldown()), redacted)
+		c.pool.setNote(accountID, "out of credit (paid ids parked): "+redacted)
 	case kindDailyQuota:
-		c.pool.setCooldown(accountID, now.Add(dailyQuotaPark(now)), redacted)
-		c.pool.setNote(accountID, "free-tier daily cap reached: "+redacted)
+		c.pool.setFreePark(accountID, now.Add(dailyQuotaPark(now)), redacted)
+		c.pool.setNote(accountID, "free-tier daily cap reached (free ids parked): "+redacted)
 	case kindRateLimit:
 		c.pool.setCooldown(accountID, now.Add(c.cfg.rateCooldown()), redacted)
 	case kindAuth:
@@ -312,11 +329,24 @@ func dailyQuotaPark(now time.Time) time.Duration {
 	return d
 }
 
-// noteSuccess clears the account's verdicts after a good response.
+// noteSuccess records a good READ (the catalogue, a balance probe, a
+// re-validation).  It lifts the account-wide verdicts but leaves the class
+// parks alone: a read proves neither that the wallet is funded nor that the
+// free-tier counter has reset.
 func (c *Client) noteSuccess(acct accountRecord) {
 	now := c.now()
 	c.pool.touchLastUsed(acct.ID, now)
 	if c.pool.noteSuccess(acct.ID) {
+		c.persistState()
+	}
+}
+
+// noteChatSuccess records a completed completion.  The pool decides which
+// parks the success actually disproves -- see pool.chatSuccess.
+func (c *Client) noteChatSuccess(acct accountRecord, adm admission) {
+	now := c.now()
+	c.pool.touchLastUsed(acct.ID, now)
+	if c.pool.chatSuccess(acct.ID, adm.model, adm.free) {
 		c.persistState()
 	}
 }

@@ -492,6 +492,14 @@ func (c *Client) Checkin(ctx context.Context, id, action string) (core.CheckinRe
 	ctx, cancel := context.WithTimeout(ctx, signinTimeout)
 	defer cancel()
 
+	// The desktop client runs its first-run onboarding before the daily board
+	// becomes useful.  Accounts created through the panel or imported from an
+	// older store may be missing that write, so heal them here before asking
+	// for a panel that would otherwise show zero available credits.
+	if err := c.completeAccountOnboarding(ctx, &acct); err != nil {
+		c.logf("minimaxcode: account %s onboarding completion failed (continuing): %v", acct.ID, err)
+	}
+
 	panel, err := c.signinPanelOf(ctx, acct)
 	if err != nil {
 		return c.signinFailure(acct, res, start, "read the check-in status", err), nil

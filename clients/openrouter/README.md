@@ -178,6 +178,28 @@ otherwise the first cached model the catalogue marks free, otherwise the
 `openrouter/free` alias — so the Test button probes a free model instead of a
 paid one.
 
+### Free ids and an empty wallet
+
+A zero-cost id spends no credit, so the pool must not park it because the
+wallet is empty. The module therefore splits "this key is out of money" from
+"this key is parked":
+
+* an out-of-credit answer (`402`, "Insufficient credits") parks the **paid**
+  ids only. The key keeps serving every free id, and a later free success does
+  not lift the wallet park because one free call proves nothing about the
+  balance;
+* the vendor's free-tier daily cap (`free-models-per-day`) parks the **free**
+  ids only. The paid ids stay reachable;
+* a free id the vendor refuses on credit grounds parks just that
+  `(key, model)` pair, so the other free ids on the same key stay usable;
+* an ordinary rate limit, WAF block, rejected key or breaker verdict still
+  benches the whole key. "Free" is a routing exception for money, not for
+  every other failure.
+
+Manual **refresh** is the operator override: a successful `GET /key` clears
+every park on that record. The scoped parks and pair parks are persisted in
+`state.json`, so they survive a restart.
+
 ---
 
 ## Endpoints used

@@ -323,6 +323,36 @@ account usable; failure applies the normal cooling, credit or risk verdict.
 The decision is reused for six hours per account so a background balance
 sweep does not turn every pass into another model request.
 
+### Free models
+
+A model whose effective multiplier is zero -- either the list price or the
+limited-time promotion the vendor has in force right now -- is free, and the
+pool treats it that way automatically.  So is a model the vendor labels free by
+name or group (`... Free`, `cline-free/...`, `model:free`): `core.ModelIsFree`
+reads both, `extra.free` is set from that reading, the router marks the
+attempt, and the account guard steps aside:
+
+- An account parked by the low-balance guard (`low_credit`) or by the vendor's
+  own 402 (`hard_credit`) **still serves free models**.  Nothing about the
+  wallet gates a request that spends no credit, so no manual 强制启用 is needed.
+  The panel keeps showing the account as 冷却中/低余额, because that is still the
+  truth about the wallet: the park is bypassed for this request, not retired.
+- Every other park keeps applying unchanged: a soft rate limit, a WAF block, a
+  dead session, a risk flag, the breaker, the degrade park and the operator's
+  disable switch all take the account out of rotation for free models too.  So
+  does a per-model park -- an account the vendor refused *this* model on stays
+  out until its own window lapses.
+- A free model the vendor refuses for a credit reason is parked as a **pair**
+  (`free model refused: credit`, shown under the account's 模型 column) until the
+  next quota day.  The account keeps its other free models; only this
+  (account, model) pair is remembered as unusable.
+- A free success records the success and does not lift the credit park, so it
+  cannot quietly re-open the account for the models that would charge it.
+
+Promotions are only believed while their validity range and daily window are
+open (`applyModelPromotionsAt`), so a "free at night" campaign never marks a
+model free at noon.
+
 ### Per-account model policy
 
 Two operator decisions live in each credential file and survive a restart; the
@@ -350,8 +380,8 @@ is the way to set them:
   The one thing it does **not** cross is a per-model park (`11102` unsupported,
   `6004` model rate limit): that is a fact about one model, not about the
   account's health, so a forced account is still not handed back for the exact
-  model the vendor refused.  This is what lets an international account with
-  zero paid credit keep serving the free models the vendor still allows.
+  model the vendor refused.  Free models no longer need this switch at all --
+  see 「Free models」 below.
 
 ## Request path
 

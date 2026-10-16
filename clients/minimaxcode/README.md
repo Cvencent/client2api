@@ -393,8 +393,16 @@ implemented here:
 | `/minimax-cloud/api/v1/signin/status?timezone_id=…` | `GET` | the seven-day board |
 | `/minimax-cloud/api/v1/signin/claim?timezone_id=…` | `POST` (`{}`) | claiming today's reward |
 | `/minimax-cloud/api/v1/credit/details` | `GET` | the granted credit tranches |
+| `/minimax-cloud/api/v1/user/update_onboarding` | `POST` (`{"completed":true,"category_ids":["vibe_coding"]}`) | completing account onboarding |
 
-Three details are easy to get wrong and are handled deliberately:
+The desktop client completes account onboarding after the first-run guide. A
+credential created through the panel can authenticate chat but still see a
+zero-credit board until that write has happened, so login performs it and a
+check-in retries it once per process for accounts imported from an older store.
+The write is idempotent; the module remembers success in memory, so a normal
+check-in does not add another request after the first one.
+
+Three more details are easy to get wrong and are handled deliberately:
 
 * **`timezone_id` is a query parameter, and the claim needs it too.** Without it
   both sign-in routes answer `base_resp.status_code 1406010011`

@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 
 	"client2api/internal/core"
@@ -33,6 +34,11 @@ func modelGroupServer(t *testing.T) (*http.Server, *testClient, *testClient) {
 				{Client: "beta", Model: "beta-model"},
 			},
 			PlatformPriorities: map[string]int{"alpha": 20, "beta": 10},
+		},
+		"other": {
+			Members: []core.ModelGroupMember{
+				{Client: "beta", Model: "beta-model"},
+			},
 		},
 	})
 	return NewServer(Options{
@@ -68,6 +74,32 @@ func TestModelGroupCatalogueEntry(t *testing.T) {
 	members, ok := group.Extra["members"].([]any)
 	if !ok || len(members) != 2 {
 		t.Fatalf("group members = %#v, want the two configured members", group.Extra["members"])
+	}
+}
+
+func TestModelGroupCataloguePublishesTheFixedEffortLadder(t *testing.T) {
+	srv, _, _ := modelGroupServer(t)
+
+	rec := chatListModels(t, srv)
+	var out modelList
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode /v1/models: %v (%s)", err, rec.Body.String())
+	}
+	var groups []modelEntry
+	for i := range out.Data {
+		if out.Data[i].OwnedBy == "group" {
+			groups = append(groups, out.Data[i])
+		}
+	}
+	if len(groups) != 2 {
+		t.Fatalf("group entries = %d, want 2: %s", len(groups), rec.Body.String())
+	}
+
+	want := []any{"low", "medium", "high", "xhigh", "max"}
+	for _, group := range groups {
+		if got := group.Extra["supported_efforts"]; !reflect.DeepEqual(got, want) {
+			t.Fatalf("group %q supported_efforts = %#v, want %#v", group.ID, got, want)
+		}
 	}
 }
 

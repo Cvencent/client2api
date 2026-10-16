@@ -210,6 +210,68 @@ var tooLongPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)context[^0-9]{0,20}?(?:length|window|limit)[^0-9]{0,20}?(\d[\d,_]*)[^0-9]{0,20}?exceed`),
 }
 
+// wireUnicodeEscapeRE matches the JSON escapes a vendor's own error body may
+// carry verbatim: workbuddy's 11115 body arrives with ">" written as "\u003e",
+// and a parser that only knows the raw form reads every one of those refusals
+// as "the vendor said nothing".
+var wireUnicodeEscapeRE = regexp.MustCompile(`(?i)\\u([0-9a-f]{4})`)
+
+// unescapeWireEscapes decodes \uXXXX sequences in an upstream message, so the
+// size patterns can match text the vendor escaped on the wire.
+func unescapeWireEscapes(s string) string {
+	if !strings.Contains(s, `\u`) {
+		return s
+	}
+	return wireUnicodeEscapeRE.ReplaceAllStringFunc(s, func(m string) string {
+		n, err := strconv.ParseUint(m[2:], 16, 32)
+		if err != nil {
+			return m
+		}
+		return string(rune(n))
+	})
+}
+
+// refusalSizes is what a vendor's refusal measured and what it compared that
+// measurement against: the "1427021 tokens > 1048576 maximum" pair.
+//
+// Observed is 0 when the vendor named only its window; Limit is 0 when the
+// message carries no usable number at all.  A zero always means "the vendor
+// did not say", never "zero tokens".
+type refusalSizes struct {
+	Observed int64
+	Limit    int64
+}
+
+// parseRefusalSizes extracts both numbers a vendor's refusal can carry from an
+// upstream error string.
+func parseRefusalSizes(msg string) refusalSizes {
+	lower := strings.ToLower(strings.TrimSpace(unescapeWireEscapes(msg)))
+	if lower == "" || !mentionsSize(lower) {
+		return refusalSizes{}
+	}
+	for _, re := range tooLongPatterns {
+		m := re.FindStringSubmatch(lower)
+		if m == nil {
+			continue
+		}
+		// With two capture groups the first number is what the vendor measured
+		// this request at and the second is the limit it compared against; with
+		// one, the only number is the limit itself.
+		limit, ok := parseTokenCount(m[len(m)-1])
+		if !ok {
+			continue
+		}
+		sizes := refusalSizes{Limit: limit}
+		if len(m) > 2 {
+			if observed, ok := parseTokenCount(m[1]); ok && observed > limit {
+				sizes.Observed = observed
+			}
+		}
+		return sizes
+	}
+	return refusalSizes{}
+}
+
 // parseLimitFromMessage extracts a model's real context window from an upstream
 // refusal message.
 //
@@ -217,22 +279,7 @@ var tooLongPatterns = []*regexp.Regexp{
 // case across modules that have no such vocabulary: 0 means "nothing was
 // learned", never "the limit is zero".
 func parseLimitFromMessage(msg string) int64 {
-	lower := strings.ToLower(strings.TrimSpace(msg))
-	if lower == "" || !mentionsSize(lower) {
-		return 0
-	}
-	for _, re := range tooLongPatterns {
-		m := re.FindStringSubmatch(lower)
-		if m == nil {
-			continue
-		}
-		// With two capture groups the second is the limit the request was
-		// compared against; with one, the only number is the limit itself.
-		if n, ok := parseTokenCount(m[len(m)-1]); ok {
-			return n
-		}
-	}
-	return 0
+	return parseRefusalSizes(msg).Limit
 }
 
 // mentionsSize reports whether a refusal is plausibly about prompt size at all.
@@ -599,6 +646,51 @@ func (s *learnedWindowStore) saveLocked() error {
 	}
 	doc := learnedWindowDoc{Version: learnedWindowVersion, Windows: s.snapshotLocked()}
 	return core.WriteJSONAtomic(s.path, doc)
+}
+
+// measuredRefusalMaxOvershoot caps how far past the window a vendor's own
+// measurement may be before this gateway stops treating it as a conversation
+// that can be trimmed to fit.  A request tens of times over the limit is more
+// likely to have been measured under a different condition than to be a
+// history worth cutting down to a sliver for.
+const measuredRefusalMaxOvershoot = 8
+
+// retryBudgetForMeasuredRefusal turns the vendor's own two numbers from a
+// refusal into the estimator-sized budget a retry should be trimmed to.
+//
+// The proactive guard could not have used these numbers: it only has the
+// heuristic estimate, and a refusal happens when that estimate read lower than
+// the vendor's tokenizer did.  The refusal measures the real request, so the
+// ratio between the vendor's count and the gateway's estimate says how much of
+// the history the vendor's window can actually hold.
+func retryBudgetForMeasuredRefusal(req *core.ChatRequest, observed, limit int64, maxOutput int) int64 {
+	if req == nil || observed <= 0 || limit <= 0 || observed <= limit {
+		return 0
+	}
+	if observed > limit*measuredRefusalMaxOvershoot {
+		return 0
+	}
+	estimated := int64(estimateRequestTokens(req))
+	if estimated <= 0 {
+		return 0
+	}
+	reserve := int64(promptFixedOverhead)
+	if maxOutput > promptOutputCap {
+		maxOutput = promptOutputCap
+	}
+	if maxOutput > 0 {
+		reserve += int64(maxOutput)
+	}
+	room := limit - reserve
+	if room <= 0 {
+		return 0
+	}
+	room = int64(float64(room) * promptBudgetSafety)
+	budget := estimated * room / observed
+	if budget < promptBudgetFloor || budget >= estimated {
+		return 0
+	}
+	return budget
 }
 
 // ---------------------------------------------------------------------------

@@ -802,13 +802,20 @@ func TestChatStreamErrorChunkBecomesAnEventError(t *testing.T) {
 	if !strings.Contains(err.Error(), "Rate limit exceeded") {
 		t.Fatalf("err = %v, want the vendor's message", err)
 	}
-	// A 429 inside the stream is capacity evidence: the credential is parked.
+	// The daily cap is the vendor's FREE-TIER counter, so it benches the
+	// zero-cost ids and leaves the paid ones alone.
 	rec := c.mustByID(t, accountIDFor(testKey))
-	if rec.CooldownUntil == "" {
-		t.Fatalf("the credential was not parked after a rate-limit chunk: %+v", rec)
+	if rec.FreeUntil == "" {
+		t.Fatalf("the free-tier cap did not park the zero-cost ids: %+v", rec)
 	}
-	if _, err := c.pool.acquire(c.now(), c.limit()); !errors.Is(err, core.ErrBusy) {
-		t.Fatalf("acquire = %v, want ErrBusy while parked", err)
+	if rec.CooldownUntil != "" {
+		t.Fatalf("a free-tier cap must not bench the whole key: cooldown = %q", rec.CooldownUntil)
+	}
+	if _, err := c.pool.acquire(c.now(), c.limit(), admission{model: "m", free: true}); !errors.Is(err, core.ErrBusy) {
+		t.Fatalf("acquire(free) = %v, want ErrBusy while the free tier is capped", err)
+	}
+	if _, err := c.pool.acquire(c.now(), c.limit(), admission{model: "paid/model"}); err != nil {
+		t.Fatalf("acquire(paid) = %v, want the paid ids to keep working", err)
 	}
 }
 
@@ -925,7 +932,7 @@ func TestChatStreamCloseIsIdempotentAndReleases(t *testing.T) {
 		t.Fatalf("Recv after Close = %v, want io.EOF", err)
 	}
 	// The slot really is free: the same credential can be taken again.
-	if _, err := c.pool.acquire(c.now(), c.limit()); err != nil {
+	if _, err := c.pool.acquire(c.now(), c.limit(), admission{}); err != nil {
 		t.Fatalf("acquire after Close: %v", err)
 	}
 }
@@ -936,7 +943,7 @@ func TestChatStreamKeepsASlotItNeverTook(t *testing.T) {
 	// slots until every credential looked full.
 	up := &fakeUpstream{handle: func(*http.Request, string) reply { return reply{body: sseBasic} }}
 	c := newTestClient(t, fmt.Sprintf(`{"api_key":%q,"max_in_flight":1,"free_only":false}`, testKey), up)
-	rec, err := c.pool.acquire(c.now(), c.limit())
+	rec, err := c.pool.acquire(c.now(), c.limit(), admission{})
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
@@ -945,7 +952,7 @@ func TestChatStreamKeepsASlotItNeverTook(t *testing.T) {
 		t.Fatalf("buildChatBody: %v", err)
 	}
 
-	st, err := c.doChat(context.Background(), rec, body, false)
+	st, err := c.doChat(context.Background(), rec, body, false, admission{})
 	if err != nil {
 		t.Fatalf("doChat(holds=false): %v", err)
 	}
@@ -960,7 +967,7 @@ func TestChatStreamKeepsASlotItNeverTook(t *testing.T) {
 	// doChat never ACQUIRES: the rotate loop in Chat does that, and the stream
 	// only remembers whether it may release.
 	body, _ = buildChatBody(c.cfg, simpleReq("m"))
-	st, err = c.doChat(context.Background(), rec, body, true)
+	st, err = c.doChat(context.Background(), rec, body, true, admission{})
 	if err != nil {
 		t.Fatalf("doChat(holds=true): %v", err)
 	}

@@ -5,7 +5,7 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-当前版本：**0.1.67**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：**0.1.73**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 流式断流排查：升级后系统日志新增 `stream: id=...` 终止诊断，包含协议、平台/模型、
 上游事件数、`finish_reason`、正文/推理字节数、工具调用数、completion token、
@@ -72,10 +72,13 @@ client2api 是一个**个人自用**的 OpenAI 兼容网关。它把你自己在
 - `GET /v1/models`、`GET /v1/status`、`GET /healthz`。
 - 所有平台共用一个入站 API Key，面板可选本地鉴权。
 - 支持 `平台/模型`、裸模型名、别名和 `Auto/<模型>` 聚合路由。
-- 支持自定义 `model_groups`，把同一模型在各平台的不同名字绑成一组。
+- 支持自定义 `model_groups`，把同一模型在各平台的不同名字绑成一组。每个组名都会在
+  `extra.supported_efforts` 中固定发布 `low/medium/high/xhigh/max` 五档，具体成员仍按
+  各自的 effort 策略处理。
 - 支持操作者设置对外模型白名单（`exposed_models`）：网关先按路由结果生成完整的对外目录
   （`平台/模型`、`Auto/<模型>`、`model_groups` 组名、别名和转写模型），再只放行被勾选的最终
   ID。每个最终 ID 独立控制——勾了组内成员不会自动开放组名，勾了别名目标不会自动开放别名。
+  以 `/*` 结尾的条目表示只开放这个平台前缀下的全部模型，例如 `my-relay/*`，不会影响其它平台。
   匹配忽略大小写和首尾空格。未配置表示全部开放；显式 `[]` 表示全部关闭。白名单同时作用于
   `GET /v1/models` 和所有调用入口（对话、Responses、Messages、count_tokens、语音转写），
   被隐藏的 ID 即使按名字调用也会被拒绝。
@@ -85,6 +88,7 @@ client2api 是一个**个人自用**的 OpenAI 兼容网关。它把你自己在
 - 会话粘性、重试、冷却和自动故障切换；面板会列出粘性会话使用的模型，可强制解绑账号，也可在强制切换时指定目标平台；不指定时则清除账号和平台粘性并重新按优先级选择。
 - 统一把鉴权、额度、WAF、超时、限流等错误映射为 OpenAI 形状。
 - 部分厂商会在 HTTP 200 的 SSE 流里返回额度、鉴权、限流或 WAF 错误。网关会在提交流之前先读第一帧；如果这是可重试错误，就关闭该流并交给下一个候选平台，而不是把 502 直接丢给调用方。零余额账号会退出轮换，直到充值、签到或余额刷新读到正数。
+- 上下文窗口守卫：请求超过模型窗口时先按预算丢掉最旧的历史（system 提示和最新一轮永远保留），用量日志标出「已裁剪」；上游拒绝里写明的真实窗口会写入 `data/learned_context_windows.json` 并由 `/v1/models` 发布。若拒绝同时给出「实测 N tokens > M maximum」，而请求按估算本应放得下，网关会按实测比例裁剪并立刻重试一次，避免这类对话每次「继续」都报 400。
 - 思考档位按“平台 + 模型”解析：优先级为手动配置、模块缓存目录、内置预设；
   “模型与档位”页可以查看和修改支持的档位及默认档，手动值优先于可能过期的模块缓存。
 - “封顶对齐”现在对所有平台、所有模型默认开启；面板仍可按模型手动关闭或恢复默认。
@@ -96,15 +100,24 @@ client2api 是一个**个人自用**的 OpenAI 兼容网关。它把你自己在
 ### 账号与平台
 
 - 账号池支持启用/停用、备注、身份标识、优先级和余额显示。
+- 平台自报免费的模型（倍率为 0、免费额度清单，或名字/分组/模型 id 里带 Free——例如 `cline-free/...`、`vendor/model:free`）按上游的答复路由，而不是按余额：余额为 0 被冷却的账号依然可以服务它，只有「上游拒绝了本账号调用这个模型」才会把这一对账号+模型停下来。与钱无关的冷却照常生效——限流、WAF、会话失效、风控、熔断都不会因为模型免费而放行。目前 WorkBuddy、Cline、CodeArts、Raccoon、QwenWork、OpenRouter 已接入账号侧规则；模块侧契约是 `core.ChatRequest.FreeModel`，免费判定本身是共享的（`core.ModelIsFree`）。
 - 支持手动添加、本地凭据发现、整包导入，以及模块支持时的浏览器/设备登录。
 - 支持重新登录、恢复、测试、签到、刷新余额和删除账号。
-- Gemini / Google Cloud Code Assist 支持 Google OAuth 登录、账号发现与刷新、额度查询，以及 Cloud Code Assist 请求翻译和流式返回。
+- Gemini / Google Cloud Code Assist 支持 Google OAuth 登录、账号发现与刷新、额度查询，以及 Cloud Code Assist 请求翻译和流式返回。它的模型列表从上游 `fetchAvailableModels` 实时拉取（失败时退到额度桶里的模型名），平台新增或下线模型不需要改代码。浏览器登录开箱即用：模块内置了 Cloud Code IDE 自己的 OAuth 客户端，`client_id` / `client_secret`（或环境变量 `CLIENT2API_GEMINI_CLIENT_ID` / `CLIENT2API_GEMINI_CLIENT_SECRET`）可以换成自己注册的客户端。
 - ZCode 可以选择开启单槽验证码参数预取池：请求取用新鲜参数，后台立即补充；默认关闭，因为预取大约会让设备额度消耗翻倍。对应配置是 `captcha_pool` 和 `captcha_pool_ttl_seconds`。
 - 「模型」列点开可以逐账号启用/禁用单个模型，所有平台都可编辑：WorkBuddy 沿用模块自己的模型策略（含「强制启用」），其余平台写入网关共享的账号模型黑名单，在下一次请求选取账号时生效。限流中的模型会显示解除时刻和剩余时间。
 - 任何上游 429 都会给「平台 + 账号 + 模型」记一段冷却：首次 60 秒，连续失败翻倍，封顶 30 分钟；上游给了 `Retry-After` 就优先用它（同样封顶）。冷却期间网关拒绝该账号的这个模型，模块会换账号或换平台，不再撞同一个限流；账号的模型弹窗会显示解除时刻和剩余时间。模块每次尝试都通过 `core.ChatRequest.NoteAccountFailure` 上报时，即使它已经轮转到别的账号成功也会记上；没有上报的模块由网关在整体失败时兜底记录。
 - Loomy 的余额、套餐和模型目录刷新只用于展示：读取失败只在该行报错，不会让账号冷却、异常或停用；账号健康只由真实对话请求或手动「测试」决定。
 - ZCode 的 JWT 与 coding-plan API Key 会按同一账号聚合为多条通道。
+- OfficeAce（Office Claw）现在内置为 `officeace` 平台，不需要手动添加中转站。打开它的账号池，点 **浏览器登录 → 获取授权链接**，面板会走与 OfficeAce 客户端相同的华为账号 OAuth 流程，把返回的模型网关 App Key / App Secret 写进本站账号池，并把模型按 `officeace/<模型名>` 发布。每个账号保留自己登录返回的模型网关地址，因此不同区域或网关的账号可以放在同一个平台里；登录完成后不再依赖 OfficeAce 桌面端在线。Windows 上仍保留 **导入 → 探测本机凭据** 作为已有客户端登录的兜底路径。
 - 支持动态添加 OpenAI 兼容中转站，每个平台有自己的 API 地址和 Key 池。
+- 自定义中转站支持独立的限流与冷却策略，且可在面板的“编辑中转站”里直接修改：
+  `requests_per_minute` 限制整个中转站每分钟的上游尝试数，`requests_per_minute_per_account`
+  限制单把 Key；一把 Key 达到上限时会自动换下一把，全部达到上限才报忙。
+  `max_in_flight` / `max_in_flight_per_account` 覆盖平台级和账号级在途上限，留空继承平台配置，
+  显式 `0` 表示不限制。`cooldown` 是通用冷却，`rate_limit_cooldown`、`quota_cooldown`、
+  `auth_cooldown`、`upstream_cooldown` 分别覆盖限流、额度、鉴权和上游故障；专用值优先于
+  通用值，留空使用默认值（限流 30s、额度和鉴权 5m、上游 10s），`0s` 关闭对应冷却。
 - 中转站支持扫描模型；扫描失败时保留上一次成功的模型目录。
 - 中转站余额刷新支持 `balance_protocol`：`auto`（默认）依次探测 New API `GET /api/usage/token/`、Sub2API `GET /v1/usage`、New API 控制台 `GET /api/user/self`（仅在配置控制台凭据时），最后是 OpenAI Billing 的 `credit_grants` 与 `subscription`。也可固定为 `newapi`、`sub2api`、`openai_billing`，或设为 `none` 关闭查询。
 - `balance_quota_per_usd`（默认 `500000`）用于把 New API 的额度单位换算成美元；Sub2API 和 OpenAI Billing 直接按美元读取。
@@ -126,7 +139,7 @@ client2api 是一个**个人自用**的 OpenAI 兼容网关。它把你自己在
   全选/反选/清空、逐项勾选；保存后写入 `exposed_models` 并热重载，无需重启。配置里存在、
   但当前目录没有的 ID 会保留成 `missing` 行，保存不会丢。
 - 平台配置
-- 平台配置页包含路由链预演：输入模型名后显示静态故障切换顺序、实际模型、优先级和优先级来源；只做本地预演，不发上游请求、不读账号状态。
+- 平台配置页的路由链有两个独立按钮。「链路测试」输入模型名后静态显示故障切换顺序、实际模型、优先级和优先级来源，不读账号状态、不发上游请求；「测速」复用同一条链路，按平台逐个通过各自账号池发一次最小真实请求，显示首字延迟、总耗时、实际账号、输出 token 和 tok/s。结果行可以直接拖动，也可以用「上移/下移」调整顺序；保存后把显示顺序写回平台优先级、模型组成员优先级或分时优先级，并热加载生效。
 - 配置
 - 运行日志
 
@@ -161,6 +174,22 @@ client2api 是一个**个人自用**的 OpenAI 兼容网关。它把你自己在
   这样被吞掉的调用不会伪装成一次干净的结束。
 
 完整翻译规则和限制见详细参考文档。
+
+### OfficeAce 模型直连
+
+OfficeAce（Office Claw）已经内置为 `officeace` 平台，不需要自己添加中转站。客户端里能选的 GLM、DeepSeek、Kimi、Qwen 等模型，直接走华为 MaaS / AgentArts 的 OpenAI 兼容模型网关：
+
+1. 打开 **平台配置**，展开 **OfficeAce（华为 AgentArts）**。新装实例默认就有这个平台，行内会标为 **内置平台**，不提供删除按钮。
+2. 打开它的账号池，点 **浏览器登录 → 获取授权链接**，在弹出的华为账号页面完成登录。面板会用授权码兑换该账号的模型网关凭据，并写入本站账号池。
+3. 登录成功后会自动扫描模型；之后也可以再点 **扫描模型**。模型按 `officeace/<模型名>` 发布，例如 `officeace/glm-5.2`、`officeace/deepseek-v4.1-flash`。
+
+每个账号独占华为登录返回的 `model_api_url_base`，所以不同区域、不同模型网关的账号可以共用一个 `officeace` 平台。请求统一用 **HTTP Basic** 认证，账号轮换、故障切换、会话粘性、用量统计、流式输出和工具调用都与其它平台一致。凭据只保存在本机 `data/officeace/accounts.json`，不会写进配置文件或示例配置，登录完成后不需要 OfficeAce 桌面端一直在线。
+
+登录时拿到的云端临时凭据也会保存在同一个账号里，用来对齐 WorkBuddy 的平台能力：账号池上的 **签到** 按钮调用 OfficeAce 模型网关的每日奖励接口（幂等，重复点击会提示今天已经领过）；**额度/余额** 显示 `officeace_points` 积分和套餐里的联网搜索次数；**套餐** 把套餐配额和每个活动奖励拆开列出。临时凭据过期后会用 refresh token 或 IAM v3/STS 自动续期，同样不需要桌面端在线。
+
+Windows 上仍保留 **导入 → 探测本机凭据** 作为兜底：它会读取 OfficeAce 桌面客户端已经保存的登录（DPAPI + AES-GCM），显示上游地址，并导入 App Key / App Secret。如果该登录指向另一个 OfficeAce 网关，导入后会保留账号自己的网关地址，不再拒绝。两条自动路径都不可用时，才用 **手动添加**：把应用 Key 填进 `API Key / App Key`，展开 **高级设置**，把配套密钥填进 `App Secret`。
+
+如果要限制对外目录，把 `exposed_models` 设成 `["officeace/*"]` 就只开放 OfficeAce 这一个平台，不影响其它平台。
 
 ## 界面截图
 

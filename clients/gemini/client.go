@@ -44,6 +44,17 @@ type Client struct {
 	sessionMu  sync.Mutex
 	sessionGen map[string]int
 
+	// modelsMu guards the live catalogue: the served rows plus the routing
+	// table that maps an advertised id onto the upstream admission key.
+	// modelsTried throttles background retries and modelsLoading is the
+	// single-flight latch; see models.go.
+	modelsMu      sync.Mutex
+	models        []core.Model
+	routes        map[string]modelRoute
+	modelsAt      time.Time
+	modelsTried   time.Time
+	modelsLoading bool
+
 	loginMu sync.Mutex
 	logins  map[string]*loginSession
 	errMu   sync.Mutex
@@ -59,6 +70,7 @@ func New(deps core.Deps) (core.Client, error) {
 		pool:          newPool(),
 		probedProject: map[string]string{},
 		sessionGen:    map[string]int{},
+		routes:        map[string]modelRoute{},
 		logins:        map[string]*loginSession{},
 		defaultClient: &http.Client{Transport: newTransport(deps.Proxy)},
 	}
@@ -92,6 +104,11 @@ func (c *Client) ensure() {
 	if c.sessionGen == nil {
 		c.sessionGen = map[string]int{}
 	}
+	c.modelsMu.Lock()
+	if c.routes == nil {
+		c.routes = map[string]modelRoute{}
+	}
+	c.modelsMu.Unlock()
 	if c.affinity == nil {
 		c.affinity = core.NewAffinity(0)
 		c.affinity.StartGC()
@@ -177,43 +194,6 @@ func (c *Client) persistPool() {
 }
 
 // ---------------------------------------------------------------------------
-// Models
-// ---------------------------------------------------------------------------
-
-// Models reports the static catalogue.  There is deliberately no upstream
-// model list: the vendor exposes exactly one model with four effort tiers.
-func (c *Client) Models(ctx context.Context) ([]core.Model, error) {
-	c.ensure()
-	return c.catalogue(), nil
-}
-
-// RefreshModels implements core.ModelRefresher.  The catalogue is static, so a
-// refresh simply re-reads it.
-func (c *Client) RefreshModels(ctx context.Context) ([]core.Model, error) {
-	c.ensure()
-	return c.catalogue(), nil
-}
-
-func (c *Client) catalogue() []core.Model {
-	efforts := make([]string, len(effortIDs))
-	copy(efforts, effortIDs)
-	return []core.Model{{
-		ID:      upstreamFlash,
-		OwnedBy: clientName,
-		Extra: map[string]any{
-			"display_name":      "Gemini 3.8 Flash",
-			"context_length":    contextWindow,
-			"max_output_tokens": maxOutputTokens,
-			"supported_efforts": efforts,
-			"default_effort":    defaultEffort,
-			"supports_image":    true,
-		},
-	}}
-}
-
-func (c *Client) modelIDs() []string { return []string{upstreamFlash} }
-
-// ---------------------------------------------------------------------------
 // Chat
 // ---------------------------------------------------------------------------
 
@@ -232,11 +212,12 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 	if strings.TrimSpace(req.Model) == "" {
 		return nil, fmt.Errorf("%w: model is required", core.ErrUnsupported)
 	}
-	if canonicalModelID(strings.TrimSpace(req.Model)) != upstreamFlash {
-		return nil, fmt.Errorf("%w: model %q is not in this provider's catalogue (only %s)", core.ErrUnsupported, req.Model, upstreamFlash)
+	resolved, ok := c.resolveModel(req.Model, req)
+	if !ok {
+		return nil, fmt.Errorf("%w: model %q is not in this provider's catalogue; pick one from %s/ or refresh the list in the panel", core.ErrUnsupported, req.Model, clientName)
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.cfg.chatTimeout())
-	stream, err := c.openChat(ctx, cancel, req)
+	stream, err := c.openChat(ctx, cancel, req, resolved)
 	if err != nil {
 		cancel()
 		return nil, err
@@ -246,7 +227,7 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 
 // openChat picks an account and opens the upstream stream, rotating on
 // failure.
-func (c *Client) openChat(ctx context.Context, cancel context.CancelFunc, req *core.ChatRequest) (core.Stream, error) {
+func (c *Client) openChat(ctx context.Context, cancel context.CancelFunc, req *core.ChatRequest, resolved resolvedModel) (core.Stream, error) {
 	var lastErr error
 	for attempt := 0; attempt < maxRotate; attempt++ {
 		if err := ctx.Err(); err != nil {
@@ -271,7 +252,7 @@ func (c *Client) openChat(ctx context.Context, cancel context.CancelFunc, req *c
 			continue
 		}
 		core.NoteServedBy(req, acct.ID)
-		stream, err := c.streamOnce(ctx, cancel, acct, req)
+		stream, err := c.streamOnce(ctx, cancel, acct, req, resolved)
 		if err != nil {
 			c.pool.release(acct.ID)
 			if errors.Is(err, context.Canceled) {
@@ -289,11 +270,11 @@ func (c *Client) openChat(ctx context.Context, cancel context.CancelFunc, req *c
 }
 
 // streamOnce performs one upstream request attempt.
-func (c *Client) streamOnce(ctx context.Context, cancel context.CancelFunc, acct *accountRecord, req *core.ChatRequest) (core.Stream, error) {
+func (c *Client) streamOnce(ctx context.Context, cancel context.CancelFunc, acct *accountRecord, req *core.ChatRequest, resolved resolvedModel) (core.Stream, error) {
 	project := c.projectFor(ctx, acct)
 	lane := c.laneFor(req)
 	generation := c.generationFor(project, req, lane)
-	envelope, err := buildEnvelope(project, req.Model, req, c.sig, lane, generation)
+	envelope, err := buildEnvelopeFor(project, resolved.upstream, resolved.tier, req, c.sig, lane, generation)
 	if err != nil {
 		return nil, err
 	}
@@ -318,7 +299,7 @@ func (c *Client) streamOnce(ctx context.Context, cancel context.CancelFunc, acct
 
 		// A signature rejection: retry once without signatures.
 		if resp.StatusCode == http.StatusBadRequest && isSignatureError(string(body)) {
-			envelopeNoSig, berr := buildEnvelope(project, req.Model, req, nil, lane, generation)
+			envelopeNoSig, berr := buildEnvelopeFor(project, resolved.upstream, resolved.tier, req, nil, lane, generation)
 			if berr == nil {
 				if payload2, merr := marshalRequest(envelopeNoSig); merr == nil {
 					if resp2, perr := c.postStream(ctx, endpoint, acct.AccessToken, payload2); perr == nil && resp2.StatusCode == http.StatusOK {
@@ -619,6 +600,7 @@ func (c *Client) lastErrorNote() string {
 
 func (c *Client) Status(ctx context.Context) core.Status {
 	c.ensure()
+	c.warmCatalogue()
 	now := c.now()
 	st := core.Status{
 		Name:      clientName,

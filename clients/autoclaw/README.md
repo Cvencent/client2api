@@ -4,7 +4,7 @@ AutoClaw 是一个独立平台，不是智谱、BigModel、ZCode 或 WorkBuddy �
 
 ## 能力
 
-账号管理、本地导入、JSON 文件导入、手机号验证码登录、模型目录、余额与积分包、每日积分领取、会话粘性、健康与池统计、复活。
+账号管理、本地导入、JSON 文件导入、手机号验证码登录、接码与一键自动登录、模型目录、余额与积分包、每日积分领取、会话粘性、健康与池统计、复活。
 
 ## 余额
 
@@ -28,6 +28,27 @@ AutoClaw 是一个独立平台，不是智谱、BigModel、ZCode 或 WorkBuddy �
 - 刷新：POST /userapi/v1/refresh，业务码 400002 时回退 POST /userapi/v1/agent-refresh。
 - 登录：POST /userapi/v1/agent-send-code 与 POST /userapi/v1/agent-login。
 
+## 接码与自动登录
+
+登录是一次纯 HTTP 的手机号 + 短信验证码交换，不需要浏览器，所以模块实现了
+`core.SMSProvider` 和 `core.AutoLoginProvider`：
+
+- 面板「添加账号」里的接码区可以从一次性短信平台（eomsg）租号、取码、释放号码；
+- 「自动添加」一键跑完整流程：取号（避开账号池里已有的号码和本批次已试过的号码）→
+  调用 `/userapi/v1/agent-send-code` → 轮询接码平台读出验证码 →
+  `/userapi/v1/agent-login` 换取 token → 拉 user-info 补全资料 → 落库，
+  结束后把租来的号码还给平台；
+- 接码重登用账号自己的手机号重新占用原号码，成功后就地覆盖旧凭据，不会释放它。
+
+接码平台按项目（`keyWord`）过滤短信，AutoClaw 的项目名是「智谱华章」，这是内置
+默认值；供应商标注不同时可在配置或面板里改 `sms_keyword`。`sms_token` 留空表示
+不启用接码，面板会如实显示未配置。`EOMSG_TOKEN` 是 workbuddy / loomy 共用的同一个
+平台环境变量，AutoClaw 也接受它作为 token 的兜底。
+
+相关配置键：`sms_token`、`sms_keyword`、`sms_base`、`sms_provinces`、
+`sms_card_type`、`auto_login_timeout_seconds`、`sms_polls`、`sms_interval_seconds`、
+`dup_retries`。
+
 ## 账号导入
 
 桌面客户端数据目录默认 %APPDATA%\AutoClaw-official，可用 CLIENT2API_AUTOCLAW_USER_DATA_DIR 覆盖。account-credentials.enc 为 Electron safeStorage（v10 加 AES-256-GCM），密钥经 Windows DPAPI 解包；非 Windows 不能解密，但粘贴 token 仍可用。
@@ -37,10 +58,10 @@ AutoClaw 是一个独立平台，不是智谱、BigModel、ZCode 或 WorkBuddy �
 见 config.example.json。关键字段：
 
 
-access_token、refresh_token、device_id、accounts、auto_discover、base_url、client_version。
+access_token、refresh_token、device_id、accounts、auto_discover、base_url、client_version、sms_token、sms_keyword。
 
 ## 模型
 
 以服务端目录为准，内置兜底：zai_auto、zai_auto-fast、zaicoding_glm-5.3、zai_glm-5.3-flash。
 
-AutoClaw 没有批量任务或接码平台接口，本模块不伪造这些能力。
+AutoClaw 没有批量任务接口，本模块不伪造这些能力。

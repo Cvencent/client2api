@@ -294,9 +294,11 @@ func (c *Client) currentDeviceID() string {
 	return id
 }
 
-// finishLogin enriches a fresh credential, stores it and marks the session
-// successful.
-func (c *Client) finishLogin(ctx context.Context, sess *loginSession, cred credential) {
+// storeCredential enriches a fresh credential with the vendor's profile and
+// stores it in the pool.  The loopback form and the automatic SMS flow both
+// land here, so the two paths cannot drift on identity fields or on the pool
+// bookkeeping.
+func (c *Client) storeCredential(ctx context.Context, cred credential) *entry {
 	if info, err := c.fetchUserInfo(ctx, cred); err == nil {
 		if v := info.identity(); v != "" {
 			cred.UserID = v
@@ -314,7 +316,12 @@ func (c *Client) finishLogin(ctx context.Context, sess *loginSession, cred crede
 			cred.NumericUserID = v
 		}
 	}
-	e := c.pool.put(account{credential: cred, Label: cred.displayName(), Origin: originStored})
+	return c.pool.put(account{credential: cred, Label: cred.displayName(), Origin: originStored})
+}
+
+// finishLogin stores a credential and marks the session successful.
+func (c *Client) finishLogin(ctx context.Context, sess *loginSession, cred credential) {
+	e := c.storeCredential(ctx, cred)
 	sess.set(core.LoginSuccess, "已登录 "+e.acct.label(), e.acct.id())
 }
 

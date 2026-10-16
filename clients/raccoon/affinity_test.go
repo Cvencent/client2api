@@ -35,7 +35,7 @@ func TestPickAccountKeepsConversationOnItsAccount(t *testing.T) {
 	c := affinityTestClient(t)
 	req := &core.ChatRequest{ConversationID: "conv-1"}
 
-	first := c.pickAccount(nil, conversationKey(req))
+	first := c.pickAccount(nil, conversationKey(req), false, "")
 	if first == nil || first.acct.id() != "a2" {
 		t.Fatalf("first pick = %#v, want a2", first)
 	}
@@ -45,7 +45,7 @@ func TestPickAccountKeepsConversationOnItsAccount(t *testing.T) {
 	}
 
 	c.pool.markUsed(first)
-	second := c.pickAccount(nil, conversationKey(req))
+	second := c.pickAccount(nil, conversationKey(req), false, "")
 	if second == nil || second.acct.id() != "a2" {
 		t.Fatalf("second pick = %#v, want a2 pinned", second)
 	}
@@ -53,7 +53,7 @@ func TestPickAccountKeepsConversationOnItsAccount(t *testing.T) {
 
 func TestPickAccountRotatesWithoutAConversation(t *testing.T) {
 	c := affinityTestClient(t)
-	got := c.pickAccount(nil, "")
+	got := c.pickAccount(nil, "", false, "")
 	if got == nil || got.acct.id() != "a2" {
 		t.Fatalf("unscoped pick = %#v, want plain LRU a2", got)
 	}
@@ -69,7 +69,7 @@ func TestPickAccountDropsADeadBinding(t *testing.T) {
 		t.Fatalf("disabling a1: %v", err)
 	}
 
-	got := c.pickAccount(nil, "conv-2")
+	got := c.pickAccount(nil, "conv-2", false, "")
 	if got == nil || got.acct.id() != "a2" {
 		t.Fatalf("pick = %#v, want a2 after a1 was disabled", got)
 	}

@@ -32,6 +32,8 @@ var (
 	_ core.ModelLimitsProvider = (*Client)(nil)
 	_ core.BalanceProvider     = (*Client)(nil)
 	_ core.PackageProvider     = (*Client)(nil)
+	_ core.SMSProvider         = (*Client)(nil)
+	_ core.AutoLoginProvider   = (*Client)(nil)
 )
 
 const probeTimeout = 30 * time.Second
@@ -181,6 +183,10 @@ func (c *Client) probeChat(ctx context.Context, e *entry, model string) (string,
 		Model:     model,
 		Messages:  []core.Message{{Role: "user", Content: "ping"}},
 		MaxTokens: &maxTokens,
+		// SenseNova models think by default. With a 16-token budget the whole
+		// completion can be reasoning_content, so the probe would see a 200
+		// stream with no visible text and wrongly call the account invalid.
+		Options: map[string]any{"reasoning_effort": "off"},
 	}
 	stream, err := c.chatWith(ctx, nil, e, req, mapModel(model))
 	if err != nil {

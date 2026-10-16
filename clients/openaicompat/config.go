@@ -7,6 +7,7 @@
 package openaicompat
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -38,8 +39,14 @@ type ProviderConfig struct {
 	// BaseURL is the provider's OpenAI-compatible API root, without a
 	// trailing slash.  An empty value resolves through the built-in table.
 	BaseURL string `json:"base_url"`
-	// APIKey is the bearer credential sent on every request.
+	// APIKey is the primary credential: a bearer token for an ordinary
+	// OpenAI-compatible vendor, or the app key when AppSecret is set.
 	APIKey string `json:"api_key"`
+	// AppSecret switches the request to HTTP Basic authentication:
+	// Authorization: Basic base64(APIKey + ":" + AppSecret).  Huawei's
+	// APIG / AgentArts model gateways authenticate this way and answer a
+	// bearer token with APIG.0303.
+	AppSecret string `json:"app_secret"`
 	// Label is an optional display name for the panel.
 	Label string `json:"label"`
 	// Disabled parks the provider without deleting it.
@@ -114,6 +121,7 @@ func (cfg Config) normalize() Config {
 		p.ID = strings.TrimSpace(p.ID)
 		p.BaseURL = strings.TrimRight(strings.TrimSpace(p.BaseURL), "/")
 		p.APIKey = strings.TrimSpace(p.APIKey)
+		p.AppSecret = strings.TrimSpace(p.AppSecret)
 		p.Label = strings.TrimSpace(p.Label)
 		if p.BaseURL == "" {
 			p.BaseURL = builtinBaseURL(p.ID)
@@ -122,6 +130,11 @@ func (cfg Config) normalize() Config {
 			continue
 		}
 		if p.ID == "" {
+			continue
+		}
+		// A Basic pair with a missing half is a mistake, not a keyless
+		// row: the upstream would answer 401 either way.
+		if p.AppSecret != "" && p.APIKey == "" {
 			continue
 		}
 		// A credential is required unless the upstream is on this machine.
@@ -156,7 +169,7 @@ func (cfg Config) normalize() Config {
 		}
 		p.ExtraHeaders = headers
 
-		key := p.ID + "\x00" + p.APIKey
+		key := p.ID + "\x00" + p.APIKey + "\x00" + p.AppSecret
 		if seen[key] {
 			continue
 		}
@@ -572,7 +585,12 @@ func (p ProviderConfig) applyHeaders(req *request) {
 	// A keyless local upstream must not be sent a bare "Bearer " header:
 	// some servers reject an empty credential outright instead of treating
 	// it as an anonymous request.
-	if p.APIKey != "" {
+	switch {
+	case p.APIKey != "" && p.AppSecret != "":
+		// Huawei APIG / AgentArts model gateways authenticate an "app"
+		// with HTTP Basic (app key as user, app secret as password).
+		req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(p.APIKey+":"+p.AppSecret)))
+	case p.APIKey != "":
 		req.Header.Set("Authorization", "Bearer "+p.APIKey)
 	}
 	req.Header.Set("User-Agent", "client2api/1.0 (+openai-compat)")

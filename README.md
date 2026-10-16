@@ -5,7 +5,7 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-Current version: **0.1.67**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
+Current version: **0.1.73**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
 
 client2api is a personal, local-only OpenAI-compatible gateway. It aggregates
 the accounts and API Keys **you own** on different AI coding clients and
@@ -88,13 +88,17 @@ people. The built-in default is `127.0.0.1`.
   by that platform alone even when the same id is also a group member: a group never
   silently redirects an explicit platform choice, and a failure on it is reported as
   that platform's own failure rather than hidden behind a switch. `Auto/<model>` keeps
-  its own meaning and skips groups, searching the concrete catalogues directly.
+  its own meaning and skips groups, searching the concrete catalogues directly. Every
+  group entry also publishes the fixed `low/medium/high/xhigh/max` ladder in
+  `extra.supported_efforts`; each selected member still applies its own effort policy.
 - An operator-set outward model whitelist (`exposed_models`). The gateway builds the
   full final catalogue first -- `platform/model` ids, `Auto/<model>` names,
   `model_groups` names, aliases and transcription ids -- then serves only the ids the
   operator selected. Each final id is its own switch: selecting a group member does not
   expose the group name, and selecting an alias target does not expose the alias.
-  Matching is case-insensitive and ignores surrounding space. Unset means every final
+  An entry ending in `/*` exposes a whole platform prefix (for example
+  `my-relay/*`) without opening any other platform. Matching is case-insensitive
+  and ignores surrounding space. Unset means every final
   model is served; an explicit `[]` means none is. The whitelist gates `GET /v1/models`
   and every call entry point (chat, responses, messages, count_tokens and audio
   transcriptions), so a hidden id is not callable even when it is named directly.
@@ -140,6 +144,12 @@ people. The built-in default is `127.0.0.1`.
   instead of the catalogue's. This is what stops the recurrence: clients size their
   own packing from `/v1/models`. A learned limit is shown with its own `实测`
   (measured) source and never overrides a manual value from `model_context.json`.
+- A refusal that names both numbers is also a measurement of the request that was
+  just sent. When the gateway's own estimate read low enough to forward that request
+  unchanged, the history is trimmed to the proportion the vendor's window can hold and
+  the request is retried once, so a conversation that would otherwise fail on every
+  `继续` is served instead. The `\u003e` form WorkBuddy's body actually carries is
+  read too. The retry's trim lands on the usage row like any other.
 - A refusal number is cross-checked against what the model was actually observed to
   serve: a learned limit is never allowed below 80% of the largest prompt this
   gateway has had that model answer successfully (read from the usage ledger, so it
@@ -175,18 +185,46 @@ people. The built-in default is `127.0.0.1`.
 ### Accounts and platforms
 
 - Account pool with enable/disable, notes, identity labels, priority and balance.
+- A model the platform advertises as free -- a zero multiplier, a free-quota
+  list, or a vendor label naming the free tier in the display name, the group or
+  the id (`cline-free/...`, `vendor/model:free`) -- is routed by the vendor's
+  answer, not by the balance: an account parked for an empty wallet still serves
+  it, and only the vendor refusing *that* model on *that* account takes the pair
+  out. Cooldowns that are not about money -- rate limits, WAF blocks, dead
+  sessions, risk flags, the breaker -- keep applying. WorkBuddy, Cline,
+  CodeArts, Raccoon, QwenWork and OpenRouter implement the account-side rule today; the
+  module-facing contract is `core.ChatRequest.FreeModel`, and the free labelling
+  itself is shared in `core.ModelIsFree`.
 - Manual import, local credential discovery, bundle import and browser/device login where supported.
 - Re-login, revive, test, check-in, balance refresh and account deletion.
 - Gemini / Google Cloud Code Assist accounts support Google OAuth login,
   account discovery and refresh, quota reads, and Cloud Code Assist request
-  translation with streaming responses.
+  translation with streaming responses. Its model list is pulled live from
+  `fetchAvailableModels` (quota buckets as the fallback), so the picker follows
+  the vendor without a code change. Browser sign-in needs no configuration: the
+  module embeds the Cloud Code IDE's own installed-app OAuth client, and
+  `client_id` / `client_secret` (or `CLIENT2API_GEMINI_CLIENT_ID` /
+  `CLIENT2API_GEMINI_CLIENT_SECRET`) override it with a client this deployment
+  registered.
 - ZCode can opt into a one-slot captcha-parameter prefetch pool. A request takes
   the fresh parameter and the pool replenishes in the background; the pool is
   off by default because prefetching roughly doubles device-quota consumption.
   Tune it with `captcha_pool` and `captcha_pool_ttl_seconds`.
 - Loomy balance, package and model-catalogue refreshes are display-only: a failed read is reported on that row and does not cool down, park, or disable the account; a real chat request or the explicit Test action is what changes account health.
 - ZCode JWT / API key channels grouped under one account.
+- OfficeAce (Office Claw) ships as a built-in platform (`officeace`), so there is no relay entry to add. Open its account pool and use **Browser sign-in**: the panel runs the same Huawei account OAuth flow as the OfficeAce client, keeps the returned model-gateway App Key / App Secret in this gateway's own account store, and scans the catalogue published as `officeace/<model>`. Each account keeps the model gateway returned by its own login, so different regions or gateways can coexist; the OfficeAce desktop app does not need to stay open. On Windows, **Import -> Discover local credentials** remains available as a fallback for an already signed-in OfficeAce client.
+
 - Dynamic OpenAI-compatible relay platforms with their own API root and Key pool.
+- Custom relays have their own rate-limit and cooldown policy, editable in the panel's
+  relay dialog. `requests_per_minute` caps upstream attempts across the relay and
+  `requests_per_minute_per_account` caps each key; a full key is skipped in favour of
+  the next, and the relay reports busy only when every key is full. `max_in_flight`
+  and `max_in_flight_per_account` override the platform/account in-flight ceilings:
+  leave them unset to inherit the platform policy, or set `0` for no ceiling.
+  `cooldown` is the shared fallback; `rate_limit_cooldown`, `quota_cooldown`,
+  `auth_cooldown` and `upstream_cooldown` override it per failure kind. An unset
+  specific value uses the built-in default (30s for rate limits, 5m for quota/auth,
+  10s for upstream failures); `0s` disables that cooldown.
 - Model scanning for relay platforms, with cached catalogues when a scan fails.
 - Balance refresh for relay platforms via `balance_protocol`: `auto` (default) probes New API `GET /api/usage/token/`, then Sub2API `GET /v1/usage`, then the New API console `GET /api/user/self` (only when console credentials are set), then OpenAI Billing `credit_grants` + `subscription`. Pin a single protocol with `newapi`, `sub2api` or `openai_billing`, or set `none` to skip balance reads.
 - `balance_quota_per_usd` (default `500000`) converts New API quota units to USD; Sub2API and OpenAI Billing values are read as real USD.
@@ -221,12 +259,17 @@ people. The built-in default is `127.0.0.1`.
   control restores the module default, and keys the panel does not yet describe
   stay available under `Other keys (JSON)`. Module config changes take effect
   after restarting the process.
-- The Platform Configuration route-plan test: enter a model name (for example
-  Auto/MIMO-2.6Flash) and the panel shows the static failover chain - which
-  platform would be tried first, which one comes next, the effective priority
-  and where it comes from (platform priority, a time window, a model group or
-  the dynamic Auto pool). It is a local replay of the routing rules only: no
-  upstream call is made and no account state is read.
+- The Platform Configuration route chain has two separate actions. **Link Test**
+  statically replays the failover chain - which platform would be tried first,
+  which one comes next, the effective priority and where it comes from
+  (platform priority, a time window, a model group or the dynamic Auto pool) -
+  without reading account state or calling upstream. **Speed Test** resolves the
+  same chain, then sends one minimal live request per platform through that
+  platform's own account pool and reports first-event latency, total elapsed
+  time, the serving account, completion tokens and tok/s. The result rows can be
+  dragged or moved with Up/Down; saving writes the displayed order back to
+  platform priority, model-group member priority or the schedule-window priority
+  and hot-reloads it.
 - Runtime Log
 
 ### Tasks, usage and accounting
@@ -270,6 +313,21 @@ The Responses API is translated natively for Codex and compatible clients:
 
 See the detailed reference for translation rules and limitations.
 
+### OfficeAce models
+
+OfficeAce (Office Claw) is built in as the `officeace` platform. The models its client offers -- GLM, DeepSeek, Kimi, Qwen and the rest -- are reached through the Huawei MaaS / AgentArts OpenAI-compatible model gateway, and no relay entry or manual API root is required:
+
+1. Open **Platform Configuration** and expand **OfficeAce (Huawei AgentArts)**. The platform is present on a fresh install; it is shown as **built-in** and has no Delete button.
+2. Open its account pool and choose **Browser sign-in -> Get authorization link**. Sign in with the Huawei account in the page that opens. The panel exchanges the authorization code for the account's model-gateway credential and writes it into this gateway's account store.
+3. Model scanning runs automatically after a successful sign-in. **Scan models** can be pressed again later; the catalogue is published as `officeace/<model>`, for example `officeace/glm-5.2` or `officeace/deepseek-v4.1-flash`.
+
+Each account keeps the `model_api_url_base` returned by its own Huawei login, so accounts on different regions or model gateways can share one `officeace` platform. Requests use HTTP Basic authentication and behave like every other platform: account rotation, failover, conversation affinity, usage accounting, streaming and tool calls all work unchanged. Credentials stay in the local `data/officeace/accounts.json`; they are never written to the config file or the example config.
+
+The cloud credential minted during sign-in is stored with the account too, which is what brings the platform's WorkBuddy-style facilities online: **Check-in** on the account pool posts the model gateway's daily-reward endpoint (idempotent, so a second click reports that today's reward is already claimed); **Balance** shows the `officeace_points` position and the online-search meter; **Packages** splits the plan quota and each bonus activity. When the temporary credential expires it is renewed from the OAuth refresh token or the IAM v3/STS exchange, again without the desktop app running.
+
+On Windows, **Import -> Discover local credentials** remains available as a fallback: it reads a login already stored by an OfficeAce desktop client (DPAPI + AES-GCM), reports its upstream, and imports the App Key / App Secret pair. Imported accounts on a different OfficeAce gateway keep that account-level gateway instead of being rejected. **Add manually** is the last-resort path when neither browser sign-in nor local discovery is available: put the application key in `API Key / App Key`, expand **Advanced settings**, and put the matching secret in `App Secret`.
+
+To expose only this platform, set `exposed_models` to `["officeace/*"]`.
 ## Screenshots
 
 | Accounts | Platform Configuration |

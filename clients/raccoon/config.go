@@ -45,6 +45,10 @@ const (
 	defaultStoreFlush        = 5 * time.Second
 	defaultModelsRetry       = 30 * time.Second
 	defaultLoginTimeout      = 5 * time.Minute
+	defaultAutoLoginTimeout  = 5 * time.Minute
+	defaultSMSPolls          = 12
+	defaultSMSInterval       = 5 * time.Second
+	defaultDupRetries        = 6
 )
 
 // durationField accepts either a Go duration string ("90s", "5m") or a bare
@@ -131,6 +135,36 @@ type config struct {
 
 	// LoginTimeout bounds how long an interactive login stays pending.
 	LoginTimeout durationField `json:"login_timeout,omitempty"`
+
+	// SMSToken is the one-time-SMS platform credential (eomsg). Empty means
+	// the panel's 接码 controls report "not configured" and refuse to rent a
+	// number; the operator can still paste a token into the panel.
+	SMSToken string `json:"sms_token,omitempty"`
+	// SMSKeyword is the sender keyword the platform filters on. Absent means
+	// defaultSMSKeyword ("商汤科技").
+	SMSKeyword string `json:"sms_keyword,omitempty"`
+	// SMSBase overrides the platform endpoint.
+	SMSBase string `json:"sms_base,omitempty"`
+	// SMSProvinces replaces the built-in rotation pool.
+	SMSProvinces []string `json:"sms_provinces,omitempty"`
+	// SMSCardType is the card class the platform hands out. Absent means
+	// "全部".
+	SMSCardType string `json:"sms_card_type,omitempty"`
+
+	// BrowserPath pins the Chromium-family executable the auto-login flow
+	// drives. Empty means "find an installed Edge or Chrome".
+	BrowserPath string `json:"browser_path,omitempty"`
+	// BrowserHeadless runs that browser without a window. Absent means true.
+	BrowserHeadless *bool `json:"browser_headless,omitempty"`
+	// AutoLoginTimeoutSeconds bounds one auto-login run end to end.
+	AutoLoginTimeoutSeconds *int `json:"auto_login_timeout_seconds,omitempty"`
+	// SMSPolls is how many times one rented number is checked for its SMS.
+	SMSPolls *int `json:"sms_polls,omitempty"`
+	// SMSIntervalSeconds is the pause between two SMS polls.
+	SMSIntervalSeconds *int `json:"sms_interval_seconds,omitempty"`
+	// DupRetries is how many extra numbers to draw when the platform keeps
+	// handing back one that is already in the pool.
+	DupRetries *int `json:"dup_retries,omitempty"`
 }
 
 func (c config) baseURL() string {
@@ -212,6 +246,48 @@ func (c config) storeFlush() time.Duration {
 
 func (c config) loginTimeout() time.Duration {
 	return durationOr(c.LoginTimeout.String(), defaultLoginTimeout)
+}
+
+func (c config) smsCardType() string {
+	if s := strings.TrimSpace(c.SMSCardType); s != "" {
+		return s
+	}
+	return "全部"
+}
+
+func (c config) browserHeadless() bool {
+	if c.BrowserHeadless != nil {
+		return *c.BrowserHeadless
+	}
+	return true
+}
+
+func (c config) autoLoginTimeout() time.Duration {
+	if c.AutoLoginTimeoutSeconds != nil && *c.AutoLoginTimeoutSeconds > 0 {
+		return time.Duration(*c.AutoLoginTimeoutSeconds) * time.Second
+	}
+	return defaultAutoLoginTimeout
+}
+
+func (c config) smsPolls() int {
+	if c.SMSPolls != nil && *c.SMSPolls > 0 {
+		return *c.SMSPolls
+	}
+	return defaultSMSPolls
+}
+
+func (c config) smsInterval() time.Duration {
+	if c.SMSIntervalSeconds != nil && *c.SMSIntervalSeconds > 0 {
+		return time.Duration(*c.SMSIntervalSeconds) * time.Second
+	}
+	return defaultSMSInterval
+}
+
+func (c config) dupRetries() int {
+	if c.DupRetries != nil && *c.DupRetries > 0 {
+		return *c.DupRetries
+	}
+	return defaultDupRetries
 }
 
 func (c config) credentialPaths() []string {

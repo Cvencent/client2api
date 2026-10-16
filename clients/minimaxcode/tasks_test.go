@@ -102,8 +102,8 @@ func TestTheCheckinBatchReachesTheSchedulersTimetable(t *testing.T) {
 		t.Errorf("vendor saw status=%d claim=%d calls, want 1 and 1", s.statusCalls, s.claimCalls)
 	}
 	// The batch runs the code through RunTask, which is the check-in itself.
-	if ft.count() != 2 {
-		t.Errorf("made %d HTTP requests, want 2", ft.count())
+	if ft.count() != 3 {
+		t.Errorf("made %d HTTP requests, want 3 (onboarding, status, claim)", ft.count())
 	}
 	// The settle pause exists so a read-back cannot double-run; it is the
 	// scheduler's business, but the batch must at least have asked for one.

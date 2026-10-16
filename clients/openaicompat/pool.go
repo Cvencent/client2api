@@ -19,14 +19,15 @@ const (
 // providerRecord is one configured upstream source, with the health the pool
 // tracks for it.
 type providerRecord struct {
-	ID       string
-	Label    string
-	APIKey   string
-	BaseURL  string
-	Models   []string
-	Headers  map[string]string
-	Disabled bool
-	Source   string
+	ID        string
+	Label     string
+	APIKey    string
+	AppSecret string
+	BaseURL   string
+	Models    []string
+	Headers   map[string]string
+	Disabled  bool
+	Source    string
 
 	inFlight int
 	lastUsed time.Time

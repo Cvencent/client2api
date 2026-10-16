@@ -43,28 +43,58 @@ func collect(t *testing.T, s core.Stream) []core.Event {
 }
 
 // ---------------------------------------------------------------------------
-// TestGeminiRequiresDeploymentOAuthClient pins the security boundary GitHub
-// push protection forced us to make: no Google client id or secret is embedded
-// in the repository, and the operator gets a clear not-configured error rather
-// than an opaque token-endpoint 400.
-func TestGeminiRequiresDeploymentOAuthClient(t *testing.T) {
+// TestGeminiOAuthClientDefaultAndPrecedence pins the sign-in credentials: the
+// module ships the Cloud Code IDE's own installed-app client, so the panel's
+// "get a sign-in link" works on a stock install, while the operator's config
+// and environment still override either half.
+func TestGeminiOAuthClientDefaultAndPrecedence(t *testing.T) {
 	t.Setenv(envClientID, "")
 	t.Setenv(envClientSecret, "")
-	cfg := Config{}
-	if err := cfg.requireOAuthClient(); err == nil {
-		t.Fatal("empty OAuth client was accepted")
+
+	cfg := Config{}.normalize()
+	if got := cfg.clientID(); got != embeddedClientID {
+		t.Fatalf("clientID() = %q, want the embedded client %q", got, embeddedClientID)
 	}
-	t.Setenv(envClientID, "test-client-id")
-	if err := cfg.requireOAuthClient(); err == nil {
-		t.Fatal("missing client secret was accepted")
+	if got := cfg.clientSecret(); got != embeddedClientSecret {
+		t.Fatal("clientSecret() did not fall back to the embedded secret")
 	}
-	t.Setenv(envClientSecret, "test-client-secret")
 	if err := cfg.requireOAuthClient(); err != nil {
-		t.Fatalf("env-provided OAuth client was rejected: %v", err)
+		t.Fatalf("embedded OAuth client was rejected: %v", err)
 	}
+
+	t.Setenv(envClientID, "env-client-id")
+	t.Setenv(envClientSecret, "env-client-secret")
+	if cfg.clientID() != "env-client-id" || cfg.clientSecret() != "env-client-secret" {
+		t.Fatal("environment did not override the embedded OAuth client")
+	}
+
 	cfg.ClientID, cfg.ClientSecret = "config-id", "config-secret"
 	if cfg.clientID() != cfg.ClientID || cfg.clientSecret() != cfg.ClientSecret {
 		t.Fatal("config OAuth client did not win over environment")
+	}
+}
+
+// TestStartLoginWorksWithoutConfiguredOAuthClient is the regression for the
+// refusal the panel showed on a stock install: "get a sign-in link" answered
+// "client is not configured (no account)" before the listener ever opened.
+func TestStartLoginWorksWithoutConfiguredOAuthClient(t *testing.T) {
+	t.Setenv(envClientID, "")
+	t.Setenv(envClientSecret, "")
+	c := newTestClient(t, "")
+
+	st, err := c.StartLogin(context.Background())
+	if err != nil {
+		t.Fatalf("StartLogin: %v", err)
+	}
+	defer func() { _ = c.CancelLogin(context.Background(), st.SessionID) }()
+	if st.URL == "" {
+		t.Fatal("StartLogin returned no URL")
+	}
+	if !strings.Contains(st.URL, embeddedClientID) {
+		t.Fatalf("sign-in URL does not carry the embedded client: %s", st.URL)
+	}
+	if !strings.Contains(st.URL, "redirect_uri=http%3A%2F%2Flocalhost%3A") {
+		t.Fatalf("sign-in URL has no loopback redirect: %s", st.URL)
 	}
 }
 

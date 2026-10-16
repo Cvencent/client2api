@@ -38,13 +38,27 @@ type accountRecord struct {
 
 	// Health.  All of it is mirrored into state.json, so a park, a disable or
 	// a "this key was rejected" verdict survives a restart.
-	Disabled      bool   `json:"disabled,omitempty"`
-	Note          string `json:"note,omitempty"`
-	CooldownUntil string `json:"cooldown_until,omitempty"`
-	LastError     string `json:"last_error,omitempty"`
-	ErrCount      int    `json:"err_count,omitempty"`
-	Invalid       bool   `json:"invalid,omitempty"`
-	LastUsedAt    string `json:"last_used_at,omitempty"`
+	//
+	// A park is scoped to what the verdict actually proved:
+	//
+	//   - CooldownUntil blocks every model (throttling, a rejected key, a
+	//     breaker verdict);
+	//   - CreditUntil blocks the PAID ids only.  Zero-cost ids spend no credit,
+	//     so "this wallet is empty" is no reason to bench them;
+	//   - FreeUntil blocks the zero-cost ids only: it is the vendor's free-tier
+	//     daily cap, which says nothing about the paid ids;
+	//   - ModelParks holds per-model parks -- "this key cannot call THIS id" --
+	//     keyed by model id.
+	Disabled      bool              `json:"disabled,omitempty"`
+	Note          string            `json:"note,omitempty"`
+	CooldownUntil string            `json:"cooldown_until,omitempty"`
+	CreditUntil   string            `json:"credit_until,omitempty"`
+	FreeUntil     string            `json:"free_until,omitempty"`
+	ModelParks    map[string]string `json:"model_parks,omitempty"`
+	LastError     string            `json:"last_error,omitempty"`
+	ErrCount      int               `json:"err_count,omitempty"`
+	Invalid       bool              `json:"invalid,omitempty"`
+	LastUsedAt    string            `json:"last_used_at,omitempty"`
 
 	// Runtime only, guarded by the pool mutex.
 	inFlight int
@@ -65,14 +79,17 @@ type credentialRecord struct {
 // all, which is what makes "a health file can never leak a credential" a
 // structural fact rather than a promise.
 type healthRecord struct {
-	ID            string `json:"id"`
-	Disabled      bool   `json:"disabled,omitempty"`
-	Note          string `json:"note,omitempty"`
-	CooldownUntil string `json:"cooldown_until,omitempty"`
-	LastError     string `json:"last_error,omitempty"`
-	ErrCount      int    `json:"err_count,omitempty"`
-	Invalid       bool   `json:"invalid,omitempty"`
-	LastUsedAt    string `json:"last_used_at,omitempty"`
+	ID            string            `json:"id"`
+	Disabled      bool              `json:"disabled,omitempty"`
+	Note          string            `json:"note,omitempty"`
+	CooldownUntil string            `json:"cooldown_until,omitempty"`
+	CreditUntil   string            `json:"credit_until,omitempty"`
+	FreeUntil     string            `json:"free_until,omitempty"`
+	ModelParks    map[string]string `json:"model_parks,omitempty"`
+	LastError     string            `json:"last_error,omitempty"`
+	ErrCount      int               `json:"err_count,omitempty"`
+	Invalid       bool              `json:"invalid,omitempty"`
+	LastUsedAt    string            `json:"last_used_at,omitempty"`
 }
 
 const (
@@ -131,17 +148,34 @@ func (p *pool) lookupLocked(id string) *accountRecord {
 	return nil
 }
 
-// ready counts the accounts a request could go to right now.
+// admission is what the caller knows about the request before an account is
+// picked: whether it is a zero-cost model (a credit park must not block it),
+// and which model it names (a model park is per key AND per model).
+type admission struct {
+	free  bool
+	model string
+}
+
+// ready counts the accounts a request could go to right now.  A key whose
+// wallet is empty still serves the zero-cost ids, so it counts.
 func (p *pool) ready(now time.Time, limit int) int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	n := 0
 	for _, a := range p.accts {
-		if p.selectableLocked(a, now, limit) {
+		if p.anySelectableLocked(a, now, limit) {
 			n++
 		}
 	}
 	return n
+}
+
+// anySelectableLocked is ready()'s predicate: an account counts when at least
+// one class of model could reach it.  A model park cannot rule that out (the
+// other ids on the key still work), so no model is named here.
+func (p *pool) anySelectableLocked(a *accountRecord, now time.Time, limit int) bool {
+	return p.selectableLocked(a, now, limit, admission{}) ||
+		p.selectableLocked(a, now, limit, admission{free: true})
 }
 
 // enabled counts the accounts that are switched on and carry a key, whether or
@@ -159,12 +193,27 @@ func (p *pool) enabled() int {
 }
 
 // selectableLocked is the whole admission policy in one place: switched on,
-// carrying a key, not parked, and under the in-flight ceiling.
-func (p *pool) selectableLocked(a *accountRecord, now time.Time, limit int) bool {
+// carrying a key, not parked for anything that applies to this request, and
+// under the in-flight ceiling.
+//
+// The scoping is the point.  A key whose wallet is empty is still the right
+// answer for a zero-cost model, and a key that has burned its free-tier daily
+// cap is still the right answer for a paid one; only a park on the account
+// itself (throttling, a rejected key, the breaker) blocks both.
+func (p *pool) selectableLocked(a *accountRecord, now time.Time, limit int, adm admission) bool {
 	if a.Disabled || a.APIKey == "" {
 		return false
 	}
 	if p.coolingDownLocked(a, now) {
+		return false
+	}
+	if !adm.free && p.activeStampLocked(a.CreditUntil, now) {
+		return false
+	}
+	if adm.free && p.activeStampLocked(a.FreeUntil, now) {
+		return false
+	}
+	if adm.model != "" && p.modelParkedLocked(a, adm.model, now) {
 		return false
 	}
 	if limit > 0 && a.inFlight >= limit {
@@ -173,18 +222,32 @@ func (p *pool) selectableLocked(a *accountRecord, now time.Time, limit int) bool
 	return true
 }
 
-// coolingDownLocked reports whether the account is parked.  An unparseable
-// timestamp is treated as "not parked": a corrupted state file must not be able
-// to wedge every credential permanently.
+// coolingDownLocked reports whether the account is parked for every model.
+// An unparseable timestamp is treated as "not parked": a corrupted state file
+// must not be able to wedge every credential permanently.
 func (p *pool) coolingDownLocked(a *accountRecord, now time.Time) bool {
-	if a.CooldownUntil == "" {
+	return p.activeStampLocked(a.CooldownUntil, now)
+}
+
+// activeStampLocked reports whether a stored RFC3339 park is still in force.
+func (p *pool) activeStampLocked(stamp string, now time.Time) bool {
+	if stamp == "" {
 		return false
 	}
-	until, err := time.Parse(time.RFC3339, a.CooldownUntil)
+	until, err := time.Parse(time.RFC3339, stamp)
 	if err != nil {
 		return false
 	}
 	return now.Before(until)
+}
+
+// modelParkedLocked reports whether this exact model is parked on this key.
+// The key still serves every other id.
+func (p *pool) modelParkedLocked(a *accountRecord, model string, now time.Time) bool {
+	if len(a.ModelParks) == 0 {
+		return false
+	}
+	return p.activeStampLocked(a.ModelParks[strings.TrimSpace(model)], now)
 }
 
 // firstReady returns the account an idempotent read (models, balance) should
@@ -196,7 +259,7 @@ func (p *pool) firstReady(now time.Time, limit int) (accountRecord, bool) {
 	var best *accountRecord
 	bestPriority := 0
 	for _, a := range p.accts {
-		if !p.selectableLocked(a, now, limit) {
+		if !p.anySelectableLocked(a, now, limit) {
 			continue
 		}
 		priority := core.AccountPriority("openrouter", a.ID)
@@ -218,13 +281,13 @@ func (p *pool) firstReady(now time.Time, limit int) (accountRecord, bool) {
 
 // --- admission ------------------------------------------------------------
 
-// acquire takes the least-recently-used usable account and marks one request
-// in flight against it.
+// acquire takes the least-recently-used account this class of request may use
+// and marks one request in flight against it.
 //
 // The three failures are distinct on purpose: "nothing configured" and "all
 // disabled" are configuration problems (503 at the gateway), while "everything
-// is busy" is backpressure (429).
-func (p *pool) acquire(now time.Time, limit int) (accountRecord, error) {
+// is parked or busy" is backpressure (429).
+func (p *pool) acquire(now time.Time, limit int, adm admission) (accountRecord, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if len(p.accts) == 0 {
@@ -241,7 +304,7 @@ func (p *pool) acquire(now time.Time, limit int) (accountRecord, error) {
 	}
 	var best *accountRecord
 	for _, a := range p.accts {
-		if !p.selectableLocked(a, now, limit) {
+		if !p.selectableLocked(a, now, limit, adm) {
 			continue
 		}
 		if best == nil || a.lastUsed.Before(best.lastUsed) {
@@ -249,7 +312,7 @@ func (p *pool) acquire(now time.Time, limit int) (accountRecord, error) {
 		}
 	}
 	if best == nil {
-		return accountRecord{}, fmt.Errorf("%w: every OpenRouter credential is cooling down or at its in-flight ceiling", core.ErrBusy)
+		return accountRecord{}, fmt.Errorf("%w: every OpenRouter credential is parked for this model or at its in-flight ceiling", core.ErrBusy)
 	}
 	best.inFlight++
 	best.lastUsed = now
@@ -337,9 +400,12 @@ func (p *pool) setEnabled(id string, enabled bool) bool {
 	}
 	a.Disabled = !enabled
 	if enabled {
-		// Re-enabling by hand is an operator override: clear the verdict that
+		// Re-enabling by hand is an operator override: clear every verdict that
 		// switched it off, or the next failure would immediately re-park it.
 		a.CooldownUntil = ""
+		a.CreditUntil = ""
+		a.FreeUntil = ""
+		a.ModelParks = nil
 		a.Invalid = false
 		a.ErrCount = 0
 		a.LastError = ""
@@ -367,14 +433,83 @@ func (p *pool) setNote(id, note string) {
 	}
 }
 
+// setCooldown parks the account for EVERY model: throttling, a rejected key
+// and the breaker are verdicts on the credential itself.
 func (p *pool) setCooldown(id string, until time.Time, reason string) {
+	p.parkLocked(id, until, reason, func(a *accountRecord, stamp string) { a.CooldownUntil = stamp })
+}
+
+// setCreditPark parks the account for the PAID ids only: the wallet is empty,
+// so a zero-cost id must still route here.
+func (p *pool) setCreditPark(id string, until time.Time, reason string) {
+	p.parkLocked(id, until, reason, func(a *accountRecord, stamp string) { a.CreditUntil = stamp })
+}
+
+// setFreePark parks the account for the ZERO-COST ids only: the vendor's
+// free-tier daily counter is spent, which says nothing about paid credit.
+func (p *pool) setFreePark(id string, until time.Time, reason string) {
+	p.parkLocked(id, until, reason, func(a *accountRecord, stamp string) { a.FreeUntil = stamp })
+}
+
+// parkModel parks one (key, model) pair and nothing else.  Every other id on
+// the key stays usable, which is what "this account cannot call THIS free
+// model" has to mean for the pool.
+func (p *pool) parkModel(id, model string, until time.Time, reason string) {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return
+	}
+	p.parkLocked(id, until, reason, func(a *accountRecord, stamp string) {
+		if a.ModelParks == nil {
+			a.ModelParks = map[string]string{}
+		}
+		a.ModelParks[model] = stamp
+	})
+}
+
+// clearModelPark lifts one (key, model) park.
+func (p *pool) clearModelPark(id, model string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	a := p.lookupLocked(id)
 	if a == nil {
 		return
 	}
-	a.CooldownUntil = until.UTC().Format(time.RFC3339)
+	delete(a.ModelParks, strings.TrimSpace(model)) // a nil map is fine here
+	if len(a.ModelParks) == 0 {
+		a.ModelParks = nil
+	}
+}
+
+// clearParks lifts every park on the account.  It is what the operator's
+// manual refresh means: "I asked the vendor whether this key is alive", an
+// override rather than a routing verdict.
+func (p *pool) clearParks(id string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	a := p.lookupLocked(id)
+	if a == nil {
+		return
+	}
+	a.CooldownUntil = ""
+	a.CreditUntil = ""
+	a.FreeUntil = ""
+	a.ModelParks = nil
+	a.LastError = ""
+	a.ErrCount = 0
+	a.Invalid = false
+	a.Note = ""
+}
+
+// parkLocked stores one scoped park plus the reason behind it.
+func (p *pool) parkLocked(id string, until time.Time, reason string, set func(*accountRecord, string)) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	a := p.lookupLocked(id)
+	if a == nil {
+		return
+	}
+	set(a, until.UTC().Format(time.RFC3339))
 	if reason != "" {
 		a.LastError = reason
 	}
@@ -387,7 +522,6 @@ func (p *pool) clearCooldown(id string) {
 		a.CooldownUntil = ""
 	}
 }
-
 func (p *pool) markInvalid(id string, invalid bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -414,9 +548,12 @@ func (p *pool) noteError(id, msg string, now time.Time, threshold int, park time
 	}
 }
 
-// noteSuccess clears every "something is wrong" verdict on the account, and
-// reports whether anything actually changed so the caller only pays for a write
-// when there is one to make.
+// noteSuccess clears the verdicts a read proves wrong -- throttling, the
+// breaker, a rejected key -- and reports whether anything actually changed so
+// the caller only pays for a write when there is one to make.
+//
+// It deliberately keeps the class parks: a catalogue or balance read does not
+// prove the wallet is funded, nor that the free-tier counter has reset.
 func (p *pool) noteSuccess(id string) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -429,7 +566,52 @@ func (p *pool) noteSuccess(id string) bool {
 	a.LastError = ""
 	a.ErrCount = 0
 	a.Invalid = false
-	a.Note = ""
+	if !a.hasParkLocked() {
+		a.Note = ""
+	}
+	return changed
+}
+
+// chatSuccess records a completed completion.
+//
+// Each class of success lifts only what it actually proved.  A zero-cost
+// completion shows the free tier works, not that the wallet is funded; a paid
+// completion shows the wallet works, not that the free-tier counter has reset.
+// That asymmetry is what keeps an empty wallet serving the free ids: nothing
+// here can silently clear the credit park, and nothing re-parks it either.
+func (p *pool) chatSuccess(id, model string, free bool) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	a := p.lookupLocked(id)
+	if a == nil {
+		return false
+	}
+	changed := a.CooldownUntil != "" || a.LastError != "" || a.ErrCount != 0 || a.Invalid
+	a.CooldownUntil = ""
+	a.LastError = ""
+	a.ErrCount = 0
+	a.Invalid = false
+	if free {
+		if a.FreeUntil != "" {
+			a.FreeUntil = ""
+			changed = true
+		}
+		if key := strings.TrimSpace(model); key != "" {
+			if _, ok := a.ModelParks[key]; ok {
+				delete(a.ModelParks, key)
+				changed = true
+			}
+		}
+	} else if a.CreditUntil != "" {
+		a.CreditUntil = ""
+		changed = true
+	}
+	if len(a.ModelParks) == 0 {
+		a.ModelParks = nil
+	}
+	if !a.hasParkLocked() {
+		a.Note = ""
+	}
 	return changed
 }
 
@@ -449,6 +631,11 @@ func (p *pool) sortLocked() {
 // --- renderings -----------------------------------------------------------
 
 // stateOf is the panel's one-word verdict.
+//
+// A class park is rendered as its own state rather than as a plain cooldown:
+// "low_credit" still serves the zero-cost ids and "quota_exceeded" still
+// serves the paid ones, and the panel is where the operator has to be able to
+// tell those apart.
 func (p *pool) stateOf(a *accountRecord, now time.Time) string {
 	if a.Disabled || a.APIKey == "" {
 		return "invalid"
@@ -459,7 +646,41 @@ func (p *pool) stateOf(a *accountRecord, now time.Time) string {
 	if p.coolingDownLocked(a, now) {
 		return "cooling"
 	}
+	if p.activeStampLocked(a.CreditUntil, now) {
+		return "low_credit"
+	}
+	if p.activeStampLocked(a.FreeUntil, now) {
+		return "quota_exceeded"
+	}
+	for _, stamp := range a.ModelParks {
+		if p.activeStampLocked(stamp, now) {
+			return "quota_exceeded"
+		}
+	}
 	return "ready"
+}
+
+// hasParkLocked reports whether any park -- active or expired -- is stored on
+// the record.  It decides whether the human note still has something to
+// describe, so it counts expired parks too.
+func (a *accountRecord) hasParkLocked() bool {
+	return a.CooldownUntil != "" || a.CreditUntil != "" || a.FreeUntil != "" || len(a.ModelParks) > 0
+}
+
+// expiresAt is the timestamp the panel's "还有 …" column counts down to: the
+// earliest horizon that a request of either class would have to wait for.
+func (a *accountRecord) expiresAt() string {
+	for _, stamp := range []string{a.CooldownUntil, a.CreditUntil, a.FreeUntil} {
+		if stamp != "" {
+			return stamp
+		}
+	}
+	for _, stamp := range a.ModelParks {
+		if stamp != "" {
+			return stamp
+		}
+	}
+	return ""
 }
 
 // scrubNote renders a note for the panel.
@@ -491,8 +712,8 @@ func (p *pool) statuses(now time.Time) []core.AccountStatus {
 			State:   p.stateOf(a, now),
 			Note:    scrubNote(a),
 		}
-		if a.CooldownUntil != "" {
-			st.ExpiresAt = a.CooldownUntil
+		if stamp := a.expiresAt(); stamp != "" {
+			st.ExpiresAt = stamp
 		}
 		extra := map[string]any{
 			"source":    a.Source,
@@ -500,6 +721,19 @@ func (p *pool) statuses(now time.Time) []core.AccountStatus {
 		}
 		if a.ErrCount > 0 {
 			extra["failures"] = a.ErrCount
+		}
+		if a.CreditUntil != "" {
+			extra["credit_until"] = a.CreditUntil
+		}
+		if a.FreeUntil != "" {
+			extra["free_until"] = a.FreeUntil
+		}
+		if len(a.ModelParks) > 0 {
+			parks := make(map[string]string, len(a.ModelParks))
+			for id, stamp := range a.ModelParks {
+				parks[id] = stamp
+			}
+			extra["model_parks"] = parks
 		}
 		if a.LastError != "" {
 			extra["last_error"] = core.Redact(a.LastError)
@@ -529,12 +763,25 @@ func (p *pool) records(now time.Time) []core.AccountRecord {
 		if a.CooldownUntil != "" {
 			fields["cooldown_until"] = a.CooldownUntil
 		}
+		if a.CreditUntil != "" {
+			fields["credit_until"] = a.CreditUntil
+		}
+		if a.FreeUntil != "" {
+			fields["free_until"] = a.FreeUntil
+		}
+		if len(a.ModelParks) > 0 {
+			parks := make(map[string]string, len(a.ModelParks))
+			for id, stamp := range a.ModelParks {
+				parks[id] = stamp
+			}
+			fields["model_parks"] = parks
+		}
 		out = append(out, core.AccountRecord{
 			ID:        a.ID,
 			Label:     safeLabel(*a),
 			Enabled:   !a.Disabled,
 			State:     p.stateOf(a, now),
-			ExpiresAt: a.CooldownUntil,
+			ExpiresAt: a.expiresAt(),
 			Note:      scrubNote(a),
 			Fields:    fields,
 		})
@@ -581,10 +828,11 @@ func (p *pool) summary(now time.Time, limit int) string {
 			off++
 			continue
 		}
-		switch p.stateOf(a, now) {
-		case "ready":
+		if p.stateOf(a, now) == "ready" {
 			ready++
-		case "cooling", "invalid":
+		} else {
+			// Every non-ready state -- a full cooldown, a rejected key, an
+			// empty wallet, a spent free-tier cap -- is a park on the row.
 			cooling++
 		}
 	}
@@ -686,6 +934,14 @@ func applyHealth(rec accountRecord, h healthRecord) accountRecord {
 	rec.Disabled = h.Disabled
 	rec.Note = h.Note
 	rec.CooldownUntil = h.CooldownUntil
+	rec.CreditUntil = h.CreditUntil
+	rec.FreeUntil = h.FreeUntil
+	if len(h.ModelParks) > 0 {
+		rec.ModelParks = make(map[string]string, len(h.ModelParks))
+		for k, v := range h.ModelParks {
+			rec.ModelParks[k] = v
+		}
+	}
 	rec.LastError = h.LastError
 	rec.ErrCount = h.ErrCount
 	rec.Invalid = h.Invalid
@@ -697,11 +953,21 @@ func applyHealth(rec accountRecord, h healthRecord) accountRecord {
 }
 
 func healthOf(rec accountRecord) healthRecord {
+	var parks map[string]string
+	if len(rec.ModelParks) > 0 {
+		parks = make(map[string]string, len(rec.ModelParks))
+		for k, v := range rec.ModelParks {
+			parks[k] = v
+		}
+	}
 	return healthRecord{
 		ID:            rec.ID,
 		Disabled:      rec.Disabled,
 		Note:          rec.Note,
 		CooldownUntil: rec.CooldownUntil,
+		CreditUntil:   rec.CreditUntil,
+		FreeUntil:     rec.FreeUntil,
+		ModelParks:    parks,
 		LastError:     rec.LastError,
 		ErrCount:      rec.ErrCount,
 		Invalid:       rec.Invalid,

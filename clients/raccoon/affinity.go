@@ -31,9 +31,14 @@ func conversationKey(req *core.ChatRequest) string {
 
 // usableFor is the predicate the affinity table applies to a stored binding.
 // It delegates to the pool so "usable" means exactly what pick() means by it.
-// Raccoon's health is per credential, not per model.
 func (c *Client) usableFor(model string) func(accountID string) bool {
-	_ = model
+	return c.usableForRequest(model, false)
+}
+
+// usableForRequest is usableFor for a request that may be for a free model.
+// The pair park a free-model refusal leaves behind is consulted there, so a
+// sticky conversation is not handed back the exact model the vendor refused.
+func (c *Client) usableForRequest(model string, freeModel bool) func(accountID string) bool {
 	return func(accountID string) bool {
 		if c == nil || c.pool == nil {
 			return false
@@ -44,19 +49,19 @@ func (c *Client) usableFor(model string) func(accountID string) bool {
 		}
 		c.pool.mu.Lock()
 		defer c.pool.mu.Unlock()
-		return c.pool.usableLocked(e, c.pool.now())
+		return c.pool.usableLockedFor(e, c.pool.now(), freeModel, model)
 	}
 }
 
 // pickAccount chooses the next candidate, preferring a live conversation
 // binding. The binding is written only after the slot is genuinely acquired in
 // openChat, so a skipped busy account cannot capture the conversation.
-func (c *Client) pickAccount(skip map[string]bool, key string) *entry {
+func (c *Client) pickAccount(skip map[string]bool, key string, freeModel bool, model string) *entry {
 	if key != "" {
-		if id, ok := c.affinity.Resolve(key, c.usableFor("")); ok {
+		if id, ok := c.affinity.Resolve(key, c.usableForRequest(model, freeModel)); ok {
 			if e := c.pool.find(id); e != nil && (skip == nil || !skip[id]) {
 				c.pool.mu.Lock()
-				usable := c.pool.usableLocked(e, c.pool.now())
+				usable := c.pool.usableLockedFor(e, c.pool.now(), freeModel, model)
 				c.pool.mu.Unlock()
 				if usable {
 					return e
@@ -64,7 +69,7 @@ func (c *Client) pickAccount(skip map[string]bool, key string) *entry {
 			}
 		}
 	}
-	return c.pool.pick(skip)
+	return c.pool.pickFor(skip, freeModel, model)
 }
 
 // bindServedConversation records the account that actually received a slot.

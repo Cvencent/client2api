@@ -206,7 +206,7 @@ func TestAddAccountHonoursACustomIDLabelAndDisabledFlag(t *testing.T) {
 		t.Fatalf("record = %+v, want the given label and the disabled flag honoured", rec)
 	}
 	// A disabled credential must not be selectable.
-	if _, err := c.pool.acquire(c.now(), c.limit()); !errors.Is(err, core.ErrNotConfigured) {
+	if _, err := c.pool.acquire(c.now(), c.limit(), admission{}); !errors.Is(err, core.ErrNotConfigured) {
 		t.Fatalf("acquire = %v, want a disabled-only pool to be unconfigured", err)
 	}
 }
@@ -344,7 +344,7 @@ func TestTestAccountSucceedsAndTakesNoSlot(t *testing.T) {
 	// took would let a busy gateway's ceiling drift.  A slot is taken here
 	// first, because release() clamps at zero and an idle pool would hide the
 	// bug entirely.
-	if _, err := c.pool.acquire(c.now(), c.limit()); err != nil {
+	if _, err := c.pool.acquire(c.now(), c.limit(), admission{}); err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
 	if _, err := c.TestAccount(context.Background(), accountIDFor(testKey)); err != nil {
@@ -536,7 +536,7 @@ func TestClassifyHTTPLeavesANoteButParksNothingForANotFound(t *testing.T) {
 	c := newTestClient(t, cfgWithKey(testKey), nil)
 	id := accountIDFor(testKey)
 
-	err := c.classifyHTTP("chat", id, http.StatusNotFound, []byte(`{"error":{"message":"No endpoints found for that model","code":404}}`))
+	err := c.classifyHTTP("chat", id, http.StatusNotFound, []byte(`{"error":{"message":"No endpoints found for that model","code":404}}`), admission{model: "paid/model"})
 	if core.FailureKindOf(err) != core.FailureOther {
 		t.Fatalf("kind = %q, want other", core.FailureKindOf(err))
 	}
@@ -552,32 +552,42 @@ func TestClassifyHTTPLeavesANoteButParksNothingForANotFound(t *testing.T) {
 	}
 }
 
-func TestClassifyHTTPParksForTheConfiguredQuotaCooldown(t *testing.T) {
+func TestClassifyHTTPParksTheWalletNotTheKey(t *testing.T) {
 	c := newTestClient(t, cfgWithKey(testKey), nil)
 	id := accountIDFor(testKey)
 
-	err := c.classifyHTTP("chat", id, 402, []byte(`{"error":{"message":"Insufficient credits","code":402}}`))
+	err := c.classifyHTTP("chat", id, 402, []byte(`{"error":{"message":"Insufficient credits","code":402}}`), admission{model: "anthropic/claude-sonnet-4.5"})
 	if core.FailureKindOf(err) != core.FailureQuota {
 		t.Fatalf("kind = %q, want quota", core.FailureKindOf(err))
 	}
 	rec := c.mustByID(t, id)
-	until, perr := time.Parse(time.RFC3339, rec.CooldownUntil)
+	until, perr := time.Parse(time.RFC3339, rec.CreditUntil)
 	if perr != nil {
-		t.Fatalf("cooldown = %q, want a timestamp: %v", rec.CooldownUntil, perr)
+		t.Fatalf("credit park = %q, want a timestamp: %v", rec.CreditUntil, perr)
 	}
 	if got := until.Sub(c.now()); got != c.cfg.quotaCooldown() {
-		t.Fatalf("cooldown = %s, want the configured quota cooldown", got)
+		t.Fatalf("credit park = %s, want the configured quota cooldown", got)
+	}
+	if rec.CooldownUntil != "" {
+		t.Fatalf("an empty wallet must not bench the whole key: cooldown = %q", rec.CooldownUntil)
 	}
 	if !strings.Contains(rec.Note, "out of credit") {
-		t.Fatalf("note = %q, want it to say why the key is resting", rec.Note)
+		t.Fatalf("note = %q, want it to say why the paid ids are parked", rec.Note)
+	}
+	// The point of the scoped park: the key is gone for the paid ids and
+	// still on duty for the zero-cost ones, with no operator action needed.
+	if _, err := c.pool.acquire(c.now(), c.limit(), admission{model: "anthropic/claude-sonnet-4.5"}); !errors.Is(err, core.ErrBusy) {
+		t.Fatalf("paid acquire = %v, want ErrBusy", err)
+	}
+	if _, err := c.pool.acquire(c.now(), c.limit(), admission{model: "cohere/north-mini-code:free", free: true}); err != nil {
+		t.Fatalf("free acquire = %v, want the key to keep serving zero-cost ids", err)
 	}
 }
-
 func TestClassifyHTTPMarksARefusedKeyInvalid(t *testing.T) {
 	c := newTestClient(t, cfgWithKey(testKey), nil)
 	id := accountIDFor(testKey)
 
-	err := c.classifyHTTP("chat", id, http.StatusUnauthorized, []byte(`{"error":{"message":"No cookie auth credentials found","code":401}}`))
+	err := c.classifyHTTP("chat", id, http.StatusUnauthorized, []byte(`{"error":{"message":"No cookie auth credentials found","code":401}}`), admission{model: "paid/model"})
 	if core.FailureKindOf(err) != core.FailureAuth {
 		t.Fatalf("kind = %q, want auth", core.FailureKindOf(err))
 	}
@@ -601,7 +611,7 @@ func TestClassifyHTTPNeverLeaksTheKeyIntoTheMessage(t *testing.T) {
 	c := newTestClient(t, cfgWithKey(testKey), nil)
 
 	body := fmt.Sprintf(`{"error":{"message":"invalid key %s","code":401}}`, testKey)
-	err := c.classifyHTTP("chat", accountIDFor(testKey), http.StatusUnauthorized, []byte(body))
+	err := c.classifyHTTP("chat", accountIDFor(testKey), http.StatusUnauthorized, []byte(body), admission{model: "paid/model"})
 	if strings.Contains(err.Error(), testKey) {
 		t.Fatalf("the failure leaked the key: %q", err.Error())
 	}
@@ -614,7 +624,7 @@ func TestClassifyUpstreamWrapsATransportFailure(t *testing.T) {
 	c := newTestClient(t, cfgWithKey(testKey), nil)
 	id := accountIDFor(testKey)
 
-	err := c.classifyUpstream(id, errors.New("dial tcp 1.2.3.4:443: connect: connection refused"))
+	err := c.classifyUpstream(id, errors.New("dial tcp 1.2.3.4:443: connect: connection refused"), admission{model: "paid/model"})
 	if core.FailureKindOf(err) != core.FailureUpstream {
 		t.Fatalf("kind = %q, want upstream", core.FailureKindOf(err))
 	}
@@ -628,7 +638,7 @@ func TestClassifyUpstreamWrapsATransportFailure(t *testing.T) {
 	if rec := c.mustByID(t, id); rec.Invalid {
 		t.Fatalf("a transport failure marked the key invalid: %+v", rec)
 	}
-	if err := c.classifyUpstream(id, nil); err != nil {
+	if err := c.classifyUpstream(id, nil, admission{model: "paid/model"}); err != nil {
 		t.Fatalf("classifyUpstream(nil) = %v, want nil", err)
 	}
 }
@@ -651,7 +661,7 @@ func TestRetryableChatErrorTable(t *testing.T) {
 		// Every case gets its own client: noteFailure is exercised here.
 		c := newTestClient(t, cfgWithKey(testKey), nil)
 		body := []byte(fmt.Sprintf(`{"error":{"message":%q,"code":%d}}`, tc.text, tc.status))
-		err := c.classifyHTTP("chat", accountIDFor(testKey), tc.status, body)
+		err := c.classifyHTTP("chat", accountIDFor(testKey), tc.status, body, admission{model: "paid/model"})
 		if got := retryableChatError(err); got != tc.want {
 			t.Fatalf("retryable(%d %q) = %v, want %v", tc.status, tc.text, got, tc.want)
 		}

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -42,6 +43,15 @@ type entry struct {
 	note      string
 	origin    string // "config" or "stored"
 	removable bool
+
+	// quotaUntil is the part of until that came from a wallet verdict -- the
+	// vendor's quota refusal, or the operator's reserve guard.  A free model
+	// spends no credit, so it is allowed to step over this part of the park.
+	quotaUntil int64
+	// freeCool remembers a (credential, free model) pair the vendor refused
+	// on credit grounds.  Runtime-only on purpose: it is a fact about one
+	// model, not about the credential's health.
+	freeCool map[string]int64
 }
 
 // account returns a copy of the credential, so a caller cannot mutate the
@@ -296,10 +306,58 @@ func (p *pool) len() int {
 	return len(p.entries)
 }
 
-// availableLocked reports whether an entry may serve a request now, and
+// quotaParkedLocked reports whether the live cooldown on this entry came from
+// a wallet verdict.  stateExhausted is only ever written by that verdict, so an
+// entry that still carries it -- including one restored from state.json before
+// the label is refreshed -- counts, and so does a remembered deadline.
+func (e *entry) quotaParkedLocked(nowMS int64) bool {
+	if e == nil || e.until <= nowMS {
+		return false
+	}
+	if e.quotaUntil > 0 {
+		return e.until <= e.quotaUntil
+	}
+	return e.state == stateExhausted
+}
+
+// freeCooledLocked reports whether the vendor refused this exact
+// (credential, model) pair for a free-model request.  A lapsed window is
+// dropped on sight.
+func (e *entry) freeCooledLocked(model string, nowMS int64) bool {
+	if e == nil || len(e.freeCool) == 0 {
+		return false
+	}
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return false
+	}
+	until, ok := e.freeCool[model]
+	if !ok {
+		return false
+	}
+	if until > nowMS {
+		return true
+	}
+	delete(e.freeCool, model)
+	return false
+}
+
+// availableLocked reports whether an entry may serve a paid request now.
+func (p *pool) availableLocked(e *entry, now time.Time) bool {
+	return p.availableLockedFor(e, now, false, "")
+}
+
+// availableLockedFor reports whether an entry may serve a request now, and
 // publishes the state label that matches the answer.  It is the single source
 // of truth for both, so Status can never disagree with the picker.
-func (p *pool) availableLocked(e *entry, now time.Time) bool {
+//
+// A free model does not spend credit, so a park that only reflects an empty
+// wallet -- the quota verdict, or a reserve guard -- is stepped over for it.
+// Everything else still applies: a dead session, a rate limit, risk control,
+// and a per-pair park the vendor issued for this very model.  The wallet park
+// is bypassed, not retired: the account keeps being reported as 已用尽 for the
+// models that would charge it.
+func (p *pool) availableLockedFor(e *entry, now time.Time, freeModel bool, model string) bool {
 	if e == nil {
 		return false
 	}
@@ -311,16 +369,26 @@ func (p *pool) availableLocked(e *entry, now time.Time) bool {
 		return false
 	}
 	nowMS := now.UnixMilli()
+	walletPark := e.quotaParkedLocked(nowMS)
 	if e.until > nowMS {
-		e.state = stateCooling
-		return false
-	}
-	if e.until != 0 && e.until <= nowMS {
+		if !(freeModel && walletPark) {
+			if walletPark {
+				e.state = stateExhausted
+			} else {
+				e.state = stateCooling
+			}
+			return false
+		}
+	} else if e.until != 0 {
 		// The cooldown expired: the account is a candidate again.
 		e.until = 0
-		if e.state == stateCooling {
+		e.quotaUntil = 0
+		if e.state == stateCooling || e.state == stateExhausted {
 			e.state = stateReady
 		}
+	}
+	if freeModel && e.freeCooledLocked(model, nowMS) {
+		return false
 	}
 	switch e.state {
 	case stateInvalid:
@@ -328,11 +396,18 @@ func (p *pool) availableLocked(e *entry, now time.Time) bool {
 	case stateCooling, stateExhausted:
 		// A state without a matching cooldown is stale bookkeeping from an
 		// older run; treat it as usable rather than parking it forever.
-		e.state = stateReady
+		if !(freeModel && walletPark) {
+			e.state = stateReady
+		}
 	}
 	if !e.acct.usable() {
 		e.state = stateInvalid
 		return false
+	}
+	if freeModel && walletPark {
+		// The wallet is still empty.  The park stands for the paid models.
+		e.state = stateExhausted
+		return true
 	}
 	e.state = stateReady
 	return true
@@ -343,6 +418,12 @@ func (p *pool) availableLocked(e *entry, now time.Time) bool {
 // It returns nil when nothing can serve, which every caller must treat as
 // "no credential" rather than an error to retry.
 func (p *pool) pick(skip map[string]bool) *entry {
+	return p.pickFor(skip, false, "")
+}
+
+// pickFor is pick() for a request that may be for a free model.  The model id
+// is only consulted for a free request, where it can carry a per-pair park.
+func (p *pool) pickFor(skip map[string]bool, freeModel bool, model string) *entry {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	now := time.Now()
@@ -352,7 +433,7 @@ func (p *pool) pick(skip map[string]bool) *entry {
 		if skip[e.id()] {
 			continue
 		}
-		if !p.availableLocked(e, now) {
+		if !p.availableLockedFor(e, now, freeModel, model) {
 			continue
 		}
 		priority := core.AccountPriority("codearts", e.id())
@@ -384,14 +465,28 @@ func (p *pool) all() []*entry {
 
 // markUsed records a successful use.
 func (p *pool) markUsed(e *entry) {
+	p.markUsedFor(e, false)
+}
+
+// markUsedFor records a successful use.  A free success is evidence about the
+// model, not about the wallet, so it does not lift a credit park: the account
+// keeps being reported as 已用尽 for the models that would charge it.
+func (p *pool) markUsedFor(e *entry, freeModel bool) {
 	if e == nil {
 		return
 	}
 	p.mu.Lock()
-	e.lastUsed = time.Now().UnixMilli()
+	now := time.Now()
+	e.lastUsed = now.UnixMilli()
+	e.fails = 0
+	if freeModel && e.quotaParkedLocked(now.UnixMilli()) {
+		p.mu.Unlock()
+		p.persist(false)
+		return
+	}
 	e.state = stateReady
 	e.until = 0
-	e.fails = 0
+	e.quotaUntil = 0
 	p.mu.Unlock()
 	p.persist(false)
 }
@@ -412,12 +507,49 @@ func (p *pool) markFailure(e *entry, kind errKind, note string) {
 		if until > e.until {
 			e.until = until
 		}
+		if kind == kindQuota && until > e.quotaUntil {
+			// Remember the wallet deadline separately: it is the part of the
+			// park a free model is allowed to step over.
+			e.quotaUntil = until
+		}
 		e.state = state
 	} else if e.state == "" {
 		e.state = stateUnknown
 	}
 	p.mu.Unlock()
 	p.persist(false)
+}
+
+// freeModelCreditReason labels a per-pair park in logs and tests.
+const freeModelCreditReason = "free model refused: credit"
+
+// ParkFreeModel remembers that the vendor refused one free model for one
+// credential on credit grounds.  The account keeps serving its other free
+// models; only this (credential, model) pair is withheld, for the window the
+// caller passes -- the quota cooldown, or a day when none is configured.
+//
+// The park is runtime-only.  It is a fact about one model, not the
+// credential's health, and re-learning it costs one refused request.
+func (p *pool) ParkFreeModel(e *entry, model string, within time.Duration) {
+	if e == nil {
+		return
+	}
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return
+	}
+	if within <= 0 {
+		within = defaultQuotaCooldown
+	}
+	until := time.Now().Add(within).UnixMilli()
+	p.mu.Lock()
+	if e.freeCool == nil {
+		e.freeCool = make(map[string]int64)
+	}
+	if until > e.freeCool[model] {
+		e.freeCool[model] = until
+	}
+	p.mu.Unlock()
 }
 
 // markDead parks an account until an operator intervenes.
@@ -428,6 +560,7 @@ func (p *pool) markDead(e *entry, note string) {
 	p.mu.Lock()
 	e.state = stateInvalid
 	e.until = 0
+	e.quotaUntil = 0
 	e.fails++
 	e.note = core.Redact(cleanErrorText(note))
 	p.mu.Unlock()

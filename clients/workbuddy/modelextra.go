@@ -84,6 +84,11 @@ func modelExtra(mi ModelInfo) map[string]any {
 	setStr("promo_label", mi.PromoLabel)
 	setStr("promo_note", mi.PromoNote)
 
+	// The free marker is what the router reads: a zero multiplier means the
+	// account's balance does not gate this model, so a pool that parked an
+	// account for an empty wallet must still consider it.
+	setFlag("free", modelIsFree(mi))
+
 	setList("tags", mi.Tags)
 	setStr("vendor", mi.Vendor)
 

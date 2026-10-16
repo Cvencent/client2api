@@ -213,6 +213,9 @@ func catalogModelToModel(m catalogModel) core.Model {
 	if s := strings.TrimSpace(m.BillingStatusNote); s != "" {
 		extra["billing_status_note"] = s
 	}
+	if multiplierIsZero(eff, base) {
+		extra["free"] = true
+	}
 	return core.Model{ID: id, OwnedBy: "raccoon", Extra: extra}
 }
 
@@ -258,7 +261,22 @@ func fallbackModels() []core.Model {
 		if b.SupportsReason {
 			extra["reasoning"] = true
 		}
+		if multiplierIsZero(&eff, &base) {
+			extra["free"] = true
+		}
 		out = append(out, core.Model{ID: b.ID, OwnedBy: "raccoon", Extra: extra})
 	}
 	return out
+}
+
+// multiplierIsZero reports whether a model's effective price is exactly zero.
+// The effective multiplier is the one in force right now -- a limited-time
+// campaign can make a model free while its list price stays paid -- so it wins
+// when the vendor reports it.  An unreadable or negative value is not free:
+// guessing would send traffic that the wallet cannot pay for.
+func multiplierIsZero(effective, base *float64) bool {
+	if effective != nil {
+		return *effective == 0
+	}
+	return base != nil && *base == 0
 }

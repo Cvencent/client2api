@@ -198,6 +198,12 @@ type chatStream struct {
 	accountID string
 	cancel    context.CancelFunc
 
+	// adm is what this request was, carried past the headers so a failure
+	// that arrives INSIDE the stream is scoped like one that arrives before
+	// it: a credit refusal on a zero-cost id benches one (key, model) pair,
+	// not the wallet.
+	adm admission
+
 	// holds records whether the caller took an in-flight slot from the pool.
 	// Only the holder may give it back; a panel probe never took one.
 	holds bool
@@ -221,7 +227,7 @@ type chatStream struct {
 	toolOrder []int
 }
 
-func newChatStream(c *Client, resp *http.Response, accountID string, cancel context.CancelFunc, holds bool) *chatStream {
+func newChatStream(c *Client, resp *http.Response, accountID string, cancel context.CancelFunc, holds bool, adm admission) *chatStream {
 	body := newIdleReader(resp.Body, c.cfg.streamIdle())
 	return &chatStream{
 		client:    c,
@@ -230,6 +236,7 @@ func newChatStream(c *Client, resp *http.Response, accountID string, cancel cont
 		reader:    newSSEReader(body),
 		accountID: accountID,
 		cancel:    cancel,
+		adm:       adm,
 		holds:     holds,
 		finish:    "stop",
 		toolCalls: make(map[int]*core.ToolCallDelta),
@@ -421,7 +428,7 @@ func (s *chatStream) chunkFailure(e *oaiChunkError) {
 		k = kindServer
 	}
 	if s.client != nil {
-		s.client.noteFailure(s.accountID, k, msg)
+		s.client.noteFailure(s.accountID, k, msg, s.adm)
 	}
 	s.failed = true
 	s.pending = append(s.pending, core.Event{
@@ -443,7 +450,7 @@ func (s *chatStream) endStream() {
 		s.succeeded = true
 		if s.client != nil {
 			if acct, ok := s.client.pool.byID(s.accountID); ok {
-				s.client.noteSuccess(acct)
+				s.client.noteChatSuccess(acct, s.adm)
 			}
 		}
 	}

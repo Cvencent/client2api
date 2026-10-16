@@ -265,6 +265,10 @@ func (c *Client) openChat(ctx context.Context, release context.CancelFunc, req *
 		_ = c.tryRefresh(ctx, e)
 	}
 
+	// The router prices the model before the module sees it.  A zero multiplier
+	// means the request spends no credit, so an account parked for an empty
+	// wallet is still a candidate for it.
+	freeModel := req.FreeModel
 	skip := map[string]bool{}
 	refreshed := map[string]bool{}
 	attempts := c.cfg.maxAttempts()
@@ -276,7 +280,7 @@ func (c *Client) openChat(ctx context.Context, release context.CancelFunc, req *
 	busy := false
 
 	for i := 0; i < attempts; i++ {
-		e := c.pickAccount(skip, convKey)
+		e := c.pickAccount(skip, convKey, freeModel, req.Model)
 		if e == nil {
 			break
 		}
@@ -299,7 +303,7 @@ func (c *Client) openChat(ctx context.Context, release context.CancelFunc, req *
 
 		resp, err := c.chatStream(ctx, e.acct, body, taskIDFor(req))
 		if err == nil {
-			c.pool.markUsed(e)
+			c.pool.markUsedFor(e, freeModel)
 			c.noteUpstream(true, "")
 			return newClineStream(ctx, release, resp.Body), nil
 		}
@@ -329,7 +333,14 @@ func (c *Client) openChat(ctx context.Context, release context.CancelFunc, req *
 			}
 		}
 
+		// A quota answer parks the account for the models that cost money.  A
+		// free model spends none, so that park cannot be the whole verdict: what
+		// disqualifies the pair is the vendor refusing *this* model for free, and
+		// that is what gets remembered here.
 		c.pool.markFailureWith(e, ue.Kind, ue.Message, ue.RetryAfter)
+		if freeModel && ue.Kind == kindQuota {
+			c.pool.ParkFreeModel(e, req.Model)
+		}
 
 		// Tell the gateway about this attempt even though the loop may still
 		// recover on another account: the gateway parks the (account, model)
@@ -398,15 +409,15 @@ func (c *Client) chatStream(ctx context.Context, acct account, body []byte, task
 // pickAccount selects the account for one attempt: a conversation's bound
 // account when it is still usable, otherwise the pool's LRU pick, which is then
 // bound.  An empty key degenerates into the plain LRU pick.
-func (c *Client) pickAccount(skip map[string]bool, convKey string) *entry {
+func (c *Client) pickAccount(skip map[string]bool, convKey string, freeModel bool, model string) *entry {
 	if convKey != "" && c.affinity != nil {
-		if id, ok := c.affinity.Resolve(convKey, c.usableFor); ok {
-			if e := c.pool.usableEntry(id, skip); e != nil {
+		if id, ok := c.affinity.Resolve(convKey, c.usableForPriced(freeModel, model)); ok {
+			if e := c.pool.usableEntryFor(id, skip, freeModel, model); e != nil {
 				return e
 			}
 		}
 	}
-	e := c.pool.pick(skip)
+	e := c.pool.pickFor(skip, freeModel, model)
 	if e == nil {
 		return nil
 	}
@@ -418,11 +429,21 @@ func (c *Client) pickAccount(skip map[string]bool, convKey string) *entry {
 
 // usableFor reports whether an account id may serve a request now.
 func (c *Client) usableFor(id string) bool {
-	e := c.pool.get(id)
-	if e == nil {
-		return false
+	return c.usableForPriced(false, "")(id)
+}
+
+// usableForPriced is usableFor with the request's pricing verdict.  The affinity
+// table is fed this predicate, so a conversation bound to an account that is
+// only out of credit stays bound for a free model instead of being re-bound on
+// every turn.
+func (c *Client) usableForPriced(freeModel bool, model string) func(string) bool {
+	return func(id string) bool {
+		e := c.pool.get(id)
+		if e == nil {
+			return false
+		}
+		return c.pool.availableNowFor(e, freeModel, model)
 	}
-	return c.pool.availableNow(e)
 }
 
 // pace waits out the rotation backoff before another upstream attempt.

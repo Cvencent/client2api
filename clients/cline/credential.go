@@ -115,6 +115,13 @@ type entry struct {
 	until time.Time
 	note  string
 	fails int
+
+	// freeCool remembers a (free) model the vendor refused on this account.
+	// A quota park is account-wide and about money, so a request priced at zero
+	// is allowed through it -- but only until the vendor answers that this
+	// account cannot serve *that* model, which is what this map records.  It is
+	// runtime-only: a restart costs one refused call to learn it again.
+	freeCool map[string]time.Time
 }
 
 // healthRecord is the credential-free mirror written to state.json.

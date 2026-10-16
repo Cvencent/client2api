@@ -44,7 +44,7 @@ import (
 )
 
 // version is overridable with -ldflags "-X main.version=...".
-var version = "0.1.67"
+var version = "0.1.73"
 
 // restartHandoffEnv marks the replacement half of a panel restart.  It tells a
 // starting process to keep retrying the listen address instead of failing fast,
@@ -1797,6 +1797,7 @@ func loadConfigAt(path, ver string, create bool) (*fileConfig, bool, error) {
 			} else {
 				fmt.Printf("client2api: generated api_key: %s\n", cfg.APIKey)
 			}
+			cfg.Sources = core.WithBuiltinSources(cfg.Sources)
 			return cfg, true, nil
 		}
 		return nil, false, err
@@ -1816,6 +1817,10 @@ func loadConfigAt(path, ver string, create bool) (*fileConfig, bool, error) {
 		cfg.Sources = sources
 	}
 	cfg.applyEnv()
+	// Shipped platforms exist without a file entry.  The file still wins when
+	// it defines the same id, including an entry whose only job is to disable
+	// the platform.
+	cfg.Sources = core.WithBuiltinSources(cfg.Sources)
 	return cfg, false, nil
 }
 

@@ -113,6 +113,17 @@ type ChatRequest struct {
 	// through when the request carried one.  A module that aggregates its
 	// upstream calls per turn derives a value itself when this is empty.
 	ConversationRequestID string
+	// FreeModel marks a request the router resolved to a model its platform
+	// advertises as free (a zero multiplier).  A pool that parks an account for
+	// credit exhaustion must treat such a request as still routable: a model the
+	// vendor charges nothing for does not need the balance, and the only
+	// evidence that disqualifies an account is the vendor refusing *this* model
+	// on *this* account.  Parks that are not about money -- a WAF block, a dead
+	// session, a risk flag, a rate limit -- keep applying.
+	//
+	// Like ConversationID and ServedBy this is a gateway-to-module channel only.
+	// It must never be copied into the body sent upstream.
+	FreeModel bool
 	// Options carries per-client knobs.  Callers set it via the
 	// "client2api" object in the JSON body.
 	Options map[string]any

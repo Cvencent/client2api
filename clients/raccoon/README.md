@@ -148,6 +148,14 @@ only to that loopback listener:
   `/raccoon/sms/send` and the code to `/raccoon/sms/verify`. The phone is
   encrypted host-side. A retryable SMS error is returned to the page and the
   session stays pending, so a mistyped code does not end the login.
+- **接码登录 / 自动登录** — the panel's 一键接码 path rents a number from the
+  eomsg platform (`sms_token`), mints the Aliyun slider parameter in a local
+  Chromium-family browser, sends the number through the same vendor SMS API,
+  polls the eomsg message with sender keyword `商汤科技`, exchanges the code
+  for a credential and stores the account.  The run is a job: the panel starts
+  it, renders each step, and can cancel it.  A headless mint is tried first;
+  if Aliyun refuses it, the module retries with a visible browser so the
+  operator can finish the slider once by hand.
 
 On success the credential is enriched through `/api/web/auth/v1/user_info`,
 written through the same pool as an imported token, and the desktop
@@ -279,6 +287,20 @@ back in as an id.
 
 ---
 
+## Free models
+
+A model whose effective `billing_multiplier` is zero -- including a
+limited-time campaign that prices a model at zero while its list price stays
+paid -- carries `extra.free`.  The router marks the attempt with
+`core.ChatRequest.FreeModel` and the account guard steps aside for it: a
+credential parked by the vendor's quota verdict still serves it, because it
+spends no credit.  A dead session, a rate limit or the operator's disable
+switch keeps applying, and so does a per-pair park.
+
+A free model the vendor refuses on credit grounds parks that
+(credential, model) pair alone; the credential keeps serving its other free
+models, and a free success never lifts the wallet park.
+
 ## Configuration
 
 The module reads the JSON object under `clients.raccoon` in
@@ -336,6 +358,17 @@ copy-paste starting point.
 | `refresh_margin` | duration | `300s` | renew this long before expiry |
 | `store_flush` | duration | `5s` | debounce for writing `accounts.json`/`state.json` |
 | `login_timeout` | duration | `5m` | how long an interactive QR/SMS login stays pending before it expires |
+| `sms_token` | string | — | eomsg (接码平台) credential for the SMS and auto-login providers |
+| `sms_keyword` | string | `商汤科技` | sender keyword the platform filters on; a wrong keyword reads as "no message" |
+| `sms_base` | string | eomsg | platform endpoint override |
+| `sms_provinces` | array | built-in pool | province rotation; empty keeps the built-in pool, `["none"]` lets the platform choose |
+| `sms_card_type` | string | `全部` | eomsg card class: `实卡`, `虚卡` or `全部` |
+| `browser_path` | string | auto-detect | Chromium-family executable used to mint the Aliyun slider |
+| `browser_headless` | bool | `true` | headless first; a refused mint retries with a visible window |
+| `auto_login_timeout_seconds` | int | `300` | whole auto-login run timeout |
+| `sms_polls` | int | `12` | polls per rented number before the run gives up |
+| `sms_interval_seconds` | int | `5` | pause between SMS polls |
+| `dup_retries` | int | `6` | extra draws when the platform returns a virtual or already-used number |
 
 Durations accept a Go duration string (`"90s"`, `"5m"`) or a bare JSON number
 read as seconds. A value that cannot be parsed falls back to the default.
@@ -365,14 +398,19 @@ call: it is not parked and it does not spend one of the `max_attempts` attempts.
 | `core.BalanceProvider` | yes | `GET /api/web/points/v1/balance`, read-only |
 | `core.PackageProvider` | yes | the balance's pools as separate packages |
 | `core.LoginProvider` | yes | loopback QR/SMS page; `RealmLoginProvider` is not implemented (a single sign-in flow) |
+| `core.SMSProvider` | yes | eomsg rent/poll/release; sender keyword defaults to `商汤科技` |
+| `core.AutoLoginProvider` | yes | rent a number, mint the Aliyun slider, SMS login end to end and store the credential |
 | `core.CheckinProvider` | yes | one action, `login-points`: claims the daily 300 login credits through the desktop login grant |
 | `core.VoucherProvider` | **no** | the vendor exposes no voucher concept |
 | `core.TaskProvider` / `core.BatchProvider` | **no** | nothing to offer |
-| `core.CaptchaProvider` | **no** | the SMS tab loads the vendor's Aliyun slider in the browser; the module never solves a captcha server-side |
+| `core.CaptchaProvider` | **no** | the interactive SMS tab loads the vendor's Aliyun slider in the browser; the auto-login path mints it in a local throwaway browser, falling back to a visible one when needed |
 | `core.HintProvider` | **no** | nothing to hint at |
 
 `TestAccount` sends one minimum-size real chat completion through the account under
 test, so a token that opens the gateway but cannot answer is reported as failed.
+Thinking is explicitly disabled on that probe: SenseNova's default thinking can
+consume the entire 16-token budget as `reasoning_content`, which would otherwise
+look like an empty answer and wrongly park the account.
 A refusal is reported as a failed test result, not as an error.
 
 ---

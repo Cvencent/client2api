@@ -111,6 +111,21 @@ the key that warmed its upstream prompt cache, so a relay that bills per cached
 prefix does not re-charge the whole prompt when the pool rotates. The binding is
 per source and per conversation, and it is ignored while the key is disabled,
 cooling down or missing the requested model from its scanned catalogue.
+OfficeAce (Office Claw) is built in as `officeace` and needs no `sources` entry.
+Use **Browser sign-in** in its account pool: the panel completes the Huawei
+account OAuth flow, stores the model-gateway App Key / App Secret in
+`data/officeace/accounts.json`, and publishes the scanned models as
+`officeace/<model>`. Each account keeps the `model_api_url_base` returned by its
+own login. Requests use `Authorization: Basic base64(app_key:app_secret)`.
+The cloud credential from the same login is stored alongside it, which is what
+backs the WorkBuddy-style facilities: **Check-in** posts
+`POST /v1/subscription/bonus/claim` (idempotent), **Balance** reads the
+`officeace_points` position and the online-search meter, and **Packages** lists
+the plan quota and bonus activities. Expired temporary credentials are renewed
+from the OAuth refresh token or the IAM v3/STS exchange.
+Windows can still use **Import -> Discover local credentials** for an already
+signed-in OfficeAce desktop client.
+
 The existing `clients.openai-compat` configuration and data remain supported;
 the panel displays that legacy module as **onmiRoute**.
 
@@ -129,9 +144,13 @@ HTTP 429 endpoint outages, are classified as upstream failures.
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-Current version: **0.1.67**. Full history: [CHANGELOG.md](../CHANGELOG.md).
+Current version: **0.1.73**. Full history: [CHANGELOG.md](../CHANGELOG.md).
 
-### Recent highlights (0.1.63 - 0.1.67)
+### Recent highlights (0.1.63 - 0.1.73)
+
+
+* **OfficeAce (Office Claw) platform:** `officeace` is built in with Huawei-account browser sign-in, automatic model-gateway credential storage, account-level gateway addresses, and `officeace/<model>` publication. Windows local credential discovery remains a fallback.
+* **OfficeAce parity with WorkBuddy:** the built-in platform now offers daily check-in, credit balance and package breakdown, with automatic renewal of the temporary cloud credential.
 
 * **Anthropic Messages ingress:** Claude Code and Anthropic SDK clients can use
   `POST /v1/messages` and `count_tokens`, including tools, tool results,
@@ -140,13 +159,21 @@ Current version: **0.1.67**. Full history: [CHANGELOG.md](../CHANGELOG.md).
   and refresh, quota reads, Cloud Code Assist translation and streaming.
 * **Final outward model whitelist:** `exposed_models` filters the completed
   catalogue and every call entry point, with a hot-reloaded selector under
-  **Models and Profiles → Exposed Models**.
+  **Models and Profiles → Exposed Models**. `platform/*` entries expose a whole
+  platform prefix without opening any other platform.
 * **Per-account model policy and 429 parking:** disable a model on one account,
   see when a rate limit is released, and park the `(platform, account, model)`
   triple for 60 seconds, doubling to a 30-minute cap or the vendor's
   `Retry-After`.
-* **Route-plan preview:** Platform Configuration → Link Test statically replays
-  failover order without reading account state or calling upstream.
+* **Route-plan preview and speed test:** Platform Configuration → Link Test
+  statically replays failover order without reading account state or calling
+  upstream. Speed Test resolves the same chain and sends one minimal live
+  request per platform through that platform's account pool, reporting
+  first-event latency, total elapsed time, the serving account, completion
+  tokens and tok/s.
+* **Route-chain reordering:** result rows can be dragged or moved with Up/Down.
+  Saving writes the displayed order back to platform priority, model-group
+  member priority or schedule-window priority and hot-reloads it.
 * **Managed egress:** route all upstream traffic through an existing HTTP/SOCKS
   proxy or a subscription managed by a local mihomo process.
 * **ZCode captcha prefetch:** opt into a one-slot parameter pool with
@@ -155,6 +182,10 @@ Current version: **0.1.67**. Full history: [CHANGELOG.md](../CHANGELOG.md).
   stream fail over before commit, zero-credit accounts leave rotation, explicit
   `platform/model` pins are not silently redirected by model groups, and empty
   Responses turns retry once.
+* **Measured context-window retry:** when a vendor refuses an oversized prompt
+  with `N tokens > M maximum`, the gateway decodes the `\u003e` escaping, trims
+  the oldest history to the measured proportion and retries the same request
+  once, so a conversation that used to fail on every retry is served instead.
 
 ### Earlier highlights (0.1.26 - 0.1.29)
 
@@ -281,6 +312,8 @@ built binary and a tagged release can never disagree about their version.
 ```
 
 Flags: `-config`, `-listen`, `-data-dir`, `-proxy`, `-list-clients`.
+
+
 
 Then:
 
@@ -675,7 +708,9 @@ sections below:
   routing builds the full catalogue, so it filters `platform/model` ids,
   `Auto/<model>` names, `model_groups` names, aliases and transcription ids, and
   each final id is its own switch -- exposing a group member does not expose the
-  group name, and exposing an alias target does not expose the alias. Matching is
+  group name, and exposing an alias target does not expose the alias. An entry
+  ending in `/*` exposes every model under that platform prefix (for example
+  `my-relay/*`) without opening any other platform. Matching is
   case-insensitive and ignores surrounding space. `null` (the default, or the key
   absent) serves every final model; `[]` serves none. The whitelist gates
   `GET /v1/models` and every call entry point, so a hidden id is rejected even
@@ -1405,14 +1440,14 @@ renderer never calls it either — so there is nothing honest to implement from.
 | module | manage | import | login | check-in |
 |---|---|---|---|---|
 | workbuddy | yes | yes | yes — polls `/v2/plugin/auth/state` → `/token` and opens `copilot.tencent.com/login` | yes — `daily-checkin` (CN) and `daily-activity` (intl) |
-| autoclaw | yes | yes — Electron safeStorage/DPAPI desktop import, JSON and bundle import | yes — loopback phone + SMS-code login | yes — daily points claim |
+| autoclaw | yes | yes — Electron safeStorage/DPAPI desktop import, JSON and bundle import | yes — loopback phone + SMS-code login; plus one-click SMS auto-login the module runs itself (`core.AutoLoginProvider` + `core.SMSProvider`, platform project 智谱华章) | yes — daily points claim |
 | trae | yes | yes | yes — loopback redirect on `127.0.0.1`, opens `www.trae.cn/authorization` | yes — `daily-checkin` (CN only) |
 | zcode | yes | yes | yes — polls `POST {api}/oauth/cli/init` → `GET …/poll/{flow_id}` | yes — claims the promotion via the built-in Edge/Chrome captcha solver; `captcha_command` is the headless fallback |
 | kimi | yes | yes | yes — RFC 8628 device grant against `auth.kimi.com`; the CLI is not required | no — no such endpoint exists |
 | qoder | yes | yes — Electron safeStorage + DPAPI on Windows; a pasted token elsewhere | yes — browser device grant + PKCE; plus one-click SMS auto-login through Aliyun SSO (`core.AutoLoginProvider` + `core.SMSProvider`) | yes — the daily `CLAIM_BENEFIT` campaign; also a real campaign task board, package breakdown, pool health and model output limits |
 | qwenwork | yes | no — nothing on disk holds a usable token | yes — PKCE device flow | yes — `daily`, against the Sash check-in API |
 | tabbit | yes | yes | yes — browser hand-off: opens the sign-in page inside the Tabbit browser through its own launcher, then reads the session cookie back (`local_app` + `handoff_path`; with no launcher it falls back to returning the URL) | yes — daily `sign-in` for the `desktop_pet` scene (normally 3% credit), with a fresh `request_no` idempotency key |
-| minimaxcode | yes | yes | yes — RFC 8628 device grant against `account.minimax.cn`, PKCE, with the CN `user_code` variant; the desktop GUI is not required | no — the product has no check-in |
+| minimaxcode | yes | yes | yes — RFC 8628 device grant against `account.minimax.cn`, PKCE, with the CN `user_code` variant; the desktop GUI is not required | yes — the daily sign-in board and credits; sign-in also completes the first-run account onboarding gate |
 | gemini | yes | yes — Google OAuth token discovery and import | yes — Google OAuth loopback callback | no — quota is a rolling 5-hour/weekly window, not a check-in |
 | cline | yes | yes | yes — WorkOS device-code flow, the same client id the desktop app uses | no — no such endpoint exists |
 | lobsterai | yes | yes | yes — browser hand-off; the module returns the URL and watches for the credential it leaves behind | yes — a daily check-in action |
@@ -1623,6 +1658,7 @@ GET    /panel/api/models
 POST   /panel/api/models/refresh
 GET    /panel/api/exposed_models                         the final catalogue plus the selected whitelist
 POST   /panel/api/route_plan                             {"model":"…","catalogs":{…}}; static only
+POST   /panel/api/route_speed                            same body; one live request per platform
 GET    /panel/api/model_probes                          (optional; the probe file)
 GET    /panel/api/usage?window=HOURS
 POST   /panel/api/usage/save

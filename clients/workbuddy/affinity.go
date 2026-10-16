@@ -30,8 +30,15 @@ import (
 // from, must not be resolved as a sticky binding.  Anything looser would let
 // stickiness serve an account the picker would have refused.
 func (c *Client) usableFor(model, realm string) func(accountID string) bool {
+	return c.usableForPriced(model, realm, false)
+}
+
+// usableForPriced is usableFor with the request's pricing verdict: a model the
+// vendor charges nothing for keeps its binding on an account parked for an
+// empty wallet, because the picker would serve it from exactly that account.
+func (c *Client) usableForPriced(model, realm string, freeModel bool) func(accountID string) bool {
 	return func(accountID string) bool {
-		return c.pool.UsableForModelInRealm(accountID, model, realm)
+		return c.pool.UsableForModelInRealmFor(accountID, model, realm, freeModel)
 	}
 }
 
@@ -96,9 +103,9 @@ func (c *Client) ConversationAccount(conversationKey, model string) (string, boo
 // conversationKey may be empty, which means "this request is not
 // conversation-scoped": the call then degenerates exactly into the model-aware
 // pick, with no table traffic at all.
-func (c *Client) pickAccount(skip map[string]bool, conversationKey string, r modelRoute) (*Auth, bool) {
+func (c *Client) pickAccount(skip map[string]bool, conversationKey string, r modelRoute, freeModel bool) (*Auth, bool) {
 	if conversationKey != "" {
-		if id, ok := c.affinity.Resolve(conversationKey, c.usableFor(r.bare, r.affinityRealm)); ok {
+		if id, ok := c.affinity.Resolve(conversationKey, c.usableForPriced(r.bare, r.affinityRealm, freeModel)); ok {
 			if a, ok := c.pool.Find(skip, id); ok {
 				return a, true
 			}
@@ -107,7 +114,7 @@ func (c *Client) pickAccount(skip map[string]bool, conversationKey string, r mod
 	var a *Auth
 	ok := false
 	for _, realm := range r.realms {
-		if a, ok = c.pool.PickForModelInRealm(skip, r.bare, realm); ok {
+		if a, ok = c.pool.PickForModelInRealmFor(skip, r.bare, realm, freeModel); ok {
 			break
 		}
 	}

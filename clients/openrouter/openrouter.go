@@ -187,6 +187,14 @@ func (c *Client) lastError() string {
 
 // --- chat -----------------------------------------------------------------
 
+// admissionFor is what the pool needs to know about a request before it picks
+// a credential: whether the id is zero-cost (so a credit park must not block
+// it) and the id itself (a model park is per key AND per model).
+func (c *Client) admissionFor(model string) admission {
+	model = strings.TrimSpace(model)
+	return admission{free: c.modelFreeFor(model), model: model}
+}
+
 // Chat picks a credential, sends the request and returns the response stream.
 //
 // The body is built and validated BEFORE any account is taken, so a request
@@ -206,6 +214,18 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 	if err != nil {
 		return nil, err
 	}
+	// What the pool needs to know before it picks a credential: whether this
+	// id is zero-cost (a credit park must not block it) and the id itself (a
+	// model park is per key AND per model).  It is fixed for the whole
+	// request, so every attempt compares like with like.
+	//
+	// The gateway's verdict comes from this module's own catalogue, and the
+	// module's read adds what a cold cache cannot see (`vendor/x:free` is
+	// free by name).  Either saying zero-cost is enough.
+	adm := c.admissionFor(req.Model)
+	if req.FreeModel {
+		adm.free = true
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -220,7 +240,7 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 			// affinity hand the same key straight back on the retry. Rotate
 			// through the pool instead; the binding remains untouched until a
 			// key actually serves the request.
-			acct, err = c.pool.acquire(c.now(), c.limit())
+			acct, err = c.pool.acquire(c.now(), c.limit(), adm)
 		} else {
 			acct, err = c.acquireAccount(req)
 		}
@@ -251,7 +271,7 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 		c.bindServedConversation(req, acct.ID)
 		core.NoteServedBy(req, acct.ID)
 
-		stream, err := c.openChat(ctx, acct, body)
+		stream, err := c.openChat(ctx, acct, body, adm)
 		if err == nil {
 			return stream, nil
 		}
@@ -284,14 +304,14 @@ func retryableChatError(err error) bool {
 
 // openChat issues one streaming completion against a credential the caller
 // already holds an in-flight slot for.
-func (c *Client) openChat(ctx context.Context, acct accountRecord, body []byte) (core.Stream, error) {
-	return c.doChat(ctx, acct, body, true)
+func (c *Client) openChat(ctx context.Context, acct accountRecord, body []byte, adm admission) (core.Stream, error) {
+	return c.doChat(ctx, acct, body, true, adm)
 }
 
 // doChat is the single place a POST /chat/completions is issued. holds says
 // whether the caller took an in-flight slot from the pool (a normal chat does;
 // the panel's Test button does not), because only the holder may release it.
-func (c *Client) doChat(ctx context.Context, acct accountRecord, body []byte, holds bool) (core.Stream, error) {
+func (c *Client) doChat(ctx context.Context, acct accountRecord, body []byte, holds bool, adm admission) (core.Stream, error) {
 	reqCtx, cancel := context.WithTimeout(ctxOrBackground(ctx), c.cfg.chatTimeout())
 	httpReq, err := http.NewRequestWithContext(reqCtx, http.MethodPost, c.cfg.chatURL(), bytes.NewReader(body))
 	if err != nil {
@@ -304,15 +324,15 @@ func (c *Client) doChat(ctx context.Context, acct accountRecord, body []byte, ho
 	resp, err := c.httpClient().Do(httpReq)
 	if err != nil {
 		cancel()
-		return nil, c.classifyUpstream(acct.ID, err)
+		return nil, c.classifyUpstream(acct.ID, err, adm)
 	}
 	if resp.StatusCode != http.StatusOK {
 		raw := readLimited(resp.Body, maxErrorBytes)
 		_ = resp.Body.Close()
 		cancel()
-		return nil, c.classifyHTTP("chat", acct.ID, resp.StatusCode, raw)
+		return nil, c.classifyHTTP("chat", acct.ID, resp.StatusCode, raw, adm)
 	}
-	return newChatStream(c, resp, acct.ID, cancel, holds), nil
+	return newChatStream(c, resp, acct.ID, cancel, holds, adm), nil
 }
 
 // --- status ---------------------------------------------------------------

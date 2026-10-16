@@ -250,6 +250,27 @@ func modelIsFree(m core.Model) bool {
 	return v
 }
 
+// modelFreeFor reports whether a REQUESTED id has to be routed as zero-cost.
+//
+// The served catalogue is asked first: it carries the vendor's own pricing
+// verdict (`openrouter/models` publishes a prompt and completion price per
+// id), and that outranks any name.  An id the catalogue does not know -- a
+// cold cache, or a variant nobody has fetched yet -- falls back to the general
+// naming rule, because the vendor marks its free variants in the id itself
+// (`vendor/slug:free`, `openrouter/free`).
+func (c *Client) modelFreeFor(id string) bool {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return false
+	}
+	for _, m := range c.statusModels() {
+		if strings.TrimSpace(m.ID) == id {
+			return core.ModelIsFree(m)
+		}
+	}
+	return core.ModelIsFree(core.Model{ID: id, OwnedBy: authorOf(id)})
+}
+
 // freeModelSet is the set of ids this deployment may call, derived from the
 // served catalogue so it tracks live pricing rather than a fixed list.
 func (c *Client) freeModelSet() map[string]bool {
@@ -611,15 +632,15 @@ func (c *Client) fetchModels(ctx context.Context) ([]core.Model, error) {
 	c.cfg.applyHeaders(req, acct.APIKey)
 	resp, err := c.httpClient().Do(req)
 	if err != nil {
-		return nil, c.classifyUpstream(acct.ID, err)
+		return nil, c.classifyUpstream(acct.ID, err, admission{})
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxModelsBytes))
 	if err != nil {
-		return nil, c.classifyUpstream(acct.ID, err)
+		return nil, c.classifyUpstream(acct.ID, err, admission{})
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, c.classifyHTTP("models", acct.ID, resp.StatusCode, body)
+		return nil, c.classifyHTTP("models", acct.ID, resp.StatusCode, body, admission{})
 	}
 	list, err := parseModelsBody(body)
 	if err != nil {

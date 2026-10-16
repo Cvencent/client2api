@@ -21,6 +21,7 @@ import (
 
 	"client2api/internal/core"
 	"client2api/internal/fingerprint"
+	"client2api/internal/smscap"
 )
 
 func init() { core.Register("autoclaw", New) }
@@ -52,6 +53,13 @@ type Client struct {
 	loginMu sync.Mutex
 	logins  map[string]*loginSession
 
+	// smsRot hands out the next province in the one-time-SMS rotation
+	// (sms.go).  autos is the in-flight auto-login job table (autologin.go);
+	// it is created lazily by putAutoJob.
+	smsRot smscap.Rotator
+	autoMu sync.Mutex
+	autos  map[string]*autoJob
+
 	deviceMu sync.Mutex
 	deviceID string
 
@@ -66,6 +74,7 @@ func New(deps core.Deps) (core.Client, error) {
 		deps.Log("autoclaw: invalid config, using defaults: %v", err)
 		cfg = config{}
 	}
+	applyEnv(&cfg)
 	c := &Client{deps: deps, cfg: cfg, now: time.Now}
 	c.affinity = core.NewAffinity(0)
 	c.affinity.StartGC()

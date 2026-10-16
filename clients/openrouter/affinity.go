@@ -31,9 +31,12 @@ func conversationKey(req *core.ChatRequest) string {
 
 // usableFor is the predicate the affinity table applies to a stored binding.
 // It delegates to the pool so "usable" means exactly what acquire() means by
-// it. OpenRouter health is per key, not per model.
+// it -- including the class scoping: a key parked for an empty wallet is still
+// a valid binding target for a zero-cost model, and one parked on its
+// free-tier counter is still valid for a paid one.
 func (c *Client) usableFor(model string) func(accountID string) bool {
-	_ = model
+	adm := c.admissionFor(model)
+	anyClass := adm.model == ""
 	return func(accountID string) bool {
 		if c == nil || c.pool == nil {
 			return false
@@ -41,7 +44,15 @@ func (c *Client) usableFor(model string) func(accountID string) bool {
 		c.pool.mu.Lock()
 		defer c.pool.mu.Unlock()
 		a := c.pool.lookupLocked(strings.TrimSpace(accountID))
-		return a != nil && c.pool.selectableLocked(a, c.now(), c.limit())
+		if a == nil {
+			return false
+		}
+		if anyClass {
+			// No model named: the caller only asks whether the key works at
+			// all, so either class of model counts.
+			return c.pool.anySelectableLocked(a, c.now(), c.limit())
+		}
+		return c.pool.selectableLocked(a, c.now(), c.limit(), adm)
 	}
 }
 
@@ -50,15 +61,20 @@ func (c *Client) usableFor(model string) func(accountID string) bool {
 // reservation succeeds, so a busy key that was skipped cannot capture the
 // conversation.
 func (c *Client) acquireAccount(req *core.ChatRequest) (accountRecord, error) {
+	model := ""
+	if req != nil {
+		model = req.Model
+	}
+	adm := c.admissionFor(model)
 	key := conversationKey(req)
 	if key != "" && c.affinity != nil {
-		if id, ok := c.affinity.Resolve(key, c.usableFor("")); ok {
-			if a, err := c.pool.acquireByID(id, c.now(), c.limit()); err == nil {
+		if id, ok := c.affinity.Resolve(key, c.usableFor(model)); ok {
+			if a, err := c.pool.acquireByID(id, c.now(), c.limit(), adm); err == nil {
 				return a, nil
 			}
 		}
 	}
-	return c.pool.acquire(c.now(), c.limit())
+	return c.pool.acquire(c.now(), c.limit(), adm)
 }
 
 // bindServedConversation records the credential that actually received a slot.
@@ -146,11 +162,11 @@ func (c *Client) ApplyLive(s core.LiveSettings) {
 
 // acquireByID reserves one in-flight slot on a specific credential when it is
 // selectable right now.  It applies the same admission policy as acquire().
-func (p *pool) acquireByID(id string, now time.Time, limit int) (accountRecord, error) {
+func (p *pool) acquireByID(id string, now time.Time, limit int, adm admission) (accountRecord, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	a := p.lookupLocked(strings.TrimSpace(id))
-	if a == nil || !p.selectableLocked(a, now, limit) {
+	if a == nil || !p.selectableLocked(a, now, limit, adm) {
 		return accountRecord{}, core.ErrBusy
 	}
 	a.inFlight++

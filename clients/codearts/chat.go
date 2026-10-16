@@ -63,6 +63,10 @@ func (c *Client) openStream(ctx context.Context, req *core.ChatRequest, release 
 	if attempts < 1 {
 		attempts = 1
 	}
+	// The gateway marks an attempt for a zero-multiplier model.  That flag is
+	// what lets a credential whose wallet is spent still serve benefit
+	// models: the picker steps over the wallet park for this request.
+	freeModel := req.FreeModel
 	var (
 		tried     = map[string]bool{}
 		rateLimit = map[string]bool{}
@@ -80,7 +84,7 @@ func (c *Client) openStream(ctx context.Context, req *core.ChatRequest, release 
 			}
 			return nil, err
 		}
-		e := c.pickAccount(req, tried)
+		e := c.pickAccount(req, tried, freeModel)
 		if e == nil {
 			if lastErr != nil {
 				return nil, c.terminal(lastErr, lastAcct)
@@ -183,7 +187,15 @@ func (c *Client) openStream(ctx context.Context, req *core.ChatRequest, release 
 				case kindAuth:
 					c.pool.markFailure(e, kindAuth, msg)
 				case kindQuota:
-					c.pool.markFailure(e, kindQuota, msg)
+					if freeModel {
+						// A free model spends no credit, so a refusal of one
+						// says nothing about the wallet: remember the pair
+						// and leave the credential serving its other free
+						// models.  A paid refusal still parks the account.
+						c.pool.ParkFreeModel(e, req.Model, c.cfg.quotaCooldown())
+					} else {
+						c.pool.markFailure(e, kindQuota, msg)
+					}
 					rateLimit[acctID] = true
 				case kindQueue, kindTransient, kindNetwork:
 					c.pool.markFailure(e, kind, msg)
@@ -200,7 +212,7 @@ func (c *Client) openStream(ctx context.Context, req *core.ChatRequest, release 
 			}
 		}
 
-		c.pool.markUsed(e)
+		c.pool.markUsedFor(e, freeModel)
 		return newStream(ctx, resp.Body, c.cfg.firstTokenWait(), c.cfg.chunkWait(), release), nil
 	}
 

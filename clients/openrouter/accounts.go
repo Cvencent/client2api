@@ -173,7 +173,7 @@ func (c *Client) TestAccount(ctx context.Context, id string) (res core.TestResul
 	probeCtx, cancel := context.WithTimeout(ctxOrBackground(ctx), c.cfg.modelsTimeout())
 	defer cancel()
 
-	stream, err := c.openChatProbe(probeCtx, rec, body)
+	stream, err := c.openChatProbe(probeCtx, rec, body, c.admissionFor(model))
 	if err != nil {
 		res.Error = truncate(core.Redact(err.Error()), 300)
 		return res, nil
@@ -225,10 +225,15 @@ func (c *Client) RefreshAccount(ctx context.Context, id string) ([]core.RefreshR
 			res.Error = truncate(core.Redact(err.Error()), 300)
 		case status != http.StatusOK:
 			res.Error = errorTextOf(body)
-			c.noteFailure(rec.ID, classifyFailure(status, 0, res.Error), res.Error)
+			c.noteFailure(rec.ID, classifyFailure(status, 0, res.Error), res.Error, admission{})
 		default:
 			res.OK = true
-			c.noteSuccess(rec)
+			// A manual refresh is the operator's override: the vendor just
+			// answered, so every park -- wallet, free-tier cap, one model --
+			// is lifted and the pool starts from a clean slate.
+			c.pool.clearParks(rec.ID)
+			c.pool.touchLastUsed(rec.ID, c.now())
+			c.persistState()
 		}
 		out = append(out, res)
 	}
@@ -248,8 +253,8 @@ func (c *Client) panelRecord(id string) (core.AccountRecord, bool) {
 
 // openChatProbe is openChat for an explicit credential.  It does NOT take an
 // in-flight slot: a panel probe is a diagnostic, not a served request.
-func (c *Client) openChatProbe(ctx context.Context, rec accountRecord, body []byte) (core.Stream, error) {
-	return c.doChat(ctx, rec, body, false)
+func (c *Client) openChatProbe(ctx context.Context, rec accountRecord, body []byte, adm admission) (core.Stream, error) {
+	return c.doChat(ctx, rec, body, false, adm)
 }
 
 func ctxOrBackground(ctx context.Context) context.Context {

@@ -18,7 +18,8 @@ import (
 
 func (s *source) AccountFields(context.Context) []core.FieldSpec {
 	return []core.FieldSpec{
-		{Key: "api_key", Label: "API Key", Type: "password", Required: true},
+		{Key: "api_key", Label: "API Key / App Key", Type: "password", Required: true, Help: "上游的密钥。用 Basic 应用认证的上游（例如华为 APIG / AgentArts 模型网关）这里填 app key。"},
+		{Key: "app_secret", Label: "App Secret（Basic 认证）", Type: "password", Advanced: true, Help: "上游用 Basic 应用认证时填这里；填了以后请求会带 Authorization: Basic base64(app_key:app_secret)。留空则继续用 Bearer。"},
 		{Key: "label", Label: "备注", Type: "text"},
 		{Key: "models", Label: "模型列表", Type: "textarea", Advanced: true},
 		{Key: "balance_access_token", Label: "余额查询 Access Token", Type: "password", Advanced: true, Help: "部分 New API 控制台需要 Access Token 才能读取余额；聊天 API Key 能直接读时留空。"},
@@ -37,10 +38,23 @@ func (s *source) Accounts(context.Context) ([]core.AccountRecord, error) {
 	return out, nil
 }
 func (s *source) AddAccount(ctx context.Context, spec core.AccountSpec) (core.AccountRecord, error) {
+	return s.addAccount(ctx, spec, "")
+}
+
+// addAccount is the one write path for panel-owned credentials.  baseURL is
+// normally empty, which means "use this platform's configured root"; an
+// OfficeAce account passes the model gateway recorded in its own login so
+// accounts minted on different gateways can coexist in one pool.
+func (s *source) addAccount(ctx context.Context, spec core.AccountSpec, baseURL string) (core.AccountRecord, error) {
 	key := strings.TrimSpace(spec.Fields["api_key"])
 	if key == "" || strings.ContainsAny(key, " \r\n\t") {
 		return core.AccountRecord{}, fmt.Errorf("api_key must be a non-empty key without whitespace")
 	}
+	appSecret := strings.TrimSpace(spec.Fields["app_secret"])
+	if strings.ContainsAny(appSecret, " \r\n\t") {
+		return core.AccountRecord{}, fmt.Errorf("app_secret must not contain whitespace")
+	}
+	requestedBase := strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rows := append([]storedProvider(nil), s.rows...)
@@ -63,11 +77,16 @@ func (s *source) AddAccount(ctx context.Context, spec core.AccountSpec) (core.Ac
 			id = "key-" + hex.EncodeToString(b[:])
 		}
 	}
+	rowBase := requestedBase
+	if rowBase == "" {
+		rowBase = strings.TrimRight(s.cfg.BaseURL, "/")
+	}
 	p := storedProvider{
 		ID:                 id,
 		APIKey:             key,
+		AppSecret:          appSecret,
 		Label:              firstNonEmpty(spec.Label, spec.Fields["label"]),
-		BaseURL:            strings.TrimRight(s.cfg.BaseURL, "/"),
+		BaseURL:            rowBase,
 		Models:             splitModels(spec.Fields["models"]),
 		BalanceAccessToken: strings.TrimSpace(spec.Fields["balance_access_token"]),
 		BalanceUserID:      strings.TrimSpace(spec.Fields["balance_user_id"]),
@@ -78,6 +97,12 @@ func (s *source) AddAccount(ctx context.Context, spec core.AccountSpec) (core.Ac
 	found := false
 	for i, old := range rows {
 		if old.ID == id {
+			// An edit made in the panel carries no gateway override.  Keep the
+			// account's existing OfficeAce gateway in that case; only an
+			// explicit login/import writes a new one.
+			if requestedBase == "" && strings.TrimSpace(old.BaseURL) != "" {
+				p.BaseURL = old.BaseURL
+			}
 			if old.APIKey == key && spec.Fields["models"] == "" {
 				p.Models = old.Models
 			}
@@ -89,6 +114,11 @@ func (s *source) AddAccount(ctx context.Context, spec core.AccountSpec) (core.Ac
 			}
 			if p.BalanceUserID == "" {
 				p.BalanceUserID = old.BalanceUserID
+			}
+			// An edit that leaves app_secret blank keeps the stored half of
+			// the Basic pair; removing the account is how it is cleared.
+			if p.AppSecret == "" {
+				p.AppSecret = old.AppSecret
 			}
 			rows[i] = p
 			found = true
@@ -177,7 +207,7 @@ func (s *source) TestAccount(ctx context.Context, id string) (core.TestResult, e
 		return core.TestResult{AccountID: id, Error: "scan this platform's models first"}, nil
 	}
 	// probeProvider chooses the first explicit model, never a vendor default.
-	res := transport.probeProvider(ctx, prov, providerRecord{ID: id, APIKey: p.APIKey, BaseURL: prov.BaseURL})
+	res := transport.probeProvider(ctx, prov, providerRecord{ID: id, APIKey: p.APIKey, AppSecret: p.AppSecret, BaseURL: prov.BaseURL})
 	if res.OK {
 		s.mu.Lock()
 		if s.active && s.generation == generation {
@@ -237,7 +267,7 @@ func (s *source) scan(ctx context.Context, p storedProvider, transport *Client, 
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if strings.TrimRight(s.cfg.BaseURL, "/") != prov.base() {
+	if s.accountBaseLocked(p) != prov.base() {
 		return fmt.Errorf("source URL changed during model scan; scan again")
 	}
 	if !s.active || s.generation != generation {
@@ -294,7 +324,15 @@ func (s *source) RefreshAccount(ctx context.Context, id string) ([]core.RefreshR
 			for i := range jobs {
 				p := selected[i]
 				prov := storedToConfig(p)
-				prov.BaseURL = cfg.BaseURL
+				// OfficeAce stores the model gateway that belongs to each
+				// Huawei login. An ordinary relay still follows the
+				// platform-level URL after a config edit, but an OfficeAce
+				// account must keep its own root.
+				if officeAceEndpoint(s.name, cfg.BaseURL) && strings.TrimSpace(p.BaseURL) != "" {
+					prov.BaseURL = strings.TrimRight(p.BaseURL, "/")
+				} else {
+					prov.BaseURL = cfg.BaseURL
+				}
 				err := s.scan(ctx, p, transport, prov, generation)
 				res := core.RefreshResult{AccountID: p.ID, OK: err == nil}
 				if err != nil {

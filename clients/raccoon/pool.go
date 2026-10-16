@@ -102,6 +102,11 @@ type entry struct {
 	until time.Time
 	note  string
 	fails int
+
+	// freeCool remembers a (credential, free model) pair the vendor refused
+	// on credit grounds.  Runtime-only on purpose: it is a fact about one
+	// model, not about the credential's health.
+	freeCool map[string]time.Time
 }
 
 // healthRecord is one line of state.json. It deliberately carries no
@@ -385,9 +390,43 @@ func (p *pool) findLocked(id string) *entry {
 }
 
 // usableLocked is the single source of truth for "could this account serve a
-// request right now". It also publishes the matching state label, so
+// paid request right now". It also publishes the matching state label, so
 // ready(), pick() and snapshot() can never disagree about an account.
 func (p *pool) usableLocked(e *entry, now time.Time) bool {
+	return p.usableLockedFor(e, now, false, "")
+}
+
+// freeCooledLocked reports whether the vendor refused this exact
+// (credential, model) pair for a free-model request.  A lapsed window is
+// dropped on sight.
+func (e *entry) freeCooledLocked(model string, now time.Time) bool {
+	if e == nil || len(e.freeCool) == 0 {
+		return false
+	}
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return false
+	}
+	until, ok := e.freeCool[model]
+	if !ok {
+		return false
+	}
+	if until.After(now) {
+		return true
+	}
+	delete(e.freeCool, model)
+	return false
+}
+
+// usableLockedFor is usableLocked for a request that may be for a free model.
+//
+// A model whose multiplier the caller read as zero spends no credit, so a park
+// that only reflects an empty wallet -- the vendor's quota verdict -- is
+// stepped over for it.  Everything else still applies: a dead session, risk
+// control, a rate limit, and a per-pair park the vendor issued for this very
+// model.  The wallet park is bypassed, not retired: the account keeps being
+// reported as 已用尽 for the models that would charge it.
+func (p *pool) usableLockedFor(e *entry, now time.Time, freeModel bool, model string) bool {
 	if e.acct.Disabled {
 		e.state = stateInvalid
 		if e.note == "" {
@@ -401,9 +440,21 @@ func (p *pool) usableLocked(e *entry, now time.Time) bool {
 		return false
 	}
 	if !e.until.IsZero() && e.until.After(now) {
-		if e.state == "" || e.state == stateReady {
-			e.state = stateCooling
+		walletPark := e.state == stateExhausted
+		if !(freeModel && walletPark) {
+			if e.state == "" || e.state == stateReady {
+				e.state = stateCooling
+			}
+			return false
 		}
+		if e.freeCooledLocked(model, now) {
+			return false
+		}
+		// The wallet is still empty.  The park stands for the paid models.
+		e.state = stateExhausted
+		return true
+	}
+	if freeModel && e.freeCooledLocked(model, now) {
 		return false
 	}
 	if !e.until.IsZero() && !e.until.After(now) {
@@ -444,9 +495,23 @@ func (p *pool) ready() bool {
 
 // pick returns the least-recently-used usable account that is not in skip.
 func (p *pool) pick(skip map[string]bool) *entry {
+	return p.pickFor(skip, false, "")
+}
+
+// pickFor is pick() for a request that may be for a free model.  The model id
+// is only consulted for a free request, where it can carry a per-pair park.
+func (p *pool) pickFor(skip map[string]bool, freeModel bool, model string) *entry {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	for _, e := range core.LowestPriorityTier("raccoon", p.usableLockedList(), func(e *entry) string { return e.acct.id() }) {
+	now := p.now()
+	var usable []*entry
+	for _, e := range p.entries {
+		if p.usableLockedFor(e, now, freeModel, model) {
+			usable = append(usable, e)
+		}
+	}
+	sortEntriesByLastUsed(usable)
+	for _, e := range core.LowestPriorityTier("raccoon", usable, func(e *entry) string { return e.acct.id() }) {
 		if skip != nil && skip[e.acct.id()] {
 			continue
 		}
@@ -541,6 +606,41 @@ func (p *pool) summary() string {
 	return strings.Join(parts, ", ")
 }
 
+// freeModelCreditReason labels a per-pair park in logs and tests.
+const freeModelCreditReason = "free model refused: credit"
+
+// ParkFreeModel remembers that the vendor refused one free model for one
+// credential on credit grounds.  The account keeps serving its other free
+// models; only this (credential, model) pair is withheld, for the window the
+// caller passes -- the configured quota cooldown, or a day when none is set.
+//
+// The park is runtime-only.  It is a fact about one model, not the
+// credential's health, and re-learning it costs one refused request.
+func (p *pool) ParkFreeModel(e *entry, model string, within time.Duration) {
+	if e == nil {
+		return
+	}
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return
+	}
+	if within <= 0 {
+		within = p.cd.quota
+	}
+	if within <= 0 {
+		within = 24 * time.Hour
+	}
+	until := p.now().Add(within)
+	p.mu.Lock()
+	if e.freeCool == nil {
+		e.freeCool = make(map[string]time.Time)
+	}
+	if until.After(e.freeCool[model]) {
+		e.freeCool[model] = until
+	}
+	p.mu.Unlock()
+}
+
 func (e *entry) free() {
 	e.until = time.Time{}
 	e.state = stateReady
@@ -554,9 +654,21 @@ func (e *entry) park(until time.Time, state string) {
 }
 
 func (p *pool) markUsed(e *entry) {
+	p.markUsedFor(e, false)
+}
+
+// markUsedFor records a successful use.  A free success is evidence about the
+// model, not about the wallet, so it does not lift a credit park: the account
+// keeps being reported as 已用尽 for the models that would charge it.
+func (p *pool) markUsedFor(e *entry, freeModel bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	e.acct.LastUsed = p.now().UnixMilli()
+	if freeModel && e.state == stateExhausted && e.until.After(p.now()) {
+		e.fails = 0
+		p.flushStateLocked(false)
+		return
+	}
 	e.free()
 	p.flushStateLocked(false)
 }

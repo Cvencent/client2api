@@ -25,4 +25,10 @@ func TestConfigExampleParses(t *testing.T) {
 	if len(cfg.Accounts) != 1 {
 		t.Fatalf("accounts = %d, want 1", len(cfg.Accounts))
 	}
+	if cfg.SMSKeyword != defaultSMSKeyword {
+		t.Errorf("sms_keyword = %q, want %q", cfg.SMSKeyword, defaultSMSKeyword)
+	}
+	if got := cfg.autoLoginTimeout(); got != defaultAutoLoginTimeout {
+		t.Errorf("auto_login_timeout_seconds = %v, want %v", got, defaultAutoLoginTimeout)
+	}
 }

@@ -46,12 +46,12 @@ func TestQwenworkBoundConversationPicksItsAccount(t *testing.T) {
 
 	// Control: with no conversation key the pool's own pick takes the first
 	// configured account, which is the one the binding below must beat.
-	if e := c.pickAccount(nil, "", "pro"); e == nil || e.acct.id() != "uid:1" {
+	if e := c.pickAccount(nil, "", "pro", false); e == nil || e.acct.id() != "uid:1" {
 		t.Fatalf("unbound pick = %v, want uid:1", e)
 	}
 
 	c.BindConversation("conv-1", "uid:2")
-	e := c.pickAccount(nil, "conv-1", "pro")
+	e := c.pickAccount(nil, "conv-1", "pro", false)
 	if e == nil || e.acct.id() != "uid:2" {
 		t.Fatalf("bound pick = %v, want the bound uid:2", e)
 	}
@@ -61,7 +61,7 @@ func TestQwenworkBoundConversationPicksItsAccount(t *testing.T) {
 
 	// A skip entry means the account already failed in this request, so the
 	// binding must not be resolved back in.
-	if e := c.pickAccount(map[string]bool{"uid:2": true}, "conv-1", "pro"); e == nil || e.acct.id() != "uid:1" {
+	if e := c.pickAccount(map[string]bool{"uid:2": true}, "conv-1", "pro", false); e == nil || e.acct.id() != "uid:1" {
 		t.Errorf("pick with the bound account skipped = %v, want the fall-through uid:1", e)
 	}
 }
@@ -84,7 +84,7 @@ func TestQwenworkUnusableBindingIsDroppedAndThePickerFallsThrough(t *testing.T) 
 	if got, ok := c.ConversationAccount("conv-cool", "pro"); ok {
 		t.Errorf("a parked binding resolved as %q; it must be reported absent", got)
 	}
-	picked := c.pickAccount(nil, "conv-cool", "pro")
+	picked := c.pickAccount(nil, "conv-cool", "pro", false)
 	if picked == nil || picked.acct.id() != "uid:2" {
 		t.Fatalf("pick after a parked binding = %v, want the fall-through uid:2", picked)
 	}
@@ -110,7 +110,7 @@ func TestQwenworkDisabledBindingIsDropped(t *testing.T) {
 	if _, ok := c.ConversationAccount("conv-off", "pro"); ok {
 		t.Error("a disabled account must not resolve as a binding")
 	}
-	if picked := c.pickAccount(nil, "conv-off", "pro"); picked == nil || picked.acct.id() != "uid:2" {
+	if picked := c.pickAccount(nil, "conv-off", "pro", false); picked == nil || picked.acct.id() != "uid:2" {
 		t.Errorf("pick = %v, want uid:2", picked)
 	}
 }
@@ -149,7 +149,7 @@ func TestQwenworkUnbindForgetsTheBinding(t *testing.T) {
 	if _, ok := c.ConversationAccount("conv-x", "pro"); ok {
 		t.Error("the binding survived UnbindConversation")
 	}
-	if picked := c.pickAccount(nil, "conv-x", "pro"); picked == nil || picked.acct.id() != "uid:1" {
+	if picked := c.pickAccount(nil, "conv-x", "pro", false); picked == nil || picked.acct.id() != "uid:1" {
 		t.Errorf("pick = %v, want the LRU uid:1", picked)
 	}
 }

@@ -179,6 +179,12 @@ func (p *panel) modelsFor(ctx context.Context, c core.Client, refresh bool) clie
 		if extra == nil {
 			extra = map[string]any{}
 		}
+		// The panel's 免费 chip follows the same rule the router uses, so a
+		// model the vendor labels free by name or group reads as free here
+		// too, not only when the module could read its price.
+		if core.ModelIsFree(m) {
+			extra["free"] = true
+		}
 		owned := m.OwnedBy
 		if owned == "" {
 			owned = c.Name()

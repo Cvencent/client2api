@@ -402,7 +402,7 @@ func TestConfigApplyHeaders(t *testing.T) {
 
 func TestPoolAcquireWithoutAnyCredential(t *testing.T) {
 	c := newTestClient(t, "", nil)
-	_, err := c.pool.acquire(c.now(), c.limit())
+	_, err := c.pool.acquire(c.now(), c.limit(), admission{})
 	if !errors.Is(err, core.ErrNotConfigured) {
 		t.Fatalf("err = %v, want ErrNotConfigured (the gateway answers 503)", err)
 	}
@@ -413,7 +413,7 @@ func TestPoolAcquireWithoutAnyCredential(t *testing.T) {
 
 func TestPoolAcquireWhenEveryCredentialIsDisabled(t *testing.T) {
 	c := newTestClient(t, fmt.Sprintf(`{"accounts":[{"api_key":%q,"disabled":true}]}`, testKey), nil)
-	_, err := c.pool.acquire(c.now(), c.limit())
+	_, err := c.pool.acquire(c.now(), c.limit(), admission{})
 	if !errors.Is(err, core.ErrNotConfigured) {
 		t.Fatalf("err = %v, want ErrNotConfigured", err)
 	}
@@ -426,14 +426,14 @@ func TestPoolAcquireReportsBusyWhileCoolingDown(t *testing.T) {
 	c := newTestClient(t, cfgWithKey(testKey), nil)
 	id := accountIDFor(testKey)
 	c.pool.setCooldown(id, c.now().Add(time.Minute), "429 rate limited")
-	_, err := c.pool.acquire(c.now(), c.limit())
+	_, err := c.pool.acquire(c.now(), c.limit(), admission{})
 	if !errors.Is(err, core.ErrBusy) {
 		t.Fatalf("err = %v, want ErrBusy (the gateway answers 429)", err)
 	}
 
 	// The same account is selectable again the moment the park expires.
 	later := c.now().Add(2 * time.Minute)
-	if _, err := c.pool.acquire(later, c.limit()); err != nil {
+	if _, err := c.pool.acquire(later, c.limit(), admission{}); err != nil {
 		t.Fatalf("after the cooldown: %v", err)
 	}
 }
@@ -443,33 +443,33 @@ func TestPoolAcquireHonoursTheInFlightCeiling(t *testing.T) {
 	if c.limit() != 1 {
 		t.Fatalf("limit = %d, want 1", c.limit())
 	}
-	rec, err := c.pool.acquire(c.now(), c.limit())
+	rec, err := c.pool.acquire(c.now(), c.limit(), admission{})
 	if err != nil {
 		t.Fatalf("first acquire: %v", err)
 	}
-	if _, err := c.pool.acquire(c.now(), c.limit()); !errors.Is(err, core.ErrBusy) {
+	if _, err := c.pool.acquire(c.now(), c.limit(), admission{}); !errors.Is(err, core.ErrBusy) {
 		t.Fatalf("second acquire = %v, want ErrBusy", err)
 	}
 	c.pool.release(rec.ID)
-	if _, err := c.pool.acquire(c.now(), c.limit()); err != nil {
+	if _, err := c.pool.acquire(c.now(), c.limit(), admission{}); err != nil {
 		t.Fatalf("after release: %v", err)
 	}
 }
 
 func TestPoolAcquireRotatesLeastRecentlyUsed(t *testing.T) {
 	c := newTestClient(t, twoKeysCfg(), nil)
-	first, err := c.pool.acquire(c.now(), c.limit())
+	first, err := c.pool.acquire(c.now(), c.limit(), admission{})
 	if err != nil {
 		t.Fatalf("first: %v", err)
 	}
-	second, err := c.pool.acquire(c.now(), c.limit())
+	second, err := c.pool.acquire(c.now(), c.limit(), admission{})
 	if err != nil {
 		t.Fatalf("second: %v", err)
 	}
 	if first.ID == second.ID {
 		t.Fatalf("both requests went to %s; rotation is not happening", first.ID)
 	}
-	third, err := c.pool.acquire(c.now(), c.limit())
+	third, err := c.pool.acquire(c.now(), c.limit(), admission{})
 	if err != nil {
 		t.Fatalf("third: %v", err)
 	}
@@ -503,7 +503,7 @@ func TestPoolNoteErrorParksAtTheThreshold(t *testing.T) {
 	if got := c.pool.stateOf(&parked, c.now()); got != "cooling" {
 		t.Fatalf("after %d failures state = %q, want cooling", softErrorThreshold, got)
 	}
-	if _, err := c.pool.acquire(c.now(), c.limit()); !errors.Is(err, core.ErrBusy) {
+	if _, err := c.pool.acquire(c.now(), c.limit(), admission{}); !errors.Is(err, core.ErrBusy) {
 		t.Fatalf("a parked credential must not be selectable, got %v", err)
 	}
 }
@@ -950,7 +950,7 @@ func TestHealthCountsEveryState(t *testing.T) {
 	// A pool whose only healthy credential is at its ceiling is NOT servable:
 	// that is the whole reason Health exists next to Status.
 	c2 := newTestClient(t, fmt.Sprintf(`{"api_key":%q,"max_in_flight":1}`, testKey), nil)
-	if _, err := c2.pool.acquire(c2.now(), c2.limit()); err != nil {
+	if _, err := c2.pool.acquire(c2.now(), c2.limit(), admission{}); err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
 	if h2 := c2.Health(); h2.Servable {
@@ -970,13 +970,13 @@ func TestPoolStatsReportInFlight(t *testing.T) {
 	if got := c.PoolStats(); got.InFlight != 0 || got.InFlightFull != 0 {
 		t.Fatalf("PoolStats = %+v", got)
 	}
-	if _, err := c.pool.acquire(c.now(), c.limit()); err != nil {
+	if _, err := c.pool.acquire(c.now(), c.limit(), admission{}); err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
 	if got := c.PoolStats(); got.InFlight != 1 || got.InFlightFull != 0 {
 		t.Fatalf("PoolStats = %+v", got)
 	}
-	if _, err := c.pool.acquire(c.now(), c.limit()); err != nil {
+	if _, err := c.pool.acquire(c.now(), c.limit(), admission{}); err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
 	if got := c.PoolStats(); got.InFlight != 2 || got.InFlightFull != 1 {

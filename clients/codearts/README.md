@@ -174,7 +174,7 @@ all override these. `chat_url` is the **full** URL, not a base.
 
 `sign.go` implements Huawei's scheme by hand. The canonical request is:
 
-```
+``
 METHOD
 <path with a forced trailing slash>
 <query string, without the leading '?'>
@@ -182,20 +182,20 @@ METHOD
 <empty line>
 <semicolon-joined signed header names>
 <sha256 hex of the body>
-```
+``
 
 then
 
-```
+``
 stringToSign = "SDK-HMAC-SHA256\n" + xSdkDate + "\n" + sha256Hex(canonicalRequest)
 signature    = HMAC-SHA256(secretAccessKey, stringToSign)      // hex
-```
+``
 
 and the credential rides in
 
-```
+``
 Authorization: SDK-HMAC-SHA256 Access=<ak>,SignedHeaders=<h;h;…>,Signature=<hex>
-```
+``
 
 Base headers, always present and always signed: `host`, `x-sdk-date`,
 `x-sdk-content-sha256`, and `x-security-token` when the credential has one.
@@ -243,7 +243,7 @@ future `DPoP` confirmation.
 
 The body is:
 
-```json
+``json
 {
   "model": "…",
   "messages": [ … ],
@@ -254,7 +254,7 @@ The body is:
   "tool_stream": true,
   "max_tokens": 65536
 }
-```
+``
 
 with `"thinking": {"type": "disabled"}` added when `reasoning_effort` is `off`,
 and `tools` added when the caller supplied any.
@@ -341,6 +341,20 @@ still gets the free tier rather than silently paying.
 model resolve never blocks on the network.
 
 ---
+
+## Free-quota models and the wallet
+
+The models the vendor's free-quota list names carry `extra.free`, so the
+router marks an attempt for them and the account guard steps aside for that
+request: a credential parked because its wallet is spent -- the `quota`
+verdict, or the operator's reserve guard -- still serves `maas_type: benefit`
+models, because they spend no credit.  Everything else keeps applying: a dead
+session, a queue or rate limit, an invalid credential, and a per-pair park.
+
+A benefit model the vendor refuses on credit grounds parks the
+(credential, model) pair alone, until the quota window lapses; the credential
+keeps serving its other benefit models.  A free success records the success
+without lifting the wallet park, which stays true for the paid models.
 
 ## Daily check-in and balance
 
@@ -447,12 +461,12 @@ advertised that the vendor does not have.
 
 ## Testing
 
-```powershell
+``powershell
 $env:Path = "$env:LOCALAPPDATA\Programs\go1.27.1\go\bin;" + $env:Path
 $env:GOPROXY='https://goproxy.cn,direct'; $env:GOSUMDB='sum.golang.google.cn'
 $env:CGO_ENABLED='0'
 go test -count=1 -timeout 20m ./clients/codearts/
-```
+``
 
 Every test is fixture-driven — `httptest` servers and `http.RoundTripper` stubs,
 never the real network. The suite covers config parsing and defaults, credential

@@ -332,11 +332,11 @@ func TestWorkbuddyConversationSticksToItsAccount(t *testing.T) {
 		t.Fatalf("conversation key = %q", key)
 	}
 
-	first, ok := c.pickAccount(map[string]bool{}, key, routeModel("model-x"))
+	first, ok := c.pickAccount(map[string]bool{}, key, routeModel("model-x"), false)
 	if !ok {
 		t.Fatal("first pick failed")
 	}
-	second, ok := c.pickAccount(map[string]bool{}, key, routeModel("model-x"))
+	second, ok := c.pickAccount(map[string]bool{}, key, routeModel("model-x"), false)
 	if !ok {
 		t.Fatal("second pick failed")
 	}
@@ -345,7 +345,7 @@ func TestWorkbuddyConversationSticksToItsAccount(t *testing.T) {
 	}
 	// A different conversation still gets its own account: stickiness must not
 	// collapse the whole pool onto one credential.
-	other, ok := c.pickAccount(map[string]bool{}, "conv-2", routeModel("model-x"))
+	other, ok := c.pickAccount(map[string]bool{}, "conv-2", routeModel("model-x"), false)
 	if !ok {
 		t.Fatal("second conversation pick failed")
 	}
@@ -365,7 +365,7 @@ func TestWorkbuddyStickyConversationYieldsToAModelPark(t *testing.T) {
 	c := &Client{pool: p, affinity: core.NewAffinity(0)}
 	key := "conv-1"
 
-	first, ok := c.pickAccount(map[string]bool{}, key, routeModel("model-x"))
+	first, ok := c.pickAccount(map[string]bool{}, key, routeModel("model-x"), false)
 	if !ok {
 		t.Fatal("first pick failed")
 	}
@@ -378,7 +378,7 @@ func TestWorkbuddyStickyConversationYieldsToAModelPark(t *testing.T) {
 	if id, ok := c.ConversationAccount(key, "model-x"); ok {
 		t.Fatalf("stickiness served the parked account %s", id)
 	}
-	got, ok := c.pickAccount(map[string]bool{}, key, routeModel("model-x"))
+	got, ok := c.pickAccount(map[string]bool{}, key, routeModel("model-x"), false)
 	if !ok {
 		t.Fatal("pick after a park failed")
 	}

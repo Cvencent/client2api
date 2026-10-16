@@ -490,7 +490,10 @@ func (s *server) handleModels(w http.ResponseWriter, r *http.Request) {
 			Object:  "model",
 			Created: created,
 			OwnedBy: "group",
-			Extra:   map[string]any{"members": members},
+			Extra: map[string]any{
+				"members":           members,
+				"supported_efforts": []string{"low", "medium", "high", "xhigh", "max"},
+			},
 		})
 	}
 
@@ -680,6 +683,9 @@ func (s *server) serveRemainingCandidates(w http.ResponseWriter, r *http.Request
 		firstCandidate++
 		attemptReq := cloneChatRequest(baseReq)
 		attemptReq.Model = upstreamModel
+		// Each candidate carries its own free/paid verdict: an id served for
+		// free by one platform may be a paid model on the next.
+		attemptReq.FreeModel = candidate.Free
 		sentEffort := s.applyEffortPolicy(attemptCtx, client, upstreamModel, attemptReq, rec.ReasoningEffort)
 		rec.SentReasoningEffort = ""
 		if sentEffort != "" && sentEffort != rec.ReasoningEffort {
@@ -704,7 +710,7 @@ func (s *server) serveRemainingCandidates(w http.ResponseWriter, r *http.Request
 		hintCtx := s.hintContextFunc(attemptCtx, client, upstreamModel, attemptReq.Messages)
 		var servedBy string
 		attemptReq.ServedBy = &servedBy
-		stream, err := s.openStream(attemptCtx, client, attemptReq)
+		stream, err := s.openStreamRecorded(attemptCtx, client, attemptReq, rec)
 		if err == nil {
 			// Some vendors answer an exhausted account with HTTP 200 and put the
 			// refusal inside the stream.  Nothing has been written to the caller
@@ -969,9 +975,17 @@ func (s *server) publishPlatformAlert(client, model, account string, ev core.Hea
 //   - an unclassified error is never retried, because the gateway cannot know
 //     whether a second account would help.
 func (s *server) openStream(ctx context.Context, client core.Client, req *core.ChatRequest) (core.Stream, error) {
+	return s.openStreamRecorded(ctx, client, req, nil)
+}
+
+// openStreamRecorded is openStream with the caller's usage row attached, so a
+// trim the gateway performs after a measured refusal is recorded on the row
+// exactly like a trim the proactive guard performed.
+func (s *server) openStreamRecorded(ctx context.Context, client core.Client, req *core.ChatRequest, rec *UsageRecord) (core.Stream, error) {
 	guard := s.opts.Guard
 	maxRotate := s.maxRotate()
 	degraded := false
+	contextRetried := false
 	var lastErr error
 
 	for attempt := 0; ; attempt++ {
@@ -1026,6 +1040,36 @@ func (s *server) openStream(ctx context.Context, client core.Client, req *core.C
 			// over-packing.  The request itself still fails this time; retrying it
 			// unchanged would just fail again.
 			s.learnContextWindowFromFailure(ctx, client, req.Model, err)
+			// The refusal also carries the vendor's own measurement of this
+			// exact request.  When that measurement says the request did not fit
+			// while the gateway's estimate said it would, the estimate is the
+			// thing that was wrong -- and the same proportion tells the trim how
+			// much of the history to drop.  Retrying once with that trim turns a
+			// dead end the caller can only re-send into a served answer.
+			if !contextRetried {
+				sizes := parseRefusalSizes(err.Error())
+				maxOutput := 0
+				if req.MaxTokens != nil {
+					maxOutput = *req.MaxTokens
+				}
+				if budget := retryBudgetForMeasuredRefusal(req, sizes.Observed, sizes.Limit, maxOutput); budget > 0 {
+					if report, trimmed := applyContextBudget(req, budget); trimmed {
+						contextRetried = true
+						if rec != nil {
+							rec.Trimmed = true
+							rec.TrimDropped = report.DroppedMessages
+							rec.TrimmedFromTokens = report.BeforeTokens
+							rec.TrimmedToTokens = report.AfterTokens
+							rec.ContextWindow = sizes.Limit
+						}
+						s.opts.Logger.Printf(
+							"context: %s/%s refused a prompt the vendor measured at %d tokens against a %d-token window; trimmed %d oldest message(s) and retrying (about %d -> %d)",
+							client.Name(), req.Model, sizes.Observed, sizes.Limit,
+							report.DroppedMessages, report.BeforeTokens, report.AfterTokens)
+						continue
+					}
+				}
+			}
 		}
 
 		// The module has already walked its whole account pool.  Re-running

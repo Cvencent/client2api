@@ -442,22 +442,7 @@ func (c *Client) loginWithSMS(ctx context.Context, phone, smsCode string) (crede
 // successful.  The credential is written through the same pool a pasted key
 // uses, so it survives a restart and shows up in the account table.
 func (c *Client) finishLogin(ctx context.Context, sess *loginSession, cred credential) {
-	if info, err := c.fetchUserInfo(ctx, cred); err == nil {
-		if info.ID != "" {
-			cred.UserID = info.ID
-		}
-		if info.Name != "" {
-			cred.Nickname = info.Name
-		}
-		if info.Phone != "" {
-			cred.Phone = info.Phone
-		}
-		if info.OfficeIdentity != "" {
-			cred.OfficeIdentity = info.OfficeIdentity
-		}
-	}
-	e := c.pool.put(account{credential: cred, Label: cred.displayName(), Origin: originStored})
-	c.grantLoginPointsBestEffort(ctx, e)
+	e := c.storeCredential(ctx, cred)
 	sess.succeed(e.acct.id(), "已登录 "+e.acct.label())
 }
 

@@ -172,6 +172,11 @@ func (s *server) routeAndServeMessages(w http.ResponseWriter, r *http.Request, i
 	attemptCtx := withCatalogueExtra(r.Context(), candidates[0])
 	in.rec.Candidate = 1
 	in.req.Model = upstreamModel
+	// The module owns its account pool, so only the module can decide whether a
+	// parked account may still serve this request.  A model the platform itself
+	// advertises as free is rationed by the vendor's answer, not by a balance,
+	// and the flag is how the pool learns that.
+	in.req.FreeModel = candidates[0].Free
 	maxTokensExplicit := in.req.MaxTokens != nil
 	// A caller that left the output budget to us gets the number the vendor
 	// publishes for this model, when the module knows it.  This has to happen
@@ -257,7 +262,7 @@ func (s *server) routeAndServeMessages(w http.ResponseWriter, r *http.Request, i
 	var servedBy string
 	in.req.ServedBy = &servedBy
 
-	stream, err := s.openStream(attemptCtx, client, in.req)
+	stream, err := s.openStreamRecorded(attemptCtx, client, in.req, in.rec)
 	if err != nil {
 		// A failure usually names its own account through core.Failure.  When it
 		// does not, the slot still holds the last credential the module tried,
@@ -356,7 +361,7 @@ func (s *server) routeAndServeMessages(w http.ResponseWriter, r *http.Request, i
 	// silently closes an agent loop; one more attempt is spent on it before the
 	// caller is told the turn is over.  See deadturn.go.
 	stream = wrapDeadTurnRetry(stream, in.req, func() (core.Stream, error) {
-		next, err := s.openStream(attemptCtx, client, in.req)
+		next, err := s.openStreamRecorded(attemptCtx, client, in.req, in.rec)
 		if err != nil {
 			return nil, err
 		}

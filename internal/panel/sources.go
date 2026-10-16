@@ -26,11 +26,16 @@ func (p *panel) handleSource(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err.Error())
 		return
 	}
+	if r.Method == http.MethodDelete {
+		if _, builtin := core.BuiltinSource(id); builtin {
+			writeErr(w, http.StatusBadRequest, "built-in platforms cannot be deleted; edit the explicit sources entry in the config file to disable or override it")
+			return
+		}
+	}
 	sourceEditMu.Lock()
 	defer sourceEditMu.Unlock()
 	var entry any
 	if r.Method == http.MethodPut {
-		var cfg core.SourceConfig
 		var fields map[string]any
 		if !decodeJSON(w, r, &fields) {
 			return
@@ -40,15 +45,14 @@ func (p *panel) handleSource(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, 400, err.Error())
 			return
 		}
-		sources, err := core.ParseSources(raw)
-		if err != nil {
+		if _, err := core.ParseSources(raw); err != nil {
 			writeErr(w, 400, err.Error())
 			return
 		}
-		cfg = sources[id]
-		entry = map[string]any{"label": cfg.Label, "base_url": cfg.BaseURL,
-			"disabled": cfg.Disabled, "max_tokens_field": cfg.MaxTokensField,
-			"balance_protocol": cfg.BalanceProtocol, "balance_quota_per_usd": cfg.BalanceQuotaPerUSD}
+		// Keep the validated request object intact. Rebuilding from SourceConfig
+		// would drop explicit zeros (notably max_in_flight: 0) and any future
+		// optional field before it reaches the config file.
+		entry = fields
 	} else {
 		cfg, err := p.readConfigMap()
 		if err != nil {

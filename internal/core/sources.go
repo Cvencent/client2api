@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 )
 
 func ParseSources(raw []byte) (map[string]SourceConfig, error) {
@@ -34,6 +35,64 @@ type SourceConfig struct {
 	MaxTokensField     string  `json:"max_tokens_field,omitempty"`
 	BalanceProtocol    string  `json:"balance_protocol,omitempty"`
 	BalanceQuotaPerUSD float64 `json:"balance_quota_per_usd,omitempty"`
+
+	// RequestsPerMinute caps every upstream attempt for this source.  Zero
+	// means no per-source RPM ceiling.
+	RequestsPerMinute int `json:"requests_per_minute,omitempty"`
+	// RequestsPerMinutePerAccount applies the same rule to one credential.
+	// When one key is full the source tries the next key; only when every
+	// eligible key is full does it report busy.
+	RequestsPerMinutePerAccount int `json:"requests_per_minute_per_account,omitempty"`
+	// MaxInFlight and MaxInFlightPerAccount feed the gateway's existing
+	// platform brakes.  A pointer keeps "absent" distinct from an explicit
+	// zero, which means no ceiling.
+	MaxInFlight           *int `json:"max_in_flight,omitempty"`
+	MaxInFlightPerAccount *int `json:"max_in_flight_per_account,omitempty"`
+
+	// Cooldown is the shared fallback for every failure type.  The more
+	// specific durations win when they are set, and an explicit "0s" disables
+	// that failure's cooldown.
+	Cooldown          string `json:"cooldown,omitempty"`
+	RateLimitCooldown string `json:"rate_limit_cooldown,omitempty"`
+	QuotaCooldown     string `json:"quota_cooldown,omitempty"`
+	AuthCooldown      string `json:"auth_cooldown,omitempty"`
+	UpstreamCooldown  string `json:"upstream_cooldown,omitempty"`
+}
+
+// CooldownFor resolves one failure's cooldown.  The specific field wins over
+// the shared cooldown, an explicit zero disables the park, and def is used
+// only when neither field is set.  Invalid values are rejected by
+// ValidateSources, so the parse fallback here is only for hand-built configs
+// and tests.
+func (cfg SourceConfig) CooldownFor(kind FailureKind, def time.Duration) time.Duration {
+	raw := cfg.Cooldown
+	switch kind {
+	case FailureRateLimited:
+		if cfg.RateLimitCooldown != "" {
+			raw = cfg.RateLimitCooldown
+		}
+	case FailureQuota:
+		if cfg.QuotaCooldown != "" {
+			raw = cfg.QuotaCooldown
+		}
+	case FailureAuth:
+		if cfg.AuthCooldown != "" {
+			raw = cfg.AuthCooldown
+		}
+	case FailureUpstream:
+		if cfg.UpstreamCooldown != "" {
+			raw = cfg.UpstreamCooldown
+		}
+	}
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return def
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d < 0 {
+		return def
+	}
+	return d
 }
 
 type SourceClient interface {
@@ -52,6 +111,71 @@ func RegisterSourceFactory(factory SourceFactory) {
 		panic("core.RegisterSourceFactory: nil or duplicate factory")
 	}
 	sourceFactory = factory
+}
+
+// --- shipped platforms ------------------------------------------------------
+
+// builtinSources are the routing platforms this binary ships with.  A module
+// declares its own default from init(), and the config loader, the source
+// validator and the panel all read the same table -- so a shipped platform
+// behaves exactly like one the operator wrote into the config file, except
+// that it exists without an entry.
+var builtinSources = map[string]SourceConfig{}
+
+// RegisterBuiltinSource declares one shipped platform.  The operator's config
+// always wins over this definition, including an entry that only disables the
+// platform; a missing entry means "use the shipped default".  A duplicate or
+// malformed registration is a programming error, exactly like Register.
+func RegisterBuiltinSource(id string, cfg SourceConfig) {
+	id = strings.ToLower(strings.TrimSpace(id))
+	if !sourceIDPattern.MatchString(id) {
+		panic("core.RegisterBuiltinSource: invalid platform id " + id)
+	}
+	if strings.TrimSpace(cfg.BaseURL) == "" {
+		panic("core.RegisterBuiltinSource: " + id + " has no base_url")
+	}
+	regMu.Lock()
+	defer regMu.Unlock()
+	if _, dup := builtinSources[id]; dup {
+		panic("core.RegisterBuiltinSource: duplicate platform " + id)
+	}
+	builtinSources[id] = cfg
+}
+
+// BuiltinSourceDefaults copies the shipped platform definitions, keyed by id.
+func BuiltinSourceDefaults() map[string]SourceConfig {
+	regMu.RLock()
+	defer regMu.RUnlock()
+	out := make(map[string]SourceConfig, len(builtinSources))
+	for id, cfg := range builtinSources {
+		out[id] = cfg
+	}
+	return out
+}
+
+// BuiltinSource reports one shipped platform definition.
+func BuiltinSource(id string) (SourceConfig, bool) {
+	regMu.RLock()
+	defer regMu.RUnlock()
+	cfg, ok := builtinSources[strings.ToLower(strings.TrimSpace(id))]
+	return cfg, ok
+}
+
+// WithBuiltinSources returns the effective source table: every shipped
+// platform the operator has not defined, plus the operator's own entries
+// unchanged.  The loader calls it on every read, so a shipped platform needs
+// no config entry while an operator's edit -- including one that only flips
+// "disabled" -- always wins.
+func WithBuiltinSources(cfg map[string]SourceConfig) map[string]SourceConfig {
+	defaults := BuiltinSourceDefaults()
+	out := make(map[string]SourceConfig, len(cfg)+len(defaults))
+	for id, c := range defaults {
+		out[id] = c
+	}
+	for id, c := range cfg {
+		out[id] = c
+	}
+	return out
 }
 
 func ValidateSources(sources map[string]SourceConfig) error {
@@ -89,6 +213,44 @@ func ValidateSources(sources map[string]SourceConfig) error {
 		if math.IsNaN(cfg.BalanceQuotaPerUSD) || math.IsInf(cfg.BalanceQuotaPerUSD, 0) || cfg.BalanceQuotaPerUSD < 0 {
 			return fmt.Errorf("source %q: balance_quota_per_usd must be positive when set", id)
 		}
+		if cfg.RequestsPerMinute < 0 {
+			return fmt.Errorf("source %q: requests_per_minute must be >= 0", id)
+		}
+		if cfg.RequestsPerMinutePerAccount < 0 {
+			return fmt.Errorf("source %q: requests_per_minute_per_account must be >= 0", id)
+		}
+		if cfg.MaxInFlight != nil && *cfg.MaxInFlight < 0 {
+			return fmt.Errorf("source %q: max_in_flight must be >= 0", id)
+		}
+		if cfg.MaxInFlightPerAccount != nil && *cfg.MaxInFlightPerAccount < 0 {
+			return fmt.Errorf("source %q: max_in_flight_per_account must be >= 0", id)
+		}
+		for name, raw := range map[string]string{
+			"cooldown":            cfg.Cooldown,
+			"rate_limit_cooldown": cfg.RateLimitCooldown,
+			"quota_cooldown":      cfg.QuotaCooldown,
+			"auth_cooldown":       cfg.AuthCooldown,
+			"upstream_cooldown":   cfg.UpstreamCooldown,
+		} {
+			if err := validateSourceCooldown(raw); err != nil {
+				return fmt.Errorf("source %q: %s %v", id, name, err)
+			}
+		}
+	}
+	return nil
+}
+
+func validateSourceCooldown(raw string) error {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return fmt.Errorf("must be a duration such as 30s or 5m")
+	}
+	if d < 0 {
+		return fmt.Errorf("must not be negative")
 	}
 	return nil
 }

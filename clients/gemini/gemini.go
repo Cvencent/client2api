@@ -145,14 +145,17 @@ func effortToTier(effort string) string {
 	}
 }
 
-// thinkingBudget maps a tier onto its budget, or -1 for the adaptive tier.
+// thinkingBudget maps a tier onto its budget, or -1 for "omit the budget".  The
+// adaptive tier asks the vendor to decide; an empty tier means the catalogue
+// row carries no level at all (a bare vendor id), so nothing is pinned there
+// either.
 func thinkingBudget(tier string) int {
 	switch tier {
 	case "low":
 		return budgetLow
 	case "high":
 		return budgetHigh
-	case "tiered":
+	case "tiered", "":
 		return budgetTiered
 	default:
 		return budgetMedium

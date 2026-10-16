@@ -38,6 +38,13 @@ import "client2api/internal/core"
 // refused, and it is why the predicate below delegates rather than re-deriving
 // "healthy" here.
 func (p *pool) usableEntry(id string, skip map[string]bool) *entry {
+	return p.usableEntryFor(id, skip, false, "")
+}
+
+// usableEntryFor is usableEntry for a request that may be for a free model.
+// The pair park a free-model refusal leaves behind is consulted there, so a
+// sticky conversation is never handed back the exact model the vendor refused.
+func (p *pool) usableEntryFor(id string, skip map[string]bool, freeModel bool, model string) *entry {
 	if p == nil || id == "" {
 		return nil
 	}
@@ -51,7 +58,7 @@ func (p *pool) usableEntry(id string, skip map[string]bool) *entry {
 		if e.acct.id() != id {
 			continue
 		}
-		if p.availableLocked(e, now) {
+		if p.availableLockedFor(e, now, freeModel, model) {
 			return e
 		}
 		return nil
@@ -75,11 +82,17 @@ func (p *pool) usableEntry(id string, skip map[string]bool) *entry {
 // looser one.  It stays correct if the pool ever grows a per-model cooldown,
 // because the closure is re-evaluated on every Resolve rather than baked in.
 func (c *Client) usableFor(model string) func(accountID string) bool {
+	return c.usableForRequest(model, false)
+}
+
+// usableForRequest is usableFor for a request that may be for a free model.
+// The pair park a free-model refusal leaves behind is consulted there.
+func (c *Client) usableForRequest(model string, freeModel bool) func(accountID string) bool {
 	return func(accountID string) bool {
 		if c == nil {
 			return false
 		}
-		return c.pool.usableEntry(accountID, nil) != nil
+		return c.pool.usableEntryFor(accountID, nil, freeModel, model) != nil
 	}
 }
 
@@ -149,15 +162,15 @@ func conversationKey(req *core.ChatRequest) string {
 // conversationKey may be empty, which means "this request is not
 // conversation-scoped": the call then degenerates exactly into the pool's own
 // pick, with no table traffic at all.
-func (c *Client) pickAccount(skip map[string]bool, conversationKey, model string) *entry {
+func (c *Client) pickAccount(skip map[string]bool, conversationKey, model string, freeModel bool) *entry {
 	if conversationKey != "" {
-		if id, ok := c.affinity.Resolve(conversationKey, c.usableFor(model)); ok {
-			if e := c.pool.usableEntry(id, skip); e != nil {
+		if id, ok := c.affinity.Resolve(conversationKey, c.usableForRequest(model, freeModel)); ok {
+			if e := c.pool.usableEntryFor(id, skip, freeModel, model); e != nil {
 				return e
 			}
 		}
 	}
-	e := c.pool.pick(skip)
+	e := c.pool.pickFor(skip, freeModel, model)
 	if e == nil {
 		return nil
 	}

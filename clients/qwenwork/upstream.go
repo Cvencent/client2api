@@ -444,6 +444,9 @@ func (c *Client) modelList(ctx context.Context, acct account, sess cosySession) 
 		}
 		if m.Credits != "" {
 			extra["credits"] = m.Credits
+			if creditsAreFree(m.Credits) {
+				extra["free"] = true
+			}
 		}
 		if m.Description != "" {
 			extra["description"] = m.Description
@@ -604,8 +607,12 @@ func (c *Client) openChat(ctx context.Context, release context.CancelFunc, req *
 	// was at its per-account in-flight ceiling.
 	busy := false
 
+	// The gateway marks an attempt for a zero-multiplier model.  That flag is
+	// what lets a credential whose wallet is spent still serve free models:
+	// the picker steps over the wallet park for this request.
+	freeModel := req.FreeModel
 	for i := 0; i < attempts; i++ {
-		e := c.pickAccount(skip, conversationKey, modelKey)
+		e := c.pickAccount(skip, conversationKey, modelKey, freeModel)
 		if e == nil {
 			break
 		}
@@ -646,7 +653,7 @@ func (c *Client) openChat(ctx context.Context, release context.CancelFunc, req *
 		issued++
 		resp, err := c.chatStream(ctx, e.acct, sess, bodyStr, modelKey)
 		if err == nil {
-			c.pool.markUsed(e)
+			c.pool.markUsedFor(e, freeModel)
 			c.noteUpstream(true, kindNone, "")
 			// Count the live call for as long as the stream is open, so
 			// PoolStats reports the module's real concurrency.
@@ -682,7 +689,15 @@ func (c *Client) openChat(ctx context.Context, release context.CancelFunc, req *
 			}
 		}
 
-		c.pool.markFailureWith(e, ue.Kind, ue.Message, ue.RetryAfter)
+		if freeModel && ue.Kind == kindQuota {
+			// A free model spends no credit, so a refusal of one says
+			// nothing about the wallet: remember the pair and leave the
+			// credential serving its other free models.  A paid refusal
+			// still parks the account.
+			c.pool.ParkFreeModel(e, modelKey, c.cfg.quotaCooldown())
+		} else {
+			c.pool.markFailureWith(e, ue.Kind, ue.Message, ue.RetryAfter)
+		}
 		skip[e.acct.id()] = true
 		lastErr, lastAcct = ue, e.acct
 		if !retryable(ue.Kind) {

@@ -24,6 +24,9 @@ const (
 	envDeviceID     = "CLIENT2API_AUTOCLAW_DEVICE_ID"
 	envAccountID    = "CLIENT2API_AUTOCLAW_ACCOUNT_ID"
 	envUserData     = "CLIENT2API_AUTOCLAW_USER_DATA_DIR"
+	envSMSToken     = "CLIENT2API_AUTOCLAW_SMS_TOKEN"
+	envSMSKeyword   = "CLIENT2API_AUTOCLAW_SMS_KEYWORD"
+	envSMSBase      = "CLIENT2API_AUTOCLAW_SMS_BASE"
 )
 
 const (
@@ -111,6 +114,40 @@ type config struct {
 	RefreshMargin     durationField `json:"refresh_margin,omitempty"`
 	StoreFlush        durationField `json:"store_flush,omitempty"`
 	LoginTimeout      durationField `json:"login_timeout,omitempty"`
+
+	// SMSToken is the one-time-SMS platform credential (eomsg).  AutoClaw's
+	// login is a phone-code exchange, so the panel can rent a number and read
+	// the code for it.  Empty means the panel reports "not configured" and the
+	// auto-login flow refuses to start; the operator can also paste a token in
+	// the panel, which overrides this per call without a restart.
+	SMSToken string `json:"sms_token,omitempty"`
+	// SMSKeyword is the sender keyword the platform filters on.  Absent means
+	// defaultSMSKeyword (智谱华章).  A wrong keyword reads as "no message has
+	// arrived".
+	SMSKeyword string `json:"sms_keyword,omitempty"`
+	// SMSBase overrides the platform endpoint.  Absent means the built-in
+	// eomsg URL, which is the only provider this module speaks.
+	SMSBase string `json:"sms_base,omitempty"`
+	// SMSProvinces replaces the built-in rotation pool.  An empty list keeps
+	// the built-in 31 provinces; "none" disables the rotation and lets the
+	// platform choose.
+	SMSProvinces []string `json:"sms_provinces,omitempty"`
+	// SMSCardType is the card class the platform hands out.  Absent means
+	// "全部".
+	SMSCardType string `json:"sms_card_type,omitempty"`
+	// AutoLoginTimeoutSeconds bounds one auto-login run end to end.  Absent
+	// means defaultAutoLoginTimeout.
+	AutoLoginTimeoutSeconds *int `json:"auto_login_timeout_seconds,omitempty"`
+	// SMSPolls is how many times one rented number is checked for its SMS
+	// before the run gives up on that number.  Absent means defaultSMSPolls.
+	SMSPolls *int `json:"sms_polls,omitempty"`
+	// SMSIntervalSeconds is the pause between two SMS polls.  Absent means
+	// defaultSMSInterval.
+	SMSIntervalSeconds *int `json:"sms_interval_seconds,omitempty"`
+	// DupRetries is how many extra numbers to draw when the platform keeps
+	// handing back one that is already in the pool.  Absent means
+	// defaultDupRetries.
+	DupRetries *int `json:"dup_retries,omitempty"`
 }
 
 func (c config) baseURL() string {
@@ -178,6 +215,41 @@ func (c config) loginTimeout() time.Duration {
 	return durationOr(c.LoginTimeout.String(), defaultLoginTimeout)
 }
 
+// autoLoginTimeout resolves `auto_login_timeout_seconds`.
+func (c config) autoLoginTimeout() time.Duration {
+	if c.AutoLoginTimeoutSeconds != nil && *c.AutoLoginTimeoutSeconds > 0 {
+		return time.Duration(*c.AutoLoginTimeoutSeconds) * time.Second
+	}
+	return defaultAutoLoginTimeout
+}
+
+// smsPolls resolves `sms_polls`: how many times one rented number is checked
+// for its SMS before the run gives up on it.
+func (c config) smsPolls() int {
+	if c.SMSPolls != nil && *c.SMSPolls > 0 {
+		return *c.SMSPolls
+	}
+	return defaultSMSPolls
+}
+
+// smsInterval resolves `sms_interval_seconds`: the pause between two SMS
+// polls.
+func (c config) smsInterval() time.Duration {
+	if c.SMSIntervalSeconds != nil && *c.SMSIntervalSeconds > 0 {
+		return time.Duration(*c.SMSIntervalSeconds) * time.Second
+	}
+	return defaultSMSInterval
+}
+
+// dupRetries resolves `dup_retries`: how many extra numbers to draw when the
+// platform keeps handing back one that is already in the pool.
+func (c config) dupRetries() int {
+	if c.DupRetries != nil && *c.DupRetries > 0 {
+		return *c.DupRetries
+	}
+	return defaultDupRetries
+}
+
 func (c config) credentialPaths() []string {
 	out := make([]string, 0, len(c.CredentialPaths))
 	for _, p := range c.CredentialPaths {
@@ -211,6 +283,25 @@ func parseConfig(raw []byte) (config, error) {
 		return config{}, err
 	}
 	return cfg, nil
+}
+
+// applyEnv lets the environment supply the one-time-SMS platform settings, so
+// a deployment can keep the token out of the config file.  EOMSG_TOKEN is the
+// same variable workbuddy and loomy use: it is one platform account shared by
+// every module that rents numbers from it.
+func applyEnv(cfg *config) {
+	envStr(&cfg.SMSToken, envSMSToken)
+	if strings.TrimSpace(cfg.SMSToken) == "" {
+		envStr(&cfg.SMSToken, "EOMSG_TOKEN")
+	}
+	envStr(&cfg.SMSKeyword, envSMSKeyword)
+	envStr(&cfg.SMSBase, envSMSBase)
+}
+
+func envStr(dst *string, name string) {
+	if v := strings.TrimSpace(os.Getenv(name)); v != "" {
+		*dst = v
+	}
 }
 
 func configuredAccounts(cfg config) []account {

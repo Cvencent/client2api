@@ -99,7 +99,17 @@ API 地址只接受 HTTP(S)，需要 `/v1` 等前缀的服务请一并填写。
 
 Key 与扫描目录保存在各平台的 `data/<平台ID>/accounts.json`，不放进 `sources`
 配置。整份备份包含平台定义和账号数据。删除平台保留账号文件，重新添加相同
-ID 与 API 地址即可恢复账号池。每个自定义中转站都是**会话粘性**的：多轮对话会
+ID 与 API 地址即可恢复账号池。
+OfficeAce（Office Claw）已内置为 `officeace`，不需要写进 `sources`。打开它的账号池走
+**浏览器登录**，面板会完成华为账号 OAuth、把模型网关返回的 App Key / App Secret 写进
+`data/officeace/accounts.json`，并按 `officeace/<模型名>` 发布模型。每个账号保留自己登录
+返回的 `model_api_url_base`；请求使用 `Authorization: Basic base64(app_key:app_secret)`。
+同一份登录里返回的云端临时凭据也会保存下来，用于对齐 WorkBuddy 的平台能力：账号池的
+**签到**调用 `POST /v1/subscription/bonus/claim`（幂等），**额度/余额**读取
+`officeace_points` 和联网搜索次数，**套餐**列出套餐配额与活动奖励；临时凭据过期后自动
+用 refresh token 或 IAM v3/STS 续期。
+Windows 上仍可 **导入 → 探测本机凭据** 读取已经登录的桌面客户端作为兜底。
+每个自定义中转站都是**会话粘性**的：多轮对话会
 持续落在已经预热上游提示缓存的同一个 Key 上，因此按缓存前缀计费的中转站不会因为
 账号池轮换而重收整段前缀。粘性按“中转站 + 会话”绑定；Key 被停用、冷却或扫描目录里
 没有当前模型时，这条绑定会被忽略。旧 `clients.openai-compat` 配置、存储与调用地址
@@ -108,9 +118,13 @@ ID 与 API 地址即可恢复账号池。每个自定义中转站都是**会话�
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-当前版本：**0.1.67**。完整更新记录见 [CHANGELOG.md](../CHANGELOG.md)。
+当前版本：**0.1.73**。完整更新记录见 [CHANGELOG.md](../CHANGELOG.md)。
 
-### 近期重点（0.1.63 - 0.1.67）
+### 近期重点（0.1.63 - 0.1.73）
+
+
+* **OfficeAce（Office Claw）内置平台**：`officeace` 开箱即用，无需添加中转站；账号池支持华为账号浏览器登录、自动写入模型网关凭据和账号级网关地址，扫描后按 `officeace/<模型名>` 发布，Windows 本机凭据导入作为兜底。
+* **OfficeAce 对齐 WorkBuddy 能力**：同一个内置平台提供每日签到、积分余额和套餐明细，临时凭据过期后自动续期。
 
 * **Anthropic Messages 入站**：Claude Code 和 Anthropic SDK 可以使用
   `POST /v1/messages` 与 `count_tokens`，支持 tools、tool result、thinking、
@@ -118,15 +132,19 @@ ID 与 API 地址即可恢复账号池。每个自定义中转站都是**会话�
 * **Gemini / Google Cloud Code Assist**：支持 Google OAuth 登录、账号发现与刷新、
   额度查询、Cloud Code Assist 请求翻译和流式返回。
 * **最终对外模型白名单**：`exposed_models` 过滤完整对外目录和所有调用入口；
-  在 **模型与档位 → 对外模型** 中编辑并热重载。
+  在 **模型与档位 → 对外模型** 中编辑并热重载。`平台/*` 形式只开放该平台前缀，
+  不会影响其它平台。
 * **账号模型策略与 429 停靠**：可按账号禁用单个模型、查看限流解除时间，并把
   `(平台, 账号, 模型)` 冷却 60 秒，连续失败翻倍，封顶 30 分钟或使用厂商的
   `Retry-After`。
-* **路由链预演**：平台配置 → 链路测试只做本地静态预演，不读账号状态、不发上游请求。
+* **路由链预演与测速**：平台配置 → 链路测试只做本地静态预演，不读账号状态、不发上游请求；测速复用同一条链路，按平台分别通过各自账号池发一次最小真实请求，显示首字延迟、总耗时、实际账号、输出 token 和 tok/s。
+* **路由链排序**：结果行可以直接拖动，也可以用「上移/下移」调整；保存后把显示顺序写回平台优先级、模型组成员优先级或分时优先级，并热加载生效。
 * **托管出口中继**：可以走已有 HTTP/SOCKS 代理，也可以由本进程托管 mihomo 加载订阅。
 * **ZCode 验证码预取**：通过 `captcha_pool` 和 `captcha_pool_ttl_seconds` 开启单槽参数池。
 * **流式与路由修复**：HTTP 200 SSE 流内的可重试错误会在提交前切换候选；零余额账号退出
   轮换；显式 `platform/model` 不会被模型组静默改道；Responses 空回合自动重试一次。
+* **上下文窗口实测重试**：上游用 `N tokens > M maximum` 拒绝时，网关会还原被 `\u003e` 转义
+  的报错，按实测比例裁剪最旧的历史并在同一次请求内重试一次，避免这类对话每次「继续」都失败。
 
 ### 较早重点（0.1.26 - 0.1.29）
 
@@ -285,6 +303,8 @@ make run            # 构建并启动网关
 ```
 
 参数：`-config`、`-listen`、`-data-dir`、`-proxy`、`-list-clients`。
+
+
 
 健康检查与接口：
 
@@ -573,7 +593,8 @@ assistant 消息的事件——只发 delta 的流会显示文字但永远不执
 * `exposed_models` 是对外模型白名单。它作用在路由**之后**：网关先按路由结果生成完整
   的对外目录，再只放行被勾选的最终 ID。所以它过滤的是 `平台/模型`、`Auto/<模型>`、
   `model_groups` 组名、别名和转写模型这些最终结果，而且每个最终 ID 独立控制——勾了组内
-  成员不会自动开放组名，勾了别名目标不会自动开放别名。匹配忽略大小写和首尾空格。
+  成员不会自动开放组名，勾了别名目标不会自动开放别名。以 `/*` 结尾的条目表示只开放这个
+  平台前缀下的全部模型，例如 `my-relay/*`，不会影响其它平台。匹配忽略大小写和首尾空格。
   `null`（默认，或该键缺失）表示全部开放，`[]` 表示全部关闭。白名单同时作用于
   `GET /v1/models` 和所有调用入口，被隐藏的 ID 即使按名字调用也会被拒绝。
   在 **模型与档位 → 对外模型** 里编辑。
@@ -693,14 +714,14 @@ WorkBuddy 提示词与指纹清洗，都在 **平台配置** 页里按平台/模
 | 模块 | 管理 | 导入 | 登录 | 签到 |
 |---|---|---|---|---|
 | workbuddy | 是 | 是 | 是，轮询厂商登录状态 | 是，国内 `daily-checkin` / 国际 `daily-activity` |
-| autoclaw | 是 | 是，桌面 safeStorage/DPAPI、JSON 和整包导入 | 是，本机回环手机号 + 短信验证码登录 | 是，每日积分领取 |
+| autoclaw | 是 | 是，桌面 safeStorage/DPAPI、JSON 和整包导入 | 是，本机回环手机号 + 短信验证码登录；并支持一键接码自动登录（`core.AutoLoginProvider` + `core.SMSProvider`，接码项目「智谱华章」） | 是，每日积分领取 |
 | trae | 是 | 是 | 是，本机 loopback 回调 | 是，仅国内 `daily-checkin` |
 | zcode | 是 | 是 | 是，设备轮询 | 是，支持浏览器验证码 |
 | kimi | 是 | 是 | 是，RFC 8628 设备授权 | 否 |
 | qoder | 是 | 是 | 是，浏览器设备授权 + PKCE；并支持通过阿里云 SSO 一键接码自动登录（`core.AutoLoginProvider` + `core.SMSProvider`） | 是，每日 `CLAIM_BENEFIT`，并提供活动任务板、套餐明细、健康状态和模型输出上限 |
 | qwenwork | 是 | 否 | 是，PKCE 设备流 | 是，Sash 每日签到 |
 | tabbit | 是 | 是 | 是，交给 Tabbit 浏览器 | 是，每日 `sign-in`（`desktop_pet` 场景，通常每日 3% 额度） |
-| minimaxcode | 是 | 是 | 是，RFC 8628 设备授权 | 否 |
+| minimaxcode | 是 | 是 | 是，RFC 8628 设备授权 | 是，每日签到与积分；登录时补齐首次账号引导 |
 | gemini | 是 | 是，Google OAuth 令牌发现与导入 | 是，Google OAuth 本机回调 | 否，额度是 5 小时/周滚动窗口，没有签到 |
 | cline | 是 | 是 | 是，WorkOS 设备码 | 否 |
 | lobsterai | 是 | 是 | 是，浏览器交接 | 是，每日签到 |
@@ -820,6 +841,7 @@ GET    /panel/api/models
 POST   /panel/api/models/refresh
 GET    /panel/api/exposed_models
 POST   /panel/api/route_plan
+POST   /panel/api/route_speed
 GET    /panel/api/model_probes
 GET    /panel/api/usage?window=HOURS
 POST   /panel/api/usage/save

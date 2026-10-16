@@ -81,6 +81,14 @@ type Client struct {
 	// StartLogin; see login.go and putLogin.
 	loginsMu sync.Mutex
 	logins   map[string]*loginSession
+
+	// onboardingDone records the accounts whose account-onboarding step has
+	// completed in this process. The vendor's update is idempotent, but the
+	// desktop client performs it only once for a new user; remembering the
+	// successful write avoids an extra request before every daily claim. A
+	// restart repeats the harmless write once per account.
+	onboardingMu   sync.Mutex
+	onboardingDone map[string]bool
 }
 
 // The sign-in table is guarded for the whole operation rather than handed out:

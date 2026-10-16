@@ -429,6 +429,8 @@ label.fld > .hint { display: block; font-size: 11.5px; color: var(--ink-3); marg
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 20px; }
 .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0 16px; }
 @media (max-width: 860px) { .grid2, .grid3 { grid-template-columns: 1fr; } }
+#sourceForm .source-policy { margin: 2px 0 14px; padding-top: 13px; border-top: 1px solid var(--line-soft); }
+#sourceForm .source-policy > .hint { margin: -3px 0 10px; color: var(--ink-3); font-size: 11.5px; line-height: 1.6; }
 fieldset { border: none; margin-bottom: 6px; }
 legend { font-size: 12px; color: var(--ink-3); font-weight: 600; padding-bottom: 10px; }
 .hr { height: 1px; background: var(--line-soft); margin: 4px 0 16px; }
@@ -1224,6 +1226,13 @@ button.primary:active:not(:disabled) { filter: brightness(.94); }
 }
 .pfhead .pfcount { color: var(--ink-3); font-size: 11.5px; }
 .pfhead .pfToggle { width: 24px; padding: 0; }
+.rpStep { cursor: grab; }
+.rpStep.dragging { opacity: .45; }
+.rpStep.drag-over { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.rpDrag { color: var(--ink-3); font: 700 15px var(--mono); letter-spacing: -2px; cursor: grab; user-select: none; }
+.rpMove { padding: 2px 7px; }
+.rpSpeed { margin-left: auto; color: var(--ink-3); font-size: 11.5px; text-align: right; }
+.rpSpeed .tag { margin-right: 5px; }
 .pfmodels { padding: 10px 12px 12px; }
 .pfmodels .pfFilter { width: 260px; max-width: 100%; padding: 5px 10px; font-size: 12.5px; border-radius: 6px; margin-bottom: 8px; }
 .pfmodels .hint { font-size: 12px; color: var(--ink-3); }
@@ -3339,7 +3348,8 @@ kbd {
           <div class="tblbar">
             <input id="rpModel" type="search" placeholder="模型名，例如 Auto/MIMO-2.6Flash" spellcheck="false" autocomplete="off" style="min-width:280px">
             <button class="xs" id="btnRpTest">测试链路</button>
-            <span class="hint">只做本地静态预演，不调用上游、不看账号状态。</span>
+            <button class="xs" id="btnRpSpeed">测速</button>
+            <span class="hint">测试链路只做本地静态预演；测速会为每个平台实际调用一次，拖动结果可调整调用优先级。</span>
           </div>
           <div class="pad" id="rpResult"><div class="hint">输入模型名后点「测试链路」，查看平台的调用顺序。</div></div>
         </div>
@@ -3480,6 +3490,23 @@ kbd {
       <div class="fld"><label class="lb" for="sourceTokens">输出上限字段</label><select id="sourceTokens"><option value="max_tokens">max_tokens</option><option value="max_completion_tokens">max_completion_tokens</option></select></div>
       <div class="fld"><label class="lb" for="sourceBalanceProtocol">余额协议</label><select id="sourceBalanceProtocol"><option value="auto">自动识别</option><option value="newapi">New API</option><option value="sub2api">Sub2API</option><option value="openai_billing">OpenAI Billing</option><option value="none">不查询</option></select></div>
       <div class="fld"><label class="lb" for="sourceBalanceQuota">每美元额度</label><input id="sourceBalanceQuota" type="number" min="0" step="1" value="500000" placeholder="500000" inputmode="numeric"></div>
+      <fieldset class="source-policy">
+        <legend>限流与冷却</legend>
+        <div class="grid2">
+          <label class="fld"><span class="lb">中转站每分钟请求数</span><input id="sourceRPM" type="number" min="0" step="1" placeholder="留空 = 不限制" inputmode="numeric"><span class="hint">整个中转站每分钟允许发起的上游尝试数；留空或 0 表示不限制。</span></label>
+          <label class="fld"><span class="lb">单账号每分钟请求数</span><input id="sourceAccountRPM" type="number" min="0" step="1" placeholder="留空 = 不限制" inputmode="numeric"><span class="hint">每把 Key 独立计算；一把达到上限时自动换下一把。</span></label>
+          <label class="fld"><span class="lb">中转站在途上限</span><input id="sourceMaxInFlight" type="number" min="0" step="1" placeholder="留空 = 继承平台配置" inputmode="numeric"><span class="hint">留空继承平台配置；填 0 表示不限制；正整数覆盖平台上限。</span></label>
+          <label class="fld"><span class="lb">单账号在途上限</span><input id="sourceAccountMaxInFlight" type="number" min="0" step="1" placeholder="留空 = 继承平台配置" inputmode="numeric"><span class="hint">留空继承平台配置；填 0 表示不限制；达到上限时换下一把 Key。</span></label>
+        </div>
+        <div class="hint">冷却时间支持 Go duration 写法，例如 30s、5m、1h。专用冷却优先于通用冷却；留空走默认值，0s 表示关闭该冷却。</div>
+        <div class="grid2">
+          <label class="fld"><span class="lb">通用冷却</span><input id="sourceCooldown" type="text" placeholder="留空 = 按失败类型默认" autocomplete="off" spellcheck="false"><span class="hint">未单独设置失败类型时使用，例如 15s；0s 关闭所有默认冷却。</span></label>
+          <label class="fld"><span class="lb">限流冷却</span><input id="sourceRateCooldown" type="text" placeholder="默认 30s" autocomplete="off" spellcheck="false"><span class="hint">429 或厂商限流后的冷却；0s 关闭。</span></label>
+          <label class="fld"><span class="lb">额度冷却</span><input id="sourceQuotaCooldown" type="text" placeholder="默认 5m" autocomplete="off" spellcheck="false"><span class="hint">余额或套餐额度耗尽后的冷却；0s 关闭。</span></label>
+          <label class="fld"><span class="lb">鉴权冷却</span><input id="sourceAuthCooldown" type="text" placeholder="默认 5m" autocomplete="off" spellcheck="false"><span class="hint">API Key 被上游拒绝后的冷却；0s 关闭。</span></label>
+          <label class="fld"><span class="lb">上游故障冷却</span><input id="sourceUpstreamCooldown" type="text" placeholder="默认 10s" autocomplete="off" spellcheck="false"><span class="hint">网络、5xx 等上游故障后的冷却；0s 关闭。</span></label>
+        </div>
+      </fieldset>
       <label class="chk"><input id="sourceEnabled" type="checkbox" checked>启用平台</label>
       <div class="state err" id="sourceError" hidden></div>
     </div>
@@ -3896,12 +3923,20 @@ const row = (k, v) => '<div class="row"><span class="k">' + esc(k) + '</span><sp
 
 function clientInfo(n) { return SNAP.clients.find(c => c.name === n) || null; }
 let SOURCE_DEFS = {};
+let BUILTIN_SOURCES = new Set();
 function platformLabel(n) {
   const c = clientInfo(n), source = SOURCE_DEFS[n];
   return (source && source.label) || (c && c.label) || (n === "openai-compat" ? "onmiRoute" : n);
 }
 
 function closeSource() { hideVeil($("#sourceVeil")); $("#sourceKey").value = ""; }
+function sourceIntField(selector) {
+  const raw = $(selector).value.trim();
+  if (raw === "") return null;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 0) throw new Error("限流和并发上限必须是 0 或正整数");
+  return value;
+}
 function openSource(id) {
   const cfg = SOURCE_DEFS[id] || {};
   $("#sourceForm").reset();
@@ -3912,6 +3947,16 @@ function openSource(id) {
   $("#sourceTokens").value = cfg.max_tokens_field || "max_tokens";
   $("#sourceBalanceProtocol").value = cfg.balance_protocol || "auto";
   $("#sourceBalanceQuota").value = cfg.balance_quota_per_usd || 500000;
+  const intText = value => value == null ? "" : String(value);
+  $("#sourceRPM").value = intText(cfg.requests_per_minute);
+  $("#sourceAccountRPM").value = intText(cfg.requests_per_minute_per_account);
+  $("#sourceMaxInFlight").value = intText(cfg.max_in_flight);
+  $("#sourceAccountMaxInFlight").value = intText(cfg.max_in_flight_per_account);
+  $("#sourceCooldown").value = cfg.cooldown || "";
+  $("#sourceRateCooldown").value = cfg.rate_limit_cooldown || "";
+  $("#sourceQuotaCooldown").value = cfg.quota_cooldown || "";
+  $("#sourceAuthCooldown").value = cfg.auth_cooldown || "";
+  $("#sourceUpstreamCooldown").value = cfg.upstream_cooldown || "";
   $("#sourceEnabled").checked = !cfg.disabled;
   $("#sourceKeyField").hidden = !!id;
   $("#sourceError").hidden = true;
@@ -3973,15 +4018,33 @@ async function scanSource(id, btn) {
 async function saveSource(ev) {
   ev.preventDefault();
   const id = $("#sourceID").value.trim(), key = $("#sourceKey").value.trim();
-  const cfg = {
-    label: $("#sourceLabel").value.trim(), base_url: $("#sourceURL").value.trim(),
-    disabled: !$("#sourceEnabled").checked, max_tokens_field: $("#sourceTokens").value,
-    balance_protocol: $("#sourceBalanceProtocol").value,
-    balance_quota_per_usd: Number($("#sourceBalanceQuota").value)
-  };
   const btn = $("#btnSourceSave"), error = $("#sourceError");
   btn.disabled = true; error.hidden = true;
   try {
+    const cfg = {
+      label: $("#sourceLabel").value.trim(), base_url: $("#sourceURL").value.trim(),
+      disabled: !$("#sourceEnabled").checked, max_tokens_field: $("#sourceTokens").value,
+      balance_protocol: $("#sourceBalanceProtocol").value,
+      balance_quota_per_usd: Number($("#sourceBalanceQuota").value)
+    };
+    const rpm = sourceIntField("#sourceRPM");
+    const accountRPM = sourceIntField("#sourceAccountRPM");
+    const maxInFlight = sourceIntField("#sourceMaxInFlight");
+    const accountMaxInFlight = sourceIntField("#sourceAccountMaxInFlight");
+    if (rpm != null) cfg.requests_per_minute = rpm;
+    if (accountRPM != null) cfg.requests_per_minute_per_account = accountRPM;
+    if (maxInFlight != null) cfg.max_in_flight = maxInFlight;
+    if (accountMaxInFlight != null) cfg.max_in_flight_per_account = accountMaxInFlight;
+    for (const [selector, field] of [
+      ["#sourceCooldown", "cooldown"],
+      ["#sourceRateCooldown", "rate_limit_cooldown"],
+      ["#sourceQuotaCooldown", "quota_cooldown"],
+      ["#sourceAuthCooldown", "auth_cooldown"],
+      ["#sourceUpstreamCooldown", "upstream_cooldown"],
+    ]) {
+      const value = $(selector).value.trim();
+      if (value) cfg[field] = value;
+    }
     if (key && cfg.disabled) throw new Error("启用平台后才能添加首个 API Key");
     const saved = await api("/panel/api/sources/" + encodeURIComponent(id), { method: "PUT", body: cfg });
     if (!saved.ok) throw new Error(saved.err);
@@ -8186,12 +8249,19 @@ async function renderPlatforms(preserveDraft = false) {
   const c = (cfg.data && cfg.data.config) || {};
   const draft = preserveDraft ? capturePlatformDraft() : null;
   SOURCE_DEFS = c.sources || {};
+  BUILTIN_SOURCES = new Set((cfg.data && cfg.data.builtin_sources) || []);
   const policy = c.platforms || {};
   const clientCfg = c.clients || {};
   const modSchema = cfg.data.module_schema || {};
   const models = {};
+  const modelInfos = {};
   ((md.data && md.data.clients) || []).forEach(x => {
-    models[x.name] = (x.models || []).map(m => m && m.id).filter(Boolean);
+    const infos = (x.models || []).filter(m => m && m.id).map(m => ({
+      id: m.id,
+      free: !!(m.extra && m.extra.free),
+    }));
+    models[x.name] = infos.map(m => m.id);
+    modelInfos[x.name] = infos;
   });
   // 先排注册表里真正在跑的平台；接口没给的（例如刚被禁用）再用配置和模型表兜底。
   const names = [];
@@ -8210,6 +8280,7 @@ async function renderPlatforms(preserveDraft = false) {
   PF = {
     policy: policy,
     models: models,
+    modelInfos: modelInfos,
     names: names,
     baseline: JSON.parse(JSON.stringify(policy)),
     clientBaseline: JSON.parse(JSON.stringify(clientCfg)),
@@ -8245,12 +8316,12 @@ async function renderPlatforms(preserveDraft = false) {
       '<label class="sel-note" title="账号余额低于或等于这个数就暂停（不再参与路由），直到余额回升；留空或 0 = 零余额即暂停；-1 = 关闭这个保护">最低余额 <input class="cfgtext pfReserve" type="number" min="-1" value="' + esc(res) + '" placeholder="0" style="width:76px"></label>' +
       '<span class="pfcount">' + list.length + " 个模型 · 禁用 " + off.length + '</span>' +
       '<span class="grow"></span>' +
-      (SOURCE_DEFS[n] ? '<button class="xs sourceAccounts" type="button">账号池</button><button class="xs sourceScan" type="button"' + (SOURCE_DEFS[n].disabled ? ' disabled' : '') + '>扫描模型</button><button class="xs sourceEdit" type="button">编辑</button><button class="xs sourceDelete" type="button">删除</button>' : '') +
+      (SOURCE_DEFS[n] ? '<button class="xs sourceAccounts" type="button">账号池</button><button class="xs sourceScan" type="button"' + (SOURCE_DEFS[n].disabled ? ' disabled' : '') + '>扫描模型</button>' + (BUILTIN_SOURCES.has(n) ? '' : '<button class="xs sourceEdit" type="button">编辑</button><button class="xs sourceDelete" type="button">删除</button>') : '') +
       '<button class="xs pfAll" type="button">全允许</button>' +
       '<button class="xs pfNone" type="button">全禁用</button>' +
       '</div>');
     out.push('<div class="pfmodels" hidden>');
-    if (SOURCE_DEFS[n]) out.push('<div class="hint">' + esc(n) + ' · ' + esc(SOURCE_DEFS[n].base_url) + ' · 余额 ' + esc(SOURCE_DEFS[n].balance_protocol || 'auto') + (SOURCE_DEFS[n].disabled ? ' · 已停用' : '') + '</div>');
+    if (SOURCE_DEFS[n]) out.push('<div class="hint">' + esc(n) + ' · ' + esc(SOURCE_DEFS[n].base_url) + ' · 余额 ' + esc(SOURCE_DEFS[n].balance_protocol || 'auto') + (BUILTIN_SOURCES.has(n) ? ' · 内置平台' : '') + (SOURCE_DEFS[n].disabled ? ' · 已停用' : '') + '</div>');
     // 展开区顶部是 priority_schedule 分时规则编辑器，下方才是模型清单。
     out.push(pfPriorityScheduleHTML(entry));
     if (n === "workbuddy") out.push(pfWorkBuddyPoolHTML(c));
@@ -8279,41 +8350,178 @@ async function renderPlatforms(preserveDraft = false) {
   restorePlatformDraft(draft);
 }
 
-function runRoutePlan() {
+let RP = null;
+let RP_DND = null;
+
+function routeCatalogs(source) {
+  const catalogs = {};
+  const ids = source || PF.models || {};
+  const infos = (PF && PF.modelInfos) || {};
+  Object.keys(ids).forEach(name => {
+    const known = Array.isArray(infos[name]) ? infos[name] : [];
+    const list = (known.length ? known : (ids[name] || []).map(id => ({ id: id }))).map(m => {
+      const item = { id: m.id };
+      if (m.free) item.free = true;
+      return item;
+    });
+    if (list.length) catalogs[name] = list;
+  });
+  return catalogs;
+}
+
+function routeStepHTML(s) {
+  const tag = s.preferred ? ' <span class="tag ok">首选</span>' : "";
+  const free = s.free ? ' <span class="tag ok">免费</span>' : "";
+  return '<div class="pfplat rpStep" draggable="true" data-rp-platform="' + esc(s.platform) + '" data-rp-position="' + s.position + '">' +
+    '<div class="pfhead">' +
+    '<span class="rpDrag" title="拖动调整优先级" aria-hidden="true">≡</span>' +
+    '<span class="pfname"><span class="rpPos">#' + s.position + '</span> · ' + esc(platformLabel(s.platform)) + '</span>' +
+    '<span class="pfcount">实际模型 ' + esc(s.model_id) + ' · 优先级 ' + s.priority + ' · ' + esc(s.priority_source_name || s.priority_source || "") + '</span>' +
+    (s.group ? '<span class="pfcount">组 ' + esc(s.group) + '</span>' : "") +
+    (s.auto_pool ? '<span class="pfcount">Auto 池成员</span>' : "") +
+    (s.schedule_hit ? '<span class="pfcount">分时命中 ' + esc(s.schedule_hit) + '</span>' : "") +
+    tag + free + '<span class="grow"></span>' +
+    '<button class="xs rpMove" type="button" data-rp-move="-1" aria-label="上移 ' + esc(platformLabel(s.platform)) + '">上移</button>' +
+    '<button class="xs rpMove" type="button" data-rp-move="1" aria-label="下移 ' + esc(platformLabel(s.platform)) + '">下移</button>' +
+    '<span class="rpSpeed hint">未测速</span>' +
+    '</div></div>';
+}
+
+function routeSpeedCellHTML(x) {
+  if (!x) return '<span class="hint">未返回</span>';
+  if (!x.ok) return '<span class="tag bad">失败</span>' + esc(x.error || "调用失败");
+  const bits = [];
+  if (x.account_id) bits.push("账号 " + x.account_id);
+  bits.push("首字 " + fmtMs(x.first_event_ms));
+  bits.push("总 " + fmtMs(x.elapsed_ms));
+  if (x.completion_tokens) bits.push("输出 " + x.completion_tokens + " tok");
+  if (x.tokens_per_second) bits.push(fmtRate(x.tokens_per_second));
+  return '<span class="tag ok">可用</span>' + esc(bits.join(" · "));
+}
+
+async function runRoutePlan() {
   const btn = $("#btnRpTest");
+  const speedBtn = $("#btnRpSpeed");
+  const input = $("#rpModel");
+  const out = $("#rpResult");
+  const model = (input && input.value || "").trim();
+  if (!model) { RP = null; if (out) out.innerHTML = '<div class="hint">先输入模型名。</div>'; return; }
+  btn.disabled = true;
+  if (speedBtn) speedBtn.disabled = true;
+  btn.textContent = "解析中…";
+  try {
+    const r = await api("/panel/api/route_plan", { method: "POST", body: { model: model, catalogs: routeCatalogs(PF.models) } });
+    if (!r.ok || !r.data) { RP = null; out.innerHTML = '<div class="state err">' + esc(r.err || "解析失败") + '</div>'; return; }
+    const steps = r.data.steps || [];
+    if (!steps.length) { RP = null; out.innerHTML = '<div class="hint">没有平台能服务这个模型。</div>'; return; }
+    RP = { input: model, model: r.data.model || model, steps: steps };
+    const rows = [];
+    rows.push('<div class="pfwbhd" style="margin:2px 0 8px">路由链 · ' + esc(RP.model) + '</div>');
+    rows.push('<div class="rpList">');
+    steps.forEach(s => rows.push(routeStepHTML(s)));
+    rows.push('</div>');
+    rows.push('<div class="hint">顺序为静态预演：实际请求还会受账号可用性、冷却与健康状态影响；拖动或上移下移会调整对应优先级，测速会为每个平台实际调用一次。</div>');
+    out.innerHTML = rows.join("");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "测试链路";
+    if (speedBtn) speedBtn.disabled = false;
+  }
+}
+
+async function runRouteSpeed() {
+  const btn = $("#btnRpSpeed");
+  const testBtn = $("#btnRpTest");
   const input = $("#rpModel");
   const out = $("#rpResult");
   const model = (input && input.value || "").trim();
   if (!model) { if (out) out.innerHTML = '<div class="hint">先输入模型名。</div>'; return; }
-  const catalogs = {};
-  Object.keys(PF.models || {}).forEach(name => {
-    const list = (PF.models[name] || []).map(id => ({ id: id }));
-    if (list.length) catalogs[name] = list;
-  });
+  if (!RP || RP.input !== model) {
+    await runRoutePlan();
+    if (!RP) return;
+  }
   btn.disabled = true;
-  btn.textContent = "解析中…";
-  api("/panel/api/route_plan", { method: "POST", body: { model: model, catalogs: catalogs } })
-    .then(r => {
-      if (!r.ok || !r.data) { out.innerHTML = '<div class="state err">' + esc(r.err || "解析失败") + '</div>'; return; }
-      const steps = r.data.steps || [];
-      if (!steps.length) { out.innerHTML = '<div class="hint">没有平台能服务这个模型。</div>'; return; }
-      const rows = [];
-      rows.push('<div class="pfwbhd" style="margin:2px 0 8px">路由链 · ' + esc(r.data.model || model) + '</div>');
-      steps.forEach(s => {
-        const tag = s.preferred ? ' <span class="tag ok">首选</span>' : "";
-        const free = s.free ? ' <span class="tag ok">免费</span>' : "";
-        rows.push('<div class="pfplat" style="margin-bottom:6px"><div class="pfhead">' +
-          '<span class="pfname">#' + s.position + ' · ' + esc(platformLabel(s.platform)) + '</span>' +
-          '<span class="pfcount">实际模型 ' + esc(s.model_id) + ' · 优先级 ' + s.priority + ' · ' + esc(s.priority_source_name || s.priority_source || "") + '</span>' +
-          (s.group ? '<span class="pfcount">组 ' + esc(s.group) + '</span>' : "") +
-          (s.auto_pool ? '<span class="pfcount">Auto 池成员</span>' : "") +
-          (s.schedule_hit ? '<span class="pfcount">分时命中 ' + esc(s.schedule_hit) + '</span>' : "") +
-          tag + free + '<span class="grow"></span></div></div>');
+  if (testBtn) testBtn.disabled = true;
+  btn.textContent = "测速中…";
+  try {
+    const r = await api("/panel/api/route_speed", { method: "POST", body: { model: model, catalogs: routeCatalogs(PF.models) } });
+    if (!r.ok || !r.data) { toast("测速失败：" + (r.err || "没有结果"), "err"); return; }
+    const byPlatform = {};
+    (r.data.results || []).forEach(x => { byPlatform[x.platform] = x; });
+    out.querySelectorAll(".rpStep").forEach(row => {
+      const cell = row.querySelector(".rpSpeed");
+      if (cell) cell.innerHTML = routeSpeedCellHTML(byPlatform[row.dataset.rpPlatform]);
+    });
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "测速";
+    if (testBtn) testBtn.disabled = false;
+  }
+}
+
+function routeOrderEdits(steps) {
+  return (steps || []).map((s, i) => ({
+    platform: String(s.platform || ""),
+    source: String(s.priority_source || "base"),
+    group: String(s.group || ""),
+    schedule_hit: String(s.schedule_hit || ""),
+    priority: i,
+  }));
+}
+
+function renumberRouteRows() {
+  const list = document.querySelector("#rpResult .rpList");
+  if (!list) return;
+  const rows = Array.from(list.children).filter(el => el.classList && el.classList.contains("rpStep"));
+  rows.forEach((row, i) => {
+    row.dataset.rpPosition = String(i + 1);
+    const pos = row.querySelector(".rpPos");
+    if (pos) pos.textContent = "#" + (i + 1);
+  });
+}
+
+async function applyRouteOrder() {
+  const list = document.querySelector("#rpResult .rpList");
+  if (!list || !RP) return false;
+  const byPlatform = {};
+  (RP.steps || []).forEach(s => { byPlatform[s.platform] = s; });
+  const ordered = Array.from(list.children)
+    .filter(el => el.classList && el.classList.contains("rpStep"))
+    .map(row => byPlatform[row.dataset.rpPlatform])
+    .filter(Boolean);
+  const edits = routeOrderEdits(ordered);
+  const cards = Array.from(document.querySelectorAll("#pfBody .pfplat"));
+  edits.forEach(edit => {
+    const card = cards.find(el => el.dataset.client === edit.platform);
+    if (!card) return;
+    let applied = false;
+    if (edit.source === "group" && edit.group) {
+      const group = Array.from(document.querySelectorAll("#pfGroups .pfGroup")).find(g => {
+        const name = g.querySelector(".pfGName");
+        return name && name.value.trim().toLowerCase() === edit.group.toLowerCase();
       });
-      rows.push('<div class="hint">顺序为静态预演：实际请求还会受账号可用性、冷却与健康状态影响；这里不读账号，也不发上游请求。</div>');
-      out.innerHTML = rows.join("");
-    })
-    .finally(() => { btn.disabled = false; btn.textContent = "测试链路"; });
+      const member = group && Array.from(group.querySelectorAll(".pfGRow")).find(row => {
+        const field = row.querySelector(".pfGMember");
+        return field && field.value.trim().split("/")[0].toLowerCase() === edit.platform.toLowerCase();
+      });
+      const priority = member && member.querySelector(".pfGPrio");
+      if (priority) { priority.value = String(edit.priority); applied = true; }
+    }
+    if (!applied && edit.source === "schedule") {
+      const hit = /窗口(\d+)/.exec(edit.schedule_hit || "");
+      const rows = Array.from(card.querySelectorAll(".pfSchedRow"));
+      const priority = hit && rows[Number(hit[1]) - 1] && rows[Number(hit[1]) - 1].querySelector(".pfSchedPrio");
+      if (priority) { priority.value = String(edit.priority); applied = true; }
+    }
+    if (!applied) {
+      const priority = card.querySelector(".pfPrio");
+      if (priority) priority.value = String(edit.priority);
+    }
+  });
+  renumberRouteRows();
+  const ok = await savePlatforms();
+  if (ok) await runRoutePlan();
+  return ok;
 }
 function pfReadDisabledModels(plat, baseline) {
   const rows = Array.from(plat.querySelectorAll(".pfm"));
@@ -8422,7 +8630,7 @@ async function savePlatforms() {
   }
   if (bad) {
     toast("「" + bad + "」" + badReason, "err");
-    return;
+    return false;
   }
 
   const pool = {}, cool = {}, prompt = {}, features = {};
@@ -8447,7 +8655,7 @@ async function savePlatforms() {
       readDurField("cfgPoolDegradeCooldownMax", "degrade_cooldown_max", pool, bPool) &&
       readDurField("cfgPoolCostExplore", "cost_explore_interval", pool, bPool) &&
       readDurField("cfgPoolExpiringSoon", "expiring_soon", pool, bPool);
-    if (!ok) return;
+    if (!ok) return false;
     const pref = $("#cfgPoolPreferExpiring");
     if (pref) {
       const now = !!pref.checked;
@@ -8486,7 +8694,7 @@ async function savePlatforms() {
     if (built.error) {
       toast("「" + platformLabel(name) + "」配置无效：" + built.error, "err");
       if (extraEl) extraEl.focus();
-      return;
+      return false;
     }
     const diff = modDiffPatch(before, built.value);
     if (Object.keys(diff).length) clientPatch[name] = diff;
@@ -8504,7 +8712,7 @@ async function savePlatforms() {
     const holder = readGroups.row;
     const field = holder && holder.querySelector ? holder.querySelector(".pfGName, .pfGMember, .pfGPrio") : null;
     if (field) field.focus();
-    return;
+    return false;
   }
   const groups = {};
   const groupsBase = (PF && PF.groupsBaseline) || {};
@@ -8534,13 +8742,13 @@ async function savePlatforms() {
   if (Object.keys(groups).length) patch.model_groups = groups;
   if (!Object.keys(patch).length) {
     toast("已保存，内容没有变化");
-    return;
+    return true;
   }
   const btn = $("#btnPfSave");
   btn.disabled = true;
   try {
     const r = await api("/panel/api/config", { method: "PATCH", body: patch });
-    if (!r.ok) { toast("保存失败：" + r.err, "err"); return; }
+    if (!r.ok) { toast("保存失败：" + r.err, "err"); return false; }
     const rel = await api("/panel/api/reload", { method: "POST" });
     const needsRestart = Object.prototype.hasOwnProperty.call(patch, "clients");
     if (!rel.ok) {
@@ -8551,6 +8759,7 @@ async function savePlatforms() {
       toast("已保存并立即生效：" + Object.keys(patch).join("、"));
     }
     await renderPlatforms();
+    return true;
   } finally {
     btn.disabled = false;
   }
@@ -12723,6 +12932,55 @@ $("#btnPfExport").addEventListener("click", bundleExport);
 $("#btnPfImport").addEventListener("click", bundlePick);
 $("#btnPfSave").addEventListener("click", savePlatforms);
 $("#btnRpTest").addEventListener("click", runRoutePlan);
+$("#btnRpSpeed").addEventListener("click", runRouteSpeed);
+$("#rpResult").addEventListener("dragstart", ev => {
+  const row = ev.target.closest && ev.target.closest(".rpStep");
+  if (!row) return;
+  RP_DND = row;
+  row.classList.add("dragging");
+  if (ev.dataTransfer) {
+    ev.dataTransfer.effectAllowed = "move";
+    ev.dataTransfer.setData("text/plain", row.dataset.rpPlatform || "");
+  }
+});
+$("#rpResult").addEventListener("dragover", ev => {
+  const row = ev.target.closest && ev.target.closest(".rpStep");
+  if (!row || !RP_DND || row === RP_DND) return;
+  ev.preventDefault();
+  document.querySelectorAll("#rpResult .rpStep.drag-over").forEach(el => el.classList.remove("drag-over"));
+  row.classList.add("drag-over");
+  if (ev.dataTransfer) ev.dataTransfer.dropEffect = "move";
+});
+$("#rpResult").addEventListener("drop", async ev => {
+  const row = ev.target.closest && ev.target.closest(".rpStep");
+  if (!row || !RP_DND || row === RP_DND) return;
+  ev.preventDefault();
+  const rect = row.getBoundingClientRect();
+  const after = ev.clientY > rect.top + rect.height / 2;
+  row.parentNode.insertBefore(RP_DND, after ? row.nextSibling : row);
+  RP_DND.classList.remove("dragging");
+  document.querySelectorAll("#rpResult .rpStep.drag-over").forEach(el => el.classList.remove("drag-over"));
+  renumberRouteRows();
+  await applyRouteOrder();
+});
+$("#rpResult").addEventListener("dragend", () => {
+  if (RP_DND) RP_DND.classList.remove("dragging");
+  document.querySelectorAll("#rpResult .rpStep.drag-over").forEach(el => el.classList.remove("drag-over"));
+  RP_DND = null;
+});
+$("#rpResult").addEventListener("click", ev => {
+  const btn = ev.target.closest && ev.target.closest("[data-rp-move]");
+  if (!btn) return;
+  const row = btn.closest(".rpStep");
+  if (!row) return;
+  const direction = Number(btn.dataset.rpMove);
+  const sibling = direction < 0 ? row.previousElementSibling : row.nextElementSibling;
+  if (!sibling || !sibling.classList || !sibling.classList.contains("rpStep")) return;
+  if (direction < 0) row.parentNode.insertBefore(row, sibling);
+  else row.parentNode.insertBefore(sibling, row);
+  renumberRouteRows();
+  applyRouteOrder();
+});
 $("#btnSourceAdd").addEventListener("click", () => openSource());
 $("#btnSourceCancel").addEventListener("click", closeSource);
 $("#sourceForm").addEventListener("submit", saveSource);

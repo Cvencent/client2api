@@ -298,6 +298,7 @@ func (c *Client) probeProvider(ctx context.Context, prov ProviderConfig, rec pro
 		return res
 	}
 	prov.APIKey = rec.APIKey
+	prov.AppSecret = rec.AppSecret
 	prov.Disabled = false
 
 	model := c.probeModel(prov)

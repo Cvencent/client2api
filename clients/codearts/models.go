@@ -256,7 +256,7 @@ func (c *Client) fallbackCatalogue() []core.Model {
 	for _, id := range c.cfg.fallbackModels() {
 		out = append(out, newModel(id, "", 0, 0, ""))
 	}
-	return out
+	return markBenefitModels(out, codeartsBenefitFallback)
 }
 
 // ---------------------------------------------------------------------------
@@ -352,8 +352,14 @@ func (c *Client) loadModelsCache() {
 	if len(cache.Models) == 0 {
 		return
 	}
+	benefit := cache.Benefit
+	if len(benefit) == 0 {
+		// The cache does not name a free-quota list, so the built-in one is
+		// what isBenefitModel falls back to; mark the same ids here.
+		benefit = codeartsBenefitFallback
+	}
 	c.modelsMu.Lock()
-	c.models = cache.Models
+	c.models = markBenefitModels(cache.Models, benefit)
 	c.modelsAt = time.Unix(cache.UpdatedAt, 0)
 	c.benefit = cache.Benefit
 	c.modelsMu.Unlock()
@@ -420,6 +426,43 @@ func (c *Client) isBenefitModel(model string) bool {
 	return false
 }
 
+// benefitIDsLocked is the free-quota list in force: the live list, then the
+// disk cache, then the built-in fallback.  The caller holds modelsMu.
+func (c *Client) benefitIDsLocked() []string {
+	if len(c.benefit) > 0 {
+		return append([]string(nil), c.benefit...)
+	}
+	return append([]string(nil), codeartsBenefitFallback...)
+}
+
+// markBenefitModels stamps `extra.free` on the models that bill against the
+// free quota.  The gateway reads that flag to mark a request as free, and the
+// module's account guard steps aside for those: a benefit request spends no
+// credit, so a spent wallet must not hide it.  The list is the same one
+// isBenefitModel uses, so the flag and the `maas_type: benefit` header can
+// never disagree.
+func markBenefitModels(models []core.Model, benefit []string) []core.Model {
+	if len(models) == 0 || len(benefit) == 0 {
+		return models
+	}
+	free := make(map[string]bool, len(benefit))
+	for _, id := range benefit {
+		if id = strings.ToLower(strings.TrimSpace(id)); id != "" {
+			free[id] = true
+		}
+	}
+	for i := range models {
+		if !free[strings.ToLower(models[i].ID)] {
+			continue
+		}
+		if models[i].Extra == nil {
+			models[i].Extra = map[string]any{}
+		}
+		models[i].Extra["free"] = true
+	}
+	return models
+}
+
 // ---------------------------------------------------------------------------
 // refresh
 // ---------------------------------------------------------------------------
@@ -481,12 +524,13 @@ func (c *Client) RefreshModels(ctx context.Context) ([]core.Model, error) {
 
 	now := time.Now()
 	c.modelsMu.Lock()
-	c.models = models
-	c.modelsAt = now
-	c.modelsRetryAt = time.Time{}
 	if len(benefit) > 0 {
 		c.benefit = benefit
 	}
+	models = markBenefitModels(models, c.benefitIDsLocked())
+	c.models = models
+	c.modelsAt = now
+	c.modelsRetryAt = time.Time{}
 	c.modelsMu.Unlock()
 	c.saveModelsCache(models, benefit, now)
 	return append([]core.Model(nil), models...), nil

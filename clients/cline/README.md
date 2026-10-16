@@ -14,7 +14,7 @@ model catalogues into one list.
 The bundled `code-sidecar.exe` installs `DESKTOP_CLIENT_CONTEXT` at startup, so
 **every** request it makes carries the desktop identity, not the SDK fallback:
 
-```
+``
 User-Agent: Cline/0.0.40
 X-CLIENT-TYPE: cline-desktop
 X-CLIENT-VERSION: 0.0.40
@@ -23,7 +23,7 @@ X-PLATFORM-VERSION: 0.0.40
 HTTP-Referer: https://cline.bot
 X-Title: Cline
 X-IS-MULTIROOT: false
-```
+``
 
 `cline-sdk` appears in the bundle only as `DEFAULT_CLINE_REQUEST_HEADERS`, used
 when no identity is installed; an earlier revision sent it on every call and was
@@ -32,10 +32,10 @@ therefore distinguishable from the real desktop.
 Inference calls (`buildClineRequestHeaders`) add two headers the account and
 catalogue calls do not:
 
-```
+``
 X-CORE-VERSION: 0.0.89   # the bundled @cline/core version
 X-Task-ID: <sessionId>   # the task's own id
-```
+``
 
 This module sends `X-CORE-VERSION` on chat and maps `X-Task-ID` from the
 caller's conversation id (or, failing that, the turn id). When the caller names
@@ -137,9 +137,9 @@ guess. The number is also published as `core.Model.Extra["max_output_tokens"]`.
 This matters concretely. The limit is not uniform across the free models: sending
 `max_tokens=131072` to `cline-free/gemini-3.8-flash` is rejected upstream with
 
-```
+``
 has a maxOutputTokens value of 131072 but the supported range is from 1 (inclusive) to 65537 (exclusive)
-```
+``
 
 so the catalogue carries 65 536 for that model and 131 072 for its siblings.
 
@@ -157,7 +157,7 @@ optional**: an absent object is treated as `{}`, and a malformed object is logge
 and replaced with defaults — the factory logs a line containing `invalid config`
 and `Status` reports not-ready rather than refusing to build.
 
-```jsonc
+``jsonc
 {
   "clients": {
     "cline": {
@@ -210,7 +210,7 @@ and `Status` reports not-ready rather than refusing to build.
     }
   }
 }
-```
+``
 
 ### Top-level keys
 
@@ -282,9 +282,9 @@ Environment values only fill fields the config leaves empty.
 
 `Discover` looks in exactly one place, the vendor's own store:
 
-```
+``
 ~/.cline/data/settings/providers.json
-```
+``
 
 The file is parsed as arbitrary JSON and the access token is found by walking it
 (depth-capped, preferring `accessToken` / `access_token` / `clineAccessToken` /
@@ -345,9 +345,9 @@ a test in `cline_test.go` asserting it directly.
 
 The stored value is `workos:eyJ…`. It is sent **verbatim**:
 
-```
+``
 Authorization: Bearer workos:eyJ…
-```
+``
 
 Measured: with the prefix, `GET /api/v1/users/me` answers 200; with the prefix
 stripped, it answers **401** whose body misleadingly says *"make sure you're using
@@ -357,9 +357,9 @@ only to decode the JWT payload locally; it is never used to build a header.
 
 ### 2. The refresh body is camelCase, not OAuth-standard
 
-```json
+``json
 {"refreshToken": "<token>", "grantType": "refresh_token"}
-```
+``
 
 Both fields are required. The OAuth-standard `refresh_token` / `grant_type`
 spellings produce a *generic* authentication failure rather than a "missing
@@ -371,15 +371,15 @@ debug.
 The balance route is `GET /api/v1/users/{account_id}/balance`, so it needs
 `account_id`, which looks like
 
-```
+``
 usr-01M3BCV4FYCGJKAWD3MJG3DBQM
-```
+``
 
 The JWT's `sub` claim looks like
 
-```
+``
 user_01M3BCQ86DV4S9KKBT85X4GKTV
-```
+``
 
 and passing it returns `400 {"error":"Invalid request format"}`. The two are
 easy to conflate because both are opaque `usr-`/`user_` strings. `account_id` is
@@ -482,6 +482,17 @@ information about the credential, not a failure of the probe.
 
 ---
 
+### Free models
+
+A model the vendor marks free carries `extra.free`, and the router marks the
+attempt with `core.ChatRequest.FreeModel`.  An account parked for an empty
+wallet still serves it -- a model with a zero multiplier spends no credit --
+while a rate limit, a WAF block, a dead session, the breaker or a per-model
+park keeps applying.  A free model the vendor refuses for a credit reason parks
+that (account, model) pair alone, so the account keeps its other free models.
+A free success never lifts the wallet park, which is still true for the models
+that would charge it.
+
 ## Streaming
 
 - `data: [DONE]` ends the stream; a final frame without a trailing blank line is
@@ -576,11 +587,11 @@ never block.
 
 ## Testing
 
-```sh
+``sh
 go vet ./clients/cline/...
 go test ./clients/cline/... -v
 go test ./... -count=1
-```
+``
 
 Everything runs offline and needs no credential. The suite stands up an
 `httptest` server that records **every** request (method, path, headers, raw

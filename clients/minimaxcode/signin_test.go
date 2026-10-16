@@ -25,6 +25,8 @@ const (
 	signinStatusPathTest = "/minimax-cloud/api/v1/signin/status"
 	signinClaimPathTest  = "/minimax-cloud/api/v1/signin/claim"
 	creditDetailPathTest = "/minimax-cloud/api/v1/credit/details"
+	onboardingPathTest   = "/minimax-cloud/api/v1/user/update_onboarding"
+	onboardingBodyTest   = `{"completed":true,"category_ids":["vibe_coding"]}`
 )
 
 // signinPanelJSON builds a seven-day board whose first day carries the state
@@ -89,11 +91,21 @@ type scriptedSignin struct {
 	creditBody  string
 	statusCalls int
 	claimCalls  int
+
+	onboardingBody  string
+	onboardingCalls int
 }
 
 func (s *scriptedSignin) handler() func(*http.Request) (*http.Response, error) {
 	return func(req *http.Request) (*http.Response, error) {
 		switch req.URL.Path {
+		case onboardingPathTest:
+			s.onboardingCalls++
+			body := s.onboardingBody
+			if body == "" {
+				body = `{"base_resp":{"status_code":0,"status_msg":"ok"}}`
+			}
+			return jsonResponse(http.StatusOK, body), nil
 		case signinStatusPathTest:
 			s.statusCalls++
 			code := s.statusCode
@@ -161,17 +173,20 @@ func TestCheckinClaimsWhenTodayIsClaimable(t *testing.T) {
 		t.Errorf("result is not stamped: %+v", res)
 	}
 
-	if ft.count() != 2 {
-		t.Fatalf("made %d requests, want 2 (status then claim)", ft.count())
+	if ft.count() != 3 {
+		t.Fatalf("made %d requests, want 3 (onboarding, status, claim)", ft.count())
 	}
-	ask := ft.requestAt(0)
+	if got := ft.requestAt(0).URL.Path; got != onboardingPathTest {
+		t.Errorf("first call went to %s, want the onboarding route", got)
+	}
+	ask := ft.requestAt(1)
 	if ask.URL.Path != signinStatusPathTest {
-		t.Errorf("first call went to %s, want the status route", ask.URL.Path)
+		t.Errorf("second call went to %s, want the status route", ask.URL.Path)
 	}
 	if got := ask.URL.Query().Get("timezone_id"); got != "Asia/Shanghai" {
 		t.Errorf("status timezone_id = %q, want Asia/Shanghai", got)
 	}
-	post := ft.requestAt(1)
+	post := ft.requestAt(2)
 	if post.Method != http.MethodPost {
 		t.Errorf("claim method = %s, want POST", post.Method)
 	}
@@ -184,7 +199,7 @@ func TestCheckinClaimsWhenTodayIsClaimable(t *testing.T) {
 	if got := post.URL.Query().Get("timezone_id"); got != "Asia/Shanghai" {
 		t.Errorf("claim timezone_id = %q, want Asia/Shanghai", got)
 	}
-	if got := ft.bodyAt(1); got != "{}" {
+	if got := ft.bodyAt(2); got != "{}" {
 		t.Errorf("claim body = %q, want an empty JSON object", got)
 	}
 }
@@ -554,7 +569,17 @@ func TestSigninTimezonePrefersTheConfiguredZone(t *testing.T) {
 
 	checkin(t, c, signinActionDaily)
 
-	if got := ft.requestAt(0).URL.Query().Get("timezone_id"); got != "Europe/Berlin" {
+	statusAt := -1
+	for i := 0; i < ft.count(); i++ {
+		if ft.requestAt(i).URL.Path == signinStatusPathTest {
+			statusAt = i
+			break
+		}
+	}
+	if statusAt < 0 {
+		t.Fatal("Checkin never read the sign-in status")
+	}
+	if got := ft.requestAt(statusAt).URL.Query().Get("timezone_id"); got != "Europe/Berlin" {
 		t.Errorf("timezone_id = %q, want the configured zone", got)
 	}
 }

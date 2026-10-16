@@ -19,10 +19,15 @@ type storedProvider struct {
 	Label              string            `json:"label,omitempty"`
 	BaseURL            string            `json:"base_url,omitempty"`
 	APIKey             string            `json:"api_key"`
+	AppSecret          string            `json:"app_secret,omitempty"`
 	Models             []string          `json:"models,omitempty"`
 	Headers            map[string]string `json:"extra_headers,omitempty"`
 	BalanceAccessToken string            `json:"balance_access_token,omitempty"`
 	BalanceUserID      string            `json:"balance_user_id,omitempty"`
+	// OfficeAce keeps the Huawei cloud credential one OfficeAce login minted,
+	// so the premium routes (每日签到/余额/套餐) can be signed later without
+	// the desktop client running.  It stays nil for every other relay.
+	OfficeAce *officeAceStoredSession `json:"officeace,omitempty"`
 	Disabled           bool              `json:"disabled,omitempty"`
 }
 
@@ -49,6 +54,9 @@ func (c *Client) loadProviders() []storedProvider {
 		// A keyless row is only legitimate for a loopback upstream; anything
 		// else missing its key is a half-written row and is dropped.
 		if p.APIKey == "" && !isLoopbackBase(p.BaseURL) {
+			continue
+		}
+		if p.AppSecret != "" && p.APIKey == "" {
 			continue
 		}
 		out = append(out, p)
@@ -78,6 +86,7 @@ func storedToConfig(p storedProvider) ProviderConfig {
 		Label:        p.Label,
 		BaseURL:      p.BaseURL,
 		APIKey:       p.APIKey,
+		AppSecret:    p.AppSecret,
 		Models:       p.Models,
 		ExtraHeaders: p.Headers,
 		Disabled:     p.Disabled,
@@ -87,12 +96,13 @@ func storedToConfig(p storedProvider) ProviderConfig {
 // configToStored converts a provider into its on-disk row.
 func configToStored(p ProviderConfig) storedProvider {
 	return storedProvider{
-		ID:       p.ID,
-		Label:    p.Label,
-		BaseURL:  p.BaseURL,
-		APIKey:   p.APIKey,
-		Models:   p.Models,
-		Headers:  p.ExtraHeaders,
-		Disabled: p.Disabled,
+		ID:        p.ID,
+		Label:     p.Label,
+		BaseURL:   p.BaseURL,
+		APIKey:    p.APIKey,
+		AppSecret: p.AppSecret,
+		Models:    p.Models,
+		Headers:   p.ExtraHeaders,
+		Disabled:  p.Disabled,
 	}
 }

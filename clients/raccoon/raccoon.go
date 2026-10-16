@@ -33,6 +33,7 @@ import (
 
 	"client2api/internal/core"
 	"client2api/internal/fingerprint"
+	"client2api/internal/smscap"
 )
 
 func init() { core.Register("raccoon", New) }
@@ -83,6 +84,19 @@ type Client struct {
 	// path feeds it through core.TrackStream, so PoolStats reports real
 	// concurrency rather than a second bookkeeping.
 	inFlight atomic.Int64
+
+	// smsRot spreads consecutive rentals across provinces so one region does
+	// not take repeated traffic.
+	smsRot smscap.Rotator
+
+	// autoMu guards the in-flight auto-login jobs.  They are memory-only: a
+	// run that survives a restart is a run nobody can reason about.
+	autoMu   sync.Mutex
+	autoJobs map[string]*autoJob
+
+	// autoCaptcha is a test seam for the browser-driven auto-login flow.
+	// Production uses solveRaccoonCaptcha.
+	autoCaptcha func(context.Context, string) (string, error)
 }
 
 // New builds the module. A malformed config is logged and replaced with
@@ -111,6 +125,7 @@ func New(deps core.Deps) (core.Client, error) {
 	)
 	c.pool.load(configuredAccounts(cfg))
 	c.httpc = c.httpClient()
+	c.autoCaptcha = c.solveRaccoonCaptcha
 	return c, nil
 }
 
@@ -387,12 +402,16 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 // accepts the request, parking the ones that failed.
 func (c *Client) openChat(ctx context.Context, cancel context.CancelFunc, req *core.ChatRequest, model string) (core.Stream, error) {
 	skip := map[string]bool{}
+	// The gateway marks an attempt for a zero-multiplier model.  That flag is
+	// what lets a credential whose wallet is spent still serve free models:
+	// the picker steps over the wallet park for this request.
+	freeModel := req.FreeModel
 	var lastErr error
 	// busy records that every account we reached was at its per-account
 	// in-flight ceiling.
 	busy := false
 	for i := 0; i < c.cfg.maxAttempts(); i++ {
-		e := c.pickAccount(skip, conversationKey(req))
+		e := c.pickAccount(skip, conversationKey(req), freeModel, model)
 		if e == nil {
 			break
 		}
@@ -413,7 +432,7 @@ func (c *Client) openChat(ctx context.Context, cancel context.CancelFunc, req *c
 		c.ensureFresh(ctx, e)
 		stream, err := c.chatWith(ctx, cancel, e, req, model)
 		if err == nil {
-			c.pool.markUsed(e)
+			c.pool.markUsedFor(e, freeModel)
 			c.noteUpstreamOK()
 			c.inFlight.Add(1)
 			return core.TrackStream(stream, func() { c.inFlight.Add(-1) }), nil
@@ -423,6 +442,12 @@ func (c *Client) openChat(ctx context.Context, cancel context.CancelFunc, req *c
 		msg := truncate(c.scrub(err.Error()), 240)
 		if kind == kindAuth {
 			c.pool.markDead(e, msg)
+		} else if freeModel && kind == kindQuota {
+			// A free model spends no credit, so a refusal of one says
+			// nothing about the wallet: remember the pair and leave the
+			// credential serving its other free models.  A paid refusal
+			// still parks the account.
+			c.pool.ParkFreeModel(e, model, c.cfg.quotaCooldown())
 		} else {
 			c.pool.markFailure(e, kind, msg)
 		}

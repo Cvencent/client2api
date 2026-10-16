@@ -6,6 +6,134 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.1.73] - 2026-10-16
+
+### Added
+
+- **OfficeAce 对齐 WorkBuddy 的签到、余额和套餐**：内置的 `officeace` 平台现在会保存华为
+  账号登录时拿到的云端临时凭据，因此可以直接使用模型网关自己的订阅接口。面板的**签到**
+  按钮调用 `POST /v1/subscription/bonus/claim`，幂等，重复点击会提示今天的奖励已经领过；
+  **额度/余额**显示 `officeace_points` 积分和套餐内的联网搜索次数；**套餐**把套餐配额和
+  每个活动奖励拆开列出。凭据和结果只写在本机 `data/officeace/accounts.json`。临时凭据
+  过期后优先用 OAuth refresh token 续期，其次用 IAM v3/STS 换发，登录完成后不需要
+  OfficeAce 桌面端在线。
+- **免费模型不再被余额/额度停用挡住**：`core.ModelIsFree` 统一识别零成本模型（模块读到的
+  零倍率/零价格、`extra.free`，或名称、分组、ID 里的 `free` / `免费` 标记），路由层把
+  免费标记传给账号池。因为余额不足、低余额或上游 402 被停用的账号仍然继续服务免费模型，
+  不需要手工强制启用；免费模型被上游按额度拒绝时只停用该账号的这一个（账号, 模型）组合，
+  账号的其它免费模型照常可用；限流、WAF、失效会话和熔断仍按原规则停用整个账号。Cline、
+  CodeArts、OpenRouter、QwenWork、WorkBuddy 的池都接入这套判定，停用状态写入各自的
+  `state.json`，重启后仍有效。
+- **AutoClaw / Raccoon 接码与一键自动登录**：两个平台实现 `core.SMSProvider` 与
+  `core.AutoLoginProvider`；面板可以租一次性号码、自动收验证码、完成手机号登录并落库，
+  已有账号可以用原号码接码重登并就地刷新凭据。接码沿用 eomsg，token 为空即不启用。
+- **Gemini 运行时模型目录**：模型目录改为读取厂商自己的 `fetchAvailableModels`（被拒时
+  回退到配额接口里的模型 ID，再失败时保留上次结果），`-low/-medium/-high` 变体折叠成一行、
+  用 `reasoning_effort` 选择，上下文和输出上限也读取厂商元数据；内置 Cloud Code IDE 的
+  installed-app OAuth client，库存安装开箱即可浏览器登录。
+- **MiniMax Code 登录补写 onboarding**：登录时调用
+  `/minimax-cloud/api/v1/user/update_onboarding`，避免新账号能聊天但签到/额度板显示为 0。
+- **路由预览增加实时测速**：面板可以对着静态路线链逐平台发一条极小请求，显示首包延迟、
+  总耗时、完成 token 数和 token/s，便于对比不同线路。
+
+### Fixed
+
+- **OfficeAce 云端签名对齐客户端的 V11-HMAC-SHA256**：修正签名密钥派生
+  （客户端使用 `HMAC(HMAC(AK, SK), scope || 0x01)`，`StringToSign` 为
+  `V11-HMAC-SHA256 \n X-Sdk-Date \n scope \n sha256(canonicalRequest)`），并让带
+  `project_id` 的账号同时签 `X-Project-ID`。签到和订阅查询不再被网关以
+  `APIG.0301`（签名校验失败）拒绝。
+
+### Installer
+
+- `client2api-setup-0.1.73.exe`（空包，不含账号凭据或本机配置）
+- 升级会保留现有 `configs/`、`data/`、账号池、用量和任务数据。
+
+## [0.1.72] - 2026-10-16
+
+### Added
+
+- **OfficeAce 内置为平台，不再要求手加中转站**：`officeace` 由程序直接注册，新装实例
+  会出现在平台配置里，并为它保留账号池和模型扫描入口；配置文件仍可用同 ID 覆盖地址或
+  `disabled` 禁用，不需要也不应再手工创建一条同名中转站。
+- **OfficeAce 华为账号浏览器登录**：账号池新增真正的账号登录路径，面板按 OfficeAce
+  客户端的方式完成 PKCE + DPoP 授权（state、授权码、IAM 临时凭据、权限校验、未开通时
+  调用订阅接口），把云端返回的模型网关 App Key / App Secret 写进本站账号池并自动扫描
+  模型。登录后不需要 OfficeAce 桌面客户端在线，也不再必须先探测本机凭据。
+- **OfficeAce 账号级模型网关**：每个华为账号保留自己登录返回的 `model_api_url_base`，
+  不同区域或模型的网关可以同时存在于 `officeace` 平台；面板扫描和其他账号操作不会把
+  账号地址覆盖回平台默认地址。
+
+### Fixed
+
+- **本机凭据导入不再拒绝其他 OfficeAce 网关**：Windows 兜底导入会保留客户端记录的
+  账号级网关地址；面板会明确提示该账号将走自己的网关，而不是要求两者地址完全一致。
+
+### Installer
+
+- `client2api-setup-0.1.72.exe`（空包，不含账号凭据或本机配置）
+- 升级会保留现有 `configs/`、`data/`、账号池、用量和任务数据。
+
+## [0.1.71] - 2026-10-16
+
+### Added
+
+- **OfficeAce 一键导入客户端登录**：OfficeAce（Office Claw）中转站的账号池新增「导入 →
+  探测本机凭据」。面板直接读取 OfficeAce 客户端自己的加密凭据库
+  （`packages/api/.config/secure-config-nodejs`：安装密钥由 Windows DPAPI CurrentUser 托管，
+  登录档案为 AES-256-GCM），取出华为账号登录后拿到的那对模型网关 App Key / App Secret，
+  再按普通账号写进该中转站；导入前会比对客户端记录的上游地址和本站 `base_url`，不一致时
+  明确报错而不是导入一组用不了的凭据。探测结果只包含账号标识和上游地址，不含任何密钥；
+  客户端没装或装在别的机器上时，原来的手动填写 App Key / App Secret 路径不受影响。
+
+### Installer
+
+- `client2api-setup-0.1.71.exe`（空包，不含账号凭据或本机配置）
+- 升级会保留现有 `configs/`、`data/`、账号池、用量和任务数据。
+
+## [0.1.70] - 2026-10-16
+
+### Fixed
+
+- **上下文守卫：上游实测超限时按实测比例裁剪并自动重试一次**：当启发式估算把请求算在窗口以内、
+  上游按自己的 tokenizer 拒绝并给出 `N tokens > M maximum` 时，网关会先还原报错里被 `\u003e`
+  转义的 `>`，同时读出「实测用量」和「窗口上限」两个数字，按实测比例把最旧的历史裁到窗口以内
+  （system 提示和最新一轮永远保留），并在同一次请求里重试一次。裁剪同样写进用量行；连最新一轮
+  都放不下时仍然返回 `context_window_exceeded`。这修掉了这类对话每次「继续」都必然 400 的问题。
+
+### Added
+
+- **OfficeAce（Office Claw）模型直连**：OfficeAce 客户端里的 GLM、DeepSeek、Kimi、Qwen 等模型
+  本身走华为 MaaS / AgentArts 的 OpenAI 兼容接口，现在可以当普通「自定义中转站」接入：
+  在面板里添加平台、把应用 Key / App Secret 填进账号池（`app_secret` 触发 HTTP Basic），
+  扫描后以 `officeace/<模型名>` 对外发布。凭据只落在本机 `data/`，桌面客户端不需要保持运行。
+
+### Installer
+
+- `client2api-setup-0.1.70.exe`（空包，不含账号凭据或本机配置）
+- 升级会保留现有 `configs/`、`data/`、账号池、用量和任务数据。
+
+## [0.1.69] - 2026-10-16
+
+### Added
+
+- **OfficeAce（Office Claw）内置模型直连**：OfficeAce 客户端里能选的 GLM、DeepSeek、Kimi、
+  Qwen 等模型本身走华为 MaaS / AgentArts 的 OpenAI 兼容接口，现在按普通“自定义中转站”接入，
+  不经过 OfficeAce 桌面端。账号池的 `API Key / App Key` 填应用 Key，高级字段 `App Secret` 填
+  配套密钥，网关自动改用 `Authorization: Basic base64(app_key:app_secret)`；扫描得到的模型按
+  `officeace/<模型名>` 对外发布，账号轮换、故障切换、会话粘性、流式输出、工具调用和用量统计
+  与其它平台一致。
+- **自定义中转站支持 HTTP Basic 应用认证**：账号池新增可选高级字段 `app_secret`，填了它就走
+  Basic（用户名是 `api_key`），留空继续走 Bearer；旧账号和旧配置不受影响。
+- **`exposed_models` 支持 `平台/*` 通配**：例如 `officeace/*` 一次开放该平台全部模型，
+  不影响其它平台。
+
+### Installer
+
+- `client2api-setup-0.1.69.exe`（空包，不含账号凭据或本机配置）
+- OfficeAce 不再以独立客户端模块发布；它的模型通过上面的自定义中转站直接接入
+- 升级会保留现有 `configs/`、`data/`、账号池、用量和任务数据。
+
 ## [0.1.67] - 2026-10-15
 
 ### Fixed

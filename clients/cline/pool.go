@@ -285,6 +285,19 @@ func (p *pool) ready() bool {
 // are computed from it, so two accounts in the same condition can never be
 // reported differently.
 func (p *pool) availableLocked(e *entry, now time.Time) bool {
+	return p.availableLockedFor(e, now, false, "")
+}
+
+// availableLockedFor is availableLocked for a request the router has already
+// priced.
+//
+// A quota park is about money, and a model the vendor charges nothing for spends
+// none, so freeModel lets the account stay in play across it.  That is the only
+// exception: a rate limit, an auth park and a dead token all say something about
+// the credential, not the wallet, and keep applying.  A park recorded for this
+// exact model (the vendor refusing the free model itself) applies too -- that is
+// the pair the free path had to earn, and it is not a statement about credit.
+func (p *pool) availableLockedFor(e *entry, now time.Time, freeModel bool, model string) bool {
 	if e == nil {
 		return false
 	}
@@ -294,10 +307,55 @@ func (p *pool) availableLocked(e *entry, now time.Time) bool {
 	if strings.TrimSpace(e.acct.AccessToken) == "" {
 		return false
 	}
-	if e.until.After(now) {
+	if e.until.After(now) && !(freeModel && e.state == stateExhausted) {
+		return false
+	}
+	if freeModel && e.freeCooled(now, model) {
 		return false
 	}
 	return !e.acct.expired(now)
+}
+
+// freeCooled reports whether a free model is currently parked on this entry.
+// A lapsed entry is dropped on the way past, so the map stays bounded by the
+// models the account actually refused.  The caller holds p.mu.
+func (e *entry) freeCooled(now time.Time, model string) bool {
+	if e == nil || model == "" || len(e.freeCool) == 0 {
+		return false
+	}
+	until, ok := e.freeCool[model]
+	if !ok {
+		return false
+	}
+	if !now.Before(until) {
+		delete(e.freeCool, model)
+		return false
+	}
+	return true
+}
+
+// ParkFreeModel records that this account cannot serve one free model.
+//
+// The horizon is the account's own quota park: the vendor refilling the wallet
+// is what makes the pair worth trying again, so the pair is probed whenever the
+// account-level park lapses rather than on a timer of our own invention.
+func (p *pool) ParkFreeModel(e *entry, model string) time.Duration {
+	if e == nil || strings.TrimSpace(model) == "" {
+		return 0
+	}
+	now := p.now()
+	d := p.cd.quota
+	if d <= 0 {
+		d = time.Hour
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if e.freeCool == nil {
+		e.freeCool = make(map[string]time.Time, 1)
+	}
+	e.freeCool[model] = now.Add(d)
+	p.logf("cline: model %s is not served for free on %s; parked for %v", model, e.acct.id(), d)
+	return d
 }
 
 // usable returns every selectable entry, least-recently-used first.
@@ -344,6 +402,13 @@ func (p *pool) refreshCandidates(now time.Time, margin time.Duration) []*entry {
 // it as used.  It never returns an entry that Status would call cooling,
 // exhausted or invalid.
 func (p *pool) pick(skip map[string]bool) *entry {
+	return p.pickFor(skip, false, "")
+}
+
+// pickFor is pick for a request the router has priced: freeModel and model let
+// an account parked for an empty wallet stay in rotation for a model the vendor
+// gives away, while the parks that are not about money keep excluding it.
+func (p *pool) pickFor(skip map[string]bool, freeModel bool, model string) *entry {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	now := p.now()
@@ -352,7 +417,7 @@ func (p *pool) pick(skip map[string]bool) *entry {
 		if skip != nil && skip[e.acct.id()] {
 			continue
 		}
-		if p.availableLocked(e, now) {
+		if p.availableLockedFor(e, now, freeModel, model) {
 			candidates = append(candidates, e)
 		}
 	}
@@ -370,6 +435,13 @@ func (p *pool) pick(skip map[string]bool) *entry {
 // now and is not in skip, marking it used.  It is the affinity fast path: a
 // conversation's bound account is served only while it is still healthy.
 func (p *pool) usableEntry(id string, skip map[string]bool) *entry {
+	return p.usableEntryFor(id, skip, false, "")
+}
+
+// usableEntryFor is usableEntry with the request's pricing verdict, so a
+// conversation bound to an account that is only short of money keeps its
+// binding for a free model and loses it for everything else.
+func (p *pool) usableEntryFor(id string, skip map[string]bool, freeModel bool, model string) *entry {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if skip != nil && skip[id] {
@@ -380,7 +452,7 @@ func (p *pool) usableEntry(id string, skip map[string]bool) *entry {
 		if e.acct.id() != id {
 			continue
 		}
-		if !p.availableLocked(e, now) {
+		if !p.availableLockedFor(e, now, freeModel, model) {
 			return nil
 		}
 		e.acct.LastUsed = now.Unix()
@@ -391,9 +463,15 @@ func (p *pool) usableEntry(id string, skip map[string]bool) *entry {
 
 // availableNow reports whether one entry may serve a request now.
 func (p *pool) availableNow(e *entry) bool {
+	return p.availableNowFor(e, false, "")
+}
+
+// availableNowFor is availableNow with the request's pricing verdict.  It is the
+// predicate the affinity table is fed.
+func (p *pool) availableNowFor(e *entry, freeModel bool, model string) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.availableLocked(e, p.now())
+	return p.availableLockedFor(e, p.now(), freeModel, model)
 }
 
 // get returns the entry for an id, or nil.
@@ -436,12 +514,22 @@ func (p *pool) revive(e *entry) {
 
 // markUsed records a successful use.
 func (p *pool) markUsed(e *entry) {
+	p.markUsedFor(e, false)
+}
+
+// markUsedFor records a request this entry served.  A free model that succeeds
+// proves the credential works and that the model is served -- but nothing about
+// the balance, so a quota park survives it and the account stays out of rotation
+// for the models that would charge it.
+func (p *pool) markUsedFor(e *entry, freeModel bool) {
 	if e == nil {
 		return
 	}
 	p.mu.Lock()
 	e.acct.LastUsed = p.now().Unix()
-	e.state = stateReady
+	if !(freeModel && e.state == stateExhausted) {
+		e.state = stateReady
+	}
 	p.mu.Unlock()
 	p.flushState(false)
 }

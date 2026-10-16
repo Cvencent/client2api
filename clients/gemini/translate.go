@@ -53,10 +53,24 @@ type geminiContent struct {
 	Parts []geminiPart `json:"parts"`
 }
 
-// buildEnvelope assembles the request body.  It returns the envelope as a
-// nested map so encoding/json sorts every layer alphabetically, which is what
-// the vendor's fingerprint expects to see byte-for-byte.
+// buildEnvelope assembles the request body for the compiled-in flash line: the
+// admission key is the bare model plus the tier the request's effort names, and
+// the caller's own model string only picks that tier, never travels.
 func buildEnvelope(project, model string, req *core.ChatRequest, sig *sigStore, lane string, generation int) (map[string]any, error) {
+	_ = model
+	tier := effortToTier(requestEffort(req))
+	return buildEnvelopeFor(project, upstreamModelName(tier), tier, req, sig, lane, generation)
+}
+
+// buildEnvelopeFor assembles the request body for one resolved catalogue
+// route: upstream is the vendor's own admission key, sent verbatim, and tier is
+// the thinking level whose budget the request carries.  An empty tier omits
+// thinkingBudget and lets the vendor answer with its own default.
+//
+// The envelope is a nested map so encoding/json sorts every layer
+// alphabetically, which is what the vendor's fingerprint expects to see
+// byte-for-byte.
+func buildEnvelopeFor(project, upstream, tier string, req *core.ChatRequest, sig *sigStore, lane string, generation int) (map[string]any, error) {
 	contents, system, err := translateContents(req, sig)
 	if err != nil {
 		return nil, err
@@ -64,19 +78,13 @@ func buildEnvelope(project, model string, req *core.ChatRequest, sig *sigStore, 
 	if len(contents) == 0 {
 		return nil, errEmptyContents
 	}
-
-	tier := effortToTier(requestEffort(req))
-	spec := map[string]any{
-		"model":     upstreamModelName(tier),
+	return map[string]any{
+		"model":     upstream,
 		"project":   project,
 		"request":   buildRequestMap(contents, system, req, project, lane, tier, generation),
 		"requestId": newRequestID(),
 		"userAgent": upstreamUserAgent,
-	}
-	// `model` already carries the tier; the caller's own model string is only
-	// used to pick the tier, never forwarded.
-	_ = model
-	return spec, nil
+	}, nil
 }
 
 // buildRequestMap is the inner `request` object.

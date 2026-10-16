@@ -48,6 +48,11 @@ type configResponse struct {
 	// as raw JSON because every module decides its own keys; this table is what
 	// lets the page render labelled controls instead of an unlabelled blob.
 	ModuleSchema map[string][]moduleOption `json:"module_schema"`
+	// BuiltinSources names the platforms shipped by this binary.  Config may
+	// still define or override them, so the panel receives the effective
+	// source table in Config and this marker tells it which rows must not be
+	// presented as an operator-added relay.
+	BuiltinSources []string `json:"builtin_sources"`
 }
 
 // panelSettings is the resolved dashboard presentation config.  Every field is
@@ -107,8 +112,50 @@ func (p *panel) configRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp.Config = redactConfig(parsed)
+	p.exposeBuiltinSources(&resp)
 	p.exposeModelGroups(&resp)
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// exposeBuiltinSources projects shipped platforms into the effective config
+// the panel reads, without writing them back to disk.  An operator's entry
+// always wins; a missing entry is filled from the shipped default so the
+// platform has the same account and scan controls as a normal relay.
+func (p *panel) exposeBuiltinSources(resp *configResponse) {
+	if resp == nil {
+		return
+	}
+	defaults := core.BuiltinSourceDefaults()
+	if len(defaults) == 0 {
+		return
+	}
+	resp.BuiltinSources = make([]string, 0, len(defaults))
+	for id := range defaults {
+		resp.BuiltinSources = append(resp.BuiltinSources, id)
+	}
+	sort.Strings(resp.BuiltinSources)
+	cfg, ok := resp.Config.(map[string]any)
+	if !ok {
+		return
+	}
+	sources, _ := cfg["sources"].(map[string]any)
+	if sources == nil {
+		sources = make(map[string]any, len(defaults))
+		cfg["sources"] = sources
+	}
+	for id, def := range defaults {
+		row, _ := sources[id].(map[string]any)
+		if row == nil {
+			row = make(map[string]any, 2)
+			sources[id] = row
+		}
+		if _, ok := row["label"]; !ok && def.Label != "" {
+			row["label"] = def.Label
+		}
+		if _, ok := row["base_url"]; !ok {
+			row["base_url"] = def.BaseURL
+		}
+	}
 }
 
 // exposeModelGroups puts the effective routing groups into the config payload.

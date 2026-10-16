@@ -49,8 +49,23 @@ type Client struct {
 
 func init() {
 	core.Register(clientName, New)
+	// OfficeAce is a platform this build ships with rather than a relay the
+	// operator has to add: the default model gateway is registered here, so a
+	// fresh install already lists it and the panel can drive its Huawei
+	// account login on the platform itself.
+	core.RegisterBuiltinSource(officeAceSourceID, core.SourceConfig{
+		Label:   officeAceSourceLabel,
+		BaseURL: officeAceDefaultBaseURL,
+	})
 	core.RegisterSourceFactory(func(name string, cfg core.SourceConfig, deps core.Deps) (core.SourceClient, error) {
-		return newSource(name, cfg, deps)
+		s, err := newSource(name, cfg, deps)
+		if err != nil {
+			return nil, err
+		}
+		// An OfficeAce relay also adopts the credential the OfficeAce desktop
+		// client already stored, so the panel offers its normal "import from
+		// this machine" tab there and nowhere else.
+		return wrapOfficeAceSource(name, cfg, s), nil
 	})
 }
 
@@ -129,14 +144,15 @@ func (c *Client) buildCredentials() []providerRecord {
 	recs := make([]providerRecord, 0, len(c.cfg.Providers))
 	for _, p := range c.cfg.Providers {
 		recs = append(recs, providerRecord{
-			ID:       p.ID,
-			Label:    firstNonEmpty(p.Label, p.ID),
-			APIKey:   p.APIKey,
-			BaseURL:  p.base(),
-			Models:   p.Models,
-			Headers:  p.ExtraHeaders,
-			Disabled: p.Disabled,
-			Source:   p.source(),
+			ID:        p.ID,
+			Label:     firstNonEmpty(p.Label, p.ID),
+			APIKey:    p.APIKey,
+			AppSecret: p.AppSecret,
+			BaseURL:   p.base(),
+			Models:    p.Models,
+			Headers:   p.ExtraHeaders,
+			Disabled:  p.Disabled,
+			Source:    p.source(),
 		})
 	}
 	return recs

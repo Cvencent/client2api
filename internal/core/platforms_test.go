@@ -242,3 +242,62 @@ func TestMaxInFlightPerAccountForReadsThePolicy(t *testing.T) {
 		t.Errorf("unknown per-account ceiling = %d, want 0", got)
 	}
 }
+
+func TestSourceInFlightOverridesPlatformPolicy(t *testing.T) {
+	r := NewRegistry()
+	r.SetPlatformConfigs(map[string]PlatformConfig{
+		"relay": {MaxInFlight: 9, MaxInFlightPerAccount: 4},
+	})
+	max, accountMax := 2, 1
+	r.reconcileSources(map[string]SourceConfig{
+		"relay": {BaseURL: "https://relay.example/v1", MaxInFlight: &max, MaxInFlightPerAccount: &accountMax},
+	}, Deps{DataDir: t.TempDir()}, func(name string, cfg SourceConfig, deps Deps) (SourceClient, error) {
+		return &sourceTestClient{name: name, cfg: cfg}, nil
+	})
+
+	if got := r.MaxInFlightFor("relay"); got != 2 {
+		t.Errorf("source max_in_flight = %d, want 2", got)
+	}
+	if got := r.MaxInFlightPerAccountFor("relay"); got != 1 {
+		t.Errorf("source max_in_flight_per_account = %d, want 1", got)
+	}
+}
+
+func TestSourceExplicitZeroDisablesPlatformInFlightPolicy(t *testing.T) {
+	r := NewRegistry()
+	r.SetPlatformConfigs(map[string]PlatformConfig{
+		"relay": {MaxInFlight: 9, MaxInFlightPerAccount: 4},
+	})
+	zero := 0
+	r.reconcileSources(map[string]SourceConfig{
+		"relay": {BaseURL: "https://relay.example/v1", MaxInFlight: &zero, MaxInFlightPerAccount: &zero},
+	}, Deps{DataDir: t.TempDir()}, func(name string, cfg SourceConfig, deps Deps) (SourceClient, error) {
+		return &sourceTestClient{name: name, cfg: cfg}, nil
+	})
+
+	if got := r.MaxInFlightFor("relay"); got != 0 {
+		t.Errorf("explicit zero max_in_flight = %d, want 0", got)
+	}
+	if got := r.MaxInFlightPerAccountFor("relay"); got != 0 {
+		t.Errorf("explicit zero max_in_flight_per_account = %d, want 0", got)
+	}
+}
+
+func TestSourceUnsetInFlightFallsBackToPlatformPolicy(t *testing.T) {
+	r := NewRegistry()
+	r.SetPlatformConfigs(map[string]PlatformConfig{
+		"relay": {MaxInFlight: 9, MaxInFlightPerAccount: 4},
+	})
+	r.reconcileSources(map[string]SourceConfig{
+		"relay": {BaseURL: "https://relay.example/v1"},
+	}, Deps{DataDir: t.TempDir()}, func(name string, cfg SourceConfig, deps Deps) (SourceClient, error) {
+		return &sourceTestClient{name: name, cfg: cfg}, nil
+	})
+
+	if got := r.MaxInFlightFor("relay"); got != 9 {
+		t.Errorf("unset source max_in_flight = %d, want platform fallback 9", got)
+	}
+	if got := r.MaxInFlightPerAccountFor("relay"); got != 4 {
+		t.Errorf("unset source max_in_flight_per_account = %d, want platform fallback 4", got)
+	}
+}

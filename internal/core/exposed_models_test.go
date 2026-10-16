@@ -34,6 +34,20 @@ func TestExposedModelPolicyMatchesTrimmedCaseInsensitiveIDs(t *testing.T) {
 	}
 }
 
+func TestExposedModelPolicySupportsPlatformWildcards(t *testing.T) {
+	r := NewRegistry()
+	r.SetExposedModels([]string{"my-relay/*"}, true)
+
+	for _, id := range []string{"my-relay/model-a", "MY-RELAY/sub/model"} {
+		if !r.ExposedModelAllowed(id) {
+			t.Fatalf("my-relay/* must allow %q", id)
+		}
+	}
+	if r.ExposedModelAllowed("workbuddy/glm-5.3") {
+		t.Fatal("a platform wildcard must not allow another platform")
+	}
+}
+
 func TestExposedModelPolicyReturnsTheConfiguredDisplayIDs(t *testing.T) {
 	r := NewRegistry()
 	r.SetExposedModels([]string{"Auto/DeepSeek-V4.1-Flash", " auto/deepseek-v4.1-flash ", "alias"}, true)

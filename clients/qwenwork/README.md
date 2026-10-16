@@ -52,7 +52,7 @@ factory logs a line containing `invalid config` and Status reports not-ready.
 
 See `config.example.json` for a copy-paste starting point.
 
-```jsonc
+``jsonc
 {
   "clients": {
     "qwenwork": {
@@ -84,7 +84,7 @@ See `config.example.json` for a copy-paste starting point.
     }
   }
 }
-```
+``
 
 ### Top-level keys
 
@@ -289,6 +289,19 @@ credential at all):
 
 ---
 
+## Free models
+
+The vendor's `credits` multiplier is read per model: a parsed zero (`0`,
+`x0`, 免费) sets `extra.free`, and the router marks the attempt with
+`core.ChatRequest.FreeModel`.  A credential parked by a quota verdict
+(`exhausted`) still serves those models -- they spend no credit -- while a
+rate limit, a dead session, a client error and a per-pair park keep applying.
+
+A free model the vendor refuses on credit grounds parks that
+(credential, model) pair alone, until the configured quota cooldown lapses; the
+credential keeps serving its other free models, and a free success never lifts
+the wallet park.
+
 ## Daily check-in
 
 One action, `daily`, over two Sash endpoints on the same host as chat:
@@ -471,11 +484,11 @@ appended, where the age is rendered `0s` / `Ns` / `Nm` / `Nh`.
 
 ## Testing
 
-```sh
+``sh
 go vet ./clients/qwenwork/...
 go test ./clients/qwenwork/... -v
 go test ./... -count=1
-```
+``
 
 Everything runs **offline** and needs no credential: upstream payloads are
 inline string fixtures and the transport is a fake `http.RoundTripper`

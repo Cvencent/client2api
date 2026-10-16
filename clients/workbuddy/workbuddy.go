@@ -882,6 +882,10 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 	if route.bare == "" {
 		return nil, core.ErrUnsupported
 	}
+	// The router prices the model before the module ever sees it: a zero
+	// multiplier means the request spends no credit, so an account parked for
+	// an empty wallet is still a candidate for it.
+	freeModel := req.FreeModel
 
 	c.refreshAccounts(false)
 	if c.pool.Len() == 0 {
@@ -946,7 +950,7 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		a, ok := c.pickAccount(skip, convKey, route)
+		a, ok := c.pickAccount(skip, convKey, route, freeModel)
 		if !ok {
 			break
 		}
@@ -987,14 +991,14 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 				lastErr = errors.New("upstream returned an empty response body")
 				continue
 			}
-			c.pool.MarkSuccessForModel(a, route.bare)
+			c.pool.MarkSuccessForModelFor(a, route.bare, freeModel)
 			return newLeasedStream(ctx, rc, func() { c.pool.Release(a) }), nil
 		}
 		c.pool.Release(a)
 		// MarkFailureForModel rather than MarkFailure: a 11102 or a model-scoped
 		// 6004 parks the model on this account, not the account, because the
 		// credential is still perfectly good for every other model.
-		kind, _ := c.pool.MarkFailureForModel(a, route.bare, err)
+		kind := c.noteAttemptFailure(a, route.bare, err, freeModel)
 		lastErr = err
 		if !retryableKind(kind) {
 			return nil, classifyFailure(err, lastAccount)
@@ -1025,6 +1029,26 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 		}
 	}
 	return nil, core.ErrNotConfigured
+}
+
+// noteAttemptFailure feeds one refused attempt back into the pool and reports
+// how the vendor's answer was classified.
+//
+// The free-model case is the one exception to the usual account-level policy.
+// A request only reaches an account whose wallet is empty because the router
+// priced the model at zero, so "insufficient credit" here is not news about the
+// account -- it is news about this model on this account, and that is where the
+// park is recorded.  Parking the account instead would take it out of rotation
+// for every other free model, which is the outcome the free path exists to
+// avoid.
+func (c *Client) noteAttemptFailure(a *Auth, model string, err error, freeModel bool) ErrKind {
+	kind, _, _, _ := failureDetail(err)
+	if freeModel && kind == ErrHardCredit {
+		c.pool.MarkFreeModelUnavailable(a, model)
+		return kind
+	}
+	kind, _ = c.pool.MarkFailureForModel(a, model, err)
+	return kind
 }
 
 // attempt performs one upstream call for one account, including the

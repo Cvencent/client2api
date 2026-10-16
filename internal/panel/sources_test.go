@@ -49,6 +49,46 @@ func TestSourceHandlerPersistsBalanceProtocol(t *testing.T) {
 	}
 }
 
+func TestSourceHandlerPersistsRelayLimitsAndCooldowns(t *testing.T) {
+	path := configFile(t, `{}`)
+	p := configPanel(path)
+	p.opts.Registry = core.NewRegistry()
+	p.opts.Reload = func() error { return nil }
+	w := httptest.NewRecorder()
+	body := `{
+		"base_url":"https://relay.example/v1",
+		"requests_per_minute":120,
+		"requests_per_minute_per_account":30,
+		"max_in_flight":0,
+		"max_in_flight_per_account":1,
+		"cooldown":"15s",
+		"rate_limit_cooldown":"0s",
+		"quota_cooldown":"5m",
+		"auth_cooldown":"6m",
+		"upstream_cooldown":"10s"
+	}`
+	p.handleSource(w, httptest.NewRequest(http.MethodPut, "/panel/api/sources/relay", strings.NewReader(body)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("save: %d %s", w.Code, w.Body.String())
+	}
+	src := onDisk(t, path)["sources"].(map[string]any)["relay"].(map[string]any)
+	for key, want := range map[string]any{
+		"requests_per_minute":             float64(120),
+		"requests_per_minute_per_account": float64(30),
+		"max_in_flight":                   float64(0),
+		"max_in_flight_per_account":       float64(1),
+		"cooldown":                        "15s",
+		"rate_limit_cooldown":             "0s",
+		"quota_cooldown":                  "5m",
+		"auth_cooldown":                   "6m",
+		"upstream_cooldown":               "10s",
+	} {
+		if got, ok := src[key]; !ok || got != want {
+			t.Errorf("persisted %s = %#v (present=%v), want %#v", key, got, ok, want)
+		}
+	}
+}
+
 func TestSourceBalanceEditorIsWired(t *testing.T) {
 	src := string(indexHTML)
 	for _, want := range []string{
@@ -64,6 +104,33 @@ func TestSourceBalanceEditorIsWired(t *testing.T) {
 	} {
 		if !strings.Contains(src, want) {
 			t.Errorf("source balance editor is missing %q", want)
+		}
+	}
+}
+
+func TestSourceLimitsEditorIsWired(t *testing.T) {
+	src := string(indexHTML)
+	for _, want := range []string{
+		`id="sourceRPM"`,
+		`id="sourceAccountRPM"`,
+		`id="sourceMaxInFlight"`,
+		`id="sourceAccountMaxInFlight"`,
+		`id="sourceCooldown"`,
+		`id="sourceRateCooldown"`,
+		`id="sourceQuotaCooldown"`,
+		`id="sourceAuthCooldown"`,
+		`id="sourceUpstreamCooldown"`,
+		`const intText = value => value == null ? "" : String(value);`,
+		`$("#sourceMaxInFlight").value = intText(cfg.max_in_flight);`,
+		`if (maxInFlight != null) cfg.max_in_flight = maxInFlight;`,
+		`["#sourceCooldown", "cooldown"]`,
+		`["#sourceRateCooldown", "rate_limit_cooldown"]`,
+		`["#sourceQuotaCooldown", "quota_cooldown"]`,
+		`["#sourceAuthCooldown", "auth_cooldown"]`,
+		`["#sourceUpstreamCooldown", "upstream_cooldown"]`,
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("source limits editor is missing %q", want)
 		}
 	}
 }

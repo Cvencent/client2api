@@ -123,3 +123,11 @@ func TestRoutePlanModelCallsStaysZero(t *testing.T) {
 		t.Fatal("counter should start at zero")
 	}
 }
+
+func TestRoutePlanReportsMissingRegistry(t *testing.T) {
+	h := New(Options{})
+	rec := routePlanPost(t, h, `{"model":"Auto/gpt-x","catalogs":{}}`)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503: %s", rec.Code, rec.Body.String())
+	}
+}

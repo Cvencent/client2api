@@ -1,16 +1,17 @@
 package panel
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
 	"client2api/internal/core"
 )
 
-// routePlanRequest is the body of POST /panel/api/route_plan.  catalogs is the
-// caller"s own snapshot of each platform"s model list (the panel page already
-// holds it from /panel/api/models), so this endpoint never asks a module for
-// anything: no cache refresh, no account reads, no upstream traffic at all.
+// routePlanRequest is the shared body shape for the route-plan and route-speed
+// endpoints.  catalogs is the caller's own snapshot of each platform's model
+// list, taken from /panel/api/models.  Route-plan is purely local; route-speed
+// uses the same resolved plan and then probes each platform live.
 type routePlanRequest struct {
 	Model    string                            `json:"model"`
 	Catalogs map[string][]routePlanCatalogItem `json:"catalogs"`
@@ -34,14 +35,29 @@ func (p *panel) handleRoutePlan(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	req.Model = strings.TrimSpace(req.Model)
-	if req.Model == "" {
-		writeErr(w, http.StatusBadRequest, "model is required")
+	plan, err := p.resolveRoutePlan(req)
+	if err != nil {
+		status := http.StatusNotFound
+		if strings.Contains(err.Error(), "model is required") {
+			status = http.StatusBadRequest
+		} else if strings.Contains(err.Error(), "no registry") {
+			status = http.StatusServiceUnavailable
+		}
+		writeErr(w, status, err.Error())
 		return
 	}
+	writeJSON(w, http.StatusOK, plan)
+}
+
+// resolveRoutePlan turns the panel's already-cached catalogue snapshot into
+// the same static chain the route-plan and route-speed handlers expose.
+func (p *panel) resolveRoutePlan(req routePlanRequest) (core.RoutePlan, error) {
+	req.Model = strings.TrimSpace(req.Model)
+	if req.Model == "" {
+		return core.RoutePlan{}, errors.New("model is required")
+	}
 	if p.opts.Registry == nil {
-		writeErr(w, http.StatusServiceUnavailable, "no registry")
-		return
+		return core.RoutePlan{}, errors.New("no registry")
 	}
 
 	catalogs := make(map[string][]core.Model, len(req.Catalogs))
@@ -71,15 +87,5 @@ func (p *panel) handleRoutePlan(w http.ResponseWriter, r *http.Request) {
 		}
 		catalogs[name] = models
 	}
-
-	plan, err := p.opts.Registry.ResolveStaticCatalog(req.Model, catalogs)
-	if err != nil {
-		status := http.StatusNotFound
-		if strings.Contains(err.Error(), "model is required") {
-			status = http.StatusBadRequest
-		}
-		writeErr(w, status, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, plan)
+	return p.opts.Registry.ResolveStaticCatalog(req.Model, catalogs)
 }

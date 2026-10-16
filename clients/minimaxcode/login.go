@@ -365,6 +365,14 @@ func (c *Client) pollDeviceToken(ctx context.Context, s *loginSession) (core.Log
 		return s.snapshot(), nil
 	}
 
+	// A panel sign-in must finish the same first-run account setup the desktop
+	// client performs.  Without this write the credential can chat but the
+	// daily sign-in board stays at zero for that account.
+	onboardingAcct := Account{ID: rec.ID, Token: access, BaseURL: ""}
+	if err := c.completeAccountOnboarding(ctx, &onboardingAcct); err != nil {
+		c.logf("minimaxcode: sign-in %s onboarding completion failed (continuing): %v", s.id, err)
+	}
+
 	message := ""
 	if strings.TrimSpace(refresh) == "" {
 		// Worth saying out loud: without a refresh token the row works until the

@@ -254,6 +254,11 @@ func (r *Registry) MaxInFlightFor(name string) int {
 	if r == nil {
 		return 0
 	}
+	r.sourceMu.Lock()
+	defer r.sourceMu.Unlock()
+	if cfg, ok := r.sources[name]; ok && cfg.MaxInFlight != nil {
+		return *cfg.MaxInFlight
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.platforms[name].maxInFlight
@@ -266,6 +271,11 @@ func (r *Registry) MaxInFlightFor(name string) int {
 func (r *Registry) MaxInFlightPerAccountFor(name string) int {
 	if r == nil {
 		return 0
+	}
+	r.sourceMu.Lock()
+	defer r.sourceMu.Unlock()
+	if cfg, ok := r.sources[name]; ok && cfg.MaxInFlightPerAccount != nil {
+		return *cfg.MaxInFlightPerAccount
 	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -324,7 +334,8 @@ func (r *Registry) ModelAllowed(platform, model string) bool {
 // distinguishes a missing setting ("all models") from an explicit empty list
 // ("no models"), which JSON null and [] must not collapse into each other.
 // Matching is case-insensitive and ignores surrounding space, but the original
-// display spelling is retained for the panel.
+// display spelling is retained for the panel.  A trailing "/*" pattern exposes
+// every model below that platform prefix without opening any other platform.
 func (r *Registry) SetExposedModels(models []string, configured bool) {
 	next := make(map[string]struct{}, len(models))
 	display := make([]string, 0, len(models))
@@ -385,8 +396,19 @@ func (r *Registry) ExposedModelAllowed(model string) bool {
 	if key == "" {
 		return false
 	}
-	_, ok := r.exposedModels[key]
-	return ok
+	if _, ok := r.exposedModels[key]; ok {
+		return true
+	}
+	for pattern := range r.exposedModels {
+		prefix, ok := strings.CutSuffix(pattern, "*")
+		if !ok || !strings.HasSuffix(prefix, "/") || len(key) <= len(prefix) {
+			continue
+		}
+		if strings.HasPrefix(key, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // platformPriorityCST keeps time-window matching independent of the host's
@@ -633,9 +655,12 @@ type Candidate struct {
 // ordinary catalogue match.
 func (c Candidate) GroupKey() string { return c.group }
 
+// modelFree reports whether the router treats this catalogue entry as a
+// zero-cost model.  The rule lives in ModelIsFree: an explicit flag set by the
+// module, or a vendor label that names the free tier in the display name, the
+// group (`owned_by`) or the id.
 func modelFree(m Model) bool {
-	free, _ := m.Extra["free"].(bool)
-	return free
+	return ModelIsFree(m)
 }
 
 // Resolve maps a requested model to its first, best candidate.
@@ -796,12 +821,14 @@ func (r *Registry) resolveQualifiedCandidate(ctx context.Context, c Client, rest
 	var (
 		matchedExtra map[string]any
 		catalogueHit bool
+		free         bool
 	)
 	if models, err := c.Models(ctx); err == nil {
 		for _, m := range models {
 			if strings.EqualFold(strings.TrimSpace(m.ID), rest) {
 				upstream = m.ID
 				matchedExtra = m.Extra
+				free = modelFree(m)
 				catalogueHit = true
 				break
 			}
@@ -810,7 +837,10 @@ func (r *Registry) resolveQualifiedCandidate(ctx context.Context, c Client, rest
 	if !r.ModelAllowed(c.Name(), upstream) {
 		return nil, fmt.Errorf("model %q is disabled on client %q; re-enable it in the platform configuration or qualify another client", upstream, c.Name())
 	}
-	return []Candidate{{Client: c, Model: upstream, Catalogue: catalogueHit, Extra: matchedExtra}}, nil
+	// The hard pin still carries the free flag: it is what lets the module's
+	// pool keep a zero-balance account in play for a model the vendor gives
+	// away, and a caller who wrote the platform name is no different there.
+	return []Candidate{{Client: c, Model: upstream, Free: free, Catalogue: catalogueHit, Extra: matchedExtra}}, nil
 }
 
 // rankCandidates orders the multi-platform candidates that can serve one

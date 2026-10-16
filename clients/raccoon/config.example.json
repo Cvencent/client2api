@@ -19,6 +19,19 @@
   "store_flush": "5s",
   "login_timeout": "5m",
 
+  "sms_token": "",
+  "sms_keyword": "商汤科技",
+  "sms_base": "https://api.eomsg.com/zc/data.php",
+  "sms_provinces": [],
+  "sms_card_type": "全部",
+
+  "browser_path": "",
+  "browser_headless": true,
+  "auto_login_timeout_seconds": 300,
+  "sms_polls": 12,
+  "sms_interval_seconds": 5,
+  "dup_retries": 6,
+
   "credential_paths": [],
 
   "access_token": "",

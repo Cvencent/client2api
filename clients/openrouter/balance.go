@@ -61,14 +61,14 @@ func (c *Client) AccountBalance(ctx context.Context, id string, soon time.Durati
 		return core.Balance{}, keyErr
 	}
 	if keyStatus != http.StatusOK {
-		c.noteFailure(rec.ID, classifyFailure(keyStatus, 0, errorTextOf(keyBody)), errorTextOf(keyBody))
+		c.noteFailure(rec.ID, classifyFailure(keyStatus, 0, errorTextOf(keyBody)), errorTextOf(keyBody), admission{})
 		return core.Balance{}, fmt.Errorf("openrouter: balance lookup failed (HTTP %d): %s", keyStatus, errorTextOf(keyBody))
 	}
 	if creditsErr != nil {
 		return core.Balance{}, creditsErr
 	}
 	if creditsStatus != http.StatusOK {
-		c.noteFailure(rec.ID, classifyFailure(creditsStatus, 0, errorTextOf(creditsBody)), errorTextOf(creditsBody))
+		c.noteFailure(rec.ID, classifyFailure(creditsStatus, 0, errorTextOf(creditsBody)), errorTextOf(creditsBody), admission{})
 		return core.Balance{}, fmt.Errorf("openrouter: credit lookup failed (HTTP %d): %s", creditsStatus, errorTextOf(creditsBody))
 	}
 	return core.Balance{}, fmt.Errorf("openrouter: the vendor returned no usable balance")
@@ -175,7 +175,7 @@ func (c *Client) getJSON(ctx context.Context, rec accountRecord, url string) ([]
 	c.cfg.applyHeaders(req, rec.APIKey)
 	resp, err := c.httpClient().Do(req)
 	if err != nil {
-		return nil, 0, c.classifyUpstream(rec.ID, err)
+		return nil, 0, c.classifyUpstream(rec.ID, err, admission{})
 	}
 	defer resp.Body.Close()
 	return readLimited(resp.Body, maxErrorBytes), resp.StatusCode, nil

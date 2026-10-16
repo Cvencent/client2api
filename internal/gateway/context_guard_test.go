@@ -21,6 +21,7 @@ func TestParseLimitFromMessage(t *testing.T) {
 	}{
 		{"workbuddy code 11115", `{"code":11115,"msg":"prompt is too long: 100001 tokens > 100000 maximum","requestId":"b15aeebef2a4f830ddc58866a5288569"}`, 100000},
 		{"workbuddy larger window", `prompt is too long: 1060027 tokens > 1048576 maximum`, 1048576},
+		{"workbuddy escaped comparison", `upstream prompt_too_long (http 400): {"code":11115,"msg":"prompt is too long: 1427021 tokens \u003e 1048576 maximum","requestId":"f608978d070b25efcb15e65273adc4c0"}`, 1048576},
 		{"comma separated", "prompt is too long: 100,001 tokens > 100,000 maximum", 100000},
 		{"underscore separated", "prompt is too long: 100001 tokens > 1048576 maximum", 1048576},
 		{"maximum phrased after", "maximum context length is 200000 tokens", 200000},
@@ -36,6 +37,23 @@ func TestParseLimitFromMessage(t *testing.T) {
 				t.Fatalf("parseLimitFromMessage(%q) = %d, want %d", tc.msg, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestParseRefusalSizesReadsTheMeasuredSizeAndTheLimit(t *testing.T) {
+	// The exact shape workbuddy produces: ">" arrives JSON-escaped, and both
+	// numbers are present.  The pair is what lets a measured refusal be trimmed
+	// to fit instead of being re-sent until it fails again.
+	escaped := `upstream prompt_too_long (http 400): {"code":11115,"msg":"prompt is too long: 1427021 tokens \u003e 1048576 maximum","requestId":"f608978d070b25efcb15e65273adc4c0"}`
+	got := parseRefusalSizes(escaped)
+	if got.Observed != 1427021 || got.Limit != 1048576 {
+		t.Fatalf("parseRefusalSizes = %+v, want {Observed:1427021 Limit:1048576}", got)
+	}
+	// A message that names only the window still yields the limit, with the
+	// measurement left unknown rather than invented.
+	only := parseRefusalSizes("maximum context length is 128000 tokens")
+	if only.Observed != 0 || only.Limit != 128000 {
+		t.Fatalf("parseRefusalSizes = %+v, want {Observed:0 Limit:128000}", only)
 	}
 }
 
