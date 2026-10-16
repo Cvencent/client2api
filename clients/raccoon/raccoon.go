@@ -31,6 +31,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"client2api/internal/browser"
 	"client2api/internal/core"
 	"client2api/internal/fingerprint"
 	"client2api/internal/smscap"
@@ -97,6 +98,11 @@ type Client struct {
 	// autoCaptcha is a test seam for the browser-driven auto-login flow.
 	// Production uses solveRaccoonCaptcha.
 	autoCaptcha func(context.Context, string) (string, error)
+
+	// findBrowser is a test seam for the same flow's prerequisite check.
+	// Production uses browser.FindBrowser; a test pins it to "" so the
+	// "no browser installed" path can be exercised on a machine that has one.
+	findBrowser func(string) string
 }
 
 // New builds the module. A malformed config is logged and replaced with
@@ -126,7 +132,18 @@ func New(deps core.Deps) (core.Client, error) {
 	c.pool.load(configuredAccounts(cfg))
 	c.httpc = c.httpClient()
 	c.autoCaptcha = c.solveRaccoonCaptcha
+	c.findBrowser = browser.FindBrowser
 	return c, nil
+}
+
+// browserPath resolves the configured browser, falling back to the shared
+// lookup.  Indirection only exists so tests can simulate a machine with no
+// Chromium-family browser.
+func (c *Client) browserPath() string {
+	if c.findBrowser != nil {
+		return c.findBrowser(c.cfg.BrowserPath)
+	}
+	return browser.FindBrowser(c.cfg.BrowserPath)
 }
 
 // setPaths resolves the two state files inside Deps.DataDir. When DataDir is

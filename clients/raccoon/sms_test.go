@@ -150,6 +150,9 @@ func TestRaccoonAutoLoginFailsFastWithoutAPlatformToken(t *testing.T) {
 func TestRaccoonAutoLoginFailsFastWithNoBrowser(t *testing.T) {
 	missing := t.TempDir() + string(filepath.Separator) + "missing-browser"
 	c := newTestClient(t, t.TempDir(), `{"sms_token":"tok","browser_path":`+strconvQuote(missing)+`,"sms_polls":1}`, nil)
+	// A CI runner ships Chromium, so the configured path alone cannot prove
+	// the guard fired.  Pin the lookup to "nothing installed" instead.
+	c.findBrowser = func(string) string { return "" }
 	if _, err := c.StartAutoLogin(context.Background(), core.AutoLoginRequest{}); err == nil {
 		t.Fatal("StartAutoLogin accepted a run with no usable browser")
 	}

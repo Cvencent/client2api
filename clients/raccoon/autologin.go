@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"client2api/internal/browser"
 	"client2api/internal/core"
 )
 
@@ -156,7 +155,7 @@ func (c *Client) StartAutoLogin(ctx context.Context, req core.AutoLoginRequest) 
 	if _, err := c.newSMSClient(c.resolveSMS(opts)); err != nil {
 		return core.AutoLoginJob{}, err
 	}
-	if browser.FindBrowser(c.cfg.BrowserPath) == "" {
+	if c.browserPath() == "" {
 		return core.AutoLoginJob{}, errors.New("no Chromium-family browser found; install Microsoft Edge or Google Chrome, or set clients.raccoon.browser_path")
 	}
 	if c.accountsPath == "" {
