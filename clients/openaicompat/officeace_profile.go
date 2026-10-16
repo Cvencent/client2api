@@ -240,7 +240,7 @@ type officeAceProfileDocument struct {
 	// principalUrn is the "iam::<account>:user:<name>" identity the client
 	// stores after the permission check.
 	PrincipalURN string `json:"principalUrn"`
-	ModelInfo struct {
+	ModelInfo    struct {
 		APIURLBase string `json:"model_api_url_base"`
 		AuthInfo   struct {
 			AppKey    string `json:"model_app_key"`

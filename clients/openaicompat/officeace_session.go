@@ -218,4 +218,3 @@ func (o *officeAceSource) saveOfficeAceSession(id string, sess officeAceStoredSe
 	}
 	return fmt.Errorf("officeace: account %q not found", id)
 }
-

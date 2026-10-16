@@ -29,7 +29,7 @@ type storedProvider struct {
 	// so the premium routes (每日签到/余额/套餐) can be signed later without
 	// the desktop client running.  It stays nil for every other relay.
 	OfficeAce *officeAceStoredSession `json:"officeace,omitempty"`
-	Disabled           bool              `json:"disabled,omitempty"`
+	Disabled  bool                    `json:"disabled,omitempty"`
 }
 
 // storePath is the module's own credential store.
@@ -98,14 +98,14 @@ func storedToConfig(p storedProvider) ProviderConfig {
 // configToStored converts a provider into its on-disk row.
 func configToStored(p ProviderConfig) storedProvider {
 	return storedProvider{
-		ID:        p.ID,
-		Label:     p.Label,
-		BaseURL:   p.BaseURL,
-		APIKey:    p.APIKey,
-		AppSecret: p.AppSecret,
-		Models:    p.Models,
+		ID:          p.ID,
+		Label:       p.Label,
+		BaseURL:     p.BaseURL,
+		APIKey:      p.APIKey,
+		AppSecret:   p.AppSecret,
+		Models:      p.Models,
 		ProbeModels: p.ProbeModels,
-		Headers:   p.ExtraHeaders,
-		Disabled:  p.Disabled,
+		Headers:     p.ExtraHeaders,
+		Disabled:    p.Disabled,
 	}
 }
