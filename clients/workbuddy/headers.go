@@ -23,13 +23,26 @@ import (
 // so the module stays self-contained.
 
 const (
-	// defaultClientVersion is the WorkBuddy Desktop version segment used in the
-	// outbound UA and in the X-IDE-Version attribution header.  Matches the
-	// official desktop distribution (5.7.7).
+	// defaultClientVersion is the CN WorkBuddy Desktop version segment used in
+	// the outbound UA and in the X-IDE-Version attribution header.  Matches the
+	// official CN desktop distribution (5.7.7).
 	defaultClientVersion = "5.7.7"
-	// defaultCliVersion is the `CLI/<ver>` UA segment.  Matches the official
-	// bundled CLI (2.137.1).
+	// defaultCliVersion is the CN `CLI/<ver>` UA segment.  Matches the official
+	// bundled CN CLI (2.137.1).
 	defaultCliVersion = "2.137.1"
+
+	// defaultClientVersionGlobal is the international ("WorkBuddy AI") desktop
+	// version.  The 5.8.4 bundle is what the official global client ships today,
+	// and a global request that still announces the retired 5.7.7 pair is
+	// answered with business code 11-128 ("request illegal").
+	defaultClientVersionGlobal = "5.8.4"
+	// defaultCliVersionGlobal is the international `CLI/<ver>` UA segment
+	// (bundled codebuddy CLI 2.161.0).
+	defaultCliVersionGlobal = "2.161.0"
+	// globalUAPlatform is the international UA platform segment.  The official
+	// client spells it lowercase and hyphenated (`workbuddy-ai`), unlike the CN
+	// `WorkBuddy` segment.
+	globalUAPlatform = "workbuddy-ai"
 
 	originRefererCN     = "https://www.codebuddy.cn"
 	originRefererGlobal = "https://www.workbuddy.ai"
@@ -47,30 +60,51 @@ func originRefererFor(a *Auth) string {
 	return originRefererCN
 }
 
-func (u *Upstream) clientVersion() string {
+// clientVersionFor returns the desktop version for an account's realm.  An
+// explicit client_version in the config wins for both realms; otherwise each
+// realm gets the version its official client ships.
+func (u *Upstream) clientVersionFor(a *Auth) string {
 	if u != nil && u.ClientVersion != "" {
 		return u.ClientVersion
+	}
+	if a != nil && a.IsGlobal() {
+		return defaultClientVersionGlobal
 	}
 	return defaultClientVersion
 }
 
-func (u *Upstream) cliVersion() string {
+// clientVersion is the CN desktop version.  It also feeds the CN web-login URL,
+// which never serves the international realm.
+func (u *Upstream) clientVersion() string { return u.clientVersionFor(nil) }
+
+// cliVersionFor returns the bundled CLI version for an account's realm, with the
+// same explicit-config-wins rule as clientVersionFor.
+func (u *Upstream) cliVersionFor(a *Auth) string {
 	if u != nil && u.CliVersion != "" {
 		return u.CliVersion
+	}
+	if a != nil && a.IsGlobal() {
+		return defaultCliVersionGlobal
 	}
 	return defaultCliVersion
 }
 
-// defaultWorkBuddyUAFor builds the official desktop UA.  The platform segment
-// differs per realm: `WorkBuddy` for CN, `WorkBuddy AI` for the international
-// product.  Sending the wrong one can trip upstream risk control (403 code
-// 11140 "request illegal").
+// cliVersion is the CN bundled CLI version.
+func (u *Upstream) cliVersion() string { return u.cliVersionFor(nil) }
+
+// defaultWorkBuddyUAFor builds the official desktop UA.  Both the platform
+// segment and the version pair differ per realm: CN sends `WorkBuddy/5.7.7
+// WorkBuddy/5.7.7 CLI/2.137.1`, while the official international client sends
+// `WorkBuddy/5.8.4 workbuddy-ai/5.8.4 CLI/2.161.0`.  Announcing the retired
+// pair on a global request is answered with business code 11-128 ("request
+// illegal").
 func (u *Upstream) defaultWorkBuddyUAFor(a *Auth) string {
 	platform := "WorkBuddy"
 	if a != nil && a.IsGlobal() {
-		platform = "WorkBuddy AI"
+		platform = globalUAPlatform
 	}
-	return "WorkBuddy/" + u.clientVersion() + " " + platform + "/" + u.clientVersion() + " CLI/" + u.cliVersion()
+	version := u.clientVersionFor(a)
+	return "WorkBuddy/" + version + " " + platform + "/" + version + " CLI/" + u.cliVersionFor(a)
 }
 
 // userAgent is the outbound UA: explicit configuration wins, else the
@@ -84,11 +118,13 @@ func (u *Upstream) userAgent(a *Auth) string {
 
 // billingUA is the single-segment UA used for the whitelist endpoints
 // (billing/checkin).  It is suppressed when client_name is explicitly "SaaS".
-func (u *Upstream) billingUA() string {
+// The version still follows the realm: an international account must not send
+// the retired CN version on a billing call.
+func (u *Upstream) billingUA(a *Auth) string {
 	if u == nil || u.attributionClientName() == "SaaS" {
 		return ""
 	}
-	return "WorkBuddy/" + u.clientVersion()
+	return "WorkBuddy/" + u.clientVersionFor(a)
 }
 
 func (u *Upstream) attributionClientName() string {
@@ -283,7 +319,7 @@ func (u *Upstream) ChatHeaders(req *http.Request, a *Auth, clientIP string, meta
 	} else {
 		u.injectGlobalChatHeaders(req, a)
 	}
-	u.injectAttribution(req)
+	u.injectAttribution(req, a)
 	u.injectClientIP(req, clientIP)
 	u.injectDeviceToken(req, a)
 	u.injectConversationHeaders(req, meta)
@@ -382,20 +418,31 @@ func validTraceID(s string) bool {
 // injectAttribution injects the usage attribution headers.  The default spoofs
 // the official desktop fingerprint; client_name="SaaS" restores the plain
 // gateway shape.
-func (u *Upstream) injectAttribution(req *http.Request) {
+func (u *Upstream) injectAttribution(req *http.Request, a *Auth) {
 	name := u.attributionClientName()
 	if name == "WorkBuddy" {
-		// The main desktop conversation adapter does not set X-Product or
-		// X-Agent-Purpose. X-IDE-* is set from the client info provider.
+		if a != nil && a.IsGlobal() {
+			// The international client tags every model call it makes as a
+			// SaaS conversation: the CLI sets X-Agent-Purpose from the session
+			// purpose and its product interceptor fills X-Product from the
+			// deployment type (SaaS).  Both are load-bearing for the
+			// international risk control, which answers without them with the
+			// non-official-client refusal (11-128).
+			req.Header.Set("X-Agent-Purpose", "conversation")
+			req.Header.Set("X-Product", "SaaS")
+		}
+		// The CN main desktop conversation adapter does not set X-Product or
+		// X-Agent-Purpose. X-IDE-* is set from the client info provider on both
+		// realms.
 		req.Header.Set("X-IDE-Name", name)
 		req.Header.Set("X-IDE-Type", name)
-		req.Header.Set("X-IDE-Version", u.clientVersion())
+		req.Header.Set("X-IDE-Version", u.clientVersionFor(a))
 		return
 	}
 	req.Header.Set("X-Agent-Purpose", "conversation")
 	req.Header.Set("X-IDE-Name", name)
 	req.Header.Set("X-IDE-Type", name)
-	req.Header.Set("X-IDE-Version", u.clientVersion())
+	req.Header.Set("X-IDE-Version", u.clientVersionFor(a))
 	req.Header.Set("X-Product", name)
 }
 func (u *Upstream) injectClientIP(req *http.Request, clientIP string) {
@@ -431,7 +478,7 @@ func (u *Upstream) BillingHeaders(req *http.Request, a *Auth) {
 	req.Header.Set("Accept-Language", acceptLanguageFor(a))
 	if u != nil && u.UserAgent != "" {
 		req.Header.Set("User-Agent", u.UserAgent)
-	} else if ua := u.billingUA(); ua != "" {
+	} else if ua := u.billingUA(a); ua != "" {
 		req.Header.Set("User-Agent", ua)
 	}
 	if uid := a.UIDValue(); uid != "" {

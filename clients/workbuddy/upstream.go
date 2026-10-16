@@ -296,12 +296,17 @@ const (
 )
 
 var (
-	softRateResetLoc      = time.FixedZone("UTC+8", 8*60*60)
-	softRateTimeLayout    = "2006-01-02 15:04:05"
-	reModelRateLimit      = regexp.MustCompile(`"code"\s*:\s*"?6004"?`)
-	reSoftRateResetCN     = regexp.MustCompile(`将在 (.+?) 重置`)
-	reSoftRateResetEN     = regexp.MustCompile(`(?i)reset at (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})`)
-	reBusinessCode11135   = regexp.MustCompile(`"code"\s*:\s*"?11135"?`)
+	softRateResetLoc    = time.FixedZone("UTC+8", 8*60*60)
+	softRateTimeLayout  = "2006-01-02 15:04:05"
+	reModelRateLimit    = regexp.MustCompile(`"code"\s*:\s*"?6004"?`)
+	reSoftRateResetCN   = regexp.MustCompile(`将在 (.+?) 重置`)
+	reSoftRateResetEN   = regexp.MustCompile(`(?i)reset at (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})`)
+	reBusinessCode11135 = regexp.MustCompile(`"code"\s*:\s*"?11135"?`)
+	// reChannelVerifyCode matches the vendor's sender check ("channel
+	// verification").  Its body is not valid JSON -- the business code arrives
+	// unquoted -- so the code is scraped with a tolerant regexp instead of
+	// json.Unmarshal, exactly like the image code above.
+	reChannelVerifyCode   = regexp.MustCompile(`"code"\s*:\s*"?11-128\b`)
 	reRetryAfterCandidate = regexp.MustCompile(`^\d+$`)
 )
 
@@ -493,6 +498,16 @@ func Classify(status int, body string) ErrKind {
 	lower := strings.ToLower(body)
 	if containsAny(body, lower, sessionDeadMarkers) {
 		return ErrSessionDead
+	}
+	// Channel verification (business code 11-128) has to be recognised before
+	// the account-fault markers below, because its message is also "request
+	// illegal" and the two are otherwise indistinguishable.  Ordering matters:
+	// parking the credential for 12h would bench a perfectly healthy account --
+	// the same one keeps working from the official client -- while a content
+	// block is exactly what this kind is for, so the gateway's degraded-prompt
+	// retry gets its chance instead.
+	if status == 400 && reChannelVerifyCode.MatchString(body) {
+		return ErrContentBlocked
 	}
 	if containsAny(body, lower, accountFaultMarkers) {
 		return ErrAccountFault
@@ -987,10 +1002,9 @@ func (u *Upstream) ChatStream(ctx context.Context, a *Auth, body []byte, clientI
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	// prepareBody (stage 6) guarantees the leading system message for both
+	// realms, so the console-only injection that used to sit here is gone.
 	prepared := u.prepareBodyForEffort(body, a.RealmName(), a.UIDValue(), meta.ConversationID, meta.EffortFinal)
-	if u.globalOn(a) {
-		prepared = ensureConsoleSystem(prepared)
-	}
 	var lastStatus int
 	var lastBody []byte
 	var lastErr error

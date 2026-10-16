@@ -6,6 +6,33 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.1.78] - 2026-10-17
+
+### Fixed
+
+- **WorkBuddy 国际版账号不再被判「非官方客户端」**：官方的 WorkBuddy AI 5.8.4 桌面端
+  换了指纹，国际（`global:`）账号现在按新指纹发送
+  `WorkBuddy/5.8.4 workbuddy-ai/5.8.4 CLI/2.161.0`、`X-IDE-Version: 5.8.4`，并补上官方
+  主会话一直在带的 `X-Product: SaaS` 与 `X-Agent-Purpose: conversation`；计费和签到等非
+  对话请求也改用 5.8.4。旧的 `WorkBuddy/5.7.7 WorkBuddy AI/5.7.7 CLI/2.137.1` 正是面板里
+  「账号认证失败（HTTP 400）：`{"code":11-128,"msg":"request illegal"}`」的来源。CN 的
+  5.7.7 / 2.137.1 指纹保持不变，配置里显式写了 `client_version` / `cli_version` 时仍然优先。
+
+### Changed
+
+- **每个出站聊天请求都会保证开头是一条 system 消息**：上游对首条不是 system 的会话回的
+  也是 `11-128`（"first message is not system prompt"），所以只带 user 的直连调用、任务脚本
+  和面板探针以前会被拒；现在缺什么补一条中性 system，客户端自带 system 时不重复补。
+- **`11-128` 改判为内容类拒绝**：以前它被当成账号故障（`account_auth_failed`），会冷却一个
+  完全健康的账号；现在触发一次降级 prompt 重试，并且失败提示变成可操作的
+  `content_blocked`。
+- 根 `README.md` 与 `clients/workbuddy/README.md` 同步了国际指纹的取值来源、realm 分版本的
+  默认值和这次判定的取舍。
+
+### Installer
+
+- `client2api-setup-0.1.78.exe`（空包，不含账号凭据或本机配置）
+- 升级会保留现有 `configs/`、`data/`、账号池、用量和任务数据。
 ## [0.1.77] - 2026-10-16
 
 ### Fixed

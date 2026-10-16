@@ -22,9 +22,13 @@ The CN browser-login endpoint uses the `web_base_cn` host (`https://www.workbudd
 
 Both realms use the same paths (`/v2/chat/completions`,
 `/v2/plugin/auth/token/refresh`); only the host, the `Origin`/`Referer` pair, the
-`Accept-Language`, the enterprise headers and the User-Agent product segment
-differ. The realm is stored per credential (`"realm"`, or inferred from the
-token `domain`). Nothing is hardcoded to one realm.
+`Accept-Language`, the enterprise headers, the User-Agent product segment and
+the desktop/CLI version pair differ: CN announces `5.7.7` / `2.137.1`, the
+international client ships `5.8.4` / `2.161.0` and spells its platform segment
+`workbuddy-ai`. The international realm also tags model calls with
+`X-Product: SaaS` and `X-Agent-Purpose: conversation`; CN sends neither. The
+realm is stored per credential (`"realm"`, or inferred from the token `domain`).
+Nothing is hardcoded to one realm.
 
 The published catalogue is the union of both realms, with each id carrying its
 realm prefix (`cn:glm-5.3`). A catalogue refresh picks its credential per realm
@@ -81,8 +85,8 @@ its own data directory and uses the vendor defaults. The object below goes under
 | `billing_base_global` | string | `https://www.workbuddy.ai` | global realm billing/console host (override, independent of the chat host; the register wizard rides it too) |
 | `web_base_cn` | string | `https://www.workbuddy.cn` | cn browser-login/auth host |
 | `global_enabled` | bool | `true` | route global-realm accounts to the global host |
-| `client_version` | string | `5.7.7` | desktop version sent upstream and appended to the CN login URL |
-| `cli_version` | string | `2.137.1` | CLI version advertised in headers |
+| `client_version` | string | `5.7.7` on `cn`, `5.8.4` on `global` | desktop version sent upstream (UA and `X-IDE-Version`) and appended to the CN login URL; setting it pins both realms |
+| `cli_version` | string | `2.137.1` on `cn`, `2.161.0` on `global` | CLI version advertised in headers; setting it pins both realms |
 | `user_agent` | string | derived from realm | full User-Agent override |
 | `client_name` | string | `WorkBuddy` | attribution name (`X-IDE-Name` etc.) |
 | `passthrough_ip` | bool | `false` | forward the caller's IP (`X-Forwarded-For`, `X-Real-IP`, `X-Client-IP`) |
@@ -397,7 +401,10 @@ is the way to set them:
 2. The body is rewritten in the reference's exact order: `stream: true`;
    `max_completion_tokens` → `max_tokens`; `stream_options.include_usage`;
    `tool_choice` flattened to the string form the vendor accepts; `developer` →
-   `system`; string `image_url` → object form; broken tool-call/tool-result
+   `system`; a leading `system` turn is guaranteed (a neutral one is prepended
+   when the caller sent none, because the vendor refuses a conversation that
+   opens with a user turn with business code `11-128`); string `image_url` →
+   object form; broken tool-call/tool-result
    pairing repaired; thinking/`reasoning_effort` injected and snapped to a
    supported level unless the gateway marked a panel-resolved level final;
    `reasoning_content` backfilled; then a prompt-cache key is
@@ -420,8 +427,10 @@ is the way to set them:
 This module sends several different `User-Agent` strings, and that is a faithful
 port rather than an oversight: each one belongs to a different upstream surface
 that the vendor's own clients label differently. The normal API path derives its
-UA from `user_agent` (realm-dependent, CN `WorkBuddy/… WorkBuddy/… CLI/…`, intl
-`… WorkBuddy AI/…`). The desktop-event fingerprint path pins
+UA from `user_agent` (realm-dependent: CN `WorkBuddy/5.7.7 WorkBuddy/5.7.7
+CLI/2.137.1`, international `WorkBuddy/5.8.4 workbuddy-ai/5.8.4 CLI/2.161.0`,
+the latter measured from the shipped international client). The desktop-event
+fingerprint path pins
 `WorkBuddy/5.5.6 WorkBuddy/5.5.6 CLI/2.137.1` because the reference's
 `internal/upstream/desktop.go` pins exactly that string, and the CodeBuddy IDE
 and CLI surfaces announce `CodeBuddyIDE/<v>` and `CLI/<v>` respectively. Do not
@@ -562,6 +571,19 @@ overrides the model id). They are skipped on this machine — see
   goes stale silently and nothing on the wire says so. The 2026-09 detection
   mechanism (a bare numeric error code and the Claude-Code/Codex identity
   sentences in the system prompt) is what the pairs target.
+* **The international fingerprint is pinned to the 5.8.4 client, and 11-128 is
+  read as a request-shape refusal.** `global` announces
+  `WorkBuddy/5.8.4 workbuddy-ai/5.8.4 CLI/2.161.0` with `X-Product: SaaS` and
+  `X-Agent-Purpose: conversation`, and every outbound chat body is given a
+  leading `system` turn. Business code `11-128` ("request illegal") is what the
+  vendor answered a conversation that opened with a user turn, and it is also
+  what the retired version pair drew on an international request, so the code is
+  classified as a content refusal (degraded-prompt retry once) rather than an
+  account fault. If the vendor later uses the same code for a genuinely
+  account-scoped block, the gateway retries once and answers `content_blocked`
+  instead of parking the credential; that is the tradeoff, chosen because
+  benching a healthy account is the worse failure. CN is untouched: it keeps
+  5.7.7 / 2.137.1 and sends neither header.
 * **The vendor's live credential store cannot be imported** (encrypted
   `$wbEncrypted` envelopes), so `Status()` reports its presence instead of
   importing it. See "Credential discovery".

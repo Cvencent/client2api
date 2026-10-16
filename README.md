@@ -133,6 +133,16 @@ people. The built-in default is `127.0.0.1`.
   `11129` ("invalid function call parameters"); the other WorkBuddy models
   tolerate it, which is why the failure looked model-specific. A tool with no
   real arguments and a tool with real properties are both unaffected.
+- WorkBuddy's international realm goes out as the official WorkBuddy AI 5.8.4
+  desktop client does: `WorkBuddy/5.8.4 workbuddy-ai/5.8.4 CLI/2.161.0`,
+  `X-IDE-Version: 5.8.4`, `X-Product: SaaS` and `X-Agent-Purpose: conversation`.
+  A global request still carrying the retired CN pair is answered with business
+  code `11-128` ("request illegal"). Every outbound chat body also gets a
+  leading `system` turn, because the same code is what the vendor returns for a
+  conversation that opens with a user turn, and `11-128` is classified as a
+  content refusal rather than an auth fault, so a healthy account is not parked
+  and the request gets the degraded-prompt retry instead. CN keeps its
+  5.7.7 / 2.137.1 pair and its header set unchanged.
 - Context-window guard: a request larger than the model's window is shortened before
   it is sent, so it is served instead of refused. The system prompt and the newest
   turn are always kept; only the stale middle is dropped. Every trimmed request is

@@ -20,13 +20,15 @@ import (
 //	3. stream_options.include_usage is requested
 //	4. tool_choice is flattened to the string form the upstream accepts
 //	5. developer messages are relabelled system
-//	6. string image_url parts are converted to the object form
-//	7. broken tool_call / tool-result pairing is repaired
-//	8. thinking / reasoning_effort is injected and normalised
-//	9. reasoning_content is backfilled for multi-turn consistency
-//	10. content-moderation fingerprint sanitisation (sanitize.go)
+//	6. a leading system message is guaranteed (the upstream rejects a
+//	   conversation that opens with a user turn)
+//	7. string image_url parts are converted to the object form
+//	8. broken tool_call / tool-result pairing is repaired
+//	9. thinking / reasoning_effort is injected and normalised
+//	10. reasoning_content is backfilled for multi-turn consistency
+//	11. content-moderation fingerprint sanitisation (sanitize.go)
 //
-// Step 10 is a byte-exact port of the reference's sanitize.go, rewrite table
+// Step 11 is a byte-exact port of the reference's sanitize.go, rewrite table
 // included.  The upstream blocks requests by exact string match on the client's
 // own identity sentences, so the fix is to alter those sentences by the smallest
 // possible edit (one word, one hyphen) rather than to delete them: deleting a
@@ -219,29 +221,38 @@ func prepareBodyWithEffort(src []byte, sanitize bool, efforts map[string][]strin
 	// 5. developer -> system
 	normalizeRoles(obj)
 
-	// 6. image_url string -> object
+	// 6. system-first: the upstream refuses a conversation whose first message
+	// is not a system turn (business code 11-128, "channel verification"), so a
+	// neutral system message is prepended when the client sent none.  This runs
+	// for both realms and for every prompt strategy: passthrough mode forwards
+	// the client's own messages untouched, so a client that never adds a system
+	// prompt (a bare chat call, a task runner, a panel probe) would otherwise
+	// trip the check on an otherwise valid request.
+	ensureLeadingSystem(obj)
+
+	// 7. image_url string -> object
 	normalizeImageURL(obj)
 
-	// 7. repair tool_call / tool-result pairing
+	// 8. repair tool_call / tool-result pairing
 	if msgs, ok := obj["messages"].([]any); ok {
 		msgs, _ = repackToolResultBlocks(msgs)
 		msgs, _ = cleanupOrphanToolCalls(msgs)
 		obj["messages"] = msgs
 	}
 
-	// 8. thinking / reasoning_effort
+	// 9. thinking / reasoning_effort
 	modelName := strField(obj, "model")
 	injectThinking(obj, lookupDefaultEffort(defaultEfforts, modelName))
 	if !effortFinal {
 		normalizeReasoningEffort(obj, efforts)
 	}
 
-	// 9. multi-turn reasoning consistency
+	// 10. multi-turn reasoning consistency
 	backfillReasoningContent(obj)
 
-	// 10. sanitise content-moderation fingerprints.  It runs last, exactly where
+	// 11. sanitise content-moderation fingerprints.  It runs last, exactly where
 	// the reference runs it (payload.go:75-79), and only rewrites message text:
-	// the request shape has already been settled by steps 1-9.
+	// the request shape has already been settled by steps 1-10.
 	if sanitize {
 		if msgs, ok := obj["messages"].([]any); ok {
 			sanitizeMessages(msgs)
@@ -741,34 +752,48 @@ func backfillReasoningContent(obj map[string]any) {
 	}
 }
 
-// --- console system prompt -------------------------------------------------
+// --- system-first requirement ----------------------------------------------
 
-// ensureConsoleSystem prepends a system message when the conversation has none.
-// The international ("console") realm rejects a conversation that starts with a
-// user turn.
-func ensureConsoleSystem(body []byte) []byte {
-	if len(body) == 0 {
-		return body
+// neutralSystemMessage is the system turn prepended when a caller sends a
+// conversation that does not open with one.  It is deliberately minimal: the
+// upstream only inspects the *role* of the first message, and the caller's own
+// instructions (when it has any) travel in the following messages untouched.
+func neutralSystemMessage() map[string]any {
+	return map[string]any{"role": "system", "content": "You are a helpful assistant."}
+}
+
+// startsWithSystem reports whether a decoded message list opens with a system
+// turn.
+func startsWithSystem(msgs []any) bool {
+	if len(msgs) == 0 {
+		return false
 	}
-	var obj map[string]any
-	if err := json.Unmarshal(body, &obj); err != nil || obj == nil {
-		return body
+	first, ok := msgs[0].(map[string]any)
+	if !ok {
+		return false
 	}
-	msgs, _ := obj["messages"].([]any)
-	if len(msgs) > 0 {
-		if first, ok := msgs[0].(map[string]any); ok {
-			if role, _ := first["role"].(string); role == "system" {
-				return body
-			}
-		}
+	role, _ := first["role"].(string)
+	return strings.EqualFold(strings.TrimSpace(role), "system")
+}
+
+// ensureLeadingSystem prepends the neutral system message when obj["messages"]
+// does not already start with one, and reports whether it changed anything.
+//
+// Both realms answer a conversation that opens with a user turn with business
+// code 11-128 ("first message is not system prompt").  That code is also what
+// the gateway reports as a channel-verification failure, so a request which
+// trips it is indistinguishable from one sent by a blocked client.  Existing
+// messages are never reordered or rewritten: the system turn is only prepended.
+func ensureLeadingSystem(obj map[string]any) bool {
+	if obj == nil {
+		return false
 	}
-	sys := map[string]any{"role": "system", "content": "You are a helpful assistant."}
-	obj["messages"] = append([]any{sys}, msgs...)
-	out, err := json.Marshal(obj)
-	if err != nil {
-		return body
+	msgs, ok := obj["messages"].([]any)
+	if !ok || len(msgs) == 0 || startsWithSystem(msgs) {
+		return false
 	}
-	return out
+	obj["messages"] = append([]any{neutralSystemMessage()}, msgs...)
+	return true
 }
 
 // --- prompt cache ----------------------------------------------------------

@@ -483,27 +483,60 @@ func TestPrepareBodyHonorsTheGatewaysFinalReasoningEffort(t *testing.T) {
 	}
 }
 
-func TestEnsureConsoleSystem(t *testing.T) {
-	out := ensureConsoleSystem([]byte(`{"messages":[{"role":"user","content":"hi"}]}`))
-	var obj map[string]any
-	if err := json.Unmarshal(out, &obj); err != nil {
-		t.Fatalf("unmarshal: %v", err)
+func TestEnsureLeadingSystemEdges(t *testing.T) {
+	if ensureLeadingSystem(nil) {
+		t.Fatal("a nil body must not be reported as changed")
+	}
+	if ensureLeadingSystem(map[string]any{}) {
+		t.Fatal("an absent message list has nothing to prepend to and must be left alone")
+	}
+	if ensureLeadingSystem(map[string]any{"messages": []any{}}) {
+		t.Fatal("an empty message list carries no conversation and must be left alone")
+	}
+
+	// Malformed entries still open the conversation, so the rule applies to
+	// them too: the vendor only inspects the first role.
+	obj := map[string]any{"messages": []any{"not-a-map"}}
+	if !ensureLeadingSystem(obj) {
+		t.Fatal("a malformed first turn must still get the leading system turn")
 	}
 	msgs, _ := obj["messages"].([]any)
 	if len(msgs) != 2 {
-		t.Fatalf("expected prepended system message, got %v", msgs)
+		t.Fatalf("messages = %v, want the neutral system turn plus the original entry", msgs)
 	}
 	first, _ := msgs[0].(map[string]any)
 	if first["role"] != "system" {
-		t.Fatalf("first role = %v", first["role"])
+		t.Fatalf("first role = %v, want system", first["role"])
 	}
-	again := ensureConsoleSystem([]byte(`{"messages":[{"role":"system","content":"s"},{"role":"user","content":"hi"}]}`))
-	var obj2 map[string]any
-	if err := json.Unmarshal(again, &obj2); err != nil {
-		t.Fatalf("unmarshal: %v", err)
+}
+
+// The upstream refuses a conversation whose first message is not a system turn
+// (business code 11-128, reported as "request illegal").  The gateway cannot
+// rely on every caller sending one: passthrough clients hand over whatever the
+// user typed, and a bare chat probe has no system turn at all.
+func TestPrepareBodyGuaranteesLeadingSystem(t *testing.T) {
+	userFirst := []byte(`{"model":"m","messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"hello"}]}`)
+	msgs := messagesOf(t, prepareBody(userFirst, false, nil, nil))
+	if len(msgs) != 3 {
+		t.Fatalf("message count = %d, want 3 (system prepended): %v", len(msgs), msgs)
 	}
-	if msgs2, _ := obj2["messages"].([]any); len(msgs2) != 2 {
-		t.Fatalf("system message must not be duplicated: %v", msgs2)
+	if msgs[0]["role"] != "system" {
+		t.Fatalf("first role = %v, want system", msgs[0]["role"])
+	}
+	if msgs[1]["role"] != "user" || msgs[2]["role"] != "assistant" {
+		t.Fatalf("the client's own turns must survive the prepend in order, got %v", msgs)
+	}
+
+	withSystem := []byte(`{"messages":[{"role":"system","content":"s"},{"role":"user","content":"hi"}]}`)
+	msgs = messagesOf(t, prepareBody(withSystem, false, nil, nil))
+	if len(msgs) != 2 || msgs[0]["content"] != "s" {
+		t.Fatalf("an existing leading system turn must be preserved untouched, got %v", msgs)
+	}
+
+	laterSystem := []byte(`{"messages":[{"role":"user","content":"hi"},{"role":"system","content":"late"}]}`)
+	msgs = messagesOf(t, prepareBody(laterSystem, false, nil, nil))
+	if len(msgs) != 3 || msgs[0]["role"] != "system" || msgs[2]["content"] != "late" {
+		t.Fatalf("a non-leading system turn must not satisfy the leading-system rule: %v", msgs)
 	}
 }
 
@@ -741,6 +774,9 @@ func TestClassify(t *testing.T) {
 		{"nested function params code", 400, `{"code":1,"extError":{"code":"invalid_function_parameters","message":"invalid function call parameters","ext":{"code":11129}}}`, ErrBadParams},
 		{"content blocked", 400, "blocked by security policy", ErrContentBlocked},
 		{"account fault", 400, "request illegal", ErrAccountFault},
+		{"channel verification", 400, `{"code":11-128,"msg":"request illegal"}`, ErrContentBlocked},
+		{"channel verification quoted", 400, `{"code":"11-128","msg":"request illegal"}`, ErrContentBlocked},
+		{"channel verification envelope", 400, `{"code":11-128,"msg":"request illegal","requestId":"7da7","displayMsg":{"en":"Request blocked. Please send it again"}}`, ErrContentBlocked},
 		{"trial", 400, "trial not activated", ErrAccountFault},
 		{"model blocked", 400, `{"code":11102,"msg":"service info not found"}`, ErrModelBlocked},
 		{"waf", 403, "you shall not pass", ErrWafBlock},
