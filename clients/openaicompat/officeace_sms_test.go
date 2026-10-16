@@ -398,9 +398,7 @@ func TestOfficeAceAutoLoginDrivesBrowserWithSMS(t *testing.T) {
 	drv.mu.Lock()
 	gotURL, gotPhone, gotCode := drv.url, drv.phone, drv.codeSeen
 	drv.mu.Unlock()
-	if !strings.Contains(gotURL, "authui/login.html?service=") {
-		t.Fatalf("driver url = %q, want the Huawei authorisation URL", gotURL)
-	}
+	officeAceAssertLogoutWrappedLoginURL(t, gotURL)
 	if gotPhone != "13800000000" {
 		t.Fatalf("driver phone = %q", gotPhone)
 	}

@@ -7,7 +7,8 @@ package openaicompat
 // The flow, mirrored from the client's own auth/huawei-oauth.js:
 //
 //  1. POST {claw}/v1/claw/auth/state                 -> {state}
-//  2. the operator opens {auth}/authui/login.html?service=... in a browser
+//  2. the operator opens a logout-wrapped {auth}/authui/login.html?service=...
+//     in a browser, which clears any earlier Huawei web session first
 //  3. GET  {claw}/v1/claw/auth/code?state=...        -> {code} once approved
 //  4. POST {iam}/v1/oauth2/tokens                    -> IAM temporary credential
 //  5. GET  {claw}/v1/claw/client-permission-validate -> identity + model_info
@@ -936,6 +937,13 @@ func officeAcePKCEChallenge(verifier string) string {
 // officeAceAuthorizeURL builds the Huawei login page URL.  The oauth2
 // authorize URL travels inside the login page's "service" parameter, exactly
 // as the desktop client composes it.
+//
+// The login page is itself wrapped in Huawei's logout endpoint.  A browser
+// that still holds the previous Huawei session answers the authorize request
+// from that session and signs the operator straight back into the account they
+// were trying to leave, so the link has to clear the session before it asks
+// for one.  /authui/logout accepts a "service" return URL, so a single click
+// logs out and then lands on the login page with the original request intact.
 func officeAceAuthorizeURL(eps officeAceEndpoints, state, challenge string) string {
 	authBase := strings.TrimRight(eps.AuthBase, "/")
 	params := url.Values{
@@ -950,9 +958,10 @@ func officeAceAuthorizeURL(eps officeAceEndpoints, state, challenge string) stri
 	inner := authBase + "/authui/v1/oauth2/authorize?" + params.Encode()
 	background := "https://res.hc-cdn.com/AgentArts-Console/26.4.7/hws/assets/login/bg2.png"
 	portal := "https://res.hc-cdn.com/AgentArts-Console/26.4.7/hws/assets/login/ad2.png"
-	return authBase + "/authui/login.html?service=" + url.QueryEscape(inner) +
+	login := authBase + "/authui/login.html?service=" + url.QueryEscape(inner) +
 		"&background_img_url=" + url.QueryEscape(background) +
 		"&portal_img_url=" + url.QueryEscape(portal)
+	return authBase + "/authui/logout?service=" + url.QueryEscape(login)
 }
 
 // officeAceDPoPProof signs one DPoP proof JWT (ES256, raw r||s, exactly as

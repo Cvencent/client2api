@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -26,6 +27,28 @@ func officeAceTestJWT(t *testing.T, claims map[string]any) string {
 		t.Fatal(err)
 	}
 	return base64.RawURLEncoding.EncodeToString(header) + "." + base64.RawURLEncoding.EncodeToString(payload) + "."
+}
+
+// officeAceAssertLogoutWrappedLoginURL pins the one property that keeps the
+// "add another account" flow honest: the link must clear the browser's Huawei
+// session before it asks for a login, or a still-signed-in browser just signs
+// the operator back into the account they were trying to leave.
+func officeAceAssertLogoutWrappedLoginURL(t *testing.T, got string) {
+	t.Helper()
+	outer, err := url.Parse(got)
+	if err != nil {
+		t.Fatalf("login URL %q is not a URL: %v", got, err)
+	}
+	if !strings.HasSuffix(outer.Path, "/authui/logout") {
+		t.Fatalf("login URL path = %q, want it wrapped in /authui/logout", outer.Path)
+	}
+	inner := outer.Query().Get("service")
+	if !strings.Contains(inner, "/authui/login.html?service=") {
+		t.Fatalf("logout service = %q, want the Huawei login page", inner)
+	}
+	if !strings.Contains(inner, "oauth2%2Fauthorize") && !strings.Contains(inner, "oauth2/authorize") {
+		t.Fatalf("logout service = %q, want the oauth2 authorize request inside it", inner)
+	}
 }
 
 func TestOfficeAceHuaweiAccountLoginWritesCredential(t *testing.T) {
@@ -120,9 +143,10 @@ func TestOfficeAceHuaweiAccountLoginWritesCredential(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start login: %v", err)
 	}
-	if state.State != core.LoginPending || state.SessionID != "test-state" || !strings.Contains(state.URL, "/authui/login.html?service=") {
+	if state.State != core.LoginPending || state.SessionID != "test-state" {
 		t.Fatalf("start login state = %+v", state)
 	}
+	officeAceAssertLogoutWrappedLoginURL(t, state.URL)
 
 	pending, err := o.PollLogin(ctx, state.SessionID)
 	if err != nil || pending.State != core.LoginPending {

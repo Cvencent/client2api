@@ -178,21 +178,15 @@ jobs:
           name: client2api ${{ github.ref_name }}
           prerelease: ${{ contains(github.ref_name, '-') }}
           body: |
-            ## 下载
-
-            - Windows 安装升级包：由维护者在发布后附加到下方 `Assets`。
-            - 五平台便携版与校验文件：见下方 `Assets`。
-
             ## 本版变更
 
-            - 该版本由 GitHub Actions 自动构建，包含 Windows、Linux、macOS 共五个平台产物和 `checksums.txt`。
             - 完整版本记录见 [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/CHANGELOG.md)。
+            - 五平台便携版和 `checksums.txt` 由 GitHub Actions 自动构建，见下方 `Assets`。
 
-            ## 升级说明
+            ## 安装包
 
-            - 便携版解包后，将 `configs/client2api.example.json` 复制为 `configs/client2api.json`。
-            - 启动前必须设置 `api_key`，留空等于网关与面板都不鉴权。
-            - Windows 安装升级包会保留现有 `configs/client2api.json`、`data/`、账号池、用量和任务数据；安装失败会拒绝覆盖并回滚。
+            - `client2api-setup-<version>.exe`（发布后由维护者附加到下方 `Assets`）
+            - 升级会保留现有 `configs/client2api.json`、`data/`、账号池、用量和任务数据。
 
             ## 完整变更
 
