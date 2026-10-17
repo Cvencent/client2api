@@ -1063,7 +1063,7 @@ html { scrollbar-gutter: stable; }
 .mpark-head .hint { font-size: 11.5px; }
 .mpark-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(225px, 1fr)); gap: 6px; }
 .mpark-m {
-  display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: center;
+  display: grid; grid-template-columns: 16px minmax(0, 1fr) auto auto; align-items: center;
   column-gap: 7px; padding: 6px 9px; border: 1px solid var(--line-soft);
   border-radius: 6px; background: var(--surface-2); font-size: 12px; min-width: 0;
   transition: border-color var(--dur-panel) var(--ease-smooth), background var(--dur-panel) var(--ease-smooth);
@@ -3916,7 +3916,7 @@ const cbase = n => "/panel/api/clients/" + encodeURIComponent(n);
 const aid = id => encodeURIComponent(id);
 
 /* ── 状态 ─────────────────────────────────────────────────────────────── */
-let SNAP = { clients: [] }, OVER = null, NAMES = [], REG = [], ACCTS = {}, CUR = null, MODELS = [], MODEL_NAMES = {}, MODEL_NAMES_READY = {}, VIEW = "accounts", POOL = null;
+let SNAP = { clients: [] }, OVER = null, NAMES = [], REG = [], ACCTS = {}, CUR = null, MODELS = [], MODEL_NAMES = {}, MODEL_META = {}, MODEL_NAMES_READY = {}, VIEW = "accounts", POOL = null;
 // OVER_FULL: the last /panel/api/overview carried the complete account list and the
 // traffic slice, so the poll must not re-ask every module for what it already has.
 // BOOT: the first refresh has not finished yet; the accounts table shows a skeleton
@@ -5869,6 +5869,19 @@ function modelDisplayName(client, id) {
   return MODEL_NAMES[String(client || "") + "/" + String(id || "")] || String(id || "");
 }
 
+function rememberModelMeta(client, m) {
+  const key = String(client || "") + "/" + String((m && m.id) || "");
+  const ex = (m && m.extra) || {};
+  const nm = ex.display_name || ex.name || "";
+  MODEL_META[key] = ex;
+  if (nm) MODEL_NAMES[key] = nm;
+  return nm;
+}
+
+function modelExtra(client, id) {
+  return MODEL_META[String(client || "") + "/" + String(id || "")] || null;
+}
+
 // parkStateHTML 是限流格子的状态文字。可编辑和只读两条分支共用它：原先可编辑
 // 模式只把格子染黄、不写字，于是支持模型开关的平台（WorkBuddy）反而看不到限流
 // 到几点，而只读平台能看到。until 缺失时只说「限流中」，不编造时间。
@@ -5884,18 +5897,19 @@ function parkStateHTML(p) {
 function modelCellHTML(client, m, p, editable, disabled) {
   const shown = modelDisplayName(client, m);
   const name = '<span class="nm" title="' + esc(m) + '">' + esc(shown) + '</span>';
+  const rate = modelRateTagHTML(modelExtra(client, m));
   if (editable) {
     const cls = disabled ? "off" : (p ? (p.kind === "unsupported" ? "bad" : "limit") : "ok");
     const state = disabled ? '<span class="st">已关闭</span>' : parkStateHTML(p);
     return '<label class="mpark-m ' + cls + '" data-model="' + esc(m) + '" title="' + esc(m) + '">' +
-      '<input type="checkbox" class="mparkBox"' + (disabled ? "" : " checked") + '>' + name + state + '</label>';
+      '<input type="checkbox" class="mparkBox"' + (disabled ? "" : " checked") + '>' + name + rate + state + '</label>';
   }
-  if (disabled) return '<div class="mpark-m off"><span class="ic">⊘</span>' + name + '<span class="st">已关闭</span></div>';
-  if (!p) return '<div class="mpark-m ok"><span class="ic">✓</span>' + name + '</div>';
+  if (disabled) return '<div class="mpark-m off"><span class="ic">⊘</span>' + name + rate + '<span class="st">已关闭</span></div>';
+  if (!p) return '<div class="mpark-m ok"><span class="ic">✓</span>' + name + rate + '</div>';
   if (p.kind === "unsupported") {
-    return '<div class="mpark-m bad"><span class="ic">⊘</span>' + name + '<span class="st">该账号不支持</span></div>';
+    return '<div class="mpark-m bad"><span class="ic">⊘</span>' + name + rate + '<span class="st">该账号不支持</span></div>';
   }
-  return '<div class="mpark-m limit"><span class="ic">✕</span>' + name + parkStateHTML(p) + '</div>';
+  return '<div class="mpark-m limit"><span class="ic">✕</span>' + name + rate + parkStateHTML(p) + '</div>';
 }
 
 async function ensureModelNames() {
@@ -5903,10 +5917,7 @@ async function ensureModelNames() {
   const r = await api("/panel/api/models");
   if (!r.ok) return;
   ((r.data && r.data.clients) || []).forEach(c => {
-    (c.models || []).forEach(m => {
-      const nm = (m.extra || {}).display_name || (m.extra || {}).name || "";
-      if (nm) MODEL_NAMES[c.name + "/" + m.id] = nm;
-    });
+    (c.models || []).forEach(m => rememberModelMeta(c.name, m));
   });
   MODEL_NAMES_READY[""] = true;
 }
@@ -7189,6 +7200,25 @@ function rateFromDisplayName(ex) {
   return m ? Number(m[1]) : null;
 }
 
+// modelRateTagHTML is the compact account-dialog counterpart to rateCell.  The
+// current promotion wins over the list price, an explicit free marker wins over
+// both, and a catalogue with no rate information stays unlabelled.
+function modelRateTagHTML(ex) {
+  if (!ex || typeof ex !== "object") return "";
+  const effective = rateEffectivePrice(ex);
+  const list = rateListPrice(ex);
+  const display = ex.display_multiplier !== undefined && ex.display_multiplier !== null
+    ? ex.display_multiplier
+    : rateFromDisplayName(ex);
+  const value = effective || list || (display !== undefined && display !== null ? fmtMultiplier(display) : "");
+  if (ex.free === true || rateIsFree(value) || rateIsFree(display) || rateIsFree(ex.model_access_type)) {
+    return '<span class="tag ok model-rate" title="免费模型">免费</span>';
+  }
+  if (!value) return "";
+  const title = effective ? "当前生效倍率" : "模型倍率";
+  return '<span class="tag mute model-rate" title="' + esc(title) + '">' + esc(value) + '</span>';
+}
+
 function rateCell(ex) {
   const list = rateListPrice(ex);
   const promo = rateEffectivePrice(ex);
@@ -7511,8 +7541,7 @@ async function renderModels(refresh) {
         : "上游定价 prompt/completion 均为 0（免费）；用 openrouter/ + 模型 id 调用，免费模型有每日请求限额";
       const probe = probeOf(m.id);
       if (probe) probed++;
-      const nm = ex.display_name || ex.name || "";
-      if (nm) MODEL_NAMES[c.name + "/" + m.id] = nm;
+      const nm = rememberModelMeta(c.name, m);
       const ctx = ex.context_length || ex.context_window || 0;
       // 每一行把 HTML 和"可搜索文本"一起存下来：搜索框、客户端下拉、只看上游/只看免费这四个
       // 条件都只是在这个数组上过滤，不会再问一次上游。

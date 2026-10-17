@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"client2api/internal/core"
@@ -299,9 +300,16 @@ func (c *Client) classifyHTTP(op string, acct *accountRecord, status int, body [
 	if v.kind == kindModel {
 		return fmt.Errorf("%w: %s", core.ErrUnsupported, v.text())
 	}
-	return core.Fail(clientName, acctID(acct), coreKindFor(v.kind), status, &upstreamError{
+	publicStatus := status
+	if v.kind == kindServer && status >= 400 && status < 500 {
+		// Zen has been observed labelling an unavailable endpoint as HTTP 429
+		// with a server_error envelope.  Preserve the upstream failure class,
+		// but do not turn it into a rate-limit response for our caller.
+		publicStatus = http.StatusBadGateway
+	}
+	return core.Fail(clientName, acctID(acct), coreKindFor(v.kind), publicStatus, &upstreamError{
 		Op:     op,
-		Status: status,
+		Status: publicStatus,
 		Type:   v.typ,
 		Msg:    v.msg,
 	})

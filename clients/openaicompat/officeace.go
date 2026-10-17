@@ -81,6 +81,7 @@ func wrapOfficeAceSource(name string, cfg core.SourceConfig, s *source) core.Sou
 		return s
 	}
 	oa := &officeAceSource{source: s, eps: defaultOfficeAceEndpoints()}
+	oa.enableDesktopModelSelection()
 	if !officeAceLocalSupported() {
 		return oa
 	}

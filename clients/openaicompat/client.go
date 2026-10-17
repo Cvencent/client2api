@@ -41,7 +41,8 @@ type Client struct {
 	// affinity pins a conversation to the provider account that served it.
 	// A provider here is one credential, so a binding keeps a repeated
 	// conversation on the upstream that already warmed its prompt cache.
-	affinity *core.Affinity
+	affinity  *core.Affinity
+	wireModel func(string) string
 
 	mu      sync.Mutex
 	lastErr string
@@ -119,6 +120,13 @@ func (c *Client) httpClient() *http.Client {
 		return c.deps.HTTPClient
 	}
 	return defaultHTTPClient
+}
+
+func (c *Client) wireModelID(model string) string {
+	if c != nil && c.wireModel != nil {
+		return c.wireModel(strings.TrimSpace(model))
+	}
+	return model
 }
 
 // noteError remembers the last error for Status.
@@ -237,7 +245,7 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 	if prov.Disabled {
 		return nil, fmt.Errorf("%w: provider %q is disabled in the module config", core.ErrUnsupported, prov.ID)
 	}
-	body, err := buildChatBody(c.cfg, prov, model, req)
+	body, err := buildChatBody(c.cfg, prov, c.wireModelID(model), req)
 	if err != nil {
 		return nil, err
 	}

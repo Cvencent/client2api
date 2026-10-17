@@ -64,13 +64,15 @@ func officeAcePremiumSource(t *testing.T, srv *httptest.Server) *officeAceSource
 	if err != nil {
 		t.Fatalf("new source: %v", err)
 	}
-	return &officeAceSource{source: s, eps: officeAceEndpoints{
+	o := &officeAceSource{source: s, eps: officeAceEndpoints{
 		ClawBase:     srv.URL,
 		AuthBase:     srv.URL,
 		IAMBase:      srv.URL,
 		KeystoneBase: srv.URL,
 		ClientID:     "test-client",
 	}}
+	o.enableDesktopModelSelection()
+	return o
 }
 
 func officeAceAddAccountWithSession(t *testing.T, o *officeAceSource, srv *httptest.Server, sess officeAceStoredSession) string {

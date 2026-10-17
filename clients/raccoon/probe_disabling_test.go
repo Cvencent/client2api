@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -21,12 +22,9 @@ func TestTestAccountDisablesThinkingSoTheTinyProbeGetsContent(t *testing.T) {
 			return
 		}
 		var body struct {
-			MaxTokens *int `json:"max_tokens"`
-			ExtraBody struct {
-				Thinking struct {
-					Type string `json:"type"`
-				} `json:"thinking"`
-			} `json:"extra_body"`
+			MaxTokens       *int           `json:"max_tokens"`
+			ReasoningEffort string         `json:"reasoning_effort"`
+			ExtraBody       map[string]any `json:"extra_body"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Errorf("decode request: %v", err)
@@ -35,7 +33,7 @@ func TestTestAccountDisablesThinkingSoTheTinyProbeGetsContent(t *testing.T) {
 		if body.MaxTokens == nil || *body.MaxTokens != 16 {
 			t.Errorf("max_tokens = %v, want the 16-token probe budget", body.MaxTokens)
 		}
-		if body.ExtraBody.Thinking.Type != "disabled" {
+		if body.ReasoningEffort != "none" || len(body.ExtraBody) != 0 {
 			// Mirror the live upstream: thinking wins the tiny budget and the
 			// stream ends after reasoning without ever producing content.
 			writeSSE(w,
@@ -64,5 +62,60 @@ func TestTestAccountDisablesThinkingSoTheTinyProbeGetsContent(t *testing.T) {
 	}
 	if res.Reply != "pong" {
 		t.Fatalf("Reply = %q, want pong", res.Reply)
+	}
+}
+
+func TestTestAccountAcceptsReasoningOnlyCompletion(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != pathChat {
+			t.Errorf("unexpected path %q", r.URL.Path)
+			return
+		}
+		writeSSE(w,
+			`{"choices":[{"delta":{"reasoning_content":"thinking"}}]}`,
+			`{"choices":[{"delta":{},"finish_reason":"length"}]}`,
+			`[DONE]`,
+		)
+	}))
+	defer ts.Close()
+
+	c := newTestClient(t, t.TempDir(),
+		fmt.Sprintf(`{"base_url":%q,"access_token":"tok","user_id":"u1"}`, ts.URL), ts.Client())
+	res, err := c.TestAccount(context.Background(), "uid:u1")
+	if err != nil {
+		t.Fatalf("TestAccount: %v", err)
+	}
+	if !res.OK {
+		t.Fatalf("a 200 completion carrying reasoning proves the credential works: %+v", res)
+	}
+	if res.Reply == "" {
+		t.Fatal("successful reasoning-only probe must carry a non-empty result")
+	}
+}
+
+func TestTestAccountRejectsAStreamErrorAfterReasoning(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != pathChat {
+			t.Errorf("unexpected path %q", r.URL.Path)
+			return
+		}
+		writeSSE(w,
+			`{"choices":[{"delta":{"reasoning_content":"partial thought"}}]}`,
+			`{"error":{"message":"upstream broke"}}`,
+		)
+	}))
+	defer ts.Close()
+
+	c := newTestClient(t, t.TempDir(),
+		fmt.Sprintf(`{"base_url":%q,"access_token":"tok","user_id":"u1"}`, ts.URL), ts.Client())
+	res, err := c.TestAccount(context.Background(), "uid:u1")
+	if err != nil {
+		t.Fatalf("TestAccount: %v", err)
+	}
+	if res.OK {
+		t.Fatal("reasoning received before a stream error must not prove the account works")
+	}
+	if !strings.Contains(res.Error, "upstream broke") {
+		t.Fatalf("error = %q, want the real stream failure", res.Error)
 	}
 }

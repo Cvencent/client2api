@@ -35,7 +35,11 @@ type source struct {
 	active     bool
 	generation uint64
 	affinity   *core.Affinity
+	scanFilter sourceModelFilter
+	wireModel  func(string) string
 }
+
+type sourceModelFilter func(context.Context, storedProvider, []modelCatalogueEntry) ([]modelCatalogueEntry, error)
 
 type sourceRateWindow struct {
 	start time.Time
@@ -143,7 +147,7 @@ func (s *source) transportLocked() *Client {
 	for _, p := range s.rows {
 		providers = append(providers, s.providerLocked(p))
 	}
-	return &Client{instanceName: s.name, deps: s.deps, cfg: Config{MaxTokensField: field, Providers: providers}, pool: s.pool, now: time.Now}
+	return &Client{instanceName: s.name, deps: s.deps, cfg: Config{MaxTokensField: field, Providers: providers}, pool: s.pool, now: time.Now, wireModel: s.wireModel}
 }
 func (s *source) providerLocked(p storedProvider) ProviderConfig {
 	return ProviderConfig{ID: p.ID, APIKey: p.APIKey, AppSecret: p.AppSecret, BaseURL: s.accountBaseLocked(p), Models: append([]string(nil), p.Models...), ProbeModels: append([]string(nil), p.ProbeModels...), Label: p.Label, Disabled: p.Disabled}
@@ -322,7 +326,7 @@ func (s *source) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 			break
 		}
 		s.mu.Unlock()
-		body, err := buildChatBody(transport.cfg, prov, req.Model, req)
+		body, err := buildChatBody(transport.cfg, prov, transport.wireModelID(req.Model), req)
 		if err != nil {
 			req.ReleaseAccountSlot()
 			return nil, err

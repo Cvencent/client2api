@@ -194,36 +194,47 @@ func (c *Client) probeChat(ctx context.Context, e *entry, model string) (string,
 	}
 	defer stream.Close()
 
-	var reply strings.Builder
+	var reply, reasoning strings.Builder
+	sawToolCall := false
 	for {
 		event, err := stream.Recv()
 		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
-			if reply.Len() > 0 {
-				return reply.String(), nil
-			}
 			return "", err
 		}
 		switch event.Type {
 		case core.EventDelta:
 			reply.WriteString(event.Delta)
+			reasoning.WriteString(event.Reasoning)
+		case core.EventToolCall:
+			sawToolCall = true
 		case core.EventError:
 			if event.Err != nil {
-				if reply.Len() > 0 {
-					return reply.String(), nil
-				}
 				return "", event.Err
 			}
 		case core.EventDone:
 			// keep draining until the stream really ends
 		}
 	}
-	if reply.Len() == 0 {
-		return "", fmt.Errorf("raccoon: %s answered without any text", model)
+	if evidence := probeEvidence(reply.String(), reasoning.String(), sawToolCall); evidence != "" {
+		return evidence, nil
 	}
-	return reply.String(), nil
+	return "", fmt.Errorf("raccoon: %s answered without any text", model)
+}
+
+func probeEvidence(reply, reasoning string, sawToolCall bool) string {
+	if strings.TrimSpace(reply) != "" {
+		return reply
+	}
+	if strings.TrimSpace(reasoning) != "" {
+		return "reasoning-only completion"
+	}
+	if sawToolCall {
+		return "tool call completed"
+	}
+	return ""
 }
 
 // RefreshAccount renews one account (or every refreshable account when id is

@@ -504,3 +504,154 @@ func TestSourceProbeFallsBackWhenStoredFirstModelIsNotChat(t *testing.T) {
 		t.Fatalf("probed model = %q, want GLM-5.3-Flash", got)
 	}
 }
+
+func TestOfficeAceScanPublishesOnlyDesktopSelectableModels(t *testing.T) {
+	const catalogue = `{"data":[
+		{"id":"deepseek-v4.1-flash","name":"DeepSeek-V4.1-Flash"},
+		{"id":"deepseek-v4-flash-0731","name":"DeepSeek-V4-Flash-0731"},
+		{"id":"glm-5"},
+		{"id":"glm-5.1"},
+		{"id":"glm-5.2-zx"},
+		{"id":"glm-5.3"},
+		{"id":"glm-5.3-flash"},
+		{"id":"glm-5.3-test"},
+		{"id":"qwen3-32b"}
+	]}`
+	cases := []struct {
+		name string
+		sku  string
+		want []string
+	}{
+		{
+			name: "standard plan",
+			sku:  "officeace.personal.package.standard",
+			want: []string{
+				"deepseek-v4-flash-0731",
+				"deepseek-v4.1-flash",
+				"glm-5",
+				"glm-5.1",
+				"glm-5.2",
+				"glm-5.3-flash",
+			},
+		},
+		{
+			name: "ultimate plan adds GLM-5.3",
+			sku:  "officeace.personal.package.ultimate",
+			want: []string{
+				"deepseek-v4-flash-0731",
+				"deepseek-v4.1-flash",
+				"glm-5",
+				"glm-5.1",
+				"glm-5.2",
+				"glm-5.3",
+				"glm-5.3-flash",
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/v2/models":
+					fmt.Fprint(w, catalogue)
+				case "/v1/subscription":
+					fmt.Fprintf(w, `{"subscribe_status":"SUBSCRIBED","skus":[{"sku_code":%q,"sku_name":"test"}]}`, tc.sku)
+				default:
+					t.Errorf("unexpected path %q", r.URL.Path)
+					http.NotFound(w, r)
+				}
+			}))
+			defer srv.Close()
+
+			o := officeAcePremiumSource(t, srv)
+			officeAceAddAccountWithSession(t, o, srv, officeAceStoredSession{
+				Region:        "cn-southwest-2",
+				AccessKey:     "access",
+				SecretKey:     "secret",
+				SecurityToken: "security",
+				ProjectID:     "project",
+				ExpiresAt:     "2099-01-01T00:00:00Z",
+			})
+			models, err := o.source.RefreshModels(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := make([]string, 0, len(models))
+			for _, model := range models {
+				got = append(got, model.ID)
+			}
+			if strings.Join(got, ",") != strings.Join(tc.want, ",") {
+				t.Fatalf("published models = %v, want OfficeAce desktop selection %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestOfficeAceFlashAliasUsesTheSupportedWireModel(t *testing.T) {
+	var wireModel atomic.Value
+	var chatCalls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v2/models":
+			fmt.Fprint(w, `{"data":[{"id":"glm-5.3-flash","output":["text"]}]}`)
+		case "/v1/subscription":
+			fmt.Fprint(w, `{"subscribe_status":"SUBSCRIBED","skus":[{"sku_code":"officeace.personal.package.standard","sku_name":"test"}]}`)
+		case "/v2/chat/completions":
+			var body struct {
+				Model string `json:"model"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode chat body: %v", err)
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
+			wireModel.Store(body.Model)
+			chatCalls.Add(1)
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"pong\"}}]}\n\ndata: [DONE]\n\n")
+		default:
+			t.Errorf("unexpected path %q", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	o := officeAcePremiumSource(t, srv)
+	id := officeAceAddAccountWithSession(t, o, srv, officeAceStoredSession{
+		Region:        "cn-southwest-2",
+		AccessKey:     "access",
+		SecretKey:     "secret",
+		SecurityToken: "security",
+		ProjectID:     "project",
+		ExpiresAt:     "2099-01-01T00:00:00Z",
+	})
+	if _, err := o.source.RefreshModels(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	stream, err := o.source.Chat(context.Background(), &core.ChatRequest{
+		Model:    "glm-5.3-flash",
+		Messages: []core.Message{{Role: "user", Content: "ping"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, _, _, err := drainStream(stream); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := wireModel.Load().(string); got != "glm-5.3" {
+		t.Fatalf("upstream model = %q, want glm-5.3", got)
+	}
+	res, err := o.source.TestAccount(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.OK {
+		t.Fatalf("test probe failed: %+v", res)
+	}
+	if chatCalls.Load() != 2 {
+		t.Fatalf("chat calls = %d, want one chat plus one probe", chatCalls.Load())
+	}
+	if got, _ := wireModel.Load().(string); got != "glm-5.3" {
+		t.Fatalf("probe upstream model = %q, want glm-5.3", got)
+	}
+}

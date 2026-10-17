@@ -314,7 +314,7 @@ func (c *Client) probeProvider(ctx context.Context, prov ProviderConfig, rec pro
 	var lastErr string
 	for _, model := range models {
 		res.Model = model
-		body, err := buildChatBody(c.cfg, prov, model, &core.ChatRequest{
+		body, err := buildChatBody(c.cfg, prov, c.wireModelID(model), &core.ChatRequest{
 			Model:    model,
 			Stream:   true,
 			Messages: []core.Message{{Role: "user", Content: "Reply with the single word: pong"}},

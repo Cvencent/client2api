@@ -392,7 +392,10 @@ to the rate-limited anonymous identity.
   they say nothing about the account's health.
 - A named `server_error`, even with HTTP 429, is an upstream failure rather than
   evidence of an account quota or rate limit. A single outage does not park the
-  account. Expired cooldowns no longer remain visually cooling due to stale errors.
+  account. Because that status is misleading to callers, a `server_error` carrying
+  any upstream 4xx is exposed as HTTP 502; genuine rate-limit and quota verdicts
+  keep their own status. Expired cooldowns no longer remain visually cooling due
+  to stale errors.
 - Re-enabling an account clears its failure state, so it does not come back
   already parked.
 - `AccountRecord.Identity` is **always empty**. Zen publishes no account

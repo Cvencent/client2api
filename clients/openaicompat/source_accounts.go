@@ -218,6 +218,14 @@ func (s *source) TestAccount(ctx context.Context, id string) (core.TestResult, e
 	return res, nil
 }
 
+type modelCatalogueEntry struct {
+	ID           string   `json:"id"`
+	Output       []string `json:"output"`
+	Architecture struct {
+		OutputModalities []string `json:"output_modalities"`
+	} `json:"architecture"`
+}
+
 func (s *source) scan(ctx context.Context, p storedProvider, transport *Client, prov ProviderConfig, generation uint64) error {
 	ctx, cancel := context.WithTimeout(ctxOrBackground(ctx), transport.cfg.modelsTimeout())
 	defer cancel()
@@ -250,15 +258,15 @@ func (s *source) scan(ctx context.Context, p storedProvider, transport *Client, 
 	if len(env.Data) == 0 || string(env.Data) == "null" {
 		return fmt.Errorf("models response must contain a data array")
 	}
-	var list []struct {
-		ID           string   `json:"id"`
-		Output       []string `json:"output"`
-		Architecture struct {
-			OutputModalities []string `json:"output_modalities"`
-		} `json:"architecture"`
-	}
+	var list []modelCatalogueEntry
 	if err := json.Unmarshal(env.Data, &list); err != nil {
 		return fmt.Errorf("invalid models data: %w", err)
+	}
+	if s.scanFilter != nil {
+		list, err = s.scanFilter(ctx, p, list)
+		if err != nil {
+			return err
+		}
 	}
 	models := []string{}
 	probeModels := []string{}

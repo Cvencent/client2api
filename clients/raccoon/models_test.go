@@ -392,28 +392,40 @@ func TestBuildChatBody(t *testing.T) {
 	if _, ok := fn["parameters"]; !ok {
 		t.Error("tool parameters must be forwarded")
 	}
-	eb, ok := top["extra_body"].(map[string]any)
-	if !ok {
-		t.Fatalf("extra_body missing: %#v", top["extra_body"])
+	if top["reasoning_effort"] != "none" {
+		t.Errorf("reasoning effort off must send top-level reasoning_effort=none, got %#v", top["reasoning_effort"])
 	}
-	th, _ := eb["thinking"].(map[string]any)
-	if th["type"] != "disabled" {
-		t.Errorf("reasoning effort off must send thinking.type=disabled, got %#v", eb)
+	if _, ok := top["extra_body"]; ok {
+		t.Errorf("reasoning control must not be hidden in extra_body: %#v", top["extra_body"])
 	}
 
-	// effort on => enabled; no effort => no extra_body at all.
+	// effort on => top-level thinking enabled; no effort => neither field.
 	req.Options = map[string]any{"reasoning_effort": "on"}
-	if got := extraBodyFor(reasoningEffort(req))["thinking"].(map[string]any)["type"]; got != "enabled" {
-		t.Errorf("effort on => %v, want enabled", got)
+	raw, _ = json.Marshal(buildChatBody(req, "sn-kimi-k3", true))
+	top = map[string]any{}
+	_ = json.Unmarshal(raw, &top)
+	th, _ := top["thinking"].(map[string]any)
+	if th["type"] != "enabled" {
+		t.Errorf("effort on => %#v, want enabled", top["thinking"])
 	}
 	req.Options = nil
-	if eb := extraBodyFor(reasoningEffort(req)); eb != nil {
-		t.Errorf("no effort must send no extra_body, got %#v", eb)
+	raw, _ = json.Marshal(buildChatBody(req, "sn-kimi-k3", true))
+	top = map[string]any{}
+	_ = json.Unmarshal(raw, &top)
+	if _, ok := top["reasoning_effort"]; ok {
+		t.Errorf("no effort must send no reasoning_effort, got %#v", top["reasoning_effort"])
 	}
-	// ...and a top-level `thinking` is never invented.
+	if _, ok := top["thinking"]; ok {
+		t.Errorf("no effort must send no thinking field, got %#v", top["thinking"])
+	}
+	// A boolean thinking option uses the same top-level dialect.
 	req.Options = map[string]any{"thinking": true}
-	if got := extraBodyFor(reasoningEffort(req))["thinking"].(map[string]any)["type"]; got != "enabled" {
-		t.Errorf("a boolean thinking option => %v, want enabled", got)
+	raw, _ = json.Marshal(buildChatBody(req, "sn-kimi-k3", true))
+	top = map[string]any{}
+	_ = json.Unmarshal(raw, &top)
+	th, _ = top["thinking"].(map[string]any)
+	if th["type"] != "enabled" {
+		t.Errorf("a boolean thinking option => %#v, want enabled", top["thinking"])
 	}
 }
 

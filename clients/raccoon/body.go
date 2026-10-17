@@ -10,16 +10,21 @@ import (
 // chatBody is the OpenAI-compatible request body raccoon's
 // `/api/web/llm/v2/chat/completions` accepts.
 type chatBody struct {
-	Model       string          `json:"model"`
-	Messages    []chatMessage   `json:"messages"`
-	Stream      bool            `json:"stream"`
-	MaxTokens   *int            `json:"max_tokens,omitempty"`
-	Temperature *float64        `json:"temperature,omitempty"`
-	TopP        *float64        `json:"top_p,omitempty"`
-	Stop        []string        `json:"stop,omitempty"`
-	Tools       []chatTool      `json:"tools,omitempty"`
-	ToolChoice  json.RawMessage `json:"tool_choice,omitempty"`
-	ExtraBody   map[string]any  `json:"extra_body,omitempty"`
+	Model           string          `json:"model"`
+	Messages        []chatMessage   `json:"messages"`
+	Stream          bool            `json:"stream"`
+	MaxTokens       *int            `json:"max_tokens,omitempty"`
+	Temperature     *float64        `json:"temperature,omitempty"`
+	TopP            *float64        `json:"top_p,omitempty"`
+	Stop            []string        `json:"stop,omitempty"`
+	Tools           []chatTool      `json:"tools,omitempty"`
+	ToolChoice      json.RawMessage `json:"tool_choice,omitempty"`
+	ReasoningEffort string          `json:"reasoning_effort,omitempty"`
+	Thinking        *chatThinking   `json:"thinking,omitempty"`
+}
+
+type chatThinking struct {
+	Type string `json:"type"`
 }
 
 type chatMessage struct {
@@ -115,7 +120,7 @@ func buildChatBody(req *core.ChatRequest, model string, stream bool) chatBody {
 	if len(req.ToolChoice) > 0 && string(req.ToolChoice) != "null" {
 		body.ToolChoice = req.ToolChoice
 	}
-	body.ExtraBody = extraBodyFor(reasoningEffort(req))
+	applyThinkingControl(&body, reasoningEffort(req))
 	return body
 }
 
@@ -185,20 +190,18 @@ func reasoningEffort(req *core.ChatRequest) string {
 	return ""
 }
 
-// extraBodyFor maps a reasoning effort onto the vendor's thinking dialect.
-//
-// Thinking control ONLY works inside `extra_body`; a top-level `thinking`
-// field is silently ignored by the server. Effort "off" disables thinking and
-// anything else (including "on") enables it. An absent effort sends no
-// `extra_body` at all, which leaves the server's own default in place.
-func extraBodyFor(effort string) map[string]any {
+// applyThinkingControl maps a reasoning effort onto the fields SenseNova
+// actually reads. "off" is reasoning_effort=none, not an OpenAI extra_body
+// extension; enabling thinking uses the vendor's top-level object.
+func applyThinkingControl(body *chatBody, effort string) {
 	e := strings.ToLower(strings.TrimSpace(effort))
 	if e == "" {
-		return nil
+		return
 	}
-	typ := "enabled"
-	if e == "off" {
-		typ = "disabled"
+	switch e {
+	case "off", "none", "disabled", "disable", "false", "0":
+		body.ReasoningEffort = "none"
+	default:
+		body.Thinking = &chatThinking{Type: "enabled"}
 	}
-	return map[string]any{"thinking": map[string]any{"type": typ}}
 }

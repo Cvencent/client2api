@@ -183,7 +183,7 @@ All paths are relative to `https://xiaohuanxiong.com` (override with `base_url`)
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `POST` | `/api/web/auth/v1/refresh` | exchange `refresh_token` for a new access token |
-| `GET` | `/api/web/auth/v1/user_info` | account metadata; used as the credential probe |
+| `GET` | `/api/web/auth/v1/user_info` | account metadata and credential enrichment |
 | `POST` | `/api/web/auth/v1/login_with_qrcode_code` | QR login poll (the WeChat scan); body `{"qrcode_code": "…"}`, unauthenticated |
 | `POST` | `/api/web/auth/v1/send_sms` | request an SMS verification code; body `{"phone": "<encrypted>"}`, unauthenticated |
 | `POST` | `/api/web/auth/v1/login_with_sms` | exchange the phone and `sms_code` for a credential, unauthenticated |
@@ -408,10 +408,13 @@ call: it is not parked and it does not spend one of the `max_attempts` attempts.
 
 `TestAccount` sends one minimum-size real chat completion through the account under
 test, so a token that opens the gateway but cannot answer is reported as failed.
-Thinking is explicitly disabled on that probe: SenseNova's default thinking can
-consume the entire 16-token budget as `reasoning_content`, which would otherwise
-look like an empty answer and wrongly park the account.
-A refusal is reported as a failed test result, not as an error.
+Thinking is explicitly disabled with top-level `reasoning_effort: "none"`:
+SenseNova's default thinking can consume the entire 16-token budget as
+`reasoning_content`, which would otherwise look like an empty answer and wrongly
+park the account. A cleanly completed stream carrying reasoning or a tool call
+is still valid proof that the credential works. A stream error after partial
+reasoning remains a failed test, as does a stream with no completion evidence at
+all. A refusal is reported as a failed test result, not as an error.
 
 ---
 

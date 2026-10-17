@@ -20,6 +20,10 @@ func TestUnavailableEndpointDoesNotRateLimitAccount(t *testing.T) {
 	if core.FailureKindOf(err) != core.FailureUpstream {
 		t.Fatalf("failure kind = %v, want upstream", core.FailureKindOf(err))
 	}
+	failure, ok := core.AsFailure(err)
+	if !ok || failure.Status != http.StatusBadGateway {
+		t.Fatalf("public failure status = %d, want %d: a server_error must not surface as upstream 429", failure.Status, http.StatusBadGateway)
+	}
 	stored, _ := c.pool.byID("a")
 	if stored.CooldownUntil != "" || !stored.Enabled {
 		t.Fatal("one unavailable endpoint parked the account")
@@ -329,7 +333,8 @@ func TestSingleUpstreamOutageDoesNotRetrySameAccountIntoCooldown(t *testing.T) {
 	addAccount(t, c, "a", "zen-key")
 	_, err := c.Chat(context.Background(), chatRequest("gpt-5.1"))
 	acct, _ := c.pool.byID("a")
-	if core.FailureKindOf(err) != core.FailureUpstream || acct.CooldownUntil != "" || calls != 1 {
+	failure, ok := core.AsFailure(err)
+	if core.FailureKindOf(err) != core.FailureUpstream || !ok || failure.Status != http.StatusBadGateway || acct.CooldownUntil != "" || calls != 1 {
 		t.Fatalf("calls=%d, parked=%t, error=%v", calls, acct.CooldownUntil != "", err)
 	}
 }

@@ -149,7 +149,11 @@ func TestModelDialogShowsFriendlyNames(t *testing.T) {
 		t.Error("openModelsDialog does not pass the client into modelCellHTML")
 	}
 	render := poolStatsFuncBody(t, src, "renderModels")
-	if !strings.Contains(render, `MODEL_NAMES[c.name + "/" + m.id] = nm`) {
-		t.Error("renderModels does not cache display names for the account-pool dialog")
+	if !strings.Contains(render, "rememberModelMeta(c.name, m)") {
+		t.Error("renderModels does not cache catalogue metadata for the account-pool dialog")
+	}
+	cache := poolStatsFuncBody(t, src, "rememberModelMeta")
+	if !strings.Contains(cache, "MODEL_NAMES[key] = nm") {
+		t.Error("rememberModelMeta does not cache display names")
 	}
 }
