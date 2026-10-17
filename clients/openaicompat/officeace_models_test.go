@@ -5,28 +5,29 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
-func TestOfficeAceScanFallsBackWhenSubscriptionTokenExpired(t *testing.T) {
+func TestOfficeAceScanPublishesExactlyTheDesktopModels(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/v2/models":
-			fmt.Fprint(w, `{"data":[
-				{"id":"glm-5.3"},
-				{"id":"glm-5.3-flash"},
-				{"id":"glm-5.3-test"}
-			]}`)
-		case "/v1/subscription":
-			w.WriteHeader(http.StatusBadRequest)
-			fmt.Fprint(w, `{"error_msg":"Bad request: the security token has expired","error_code":"APIG.0602"}`)
-		case "/v3.0/OS-CREDENTIAL/securitytokens":
-			w.WriteHeader(http.StatusBadRequest)
-			fmt.Fprint(w, `{"error_msg":"Bad request: the security token has expired","error_code":"APIG.0602"}`)
-		default:
+		if r.URL.Path != "/v2/models" {
 			t.Errorf("unexpected path %q", r.URL.Path)
 			http.NotFound(w, r)
+			return
 		}
+		fmt.Fprint(w, `{"data":[
+			{"id":"deepseek-v4.1-flash","name":"DeepSeek-V4.1-Flash"},
+			{"id":"deepseek-v4-flash-0731","name":"DeepSeek-V4-Flash-0731"},
+			{"id":"glm-5"},
+			{"id":"glm-5.1"},
+			{"id":"glm-5.2"},
+			{"id":"glm-5.2-zx"},
+			{"id":"glm-5.3"},
+			{"id":"glm-5.3-flash"},
+			{"id":"glm-5.3-test"},
+			{"id":"qwen3-32b"}
+		]}`)
 	}))
 	defer srv.Close()
 
@@ -41,9 +42,22 @@ func TestOfficeAceScanFallsBackWhenSubscriptionTokenExpired(t *testing.T) {
 	})
 	models, err := o.source.RefreshModels(context.Background())
 	if err != nil {
-		t.Fatalf("refresh models with expired subscription token: %v", err)
+		t.Fatal(err)
 	}
-	if len(models) != 1 || models[0].ID != "glm-5.3-flash" {
-		t.Fatalf("published models = %+v, want only glm-5.3-flash", models)
+	got := make([]string, 0, len(models))
+	for _, model := range models {
+		got = append(got, model.ID)
+	}
+	want := []string{
+		"deepseek-v4-flash-0731",
+		"deepseek-v4.1-flash",
+		"glm-5.1",
+		"glm-5.2",
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("published models = %v, want exactly %v", got, want)
+	}
+	if o.source.wireModel != nil {
+		t.Fatal("OfficeAce must not rewrite published model ids at the wire boundary")
 	}
 }
