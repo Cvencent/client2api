@@ -6,6 +6,26 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.1.79] - 2026-10-17
+
+### Fixed
+
+- **WorkBuddy 国际版补齐真正的 VLM 会话指纹，`11-128 / request illegal` 不再把健康账号
+  误判成认证失败**：对照官方 WorkBuddy AI 5.8.4 客户端后确认，国际聊天必须始终携带
+  `X-Conversation-ID`；同一个会话还要复用稳定的 `acp-connection-id`，并发送官方的
+  `X-Private-Data: true`、W3C/B3 trace 头以及
+  `WorkBuddy/5.8.4 WorkBuddy/5.8.4 CLI/2.161.0`。国际聊天不再发送浏览器侧的
+  Origin/Referer、机器 ID、会话 ID 或 `X-Agent-Type`。令牌本身没有失效，**不需要重新登录**；
+  旧版缺失这些请求头时，上游会用同一张 400 响应拒绝请求。
+- **补上回归覆盖**：同一账号连续两轮不显式传 conversation id 的请求必须复用同一组
+  conversation/ACP id，同时固定 `11-128` 的 `content_blocked` 分类，避免再次显示
+  `account_auth_failed` 或冷却健康账号。CN 的 5.7.7 / 2.137.1 行为保持不变。
+
+### Installer
+
+- `client2api-setup-0.1.79.exe`（空包，不含账号凭据或本机配置）
+- 升级会保留现有 `configs/`、`data/`、账号池、用量和任务数据。
+
 ## [0.1.78] - 2026-10-17
 
 ### Fixed

@@ -911,6 +911,7 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 	// it must not change between attempts: a retry on another account has to
 	// re-bind the SAME conversation, not start choosing a new one.
 	convKey := conversationKey(req, meta)
+	meta.ConversationKey = convKey
 	// The vendor aggregates its own usage reports by X-Conversation-Request-ID,
 	// and the official client resets that id once per user submit.  So one turn
 	// must produce exactly one value for every attempt — rotation, retry and

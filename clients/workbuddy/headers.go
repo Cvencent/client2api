@@ -39,10 +39,10 @@ const (
 	// defaultCliVersionGlobal is the international `CLI/<ver>` UA segment
 	// (bundled codebuddy CLI 2.161.0).
 	defaultCliVersionGlobal = "2.161.0"
-	// globalUAPlatform is the international UA platform segment.  The official
-	// client spells it lowercase and hyphenated (`workbuddy-ai`), unlike the CN
-	// `WorkBuddy` segment.
-	globalUAPlatform = "workbuddy-ai"
+	// globalUAPlatform matches the official WorkBuddy VLM UA builder, which
+	// repeats the product name on both realms. The bundled CLI version still
+	// distinguishes the international 5.8.4 pair from the domestic 5.7.7 pair.
+	globalUAPlatform = "WorkBuddy"
 
 	originRefererCN     = "https://www.codebuddy.cn"
 	originRefererGlobal = "https://www.workbuddy.ai"
@@ -92,10 +92,10 @@ func (u *Upstream) cliVersionFor(a *Auth) string {
 // cliVersion is the CN bundled CLI version.
 func (u *Upstream) cliVersion() string { return u.cliVersionFor(nil) }
 
-// defaultWorkBuddyUAFor builds the official desktop UA.  Both the platform
-// segment and the version pair differ per realm: CN sends `WorkBuddy/5.7.7
-// WorkBuddy/5.7.7 CLI/2.137.1`, while the official international client sends
-// `WorkBuddy/5.8.4 workbuddy-ai/5.8.4 CLI/2.161.0`.  Announcing the retired
+// defaultWorkBuddyUAFor builds the official desktop UA. The desktop/CLI
+// version pair differs per realm: CN sends `WorkBuddy/5.7.7
+// WorkBuddy/5.7.7 CLI/2.137.1`, while the official international VLM sends
+// `WorkBuddy/5.8.4 WorkBuddy/5.8.4 CLI/2.161.0`. Announcing the retired
 // pair on a global request is answered with business code 11-128 ("request
 // illegal").
 func (u *Upstream) defaultWorkBuddyUAFor(a *Auth) string {
@@ -241,6 +241,17 @@ func deriveAccountStableID(uid, purpose string) string {
 	return hex.EncodeToString(sum[:18]) // 36 hex chars
 }
 
+func uuidV4ForKey(key string) string {
+	raw, err := hex.DecodeString(requestIDForKey(key))
+	if err != nil || len(raw) != 16 {
+		raw = make([]byte, 16)
+	}
+	raw[6] = (raw[6] & 0x0f) | 0x40
+	raw[8] = (raw[8] & 0x3f) | 0x80
+	encoded := hex.EncodeToString(raw)
+	return fmt.Sprintf("%s-%s-%s-%s-%s", encoded[:8], encoded[8:12], encoded[12:16], encoded[16:20], encoded[20:])
+}
+
 func (u *Upstream) injectAccountStableHeaders(req *http.Request, a *Auth) {
 	uid := a.UIDValue()
 	if uid == "" {
@@ -281,6 +292,7 @@ func (u *Upstream) CommonHeaders(req *http.Request, a *Auth) {
 type ChatMeta struct {
 	ConversationID        string
 	ConversationRequestID string
+	ConversationKey       string
 	TraceID               string
 	// EffortFinal tells the body pipeline that the gateway already resolved
 	// the reasoning level from the panel's authoritative vocabulary. The
@@ -293,6 +305,12 @@ type ChatMeta struct {
 func (u *Upstream) ChatHeaders(req *http.Request, a *Auth, clientIP string, meta ChatMeta) {
 	u.CommonHeaders(req, a)
 	req.Header.Set("Accept", "application/json, text/event-stream")
+	if a != nil && a.IsGlobal() {
+		req.Header.Del("Origin")
+		req.Header.Del("Referer")
+		req.Header.Del("X-Machine-ID")
+		req.Header.Del("X-Session-ID")
+	}
 	if at := a.AccessTokenValue(); at != "" {
 		req.Header.Set("Authorization", "Bearer "+at)
 	} else {
@@ -322,7 +340,7 @@ func (u *Upstream) ChatHeaders(req *http.Request, a *Auth, clientIP string, meta
 	u.injectAttribution(req, a)
 	u.injectClientIP(req, clientIP)
 	u.injectDeviceToken(req, a)
-	u.injectConversationHeaders(req, meta)
+	u.injectConversationHeaders(req, a, meta)
 }
 
 // injectGlobalChatHeaders declares the international client shape for accounts
@@ -371,34 +389,58 @@ func (u *Upstream) injectGlobalChatHeaders(req *http.Request, a *Auth) {
 }
 
 // injectConversationHeaders injects the official client conversation family.
-func (u *Upstream) injectConversationHeaders(req *http.Request, meta ChatMeta) {
-	convReqID := meta.ConversationRequestID
+func (u *Upstream) injectConversationHeaders(req *http.Request, a *Auth, meta ChatMeta) {
+	convReqID := strings.TrimSpace(meta.ConversationRequestID)
+	conversationKey := strings.TrimSpace(meta.ConversationKey)
+	conversationID := strings.TrimSpace(meta.ConversationID)
 	if convReqID == "" {
-		// A zero-value meta (direct ChatHeaders callers, tests) still needs an
-		// aggregation key.
 		convReqID = newMessageID()
 	}
+	if conversationKey == "" {
+		conversationKey = conversationID
+	}
+	if conversationKey == "" {
+		conversationKey = convReqID
+	}
+	if conversationID == "" && a != nil && a.IsGlobal() {
+		conversationID = requestIDForKey(conversationKey)
+	}
+
 	messageID := newMessageID()
-	if meta.ConversationID != "" {
-		req.Header.Set("X-Conversation-ID", meta.ConversationID)
+	if conversationID != "" {
+		req.Header.Set("X-Conversation-ID", conversationID)
 	}
 	req.Header.Set("X-Conversation-Request-ID", convReqID)
 	req.Header.Set("X-Conversation-Message-ID", messageID)
 	req.Header.Set("X-Request-ID", messageID)
 	req.Header.Set("X-Agent-Intent", "craft")
-	req.Header.Set("X-Agent-Type", "main")
-	req.Header.Set("X-Private-Data", "false")
+
+	global := a != nil && a.IsGlobal()
+	if global {
+		req.Header.Set("X-Private-Data", "true")
+		req.Header.Set("acp-connection-id", uuidV4ForKey(conversationKey))
+	} else {
+		req.Header.Set("X-Agent-Type", "main")
+		req.Header.Set("X-Private-Data", "false")
+	}
 
 	traceID := meta.TraceID
 	if !validTraceID(traceID) {
 		traceID = messageID
 	}
 	spanID := newMessageID()[:16]
+	parentSpanID := newMessageID()[:16]
 	req.Header.Set("X-Trace-ID", traceID)
 	req.Header.Set("X-B3-TraceId", traceID)
 	req.Header.Set("X-B3-SpanId", spanID)
 	req.Header.Set("X-B3-Sampled", "1")
-	req.Header.Set("b3", traceID+"-"+spanID+"-1")
+	if global {
+		req.Header.Set("traceparent", "00-"+traceID+"-"+spanID+"-01")
+		req.Header.Set("X-B3-ParentSpanId", parentSpanID)
+		req.Header.Set("b3", traceID+"-"+spanID+"-1-"+parentSpanID)
+	} else {
+		req.Header.Set("b3", traceID+"-"+spanID+"-1")
+	}
 }
 
 // validTraceID reports whether s is a legal B3 trace id (16 or 32 hex chars).

@@ -21,14 +21,17 @@ them, and the realm decides the host it talks to:
 The CN browser-login endpoint uses the `web_base_cn` host (`https://www.workbuddy.cn`) rather than the CN chat host.
 
 Both realms use the same paths (`/v2/chat/completions`,
-`/v2/plugin/auth/token/refresh`); only the host, the `Origin`/`Referer` pair, the
-`Accept-Language`, the enterprise headers, the User-Agent product segment and
-the desktop/CLI version pair differ: CN announces `5.7.7` / `2.137.1`, the
-international client ships `5.8.4` / `2.161.0` and spells its platform segment
-`workbuddy-ai`. The international realm also tags model calls with
-`X-Product: SaaS` and `X-Agent-Purpose: conversation`; CN sends neither. The
-realm is stored per credential (`"realm"`, or inferred from the token `domain`).
-Nothing is hardcoded to one realm.
+`/v2/plugin/auth/token/refresh`). The host, `Accept-Language`, enterprise headers
+and desktop/CLI version pair still differ: CN announces `5.7.7` / `2.137.1`,
+while the international VLM client ships `5.8.4` / `2.161.0` and repeats
+`WorkBuddy` in both UA product segments. International chat calls also omit the
+browser-only `Origin`/`Referer` and machine/session headers, set
+`X-Private-Data: true`, and carry `X-Product: SaaS`, `X-Agent-Purpose:
+conversation`, a per-session `X-Conversation-ID` / `acp-connection-id` and the
+official W3C/B3 trace family. CN keeps its desktop pair, `main` agent type,
+`X-Private-Data: false` and common request headers. The realm is stored per
+credential (`"realm"`, or inferred from the token `domain`). Nothing is
+hardcoded to one realm.
 
 The published catalogue is the union of both realms, with each id carrying its
 realm prefix (`cn:glm-5.3`). A catalogue refresh picks its credential per realm
@@ -428,7 +431,7 @@ This module sends several different `User-Agent` strings, and that is a faithful
 port rather than an oversight: each one belongs to a different upstream surface
 that the vendor's own clients label differently. The normal API path derives its
 UA from `user_agent` (realm-dependent: CN `WorkBuddy/5.7.7 WorkBuddy/5.7.7
-CLI/2.137.1`, international `WorkBuddy/5.8.4 workbuddy-ai/5.8.4 CLI/2.161.0`,
+CLI/2.137.1`, international `WorkBuddy/5.8.4 WorkBuddy/5.8.4 CLI/2.161.0`,
 the latter measured from the shipped international client). The desktop-event
 fingerprint path pins
 `WorkBuddy/5.5.6 WorkBuddy/5.5.6 CLI/2.137.1` because the reference's
@@ -571,19 +574,21 @@ overrides the model id). They are skipped on this machine — see
   goes stale silently and nothing on the wire says so. The 2026-09 detection
   mechanism (a bare numeric error code and the Claude-Code/Codex identity
   sentences in the system prompt) is what the pairs target.
-* **The international fingerprint is pinned to the 5.8.4 client, and 11-128 is
-  read as a request-shape refusal.** `global` announces
-  `WorkBuddy/5.8.4 workbuddy-ai/5.8.4 CLI/2.161.0` with `X-Product: SaaS` and
-  `X-Agent-Purpose: conversation`, and every outbound chat body is given a
-  leading `system` turn. Business code `11-128` ("request illegal") is what the
-  vendor answered a conversation that opened with a user turn, and it is also
-  what the retired version pair drew on an international request, so the code is
-  classified as a content refusal (degraded-prompt retry once) rather than an
-  account fault. If the vendor later uses the same code for a genuinely
-  account-scoped block, the gateway retries once and answers `content_blocked`
-  instead of parking the credential; that is the tradeoff, chosen because
-  benching a healthy account is the worse failure. CN is untouched: it keeps
-  5.7.7 / 2.137.1 and sends neither header.
+* **The international fingerprint is pinned to the 5.8.4 VLM client, and 11-128
+  is read as a request-shape refusal.** `global` announces
+  `WorkBuddy/5.8.4 WorkBuddy/5.8.4 CLI/2.161.0` with `X-Product: SaaS`,
+  `X-Agent-Purpose: conversation`, `X-Private-Data: true`, a per-conversation
+  `X-Conversation-ID` / `acp-connection-id` and the official trace headers. The
+  channel verifier rejects an otherwise working token with `11-128` when
+  `X-Conversation-ID` is absent, which is why the id is always sent on global
+  chat calls. Every outbound chat body is also given a leading `system` turn.
+  Business code `11-128` ("request illegal") is therefore classified as a
+  content refusal (degraded-prompt retry once) rather than an account fault. If
+  the vendor later uses the same code for a genuinely account-scoped block, the
+  gateway retries once and answers `content_blocked` instead of parking the
+  credential; that is the tradeoff, chosen because benching a healthy account is
+  the worse failure. CN is untouched: it keeps 5.7.7 / 2.137.1, `main` agent
+  type and `X-Private-Data: false`.
 * **The vendor's live credential store cannot be imported** (encrypted
   `$wbEncrypted` envelopes), so `Status()` reports its presence instead of
   importing it. See "Credential discovery".
