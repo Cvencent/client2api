@@ -242,6 +242,32 @@ func TestClassifyHTTPFreeTierErrorParksInsteadOfDisabling(t *testing.T) {
 	}
 }
 
+func TestClassifyHTTPServerErrorCannotBecomeRateLimit(t *testing.T) {
+	body := []byte(`{"type":"error","error":{"type":"server_error","message":"upstream unavailable"}}`)
+	c := newTestClient(t, Config{Cooldown: Duration(20 * time.Minute)})
+	addAccount(t, c, "opencode:a", "sk-a")
+	acct, _ := c.pool.byID("opencode:a")
+
+	err := c.classifyHTTP("chat", acct, 429, body)
+	if kind := core.FailureKindOf(err); kind != core.FailureUpstream {
+		t.Fatalf("kind = %q, want %q for a server_error envelope", kind, core.FailureUpstream)
+	}
+	f, ok := core.AsFailure(err)
+	if !ok {
+		t.Fatalf("error %v is not a *core.Failure", err)
+	}
+	if f.Status != 502 {
+		t.Fatalf("status = %d, want 502 instead of the upstream 429", f.Status)
+	}
+	after, _ := c.pool.byID("opencode:a")
+	if after.CooldownUntil != "" || after.CooldownKind != "" {
+		t.Fatalf("a server_error parked the account as rate-limited: %+v", after)
+	}
+	if !after.Enabled {
+		t.Fatal("a server_error disabled the account")
+	}
+}
+
 // A transport failure is not the vendor refusing anything.
 func TestClassifyErrForTransportIsUpstream(t *testing.T) {
 	c := newTestClient(t, Config{})

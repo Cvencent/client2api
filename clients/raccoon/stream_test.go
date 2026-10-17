@@ -174,6 +174,10 @@ func TestParseChunkShapes(t *testing.T) {
 	if !ok || c.Finish != "stop" {
 		t.Fatalf("finish reason: %#v ok=%v", c, ok)
 	}
+	c, ok = parseChunk(`{"choices":[{"delta":{},"finish_reason":"stop"}]}`)
+	if !ok || c.Finish != "stop" {
+		t.Fatalf("empty completion frame: %#v ok=%v", c, ok)
+	}
 	c, ok = parseChunk(`{"choices":[{"message":{"content":"whole"}}]}`)
 	if !ok || c.Delta != "whole" {
 		t.Fatalf("a whole non-streamed message must be read: %#v ok=%v", c, ok)

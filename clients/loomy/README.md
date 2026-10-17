@@ -405,6 +405,16 @@ fact.
   upstream error advance the account one step along `30 s` → `1 min` → `2 min`,
   and a fourth failed round marks it `abnormal`. A caller that has gone away
   (`ctx.Err() != nil`) stops the walk without penalising anything.
+* prompt-size refusal → the account is **not** penalised and the request is not
+  retried on it. The backend behind DeepSeek-V4.1-Flash answers an oversized
+  prompt with HTTP 400 and `内容太长了，请精简输入或开启新对话` (provider
+  `alibaba-dashscope`); that says the body is too large, not that the credential
+  is unhealthy, so retrying it on the same or another account only sends the
+  same oversized body again. The walk stops and the classified refusal reaches
+  the gateway as `core.FailureContextWindow`, which answers `400
+  invalid_request_error` / `context_window_exceeded` instead of a 502. The
+  message carries no token count, so no context window is learned from it; the
+  gateway's own guard is what trims the history when it does know the window.
 
 If every candidate fails, the caller gets the last error; if every candidate was
 merely busy, it gets `core.ErrBusy`. If there are no candidates at all, it gets

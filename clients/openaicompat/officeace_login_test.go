@@ -112,6 +112,14 @@ func TestOfficeAceHuaweiAccountLoginWritesCredential(t *testing.T) {
 				},
 			}}}
 			_ = json.NewEncoder(w).Encode(body)
+		case r.Method == http.MethodPost && r.URL.Path == officeAcePremiumPathSecurityTok:
+			_, _ = io.WriteString(w, `{"credential":{"access":"v3-access","secret":"v3-secret","securitytoken":"v3-token","expires_at":"2099-01-01T00:00:00Z"}}`)
+		case r.Method == http.MethodGet && r.URL.Path == officeAcePremiumPathSubscription:
+			_, _ = io.WriteString(w, `{"subscribe_status":"SUBSCRIBED","skus":[],"bonus_skus":[]}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/skus/"+officeAceTrialSKUCode:
+			_, _ = io.WriteString(w, `{"product_sales_cycles":[{"id":"atomic-trial-product","status":"ONSALE"}]}`)
+		case r.Method == http.MethodPost && r.URL.Path == officeAcePremiumPathSubscriptionPeriod:
+			_, _ = io.WriteString(w, `{"status":"SUBSCRIBED","order_id":"order-1"}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/model-gateway/v2/models":
 			scanCalls.Add(1)
 			_, _ = io.WriteString(w, `{"data":[{"id":"test-glm"},{"id":"test-deepseek"}]}`)
@@ -129,10 +137,11 @@ func TestOfficeAceHuaweiAccountLoginWritesCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 	o := &officeAceSource{source: s, eps: officeAceEndpoints{
-		ClawBase: srv.URL,
-		AuthBase: srv.URL,
-		IAMBase:  srv.URL,
-		ClientID: "test-client",
+		ClawBase:     srv.URL,
+		AuthBase:     srv.URL,
+		IAMBase:      srv.URL,
+		KeystoneBase: srv.URL,
+		ClientID:     "test-client",
 	}}
 	ctx := context.Background()
 	if !core.CapabilitiesOf(ctx, o).Login {
@@ -271,7 +280,7 @@ func TestOfficeAceLoginCreatesTrialEntitlementWithExistingModelInfo(t *testing.T
 			}
 			_, _ = io.WriteString(w, `{"status":"SUBSCRIBED","order_id":"order-1","cbc_order_id":"cbc-1"}`)
 		case r.Method == http.MethodPost && r.URL.Path == officeAcePremiumPathSecurityTok:
-			http.Error(w, "v3 credential is optional here", http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"credential":{"access":"v3-access","secret":"v3-secret","securitytoken":"v3-token","expires_at":"2099-01-01T00:00:00Z"}}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/model-gateway/v2/models":
 			scanCalls.Add(1)
 			_, _ = io.WriteString(w, `{"data":[{"id":"test-glm"}]}`)
@@ -311,8 +320,8 @@ func TestOfficeAceLoginCreatesTrialEntitlementWithExistingModelInfo(t *testing.T
 	if orderBody.ServiceType != "hws.service.type.agentarts" ||
 		orderBody.SubscribePeriodType != 2 ||
 		orderBody.SubscribePeriodValue != 1 ||
-		orderBody.AutoRenewal != 1 ||
-		orderBody.AutoPay != 1 ||
+		orderBody.AutoRenewal != 0 ||
+		orderBody.AutoPay != 0 ||
 		orderBody.SubscribeSKUInfo.SubscribeQuantity != 1 ||
 		orderBody.SubscribeSKUInfo.SubscribeSKUCode != "officeace.personal.package.trial" ||
 		orderBody.SubscribeSKUInfo.SubscribeSubProductCode != "hws.resource.type.agentarts.platform" ||

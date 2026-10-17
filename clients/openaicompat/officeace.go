@@ -44,6 +44,17 @@ type officeAceSource struct {
 	refreshMu    sync.Mutex
 	refreshLocks map[string]*sync.Mutex
 
+	// Premium calls have two independent serialization domains.  A V3
+	// credential can be minted from a V5 credential while another goroutine is
+	// refreshing the V5 credential, so sharing the refresh lock would deadlock
+	// the trial-repair path.  The trial lock prevents two panel actions from
+	// placing the same free entitlement order.
+	v3Mu    sync.Mutex
+	v3Locks map[string]*sync.Mutex
+
+	trialMu    sync.Mutex
+	trialLocks map[string]*sync.Mutex
+
 	// SMS and auto-login state.  The platform token and per-call overrides
 	// travel through core.SMSOpts/core.AutoLoginRequest, so no credential is
 	// added to SourceConfig.  smsBase is only set by tests.
@@ -72,6 +83,34 @@ func (o *officeAceSource) officeAceRefreshLock(id string) *sync.Mutex {
 	if lock == nil {
 		lock = &sync.Mutex{}
 		o.refreshLocks[id] = lock
+	}
+	return lock
+}
+
+func (o *officeAceSource) officeAceV3Lock(id string) *sync.Mutex {
+	o.v3Mu.Lock()
+	defer o.v3Mu.Unlock()
+	if o.v3Locks == nil {
+		o.v3Locks = map[string]*sync.Mutex{}
+	}
+	lock := o.v3Locks[id]
+	if lock == nil {
+		lock = &sync.Mutex{}
+		o.v3Locks[id] = lock
+	}
+	return lock
+}
+
+func (o *officeAceSource) officeAceTrialLock(id string) *sync.Mutex {
+	o.trialMu.Lock()
+	defer o.trialMu.Unlock()
+	if o.trialLocks == nil {
+		o.trialLocks = map[string]*sync.Mutex{}
+	}
+	lock := o.trialLocks[id]
+	if lock == nil {
+		lock = &sync.Mutex{}
+		o.trialLocks[id] = lock
 	}
 	return lock
 }

@@ -81,6 +81,10 @@ func (o *officeAceSource) Checkin(ctx context.Context, id, action string) (core.
 	if err != nil {
 		return core.CheckinResult{}, err
 	}
+	if _, err := p.subscriptionRepairingTrial(ctx); err != nil {
+		res.Error = core.Redact(err.Error())
+		return res, nil
+	}
 	start := time.Now()
 	bonuses, err := p.claimBonus(ctx)
 	res.ElapsedMS = time.Since(start).Milliseconds()
@@ -120,7 +124,7 @@ func (o *officeAceSource) AccountBalance(ctx context.Context, id string, soon ti
 	if err != nil {
 		return core.Balance{}, err
 	}
-	sub, err := p.subscription(officeAceContext(ctx))
+	sub, err := p.subscriptionRepairingTrial(officeAceContext(ctx))
 	if err != nil {
 		return core.Balance{}, err
 	}
@@ -160,7 +164,7 @@ func (o *officeAceSource) AccountPackages(ctx context.Context, id string) (core.
 	if err != nil {
 		return core.PackageReport{}, err
 	}
-	sub, err := p.subscription(officeAceContext(ctx))
+	sub, err := p.subscriptionRepairingTrial(officeAceContext(ctx))
 	if err != nil {
 		return core.PackageReport{}, err
 	}

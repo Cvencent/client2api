@@ -119,3 +119,64 @@ func TestTestAccountRejectsAStreamErrorAfterReasoning(t *testing.T) {
 		t.Fatalf("error = %q, want the real stream failure", res.Error)
 	}
 }
+
+func TestTestAccountAcceptsCleanEmptyCompletion(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != pathChat {
+			t.Errorf("unexpected path %q", r.URL.Path)
+			return
+		}
+		writeSSE(w,
+			`{"choices":[{"delta":{},"finish_reason":"stop"}]}`,
+			`[DONE]`,
+		)
+	}))
+	defer ts.Close()
+
+	c := newTestClient(t, t.TempDir(),
+		fmt.Sprintf(`{"base_url":%q,"access_token":"tok","user_id":"u1"}`, ts.URL), ts.Client())
+	res, err := c.TestAccount(context.Background(), "uid:u1")
+	if err != nil {
+		t.Fatalf("TestAccount: %v", err)
+	}
+	if !res.OK {
+		t.Fatalf("a clean empty completion proves the credential works: %+v", res)
+	}
+	if res.Reply != "empty completion completed" {
+		t.Fatalf("Reply = %q, want the explicit empty-completion evidence", res.Reply)
+	}
+}
+
+func TestSuccessfulProbeRevivesADisabledAccount(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeSSE(w,
+			`{"choices":[{"delta":{"content":"pong"}}]}`,
+			`{"choices":[{"finish_reason":"stop"}]}`,
+			`[DONE]`,
+		)
+	}))
+	defer ts.Close()
+
+	c := newTestClient(t, t.TempDir(),
+		fmt.Sprintf(`{"base_url":%q,"access_token":"tok","user_id":"u1"}`, ts.URL), ts.Client())
+	e := c.pool.find("uid:u1")
+	if e == nil {
+		t.Fatal("test account was not loaded")
+	}
+	c.pool.markDead(e, "old credential rejection")
+	res, err := c.TestAccount(context.Background(), "uid:u1")
+	if err != nil {
+		t.Fatalf("TestAccount: %v", err)
+	}
+	if !res.OK {
+		t.Fatalf("an explicit test must succeed after the credential recovered: %+v", res)
+	}
+	after := c.pool.find("uid:u1")
+	if after == nil {
+		t.Fatal("account disappeared")
+	}
+	if after.acct.Disabled || after.state != stateReady || after.note != "" {
+		t.Fatalf("successful probe left the account parked: disabled=%v state=%q note=%q",
+			after.acct.Disabled, after.state, after.note)
+	}
+}

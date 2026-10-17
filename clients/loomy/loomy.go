@@ -448,6 +448,10 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 
 	attempts := c.cfg.maxAttempts()
 	var lastErr error
+	// lastAccount remembers the credential the final refusal came from, so the
+	// terminal error can be attributed to it.  Every completed attempt
+	// overwrites it; a skipped candidate never does.
+	var lastAccount string
 	// issued counts upstream account attempts, not candidates examined.  A
 	// lost race for an account's in-flight slot is skipped without spending
 	// one of the request's switch attempts.
@@ -467,6 +471,7 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 			continue
 		}
 		issued++
+		lastAccount = acc.ID
 		// Bind only after the slot is genuinely held, so a conversation cannot be
 		// pinned to an account that was skipped because it was already busy.
 		c.bindServedConversation(&local, acc.ID)
@@ -479,6 +484,15 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 			return core.TrackStream(stream, func() { c.inFlight.Add(-1) }), nil
 		}
 		if callerGone(err) {
+			break
+		}
+		// A prompt-size refusal is not evidence about the credential: the same
+		// oversized body would be refused by every other account too, so there
+		// is nothing to learn from a retry and nothing to penalise.  Return the
+		// classified refusal immediately, which is also what lets the gateway
+		// answer 400 + context_window_exceeded instead of a 502.
+		if failureKind(err) == core.FailureContextWindow {
+			lastErr = err
 			break
 		}
 
@@ -516,6 +530,13 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 		if callerGone(err) {
 			break
 		}
+		// The same-size refusal reached on the second attempt is still not a
+		// verdict about the credential; classify it and leave the account's
+		// cooldown ladder untouched.
+		if failureKind(err) == core.FailureContextWindow {
+			lastErr = err
+			break
+		}
 		// A 402 from the chat endpoint is the vendor's authoritative
 		// insufficient-credit verdict. The first call already got one retry
 		// above, so the second refusal is enough to park the account as
@@ -542,6 +563,11 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 	if lastErr == nil {
 		lastErr = core.ErrNotConfigured
 	}
+	// Hand the gateway a classified failure when this module can name one, so
+	// it can preserve the upstream status and the machine-readable code.  A
+	// sentinel (ErrBusy / ErrNotConfigured) or a bare transport error passes
+	// through untouched.
+	lastErr = classifyFailure(lastErr, lastAccount)
 	c.noteFailure(lastErr)
 	return nil, lastErr
 }

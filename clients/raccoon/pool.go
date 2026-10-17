@@ -657,6 +657,23 @@ func (p *pool) markUsed(e *entry) {
 	p.markUsedFor(e, false)
 }
 
+// markProbeSuccess records a successful explicit credential probe. Unlike a
+// normal request, the panel's test action is a deliberate operator decision to
+// retry an account, so a clean success is strong evidence that a previous
+// auth failure is stale: clear the disabled flag as well as the cooldown.
+// Real 401/403 paths still call markDead/markFailure and remain sticky.
+func (p *pool) markProbeSuccess(e *entry) {
+	if e == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	e.acct.Disabled = false
+	e.acct.LastUsed = p.now().UnixMilli()
+	e.free()
+	p.flushStateLocked(true)
+}
+
 // markUsedFor records a successful use.  A free success is evidence about the
 // model, not about the wallet, so it does not lift a credit park: the account
 // keeps being reported as 已用尽 for the models that would charge it.

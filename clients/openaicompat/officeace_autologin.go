@@ -43,6 +43,12 @@ const (
 	officeAceSelSendCode = `[ht="click_changePhoneAccount_getAuthcode"]`
 	officeAceSelCode     = `input[ht="input_changePhoneAccount_authcode"]`
 	officeAceSelSubmit   = `[ht="click_login_phoneSubmit"]`
+	// A fresh Huawei account lands on the OfficeAce/AgentArts registration
+	// consent page after the SMS code is accepted.  The page stays there until
+	// this checkbox is selected and the primary action is clicked; otherwise
+	// the OAuth callback never runs and auto-login eventually times out.
+	officeAceSelRegisterAgree    = `input.ti-checkbox-input`
+	officeAceSelRegisterContinue = `#submitBtn_reg_open`
 )
 
 // officeAceAutoDriver is the browser half of one auto-login.  Drive must
@@ -51,6 +57,26 @@ const (
 type officeAceAutoDriver interface {
 	Drive(ctx context.Context, url, phone string, waitCode func(context.Context) (string, error), logf func(string, ...any)) error
 }
+
+// officeAceAutoPage is the browser surface needed after the phone-code
+// submission. Keeping it narrow makes the conditional registration-consent
+// path testable without launching a browser.
+type officeAceAutoPage interface {
+	Exists(ctx context.Context, selector string) (bool, error)
+	Click(ctx context.Context, selector string) (bool, error)
+	EvalBool(ctx context.Context, expression string) (bool, error)
+}
+
+const (
+	officeAceRegistrationAgreeCheckedExpr = `(function(){` +
+		`var el=document.querySelector('input.ti-checkbox-input');` +
+		`return !!(el && el.checked);})()`
+	officeAceRegistrationContinueEnabledExpr = `(function(){` +
+		`var el=document.querySelector('#submitBtn_reg_open');` +
+		`return !!(el && !el.disabled && !el.classList.contains('is-disabled'));})()`
+	officeAceRegistrationAgreementWait = 5 * time.Second
+	officeAceRegistrationContinueWait  = 10 * time.Second
+)
 
 // officeAceAutoJob is one in-flight auto-login.  Every field is read under mu
 // because the panel polls while the background run writes.
@@ -479,10 +505,86 @@ func (officeAceBrowserDriver) Drive(ctx context.Context, url, phone string, wait
 		return errors.New("找不到登录按钮")
 	}
 	logf("已提交验证码，等待华为授权结果…")
+	if err := acceptOfficeAceRegistrationConsent(ctx, page, logf); err != nil {
+		return fmt.Errorf("确认华为云用户协议失败：%w", err)
+	}
 	return nil
 }
 
-func waitOfficeAceSelector(ctx context.Context, page *browser.Page, selector string, timeout time.Duration) (bool, error) {
+// acceptOfficeAceRegistrationConsent handles the extra Huawei Cloud
+// registration page shown for a freshly created account. The page is
+// conditional: an existing account goes straight back to the OAuth callback,
+// so a missing checkbox is a successful no-op rather than an error.
+func acceptOfficeAceRegistrationConsent(ctx context.Context, page officeAceAutoPage, logf func(string, ...any)) error {
+	return acceptOfficeAceRegistrationConsentWithin(ctx, page, officeAceRegistrationAgreementWait, officeAceRegistrationContinueWait, logf)
+}
+
+func acceptOfficeAceRegistrationConsentWithin(ctx context.Context, page officeAceAutoPage, agreementWait, continueWait time.Duration, logf func(string, ...any)) error {
+	appeared, err := waitOfficeAceSelector(ctx, page, officeAceSelRegisterAgree, agreementWait)
+	if err != nil {
+		return err
+	}
+	if !appeared {
+		return nil
+	}
+
+	logf("检测到华为云用户协议，正在确认…")
+	checked, err := page.EvalBool(ctx, officeAceRegistrationAgreeCheckedExpr)
+	if err != nil {
+		return fmt.Errorf("读取协议勾选状态失败：%w", err)
+	}
+	if !checked {
+		clicked, err := page.Click(ctx, officeAceSelRegisterAgree)
+		if err != nil {
+			return fmt.Errorf("勾选用户协议失败：%w", err)
+		}
+		if !clicked {
+			return errors.New("找不到用户协议勾选框")
+		}
+	}
+
+	enabled, err := waitOfficeAceCondition(ctx, page, officeAceRegistrationContinueEnabledExpr, continueWait)
+	if err != nil {
+		return err
+	}
+	if !enabled {
+		return errors.New("勾选用户协议后“同意并继续”按钮仍未启用")
+	}
+	clicked, err := page.Click(ctx, officeAceSelRegisterContinue)
+	if err != nil {
+		return fmt.Errorf("点击“同意并继续”失败：%w", err)
+	}
+	if !clicked {
+		return errors.New("找不到“同意并继续”按钮")
+	}
+	logf("已同意华为云用户协议，继续华为授权…")
+	return nil
+}
+
+func waitOfficeAceCondition(ctx context.Context, page officeAceAutoPage, expression string, timeout time.Duration) (bool, error) {
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for {
+		ok, err := page.EvalBool(ctx, expression)
+		if err == nil && ok {
+			return true, nil
+		}
+		lastErr = err
+		if time.Now().After(deadline) {
+			if lastErr != nil {
+				return false, lastErr
+			}
+			return false, nil
+		}
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+}
+
+func waitOfficeAceSelector(ctx context.Context, page officeAceAutoPage, selector string, timeout time.Duration) (bool, error) {
 	deadline := time.Now().Add(timeout)
 	var lastErr error
 	for {

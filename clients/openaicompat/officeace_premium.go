@@ -130,33 +130,57 @@ func (p *officeAcePremium) cloudFetch(ctx context.Context, method, path string, 
 	return p.cloudFetchBase(ctx, p.origin(), method, path, body, headers)
 }
 
-// cloudFetchBase is cloudFetch against an explicit cloud root.  OfficeAce's
-// subscription and SKU order endpoints live on the claw service rather than
-// the account's model gateway, while the premium summary lives on the gateway.
+// cloudFetchBase is cloudFetch against an explicit cloud root.  It always uses
+// the V11 model-gateway signature.
 func (p *officeAcePremium) cloudFetchBase(ctx context.Context, base, method, path string, body []byte, headers map[string]string) ([]byte, int, error) {
+	return p.cloudFetchWithSigner(ctx, base, method, path, body, headers, false)
+}
+
+// cloudFetchV3 is the claw-service half of OfficeAce.  The SKU catalogue and
+// subscription-period order reject V11 signatures with APIG.0301 and require
+// the IAM V3 (SDK-HMAC-SHA256) credential, including X-Security-Token and
+// X-Project-ID.
+func (p *officeAcePremium) cloudFetchV3(ctx context.Context, method, path string, body []byte, headers map[string]string) ([]byte, int, error) {
+	return p.cloudFetchWithSigner(ctx, p.src.endpoints().ClawBase, method, path, body, headers, true)
+}
+
+func (p *officeAcePremium) cloudFetchWithSigner(ctx context.Context, base, method, path string, body []byte, headers map[string]string, v3 bool) ([]byte, int, error) {
 	base = strings.TrimRight(strings.TrimSpace(base), "/")
 	if base == "" {
 		return nil, 0, errors.New("officeace: 云端地址为空")
 	}
 	endpoint := base + path
-	if officeAceExpiresWithin(p.sess.ExpiresAt, p.now(), officeAceCredentialRefreshLead) {
-		_ = p.refreshCredentials(ctx)
+	if v3 {
+		if err := p.ensureV3Credential(ctx); err != nil {
+			return nil, 0, err
+		}
+	} else {
+		if officeAceExpiresWithin(p.sess.ExpiresAt, p.now(), officeAceCredentialRefreshLead) {
+			_ = p.refreshCredentials(ctx)
+		}
+		if p.sess.ProjectID == "" {
+			p.ensureProject(ctx)
+		}
 	}
-	if p.sess.ProjectID == "" {
-		p.ensureProject(ctx)
-	}
-	raw, status, code, err := p.doSigned(ctx, method, endpoint, body, headers)
+	raw, status, code, err := p.doSigned(ctx, method, endpoint, body, headers, v3)
 	if err != nil {
 		return nil, 0, err
 	}
 	if !officeAceCredentialRejected(status, code) {
 		return raw, status, nil
 	}
-	if rerr := p.refreshCredentials(ctx); rerr != nil {
-		return raw, status, nil
+	if v3 {
+		p.clearV3Credential()
+		if rerr := p.ensureV3Credential(ctx); rerr != nil {
+			return raw, status, nil
+		}
+	} else {
+		if rerr := p.refreshCredentials(ctx); rerr != nil {
+			return raw, status, nil
+		}
+		p.ensureProject(ctx)
 	}
-	p.ensureProject(ctx)
-	raw, status, _, err = p.doSigned(ctx, method, endpoint, body, headers)
+	raw, status, _, err = p.doSigned(ctx, method, endpoint, body, headers, v3)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -176,7 +200,7 @@ func officeAceCredentialRejected(status int, code string) bool {
 
 // doSigned signs one request with the current credential and returns the body,
 // status and the gateway error_code (when the body carries one).
-func (p *officeAcePremium) doSigned(ctx context.Context, method, endpoint string, body []byte, headers map[string]string) ([]byte, int, string, error) {
+func (p *officeAcePremium) doSigned(ctx context.Context, method, endpoint string, body []byte, headers map[string]string, v3 bool) ([]byte, int, string, error) {
 	merged := map[string]string{}
 	for key, value := range headers {
 		merged[key] = value
@@ -192,7 +216,17 @@ func (p *officeAcePremium) doSigned(ctx context.Context, method, endpoint string
 		delete(merged, "X-Subscription-Type")
 		merged["x-subscription-type"] = v
 	}
-	signed, err := signOfficeAceV11Request(method, endpoint, merged, string(body), p.sess.AccessKey, p.sess.SecretKey, p.sess.SecurityToken, p.sess.ProjectID, p.sess.region(), p.now())
+	var (
+		signed map[string]string
+		err    error
+	)
+	if v3 {
+		merged["X-Security-Token"] = strings.TrimSpace(p.sess.V3SecurityToken)
+		merged["X-Project-ID"] = strings.TrimSpace(p.sess.V3ProjectID)
+		signed, err = signOfficeAceRequest(method, endpoint, merged, string(body), p.sess.V3AccessKey, p.sess.V3SecretKey, p.now())
+	} else {
+		signed, err = signOfficeAceV11Request(method, endpoint, merged, string(body), p.sess.AccessKey, p.sess.SecretKey, p.sess.SecurityToken, p.sess.ProjectID, p.sess.region(), p.now())
+	}
 	if err != nil {
 		return nil, 0, "", err
 	}
@@ -267,39 +301,58 @@ func (p *officeAcePremium) refreshCredentials(ctx context.Context) error {
 		return nil
 	}
 
-	now := p.now()
 	if token := strings.TrimSpace(p.sess.RefreshToken); token != "" {
 		if err := p.refreshWithToken(ctx); err == nil {
 			return p.save()
 		}
 	}
-	if p.sess.v3Usable() && !officeAceExpiresWithin(p.sess.V3ExpiresAt, now, 0) {
-		p.applyV3(officeAceV3Credential{
-			Access:        p.sess.V3AccessKey,
-			Secret:        p.sess.V3SecretKey,
-			SecurityToken: p.sess.V3SecurityToken,
-			ProjectID:     p.sess.V3ProjectID,
-			ExpiresAt:     p.sess.V3ExpiresAt,
-		})
-		return p.save()
-	}
-	if v3, ok := officeAceFetchV3(ctx, p.src.httpClient(), p.src.endpoints().KeystoneBase, p.sess.AccessKey, p.sess.SecretKey, p.sess.SecurityToken, p.sess.ProjectID, now); ok {
-		p.applyV3(v3)
-		return p.save()
-	}
 	return errors.New("officeace: 云端登录凭据已过期且无法自动续期，请重新登录华为账号")
 }
 
-func (p *officeAcePremium) applyV3(v3 officeAceV3Credential) {
-	p.sess.AccessKey = strings.TrimSpace(v3.Access)
-	p.sess.SecretKey = strings.TrimSpace(v3.Secret)
-	p.sess.SecurityToken = strings.TrimSpace(v3.SecurityToken)
+// ensureV3Credential keeps the IAM V3 credential separate from the V11
+// credential.  It is safe to mint from a V5 credential while another call is
+// refreshing V5 because the two paths use independent per-account locks.
+func (p *officeAcePremium) ensureV3Credential(ctx context.Context) error {
+	lock := p.src.officeAceV3Lock(p.row.ID)
+	lock.Lock()
+	defer lock.Unlock()
+
+	if row, ok := p.src.source.officeAceFindRow(p.row.ID); ok && row.OfficeAce != nil {
+		p.row = row
+		p.sess = *row.OfficeAce
+	}
+	now := p.now()
+	if p.sess.v3Usable() && !officeAceExpiresWithin(p.sess.V3ExpiresAt, now, 0) {
+		return nil
+	}
+	if officeAceExpiresWithin(p.sess.ExpiresAt, now, officeAceCredentialRefreshLead) {
+		_ = p.refreshCredentials(ctx)
+	}
+	v3, ok := officeAceFetchV3(ctx, p.src.httpClient(), p.src.endpoints().KeystoneBase, p.sess.AccessKey, p.sess.SecretKey, p.sess.SecurityToken, p.sess.ProjectID, now)
+	if !ok {
+		return errors.New("officeace: 无法从华为 V5 凭据换取 V3 凭据，请重新登录华为账号")
+	}
+	p.storeV3(v3)
+	return p.save()
+}
+
+func (p *officeAcePremium) storeV3(v3 officeAceV3Credential) {
+	p.sess.V3AccessKey = strings.TrimSpace(v3.Access)
+	p.sess.V3SecretKey = strings.TrimSpace(v3.Secret)
+	p.sess.V3SecurityToken = strings.TrimSpace(v3.SecurityToken)
 	if strings.TrimSpace(v3.ProjectID) != "" {
-		p.sess.ProjectID = strings.TrimSpace(v3.ProjectID)
+		p.sess.V3ProjectID = strings.TrimSpace(v3.ProjectID)
 	}
-	if strings.TrimSpace(v3.ExpiresAt) != "" {
-		p.sess.ExpiresAt = strings.TrimSpace(v3.ExpiresAt)
-	}
+	p.sess.V3ExpiresAt = strings.TrimSpace(v3.ExpiresAt)
+}
+
+func (p *officeAcePremium) clearV3Credential() {
+	p.sess.V3AccessKey = ""
+	p.sess.V3SecretKey = ""
+	p.sess.V3SecurityToken = ""
+	p.sess.V3ProjectID = ""
+	p.sess.V3ExpiresAt = ""
+	_ = p.save()
 }
 
 // refreshWithToken exchanges the stored OAuth refresh token for a fresh
@@ -510,6 +563,21 @@ func (o *officeAceSource) ensureOfficeAceTrial(ctx context.Context, accountID st
 	if err != nil {
 		return err
 	}
+	return p.ensureTrial(ctx)
+}
+
+// ensureTrial is idempotent and serialized per account.  It repairs logins
+// created before the entitlement order was wired correctly, as well as any
+// account whose trial is missing when the panel reads its balance/packages.
+func (p *officeAcePremium) ensureTrial(ctx context.Context) error {
+	lock := p.src.officeAceTrialLock(p.row.ID)
+	lock.Lock()
+	defer lock.Unlock()
+
+	if row, ok := p.src.source.officeAceFindRow(p.row.ID); ok && row.OfficeAce != nil {
+		p.row = row
+		p.sess = *row.OfficeAce
+	}
 	sub, err := p.subscription(ctx)
 	if err != nil {
 		return err
@@ -524,6 +592,23 @@ func (o *officeAceSource) ensureOfficeAceTrial(ctx context.Context, accountID st
 	return p.createTrialOrder(ctx, atomicProductID)
 }
 
+// subscriptionRepairingTrial reads the subscription and, when the free trial
+// is missing, repairs it before reading once more. The second read keeps a
+// brief cloud propagation delay out of the panel result.
+func (p *officeAcePremium) subscriptionRepairingTrial(ctx context.Context) (officeAceSubscription, error) {
+	sub, err := p.subscription(ctx)
+	if err != nil {
+		return officeAceSubscription{}, err
+	}
+	if sub.hasTrial() {
+		return sub, nil
+	}
+	if err := p.ensureTrial(ctx); err != nil {
+		return officeAceSubscription{}, err
+	}
+	return p.subscription(ctx)
+}
+
 func (s officeAceSubscription) hasTrial() bool {
 	for _, sku := range s.Skus {
 		if strings.EqualFold(strings.TrimSpace(sku.Code), officeAceTrialSKUCode) {
@@ -535,7 +620,7 @@ func (s officeAceSubscription) hasTrial() bool {
 
 func (p *officeAcePremium) trialAtomicProductID(ctx context.Context) (string, error) {
 	path := "/v1/skus/" + officeAceTrialSKUCode + "?is_query_sales_cycle=true&is_query_resource_rating=false"
-	raw, status, err := p.cloudFetchBase(ctx, p.src.endpoints().ClawBase, http.MethodGet, path, nil, map[string]string{"Accept": "application/json"})
+	raw, status, err := p.cloudFetchV3(ctx, http.MethodGet, path, nil, map[string]string{"Accept": "application/json"})
 	if err != nil {
 		return "", err
 	}
@@ -587,8 +672,8 @@ func (p *officeAcePremium) createTrialOrder(ctx context.Context, atomicProductID
 		ServiceType:          "hws.service.type.agentarts",
 		SubscribePeriodType:  2,
 		SubscribePeriodValue: 1,
-		AutoRenewal:          1,
-		AutoPay:              1,
+		AutoRenewal:          0,
+		AutoPay:              0,
 		SubscribeSKUInfo: officeAceTrialSKUInfo{
 			SubscribeQuantity:        1,
 			SubscribeSKUCode:         officeAceTrialSKUCode,
@@ -605,7 +690,7 @@ func (p *officeAcePremium) createTrialOrder(ctx context.Context, atomicProductID
 	if err != nil {
 		return err
 	}
-	raw, status, err := p.cloudFetchBase(ctx, p.src.endpoints().ClawBase, http.MethodPost, officeAcePremiumPathSubscriptionPeriod, body, map[string]string{"Accept": "application/json"})
+	raw, status, err := p.cloudFetchV3(ctx, http.MethodPost, officeAcePremiumPathSubscriptionPeriod, body, map[string]string{"Accept": "application/json"})
 	if err != nil {
 		return err
 	}

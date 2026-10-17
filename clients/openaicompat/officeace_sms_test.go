@@ -378,8 +378,16 @@ func TestOfficeAceAutoLoginDrivesBrowserWithSMS(t *testing.T) {
 				"id_token": officeAceTestJWT(t, map[string]any{"sub": "test-subject", "preferred_username": "test-user"}),
 			}
 			_ = json.NewEncoder(w).Encode(body)
+		case r.Method == http.MethodPost && r.URL.Path == officeAcePremiumPathSecurityTok:
+			_, _ = io.WriteString(w, `{"credential":{"access":"v3-access","secret":"v3-secret","securitytoken":"v3-token","expires_at":"2099-01-01T00:00:00Z"}}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/claw/client-permission-validate":
 			_, _ = io.WriteString(w, `{"data":{"account_id":"acct-auto","principal_id":"user-auto","principal_urn":"iam::123:user:auto-user","model_info":{"model_api_url_base":"`+srv.URL+`/model-gateway","model_auth_info":{"model_app_key":"`+testOfficeAceAppKey+`","model_app_secret":"`+testOfficeAceAppSecret+`"}}}}`)
+		case r.Method == http.MethodGet && r.URL.Path == officeAcePremiumPathSubscription:
+			_, _ = io.WriteString(w, `{"subscribe_status":"SUBSCRIBED","skus":[],"bonus_skus":[]}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/skus/"+officeAceTrialSKUCode:
+			_, _ = io.WriteString(w, `{"product_sales_cycles":[{"id":"atomic-trial-product","status":"ONSALE"}]}`)
+		case r.Method == http.MethodPost && r.URL.Path == officeAcePremiumPathSubscriptionPeriod:
+			_, _ = io.WriteString(w, `{"status":"SUBSCRIBED","order_id":"order-1"}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/model-gateway/v2/models":
 			_, _ = io.WriteString(w, `{"data":[{"id":"test-glm"}]}`)
 		default:
@@ -590,6 +598,77 @@ func (d *fakeOfficeAceDriver) Drive(ctx context.Context, url, phone string, wait
 		return fmt.Errorf("login page rejected the code")
 	}
 	return nil
+}
+
+type fakeOfficeAceConsentPage struct {
+	hasAgreement     bool
+	agreementChecked bool
+	continueEnabled  bool
+	agreementClicks  int
+	continueClicks   int
+}
+
+func (p *fakeOfficeAceConsentPage) Exists(_ context.Context, selector string) (bool, error) {
+	return p.hasAgreement && selector == officeAceSelRegisterAgree, nil
+}
+
+func (p *fakeOfficeAceConsentPage) Click(_ context.Context, selector string) (bool, error) {
+	switch selector {
+	case officeAceSelRegisterAgree:
+		p.agreementClicks++
+		p.agreementChecked = !p.agreementChecked
+		p.continueEnabled = p.agreementChecked
+		return true, nil
+	case officeAceSelRegisterContinue:
+		if !p.continueEnabled {
+			return false, nil
+		}
+		p.continueClicks++
+		return true, nil
+	default:
+		return false, nil
+	}
+}
+
+func (p *fakeOfficeAceConsentPage) EvalBool(_ context.Context, expression string) (bool, error) {
+	switch expression {
+	case officeAceRegistrationAgreeCheckedExpr:
+		return p.agreementChecked, nil
+	case officeAceRegistrationContinueEnabledExpr:
+		return p.continueEnabled, nil
+	default:
+		return false, nil
+	}
+}
+
+func TestOfficeAceRegistrationConsentSelectsAgreementAndContinues(t *testing.T) {
+	page := &fakeOfficeAceConsentPage{hasAgreement: true}
+	var logs []string
+	err := acceptOfficeAceRegistrationConsentWithin(context.Background(), page, 10*time.Millisecond, 10*time.Millisecond, func(format string, args ...any) {
+		logs = append(logs, fmt.Sprintf(format, args...))
+	})
+	if err != nil {
+		t.Fatalf("acceptOfficeAceRegistrationConsent: %v", err)
+	}
+	if page.agreementClicks != 1 || page.continueClicks != 1 {
+		t.Fatalf("clicks agreement=%d continue=%d, want one of each", page.agreementClicks, page.continueClicks)
+	}
+	if !page.agreementChecked || !page.continueEnabled {
+		t.Fatalf("consent state = %+v, want agreement checked and continue enabled", page)
+	}
+	if !strings.Contains(strings.Join(logs, "\n"), "已同意华为云用户协议") {
+		t.Fatalf("logs = %v, want the agreement step reported", logs)
+	}
+}
+
+func TestOfficeAceRegistrationConsentSkipsExistingAccount(t *testing.T) {
+	page := &fakeOfficeAceConsentPage{}
+	if err := acceptOfficeAceRegistrationConsentWithin(context.Background(), page, 5*time.Millisecond, 5*time.Millisecond, func(string, ...any) {}); err != nil {
+		t.Fatalf("acceptOfficeAceRegistrationConsent: %v", err)
+	}
+	if page.agreementClicks != 0 || page.continueClicks != 0 {
+		t.Fatalf("clicks agreement=%d continue=%d, want no clicks for an existing account", page.agreementClicks, page.continueClicks)
+	}
 }
 
 func waitOfficeAceJob(t *testing.T, o *officeAceSource, id string) core.AutoLoginJob {

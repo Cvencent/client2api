@@ -221,6 +221,117 @@ func TestOfficeAceEnsureTrialSkipsExistingEntitlement(t *testing.T) {
 	}
 }
 
+func TestOfficeAceTrialOrderUsesV3SignatureAndDoesNotAutoPay(t *testing.T) {
+	var orderBody officeAceTrialOrder
+	var orderCalls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == officeAcePremiumPathSubscription:
+			_, _ = io.WriteString(w, `{"subscribe_status":"SUBSCRIBED","skus":[],"bonus_skus":[]}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/skus/"+officeAceTrialSKUCode:
+			if !strings.HasPrefix(r.Header.Get("Authorization"), officeAceSignAlgorithm) {
+				http.Error(w, `{"error_code":"APIG.0301","message":"not SDK signed"}`, http.StatusUnauthorized)
+				return
+			}
+			if r.Header.Get("X-Security-Token") != "v3-token" || r.Header.Get("X-Project-ID") != "v3-project" {
+				http.Error(w, "missing v3 credential headers", http.StatusUnauthorized)
+				return
+			}
+			_, _ = io.WriteString(w, `{"product_sales_cycles":[{"id":"atomic-trial-product","status":"ONSALE"}]}`)
+		case r.Method == http.MethodPost && r.URL.Path == officeAcePremiumPathSubscriptionPeriod:
+			orderCalls.Add(1)
+			if !strings.HasPrefix(r.Header.Get("Authorization"), officeAceSignAlgorithm) {
+				http.Error(w, `{"error_code":"APIG.0301","message":"not SDK signed"}`, http.StatusUnauthorized)
+				return
+			}
+			if r.Header.Get("X-Security-Token") != "v3-token" || r.Header.Get("X-Project-ID") != "v3-project" {
+				http.Error(w, "missing v3 credential headers", http.StatusUnauthorized)
+				return
+			}
+			if err := json.NewDecoder(r.Body).Decode(&orderBody); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			_, _ = io.WriteString(w, `{"status":"SUBSCRIBED","order_id":"order-1"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	o := officeAcePremiumSource(t, srv)
+	id := officeAceAddAccountWithSession(t, o, srv, officeAceStoredSession{
+		Region:          "cn-southwest-2",
+		AccessKey:       "v11-access",
+		SecretKey:       "v11-secret",
+		SecurityToken:   "v11-token",
+		ProjectID:       "v11-project",
+		ExpiresAt:       "2099-01-01T00:00:00Z",
+		V3AccessKey:     "v3-access",
+		V3SecretKey:     "v3-secret",
+		V3SecurityToken: "v3-token",
+		V3ProjectID:     "v3-project",
+		V3ExpiresAt:     "2099-01-01T00:00:00Z",
+	})
+
+	if err := o.ensureOfficeAceTrial(context.Background(), id); err != nil {
+		t.Fatalf("ensure trial: %v", err)
+	}
+	if orderCalls.Load() != 1 {
+		t.Fatalf("order calls = %d, want 1", orderCalls.Load())
+	}
+	if orderBody.AutoRenewal != 0 || orderBody.AutoPay != 0 {
+		t.Fatalf("auto flags = renewal:%d pay:%d, want 0/0", orderBody.AutoRenewal, orderBody.AutoPay)
+	}
+}
+
+func TestOfficeAceBalanceRepairsMissingTrial(t *testing.T) {
+	var subscriptionCalls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == officeAcePremiumPathSubscription:
+			if subscriptionCalls.Add(1) <= 2 {
+				_, _ = io.WriteString(w, `{"subscribe_status":"SUBSCRIBED","skus":[],"bonus_skus":[]}`)
+				return
+			}
+			_, _ = io.WriteString(w, officeAcePremiumSubscriptionJSON)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/skus/"+officeAceTrialSKUCode:
+			_, _ = io.WriteString(w, `{"product_sales_cycles":[{"id":"atomic-trial-product","status":"ONSALE"}]}`)
+		case r.Method == http.MethodPost && r.URL.Path == officeAcePremiumPathSubscriptionPeriod:
+			_, _ = io.WriteString(w, `{"status":"SUBSCRIBED","order_id":"order-1"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	o := officeAcePremiumSource(t, srv)
+	id := officeAceAddAccountWithSession(t, o, srv, officeAceStoredSession{
+		Region:          "cn-southwest-2",
+		AccessKey:       "access",
+		SecretKey:       "secret",
+		SecurityToken:   "token",
+		ProjectID:       "project-1",
+		ExpiresAt:       "2099-01-01T00:00:00Z",
+		V3AccessKey:     "v3-access",
+		V3SecretKey:     "v3-secret",
+		V3SecurityToken: "v3-token",
+		V3ProjectID:     "project-1",
+		V3ExpiresAt:     "2099-01-01T00:00:00Z",
+	})
+
+	bal, err := o.AccountBalance(context.Background(), id, 0)
+	if err != nil {
+		t.Fatalf("balance: %v", err)
+	}
+	if bal.Credits != 5400 {
+		t.Fatalf("balance = %+v, want the trial quota after repair", bal)
+	}
+	if subscriptionCalls.Load() < 3 {
+		t.Fatalf("subscription calls = %d, want the repair read plus the balance read", subscriptionCalls.Load())
+	}
+}
+
 func TestOfficeAceCheckinRequiresASession(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)

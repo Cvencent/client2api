@@ -7,6 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
+	"strconv"
+	"strings"
 
 	"client2api/internal/core"
 )
@@ -146,6 +149,64 @@ func (e *apiError) sessionDead() bool {
 		e.Status == http.StatusForbidden
 }
 
+// promptTooLongMarkers are the vendor's own ways of saying "the assembled
+// prompt is over the limit this model will serve".
+//
+// The Chinese pair is the wording the backend behind DeepSeek-V4.1-Flash
+// actually uses: a 400 whose body is
+// {"error":{"message":"内容太长了，请精简输入或开启新对话",
+// "metadata":{"provider_name":"alibaba-dashscope"}}}.  It names no token count,
+// so no window can be learned from it, but it is still a request-shape refusal:
+// the credential is healthy, and rotating to the next one only sends the same
+// oversized body again.
+//
+// The English markers are the spellings the same family of backends uses when
+// the account's locale is not Chinese.  They are deliberately narrow: a bare
+// "too long" would also match "the request took too long".
+var promptTooLongMarkers = []string{
+	"内容太长",
+	"请精简输入",
+	"开启新对话",
+	"prompt is too long",
+	"context length exceeded",
+	"context_length_exceeded",
+	"maximum context length",
+}
+
+// wireUnicodeEscapeRE matches a JSON \uXXXX escape inside an upstream body.
+var wireUnicodeEscapeRE = regexp.MustCompile(`(?i)\\u([0-9a-f]{4})`)
+
+// unescapeWireEscapes decodes \uXXXX sequences so a vendor that escaped its own
+// Chinese refusal on the wire is still recognised.  Anything that is not a
+// valid escape is left exactly as it was.
+func unescapeWireEscapes(s string) string {
+	if !strings.Contains(s, `\u`) {
+		return s
+	}
+	return wireUnicodeEscapeRE.ReplaceAllStringFunc(s, func(m string) string {
+		n, err := strconv.ParseUint(m[2:], 16, 32)
+		if err != nil {
+			return m
+		}
+		return string(rune(n))
+	})
+}
+
+// promptTooLong reports whether this refusal is the vendor saying the assembled
+// prompt is larger than the model will serve.
+func (e *apiError) promptTooLong() bool {
+	if e == nil {
+		return false
+	}
+	msg := strings.ToLower(unescapeWireEscapes(e.Message))
+	for _, marker := range promptTooLongMarkers {
+		if strings.Contains(msg, strings.ToLower(marker)) {
+			return true
+		}
+	}
+	return false
+}
+
 // failureKind maps an error onto the contract's failure vocabulary.
 func failureKind(err error) core.FailureKind {
 	var api *apiError
@@ -157,6 +218,11 @@ func failureKind(err error) core.FailureKind {
 			return core.FailureRateLimited
 		case api.Status == http.StatusPaymentRequired:
 			return core.FailureQuota
+		case api.promptTooLong():
+			// Another account cannot make the same body smaller, and the
+			// gateway needs this kind to answer 400 + context_window_exceeded
+			// instead of turning the refusal into a 502 upstream error.
+			return core.FailureContextWindow
 		case api.Code == loomyBadRequestCode:
 			// The vendor rejected the request shape.  That is this module's
 			// bug or the caller's, never something to retry.
@@ -168,6 +234,30 @@ func failureKind(err error) core.FailureKind {
 		return core.FailureUpstream
 	}
 	return core.FailureUpstream
+}
+
+// classifyFailure wraps the one refusal the gateway has to act on: a prompt-size
+// rejection, which has to reach the caller as 400 + context_window_exceeded
+// carrying the credential it came from.
+//
+// Every other error is deliberately returned untouched.  The gateway retries a
+// module error whose kind core.Retryable reports true by running Chat again,
+// and this module already walks its own account pool internally; tagging a
+// transport or 5xx failure as retryable here would multiply one request's
+// account burn by the gateway's own rotation.  Sentinels (core.ErrNotConfigured,
+// core.ErrBusy, core.ErrUnsupported) must keep their shape for the same reason.
+func classifyFailure(err error, accountID string) error {
+	if err == nil {
+		return err
+	}
+	if _, ok := core.AsFailure(err); ok {
+		return err
+	}
+	var api *apiError
+	if errors.As(err, &api) && failureKind(err) == core.FailureContextWindow {
+		return core.Fail("loomy", accountID, core.FailureContextWindow, api.Status, err)
+	}
+	return err
 }
 
 // errSessionExpired is the honest report for a credential the vendor has

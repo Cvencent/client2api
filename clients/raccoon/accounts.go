@@ -153,7 +153,7 @@ func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, e
 	}
 	res.OK = true
 	res.Reply = reply
-	c.pool.markUsed(e)
+	c.pool.markProbeSuccess(e)
 	return res, nil
 }
 
@@ -196,6 +196,7 @@ func (c *Client) probeChat(ctx context.Context, e *entry, model string) (string,
 
 	var reply, reasoning strings.Builder
 	sawToolCall := false
+	cleanDone := false
 	for {
 		event, err := stream.Recv()
 		if errors.Is(err, io.EOF) {
@@ -215,11 +216,15 @@ func (c *Client) probeChat(ctx context.Context, e *entry, model string) (string,
 				return "", event.Err
 			}
 		case core.EventDone:
+			cleanDone = true
 			// keep draining until the stream really ends
 		}
 	}
 	if evidence := probeEvidence(reply.String(), reasoning.String(), sawToolCall); evidence != "" {
 		return evidence, nil
+	}
+	if cleanDone {
+		return "empty completion completed", nil
 	}
 	return "", fmt.Errorf("raccoon: %s answered without any text", model)
 }
