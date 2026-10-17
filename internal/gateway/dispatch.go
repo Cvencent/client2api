@@ -142,6 +142,19 @@ func (s *server) routeAndServeMessages(w http.ResponseWriter, r *http.Request, i
 		in.protocolError(w, http.StatusNotFound, "invalid_request_error", err.Error())
 		return
 	}
+	virtualEffort := s.virtualEffortFor(in.requested, candidates)
+	if virtualEffort != "" && normalizeEffort(in.rec.ReasoningEffort) == "" {
+		// A virtual name (Auto/<id> or an equivalence group) may publish a
+		// default thinking level.  Apply it before the pristine request is
+		// copied so every candidate starts from the same caller-visible
+		// default, while the usage row keeps the caller's own empty value.
+		// A model that snaps unsupported levels down still does so on its own
+		// candidate without changing the platform order.
+		if in.req.Options == nil {
+			in.req.Options = map[string]any{}
+		}
+		in.req.Options["reasoning_effort"] = virtualEffort
+	}
 	// A bare model may have several platforms.  Once one has served this
 	// conversation, keep it first: trying the higher-priority sibling first
 	// would make every turn pay for a platform that already failed.  The
@@ -171,76 +184,48 @@ func (s *server) routeAndServeMessages(w http.ResponseWriter, r *http.Request, i
 	client, upstreamModel := candidates[0].Client, candidates[0].Model
 	attemptCtx := withCatalogueExtra(r.Context(), candidates[0])
 	in.rec.Candidate = 1
-	in.req.Model = upstreamModel
-	// The module owns its account pool, so only the module can decide whether a
-	// parked account may still serve this request.  A model the platform itself
-	// advertises as free is rationed by the vendor's answer, not by a balance,
-	// and the flag is how the pool learns that.
-	in.req.FreeModel = candidates[0].Free
+	// The caller's full history is the basis for every candidate.  Keeping a
+	// pristine copy is what lets the failover chain re-trim for each platform
+	// instead of inheriting the cuts made for a smaller-window sibling.
+	baseReq := cloneChatRequest(in.req)
 	maxTokensExplicit := in.req.MaxTokens != nil
-	// A caller that left the output budget to us gets the number the vendor
-	// publishes for this model, when the module knows it.  This has to happen
-	// after the registry resolves the alias, because the module keys its
-	// catalogue on the upstream id, and it must stay nil-conditional: an
-	// explicit max_tokens is the caller's decision and is never second-guessed.
-	//
-	// A module that answers "cannot say" leaves the field nil.  The module then
-	// sends whatever its own default is -- which is the old behaviour, and
-	// correct for a module with no published number -- rather than the gateway
-	// inventing a cap from a table it does not own.
-	if in.req.MaxTokens == nil {
-		if n, ok := s.resolveMaxOutputTokens(attemptCtx, client, upstreamModel); ok {
-			in.req.MaxTokens = &n
+	attemptReq, prepErr := s.prepareCandidateAttempt(attemptCtx, candidates[0], baseReq, in.rec, maxTokensExplicit)
+	if prepErr != nil {
+		// The newest turn alone does not fit this candidate.  That is a reason
+		// to skip the candidate, not to refuse the whole request while a larger
+		// sibling may still be able to serve it.
+		hintCtx := s.hintContextFunc(attemptCtx, client, upstreamModel, baseReq.Messages)
+		s.opts.Usage.RecordAttempt(UsageRecord{
+			At:            time.Now(),
+			StartedAt:     in.rec.StartedAt,
+			Client:        client.Name(),
+			SessionID:     in.rec.SessionID,
+			Model:         client.Name() + "/" + upstreamModel,
+			Candidate:     in.rec.Candidate,
+			FailureReason: failureReason(prepErr),
+			Failed:        true,
+			Attempt:       true,
+		})
+		if len(candidates) > 1 && !hardPlatformPin(in.requested, candidates[0]) &&
+			(s.opts.Guard == nil || !s.opts.Guard.IP.Active()) {
+			s.opts.Logger.Printf("chat: platform %s model %s cannot fit the newest turn, trying the next platform", client.Name(), upstreamModel)
+			var handled bool
+			client, hintCtx, prepErr, handled = s.serveRemainingCandidates(w, r, in, candidates[1:], 2, maxTokensExplicit, baseReq)
+			if handled {
+				return
+			}
 		}
+		status, _, _ := upstreamErrorShape(prepErr)
+		in.stat.status = status
+		s.fail(in.rec, prepErr)
+		s.writeUpstreamError(w, client, hintCtx, prepErr)
+		return
 	}
-	// Now that the output budget is settled, measure the input against the
-	// model's window and shorten the history if it does not fit.  This runs
-	// before the module is called, so a request that would have been refused
-	// outright is served instead -- and a trimmed request is recorded as such.
-	maxTokensForBudget := 0
-	if in.req.MaxTokens != nil {
-		maxTokensForBudget = *in.req.MaxTokens
-	}
-	// guardRequestContext records a trim on the usage row itself, so there is
-	// nothing to copy over here.
-	if report, trimmed := s.guardRequestContext(attemptCtx, in.req, client, upstreamModel, maxTokensForBudget, in.rec); trimmed || report.Impossible {
-		window := s.effectiveContextWindow(attemptCtx, client, upstreamModel)
-		if report.Impossible {
-			// The newest turn alone does not fit, so there is nothing left to
-			// trim without answering a different question.  Refuse locally, with
-			// the limit spelled out, rather than paying for a refusal upstream.
-			in.rec.ContextWindow = window
-			s.opts.Logger.Printf(
-				"context: refusing %s/%s: even the newest turn alone is about %d tokens, over the %d-token window",
-				client.Name(), upstreamModel, report.BeforeTokens, window)
-			in.stat.status = http.StatusBadRequest
-			err := contextWindowRefusal(client, upstreamModel, window, report.BeforeTokens)
-			s.fail(in.rec, err)
-			in.protocolError(w, http.StatusBadRequest, "context_window_exceeded",
-				fmt.Sprintf("[%s] %s", client.Name(), err.Error()))
-			return
-		}
-		s.opts.Logger.Printf(
-			"context: trimmed %d oldest message(s) for %s/%s to fit %d tokens (about %d -> %d)",
-			report.DroppedMessages, client.Name(), upstreamModel, window,
-			report.BeforeTokens, report.AfterTokens)
-	}
-	in.rec.Client = client.Name()
-	in.rec.Model = client.Name() + "/" + upstreamModel
+	in.req = attemptReq
 	// The row names the resolved module and model, which is what the console
 	// reader needs in order to tell "the caller asked for something odd" apart
 	// from "the module misbehaved".
 	in.stat.model = in.rec.Model
-
-	// Thinking policy is per candidate: xhigh is the top tier Codex sends, but
-	// some vendors call their real top tier max. Cap alignment is opt-in per
-	// model and only changes the caller's own top tier.
-	sentEffort := s.applyEffortPolicy(attemptCtx, client, upstreamModel, in.req, in.rec.ReasoningEffort)
-	in.rec.SentReasoningEffort = ""
-	if sentEffort != "" && sentEffort != in.rec.ReasoningEffort {
-		in.rec.SentReasoningEffort = sentEffort
-	}
-
 	// Attribute only what the gateway can honestly know.  The account that
 	// serves a successful request is chosen inside the module, so the gateway
 	// must not guess it; a failure names its account through core.Failure.  A
@@ -295,13 +280,18 @@ func (s *server) routeAndServeMessages(w http.ResponseWriter, r *http.Request, i
 				FailureReason:       failureReason(err),
 				Failed:              true,
 				Attempt:             true,
+				Trimmed:             in.rec.Trimmed,
+				TrimDropped:         in.rec.TrimDropped,
+				TrimmedFromTokens:   in.rec.TrimmedFromTokens,
+				TrimmedToTokens:     in.rec.TrimmedToTokens,
+				ContextWindow:       in.rec.ContextWindow,
 			})
 			if skippable {
 				s.opts.Registry.NoteModelUnavailable(client.Name(), upstreamModel, time.Now())
 			}
 			s.opts.Logger.Printf("chat: platform %s model %s failed (%v), trying the next platform", client.Name(), upstreamModel, err)
 			var handled bool
-			client, hintCtx, err, handled = s.serveRemainingCandidates(w, r, in, candidates[1:], 2, maxTokensExplicit)
+			client, hintCtx, err, handled = s.serveRemainingCandidates(w, r, in, candidates[1:], 2, maxTokensExplicit, baseReq)
 			if handled {
 				return
 			}
@@ -337,7 +327,7 @@ func (s *server) routeAndServeMessages(w http.ResponseWriter, r *http.Request, i
 			s.noteFailedCandidate(in.rec, client, upstreamModel, probeErr)
 			s.opts.Logger.Printf("chat: platform %s model %s failed inside stream (%v), trying the next platform", client.Name(), upstreamModel, probeErr)
 			var handled bool
-			client, hintCtx, probeErr, handled = s.serveRemainingCandidates(w, r, in, candidates[1:], 2, maxTokensExplicit)
+			client, hintCtx, probeErr, handled = s.serveRemainingCandidates(w, r, in, candidates[1:], 2, maxTokensExplicit, baseReq)
 			if handled {
 				return
 			}

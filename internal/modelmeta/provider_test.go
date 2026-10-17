@@ -27,23 +27,22 @@ func TestProviderStaticTableServesWorkbuddy(t *testing.T) {
 	if !ok {
 		t.Fatal("glm-5.2 is in the ported reference table")
 	}
-	if m.ContextLength != 1000000 || m.MaxOutputTokens != 131072 {
-		t.Fatalf("glm-5.2 = %d/%d, want 1000000/131072", m.ContextLength, m.MaxOutputTokens)
+	if m.ContextLength != 1000000 || m.MaxOutputTokens != 64000 {
+		t.Fatalf("glm-5.2 = %d/%d, want 1000000/64000", m.ContextLength, m.MaxOutputTokens)
 	}
 	if m.Source != SourceStatic || m.SourceOf(FieldContextLength) != SourceStatic {
 		t.Fatalf("provenance = %q/%q", m.Source, m.SourceOf(FieldContextLength))
 	}
-	// A model whose reference entry has no max_output_tokens must omit the field
-	// rather than guess an output limit.
+	// The installed client publishes both context and output for this row.
 	k, ok := p.Lookup("kimi-k2.8-preview")
 	if !ok {
 		t.Fatal("kimi-k2.8-preview is in the table")
 	}
-	if k.ContextLength != 1048576 {
+	if k.ContextLength != 1000000 {
 		t.Fatalf("context = %d", k.ContextLength)
 	}
-	if k.Has(FieldMaxOutputTokens) {
-		t.Fatalf("max_output_tokens = %d, want the field omitted (the reference has no value for it)", k.MaxOutputTokens)
+	if k.MaxOutputTokens != 64000 {
+		t.Fatalf("max_output_tokens = %d, want the client-published 64000", k.MaxOutputTokens)
 	}
 }
 
@@ -68,8 +67,8 @@ func TestProviderVendorBeatsEveryFallback(t *testing.T) {
 		t.Fatalf("context provenance = %q, want vendor", got.SourceOf(FieldContextLength))
 	}
 	// The static table may still fill the fields the vendor left empty.
-	if got.MaxOutputTokens != 131072 {
-		t.Fatalf("max_output_tokens = %d, want the static 131072", got.MaxOutputTokens)
+	if got.MaxOutputTokens != 64000 {
+		t.Fatalf("max_output_tokens = %d, want the static 64000", got.MaxOutputTokens)
 	}
 	if got.SourceOf(FieldMaxOutputTokens) != SourceStatic {
 		t.Fatalf("max_output_tokens provenance = %q, want static", got.SourceOf(FieldMaxOutputTokens))
@@ -100,7 +99,7 @@ func TestProviderStaticBeatsRemote(t *testing.T) {
 		Client: "workbuddy",
 		Remote: &RemoteConfig{Enabled: true, URL: srv.URL, Cooldown: time.Hour},
 	})
-	// "glm-5.2" is in both the reference table (1000000/131072) and the fake
+	// "glm-5.2" is in both the client table (1000000/64000) and the fake
 	// models.dev document (5/5).
 	if _, ok := p.Lookup("glm-5.2"); !ok {
 		t.Fatal("the static table must answer before any network access")
@@ -112,8 +111,8 @@ func TestProviderStaticBeatsRemote(t *testing.T) {
 	if !ok {
 		t.Fatal("glm-5.2 vanished")
 	}
-	if m.ContextLength != 1000000 || m.MaxOutputTokens != 131072 {
-		t.Fatalf("got %d/%d, want the static 1000000/131072 (static beats models.dev)", m.ContextLength, m.MaxOutputTokens)
+	if m.ContextLength != 1000000 || m.MaxOutputTokens != 64000 {
+		t.Fatalf("got %d/%d, want the static 1000000/64000 (static beats models.dev)", m.ContextLength, m.MaxOutputTokens)
 	}
 	if m.SourceOf(FieldContextLength) != SourceStatic {
 		t.Fatalf("provenance = %q, want static", m.SourceOf(FieldContextLength))
@@ -281,25 +280,20 @@ func TestProviderGlobalOnlyModelIsAbsentInCN(t *testing.T) {
 
 func TestProviderKimiAndTabbitHaveNoInventedNumbers(t *testing.T) {
 	kimi := New(Options{Client: "kimi"})
-	// k3-agent/k3-agent-ultra carry a documented Kimi K3 window; the remaining
-	// builtin ids have no public source and must stay unresolved.
-	for _, id := range []string{"kimi", "kimi-k2", "k2d6-agent"} {
+	// The installed Kimi desktop cache publishes all three agent windows; ids
+	// outside that cache stay unresolved.
+	for _, id := range []string{"kimi", "kimi-k2"} {
 		if m, ok := kimi.Lookup(id); ok {
 			t.Errorf("kimi %q resolved to %+v; no authoritative source covers this id", id, m)
 		}
 	}
+	if m, ok := kimi.Lookup("k2d6-agent"); !ok || m.ContextLength != 262144 || m.MaxOutputTokens != 0 {
+		t.Errorf("kimi k2d6-agent = %+v ok=%v, want the client cache 262144/0", m, ok)
+	}
 
 	tabbit := New(Options{Client: "tabbit"})
-	m, ok := tabbit.Lookup("gpt-5.5")
-	if !ok {
-		t.Fatal("tabbit gpt-5.5 is sourced from the reference")
-	}
-	if m.ContextLength != 1050000 || m.MaxOutputTokens != 128000 {
-		t.Fatalf("tabbit gpt-5.5 = %d/%d", m.ContextLength, m.MaxOutputTokens)
-	}
-	// Case-insensitive lookup, because tabbit's ids are display-cased.
-	if up, ok := tabbit.Lookup("GPT-5.5"); !ok || up.ContextLength != m.ContextLength {
-		t.Fatalf("case-insensitive lookup failed: %+v ok=%v", up, ok)
+	if m, ok := tabbit.Lookup("gpt-5.5"); ok {
+		t.Fatalf("tabbit gpt-5.5 resolved to %+v without a client-published window", m)
 	}
 	for _, id := range []string{"Claude-Opus-4.7", "Claude-Sonnet-4.6", "Gemini-3.1-Pro", "priority", "Default"} {
 		if m, ok := tabbit.Lookup(id); ok {

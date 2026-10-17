@@ -148,6 +148,14 @@ type ChatRequest struct {
 	// than that cache. Like ServedBy, this never goes upstream.
 	EffortFinal bool
 
+	// ContextWindowLimit, when positive, caps the context window the request
+	// guard will trim against.  It exists so the panel's chat tester can ask
+	// "does this model actually accept N tokens?" without persisting a manual
+	// override: the effective window is the smaller of the configured/vendor
+	// window and this test limit.  It is a gateway-only value and must never
+	// reach a module's upstream body.
+	ContextWindowLimit int64
+
 	// accountAcquire is the gateway's per-account in-flight hook.  The
 	// gateway installs it before every attempt; a module calls
 	// AcquireAccountSlot right after it picks a credential and before any

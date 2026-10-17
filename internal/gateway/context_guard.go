@@ -68,9 +68,20 @@ const promptOutputCap = 32 * 1024
 // are all of it.
 const promptFixedOverhead = 512
 
-// promptBudget is the number of input tokens a request for this model may use.
-func (s *server) promptBudget(ctx context.Context, client core.Client, model string, maxOutput int) int64 {
+// requestContextWindow is the window a single request is judged against: the
+// configured/vendor window, capped by any per-request test limit the caller
+// supplied.  The limit is only ever a cap; it never widens a model.
+func (s *server) requestContextWindow(ctx context.Context, client core.Client, model string, limit int64) int64 {
 	window := s.effectiveContextWindow(ctx, client, model)
+	if limit > 0 && (window <= 0 || limit < window) {
+		return limit
+	}
+	return window
+}
+
+// promptBudget is the number of input tokens a request for this model may use.
+func (s *server) promptBudget(ctx context.Context, client core.Client, model string, maxOutput int, limit int64) int64 {
+	window := s.requestContextWindow(ctx, client, model, limit)
 	if window <= 0 {
 		return 0
 	}
@@ -697,6 +708,97 @@ func retryBudgetForMeasuredRefusal(req *core.ChatRequest, observed, limit int64,
 // The request-path entry point
 // ---------------------------------------------------------------------------
 
+// prepareCandidateAttempt builds one candidate's request from the caller's
+// pristine history and trims it to that candidate's own context window.
+//
+// The full history, not a previously trimmed one, is the basis for every
+// candidate: a platform with a larger window must receive everything the
+// caller sent, even when an earlier, smaller sibling already had to drop turns.
+// A candidate whose newest turn cannot fit is reported as an error so the
+// router can skip it and keep walking the user's priority order.
+func (s *server) prepareCandidateAttempt(ctx context.Context, candidate core.Candidate, base *core.ChatRequest, rec *UsageRecord, maxTokensExplicit bool) (*core.ChatRequest, error) {
+	client, model := candidate.Client, candidate.Model
+	req := cloneChatRequest(base)
+	if req == nil {
+		req = &core.ChatRequest{}
+	}
+	req.Model = model
+	req.FreeModel = candidate.Free
+
+	if rec != nil {
+		// Each candidate owns its own trim verdict. Without this reset, a trim
+		// performed for a failed candidate would be copied onto whichever
+		// candidate finally served the request.
+		rec.Trimmed = false
+		rec.TrimDropped = 0
+		rec.TrimmedFromTokens = 0
+		rec.TrimmedToTokens = 0
+		rec.ContextWindow = 0
+		rec.Client = client.Name()
+		rec.Model = client.Name() + "/" + model
+		rec.Realm = ""
+		if h, ok := core.HealthOf(client); ok && len(h.Realms) == 1 {
+			for realm := range h.Realms {
+				rec.Realm = realm
+			}
+		}
+	}
+
+	// A caller that left the output budget to us gets the number this platform
+	// publishes for the model. An explicit max_tokens is the caller's decision
+	// and is never second-guessed.
+	if !maxTokensExplicit {
+		req.MaxTokens = nil
+		if n, ok := s.resolveMaxOutputTokens(ctx, client, model); ok {
+			req.MaxTokens = &n
+		}
+	}
+	maxOutput := 0
+	if req.MaxTokens != nil {
+		maxOutput = *req.MaxTokens
+	}
+	limit := req.ContextWindowLimit
+
+	report, trimmed := s.guardRequestContext(ctx, req, client, model, maxOutput, rec)
+	if report.Impossible {
+		window := s.requestContextWindow(ctx, client, model, limit)
+		if rec != nil {
+			rec.ContextWindow = window
+		}
+		s.opts.Logger.Printf(
+			"context: refusing %s/%s: even the newest turn alone is about %d tokens, over the %d-token window",
+			client.Name(), model, report.BeforeTokens, window)
+		return nil, contextWindowRefusal(client, model, window, report.BeforeTokens)
+	}
+	if trimmed {
+		window := s.effectiveContextWindow(ctx, client, model)
+		s.opts.Logger.Printf(
+			"context: trimmed %d oldest message(s) for %s/%s to fit %d tokens (about %d -> %d)",
+			report.DroppedMessages, client.Name(), model, window,
+			report.BeforeTokens, report.AfterTokens)
+	}
+
+	// Thinking policy is per candidate: xhigh is the top tier Codex sends, but
+	// some vendors call their real top tier max. Cap alignment is opt-in per
+	// model and only changes the caller's own top tier.
+	if rec != nil {
+		requestedEffort := rec.ReasoningEffort
+		if requestedEffort == "" {
+			requestedEffort = optionEffort(req.Options)
+		}
+		sentEffort := s.applyEffortPolicy(ctx, client, model, req, requestedEffort)
+		rec.SentReasoningEffort = ""
+		if sentEffort != "" && sentEffort != rec.ReasoningEffort {
+			rec.SentReasoningEffort = sentEffort
+		}
+	}
+	// This is a gateway-only sizing instruction, not part of the upstream wire
+	// request. Clear it after the guard has used it so no module can mistake it
+	// for a field it should forward.
+	req.ContextWindowLimit = 0
+	return req, nil
+}
+
 // guardRequestContext trims a request to its model's window, in place, and
 // records what it did on the usage row.
 //
@@ -704,7 +806,11 @@ func retryBudgetForMeasuredRefusal(req *core.ChatRequest, observed, limit int64,
 // that keep that safe: it never touches a request whose window is unknown, and
 // it never trims a request that already fits.
 func (s *server) guardRequestContext(ctx context.Context, req *core.ChatRequest, client core.Client, model string, maxOutput int, rec *UsageRecord) (trimReport, bool) {
-	budget := s.promptBudget(ctx, client, model, maxOutput)
+	limit := int64(0)
+	if req != nil {
+		limit = req.ContextWindowLimit
+	}
+	budget := s.promptBudget(ctx, client, model, maxOutput, limit)
 	if budget <= 0 {
 		// The window is unknown, or too small to trim against.  Forwarding the
 		// request untouched is the only safe answer.
@@ -716,7 +822,7 @@ func (s *server) guardRequestContext(ctx context.Context, req *core.ChatRequest,
 		rec.TrimDropped = report.DroppedMessages
 		rec.TrimmedFromTokens = report.BeforeTokens
 		rec.TrimmedToTokens = report.AfterTokens
-		rec.ContextWindow = s.effectiveContextWindow(ctx, client, model)
+		rec.ContextWindow = s.requestContextWindow(ctx, client, model, limit)
 	}
 	return report, trimmed
 }

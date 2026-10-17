@@ -96,6 +96,9 @@ people. The built-in default is `127.0.0.1`.
   `model_groups` names, aliases and transcription ids -- then serves only the ids the
   operator selected. Each final id is its own switch: selecting a group member does not
   expose the group name, and selecting an alias target does not expose the alias.
+  Virtual rows are editable under the reserved `__virtual__` client in the model page:
+  the override applies to the published `Auto/<model>` or group name and never to the
+  concrete platform members.
   An entry ending in `/*` exposes a whole platform prefix (for example
   `my-relay/*`) without opening any other platform. Matching is case-insensitive
   and ignores surrounding space. Unset means every final
@@ -152,6 +155,12 @@ people. The built-in default is `127.0.0.1`.
   turn are always kept; only the stale middle is dropped. Every trimmed request is
   marked `已裁剪` in the usage log with how much was dropped and the sizes either
   side.
+- A virtual model advertises the widest member window so the downstream client can
+  keep the large-window experience. If routing falls through to a narrower platform,
+  that candidate alone is trimmed and, if needed, retried; the next candidate always
+  starts from the caller's pristine history. A candidate whose newest turn cannot fit
+  is skipped in priority order and the request is refused only when no candidate can
+  serve it.
 - When a vendor refuses an oversized prompt, the limit it names
   (`prompt is too long: 100001 tokens > 100000 maximum`) is learned and persisted to
   `data/learned_context_windows.json`, and `/v1/models` then advertises that number
@@ -177,6 +186,16 @@ people. The built-in default is `127.0.0.1`.
   manual override, then the module's cached catalogue, then the embedded preset.
   The model page can edit the supported levels and default, and those values are
   authoritative over a stale module cache.
+- `Auto/<model>` and custom model groups expose the same editable context window,
+  max-output and thinking fields as a concrete platform/model row. The effective
+  context is the widest member plus any `__virtual__` override; the effort list is
+  the stable union of members and the default follows the first platform in the
+  operator's routing order. Editing the virtual row is a gateway-level override,
+  so it is applied before the per-candidate policy.
+- A virtual name injects its default effort only when the caller omitted one.
+  Each platform still aligns that level to its own advertised ladder (preferring
+  the nearest lower rung) and keeps the user's platform priority unchanged; the
+  usage row records the caller's original request and the level actually sent.
 - Cap alignment is on by default for every model on every platform; the panel
   still lets an operator turn it off or restore the default per model. When it is
   on, a caller's top level `xhigh` is promoted to the model's real highest level

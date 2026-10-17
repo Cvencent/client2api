@@ -24,11 +24,96 @@ func TestModelsListIncludesResolvedMetadataSources(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := got.Clients[0].Models[0]
-	if m.ContextLength != 123456 || m.ContextSource != modelmeta.SourceVendor {
-		t.Fatalf("context = %d source=%q", m.ContextLength, m.ContextSource)
+	if m.ContextLength != 1000000 || m.ContextSource != modelmeta.SourceStatic {
+		t.Fatalf("context = %d source=%q, want the client-published 1000000/static", m.ContextLength, m.ContextSource)
 	}
 	if m.MaxOutputTokens != 777 || m.MaxOutputSource != modelmeta.SourceManual {
 		t.Fatalf("max_output = %d source=%q", m.MaxOutputTokens, m.MaxOutputSource)
+	}
+}
+
+func TestModelsListPrefersClientDefaultsOverVendorExtra(t *testing.T) {
+	client := &fakeClient{name: "workbuddy", models: []core.Model{{
+		ID: "cn:deepseek-v4.1-flash",
+		Extra: map[string]any{
+			"context_length":    100000,
+			"max_output_tokens": 100000,
+		},
+	}}}
+	h := New(Options{Registry: registryOf(client)})
+	rec := get(t, h, "/panel/api/models")
+	var got modelsReport
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	m := got.Clients[0].Models[0]
+	if m.ContextLength != 1000000 || m.ContextSource != modelmeta.SourceStatic {
+		t.Fatalf("context = %d source=%q, want client default 1000000/static", m.ContextLength, m.ContextSource)
+	}
+	if m.MaxOutputTokens != 128000 || m.MaxOutputSource != modelmeta.SourceStatic {
+		t.Fatalf("max_output = %d source=%q, want client default 128000/static", m.MaxOutputTokens, m.MaxOutputSource)
+	}
+	if m.ContextDefault != 1000000 || m.MaxOutputDefault != 128000 {
+		t.Fatalf("defaults = %d/%d, want 1000000/128000", m.ContextDefault, m.MaxOutputDefault)
+	}
+}
+
+// Regression: the request path and /v1/models read the same client preset
+// through modelmeta.PreferLimits, so the panel's displayed default must match
+// both of them when the live Extra is stale.
+func TestModelsListClientDefaultsMatchGatewayResolution(t *testing.T) {
+	client := &fakeClient{name: "workbuddy", models: []core.Model{{
+		ID: "cn:deepseek-v4.1-flash",
+		Extra: map[string]any{
+			"context_length":    100000,
+			"max_output_tokens": 100000,
+		},
+	}}}
+	h := New(Options{Registry: registryOf(client)})
+	rec := get(t, h, "/panel/api/models")
+	var got modelsReport
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	m := got.Clients[0].Models[0]
+	if m.ContextLength != 1000000 || m.ContextSource != modelmeta.SourceStatic {
+		t.Fatalf("gateway-facing context = %d source=%q, want the client preset 1000000/static", m.ContextLength, m.ContextSource)
+	}
+	if m.MaxOutputTokens != 128000 || m.MaxOutputSource != modelmeta.SourceStatic {
+		t.Fatalf("gateway-facing max_output = %d source=%q, want the client preset 128000/static", m.MaxOutputTokens, m.MaxOutputSource)
+	}
+}
+
+func TestModelsListManualOverrideBeatsClientDefaults(t *testing.T) {
+	store, err := modelmeta.OpenOverrideStore("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Set("workbuddy", "cn:deepseek-v4.1-flash", 777, 888); err != nil {
+		t.Fatal(err)
+	}
+	client := &fakeClient{name: "workbuddy", models: []core.Model{{
+		ID: "cn:deepseek-v4.1-flash",
+		Extra: map[string]any{
+			"context_length":    100000,
+			"max_output_tokens": 100000,
+		},
+	}}}
+	h := New(Options{Registry: registryOf(client), ModelOverrides: store})
+	rec := get(t, h, "/panel/api/models")
+	var got modelsReport
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	m := got.Clients[0].Models[0]
+	if m.ContextLength != 777 || m.ContextSource != modelmeta.SourceManual {
+		t.Fatalf("context = %d source=%q, want manual 777", m.ContextLength, m.ContextSource)
+	}
+	if m.MaxOutputTokens != 888 || m.MaxOutputSource != modelmeta.SourceManual {
+		t.Fatalf("max_output = %d source=%q, want manual 888", m.MaxOutputTokens, m.MaxOutputSource)
+	}
+	if m.ContextDefault != 1000000 || m.MaxOutputDefault != 128000 {
+		t.Fatalf("defaults = %d/%d, want client defaults 1000000/128000", m.ContextDefault, m.MaxOutputDefault)
 	}
 }
 
@@ -56,11 +141,11 @@ func TestModelsListPublishesThePreOverrideDefault(t *testing.T) {
 	if m.ContextLength != 4242 || m.ContextSource != modelmeta.SourceManual {
 		t.Fatalf("context = %d source=%q, want the manual 4242", m.ContextLength, m.ContextSource)
 	}
-	if m.ContextDefault != 1048576 {
-		t.Fatalf("context_default = %d, want the official 1048576 preset", m.ContextDefault)
+	if m.ContextDefault != 1000000 {
+		t.Fatalf("context_default = %d, want the client-published 1000000 preset", m.ContextDefault)
 	}
-	if m.MaxOutputDefault != 131072 {
-		t.Fatalf("max_output_default = %d, want the official 131072 preset", m.MaxOutputDefault)
+	if m.MaxOutputDefault != 128000 {
+		t.Fatalf("max_output_default = %d, want the client-published 128000 preset", m.MaxOutputDefault)
 	}
 	if !m.ContextEditable || !m.MaxOutputEditable {
 		t.Fatal("a wired override store must make both fields editable")

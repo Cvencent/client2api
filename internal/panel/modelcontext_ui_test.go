@@ -154,3 +154,22 @@ func TestModelsViewEditsCNYPrices(t *testing.T) {
 		}
 	}
 }
+
+// TestVirtualModelControlsArePresent is a static guard for the two gateway-level
+// controls that live entirely in index.html: a one-off context window for the
+// chat tester and sorting the model table by its effective context window.
+func TestVirtualModelControlsArePresent(t *testing.T) {
+	src := poolStatsUISource(t)
+	for _, want := range []string{
+		`id="chatContextWindow"`,
+		`h["X-Client2API-Context-Window"] = String(testWindow);`,
+		`data-md-sort="context"`,
+		`function mdContextSortToggle()`,
+		`mdContextSorted(MD_ITEMS.filter`,
+		`if (n === "__virtual__") return "虚拟模型";`,
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("模型页缺少虚拟模型 / 上下文测试控件 %q", want)
+		}
+	}
+}

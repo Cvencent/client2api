@@ -2,53 +2,26 @@ package tabbit
 
 import "testing"
 
-// fallbackModels is what /v1/models serves when the sidecar is absent — the cold
-// start this package's metadata fallback exists for. The two halves of the wiring
-// contract are pinned here: an id our static table can prove gains the numbers, and
-// an id it cannot prove gains nothing at all.
-func TestFallbackModelsCarriesOnlySourcedMetadata(t *testing.T) {
+// fallbackModels is what /v1/models serves when the sidecar is absent - the cold
+// start this package's metadata fallback exists for. The installed Tabbit client
+// publishes no per-model context/output limits, so every entry stays bare rather
+// than borrowing numbers from public documentation.
+func TestFallbackModelsCarriesOnlyClientPublishedMetadata(t *testing.T) {
 	byID := map[string]map[string]any{}
 	for _, m := range fallbackModels(Config{}) {
 		byID[m.ID] = m.Extra
 	}
 
-	sourced := []struct {
-		id      string
-		context int64
-		output  int64
-	}{
-		{"DeepSeek-V4-Pro", 1000000, 384000},
-		{"GLM-5.1", 200000, 131072},
-		{"MiMo-V2.6-Pro", 1048576, 131072},
-		{"Kimi-K3", 1048576, 131072},
-		{"LongCat-2.0", 1048576, 131072},
-	}
-	for _, tc := range sourced {
-		extra, ok := byID[tc.id]
-		if !ok {
-			t.Fatalf("%s is missing from the fallback catalogue", tc.id)
-		}
-		if got := extra["context_length"]; got != tc.context {
-			t.Errorf("%s context_length = %v, want %d", tc.id, got, tc.context)
-		}
-		if got := extra["max_output_tokens"]; got != tc.output {
-			t.Errorf("%s max_output_tokens = %v, want %d", tc.id, got, tc.output)
-		}
-	}
-
-	// Ids the static table cannot prove must stay bare.  These four are real
-	// vendor display names, so they are in the catalogue without numbers.
-	unsourced := []string{"Default", "Qwen3.5-Plus"}
-	for _, id := range unsourced {
+	for _, id := range []string{"DeepSeek-V4-Pro", "GLM-5.1", "MiMo-V2.6-Pro", "Kimi-K3", "LongCat-2.0", "Default", "Qwen3.5-Plus"} {
 		extra, ok := byID[id]
 		if !ok {
 			t.Fatalf("%s is missing from the fallback catalogue", id)
 		}
 		if v, ok := extra["context_length"]; ok {
-			t.Errorf("%s grew a context_length of %v; no source covers it", id, v)
+			t.Errorf("%s grew a context_length of %v; the client publishes none", id, v)
 		}
 		if v, ok := extra["max_output_tokens"]; ok {
-			t.Errorf("%s grew a max_output_tokens of %v; no source covers it", id, v)
+			t.Errorf("%s grew a max_output_tokens of %v; the client publishes none", id, v)
 		}
 	}
 
@@ -63,16 +36,16 @@ func TestFallbackModelsCarriesOnlySourcedMetadata(t *testing.T) {
 	}
 }
 
-// Extra models configured by the operator are filled from the same table, and an
-// operator-supplied id with no sourced numbers still gets no numbers.
-func TestFallbackModelsFillsExtraModelsFromTheSameTable(t *testing.T) {
+// Extra models configured by the operator are not given numbers when the client
+// publishes none for them.
+func TestFallbackModelsDoesNotFillExtraModelsWithoutClientSource(t *testing.T) {
 	models := fallbackModels(Config{ExtraModels: []string{"GPT-5.5", "totally-made-up"}})
 	byID := map[string]map[string]any{}
 	for _, m := range models {
 		byID[m.ID] = m.Extra
 	}
-	if got := byID["GPT-5.5"]["context_length"]; got != int64(1050000) {
-		t.Errorf("configured GPT-5.5 context_length = %v, want 1050000", got)
+	if v, ok := byID["GPT-5.5"]["context_length"]; ok {
+		t.Errorf("configured GPT-5.5 grew a context_length of %v", v)
 	}
 	if v, ok := byID["totally-made-up"]["context_length"]; ok {
 		t.Errorf("an unknown configured id grew a context_length of %v", v)

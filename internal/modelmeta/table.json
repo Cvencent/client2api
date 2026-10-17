@@ -3,439 +3,697 @@
     "Static model metadata table, keyed by client -> model id.",
     "Every number here is ported verbatim from an authoritative source; an empty field",
     "means 'no source', which is a correct value. A guessed field is a bug.",
-    "context_length/max_output_tokens are realm-independent (the reference keeps ONE",
-    "context table for both realms because the same model id has the same window).",
+    "context_length/max_output_tokens are used for client-wide values; limits_by_realm",
+    "overrides them when the same client publishes different CN/Global limits.",
     "efforts are realm-split on purpose (see efforts_by_realm + effort_origin).",
     "`origin` says where context_length/max_output_tokens came from;",
     "`effort_origin` says where efforts/default_effort came from."
   ],
   "workbuddy": {
-    "notes": "Ported from workbuddy2api-panel: internal/upstream/model.json (27 entries, all source=seed) and internal/upstream/effort_catalog.go.",
+    "notes": "Context/output limits come from the CN/Global WorkBuddy client product.json files; limits_by_realm preserves realm-specific caps.",
     "models": {
       "glm-5.2": {
-        "context_length": 1000000,
-        "max_output_tokens": 131072,
-        "origin": "model.json",
+        "limits_by_realm": {
+          "cn": {
+            "context_length": 1000000,
+            "max_output_tokens": 64000
+          },
+          "global": {
+            "context_length": 1000000,
+            "max_output_tokens": 48000
+          }
+        },
+        "origin": "WorkBuddy client product.json",
         "efforts_by_realm": {
-          "cn": { "efforts": ["high", "xhigh"], "default_effort": "high" },
-          "global": { "efforts": ["high", "xhigh"], "default_effort": "high" }
+          "cn": {
+            "efforts": [
+              "high",
+              "xhigh"
+            ],
+            "default_effort": "high"
+          },
+          "global": {
+            "efforts": [
+              "high",
+              "xhigh"
+            ],
+            "default_effort": "high"
+          }
         },
         "effort_origin": "effort_catalog.go"
       },
       "glm-5.1": {
-        "context_length": 200000,
-        "max_output_tokens": 131072,
-        "origin": "model.json",
+        "limits_by_realm": {
+          "cn": {
+            "context_length": 200000,
+            "max_output_tokens": 48000
+          }
+        },
+        "origin": "WorkBuddy client product.json",
         "efforts_by_realm": {
-          "cn": { "efforts": ["medium"] }
+          "cn": {
+            "efforts": [
+              "medium"
+            ]
+          }
         },
         "effort_origin": "effort_catalog.go:cnEffortFallback"
       },
       "glm-5.3": {
-        "context_length": 1000000,
-        "max_output_tokens": 131072,
-        "origin": "model.json",
+        "limits_by_realm": {
+          "cn": {
+            "context_length": 1000000,
+            "max_output_tokens": 64000
+          },
+          "global": {
+            "context_length": 1000000,
+            "max_output_tokens": 48000
+          }
+        },
+        "origin": "WorkBuddy client product.json",
         "efforts_by_realm": {
-          "cn": { "efforts": ["low", "high", "max"], "default_effort": "high" },
-          "global": { "efforts": ["low", "high", "max"], "default_effort": "high" }
+          "cn": {
+            "efforts": [
+              "low",
+              "high",
+              "max"
+            ],
+            "default_effort": "high"
+          },
+          "global": {
+            "efforts": [
+              "low",
+              "high",
+              "max"
+            ],
+            "default_effort": "high"
+          }
         },
         "effort_origin": "effort_catalog.go"
       },
       "glm-5.3-flash": {
-        "context_length": 1000000,
-        "max_output_tokens": 131072,
-        "origin": "model.json",
+        "limits_by_realm": {
+          "cn": {
+            "context_length": 1000000,
+            "max_output_tokens": 131072
+          },
+          "global": {
+            "context_length": 1000000,
+            "max_output_tokens": 32000
+          }
+        },
+        "origin": "WorkBuddy client product.json",
         "efforts_by_realm": {
-          "cn": { "efforts": ["low", "high", "max"], "default_effort": "high" }
+          "cn": {
+            "efforts": [
+              "low",
+              "high",
+              "max"
+            ],
+            "default_effort": "high"
+          }
         },
         "effort_origin": "effort_catalog.go:cnEffortFallback"
       },
-      "glm-5v-turbo": {
-        "context_length": 200000,
-        "max_output_tokens": 131072,
-        "origin": "model.json",
+      "glm-5.3-flashx": {
+        "limits_by_realm": {
+          "cn": {
+            "context_length": 1000000,
+            "max_output_tokens": 131072
+          }
+        },
+        "origin": "WorkBuddy client product.json",
         "efforts_by_realm": {
-          "cn": { "efforts": ["medium"] }
+          "cn": {
+            "efforts": [
+              "low",
+              "high",
+              "max"
+            ],
+            "default_effort": "high"
+          }
+        },
+        "effort_origin": "WorkBuddy CN effort_catalog.go"
+      },
+      "glm-5v-turbo": {
+        "limits_by_realm": {
+          "cn": {
+            "context_length": 200000,
+            "max_output_tokens": 38000
+          }
+        },
+        "origin": "WorkBuddy client product.json",
+        "efforts_by_realm": {
+          "cn": {
+            "efforts": [
+              "medium"
+            ]
+          }
         },
         "effort_origin": "effort_catalog.go:cnEffortFallback"
       },
       "kimi-k2.7": {
-        "context_length": 256000,
-        "max_output_tokens": 65536,
-        "origin": "model.json",
+        "limits_by_realm": {
+          "cn": {
+            "context_length": 256000,
+            "max_output_tokens": 32000
+          }
+        },
+        "origin": "WorkBuddy client product.json",
         "efforts_by_realm": {
-          "cn": { "efforts": ["medium"] }
+          "cn": {
+            "efforts": [
+              "medium"
+            ]
+          }
         },
         "effort_origin": "effort_catalog.go:cnEffortFallback"
       },
       "kimi-k2.6": {
-        "context_length": 256000,
-        "max_output_tokens": 262144,
-        "origin": "model.json",
+        "limits_by_realm": {
+          "cn": {
+            "context_length": 256000,
+            "max_output_tokens": 32000
+          },
+          "global": {
+            "context_length": 256000,
+            "max_output_tokens": 32000
+          }
+        },
+        "origin": "WorkBuddy client product.json",
         "efforts_by_realm": {
-          "cn": { "efforts": ["medium"] },
-          "global": { "efforts": ["medium"] }
+          "cn": {
+            "efforts": [
+              "medium"
+            ]
+          },
+          "global": {
+            "efforts": [
+              "medium"
+            ]
+          }
         },
         "effort_origin": "effort_catalog.go"
       },
       "kimi-k2.5": {
-        "context_length": 164000,
-        "max_output_tokens": 262144,
-        "origin": "model.json"
+        "limits_by_realm": {
+          "cn": {
+            "context_length": 256000,
+            "max_output_tokens": 32000
+          }
+        },
+        "origin": "WorkBuddy client product.json"
       },
       "kimi-k3": {
-        "context_length": 1048576,
-        "max_output_tokens": 131072,
-        "origin": "model.json",
+        "limits_by_realm": {
+          "global": {
+            "context_length": 1000000,
+            "max_output_tokens": 32000
+          }
+        },
+        "origin": "WorkBuddy client product.json",
         "efforts_by_realm": {
-          "global": { "efforts": ["medium"] }
+          "global": {
+            "efforts": [
+              "medium"
+            ]
+          }
         },
         "effort_origin": "effort_catalog.go:globalEffortFallback"
       },
       "kimi-k2.8-preview": {
-        "context_length": 1048576,
-        "origin": "model.json",
-        "_note": "model.json has no max_output_tokens key for this id; output limit stays empty."
-      },
-      "kimi-k3-1": {
-        "efforts_by_realm": {
-          "cn": { "efforts": ["medium"] }
+        "limits_by_realm": {
+          "cn": {
+            "context_length": 1000000,
+            "max_output_tokens": 64000
+          },
+          "global": {
+            "context_length": 1000000,
+            "max_output_tokens": 32000
+          }
         },
-        "effort_origin": "effort_catalog.go:cnEffortFallback",
-        "_note": "Effort-only id: no context_length/max_output_tokens in model.json or context_catalog.go."
+        "origin": "WorkBuddy client product.json"
       },
-      "minimax-m3": {
-        "context_length": 512000,
-        "max_output_tokens": 512000,
-        "origin": "model.json",
+      "minimax-m3-pay": {
+        "limits_by_realm": {
+          "cn": {
+            "context_length": 512000,
+            "max_output_tokens": 128000
+          }
+        },
+        "origin": "WorkBuddy client product.json",
         "efforts_by_realm": {
-          "cn": { "efforts": ["medium"] }
+          "cn": {
+            "efforts": [
+              "medium"
+            ]
+          }
         },
         "effort_origin": "effort_catalog.go:cnEffortFallback"
       },
       "hy3": {
-        "context_length": 192000,
-        "max_output_tokens": 64000,
-        "origin": "model.json",
+        "limits_by_realm": {
+          "cn": {
+            "context_length": 192000,
+            "max_output_tokens": 64000
+          },
+          "global": {
+            "context_length": 192000,
+            "max_output_tokens": 64000
+          }
+        },
+        "origin": "WorkBuddy client product.json",
         "efforts_by_realm": {
-          "cn": { "efforts": ["low", "high"], "default_effort": "high" },
-          "global": { "efforts": ["low", "high"], "default_effort": "high" }
+          "cn": {
+            "efforts": [
+              "low",
+              "high"
+            ],
+            "default_effort": "high"
+          },
+          "global": {
+            "efforts": [
+              "low",
+              "high"
+            ],
+            "default_effort": "high"
+          }
         },
         "effort_origin": "effort_catalog.go"
       },
       "hy3-preview": {
-        "context_length": 262144,
-        "max_output_tokens": 64000,
-        "origin": "model.json"
+        "limits_by_realm": {
+          "cn": {
+            "context_length": 192000,
+            "max_output_tokens": 64000
+          }
+        },
+        "origin": "WorkBuddy client product.json"
       },
       "hy3-x": {
-        "efforts_by_realm": {
-          "cn": { "efforts": ["low", "high"], "default_effort": "high" }
+        "limits_by_realm": {
+          "cn": {
+            "context_length": 192000,
+            "max_output_tokens": 64000
+          }
         },
-        "effort_origin": "effort_catalog.go:cnEffortFallback",
-        "_note": "Effort-only id: no context_length/max_output_tokens in model.json or context_catalog.go."
-      },
-      "hy4-preview": {
-        "context_length": 1000000,
-        "max_output_tokens": 64000,
-        "origin": "model.json",
+        "origin": "WorkBuddy client product.json",
         "efforts_by_realm": {
-          "cn": { "efforts": ["high"], "default_effort": "high" }
+          "cn": {
+            "efforts": [
+              "low",
+              "high"
+            ],
+            "default_effort": "high"
+          }
         },
         "effort_origin": "effort_catalog.go:cnEffortFallback"
       },
-      "hy4-preview-x": {
-        "context_length": 1000000,
-        "max_output_tokens": 64000,
-        "origin": "model.json",
+      "hy4-preview": {
+        "limits_by_realm": {
+          "cn": {
+            "context_length": 1000000,
+            "max_output_tokens": 64000
+          },
+          "global": {
+            "context_length": 1000000,
+            "max_output_tokens": 64000
+          }
+        },
+        "origin": "WorkBuddy client product.json",
         "efforts_by_realm": {
-          "cn": { "efforts": ["high"] }
+          "cn": {
+            "efforts": [
+              "high"
+            ],
+            "default_effort": "high"
+          },
+          "global": {
+            "efforts": [
+              "high"
+            ],
+            "default_effort": "high"
+          }
+        },
+        "effort_origin": "effort_catalog.go"
+      },
+      "hy4-preview-x": {
+        "limits_by_realm": {
+          "cn": {
+            "context_length": 1000000,
+            "max_output_tokens": 64000
+          }
+        },
+        "origin": "WorkBuddy client product.json",
+        "efforts_by_realm": {
+          "cn": {
+            "efforts": [
+              "high"
+            ]
+          }
         },
         "effort_origin": "effort_catalog.go:cnEffortFallback"
       },
       "hy4-preview-f": {
         "efforts_by_realm": {
-          "global": { "efforts": ["high"], "default_effort": "high" }
+          "global": {
+            "efforts": [
+              "high"
+            ],
+            "default_effort": "high"
+          }
         },
-        "effort_origin": "effort_catalog.go:globalEffortFallback",
-        "_note": "Effort-only id: no context_length/max_output_tokens in model.json or context_catalog.go."
+        "effort_origin": "effort_catalog.go:globalEffortFallback"
       },
       "deepseek-v4-pro": {
-        "context_length": 1000000,
-        "max_output_tokens": 384000,
-        "origin": "model.json",
+        "limits_by_realm": {
+          "cn": {
+            "context_length": 1000000,
+            "max_output_tokens": 128000
+          }
+        },
+        "origin": "WorkBuddy client product.json",
         "efforts_by_realm": {
-          "cn": { "efforts": ["low", "high", "xhigh"], "default_effort": "high" }
+          "cn": {
+            "efforts": [
+              "low",
+              "high",
+              "xhigh"
+            ],
+            "default_effort": "high"
+          }
         },
         "effort_origin": "effort_catalog.go:cnEffortFallback"
       },
       "deepseek-v4-flash": {
-        "context_length": 1000000,
-        "max_output_tokens": 384000,
-        "origin": "model.json",
+        "limits_by_realm": {
+          "cn": {
+            "context_length": 1000000,
+            "max_output_tokens": 50000
+          }
+        },
+        "origin": "WorkBuddy client product.json",
         "efforts_by_realm": {
-          "cn": { "efforts": ["low", "high", "max"] }
+          "cn": {
+            "efforts": [
+              "low",
+              "high",
+              "max"
+            ]
+          }
         },
         "effort_origin": "effort_catalog.go:cnEffortFallback"
       },
       "deepseek-v4.1-flash": {
-        "context_length": 1000000,
-        "max_output_tokens": 384000,
-        "origin": "model.json",
+        "limits_by_realm": {
+          "cn": {
+            "context_length": 1000000,
+            "max_output_tokens": 128000
+          },
+          "global": {
+            "context_length": 1000000,
+            "max_output_tokens": 128000
+          }
+        },
+        "origin": "WorkBuddy client product.json",
         "efforts_by_realm": {
-          "cn": { "efforts": ["low", "high", "max"], "default_effort": "high" },
-          "global": { "efforts": ["high"], "default_effort": "high" }
+          "cn": {
+            "efforts": [
+              "low",
+              "high",
+              "max"
+            ],
+            "default_effort": "high"
+          },
+          "global": {
+            "efforts": [
+              "high"
+            ],
+            "default_effort": "high"
+          }
         },
         "effort_origin": "effort_catalog.go",
-        "elevate_top_default": true,
-        "_note": "The international realm accepts ONLY [high]; sending low/max there is an HTTP 400. Kept realm-split on purpose."
+        "elevate_top_default": true
       },
       "gpt-6-astra": {
-        "context_length": 1048576,
-        "max_output_tokens": 128000,
-        "origin": "model.json",
+        "limits_by_realm": {
+          "global": {
+            "context_length": 1000000,
+            "max_output_tokens": 128000
+          }
+        },
+        "origin": "WorkBuddy client product.json",
         "efforts_by_realm": {
-          "global": { "efforts": ["low", "medium", "high", "xhigh", "max"], "default_effort": "high" }
+          "global": {
+            "efforts": [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ],
+            "default_effort": "high"
+          }
         },
         "effort_origin": "effort_catalog.go:globalEffortFallback"
       },
       "gpt-5.6-sol": {
-        "context_length": 1048576,
-        "max_output_tokens": 128000,
-        "origin": "model.json",
+        "limits_by_realm": {
+          "global": {
+            "context_length": 1000000,
+            "max_output_tokens": 128000
+          }
+        },
+        "origin": "WorkBuddy client product.json",
         "efforts_by_realm": {
-          "global": { "efforts": ["low", "medium", "high", "xhigh", "max"], "default_effort": "high" }
+          "global": {
+            "efforts": [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ],
+            "default_effort": "high"
+          }
         },
         "effort_origin": "effort_catalog.go:globalEffortFallback"
       },
       "gpt-5.6-terra": {
-        "context_length": 1048576,
-        "max_output_tokens": 128000,
-        "origin": "model.json",
+        "limits_by_realm": {
+          "global": {
+            "context_length": 1000000,
+            "max_output_tokens": 128000
+          }
+        },
+        "origin": "WorkBuddy client product.json",
         "efforts_by_realm": {
-          "global": { "efforts": ["low", "medium", "high", "xhigh", "max"], "default_effort": "high" }
+          "global": {
+            "efforts": [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ],
+            "default_effort": "high"
+          }
         },
         "effort_origin": "effort_catalog.go:globalEffortFallback"
       },
       "gpt-5.6-luna": {
-        "context_length": 1048576,
-        "max_output_tokens": 128000,
-        "origin": "model.json",
+        "limits_by_realm": {
+          "global": {
+            "context_length": 1000000,
+            "max_output_tokens": 128000
+          }
+        },
+        "origin": "WorkBuddy client product.json",
         "efforts_by_realm": {
-          "global": { "efforts": ["low", "medium", "high", "xhigh", "max"], "default_effort": "high" }
+          "global": {
+            "efforts": [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ],
+            "default_effort": "high"
+          }
         },
         "effort_origin": "effort_catalog.go:globalEffortFallback"
       },
       "gpt-5.5": {
-        "context_length": 1048576,
-        "max_output_tokens": 128000,
-        "origin": "model.json",
+        "limits_by_realm": {
+          "global": {
+            "context_length": 1000000,
+            "max_output_tokens": 128000
+          }
+        },
+        "origin": "WorkBuddy client product.json",
         "efforts_by_realm": {
-          "global": { "efforts": ["low", "medium", "high", "xhigh"], "default_effort": "high" }
+          "global": {
+            "efforts": [
+              "low",
+              "medium",
+              "high",
+              "xhigh"
+            ],
+            "default_effort": "high"
+          }
         },
         "effort_origin": "effort_catalog.go:globalEffortFallback"
       },
       "gpt-5.4": {
-        "context_length": 1048576,
-        "max_output_tokens": 128000,
-        "origin": "model.json",
-        "efforts_by_realm": {
-          "global": { "efforts": ["low", "medium", "high", "xhigh"], "default_effort": "high" }
+        "limits_by_realm": {
+          "global": {
+            "context_length": 272000,
+            "max_output_tokens": 72000
+          }
         },
-        "effort_origin": "effort_catalog.go:globalEffortFallback"
-      },
-      "gpt-5.3-codex": {
-        "context_length": 400000,
-        "max_output_tokens": 128000,
-        "origin": "model.json",
+        "origin": "WorkBuddy client product.json",
         "efforts_by_realm": {
-          "global": { "efforts": ["medium"] }
+          "global": {
+            "efforts": [
+              "low",
+              "medium",
+              "high",
+              "xhigh"
+            ],
+            "default_effort": "high"
+          }
         },
         "effort_origin": "effort_catalog.go:globalEffortFallback"
       },
       "gemini-3.5-flash": {
-        "context_length": 1048576,
-        "max_output_tokens": 65536,
-        "origin": "model.json",
+        "limits_by_realm": {
+          "global": {
+            "context_length": 1000000,
+            "max_output_tokens": 65536
+          }
+        },
+        "origin": "WorkBuddy client product.json",
         "efforts_by_realm": {
-          "global": { "efforts": ["medium"] }
+          "global": {
+            "efforts": [
+              "medium"
+            ]
+          }
         },
         "effort_origin": "effort_catalog.go:globalEffortFallback"
       },
       "auto": {
-        "context_length": 168000,
-        "origin": "model.json",
-        "_note": "model.json has no max_output_tokens key for this id; output limit stays empty."
+        "limits_by_realm": {
+          "cn": {
+            "context_length": 168000,
+            "max_output_tokens": 32000
+          }
+        },
+        "origin": "WorkBuddy client product.json"
       },
       "fast-model": {
-        "efforts_by_realm": {
-          "global": { "efforts": ["medium"] }
+        "limits_by_realm": {
+          "global": {
+            "context_length": 200000,
+            "max_output_tokens": 32000
+          }
         },
-        "effort_origin": "effort_catalog.go:globalEffortFallback",
-        "_note": "Effort-only id: no context_length/max_output_tokens in model.json or context_catalog.go."
+        "origin": "WorkBuddy client product.json",
+        "efforts_by_realm": {
+          "global": {
+            "efforts": [
+              "medium"
+            ]
+          }
+        },
+        "effort_origin": "effort_catalog.go:globalEffortFallback"
       },
       "balanced-model": {
-        "efforts_by_realm": {
-          "global": { "efforts": ["medium"] }
+        "limits_by_realm": {
+          "global": {
+            "context_length": 256000,
+            "max_output_tokens": 32000
+          }
         },
-        "effort_origin": "effort_catalog.go:globalEffortFallback",
-        "_note": "Effort-only id: no context_length/max_output_tokens in model.json or context_catalog.go."
+        "origin": "WorkBuddy client product.json",
+        "efforts_by_realm": {
+          "global": {
+            "efforts": [
+              "medium"
+            ]
+          }
+        },
+        "effort_origin": "effort_catalog.go:globalEffortFallback"
       },
       "primary-model": {
-        "efforts_by_realm": {
-          "global": { "efforts": ["high"] }
+        "limits_by_realm": {
+          "global": {
+            "context_length": 272000,
+            "max_output_tokens": 72000
+          }
         },
-        "effort_origin": "effort_catalog.go:globalEffortFallback",
-        "_note": "Effort-only id: no context_length/max_output_tokens in model.json or context_catalog.go."
+        "origin": "WorkBuddy client product.json",
+        "efforts_by_realm": {
+          "global": {
+            "efforts": [
+              "high"
+            ]
+          }
+        },
+        "effort_origin": "effort_catalog.go:globalEffortFallback"
+      },
+      "default-model": {
+        "limits_by_realm": {
+          "global": {
+            "context_length": 176000,
+            "max_output_tokens": 24000
+          }
+        },
+        "origin": "WorkBuddy client product.json"
+      },
+      "deep-model": {
+        "limits_by_realm": {
+          "global": {
+            "context_length": 176000,
+            "max_output_tokens": 24000
+          }
+        },
+        "origin": "WorkBuddy client product.json"
       }
     }
   },
   "kimi": {
-    "notes": "The K3 agent ids map to Kimi K3, whose public window is 1M context / 128K output. kimi, kimi-k2 and k2d6-agent have no public source and stay unknown.",
+    "notes": "Context limits come from the Kimi desktop client's kimi-work-models-cache.json. The client publishes no output cap, so output stays empty.",
     "models": {
       "k3-agent": {
-        "context_length": 1048576,
-        "max_output_tokens": 131072,
-        "origin": "platform.kimi.ai docs: K3 1M context / 128K output"
+        "context_length": 1000000,
+        "origin": "kimi-desktop kimi-work-models-cache.json maxContextSize"
       },
       "k3-agent-ultra": {
-        "context_length": 1048576,
-        "max_output_tokens": 131072,
-        "origin": "platform.kimi.ai docs: K3 1M context / 128K output"
+        "context_length": 1000000,
+        "origin": "kimi-desktop kimi-work-models-cache.json maxContextSize"
+      },
+      "k2d6-agent": {
+        "context_length": 262144,
+        "origin": "kimi-desktop kimi-work-models-cache.json maxContextSize"
       }
     }
   },
   "tabbit": {
     "notes": [
-      "Official vendor presets (z.ai, DeepSeek, Kimi, MiniMax, Qwen, Volcengine,",
-      "StepFun, MiMo, LongCat) for the ids whose upstream model is documented, plus",
-      "the reference-derived GPT/DeepSeek/GLM rows. Router aliases (Default, priority)",
-      "and ids with no public window stay absent."
+      "The installed Tabbit client does not publish per-model context/output limits.",
+      "Rows with no client-published window stay absent rather than borrowing docs."
     ],
-    "models": {
-      "GPT-5.5": {
-        "context_length": 1050000,
-        "max_output_tokens": 128000,
-        "origin": "reference model.json gpt-5.5 (unverified for tabbit)"
-      },
-      "GPT-5.4": {
-        "context_length": 1050000,
-        "max_output_tokens": 128000,
-        "origin": "reference model.json gpt-5.4 (unverified for tabbit)"
-      },
-      "DeepSeek-V4-Pro": {
-        "context_length": 1000000,
-        "max_output_tokens": 384000,
-        "origin": "reference model.json deepseek-v4-pro (unverified for tabbit)"
-      },
-      "GLM-5.1": {
-        "context_length": 200000,
-        "max_output_tokens": 131072,
-        "origin": "reference model.json glm-5.1 (unverified for tabbit)"
-      },
-      "MiMo-V2.6-Pro": {
-        "context_length": 1048576,
-        "max_output_tokens": 131072,
-        "origin": "mimo.mi.com docs: 1M context / 128K output"
-      },
-      "MiMo-V2.6-Flash": {
-        "context_length": 1048576,
-        "max_output_tokens": 131072,
-        "origin": "mimo.mi.com docs: 1M context / 128K output"
-      },
-      "GLM-5.3-FlashX": {
-        "context_length": 1048576,
-        "max_output_tokens": 131072,
-        "origin": "z.ai docs: 1M context / 128K output"
-      },
-      "DeepSeek-V4.1-Flash": {
-        "context_length": 1048576,
-        "max_output_tokens": 384000,
-        "origin": "api-docs.deepseek.com: 1M context / 384K output",
-        "elevate_top_default": true
-      },
-      "DeepSeek-V4-Flash": {
-        "context_length": 1048576,
-        "max_output_tokens": 384000,
-        "origin": "api-docs.deepseek.com: 1M context / 384K output"
-      },
-      "GLM-5.3-Flash": {
-        "context_length": 1048576,
-        "max_output_tokens": 131072,
-        "origin": "z.ai docs: 1M context / 128K output"
-      },
-      "GLM-5.3": {
-        "context_length": 1048576,
-        "max_output_tokens": 131072,
-        "origin": "z.ai docs: 1M context / 128K output"
-      },
-      "Qwen3.8-Max": {
-        "context_length": 1000000,
-        "max_output_tokens": 131072,
-        "origin": "Alibaba Cloud Model Studio: 1M context / 128K output"
-      },
-      "Kimi-K3": {
-        "context_length": 1048576,
-        "max_output_tokens": 131072,
-        "origin": "platform.kimi.ai docs: K3 1M context / 128K output"
-      },
-      "LongCat-2.0": {
-        "context_length": 1048576,
-        "max_output_tokens": 131072,
-        "origin": "longcat.chat docs: 1M context / 128K output"
-      },
-      "Qwen3.7-Max": {
-        "context_length": 1000000,
-        "max_output_tokens": 131072,
-        "origin": "Alibaba Cloud Model Studio: 1M context / 128K output"
-      },
-      "Kimi-K2.7-Code": {
-        "context_length": 262144,
-        "max_output_tokens": 32768,
-        "origin": "platform.kimi.ai docs: K3 1M context / 128K output"
-      },
-      "Doubao-Seed-2.1-Pro": {
-        "context_length": 262144,
-        "max_output_tokens": 262144,
-        "origin": "Volcengine Ark docs: 256K context / 256K output"
-      },
-      "Doubao-Seed-2.1-Turbo": {
-        "context_length": 262144,
-        "max_output_tokens": 262144,
-        "origin": "Volcengine Ark docs: 256K context / 256K output"
-      },
-      "MiniMax-M3": {
-        "context_length": 1048576,
-        "max_output_tokens": 131072,
-        "origin": "MiniMax platform docs"
-      },
-      "Kimi-K2.6": {
-        "context_length": 262144,
-        "max_output_tokens": 65536,
-        "origin": "platform.kimi.ai docs: K3 1M context / 128K output"
-      },
-      "GLM-5.2": {
-        "context_length": 1048576,
-        "max_output_tokens": 131072,
-        "origin": "z.ai docs: 1M context / 128K output"
-      },
-      "GLM-5V-Turbo": {
-        "context_length": 204800,
-        "max_output_tokens": 131072,
-        "origin": "z.ai docs: 200K context / 128K output"
-      }
-    }
+    "models": {}
   },
   "codearts": {
-    "notes": "Official GLM preset used when the module reports no window.",
+    "notes": "The installed CodeArts client publishes reasoning-effort metadata only; no per-model window is available.",
     "models": {
-      "GLM-5.2": {
-        "context_length": 1048576,
-        "max_output_tokens": 131072,
-        "origin": "z.ai docs: 1M context / 128K output"
-      },
       "deepseek-v4.1-flash": {
-        "efforts": ["off", "on"],
+        "efforts": [
+          "off",
+          "on"
+        ],
         "default_effort": "on",
         "effort_origin": "codearts: thinking is enabled by default; the module can send thinking.type=disabled for off",
         "elevate_top_default": true
@@ -446,13 +704,29 @@
     "notes": "Cline remote catalogue does not publish per-model reasoning tiers; the vendor validates one global vocabulary for every model.",
     "models": {
       "cline-free/deepseek-v4.1-flash": {
-        "efforts": ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
+        "efforts": [
+          "none",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
         "default_effort": "high",
         "effort_origin": "cline/body.go reasoningEffortTable + defaultReasoningEffort",
         "elevate_top_default": true
       },
       "deepseek/deepseek-v4.1-flash": {
-        "efforts": ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
+        "efforts": [
+          "none",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
         "default_effort": "high",
         "effort_origin": "cline/body.go reasoningEffortTable + defaultReasoningEffort",
         "elevate_top_default": true
@@ -463,7 +737,13 @@
     "notes": "The live V4.1 row advertises the same five-tier vocabulary as the module fallback: xhigh is its real highest tier, so cap alignment stays a no-op rather than inventing max.",
     "models": {
       "DeepSeek-V4.1-Flash": {
-        "efforts": ["none", "low", "medium", "high", "xhigh"],
+        "efforts": [
+          "none",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
         "default_effort": "high",
         "effort_origin": "loomy/models.go loomyEfforts + loomyDefaultEffort",
         "elevate_top_default": true
@@ -474,7 +754,10 @@
     "notes": "Raccoon exposes thinking as an enabled/disabled switch, not as named effort tiers.",
     "models": {
       "sn-deepseek-v4-1-flash": {
-        "efforts": ["off", "on"],
+        "efforts": [
+          "off",
+          "on"
+        ],
         "default_effort": "on",
         "effort_origin": "raccoon/body.go extraBodyFor",
         "elevate_top_default": true
@@ -482,363 +765,258 @@
     }
   },
   "openrouter": {
-    "notes": "OpenRouter publishes V4.1 Flash as low/high/max; xhigh is not advertised.",
+    "notes": "Reasoning vocabulary is published by the OpenRouter API; no installed desktop client publishes context/output limits.",
     "models": {
       "deepseek/deepseek-v4.1-flash": {
-        "context_length": 1048576,
-        "max_output_tokens": 943718,
-        "efforts": ["low", "high", "max"],
+        "efforts": [
+          "low",
+          "high",
+          "max"
+        ],
         "default_effort": "high",
         "effort_origin": "openrouter.ai/api/v1/models reasoning.supported_efforts (2026-10-13)",
-        "origin": "openrouter.ai/api/v1/models: 1M context / 943718 max completion tokens",
         "elevate_top_default": true
       }
     }
   },
   "opencode": {
-    "notes": "Official presets for the ids whose upstream model is publicly documented; obscure free ids stay unknown.",
-    "models": {
-      "deepseek-v4-flash-free": {
-        "context_length": 1048576,
-        "max_output_tokens": 384000,
-        "origin": "api-docs.deepseek.com: 1M context / 384K output"
-      },
-      "mimo-v2.6-flash-free": {
-        "context_length": 1048576,
-        "max_output_tokens": 131072,
-        "origin": "mimo.mi.com docs: 1M context / 128K output"
-      },
-      "longcat-2.5-preview-free": {
-        "context_length": 1048576,
-        "max_output_tokens": 131072,
-        "origin": "longcat.chat docs: 1M context / 128K output"
-      }
-    }
+    "notes": "The installed OpenCode client does not publish per-model context/output limits; rows stay absent rather than borrowing vendor docs.",
+    "models": {}
   },
   "lobsterai": {
-    "notes": "Official vendor presets for the hosted models.",
+    "notes": "Context/output limits come from the LobsterAI client's agent models.json. Client rows without a published output limit keep it empty.",
     "models": {
       "deepseek-flash": {
-        "context_length": 1048576,
-        "max_output_tokens": 384000,
-        "origin": "api-docs.deepseek.com: 1M context / 384K output",
+        "context_length": 1000000,
+        "origin": "LobsterAI agent models.json contextWindow",
         "elevate_top_default": true
       },
       "deepseek-v4-pro": {
-        "context_length": 1048576,
-        "max_output_tokens": 384000,
-        "origin": "api-docs.deepseek.com: 1M context / 384K output"
+        "context_length": 1000000,
+        "origin": "LobsterAI agent models.json contextWindow"
       },
       "deepseek-v4-flash": {
-        "context_length": 1048576,
-        "max_output_tokens": 384000,
-        "origin": "api-docs.deepseek.com: 1M context / 384K output"
+        "context_length": 1000000,
+        "origin": "LobsterAI agent models.json contextWindow"
       },
       "deepseek-v4-flash-vision-exp": {
-        "context_length": 1048576,
-        "max_output_tokens": 384000,
-        "origin": "api-docs.deepseek.com: 1M context / 384K output"
+        "context_length": 1000000,
+        "origin": "LobsterAI agent models.json contextWindow"
       },
       "glm-5.3-flashx": {
-        "context_length": 1048576,
-        "max_output_tokens": 131072,
-        "origin": "z.ai docs: 1M context / 128K output"
+        "context_length": 1000000,
+        "origin": "LobsterAI agent models.json contextWindow"
       },
       "glm-5.3-flash": {
-        "context_length": 1048576,
-        "max_output_tokens": 131072,
-        "origin": "z.ai docs: 1M context / 128K output"
+        "context_length": 1000000,
+        "origin": "LobsterAI agent models.json contextWindow"
       },
       "glm-5.3": {
-        "context_length": 1048576,
-        "max_output_tokens": 131072,
-        "origin": "z.ai docs: 1M context / 128K output"
+        "context_length": 1000000,
+        "origin": "LobsterAI agent models.json contextWindow"
       },
       "glm-5.2": {
-        "context_length": 1048576,
-        "max_output_tokens": 131072,
-        "origin": "z.ai docs: 1M context / 128K output"
+        "context_length": 1000000,
+        "origin": "LobsterAI agent models.json contextWindow"
       },
       "glm-5.1": {
-        "context_length": 204800,
-        "max_output_tokens": 131072,
-        "origin": "z.ai docs: 200K context / 128K output"
+        "context_length": 202800,
+        "origin": "LobsterAI agent models.json contextWindow"
       },
       "glm-5v-turbo": {
-        "context_length": 204800,
-        "max_output_tokens": 131072,
-        "origin": "z.ai docs: 200K context / 128K output"
+        "origin": "LobsterAI agent models.json has no contextWindow or maxTokens"
       },
       "glm-5": {
-        "context_length": 204800,
-        "max_output_tokens": 131072,
-        "origin": "z.ai docs: 200K context / 128K output"
+        "context_length": 202800,
+        "origin": "LobsterAI agent models.json contextWindow"
       },
       "MiniMax-M3.1-Flash-Preview": {
         "context_length": 1000000,
-        "max_output_tokens": 131072,
-        "origin": "MiniMax platform docs"
+        "origin": "LobsterAI agent models.json contextWindow"
       },
       "MiniMax-M3": {
-        "context_length": 1048576,
-        "max_output_tokens": 131072,
-        "origin": "MiniMax platform docs"
+        "context_length": 1000000,
+        "origin": "LobsterAI agent models.json contextWindow"
       },
       "MiniMax-M2.7": {
         "context_length": 204800,
-        "max_output_tokens": 131072,
-        "origin": "MiniMax platform docs"
+        "origin": "LobsterAI agent models.json contextWindow"
       },
       "qwen3.8-max": {
         "context_length": 1000000,
-        "max_output_tokens": 131072,
-        "origin": "Alibaba Cloud Model Studio: 1M context / 128K output"
+        "origin": "LobsterAI agent models.json contextWindow"
       },
       "qwen3.7-max": {
         "context_length": 1000000,
-        "max_output_tokens": 131072,
-        "origin": "Alibaba Cloud Model Studio: 1M context / 128K output"
+        "origin": "LobsterAI agent models.json contextWindow"
       },
       "qwen3.7-plus": {
         "context_length": 1000000,
-        "max_output_tokens": 65536,
-        "origin": "Alibaba Cloud Model Studio: 1M context / 128K output"
+        "origin": "LobsterAI agent models.json contextWindow"
       },
       "kimi-k3": {
         "context_length": 1048576,
-        "max_output_tokens": 131072,
-        "origin": "platform.kimi.ai docs: K3 1M context / 128K output"
+        "max_output_tokens": 8192,
+        "origin": "LobsterAI agent models.json contextWindow/maxTokens"
       },
       "kimi-k2.7-code": {
         "context_length": 262144,
-        "max_output_tokens": 32768,
-        "origin": "platform.kimi.ai docs: K3 1M context / 128K output"
+        "origin": "LobsterAI agent models.json contextWindow"
       },
       "kimi-k2.7-code-highspeed": {
         "context_length": 262144,
-        "max_output_tokens": 32768,
-        "origin": "platform.kimi.ai docs: K3 1M context / 128K output"
+        "origin": "LobsterAI agent models.json contextWindow"
       },
       "kimi-k2.6": {
         "context_length": 262144,
-        "max_output_tokens": 65536,
-        "origin": "platform.kimi.ai docs: K3 1M context / 128K output"
+        "origin": "LobsterAI agent models.json contextWindow"
       },
       "kimi-k2.5": {
         "context_length": 262144,
-        "max_output_tokens": 262144,
-        "origin": "platform.kimi.ai docs: K3 1M context / 128K output"
+        "origin": "LobsterAI agent models.json contextWindow"
       },
       "doubao-seed-2-1-pro-260915": {
-        "context_length": 262144,
-        "max_output_tokens": 262144,
-        "origin": "Volcengine Ark docs: 256K context / 256K output"
+        "context_length": 256000,
+        "origin": "LobsterAI agent models.json contextWindow"
       },
       "doubao-seed-2-1-turbo-260628": {
+        "context_length": 256000,
+        "origin": "LobsterAI agent models.json contextWindow"
+      },
+      "qwen3.8-flash": {
+        "context_length": 1000000,
+        "origin": "LobsterAI agent models.json contextWindow"
+      },
+      "qwen3.8-omni-flash": {
+        "context_length": 1000000,
+        "origin": "LobsterAI agent models.json contextWindow"
+      },
+      "qwen3.6-plus": {
+        "context_length": 1000000,
+        "origin": "LobsterAI agent models.json contextWindow"
+      },
+      "kimi-k2.8-preview": {
         "context_length": 262144,
-        "max_output_tokens": 262144,
-        "origin": "Volcengine Ark docs: 256K context / 256K output"
+        "origin": "LobsterAI agent models.json contextWindow"
+      },
+      "qwen3.5-plus-2026-04-20": {
+        "origin": "LobsterAI agent models.json has no contextWindow or maxTokens"
+      },
+      "doubao-seed-2-0-code-preview-260215": {
+        "origin": "LobsterAI agent models.json has no contextWindow or maxTokens"
       }
     }
   },
   "minimaxcode": {
-    "notes": "MiniMax platform presets.",
+    "notes": "Limits come from the MiniMax Code client config.yaml. The default M3/M3.1 window is 512000; 1000000 remains a selectable option, not the default.",
     "models": {
       "MiniMax-M2.7-highspeed": {
-        "context_length": 204800,
-        "max_output_tokens": 131072,
-        "origin": "MiniMax platform docs"
+        "context_length": 200000,
+        "max_output_tokens": 128000,
+        "origin": "~/.minimax/config.yaml limit.context/output"
       },
       "MiniMax-M2.7": {
-        "context_length": 204800,
-        "max_output_tokens": 131072,
-        "origin": "MiniMax platform docs"
+        "context_length": 200000,
+        "max_output_tokens": 128000,
+        "origin": "~/.minimax/config.yaml limit.context/output"
       },
       "MiniMax-M3": {
-        "context_length": 1048576,
-        "max_output_tokens": 131072,
-        "origin": "MiniMax platform docs"
+        "context_length": 512000,
+        "max_output_tokens": 128000,
+        "origin": "~/.minimax/config.yaml limit.context/output (default; 1M is an option)"
       },
       "MiniMax-M3.1-Flash-Preview": {
-        "context_length": 1000000,
-        "max_output_tokens": 131072,
-        "origin": "MiniMax platform docs"
+        "context_length": 512000,
+        "max_output_tokens": 128000,
+        "origin": "~/.minimax/config.yaml limit.context/output (default; 1M is an option)"
       }
     }
   },
   "qwenwork": {
-    "notes": "Alibaba Cloud Model Studio presets.",
-    "models": {
-      "pro": {
-        "context_length": 1000000,
-        "max_output_tokens": 131072,
-        "origin": "Alibaba Cloud Model Studio: 1M context / 128K output"
-      },
-      "flash": {
-        "context_length": 1000000,
-        "max_output_tokens": 131072,
-        "origin": "Alibaba Cloud Model Studio: 1M context / 128K output"
-      },
-      "qwen3.8-max-preview": {
-        "context_length": 1000000,
-        "max_output_tokens": 131072,
-        "origin": "Alibaba Cloud Model Studio: 1M context / 128K output"
-      }
-    }
+    "notes": "QwenWork receives its default window from the server at runtime; the installed client publishes no static per-model limits.",
+    "models": {}
   },
   "trae": {
-    "notes": "Official presets for the documented ids; sub-agents, custom_model_* and router aliases stay unknown.",
-    "models": {
-      "step-5-preview": {
-        "context_length": 1048576,
-        "max_output_tokens": 65536,
-        "origin": "platform.stepfun.com docs: 1M context / 64K output"
-      },
-      "glm-5.3": {
-        "context_length": 1048576,
-        "max_output_tokens": 131072,
-        "origin": "z.ai docs: 1M context / 128K output"
-      },
-      "glm-5.2": {
-        "context_length": 1048576,
-        "max_output_tokens": 131072,
-        "origin": "z.ai docs: 1M context / 128K output"
-      },
-      "glm-5-turbo": {
-        "context_length": 202752,
-        "max_output_tokens": 131072,
-        "origin": "z.ai docs: 200K context / 128K output"
-      },
-      "glm-5": {
-        "context_length": 204800,
-        "max_output_tokens": 131072,
-        "origin": "z.ai docs: 200K context / 128K output"
-      },
-      "deepseek-v4.1-flash": {
-        "context_length": 1048576,
-        "max_output_tokens": 384000,
-        "origin": "api-docs.deepseek.com: 1M context / 384K output",
-        "elevate_top_default": true
-      },
-      "DeepSeek-V4-Flash-Official": {
-        "context_length": 1048576,
-        "max_output_tokens": 384000,
-        "origin": "api-docs.deepseek.com: 1M context / 384K output"
-      },
-      "DeepSeek-V4-Flash": {
-        "context_length": 1048576,
-        "max_output_tokens": 384000,
-        "origin": "api-docs.deepseek.com: 1M context / 384K output"
-      },
-      "DeepSeek-V4-Pro-Official": {
-        "context_length": 1048576,
-        "max_output_tokens": 384000,
-        "origin": "api-docs.deepseek.com: 1M context / 384K output"
-      },
-      "DeepSeek-V4-Pro": {
-        "context_length": 1048576,
-        "max_output_tokens": 384000,
-        "origin": "api-docs.deepseek.com: 1M context / 384K output"
-      },
-      "kimi-k3": {
-        "context_length": 1048576,
-        "max_output_tokens": 131072,
-        "origin": "platform.kimi.ai docs: K3 1M context / 128K output"
-      },
-      "kimi-k2.7-code": {
-        "context_length": 262144,
-        "max_output_tokens": 32768,
-        "origin": "platform.kimi.ai docs: K3 1M context / 128K output"
-      },
-      "kimi-k2.6": {
-        "context_length": 262144,
-        "max_output_tokens": 65536,
-        "origin": "platform.kimi.ai docs: K3 1M context / 128K output"
-      },
-      "minimax-m3": {
-        "context_length": 1048576,
-        "max_output_tokens": 131072,
-        "origin": "MiniMax platform docs"
-      },
-      "qwen3.8-max": {
-        "context_length": 1000000,
-        "max_output_tokens": 131072,
-        "origin": "Alibaba Cloud Model Studio: 1M context / 128K output"
-      },
-      "qwen-3.7-plus": {
-        "context_length": 1000000,
-        "max_output_tokens": 65536,
-        "origin": "Alibaba Cloud Model Studio: 1M context / 128K output"
-      },
-      "Doubao-Seed-2.1-Pro": {
-        "context_length": 262144,
-        "max_output_tokens": 262144,
-        "origin": "Volcengine Ark docs: 256K context / 256K output"
-      },
-      "Doubao-Seed-2.1-Turbo": {
-        "context_length": 262144,
-        "max_output_tokens": 262144,
-        "origin": "Volcengine Ark docs: 256K context / 256K output"
-      }
-    }
+    "notes": "The installed Trae clients do not publish per-model context/output limits; rows stay absent rather than borrowing vendor docs.",
+    "models": {}
   },
   "zcode": {
-    "notes": "GLM family presets from z.ai docs.",
+    "notes": "Context/output limits come from the installed ZCode client's built-in provider rules (modelConfigRules).",
     "models": {
       "glm-4.5": {
         "context_length": 131072,
         "max_output_tokens": 98304,
-        "origin": "z.ai docs: 128K context / 96K output"
+        "origin": "ZCode client zcode-builtin.json modelConfigRules"
       },
       "glm-4.5-air": {
         "context_length": 131072,
         "max_output_tokens": 98304,
-        "origin": "z.ai docs: 128K context / 96K output"
+        "origin": "ZCode client zcode-builtin.json modelConfigRules"
       },
       "glm-4.6": {
-        "context_length": 204800,
+        "context_length": 200000,
         "max_output_tokens": 131072,
-        "origin": "z.ai docs: 200K context / 128K output"
+        "origin": "ZCode client zcode-builtin.json modelConfigRules"
       },
       "glm-4.7": {
-        "context_length": 204800,
+        "context_length": 200000,
         "max_output_tokens": 131072,
-        "origin": "z.ai docs: 200K context / 128K output"
+        "origin": "ZCode client zcode-builtin.json modelConfigRules"
       },
       "glm-5": {
-        "context_length": 204800,
-        "max_output_tokens": 131072,
-        "origin": "z.ai docs: 200K context / 128K output"
+        "context_length": 200000,
+        "max_output_tokens": 64000,
+        "origin": "ZCode client zcode-builtin.json modelConfigRules"
       },
       "glm-5-turbo": {
-        "context_length": 202752,
-        "max_output_tokens": 131072,
-        "origin": "z.ai docs: 200K context / 128K output"
+        "context_length": 200000,
+        "max_output_tokens": 64000,
+        "origin": "ZCode client zcode-builtin.json modelConfigRules"
       },
       "glm-5.1": {
-        "context_length": 204800,
-        "max_output_tokens": 131072,
-        "origin": "z.ai docs: 200K context / 128K output"
+        "context_length": 200000,
+        "max_output_tokens": 64000,
+        "origin": "ZCode client zcode-builtin.json modelConfigRules"
       },
       "glm-5.2": {
-        "context_length": 1048576,
-        "max_output_tokens": 131072,
-        "origin": "z.ai docs: 1M context / 128K output"
+        "context_length": 1000000,
+        "max_output_tokens": 128000,
+        "origin": "ZCode client zcode-builtin.json modelConfigRules"
       },
       "glm-5.3": {
-        "context_length": 1048576,
-        "max_output_tokens": 131072,
-        "origin": "z.ai docs: 1M context / 128K output"
+        "context_length": 1000000,
+        "max_output_tokens": 128000,
+        "origin": "ZCode client zcode-builtin.json modelConfigRules"
       },
       "glm-5.3-flash": {
+        "context_length": 1000000,
+        "max_output_tokens": 128000,
+        "origin": "ZCode client zcode-builtin.json modelConfigRules"
+      }
+    }
+  },
+  "autoclaw": {
+    "notes": "Limits come from the AutoClaw client remote-snapshot.json.",
+    "models": {
+      "zai_auto": {
         "context_length": 1048576,
-        "max_output_tokens": 131072,
-        "origin": "z.ai docs: 1M context / 128K output"
+        "max_output_tokens": 393216,
+        "origin": "AutoClaw client remote-snapshot.json contextWindow/maxTokens"
       },
-      "glm-5.3-flashx": {
+      "zai_auto-fast": {
         "context_length": 1048576,
         "max_output_tokens": 131072,
-        "origin": "z.ai docs: 1M context / 128K output"
+        "origin": "AutoClaw client remote-snapshot.json contextWindow/maxTokens"
+      },
+      "zaicoding_glm-5.3": {
+        "context_length": 1048576,
+        "max_output_tokens": 307200,
+        "origin": "AutoClaw client remote-snapshot.json contextWindow/maxTokens"
+      },
+      "zai_glm-5.3-flash": {
+        "context_length": 1048576,
+        "max_output_tokens": 131072,
+        "origin": "AutoClaw client remote-snapshot.json contextWindow/maxTokens"
       }
     }
   }

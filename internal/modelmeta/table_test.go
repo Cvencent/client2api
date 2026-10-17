@@ -11,9 +11,10 @@ func TestStaticTableEntryCounts(t *testing.T) {
 		want   int
 		why    string
 	}{
-		{"workbuddy", 33, "27 ids ported verbatim from model.json plus 6 effort-only ids"},
-		{"tabbit", 22, "official upstream presets plus the reference-derived gpt/deepseek/glm rows"},
-		{"kimi", 2, "the K3 agent ids carry a documented Kimi K3 window"},
+		{"workbuddy", 34, "the client product.json catalogue plus effort-only ids"},
+		{"tabbit", 0, "the installed client publishes no static window values"},
+		{"kimi", 3, "the Kimi desktop cache publishes three context windows"},
+		{"autoclaw", 4, "the AutoClaw client snapshot publishes four rows"},
 		{"cline", 2, "one global wire vocabulary for the free and metered V4.1 ids"},
 		{"loomy", 1, "the live V4.1 row five-tier vocabulary"},
 		{"raccoon", 1, "the V4.1 on/off thinking switch"},
@@ -27,10 +28,10 @@ func TestStaticTableEntryCounts(t *testing.T) {
 	}
 	clients := Clients()
 	want := map[string]bool{
-		"workbuddy": true, "tabbit": true, "kimi": true, "codearts": true,
-		"opencode": true, "lobsterai": true, "minimaxcode": true,
-		"qwenwork": true, "trae": true, "zcode": true, "cline": true, "loomy": true,
-		"raccoon": true, "openrouter": true,
+		"workbuddy": true, "kimi": true, "codearts": true,
+		"lobsterai": true, "minimaxcode": true,
+		"zcode": true, "cline": true, "loomy": true,
+		"raccoon": true, "openrouter": true, "autoclaw": true,
 	}
 	if len(clients) != len(want) {
 		t.Fatalf("Clients() = %v, want %v", clients, want)
@@ -48,30 +49,21 @@ func TestStaticTableWorkbuddyValuesAreVerbatim(t *testing.T) {
 		context int64
 		output  int64
 	}{
-		{"glm-5.2", 1000000, 131072},
-		{"glm-5.1", 200000, 131072},
-		{"glm-5v-turbo", 200000, 131072},
-		{"kimi-k2.7", 256000, 65536},
-		{"kimi-k2.6", 256000, 262144},
-		{"kimi-k2.5", 164000, 262144},
-		{"kimi-k3", 1048576, 131072},
-		{"minimax-m3", 512000, 512000},
+		{"glm-5.2", 1000000, 64000},
+		{"glm-5.1", 200000, 48000},
+		{"glm-5v-turbo", 200000, 38000},
+		{"kimi-k2.7", 256000, 32000},
+		{"kimi-k2.6", 256000, 32000},
+		{"kimi-k2.5", 256000, 32000},
+		{"minimax-m3-pay", 512000, 128000},
 		{"hy3", 192000, 64000},
-		{"hy3-preview", 262144, 64000},
+		{"hy3-preview", 192000, 64000},
 		{"hy4-preview", 1000000, 64000},
 		{"hy4-preview-x", 1000000, 64000},
-		{"deepseek-v4-pro", 1000000, 384000},
-		{"deepseek-v4-flash", 1000000, 384000},
-		{"deepseek-v4.1-flash", 1000000, 384000},
-		{"gpt-6-astra", 1048576, 128000},
-		{"gpt-5.6-sol", 1048576, 128000},
-		{"gpt-5.6-terra", 1048576, 128000},
-		{"gpt-5.6-luna", 1048576, 128000},
-		{"gpt-5.5", 1048576, 128000},
-		{"gpt-5.4", 1048576, 128000},
-		{"gpt-5.3-codex", 400000, 128000},
-		{"gemini-3.5-flash", 1048576, 65536},
-		{"glm-5.3", 1000000, 131072},
+		{"deepseek-v4-pro", 1000000, 128000},
+		{"deepseek-v4-flash", 1000000, 50000},
+		{"deepseek-v4.1-flash", 1000000, 128000},
+		{"glm-5.3", 1000000, 64000},
 		{"glm-5.3-flash", 1000000, 131072},
 	}
 	for _, c := range cases {
@@ -101,48 +93,30 @@ func TestStaticTableOmitsUnknownOutputLimits(t *testing.T) {
 		if m.ContextLength <= 0 {
 			t.Errorf("%s context = %d, want the sourced value", model, m.ContextLength)
 		}
-		if m.MaxOutputTokens != 0 {
-			t.Errorf("%s MaxOutputTokens = %d, want 0 (no source exists)", model, m.MaxOutputTokens)
-		}
-		if m.SourceOf(FieldMaxOutputTokens) != "" {
-			t.Errorf("%s output provenance = %q, want empty", model, m.SourceOf(FieldMaxOutputTokens))
+		if m.MaxOutputTokens <= 0 {
+			t.Errorf("%s MaxOutputTokens = %d, want the client-published value", model, m.MaxOutputTokens)
 		}
 	}
 }
 
 func TestStaticTableEffortOnlyRows(t *testing.T) {
-	// hy3-x, kimi-k3-1, hy4-preview-f, fast/balanced/primary-model appear in the
-	// reference's effort tables but in no context table: efforts only, no window.
-	for _, c := range []struct {
-		model string
-		realm string
-		want  int
-	}{
-		{"hy3-x", RealmCN, 2},
-		{"kimi-k3-1", RealmCN, 1},
-		{"hy4-preview-f", RealmGlobal, 1},
-		{"fast-model", RealmGlobal, 1},
-		{"balanced-model", RealmGlobal, 1},
-		{"primary-model", RealmGlobal, 1},
-	} {
-		m, ok := StaticMeta("workbuddy", c.realm, c.model)
-		if !ok {
-			t.Errorf("StaticMeta(workbuddy, %s, %q) not found", c.realm, c.model)
-			continue
-		}
-		if len(m.Efforts) != c.want {
-			t.Errorf("%s/%s efforts = %v, want %d entries", c.realm, c.model, m.Efforts, c.want)
-		}
-		if m.ContextLength != 0 || m.MaxOutputTokens != 0 {
-			t.Errorf("%s/%s invented a window: %d/%d", c.realm, c.model, m.ContextLength, m.MaxOutputTokens)
-		}
+	// hy4-preview-f has an effort row but no client-published window. kimi-k3-1
+	// was removed because the installed client does not publish that id.
+	m, ok := StaticMeta("workbuddy", RealmGlobal, "hy4-preview-f")
+	if !ok {
+		t.Fatal("StaticMeta(workbuddy, global, hy4-preview-f) not found")
 	}
-	// And the same rows must not leak into the other realm.
-	if _, ok := StaticMeta("workbuddy", RealmGlobal, "hy3-x"); ok {
-		t.Error("hy3-x has only a CN effort row; the global realm must not borrow it")
+	if len(m.Efforts) != 1 {
+		t.Errorf("global/hy4-preview-f efforts = %v, want 1 entry", m.Efforts)
 	}
-	if _, ok := StaticMeta("workbuddy", RealmCN, "fast-model"); ok {
-		t.Error("fast-model has only a global effort row; the CN realm must not borrow it")
+	if m.ContextLength != 0 || m.MaxOutputTokens != 0 {
+		t.Errorf("global/hy4-preview-f invented a window: %d/%d", m.ContextLength, m.MaxOutputTokens)
+	}
+	if _, ok := StaticMeta("workbuddy", RealmCN, "hy4-preview-f"); ok {
+		t.Error("hy4-preview-f has only a global effort row; the CN realm must not borrow it")
+	}
+	if _, ok := StaticMeta("workbuddy", RealmCN, "kimi-k3-1"); ok {
+		t.Error("kimi-k3-1 is not present in the installed client")
 	}
 }
 
@@ -167,15 +141,49 @@ func TestStaticTableEffortsAreRealmSplit(t *testing.T) {
 	if gl.DefaultEffort != "high" {
 		t.Fatalf("global default = %q, want high", gl.DefaultEffort)
 	}
-	// Context and output are realm-independent: same id, same window.
-	if cn.ContextLength != gl.ContextLength || cn.ContextLength != 1000000 {
-		t.Fatalf("context differs by realm: cn=%d global=%d", cn.ContextLength, gl.ContextLength)
+	if cn.ContextLength != 1000000 || gl.ContextLength != 1000000 {
+		t.Fatalf("context = %d/%d, want 1000000/1000000", cn.ContextLength, gl.ContextLength)
 	}
-	if cn.MaxOutputTokens != gl.MaxOutputTokens || cn.MaxOutputTokens != 384000 {
-		t.Fatalf("output differs by realm: cn=%d global=%d", cn.MaxOutputTokens, gl.MaxOutputTokens)
+	if cn.MaxOutputTokens != 128000 || gl.MaxOutputTokens != 128000 {
+		t.Fatalf("output differs by realm: cn=%d global=%d, want 128000/128000", cn.MaxOutputTokens, gl.MaxOutputTokens)
 	}
 }
 
+func TestStaticTableRealmLimitsDoNotBorrowAcrossRealms(t *testing.T) {
+	cn, ok := StaticMeta("workbuddy", RealmCN, "glm-5.3")
+	if !ok {
+		t.Fatal("workbuddy/glm-5.3 not found")
+	}
+	if cn.ContextLength != 1000000 || cn.MaxOutputTokens != 64000 {
+		t.Fatalf("cn-qualified glm-5.3 = %d/%d, want 1000000/64000", cn.ContextLength, cn.MaxOutputTokens)
+	}
+
+	gl, ok := StaticMeta("workbuddy", RealmGlobal, "glm-5.3")
+	if !ok {
+		t.Fatal("workbuddy/global glm-5.3 not found")
+	}
+	if gl.ContextLength != 1000000 || gl.MaxOutputTokens != 48000 {
+		t.Fatalf("global glm-5.3 = %d/%d, want 1000000/48000", gl.ContextLength, gl.MaxOutputTokens)
+	}
+}
+
+func TestStaticMetaSelectsRealmFromQualifiedWorkbuddyID(t *testing.T) {
+	cn, ok := StaticMeta("workbuddy", "", "cn:deepseek-v4.1-flash")
+	if !ok {
+		t.Fatal("cn:deepseek-v4.1-flash not found")
+	}
+	if cn.ContextLength != 1000000 || cn.MaxOutputTokens != 128000 {
+		t.Fatalf("cn limits = %d/%d, want 1000000/128000", cn.ContextLength, cn.MaxOutputTokens)
+	}
+
+	gl, ok := StaticMeta("workbuddy", "", "global:deepseek-v4.1-flash")
+	if !ok {
+		t.Fatal("global:deepseek-v4.1-flash not found")
+	}
+	if gl.ContextLength != 1000000 || gl.MaxOutputTokens != 128000 {
+		t.Fatalf("global limits = %d/%d, want 1000000/128000", gl.ContextLength, gl.MaxOutputTokens)
+	}
+}
 func TestStaticTableV41EffortDefaults(t *testing.T) {
 	cases := []struct {
 		client  string
@@ -257,17 +265,10 @@ func TestStaticElevateTopDefaultsOnForEveryModel(t *testing.T) {
 	}
 }
 func TestStaticTableRealmMissingMeansNoVocabulary(t *testing.T) {
-	// glm-5.1 exists in the CN effort table only. The global realm still knows its
-	// window (context is realm-independent) but must not be handed CN efforts.
-	m, ok := StaticMeta("workbuddy", RealmGlobal, "glm-5.1")
-	if !ok {
-		t.Fatal("glm-5.1 should resolve globally for its window")
-	}
-	if len(m.Efforts) != 0 || m.DefaultEffort != "" {
-		t.Fatalf("global efforts = %v default = %q, want none", m.Efforts, m.DefaultEffort)
-	}
-	if m.ContextLength != 200000 {
-		t.Fatalf("context = %d, want 200000", m.ContextLength)
+	// glm-5.1 exists in the CN realm only; the global realm must not borrow
+	// either its window or its vocabulary.
+	if m, ok := StaticMeta("workbuddy", RealmGlobal, "glm-5.1"); ok {
+		t.Fatalf("CN-only glm-5.1 leaked into the global realm: %+v", m)
 	}
 	// An empty or unknown realm behaves like CN, matching the reference's realmKey.
 	for _, realm := range []string{"", "cn", "CN", "  cn  ", "whatever"} {
@@ -287,16 +288,15 @@ func TestStaticTableRealmMissingMeansNoVocabulary(t *testing.T) {
 }
 
 func TestStaticLookupFallsBackToCaseInsensitive(t *testing.T) {
-	// tabbit lists its models capitalised while the reference table is lowercase.
-	m, ok := StaticMeta("tabbit", RealmCN, "gpt-5.5")
+	m, ok := StaticMeta("kimi", RealmCN, "k3-agent-ultra")
 	if !ok {
-		t.Fatal("tabbit/GPT-5.5 (asked lowercase) should match the static row")
+		t.Fatal("kimi/k3-agent-ultra should match the exact row")
 	}
-	if m.ContextLength != 1050000 || m.MaxOutputTokens != 128000 {
-		t.Fatalf("got %d/%d, want 1050000/128000", m.ContextLength, m.MaxOutputTokens)
+	if m.ContextLength != 1000000 || m.MaxOutputTokens != 0 {
+		t.Fatalf("got %d/%d, want 1000000/0", m.ContextLength, m.MaxOutputTokens)
 	}
-	if _, ok := StaticMeta("tabbit", RealmCN, "GPT-5.5"); !ok {
-		t.Fatal("the exact id must resolve too")
+	if _, ok := StaticMeta("tabbit", RealmCN, "gpt-5.5"); ok {
+		t.Fatal("tabbit row should be absent without a client-published window")
 	}
 }
 
@@ -308,23 +308,23 @@ func TestStaticUnknownModelsAreNotFound(t *testing.T) {
 	}
 	// Only the K3 agent ids have a public source. The rest of the kimi module's
 	// builtin ids must stay unresolved rather than borrow the K3 window.
-	if m, ok := StaticMeta("kimi", RealmCN, "k3-agent"); !ok || m.ContextLength != 1048576 {
-		t.Errorf("kimi/k3-agent = %+v ok=%v, want the documented 1M window", m, ok)
+	if m, ok := StaticMeta("kimi", RealmCN, "k3-agent"); !ok || m.ContextLength != 1000000 {
+		t.Errorf("kimi/k3-agent = %+v ok=%v, want the client-published 1M window", m, ok)
 	}
-	for _, model := range []string{"kimi", "kimi-k2", "k2d6-agent"} {
+	for _, model := range []string{"kimi", "kimi-k2"} {
 		if m, ok := StaticMeta("kimi", RealmCN, model); ok {
-			t.Errorf("kimi/%q resolved to %+v, but no source exists for it", model, m)
+			t.Errorf("kimi/%q resolved to %+v, but no client source exists for it", model, m)
 		}
 	}
-	if ids := StaticModelIDs("kimi"); len(ids) != 2 {
-		t.Errorf("StaticModelIDs(kimi) = %v, want the two K3 agent ids", ids)
+	if ids := StaticModelIDs("kimi"); len(ids) != 3 {
+		t.Errorf("StaticModelIDs(kimi) = %v, want three client-cache ids", ids)
 	}
 }
 
 func TestStaticModelIDsAreSortedCopies(t *testing.T) {
-	ids := StaticModelIDs("tabbit")
-	if len(ids) != 22 {
-		t.Fatalf("StaticModelIDs(tabbit) = %v, want 22 entries", ids)
+	ids := StaticModelIDs("zcode")
+	if len(ids) != 10 {
+		t.Fatalf("StaticModelIDs(zcode) = %v, want 10 entries", ids)
 	}
 	for i := 1; i < len(ids); i++ {
 		if ids[i-1] > ids[i] {
@@ -332,7 +332,7 @@ func TestStaticModelIDsAreSortedCopies(t *testing.T) {
 		}
 	}
 	ids[0] = "mutated"
-	if again := StaticModelIDs("tabbit"); again[0] == "mutated" {
+	if again := StaticModelIDs("zcode"); again[0] == "mutated" {
 		t.Fatal("StaticModelIDs returned a view into package state")
 	}
 }

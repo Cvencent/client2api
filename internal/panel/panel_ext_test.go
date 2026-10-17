@@ -407,8 +407,8 @@ func TestModelsListGroupsByClient(t *testing.T) {
 	if got.RefreshedAt == "" {
 		t.Error("refreshed_at is empty")
 	}
-	if len(got.Clients) != 2 {
-		t.Fatalf("clients = %d, want 2", len(got.Clients))
+	if len(got.Clients) != 3 {
+		t.Fatalf("clients = %d, want the two platform rows plus the virtual row", len(got.Clients))
 	}
 	byName := map[string]clientModels{}
 	for _, c := range got.Clients {
@@ -430,6 +430,9 @@ func TestModelsListGroupsByClient(t *testing.T) {
 	}
 	if byName["plain"].Models[0].OwnedBy != "plain" {
 		t.Errorf("owned_by = %q, want the client name as fallback", byName["plain"].Models[0].OwnedBy)
+	}
+	if _, ok := byName[core.VirtualModelClient]; !ok {
+		t.Fatalf("virtual model row missing from %v", byName)
 	}
 }
 

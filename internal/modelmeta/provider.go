@@ -135,6 +135,10 @@ func (p *Provider) resolveAt(model string, vendor Meta, at time.Time) (Meta, boo
 	if p == nil {
 		return vendor.Clone(), !vendor.IsZero()
 	}
+	realm := p.realm
+	if _, modelRealm, qualified := splitStaticRealm(model); qualified {
+		realm = modelRealm
+	}
 	out := vendor.Clone()
 	if p.overrides != nil && model != "" {
 		if o, ok := p.overrides.Get(p.client, model); ok {
@@ -144,7 +148,7 @@ func (p *Provider) resolveAt(model string, vendor Meta, at time.Time) (Meta, boo
 	model = strings.TrimSpace(model)
 	if model != "" {
 		if e, ok := static().entry(p.client, model); ok {
-			out = Merge(out, e.meta(p.realm))
+			out = Merge(out, e.meta(realm))
 		}
 		if m, ok := p.remote.lookup(model); ok {
 			out = Merge(out, m)

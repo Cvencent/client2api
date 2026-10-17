@@ -13,15 +13,11 @@ func TestStaticTableCoversPlatformModels(t *testing.T) {
 		context int64
 		output  int64
 	}{
-		{"codearts", "GLM-5.2", 1048576, 131072},
-		{"opencode", "mimo-v2.6-flash-free", 1048576, 131072},
-		{"kimi", "k3-agent", 1048576, 131072},
-		{"lobsterai", "deepseek-flash", 1048576, 384000},
-		{"minimaxcode", "MiniMax-M3", 1048576, 131072},
-		{"qwenwork", "pro", 1000000, 131072},
-		{"tabbit", "GLM-5.3", 1048576, 131072},
-		{"trae", "step-5-preview", 1048576, 65536},
-		{"zcode", "glm-5.3-flash", 1048576, 131072},
+		{"kimi", "k3-agent", 1000000, 0},
+		{"lobsterai", "deepseek-flash", 1000000, 0},
+		{"minimaxcode", "MiniMax-M3", 512000, 128000},
+		{"zcode", "glm-5.3-flash", 1000000, 128000},
+		{"autoclaw", "zaicoding_glm-5.3", 1048576, 307200},
 	}
 	for _, c := range cases {
 		m, ok := StaticMeta(c.client, RealmCN, c.model)

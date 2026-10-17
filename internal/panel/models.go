@@ -3,6 +3,7 @@ package panel
 import (
 	"context"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -140,12 +141,240 @@ func (p *panel) serveModels(w http.ResponseWriter, r *http.Request, refresh bool
 	}
 	wg.Wait()
 
+	if r.URL.Query().Get("client") == "" {
+		out = append(out, p.virtualModelsFor(out))
+	}
 	writeJSON(w, http.StatusOK, modelsReport{
 		RefreshedAt: time.Now().UTC().Format(time.RFC3339),
 		Clients:     out,
 	})
 }
 
+// virtualModelsFor exposes the gateway-level routing names in the same
+// editable table as platform models.  Their fallback window is the widest
+// concrete member the name may reach; routing still trims per candidate.
+func (p *panel) virtualModelsFor(real []clientModels) clientModels {
+	row := clientModels{Name: core.VirtualModelClient, Models: []modelInfo{}}
+	if p.opts.Registry == nil {
+		return row
+	}
+
+	type pick struct {
+		display  string
+		raw      string
+		context  int64
+		output   int64
+		efforts  []string
+		default_ string
+	}
+	auto := map[string]pick{}
+	// firstDefault keeps the default advertised by the first routed platform.
+	// The aggregate window/efforts grow across platforms, but an omitted effort
+	// must not drift to whichever member happened to be iterated last.
+	firstDefault := map[string]string{}
+	concrete := map[string]modelInfo{}
+	concreteEfforts := map[string][]string{}
+	concreteDefaults := map[string]string{}
+	for _, c := range real {
+		for _, m := range c.Models {
+			concrete[c.Name+"\x00"+m.ID] = m
+			concreteEfforts[c.Name+"\x00"+m.ID] = append([]string(nil), m.SupportedEfforts...)
+			concreteDefaults[c.Name+"\x00"+m.ID] = m.DefaultEffort
+			key := core.CanonicalModelID(m.ID)
+			if key == "" {
+				continue
+			}
+			display := core.ModelDisplayID(m.ID)
+			if display == "" {
+				display = m.ID
+			}
+			next := pick{
+				display: display, raw: m.ID, context: m.ContextLength, output: m.MaxOutputTokens,
+				efforts: append([]string(nil), m.SupportedEfforts...), default_: m.DefaultEffort,
+			}
+			if _, ok := firstDefault[key]; !ok {
+				firstDefault[key] = m.DefaultEffort
+			}
+			if prev, ok := auto[key]; ok {
+				if prev.context > next.context {
+					next.context = prev.context
+				}
+				if prev.output > next.output {
+					next.output = prev.output
+				}
+				next.efforts = dedupeEfforts(append(append([]string(nil), prev.efforts...), next.efforts...))
+				if !betterVirtualDisplay(next.display, next.raw, prev.display, prev.raw) {
+					next.display = prev.display
+					next.raw = prev.raw
+				}
+			}
+			auto[key] = next
+		}
+	}
+
+	appendRow := func(id, ownedBy string, context, output int64, efforts []string, defaultEffort string, extra map[string]any) {
+		contextSource, outputSource := "", ""
+		if context > 0 {
+			contextSource = modelmeta.SourceVendor
+		}
+		if output > 0 {
+			outputSource = modelmeta.SourceVendor
+		}
+		effortsSource := ""
+		if len(efforts) > 0 {
+			effortsSource = modelmeta.SourceVendor
+		}
+		contextDefault, outputDefault := context, output
+		effortsDefault := append([]string(nil), efforts...)
+		defaultDefault := defaultEffort
+		if p.opts.ModelOverrides != nil {
+			if o, ok := p.opts.ModelOverrides.Get(core.VirtualModelClient, id); ok {
+				if o.ContextLength > 0 {
+					context = o.ContextLength
+					contextSource = modelmeta.SourceManual
+				}
+				if o.MaxOutputTokens > 0 {
+					output = o.MaxOutputTokens
+					outputSource = modelmeta.SourceManual
+				}
+				if len(o.SupportedEfforts) > 0 {
+					efforts = append([]string(nil), o.SupportedEfforts...)
+					effortsSource = modelmeta.SourceManual
+				}
+				if o.DefaultEffort != "" && containsString(efforts, o.DefaultEffort) {
+					defaultEffort = o.DefaultEffort
+				}
+			}
+		}
+		if defaultEffort != "" && !containsString(efforts, defaultEffort) {
+			defaultEffort = ""
+		}
+		row.Models = append(row.Models, modelInfo{
+			ID:               id,
+			OwnedBy:          ownedBy,
+			Extra:            extra,
+			ContextLength:    context,
+			MaxOutputTokens:  output,
+			ContextSource:    contextSource,
+			MaxOutputSource:  outputSource,
+			ContextDefault:   contextDefault,
+			MaxOutputDefault: outputDefault,
+			SupportedEfforts: efforts,
+			DefaultEffort:    defaultEffort,
+			EffortsSource:    effortsSource,
+			DefaultEffortSource: func() string {
+				if defaultEffort != "" {
+					return effortsSource
+				}
+				return ""
+			}(),
+			SupportedEffortsDefault: effortsDefault,
+			DefaultEffortDefault:    defaultDefault,
+			ContextEditable:         p.opts.ModelOverrides != nil,
+			MaxOutputEditable:       p.opts.ModelOverrides != nil,
+			EffortsEditable:         p.opts.ModelOverrides != nil,
+		})
+	}
+
+	keys := make([]string, 0, len(auto))
+	for key := range auto {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		pick := auto[key]
+		pick.default_ = firstDefault[key]
+		appendRow("Auto/"+pick.display, "auto", pick.context, pick.output, pick.efforts, pick.default_, map[string]any{
+			"auto":   true,
+			"target": key,
+		})
+	}
+
+	groups := p.opts.Registry.ModelGroups()
+	names := make([]string, 0, len(groups))
+	for name := range groups {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		group := groups[name]
+		var context, output int64
+		members := make([]string, 0, len(group.Members))
+		var efforts []string
+		defaultEffort := ""
+		for _, member := range group.Members {
+			qualified := member.Client + "/" + member.Model
+			members = append(members, qualified)
+			if strings.EqualFold(member.Client, "Auto") {
+				if pick, ok := auto[core.CanonicalModelID(member.Model)]; ok {
+					if pick.context > context {
+						context = pick.context
+					}
+					if pick.output > output {
+						output = pick.output
+					}
+					efforts = dedupeEfforts(append(efforts, pick.efforts...))
+					if defaultEffort == "" && pick.default_ != "" {
+						defaultEffort = pick.default_
+					}
+				}
+				continue
+			}
+			if m, ok := concrete[member.Client+"\x00"+member.Model]; ok {
+				if m.ContextLength > context {
+					context = m.ContextLength
+				}
+				if m.MaxOutputTokens > output {
+					output = m.MaxOutputTokens
+				}
+				efforts = dedupeEfforts(append(efforts, concreteEfforts[member.Client+"\x00"+member.Model]...))
+				if defaultEffort == "" {
+					defaultEffort = concreteDefaults[member.Client+"\x00"+member.Model]
+				}
+			}
+		}
+		appendRow(name, "group", context, output, efforts, defaultEffort, map[string]any{"members": members})
+	}
+	return row
+}
+
+func containsString(list []string, want string) bool {
+	for _, v := range list {
+		if strings.EqualFold(strings.TrimSpace(v), strings.TrimSpace(want)) {
+			return true
+		}
+	}
+	return false
+}
+
+func dedupeEfforts(list []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(list))
+	for _, v := range list {
+		v = strings.ToLower(strings.TrimSpace(v))
+		if v == "" {
+			continue
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	return out
+}
+
+func betterVirtualDisplay(nextDisplay, nextRaw, oldDisplay, oldRaw string) bool {
+	nextBare := strings.EqualFold(nextRaw, nextDisplay)
+	oldBare := strings.EqualFold(oldRaw, oldDisplay)
+	if nextBare != oldBare {
+		return nextBare
+	}
+	if len(nextDisplay) != len(oldDisplay) {
+		return len(nextDisplay) < len(oldDisplay)
+	}
+	return nextDisplay < oldDisplay
+}
 func (p *panel) modelsFor(ctx context.Context, c core.Client, refresh bool) clientModels {
 	row := clientModels{Name: c.Name(), Models: []modelInfo{}}
 	effortProvider, hasEffortProvider := core.AsModelEfforts(c)
@@ -213,6 +442,19 @@ func (p *panel) modelsFor(ctx context.Context, c core.Client, refresh bool) clie
 		plain := modelmeta.New(modelmeta.Options{Client: c.Name(), Realm: realm})
 		meta := provider.Merge(m.ID, vendor)
 		base := plain.Merge(m.ID, vendor)
+		// The panel treats the client's published catalogue as the default
+		// capability: it is what the user sees before touching the row, and it
+		// must not be masked by an upstream Extra value from a different
+		// catalogue. The manual override remains the final authority.
+		if clientMeta, ok := modelmeta.StaticMeta(c.Name(), realm, m.ID); ok {
+			meta = modelmeta.PreferLimits(meta, clientMeta)
+			base = modelmeta.PreferLimits(base, clientMeta)
+		}
+		if p.opts.ModelOverrides != nil {
+			if o, ok := p.opts.ModelOverrides.Get(c.Name(), m.ID); ok {
+				meta = modelmeta.ApplyOverride(meta, o)
+			}
+		}
 		// The effective policy is the shared resolver, so the checkbox reflects
 		// what the gateway will actually do (an embedded default applies unless
 		// the operator recorded an explicit choice).
@@ -266,6 +508,9 @@ func (p *panel) modelsFor(ctx context.Context, c core.Client, refresh bool) clie
 }
 
 func modelRealmForID(id string) string {
+	if prefix, rest, ok := strings.Cut(strings.TrimSpace(id), ":"); ok && rest != "" && prefix == modelmeta.RealmCN {
+		return modelmeta.RealmCN
+	}
 	if prefix, rest, ok := strings.Cut(strings.TrimSpace(id), ":"); ok && rest != "" && prefix == modelmeta.RealmGlobal {
 		return modelmeta.RealmGlobal
 	}

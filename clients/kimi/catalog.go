@@ -29,11 +29,11 @@ var metaProvider = modelmeta.New(modelmeta.Options{Client: "kimi"})
 // are unverified against the CLI).  Any id not listed here is still accepted by
 // Chat and passed straight through to the CLI as `-m <id>`.
 //
-// None of these five ids is covered by an authoritative source for a context
-// window or an output limit, so no such number is attached here: an empty field
-// is correct, a guessed one would be a bug.  The modelmeta call is in place so a
-// sourced number would flow through automatically, and it only ever adds
-// metadata keys — it never marks an unverified id as verified.
+// The installed client cache publishes a context window for the three
+// k3/k2d6 ids, so modelmeta fills that field.  It publishes no output cap for
+// any of them, and the two reference ids have no client-published window at
+// all; those fields stay empty rather than being guessed.  The modelmeta call
+// only adds metadata keys — it never marks an unverified id as verified.
 func builtinCatalog() []core.Model {
 	return []core.Model{
 		builtinEntry("kimi", map[string]any{"source": "builtin", "default": true}),

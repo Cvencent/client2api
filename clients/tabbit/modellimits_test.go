@@ -6,8 +6,8 @@ import (
 	"testing"
 )
 
-// limitsFixture carries one id the embedded metadata table can source (GLM-5.1)
-// and one it cannot (Default), so the test can pin both halves of the contract.
+// limitsFixture carries two ids for which the installed Tabbit client publishes
+// no per-model output limit.
 const limitsFixture = `{"object":"list","data":[
  {"id":"tabbit/GLM-5.1"},
  {"id":"tabbit/Default"}
@@ -16,10 +16,10 @@ const limitsFixture = `{"object":"list","data":[
 // TestModelMaxOutputTokensReadsTheCachedCatalogue pins what the gateway gets
 // when a caller omits max_tokens.
 //
-// tabbit is the module whose number comes from internal/modelmeta rather than
-// from the vendor's own payload, so this also pins that the merge actually
-// reaches the cache the chat path reads.
-func TestModelMaxOutputTokensReadsTheCachedCatalogue(t *testing.T) {
+// The installed Tabbit client does not publish output caps, so the catalogue
+// must report unknown both before and after the cache is populated rather than
+// borrowing a number from public documentation.
+func TestModelMaxOutputTokensStaysUnknownWithoutClientLimit(t *testing.T) {
 	hc := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		if r.URL.Path == "/v1/models" {
 			return jsonResponse(200, limitsFixture), nil
@@ -39,14 +39,11 @@ func TestModelMaxOutputTokensReadsTheCachedCatalogue(t *testing.T) {
 	}
 
 	n, ok := c.ModelMaxOutputTokens(ctx, "GLM-5.1")
-	if !ok {
-		t.Fatal("GLM-5.1 is sourced by the metadata table but the module declined to say so")
-	}
-	if n != 131072 {
-		t.Fatalf("max output tokens = %d, want the sourced 131072", n)
+	if ok {
+		t.Fatalf("GLM-5.1 = %d, true; the installed client publishes no output cap", n)
 	}
 
-	// An id no source covers must stay uncapped rather than borrow a number.
+	// An unsourced id must stay uncapped rather than borrow a number.
 	if n, ok := c.ModelMaxOutputTokens(ctx, "Default"); ok {
 		t.Fatalf("Default = %d, true; want ok=false", n)
 	}

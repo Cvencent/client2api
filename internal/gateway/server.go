@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -303,6 +304,14 @@ func (s *server) handleNotFound(w http.ResponseWriter, r *http.Request) {
 type autoModelPick struct {
 	display string
 	raw     string
+	// window and output are the largest resolved context/output among the
+	// platforms this Auto name may route to, as seen while building the list.
+	window  int64
+	output  int64
+	efforts []string
+	// defaultEffort is the first candidate's advertised default in routing
+	// order, which is also the level an omitted request will inherit.
+	defaultEffort string
 }
 
 // betterAutoDisplay keeps the Auto/ catalogue stable regardless of the
@@ -332,6 +341,10 @@ func (s *server) handleModels(w http.ResponseWriter, r *http.Request) {
 	// resolved caches each advertised id's context/output so the alias table
 	// below can reuse the target's numbers instead of re-resolving them.
 	resolved := make(map[string]modelmeta.Meta, 64)
+	// catalogs is the same snapshot, kept by platform for the static route plan.
+	// Auto's published default effort must follow the user's routing priority,
+	// not the registry's registration order.
+	catalogs := make(map[string][]core.Model, len(s.opts.Registry.All()))
 	// Auto/<model> is a gateway-level virtual model, not an upstream id.
 	// Aggregate vendor catalogues under one stable display name so a caller
 	// can ask the gateway to choose the platform.  Keep every platform-
@@ -343,6 +356,7 @@ func (s *server) handleModels(w http.ResponseWriter, r *http.Request) {
 			s.opts.Logger.Printf("models: client %s: %v", c.Name(), err)
 			continue
 		}
+		catalogs[c.Name()] = append([]core.Model(nil), models...)
 		for _, m := range models {
 			id := c.Name() + "/" + m.ID
 			if _, dup := seen[id]; dup {
@@ -355,13 +369,43 @@ func (s *server) handleModels(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			if key := core.CanonicalModelID(m.ID); key != "" {
-				pick := autoModelPick{display: core.ModelDisplayID(m.ID), raw: m.ID}
-				if pick.display == "" {
-					pick.display = m.ID
+				display := core.ModelDisplayID(m.ID)
+				if display == "" {
+					display = m.ID
 				}
-				if old, ok := auto[key]; !ok || betterAutoDisplay(pick, old) {
-					auto[key] = pick
+				// Accumulate the largest window/output this canonical id can be
+				// served with, from every platform that advertises it.  The Auto
+				// entry then offers the caller a number it can actually size to,
+				// while request-time routing still trims per candidate.
+				candidateMeta := s.resolvedModelMetaWithEfforts(ctx, c, m.ID, m.Extra)
+				if learned := s.learnedWindows.get(c.Name(), m.ID); learned > 0 && candidateMeta.SourceOf(modelmeta.FieldContextLength) != modelmeta.SourceManual {
+					candidateMeta.ContextLength = learned
 				}
+				next := autoModelPick{
+					display:       display,
+					raw:           m.ID,
+					window:        candidateMeta.ContextLength,
+					output:        candidateMeta.MaxOutputTokens,
+					efforts:       append([]string(nil), candidateMeta.Efforts...),
+					defaultEffort: candidateMeta.DefaultEffort,
+				}
+				if prev, ok := auto[key]; ok {
+					if prev.window > next.window {
+						next.window = prev.window
+					}
+					if prev.output > next.output {
+						next.output = prev.output
+					}
+					next.efforts = dedupeEfforts(append(append([]string(nil), prev.efforts...), next.efforts...))
+					if prev.defaultEffort != "" {
+						next.defaultEffort = prev.defaultEffort
+					}
+					if !betterAutoDisplay(next, prev) {
+						next.display = prev.display
+						next.raw = prev.raw
+					}
+				}
+				auto[key] = next
 			}
 			seen[id] = struct{}{}
 			owned := m.OwnedBy
@@ -370,13 +414,13 @@ func (s *server) handleModels(w http.ResponseWriter, r *http.Request) {
 			}
 			// Resolve the window/output from override > vendor > official preset so
 			// a caller can size its context even when the vendor reported nothing.
-			meta := s.resolvedModelMeta(c, m.ID, m.Extra)
+			meta := s.resolvedModelMetaWithEfforts(ctx, c, m.ID, m.Extra)
 			// A window this gateway learned from the vendor's own refusal outranks
 			// every published figure, including a vendor catalogue that has not
 			// caught up with a limit change.  This is the number a client sizes its
 			// own context from, so correcting it here is what actually stops an
 			// over-packed request from being built in the first place.
-			if learned := s.learnedWindows.get(c.Name(), m.ID); learned > 0 {
+			if learned := s.learnedWindows.get(c.Name(), m.ID); learned > 0 && meta.SourceOf(modelmeta.FieldContextLength) != modelmeta.SourceManual {
 				meta.ContextLength = learned
 				if meta.FieldSources == nil {
 					meta.FieldSources = map[string]string{}
@@ -385,10 +429,10 @@ func (s *server) handleModels(w http.ResponseWriter, r *http.Request) {
 			}
 			resolved[id] = meta
 			// Mirror the resolved numbers into Extra as well: some clients read the
-			// OpenAI top-level field, others look inside extra. Fill only what the
-			// vendor left empty so the vendor's own numbers are never overwritten.
-			// Clone before adding: the map belongs to the module's catalogue and
-			// mutating it here would leak resolved values back into the module.
+			// OpenAI top-level field, others look inside extra. Assign rather than
+			// fill-only, because the resolved value may deliberately outrank a stale
+			// vendor catalogue limit. Clone before adding: the map belongs to the
+			// module's catalogue and mutating it here would leak values back into it.
 			var extra map[string]any
 			if len(m.Extra) > 0 {
 				extra = make(map[string]any, len(m.Extra)+2)
@@ -400,10 +444,10 @@ func (s *server) handleModels(w http.ResponseWriter, r *http.Request) {
 				if extra == nil {
 					extra = map[string]any{}
 				}
-				if _, ok := extra["context_length"]; !ok && meta.ContextLength > 0 {
+				if meta.ContextLength > 0 {
 					extra["context_length"] = meta.ContextLength
 				}
-				if _, ok := extra["max_output_tokens"]; !ok && meta.MaxOutputTokens > 0 {
+				if meta.MaxOutputTokens > 0 {
 					extra["max_output_tokens"] = meta.MaxOutputTokens
 				}
 			}
@@ -412,11 +456,15 @@ func (s *server) handleModels(w http.ResponseWriter, r *http.Request) {
 			// that reads extra -- rather than the top-level field -- keep packing
 			// to the figure this gateway has already proven wrong, which is the
 			// exact failure the learning exists to stop.
-			if learned := s.learnedWindows.get(c.Name(), m.ID); learned > 0 && extra != nil {
+			if learned := s.learnedWindows.get(c.Name(), m.ID); learned > 0 && extra != nil && meta.SourceOf(modelmeta.FieldContextLength) != modelmeta.SourceManual {
 				extra["context_length"] = learned
 			}
+			entryID := id
+			if codexPlusModelRequest(r) {
+				entryID = withCodexPlusWindowSuffix(id, meta.ContextLength)
+			}
 			out.Data = append(out.Data, modelEntry{
-				ID:              id,
+				ID:              entryID,
 				Object:          "model",
 				Created:         created,
 				OwnedBy:         owned,
@@ -459,17 +507,44 @@ func (s *server) handleModels(w http.ResponseWriter, r *http.Request) {
 	sort.Slice(out.Data, func(i, j int) bool { return out.Data[i].ID < out.Data[j].ID })
 
 	for key, display := range auto {
+		if plan, err := s.opts.Registry.ResolveStaticCatalog("Auto/"+display.display, catalogs); err == nil && len(plan.Steps) > 0 {
+			first := plan.Steps[0]
+			if m, ok := resolved[first.Platform+"/"+first.ModelID]; ok && m.DefaultEffort != "" {
+				display.defaultEffort = m.DefaultEffort
+			}
+		}
 		id := "Auto/" + display.display
 		if _, dup := seen[id]; dup {
 			continue
 		}
 		seen[id] = struct{}{}
+		meta := s.virtualModelMeta(id, modelmeta.Meta{
+			ContextLength:   display.window,
+			MaxOutputTokens: display.output,
+			Efforts:         append([]string(nil), display.efforts...),
+			DefaultEffort:   display.defaultEffort,
+		})
+		extra := map[string]any{"target": key}
+		if meta.ContextLength > 0 {
+			extra["context_length"] = meta.ContextLength
+		}
+		if meta.MaxOutputTokens > 0 {
+			extra["max_output_tokens"] = meta.MaxOutputTokens
+		}
+		if len(meta.Efforts) > 0 {
+			extra["supported_efforts"] = append([]string(nil), meta.Efforts...)
+		}
+		if meta.DefaultEffort != "" {
+			extra["default_effort"] = meta.DefaultEffort
+		}
 		out.Data = append(out.Data, modelEntry{
-			ID:      id,
-			Object:  "model",
-			Created: created,
-			OwnedBy: "auto",
-			Extra:   map[string]any{"target": key},
+			ID:              id,
+			Object:          "model",
+			Created:         created,
+			OwnedBy:         "auto",
+			ContextLength:   meta.ContextLength,
+			MaxOutputTokens: meta.MaxOutputTokens,
+			Extra:           extra,
 		})
 	}
 
@@ -481,19 +556,67 @@ func (s *server) handleModels(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		members := make([]string, 0, len(group.Members))
+		// A virtual group is only as large as its widest member.  Taking the
+		// maximum lets a caller size to the best member the group may reach,
+		// while request-time routing still trims per candidate when the group
+		// lands on a narrower one.
+		groupMeta := modelmeta.Meta{}
+		groupDefaultEffort := ""
 		for _, member := range group.Members {
-			members = append(members, member.Client+"/"+member.Model)
+			qualified := member.Client + "/" + member.Model
+			members = append(members, qualified)
+			if strings.EqualFold(strings.TrimSpace(member.Client), "Auto") {
+				// An Auto member expands to every platform serving that id, so
+				// its widest window is already accumulated in the auto table.
+				if pick, ok := auto[core.CanonicalModelID(member.Model)]; ok {
+					groupMeta = mergeWindow(groupMeta, modelmeta.Meta{
+						ContextLength:   pick.window,
+						MaxOutputTokens: pick.output,
+						Efforts:         append([]string(nil), pick.efforts...),
+					})
+					if groupDefaultEffort == "" {
+						groupDefaultEffort = pick.defaultEffort
+					}
+				}
+				continue
+			}
+			if m, ok := resolved[qualified]; ok {
+				groupMeta = mergeWindow(groupMeta, m)
+				if groupDefaultEffort == "" {
+					groupDefaultEffort = m.DefaultEffort
+				}
+			}
+		}
+		groupMeta.DefaultEffort = groupDefaultEffort
+		groupMeta = s.virtualModelMeta(name, groupMeta)
+		// Without a member-published vocabulary, keep the historical fixed
+		// ladder so an operator-declared group remains usable.  Once any member
+		// publishes a real ladder, the resolved union above is authoritative.
+		if len(groupMeta.Efforts) == 0 {
+			groupMeta.Efforts = []string{"low", "medium", "high", "xhigh", "max"}
+		}
+		extra := map[string]any{"members": members}
+		if groupMeta.ContextLength > 0 {
+			extra["context_length"] = groupMeta.ContextLength
+		}
+		if groupMeta.MaxOutputTokens > 0 {
+			extra["max_output_tokens"] = groupMeta.MaxOutputTokens
+		}
+		if len(groupMeta.Efforts) > 0 {
+			extra["supported_efforts"] = append([]string(nil), groupMeta.Efforts...)
+		}
+		if groupMeta.DefaultEffort != "" {
+			extra["default_effort"] = groupMeta.DefaultEffort
 		}
 		seen[name] = struct{}{}
 		out.Data = append(out.Data, modelEntry{
-			ID:      name,
-			Object:  "model",
-			Created: created,
-			OwnedBy: "group",
-			Extra: map[string]any{
-				"members":           members,
-				"supported_efforts": []string{"low", "medium", "high", "xhigh", "max"},
-			},
+			ID:              name,
+			Object:          "model",
+			Created:         created,
+			OwnedBy:         "group",
+			ContextLength:   groupMeta.ContextLength,
+			MaxOutputTokens: groupMeta.MaxOutputTokens,
+			Extra:           extra,
 		})
 	}
 
@@ -642,6 +765,14 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 	// a module that aggregates its upstream calls per turn honours it verbatim
 	// instead of deriving one.
 	req.ConversationRequestID = strings.TrimSpace(r.Header.Get("X-Conversation-Request-ID"))
+	// The panel's chat tester can cap the window for one request so an operator
+	// can probe the real serving limit per platform. The cap is a gateway-only
+	// value: it never persists and never reaches a module's upstream body.
+	if raw := strings.TrimSpace(r.Header.Get("X-Client2API-Context-Window")); raw != "" {
+		if n, err := strconv.ParseInt(raw, 10, 64); err == nil && n > 0 {
+			req.ContextWindowLimit = n
+		}
+	}
 	// The usage journal answers "which session made this call", so it records
 	// the caller's own session identifier, exactly the one the router pins a
 	// conversation to.  It is set here, once, so failover attempts below can
@@ -668,8 +799,11 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 // is called from routeAndServe once the first candidate has been refused in a
 // way that a sibling platform could plausibly serve, and it speaks only in the
 // protocol-neutral routeInput so that both endpoints fail over identically.
-func (s *server) serveRemainingCandidates(w http.ResponseWriter, r *http.Request, in routeInput, candidates []core.Candidate, firstCandidate int, maxTokensExplicit bool) (core.Client, func() core.HintContext, error, bool) {
-	rec, stat, baseReq := in.rec, in.stat, in.req
+func (s *server) serveRemainingCandidates(w http.ResponseWriter, r *http.Request, in routeInput, candidates []core.Candidate, firstCandidate int, maxTokensExplicit bool, baseReq *core.ChatRequest) (core.Client, func() core.HintContext, error, bool) {
+	rec, stat := in.rec, in.stat
+	if baseReq == nil {
+		baseReq = in.req
+	}
 
 	var (
 		lastClient core.Client
@@ -681,29 +815,27 @@ func (s *server) serveRemainingCandidates(w http.ResponseWriter, r *http.Request
 		attemptCtx := withCatalogueExtra(r.Context(), candidate)
 		rec.Candidate = firstCandidate
 		firstCandidate++
-		attemptReq := cloneChatRequest(baseReq)
-		attemptReq.Model = upstreamModel
-		// Each candidate carries its own free/paid verdict: an id served for
-		// free by one platform may be a paid model on the next.
-		attemptReq.FreeModel = candidate.Free
-		sentEffort := s.applyEffortPolicy(attemptCtx, client, upstreamModel, attemptReq, rec.ReasoningEffort)
-		rec.SentReasoningEffort = ""
-		if sentEffort != "" && sentEffort != rec.ReasoningEffort {
-			rec.SentReasoningEffort = sentEffort
-		}
-		if !maxTokensExplicit {
-			attemptReq.MaxTokens = nil
-			if n, ok := s.resolveMaxOutputTokens(attemptCtx, client, upstreamModel); ok {
-				attemptReq.MaxTokens = &n
-			}
-		}
-		rec.Client = client.Name()
-		rec.Model = client.Name() + "/" + upstreamModel
-		rec.Realm = ""
-		if h, ok := core.HealthOf(client); ok && len(h.Realms) == 1 {
-			for realm := range h.Realms {
-				rec.Realm = realm
-			}
+
+		attemptReq, prepErr := s.prepareCandidateAttempt(attemptCtx, candidate, baseReq, rec, maxTokensExplicit)
+		if prepErr != nil {
+			// The newest turn alone does not fit this candidate. Record the
+			// attempt and keep walking the user's priority order: a later
+			// platform with a larger window may still serve the full request.
+			hintCtx := s.hintContextFunc(attemptCtx, client, upstreamModel, baseReq.Messages)
+			s.opts.Usage.RecordAttempt(UsageRecord{
+				At:            time.Now(),
+				StartedAt:     rec.StartedAt,
+				Client:        client.Name(),
+				SessionID:     rec.SessionID,
+				Model:         client.Name() + "/" + upstreamModel,
+				Candidate:     rec.Candidate,
+				FailureReason: failureReason(prepErr),
+				Failed:        true,
+				Attempt:       true,
+			})
+			lastClient, lastHint, lastErr = client, hintCtx, prepErr
+			s.opts.Logger.Printf("chat: platform %s model %s cannot fit the newest turn (%v), trying the next platform", client.Name(), upstreamModel, prepErr)
+			continue
 		}
 		stat.model = rec.Model
 
@@ -776,6 +908,11 @@ func (s *server) serveRemainingCandidates(w http.ResponseWriter, r *http.Request
 			FailureReason:       failureReason(err),
 			Failed:              true,
 			Attempt:             true,
+			Trimmed:             rec.Trimmed,
+			TrimDropped:         rec.TrimDropped,
+			TrimmedFromTokens:   rec.TrimmedFromTokens,
+			TrimmedToTokens:     rec.TrimmedToTokens,
+			ContextWindow:       rec.ContextWindow,
 		})
 		lastClient, lastHint, lastErr = client, hintCtx, err
 

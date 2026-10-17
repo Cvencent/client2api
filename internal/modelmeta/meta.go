@@ -236,6 +236,33 @@ func Merge(vendor, fallback Meta) Meta {
 	return out
 }
 
+// PreferLimits overlays only the two capacity limits from preferred onto dst.
+// It is used by callers that deliberately want a platform-published preset to
+// outrank a stale value in a live catalogue Extra, while keeping every other
+// metadata field (efforts, prices and their provenance) from dst untouched.
+func PreferLimits(dst, preferred Meta) Meta {
+	out := dst.Clone()
+	if out.FieldSources == nil {
+		out.FieldSources = map[string]string{}
+	}
+	if preferred.ContextLength > 0 {
+		out.ContextLength = preferred.ContextLength
+		out.FieldSources[FieldContextLength] = preferred.SourceOf(FieldContextLength)
+		if out.FieldSources[FieldContextLength] == "" {
+			out.FieldSources[FieldContextLength] = SourceStatic
+		}
+	}
+	if preferred.MaxOutputTokens > 0 {
+		out.MaxOutputTokens = preferred.MaxOutputTokens
+		out.FieldSources[FieldMaxOutputTokens] = preferred.SourceOf(FieldMaxOutputTokens)
+		if out.FieldSources[FieldMaxOutputTokens] == "" {
+			out.FieldSources[FieldMaxOutputTokens] = SourceStatic
+		}
+	}
+	out.Source = strongestSource(out.FieldSources)
+	return out
+}
+
 // strongestSource returns the most authoritative source present in a per-field
 // provenance map, or "" when nothing is known.
 func strongestSource(sources map[string]string) string {

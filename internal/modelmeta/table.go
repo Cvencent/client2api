@@ -16,11 +16,11 @@ import (
 //go:embed table.json
 var tableJSON []byte
 
-// Realm names. Context and output limits are realm-independent (the reference
-// keeps one context table because the same model id has the same window) while
-// reasoning efforts are deliberately realm-split: for example the international
-// edition of deepseek-v4.1-flash accepts only ["high"] and rejects low/max with an
-// HTTP 400. The reference treats every realm except "global" as the CN table.
+// Realm names. Reasoning efforts and client-published context/output limits are
+// deliberately realm-split: the two WorkBuddy editions publish different caps
+// for the same model id, and the international edition of deepseek-v4.1-flash
+// accepts only ["high"]. A realm-split row never borrows a missing field from the
+// other realm, because that would send numbers the client never published.
 const (
 	RealmCN     = "cn"
 	RealmGlobal = "global"
@@ -43,18 +43,28 @@ type effortSpec struct {
 	DefaultEffort string   `json:"default_effort,omitempty"`
 }
 
+// realmLimitSpec is one realm's context and output limits. A row that carries
+// LimitsByRealm is deliberately not allowed to borrow a missing field from the
+// other realm: WorkBuddy publishes different output caps per realm, and a
+// cross-realm fallback would silently send an unsupported max_tokens.
+type realmLimitSpec struct {
+	ContextLength   int64 `json:"context_length,omitempty"`
+	MaxOutputTokens int64 `json:"max_output_tokens,omitempty"`
+}
+
 // tableEntry is one static table row. Every field is optional on purpose: a row
 // may carry only efforts (the reference's effort-only ids such as hy3-x), and a
 // row may carry a context window with no output limit (auto, kimi-k2.8-preview),
 // in which case the output limit stays empty rather than being invented.
 type tableEntry struct {
-	ContextLength   int64                 `json:"context_length,omitempty"`
-	MaxOutputTokens int64                 `json:"max_output_tokens,omitempty"`
-	Efforts         []string              `json:"efforts,omitempty"`
-	DefaultEffort   string                `json:"default_effort,omitempty"`
-	EffortsByRealm  map[string]effortSpec `json:"efforts_by_realm,omitempty"`
-	Origin          string                `json:"origin,omitempty"`
-	EffortOrigin    string                `json:"effort_origin,omitempty"`
+	ContextLength   int64                     `json:"context_length,omitempty"`
+	MaxOutputTokens int64                     `json:"max_output_tokens,omitempty"`
+	Efforts         []string                  `json:"efforts,omitempty"`
+	DefaultEffort   string                    `json:"default_effort,omitempty"`
+	EffortsByRealm  map[string]effortSpec     `json:"efforts_by_realm,omitempty"`
+	LimitsByRealm   map[string]realmLimitSpec `json:"limits_by_realm,omitempty"`
+	Origin          string                    `json:"origin,omitempty"`
+	EffortOrigin    string                    `json:"effort_origin,omitempty"`
 	// ElevateTopDefault opts this model into cap alignment out of the box: the
 	// caller's top tier (xhigh) is promoted to the model's real highest tier
 	// (for example max). The zero value is off, and an operator's deliberate
@@ -140,6 +150,9 @@ func (st *staticTable) entry(client, model string) (tableEntry, bool) {
 	if st == nil || model == "" {
 		return tableEntry{}, false
 	}
+	if bare, _, qualified := splitStaticRealm(model); qualified {
+		model = bare
+	}
 	if exact, ok := st.exact[client]; ok {
 		if e, found := exact[model]; found {
 			return e, true
@@ -153,16 +166,27 @@ func (st *staticTable) entry(client, model string) (tableEntry, bool) {
 	return tableEntry{}, false
 }
 
+// RealmFromModel returns the realm an explicitly qualified WorkBuddy id names.
+// A bare id keeps the historical CN default; callers that already know a
+// different realm should pass it explicitly.
+func RealmFromModel(model string) string {
+	if _, realm, qualified := splitStaticRealm(model); qualified {
+		return realm
+	}
+	return RealmCN
+}
+
 // meta projects a row into a Meta for the given realm, tagging every field it
 // emits with SourceStatic so provenance survives a later merge.
 func (e tableEntry) meta(realm string) Meta {
 	m := Meta{Source: SourceStatic, FieldSources: map[string]string{}}
-	if e.ContextLength > 0 {
-		m.ContextLength = e.ContextLength
+	contextLength, maxOutput := e.limitsFor(realm)
+	if contextLength > 0 {
+		m.ContextLength = contextLength
 		m.FieldSources[FieldContextLength] = SourceStatic
 	}
-	if e.MaxOutputTokens > 0 {
-		m.MaxOutputTokens = e.MaxOutputTokens
+	if maxOutput > 0 {
+		m.MaxOutputTokens = maxOutput
 		m.FieldSources[FieldMaxOutputTokens] = SourceStatic
 	}
 	efforts, def := e.effortsFor(realm)
@@ -175,6 +199,20 @@ func (e tableEntry) meta(realm string) Meta {
 		}
 	}
 	return m
+}
+
+// limitsFor picks the realm-specific limits. A realm absent from a realm-split
+// row yields nothing, matching effortsFor: the table must not invent a Global
+// value from the CN row or vice versa.
+func (e tableEntry) limitsFor(realm string) (int64, int64) {
+	if len(e.LimitsByRealm) > 0 {
+		spec, ok := e.LimitsByRealm[NormalizeRealm(realm)]
+		if !ok {
+			return 0, 0
+		}
+		return spec.ContextLength, spec.MaxOutputTokens
+	}
+	return e.ContextLength, e.MaxOutputTokens
 }
 
 // effortsFor picks the realm's vocabulary. A realm absent from a realm-split row
@@ -228,7 +266,11 @@ func StaticModelIDs(client string) []string {
 // remote and cache layers. It is exported for the panel and for tests that need to
 // assert on the table alone.
 func StaticMeta(client, realm, model string) (Meta, bool) {
-	e, ok := static().entry(client, model)
+	bare, modelRealm, qualified := splitStaticRealm(model)
+	if qualified {
+		realm = modelRealm
+	}
+	e, ok := static().entry(client, bare)
 	if !ok {
 		return Meta{}, false
 	}
@@ -237,6 +279,21 @@ func StaticMeta(client, realm, model string) (Meta, bool) {
 		return Meta{}, false
 	}
 	return m, true
+}
+
+// splitStaticRealm recognises WorkBuddy's realm-qualified model ids. Only the
+// exact lower-case prefixes "cn:" and "global:" are protocol; other clients use
+// model ids that legitimately contain colons or slashes, so they must not be
+// rewritten here.
+func splitStaticRealm(model string) (bare, realm string, qualified bool) {
+	model = strings.TrimSpace(model)
+	for _, candidate := range []string{RealmCN, RealmGlobal} {
+		prefix := candidate + ":"
+		if strings.HasPrefix(model, prefix) {
+			return strings.TrimPrefix(model, prefix), candidate, true
+		}
+	}
+	return model, "", false
 }
 
 // StaticElevateTop reports whether cap alignment is enabled by default for this

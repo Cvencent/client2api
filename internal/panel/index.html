@@ -2916,6 +2916,7 @@ kbd {
           <label class="sel-note" id="chatAccountRow">账号 <select id="chatAccount"></select></label>
           <span id="chatChatOpts" class="chat-opts">
             <label class="sel-note">max_tokens <input id="chatMax" type="number" min="1" max="1000000" value="512" style="width:92px"></label>
+            <label class="sel-note">上下文窗口 <input id="chatContextWindow" type="number" min="1" max="10000000" step="1024" placeholder="按模型配置" style="width:108px" title="仅本次测试：填写后会临时按此窗口裁剪，不保存到模型设置"></label>
             <label class="sel-note">温度 <input id="chatTemp" type="number" min="0" max="2" step="0.1" value="0.7" style="width:74px"></label>
             <label class="sel-note"><input id="chatStream" type="checkbox" checked> 流式</label>
           </span>
@@ -3264,7 +3265,7 @@ kbd {
         <div class="tbl-wrap">
         <table class="acc md">
           <thead><tr>
-            <th>模型</th><th>客户端</th><th>来源</th><th>倍率</th><th>默认档</th><th>思考档位</th><th>封顶对齐</th><th>上下文</th><th>最大输出</th><th>输入价<br><span class="hint">¥/百万 tokens</span></th><th>输出价<br><span class="hint">¥/百万 tokens</span></th><th>缓存读取价<br><span class="hint">¥/百万 tokens</span></th><th>操作</th><th>所属</th>
+            <th>模型</th><th>客户端</th><th>来源</th><th>倍率</th><th>默认档</th><th>思考档位</th><th>封顶对齐</th><th class="sortable" id="mdSortContext" data-md-sort="context" tabindex="0" aria-sort="none" title="按上下文窗口排序">上下文 <span class="sort-mark" aria-hidden="true">↕</span></th><th>最大输出</th><th>输入价<br><span class="hint">¥/百万 tokens</span></th><th>输出价<br><span class="hint">¥/百万 tokens</span></th><th>缓存读取价<br><span class="hint">¥/百万 tokens</span></th><th>操作</th><th>所属</th>
           </tr></thead>
           <tbody id="mdBody"></tbody>
         </table>
@@ -3930,6 +3931,7 @@ function clientInfo(n) { return SNAP.clients.find(c => c.name === n) || null; }
 let SOURCE_DEFS = {};
 let BUILTIN_SOURCES = new Set();
 function platformLabel(n) {
+  if (n === "__virtual__") return "虚拟模型";
   const c = clientInfo(n), source = SOURCE_DEFS[n];
   return (source && source.label) || (c && c.label) || (n === "openai-compat" ? "onmiRoute" : n);
 }
@@ -7612,6 +7614,11 @@ async function renderModels(refresh) {
       names.map(x => '<option value="' + esc(x) + '">' + esc(platformLabel(x)) + '</option>').join("");
     sel.value = names.indexOf(keep) >= 0 ? keep : "";
   }
+  const mdSortHeader = $("#mdSortContext");
+  if (mdSortHeader) {
+    mdSortHeader.dataset.mdSortDir = MD_CONTEXT_SORT;
+    mdSortHeader.setAttribute("aria-sort", MD_CONTEXT_SORT === "asc" ? "ascending" : "descending");
+  }
   mdApply();
   $("#mdNote").textContent = n + " 个模型 · " + canRefresh + "/" + cls.length + " 支持上游刷新 · " + (r.data.refreshed_at || "").replace("T", " ").slice(0, 19) +
     (fallbackRows ? " · " + fallbackRows + "/" + n + " 行来自回退列表" : " · 全部来自上游") +
@@ -7620,6 +7627,23 @@ async function renderModels(refresh) {
   if (refresh && errs.length) toast(errs[0], "err");
 }
 
+let MD_CONTEXT_SORT = "desc";
+function mdContextSortToggle() {
+  const th = $("#mdSortContext");
+  MD_CONTEXT_SORT = MD_CONTEXT_SORT === "desc" ? "asc" : "desc";
+  if (th) {
+    th.dataset.mdSortDir = MD_CONTEXT_SORT;
+    th.setAttribute("aria-sort", MD_CONTEXT_SORT === "asc" ? "ascending" : "descending");
+  }
+  mdApply();
+}
+function mdContextSorted(rows) {
+  return rows.slice().sort((a, b) => {
+    const av = Number(a.ctx || 0), bv = Number(b.ctx || 0);
+    if (av !== bv) return MD_CONTEXT_SORT === "asc" ? av - bv : bv - av;
+    return String(a.model).localeCompare(String(b.model), "zh-CN");
+  });
+}
 // mdApply 只做过滤和重排，不碰网络。三个条件（搜索词 / 客户端 / 只看上游）是"与"
 // 关系；搜索词按空格拆成多个词，每个词都要在同一行里命中才算命中。
 function mdApply() {
@@ -7628,9 +7652,9 @@ function mdApply() {
   const upOnly = $("#mdUpOnly").checked;
   const freeOnly = $("#mdFreeOnly").checked;
   const words = q ? q.split(/\s+/) : [];
-  const rows = MD_ITEMS.filter(it =>
+  const rows = mdContextSorted(MD_ITEMS.filter(it =>
     (!cl || it.client === cl) && (!upOnly || it.up) && (!freeOnly || it.free) &&
-    words.every(w => it.text.indexOf(w) >= 0));
+    words.every(w => it.text.indexOf(w) >= 0)));
   $("#mdBody").innerHTML = rows.map(it => it.html).join("") ||
     '<tr class="filtered"><td colspan="14" class="hint">' +
     (MD_ITEMS.length ? "没有模型匹配当前筛选条件，清空搜索框即可回到全量" : "没有任何模块返回模型") + '</td></tr>';
@@ -12762,6 +12786,15 @@ $("#btnPk").addEventListener("click", renderClients);
   $("#btnAlertsClear").addEventListener("click", clearAlerts);
   $("#btnAlertCenter").addEventListener("click", () => { location.hash = "#alerts"; if (VIEW === "alerts") renderAlerts(); });
   $("#btnModels").addEventListener("click", () => renderModels(true));
+const mdSortContext = $("#mdSortContext");
+if (mdSortContext) {
+  mdSortContext.addEventListener("click", mdContextSortToggle);
+  mdSortContext.addEventListener("keydown", ev => {
+    if (ev.key !== "Enter" && ev.key !== " ") return;
+    ev.preventDefault();
+    mdContextSortToggle();
+  });
+}
 // 上下文 / 最大输出的编辑是委托式的：过滤会重建 tbody，绑定在行上会随行一起丢。
 $("#mdBody").addEventListener("input", ev => {
   const tr = ev.target.closest("tr[data-client]");
@@ -13683,6 +13716,8 @@ async function chatSend() {
     const h = { "Content-Type": "application/json" };
     if (KEY) h["Authorization"] = "Bearer " + KEY;
     if (stream) h["Accept"] = "text/event-stream";
+    const testWindow = Number($("#chatContextWindow").value);
+    if (Number.isInteger(testWindow) && testWindow > 0) h["X-Client2API-Context-Window"] = String(testWindow);
     res = await fetch("/v1/chat/completions", { method: "POST", headers: h, body: JSON.stringify(body), cache: "no-store", signal: CHAT.ctrl.signal });
   } catch (e) {
     fail((CHAT.ctrl && CHAT.ctrl.signal.aborted) ? "已停止" : "请求失败：" + String((e && e.message) || e), 0);

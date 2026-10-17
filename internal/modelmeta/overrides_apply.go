@@ -1,5 +1,12 @@
 package modelmeta
 
+// ApplyOverride overlays an operator override on an already-resolved Meta. It is
+// the public form of applyOverride for callers that need to reapply the manual
+// layer after a deliberate capability-source overlay.
+func ApplyOverride(dst Meta, o Override) Meta {
+	return applyOverride(dst, o)
+}
+
 // applyOverride overlays the operator's manual values on an already-resolved
 // Meta. A zero override field is left untouched so context and output can be
 // restored independently. Price flags are grouped: when a manual price is
