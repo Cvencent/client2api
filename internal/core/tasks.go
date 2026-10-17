@@ -60,8 +60,12 @@ type TaskResult struct {
 	OK        bool   `json:"ok"`
 	Code      string `json:"code"`
 	AccountID string `json:"account_id,omitempty"`
-	Message   string `json:"message,omitempty"`
-	Error     string `json:"error,omitempty"`
+	// CheckinAction optionally names the CheckinProvider action whose account
+	// state this result settles. Most check-in tasks use the same ID as Code;
+	// this field exists for declared scheduler chores whose task code differs.
+	CheckinAction string `json:"checkin_action,omitempty"`
+	Message       string `json:"message,omitempty"`
+	Error         string `json:"error,omitempty"`
 	// Skipped means there was deliberately nothing to execute -- already
 	// done, not enabled for this account, or a scope the action does not
 	// apply to.  It is neither a success nor a vendor refusal.

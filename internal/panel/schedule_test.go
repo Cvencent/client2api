@@ -282,10 +282,72 @@ func TestRunOutcomeDistinguishesSuccessFromRefusal(t *testing.T) {
 func TestScheduleRunRowsShowSkippedAndRefusalReasons(t *testing.T) {
 	src := scheduleShellSource(t)
 	body := scheduleFuncBody(t, src, "scRenderRuns")
-	for _, want := range []string{"r.skipped", "<th>跳过</th>", "reasons.join"} {
+	for _, want := range []string{"r.skipped", "r.skip_reasons", "<th>跳过</th>", "reasons.join"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("scRenderRuns is missing %q", want)
 		}
+	}
+}
+
+func TestScheduleViewCarriesSchedulerSkipReasons(t *testing.T) {
+	var rec scheduler.RunRecord
+	if err := json.Unmarshal([]byte(`{
+		"client":"qwenwork",
+		"batch":"checkin",
+		"trigger":"schedule",
+		"started":"2026-10-17T05:00:00+08:00",
+		"duration":46600000000,
+		"accounts":2,
+		"ran":2,
+		"skipped":2,
+		"skip_reasons":["the check-in campaign has ended (status=ENDED)"]
+	}`), &rec); err != nil {
+		t.Fatalf("unmarshal run record: %v", err)
+	}
+	p := statusPanel(t, &fakeScheduler{
+		cfg:     scheduler.Config{Enabled: true},
+		history: []scheduler.RunRecord{rec},
+	})
+
+	runs, _ := scheduleView(t, p)["runs"].([]any)
+	if len(runs) != 1 {
+		t.Fatalf("runs = %v, want one scheduled run", runs)
+	}
+	run, _ := runs[0].(map[string]any)
+	reasons, _ := run["skip_reasons"].([]any)
+	want := "the check-in campaign has ended (status=ENDED)"
+	if len(reasons) != 1 || reasons[0] != want {
+		t.Fatalf("skip_reasons = %v, want %q", run["skip_reasons"], want)
+	}
+}
+
+func TestScheduleViewCarriesManualSkipReasons(t *testing.T) {
+	p := statusPanel(t, &fakeScheduler{cfg: scheduler.Config{Enabled: true}})
+	p.sweeps = newBatchRuns()
+	p.sweeps.add(&batchRun{
+		Client:     "qwenwork",
+		Batch:      "checkin",
+		State:      batchDone,
+		StartedAt:  "2026-10-17T05:00:00+08:00",
+		FinishedAt: "2026-10-17T05:00:01+08:00",
+		Accounts:   1,
+		Skipped:    1,
+		Steps: []batchStep{{
+			Account: "a1",
+			Code:    "daily",
+			Skipped: true,
+			Message: "already checked in today",
+		}},
+	})
+
+	runs, _ := scheduleView(t, p)["runs"].([]any)
+	if len(runs) != 1 {
+		t.Fatalf("runs = %v, want one manual run", runs)
+	}
+	run, _ := runs[0].(map[string]any)
+	reasons, _ := run["skip_reasons"].([]any)
+	if len(reasons) != 1 || reasons[0] != "already checked in today" {
+		t.Fatalf("skip_reasons = %v, want the manual step's skip reason", run["skip_reasons"])
 	}
 }
 

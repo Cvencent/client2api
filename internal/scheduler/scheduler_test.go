@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -756,6 +757,18 @@ func TestRefusalReasonUsesErrorAndSkipIsNotRefusal(t *testing.T) {
 	}
 	if len(rep.Refusals) != 1 || rep.Refusals[0] != "quota exhausted" {
 		t.Fatalf("refusals = %v, want the business error reason", rep.Refusals)
+	}
+	raw, err := json.Marshal(rep)
+	if err != nil {
+		t.Fatalf("marshal report: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal report: %v", err)
+	}
+	reasons, _ := got["skip_reasons"].([]any)
+	if len(reasons) != 1 || reasons[0] != "already done" {
+		t.Fatalf("skip_reasons = %v, want the vendor's skip reason", got["skip_reasons"])
 	}
 }
 
@@ -1756,8 +1769,65 @@ func TestSyntheticCheckinSkipsMismatchedActionChannel(t *testing.T) {
 	if rep.Skipped != 1 || rep.Ran != 0 || rep.Refused != 0 || rep.Failed != 0 {
 		t.Fatalf("report = %+v, want one channel-scoped skip and no calls", rep)
 	}
+	raw, err := json.Marshal(rep)
+	if err != nil {
+		t.Fatalf("marshal report: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal report: %v", err)
+	}
+	reasons, _ := got["skip_reasons"].([]any)
+	wantReason := "action is not scoped to this account channel"
+	if len(reasons) != 1 || reasons[0] != wantReason {
+		t.Fatalf("skip_reasons = %v, want %q", got["skip_reasons"], wantReason)
+	}
 	if got := logs.all(); len(got) != 1 || got[0] != "sleep" {
 		t.Fatalf("events = %v, want only the post-batch settle", got)
+	}
+}
+
+func TestCheckinSkipReasonSurvivesTheRunJournal(t *testing.T) {
+	logs := &recorder{}
+	clk := newFakeClock(cstMidnight, logs)
+	c := &checkinOnly{
+		name:     "qwenwork",
+		accounts: []core.AccountRecord{{ID: "a1", Enabled: true}},
+		rec:      logs,
+		result: core.CheckinResult{
+			Skipped: true,
+			Error:   "the check-in campaign has ended (status=ENDED)",
+		},
+	}
+	r := New(deps(registryOf(c), clk, logs))
+	r.Reconfigure(Config{})
+
+	rep, ok := r.RunBatchNow(context.Background(), "qwenwork", core.CheckinBatchName)
+	if !ok {
+		t.Fatal("RunBatchNow: ok = false")
+	}
+	if rep.Skipped != 1 || rep.Refused != 0 || len(rep.Refusals) != 0 {
+		t.Fatalf("report = %+v, want one skip and no refusal", rep)
+	}
+
+	raw, err := json.Marshal(r.History())
+	if err != nil {
+		t.Fatalf("marshal history: %v", err)
+	}
+	var history []map[string]any
+	if err := json.Unmarshal(raw, &history); err != nil {
+		t.Fatalf("unmarshal history: %v", err)
+	}
+	if len(history) != 1 {
+		t.Fatalf("history = %v, want one run", history)
+	}
+	reasons, _ := history[0]["skip_reasons"].([]any)
+	want := "the check-in campaign has ended (status=ENDED)"
+	if len(reasons) != 1 || reasons[0] != want {
+		t.Fatalf("history skip_reasons = %v, want %q", history[0]["skip_reasons"], want)
+	}
+	if _, exists := history[0]["refusals"]; exists {
+		t.Fatalf("a skip leaked into refusals: %v", history[0]["refusals"])
 	}
 }
 
@@ -2174,5 +2244,93 @@ func TestSyntheticCheckinPublishesDefinitiveResult(t *testing.T) {
 	}
 	if want := []string{"ci/a/daily/done", "ci/b/daily/done"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("published results = %v, want %v", got, want)
+	}
+}
+
+func TestDeclaredCheckinTaskPublishesDefinitiveResult(t *testing.T) {
+	logs := &recorder{}
+	clk := newFakeClock(cstMidnight, logs)
+	base := &fakeClient{
+		name:     "minimaxcode",
+		batches:  []core.Batch{oneBatch(batchCheckin, "daily-signin")},
+		accounts: []core.AccountRecord{{ID: "a", Enabled: true}},
+		run: func(context.Context, string, string) (core.TaskResult, error) {
+			return core.TaskResult{
+				OK:        true,
+				Code:      "daily-signin",
+				AccountID: "a",
+				Message:   "already checked in",
+			}, nil
+		},
+		rec: logs,
+	}
+	c := &actionScopedClient{
+		fakeClient: base,
+		actions:    []core.CheckinAction{{ID: "daily-signin"}},
+	}
+	d := deps(registryOf(c), clk, logs)
+	var got string
+	d.OnCheckinResult = func(client, account, action string, res core.CheckinResult) {
+		state := "failure"
+		switch {
+		case res.Skipped:
+			state = "unavailable"
+		case res.OK:
+			state = "done"
+		}
+		got = client + "/" + account + "/" + action + "/" + state + "/" + res.Message
+	}
+	r := New(d)
+	r.Reconfigure(Config{})
+
+	rep, ok := r.RunBatchNow(context.Background(), "minimaxcode", batchCheckin)
+	if !ok || rep.Ran != 1 {
+		t.Fatalf("RunBatchNow = %+v, ok=%v; want one run", rep, ok)
+	}
+	if want := "minimaxcode/a/daily-signin/done/already checked in"; got != want {
+		t.Fatalf("published result = %q, want %q", got, want)
+	}
+}
+
+func TestDeclaredCheckinTaskPublishesExplicitActionMapping(t *testing.T) {
+	logs := &recorder{}
+	clk := newFakeClock(cstMidnight, logs)
+	var mapped core.TaskResult
+	if err := json.Unmarshal([]byte(`{
+		"ok": true,
+		"code": "checkin",
+		"account_id": "a",
+		"message": "credited",
+		"checkin_action": "daily-checkin"
+	}`), &mapped); err != nil {
+		t.Fatalf("unmarshal mapped task result: %v", err)
+	}
+	base := &fakeClient{
+		name:     "workbuddy",
+		batches:  []core.Batch{oneBatch(batchCheckin, "checkin")},
+		accounts: []core.AccountRecord{{ID: "a", Enabled: true}},
+		run: func(context.Context, string, string) (core.TaskResult, error) {
+			return mapped, nil
+		},
+		rec: logs,
+	}
+	c := &actionScopedClient{
+		fakeClient: base,
+		actions:    []core.CheckinAction{{ID: "daily-checkin"}},
+	}
+	d := deps(registryOf(c), clk, logs)
+	var gotAction string
+	d.OnCheckinResult = func(_ string, _ string, action string, _ core.CheckinResult) {
+		gotAction = action
+	}
+	r := New(d)
+	r.Reconfigure(Config{})
+
+	rep, ok := r.RunBatchNow(context.Background(), "workbuddy", batchCheckin)
+	if !ok || rep.Ran != 1 {
+		t.Fatalf("RunBatchNow = %+v, ok=%v; want one run", rep, ok)
+	}
+	if gotAction != "daily-checkin" {
+		t.Fatalf("published action = %q, want daily-checkin", gotAction)
 	}
 }

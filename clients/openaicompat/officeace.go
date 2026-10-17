@@ -41,6 +41,9 @@ type officeAceSource struct {
 	loginMu sync.Mutex
 	logins  map[string]*officeAceLoginSession
 
+	refreshMu    sync.Mutex
+	refreshLocks map[string]*sync.Mutex
+
 	// SMS and auto-login state.  The platform token and per-call overrides
 	// travel through core.SMSOpts/core.AutoLoginRequest, so no credential is
 	// added to SourceConfig.  smsBase is only set by tests.
@@ -58,6 +61,20 @@ type officeAceSource struct {
 // that cannot unwrap the client's DPAPI-protected store, while the account
 // login keeps working there.
 type officeAceLocalSource struct{ *officeAceSource }
+
+func (o *officeAceSource) officeAceRefreshLock(id string) *sync.Mutex {
+	o.refreshMu.Lock()
+	defer o.refreshMu.Unlock()
+	if o.refreshLocks == nil {
+		o.refreshLocks = map[string]*sync.Mutex{}
+	}
+	lock := o.refreshLocks[id]
+	if lock == nil {
+		lock = &sync.Mutex{}
+		o.refreshLocks[id] = lock
+	}
+	return lock
+}
 
 func wrapOfficeAceSource(name string, cfg core.SourceConfig, s *source) core.SourceClient {
 	if s == nil || !officeAceEndpoint(name, cfg.BaseURL) {

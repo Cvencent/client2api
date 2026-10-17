@@ -7,9 +7,10 @@ package openaicompat
 // HTTP Basic key pair -- so it lives in its own file and never touches the
 // transport the chat requests use.
 //
-// The credential comes from officeace_session.go.  A call that comes back 401
-// APIG.0301 refreshes the credential once (OAuth refresh token, then the IAM
-// v3 or STS exchange) and retries, mirroring the client's cloudFetch.
+// The credential comes from officeace_session.go.  A token inside the client's
+// ten-minute refresh window is renewed before the call.  If the gateway still
+// rejects it with 401 APIG.0301 or 400 APIG.0602, the credential is refreshed
+// once (OAuth refresh token, then the IAM v3/STS exchange) and the call retries.
 
 import (
 	"context"
@@ -31,10 +32,12 @@ const (
 	officeAcePremiumPathSecurityTok        = "/v3.0/OS-CREDENTIAL/securitytokens"
 	officeAcePremiumTokenPath              = "/v1/oauth2/tokens"
 	officeAceTrialSKUCode                  = "officeace.personal.package.trial"
-	// officeAceSignerSignatureCode is Huawei APIG's "signature is stale" error.
-	officeAceSignerStaleCode = "APIG.0301"
-	officeAceV3DurationSecs  = 24 * 60 * 60
-	officeAceRefreshTTL      = 30 * 24 * time.Hour
+	// Huawei APIG reports a stale signature separately from an expired security token.
+	officeAceSignerStaleCode       = "APIG.0301"
+	officeAceSecurityTokenExpired  = "APIG.0602"
+	officeAceV3DurationSecs        = 24 * 60 * 60
+	officeAceRefreshTTL            = 30 * 24 * time.Hour
+	officeAceCredentialRefreshLead = 10 * time.Minute
 )
 
 // officeAcePremium signs the premium routes for one stored account.
@@ -136,6 +139,9 @@ func (p *officeAcePremium) cloudFetchBase(ctx context.Context, base, method, pat
 		return nil, 0, errors.New("officeace: 云端地址为空")
 	}
 	endpoint := base + path
+	if officeAceExpiresWithin(p.sess.ExpiresAt, p.now(), officeAceCredentialRefreshLead) {
+		_ = p.refreshCredentials(ctx)
+	}
 	if p.sess.ProjectID == "" {
 		p.ensureProject(ctx)
 	}
@@ -143,7 +149,7 @@ func (p *officeAcePremium) cloudFetchBase(ctx context.Context, base, method, pat
 	if err != nil {
 		return nil, 0, err
 	}
-	if status != http.StatusUnauthorized || code != officeAceSignerStaleCode {
+	if !officeAceCredentialRejected(status, code) {
 		return raw, status, nil
 	}
 	if rerr := p.refreshCredentials(ctx); rerr != nil {
@@ -155,6 +161,17 @@ func (p *officeAcePremium) cloudFetchBase(ctx context.Context, base, method, pat
 		return nil, 0, err
 	}
 	return raw, status, nil
+}
+
+func officeAceCredentialRejected(status int, code string) bool {
+	switch code {
+	case officeAceSignerStaleCode:
+		return status == http.StatusUnauthorized
+	case officeAceSecurityTokenExpired:
+		return status == http.StatusBadRequest
+	default:
+		return false
+	}
 }
 
 // doSigned signs one request with the current credential and returns the body,
@@ -228,11 +245,28 @@ func officeAceErrorCode(raw []byte) string {
 }
 
 // refreshCredentials renews the temporary credential, preferring the durable
-// OAuth refresh token and falling back to the IAM v3/STS exchange.  The new
-// credential is written to the store immediately: a consumed refresh token is
-// invalidated by the cloud, so losing the replacement would strand the
-// account.
+// OAuth refresh token and falling back to the IAM v3/STS exchange.  Refreshes
+// are serialized per account and re-read the latest persisted session after
+// taking the lock, because a refresh token can be consumed only once.  The new
+// credential is written to the store immediately: losing the replacement would
+// strand the account.
 func (p *officeAcePremium) refreshCredentials(ctx context.Context) error {
+	lock := p.src.officeAceRefreshLock(p.row.ID)
+	lock.Lock()
+	defer lock.Unlock()
+
+	before := p.sess
+	if row, ok := p.src.source.officeAceFindRow(p.row.ID); ok && row.OfficeAce != nil {
+		p.row = row
+		p.sess = *row.OfficeAce
+	}
+	if before.AccessKey != p.sess.AccessKey ||
+		before.SecretKey != p.sess.SecretKey ||
+		before.SecurityToken != p.sess.SecurityToken ||
+		before.RefreshToken != p.sess.RefreshToken {
+		return nil
+	}
+
 	now := p.now()
 	if token := strings.TrimSpace(p.sess.RefreshToken); token != "" {
 		if err := p.refreshWithToken(ctx); err == nil {

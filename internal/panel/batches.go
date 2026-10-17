@@ -605,7 +605,7 @@ func (p *panel) runOne(ctx context.Context, tp core.TaskProvider, account, code 
 	stepCtx, cancel := context.WithTimeout(ctx, batchStepTimeout)
 	defer cancel()
 
-	res, err := tp.RunTask(stepCtx, account, code)
+	res, err := p.runTaskAndRecordCheckin(stepCtx, tp, account, code)
 	step.ElapsedMS = time.Since(started).Milliseconds()
 	if err != nil {
 		step.Error = core.Redact(err.Error())

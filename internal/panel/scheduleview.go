@@ -64,19 +64,20 @@ type scheduleRow struct {
 // scheduler's own history (scheduled fires and manual presses it served) or
 // the panel's sweep journal (the one-click batch buttons).
 type scheduleRun struct {
-	At       string   `json:"at"`
-	Client   string   `json:"client"`
-	Batch    string   `json:"batch"`
-	Trigger  string   `json:"trigger"`
-	State    string   `json:"state,omitempty"`
-	Accounts int      `json:"accounts"`
-	Ran      int      `json:"ran"`
-	Refused  int      `json:"refused"`
-	Failed   int      `json:"failed"`
-	Skipped  int      `json:"skipped"`
-	Elapsed  int64    `json:"elapsed_ms"`
-	Refusals []string `json:"refusals,omitempty"`
-	Error    string   `json:"error,omitempty"`
+	At          string   `json:"at"`
+	Client      string   `json:"client"`
+	Batch       string   `json:"batch"`
+	Trigger     string   `json:"trigger"`
+	State       string   `json:"state,omitempty"`
+	Accounts    int      `json:"accounts"`
+	Ran         int      `json:"ran"`
+	Refused     int      `json:"refused"`
+	Failed      int      `json:"failed"`
+	Skipped     int      `json:"skipped"`
+	Elapsed     int64    `json:"elapsed_ms"`
+	Refusals    []string `json:"refusals,omitempty"`
+	SkipReasons []string `json:"skip_reasons,omitempty"`
+	Error       string   `json:"error,omitempty"`
 }
 
 // runJournalMax bounds what the merged journal returns.  The page shows the
@@ -244,19 +245,20 @@ func (p *panel) mergedRuns() []scheduleRun {
 	if p.opts.Scheduler != nil {
 		for _, rec := range p.opts.Scheduler.History() {
 			out = append(out, scheduleRun{
-				At:       rec.Started.Format(time.RFC3339),
-				Client:   rec.Client,
-				Batch:    rec.Batch,
-				Trigger:  rec.Trigger,
-				State:    runOutcome(rec.Ran, rec.Refused, rec.Skipped, rec.Failed, rec.Error),
-				Accounts: rec.Accounts,
-				Ran:      rec.Ran,
-				Refused:  rec.Refused,
-				Skipped:  rec.Skipped,
-				Failed:   rec.Failed,
-				Refusals: append([]string(nil), rec.Refusals...),
-				Elapsed:  rec.Duration.Milliseconds(),
-				Error:    rec.Error,
+				At:          rec.Started.Format(time.RFC3339),
+				Client:      rec.Client,
+				Batch:       rec.Batch,
+				Trigger:     rec.Trigger,
+				State:       runOutcome(rec.Ran, rec.Refused, rec.Skipped, rec.Failed, rec.Error),
+				Accounts:    rec.Accounts,
+				Ran:         rec.Ran,
+				Refused:     rec.Refused,
+				Skipped:     rec.Skipped,
+				Failed:      rec.Failed,
+				Refusals:    append([]string(nil), rec.Refusals...),
+				SkipReasons: append([]string(nil), rec.SkipReasons...),
+				Elapsed:     rec.Duration.Milliseconds(),
+				Error:       rec.Error,
 			})
 		}
 	}
@@ -270,19 +272,20 @@ func (p *panel) mergedRuns() []scheduleRun {
 			at = run.QueuedAt
 		}
 		out = append(out, scheduleRun{
-			At:       at,
-			Client:   run.Client,
-			Batch:    run.Batch,
-			Trigger:  scheduler.TriggerManual,
-			State:    run.State,
-			Accounts: run.Accounts,
-			Ran:      run.Ran,
-			Refused:  run.Refused,
-			Skipped:  run.Skipped,
-			Failed:   run.Failed,
-			Refusals: runRefusalReasons(run),
-			Error:    run.Error,
-			Elapsed:  run.ElapsedMS,
+			At:          at,
+			Client:      run.Client,
+			Batch:       run.Batch,
+			Trigger:     scheduler.TriggerManual,
+			State:       run.State,
+			Accounts:    run.Accounts,
+			Ran:         run.Ran,
+			Refused:     run.Refused,
+			Skipped:     run.Skipped,
+			Failed:      run.Failed,
+			Refusals:    runRefusalReasons(run),
+			SkipReasons: runSkipReasons(run),
+			Error:       run.Error,
+			Elapsed:     run.ElapsedMS,
 		})
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].At > out[j].At })
@@ -297,14 +300,33 @@ func (p *panel) mergedRuns() []scheduleRun {
 
 // runRefusalReasons extracts the operator-facing reasons from a manual sweep.
 func runRefusalReasons(run batchRun) []string {
+	return runStepReasons(run, false)
+}
+
+// runSkipReasons extracts the operator-facing reasons from deliberately
+// skipped manual steps. Scheduled runners persist the same distinction in
+// RunRecord.SkipReasons.
+func runSkipReasons(run batchRun) []string {
+	return runStepReasons(run, true)
+}
+
+func runStepReasons(run batchRun, skipped bool) []string {
 	var out []string
 	for _, step := range run.Steps {
-		if step.Skipped || !step.Refused {
+		if skipped {
+			if !step.Skipped {
+				continue
+			}
+		} else if step.Skipped || !step.Refused {
 			continue
 		}
 		reason := core.Redact(strings.TrimSpace(firstNonEmpty(step.Message, step.Error)))
 		if reason == "" {
-			reason = "the vendor refused the action"
+			if skipped {
+				reason = "the vendor skipped the action"
+			} else {
+				reason = "the vendor refused the action"
+			}
 		}
 		seen := false
 		for _, got := range out {

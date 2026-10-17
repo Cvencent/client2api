@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -287,7 +288,7 @@ func TestOfficeAcePremiumRefreshesOnStaleSignature(t *testing.T) {
 		SecretKey:        "old-secret",
 		SecurityToken:    "old-token",
 		ProjectID:        "project-1",
-		ExpiresAt:        "2026-01-01T00:00:00Z",
+		ExpiresAt:        "2099-01-01T00:00:00Z",
 		RefreshToken:     "old-refresh",
 		RefreshExpiresAt: "2099-01-01T00:00:00Z",
 		DPoPScalar:       officeAceTestScalar(t),
@@ -308,6 +309,223 @@ func TestOfficeAcePremiumRefreshesOnStaleSignature(t *testing.T) {
 		t.Fatal("session row disappeared")
 	}
 	if row.OfficeAce.AccessKey != "new-access" || row.OfficeAce.RefreshToken != "new-refresh" {
+		t.Fatalf("refreshed session = %+v", row.OfficeAce)
+	}
+}
+
+func TestOfficeAcePremiumRefreshesOnExpiredSecurityToken(t *testing.T) {
+	var subscriptionCalls, tokenCalls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == officeAcePremiumPathSubscription:
+			if subscriptionCalls.Add(1) == 1 {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = io.WriteString(w, `{"error_msg":"Bad request: the security token has expired","error_code":"APIG.0602"}`)
+				return
+			}
+			if r.Header.Get("X-Security-Token") != "new-token" {
+				http.Error(w, "stale security token", http.StatusUnauthorized)
+				return
+			}
+			_, _ = io.WriteString(w, officeAcePremiumSubscriptionJSON)
+		case r.Method == http.MethodPost && r.URL.Path == officeAcePremiumTokenPath:
+			tokenCalls.Add(1)
+			if err := r.ParseForm(); err != nil || r.Form.Get("grant_type") != "refresh_token" || r.Form.Get("refresh_token") != "old-refresh" {
+				http.Error(w, "bad refresh request", http.StatusBadRequest)
+				return
+			}
+			body := map[string]any{
+				"credentials": map[string]string{
+					"access_key_id":     "new-access",
+					"secret_access_key": "new-secret",
+					"security_token":    "new-token",
+					"project_id":        "project-1",
+					"expiration":        "2099-01-01T00:00:00Z",
+				},
+				"refresh_token": "new-refresh",
+			}
+			_ = json.NewEncoder(w).Encode(body)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	o := officeAcePremiumSource(t, srv)
+	id := officeAceAddAccountWithSession(t, o, srv, officeAceStoredSession{
+		Region:           "cn-southwest-2",
+		AccessKey:        "old-access",
+		SecretKey:        "old-secret",
+		SecurityToken:    "old-token",
+		ProjectID:        "project-1",
+		ExpiresAt:        "2099-01-01T00:00:00Z",
+		RefreshToken:     "old-refresh",
+		RefreshExpiresAt: "2099-01-01T00:00:00Z",
+		DPoPScalar:       officeAceTestScalar(t),
+	})
+
+	bal, err := o.AccountBalance(context.Background(), id, 0)
+	if err != nil {
+		t.Fatalf("balance: %v", err)
+	}
+	if bal.Credits != 5400 {
+		t.Fatalf("balance = %+v", bal)
+	}
+	if tokenCalls.Load() != 1 || subscriptionCalls.Load() != 2 {
+		t.Fatalf("refresh calls token=%d subscription=%d", tokenCalls.Load(), subscriptionCalls.Load())
+	}
+	row, ok := o.source.officeAceFindRow(id)
+	if !ok || row.OfficeAce == nil {
+		t.Fatal("session row disappeared")
+	}
+	if row.OfficeAce.AccessKey != "new-access" || row.OfficeAce.RefreshToken != "new-refresh" {
+		t.Fatalf("refreshed session = %+v", row.OfficeAce)
+	}
+}
+
+func TestOfficeAcePremiumRefreshesBeforeSecurityTokenExpires(t *testing.T) {
+	now := time.Date(2026, 10, 17, 0, 51, 0, 0, time.UTC)
+	var subscriptionCalls, tokenCalls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == officeAcePremiumPathSubscription:
+			subscriptionCalls.Add(1)
+			if r.Header.Get("X-Security-Token") != "new-token" {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = io.WriteString(w, `{"error_msg":"Bad request: the security token has expired","error_code":"APIG.0602"}`)
+				return
+			}
+			_, _ = io.WriteString(w, officeAcePremiumSubscriptionJSON)
+		case r.Method == http.MethodPost && r.URL.Path == officeAcePremiumTokenPath:
+			tokenCalls.Add(1)
+			body := map[string]any{
+				"credentials": map[string]string{
+					"access_key_id":     "new-access",
+					"secret_access_key": "new-secret",
+					"security_token":    "new-token",
+					"project_id":        "project-1",
+					"expiration":        "2099-01-01T00:00:00Z",
+				},
+				"refresh_token": "new-refresh",
+			}
+			_ = json.NewEncoder(w).Encode(body)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	o := officeAcePremiumSource(t, srv)
+	o.source.now = func() time.Time { return now }
+	id := officeAceAddAccountWithSession(t, o, srv, officeAceStoredSession{
+		Region:           "cn-southwest-2",
+		AccessKey:        "old-access",
+		SecretKey:        "old-secret",
+		SecurityToken:    "old-token",
+		ProjectID:        "project-1",
+		ExpiresAt:        now.Add(9 * time.Minute).Format(time.RFC3339),
+		RefreshToken:     "old-refresh",
+		RefreshExpiresAt: now.Add(24 * time.Hour).Format(time.RFC3339),
+		DPoPScalar:       officeAceTestScalar(t),
+	})
+
+	bal, err := o.AccountBalance(context.Background(), id, 0)
+	if err != nil {
+		t.Fatalf("balance: %v", err)
+	}
+	if bal.Credits != 5400 {
+		t.Fatalf("balance = %+v", bal)
+	}
+	if tokenCalls.Load() != 1 || subscriptionCalls.Load() != 1 {
+		t.Fatalf("refresh calls token=%d subscription=%d", tokenCalls.Load(), subscriptionCalls.Load())
+	}
+	row, ok := o.source.officeAceFindRow(id)
+	if !ok || row.OfficeAce == nil || row.OfficeAce.SecurityToken != "new-token" {
+		t.Fatalf("refreshed session = %+v", row.OfficeAce)
+	}
+}
+
+func TestOfficeAcePremiumSerializesConcurrentRefresh(t *testing.T) {
+	var subscriptionCalls, tokenCalls, oldTokenCalls atomic.Int32
+	bothOldRequests := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == officeAcePremiumPathSubscription:
+			subscriptionCalls.Add(1)
+			switch r.Header.Get("X-Security-Token") {
+			case "old-token":
+				if oldTokenCalls.Add(1) == 2 {
+					close(bothOldRequests)
+				}
+				<-bothOldRequests
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = io.WriteString(w, `{"error_msg":"Bad request: the security token has expired","error_code":"APIG.0602"}`)
+			case "new-token":
+				_, _ = io.WriteString(w, officeAcePremiumSubscriptionJSON)
+			default:
+				http.Error(w, "unexpected security token", http.StatusUnauthorized)
+			}
+		case r.Method == http.MethodPost && r.URL.Path == officeAcePremiumTokenPath:
+			call := tokenCalls.Add(1)
+			if err := r.ParseForm(); err != nil || r.Form.Get("refresh_token") != "old-refresh" || call != 1 {
+				http.Error(w, "refresh token already used", http.StatusBadRequest)
+				return
+			}
+			body := map[string]any{
+				"credentials": map[string]string{
+					"access_key_id":     "new-access",
+					"secret_access_key": "new-secret",
+					"security_token":    "new-token",
+					"project_id":        "project-1",
+					"expiration":        "2099-01-01T00:00:00Z",
+				},
+				"refresh_token": "new-refresh",
+			}
+			_ = json.NewEncoder(w).Encode(body)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	o := officeAcePremiumSource(t, srv)
+	id := officeAceAddAccountWithSession(t, o, srv, officeAceStoredSession{
+		Region:           "cn-southwest-2",
+		AccessKey:        "old-access",
+		SecretKey:        "old-secret",
+		SecurityToken:    "old-token",
+		ProjectID:        "project-1",
+		ExpiresAt:        "2099-01-01T00:00:00Z",
+		RefreshToken:     "old-refresh",
+		RefreshExpiresAt: "2099-01-01T00:00:00Z",
+		DPoPScalar:       officeAceTestScalar(t),
+	})
+
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	var wg sync.WaitGroup
+	for range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, err := o.AccountBalance(context.Background(), id, 0)
+			results <- err
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+	for err := range results {
+		if err != nil {
+			t.Fatalf("balance: %v", err)
+		}
+	}
+	if tokenCalls.Load() != 1 || subscriptionCalls.Load() != 4 {
+		t.Fatalf("refresh calls token=%d subscription=%d", tokenCalls.Load(), subscriptionCalls.Load())
+	}
+	row, ok := o.source.officeAceFindRow(id)
+	if !ok || row.OfficeAce == nil || row.OfficeAce.RefreshToken != "new-refresh" {
 		t.Fatalf("refreshed session = %+v", row.OfficeAce)
 	}
 }

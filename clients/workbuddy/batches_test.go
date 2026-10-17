@@ -2,6 +2,7 @@ package workbuddy
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -214,6 +215,17 @@ func TestWorkbuddyScheduledCheckinRunsOnTheCnRealm(t *testing.T) {
 	}
 	if !strings.Contains(res.Message, "credited") {
 		t.Fatalf("message = %q, want it to report the credit", res.Message)
+	}
+	raw, err := json.Marshal(res)
+	if err != nil {
+		t.Fatalf("marshal scheduled check-in: %v", err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatalf("unmarshal scheduled check-in: %v", err)
+	}
+	if got, _ := body["checkin_action"].(string); got != checkinActionCN {
+		t.Fatalf("checkin_action = %q, want %q", got, checkinActionCN)
 	}
 	// The reward is first and the tail follows in one fixed order.  Pinning the
 	// sequence is the point of this test: the tail is idempotent and every step

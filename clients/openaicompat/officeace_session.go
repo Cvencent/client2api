@@ -156,7 +156,8 @@ func officeAceParseTime(raw string) (time.Time, bool) {
 
 // officeAceExpiresWithin reports whether raw names a time at or before the
 // given moment.  An unparseable timestamp is treated as "not expired": the
-// cloud rejects a stale credential and the caller refreshes on the 401.
+// cloud rejects a stale credential and the caller refreshes on APIG.0301 or
+// APIG.0602.
 func officeAceExpiresWithin(raw string, now time.Time, margin time.Duration) bool {
 	t, ok := officeAceParseTime(raw)
 	if !ok {

@@ -290,7 +290,15 @@ func (o *officeAceSource) autoLogin(ctx context.Context, job *officeAceAutoJob, 
 	} else {
 		job.logf("已取号 %s%s", num.Phone, provinceSuffix(num.Province))
 	}
-	defer o.releaseAutoPhone(ctx, job, opts, num)
+	released := false
+	releasePhone := func() {
+		if released {
+			return
+		}
+		released = true
+		o.releaseAutoPhone(ctx, job, opts, num)
+	}
+	defer releasePhone()
 
 	job.setStep("browser")
 	driver := o.autoDriver
@@ -317,6 +325,7 @@ func (o *officeAceSource) autoLogin(ctx context.Context, job *officeAceAutoJob, 
 			if msg == "" {
 				msg = "华为账号登录成功，凭据已保存"
 			}
+			releasePhone()
 			job.finish(core.AutoLoginSuccess, msg, st.AccountID)
 			return nil
 		case core.LoginFailed, core.LoginCancelled:

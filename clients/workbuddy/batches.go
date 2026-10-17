@@ -117,6 +117,7 @@ func runScheduledCheckin(ctx context.Context, c *Client, a *Auth, res core.TaskR
 		res.Message = "the international realm credits no check-in; the scheduled check-in skips global accounts"
 		return res
 	}
+	res.CheckinAction = checkinActionCN
 	cr := c.checkinCN(ctx, a, core.CheckinResult{
 		AccountID: a.ID(),
 		Action:    checkinActionCN,

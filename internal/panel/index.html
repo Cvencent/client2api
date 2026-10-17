@@ -9560,7 +9560,9 @@ function scRenderRuns(runs) {
     const t = r.at ? new Date(r.at).toLocaleString("zh-CN", { hour12: false }) : "-";
     const src = r.trigger === "schedule" ? "定时" : "手动";
     const st = runStateChip(r);
-    const reasons = Array.isArray(r.refusals) ? r.refusals.filter(Boolean) : [];
+    const refusals = Array.isArray(r.refusals) ? r.refusals.filter(Boolean) : [];
+    const skipReasons = Array.isArray(r.skip_reasons) ? r.skip_reasons.filter(Boolean) : [];
+    const reasons = Array.from(new Set(refusals.concat(skipReasons)));
     let reasonText = reasons.join("；") + ((reasons.length && r.error) ? "；" : "") + (r.error || "");
     if (!reasonText && ((r.refused || 0) + (r.skipped || 0) + (r.failed || 0)) > 0) {
       reasonText = "旧版本记录未保存原因（升级后新记录会带上供应商返回）";

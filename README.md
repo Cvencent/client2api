@@ -292,7 +292,7 @@ people. The built-in default is `127.0.0.1`.
 - Batch execution and a task board for supported account actions.
 - Daily balance refresh can run by time, by interval, or by a 5/6-field cron expression.
 - Recovery probes, daily balance refresh and check-in.
-- A check-in the vendor settles (already done today, or the vendor says the account cannot check in today) greys out that account's button for the rest of the Shanghai day and is skipped by batch runs; transient network/auth errors stay clickable and reset automatically at the next Shanghai day.
+- A check-in the vendor settles (already done today, or the vendor says the account cannot check in today) greys out that account's button for the rest of the Shanghai day, whether it came from the account button, task centre or scheduler, and is skipped by batch runs; transient network/auth errors stay clickable and reset automatically at the next Shanghai day.
 - Success rate, latency, token totals, cache hit rate and recent calls.
 - Per-request session IDs and per-model / per-account statistics.
 - CNY cost estimates, official price tables, models.dev fallback and manual overrides.

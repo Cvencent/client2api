@@ -1319,6 +1319,7 @@ func (r *Runner) runBatchAs(ctx context.Context, clientName, batchName, trigger 
 			ranACode = true
 			if !core.CheckinActionAllowsAccount(checkinActions, code, rec) {
 				rep.Skipped++
+				rep.SkipReasons = appendReason(rep.SkipReasons, "action is not scoped to this account channel")
 				r.log("[scheduler] %s/%s account %q code %q skipped: action is not scoped to this account channel", clientName, batchName, acc, code)
 				continue
 			}
@@ -1330,11 +1331,16 @@ func (r *Runner) runBatchAs(ctx context.Context, clientName, batchName, trigger 
 				r.log("[scheduler] %s/%s account %q code %q failed: %v", clientName, batchName, acc, code, rerr)
 				continue
 			}
+			if strings.EqualFold(batchName, core.CheckinBatchName) {
+				r.publishTaskCheckinResult(clientName, acc, code, checkinActions, res)
+			}
 			rep.Ran++
 			if !res.OK {
 				if res.Skipped {
 					rep.Skipped++
-					r.log("[scheduler] %s/%s account %q code %q skipped: %s", clientName, batchName, acc, code, resultReason(res))
+					reason := resultReason(res)
+					rep.SkipReasons = appendReason(rep.SkipReasons, reason)
+					r.log("[scheduler] %s/%s account %q code %q skipped: %s", clientName, batchName, acc, code, reason)
 					continue
 				}
 				// A vendor refusal -- already claimed, prerequisite missing,
@@ -1426,13 +1432,16 @@ func checkinAccount(rec core.AccountRecord) bool {
 	}
 }
 
-const maxRunRefusals = 5
+const maxRunReasons = 5
 
 func resultReason(res core.TaskResult) string {
 	for _, s := range []string{res.Message, res.Error, res.Code} {
 		if s = core.Redact(strings.TrimSpace(s)); s != "" {
 			return s
 		}
+	}
+	if res.Skipped {
+		return "the vendor skipped the action"
 	}
 	return "the vendor refused the action"
 }
@@ -1446,12 +1455,15 @@ func checkinReason(res core.CheckinResult) string {
 	if res.Code != 0 {
 		return fmt.Sprintf("business code %d", res.Code)
 	}
+	if res.Skipped {
+		return "the vendor skipped the check-in"
+	}
 	return "the vendor refused the check-in"
 }
 
 func appendReason(list []string, reason string) []string {
 	reason = core.Redact(strings.TrimSpace(reason))
-	if reason == "" || len(list) >= maxRunRefusals {
+	if reason == "" || len(list) >= maxRunReasons {
 		return list
 	}
 	for _, got := range list {
@@ -1460,6 +1472,49 @@ func appendReason(list []string, reason string) []string {
 		}
 	}
 	return append(list, reason)
+}
+
+// publishTaskCheckinResult makes a declared check-in batch visible to the same
+// account-row state store as a direct CheckinProvider call.  Declared batches
+// run through RunTask, whose result has the same definitive OK/Skipped verdict
+// but not the CheckinResult wrapper, so the scheduler has to bridge it.
+func (r *Runner) publishTaskCheckinResult(client, account, code string, actions []core.CheckinAction, res core.TaskResult) {
+	if r == nil || r.onCheckin == nil {
+		return
+	}
+	action := matchingCheckinAction(actions, res.CheckinAction)
+	if action == "" {
+		action = matchingCheckinAction(actions, code)
+	}
+	if action == "" {
+		return
+	}
+	if res.AccountID != "" {
+		account = strings.TrimSpace(res.AccountID)
+	}
+	r.onCheckin(client, account, action, core.CheckinResult{
+		OK:        res.OK,
+		AccountID: account,
+		Action:    action,
+		Message:   res.Message,
+		Error:     res.Error,
+		Skipped:   res.Skipped,
+		ElapsedMS: res.ElapsedMS,
+		At:        res.At,
+	})
+}
+
+func matchingCheckinAction(actions []core.CheckinAction, id string) string {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return ""
+	}
+	for _, action := range actions {
+		if candidate := strings.TrimSpace(action.ID); candidate == id {
+			return candidate
+		}
+	}
+	return ""
 }
 
 // gateOpen reports whether the batch's gate is present and still incomplete.
@@ -1511,17 +1566,18 @@ func gateOpen(ctx context.Context, tp core.TaskProvider, accountID, gate string)
 // must not stall Status or a concurrent batch.
 func (r *Runner) record(rep Report, trigger string) {
 	run := RunRecord{
-		Client:   rep.Client,
-		Batch:    rep.Batch,
-		Trigger:  trigger,
-		Started:  rep.Started,
-		Duration: rep.Duration,
-		Accounts: rep.Accounts,
-		Ran:      rep.Ran,
-		Refused:  rep.Refused,
-		Failed:   rep.Failed,
-		Skipped:  rep.Skipped,
-		Refusals: append([]string(nil), rep.Refusals...),
+		Client:      rep.Client,
+		Batch:       rep.Batch,
+		Trigger:     trigger,
+		Started:     rep.Started,
+		Duration:    rep.Duration,
+		Accounts:    rep.Accounts,
+		Ran:         rep.Ran,
+		Refused:     rep.Refused,
+		Failed:      rep.Failed,
+		Skipped:     rep.Skipped,
+		Refusals:    append([]string(nil), rep.Refusals...),
+		SkipReasons: append([]string(nil), rep.SkipReasons...),
 	}
 	if len(rep.Errors) > 0 {
 		run.Error = strings.Join(rep.Errors, "; ")
@@ -1552,22 +1608,23 @@ func (r *Runner) record(rep Report, trigger string) {
 
 // RunRecord is one finished batch run, as the run-history view shows it.
 type RunRecord struct {
-	Client   string        `json:"client"`
-	Batch    string        `json:"batch"`
-	Trigger  string        `json:"trigger"` // TriggerSchedule or TriggerManual
-	Started  time.Time     `json:"started"`
-	Duration time.Duration `json:"duration"`
-	Accounts int           `json:"accounts"`
-	Ran      int           `json:"ran"`
-	Refused  int           `json:"refused"`
-	Failed   int           `json:"failed"`
-	Skipped  int           `json:"skipped"`
-	Refusals []string      `json:"refusals,omitempty"`
-	Error    string        `json:"error,omitempty"`
+	Client      string        `json:"client"`
+	Batch       string        `json:"batch"`
+	Trigger     string        `json:"trigger"` // TriggerSchedule or TriggerManual
+	Started     time.Time     `json:"started"`
+	Duration    time.Duration `json:"duration"`
+	Accounts    int           `json:"accounts"`
+	Ran         int           `json:"ran"`
+	Refused     int           `json:"refused"`
+	Failed      int           `json:"failed"`
+	Skipped     int           `json:"skipped"`
+	Refusals    []string      `json:"refusals,omitempty"`
+	SkipReasons []string      `json:"skip_reasons,omitempty"`
+	Error       string        `json:"error,omitempty"`
 }
 
-// History returns the run journal newest-first.  Refusals is copied so a
-// caller cannot reach back into the runner's stored slice.
+// History returns the run journal newest-first. Reason slices are copied so a
+// caller cannot reach back into the runner's stored state.
 func (r *Runner) History() []RunRecord {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -1575,6 +1632,7 @@ func (r *Runner) History() []RunRecord {
 	for i := range r.history {
 		out[i] = r.history[len(r.history)-1-i]
 		out[i].Refusals = append([]string(nil), out[i].Refusals...)
+		out[i].SkipReasons = append([]string(nil), out[i].SkipReasons...)
 	}
 	return out
 }
@@ -1589,17 +1647,18 @@ func (r *Runner) Config() Config {
 
 // Report summarizes one batch execution.
 type Report struct {
-	Client   string        `json:"client"`
-	Batch    string        `json:"batch"`
-	Started  time.Time     `json:"started"`
-	Duration time.Duration `json:"duration"`
-	Accounts int           `json:"accounts"`
-	Ran      int           `json:"ran"`
-	Refused  int           `json:"refused"` // TaskResult.OK == false: legitimate, NOT an error
-	Failed   int           `json:"failed"`  // transport/Go errors
-	Skipped  int           `json:"skipped"` // deliberately not run for this account/code
-	Refusals []string      `json:"refusals,omitempty"`
-	Errors   []string      `json:"errors,omitempty"`
+	Client      string        `json:"client"`
+	Batch       string        `json:"batch"`
+	Started     time.Time     `json:"started"`
+	Duration    time.Duration `json:"duration"`
+	Accounts    int           `json:"accounts"`
+	Ran         int           `json:"ran"`
+	Refused     int           `json:"refused"` // TaskResult.OK == false: legitimate, NOT an error
+	Failed      int           `json:"failed"`  // transport/Go errors
+	Skipped     int           `json:"skipped"` // deliberately not run for this account/code
+	Refusals    []string      `json:"refusals,omitempty"`
+	SkipReasons []string      `json:"skip_reasons,omitempty"`
+	Errors      []string      `json:"errors,omitempty"`
 }
 
 // Status is a read-only snapshot for the panel.
@@ -1708,6 +1767,7 @@ func (r *Runner) runCheckinBatchAs(ctx context.Context, c core.Client, b core.Ba
 		ranAnAccount = true
 		if !core.CheckinActionAllowsAccount(checkinActions, "", rec) {
 			rep.Skipped++
+			rep.SkipReasons = appendReason(rep.SkipReasons, "action is not scoped to this account channel")
 			r.log("[scheduler] %s/%s account %q checkin skipped: action is not scoped to this account channel", rep.Client, rep.Batch, acc)
 			continue
 		}
@@ -1730,7 +1790,9 @@ func (r *Runner) runCheckinBatchAs(ctx context.Context, c core.Client, b core.Ba
 		if !res.OK {
 			if res.Skipped {
 				rep.Skipped++
-				r.log("[scheduler] %s/%s account %q checkin skipped: %s", rep.Client, rep.Batch, acc, checkinReason(res))
+				reason := checkinReason(res)
+				rep.SkipReasons = appendReason(rep.SkipReasons, reason)
+				r.log("[scheduler] %s/%s account %q checkin skipped: %s", rep.Client, rep.Batch, acc, reason)
 				continue
 			}
 			rep.Refused++

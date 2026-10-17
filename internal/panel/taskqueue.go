@@ -547,7 +547,7 @@ func (p *panel) drainTaskQueue(tp core.TaskProvider, client string) {
 				q.markRun(idx, runID)
 
 				ctx, cancel := context.WithTimeout(context.Background(), taskRunTimeout)
-				res, err := tp.RunTask(ctx, item.Account, item.Code)
+				res, err := p.runTaskAndRecordCheckin(ctx, tp, item.Account, item.Code)
 				cancel()
 				q.noteTaskDone(item.Account)
 				releaseAccount()

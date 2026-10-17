@@ -373,7 +373,7 @@ func (p *panel) taskRun(w http.ResponseWriter, r *http.Request, c core.Client, c
 	}, func() {
 		ctx, cancel := context.WithTimeout(context.Background(), taskRunTimeout)
 		defer cancel()
-		res, err := tp.RunTask(ctx, body.Account, code)
+		res, err := p.runTaskAndRecordCheckin(ctx, tp, body.Account, code)
 		if err != nil {
 			res = core.TaskResult{
 				Code:      code,

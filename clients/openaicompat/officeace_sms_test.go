@@ -342,9 +342,22 @@ func TestOfficeAceSMSStatusRedactsTheTokenFromErrors(t *testing.T) {
 
 func TestOfficeAceAutoLoginDrivesBrowserWithSMS(t *testing.T) {
 	t.Setenv("EOMSG_TOKEN", "")
+	releaseStarted := make(chan struct{})
+	releaseContinue := make(chan struct{})
+	var releaseStartedOnce, releaseContinueOnce sync.Once
+	continueRelease := func() {
+		releaseContinueOnce.Do(func() { close(releaseContinue) })
+	}
 	sms := &fakeOfficeAceSMS{phones: []string{"13800000000"}, msg: "【华为】验证码：246810，请勿泄露。"}
-	smsSrv := httptest.NewServer(http.HandlerFunc(sms.serve))
+	smsSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("code") == "release" {
+			releaseStartedOnce.Do(func() { close(releaseStarted) })
+			<-releaseContinue
+		}
+		sms.serve(w, r)
+	}))
 	defer smsSrv.Close()
+	defer continueRelease()
 
 	var srv *httptest.Server
 	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -387,6 +400,19 @@ func TestOfficeAceAutoLoginDrivesBrowserWithSMS(t *testing.T) {
 	if job.State != core.AutoLoginRunning {
 		t.Fatalf("job = %+v, want running", job)
 	}
+	select {
+	case <-releaseStarted:
+	case <-time.After(10 * time.Second):
+		t.Fatal("auto login never tried to release the freshly drawn number")
+	}
+	job, err = o.PollAutoLogin(context.Background(), job.ID)
+	if err != nil {
+		t.Fatalf("PollAutoLogin while releasing: %v", err)
+	}
+	if job.State != core.AutoLoginRunning {
+		t.Fatalf("job = %+v, want running until the number is released", job)
+	}
+	continueRelease()
 	done := waitOfficeAceJob(t, o, job.ID)
 	if done.State != core.AutoLoginSuccess {
 		t.Fatalf("job = %+v, want success", done)
