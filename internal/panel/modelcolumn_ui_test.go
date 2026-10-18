@@ -135,7 +135,7 @@ func TestModelColumnIsWiredEndToEnd(t *testing.T) {
 // shows that name while the title stays the wire model id the gateway expects.
 func TestModelDialogShowsFriendlyNames(t *testing.T) {
 	src := poolStatsUISource(t)
-	for _, want := range []string{`MODEL_NAMES`, `display_name`, `function modelDisplayName(client, id)`} {
+	for _, want := range []string{`MODEL_NAMES`, `display_name`, `function modelDisplayName(client, id, realm)`} {
 		if !strings.Contains(src, want) {
 			t.Errorf("model dialog is missing %q", want)
 		}

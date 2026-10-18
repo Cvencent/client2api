@@ -27,6 +27,8 @@ type routeSpeedResult struct {
 	ElapsedMS        int64   `json:"elapsed_ms"`
 	CompletionTokens int     `json:"completion_tokens,omitempty"`
 	TokensPerSecond  float64 `json:"tokens_per_second,omitempty"`
+	ContextLength    int64   `json:"context_length,omitempty"`
+	ContextSource    string  `json:"context_source,omitempty"`
 	Error            string  `json:"error,omitempty"`
 }
 
@@ -68,9 +70,11 @@ func (p *panel) handleRouteSpeed(w http.ResponseWriter, r *http.Request) {
 
 func (p *panel) speedRouteStep(parent context.Context, step core.RoutePlanStep) routeSpeedResult {
 	result := routeSpeedResult{
-		Position: step.Position,
-		Platform: step.Platform,
-		ModelID:  step.ModelID,
+		Position:      step.Position,
+		Platform:      step.Platform,
+		ModelID:       step.ModelID,
+		ContextLength: step.ContextLength,
+		ContextSource: step.ContextSource,
 	}
 	if p == nil || p.opts.Registry == nil {
 		result.Error = "no registry"

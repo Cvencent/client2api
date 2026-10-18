@@ -187,8 +187,9 @@ people. The built-in default is `127.0.0.1`.
   The model page can edit the supported levels and default, and those values are
   authoritative over a stale module cache.
 - `Auto/<model>` and custom model groups expose the same editable context window,
-  max-output and thinking fields as a concrete platform/model row. The effective
-  context is the widest member plus any `__virtual__` override; the effort list is
+  max-output, thinking and cap-alignment fields as a concrete platform/model
+  row. The effective context is the widest member plus any `__virtual__`
+  override; the effort list is
   the stable union of members and the default follows the first platform in the
   operator's routing order. Editing the virtual row is a gateway-level override,
   so it is applied before the per-candidate policy.
@@ -196,8 +197,9 @@ people. The built-in default is `127.0.0.1`.
   Each platform still aligns that level to its own advertised ladder (preferring
   the nearest lower rung) and keeps the user's platform priority unchanged; the
   usage row records the caller's original request and the level actually sent.
-- Cap alignment is on by default for every model on every platform; the panel
-  still lets an operator turn it off or restore the default per model. When it is
+- Cap alignment is on by default for every model on every platform, including
+  `Auto/<model>` and model-group rows; the panel still lets an operator turn it
+  off or restore the default per model. When it is
   on, a caller's top level `xhigh` is promoted to the model's real highest level
   only when that level is higher (for example WorkBuddy, Cline and OpenRouter
   `max`). Lower requests and models whose top level is already `xhigh` - Loomy,
@@ -296,13 +298,14 @@ people. The built-in default is `127.0.0.1`.
   statically replays the failover chain - which platform would be tried first,
   which one comes next, the effective priority and where it comes from
   (platform priority, a time window, a model group or the dynamic Auto pool) -
-  without reading account state or calling upstream. **Speed Test** resolves the
-  same chain, then sends one minimal live request per platform through that
-  platform's own account pool and reports first-event latency, total elapsed
-  time, the serving account, completion tokens and tok/s. The result rows can be
-  dragged or moved with Up/Down; saving writes the displayed order back to
-  platform priority, model-group member priority or the schedule-window priority
-  and hot-reloads it.
+  and shows each platform model's effective context window and source so the
+  order can be judged with context capacity in view, without reading account
+  state or calling upstream. **Speed Test** resolves the same chain, then sends
+  one minimal live request per platform through that platform's own account pool
+  and reports first-event latency, total elapsed time, the serving account,
+  completion tokens and tok/s. The result rows can be dragged or moved with
+  Up/Down; saving writes the displayed order back to platform priority,
+  model-group member priority or the schedule-window priority and hot-reloads it.
 - Runtime Log
 
 ### Tasks, usage and accounting

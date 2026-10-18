@@ -27,7 +27,7 @@ var reasoningEffortRank = map[string]int{
 // and then applies cap alignment. Resetting matters on failover: an earlier
 // candidate may have promoted xhigh to max, while the next candidate may not
 // support max and must start from the original request again.
-func (s *server) applyEffortPolicy(ctx context.Context, client core.Client, model string, req *core.ChatRequest, requested string) string {
+func (s *server) applyEffortPolicy(ctx context.Context, client core.Client, model, requestedModel string, req *core.ChatRequest, requested string) string {
 	if req == nil {
 		return ""
 	}
@@ -50,7 +50,7 @@ func (s *server) applyEffortPolicy(ctx context.Context, client core.Client, mode
 	// because xhigh is Codex's top label while some vendors expose the same
 	// level as max; the policy deliberately promotes the caller's top tier to
 	// that vendor name instead of misreading it as an unsupported level.
-	if requested == effortXHigh && modelmeta.ElevateTop(client.Name(), model, s.opts.ModelOverrides) {
+	if requested == effortXHigh && s.capAlignmentEnabled(requestedModel, client, model) {
 		top := highestReasoningEffort(efforts)
 		if top != "" && reasoningEffortRank[top] > reasoningEffortRank[requested] {
 			setReasoningEffort(req, top)
@@ -74,6 +74,22 @@ func (s *server) applyEffortPolicy(ctx context.Context, client core.Client, mode
 		}
 	}
 	return requested
+}
+
+// capAlignmentEnabled resolves the policy for the model the caller actually
+// named. A virtual row (Auto/<id> or a model group) may carry an explicit
+// choice; when it does, that choice is final for every underlying candidate.
+// Otherwise each candidate keeps its own model-level policy, which is the same
+// precedence used for the virtual row's context, output and effort metadata.
+func (s *server) capAlignmentEnabled(requestedModel string, client core.Client, model string) bool {
+	if name, ok := s.virtualModelName(requestedModel); ok && s.opts.ModelOverrides != nil {
+		if o, ok := s.opts.ModelOverrides.Get(core.VirtualModelClient, name); ok {
+			if on, explicit := o.ExplicitElevateTop(); explicit {
+				return on
+			}
+		}
+	}
+	return modelmeta.ElevateTop(client.Name(), model, s.opts.ModelOverrides)
 }
 
 // alignEffortToSupported maps a caller's unsupported tier onto the candidate's

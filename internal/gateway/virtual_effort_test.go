@@ -187,3 +187,64 @@ func TestExplicitEffortBeatsVirtualDefaultAndUnsupportedCandidateDowngradesInOrd
 		t.Fatal("beta was tried even though alpha could serve after cap alignment")
 	}
 }
+
+func TestVirtualCapAlignmentOffOverridesTheCandidateDefault(t *testing.T) {
+	alpha := &virtualEffortClient{
+		testClient:    &testClient{name: "alpha", catalogue: []core.Model{{ID: "shared-model"}}},
+		efforts:       []string{"low", "high", "max"},
+		defaultEffort: "high",
+	}
+	store, err := modelmeta.OpenOverrideStore("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetElevateTop(core.VirtualModelClient, "Auto/shared-model", false); err != nil {
+		t.Fatal(err)
+	}
+	srv := NewServer(Options{
+		Registry:       regWith(alpha),
+		Version:        "test",
+		Logger:         log.New(io.Discard, "", 0),
+		ModelOverrides: store,
+	})
+
+	rec := chat(t, srv, `{"model":"Auto/shared-model","reasoning_effort":"xhigh","messages":[{"role":"user","content":"hi"}]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if got := alpha.seen.Options["reasoning_effort"]; got != "xhigh" {
+		t.Fatalf("sent effort = %v, want xhigh after the virtual row disabled cap alignment", got)
+	}
+}
+
+func TestVirtualCapAlignmentOnOverridesTheCandidateChoice(t *testing.T) {
+	alpha := &virtualEffortClient{
+		testClient:    &testClient{name: "alpha", catalogue: []core.Model{{ID: "shared-model"}}},
+		efforts:       []string{"low", "high", "max"},
+		defaultEffort: "high",
+	}
+	store, err := modelmeta.OpenOverrideStore("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetElevateTop("alpha", "shared-model", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetElevateTop(core.VirtualModelClient, "Auto/shared-model", true); err != nil {
+		t.Fatal(err)
+	}
+	srv := NewServer(Options{
+		Registry:       regWith(alpha),
+		Version:        "test",
+		Logger:         log.New(io.Discard, "", 0),
+		ModelOverrides: store,
+	})
+
+	rec := chat(t, srv, `{"model":"Auto/shared-model","reasoning_effort":"xhigh","messages":[{"role":"user","content":"hi"}]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if got := alpha.seen.Options["reasoning_effort"]; got != "max" {
+		t.Fatalf("sent effort = %v, want max after the virtual row enabled cap alignment", got)
+	}
+}

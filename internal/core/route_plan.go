@@ -1,6 +1,7 @@
 package core
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -32,8 +33,13 @@ type RoutePlanStep struct {
 	Priority   int             `json:"priority"`
 	Source     RoutePlanSource `json:"priority_source"`
 	SourceName string          `json:"priority_source_name"`
-	AutoPool   bool            `json:"auto_pool,omitempty"`
-	Group      string          `json:"group,omitempty"`
+	// ContextLength is the effective input window the panel resolved for this
+	// platform's concrete model. It travels with the route plan so operators
+	// can compare failover candidates without opening the model table again.
+	ContextLength int64  `json:"context_length,omitempty"`
+	ContextSource string `json:"context_source,omitempty"`
+	AutoPool      bool   `json:"auto_pool,omitempty"`
+	Group         string `json:"group,omitempty"`
 	// Preferred marks the member that matches the caller's spelling of a
 	// bare group name: the runtime tries it before the group's siblings.
 	// Writing client/model is a hard pin instead and yields that one
@@ -166,6 +172,7 @@ func (r *Registry) ResolveStaticCatalogAt(model string, catalogs map[string][]Mo
 			Source:     RoutePlanSourceBase,
 			SourceName: "平台优先级",
 		}
+		step.ContextLength, step.ContextSource = routePlanContext(m)
 		if hitName, hit := r.scheduleWindowSource(name, now); hit {
 			step.Source = RoutePlanSourceSchedule
 			step.SourceName = "分时规则"
@@ -233,6 +240,7 @@ func (r *Registry) planGroupMember(group ModelGroup, groupKey, name string, mode
 			Free:     modelFree(m),
 			Group:    groupKey,
 		}
+		step.ContextLength, step.ContextSource = routePlanContext(m)
 		// The Auto member expands to every platform that serves the model.
 		// The runtime sorts the pool members by each platform's own priority
 		// (a group-set Auto priority only positions the whole pool), so the
@@ -262,6 +270,55 @@ func (r *Registry) planGroupMember(group ModelGroup, groupKey, name string, mode
 		return &step, true
 	}
 	return nil, false
+}
+
+// routePlanContext reads the context window a panel catalogue item carries.
+// The panel normally sends the already-resolved effective value as
+// context_length plus its provenance, but accepting the module spellings too
+// keeps the static plan useful for callers that supply a raw catalogue.
+func routePlanContext(m Model) (int64, string) {
+	if m.Extra == nil {
+		return 0, ""
+	}
+	var length int64
+	for _, key := range []string{"context_length", "context_window", "max_input_tokens"} {
+		if n := routePlanInt64(m.Extra[key]); n > 0 {
+			length = n
+			break
+		}
+	}
+	source, _ := m.Extra["context_source"].(string)
+	return length, strings.TrimSpace(source)
+}
+
+func routePlanInt64(v any) int64 {
+	switch n := v.(type) {
+	case int:
+		return int64(n)
+	case int32:
+		return int64(n)
+	case int64:
+		return n
+	case uint:
+		if uint64(n) <= uint64(1<<63-1) {
+			return int64(n)
+		}
+	case uint32:
+		return int64(n)
+	case uint64:
+		if n <= uint64(1<<63-1) {
+			return int64(n)
+		}
+	case float32:
+		return int64(n)
+	case float64:
+		return int64(n)
+	case json.Number:
+		if n, err := n.Int64(); err == nil {
+			return n
+		}
+	}
+	return 0
 }
 
 // scheduleWindowSource reports whether a priority window covers now and, if

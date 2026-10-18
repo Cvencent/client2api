@@ -96,8 +96,8 @@ func TestRouteSpeedCallsEveryPlatformAndReportsTiming(t *testing.T) {
 	rec := routeSpeedPost(t, h, `{
 		"model":"Auto/gpt-x",
 		"catalogs":{
-			"alpha":[{"id":"gpt-x"}],
-			"beta":[{"id":"gpt-x"}]
+			"alpha":[{"id":"gpt-x","context_length":200000,"context_source":"manual"}],
+			"beta":[{"id":"gpt-x","context_length":1048576,"context_source":"static"}]
 		}
 	}`)
 	if rec.Code != http.StatusOK {
@@ -116,6 +116,8 @@ func TestRouteSpeedCallsEveryPlatformAndReportsTiming(t *testing.T) {
 			ElapsedMS        int64   `json:"elapsed_ms"`
 			CompletionTokens int     `json:"completion_tokens"`
 			TokensPerSecond  float64 `json:"tokens_per_second"`
+			Context          int64   `json:"context_length"`
+			ContextSrc       string  `json:"context_source"`
 			Error            string  `json:"error"`
 		} `json:"results"`
 	}
@@ -141,6 +143,10 @@ func TestRouteSpeedCallsEveryPlatformAndReportsTiming(t *testing.T) {
 	}
 	if first.CompletionTokens != 3 || first.TokensPerSecond <= 0 {
 		t.Fatalf("alpha tokens = %d / %.3f, want 3 and a positive rate", first.CompletionTokens, first.TokensPerSecond)
+	}
+	if first.Context != 200000 || first.ContextSrc != "manual" ||
+		got.Results[1].Context != 1048576 || got.Results[1].ContextSrc != "static" {
+		t.Fatalf("speed results lost the route context: %+v", got.Results)
 	}
 	if alpha.calls.Load() != 1 || beta.calls.Load() != 1 {
 		t.Fatalf("calls = alpha %d / beta %d, want 1 each", alpha.calls.Load(), beta.calls.Load())

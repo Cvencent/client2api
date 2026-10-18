@@ -666,3 +666,23 @@ func TestOfficeAceProfileImportCarriesCloudSession(t *testing.T) {
 		t.Fatalf("session = %+v", sess)
 	}
 }
+
+func TestOfficeAceFetchV3AcceptsCreated(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != officeAcePremiumPathSecurityTok {
+			http.NotFound(w, r)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		_, _ = io.WriteString(w, `{"credential":{"access":"v3-access","secret":"v3-secret","securitytoken":"v3-token","expires_at":"2099-01-01T00:00:00Z"}}`)
+	}))
+	defer srv.Close()
+
+	got, ok := officeAceFetchV3(context.Background(), srv.Client(), srv.URL, "v5-access", "v5-secret", "v5-token", "project-1", time.Now())
+	if !ok {
+		t.Fatal("the IAM security-token endpoint returns 201 Created; that must count as success")
+	}
+	if got.Access != "v3-access" || got.Secret != "v3-secret" || got.SecurityToken != "v3-token" || got.ProjectID != "project-1" {
+		t.Fatalf("v3 credential = %+v", got)
+	}
+}

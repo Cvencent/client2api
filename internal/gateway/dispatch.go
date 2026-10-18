@@ -189,7 +189,7 @@ func (s *server) routeAndServeMessages(w http.ResponseWriter, r *http.Request, i
 	// instead of inheriting the cuts made for a smaller-window sibling.
 	baseReq := cloneChatRequest(in.req)
 	maxTokensExplicit := in.req.MaxTokens != nil
-	attemptReq, prepErr := s.prepareCandidateAttempt(attemptCtx, candidates[0], baseReq, in.rec, maxTokensExplicit)
+	attemptReq, prepErr := s.prepareCandidateAttempt(attemptCtx, candidates[0], in.requested, baseReq, in.rec, maxTokensExplicit)
 	if prepErr != nil {
 		// The newest turn alone does not fit this candidate.  That is a reason
 		// to skip the candidate, not to refuse the whole request while a larger

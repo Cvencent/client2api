@@ -86,6 +86,29 @@ func TestResolveStaticCatalogOrdersByBasePriority(t *testing.T) {
 	}
 }
 
+func TestResolveStaticCatalogCarriesEachPlatformsContextWindow(t *testing.T) {
+	r := registryWith(t,
+		&countingClient{name: "alpha", models: []Model{{ID: "gpt-x"}}},
+		&countingClient{name: "beta", models: []Model{{ID: "gpt-x"}}},
+	)
+	catalogs := map[string][]Model{
+		"alpha": {{ID: "gpt-x", Extra: map[string]any{"context_length": 200000}}},
+		"beta":  {{ID: "gpt-x", Extra: map[string]any{"context_window": 1048576}}},
+	}
+
+	plan, err := r.ResolveStaticCatalog("Auto/gpt-x", catalogs)
+	if err != nil {
+		t.Fatalf("ResolveStaticCatalog failed: %v", err)
+	}
+	got := map[string]int64{}
+	for _, step := range plan.Steps {
+		got[step.Platform] = step.ContextLength
+	}
+	if got["alpha"] != 200000 || got["beta"] != 1048576 {
+		t.Fatalf("context windows = %+v, want alpha=200000 beta=1048576", got)
+	}
+}
+
 func TestResolveStaticCatalogUsesScheduleWindow(t *testing.T) {
 	r := registryWith(t,
 		&countingClient{name: "beta", models: []Model{{ID: "gpt-x"}}},

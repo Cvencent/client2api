@@ -120,6 +120,60 @@ func TestModelsListIncludesEditableVirtualModels(t *testing.T) {
 	}
 }
 
+func TestModelsListIncludesEditableVirtualCapAlignment(t *testing.T) {
+	store, err := modelmeta.OpenOverrideStore("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	alpha := &fakeClient{name: "alpha", models: []core.Model{{ID: "m1"}}}
+	reg := registryOf(alpha)
+	reg.SetModelGroups(map[string]core.ModelGroup{
+		"shared": {Members: []core.ModelGroupMember{{Client: "alpha", Model: "m1"}}},
+	})
+	h := New(Options{Registry: reg, ModelOverrides: store})
+
+	load := func() map[string]modelInfo {
+		rec := get(t, h, "/panel/api/models")
+		var got modelsReport
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range got.Clients {
+			if c.Name != core.VirtualModelClient {
+				continue
+			}
+			byID := map[string]modelInfo{}
+			for _, m := range c.Models {
+				byID[m.ID] = m
+			}
+			return byID
+		}
+		t.Fatalf("virtual client missing from %#v", got.Clients)
+		return nil
+	}
+
+	byID := load()
+	for _, id := range []string{"Auto/m1", "shared"} {
+		m, ok := byID[id]
+		if !ok {
+			t.Fatalf("virtual model %q missing: %#v", id, byID)
+		}
+		if !m.ElevateTop || !m.ElevateTopDefault || m.ElevateTopManual || !m.ElevateTopEditable {
+			t.Fatalf("%s cap alignment = on:%v default:%v manual:%v editable:%v, want on/default and editable",
+				id, m.ElevateTop, m.ElevateTopDefault, m.ElevateTopManual, m.ElevateTopEditable)
+		}
+	}
+
+	if err := store.SetElevateTop(core.VirtualModelClient, "Auto/m1", false); err != nil {
+		t.Fatal(err)
+	}
+	auto := load()["Auto/m1"]
+	if auto.ElevateTop || !auto.ElevateTopDefault || !auto.ElevateTopManual || !auto.ElevateTopEditable {
+		t.Fatalf("manual Auto cap alignment = on:%v default:%v manual:%v editable:%v, want explicit off",
+			auto.ElevateTop, auto.ElevateTopDefault, auto.ElevateTopManual, auto.ElevateTopEditable)
+	}
+}
+
 func TestModelContextAcceptsVirtualClient(t *testing.T) {
 	store, err := modelmeta.OpenOverrideStore("")
 	if err != nil {

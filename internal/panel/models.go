@@ -249,6 +249,13 @@ func (p *panel) virtualModelsFor(real []clientModels) clientModels {
 		if defaultEffort != "" && !containsString(efforts, defaultEffort) {
 			defaultEffort = ""
 		}
+		elevateTop := modelmeta.ElevateTop(core.VirtualModelClient, id, p.opts.ModelOverrides)
+		elevateTopManual := false
+		if p.opts.ModelOverrides != nil {
+			if o, ok := p.opts.ModelOverrides.Get(core.VirtualModelClient, id); ok {
+				_, elevateTopManual = o.ExplicitElevateTop()
+			}
+		}
 		row.Models = append(row.Models, modelInfo{
 			ID:               id,
 			OwnedBy:          ownedBy,
@@ -270,9 +277,13 @@ func (p *panel) virtualModelsFor(real []clientModels) clientModels {
 			}(),
 			SupportedEffortsDefault: effortsDefault,
 			DefaultEffortDefault:    defaultDefault,
+			ElevateTop:              elevateTop,
+			ElevateTopDefault:       modelmeta.StaticElevateTop(core.VirtualModelClient, id),
+			ElevateTopManual:        elevateTopManual,
 			ContextEditable:         p.opts.ModelOverrides != nil,
 			MaxOutputEditable:       p.opts.ModelOverrides != nil,
 			EffortsEditable:         p.opts.ModelOverrides != nil,
+			ElevateTopEditable:      p.opts.ModelOverrides != nil,
 		})
 	}
 

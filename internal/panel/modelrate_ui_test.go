@@ -42,8 +42,14 @@ func TestAccountModelDialogRendersRateTags(t *testing.T) {
 		{"zero multiplier is free", map[string]any{"display_multiplier": 0}, `<span class="tag ok model-rate" title="免费模型">免费</span>`},
 		{"list multiplier", map[string]any{"credits": 2}, `<span class="tag mute model-rate" title="模型倍率">x2</span>`},
 		{"current promotion", map[string]any{"credits": 2, "promo_credits": 0.8}, `<span class="tag mute model-rate" title="当前生效倍率">x0.8</span>`},
+		{"cost multiplier", map[string]any{"cost_multiplier": 0.05}, `<span class="tag mute model-rate" title="模型倍率">x0.05</span>`},
+		{"billing multiplier", map[string]any{"billing_multiplier": 0.5}, `<span class="tag mute model-rate" title="模型倍率">x0.5</span>`},
+		{"billing promotion", map[string]any{"billing_multiplier": 0.5, "billing_effective_multiplier": 0}, `<span class="tag ok model-rate" title="免费模型">免费</span>`},
+		{"consumption promotion", map[string]any{"consumption_rate": 2, "consumption_rate_current": 1}, `<span class="tag mute model-rate" title="当前生效倍率">x1</span>`},
+		{"free access type", map[string]any{"model_access_type": "free_unlimited"}, `<span class="tag ok model-rate" title="免费模型">免费</span>`},
 		{"display-name multiplier", map[string]any{"display_name": "DeepSeek V4 · x3"}, `<span class="tag mute model-rate" title="模型倍率">x3</span>`},
-		{"unknown rate", map[string]any{"display_name": "DeepSeek V4"}, ""},
+		{"client-reported level", map[string]any{"credit_consumption_level": "低"}, `<span class="tag mute model-rate" title="客户端自报的倍率分级">低</span>`},
+		{"unknown rate", map[string]any{"display_name": "DeepSeek V4"}, `<span class="tag mute model-rate" title="厂商目录没有公开这个模型的计费倍率">未公开</span>`},
 	}
 
 	dir := t.TempDir()
@@ -115,6 +121,7 @@ func TestAccountModelDialogEmbedsRateTagsInModelCells(t *testing.T) {
 	src := poolStatsUISource(t)
 	var bundle strings.Builder
 	for _, name := range []string{
+		"modelMetaKey",
 		"modelDisplayName",
 		"modelExtra",
 		"rateNumber",
@@ -183,7 +190,7 @@ fs.writeFileSync(process.argv[2], JSON.stringify(got));
 	}{
 		{"paidEditable", []string{"Paid Model", `title="模型倍率">x2</span>`, `class="mparkBox" checked`}, ""},
 		{"freeReadonly", []string{"Free Model", `title="免费模型">免费</span>`}, ""},
-		{"unknownReadonly", []string{"Plain Model"}, "model-rate"},
+		{"unknownReadonly", []string{"Plain Model", `title="厂商目录没有公开这个模型的计费倍率">未公开</span>`}, ""},
 	} {
 		for _, want := range tc.want {
 			if !strings.Contains(got[tc.name], want) {
@@ -249,5 +256,114 @@ fs.writeFileSync(process.argv[2], JSON.stringify({
 	}
 	if got.PlainName != "" || got.PlainMeta == nil {
 		t.Errorf("plain cache = name %q meta %#v, want empty name and an empty metadata object", got.PlainName, got.PlainMeta)
+	}
+}
+
+// TestAccountModelDialogResolvesRealmAndProviderQualifiedCatalogueMeta covers
+// the account dialog's lookup path.  WorkBuddy publishes cn:/global: qualified
+// ids while the account list shows the bare id; openai-compat can publish a
+// provider-qualified id while the account exposes only the leaf name.  Both
+// must still find the catalogue's rate metadata without guessing across
+// realms or providers.
+func TestAccountModelDialogResolvesRealmAndProviderQualifiedCatalogueMeta(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not on PATH; the model-cell renderer needs it")
+	}
+
+	src := poolStatsUISource(t)
+	dialog := poolStatsFuncBody(t, src, "openModelsDialog")
+	if !strings.Contains(dialog, "modelCellHTML(n, m, sum.parks[m], editable, offSet(m), sum.realm)") {
+		t.Error("openModelsDialog 没有把账号 realm 传给模型格子，带前缀的目录会再次丢失倍率标签")
+	}
+	var bundle strings.Builder
+	for _, name := range []string{
+		"modelMetaKey",
+		"modelDisplayName",
+		"modelExtra",
+		"rateNumber",
+		"rateIsFree",
+		"fmtMultiplier",
+		"rateListPrice",
+		"rateEffectivePrice",
+		"rateFromDisplayName",
+		"modelRateTagHTML",
+		"modelCellHTML",
+	} {
+		bundle.WriteString(poolStatsFuncBody(t, src, name))
+		bundle.WriteString("\n}\n")
+	}
+
+	dir := t.TempDir()
+	resultPath := filepath.Join(dir, "result.json")
+	scriptPath := filepath.Join(dir, "model-realm-cell.js")
+	script := `
+const fs = require("fs");
+const MODEL_NAMES = {
+  "workbuddy/cn:hy3": "混元 3",
+  "workbuddy/cn:glm-5.3": "GLM 5.3",
+  "workbuddy/global:glm-5.3": "GLM 5.3 Global",
+  "openai-compat/omniroute/auto": "Auto"
+};
+const MODEL_META = {
+  "workbuddy/cn:hy3": {free: true, credits: "x0.00", display_name: "混元 3"},
+  "workbuddy/cn:glm-5.3": {credits: "x0.79", display_name: "GLM 5.3"},
+  "workbuddy/global:glm-5.3": {credits: "x1.2", display_name: "GLM 5.3 Global"},
+  "openai-compat/omniroute/auto": {credits: "2", display_name: "Auto"},
+  "multi/a/leaf": {credits: "1"},
+  "multi/b/leaf": {credits: "2"}
+};
+function esc(v) {
+  return String(v == null ? "" : v)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+function parkStateHTML() { return ""; }
+` + bundle.String() + `
+const got = {
+  workbuddyFree: modelCellHTML("workbuddy", "hy3", null, true, false, "cn"),
+  workbuddyPaid: modelCellHTML("workbuddy", "glm-5.3", null, true, false, "cn"),
+  workbuddyGlobal: modelCellHTML("workbuddy", "glm-5.3", null, true, false, "global"),
+  providerLeaf: modelCellHTML("openai-compat", "auto", null, false, false, ""),
+  ambiguousLeaf: modelCellHTML("multi", "leaf", null, false, false, "")
+};
+fs.writeFileSync(process.argv[2], JSON.stringify(got));
+`
+	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
+		t.Fatalf("writing node harness: %v", err)
+	}
+	if out, err := exec.Command(node, scriptPath, resultPath).CombinedOutput(); err != nil {
+		t.Fatalf("node could not run the realm-aware model cell renderer: %v\n%s", err, out)
+	}
+	raw, err := os.ReadFile(resultPath)
+	if err != nil {
+		t.Fatalf("reading node result: %v", err)
+	}
+	var got map[string]string
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("decoding node result: %v\n%s", err, raw)
+	}
+	for _, tc := range []struct {
+		name string
+		want []string
+		deny string
+	}{
+		{"workbuddyFree", []string{"混元 3", `title="免费模型">免费</span>`}, ""},
+		{"workbuddyPaid", []string{"GLM 5.3", `title="模型倍率">x0.79</span>`}, "x1.2"},
+		{"workbuddyGlobal", []string{"GLM 5.3 Global", `title="模型倍率">x1.2</span>`}, "x0.79"},
+		{"providerLeaf", []string{"Auto", `title="模型倍率">x2</span>`}, ""},
+		{"ambiguousLeaf", []string{"leaf"}, "model-rate"},
+	} {
+		for _, want := range tc.want {
+			if !strings.Contains(got[tc.name], want) {
+				t.Errorf("%s = %s\nmissing %s", tc.name, got[tc.name], want)
+			}
+		}
+		if tc.deny != "" && strings.Contains(got[tc.name], tc.deny) {
+			t.Errorf("%s = %s\nunexpected %s", tc.name, got[tc.name], tc.deny)
+		}
 	}
 }

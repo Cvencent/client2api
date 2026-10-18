@@ -168,27 +168,42 @@ jobs:
           merge-multiple: true
       - name: checksums
         run: cd dist && sha256sum *.zip *.tar.gz > checksums.txt && ls -la
-      - name: 上一版 tag（compare 链接用）
-        id: prev
+      - name: 生成中文 Release 说明
         run: |
-          PREV=$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)
-          echo "prev=${PREV}" >> "$GITHUB_OUTPUT"
+          python3 - <<'PY'
+          import pathlib, re, sys
+          version = re.search(r'^var version = "([^"]+)"', pathlib.Path('cmd/client2api/main.go').read_text(encoding='utf-8'), re.M).group(1)
+          text = pathlib.Path('CHANGELOG.md').read_text(encoding='utf-8')
+          match = re.search(rf'^## \[{re.escape(version)}\][^\n]*\n(.*?)(?=^## \[|\Z)', text, re.M | re.S)
+          if not match:
+              sys.exit(f'CHANGELOG.md has no section for {version}')
+          body = match.group(1).strip()
+          labels = {
+              'Added': '新增',
+              'Changed': '变更',
+              'Fixed': '修复',
+              'Installer': '安装包',
+              'Upgrade Notes': '升级提示',
+          }
+          body = re.sub(
+              r'^### (Added|Changed|Fixed|Installer|Upgrade Notes)[ \t]*$',
+              lambda m: '## ' + labels[m.group(1)],
+              body,
+              flags=re.M,
+          )
+          if '## 安装包' in body:
+              body = body.replace(
+                  '## 安装包',
+                  '## 安装包\n\n- 五平台便携版和 `checksums.txt` 由 GitHub Actions 自动构建，见下方 `Assets`。',
+                  1,
+              )
+          if 'CHANGELOG.md' in body or 'compare/' in body:
+              sys.exit('release notes unexpectedly contain a changelog or compare link')
+          pathlib.Path('release-notes.md').write_text(body.rstrip() + '\n', encoding='utf-8')
+          PY
       - uses: softprops/action-gh-release@v2
         with:
           name: client2api ${{ github.ref_name }}
           prerelease: ${{ contains(github.ref_name, '-') }}
-          body: |
-            ## 本版变更
-
-            - 完整版本记录见 [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/CHANGELOG.md)。
-            - 五平台便携版和 `checksums.txt` 由 GitHub Actions 自动构建，见下方 `Assets`。
-
-            ## 安装包
-
-            - `client2api-setup-<version>.exe`（发布后由维护者附加到下方 `Assets`）
-            - 升级会保留现有 `configs/client2api.json`、`data/`、账号池、用量和任务数据。
-
-            ## 完整变更
-
-            https://github.com/${{ github.repository }}/compare/${{ steps.prev.outputs.prev }}...${{ github.ref_name }}
+          body_path: release-notes.md
           files: dist/*

@@ -446,7 +446,8 @@ func officeAceFetchV3(ctx context.Context, client *http.Client, keystoneBase, ac
 	}
 	defer resp.Body.Close()
 	raw := readLimited(resp.Body, maxErrorBytes)
-	if resp.StatusCode != http.StatusOK {
+	// Huawei answers this create-style exchange with 201 Created.
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		return officeAceV3Credential{}, false
 	}
 	var doc struct {

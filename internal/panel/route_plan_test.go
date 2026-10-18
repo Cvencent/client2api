@@ -32,7 +32,10 @@ func TestRoutePlanResolvesThePriorityChain(t *testing.T) {
 	opts := Options{Registry: reg}
 	h := New(opts)
 
-	body := `{"model":"Auto/gpt-x","catalogs":{"alpha":[{"id":"gpt-x"}],"beta":[{"id":"gpt-x"}]}}`
+	body := `{"model":"Auto/gpt-x","catalogs":{
+		"alpha":[{"id":"gpt-x","context_length":200000,"context_source":"manual"}],
+		"beta":[{"id":"gpt-x","context_length":1048576,"context_source":"static"}]
+	}}`
 	rec := routePlanPost(t, h, body)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
@@ -47,6 +50,8 @@ func TestRoutePlanResolvesThePriorityChain(t *testing.T) {
 			Priority   int    `json:"priority"`
 			Source     string `json:"priority_source"`
 			SourceName string `json:"priority_source_name"`
+			Context    int64  `json:"context_length"`
+			ContextSrc string `json:"context_source"`
 		} `json:"steps"`
 	}{}
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
@@ -63,6 +68,10 @@ func TestRoutePlanResolvesThePriorityChain(t *testing.T) {
 	}
 	if resp.Steps[0].Position != 1 || resp.Steps[1].Position != 2 {
 		t.Fatalf("positions = %d/%d, want 1/2", resp.Steps[0].Position, resp.Steps[1].Position)
+	}
+	if resp.Steps[0].Context != 200000 || resp.Steps[0].ContextSrc != "manual" ||
+		resp.Steps[1].Context != 1048576 || resp.Steps[1].ContextSrc != "static" {
+		t.Fatalf("contexts = %+v, want alpha 200000/manual and beta 1048576/static", resp.Steps)
 	}
 }
 

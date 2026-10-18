@@ -816,7 +816,7 @@ func (s *server) serveRemainingCandidates(w http.ResponseWriter, r *http.Request
 		rec.Candidate = firstCandidate
 		firstCandidate++
 
-		attemptReq, prepErr := s.prepareCandidateAttempt(attemptCtx, candidate, baseReq, rec, maxTokensExplicit)
+		attemptReq, prepErr := s.prepareCandidateAttempt(attemptCtx, candidate, in.requested, baseReq, rec, maxTokensExplicit)
 		if prepErr != nil {
 			// The newest turn alone does not fit this candidate. Record the
 			// attempt and keep walking the user's priority order: a later

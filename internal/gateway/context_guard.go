@@ -716,7 +716,7 @@ func retryBudgetForMeasuredRefusal(req *core.ChatRequest, observed, limit int64,
 // caller sent, even when an earlier, smaller sibling already had to drop turns.
 // A candidate whose newest turn cannot fit is reported as an error so the
 // router can skip it and keep walking the user's priority order.
-func (s *server) prepareCandidateAttempt(ctx context.Context, candidate core.Candidate, base *core.ChatRequest, rec *UsageRecord, maxTokensExplicit bool) (*core.ChatRequest, error) {
+func (s *server) prepareCandidateAttempt(ctx context.Context, candidate core.Candidate, requestedModel string, base *core.ChatRequest, rec *UsageRecord, maxTokensExplicit bool) (*core.ChatRequest, error) {
 	client, model := candidate.Client, candidate.Model
 	req := cloneChatRequest(base)
 	if req == nil {
@@ -759,7 +759,7 @@ func (s *server) prepareCandidateAttempt(ctx context.Context, candidate core.Can
 	}
 	limit := req.ContextWindowLimit
 
-	report, trimmed := s.guardRequestContext(ctx, req, client, model, maxOutput, rec)
+	report, trimmed := s.guardRequestContext(ctx, req, client, model, requestedModel, maxOutput, rec)
 	if report.Impossible {
 		window := s.requestContextWindow(ctx, client, model, limit)
 		if rec != nil {
@@ -786,7 +786,7 @@ func (s *server) prepareCandidateAttempt(ctx context.Context, candidate core.Can
 		if requestedEffort == "" {
 			requestedEffort = optionEffort(req.Options)
 		}
-		sentEffort := s.applyEffortPolicy(ctx, client, model, req, requestedEffort)
+		sentEffort := s.applyEffortPolicy(ctx, client, model, requestedModel, req, requestedEffort)
 		rec.SentReasoningEffort = ""
 		if sentEffort != "" && sentEffort != rec.ReasoningEffort {
 			rec.SentReasoningEffort = sentEffort
@@ -805,7 +805,7 @@ func (s *server) prepareCandidateAttempt(ctx context.Context, candidate core.Can
 // It is the one place that mutates a request for size, so it owns the two rules
 // that keep that safe: it never touches a request whose window is unknown, and
 // it never trims a request that already fits.
-func (s *server) guardRequestContext(ctx context.Context, req *core.ChatRequest, client core.Client, model string, maxOutput int, rec *UsageRecord) (trimReport, bool) {
+func (s *server) guardRequestContext(ctx context.Context, req *core.ChatRequest, client core.Client, model, requestedModel string, maxOutput int, rec *UsageRecord) (trimReport, bool) {
 	limit := int64(0)
 	if req != nil {
 		limit = req.ContextWindowLimit

@@ -50,6 +50,19 @@ func TestRoutePlanUIWiresTheApiCall(t *testing.T) {
 	}
 }
 
+func TestRoutePlanCatalogsCarryTheResolvedModelContext(t *testing.T) {
+	src := poolStatsUISource(t)
+	render := poolStatsFuncBody(t, src, "renderPlatforms")
+	for _, want := range []string{
+		`context_length: Number(m.context_length || 0)`,
+		`context_source: String(m.context_source || "")`,
+	} {
+		if !strings.Contains(render, want) {
+			t.Errorf("renderPlatforms 没有保留模型上下文 %q", want)
+		}
+	}
+}
+
 func TestRoutePlanUIWiresTheSpeedButton(t *testing.T) {
 	src := poolStatsUISource(t)
 	body := poolStatsFuncBody(t, src, "runRouteSpeed")
@@ -85,6 +98,9 @@ func TestRoutePlanUIDragOrderPersistsPriority(t *testing.T) {
 		`data-rp-position`,
 		`data-rp-move`,
 		`title="拖动调整优先级"`,
+		`context_length`,
+		`context_source`,
+		`上下文 `,
 	} {
 		if !strings.Contains(row, want) {
 			t.Errorf("routeStepHTML 缺少 %q", want)
@@ -174,13 +190,13 @@ const assert = require("assert");
 const routeCatalogs = new Function("PF", "return " + ` + string(code) + ` + ";")({
   models: {alpha:["gpt-x", "paid"]},
   modelInfos: {alpha:[
-    {id:"gpt-x", free:true},
+    {id:"gpt-x", free:true, context_length:200000, context_source:"manual"},
     {id:"paid", free:false}
   ]}
 });
 assert.deepStrictEqual(routeCatalogs({alpha:["gpt-x", "paid"]}), {
   alpha:[
-    {id:"gpt-x", free:true},
+    {id:"gpt-x", free:true, context_length:200000, context_source:"manual"},
     {id:"paid"}
   ]
 });

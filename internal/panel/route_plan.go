@@ -18,9 +18,11 @@ type routePlanRequest struct {
 }
 
 type routePlanCatalogItem struct {
-	ID    string         `json:"id"`
-	Free  bool           `json:"free"`
-	Extra map[string]any `json:"extra,omitempty"`
+	ID            string         `json:"id"`
+	Free          bool           `json:"free"`
+	ContextLength int64          `json:"context_length,omitempty"`
+	ContextSource string         `json:"context_source,omitempty"`
+	Extra         map[string]any `json:"extra,omitempty"`
 }
 
 // handleRoutePlan resolves the static priority chain for one model.  The
@@ -82,6 +84,18 @@ func (p *panel) resolveRoutePlan(req routePlanRequest) (core.RoutePlan, error) {
 				for k, v := range item.Extra {
 					m.Extra[k] = v
 				}
+			}
+			if item.ContextLength > 0 {
+				if m.Extra == nil {
+					m.Extra = map[string]any{}
+				}
+				m.Extra["context_length"] = item.ContextLength
+			}
+			if source := strings.TrimSpace(item.ContextSource); source != "" {
+				if m.Extra == nil {
+					m.Extra = map[string]any{}
+				}
+				m.Extra["context_source"] = source
 			}
 			models = append(models, m)
 		}

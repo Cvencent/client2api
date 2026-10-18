@@ -3352,7 +3352,7 @@ kbd {
             <button class="xs" id="btnRpSpeed">测速</button>
             <span class="hint">测试链路只做本地静态预演；测速会为每个平台实际调用一次，拖动结果可调整调用优先级。</span>
           </div>
-          <div class="pad" id="rpResult"><div class="hint">输入模型名后点「测试链路」，查看平台的调用顺序。</div></div>
+          <div class="pad" id="rpResult"><div class="hint">输入模型名后点「测试链路」，查看平台的调用顺序、上下文窗口和优先级。</div></div>
         </div>
         <div class="savebar">
           <span class="hint">勾选 = 允许调用，取消勾选即加入该平台黑名单；优先级填整数，可以为负数，数字越小越先路由，例如 -10 比 -5 更优先；留空使用默认 0。「平台总并发 / 网关单账号并发」与「最低余额」在平台头部，WorkBuddy 卡片里额外有账号池治理。保存后立即热加载生效，无需重启。</span>
@@ -5867,8 +5867,38 @@ function closeAccountNote() {
    拿到的 status + overview 和一次模型名称缓存。 */
 let MODEL_POLICY = null;
 
-function modelDisplayName(client, id) {
-  return MODEL_NAMES[String(client || "") + "/" + String(id || "")] || String(id || "");
+// modelMetaKey resolves the catalogue key for the id the account dialog is
+// drawing.  A realm-aware catalogue keeps the vendor's cn:/global: prefix in
+// /panel/api/models, while the account list shows the bare id.  A custom
+// provider catalogue can likewise qualify the model with the account id and
+// leave only the leaf name in the account.  Prefer the exact key, then the
+// account's realm, and only accept a provider suffix when it is unique: two
+// providers with the same leaf model must stay unlabelled rather than borrow
+// each other's price.
+function modelMetaKey(client, id, realm) {
+  const base = String(client || "") + "/";
+  const bare = String(id || "");
+  if (!bare) return "";
+  const exact = base + bare;
+  if (MODEL_META[exact]) return exact;
+  const r = String(realm || "").trim();
+  if (r) {
+    const qualified = base + r + ":" + bare;
+    if (MODEL_META[qualified]) return qualified;
+  }
+  const suffix = "/" + bare;
+  let hit = "";
+  for (const key of Object.keys(MODEL_META)) {
+    if (key.slice(0, base.length) !== base || !key.endsWith(suffix)) continue;
+    if (hit && hit !== key) return "";
+    hit = key;
+  }
+  return hit;
+}
+
+function modelDisplayName(client, id, realm) {
+  const key = modelMetaKey(client, id, realm);
+  return (key && MODEL_NAMES[key]) || String(id || "");
 }
 
 function rememberModelMeta(client, m) {
@@ -5880,8 +5910,9 @@ function rememberModelMeta(client, m) {
   return nm;
 }
 
-function modelExtra(client, id) {
-  return MODEL_META[String(client || "") + "/" + String(id || "")] || null;
+function modelExtra(client, id, realm) {
+  const key = modelMetaKey(client, id, realm);
+  return key ? MODEL_META[key] : null;
 }
 
 // parkStateHTML 是限流格子的状态文字。可编辑和只读两条分支共用它：原先可编辑
@@ -5896,10 +5927,10 @@ function parkStateHTML(p) {
 
 // modelCellHTML 画一个模型格子。editable 为真时渲染复选框（勾选=允许），
 // disabled 表示操作员关掉了这个模型（覆盖 park 状态）。
-function modelCellHTML(client, m, p, editable, disabled) {
-  const shown = modelDisplayName(client, m);
+function modelCellHTML(client, m, p, editable, disabled, realm) {
+  const shown = modelDisplayName(client, m, realm);
   const name = '<span class="nm" title="' + esc(m) + '">' + esc(shown) + '</span>';
-  const rate = modelRateTagHTML(modelExtra(client, m));
+  const rate = modelRateTagHTML(modelExtra(client, m, realm));
   if (editable) {
     const cls = disabled ? "off" : (p ? (p.kind === "unsupported" ? "bad" : "limit") : "ok");
     const state = disabled ? '<span class="st">已关闭</span>' : parkStateHTML(p);
@@ -5976,7 +6007,7 @@ function openModelsDialog(n, ids) {
         if (!seen[k]) { seen[k] = true; models.push(m); }
       });
       off.forEach(m => { if (!seen[m]) { seen[m] = true; models.push(m); } });
-      const cells = models.map(m => modelCellHTML(n, m, sum.parks[m], editable, offSet(m)));
+      const cells = models.map(m => modelCellHTML(n, m, sum.parks[m], editable, offSet(m), sum.realm));
       grid = '<div class="mpark-grid">' + cells.join("") + '</div>';
     }
     secs.push('<div class="mpark-acct" data-id="' + esc(a.id) + '">' + head + grid + '</div>');
@@ -7204,7 +7235,8 @@ function rateFromDisplayName(ex) {
 
 // modelRateTagHTML is the compact account-dialog counterpart to rateCell.  The
 // current promotion wins over the list price, an explicit free marker wins over
-// both, and a catalogue with no rate information stays unlabelled.
+// both, and a catalogue with no rate information says so explicitly instead of
+// leaving the operator unsure whether the tag failed to render.
 function modelRateTagHTML(ex) {
   if (!ex || typeof ex !== "object") return "";
   const effective = rateEffectivePrice(ex);
@@ -7216,9 +7248,15 @@ function modelRateTagHTML(ex) {
   if (ex.free === true || rateIsFree(value) || rateIsFree(display) || rateIsFree(ex.model_access_type)) {
     return '<span class="tag ok model-rate" title="免费模型">免费</span>';
   }
-  if (!value) return "";
-  const title = effective ? "当前生效倍率" : "模型倍率";
-  return '<span class="tag mute model-rate" title="' + esc(title) + '">' + esc(value) + '</span>';
+  if (value) {
+    const title = effective ? "当前生效倍率" : "模型倍率";
+    return '<span class="tag mute model-rate" title="' + esc(title) + '">' + esc(value) + '</span>';
+  }
+  const level = ex.credit_consumption_level;
+  if (level !== undefined && level !== null && String(level).trim() !== "") {
+    return '<span class="tag mute model-rate" title="客户端自报的倍率分级">' + esc(String(level)) + '</span>';
+  }
+  return '<span class="tag mute model-rate" title="厂商目录没有公开这个模型的计费倍率">未公开</span>';
 }
 
 function rateCell(ex) {
@@ -8317,6 +8355,8 @@ async function renderPlatforms(preserveDraft = false) {
     const infos = (x.models || []).filter(m => m && m.id).map(m => ({
       id: m.id,
       free: !!(m.extra && m.extra.free),
+      context_length: Number(m.context_length || 0),
+      context_source: String(m.context_source || ""),
     }));
     models[x.name] = infos.map(m => m.id);
     modelInfos[x.name] = infos;
@@ -8420,6 +8460,8 @@ function routeCatalogs(source) {
     const list = (known.length ? known : (ids[name] || []).map(id => ({ id: id }))).map(m => {
       const item = { id: m.id };
       if (m.free) item.free = true;
+      if (m.context_length > 0) item.context_length = Number(m.context_length);
+      if (m.context_source) item.context_source = String(m.context_source);
       return item;
     });
     if (list.length) catalogs[name] = list;
@@ -8430,11 +8472,18 @@ function routeCatalogs(source) {
 function routeStepHTML(s) {
   const tag = s.preferred ? ' <span class="tag ok">首选</span>' : "";
   const free = s.free ? ' <span class="tag ok">免费</span>' : "";
+  const ctx = Number(s.context_length || 0);
+  const ctxSource = s.context_source ? mdSrcText(s.context_source) : "";
+  const ctxText = ctx > 0 ? "上下文 " + numf(ctx) + (ctxSource ? " · " + ctxSource : "") : "上下文未公开";
+  const ctxTip = ctx > 0
+    ? "上下文窗口 " + numf(ctx) + " tokens" + (ctxSource ? "，来源：" + ctxSource : "")
+    : "模型目录没有公开这个模型的上下文窗口";
   return '<div class="pfplat rpStep" draggable="true" data-rp-platform="' + esc(s.platform) + '" data-rp-position="' + s.position + '">' +
     '<div class="pfhead">' +
     '<span class="rpDrag" title="拖动调整优先级" aria-hidden="true">≡</span>' +
     '<span class="pfname"><span class="rpPos">#' + s.position + '</span> · ' + esc(platformLabel(s.platform)) + '</span>' +
     '<span class="pfcount">实际模型 ' + esc(s.model_id) + ' · 优先级 ' + s.priority + ' · ' + esc(s.priority_source_name || s.priority_source || "") + '</span>' +
+    '<span class="pfcount" title="' + esc(ctxTip) + '">' + esc(ctxText) + '</span>' +
     (s.group ? '<span class="pfcount">组 ' + esc(s.group) + '</span>' : "") +
     (s.auto_pool ? '<span class="pfcount">Auto 池成员</span>' : "") +
     (s.schedule_hit ? '<span class="pfcount">分时命中 ' + esc(s.schedule_hit) + '</span>' : "") +
@@ -8478,7 +8527,7 @@ async function runRoutePlan() {
     rows.push('<div class="rpList">');
     steps.forEach(s => rows.push(routeStepHTML(s)));
     rows.push('</div>');
-    rows.push('<div class="hint">顺序为静态预演：实际请求还会受账号可用性、冷却与健康状态影响；拖动或上移下移会调整对应优先级，测速会为每个平台实际调用一次。</div>');
+    rows.push('<div class="hint">顺序为静态预演：每个平台行显示该模型生效的上下文窗口与来源；实际请求还会受账号可用性、冷却与健康状态影响。拖动或上移下移会调整对应优先级，测速会为每个平台实际调用一次。</div>');
     out.innerHTML = rows.join("");
   } finally {
     btn.disabled = false;
