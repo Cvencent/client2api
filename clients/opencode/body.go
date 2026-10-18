@@ -62,10 +62,13 @@ type oaiMessage struct {
 	Name    string `json:"name,omitempty"`
 	// ToolCallID carries the id of the tool call a `tool` message answers.
 	ToolCallID string `json:"tool_call_id,omitempty"`
-	// ReasoningContent is accepted by the module on the way out so a caller can
-	// replay a reasoning turn, but Zen's CommonMessage has no such field and its
-	// converters drop unknown keys, so it may never reach the model.
-	ReasoningContent string        `json:"reasoning_content,omitempty"`
+	// ReasoningContent replays a thinking turn.  Zen's converters ignore the
+	// key, but the upstream behind them does not: once a trace exists the
+	// assistant message must carry reasoning_content or the turn is refused
+	// with a bare HTTP 400.  It is a pointer so an assistant turn can send it
+	// as "" instead of dropping the key, which omitempty would do; nil keeps
+	// the field off every other role.
+	ReasoningContent *string       `json:"reasoning_content,omitempty"`
 	ToolCalls        []oaiToolCall `json:"tool_calls,omitempty"`
 }
 
@@ -235,10 +238,13 @@ func wireMessage(msg core.Message, index int) (oaiMessage, error) {
 	}
 
 	out := oaiMessage{
-		Role:             role,
-		Name:             msg.Name,
-		ToolCallID:       msg.ToolCallID,
-		ReasoningContent: msg.Reasoning,
+		Role:       role,
+		Name:       msg.Name,
+		ToolCallID: msg.ToolCallID,
+	}
+	if role == "assistant" {
+		reasoning := msg.Reasoning
+		out.ReasoningContent = &reasoning
 	}
 
 	switch {

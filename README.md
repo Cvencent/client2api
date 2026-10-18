@@ -285,6 +285,15 @@ people. The built-in default is `127.0.0.1`.
 - OfficeAce (Office Claw) ships as a built-in platform (`officeace`), so there is no relay entry to add. Open its account pool and use **Browser sign-in**: the panel runs the same Huawei account OAuth flow as the OfficeAce client, keeps the returned model-gateway App Key / App Secret in this gateway's own account store, and scans the catalogue published as `officeace/<model>`. Each account keeps the model gateway returned by its own login, so different regions or gateways can coexist; the OfficeAce desktop app does not need to stay open. On Windows, **Import -> Discover local credentials** remains available as a fallback for an already signed-in OfficeAce client.
 
 - Dynamic OpenAI-compatible relay platforms with their own API root and Key pool.
+  Relay requests are normalised for the DeepSeek/LiteLLM family before they go
+  out, because a relay that fronts those models rejects several shapes that are
+  otherwise valid OpenAI: a forced `tool_choice` (`"required"` or a named
+  function) is downgraded to `"auto"`, a tool whose schema has no `properties`
+  -- notably the bare `{}` a namespace or MCP declaration can produce -- gets an
+  empty object skeleton filled in, and every assistant turn carries
+  `reasoning_content` (as `""` when there is no trace). Without these the relay
+  answers 400 with messages like "当前模型或上游不支持工具调用" or a bare
+  "HTTP 400", neither of which means what it says.
 - Custom relays have their own rate-limit and cooldown policy, editable in the panel's
   relay dialog. `requests_per_minute` caps upstream attempts across the relay and
   `requests_per_minute_per_account` caps each key; a full key is skipped in favour of

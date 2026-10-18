@@ -342,6 +342,37 @@ func TestBuildChatBodyCarriesReasoningOutbound(t *testing.T) {
 	}
 }
 
+// An assistant turn with no reasoning trace must still send the key, as an
+// empty string: dropping it entirely is what the upstream answers with a bare
+// HTTP 400, and null is rejected as a type error.  Other roles must not carry
+// the field at all.
+func TestBuildChatBodyAlwaysCarriesReasoningContentOnAssistant(t *testing.T) {
+	got := decodeBody(t, Config{}, &core.ChatRequest{
+		Model: "deepseek-v4.1-flash",
+		Messages: []core.Message{
+			{Role: "assistant", ToolCalls: []core.ToolCall{{ID: "c1", Name: "t", Arguments: `{}`}}},
+			{Role: "tool", ToolCallID: "c1", Content: "done"},
+			{Role: "assistant", Reasoning: "why"},
+		},
+	})
+	msgs, _ := got["messages"].([]any)
+	if len(msgs) != 3 {
+		t.Fatalf("messages = %d, want 3", len(msgs))
+	}
+	first, _ := msgs[0].(map[string]any)
+	if v, ok := first["reasoning_content"]; !ok || v != "" {
+		t.Fatalf("blank assistant turn reasoning_content = %#v (present=%v), want \"\"", v, ok)
+	}
+	toolMsg, _ := msgs[1].(map[string]any)
+	if _, ok := toolMsg["reasoning_content"]; ok {
+		t.Errorf("a tool turn must not carry reasoning_content: %#v", toolMsg["reasoning_content"])
+	}
+	traced, _ := msgs[2].(map[string]any)
+	if traced["reasoning_content"] != "why" {
+		t.Fatalf("traced assistant turn reasoning_content = %#v, want why", traced["reasoning_content"])
+	}
+}
+
 // Zen's CommonRequest.tool_choice union has no "none", so a caller asking for no
 // tools gets the field omitted instead of a value the converter would mangle.
 func TestNormalizeToolChoice(t *testing.T) {

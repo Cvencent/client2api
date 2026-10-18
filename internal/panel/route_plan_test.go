@@ -297,3 +297,100 @@ func TestRoutePlanDragFixLandsOnTheModelRung(t *testing.T) {
 		t.Fatalf("source = %q, want base once the override is cleared", plan.Steps[0].Source)
 	}
 }
+
+// Regression: an Auto member's model name is the bare model being requested, so
+// memberMatchesRequest is trivially true for it.  Marking every platform the
+// pool expands to as "preferred" would sort them all ahead of the operator's
+// ordering and make a drag look like it saved but did nothing.  Auto-expanded
+// platforms must stay unmarked, exactly as the runtime treats them.
+func TestRoutePlanAutoPoolMembersAreNotPreferred(t *testing.T) {
+	reg := registryOf(
+		&fakeClient{name: "alpha", models: []core.Model{{ID: "shared-model"}}},
+		&fakeClient{name: "beta", models: []core.Model{{ID: "shared-model"}}},
+	)
+	reg.SetPlatformConfigs(map[string]core.PlatformConfig{
+		"alpha": {Priority: -5},
+		"beta":  {Priority: 20},
+	})
+	// The group is reached by the bare name and binds the model through an Auto
+	// member, which is the shape that used to mark everything preferred.
+	reg.SetModelGroups(map[string]core.ModelGroup{
+		"shared": {Members: []core.ModelGroupMember{
+			{Client: "Auto", Model: "shared-model"},
+		}},
+	})
+	h := New(Options{Registry: reg})
+
+	body := `{"model":"shared","catalogs":{"alpha":[{"id":"shared-model"}],"beta":[{"id":"shared-model"}]}}`
+	rec := routePlanPost(t, h, body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	resp := struct {
+		Steps []struct {
+			Platform  string `json:"platform"`
+			Priority  int    `json:"priority"`
+			Preferred bool   `json:"preferred"`
+			AutoPool  bool   `json:"auto_pool"`
+		} `json:"steps"`
+	}{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("bad JSON: %v", err)
+	}
+	if len(resp.Steps) != 2 {
+		t.Fatalf("chain = %+v, want both platforms", resp.Steps)
+	}
+	for _, step := range resp.Steps {
+		if step.Preferred {
+			t.Errorf("%s is marked preferred; an Auto pool member must not outrank the priority", step.Platform)
+		}
+		if !step.AutoPool {
+			t.Errorf("%s is not marked auto_pool", step.Platform)
+		}
+	}
+	// Ordering is the priority, so the -5 platform leads despite the pool.
+	if resp.Steps[0].Platform != "alpha" {
+		t.Fatalf("chain = %+v, want alpha first by priority", resp.Steps)
+	}
+}
+
+// A direct member that the caller spelled out is still preferred -- that is the
+// documented "naming a member routes the group but tries that member first"
+// behaviour, and the fix above must not have removed it.
+func TestRoutePlanDirectMemberSpellingStaysPreferred(t *testing.T) {
+	reg := registryOf(
+		&fakeClient{name: "alpha", models: []core.Model{{ID: "alpha-model"}}},
+		&fakeClient{name: "beta", models: []core.Model{{ID: "beta-model"}}},
+	)
+	reg.SetPlatformConfigs(map[string]core.PlatformConfig{
+		"alpha": {Priority: 20},
+		"beta":  {Priority: -5},
+	})
+	reg.SetModelGroups(map[string]core.ModelGroup{
+		"shared": {Members: []core.ModelGroupMember{
+			{Client: "alpha", Model: "alpha-model"},
+			{Client: "beta", Model: "beta-model"},
+		}},
+	})
+	h := New(Options{Registry: reg})
+
+	// Requesting alpha's own model id names that member, so alpha leads even
+	// though beta has the better priority.
+	body := `{"model":"alpha-model","catalogs":{"alpha":[{"id":"alpha-model"}],"beta":[{"id":"beta-model"}]}}`
+	rec := routePlanPost(t, h, body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	resp := struct {
+		Steps []struct {
+			Platform  string `json:"platform"`
+			Preferred bool   `json:"preferred"`
+		} `json:"steps"`
+	}{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("bad JSON: %v", err)
+	}
+	if len(resp.Steps) != 2 || resp.Steps[0].Platform != "alpha" || !resp.Steps[0].Preferred {
+		t.Fatalf("chain = %+v, want the spelled-out alpha first and preferred", resp.Steps)
+	}
+}

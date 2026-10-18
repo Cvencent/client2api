@@ -258,7 +258,15 @@ func (r *Registry) planGroupMember(group ModelGroup, groupKey, name string, mode
 			step.Priority = priority
 			step.Source = RoutePlanSourceModel
 			step.SourceName = "模型优先级"
-			step.Preferred = memberMatchesRequest(member, requested)
+			// Preferred means "the caller spelled this member out", and it
+			// sorts ahead of priority.  An Auto member's model name is the
+			// bare model being requested, so marking it preferred here would
+			// pin every platform the pool expands to above the operator's
+			// ordering and make the drag appear to do nothing.  The runtime
+			// passes preferred=false for exactly the same reason.
+			if !isAuto {
+				step.Preferred = memberMatchesRequest(member, requested)
+			}
 			return &step, true
 		}
 		if isAuto {

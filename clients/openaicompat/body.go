@@ -113,7 +113,19 @@ type oaiMessage struct {
 	Name       string        `json:"name,omitempty"`
 	ToolCallID string        `json:"tool_call_id,omitempty"`
 	ToolCalls  []oaiToolCall `json:"tool_calls,omitempty"`
-	Reasoning  string        `json:"reasoning,omitempty"`
+	// ReasoningContent is what the DeepSeek/LiteLLM family requires back on an
+	// assistant turn.  The key must be *present* -- an empty string is accepted,
+	// null is a 400, and omitting it entirely is the failure the vendor reports
+	// as "The `reasoning_content` in the thinking mode must be passed back to
+	// the API".  So it carries no omitempty, and the empty case is written as
+	// "" rather than dropped.  A pointer is what makes "present but empty"
+	// expressible: nil omits the key for the roles that must not have it.
+	ReasoningContent *string `json:"reasoning_content,omitempty"`
+	// Reasoning is the OpenRouter-family spelling of the same value.  It is
+	// emitted alongside the other one because the relay decides which name it
+	// wants; every provider measured ignores the extra key, while omitting the
+	// expected one is a hard failure.
+	Reasoning string `json:"reasoning,omitempty"`
 }
 
 type oaiChatRequest struct {
@@ -137,11 +149,18 @@ type oaiChatRequest struct {
 
 // wireMessage converts one gateway message.
 func wireMessage(m core.Message) oaiMessage {
+	reasoning := strings.TrimSpace(m.Reasoning)
 	out := oaiMessage{
 		Role:       strings.TrimSpace(m.Role),
 		Name:       strings.TrimSpace(m.Name),
 		ToolCallID: strings.TrimSpace(m.ToolCallID),
-		Reasoning:  strings.TrimSpace(m.Reasoning),
+		Reasoning:  reasoning,
+	}
+	// An assistant turn is exactly where the vendor demands the key; other
+	// roles must not carry it at all, so the pointer stays nil for them.
+	if strings.EqualFold(out.Role, "assistant") {
+		value := reasoning
+		out.ReasoningContent = &value
 	}
 	if out.Role == "" {
 		out.Role = "user"
@@ -224,18 +243,63 @@ func wireTools(in []core.Tool) []oaiTool {
 		if kind == "" {
 			kind = "function"
 		}
-		params := t.Parameters
-		if len(params) == 0 {
-			params = json.RawMessage(`{"type":"object","properties":{}}`)
-		}
 		out = append(out, oaiTool{
 			Type: kind,
 			Function: oaiToolDef{
 				Name:        name,
 				Description: t.Description,
-				Parameters:  params,
+				Parameters:  normalizeToolSchema(t.Parameters),
 			},
 		})
+	}
+	return out
+}
+
+// normalizeToolChoice maps the caller's tool_choice onto what an
+// OpenAI-compatible relay can honour.
+//
+// Only "auto" (and its absence) is universally supported: a relay that fronts
+// DeepSeek or another LiteLLM provider answers a forced choice with
+// MODEL_TOOL_CHOICE_NOT_SUPPORTED, "当前模型或上游不支持工具调用", which reads
+// like "this model cannot call tools" but only ever means "do not force the
+// choice".  Downgrading to "auto" keeps the request working and still lets the
+// model pick the tool, which is what an agent loop needs anyway.
+//
+// "none" is passed through untouched: it *disables* tools and every provider
+// that accepts tools also accepts it.
+// normalizeToolSchema makes a tool's parameter blob acceptable to every
+// relay.  A relay that fronts DeepSeek treats a schema without "properties"
+// -- most visibly the literal "{}" that a namespace or MCP declaration can
+// produce -- as "tools are not supported at all" and answers HTTP 400
+// MODEL_TOOL_NOT_SUPPORTED.  Filling in the object skeleton keeps the tool
+// callable instead of failing the whole request.
+//
+// A schema that already carries properties (or any other key) is passed through
+// untouched, so a real declaration is never rewritten.
+func normalizeToolSchema(raw json.RawMessage) json.RawMessage {
+	const skeleton = `{"type":"object","properties":{}}`
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return json.RawMessage(skeleton)
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(raw, &obj); err != nil || obj == nil {
+		// Not an object at all: leave it alone rather than inventing a shape
+		// the caller did not ask for.
+		return raw
+	}
+	if _, hasProperties := obj["properties"]; hasProperties {
+		return raw
+	}
+	if _, hasType := obj["type"]; hasType {
+		obj["properties"] = map[string]any{}
+	} else {
+		obj["type"] = "object"
+		obj["properties"] = map[string]any{}
+	}
+	out, err := json.Marshal(obj)
+	if err != nil {
+		return raw
 	}
 	return out
 }
@@ -247,11 +311,20 @@ func normalizeToolChoice(raw json.RawMessage) json.RawMessage {
 	}
 	var asString string
 	if err := json.Unmarshal(raw, &asString); err == nil {
-		if strings.TrimSpace(asString) == "" {
+		switch strings.ToLower(strings.TrimSpace(asString)) {
+		case "":
 			return nil
+		case "auto", "none":
+			return raw
+		default:
+			// "required" or anything else the caller invented: the relay
+			// cannot force a choice, so ask for an automatic one.
+			return json.RawMessage(`"auto"`)
 		}
 	}
-	return raw
+	// The object form names one function to call, which is also a forced
+	// choice.  There is no safe translation, so fall back to automatic.
+	return json.RawMessage(`"auto"`)
 }
 
 // --- response wire types ------------------------------------------------------
