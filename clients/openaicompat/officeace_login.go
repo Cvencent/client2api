@@ -838,10 +838,12 @@ func (o *officeAceSource) completeLogin(ctx context.Context, session *officeAceL
 	o.persistLoginSession(workCtx, eps, rec.ID, token, session.key, identity, baseURL)
 	// The desktop client creates the free personal trial after the model
 	// credentials exist, so this must not be conditional on subscribe() above.
-	// A login without the entitlement is incomplete: it is exactly the state
-	// that produced accounts with missing credits and search quota.
+	// It stays best-effort: a trial that the cloud refuses (for example an
+	// unpaid order left in the payment center) must not turn a working model
+	// login into a failure.  The account can chat either way, and the panel
+	// reports the trial problem when it reads the balance.
 	if err := o.ensureOfficeAceTrial(workCtx, rec.ID); err != nil {
-		return fmt.Errorf("officeace: 账号已保存，但免费体验包开通失败：%w", err)
+		o.source.deps.Log("%s: signed in, but the free trial could not be opened: %v", officeAceSourceID, core.Redact(err.Error()))
 	}
 	o.scanModels(workCtx, rec.ID)
 	o.source.deps.Log("%s: Huawei account signed in (%s)", officeAceSourceID, rec.ID)

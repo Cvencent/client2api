@@ -593,23 +593,6 @@ func (p *officeAcePremium) ensureTrial(ctx context.Context) error {
 	return p.createTrialOrder(ctx, atomicProductID)
 }
 
-// subscriptionRepairingTrial reads the subscription and, when the free trial
-// is missing, repairs it before reading once more. The second read keeps a
-// brief cloud propagation delay out of the panel result.
-func (p *officeAcePremium) subscriptionRepairingTrial(ctx context.Context) (officeAceSubscription, error) {
-	sub, err := p.subscription(ctx)
-	if err != nil {
-		return officeAceSubscription{}, err
-	}
-	if sub.hasTrial() {
-		return sub, nil
-	}
-	if err := p.ensureTrial(ctx); err != nil {
-		return officeAceSubscription{}, err
-	}
-	return p.subscription(ctx)
-}
-
 func (s officeAceSubscription) hasTrial() bool {
 	for _, sku := range s.Skus {
 		if strings.EqualFold(strings.TrimSpace(sku.Code), officeAceTrialSKUCode) {
@@ -668,13 +651,24 @@ type officeAceTrialAgreement struct {
 	PrivacyStatement string `json:"privacy_statement"`
 }
 
+// officeAceUnpaidOrderCode is Huawei's "the tenant already has an unpaid
+// order" refusal.  The desktop client maps it to a link to the payment center.
+const officeAceUnpaidOrderCode = "AgentArts.00000148"
+
+// officeAceUnpaidOrderURL is the account center page the desktop client opens
+// for that refusal.
+const officeAceUnpaidOrderURL = "https://account.huaweicloud.com/usercenter/?locale=zh-cn&region=cn-southwest-2#/ordercenter/userindex/unpaidOrder"
+
 func (p *officeAcePremium) createTrialOrder(ctx context.Context, atomicProductID string) error {
 	order := officeAceTrialOrder{
 		ServiceType:          "hws.service.type.agentarts",
 		SubscribePeriodType:  2,
 		SubscribePeriodValue: 1,
 		AutoRenewal:          0,
-		AutoPay:              0,
+		// The desktop client sends autoPay: 1 for the free trial: the order is
+		// zero-priced and must be settled immediately, otherwise it stays
+		// unpaid and blocks every later order.
+		AutoPay: 1,
 		SubscribeSKUInfo: officeAceTrialSKUInfo{
 			SubscribeQuantity:        1,
 			SubscribeSKUCode:         officeAceTrialSKUCode,
@@ -696,6 +690,9 @@ func (p *officeAcePremium) createTrialOrder(ctx context.Context, atomicProductID
 		return err
 	}
 	if status != http.StatusOK {
+		if officeAceErrorCode(raw) == officeAceUnpaidOrderCode {
+			return fmt.Errorf("officeace: 租户存在未支付的体验版订单，请先到华为云费用中心支付或取消原订单：%s", officeAceUnpaidOrderURL)
+		}
 		return fmt.Errorf("officeace: 创建个人体验版订单失败：%s", officeAceHTTPError(status, raw))
 	}
 	var result struct {

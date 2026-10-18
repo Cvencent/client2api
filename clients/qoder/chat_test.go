@@ -117,6 +117,85 @@ func TestCosyHeadersSignTheStrippedPath(t *testing.T) {
 	}
 }
 
+// TestCosyHeadersCarryTheModelKey pins the fix for the routing bug: the vendor's
+// inference gateway selects and bills the model from x-model-key, so a
+// model-scoped call must send it.  A body-only request is answered by the
+// account's default model no matter what the OpenAI body says, which is what
+// made "qoder/dfmodel" answer as an unrelated model.
+func TestCosyHeadersCarryTheModelKey(t *testing.T) {
+	sess := cosySession{uid: "u-1", cosyKey: "COSYKEY", info: "INFO"}
+	raw := "https://gateway.qoder.com.cn/algo/api/v2/service/pro/sse/agent_chat_generation"
+
+	scoped, err := sess.headers(cosyRequest{
+		UID: "u-1", Body: `{"model":"dfmodel"}`, RawURL: raw,
+		RequestID: "req-1", XRequestID: "xreq-1", UnixDate: 1700000000,
+		ModelKey: "dfmodel",
+	})
+	if err != nil {
+		t.Fatalf("headers: %v", err)
+	}
+	if scoped["x-model-key"] != "dfmodel" || scoped["x-model-source"] != "system" {
+		t.Fatalf("model headers = %q/%q, want dfmodel/system", scoped["x-model-key"], scoped["x-model-source"])
+	}
+
+	// The catalogue read carries no model, so the header must be absent rather
+	// than sent empty; the vendor treats an empty key as a model request.
+	unscoped, err := sess.headers(cosyRequest{
+		UID: "u-1", Body: "", RawURL: "https://gateway.qoder.com.cn/algo/api/v2/model/list",
+		RequestID: "req-2", XRequestID: "xreq-2", UnixDate: 1700000000,
+	})
+	if err != nil {
+		t.Fatalf("headers: %v", err)
+	}
+	if _, ok := unscoped["x-model-key"]; ok {
+		t.Errorf("an unscoped call must not send x-model-key: %#v", unscoped)
+	}
+	if _, ok := unscoped["x-model-source"]; ok {
+		t.Errorf("an unscoped call must not send x-model-source: %#v", unscoped)
+	}
+}
+
+// TestChatSendsTheModelKeyHeader pins the wiring end to end: the chat request
+// the module actually issues must carry x-model-key, and the catalogue read
+// must not.
+func TestChatSendsTheModelKeyHeader(t *testing.T) {
+	type hit struct {
+		path  string
+		model string
+	}
+	var hits []hit
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured := hit{path: r.URL.Path, model: r.Header.Get("x-model-key")}
+		hits = append(hits, captured)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(probeSSEFrame))
+	}))
+	defer server.Close()
+
+	acc := account{storedAccount: storedAccount{
+		ID: "a1", Token: "dt-token", UserID: "u-1", Name: "tester", Enabled: true,
+	}}
+	c := &Client{
+		cfg:      config{GatewayBase: server.URL},
+		up:       newUpstream(config{OpenAPIBase: server.URL}, server.Client(), nil),
+		store:    &store{all: []*account{&acc}},
+		sessions: map[string]sessionEntry{},
+	}
+
+	if _, err := c.TestAccount(context.Background(), "a1"); err != nil {
+		t.Fatalf("TestAccount: %v", err)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("chat requests = %d, want 1 (%v)", len(hits), hits)
+	}
+	if hits[0].path != "/algo/api/v2/service/pro/sse/agent_chat_generation" {
+		t.Fatalf("path = %q", hits[0].path)
+	}
+	if hits[0].model != "auto" {
+		t.Fatalf("x-model-key = %q, want the probe model %q", hits[0].model, "auto")
+	}
+}
+
 // TestGatewayChatModelsKeepsChatGroupAndDedupes pins the catalogue rules: only
 // the chat group is read, disabled entries are dropped, duplicates collapse.
 func TestGatewayChatModelsKeepsChatGroupAndDedupes(t *testing.T) {

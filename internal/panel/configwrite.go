@@ -627,6 +627,24 @@ func validateConfig(cfg map[string]any) error {
 					}
 				}
 			}
+			if mp, ok := em["model_priorities"]; ok && mp != nil {
+				priorities, ok := mp.(map[string]any)
+				if !ok {
+					return fmt.Errorf("platform %q model_priorities must be an object keyed by model id", name)
+				}
+				for model, rawPriority := range priorities {
+					if rawPriority == nil {
+						continue // null deletes one override without touching siblings
+					}
+					if strings.TrimSpace(model) == "" {
+						return fmt.Errorf("platform %q model_priorities has a blank model id", name)
+					}
+					priority, ok := rawPriority.(float64)
+					if !ok || priority != float64(int(priority)) {
+						return fmt.Errorf("platform %q model priority for %q must be a whole number", name, model)
+					}
+				}
+			}
 			if ps, ok := em["priority_schedule"]; ok && ps != nil {
 				arr, ok := ps.([]any)
 				if !ok {

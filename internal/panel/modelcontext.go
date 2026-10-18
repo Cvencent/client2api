@@ -13,11 +13,12 @@ type modelContextBody struct {
 // modelContextPatch distinguishes an omitted JSON field from an explicit zero,
 // so saving one metadata field never clears another.
 type modelContextPatch struct {
-	ContextLength    *int64    `json:"context_length"`
-	MaxOutputTokens  *int64    `json:"max_output_tokens"`
-	SupportedEfforts *[]string `json:"supported_efforts"`
-	DefaultEffort    *string   `json:"default_effort"`
-	ElevateTop       *bool     `json:"elevate_top"`
+	ContextLength    *int64                     `json:"context_length"`
+	MaxOutputTokens  *int64                     `json:"max_output_tokens"`
+	SupportedEfforts *[]string                  `json:"supported_efforts"`
+	DefaultEffort    *string                    `json:"default_effort"`
+	EffortMappings   *[]modelmeta.EffortMapping `json:"effort_mappings"`
+	ElevateTop       *bool                      `json:"elevate_top"`
 	// ElevateTopDefault clears the operator's cap-alignment choice so the model
 	// falls back to its embedded default. It is what "restore default" sends:
 	// writing elevate_top:false instead would pin a manual "off".
@@ -27,10 +28,6 @@ type modelContextPatch struct {
 	CacheReadPerMillion *float64 `json:"cache_read_per_million"`
 	HasPrice            *bool    `json:"has_price"`
 	HasCacheRead        *bool    `json:"has_cache_read"`
-}
-
-func (p modelContextPatch) touchesEfforts() bool {
-	return p.SupportedEfforts != nil || p.DefaultEffort != nil || p.ElevateTop != nil
 }
 
 func (p modelContextPatch) touchesPrice() bool {
@@ -86,6 +83,11 @@ func applyModelContextPatch(store *modelmeta.OverrideStore, client, model string
 			defaultEffort = *patch.DefaultEffort
 		}
 		if err := store.SetEfforts(client, model, efforts, defaultEffort); err != nil {
+			return err
+		}
+	}
+	if patch.EffortMappings != nil {
+		if err := store.SetEffortMappings(client, model, *patch.EffortMappings); err != nil {
 			return err
 		}
 	}

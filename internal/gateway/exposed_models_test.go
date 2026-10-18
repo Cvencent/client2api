@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"encoding/json"
 	"io"
 	"log"
 	"net/http"
@@ -63,6 +64,72 @@ func TestModelsListFiltersByExposedPolicy(t *testing.T) {
 	}
 }
 
+// TestInternalTestMarkerBypassesTheExposedPolicy pins the intent of the panel's
+// chat tester: the exposed_models whitelist shapes what *outside* callers see,
+// but the operator's own test page must be able to list and call every model
+// the gateway can route -- otherwise the page cannot test the models it exists
+// to exercise.  The marker is read only on the authenticated surface, so it
+// grants nothing a caller holding the API key did not already have.
+func TestInternalTestMarkerBypassesTheExposedPolicy(t *testing.T) {
+	alpha := &testClient{name: "alpha", catalogue: []core.Model{{ID: "m1"}}}
+	beta := &testClient{name: "beta", catalogue: []core.Model{{ID: "m2"}}}
+	reg := core.NewRegistry()
+	reg.Add(alpha)
+	reg.Add(beta)
+	reg.SetExposedModels([]string{"alpha/m1"}, true)
+	srv := exposedTestServer(t, reg)
+
+	// Sanity: an ordinary caller still sees only the whitelisted id.
+	if got := modelIDs(t, srv); len(got) != 1 {
+		t.Fatalf("unmarked /v1/models = %v, want only alpha/m1", got)
+	}
+
+	// The tester's listing is the complete catalogue.
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	req.Header.Set(InternalTestHeader, "1")
+	srv.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("marked /v1/models = %d: %s", rec.Code, rec.Body.String())
+	}
+	var out modelList
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	ids := make(map[string]bool, len(out.Data))
+	for _, m := range out.Data {
+		ids[m.ID] = true
+	}
+	if !ids["alpha/m1"] || !ids["beta/m2"] {
+		t.Fatalf("marked /v1/models = %v, want the whole catalogue", ids)
+	}
+
+	// An unexposed model is still reachable for the tester...
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
+		strings.NewReader(`{"model":"beta/m2","messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(InternalTestHeader, "1")
+	srv.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("marked chat = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	// The fake stream returns a text-less turn, which the gateway retries once,
+	// so the assertion is "the module was reached", not an exact count.
+	reached := beta.chatCalls
+	if reached == 0 {
+		t.Fatal("the marked request never reached beta")
+	}
+
+	// ...while an ordinary caller keeps getting refused before routing.
+	rec = chat(t, srv, `{"model":"beta/m2","messages":[{"role":"user","content":"hi"}]}`)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("unmarked chat = %d, want 404: %s", rec.Code, rec.Body.String())
+	}
+	if beta.chatCalls != reached {
+		t.Fatalf("an unmarked call reached beta %d times, want the earlier %d only", beta.chatCalls, reached)
+	}
+}
 func TestUnselectedModelCallIsRejectedBeforeRouting(t *testing.T) {
 	alpha := &testClient{name: "alpha", catalogue: []core.Model{{ID: "m1"}}}
 	reg := core.NewRegistry()

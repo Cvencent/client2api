@@ -44,7 +44,7 @@ import (
 )
 
 // version is overridable with -ldflags "-X main.version=...".
-var version = "0.1.85"
+var version = "0.1.86"
 
 // restartHandoffEnv marks the replacement half of a panel restart.  It tells a
 // starting process to keep retrying the listen address instead of failing fast,
@@ -91,6 +91,12 @@ type platformConfig struct {
 	Priority         int                    `json:"priority"`
 	PrioritySchedule []priorityWindowConfig `json:"priority_schedule,omitempty"`
 	DisabledModels   []string               `json:"disabled_models"`
+	// ModelPriorities overrides the routing priority for individual upstream
+	// model ids on this platform, using the same scale as Priority.  A model
+	// with no entry inherits the platform's effective priority, so an absent
+	// or empty map keeps the previous behaviour.  This is the per-model rung
+	// the platform card edits and the route plan displays.
+	ModelPriorities map[string]int `json:"model_priorities,omitempty"`
 	// MaxInFlight caps concurrent requests against this platform.  Absent
 	// means the default of 2; an explicit 0 means no ceiling.  A pointer is
 	// required so the two cases stay distinguishable in JSON.
@@ -198,6 +204,17 @@ func (c *fileConfig) platformConfigsFor(clients []core.Client) map[string]core.P
 		for _, m := range p.DisabledModels {
 			if strings.TrimSpace(m) != "" {
 				cfg.DisabledModels = append(cfg.DisabledModels, m)
+			}
+		}
+		if len(p.ModelPriorities) > 0 {
+			cfg.ModelPriorities = make(map[string]int, len(p.ModelPriorities))
+			for model, priority := range p.ModelPriorities {
+				if strings.TrimSpace(model) != "" {
+					cfg.ModelPriorities[model] = priority
+				}
+			}
+			if len(cfg.ModelPriorities) == 0 {
+				cfg.ModelPriorities = nil
 			}
 		}
 		out[name] = cfg

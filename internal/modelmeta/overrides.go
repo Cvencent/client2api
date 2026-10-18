@@ -10,6 +10,25 @@ import (
 	"sync"
 )
 
+// EffortMappingTop is the target token for "the highest effort this candidate
+// actually supports". It lets the default policy follow each model's published
+// ladder without hard-coding max on models whose top tier is xhigh.
+const EffortMappingTop = "top"
+
+// EffortMapping rewrites one caller-requested reasoning effort before a
+// candidate request is sent. Rules are matched by From and applied once; they
+// are not chained. To may be a concrete level or EffortMappingTop.
+type EffortMapping struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
+// DefaultEffortMappings preserves the pre-existing cap-alignment behaviour:
+// Codex's xhigh is sent as whatever tier a candidate publishes as its highest.
+func DefaultEffortMappings() []EffortMapping {
+	return []EffortMapping{{From: "xhigh", To: EffortMappingTop}}
+}
+
 // Override is an operator-supplied model metadata override. A zero field means
 // "no manual value for this field", so context and output can be restored
 // independently.
@@ -23,6 +42,9 @@ type Override struct {
 	// DefaultEffort is an optional manual default. It is only authoritative
 	// when the resolved vocabulary contains it; Merge drops it otherwise.
 	DefaultEffort string `json:"default_effort,omitempty"`
+	// EffortMappings overrides the default xhigh-to-highest rule with one or
+	// more operator-defined source-to-target rules for this model.
+	EffortMappings []EffortMapping `json:"effort_mappings,omitempty"`
 	// ElevateTop opts this model into cap alignment: a caller's top tier
 	// (xhigh) may be promoted to the model's actual highest tier (for example
 	// max). The zero value is deliberately off, so existing installs are
@@ -45,7 +67,7 @@ type Override struct {
 // IsZero reports whether the override carries no manual value.
 func (o Override) IsZero() bool {
 	return o.ContextLength <= 0 && o.MaxOutputTokens <= 0 && len(o.SupportedEfforts) == 0 &&
-		o.DefaultEffort == "" && !o.ElevateTop && !o.ElevateTopExplicit &&
+		o.DefaultEffort == "" && len(o.EffortMappings) == 0 && !o.ElevateTop && !o.ElevateTopExplicit &&
 		!o.HasPrice && !o.HasCacheRead
 }
 
@@ -173,6 +195,27 @@ func (s *OverrideStore) SetEfforts(client, model string, efforts []string, defau
 	return s.putLocked(client, model, o)
 }
 
+// SetEffortMappings replaces the operator-defined cap-alignment rules while
+// preserving every other override. An empty list restores the default rule.
+func (s *OverrideStore) SetEffortMappings(client, model string, mappings []EffortMapping) error {
+	if s == nil {
+		return errors.New("modelmeta: nil override store")
+	}
+	client, model = strings.TrimSpace(client), strings.TrimSpace(model)
+	if client == "" || model == "" {
+		return errors.New("modelmeta: client and model are required")
+	}
+	normalized, err := normalizeEffortMappings(mappings)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	o := s.getLocked(client, model)
+	o.EffortMappings = normalized
+	return s.putLocked(client, model, o)
+}
+
 // SetElevateTop enables or disables cap alignment for one model. The flag is
 // kept independently of the manual effort vocabulary so an operator can use
 // the module's live facts while opting into the policy.
@@ -192,9 +235,9 @@ func (s *OverrideStore) SetElevateTop(client, model string, on bool) error {
 	return s.putLocked(client, model, o)
 }
 
-// ClearElevateTop drops the operator's cap-alignment choice so the model falls
-// back to the embedded table's per-model default. It backs the panel's
-// "restore default" action.
+// ClearElevateTop drops the operator's cap-alignment choice and custom rules so
+// the model falls back to the embedded default. It backs the panel's "restore
+// default" action.
 func (s *OverrideStore) ClearElevateTop(client, model string) error {
 	if s == nil {
 		return errors.New("modelmeta: nil override store")
@@ -208,6 +251,7 @@ func (s *OverrideStore) ClearElevateTop(client, model string) error {
 	o := s.getLocked(client, model)
 	o.ElevateTop = false
 	o.ElevateTopExplicit = false
+	o.EffortMappings = nil
 	return s.putLocked(client, model, o)
 }
 
@@ -307,6 +351,42 @@ func (s *OverrideStore) putLocked(client, model string, o Override) error {
 	}
 	models[model] = o
 	return s.writeLocked()
+}
+
+func normalizeEffortMappingTarget(raw string) string {
+	switch to := strings.ToLower(strings.TrimSpace(raw)); to {
+	case "highest", "最高", "最高档":
+		return EffortMappingTop
+	default:
+		return to
+	}
+}
+
+func normalizeEffortMappings(in []EffortMapping) ([]EffortMapping, error) {
+	if len(in) == 0 {
+		return nil, nil
+	}
+	if len(in) > 32 {
+		return nil, errors.New("modelmeta: too many effort mappings")
+	}
+	out := make([]EffortMapping, 0, len(in))
+	seen := map[string]bool{}
+	for _, raw := range in {
+		from := strings.ToLower(strings.TrimSpace(raw.From))
+		to := normalizeEffortMappingTarget(raw.To)
+		if from == "" || to == "" {
+			return nil, errors.New("modelmeta: effort mapping source and target are required")
+		}
+		if from == EffortMappingTop {
+			return nil, errors.New("modelmeta: effort mapping source cannot be top")
+		}
+		if seen[from] {
+			return nil, fmt.Errorf("modelmeta: duplicate effort mapping source %q", from)
+		}
+		seen[from] = true
+		out = append(out, EffortMapping{From: from, To: to})
+	}
+	return out, nil
 }
 
 func normalizeEfforts(in []string) []string {

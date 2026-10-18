@@ -88,8 +88,10 @@ func (c *Client) gatewayURL(path string) string {
 
 // signedRequest performs one signed gateway request and returns the raw
 // response.  The caller owns the body.  method is GET or POST; body is the
-// exact byte string that is both signed and sent.
-func (c *Client) signedRequest(ctx context.Context, method, path, body, accept string, acc account) (*http.Response, error) {
+// exact byte string that is both signed and sent.  modelKey scopes a chat call
+// to one catalogue entry via the x-model-key header; empty omits it, which is
+// what the catalogue read wants.
+func (c *Client) signedRequest(ctx context.Context, method, path, body, accept, modelKey string, acc account) (*http.Response, error) {
 	sess, err := c.gatewaySession(acc)
 	if err != nil {
 		return nil, err
@@ -101,6 +103,7 @@ func (c *Client) signedRequest(ctx context.Context, method, path, body, accept s
 		RawURL:      rawURL,
 		Accept:      accept,
 		UserAgent:   c.cfg.userAgent(),
+		ModelKey:    modelKey,
 		RequestID:   cosyRequestID(),
 		XRequestID:  cosyRequestID(),
 		UnixDate:    nowUnix(),
@@ -143,7 +146,7 @@ func (c *Client) gatewayHTTP() *http.Client {
 
 // fetchModelList reads the vendor's catalogue with one account's signature.
 func (c *Client) fetchModelList(ctx context.Context, acc account) ([]modelInfo, error) {
-	resp, err := c.signedRequest(ctx, http.MethodGet, pathModelList, "", "application/json", acc)
+	resp, err := c.signedRequest(ctx, http.MethodGet, pathModelList, "", "application/json", "", acc)
 	if err != nil {
 		return nil, err
 	}
@@ -165,8 +168,12 @@ func (c *Client) fetchModelList(ctx context.Context, acc account) ([]modelInfo, 
 
 // openChat issues one signed chat request.  A non-2xx response is drained and
 // turned into an error; on success the caller owns the response body.
-func (c *Client) openChat(ctx context.Context, acc account, body string) (*http.Response, error) {
-	resp, err := c.signedRequest(ctx, http.MethodPost, pathChat, body, "text/event-stream", acc)
+//
+// modelKey is sent as x-model-key: the vendor's gateway picks and bills the
+// model from that header, so a call made without it answers with the account's
+// default model regardless of the body's "model" field.
+func (c *Client) openChat(ctx context.Context, acc account, body, modelKey string) (*http.Response, error) {
+	resp, err := c.signedRequest(ctx, http.MethodPost, pathChat, body, "text/event-stream", modelKey, acc)
 	if err != nil {
 		return nil, err
 	}

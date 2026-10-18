@@ -221,7 +221,7 @@ func TestOfficeAceEnsureTrialSkipsExistingEntitlement(t *testing.T) {
 	}
 }
 
-func TestOfficeAceTrialOrderUsesV3SignatureAndDoesNotAutoPay(t *testing.T) {
+func TestOfficeAceTrialOrderUsesV3SignatureAndAutoPays(t *testing.T) {
 	var orderBody officeAceTrialOrder
 	var orderCalls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -280,25 +280,22 @@ func TestOfficeAceTrialOrderUsesV3SignatureAndDoesNotAutoPay(t *testing.T) {
 	if orderCalls.Load() != 1 {
 		t.Fatalf("order calls = %d, want 1", orderCalls.Load())
 	}
-	if orderBody.AutoRenewal != 0 || orderBody.AutoPay != 0 {
-		t.Fatalf("auto flags = renewal:%d pay:%d, want 0/0", orderBody.AutoRenewal, orderBody.AutoPay)
+	if orderBody.AutoRenewal != 0 || orderBody.AutoPay != 1 {
+		t.Fatalf("auto flags = renewal:%d pay:%d, want 0/1 (the zero-priced trial must settle immediately)", orderBody.AutoRenewal, orderBody.AutoPay)
 	}
 }
 
-func TestOfficeAceBalanceRepairsMissingTrial(t *testing.T) {
+func TestOfficeAceBalanceDoesNotCreateAnOrder(t *testing.T) {
 	var subscriptionCalls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == officeAcePremiumPathSubscription:
-			if subscriptionCalls.Add(1) <= 2 {
-				_, _ = io.WriteString(w, `{"subscribe_status":"SUBSCRIBED","skus":[],"bonus_skus":[]}`)
-				return
-			}
+			subscriptionCalls.Add(1)
 			_, _ = io.WriteString(w, officeAcePremiumSubscriptionJSON)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/skus/"+officeAceTrialSKUCode:
-			_, _ = io.WriteString(w, `{"product_sales_cycles":[{"id":"atomic-trial-product","status":"ONSALE"}]}`)
+			http.Error(w, "a balance read must never query the SKU", http.StatusInternalServerError)
 		case r.Method == http.MethodPost && r.URL.Path == officeAcePremiumPathSubscriptionPeriod:
-			_, _ = io.WriteString(w, `{"status":"SUBSCRIBED","order_id":"order-1"}`)
+			http.Error(w, "a balance read must never create an order", http.StatusInternalServerError)
 		default:
 			http.NotFound(w, r)
 		}
@@ -325,10 +322,10 @@ func TestOfficeAceBalanceRepairsMissingTrial(t *testing.T) {
 		t.Fatalf("balance: %v", err)
 	}
 	if bal.Credits != 5400 {
-		t.Fatalf("balance = %+v, want the trial quota after repair", bal)
+		t.Fatalf("balance = %+v", bal)
 	}
-	if subscriptionCalls.Load() < 3 {
-		t.Fatalf("subscription calls = %d, want the repair read plus the balance read", subscriptionCalls.Load())
+	if subscriptionCalls.Load() != 1 {
+		t.Fatalf("subscription calls = %d, want exactly one read", subscriptionCalls.Load())
 	}
 }
 
@@ -640,6 +637,54 @@ func TestOfficeAcePremiumSerializesConcurrentRefresh(t *testing.T) {
 	row, ok := o.source.officeAceFindRow(id)
 	if !ok || row.OfficeAce == nil || row.OfficeAce.RefreshToken != "new-refresh" {
 		t.Fatalf("refreshed session = %+v", row.OfficeAce)
+	}
+}
+
+func TestOfficeAceTrialOrderUnpaidTenantNamesThePaymentCenter(t *testing.T) {
+	var orderBody officeAceTrialOrder
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == officeAcePremiumPathSubscription:
+			_, _ = io.WriteString(w, `{"subscribe_status":"SUBSCRIBED","skus":[],"bonus_skus":[]}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/skus/"+officeAceTrialSKUCode:
+			_, _ = io.WriteString(w, `{"product_sales_cycles":[{"id":"atomic-trial-product","status":"ONSALE"}]}`)
+		case r.Method == http.MethodPost && r.URL.Path == officeAcePremiumPathSubscriptionPeriod:
+			if err := json.NewDecoder(r.Body).Decode(&orderBody); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error_code":"AgentArts.00000148","error_msg":"租户存在未支付订单。","error_suggestion":"请去华为云控制台费用中心确认。"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	o := officeAcePremiumSource(t, srv)
+	id := officeAceAddAccountWithSession(t, o, srv, officeAceStoredSession{
+		Region:          "cn-southwest-2",
+		AccessKey:       "access",
+		SecretKey:       "secret",
+		SecurityToken:   "token",
+		ProjectID:       "project-1",
+		ExpiresAt:       "2099-01-01T00:00:00Z",
+		V3AccessKey:     "v3-access",
+		V3SecretKey:     "v3-secret",
+		V3SecurityToken: "v3-token",
+		V3ProjectID:     "project-1",
+		V3ExpiresAt:     "2099-01-01T00:00:00Z",
+	})
+
+	err := o.ensureOfficeAceTrial(context.Background(), id)
+	if err == nil {
+		t.Fatal("an unpaid-order refusal must be reported")
+	}
+	if !strings.Contains(err.Error(), "费用中心") || !strings.Contains(err.Error(), "支付或取消") {
+		t.Fatalf("error must tell the operator how to clear the unpaid order: %v", err)
+	}
+	if orderBody.AutoPay != 1 {
+		t.Fatalf("auto_pay = %d, want 1", orderBody.AutoPay)
 	}
 }
 

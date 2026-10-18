@@ -109,9 +109,8 @@ func TestRoutePlanUIDragOrderPersistsPriority(t *testing.T) {
 
 	edits := poolStatsFuncBody(t, src, "routeOrderEdits")
 	for _, want := range []string{
-		`priority_source`,
-		`group`,
-		`schedule_hit`,
+		`platform`,
+		`model_id`,
 		`priority`,
 	} {
 		if !strings.Contains(edits, want) {
@@ -119,15 +118,21 @@ func TestRoutePlanUIDragOrderPersistsPriority(t *testing.T) {
 		}
 	}
 
+	// The drag writes the per-model priority on the platform card, which is
+	// the one value the chain displays; it must not fall back to the group,
+	// schedule or base boxes.
 	apply := poolStatsFuncBody(t, src, "applyRouteOrder")
 	for _, want := range []string{
-		`.pfPrio`,
-		`.pfGPrio`,
-		`.pfSchedPrio`,
+		`.pfmPrio`,
 		`savePlatforms`,
 	} {
 		if !strings.Contains(apply, want) {
 			t.Errorf("applyRouteOrder 缺少 %q", want)
+		}
+	}
+	for _, unwanted := range []string{`.pfGPrio`, `.pfSchedPrio`} {
+		if strings.Contains(apply, unwanted) {
+			t.Errorf("applyRouteOrder 仍会写 %s，拖动应当只改模型优先级", unwanted)
 		}
 	}
 
@@ -159,14 +164,14 @@ const assert = require("assert");
 const load = new Function("return " + ` + string(code) + ` + ";");
 const routeOrderEdits = load();
 const got = routeOrderEdits([
-  {platform:"beta", priority_source:"group", group:"shared", model_id:"gpt-x"},
-  {platform:"alpha", priority_source:"base", model_id:"gpt-x"},
-  {platform:"gamma", priority_source:"schedule", schedule_hit:"窗口2", model_id:"gpt-x"}
+  {platform:"beta", model_id:"gpt-x", priority:0},
+  {platform:"alpha", model_id:"gpt-x", priority:3},
+  {platform:"gamma", model_id:"gpt-x", priority:7}
 ]);
 assert.deepStrictEqual(got, [
-  {platform:"beta", source:"group", group:"shared", schedule_hit:"", priority:0},
-  {platform:"alpha", source:"base", group:"", schedule_hit:"", priority:1},
-  {platform:"gamma", source:"schedule", group:"", schedule_hit:"窗口2", priority:2}
+  {platform:"beta", model_id:"gpt-x", priority:2},
+  {platform:"alpha", model_id:"gpt-x", priority:6},
+  {platform:"gamma", model_id:"gpt-x", priority:7}
 ]);
 `
 	if out, err := exec.Command(node, "-e", program).CombinedOutput(); err != nil {

@@ -115,6 +115,14 @@ type PlatformConfig struct {
 	// given.  Matching is case-insensitive and surrounding space is ignored,
 	// because the ids are typed by hand.
 	DisabledModels []string
+	// ModelPriorities overrides the routing priority for individual models on
+	// this platform.  The key is the upstream model id the catalogue publishes
+	// and the value uses the same scale as Priority: lower wins.  A model
+	// absent from the map inherits the platform's effective priority, so an
+	// empty map leaves the historical behaviour untouched.  This is the
+	// per-model rung of the same ladder the route plan displays, which is what
+	// makes the platform card's model rows and the chain agree.
+	ModelPriorities map[string]int
 
 	// MaxInFlight caps how many requests may be in flight against this
 	// platform at once.  Zero means no ceiling.  Some vendors rate-limit
@@ -153,6 +161,7 @@ type PlatformConfig struct {
 type platformPolicy struct {
 	priority              int
 	prioritySchedule      []PriorityWindow
+	modelPriorities       map[string]int
 	disabled              map[string]struct{}
 	maxInFlight           int
 	maxInFlightPerAccount int
@@ -198,6 +207,17 @@ func (r *Registry) SetPlatformConfigs(cfgs map[string]PlatformConfig) {
 		pol := platformPolicy{priority: cfg.Priority, reserveCredits: cfg.ReserveCredits}
 		if len(cfg.PrioritySchedule) > 0 {
 			pol.prioritySchedule = append([]PriorityWindow(nil), cfg.PrioritySchedule...)
+		}
+		if len(cfg.ModelPriorities) > 0 {
+			pol.modelPriorities = make(map[string]int, len(cfg.ModelPriorities))
+			for model, priority := range cfg.ModelPriorities {
+				if key := normalizeModelID(model); key != "" {
+					pol.modelPriorities[key] = priority
+				}
+			}
+			if len(pol.modelPriorities) == 0 {
+				pol.modelPriorities = nil
+			}
 		}
 		if len(cfg.AccountPriorities) > 0 {
 			pol.accountPriorities = make(map[string]int, len(cfg.AccountPriorities))
@@ -435,6 +455,120 @@ func (r *Registry) priorityAt(name string, now time.Time) int {
 		}
 	}
 	return pol.priority
+}
+
+// modelPriorityAt returns the operator's per-model priority override for one
+// platform.  The bool reports whether one is configured: a model with no entry
+// inherits the platform's effective priority, which is what keeps the default
+// behaviour identical to before this rung existed.
+func (r *Registry) modelPriorityAt(name, model string) (int, bool) {
+	if r == nil {
+		return 0, false
+	}
+	key := normalizeModelID(model)
+	if key == "" {
+		return 0, false
+	}
+	r.mu.RLock()
+	pol := r.platforms[name]
+	r.mu.RUnlock()
+	if len(pol.modelPriorities) == 0 {
+		return 0, false
+	}
+	priority, ok := pol.modelPriorities[key]
+	return priority, ok
+}
+
+// EffectiveModelPriority resolves the routing priority one (platform, model)
+// pair would use right now, plus the rung that decided it.  It is the single
+// exported answer to "what number does this pair route at", so the panel can
+// display exactly what the request path will do instead of re-deriving the
+// precedence in its own language.
+//
+// The rung is one of "model", "group", "schedule" or "base".  The bool reports
+// whether the platform is known at all; an unknown platform yields false so the
+// caller can distinguish "no opinion" from a real priority of zero.
+func (r *Registry) EffectiveModelPriority(platform, model string, now time.Time) (int, string, bool) {
+	if r == nil {
+		return 0, "", false
+	}
+	r.mu.RLock()
+	_, known := r.platforms[platform]
+	r.mu.RUnlock()
+	if !known {
+		return 0, "", false
+	}
+
+	if priority, ok := r.modelPriorityAt(platform, model); ok {
+		return priority, "model", true
+	}
+	// A group's platform priority is part of the answer only when this
+	// concrete model is one of that group's named members, which is what makes
+	// the group rung apply on the request path too.
+	if priority, ok := r.groupPriorityForMember(platform, model); ok {
+		return priority, "group", true
+	}
+	if priority, hit := r.schedulePriorityAt(platform, now); hit {
+		return priority, "schedule", true
+	}
+	return r.priorityAt(platform, now), "base", true
+}
+
+// ModelPriorityOverride reports the operator's explicit per-model priority
+// override for one platform, if there is one.  The panel uses it to tell a
+// written box (override) apart from an empty one (inherit), which is a
+// distinction the effective value alone cannot express.
+func (r *Registry) ModelPriorityOverride(platform, model string) (int, bool) {
+	return r.modelPriorityAt(platform, model)
+}
+
+// groupPriorityForMember reports the model-group platform priority that a
+// concrete (platform, model) member routes at, if its group configures one.
+// Membership is compared through the shared canonical id so a group written as
+// `autoclaw/GLM-5.3-Flash` still covers the catalogue's own spelling.
+func (r *Registry) groupPriorityForMember(platform, model string) (int, bool) {
+	key := canonicalModelID(model)
+	if key == "" {
+		return 0, false
+	}
+	r.mu.RLock()
+	groups := make([]ModelGroup, 0, len(r.modelGroups))
+	for _, group := range r.modelGroups {
+		groups = append(groups, cloneModelGroup(group))
+	}
+	r.mu.RUnlock()
+
+	for _, group := range groups {
+		for _, member := range group.Members {
+			if !strings.EqualFold(strings.TrimSpace(member.Client), platform) {
+				continue
+			}
+			if canonicalModelID(member.Model) != key {
+				continue
+			}
+			if priority, ok := modelGroupPriority(group, platform); ok {
+				return priority, true
+			}
+		}
+	}
+	return 0, false
+}
+
+// schedulePriorityAt reports the priority of the first time window covering
+// now, so callers can name the schedule rung without comparing values against
+// the base priority (a window may legitimately repeat the base number).
+func (r *Registry) schedulePriorityAt(name string, now time.Time) (int, bool) {
+	r.mu.RLock()
+	pol := r.platforms[name]
+	r.mu.RUnlock()
+	local := now.In(platformPriorityCST)
+	minute := local.Hour()*60 + local.Minute()
+	for _, w := range pol.prioritySchedule {
+		if priorityWindowContains(w, minute) {
+			return w.Priority, true
+		}
+	}
+	return 0, false
 }
 
 // priorityWindowContains reports whether minute falls inside the half-open
@@ -861,10 +995,16 @@ func (r *Registry) rankCandidates(ctx context.Context, owners []Candidate) []Can
 	ranked := make([]scored, len(owners))
 	now := time.Now()
 	for i, o := range owners {
-		priority := r.priorityFor(o.Client.Name(), o.group)
+		priority := r.priorityFor(o.Client.Name(), o.group, o.Model)
 		innerPriority := priority
 		if o.dynamicAuto {
+			// Inside a dynamic Auto pool the platform's own priority is the
+			// starting point, but a per-model override on that platform is
+			// more specific and wins, mirroring the static route plan.
 			innerPriority = r.priority(o.Client.Name())
+			if modelPriority, ok := r.modelPriorityAt(o.Client.Name(), o.Model); ok {
+				innerPriority = modelPriority
+			}
 			priority = innerPriority
 			if o.autoPrioritySet {
 				priority = o.autoPriority

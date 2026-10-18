@@ -289,11 +289,19 @@ func pathForSignature(rawURL string) (string, error) {
 // the clock are fields rather than being read inside so that a test can pin them
 // and get a deterministic signature.
 type cosyRequest struct {
-	UID         string // Cosy-User: the account uid
-	Body        string // the exact bytes that go on the wire
-	RawURL      string // full request URL
-	Accept      string
-	UserAgent   string
+	UID       string // Cosy-User: the account uid
+	Body      string // the exact bytes that go on the wire
+	RawURL    string // full request URL
+	Accept    string
+	UserAgent string
+	// ModelKey is the catalogue key the request is scoped to.  The vendor's
+	// inference gateway routes and bills on the x-model-key header, not on the
+	// OpenAI body's "model" field: a body-only request is answered by the
+	// account's default model and billed as unbillable, whatever the body says.
+	// Sending the header is what makes a request for a specific catalogue entry
+	// actually reach that entry.  It is empty for calls that carry no model
+	// (the catalogue read), and the header is then omitted.
+	ModelKey    string
 	RequestID   string // uuid inside the signed payload
 	XRequestID  string // X-Request-Id header
 	UnixDate    int64
@@ -338,7 +346,7 @@ func (s cosySession) headers(r cosyRequest) (map[string]string, error) {
 	}
 	payload := cosyPayloadB64(s.info, r.RequestID, r.CosyVersion, ideVersion)
 	date := strconv.FormatInt(r.UnixDate, 10)
-	return map[string]string{
+	h := map[string]string{
 		"accept":                accept,
 		"content-type":          "application/json",
 		"user-agent":            userAgent,
@@ -353,7 +361,16 @@ func (s cosySession) headers(r cosyRequest) (map[string]string, error) {
 		"cosy-date":             date,
 		"authorization":         "Bearer COSY." + payload + "." + cosySignature(payload, s.cosyKey, r.UnixDate, r.Body, path),
 		"accept-encoding":       "identity",
-	}, nil
+	}
+	// The gateway selects (and bills) the model from this header.  Without it a
+	// request is answered by the account's default model no matter what the
+	// signed body asks for, so the header is mandatory for every model-scoped
+	// call and omitted only for the catalogue read.
+	if key := strings.TrimSpace(r.ModelKey); key != "" {
+		h["x-model-key"] = key
+		h["x-model-source"] = "system"
+	}
+	return h, nil
 }
 
 // jsonMarshalled renders v as the exact wire body once, so the caller can sign

@@ -21,38 +21,42 @@ const (
 )
 
 type modelInfo struct {
-	ID                      string         `json:"id"`
-	OwnedBy                 string         `json:"owned_by"`
-	Extra                   map[string]any `json:"extra"`
-	ContextLength           int64          `json:"context_length,omitempty"`
-	MaxOutputTokens         int64          `json:"max_output_tokens,omitempty"`
-	ContextSource           string         `json:"context_source,omitempty"`
-	MaxOutputSource         string         `json:"max_output_source,omitempty"`
-	SupportedEfforts        []string       `json:"supported_efforts,omitempty"`
-	DefaultEffort           string         `json:"default_effort,omitempty"`
-	EffortsSource           string         `json:"efforts_source,omitempty"`
-	DefaultEffortSource     string         `json:"default_effort_source,omitempty"`
-	SupportedEffortsDefault []string       `json:"supported_efforts_default,omitempty"`
-	DefaultEffortDefault    string         `json:"default_effort_default,omitempty"`
-	ElevateTop              bool           `json:"elevate_top"`
-	InputPerMillion         float64        `json:"input_per_million,omitempty"`
-	OutputPerMillion        float64        `json:"output_per_million,omitempty"`
-	CacheReadPerMillion     float64        `json:"cache_read_per_million,omitempty"`
-	HasPrice                bool           `json:"has_price"`
-	HasCacheRead            bool           `json:"has_cache_read"`
-	InputPriceSource        string         `json:"input_price_source,omitempty"`
-	OutputPriceSource       string         `json:"output_price_source,omitempty"`
-	CacheReadPriceSource    string         `json:"cache_read_price_source,omitempty"`
-	InputPriceDefault       float64        `json:"input_price_default,omitempty"`
-	OutputPriceDefault      float64        `json:"output_price_default,omitempty"`
-	CacheReadPriceDefault   float64        `json:"cache_read_price_default,omitempty"`
-	DefaultHasPrice         bool           `json:"default_has_price"`
-	DefaultHasCacheRead     bool           `json:"default_has_cache_read"`
-	PriceEditable           bool           `json:"price_editable"`
-	ContextEditable         bool           `json:"context_editable"`
-	MaxOutputEditable       bool           `json:"max_output_editable"`
-	EffortsEditable         bool           `json:"efforts_editable"`
-	ElevateTopEditable      bool           `json:"elevate_top_editable"`
+	ID                      string                    `json:"id"`
+	OwnedBy                 string                    `json:"owned_by"`
+	Extra                   map[string]any            `json:"extra"`
+	ContextLength           int64                     `json:"context_length,omitempty"`
+	MaxOutputTokens         int64                     `json:"max_output_tokens,omitempty"`
+	ContextSource           string                    `json:"context_source,omitempty"`
+	MaxOutputSource         string                    `json:"max_output_source,omitempty"`
+	SupportedEfforts        []string                  `json:"supported_efforts,omitempty"`
+	DefaultEffort           string                    `json:"default_effort,omitempty"`
+	EffortsSource           string                    `json:"efforts_source,omitempty"`
+	DefaultEffortSource     string                    `json:"default_effort_source,omitempty"`
+	SupportedEffortsDefault []string                  `json:"supported_efforts_default,omitempty"`
+	DefaultEffortDefault    string                    `json:"default_effort_default,omitempty"`
+	EffortMappings          []modelmeta.EffortMapping `json:"effort_mappings,omitempty"`
+	EffortMappingsDefault   []modelmeta.EffortMapping `json:"effort_mappings_default,omitempty"`
+	EffortMappingsManual    bool                      `json:"effort_mappings_manual"`
+	EffortMappingsEditable  bool                      `json:"effort_mappings_editable"`
+	ElevateTop              bool                      `json:"elevate_top"`
+	InputPerMillion         float64                   `json:"input_per_million,omitempty"`
+	OutputPerMillion        float64                   `json:"output_per_million,omitempty"`
+	CacheReadPerMillion     float64                   `json:"cache_read_per_million,omitempty"`
+	HasPrice                bool                      `json:"has_price"`
+	HasCacheRead            bool                      `json:"has_cache_read"`
+	InputPriceSource        string                    `json:"input_price_source,omitempty"`
+	OutputPriceSource       string                    `json:"output_price_source,omitempty"`
+	CacheReadPriceSource    string                    `json:"cache_read_price_source,omitempty"`
+	InputPriceDefault       float64                   `json:"input_price_default,omitempty"`
+	OutputPriceDefault      float64                   `json:"output_price_default,omitempty"`
+	CacheReadPriceDefault   float64                   `json:"cache_read_price_default,omitempty"`
+	DefaultHasPrice         bool                      `json:"default_has_price"`
+	DefaultHasCacheRead     bool                      `json:"default_has_cache_read"`
+	PriceEditable           bool                      `json:"price_editable"`
+	ContextEditable         bool                      `json:"context_editable"`
+	MaxOutputEditable       bool                      `json:"max_output_editable"`
+	EffortsEditable         bool                      `json:"efforts_editable"`
+	ElevateTopEditable      bool                      `json:"elevate_top_editable"`
 	// ElevateTopDefault is the embedded per-model policy with no operator
 	// choice applied. The row shows it so "restore default" can bring back an
 	// on-by-default model instead of silently writing a manual "off".
@@ -65,6 +69,21 @@ type modelInfo struct {
 	// row's "restore default" button writes back, and zero means unknown.
 	ContextDefault   int64 `json:"context_default,omitempty"`
 	MaxOutputDefault int64 `json:"max_output_default,omitempty"`
+
+	// EffectivePriority is the routing priority this (platform, model) pair
+	// actually resolves to, computed by the same registry the request path
+	// uses. The platform card shows it as the placeholder for the per-model
+	// box, so the number beside the model and the number in the route chain
+	// are the same value by construction rather than by a second JS copy of
+	// the precedence rules.
+	EffectivePriority int `json:"effective_priority"`
+	// PrioritySource names the rung that decided EffectivePriority ("model",
+	// "group", "schedule" or "base"), so the row can explain what it inherits.
+	PrioritySource string `json:"priority_source,omitempty"`
+	// ModelPriority is the operator's explicit per-model override, or nil when
+	// the model inherits. The panel needs the distinction to render an empty
+	// box (inherit) versus a written one (override).
+	ModelPriority *int `json:"model_priority,omitempty"`
 }
 
 type clientModels struct {
@@ -251,9 +270,11 @@ func (p *panel) virtualModelsFor(real []clientModels) clientModels {
 		}
 		elevateTop := modelmeta.ElevateTop(core.VirtualModelClient, id, p.opts.ModelOverrides)
 		elevateTopManual := false
+		var effortMappings []modelmeta.EffortMapping
 		if p.opts.ModelOverrides != nil {
 			if o, ok := p.opts.ModelOverrides.Get(core.VirtualModelClient, id); ok {
 				_, elevateTopManual = o.ExplicitElevateTop()
+				effortMappings = append([]modelmeta.EffortMapping(nil), o.EffortMappings...)
 			}
 		}
 		row.Models = append(row.Models, modelInfo{
@@ -277,6 +298,10 @@ func (p *panel) virtualModelsFor(real []clientModels) clientModels {
 			}(),
 			SupportedEffortsDefault: effortsDefault,
 			DefaultEffortDefault:    defaultDefault,
+			EffortMappings:          effortMappings,
+			EffortMappingsDefault:   modelmeta.DefaultEffortMappings(),
+			EffortMappingsManual:    len(effortMappings) > 0,
+			EffortMappingsEditable:  p.opts.ModelOverrides != nil,
 			ElevateTop:              elevateTop,
 			ElevateTopDefault:       modelmeta.StaticElevateTop(core.VirtualModelClient, id),
 			ElevateTopManual:        elevateTopManual,
@@ -471,9 +496,26 @@ func (p *panel) modelsFor(ctx context.Context, c core.Client, refresh bool) clie
 		// the operator recorded an explicit choice).
 		elevateTop := modelmeta.ElevateTop(c.Name(), m.ID, p.opts.ModelOverrides)
 		elevateTopManual := false
+		var effortMappings []modelmeta.EffortMapping
 		if p.opts.ModelOverrides != nil {
 			if o, ok := p.opts.ModelOverrides.Get(c.Name(), m.ID); ok {
 				_, elevateTopManual = o.ExplicitElevateTop()
+				effortMappings = append([]modelmeta.EffortMapping(nil), o.EffortMappings...)
+			}
+		}
+		// The routing priority is resolved by the registry itself, so this row
+		// shows the same number the request path uses.  It is resolved at the
+		// concrete upstream id, which is the key the per-model override is
+		// written against.
+		effectivePriority, prioritySource := 0, ""
+		var modelPriority *int
+		if p.opts.Registry != nil {
+			if priority, rung, ok := p.opts.Registry.EffectiveModelPriority(c.Name(), m.ID, time.Now()); ok {
+				effectivePriority, prioritySource = priority, rung
+			}
+			if override, ok := p.opts.Registry.ModelPriorityOverride(c.Name(), m.ID); ok {
+				value := override
+				modelPriority = &value
 			}
 		}
 		row.Models = append(row.Models, modelInfo{
@@ -490,6 +532,10 @@ func (p *panel) modelsFor(ctx context.Context, c core.Client, refresh bool) clie
 			DefaultEffortSource:     meta.SourceOf(modelmeta.FieldDefaultEffort),
 			SupportedEffortsDefault: append([]string(nil), base.Efforts...),
 			DefaultEffortDefault:    base.DefaultEffort,
+			EffortMappings:          effortMappings,
+			EffortMappingsDefault:   modelmeta.DefaultEffortMappings(),
+			EffortMappingsManual:    len(effortMappings) > 0,
+			EffortMappingsEditable:  p.opts.ModelOverrides != nil,
 			ElevateTop:              elevateTop,
 			ElevateTopDefault:       modelmeta.StaticElevateTop(c.Name(), m.ID),
 			ElevateTopManual:        elevateTopManual,
@@ -509,6 +555,9 @@ func (p *panel) modelsFor(ctx context.Context, c core.Client, refresh bool) clie
 			PriceEditable:           p.opts.ModelOverrides != nil,
 			ContextDefault:          base.ContextLength,
 			MaxOutputDefault:        base.MaxOutputTokens,
+			EffectivePriority:       effectivePriority,
+			PrioritySource:          prioritySource,
+			ModelPriority:           modelPriority,
 			ContextEditable:         p.opts.ModelOverrides != nil,
 			MaxOutputEditable:       p.opts.ModelOverrides != nil,
 			EffortsEditable:         p.opts.ModelOverrides != nil,

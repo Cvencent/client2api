@@ -284,7 +284,7 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 			return nil, err
 		}
 		issued++
-		resp, err := c.openChat(chatCtx, acc, body)
+		resp, err := c.openChat(chatCtx, acc, body, model)
 		if err != nil {
 			req.ReleaseAccountSlot()
 			c.inFlight.Add(-1)
@@ -335,7 +335,7 @@ func (c *Client) probeChat(ctx context.Context, acc account) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	resp, err := c.openChat(ctx, acc, body)
+	resp, err := c.openChat(ctx, acc, body, model)
 	if err != nil {
 		return "", err
 	}

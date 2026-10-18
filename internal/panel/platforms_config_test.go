@@ -68,6 +68,10 @@ func TestConfigPatchRejectsMalformedPlatformPolicy(t *testing.T) {
 		{"account priority not whole", `{"platforms":{"cline":{"account_priorities":{"a":1.5}}}}`},
 		{"account_notes not an object", `{"platforms":{"cline":{"account_notes":[]}}}`},
 		{"account note not a string", `{"platforms":{"cline":{"account_notes":{"a":5}}}}`},
+		{"model_priorities not an object", `{"platforms":{"cline":{"model_priorities":[]}}}`},
+		{"model priority not a number", `{"platforms":{"cline":{"model_priorities":{"gpt-9":"high"}}}}`},
+		{"model priority not whole", `{"platforms":{"cline":{"model_priorities":{"gpt-9":1.5}}}}`},
+		{"model priority blank id", `{"platforms":{"cline":{"model_priorities":{" ":3}}}}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -171,5 +175,48 @@ func TestConfigPatchAcceptsReserveCredits(t *testing.T) {
 	}
 	if tb["reserve_credits"] != float64(-1) {
 		t.Errorf("tabbit reserve_credits = %v, want -1 (guard off)", tb["reserve_credits"])
+	}
+}
+
+// The per-model priority map is what the drag in the route chain writes.  It
+// must round-trip through a PATCH, and a null value must delete one override
+// without disturbing its siblings.
+func TestConfigPatchAcceptsModelPriorities(t *testing.T) {
+	path := configFile(t, baseConfig)
+	out := mustSave(t, configPanel(path),
+		`{"platforms":{"autoclaw":{"model_priorities":{"zai_glm-5.3-flash":-1}}}}`)
+
+	changed, _ := out["changed"].([]any)
+	if len(changed) != 1 || changed[0] != "platforms" {
+		t.Fatalf("changed = %v, want [platforms]", out["changed"])
+	}
+
+	got := onDisk(t, path)
+	pl, _ := got["platforms"].(map[string]any)
+	ac, _ := pl["autoclaw"].(map[string]any)
+	prios, ok := ac["model_priorities"].(map[string]any)
+	if !ok {
+		t.Fatalf("model_priorities was not saved as an object: %v", ac["model_priorities"])
+	}
+	if prios["zai_glm-5.3-flash"] != float64(-1) {
+		t.Errorf("model priority = %v, want -1", prios["zai_glm-5.3-flash"])
+	}
+
+	// A second PATCH with two entries, then a third that nulls one of them:
+	// only the nulled key may disappear.
+	mustSave(t, configPanel(path),
+		`{"platforms":{"autoclaw":{"model_priorities":{"zai_glm-5.3-flash":-1,"zai_auto":4}}}}`)
+	mustSave(t, configPanel(path),
+		`{"platforms":{"autoclaw":{"model_priorities":{"zai_auto":null}}}}`)
+
+	got = onDisk(t, path)
+	pl, _ = got["platforms"].(map[string]any)
+	ac, _ = pl["autoclaw"].(map[string]any)
+	prios, _ = ac["model_priorities"].(map[string]any)
+	if _, exists := prios["zai_auto"]; exists {
+		t.Errorf("the nulled override survived: %v", prios)
+	}
+	if prios["zai_glm-5.3-flash"] != float64(-1) {
+		t.Errorf("the sibling override was disturbed: %v", prios)
 	}
 }

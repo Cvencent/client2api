@@ -368,3 +368,227 @@ func TestElevateTopResetsTheOriginalLevelForTheNextCandidate(t *testing.T) {
 		t.Fatalf("beta reasoning_effort = %v, want the original xhigh", got)
 	}
 }
+
+func TestEffortMappingsCanPromoteHighToMax(t *testing.T) {
+	store, err := modelmeta.OpenOverrideStore("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetEffortMappings("mod", "m1", []modelmeta.EffortMapping{
+		{From: "high", To: "max"},
+		{From: "xhigh", To: "max"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	base := &testClient{name: "mod", catalogue: []core.Model{{ID: "m1"}}}
+	client := &effortPolicyClient{
+		testClient: base,
+		efforts:    []string{"low", "high", "max"},
+		ok:         true,
+	}
+	srv := newEffortPolicyServer(t, client, store)
+
+	body := `{"model":"m1","reasoning_effort":"high","messages":[{"role":"user","content":"hi"}]}`
+	if rec := chat(t, srv, body); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if got := base.seen.Options["reasoning_effort"]; got != "max" {
+		t.Fatalf("module reasoning_effort = %v, want max from the high mapping", got)
+	}
+	if !base.seen.EffortFinal {
+		t.Fatal("a mapped level was not marked final")
+	}
+}
+func TestEffortMappingsDoNotChain(t *testing.T) {
+	store, err := modelmeta.OpenOverrideStore("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetEffortMappings("mod", "m1", []modelmeta.EffortMapping{
+		{From: "high", To: "xhigh"},
+		{From: "xhigh", To: "max"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	base := &testClient{name: "mod", catalogue: []core.Model{{ID: "m1"}}}
+	client := &effortPolicyClient{
+		testClient: base,
+		efforts:    []string{"low", "high", "xhigh", "max"},
+		ok:         true,
+	}
+	srv := newEffortPolicyServer(t, client, store)
+
+	body := `{"model":"m1","reasoning_effort":"high","messages":[{"role":"user","content":"hi"}]}`
+	if rec := chat(t, srv, body); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if got := base.seen.Options["reasoning_effort"]; got != "xhigh" {
+		t.Fatalf("module reasoning_effort = %v, want xhigh from one mapping step", got)
+	}
+}
+
+func TestExplicitEffortMappingCanSendAnUnsupportedTarget(t *testing.T) {
+	store, err := modelmeta.OpenOverrideStore("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetEffortMappings("mod", "m1", []modelmeta.EffortMapping{{From: "high", To: "max"}}); err != nil {
+		t.Fatal(err)
+	}
+	base := &testClient{name: "mod", catalogue: []core.Model{{ID: "m1"}}}
+	client := &effortPolicyClient{
+		testClient: base,
+		efforts:    []string{"low", "high"},
+		ok:         true,
+	}
+	srv := newEffortPolicyServer(t, client, store)
+
+	body := `{"model":"m1","reasoning_effort":"high","messages":[{"role":"user","content":"hi"}]}`
+	if rec := chat(t, srv, body); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if got := base.seen.Options["reasoning_effort"]; got != "max" {
+		t.Fatalf("module reasoning_effort = %v, want the explicit high -> max mapping even though the catalogue lists only high", got)
+	}
+}
+
+func TestCustomEffortMappingsKeepTheDefaultRule(t *testing.T) {
+	store, err := modelmeta.OpenOverrideStore("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetEffortMappings("mod", "m1", []modelmeta.EffortMapping{{From: "high", To: "max"}}); err != nil {
+		t.Fatal(err)
+	}
+	base := &testClient{name: "mod", catalogue: []core.Model{{ID: "m1"}}}
+	client := &effortPolicyClient{
+		testClient: base,
+		efforts:    []string{"low", "high", "xhigh", "max"},
+		ok:         true,
+	}
+	srv := newEffortPolicyServer(t, client, store)
+
+	body := `{"model":"m1","reasoning_effort":"xhigh","messages":[{"role":"user","content":"hi"}]}`
+	if rec := chat(t, srv, body); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if got := base.seen.Options["reasoning_effort"]; got != "max" {
+		t.Fatalf("module reasoning_effort = %v, want the default xhigh -> top rule alongside the custom high rule", got)
+	}
+}
+
+func TestCustomEffortMappingCanCancelTheDefaultRule(t *testing.T) {
+	store, err := modelmeta.OpenOverrideStore("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetEffortMappings("mod", "m1", []modelmeta.EffortMapping{{From: "xhigh", To: "xhigh"}}); err != nil {
+		t.Fatal(err)
+	}
+	base := &testClient{name: "mod", catalogue: []core.Model{{ID: "m1"}}}
+	client := &effortPolicyClient{
+		testClient: base,
+		efforts:    []string{"low", "high", "xhigh", "max"},
+		ok:         true,
+	}
+	srv := newEffortPolicyServer(t, client, store)
+
+	body := `{"model":"m1","reasoning_effort":"xhigh","messages":[{"role":"user","content":"hi"}]}`
+	if rec := chat(t, srv, body); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if got := base.seen.Options["reasoning_effort"]; got != "xhigh" {
+		t.Fatalf("module reasoning_effort = %v, want the explicit xhigh no-op", got)
+	}
+}
+
+func TestUsageRowShowsMappedHighToMax(t *testing.T) {
+	store, err := modelmeta.OpenOverrideStore("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetEffortMappings("mod", "m1", []modelmeta.EffortMapping{{From: "high", To: "max"}}); err != nil {
+		t.Fatal(err)
+	}
+	base := &testClient{name: "mod", catalogue: []core.Model{{ID: "m1"}}, events: usageEvents(1, 1)}
+	client := &effortPolicyClient{
+		testClient: base,
+		efforts:    []string{"low", "high", "max"},
+		ok:         true,
+	}
+	usage := NewUsageStore(8)
+	reg := core.NewRegistry()
+	reg.Add(client)
+	srv := NewServer(Options{
+		Registry:       reg,
+		Version:        "test",
+		Logger:         log.New(io.Discard, "", 0),
+		ModelOverrides: store,
+		Usage:          usage,
+	})
+
+	body := `{"model":"m1","reasoning_effort":"high","messages":[{"role":"user","content":"hi"}]}`
+	if rec := chat(t, srv, body); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	rows := usage.Snapshot()
+	if len(rows) != 1 {
+		t.Fatalf("recorded %d usage rows, want 1", len(rows))
+	}
+	if rows[0].ReasoningEffort != "high" || rows[0].SentReasoningEffort != "max" {
+		t.Fatalf("usage efforts = requested %q sent %q, want high and max", rows[0].ReasoningEffort, rows[0].SentReasoningEffort)
+	}
+}
+
+func TestExplicitEffortMappingIsFinalAndSkipsGenericAlignment(t *testing.T) {
+	store, err := modelmeta.OpenOverrideStore("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetEffortMappings("mod", "m1", []modelmeta.EffortMapping{{From: "max", To: "max"}}); err != nil {
+		t.Fatal(err)
+	}
+	base := &testClient{name: "mod", catalogue: []core.Model{{ID: "m1"}}}
+	client := &effortPolicyClient{
+		testClient: base,
+		efforts:    []string{"low", "high"},
+		ok:         true,
+	}
+	srv := newEffortPolicyServer(t, client, store)
+
+	body := `{"model":"m1","reasoning_effort":"max","messages":[{"role":"user","content":"hi"}]}`
+	if rec := chat(t, srv, body); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if got := base.seen.Options["reasoning_effort"]; got != "max" {
+		t.Fatalf("module reasoning_effort = %v, want the explicit max mapping to win over generic alignment", got)
+	}
+	if !base.seen.EffortFinal {
+		t.Fatal("an explicit mapping result was not marked final")
+	}
+}
+
+func TestExplicitEffortMappingCanDowngradeToAnUnsupportedLevel(t *testing.T) {
+	store, err := modelmeta.OpenOverrideStore("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetEffortMappings("mod", "m1", []modelmeta.EffortMapping{{From: "max", To: "high"}}); err != nil {
+		t.Fatal(err)
+	}
+	base := &testClient{name: "mod", catalogue: []core.Model{{ID: "m1"}}}
+	client := &effortPolicyClient{
+		testClient: base,
+		efforts:    []string{"low", "high"},
+		ok:         true,
+	}
+	srv := newEffortPolicyServer(t, client, store)
+
+	body := `{"model":"m1","reasoning_effort":"max","messages":[{"role":"user","content":"hi"}]}`
+	if rec := chat(t, srv, body); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if got := base.seen.Options["reasoning_effort"]; got != "high" {
+		t.Fatalf("module reasoning_effort = %v, want the explicit max -> high mapping", got)
+	}
+}

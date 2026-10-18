@@ -24,7 +24,7 @@ var reasoningEffortRank = map[string]int{
 }
 
 // applyEffortPolicy resets a candidate request to the caller's requested level
-// and then applies cap alignment. Resetting matters on failover: an earlier
+// and then applies the configured effort mappings. Resetting matters on failover: an earlier
 // candidate may have promoted xhigh to max, while the next candidate may not
 // support max and must start from the original request again.
 func (s *server) applyEffortPolicy(ctx context.Context, client core.Client, model, requestedModel string, req *core.ChatRequest, requested string) string {
@@ -40,29 +40,56 @@ func (s *server) applyEffortPolicy(ctx context.Context, client core.Client, mode
 	if client == nil {
 		return requested
 	}
-	efforts, _, ok := s.resolveModelEfforts(ctx, client, model)
-	if !ok || len(efforts) == 0 {
+	efforts, _, _ := s.resolveModelEfforts(ctx, client, model)
+	custom, defaults := s.effortMappingsFor(requestedModel, client, model)
+	// An operator-defined rule is authoritative. It may name a tier the
+	// candidate does not publish, and it is applied even before the candidate's
+	// ladder is known, because the operator explicitly asked for that value.
+	// This is what lets max -> high and max -> max work on a model that only
+	// advertises high.
+	for _, mapping := range custom {
+		if normalizeEffort(mapping.From) != requested {
+			continue
+		}
+		target := normalizeEffort(mapping.To)
+		if target == modelmeta.EffortMappingTop {
+			if target = highestReasoningEffort(efforts); target == "" {
+				continue
+			}
+		}
+		if target == "" {
+			continue
+		}
+		setReasoningEffort(req, target)
+		req.EffortFinal = true
+		return target
+	}
+	if len(efforts) == 0 {
 		return requested
 	}
-	// Cap alignment is a per-model policy with an embedded default: an operator
-	// may switch it off explicitly, but a model whose table opts in stays on even
-	// with no override store wired at all.  It runs before generic alignment
-	// because xhigh is Codex's top label while some vendors expose the same
-	// level as max; the policy deliberately promotes the caller's top tier to
-	// that vendor name instead of misreading it as an unsupported level.
-	if requested == effortXHigh && s.capAlignmentEnabled(requestedModel, client, model) {
-		top := highestReasoningEffort(efforts)
-		if top != "" && reasoningEffortRank[top] > reasoningEffortRank[requested] {
-			setReasoningEffort(req, top)
-			req.EffortFinal = true
-			return top
+	// The built-in xhigh -> top rule stays conservative: it only moves upward
+	// and only to a tier the candidate actually published. A global-only model
+	// that advertises just high therefore keeps Codex's xhigh unchanged instead
+	// of being downgraded.
+	for _, mapping := range defaults {
+		if normalizeEffort(mapping.From) != requested || normalizeEffort(mapping.To) != modelmeta.EffortMappingTop {
+			continue
 		}
+		target := highestReasoningEffort(efforts)
+		targetRank, targetKnown := reasoningEffortRank[target]
+		requestedRank, requestedKnown := reasoningEffortRank[requested]
+		if !targetKnown || !requestedKnown || targetRank <= requestedRank {
+			break
+		}
+		setReasoningEffort(req, target)
+		req.EffortFinal = true
+		return target
 	}
 	// A caller's top tier must not be silently downgraded merely because the
 	// candidate's published vocabulary stops at high.  Downward alignment is
 	// useful for unsupported middle tiers, but xhigh is the Codex top label and
 	// the existing contract leaves it untouched unless a higher vendor tier is
-	// available (handled by the cap-alignment branch above).
+	// available (handled by the mapping rules above).
 	if requested == effortXHigh {
 		return requested
 	}
@@ -76,20 +103,35 @@ func (s *server) applyEffortPolicy(ctx context.Context, client core.Client, mode
 	return requested
 }
 
-// capAlignmentEnabled resolves the policy for the model the caller actually
-// named. A virtual row (Auto/<id> or a model group) may carry an explicit
-// choice; when it does, that choice is final for every underlying candidate.
-// Otherwise each candidate keeps its own model-level policy, which is the same
-// precedence used for the virtual row's context, output and effort metadata.
-func (s *server) capAlignmentEnabled(requestedModel string, client core.Client, model string) bool {
+// effortMappingsFor resolves the mapping policy for the model the caller
+// actually named. Custom rules are returned separately from the built-in
+// xhigh -> top default because they have different authority: a custom rule is
+// final, while the built-in rule is only an upward cap alignment. A virtual
+// row's explicit enable/disable or custom rules are final for every underlying
+// candidate; without one, each candidate keeps its own model-level rules.
+func (s *server) effortMappingsFor(requestedModel string, client core.Client, model string) (custom, defaults []modelmeta.EffortMapping) {
 	if name, ok := s.virtualModelName(requestedModel); ok && s.opts.ModelOverrides != nil {
 		if o, ok := s.opts.ModelOverrides.Get(core.VirtualModelClient, name); ok {
 			if on, explicit := o.ExplicitElevateTop(); explicit {
-				return on
+				if !on {
+					return nil, nil
+				}
+				return append([]modelmeta.EffortMapping(nil), o.EffortMappings...), modelmeta.DefaultEffortMappings()
+			}
+			if len(o.EffortMappings) > 0 {
+				return append([]modelmeta.EffortMapping(nil), o.EffortMappings...), modelmeta.DefaultEffortMappings()
 			}
 		}
 	}
-	return modelmeta.ElevateTop(client.Name(), model, s.opts.ModelOverrides)
+	if !modelmeta.ElevateTop(client.Name(), model, s.opts.ModelOverrides) {
+		return nil, nil
+	}
+	if s.opts.ModelOverrides != nil {
+		if o, ok := s.opts.ModelOverrides.Get(client.Name(), model); ok && len(o.EffortMappings) > 0 {
+			return append([]modelmeta.EffortMapping(nil), o.EffortMappings...), modelmeta.DefaultEffortMappings()
+		}
+	}
+	return nil, modelmeta.DefaultEffortMappings()
 }
 
 // alignEffortToSupported maps a caller's unsupported tier onto the candidate's

@@ -10,14 +10,16 @@ import (
 
 // RoutePlanSource names the rule that decided a step's priority.  The static
 // plan mirrors the runtime ResolveCandidates ranking without touching live
-// account state: base is the platform's configured priority, schedule means a
-// time-window override decided it, group means a model-group override, and
-// auto_pool marks a platform inside a model-group Auto member's pool (ordered
-// by its own platform priority when the group sets no Auto priority).
+// account state: model is the per-model override on the platform card,
+// base is the platform's configured priority, schedule means a time-window
+// override decided it, group means a model-group override, and auto_pool
+// marks a platform inside a model-group Auto member's pool (ordered by its own
+// platform priority when the group sets no Auto priority).
 type RoutePlanSource string
 
 const (
 	RoutePlanSourceBase     RoutePlanSource = "base"
+	RoutePlanSourceModel    RoutePlanSource = "model"
 	RoutePlanSourceSchedule RoutePlanSource = "schedule"
 	RoutePlanSourceGroup    RoutePlanSource = "group"
 	RoutePlanSourceAutoPool RoutePlanSource = "auto_pool"
@@ -173,7 +175,14 @@ func (r *Registry) ResolveStaticCatalogAt(model string, catalogs map[string][]Mo
 			SourceName: "平台优先级",
 		}
 		step.ContextLength, step.ContextSource = routePlanContext(m)
-		if hitName, hit := r.scheduleWindowSource(name, now); hit {
+		if priority, ok := r.modelPriorityAt(name, m.ID); ok {
+			// The per-model override is the most specific rung, so it wins
+			// over both the base priority and a matching schedule window.
+			step.Priority = priority
+			step.Source = RoutePlanSourceModel
+			step.SourceName = "模型优先级"
+			step.ScheduleHit = ""
+		} else if hitName, hit := r.scheduleWindowSource(name, now); hit {
 			step.Source = RoutePlanSourceSchedule
 			step.SourceName = "分时规则"
 			step.ScheduleHit = hitName
@@ -241,31 +250,47 @@ func (r *Registry) planGroupMember(group ModelGroup, groupKey, name string, mode
 			Group:    groupKey,
 		}
 		step.ContextLength, step.ContextSource = routePlanContext(m)
-		// The Auto member expands to every platform that serves the model.
-		// The runtime sorts the pool members by each platform's own priority
-		// (a group-set Auto priority only positions the whole pool), so the
-		// plan shows the platform priority as the effective intra-pool order
-		// and marks every step auto_pool.
-		step.Priority = r.priorityAt(name, now)
-		step.Source = RoutePlanSourceAutoPool
-		step.SourceName = "Auto 池"
-		step.AutoPool = true
+		// A per-model override is the most specific rung, so it decides the
+		// number this chain shows regardless of how the platform entered the
+		// group.  Checking it first also keeps a direct member from being
+		// mislabelled as an Auto-pool row.
+		if priority, found := r.modelPriorityAt(name, m.ID); found {
+			step.Priority = priority
+			step.Source = RoutePlanSourceModel
+			step.SourceName = "模型优先级"
+			step.Preferred = memberMatchesRequest(member, requested)
+			return &step, true
+		}
 		if isAuto {
+			// The Auto member expands to every platform that serves the model.
+			// The runtime sorts the pool members by each platform's own
+			// priority (a group-set Auto priority only positions the whole
+			// pool), so the plan shows the platform priority as the effective
+			// intra-pool order and marks every step auto_pool.
+			step.Priority = r.priorityAt(name, now)
+			step.Source = RoutePlanSourceAutoPool
+			step.SourceName = "Auto 池"
+			step.AutoPool = true
 			return &step, true
 		}
 		step.Preferred = memberMatchesRequest(member, requested)
+		// A direct member falls back through the group value, then its own
+		// time window, then the platform's base priority.  The base case has
+		// to be stated explicitly: leaving the Auto-pool scaffolding in place
+		// would report "auto_pool" for a platform that is not in that pool.
+		step.Priority = r.priorityAt(name, now)
+		step.Source = RoutePlanSourceBase
+		step.SourceName = "平台优先级"
 		if p, found := modelGroupPriority(group, name); found {
 			step.Priority = p
 			step.Source = RoutePlanSourceGroup
 			step.SourceName = "模型路由组"
-			step.AutoPool = false
 			return &step, true
 		}
 		if hitName, hit := r.scheduleWindowSource(name, now); hit {
 			step.Source = RoutePlanSourceSchedule
 			step.SourceName = "分时规则"
 			step.ScheduleHit = hitName
-			step.AutoPool = false
 		}
 		return &step, true
 	}

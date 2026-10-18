@@ -134,12 +134,51 @@ type trimReport struct {
 	Impossible bool
 }
 
+// isToolMessage reports whether a turn is a tool result.  Vendors validate that
+// each one answers a tool call the assistant made, so keeping one without that
+// assistant turn turns a recoverable request into a malformed one.
+func isToolMessage(m core.Message) bool {
+	return strings.EqualFold(strings.TrimSpace(m.Role), "tool")
+}
+
+// balancedTailStart returns the index at which the newest call-balanced suffix
+// begins: the last message, extended backwards over a run of tool results and
+// the assistant turn that issued the calls they answer.
+//
+// A tool result with no assistant call ahead of it is not a shorter
+// conversation, it is a malformed one.  Vendors answer that with a bad-request
+// refusal -- workbuddy's code 11133 -- rather than the oversized-prompt one the
+// trim was trying to fix, so a trim that leaves one behind converts "too long"
+// into "bad parameters" and the caller can never recover by resending.
+func balancedTailStart(msgs []core.Message) int {
+	last := len(msgs) - 1
+	if last <= 0 || !isToolMessage(msgs[last]) {
+		return last
+	}
+	start := last
+	for start > 0 && isToolMessage(msgs[start-1]) {
+		start--
+	}
+	if start > 0 {
+		// The assistant turn that issued the calls these results answer.
+		start--
+	}
+	return start
+}
+
 // applyContextBudget trims the request's history until the input fits the
 // budget, and reports what it did.
 //
 // It returns ok=false and changes nothing when the window is unknown, when the
 // request already fits, or when even the final turn alone cannot fit; the report
 // distinguishes those cases.
+//
+// Two things are pinned and neither is stale history: the leading system
+// messages, which are the task, and the newest call-balanced tail, which is the
+// question being asked right now.  Everything between them is dropped oldest
+// first.  The kept window is assembled so it can never begin with a tool result
+// whose assistant turn was dropped: that is a malformed history, and vendors
+// reject it as a bad request instead of an oversized prompt.
 func applyContextBudget(req *core.ChatRequest, budget int64) (trimReport, bool) {
 	if req == nil || budget <= 0 || len(req.Messages) == 0 {
 		return trimReport{}, false
@@ -149,43 +188,37 @@ func applyContextBudget(req *core.ChatRequest, budget int64) (trimReport, bool) 
 		return trimReport{}, false
 	}
 
-	// Two ends of the conversation are pinned, and neither is stale history:
-	//
-	//   - the leading system messages, which are the task itself.  Dropping them
-	//     does not shorten the conversation, it changes what the model is being
-	//     asked to do.
-	//   - the final turn, which is the question being asked right now.  An answer
-	//     without it is not a degraded answer, it is a different answer.
-	//
-	// Everything between them is droppable, oldest first, because that is where
-	// the accumulated stale context lives.
 	pinned := leadingSystemTurns(req.Messages)
-	keepFrom := pinned
-	fits := false
-	for keepFrom < len(req.Messages)-1 {
-		keepFrom++
-		if int64(estimateMessagesTokens(req.Messages[keepFrom:])) <= budget {
-			fits = true
+	tail := balancedTailStart(req.Messages)
+	if tail < pinned {
+		tail = pinned
+	}
+	// Everything that is not history: the conversation envelope and the tool
+	// declarations.  The vendor measures them as part of the request, so the
+	// fit check has to count them too, or the trim lands above the budget it
+	// was given and the retry is refused for the same reason.
+	overhead := estimated - int64(estimateMessagesTokens(req.Messages))
+	head := int64(estimateMessagesTokens(req.Messages[:pinned]))
+
+	keepFrom := -1
+	for from := pinned; from <= tail; from++ {
+		if isToolMessage(req.Messages[from]) {
+			// A result without the assistant call ahead of it is exactly the
+			// malformed shape this loop exists to avoid.
+			continue
+		}
+		if overhead+head+int64(estimateMessagesTokens(req.Messages[from:])) <= budget {
+			keepFrom = from
 			break
 		}
 	}
-	// fits is false only when the loop reached the final turn without a single
-	// suffix fitting.  Reaching keepFrom == len-1 is NOT the same condition:
-	// when the final turn alone is what finally fits, the break still lands on
-	// the last index.  Reading the index instead of the fit used to refuse a
-	// request the guard could have served by keeping the pinned head and the
-	// newest turn -- the shape a conversation lands in right after it gets a
-	// large tool result back (a screenshot, a big file read).
-	if !fits {
-		// Even the final turn alone cannot fit.  Cutting into it would answer
-		// a different question, so the request is refused locally and the
+	if keepFrom < 0 {
+		// Even the newest call-balanced tail cannot fit.  Cutting into it would
+		// answer a different question, so the request is refused locally and the
 		// caller learns exactly why.
 		return trimReport{Impossible: true, BeforeTokens: estimated}, false
 	}
 
-	// The kept window is the pinned head, the droppable middle that survived, and
-	// the pinned tail -- so the result is assembled explicitly rather than being a
-	// single suffix, which would take the system prompts with it.
 	dropped := keepFrom - pinned
 	kept := make([]core.Message, 0, len(req.Messages)-dropped)
 	kept = append(kept, req.Messages[:pinned]...)
@@ -702,6 +735,55 @@ func retryBudgetForMeasuredRefusal(req *core.ChatRequest, observed, limit int64,
 		return 0
 	}
 	return budget
+}
+
+// unmeasuredRefusalRetryDivisor is how much of the advertised window a retry
+// keeps when the vendor refused the prompt as oversized but named no numbers.
+//
+// This is a retry size, never a measurement: nothing is persisted and the
+// model's advertised window is left exactly as it was.  The vendor said "too
+// long" about a request this gateway sized to fit, which means the advertised
+// window is optimistic by at least that much, so the retry aims well inside it.
+// Halving is the conservative end of "well inside" -- the newest call-balanced
+// tail is always kept, so what survives is the question, not a shrunken
+// transcript that answers something else.
+const unmeasuredRefusalRetryDivisor = 2
+
+// retryBudgetForUnmeasuredRefusal builds a retry budget from the window the
+// gateway already advertises, for a refusal that carries no numbers at all.
+//
+// Some vendors answer an oversized prompt with prose and nothing else -- Loomy's
+// "...内容太长了，请精简输入或开启新对话" names neither the size it measured nor the
+// limit it compared against.  There is nothing to learn from that and no
+// proportion to keep, so the guard cannot size the trim the way
+// retryBudgetForMeasuredRefusal does.  It can still make one conservative
+// attempt: trim to a fraction of the advertised window and retry.  A caller who
+// is served wins; a caller who is refused again gets the vendor's own 400 back,
+// exactly as they would have without the retry.
+func retryBudgetForUnmeasuredRefusal(req *core.ChatRequest, window int64, maxOutput int) int64 {
+	if req == nil || window <= 0 {
+		return 0
+	}
+	estimated := int64(estimateRequestTokens(req))
+	if estimated <= 0 {
+		return 0
+	}
+	reserve := int64(promptFixedOverhead)
+	if maxOutput > promptOutputCap {
+		maxOutput = promptOutputCap
+	}
+	if maxOutput > 0 {
+		reserve += int64(maxOutput)
+	}
+	room := window/unmeasuredRefusalRetryDivisor - reserve
+	if room <= 0 {
+		return 0
+	}
+	room = int64(float64(room) * promptBudgetSafety)
+	if room < promptBudgetFloor || room >= estimated {
+		return 0
+	}
+	return room
 }
 
 // ---------------------------------------------------------------------------

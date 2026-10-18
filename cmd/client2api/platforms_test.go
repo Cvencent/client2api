@@ -82,3 +82,38 @@ func TestPlatformConfigsProjectsBothInFlightCeilings(t *testing.T) {
 		t.Errorf("cline per-account ceiling = %d, want the default 2", got["cline"].MaxInFlightPerAccount)
 	}
 }
+
+// The per-model priority map is the rung the platform card edits.  It has to
+// survive the file-to-router projection, and a blank model id is dropped
+// because it can never match a catalogue entry.
+func TestPlatformConfigsProjectsModelPriorities(t *testing.T) {
+	cfg := &fileConfig{Platforms: map[string]platformConfig{
+		"autoclaw": {Priority: -3, ModelPriorities: map[string]int{
+			"zai_glm-5.3-flash": -1,
+			"  ":                5,
+		}},
+	}}
+
+	got := cfg.platformConfigs()
+	prios := got["autoclaw"].ModelPriorities
+	if len(prios) != 1 || prios["zai_glm-5.3-flash"] != -1 {
+		t.Fatalf("model priorities = %v, want only the real model id", prios)
+	}
+	if got["autoclaw"].Priority != -3 {
+		t.Errorf("platform priority = %d, want the base -3 kept alongside", got["autoclaw"].Priority)
+	}
+
+	// The JSON tag is the contract with the config file and the panel PATCH.
+	var parsed fileConfig
+	if err := json.Unmarshal([]byte(`{"platforms":{"autoclaw":{"model_priorities":{"glm-5.3-flash":-1}}}}`), &parsed); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if parsed.Platforms["autoclaw"].ModelPriorities["glm-5.3-flash"] != -1 {
+		t.Errorf("model_priorities did not round-trip: %+v", parsed.Platforms["autoclaw"])
+	}
+
+	// An absent map projects nil, which is what keeps the rung inactive.
+	if empty := (&fileConfig{Platforms: map[string]platformConfig{"cline": {Priority: 1}}}).platformConfigs(); empty["cline"].ModelPriorities != nil {
+		t.Errorf("model priorities = %v, want nil when unset", empty["cline"].ModelPriorities)
+	}
+}

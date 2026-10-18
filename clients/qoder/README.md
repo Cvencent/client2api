@@ -23,8 +23,19 @@
 | 模型输出上限 | 支持 | 从在线目录的 `max_output_tokens` 读取，冷缓存不猜值 |
 | 测试/启停/恢复 | 支持 | 测试发送一次最小真实对话请求，调通才算可用 |
 | 模型目录 | 支持 | 读取 `GET /algo/api/v2/model/list?Encode=1`，失败时回退内置目录 |
-| 对话 | 支持 | `POST /algo/api/v2/service/pro/sse/agent_chat_generation` |
+| 对话 | 支持 | `POST /algo/api/v2/service/pro/sse/agent_chat_generation`，模型由 `x-model-key` 请求头指定 |
 
+## 指定模型：必须发 x-model-key
+
+厂商的推理网关按 **请求头** `x-model-key`（配 `x-model-source: system`）选择并计费模型，
+签名 body 里的 OpenAI `model` 字段对它不起作用。只发 body 时，网关一律用账号默认模型回答，
+并且该次调用标记为不计费（`billable:false`、`credits:0`）——所以「按模型名调用」看起来成功，
+实际拿到的是默认模型的回答。本模块因此对每条对话请求都发这两个头；只有模型目录读取
+（`GET /algo/api/v2/model/list`）不带模型，此时省略该头。
+
+实测（2026-10-18，CN 账号）：同一把账号下，`x-model-key` 从 `dfmodel` 换成 `kmodel_latest`
+后，厂商返回的 usage 计费从约 `0.010` credits 变成约 `0.347` credits，与目录里两者的
+`price_factor` 比例一致；不带该头时一律 `credits:0`、`billable:false`。
 ## 添加账号
 
 推荐路径是浏览器登录（不需要装桌面客户端）：

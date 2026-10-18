@@ -146,3 +146,60 @@ func TestModelGroupUISaveDeletesRemovedGroupsAndPriorities(t *testing.T) {
 		}
 	}
 }
+
+// The platform card's model rows carry the per-model priority.  It is the same
+// number the route chain displays, so the row must offer an editable box, the
+// reader must collect it, and a cleared box must delete the override rather
+// than write 0.
+func TestPlatformModelRowsCarryThePerModelPriority(t *testing.T) {
+	src := poolStatsUISource(t)
+
+	render := poolStatsFuncBody(t, src, "renderPlatforms")
+	for _, want := range []string{`pfmPrio`, `model_priorities`, `data-inherited`, `pfmLbl`, `pfmBox`} {
+		if !strings.Contains(render, want) {
+			t.Errorf("renderPlatforms does not mention %q", want)
+		}
+	}
+
+	read := poolStatsFuncBody(t, src, "pfReadModelPriorities")
+	for _, want := range []string{`pfmPrio`, `dataset.model`} {
+		if !strings.Contains(read, want) {
+			t.Errorf("pfReadModelPriorities does not mention %q", want)
+		}
+	}
+
+	save := poolStatsFuncBody(t, src, "savePlatforms")
+	for _, want := range []string{
+		`pfReadModelPriorities`,
+		`modelPrioPatch`,
+		`model_priorities`,
+		`modelPrioPatch[model] = null`,
+	} {
+		if !strings.Contains(save, want) {
+			t.Errorf("savePlatforms is missing %q", want)
+		}
+	}
+
+	// The checkbox must be read through its own class: the row now holds a
+	// second input, and a bare querySelector("input") would pick the wrong one.
+	if strings.Contains(src, `m.querySelector("input")`) {
+		t.Error("a model row still reads a bare querySelector(\"input\")")
+	}
+}
+
+// Dragging in the route chain writes the per-model priority.  A blank box means
+// inherit, so the drag must not touch the base, group or schedule priority.
+func TestRouteDragWritesTheModelPriorityNotTheOtherRungs(t *testing.T) {
+	src := poolStatsUISource(t)
+	apply := poolStatsFuncBody(t, src, "applyRouteOrder")
+	for _, want := range []string{`pfmPrio`, `pfmname`, `savePlatforms`} {
+		if !strings.Contains(apply, want) {
+			t.Errorf("applyRouteOrder does not mention %q", want)
+		}
+	}
+	for _, unwanted := range []string{`.pfGPrio`, `.pfSchedPrio`} {
+		if strings.Contains(apply, unwanted) {
+			t.Errorf("applyRouteOrder still writes %s", unwanted)
+		}
+	}
+}

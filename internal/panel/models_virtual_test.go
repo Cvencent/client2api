@@ -194,3 +194,122 @@ func TestModelContextAcceptsVirtualClient(t *testing.T) {
 		t.Fatalf("stored virtual override = %+v ok=%v", got, ok)
 	}
 }
+
+func TestModelsListPublishesVirtualEffortMappings(t *testing.T) {
+	store, err := modelmeta.OpenOverrideStore("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetEffortMappings(core.VirtualModelClient, "shared", []modelmeta.EffortMapping{{From: "high", To: "max"}}); err != nil {
+		t.Fatal(err)
+	}
+	alpha := &fakeClient{name: "alpha", models: []core.Model{{ID: "m1"}}}
+	reg := registryOf(alpha)
+	reg.SetModelGroups(map[string]core.ModelGroup{
+		"shared": {Members: []core.ModelGroupMember{{Client: "alpha", Model: "m1"}}},
+	})
+	h := New(Options{Registry: reg, ModelOverrides: store})
+
+	rec := get(t, h, "/panel/api/models")
+	var got modelsReport
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range got.Clients {
+		if c.Name != core.VirtualModelClient {
+			continue
+		}
+		for _, m := range c.Models {
+			if m.ID != "shared" {
+				continue
+			}
+			if len(m.EffortMappings) != 1 || m.EffortMappings[0] != (modelmeta.EffortMapping{From: "high", To: "max"}) {
+				t.Fatalf("shared effort_mappings = %+v", m.EffortMappings)
+			}
+			if !m.EffortMappingsManual || !m.EffortMappingsEditable {
+				t.Fatalf("shared mapping flags = manual:%v editable:%v", m.EffortMappingsManual, m.EffortMappingsEditable)
+			}
+			return
+		}
+	}
+	t.Fatal("shared virtual model not found")
+}
+
+// The platform card shows the per-model box's placeholder from the value the
+// registry resolves, not from a JS re-derivation.  This pins that contract:
+// the number published on the model row is the number the route chain reports
+// for the same (platform, model) pair.
+func TestModelsListPublishesTheEffectivePriority(t *testing.T) {
+	reg := registryOf(
+		&fakeClient{name: "autoclaw", models: []core.Model{{ID: "zai_glm-5.3-flash"}}},
+		&fakeClient{name: "workbuddy", models: []core.Model{{ID: "cn:glm-5.3-flash"}}},
+	)
+	reg.SetPlatformConfigs(map[string]core.PlatformConfig{
+		"autoclaw":  {Priority: -3},
+		"workbuddy": {Priority: 1},
+	})
+	reg.SetModelGroups(map[string]core.ModelGroup{
+		"glm-5.3-flash": {
+			Members:            []core.ModelGroupMember{{Client: "autoclaw", Model: "zai_glm-5.3-flash"}},
+			PlatformPriorities: map[string]int{"autoclaw": 0},
+		},
+	})
+
+	h := New(Options{Registry: reg})
+	rec := get(t, h, "/panel/api/models")
+	var got modelsReport
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+
+	var row modelInfo
+	for _, c := range got.Clients {
+		if c.Name != "autoclaw" {
+			continue
+		}
+		for _, m := range c.Models {
+			if m.ID == "zai_glm-5.3-flash" {
+				row = m
+			}
+		}
+	}
+	if row.ID == "" {
+		t.Fatal("the autoclaw model row was not published")
+	}
+	// The group's 0 shadows the base -3, and the row has to say so.
+	if row.EffectivePriority != 0 || row.PrioritySource != "group" {
+		t.Fatalf("row = (%d, %q), want the inherited group 0", row.EffectivePriority, row.PrioritySource)
+	}
+	if row.ModelPriority != nil {
+		t.Fatalf("model_priority = %v, want nil while the model inherits", *row.ModelPriority)
+	}
+
+	// Once the operator writes a per-model value, the row reports it as both
+	// the effective value and the explicit override.
+	reg.SetPlatformConfigs(map[string]core.PlatformConfig{
+		"autoclaw":  {Priority: -3, ModelPriorities: map[string]int{"zai_glm-5.3-flash": -1}},
+		"workbuddy": {Priority: 1},
+	})
+	rec = get(t, h, "/panel/api/models")
+	got = modelsReport{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	row = modelInfo{}
+	for _, c := range got.Clients {
+		if c.Name != "autoclaw" {
+			continue
+		}
+		for _, m := range c.Models {
+			if m.ID == "zai_glm-5.3-flash" {
+				row = m
+			}
+		}
+	}
+	if row.EffectivePriority != -1 || row.PrioritySource != "model" {
+		t.Fatalf("row = (%d, %q), want the written model -1", row.EffectivePriority, row.PrioritySource)
+	}
+	if row.ModelPriority == nil || *row.ModelPriority != -1 {
+		t.Fatalf("model_priority = %v, want the explicit -1", row.ModelPriority)
+	}
+}

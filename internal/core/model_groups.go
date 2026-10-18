@@ -233,7 +233,17 @@ func (r *Registry) resolveModelGroup(ctx context.Context, groupKey string, group
 	return r.rankCandidates(ctx, owners), nil
 }
 
-func (r *Registry) priorityFor(name, group string) int {
+// priorityFor resolves the effective routing priority for one
+// (platform, model) candidate.  The rungs are ordered most-specific first:
+// a per-model override wins, then the model group's own platform priority,
+// then the platform's time-window rule, then its base priority.  A rung that
+// is not configured is skipped rather than treated as zero, so an untouched
+// model still inherits exactly what it inherited before the model rung
+// existed.
+func (r *Registry) priorityFor(name, group, model string) int {
+	if priority, ok := r.modelPriorityAt(name, model); ok {
+		return priority
+	}
 	if group != "" {
 		r.mu.RLock()
 		groupConfig, ok := r.modelGroups[group]

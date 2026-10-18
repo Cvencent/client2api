@@ -268,3 +268,36 @@ func TestModelsListPublishesV41CapAlignmentDefaults(t *testing.T) {
 			m.ElevateTop, m.ElevateTopDefault, m.ElevateTopManual)
 	}
 }
+
+func TestModelsListPublishesMultipleEffortMappings(t *testing.T) {
+	store, err := modelmeta.OpenOverrideStore("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetEffortMappings("workbuddy", "cn:glm-5.3", []modelmeta.EffortMapping{
+		{From: "high", To: "max"},
+		{From: "xhigh", To: "max"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	client := &fakeClient{name: "workbuddy", models: []core.Model{{ID: "cn:glm-5.3"}}}
+	h := New(Options{Registry: registryOf(client), ModelOverrides: store})
+
+	rec := get(t, h, "/panel/api/models")
+	var got modelsReport
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	m := got.Clients[0].Models[0]
+	if len(m.EffortMappings) != 2 ||
+		m.EffortMappings[0] != (modelmeta.EffortMapping{From: "high", To: "max"}) ||
+		m.EffortMappings[1] != (modelmeta.EffortMapping{From: "xhigh", To: "max"}) {
+		t.Fatalf("effort_mappings = %+v, want high->max and xhigh->max", m.EffortMappings)
+	}
+	if len(m.EffortMappingsDefault) != 1 || m.EffortMappingsDefault[0] != (modelmeta.EffortMapping{From: "xhigh", To: "top"}) {
+		t.Fatalf("effort_mappings_default = %+v, want xhigh->top", m.EffortMappingsDefault)
+	}
+	if !m.EffortMappingsManual || !m.EffortMappingsEditable {
+		t.Fatalf("mapping flags = manual:%v editable:%v, want true/true", m.EffortMappingsManual, m.EffortMappingsEditable)
+	}
+}

@@ -100,3 +100,63 @@ func TestModelContextRestoreDefaultClearsManualElevateChoice(t *testing.T) {
 		t.Fatal("restore default did not fall back to the embedded V4.1 default")
 	}
 }
+
+func TestModelContextEffortMappingsRoundTrip(t *testing.T) {
+	store, err := modelmeta.OpenOverrideStore("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := New(Options{ModelOverrides: store})
+
+	body := `{"clients":{"glm-5.3-flash":{"glm-5.3-flash":{"effort_mappings":[{"from":"high","to":"max"},{"from":"xhigh","to":"max"}]}}}}`
+	req := httptest.NewRequest(http.MethodPost, "/panel/api/model_context", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	got, ok := store.Get("glm-5.3-flash", "glm-5.3-flash")
+	if !ok {
+		t.Fatal("effort mappings were not stored")
+	}
+	if len(got.EffortMappings) != 2 {
+		t.Fatalf("effort mappings = %+v, want two rules", got.EffortMappings)
+	}
+	if got.EffortMappings[0] != (modelmeta.EffortMapping{From: "high", To: "max"}) ||
+		got.EffortMappings[1] != (modelmeta.EffortMapping{From: "xhigh", To: "max"}) {
+		t.Fatalf("effort mappings = %+v", got.EffortMappings)
+	}
+
+	rec = get(t, h, "/panel/api/model_context")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"effort_mappings"`) {
+		t.Fatalf("GET response missing effort_mappings: %s", rec.Body.String())
+	}
+}
+func TestModelContextRestoreDefaultAlsoClearsEffortMappings(t *testing.T) {
+	store, err := modelmeta.OpenOverrideStore("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetEffortMappings("glm-5.3-flash", "glm-5.3-flash", []modelmeta.EffortMapping{{From: "high", To: "max"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetElevateTop("glm-5.3-flash", "glm-5.3-flash", false); err != nil {
+		t.Fatal(err)
+	}
+	h := New(Options{ModelOverrides: store})
+
+	body := `{"clients":{"glm-5.3-flash":{"glm-5.3-flash":{"elevate_top_default":true}}}}`
+	req := httptest.NewRequest(http.MethodPost, "/panel/api/model_context", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if got, ok := store.Get("glm-5.3-flash", "glm-5.3-flash"); ok {
+		t.Fatalf("restore default left a manual entry behind: %+v", got)
+	}
+}

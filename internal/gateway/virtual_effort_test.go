@@ -248,3 +248,97 @@ func TestVirtualCapAlignmentOnOverridesTheCandidateChoice(t *testing.T) {
 		t.Fatalf("sent effort = %v, want max after the virtual row enabled cap alignment", got)
 	}
 }
+
+func TestVirtualExplicitEffortMappingsOverrideCandidateRules(t *testing.T) {
+	alpha := &virtualEffortClient{
+		testClient:    &testClient{name: "alpha", catalogue: []core.Model{{ID: "shared-model"}}},
+		efforts:       []string{"low", "high", "max"},
+		defaultEffort: "high",
+	}
+	store, err := modelmeta.OpenOverrideStore("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetEffortMappings("alpha", "shared-model", []modelmeta.EffortMapping{{From: "high", To: "low"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetEffortMappings(core.VirtualModelClient, "Auto/shared-model", []modelmeta.EffortMapping{{From: "high", To: "max"}}); err != nil {
+		t.Fatal(err)
+	}
+	srv := NewServer(Options{
+		Registry:       regWith(alpha),
+		Version:        "test",
+		Logger:         log.New(io.Discard, "", 0),
+		ModelOverrides: store,
+	})
+
+	rec := chat(t, srv, `{"model":"Auto/shared-model","reasoning_effort":"high","messages":[{"role":"user","content":"hi"}]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if got := alpha.seen.Options["reasoning_effort"]; got != "max" {
+		t.Fatalf("sent effort = %v, want the virtual row's high -> max rule", got)
+	}
+}
+
+func TestVirtualFallsBackToCandidateEffortMappings(t *testing.T) {
+	alpha := &virtualEffortClient{
+		testClient:    &testClient{name: "alpha", catalogue: []core.Model{{ID: "shared-model"}}},
+		efforts:       []string{"low", "high", "max"},
+		defaultEffort: "high",
+	}
+	store, err := modelmeta.OpenOverrideStore("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetEffortMappings("alpha", "shared-model", []modelmeta.EffortMapping{{From: "high", To: "max"}}); err != nil {
+		t.Fatal(err)
+	}
+	srv := NewServer(Options{
+		Registry:       regWith(alpha),
+		Version:        "test",
+		Logger:         log.New(io.Discard, "", 0),
+		ModelOverrides: store,
+	})
+
+	rec := chat(t, srv, `{"model":"Auto/shared-model","reasoning_effort":"high","messages":[{"role":"user","content":"hi"}]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if got := alpha.seen.Options["reasoning_effort"]; got != "max" {
+		t.Fatalf("sent effort = %v, want the candidate's high -> max rule", got)
+	}
+}
+
+func TestVirtualExplicitEffortMappingIsFinalForGroupMembers(t *testing.T) {
+	alpha := &virtualEffortClient{
+		testClient:    &testClient{name: "alpha", catalogue: []core.Model{{ID: "alpha-model"}}},
+		efforts:       []string{"high"},
+		defaultEffort: "high",
+	}
+	reg := regWith(alpha)
+	reg.SetModelGroups(map[string]core.ModelGroup{
+		"shared": {Members: []core.ModelGroupMember{{Client: "alpha", Model: "alpha-model"}}},
+	})
+	store, err := modelmeta.OpenOverrideStore("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetEffortMappings(core.VirtualModelClient, "shared", []modelmeta.EffortMapping{{From: "max", To: "high"}}); err != nil {
+		t.Fatal(err)
+	}
+	srv := NewServer(Options{
+		Registry:       reg,
+		Version:        "test",
+		Logger:         log.New(io.Discard, "", 0),
+		ModelOverrides: store,
+	})
+
+	rec := chat(t, srv, `{"model":"shared","reasoning_effort":"max","messages":[{"role":"user","content":"hi"}]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if got := alpha.testClient.seen.Options["reasoning_effort"]; got != "high" {
+		t.Fatalf("sent effort = %v, want the group's explicit max -> high mapping", got)
+	}
+}

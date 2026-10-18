@@ -64,6 +64,37 @@ type routeInput struct {
 	toolNames map[string]namespacedTool
 }
 
+// moduleUnavailable asks a module's own health surface whether it can serve
+// anything right now.  A module that has not opted into HealthProvider keeps
+// the historical path and is always attempted.  An opted-in module that says
+// it is unservable is authoritative: entering Chat would only repeat the same
+// empty account rotation.
+func moduleUnavailable(c core.Client) (core.Health, error) {
+	h, ok := core.HealthOf(c)
+	if !ok || h.Servable {
+		return h, nil
+	}
+	refusal := func(sentinel error) error {
+		if h.Note == "" {
+			return sentinel
+		}
+		return fmt.Errorf("%w: %s", sentinel, h.Note)
+	}
+	switch {
+	case h.Ready > 0:
+		// Ready accounts exist but none can take another request, which is the
+		// in-flight ceiling and maps to local backpressure.
+		return h, refusal(core.ErrBusy)
+	case h.Total > 0:
+		// Accounts exist but every one is cooling, parked, disabled or otherwise
+		// unusable for this request.  This is the same verdict a module returns
+		// after walking its pool, so keep the wire contract identical.
+		return h, refusal(core.ErrPlatformExhausted)
+	default:
+		return h, refusal(core.ErrNotConfigured)
+	}
+}
+
 // emitArgs is what an emitter needs to render one successful attempt.
 type emitArgs struct {
 	s       *server
@@ -128,7 +159,7 @@ func (s *server) routeAndServe(w http.ResponseWriter, r *http.Request, in routeI
 // shares the entire routing, stickiness, failover and accounting path.
 func (s *server) routeAndServeMessages(w http.ResponseWriter, r *http.Request, in routeInput, writeErr func(http.ResponseWriter, int, string, string)) {
 	in.writeProtocolError = writeErr
-	if !s.exposedModelAllowed(in.requested) {
+	if !s.exposedModelAllowed(r, in.requested) {
 		err := fmt.Errorf("model %q is not exposed by this gateway", in.requested)
 		in.stat.status = http.StatusNotFound
 		s.fail(in.rec, err)
@@ -184,6 +215,28 @@ func (s *server) routeAndServeMessages(w http.ResponseWriter, r *http.Request, i
 	client, upstreamModel := candidates[0].Client, candidates[0].Model
 	attemptCtx := withCatalogueExtra(r.Context(), candidates[0])
 	in.rec.Candidate = 1
+	if len(candidates) == 1 && !candidates[0].Free {
+		// A free model is the one exception to the account-level health verdict:
+		// a credit-parked account may still be able to serve it, and the module
+		// makes that decision per request.  Keep the fast refusal for every other
+		// candidate so an empty account rotation is not run once per retry.
+		if health, unavailable := moduleUnavailable(client); unavailable != nil {
+			in.rec.Client = client.Name()
+			in.rec.Model = client.Name() + "/" + upstreamModel
+			if len(health.Realms) == 1 {
+				for realm := range health.Realms {
+					in.rec.Realm = realm
+				}
+			}
+			in.stat.model = in.rec.Model
+			hintCtx := s.hintContextFunc(attemptCtx, client, upstreamModel, in.req.Messages)
+			status, _, _ := upstreamErrorShape(unavailable)
+			in.stat.status = status
+			s.fail(in.rec, unavailable)
+			s.writeUpstreamError(w, client, hintCtx, unavailable)
+			return
+		}
+	}
 	// The caller's full history is the basis for every candidate.  Keeping a
 	// pristine copy is what lets the failover chain re-trim for each platform
 	// instead of inheriting the cuts made for a smaller-window sibling.

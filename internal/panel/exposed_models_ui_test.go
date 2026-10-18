@@ -55,3 +55,35 @@ func TestExposedModelsUIWiresFetchAndHotSave(t *testing.T) {
 		}
 	}
 }
+
+// TestChatTesterSendsTheInternalMarker pins the UI half of the fix: the panel's
+// chat tester must mark its own /v1/models and /v1/chat/completions calls, or
+// the gateway would keep restricting the model picker to the exposed_models
+// whitelist -- the very list the tester is supposed to look past.
+func TestChatTesterSendsTheInternalMarker(t *testing.T) {
+	src := poolStatsUISource(t)
+
+	models := poolStatsFuncBody(t, src, "chatModels")
+	if !strings.Contains(models, `"/v1/models"`) {
+		t.Fatalf("chatModels no longer calls /v1/models:\n%s", models)
+	}
+	if !strings.Contains(models, "X-Client2API-Internal-Test") {
+		t.Error("chatModels must send the internal-test marker so the picker is not whitelisted")
+	}
+
+	send := poolStatsFuncBody(t, src, "chatSend")
+	if !strings.Contains(send, "/v1/chat/completions") {
+		t.Fatalf("chatSend no longer posts a completion:\n%s", send)
+	}
+	if !strings.Contains(send, "X-Client2API-Internal-Test") {
+		t.Error("chatSend must send the internal-test marker so an unexposed model can still be tested")
+	}
+
+	finish := poolStatsFuncBody(t, src, "chatTranscribe")
+	if !strings.Contains(finish, "/v1/audio/transcriptions") {
+		t.Fatalf("chatTranscribe no longer posts a transcription:\n%s", finish)
+	}
+	if !strings.Contains(finish, "X-Client2API-Internal-Test") {
+		t.Error("the transcription test must send the internal-test marker too")
+	}
+}

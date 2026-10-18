@@ -200,3 +200,66 @@ func TestOverrideStoreExplicitElevateTopOffBeatsEmbeddedDefault(t *testing.T) {
 		t.Fatal("restore default did not fall back to the embedded default")
 	}
 }
+
+func TestOverrideStorePersistsMultipleEffortMappings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "model_context.json")
+	s, err := OpenOverrideStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetEffortMappings("workbuddy", "cn:glm-5.3-flash", []EffortMapping{
+		{From: " HIGH ", To: " MAX "},
+		{From: "xhigh", To: "top"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := OpenOverrideStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := reopened.Get("workbuddy", "cn:glm-5.3-flash")
+	if !ok {
+		t.Fatal("effort mappings did not persist")
+	}
+	if len(got.EffortMappings) != 2 {
+		t.Fatalf("effort mappings = %+v, want two rules", got.EffortMappings)
+	}
+	if got.EffortMappings[0] != (EffortMapping{From: "high", To: "max"}) {
+		t.Fatalf("first mapping = %+v, want high -> max", got.EffortMappings[0])
+	}
+	if got.EffortMappings[1] != (EffortMapping{From: "xhigh", To: "top"}) {
+		t.Fatalf("second mapping = %+v, want xhigh -> top", got.EffortMappings[1])
+	}
+}
+
+func TestOverrideStoreRejectsDuplicateEffortMappingSources(t *testing.T) {
+	s, err := OpenOverrideStore("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = s.SetEffortMappings("workbuddy", "cn:glm-5.3-flash", []EffortMapping{
+		{From: "high", To: "max"},
+		{From: "HIGH", To: "xhigh"},
+	})
+	if err == nil {
+		t.Fatal("duplicate source was accepted")
+	}
+}
+
+func TestEffortMappingHighestAliasNormalizesToTop(t *testing.T) {
+	s, err := OpenOverrideStore("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetEffortMappings("workbuddy", "cn:glm-5.3-flash", []EffortMapping{{From: "high", To: " HIGHEST "}}); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := s.Get("workbuddy", "cn:glm-5.3-flash")
+	if !ok || len(got.EffortMappings) != 1 {
+		t.Fatalf("mapping = %+v ok=%v", got.EffortMappings, ok)
+	}
+	if got.EffortMappings[0] != (EffortMapping{From: "high", To: EffortMappingTop}) {
+		t.Fatalf("mapping = %+v, want high -> top", got.EffortMappings[0])
+	}
+}

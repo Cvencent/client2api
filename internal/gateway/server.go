@@ -109,10 +109,33 @@ type server struct {
 	handler http.Handler
 }
 
+// InternalTestHeader marks a request as coming from the panel's own chat
+// tester.  That page is the operator's internal instrument: it must be able to
+// list and call everything the gateway can route, not only the ids the
+// exposed_models whitelist publishes to outside callers.  The header is only
+// read on the authenticated surface, so it grants nothing a caller could not
+// already do by holding the API key -- the whole panel API sits behind the
+// same bearer.
+const InternalTestHeader = "X-Client2API-Internal-Test"
+
+// internalTestRequest reports whether r is the panel's own chat tester.
+func internalTestRequest(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	return strings.TrimSpace(r.Header.Get(InternalTestHeader)) == "1"
+}
+
 // exposedModelAllowed reports whether the final outward-facing model policy
 // permits this request id.  A nil registry is an embedder/test without a
-// policy and keeps the historical allow-all behaviour.
-func (s *server) exposedModelAllowed(model string) bool {
+// policy and keeps the historical allow-all behaviour.  The panel's chat
+// tester is exempt: the whitelist exists to shape what outside callers see, and
+// hiding a model from the operator's own test page would make the page unable
+// to test the very models it is there to exercise.
+func (s *server) exposedModelAllowed(r *http.Request, model string) bool {
+	if internalTestRequest(r) {
+		return true
+	}
 	return s == nil || s.opts.Registry == nil || s.opts.Registry.ExposedModelAllowed(model)
 }
 
@@ -658,7 +681,12 @@ func (s *server) handleModels(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sort.Slice(out.Data, func(i, j int) bool { return out.Data[i].ID < out.Data[j].ID })
-	if s.opts.Registry != nil {
+	// The exposed whitelist shapes what outside callers see.  The panel's chat
+	// tester asks for the same route with its internal marker, because it must
+	// offer every model the gateway can route -- testing only the currently
+	// published subset would hide exactly the models an operator is trying to
+	// bring up.
+	if s.opts.Registry != nil && !internalTestRequest(r) {
 		filtered := out.Data[:0]
 		for _, entry := range out.Data {
 			if s.opts.Registry.ExposedModelAllowed(entry.ID) {
@@ -1206,6 +1234,34 @@ func (s *server) openStreamRecorded(ctx context.Context, client core.Client, req
 						continue
 					}
 				}
+				// The vendor refused the prompt as oversized but named neither the
+				// size it measured nor the limit it compared against, so there is
+				// no proportion to keep and nothing to learn.  Loomy's Chinese
+				// refusal is this shape.  The gateway still knows what it
+				// advertised, and the refusal says that figure was optimistic, so
+				// one conservative retry against a fraction of it is worth trying:
+				// a served answer beats a dead end, and a second refusal is
+				// returned to the caller exactly as it would have been.
+				if sizes.Observed == 0 && sizes.Limit == 0 {
+					window := s.effectiveContextWindow(ctx, client, req.Model)
+					if budget := retryBudgetForUnmeasuredRefusal(req, window, maxOutput); budget > 0 {
+						if report, trimmed := applyContextBudget(req, budget); trimmed {
+							contextRetried = true
+							if rec != nil {
+								rec.Trimmed = true
+								rec.TrimDropped = report.DroppedMessages
+								rec.TrimmedFromTokens = report.BeforeTokens
+								rec.TrimmedToTokens = report.AfterTokens
+								rec.ContextWindow = window
+							}
+							s.opts.Logger.Printf(
+								"context: %s/%s refused an oversized prompt without naming a size; trimmed %d oldest message(s) to about %d of the advertised %d-token window and retrying (about %d -> %d)",
+								client.Name(), req.Model, report.DroppedMessages, budget, window,
+								report.BeforeTokens, report.AfterTokens)
+							continue
+						}
+					}
+				}
 			}
 		}
 
@@ -1436,6 +1492,9 @@ func errorCodeFor(err error, status int) string {
 			return "upstream_error"
 		}
 	}
+	if errors.Is(err, core.ErrPlatformExhausted) {
+		return "no_healthy_account"
+	}
 	if status == http.StatusUnauthorized {
 		return "invalid_api_key"
 	}
@@ -1483,6 +1542,11 @@ func upstreamErrorShape(err error) (int, string, core.FailureKind) {
 				typ = string(f.Kind) + "_error"
 			}
 			kind = f.Kind
+		} else if errors.Is(err, core.ErrPlatformExhausted) {
+			// The module already walked its account pool.  This is local
+			// unavailability, not a bad gateway response, so give the caller the
+			// same retryable shape as a missing healthy account.
+			status, typ = http.StatusServiceUnavailable, "invalid_request_error"
 		}
 	}
 	return status, typ, kind
@@ -1498,6 +1562,8 @@ func (s *server) writeUpstreamError(w http.ResponseWriter, c core.Client, ctx fu
 	status, typ, kind := upstreamErrorShape(err)
 	if errors.Is(err, core.ErrBusy) {
 		w.Header().Set("Retry-After", "1")
+	} else if errors.Is(err, core.ErrPlatformExhausted) {
+		w.Header().Set("Retry-After", strconv.Itoa(int(core.PlatformUnavailableCooldown/time.Second)))
 	}
 	msg := fmt.Sprintf("[%s] %s", clientName, err.Error())
 	s.opts.Logger.Printf("chat: client %s: %v", clientName, err)

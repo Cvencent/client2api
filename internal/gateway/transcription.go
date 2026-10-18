@@ -85,7 +85,7 @@ func (s *server) handleTranscriptions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request_error", "model is required")
 		return
 	}
-	if !s.exposedModelAllowed(model) {
+	if !s.exposedModelAllowed(r, model) {
 		writeError(w, http.StatusNotFound, "invalid_request_error",
 			fmt.Sprintf("model %q is not exposed by this gateway", model))
 		return

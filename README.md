@@ -105,7 +105,15 @@ people. The built-in default is `127.0.0.1`.
   model is served; an explicit `[]` means none is. The whitelist gates `GET /v1/models`
   and every call entry point (chat, responses, messages, count_tokens and audio
   transcriptions), so a hidden id is not callable even when it is named directly.
-- Platform priority, account priority and time-based priority schedules.
+- Platform priority, per-model priority, account priority and time-based
+  priority schedules.  The effective priority of a (platform, model) pair is the
+  most specific rung that is set: the per-model override on the platform card,
+  then the model group's own platform priority, then a matching time window,
+  then the platform's base priority.  A rung that is not configured is skipped
+  rather than treated as zero, so an untouched model keeps inheriting whatever
+  it inherited before.  The Platform Configuration page shows the per-model
+  number on each model row, and the route chain reads the same value, so the two
+  views cannot disagree.
 - Optional `egress` relay. `client` mode accepts an HTTP, HTTPS, SOCKS5 or
   SOCKS5H proxy URL; `subscription` mode hands a subscription URL to a managed
   mihomo process and points gateway traffic at its loopback mixed port. An
@@ -155,6 +163,17 @@ people. The built-in default is `127.0.0.1`.
   turn are always kept; only the stale middle is dropped. Every trimmed request is
   marked `已裁剪` in the usage log with how much was dropped and the sizes either
   side.
+- A trim never leaves an orphaned tool result behind. The kept window cannot begin
+  with a `tool` message whose assistant call was dropped: vendors validate that
+  pairing, so an orphan turns a recoverable "too long" into an unrecoverable
+  "bad parameters" (WorkBuddy's code 11133). When the boundary lands inside a tool
+  round trip, the whole round trip is kept and the cut moves earlier.
+- An inline base64 image is priced as an image rather than as text. `view_image`
+  returns a screenshot as a `data:image/...;base64,` URL, and a single 466x466 PNG
+  is tens of thousands of characters that the plain text divisor used to read as
+  ~18k tokens. That one overcount put the guard's estimate an order of magnitude
+  ahead of the vendor's own measurement on any conversation that had just looked
+  at a screenshot.
 - A virtual model advertises the widest member window so the downstream client can
   keep the large-window experience. If routing falls through to a narrower platform,
   that candidate alone is trimmed and, if needed, retried; the next candidate always
@@ -167,6 +186,12 @@ people. The built-in default is `127.0.0.1`.
   instead of the catalogue's. This is what stops the recurrence: clients size their
   own packing from `/v1/models`. A learned limit is shown with its own `实测`
   (measured) source and never overrides a manual value from `model_context.json`.
+- A refusal that names no numbers still gets one conservative retry. Loomy answers
+  an oversized prompt with prose ("内容太长了，请精简输入或开启新对话") that names
+  neither the size it measured nor the limit it compared against, so there is no
+  proportion to keep and nothing to learn. The gateway trims to a fraction of the
+  window it already advertises and retries once; a served answer beats a dead end,
+  and a refusal that repeats is returned to the caller unchanged.
 - A refusal that names both numbers is also a measurement of the request that was
   just sent. When the gateway's own estimate read low enough to forward that request
   unchanged, the history is trimmed to the proportion the vendor's window can hold and
@@ -199,14 +224,24 @@ people. The built-in default is `127.0.0.1`.
   usage row records the caller's original request and the level actually sent.
 - Cap alignment is on by default for every model on every platform, including
   `Auto/<model>` and model-group rows; the panel still lets an operator turn it
-  off or restore the default per model. When it is
-  on, a caller's top level `xhigh` is promoted to the model's real highest level
-  only when that level is higher (for example WorkBuddy, Cline and OpenRouter
-  `max`). Lower requests and models whose top level is already `xhigh` - Loomy,
-  for example - are left unchanged rather than sent a value the vendor never
-  advertised. A model with no published effort ladder is also harmless: the
-  default is on, but the gateway has nothing higher to send. The usage log keeps
-  both values and shows `xhigh → max` when they differ.
+  off or restore the default per model. The built-in rule is `xhigh → top`,
+  where `top` resolves to the highest level that candidate actually publishes.
+  It only moves upward: a model that publishes only `high` keeps `xhigh`
+  unchanged instead of being downgraded, and a model with no published effort
+  ladder is left untouched. The usage log keeps both values and shows
+  `xhigh → max` when they differ.
+- The row's mapping editor accepts multiple comma-separated one-step rules,
+  for example `high → max, xhigh → max`. Rules are matched by their source
+  exactly and are not chained. A custom rule is authoritative and is sent as
+  written, even when the candidate's catalogue does not list the target: this
+  is what lets `max → high` and `max → max` work on a model that only advertises
+  `high`. A custom `xhigh` rule replaces the built-in `xhigh → top` rule for
+  that model; a custom no-op such as `xhigh → xhigh` cancels the built-in
+  promotion without turning the whole policy off. A model-group row's explicit
+  mapping is applied to every member, while a row without one follows each
+  candidate's own mapping. Without a matching custom rule, the built-in
+  `xhigh → top` rule still only moves upward to a published tier, and the
+  generic unsupported-tier alignment remains the fallback for other levels.
 
 - The embedded effort defaults still follow the platform-specific facts rather
   than one global `max`: WorkBuddy CN is `low/high/max` (default `high`),
@@ -304,8 +339,11 @@ people. The built-in default is `127.0.0.1`.
   one minimal live request per platform through that platform's own account pool
   and reports first-event latency, total elapsed time, the serving account,
   completion tokens and tok/s. The result rows can be dragged or moved with
-  Up/Down; saving writes the displayed order back to platform priority,
-  model-group member priority or the schedule-window priority and hot-reloads it.
+  Up/Down; saving writes the displayed order back to the per-model priority on
+  each platform's model row -- a row outranks the one below it by one, so moving
+  a platform above a row showing `0` writes `-1` -- and hot-reloads it. Clearing
+  that box deletes the override so the model inherits the platform priority
+  again.
 - Runtime Log
 
 ### Tasks, usage and accounting

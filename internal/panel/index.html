@@ -278,6 +278,7 @@ label.fld > .hint { display: block; font-size: 11.5px; color: var(--ink-3); marg
 .acc.md .mdedit input { width: 92px; padding: 4px 6px; font-size: 12px; text-align: right; }
 .acc.md .mdedit input.mdtxt { width: 170px; text-align: left; }
 .acc.md .mdedit input.mdshort { width: 86px; text-align: left; }
+.acc.md .mdedit input.mdmap { width: 170px; margin-top: 4px; text-align: left; }
 .acc.md .mdedit input[type="checkbox"] { width: auto; margin: 0; vertical-align: middle; }
 .acc.md .mdcheckline { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .acc.md .mdedit input.dirty { border-color: var(--accent); }
@@ -1264,7 +1265,9 @@ button.primary:active:not(:disabled) { filter: brightness(.94); }
 @media (max-width: 760px) { .pfwbgrid { grid-template-columns: 1fr; } }
 .pfgrid { display: flex; flex-wrap: wrap; gap: 5px 12px; max-height: 260px; overflow: auto; padding: 2px; }
 .pfm { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--ink-2); background: var(--surface-2); border: 1px solid var(--line-soft); border-radius: 6px; padding: 3px 7px; cursor: pointer; }
-.pfm input { margin: 0; accent-color: var(--accent); }
+.pfm .pfmBox { margin: 0; accent-color: var(--accent); }
+.pfm .pfmLbl { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+.pfm .pfmPrio { margin-left: 2px; padding: 2px 5px; font-size: 11.5px; }
 .pfm.off { color: var(--bad); border-color: var(--bad); }
 .pfm .pfmname { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
@@ -3350,7 +3353,7 @@ kbd {
             <input id="rpModel" type="search" placeholder="模型名，例如 Auto/MIMO-2.6Flash" spellcheck="false" autocomplete="off" style="min-width:280px">
             <button class="xs" id="btnRpTest">测试链路</button>
             <button class="xs" id="btnRpSpeed">测速</button>
-            <span class="hint">测试链路只做本地静态预演；测速会为每个平台实际调用一次，拖动结果可调整调用优先级。</span>
+            <span class="hint">测试链路只做本地静态预演；测速会为每个平台实际调用一次。拖动结果会把顺序写回「模型优先级」，即平台配置里该模型行上的那个数字（比下一行小 1），两处始终同一个值。</span>
           </div>
           <div class="pad" id="rpResult"><div class="hint">输入模型名后点「测试链路」，查看平台的调用顺序、上下文窗口和优先级。</div></div>
         </div>
@@ -3986,10 +3989,18 @@ function capturePlatformDraft() {
     const values = {};
     ["pfPrio","pfMif","pfMifAcct","pfReserve"].forEach(k => { values[k] = p.querySelector("."+k).value; });
     const models = {};
-    p.querySelectorAll(".pfm").forEach(m => { models[m.dataset.model] = m.querySelector("input").checked; });
+    p.querySelectorAll(".pfm").forEach(m => {
+      const box = m.querySelector(".pfmBox");
+      models[m.dataset.model] = box ? box.checked : false;
+    });
+    const modelPrios = {};
+    p.querySelectorAll(".pfm").forEach(m => {
+      const el = m.querySelector(".pfmPrio");
+      modelPrios[m.dataset.model] = el ? el.value : "";
+    });
     const fields = {};
     p.querySelectorAll("input[id],select[id],textarea[id]").forEach(x => { fields[x.id] = { value: x.value, checked: x.checked }; });
-    draft.platforms[p.dataset.client] = { values, models, fields, clearBlacklist: p.dataset.clearBlacklist || "", schedule: cloneValues(p.querySelector(".pfSched")), open: !p.querySelector(".pfmodels").hidden };
+    draft.platforms[p.dataset.client] = { values, models, modelPrios, fields, clearBlacklist: p.dataset.clearBlacklist || "", schedule: cloneValues(p.querySelector(".pfSched")), open: !p.querySelector(".pfmodels").hidden };
   });
   return draft;
 }
@@ -4001,7 +4012,14 @@ function restorePlatformDraft(draft) {
     Object.keys(d.values).forEach(k => { p.querySelector("."+k).value = d.values[k]; });
     p.dataset.clearBlacklist = d.clearBlacklist;
     Object.keys(d.fields).forEach(id => { const x = document.getElementById(id); if (x) { x.value = d.fields[id].value; x.checked = d.fields[id].checked; } });
-    p.querySelectorAll(".pfm").forEach(m => { if (Object.prototype.hasOwnProperty.call(d.models, m.dataset.model)) m.querySelector("input").checked = d.models[m.dataset.model]; });
+    p.querySelectorAll(".pfm").forEach(m => {
+      const box = m.querySelector(".pfmBox");
+      if (box && Object.prototype.hasOwnProperty.call(d.models, m.dataset.model)) box.checked = d.models[m.dataset.model];
+    });
+    if (d.modelPrios) p.querySelectorAll(".pfm").forEach(m => {
+      const el = m.querySelector(".pfmPrio");
+      if (el && Object.prototype.hasOwnProperty.call(d.modelPrios, m.dataset.model)) el.value = d.modelPrios[m.dataset.model];
+    });
     p.querySelector(".pfSched").innerHTML = d.schedule;
     p.querySelector(".pfmodels").hidden = !d.open;
     p.querySelector(".pfToggle").setAttribute("aria-expanded", String(d.open));
@@ -7314,18 +7332,36 @@ function mdEffortsCell(m) {
     '<div class="mdsrc' + (src === "manual" ? " manual" : "") + '">' + esc(mdSrcText(src)) + '</div></td>';
 }
 
+function effortMappingsText(list) {
+  return (Array.isArray(list) ? list : [])
+    .filter(x => x && x.from && x.to)
+    .map(x => String(x.from) + "→" + String(x.to))
+    .join(", ");
+}
+
 function mdElevateTopCell(m) {
   const on = !!m.elevate_top;
   const dis = m.elevate_top_editable ? "" : " disabled";
   // 只有服务端明确记录过手动值时才写「手动」；否则这一档显示它实际来自
   // 内置默认还是本来就关着，操作员才能分清「默认开」和「我开过」。
-  const src = m.elevate_top_manual ? "manual" : "";
+  const src = (m.elevate_top_manual || m.effort_mappings_manual) ? "manual" : "";
   const label = on ? (src === "manual" ? "手动开启" : "默认开启") : "关闭";
   const def = m.elevate_top_default ? "1" : "0";
+  const mappings = effortMappingsText(m.effort_mappings);
+  const defaults = effortMappingsText(m.effort_mappings_default);
+  const followMembers = m.owned_by === "auto" || m.owned_by === "group";
+  const placeholder = followMembers
+    ? "成员各自（默认 " + (defaults || "xhigh→top") + "）"
+    : "默认：" + (defaults || "xhigh→top");
+  const mappingDis = m.effort_mappings_editable && on ? "" : " disabled";
   return '<td class="mdedit mdcheck" data-field="elevate_top">' +
-    '<label class="mdcheckline" title="开启后，Codex 的 xhigh 会提升到该模型真实最高档；V4.1 Flash 默认开启">' +
+    '<label class="mdcheckline" title="开启后，按下方 A→B 规则改写思考档位；自定义规则叠加默认 xhigh→top（top=该候选真实最高档）">' +
     '<input class="mdtoggle" type="checkbox" data-field="elevate_top" data-initial="' + (on ? "1" : "0") + '" data-default="' + def + '"' + (on ? " checked" : "") + dis + '>' +
-    '<span class="mdsrc' + (src === "manual" ? " manual" : "") + '">' + esc(label) + '</span></label></td>';
+    '<span class="mdsrc' + (src === "manual" ? " manual" : "") + '">' + esc(label) + '</span></label>' +
+    '<input class="mdtxt mdmap" type="text" autocomplete="off" data-field="effort_mappings"' +
+    ' value="' + esc(mappings) + '" data-initial="' + esc(mappings) + '" data-default="' + esc(defaults) + '"' +
+    ' title="多条规则用逗号分隔，例如 high→max, max→high；自定义规则原样下发，top 表示该模型真实最高档"' +
+    ' placeholder="' + esc(placeholder) + '"' + mappingDis + '></td>';
 }
 
 /* 能力徽标。原版 app.js:352-357 的语义，挂在模型名下面：默认 / 工具 / 视觉 /
@@ -7396,6 +7432,7 @@ function mdInputs(tr) {
     efforts: q("efforts"),
     defaultEffort: q("default_effort"),
     elevateTop: q("elevate_top"),
+    effortMappings: q("effort_mappings"),
   };
 }
 function mdInputDirty(input) {
@@ -7410,8 +7447,8 @@ function mdSyncDirty() {
   const note = $("#mdDirty");
   if (note) note.textContent = n ? n + " 项未保存" : "";
   document.querySelectorAll("#mdBody tr[data-client]").forEach(tr => {
-    const { ctx, out, inPrice, outPrice, cachePrice, efforts, defaultEffort, elevateTop } = mdInputs(tr);
-    [ctx, out, inPrice, outPrice, cachePrice, efforts, defaultEffort, elevateTop].forEach(input => {
+    const { ctx, out, inPrice, outPrice, cachePrice, efforts, defaultEffort, elevateTop, effortMappings } = mdInputs(tr);
+    [ctx, out, inPrice, outPrice, cachePrice, efforts, defaultEffort, elevateTop, effortMappings].forEach(input => {
       if (!input) return;
       if (mdInputDirty(input)) input.classList.add("dirty"); else input.classList.remove("dirty");
     });
@@ -7419,8 +7456,8 @@ function mdSyncDirty() {
 }
 // restore=true 表示「恢复官方默认」：保存时提交 0，服务端据此删掉手动值。
 function mdRecord(tr, restore) {
-  const { ctx, out, inPrice, outPrice, cachePrice, efforts, defaultEffort, elevateTop } = mdInputs(tr);
-  const inputs = [ctx, out, inPrice, outPrice, cachePrice, efforts, defaultEffort, elevateTop];
+  const { ctx, out, inPrice, outPrice, cachePrice, efforts, defaultEffort, elevateTop, effortMappings } = mdInputs(tr);
+  const inputs = [ctx, out, inPrice, outPrice, cachePrice, efforts, defaultEffort, elevateTop, effortMappings];
   if (inputs.some(input => !input)) return;
   const key = mdRowKey(tr);
   if (restore || inputs.some(mdInputDirty)) {
@@ -7428,6 +7465,7 @@ function mdRecord(tr, restore) {
       ctx: ctx.value, out: out.value,
       inPrice: inPrice.value, outPrice: outPrice.value, cachePrice: cachePrice.value,
       efforts: efforts.value, defaultEffort: defaultEffort.value, elevateTop: elevateTop.checked,
+      effortMappings: effortMappings.value,
       restore: !!restore,
     };
   } else {
@@ -7440,7 +7478,7 @@ function mdReapplyEdits() {
   document.querySelectorAll("#mdBody tr[data-client]").forEach(tr => {
     const e = MD_EDITS[mdRowKey(tr)];
     if (!e) return;
-    const { ctx, out, inPrice, outPrice, cachePrice, efforts, defaultEffort, elevateTop } = mdInputs(tr);
+    const { ctx, out, inPrice, outPrice, cachePrice, efforts, defaultEffort, elevateTop, effortMappings } = mdInputs(tr);
     if (ctx && ctx.value !== e.ctx) ctx.value = e.ctx;
     if (out && out.value !== e.out) out.value = e.out;
     if (inPrice && inPrice.value !== e.inPrice) inPrice.value = e.inPrice;
@@ -7449,6 +7487,8 @@ function mdReapplyEdits() {
     if (efforts && efforts.value !== e.efforts) efforts.value = e.efforts;
     if (defaultEffort && defaultEffort.value !== e.defaultEffort) defaultEffort.value = e.defaultEffort;
     if (elevateTop && elevateTop.checked !== e.elevateTop) elevateTop.checked = e.elevateTop;
+    if (effortMappings && effortMappings.value !== e.effortMappings) effortMappings.value = e.effortMappings;
+    if (effortMappings && elevateTop) effortMappings.disabled = !elevateTop.checked || elevateTop.disabled;
   });
   mdSyncDirty();
 }
@@ -7457,6 +7497,24 @@ function parseEffortList(raw) {
   return String(raw == null ? "" : raw).split(/[\s,，]+/)
     .map(v => v.trim().toLowerCase())
     .filter(v => v && !seen[v] && (seen[v] = true));
+}
+function parseEffortMappings(raw) {
+  const out = [];
+  const seen = Object.create(null);
+  const parts = String(raw == null ? "" : raw).split(/[\n,，;；]+/);
+  for (const part of parts) {
+    const item = part.trim();
+    if (!item) continue;
+    const bits = item.split(/\s*(?:->|=>|→|=|:|：)\s*/);
+    if (bits.length !== 2) return null;
+    const from = bits[0].trim().toLowerCase();
+    let to = bits[1].trim().toLowerCase();
+    if (to === "highest" || to === "最高" || to === "最高档") to = "top";
+    if (!from || !to || from === "top" || seen[from]) return null;
+    seen[from] = true;
+    out.push({ from: from, to: to });
+  }
+  return out;
 }
 function mdPriceNumber(raw) {
   const s = String(raw == null ? "" : raw).trim();
@@ -7467,6 +7525,7 @@ function mdPriceNumber(raw) {
 async function mdSave() {
   const clients = {};
   let n = 0;
+  let badMapping = "";
   MD_ITEMS.forEach(it => {
     const e = MD_EDITS[it.key];
     if (!e) return;
@@ -7479,6 +7538,7 @@ async function mdSave() {
         has_price: false,
         supported_efforts: [],
         default_effort: "",
+        effort_mappings: [],
         // 恢复默认不是手动关掉，而是清掉手动选择：V4.1 Flash 这类内置默认
         // 开启的模型必须回到「默认开启」，否则会被钉死成永久关闭。
         elevate_top_default: true,
@@ -7511,8 +7571,20 @@ async function mdSave() {
     if (e.efforts !== it.effortsStr) patch.supported_efforts = parseEffortList(e.efforts);
     if (e.defaultEffort !== it.defaultEffortStr) patch.default_effort = String(e.defaultEffort || "").trim().toLowerCase();
     if (e.elevateTop !== it.elevateTop) patch.elevate_top = !!e.elevateTop;
+    if (e.effortMappings !== it.effortMappingsStr) {
+      const mappings = parseEffortMappings(e.effortMappings);
+      if (mappings === null) {
+        badMapping = it.model;
+        return;
+      }
+      patch.effort_mappings = mappings;
+    }
     (clients[it.client] || (clients[it.client] = {}))[it.model] = patch;
   });
+  if (badMapping) {
+    toast("思考档位映射格式错误：" + badMapping + "；请用 high→max, xhigh→max", "err");
+    return;
+  }
   if (!n) return;
   const r = await api("/panel/api/model_context", { method: "POST", body: { clients: clients } });
   if (!r.ok) { toast("保存失败：" + r.err, "err"); return; }
@@ -7602,6 +7674,7 @@ async function renderModels(refresh) {
         defaultEffortDefaultStr: m.default_effort_default || "",
         defaultEffortSrc: m.default_effort_source || "",
         elevateTop: !!m.elevate_top,
+        effortMappingsStr: effortMappingsText(m.effort_mappings),
         inPrice: m.has_price ? Number(m.input_per_million || 0) : 0,
         inPriceStr: m.has_price ? String(m.input_per_million || 0) : "",
         outPrice: m.has_price ? Number(m.output_per_million || 0) : 0,
@@ -8031,6 +8104,37 @@ function pfDisabledOf(policy, name) {
   return (entry.disabled_models || []).map(m => String(m).trim().toLowerCase()).filter(Boolean);
 }
 
+// routeSourceText names the rung that decided an effective priority, using the
+// same words the route chain shows so the two views read alike.
+function routeSourceText(source) {
+  switch (String(source || "")) {
+    case "model": return "模型优先级";
+    case "group": return "模型路由组";
+    case "schedule": return "分时规则";
+    case "auto_pool": return "Auto 池";
+    case "base": return "平台优先级";
+    default: return String(source || "");
+  }
+}
+
+// pfReadModelPriorities collects the operator's per-model overrides for one
+// platform card.  A blank box means "inherit the platform priority", which is
+// expressed by leaving the key out -- the save path turns that into a null so
+// the key is deleted rather than written as 0.
+function pfReadModelPriorities(plat) {
+  const out = {};
+  plat.querySelectorAll(".pfm").forEach(row => {
+    const el = row.querySelector(".pfmPrio");
+    if (!el) return;
+    const raw = el.value.trim();
+    if (raw === "") return;
+    const model = row.dataset.model;
+    if (!model) return;
+    out[model] = Number(raw);
+  });
+  return out;
+}
+
 // WorkBuddy 是唯一带内置账号池的平台。这里的字段仍写回根级 pool.* /
 // cooldown.*，磁盘格式不变，只是把操作入口收回它真正作用的位置。
 function pfCfgRow(id, label, input, help) {
@@ -8357,6 +8461,12 @@ async function renderPlatforms(preserveDraft = false) {
       free: !!(m.extra && m.extra.free),
       context_length: Number(m.context_length || 0),
       context_source: String(m.context_source || ""),
+      // The server resolves these through the same registry the request path
+      // uses, so the model row can show the real inherited priority instead of
+      // a second JS re-implementation of the precedence rules.
+      effective_priority: m.effective_priority == null ? null : Number(m.effective_priority),
+      priority_source: String(m.priority_source || ""),
+      model_priority: (m.model_priority == null ? null : Number(m.model_priority)),
     }));
     models[x.name] = infos.map(m => m.id);
     modelInfos[x.name] = infos;
@@ -8424,17 +8534,35 @@ async function renderPlatforms(preserveDraft = false) {
     out.push(pfPriorityScheduleHTML(entry));
     if (n === "workbuddy") out.push(pfWorkBuddyPoolHTML(c));
     out.push(modCardHTML(n, clientEntry, modSchema[n] || [], ""));
-    if (list.length) out.push('<div class="pfwbhd" style="margin-top:10px">模型清单</div>');
+    if (list.length) out.push('<div class="pfwbhd" style="margin-top:10px">模型清单 <span class="hint" style="font-weight:400">（勾选 = 允许调用；右侧数字是该模型的优先级，留空继承平台基础优先级）</span></div>');
     if (!list.length) {
       out.push('<div class="hint">这个平台没有可调用的模型（模块未上报目录）。</div>');
     } else {
       out.push('<input class="pfFilter" type="search" placeholder="过滤模型名" spellcheck="false" autocomplete="off">');
       out.push('<div class="pfgrid">');
+      const modelPrios = entry.model_priorities && typeof entry.model_priorities === "object" ? entry.model_priorities : {};
+      const infoByName = {};
+      ((modelInfos[n] || [])).forEach(it => { infoByName[String(it.id).toLowerCase()] = it; });
       list.forEach(m => {
         const on = off.indexOf(String(m).toLowerCase()) < 0;
-        out.push('<label class="pfm' + (on ? "" : " off") + '" data-model="' + esc(m) + '" title="' + esc(m) + '">' +
-          '<input type="checkbox" class="pfmBox"' + (on ? " checked" : "") + '>' +
-          '<span class="pfmname">' + esc(m) + '</span></label>');
+        const info = infoByName[String(m).toLowerCase()] || {};
+        // Prefer the server's resolved value; fall back to the platform card's
+        // own base priority when the catalogue row is missing (a platform with
+        // no live module still renders its configured models).
+        const inherited = info.effective_priority != null
+          ? Number(info.effective_priority)
+          : (prio === "" ? 0 : Number(prio) || 0);
+        const inheritsFrom = info.priority_source ? ("（来自" + routeSourceText(info.priority_source) + "）") : "";
+        const mp = info.model_priority != null
+          ? String(info.model_priority)
+          : (Object.prototype.hasOwnProperty.call(modelPrios, m) ? String(modelPrios[m]) : "");
+        // The row is a div wrapping a label, not one big label: the priority
+        // box must be editable without toggling the enable checkbox.
+        out.push('<div class="pfm' + (on ? "" : " off") + '" data-model="' + esc(m) + '" title="' + esc(m) + '">' +
+          '<label class="pfmLbl"><input type="checkbox" class="pfmBox"' + (on ? " checked" : "") + '>' +
+          '<span class="pfmname">' + esc(m) + '</span></label>' +
+          '<input class="cfgtext pfmPrio" type="number" step="1" value="' + esc(mp) + '" placeholder="' + esc(String(inherited)) + '" data-inherited="' + esc(String(inherited)) + '" title="这个模型的优先级；留空则继承当前生效值 ' + esc(String(inherited)) + esc(inheritsFrom) + '。数字越小越优先，例如 -10 优先于 -5" style="width:64px">' +
+          '</div>');
       });
       out.push('</div>');
       out.push('<div class="hint pfNoMatch" hidden>没有匹配的模型</div>');
@@ -8527,7 +8655,7 @@ async function runRoutePlan() {
     rows.push('<div class="rpList">');
     steps.forEach(s => rows.push(routeStepHTML(s)));
     rows.push('</div>');
-    rows.push('<div class="hint">顺序为静态预演：每个平台行显示该模型生效的上下文窗口与来源；实际请求还会受账号可用性、冷却与健康状态影响。拖动或上移下移会调整对应优先级，测速会为每个平台实际调用一次。</div>');
+    rows.push('<div class="hint">顺序为静态预演：每个平台行显示该模型生效的上下文窗口与来源；实际请求还会受账号可用性、冷却与健康状态影响。拖动或上移下移会把顺序写回该平台的模型优先级（比下一行小 1），测速会为每个平台实际调用一次。</div>');
     out.innerHTML = rows.join("");
   } finally {
     btn.disabled = false;
@@ -8566,14 +8694,39 @@ async function runRouteSpeed() {
   }
 }
 
+// routeOrderEdits turns the displayed order into the per-model priorities that
+// reproduce it.  A row takes its place by outranking the row directly below it
+// by one: "AutoClaw above a WorkBuddy row showing 0" is therefore written as
+// -1, which is the number the operator expects to see.  The last row keeps the
+// priority it already had, so dragging one platform does not rewrite the
+// priorities of its untouched neighbours, and every value stays strictly
+// increasing down the list.
+//
+// The displayed order is the source of truth, which is why the value comes
+// from the neighbouring row rather than from the row index: a 0-based index
+// used to collide with the "explicit priority 0" spelling and silently
+// replace an inherited value.
 function routeOrderEdits(steps) {
-  return (steps || []).map((s, i) => ({
+  const list = (steps || []).map(s => ({
     platform: String(s.platform || ""),
-    source: String(s.priority_source || "base"),
-    group: String(s.group || ""),
-    schedule_hit: String(s.schedule_hit || ""),
-    priority: i,
+    model_id: String(s.model_id || ""),
+    priority: Number(s.priority) || 0,
   }));
+  const out = list.map((row, i) => {
+    const below = list[i + 1];
+    return {
+      platform: row.platform,
+      model_id: row.model_id,
+      priority: below ? below.priority - 1 : row.priority,
+    };
+  });
+  // Bottom-up repair: guarantees the written values are strictly increasing
+  // even when several neighbours shared one priority, so the chain cannot
+  // silently re-sort into a different order after the save.
+  for (let i = out.length - 2; i >= 0; i--) {
+    if (out[i].priority >= out[i + 1].priority) out[i].priority = out[i + 1].priority - 1;
+  }
+  return out;
 }
 
 function renumberRouteRows() {
@@ -8601,29 +8754,15 @@ async function applyRouteOrder() {
   edits.forEach(edit => {
     const card = cards.find(el => el.dataset.client === edit.platform);
     if (!card) return;
-    let applied = false;
-    if (edit.source === "group" && edit.group) {
-      const group = Array.from(document.querySelectorAll("#pfGroups .pfGroup")).find(g => {
-        const name = g.querySelector(".pfGName");
-        return name && name.value.trim().toLowerCase() === edit.group.toLowerCase();
-      });
-      const member = group && Array.from(group.querySelectorAll(".pfGRow")).find(row => {
-        const field = row.querySelector(".pfGMember");
-        return field && field.value.trim().split("/")[0].toLowerCase() === edit.platform.toLowerCase();
-      });
-      const priority = member && member.querySelector(".pfGPrio");
-      if (priority) { priority.value = String(edit.priority); applied = true; }
-    }
-    if (!applied && edit.source === "schedule") {
-      const hit = /窗口(\d+)/.exec(edit.schedule_hit || "");
-      const rows = Array.from(card.querySelectorAll(".pfSchedRow"));
-      const priority = hit && rows[Number(hit[1]) - 1] && rows[Number(hit[1]) - 1].querySelector(".pfSchedPrio");
-      if (priority) { priority.value = String(edit.priority); applied = true; }
-    }
-    if (!applied) {
-      const priority = card.querySelector(".pfPrio");
-      if (priority) priority.value = String(edit.priority);
-    }
+    // The drag writes the per-model priority on the model row itself.  That is
+    // the same number the chain displays, so the platform card and the route
+    // plan cannot drift apart: one editable value, one effective priority.
+    const row = Array.from(card.querySelectorAll(".pfm")).find(item => {
+      const el = item.querySelector(".pfmname");
+      return el && el.textContent.trim().toLowerCase() === edit.model_id.trim().toLowerCase();
+    });
+    const box = row && row.querySelector(".pfmPrio");
+    if (box) box.value = String(edit.priority);
   });
   renumberRouteRows();
   const ok = await savePlatforms();
@@ -8725,7 +8864,22 @@ async function savePlatforms() {
     const nowOff = off.map(m => String(m).trim().toLowerCase()).filter(Boolean).sort();
     const sched = pfReadPrioritySchedule(el);
     if (sched.err) { bad = name; badReason = "分时规则" + sched.err; break; }
+    const nowModelPrios = pfReadModelPriorities(el);
+    for (const model of Object.keys(nowModelPrios)) {
+      if (!Number.isInteger(nowModelPrios[model])) { bad = name; badReason = "模型「" + model + "」优先级必须是整数（可为负数）"; break; }
+    }
+    if (bad === name) break;
     const baseSched = Array.isArray(base.priority_schedule) ? base.priority_schedule : [];
+    const baseModelPrios = (base.model_priorities && typeof base.model_priorities === "object") ? base.model_priorities : {};
+    // A cleared box deletes the override instead of writing 0, so "inherit"
+    // stays distinguishable from an explicit zero priority.
+    const modelPrioPatch = {};
+    for (const model of Object.keys(nowModelPrios)) {
+      if (baseModelPrios[model] !== nowModelPrios[model]) modelPrioPatch[model] = nowModelPrios[model];
+    }
+    for (const model of Object.keys(baseModelPrios)) {
+      if (!(model in nowModelPrios)) modelPrioPatch[model] = null;
+    }
     const entry = {};
     if (JSON.stringify(sched.rules) !== JSON.stringify(baseSched)) entry.priority_schedule = sched.rules;
     if (prio !== basePrio) entry.priority = prio;
@@ -8733,6 +8887,7 @@ async function savePlatforms() {
     if (mifAcct !== baseMifAcct) entry.max_in_flight_per_account = mifAcct;
     if (res !== baseRes) entry.reserve_credits = res;
     if (JSON.stringify(nowOff) !== JSON.stringify(baseOff)) entry.disabled_models = off;
+    if (Object.keys(modelPrioPatch).length) entry.model_priorities = modelPrioPatch;
     if (Object.keys(entry).length) changed[name] = entry;
   }
   if (bad) {
@@ -12851,7 +13006,11 @@ $("#mdBody").addEventListener("input", ev => {
 });
 $("#mdBody").addEventListener("change", ev => {
   const tr = ev.target.closest("tr[data-client]");
-  if (tr && ev.target.classList.contains("mdtoggle")) mdRecord(tr, false);
+  if (tr && ev.target.classList.contains("mdtoggle")) {
+    const map = tr.querySelector('input[data-field="effort_mappings"]');
+    if (map && !ev.target.disabled) map.disabled = !ev.target.checked;
+    mdRecord(tr, false);
+  }
 });
 $("#mdBody").addEventListener("click", ev => {
   const copyBtn = ev.target.closest(".mdCopy");
@@ -12868,8 +13027,8 @@ $("#mdBody").addEventListener("click", ev => {
   if (!btn) return;
   const tr = btn.closest("tr[data-client]");
   if (!tr) return;
-  const { ctx, out, inPrice, outPrice, cachePrice, efforts, defaultEffort, elevateTop } = mdInputs(tr);
-  if (!ctx || !out || !inPrice || !outPrice || !cachePrice || !efforts || !defaultEffort || !elevateTop) return;
+  const { ctx, out, inPrice, outPrice, cachePrice, efforts, defaultEffort, elevateTop, effortMappings } = mdInputs(tr);
+  if (!ctx || !out || !inPrice || !outPrice || !cachePrice || !efforts || !defaultEffort || !elevateTop || !effortMappings) return;
   ctx.value = ctx.dataset.default;
   out.value = out.dataset.default;
   inPrice.value = inPrice.dataset.default;
@@ -12877,8 +13036,10 @@ $("#mdBody").addEventListener("click", ev => {
   cachePrice.value = cachePrice.dataset.default;
   efforts.value = efforts.dataset.default;
   defaultEffort.value = defaultEffort.dataset.default;
+  effortMappings.value = effortMappings.dataset.default;
   // 回到内置默认，而不是关掉：内置默认开启的模型必须保持勾选。
   elevateTop.checked = elevateTop.dataset.default === "1";
+  effortMappings.disabled = !elevateTop.checked || elevateTop.disabled;
   mdRecord(tr, true);
 });
 $("#btnMdSave").addEventListener("click", mdSave);
@@ -13582,6 +13743,7 @@ async function chatTranscribe(blob, filename) {
   const t0 = performance.now();
   let res, txt = "";
   try {
+    h["X-Client2API-Internal-Test"] = "1";
     res = await fetch("/v1/audio/transcriptions", { method: "POST", headers: h, body: fd, cache: "no-store" });
     txt = await res.text();
   } catch (e) {
@@ -13617,7 +13779,7 @@ function chatRecordToggle() {
 }
 
 async function chatModels() {
-  const r = await api("/v1/models");
+  const r = await api("/v1/models", { headers: { "X-Client2API-Internal-Test": "1" } });
   if (!r.ok) { toast("读取模型失败：" + r.err, "err"); return []; }
   const list = (r.data && r.data.data) || [];
   return list.filter(m => m && m.id);   // 保留整个条目：别名要靠 owned_by/extra 认出来
@@ -13767,6 +13929,7 @@ async function chatSend() {
     if (stream) h["Accept"] = "text/event-stream";
     const testWindow = Number($("#chatContextWindow").value);
     if (Number.isInteger(testWindow) && testWindow > 0) h["X-Client2API-Context-Window"] = String(testWindow);
+    h["X-Client2API-Internal-Test"] = "1";
     res = await fetch("/v1/chat/completions", { method: "POST", headers: h, body: JSON.stringify(body), cache: "no-store", signal: CHAT.ctrl.signal });
   } catch (e) {
     fail((CHAT.ctrl && CHAT.ctrl.signal.aborted) ? "已停止" : "请求失败：" + String((e && e.message) || e), 0);

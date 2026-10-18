@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -62,5 +63,45 @@ func TestModelsViewInputsSelectControlsNotTheirCells(t *testing.T) {
 	inputs := poolStatsFuncBody(t, src, "mdInputs")
 	if !strings.Contains(inputs, `tr.querySelector('input[data-field="' + f + '"]')`) {
 		t.Fatal("mdInputs must select input[data-field=...], not the outer td[data-field=...]")
+	}
+}
+
+func TestModelsViewEditsMultipleEffortMappings(t *testing.T) {
+	src := poolStatsUISource(t)
+	cell := poolStatsFuncBody(t, src, "mdElevateTopCell")
+	for _, want := range []string{
+		"m.effort_mappings",
+		"m.effort_mappings_default",
+		"m.effort_mappings_manual",
+		`data-field="effort_mappings"`,
+	} {
+		if !strings.Contains(cell, want) {
+			t.Errorf("mdElevateTopCell missing %q", want)
+		}
+	}
+	inputs := poolStatsFuncBody(t, src, "mdInputs")
+	if !strings.Contains(inputs, `q("effort_mappings")`) {
+		t.Error("mdInputs must read the effort_mappings control")
+	}
+	save := poolStatsFuncBody(t, src, "mdSave")
+	if !strings.Contains(save, "effort_mappings") || !strings.Contains(save, "parseEffortMappings") {
+		t.Error("mdSave must serialize the effort mapping list")
+	}
+}
+func TestParseEffortMappingsNormalizesMultipleRules(t *testing.T) {
+	src := poolStatsUISource(t)
+	fn := poolStatsFuncBody(t, src, "parseEffortMappings")
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node unavailable")
+	}
+	program := fn + "\n}\nprocess.stdout.write(JSON.stringify(parseEffortMappings('high -> max, xhigh→highest')))"
+	out, err := exec.Command(node, "-e", program).CombinedOutput()
+	if err != nil {
+		t.Fatalf("node parse: %v\n%s", err, out)
+	}
+	want := `[{"from":"high","to":"max"},{"from":"xhigh","to":"top"}]`
+	if string(out) != want {
+		t.Fatalf("parseEffortMappings = %s, want %s", out, want)
 	}
 }
