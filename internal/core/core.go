@@ -20,6 +20,7 @@ import (
 	"errors"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -473,3 +474,92 @@ func (d Deps) Log(format string, args ...any) {
 
 // Factory builds a module instance.
 type Factory func(deps Deps) (Client, error)
+
+// RepairToolPairing makes a history acceptable to vendors that require each
+// tool result to follow the assistant turn that declared its call id.
+//
+// It is deliberately provider-neutral: the gateway applies it once before any
+// module sees a request, so every platform and every failover candidate gets the
+// same valid history.  A result whose call is missing anywhere is dropped; an
+// assistant call with no result is left in place because it is a valid
+// mid-turn shape.  A history that is already well formed is returned unchanged.
+func RepairToolPairing(msgs []Message) []Message {
+	if len(msgs) < 2 {
+		return msgs
+	}
+	owner := make(map[string]int, len(msgs))
+	for i, m := range msgs {
+		for _, tc := range m.ToolCalls {
+			if strings.TrimSpace(tc.ID) != "" {
+				owner[strings.TrimSpace(tc.ID)] = i
+			}
+		}
+	}
+	resultsFor := make(map[int][]Message)
+	seenResult := make(map[string]bool)
+	// First pass: find every result that owns a call and record it.  A call
+	// with no result is malformed too, but only a later pass can safely drop it
+	// without losing the assistant text it may carry.
+	for _, m := range msgs {
+		if strings.EqualFold(strings.TrimSpace(m.Role), "tool") {
+			if id := strings.TrimSpace(m.ToolCallID); id != "" {
+				if _, ok := owner[id]; ok {
+					seenResult[id] = true
+				}
+			}
+		}
+	}
+	handled := make([]bool, len(msgs))
+	changed := false
+	for j, m := range msgs {
+		if !strings.EqualFold(strings.TrimSpace(m.Role), "tool") {
+			continue
+		}
+		id := strings.TrimSpace(m.ToolCallID)
+		at, ok := owner[id]
+		if !ok {
+			handled[j] = true
+			changed = true
+			continue
+		}
+		resultsFor[at] = append(resultsFor[at], m)
+		handled[j] = true
+		if at != j-1 {
+			changed = true
+		}
+	}
+	// Drop calls whose result does not exist anywhere in the history.  The
+	// assistant text and reasoning on that turn are preserved.
+	for i := range msgs {
+		if len(msgs[i].ToolCalls) == 0 {
+			continue
+		}
+		kept := make([]ToolCall, 0, len(msgs[i].ToolCalls))
+		for _, tc := range msgs[i].ToolCalls {
+			if seenResult[strings.TrimSpace(tc.ID)] {
+				kept = append(kept, tc)
+			} else {
+				changed = true
+			}
+		}
+		if len(kept) != len(msgs[i].ToolCalls) {
+			msgs[i].ToolCalls = kept
+		}
+	}
+	if !changed {
+		return msgs
+	}
+	out := make([]Message, 0, len(msgs))
+	for i, m := range msgs {
+		if handled[i] {
+			continue
+		}
+		if len(m.ToolCalls) > 0 || m.Content != "" || len(m.Parts) > 0 || m.Reasoning != "" || m.Role != "assistant" {
+			out = append(out, m)
+		}
+		if owned := resultsFor[i]; len(owned) > 0 {
+			out = append(out, owned...)
+		}
+	}
+	return out
+}

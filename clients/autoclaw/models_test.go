@@ -1,9 +1,13 @@
 package autoclaw
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"client2api/internal/core"
 )
@@ -127,5 +131,43 @@ func TestFlexString(t *testing.T) {
 	}
 	if err := json.Unmarshal([]byte(`"abc"`), &s); err != nil || s.String() != "abc" {
 		t.Fatalf("flexString string: %v %q", err, s)
+	}
+}
+
+func TestChatClassifiesAnUpstream500ForGatewayFailover(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"code":0,"message":"Internal Server Error"}`))
+	}))
+	defer srv.Close()
+
+	p := newPool("", "", 0, cooldownConfig{}, nil)
+	p.load([]account{{credential: credential{AccessToken: "tok-a", AccountID: "a1"}}})
+	c := &Client{
+		cfg:   config{BaseURL: srv.URL},
+		httpc: srv.Client(),
+		now:   time.Now,
+		pool:  p,
+	}
+	_, err := c.Chat(context.Background(), &core.ChatRequest{
+		Model:    "zai_glm-5.3-flash",
+		Messages: []core.Message{{Role: "user", Content: "hi"}},
+	})
+	if err == nil {
+		t.Fatal("Chat accepted a 500")
+	}
+	if !strings.Contains(err.Error(), "HTTP 500") {
+		t.Fatalf("classified error lost the upstream status: %v", err)
+	}
+	f, ok := core.AsFailure(err)
+	if !ok {
+		t.Fatalf("500 is not classified for gateway failover: %v", err)
+	}
+	if f.Client != "autoclaw" || (f.Account != "acct:a1" && f.Account != "a1") {
+		t.Fatalf("failure = %+v, want attributed to the serving account", f)
+	}
+	if f.Kind != core.FailureRateLimited && f.Kind != core.FailureUpstream {
+		t.Fatalf("failure kind = %q, want a retryable upstream kind", f.Kind)
 	}
 }

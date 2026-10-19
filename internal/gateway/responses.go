@@ -590,11 +590,13 @@ func translateResponsesInput(raw json.RawMessage) ([]core.Message, error) {
 			if callID == "" {
 				callID = strings.TrimSpace(it.ID)
 			}
+			text, parts := parseResponsesToolOutput(it.Output)
 			out = append(out, core.Message{
 				Role:       "tool",
 				ToolCallID: callID,
 				Name:       callNames[callID],
-				Content:    rawToText(it.Output),
+				Content:    text,
+				Parts:      parts,
 			})
 
 		case "reasoning":
@@ -938,4 +940,77 @@ func (s *server) handleResponses(w http.ResponseWriter, r *http.Request) {
 		stat:         stat,
 		emitter:      responsesEmitter{},
 	})
+}
+
+// parseResponsesToolOutput decodes the union shape of a Responses
+// function_call_output.  A string is plain text; an array carries typed content
+// parts.  input_text contributes text and input_image becomes an image_url part
+// so a view_image screenshot reaches the vendor as an image instead of being
+// flattened into JSON prose.  Objects and other scalar values remain readable
+// JSON text, preserving the behaviour for ordinary structured tool output.
+func parseResponsesToolOutput(raw json.RawMessage) (string, []core.ContentPart) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		return "", nil
+	}
+	if trimmed[0] == '"' {
+		var s string
+		if json.Unmarshal(trimmed, &s) == nil {
+			return s, nil
+		}
+		return rawToText(raw), nil
+	}
+	if trimmed[0] != '[' {
+		return rawToText(raw), nil
+	}
+	var parts []map[string]json.RawMessage
+	if err := json.Unmarshal(trimmed, &parts); err != nil {
+		return rawToText(raw), nil
+	}
+	var (
+		texts []string
+		out   []core.ContentPart
+	)
+	for _, part := range parts {
+		var kind string
+		if err := json.Unmarshal(part["type"], &kind); err != nil && len(part["type"]) > 0 {
+			continue
+		}
+		switch kind {
+		case "input_text", "text", "output_text":
+			var text string
+			if err := json.Unmarshal(part["text"], &text); err != nil {
+				continue
+			}
+			texts = append(texts, text)
+		case "input_image", "image_url":
+			var imageURL string
+			if err := json.Unmarshal(part["image_url"], &imageURL); err != nil {
+				// Responses normally carries image_url as a string, but some
+				// relays wrap it as {"url": "..."}. Accept both shapes.
+				var wrapped struct {
+					URL string `json:"url"`
+				}
+				if err := json.Unmarshal(part["image_url"], &wrapped); err != nil {
+					continue
+				}
+				imageURL = wrapped.URL
+			}
+			if strings.TrimSpace(imageURL) == "" {
+				continue
+			}
+			var detail string
+			if len(part["detail"]) > 0 {
+				_ = json.Unmarshal(part["detail"], &detail)
+			}
+			out = append(out, core.ContentPart{Type: "image_url", ImageURL: imageURL, Detail: detail})
+		}
+	}
+	if len(out) == 0 {
+		return rawToText(raw), nil
+	}
+	// Content is the flattened text; Parts carries only non-text media.  This
+	// matches the gateway's existing message contract, where a module that sees
+	// both fields must not send the text twice.
+	return strings.Join(texts, ""), out
 }

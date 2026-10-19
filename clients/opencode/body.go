@@ -174,7 +174,6 @@ func buildChatBodyWith(cfg Config, req *core.ChatRequest, free bool) ([]byte, er
 		}
 		msgs = append(msgs, wire)
 	}
-	msgs = repairToolPairing(msgs)
 
 	tools := make([]oaiTool, 0, len(req.Tools))
 	for _, t := range req.Tools {
@@ -287,74 +286,6 @@ func wireMessage(msg core.Message, index int) (oaiMessage, error) {
 	}
 
 	return out, nil
-}
-
-// repairToolPairing makes the message list acceptable to Zen's history
-// validator.
-//
-// Zen answers a tool result whose assistant call is not adjacent to it with a
-// bare HTTP 400 ("opencode: chat: HTTP 400") and an empty body, so the request
-// cannot be diagnosed from the reply.  Three shapes produce it: the call and
-// its result separated by another turn, the result replayed before its call,
-// and a result whose call is missing from the history entirely (a client
-// replaying a partial history, or a trim that cut the call away).
-//
-// The repair works by ownership rather than by adjacency: every result is
-// assigned to the assistant turn that declared its call id, and is emitted
-// immediately behind that turn.  A result with no owner anywhere in the history
-// is dropped, because no reordering can make it valid.  An assistant call with
-// no result is left alone -- Zen accepts that shape while the caller is
-// mid-turn, and removing it would change the conversation.
-func repairToolPairing(msgs []oaiMessage) []oaiMessage {
-	if len(msgs) < 2 {
-		return msgs
-	}
-	owner := map[string]int{}
-	for i, m := range msgs {
-		for _, tc := range m.ToolCalls {
-			if tc.ID != "" {
-				owner[tc.ID] = i
-			}
-		}
-	}
-	// resultsFor[i] holds the results owned by the assistant turn at index i, in
-	// their original order.  handled[j] marks a result that has been accounted
-	// for, either to be re-emitted behind its owner or to be dropped, so the
-	// original position is never replayed.
-	resultsFor := make(map[int][]oaiMessage)
-	handled := make([]bool, len(msgs))
-	changed := false
-	for j, m := range msgs {
-		if m.Role != "tool" {
-			continue
-		}
-		at, ok := owner[m.ToolCallID]
-		if !ok {
-			// No call anywhere in this history answers the result: drop it.
-			handled[j] = true
-			changed = true
-			continue
-		}
-		resultsFor[at] = append(resultsFor[at], m)
-		handled[j] = true
-		if at != j-1 {
-			changed = true
-		}
-	}
-	if !changed {
-		return msgs
-	}
-	out := make([]oaiMessage, 0, len(msgs))
-	for i, m := range msgs {
-		if handled[i] {
-			continue
-		}
-		out = append(out, m)
-		if owned := resultsFor[i]; len(owned) > 0 {
-			out = append(out, owned...)
-		}
-	}
-	return out
 }
 
 // normalizeToolChoice drops the values Zen's neutral shape cannot carry.

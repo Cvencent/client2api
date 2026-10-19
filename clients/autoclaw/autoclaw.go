@@ -301,13 +301,21 @@ func (c *Client) openChat(ctx context.Context, cancel context.CancelFunc, req *c
 			c.inFlight.Add(1)
 			return core.TrackStream(stream, func() { c.inFlight.Add(-1) }), nil
 		}
-		lastErr = err
 		kind := classifyErr(err)
 		msg := truncate(c.scrub(err.Error()), 240)
 		if kind == kindAuth {
 			c.pool.markDead(e, msg)
 		} else {
 			c.pool.markFailure(e, kind, msg)
+		}
+		// Hand a retryable refusal to the gateway with its account attached.
+		// A bare apiError is opaque to core.AsFailure, so the pool rotates
+		// inside AutoClaw but the gateway never offers the model-group sibling
+		// that could serve the same request.
+		if retryable(kind) {
+			lastErr = core.Fail(c.Name(), e.acct.id(), coreFailureKind(kind), statusOf(err), err)
+		} else {
+			lastErr = err
 		}
 		if !retryable(kind) || ctx.Err() != nil {
 			break
@@ -469,5 +477,24 @@ func humanAge(d time.Duration) string {
 		return fmt.Sprintf("%dm", int(d.Minutes()))
 	default:
 		return fmt.Sprintf("%.1fh", d.Hours())
+	}
+}
+
+// coreFailureKind maps the module's account-pool taxonomy onto the gateway's
+// shared vocabulary.  The pool's kinds decide whether to rotate an account;
+// the gateway's kinds decide whether a different platform or caller-visible
+// retry is allowed.
+func coreFailureKind(kind errKind) core.FailureKind {
+	switch kind {
+	case kindAuth:
+		return core.FailureAuth
+	case kindQuota:
+		return core.FailureQuota
+	case kindTransient:
+		return core.FailureRateLimited
+	case kindNetwork:
+		return core.FailureUpstream
+	default:
+		return core.FailureOther
 	}
 }

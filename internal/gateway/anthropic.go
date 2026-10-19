@@ -275,9 +275,11 @@ func translateAnthropicMessage(m anthropicMessage) ([]core.Message, error) {
 		if b.Type != "tool_result" {
 			continue
 		}
+		text, parts := anthropicToolResultContent(b)
 		out = append(out, core.Message{
 			Role:       "tool",
-			Content:    anthropicToolResultText(b),
+			Content:    text,
+			Parts:      parts,
 			ToolCallID: b.ToolUseID,
 		})
 	}
@@ -339,6 +341,59 @@ func decodeAnthropicContent(raw json.RawMessage) (string, []core.ContentPart, []
 		}
 	}
 	return sb.String(), parts, blocks, nil
+}
+
+// anthropicToolResultContent decodes a tool_result payload.  Text is flattened
+// onto Content and images become image_url parts, matching the gateway-wide
+// message contract.  The previous text-only helper silently turned a screenshot
+// into an unreadable JSON block, which is what made view_image fail upstream.
+func anthropicToolResultContent(b anthropicContentBlock) (string, []core.ContentPart) {
+	trimmed := bytes.TrimSpace(b.Content)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		return b.Text, nil
+	}
+	if trimmed[0] == '"' {
+		var s string
+		if json.Unmarshal(trimmed, &s) == nil {
+			return s, nil
+		}
+		return b.Text, nil
+	}
+	if trimmed[0] != '[' {
+		return b.Text, nil
+	}
+	var blocks []anthropicContentBlock
+	if json.Unmarshal(trimmed, &blocks) != nil {
+		return b.Text, nil
+	}
+	var (
+		texts []string
+		parts []core.ContentPart
+	)
+	for _, inner := range blocks {
+		switch inner.Type {
+		case "text", "":
+			if inner.Text != "" {
+				texts = append(texts, inner.Text)
+			}
+		case "image":
+			if inner.Source == nil {
+				continue
+			}
+			url := inner.Source.URL
+			if url == "" && inner.Source.Data != "" {
+				mediaType := inner.Source.MediaType
+				if mediaType == "" {
+					mediaType = "image/png"
+				}
+				url = "data:" + mediaType + ";base64," + inner.Source.Data
+			}
+			if url != "" {
+				parts = append(parts, core.ContentPart{Type: "image_url", ImageURL: url})
+			}
+		}
+	}
+	return strings.Join(texts, "\n"), parts
 }
 
 // anthropicToolResultText flattens a tool_result payload, which is either a

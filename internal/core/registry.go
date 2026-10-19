@@ -416,6 +416,34 @@ func (r *Registry) ExposedModelAllowed(model string) bool {
 	if key == "" {
 		return false
 	}
+	return r.exposedKeyAllowedLocked(key)
+}
+
+// ExposedModelCallable reports whether an id may be sent to a module.  It is
+// the visibility policy plus the members of selected model groups: the group is
+// the advertised entry, but a caller may legitimately name a concrete member
+// (for example autoclaw/zai_glm-5.3-flash from glm-5.3-flash).  Members stay
+// out of /v1/models because the group already represents their capability.
+func (r *Registry) ExposedModelCallable(model string) bool {
+	if r == nil {
+		return true
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if !r.exposedModelsConfigured {
+		return true
+	}
+	key := normalizeModelID(model)
+	if key == "" {
+		return false
+	}
+	if r.exposedKeyAllowedLocked(key) {
+		return true
+	}
+	return r.exposedGroupMemberAllowedLocked(key)
+}
+
+func (r *Registry) exposedKeyAllowedLocked(key string) bool {
 	if _, ok := r.exposedModels[key]; ok {
 		return true
 	}
@@ -426,6 +454,22 @@ func (r *Registry) ExposedModelAllowed(model string) bool {
 		}
 		if strings.HasPrefix(key, prefix) {
 			return true
+		}
+	}
+	return false
+}
+
+func (r *Registry) exposedGroupMemberAllowedLocked(key string) bool {
+	for groupName := range r.exposedModels {
+		group, ok := r.modelGroups[groupName]
+		if !ok {
+			continue
+		}
+		for _, member := range group.Members {
+			candidate := strings.TrimSpace(member.Client) + "/" + strings.TrimSpace(member.Model)
+			if normalizeModelID(candidate) == key || canonicalModelID(candidate) == key {
+				return true
+			}
 		}
 	}
 	return false

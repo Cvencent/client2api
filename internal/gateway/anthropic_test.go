@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -351,5 +352,36 @@ func TestAnthropicErrorEnvelopeShape(t *testing.T) {
 	}
 	if env.Type != "error" || env.Error.Type != "invalid_request_error" {
 		t.Fatalf("envelope = %+v; body = %s", env, rec.Body)
+	}
+}
+
+func TestAnthropicToolResultPreservesAnImage(t *testing.T) {
+	body := `{"model":"m1","max_tokens":16,"messages":[
+		{"role":"assistant","content":[{"type":"tool_use","id":"toolu_img","name":"view_image","input":{}}]},
+		{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_img","content":[
+			{"type":"text","text":"preview follows"},
+			{"type":"image","source":{"type":"base64","media_type":"image/png","data":"QUJD"}}
+		]}]}
+	]}`
+	req, err := translateAnthropic(t, body)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	var tool *core.Message
+	for i := range req.Messages {
+		if req.Messages[i].Role == "tool" {
+			tool = &req.Messages[i]
+			break
+		}
+	}
+	if tool == nil {
+		t.Fatalf("no tool message: %+v", req.Messages)
+	}
+	if tool.Content != "preview follows" {
+		t.Fatalf("tool text = %q", tool.Content)
+	}
+	want := []core.ContentPart{{Type: "image_url", ImageURL: "data:image/png;base64,QUJD"}}
+	if !reflect.DeepEqual(tool.Parts, want) {
+		t.Fatalf("tool parts = %+v, want %+v", tool.Parts, want)
 	}
 }

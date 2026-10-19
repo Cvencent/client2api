@@ -136,7 +136,7 @@ func (s *server) exposedModelAllowed(r *http.Request, model string) bool {
 	if internalTestRequest(r) {
 		return true
 	}
-	return s == nil || s.opts.Registry == nil || s.opts.Registry.ExposedModelAllowed(model)
+	return s == nil || s.opts.Registry == nil || s.opts.Registry.ExposedModelCallable(model)
 }
 
 // NewServer builds the gateway's http.Server.  It is deliberately transport

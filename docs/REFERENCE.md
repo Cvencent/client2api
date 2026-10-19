@@ -708,7 +708,9 @@ sections below:
   routing builds the full catalogue, so it filters `platform/model` ids,
   `Auto/<model>` names, `model_groups` names, aliases and transcription ids, and
   each final id is its own switch -- exposing a group member does not expose the
-  group name, and exposing an alias target does not expose the alias. An entry
+  group name, and exposing an alias target does not expose the alias. Selecting a
+  model group also keeps its exact member `platform/model` ids callable, without
+  adding those members to the `/v1/models` catalogue. An entry
   ending in `/*` exposes every model under that platform prefix (for example
   `my-relay/*`) without opening any other platform. Matching is
   case-insensitive and ignores surrounding space. `null` (the default, or the key

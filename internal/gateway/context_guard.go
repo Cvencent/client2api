@@ -804,6 +804,12 @@ func (s *server) prepareCandidateAttempt(ctx context.Context, candidate core.Can
 	if req == nil {
 		req = &core.ChatRequest{}
 	}
+	// Tool-call/result pairing is a vendor-independent history invariant, not a
+	// quirk of one platform.  Repair it once on the pristine history before
+	// per-candidate trimming so every module (and every failover sibling) sees
+	// the same valid ordering.  This also prevents a trim boundary from leaving
+	// a result whose call has already disappeared.
+	req.Messages = core.RepairToolPairing(req.Messages)
 	req.Model = model
 	req.FreeModel = candidate.Free
 

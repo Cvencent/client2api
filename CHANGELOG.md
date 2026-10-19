@@ -6,6 +6,23 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.1.89] - 2026-10-19
+
+### Added
+
+- **统一工具调用配对修复**：网关在候选请求准备阶段统一执行 `core.RepairToolPairing`，所有平台、所有候选和回退路径共用同一套规则：工具结果归位到声明该 call id 的助手回合之后，残留结果与无结果调用会被清理，助手正文和推理内容保留。AutoClaw、OpenCode、WorkBuddy 各自的重复实现已移除。
+- **模型组对外白名单兼容**：选中模型组后，调用方仍可按成员的精确 `平台/模型` ID 调用该组，但成员不会因此额外出现在 `/v1/models` 中；别名和无关裸名不会被顺带放开。
+
+### Fixed
+
+- **查看图片不再失败**：Responses 的 `function_call_output.output` 现在按联合类型解析，`input_image` / `image_url` 会保留为图片部件，`input_text` 保留为文本；Anthropic 的 `tool_result` 内嵌图片也做同样处理。多模态模型不再收到被压成 JSON 文本的截图。
+- **AutoClaw 上游 500 参与网关级回退**：AutoClaw 的可重试 5xx 现在携带 `FailureUpstream` / 限流分类与账号归因，网关能够按模型组候选继续尝试其它平台，而不是把错误当成不可重试的普通响应。
+
+### Installer
+
+- `client2api-setup-0.1.89.exe`（空包，不含账号凭据或本机配置）
+- SHA256：`B03765E9BCC275F5DA3DA14C0CC26A0F70EAF72C9DF7CC4DB44790DD8BC17483`
+- 升级会保留现有 `configs/`、`data/`、账号池、用量和任务数据。
 ## [0.1.88] - 2026-10-19
 
 ### Added

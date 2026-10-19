@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"reflect"
+	"strings"
 	"testing"
 
 	"client2api/internal/core"
@@ -215,5 +216,80 @@ func TestResponsesToolCallOnlyTurnStaysSuccessful(t *testing.T) {
 	}
 	if firstOfType(events, "response.completed") == nil {
 		t.Fatalf("a tool-call-only turn did not complete: %s", rec.Body)
+	}
+}
+
+func TestResponsesToolOutputPreservesAnImagePart(t *testing.T) {
+	c := &testClient{name: "t", events: usageEvents(1, 1)}
+	srv := newTestServer(t, c, NewStats(), NewUsageStore(10))
+	body := `{
+		"model":"t/m1",
+		"input":[
+			{"type":"message","role":"user","content":"inspect the render"},
+			{"type":"function_call","call_id":"call_view","name":"view_image","arguments":"{}"},
+			{"type":"function_call_output","call_id":"call_view","output":[
+				{"type":"input_image","image_url":"data:image/png;base64,AA==","detail":"high"}
+			]}
+		]
+	}`
+	rec := responses(t, srv, body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+	}
+	var tool *core.Message
+	for i := range c.seen.Messages {
+		if c.seen.Messages[i].Role == "tool" {
+			tool = &c.seen.Messages[i]
+			break
+		}
+	}
+	if tool == nil {
+		t.Fatalf("no tool message: %+v", c.seen.Messages)
+	}
+	want := []core.ContentPart{{Type: "image_url", ImageURL: "data:image/png;base64,AA==", Detail: "high"}}
+	if !reflect.DeepEqual(tool.Parts, want) {
+		t.Fatalf("tool parts = %+v, want %+v", tool.Parts, want)
+	}
+	if strings.Contains(tool.Content, `"type":"input_image"`) || strings.Contains(tool.Content, "data:image/png") {
+		t.Fatalf("the image was flattened into tool text: %q", tool.Content)
+	}
+}
+
+func TestResponsesToolOutputPreservesTextAndImageInOrder(t *testing.T) {
+	c := &testClient{name: "t", events: usageEvents(1, 1)}
+	srv := newTestServer(t, c, NewStats(), NewUsageStore(10))
+	body := `{
+		"model":"t/m1",
+		"input":[
+			{"type":"message","role":"user","content":"inspect"},
+			{"type":"function_call","call_id":"call_view","name":"view_image","arguments":"{}"},
+			{"type":"function_call_output","call_id":"call_view","output":[
+				{"type":"input_text","text":"preview follows"},
+				{"type":"input_image","image_url":"data:image/png;base64,AA==","detail":"low"}
+			]}
+		]
+	}`
+	rec := responses(t, srv, body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+	}
+	var tool *core.Message
+	for i := range c.seen.Messages {
+		if c.seen.Messages[i].Role == "tool" {
+			tool = &c.seen.Messages[i]
+			break
+		}
+	}
+	if tool == nil {
+		t.Fatalf("no tool message: %+v", c.seen.Messages)
+	}
+	if tool.Content != "preview follows" {
+		t.Fatalf("tool text = %q", tool.Content)
+	}
+	want := []core.ContentPart{
+		{Type: "image_url", ImageURL: "data:image/png;base64,AA==", Detail: "low"},
+	}
+	if !reflect.DeepEqual(tool.Parts, want) {
+		t.Fatalf("tool parts = %+v, want %+v", tool.Parts, want)
 	}
 }

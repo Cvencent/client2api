@@ -63,3 +63,45 @@ func TestExposedModelPolicyReturnsTheConfiguredDisplayIDs(t *testing.T) {
 		}
 	}
 }
+
+func TestExposedModelPolicyAllowsMembersOfASelectedGroup(t *testing.T) {
+	r := NewRegistry()
+	r.Add(&fakeClient{name: "autoclaw", models: []Model{{ID: "zai_glm-5.3-flash"}}})
+	r.SetModelGroups(map[string]ModelGroup{
+		"glm-5.3-flash": {Members: []ModelGroupMember{
+			{Client: "autoclaw", Model: "zai_glm-5.3-flash"},
+		}},
+	})
+	r.SetExposedModels([]string{"glm-5.3-flash"}, true)
+
+	if !r.ExposedModelCallable("autoclaw/zai_glm-5.3-flash") {
+		t.Fatal("a member of a selected model group must remain callable by its qualified id")
+	}
+	if r.ExposedModelCallable("autoclaw/not-in-a-selected-group") {
+		t.Fatal("group membership must not open unrelated models")
+	}
+}
+
+func TestExposedModelCallableDoesNotWidenAliasesOrBareMembers(t *testing.T) {
+	r := NewRegistry()
+	r.Add(&fakeClient{name: "autoclaw", models: []Model{{ID: "zai_glm-5.3-flash"}}})
+	r.SetModelGroups(map[string]ModelGroup{
+		"glm-5.3-flash": {Members: []ModelGroupMember{
+			{Client: "autoclaw", Model: "zai_glm-5.3-flash"},
+		}},
+	})
+	r.AddAlias("flash-alias", "autoclaw/zai_glm-5.3-flash")
+	r.SetExposedModels([]string{"glm-5.3-flash"}, true)
+
+	for _, id := range []string{
+		"flash-alias",
+		"Auto/GLM-5.3-Flash",
+	} {
+		if r.ExposedModelCallable(id) {
+			t.Fatalf("selected group must not open unrelated spelling %q", id)
+		}
+	}
+	if r.ExposedModelAllowed("autoclaw/zai_glm-5.3-flash") {
+		t.Fatal("a group member must stay callable without becoming a separately advertised id")
+	}
+}

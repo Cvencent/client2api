@@ -311,3 +311,70 @@ func TestUnmeasuredRefusalReturnsTheVendorErrorWhenTheRetryAlsoFails(t *testing.
 		t.Fatalf("upstream calls = %d, want at most the refusal plus one retry", c.calls)
 	}
 }
+
+// TestPrepareCandidateAttemptRepairsToolPairingForEveryPlatform pins the shared
+// history repair: a module is never handed a result before its call, a result
+// with no call anywhere, or a call whose result was lost.
+func TestPrepareCandidateAttemptRepairsToolPairingForEveryPlatform(t *testing.T) {
+	c := &testClient{name: "any", catalogue: []core.Model{{ID: "m1", Extra: map[string]any{"context_length": 1000000}}}}
+	s := newGuardServer(t, c, "")
+	base := &core.ChatRequest{Messages: []core.Message{
+		{Role: "user", Content: "run"},
+		{Role: "assistant", ToolCalls: []core.ToolCall{{ID: "call_keep", Name: "exec_command", Arguments: `{}`}}},
+		{Role: "user", Content: "interjection"},
+		{Role: "tool", ToolCallID: "call_keep", Name: "exec_command", Content: "ok"},
+		{Role: "tool", ToolCallID: "call_missing", Name: "exec_command", Content: "orphan"},
+	}}
+	got, err := s.prepareCandidateAttempt(context.Background(), core.Candidate{Client: c, Model: "m1"}, "m1", base, nil, false)
+	if err != nil {
+		t.Fatalf("prepareCandidateAttempt: %v", err)
+	}
+	var sawCall, sawResult bool
+	for i, m := range got.Messages {
+		if len(m.ToolCalls) > 0 && m.ToolCalls[0].ID == "call_keep" {
+			sawCall = true
+			if i+1 >= len(got.Messages) || got.Messages[i+1].Role != "tool" || got.Messages[i+1].ToolCallID != "call_keep" {
+				t.Fatalf("tool result is not adjacent to its call: %+v", got.Messages)
+			}
+		}
+		if m.Role == "tool" {
+			if m.ToolCallID == "call_missing" {
+				t.Fatalf("orphan tool result survived: %+v", got.Messages)
+			}
+			if m.ToolCallID == "call_keep" {
+				sawResult = true
+			}
+		}
+	}
+	if !sawCall || !sawResult {
+		t.Fatalf("matched round trip was lost: %+v", got.Messages)
+	}
+}
+
+func TestPrepareCandidateAttemptDropsAnOrphanToolCall(t *testing.T) {
+	c := &testClient{name: "any", catalogue: []core.Model{{ID: "m1", Extra: map[string]any{"context_length": 1000000}}}}
+	s := newGuardServer(t, c, "")
+	base := &core.ChatRequest{Messages: []core.Message{
+		{Role: "user", Content: "run"},
+		{Role: "assistant", Content: "starting", ToolCalls: []core.ToolCall{{ID: "call_missing", Name: "exec_command", Arguments: `{}`}}},
+		{Role: "user", Content: "continue without the result"},
+	}}
+	got, err := s.prepareCandidateAttempt(context.Background(), core.Candidate{Client: c, Model: "m1"}, "m1", base, nil, false)
+	if err != nil {
+		t.Fatalf("prepareCandidateAttempt: %v", err)
+	}
+	for _, m := range got.Messages {
+		if len(m.ToolCalls) != 0 {
+			t.Fatalf("orphan tool call survived: %+v", got.Messages)
+		}
+	}
+	foundText := false
+	for _, m := range got.Messages {
+		if m.Role == "assistant" && m.Content == "starting" {
+			foundText = true
+		}
+	}
+	if !foundText {
+		t.Fatalf("assistant text was lost with the orphan call: %+v", got.Messages)
+	}
+}
