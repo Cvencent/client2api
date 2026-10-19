@@ -577,10 +577,14 @@ func collectAnthropic(stream core.Stream, stat *chatStat) anthropicCollected {
 	for {
 		ev, err := stream.Recv()
 		if err != nil {
-			if errors.Is(err, io.EOF) && !finished {
-				out.streamErr = io.ErrUnexpectedEOF
-			} else if !errors.Is(err, io.EOF) {
-				out.streamErr = err
+			// Preserve an EventError the module already reported: the io.EOF
+			// that follows it only marks the end of the stream.
+			if out.streamErr == nil {
+				if errors.Is(err, io.EOF) && !finished {
+					out.streamErr = io.ErrUnexpectedEOF
+				} else if !errors.Is(err, io.EOF) {
+					out.streamErr = err
+				}
 			}
 			break
 		}
@@ -668,7 +672,7 @@ func (s *server) bufferAnthropic(w http.ResponseWriter, r *http.Request, a emitA
 		if a.stat != nil {
 			a.stat.status = status
 		}
-		s.fail(a.rec)
+		s.fail(a.rec, res.streamErr)
 		s.writeUpstreamError(w, a.client, a.hintCtx, res.streamErr)
 		return
 	}
@@ -676,7 +680,7 @@ func (s *server) bufferAnthropic(w http.ResponseWriter, r *http.Request, a emitA
 		if a.stat != nil {
 			a.stat.status = http.StatusBadGateway
 		}
-		s.fail(a.rec)
+		s.fail(a.rec, errEmptyCompletion())
 		s.writeUpstreamError(w, a.client, a.hintCtx, errEmptyCompletion())
 		return
 	}
@@ -761,7 +765,7 @@ func (s *server) streamAnthropicSSE(w http.ResponseWriter, r *http.Request, a em
 			"usage":         anthropicUsage{},
 		},
 	}) {
-		s.fail(a.rec)
+		s.fail(a.rec, errDownstreamWrite)
 		return
 	}
 
@@ -823,7 +827,7 @@ func (s *server) streamAnthropicSSE(w http.ResponseWriter, r *http.Request, a em
 			if a.stat != nil {
 				a.stat.status = http.StatusBadGateway
 			}
-			s.fail(a.rec)
+			s.fail(a.rec, err)
 			return
 		}
 		if a.stat != nil {
@@ -835,7 +839,7 @@ func (s *server) streamAnthropicSSE(w http.ResponseWriter, r *http.Request, a em
 				if open == nil || open.kind != "thinking" {
 					if !beginBlock("thinking", "", "") {
 						terminal = "downstream_write_error"
-						s.fail(a.rec)
+						s.fail(a.rec, errDownstreamWrite)
 						return
 					}
 				}
@@ -844,7 +848,7 @@ func (s *server) streamAnthropicSSE(w http.ResponseWriter, r *http.Request, a em
 					"delta": map[string]any{"type": "thinking_delta", "thinking": ev.Reasoning},
 				}) {
 					terminal = "downstream_write_error"
-					s.fail(a.rec)
+					s.fail(a.rec, errDownstreamWrite)
 					return
 				}
 			}
@@ -852,7 +856,7 @@ func (s *server) streamAnthropicSSE(w http.ResponseWriter, r *http.Request, a em
 				if open == nil || open.kind != "text" {
 					if !beginBlock("text", "", "") {
 						terminal = "downstream_write_error"
-						s.fail(a.rec)
+						s.fail(a.rec, errDownstreamWrite)
 						return
 					}
 				}
@@ -861,7 +865,7 @@ func (s *server) streamAnthropicSSE(w http.ResponseWriter, r *http.Request, a em
 					"delta": map[string]any{"type": "text_delta", "text": ev.Delta},
 				}) {
 					terminal = "downstream_write_error"
-					s.fail(a.rec)
+					s.fail(a.rec, errDownstreamWrite)
 					return
 				}
 			}
@@ -877,7 +881,7 @@ func (s *server) streamAnthropicSSE(w http.ResponseWriter, r *http.Request, a em
 				name := ev.ToolCall.Name
 				if !beginBlock("tool_use", id, name) {
 					terminal = "downstream_write_error"
-					s.fail(a.rec)
+					s.fail(a.rec, errDownstreamWrite)
 					return
 				}
 				toolCalls++
@@ -888,7 +892,7 @@ func (s *server) streamAnthropicSSE(w http.ResponseWriter, r *http.Request, a em
 					"delta": map[string]any{"type": "input_json_delta", "partial_json": ev.ToolCall.Arguments},
 				}) {
 					terminal = "downstream_write_error"
-					s.fail(a.rec)
+					s.fail(a.rec, errDownstreamWrite)
 					return
 				}
 			}
@@ -911,7 +915,7 @@ func (s *server) streamAnthropicSSE(w http.ResponseWriter, r *http.Request, a em
 				if a.stat != nil {
 					a.stat.status = http.StatusBadGateway
 				}
-				s.fail(a.rec)
+				s.fail(a.rec, ev.Err)
 				return
 			}
 		}
@@ -919,7 +923,7 @@ func (s *server) streamAnthropicSSE(w http.ResponseWriter, r *http.Request, a em
 
 	if !closeBlock() {
 		terminal = "downstream_write_error"
-		s.fail(a.rec)
+		s.fail(a.rec, errDownstreamWrite)
 		return
 	}
 	terminal = "ok"

@@ -1346,6 +1346,20 @@ func (s *server) rotateBase() time.Duration {
 	return base
 }
 
+// errDownstreamWrite marks a failed write back to the caller.  The upstream may
+// still be healthy; the connection to the client is what broke.
+var errDownstreamWrite = errors.New("downstream write failed")
+
+// errUpstreamStreamError marks an upstream stream that reported an error
+// without carrying a concrete cause of its own.
+var errUpstreamStreamError = errors.New("upstream stream error")
+
+// errEmptyCompletionValue is the canonical "model ended the turn with nothing
+// the caller can act on" error.  It lives here rather than in
+// responses_stream.go so the chat and Anthropic paths can use the same value
+// and the usage row can label it with errors.Is.
+var errEmptyCompletionValue = errors.New("upstream returned an empty completion: the model ended the turn without text or a tool call")
+
 // fail counts one failed request.  rec, when non-nil, is the usage record for
 // the same request; marking it here keeps the counter and the traffic view
 // from disagreeing.
@@ -1381,6 +1395,17 @@ func failureReason(err error) string {
 		return "调用方已取消：" + core.Redact(err.Error())
 	case errors.Is(err, context.DeadlineExceeded):
 		return "请求超时：" + core.Redact(err.Error())
+	case errors.Is(err, io.ErrUnexpectedEOF):
+		// The vendor opened the stream and then dropped it before its terminal
+		// frame.  Naming it here is what lets the panel tell a truncated turn
+		// apart from an empty one.
+		return "上游流提前中断：没有收到结束帧"
+	case errors.Is(err, errEmptyCompletionValue):
+		return "上游返回空回合：模型结束了回合，但没有文本也没有工具调用"
+	case errors.Is(err, errDownstreamWrite):
+		return "写回调用方失败：连接可能已断开"
+	case errors.Is(err, errUpstreamStreamError):
+		return "上游流返回错误：未提供具体原因"
 	}
 	f, ok := core.AsFailure(err)
 	if !ok {
@@ -1735,7 +1760,7 @@ func (s *server) streamSSE(w http.ResponseWriter, r *http.Request, client core.C
 
 	// role preamble, so strict clients see a well-formed first chunk
 	if !send(chatChoice{Index: 0, Delta: &chatMessage{Role: "assistant"}}, nil) {
-		s.fail(rec)
+		s.fail(rec, errDownstreamWrite)
 		return
 	}
 
@@ -1744,7 +1769,7 @@ func (s *server) streamSSE(w http.ResponseWriter, r *http.Request, client core.C
 		if r.Context().Err() != nil {
 			terminal = "caller_canceled"
 			stat.status = http.StatusRequestTimeout
-			s.fail(rec)
+			s.fail(rec, context.Canceled)
 			return
 		}
 		ev, err := stream.Recv()
@@ -1754,7 +1779,7 @@ func (s *server) streamSSE(w http.ResponseWriter, r *http.Request, client core.C
 					terminal = "unexpected_eof"
 					stat.status = http.StatusBadGateway
 					streamFailed = true
-					s.fail(rec)
+					s.fail(rec, io.ErrUnexpectedEOF)
 					msg := fmt.Sprintf("[%s] upstream stream ended before a terminal frame", clientName)
 					b, _ := json.Marshal(apiErrorEnvelope{Error: apiError{Message: msg, Type: "upstream_error", Code: "upstream_parse", GatewayHint: s.gatewayHint(client, "", msg, hintCtx())}})
 					fmt.Fprintf(w, "data: %s\n\n", b)
@@ -1768,7 +1793,7 @@ func (s *server) streamSSE(w http.ResponseWriter, r *http.Request, client core.C
 			terminal = "upstream_read_error"
 			streamFailed = true
 			stat.status = http.StatusBadGateway
-			s.fail(rec)
+			s.fail(rec, err)
 			s.opts.Logger.Printf("stream: client %s: %v", clientName, err)
 			msg := fmt.Sprintf("[%s] %s", clientName, err.Error())
 			_, _, kind := upstreamErrorShape(err)
@@ -1808,7 +1833,7 @@ func (s *server) streamSSE(w http.ResponseWriter, r *http.Request, client core.C
 				continue
 			}
 			if !send(chatChoice{Index: 0, Delta: d}, nil) {
-				s.fail(rec)
+				s.fail(rec, errDownstreamWrite)
 				return
 			}
 		case core.EventToolCall:
@@ -1825,7 +1850,7 @@ func (s *server) streamSSE(w http.ResponseWriter, r *http.Request, client core.C
 			d := &chatMessage{ToolCalls: []chatToolCall{tc}}
 			sawToolCall = true
 			if !send(chatChoice{Index: 0, Delta: d}, nil) {
-				s.fail(rec)
+				s.fail(rec, errDownstreamWrite)
 				return
 			}
 		case core.EventUsage:
@@ -1844,7 +1869,7 @@ func (s *server) streamSSE(w http.ResponseWriter, r *http.Request, client core.C
 				reason = "tool_calls"
 			}
 			if !send(chatChoice{Index: 0, Delta: &chatMessage{}, FinishReason: &reason}, nil) {
-				s.fail(rec)
+				s.fail(rec, errDownstreamWrite)
 				return
 			}
 		case core.EventError:
@@ -1855,7 +1880,7 @@ func (s *server) streamSSE(w http.ResponseWriter, r *http.Request, client core.C
 			streamFailed = true
 			stat.status = http.StatusBadGateway
 			if ev.Err != nil {
-				s.fail(rec)
+				s.fail(rec, ev.Err)
 				msg := fmt.Sprintf("[%s] %s", clientName, ev.Err.Error())
 				_, _, kind := upstreamErrorShape(ev.Err)
 				b, _ := json.Marshal(apiErrorEnvelope{Error: apiError{
@@ -1867,7 +1892,7 @@ func (s *server) streamSSE(w http.ResponseWriter, r *http.Request, client core.C
 				fmt.Fprintf(w, "data: %s\n\n", b)
 				flusher.Flush()
 			} else {
-				s.fail(rec)
+				s.fail(rec, errUpstreamStreamError)
 			}
 			break
 		}
@@ -1882,13 +1907,13 @@ func (s *server) streamSSE(w http.ResponseWriter, r *http.Request, client core.C
 	if !finished {
 		reason := "stop"
 		if !send(chatChoice{Index: 0, Delta: &chatMessage{}, FinishReason: &reason}, nil) {
-			s.fail(rec)
+			s.fail(rec, errDownstreamWrite)
 			return
 		}
 	}
 	if includeUsage && usage != nil {
 		if !send(chatChoice{Index: 0, Delta: &chatMessage{}}, toWireUsage(usage)) {
-			s.fail(rec)
+			s.fail(rec, errDownstreamWrite)
 			return
 		}
 	}
@@ -1922,16 +1947,22 @@ func (s *server) bufferCompletion(w http.ResponseWriter, r *http.Request, client
 	for {
 		if r.Context().Err() != nil {
 			stat.status = http.StatusGatewayTimeout
-			s.fail(rec)
+			s.fail(rec, context.Canceled)
 			writeError(w, http.StatusGatewayTimeout, "upstream_error", "client disconnected")
 			return
 		}
 		ev, err := stream.Recv()
 		if err != nil {
-			if errors.Is(err, io.EOF) && !finished {
-				streamErr = io.ErrUnexpectedEOF
-			} else if !errors.Is(err, io.EOF) {
-				streamErr = err
+			// An EventError the module already reported is the real cause; the
+			// io.EOF that follows it only means the stream is finished.  Keeping
+			// the module's own error is what lets the usage row name the failure
+			// instead of flattening every one of them to "unexpected EOF".
+			if streamErr == nil {
+				if errors.Is(err, io.EOF) && !finished {
+					streamErr = io.ErrUnexpectedEOF
+				} else if !errors.Is(err, io.EOF) {
+					streamErr = err
+				}
 			}
 			break
 		}
@@ -1977,7 +2008,7 @@ func (s *server) bufferCompletion(w http.ResponseWriter, r *http.Request, client
 	if streamErr != nil {
 		status, _, _ := upstreamErrorShape(streamErr)
 		stat.status = status
-		s.fail(rec)
+		s.fail(rec, streamErr)
 		s.writeUpstreamError(w, client, hintCtx, streamErr)
 		return
 	}

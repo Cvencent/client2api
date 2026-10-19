@@ -909,7 +909,7 @@ func (s *server) handleResponses(w http.ResponseWriter, r *http.Request) {
 	var wire responsesRequest
 	if err := json.NewDecoder(r.Body).Decode(&wire); err != nil {
 		stat.status = http.StatusBadRequest
-		s.fail(&rec)
+		s.fail(&rec, err)
 		writeError(w, http.StatusBadRequest, "invalid_request_error", "invalid JSON: "+err.Error())
 		return
 	}
@@ -920,7 +920,7 @@ func (s *server) handleResponses(w http.ResponseWriter, r *http.Request) {
 	req, err := toCoreRequestFromResponses(&wire)
 	if err != nil {
 		stat.status = http.StatusBadRequest
-		s.fail(&rec)
+		s.fail(&rec, err)
 		writeError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return
 	}

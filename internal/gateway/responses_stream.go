@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -181,7 +182,7 @@ func (s *server) streamResponsesSSE(w http.ResponseWriter, r *http.Request, a em
 	if !emit("response.created", map[string]any{
 		"response": base.base("in_progress", nil),
 	}) {
-		s.fail(a.rec)
+		s.fail(a.rec, errDownstreamWrite)
 		return
 	}
 
@@ -190,7 +191,7 @@ func (s *server) streamResponsesSSE(w http.ResponseWriter, r *http.Request, a em
 	// exactly what is wanted: the turn ends with a reason rather than hanging.
 	emitFailed := func(err error) {
 		msg := fmt.Sprintf("[%s] %s", client.Name(), err.Error())
-		s.fail(a.rec)
+		s.fail(a.rec, err)
 		status, _, _ := upstreamErrorShape(err)
 		a.stat.status = status
 		s.opts.Logger.Printf("responses stream: client %s: %v", client.Name(), err)
@@ -255,7 +256,7 @@ receive:
 		if r.Context().Err() != nil {
 			terminal = "caller_canceled"
 			a.stat.status = http.StatusRequestTimeout
-			s.fail(a.rec)
+			s.fail(a.rec, context.Canceled)
 			return
 		}
 		ev, err := stream.Recv()
@@ -442,7 +443,7 @@ receive:
 			terminal = "completed"
 		}
 	} else {
-		s.fail(a.rec)
+		s.fail(a.rec, errDownstreamWrite)
 	}
 }
 
@@ -471,16 +472,20 @@ receive:
 	for {
 		if r.Context().Err() != nil {
 			a.stat.status = http.StatusGatewayTimeout
-			s.fail(a.rec)
+			s.fail(a.rec, context.Canceled)
 			writeError(w, http.StatusGatewayTimeout, "upstream_error", "client disconnected")
 			return
 		}
 		ev, err := stream.Recv()
 		if err != nil {
-			if errors.Is(err, io.EOF) && !finished {
-				streamErr = io.ErrUnexpectedEOF
-			} else if !errors.Is(err, io.EOF) {
-				streamErr = err
+			// Preserve an EventError the module already reported: the io.EOF
+			// that follows it only marks the end of the stream.
+			if streamErr == nil {
+				if errors.Is(err, io.EOF) && !finished {
+					streamErr = io.ErrUnexpectedEOF
+				} else if !errors.Is(err, io.EOF) {
+					streamErr = err
+				}
 			}
 			break
 		}
@@ -527,7 +532,7 @@ receive:
 	if streamErr != nil {
 		status, _, _ := upstreamErrorShape(streamErr)
 		a.stat.status = status
-		s.fail(a.rec)
+		s.fail(a.rec, streamErr)
 		s.writeUpstreamError(w, client, a.hintCtx, streamErr)
 		return
 	}
@@ -539,7 +544,7 @@ receive:
 	if text.Len() == 0 && len(toolByIx) == 0 {
 		status, _, _ := upstreamErrorShape(errEmptyCompletion())
 		a.stat.status = status
-		s.fail(a.rec)
+		s.fail(a.rec, errEmptyCompletion())
 		s.writeUpstreamError(w, client, a.hintCtx, errEmptyCompletion())
 		return
 	}
@@ -616,9 +621,11 @@ func appendTail(dst *strings.Builder, s string, n int) {
 // producing anything the caller can use: no visible text and no tool call.  It
 // is deliberately a distinct message so the operator can tell it apart from a
 // transport failure in the log and in the client's error banner.
-func errEmptyCompletion() error {
-	return errors.New("upstream returned an empty completion: the model ended the turn without text or a tool call")
-}
+//
+// It returns one shared value rather than a fresh error so that the usage row
+// can recognise it with errors.Is and label the failure in the operator's
+// language.
+func errEmptyCompletion() error { return errEmptyCompletionValue }
 
 // sawAnyText reports whether any output item carries visible assistant text.
 func sawAnyText(output []responseOutput) bool {
