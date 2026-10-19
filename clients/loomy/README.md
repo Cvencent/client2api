@@ -247,6 +247,20 @@ Only rows with `type == "chat"` and a non-empty `id` are listed. This
 deliberately does **not** use `output_modalities`: five chat models carry
 `image` in `input_modalities` (vision input), which is unrelated to being an
 image-generation model.
+**Images and vision.** The same `capabilities.input_modalities` block decides
+what happens to image parts. A model that lists `image` as an input modality
+receives them untouched. A model that does not — DeepSeek and Kimi among them —
+has every image part replaced with the one-line text placeholder
+`[image omitted: the model has no vision input]` before the request leaves the
+module. Forwarding the pixels anyway is not graceful degradation, it is a
+refusal: the text-only backends read a base64 data URL as prompt text, so one
+screenshot costs tens of thousands of prompt tokens and a handful of them
+answers "内容太长了". Coding agents keep every image they have ever read in
+their history and re-send it on every turn, so the placeholder is what keeps a
+session that once looked at a screenshot alive. A model the catalogue does not
+know (an unrecognised id, or the built-in fallback table before the first live
+refresh) is treated as text-only, matching the table's deliberate
+under-reporting of vision.
 
 `reasoning_effort` is forwarded from `ChatRequest.Options` (keys
 `reasoning_effort` / `reasoningEffort` / `reasoning` / `effort`) without

@@ -192,6 +192,13 @@ people. The built-in default is `127.0.0.1`.
   proportion to keep and nothing to learn. The gateway trims to a fraction of the
   window it already advertises and retries once; a served answer beats a dead end,
   and a refusal that repeats is returned to the caller unchanged.
+- The cheapest refusal is the one that never leaves the gateway. Loomy's own
+  catalogue declares which models accept image input, and the module replaces
+  every image part with a short text placeholder for a model that does not —
+  DeepSeek and Kimi behind Loomy are text-only and read a base64 data URL as
+  prompt text, so the screenshots a coding agent's history keeps re-sending
+  refuse the request outright. Vision-capable Loomy models keep their images.
+  Details in `clients/loomy/README.md`.
 - A refusal that names both numbers is also a measurement of the request that was
   just sent. When the gateway's own estimate read low enough to forward that request
   unchanged, the history is trimmed to the proportion the vendor's window can hold and

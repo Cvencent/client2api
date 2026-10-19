@@ -432,8 +432,16 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 	// catalogue advertises.  Either way the vendor wants its own id.  The
 	// request is copied rather than mutated, so a caller that reuses the struct
 	// still sees the model it asked for.
+	catalogue := c.cachedOrFallback()
 	local := *req
-	local.Model = resolveModelID(c.cachedOrFallback(), req.Model)
+	local.Model = resolveModelID(catalogue, req.Model)
+
+	// A model the catalogue says has no vision input never receives image
+	// parts: the text-only backends read a base64 data URL as prompt text and
+	// refuse the request as oversized.  See images.go for the full reasoning.
+	if !acceptsImages(catalogue, local.Model) {
+		stripImages(&local)
+	}
 
 	body, err := buildBody(&local)
 	if err != nil {
