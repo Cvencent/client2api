@@ -373,6 +373,110 @@ func TestBuildChatBodyAlwaysCarriesReasoningContentOnAssistant(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Tool-call / tool-result pairing.
+//
+// Zen refuses a history whose tool result is not adjacent to the assistant call
+// it answers, and it says so with a bare HTTP 400 carrying an empty body -- the
+// signature seen in production as `opencode: chat: HTTP 400`.  A caller that
+// replays its history (or a trim that cut the assistant call away) can produce
+// that shape, so the module repairs it before it reaches the vendor.
+// ---------------------------------------------------------------------------
+
+// wireMessagesOf renders a request and returns its wire-level message list.
+func wireMessagesOf(t *testing.T, req *core.ChatRequest) []map[string]any {
+	t.Helper()
+	got := decodeBody(t, Config{}, req)
+	raw, ok := got["messages"].([]any)
+	if !ok {
+		t.Fatalf("messages = %T, want a JSON array", got["messages"])
+	}
+	out := make([]map[string]any, 0, len(raw))
+	for _, entry := range raw {
+		m, ok := entry.(map[string]any)
+		if !ok {
+			t.Fatalf("message entry = %T, want an object", entry)
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
+// TestBuildChatBodyDropsAnOrphanToolResult is the regression test for the bare
+// HTTP 400: a tool result with no assistant call ahead of it is malformed, and
+// forwarding it makes the vendor refuse the whole conversation.
+func TestBuildChatBodyDropsAnOrphanToolResult(t *testing.T) {
+	msgs := wireMessagesOf(t, &core.ChatRequest{
+		Model: "deepseek-v4.1-flash",
+		Messages: []core.Message{
+			{Role: "user", Content: "hi"},
+			{Role: "tool", ToolCallID: "nope", Content: "x"},
+			{Role: "user", Content: "ok"},
+		},
+	})
+	for _, m := range msgs {
+		if m["role"] == "tool" {
+			t.Fatalf("an orphan tool result was forwarded: %#v", m)
+		}
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("messages = %d, want the orphan dropped", len(msgs))
+	}
+}
+
+// TestBuildChatBodyRepacksASplitToolRoundTrip covers the other shape Zen refuses:
+// the result is present and matched, but another turn was interleaved between it
+// and its call, so the two are no longer adjacent.
+func TestBuildChatBodyRepacksASplitToolRoundTrip(t *testing.T) {
+	msgs := wireMessagesOf(t, &core.ChatRequest{
+		Model: "deepseek-v4.1-flash",
+		Messages: []core.Message{
+			{Role: "user", Content: "run ls"},
+			{Role: "assistant", ToolCalls: []core.ToolCall{{ID: "c1", Type: "function", Name: "bash", Arguments: `{}`}}},
+			{Role: "user", Content: "interjected"},
+			{Role: "tool", ToolCallID: "c1", Content: "a.txt"},
+			{Role: "user", Content: "ok"},
+		},
+	})
+	// Find the assistant call; the very next message must be its result.
+	idx := -1
+	for i, m := range msgs {
+		if m["role"] == "assistant" {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		t.Fatalf("the assistant call was dropped: %#v", msgs)
+	}
+	if idx+1 >= len(msgs) || msgs[idx+1]["role"] != "tool" {
+		t.Fatalf("the tool result was not moved adjacent to its call: %#v", msgs)
+	}
+	if len(msgs) != 5 {
+		t.Fatalf("messages = %d, want every turn kept after the repack", len(msgs))
+	}
+}
+
+// TestBuildChatBodyKeepsAWellFormedToolRoundTrip is the control: the repair must
+// not touch a history that is already valid.
+func TestBuildChatBodyKeepsAWellFormedToolRoundTrip(t *testing.T) {
+	msgs := wireMessagesOf(t, &core.ChatRequest{
+		Model: "deepseek-v4.1-flash",
+		Messages: []core.Message{
+			{Role: "user", Content: "run ls"},
+			{Role: "assistant", ToolCalls: []core.ToolCall{{ID: "c1", Type: "function", Name: "bash", Arguments: `{}`}}},
+			{Role: "tool", ToolCallID: "c1", Content: "a.txt"},
+			{Role: "user", Content: "ok"},
+		},
+	})
+	if len(msgs) != 4 {
+		t.Fatalf("messages = %d, want all four kept", len(msgs))
+	}
+	if msgs[1]["role"] != "assistant" || msgs[2]["role"] != "tool" {
+		t.Fatalf("a valid round trip was reordered: %#v", msgs)
+	}
+}
+
 // Zen's CommonRequest.tool_choice union has no "none", so a caller asking for no
 // tools gets the field omitted instead of a value the converter would mangle.
 func TestNormalizeToolChoice(t *testing.T) {
