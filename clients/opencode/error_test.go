@@ -3,6 +3,8 @@ package opencode
 import (
 	"context"
 	"errors"
+	"io"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -435,5 +437,117 @@ func TestNoteFailureUsesTheQuotaCooldownForCreditVerdicts(t *testing.T) {
 	}
 	if got := until.Sub(testNow); got != 30*time.Minute {
 		t.Fatalf("quota cooldown = %s, want the configured 30m", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// A bare 400 is not a verdict about the request.
+//
+// Zen has been observed answering a perfectly replayable history with HTTP 400
+// and an empty body.  Nothing in that answer names a cause, and the same
+// request replayed a moment later is served.  Treating it as a client mistake
+// killed a conversation and skipped the pool: the free account was blamed and
+// the signed-in account that could serve the same model was never tried.  The
+// module now spends one rotation on that shape, then reports the refusal
+// exactly as before.
+// ---------------------------------------------------------------------------
+
+func TestBareFourHundredRotatesToTheNextAccountAndRecovers(t *testing.T) {
+	calls := 0
+	c := newFakeClient(t, Config{}, func(r *http.Request) (*http.Response, error) {
+		calls++
+		if calls == 1 {
+			return jsonResponse(http.StatusBadRequest, ""), nil
+		}
+		return sseResponse(happySSE), nil
+	})
+	addAccount(t, c, "opencode:a", "sk-a")
+	addAccount(t, c, "opencode:b", "sk-b")
+
+	stream, err := c.Chat(context.Background(), chatRequest("gpt-5.1"))
+	if err != nil {
+		t.Fatalf("Chat = %v, want the second account to serve the retry", err)
+	}
+	defer stream.Close()
+	if calls != 2 {
+		t.Fatalf("upstream calls = %d, want 2", calls)
+	}
+
+	var text string
+	for {
+		ev, rerr := stream.Recv()
+		if errors.Is(rerr, io.EOF) {
+			break
+		}
+		if rerr != nil {
+			t.Fatalf("Recv = %v", rerr)
+		}
+		if ev.Type == core.EventDelta {
+			text += ev.Delta
+		}
+	}
+	if text != "Hello" {
+		t.Fatalf("text = %q, want Hello", text)
+	}
+}
+
+// The retry is a single second chance, not an unbounded loop.  When every
+// account answers the same bare 400 the caller still gets the 400 it would
+// have seen before, and each account is tried at most once.
+func TestBareFourHundredStopsAfterOneRotation(t *testing.T) {
+	calls := 0
+	c := newFakeClient(t, Config{}, func(r *http.Request) (*http.Response, error) {
+		calls++
+		return jsonResponse(http.StatusBadRequest, ""), nil
+	})
+	addAccount(t, c, "opencode:a", "sk-a")
+	addAccount(t, c, "opencode:b", "sk-b")
+
+	_, err := c.Chat(context.Background(), chatRequest("gpt-5.1"))
+	if err == nil {
+		t.Fatal("Chat = nil, want the upstream 400")
+	}
+	if calls != 2 {
+		t.Fatalf("upstream calls = %d, want one per account and no more", calls)
+	}
+	var failure *core.Failure
+	if !errors.As(err, &failure) {
+		t.Fatalf("error = %T, want a classified *core.Failure", err)
+	}
+	if failure.Status != http.StatusBadRequest || failure.Kind != core.FailureOther {
+		t.Fatalf("failure = %+v, want the original 400 as FailureOther", failure)
+	}
+}
+
+// A 400 that names its cause is still final.  Rotating on those would multiply
+// a caller's mistake across the whole pool.
+func TestLabelledFourHundredDoesNotRotate(t *testing.T) {
+	calls := 0
+	c := newFakeClient(t, Config{}, func(r *http.Request) (*http.Response, error) {
+		calls++
+		return jsonResponse(http.StatusBadRequest, `{"error":{"type":"ModelError","message":"Model bogus is not supported"}}`), nil
+	})
+	addAccount(t, c, "opencode:a", "sk-a")
+	addAccount(t, c, "opencode:b", "sk-b")
+
+	if _, err := c.Chat(context.Background(), chatRequest("gpt-5.1")); err == nil {
+		t.Fatal("Chat = nil, want the model refusal")
+	}
+	if calls != 1 {
+		t.Fatalf("upstream calls = %d, want the labelled refusal to stay final", calls)
+	}
+}
+
+// Only the empty-body 400 is retried.  A missing endpoint is permanent, and
+// rotating the pool on it would just pay the same 404 once per account.
+func TestBareFourHundredOnlyCoversBadRequest(t *testing.T) {
+	if !retryableBareRejection(http.StatusBadRequest, []byte("  \n ")) {
+		t.Fatal("an empty 400 must be retryable")
+	}
+	if retryableBareRejection(http.StatusNotFound, nil) {
+		t.Fatal("a bare 404 must stay final")
+	}
+	if retryableBareRejection(http.StatusBadRequest, []byte(`{"error":{"message":"bad"}}`)) {
+		t.Fatal("a labelled 400 must stay final")
 	}
 }

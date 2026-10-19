@@ -315,6 +315,22 @@ func (c *Client) classifyHTTP(op string, acct *accountRecord, status int, body [
 	})
 }
 
+// retryableBareRejection reports whether a non-2xx answer is a refusal that
+// says nothing about the request.
+//
+// Zen answers a replay it accepts a moment later with HTTP 400 and an empty
+// body.  There is no error type and no message to classify, so the verdict
+// used to be "the caller's request is wrong" -- which skipped the pool and
+// killed an otherwise healthy conversation.  The absence of any body is what
+// separates this shape from a labelled 400 (a model refusal, a malformed
+// field), and those must stay final.
+func retryableBareRejection(status int, body []byte) bool {
+	if status != http.StatusBadRequest {
+		return false
+	}
+	return strings.TrimSpace(string(body)) == ""
+}
+
 // classifyErrFor classifies a transport-level error and records it against the
 // account.  A reset connection is not the vendor refusing anything, so it is
 // treated as an upstream/server failure rather than as a client mistake.

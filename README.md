@@ -67,6 +67,16 @@ people. The built-in default is `127.0.0.1`.
 | `openai-compat/...` | onmiRoute | Legacy compatible sources |
 | `<source-id>/...` | Custom relay | Any OpenAI-compatible platform you add |
 
+### OpenCode: a bare HTTP 400 is retried once
+
+Zen occasionally answers a correct history with `HTTP 400` and an **empty body**.
+Nothing in that answer names a cause, and the identical request is usually served
+a moment later. `clients/opencode` therefore spends one rotation of its account
+pool on this shape (anonymous → signed-in, or the next usable account) before
+reporting it. A 400 that carries an error type or message — an unknown model, a
+malformed field — stays final, and so does every other status code, so a caller's
+mistake is never multiplied across the pool.
+
 ## Features
 
 ### Gateway and routing

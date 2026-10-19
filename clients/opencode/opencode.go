@@ -378,10 +378,18 @@ func (c *Client) openChat(ctx context.Context, cancel context.CancelFunc, req *c
 			req.ReleaseAccountSlot()
 			// classifyHTTP records the verdict against the account itself.
 			lastErr = c.classifyHTTP("chat", acct, resp.StatusCode, errBody)
-			if !core.Retryable(core.FailureKindOf(lastErr)) {
-				return nil, lastErr
+			if core.Retryable(core.FailureKindOf(lastErr)) {
+				continue
 			}
-			continue
+			// A 400 with nothing in the body is the one refusal that is not a
+			// verdict about the request: Zen produces it for a history it will
+			// accept a moment later.  Spending the rest of the rotation on it
+			// turns an unknown transient into a dead end, so it is retried like
+			// the transient it is.  A labelled 4xx stays final.
+			if retryableBareRejection(resp.StatusCode, errBody) {
+				continue
+			}
+			return nil, lastErr
 		}
 		return newChatStream(c, resp.Body, acct, ctx, cancel, !req.Stream), nil
 	}
