@@ -838,6 +838,14 @@ func TestParseRateReset(t *testing.T) {
 	if _, ok := ParseRateReset("reset at 2026-03-01 12:00:00"); !ok {
 		t.Fatal("EN reset not parsed")
 	}
+	ts, ok = ParseRateReset(`{"code":6004,"msg":"usage exceeds frequency limit, but don't worry, your usage will reset at 2026-10-18 21:43:41 UTC+8, alternatively, you can switch to the other models to continue using it."}`)
+	if !ok {
+		t.Fatal("WorkBuddy model rate-limit reset not parsed")
+	}
+	want = time.Date(2026, 10, 18, 21, 43, 41, 0, time.FixedZone("UTC+8", 8*3600))
+	if !ts.Equal(want) {
+		t.Fatalf("WorkBuddy reset = %v, want %v", ts, want)
+	}
 	if _, ok := ParseRateReset("nothing here"); ok {
 		t.Fatal("unexpected reset parse")
 	}
@@ -1808,6 +1816,47 @@ func TestChatClassifiesUpstreamFailure(t *testing.T) {
 	}
 	if len(st.Accounts) != 1 || st.Accounts[0].State != stateCooling {
 		t.Fatalf("accounts = %+v", st.Accounts)
+	}
+}
+
+// TestChatRecordsTheWorkBuddyRateLimitResetOnTheModelPark drives the exact
+// response shape seen from WorkBuddy through classification, error detail and
+// the pool's model-scoped park.  The vendor reset is further out than the
+// default two-hour soft backoff, so this also guards against silently retrying
+// the same quota window early.
+func TestChatRecordsTheWorkBuddyRateLimitResetOnTheModelPark(t *testing.T) {
+	rt := &fakeRT{handler: func(req *http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusTooManyRequests, `{"code":6004,"msg":"usage exceeds frequency limit, but don't worry, your usage will reset at 2026-10-18 21:43:41 UTC+8, alternatively, you can switch to the other models to continue using it."}`), nil
+	}}
+	c, _ := newTestClient(t, rt)
+	resetAt := time.Date(2026, 10, 18, 21, 43, 41, 0, time.FixedZone("UTC+8", 8*3600))
+	now := resetAt.Add(-5*time.Hour - 33*time.Minute - 24*time.Second)
+	c.pool.now = func() time.Time { return now }
+
+	_, err := c.Chat(context.Background(), &core.ChatRequest{
+		Model:    "deepseek-v4.1-flash",
+		Messages: []core.Message{{Role: "user", Content: "hi"}},
+	})
+	if err == nil {
+		t.Fatal("expected the upstream 429 to fail")
+	}
+	snap := c.pool.Snapshot()
+	if len(snap) != 1 {
+		t.Fatalf("snapshot len = %d, want 1", len(snap))
+	}
+	parks, ok := snap[0].Extra["model_cooldowns"].([]core.ModelPark)
+	if !ok || len(parks) != 1 {
+		t.Fatalf("model_cooldowns = %#v, want one model park", snap[0].Extra["model_cooldowns"])
+	}
+	park := parks[0]
+	if park.Model != "deepseek-v4.1-flash" || park.Kind != core.ModelParkRateLimit {
+		t.Fatalf("park = %+v, want the rate-limited requested model", park)
+	}
+	if got, want := park.ResetAt, resetAt.UTC().Format(time.RFC3339); got != want {
+		t.Fatalf("reset_at = %q, want %q", got, want)
+	}
+	if got, want := park.Until, resetAt.UTC().Format(time.RFC3339); got != want {
+		t.Fatalf("until = %q, want the vendor's reset %q", got, want)
 	}
 }
 

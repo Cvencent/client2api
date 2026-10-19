@@ -421,9 +421,13 @@ is the way to set them:
 4. On failure the account is cooled: 401/403 → refresh then one retry; 429/5xx →
    short cooldown (honouring `Retry-After`); quota/credit exhaustion → long
    cooldown; the request then moves to the next account, up to `max_attempts`.
-   A 400-class error is returned to the caller as-is (502 by the gateway) because
-   retrying cannot help. Context-window overflow is surfaced as
-   `context_window_exceeded`, allowing the caller to compact and resume.
+   A 6004 rate limit is scoped to that account and model: when the message dates
+   its reset (for example `your usage will reset at 2026-10-18 21:43:41 UTC+8`),
+   the model park lasts until that exact vendor instant rather than stopping at
+   the module's two-hour fallback cap. A 400-class error is returned to the
+   caller as-is (502 by the gateway) because retrying cannot help. Context-window
+   overflow is surfaced as `context_window_exceeded`, allowing the caller to
+   compact and resume.
 
 ### More than one User-Agent, on purpose
 

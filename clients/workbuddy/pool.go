@@ -90,9 +90,10 @@ const (
 	// the vendor's own reset hint is honoured up to this ceiling, and beyond it
 	// we distrust the hint rather than park for a day on one message.
 	softRateMax = 2 * time.Hour
-	// softModelMax caps a per-model soft rate limit park.  It is the same
-	// ceiling as softRateMax; the alias exists only to keep the model-path
-	// call sites readable.
+	// softModelMax caps a hintless per-model soft rate-limit backoff.  A dated
+	// vendor reset is an absolute instant and is not capped: quota windows can
+	// legitimately exceed this fallback.  The alias keeps model-path call sites
+	// readable.
 	softModelMax = softRateMax
 	// softStreakShiftMax caps the doubling of the hintless backoff, exactly as
 	// the reference does.
@@ -1962,10 +1963,12 @@ func (p *Pool) MarkFreeModelUnavailable(a *Auth, model string) time.Duration {
 // limit.
 //
 // resetAt is the vendor's own reset wall clock, parsed by ParseRateReset out of
-// the 6004 message.  When it is set the park honours it, capped at softModelMax
-// so that one message cannot park a model for a day.  When the message carried
-// no date the reference's bounded doubling is used instead: base, doubled per
-// consecutive hintless park, capped at softModelMax.
+// the 6004 message.  When it is set the model park uses that exact instant:
+// the vendor's quota windows can legitimately run longer than the module's own
+// two-hour soft backoff ceiling, and treating that ceiling as a cap on a
+// dated window makes the pool retry early against the same quota.  When the
+// message carried no date the reference's bounded doubling is used instead:
+// base, doubled per consecutive hintless park, capped at softModelMax.
 func (p *Pool) MarkModelRateLimited(a *Auth, model string, resetAt time.Time, base time.Duration, reason string) time.Duration {
 	if p == nil || a == nil || model == "" {
 		return 0
@@ -1990,9 +1993,6 @@ func (p *Pool) MarkModelRateLimited(a *Auth, model string, resetAt time.Time, ba
 	var ttl time.Duration
 	if !resetAt.IsZero() {
 		until := resetAt
-		if ceiling := now.Add(softModelMax); until.After(ceiling) {
-			until = ceiling
-		}
 		if until.Before(now) {
 			// The vendor's reset is already in the past: there is nothing to
 			// wait for, so record the reason with a zero park rather than

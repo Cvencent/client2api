@@ -236,8 +236,8 @@ type Error struct {
 	// <t>").  It is the zero time when the message dated nothing.
 	//
 	// When set, the pool parks the model until this instant on this account,
-	// capped at its own softModelMax, instead of inventing a backoff.  The
-	// vendor knows when its own window closes; guessing it is guesswork.
+	// subject to no synthetic softModelMax cap, instead of inventing a backoff.
+	// The vendor knows when its own window closes; guessing it is guesswork.
 	ResetAt time.Time
 	// ModelScoped marks a failure that belongs to (account, model) rather than
 	// to the account.  The vendor's 6004 rate limit is the one such answer: the
@@ -300,7 +300,7 @@ var (
 	softRateTimeLayout  = "2006-01-02 15:04:05"
 	reModelRateLimit    = regexp.MustCompile(`"code"\s*:\s*"?6004"?`)
 	reSoftRateResetCN   = regexp.MustCompile(`将在 (.+?) 重置`)
-	reSoftRateResetEN   = regexp.MustCompile(`(?i)reset at (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})`)
+	reSoftRateResetEN   = regexp.MustCompile(`(?i)reset at\s+(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})(?:\s+(UTC(?:\+8|Z)?))?`)
 	reBusinessCode11135 = regexp.MustCompile(`"code"\s*:\s*"?11135"?`)
 	// reChannelVerifyCode matches the vendor's sender check ("channel
 	// verification").  Its body is not valid JSON -- the business code arrives
@@ -468,8 +468,17 @@ func ParseRateReset(body string) (time.Time, bool) {
 	if len(m) < 2 {
 		return time.Time{}, false
 	}
-	ts := strings.TrimSuffix(strings.TrimSpace(m[1]), " UTC+8")
-	t, err := time.ParseInLocation(softRateTimeLayout, ts, softRateResetLoc)
+	ts := strings.TrimSpace(m[1])
+	loc := softRateResetLoc
+	if len(m) > 2 && strings.TrimSpace(m[2]) != "" {
+		switch strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(m[2]), " ", "")) {
+		case "UTC":
+			loc = time.UTC
+		case "UTC+8":
+			loc = softRateResetLoc
+		}
+	}
+	t, err := time.ParseInLocation(softRateTimeLayout, ts, loc)
 	if err != nil {
 		return time.Time{}, false
 	}

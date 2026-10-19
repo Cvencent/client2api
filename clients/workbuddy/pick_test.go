@@ -83,7 +83,8 @@ func TestWorkbuddyModelBlockBackoffGrowsToTheCap(t *testing.T) {
 }
 
 // TestWorkbuddyModelRateLimitHonoursTheVendorReset: a 6004 carries its own
-// deadline, and a deadline further out than the policy allows is still capped.
+// deadline, and the model park uses that instant even when it is beyond the
+// otherwise-default two-hour soft-limit window.
 func TestWorkbuddyModelRateLimitHonoursTheVendorReset(t *testing.T) {
 	a, _ := pickAuths()
 	p, clk := newPickPool([]*Auth{a})
@@ -96,9 +97,9 @@ func TestWorkbuddyModelRateLimitHonoursTheVendorReset(t *testing.T) {
 		t.Fatal("a 6004 park must be scoped to its model")
 	}
 	clk.advance(time.Minute)
-	far := clk.at.Add(48 * time.Hour)
-	if got := p.MarkModelRateLimited(a, "model-z", far, time.Minute, modelRateLimitReason); got != softModelMax {
-		t.Fatalf("park = %v, want the %v cap", got, softModelMax)
+	vendorReset := clk.at.Add(5*time.Hour + 30*time.Minute)
+	if got := p.MarkModelRateLimited(a, "model-z", vendorReset, time.Minute, modelRateLimitReason); got != vendorReset.Sub(clk.at) {
+		t.Fatalf("park = %v, want the vendor's %v reset window", got, vendorReset.Sub(clk.at))
 	}
 }
 
