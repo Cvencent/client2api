@@ -254,6 +254,16 @@ func (c *Client) startCLILogin(ctx context.Context) (core.LoginState, error) {
 	core.GoSafe("qoder cli login wait", nil, func() {
 		_ = cmd.Wait()
 		close(sess.done)
+		// The child exits as soon as the browser confirms, and it writes the
+		// credential in the same breath.  Give that write a moment to land
+		// before calling the exit a failure, so a successful sign-in is not
+		// recorded as an error by a millisecond of scheduling.
+		for i := 0; i < 20; i++ {
+			if cliSignedIn(sess.dir) || sess.snapshot().State != core.LoginPending {
+				return
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
 		if sess.snapshot().State == core.LoginPending {
 			sess.fail("本机 Qoder CLI 的登录进程已退出，可能是设备码过期或被取消。")
 		}
@@ -339,8 +349,18 @@ func (c *Client) CancelLogin(ctx context.Context, sessionID string) error {
 // pollCLILogin advances one CLI session.
 func (c *Client) pollCLILogin(ctx context.Context, sess *cliLoginSession) (core.LoginState, error) {
 	st := sess.snapshot()
-	if st.State != core.LoginPending {
+	if st.State == core.LoginSuccess || st.State == core.LoginCancelled {
 		return st, nil
+	}
+	if st.State == core.LoginFailed && !cliSignedIn(sess.dir) {
+		return st, nil
+	}
+	// A "failed" session whose config root DOES hold a credential is not a
+	// failure: the login child exits the moment the browser confirms, and that
+	// exit used to be recorded as a failure a beat before the credential was
+	// visible.  The store is the authority, so fall through and adopt it.
+	if st.State == core.LoginFailed {
+		st = core.LoginState{SessionID: sess.id, State: core.LoginPending, URL: st.URL}
 	}
 	sess.mu.Lock()
 	who := sess.who

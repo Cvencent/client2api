@@ -1116,3 +1116,87 @@ func TestCLILoginStaysPendingWhileNoCredentialExists(t *testing.T) {
 		t.Fatalf("state = %q, want pending while no credential exists", st.State)
 	}
 }
+
+// TestExitedLoginChildStillAdoptsAWrittenCredential pins the second half of the
+// "请稍后" hang.
+//
+// The login child exits the instant the browser confirms, and it writes the
+// credential in the same breath.  The exit path used to record that as a
+// failure a beat before the file was visible, so the poll saw "failed" and the
+// panel gave up -- with a valid credential sitting on disk the whole time.
+// A stored credential must win over an exited child, and an exited child with
+// nothing on disk must still be a failure.
+func TestExitedLoginChildStillAdoptsAWrittenCredential(t *testing.T) {
+	cliRoot := t.TempDir()
+	leaf := filepath.Join(".staging", "login-exited")
+	staged := filepath.Join(cliRoot, leaf)
+	if err := os.MkdirAll(filepath.Join(staged, ".auth"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// A credential file is all the poll needs here; its content is never
+	// decrypted on this path (that is readCLICredentials' job, covered by the
+	// live test).
+	if err := os.WriteFile(filepath.Join(staged, ".auth", "user"), []byte("ciphertext"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(cliDirEnv, cliRoot)
+
+	if _, err := findCLI(); err == nil {
+		// A real install is present, so pollCLILogin will get far enough to try
+		// the decrypt and fail on the synthetic file.  That still proves the
+		// exit no longer short-circuits, which is what this test is about.
+		t.Log("local Qoder CN install present; the poll will proceed past the exit check")
+	}
+
+	c := &Client{deps: core.Deps{DataDir: t.TempDir()}, cfg: config{}}
+	c.store = &store{}
+	c.cliLogins = map[string]*cliLoginSession{}
+
+	sess := &cliLoginSession{
+		id: "exited", leaf: leaf, dir: staged,
+		expiresAt: time.Now().Add(time.Minute),
+		done:      make(chan struct{}),
+		message:   "waiting",
+	}
+	// Simulate the exit path having recorded a failure already.
+	sess.fail("本机 Qoder CLI 的登录进程已退出，可能是设备码过期或被取消。")
+	close(sess.done)
+
+	st, _ := c.pollCLILogin(context.Background(), sess)
+	if st.State == core.LoginFailed && !strings.Contains(st.Message, "读取") {
+		t.Fatalf("a credential on disk was ignored after the child exited: %q", st.Message)
+	}
+}
+
+// TestExitedLoginChildWithNoCredentialFails guards the other direction: a child
+// that exits without writing anything must still report a failure.
+func TestExitedLoginChildWithNoCredentialFails(t *testing.T) {
+	cliRoot := t.TempDir()
+	leaf := filepath.Join(".staging", "login-empty")
+	staged := filepath.Join(cliRoot, leaf)
+	if err := os.MkdirAll(staged, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(cliDirEnv, cliRoot)
+
+	c := &Client{deps: core.Deps{DataDir: t.TempDir()}, cfg: config{}}
+	c.store = &store{}
+	c.cliLogins = map[string]*cliLoginSession{}
+
+	sess := &cliLoginSession{
+		id: "empty", leaf: leaf, dir: staged,
+		expiresAt: time.Now().Add(time.Minute),
+		done:      make(chan struct{}),
+		message:   "waiting",
+	}
+	sess.fail("本机 Qoder CLI 的登录进程已退出，可能是设备码过期或被取消。")
+	close(sess.done)
+
+	st, err := c.pollCLILogin(context.Background(), sess)
+	if err != nil {
+		t.Fatalf("pollCLILogin: %v", err)
+	}
+	if st.State != core.LoginFailed {
+		t.Fatalf("state = %q, want failed when the child exited with no credential", st.State)
+	}
+}
