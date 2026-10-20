@@ -110,6 +110,15 @@ func (s *cliLoginSession) setURL(u string) {
 	s.mu.Unlock()
 }
 
+// setWho records the account name the CLI printed, without claiming success.
+func (s *cliLoginSession) setWho(who string) {
+	s.mu.Lock()
+	if s.who == "" {
+		s.who = who
+	}
+	s.mu.Unlock()
+}
+
 func (s *cliLoginSession) succeed(who string) {
 	s.mu.Lock()
 	s.ok, s.who = true, who
@@ -237,7 +246,16 @@ func (c *Client) startCLILogin(ctx context.Context) (core.LoginState, error) {
 		_ = scanLines(stdout, func(line []byte) error {
 			text := string(line)
 			if m := cliWelcomePattern.FindStringSubmatch(text); len(m) == 2 {
-				sess.succeed(strings.TrimSpace(m[1]))
+				// Record the name only, and deliberately do NOT mark the
+				// session successful.
+				//
+				// This line means "the vendor accepted the sign-in", not "an
+				// account was stored".  Marking it successful here made
+				// pollCLILogin's terminal-state check return before it ever
+				// read the credential, so the panel announced success while
+				// the pool stayed empty.  Success is declared in exactly one
+				// place: after the account has been written.
+				sess.setWho(strings.TrimSpace(m[1]))
 			} else if u := cliLoginURLPattern.FindString(text); u != "" {
 				sess.setURL(strings.TrimRight(u, ".,)"))
 				once.Do(func() { close(urlFound) })
@@ -365,6 +383,7 @@ func (c *Client) pollCLILogin(ctx context.Context, sess *cliLoginSession) (core.
 	sess.mu.Lock()
 	who := sess.who
 	sess.mu.Unlock()
+	_ = who
 
 	// The credential store is the authority, not the CLI's console output.
 	//

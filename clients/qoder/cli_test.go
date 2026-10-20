@@ -1197,3 +1197,29 @@ func TestExitedLoginChildWithNoCredentialFails(t *testing.T) {
 		t.Fatalf("state = %q, want failed when the child exited with no credential", st.State)
 	}
 }
+
+// TestConsoleWelcomeLineDoesNotSkipStoringTheAccount pins the bug that made a
+// "successful" login leave the pool empty.
+//
+// The CLI prints "Login successful! Welcome, <name>" the moment the vendor
+// accepts the sign-in.  The reader used to call succeed() on that line, which
+// set the terminal state -- and pollCLILogin returns immediately once the state
+// is terminal, so it never read the credential and never wrote an account.  The
+// panel announced success against an empty pool.
+//
+// The welcome line may only record the name.  Success is declared after the
+// account is stored, and nowhere else.
+func TestConsoleWelcomeLineDoesNotSkipStoringTheAccount(t *testing.T) {
+	sess := &cliLoginSession{id: "w", done: make(chan struct{}), expiresAt: time.Now().Add(time.Minute), message: "waiting"}
+
+	// Exactly what the reader does with the vendor's line.
+	if m := cliWelcomePattern.FindStringSubmatch("Login successful! Welcome, somebody"); len(m) == 2 {
+		sess.setWho(strings.TrimSpace(m[1]))
+	}
+	if st := sess.snapshot(); st.State != core.LoginPending {
+		t.Fatalf("state = %q after the welcome line, want pending: success must be declared only once the account is stored", st.State)
+	}
+	if who := sess.who; who != "somebody" {
+		t.Fatalf("who = %q, want the name recorded from the welcome line", who)
+	}
+}
