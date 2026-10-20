@@ -531,6 +531,36 @@ available balance, so an account parked at zero returns to the pool as soon as
 the check-in actually funds it. If the follow-up read fails or still reports a
 balance at or below the reserve, the account stays parked.
 
+### Invite codes and redemption codes
+
+The desktop client exposes two different code actions, and this module keeps
+them separate rather than treating every six-character string as the same kind
+of code:
+
+| Action | Endpoint | Body |
+| --- | --- | --- |
+| Bind the operator's invite code | `POST {api_base}/points/activation` | `{"inviteCode":"P276D2","deviceId":"loomy-campus-fp-…"}` |
+| Check whether activation is already bound | `GET {api_base}/points/activation` | none |
+| Redeem a points voucher | `POST {api_base}/points/redemption-codes/redeem` | `{"code":"…"}` |
+
+The default invite code is `P276D2` and can be overridden with
+`clients.loomy.invite_code` or `CLIENT2API_LOOMY_INVITE_CODE`. Every session
+created by auto-login or the operator-owned phone flow binds it; a hand-pasted
+session is bound after the credential is stored; the accounts page also offers
+**全部绑定邀请码** for the existing pool. The device id sent with the binding is
+derived from the account's stable user id, so accounts in one pool do not all
+share the same anti-abuse device identity.
+
+The binding is best-effort after a successful login: if the activation
+endpoint is unavailable or refuses the code, the session is still stored and the
+failure is visible in the auto-login log and retryable from the accounts page.
+An account already bound to a different code is reported, not overwritten; the
+vendor's activation endpoint is not a general-purpose "change invitation" call.
+
+`RedeemAccountCode` is the separate points-voucher path. Its code is never
+passed to `/points/activation`, and an invite code is never sent to the
+redemption endpoint.
+
 ---
 
 ## Tests

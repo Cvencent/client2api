@@ -177,16 +177,12 @@ func buildChatBodyWith(cfg Config, req *core.ChatRequest, free bool) ([]byte, er
 
 	tools := make([]oaiTool, 0, len(req.Tools))
 	for _, t := range req.Tools {
-		params := t.Parameters
-		if len(params) == 0 || string(params) == "null" {
-			params = defaultToolParameters
-		}
 		tools = append(tools, oaiTool{
 			Type: firstNonEmpty(t.Type, "function"),
 			Function: oaiToolDef{
 				Name:        t.Name,
 				Description: t.Description,
-				Parameters:  params,
+				Parameters:  normalizeToolParameters(t.Parameters),
 			},
 		})
 	}
@@ -218,6 +214,40 @@ func buildChatBodyWith(cfg Config, req *core.ChatRequest, free bool) ([]byte, er
 		return nil, fmt.Errorf("%s: encoding request: %w", clientName, err)
 	}
 	return body, nil
+}
+
+// normalizeToolParameters makes every function declaration carry the object
+// schema the upstream requires. A tool with no input is commonly sent as the
+// literal `{}`, which makes OpenAI report "schema must be a JSON Schema of
+// 'type: "object"', got 'type: null'" -- the value is absent, not the string
+// null. A root `"type": null` or a non-object root fails the same way. An
+// object schema with any non-null `properties` value is passed through
+// byte-for-byte so its constraints are never rewritten.
+func normalizeToolParameters(raw json.RawMessage) json.RawMessage {
+	trimmed := trimJSON(raw)
+	if trimmed == "" || trimmed == "null" {
+		return defaultToolParameters
+	}
+
+	var obj map[string]any
+	if err := json.Unmarshal(raw, &obj); err != nil || obj == nil {
+		return defaultToolParameters
+	}
+
+	kind, _ := obj["type"].(string)
+	properties, hasProperties := obj["properties"]
+	if kind == "object" && hasProperties && properties != nil {
+		return raw
+	}
+	obj["type"] = "object"
+	if properties == nil {
+		obj["properties"] = map[string]any{}
+	}
+	out, err := json.Marshal(obj)
+	if err != nil {
+		return defaultToolParameters
+	}
+	return out
 }
 
 // wireMessage converts one core.Message.

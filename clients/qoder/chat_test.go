@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -231,7 +232,7 @@ func TestGatewayChatModelsKeepsChatGroupAndDedupes(t *testing.T) {
 
 func TestQoderBillingUsesPriceFactorAndUTC8Promotion(t *testing.T) {
 	raw := `{"chat":[
-		{"key":"qfmodel","display_name":"Qwen3.8-Flash","enable":true,"price_factor":0,"original_price_factor":0.1},
+		{"key":"qmodel_38max","display_name":"Qwen3.8-Max","enable":true,"price_factor":0,"original_price_factor":0.1},
 		{"key":"qmodel_latest","display_name":"Qwen3.7-Max","enable":true,"price_factor":0.1,"original_price_factor":0.5,"promotion":{"active":false,"discount_factor":0.2,"before_promotion_price_factor":0.5,"window_start":"22:00","window_end":"08:00"}},
 		{"key":"flat","display_name":"Flat","enable":true,"price_factor":1.25}
 	]}`
@@ -244,7 +245,7 @@ func TestQoderBillingUsesPriceFactorAndUTC8Promotion(t *testing.T) {
 		t.Fatalf("chatModels = %#v, want three entries", infos)
 	}
 	if infos[0].PriceFactor == nil || *infos[0].PriceFactor != 0 {
-		t.Fatalf("qfmodel price factor = %v, want 0 (free is a real value)", infos[0].PriceFactor)
+		t.Fatalf("qmodel_38max price factor = %v, want 0 (free is a real value)", infos[0].PriceFactor)
 	}
 	if infos[1].Promotion == nil || infos[1].Promotion.WindowStart != "22:00" || infos[1].Promotion.WindowEnd != "08:00" {
 		t.Fatalf("qmodel_latest promotion = %#v", infos[1].Promotion)
@@ -437,5 +438,107 @@ func TestChatSkipsABusyAccountWithoutSpendingAnAttempt(t *testing.T) {
 	}
 	if busy.dead || !busy.cooldownTill.IsZero() {
 		t.Fatalf("the busy account was penalised: %+v", busy)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The vendor wraps failures inside a 200 SSE stream.
+//
+// A frame can carry {body:"{\"code\":\"400\",...}",statusCodeValue:400} while
+// the HTTP response itself was 200.  That refusal must still arrive as a
+// classified core.Failure: the gateway only demotes a platform/model pair when
+// the error it sees is classified, so an anonymous errors.New() left a broken
+// model permanently first in the routing order and every request paid for it.
+// ---------------------------------------------------------------------------
+
+// runStream collects every event a qoderStream produces for one body.
+func runStream(t *testing.T, body string) ([]core.Event, error) {
+	t.Helper()
+	s := newQoderStream(context.Background(), nil, nil, io.NopCloser(strings.NewReader(body)))
+	defer s.Close()
+	var events []core.Event
+	for {
+		ev, err := s.Recv()
+		if errors.Is(err, io.EOF) {
+			return events, nil
+		}
+		if err != nil {
+			return events, err
+		}
+		events = append(events, ev)
+	}
+}
+
+// failedEvent returns the single EventError the stream produced.
+func failedEvent(t *testing.T, events []core.Event) error {
+	t.Helper()
+	for _, ev := range events {
+		if ev.Type == core.EventError {
+			if ev.Err == nil {
+				t.Fatal("EventError carried a nil error")
+			}
+			return ev.Err
+		}
+	}
+	t.Fatal("the stream produced no EventError")
+	return nil
+}
+
+func TestStreamErrorCarriesTheVendorsStatus(t *testing.T) {
+	const frame = `data:{"headers":{"Content-Type":["application/json"]},"body":"{\"code\":\"400\",\"message\":\"[FAIL]node:oa_qwen-plus-main msg:Execution failed: null\"}","statusCodeValue":400,"statusCode":"BAD_REQUEST"}` + "\n\n"
+
+	events, err := runStream(t, frame)
+	if err != nil {
+		t.Fatalf("Recv = %v, want the refusal delivered as an event", err)
+	}
+	failure := failedEvent(t, events)
+	var api *apiError
+	if !errors.As(failure, &api) {
+		t.Fatalf("stream error = %T %v, want a classified *apiError", failure, failure)
+	}
+	if api.Status != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", api.Status)
+	}
+	var coreFailure *core.Failure
+	if !errors.As(failure, &coreFailure) {
+		t.Fatalf("stream error = %v, want it wrapped in core.Failure", failure)
+	}
+	if coreFailure.Kind != core.FailureUpstream {
+		t.Fatalf("kind = %q, want %q", coreFailure.Kind, core.FailureUpstream)
+	}
+	if !strings.Contains(failure.Error(), "Execution failed") {
+		t.Fatalf("error = %q, want the vendor's own message kept", failure)
+	}
+}
+
+// An error frame without a numeric status still has to be classified; the body
+// codes are the vendor's usual spelling.
+func TestStreamErrorUsesTheBodyCodeWhenNoStatusCodeIsSent(t *testing.T) {
+	const frame = `data:{"body":"{\"code\":\"400\",\"message\":\"Execution failed: null\"}"}` + "\n\n"
+
+	events, err := runStream(t, frame)
+	if err != nil {
+		t.Fatalf("Recv = %v, want the refusal delivered as an event", err)
+	}
+	failure := failedEvent(t, events)
+	var api *apiError
+	if !errors.As(failure, &api) {
+		t.Fatalf("stream error = %T %v, want a classified *apiError", failure, failure)
+	}
+	if api.Status != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 recovered from the body code", api.Status)
+	}
+}
+
+// A clean stream must not gain a classification or an error event.
+func TestStreamSuccessStaysClean(t *testing.T) {
+	events, err := runStream(t, probeSSEFrame)
+	if err != nil {
+		t.Fatalf("Recv = %v", err)
+	}
+	for _, ev := range events {
+		if ev.Type == core.EventError {
+			t.Fatalf("a clean stream produced an EventError: %v", ev.Err)
+		}
 	}
 }

@@ -140,6 +140,13 @@ reporting it. A 400 that carries an error type or message — an unknown model, 
 malformed field — stays final, and so does every other status code, so a caller's
 mistake is never multiplied across the pool.
 
+Every outgoing function declaration has an object `parameters` schema. A missing
+or nullable declaration (`{}` or `{"type":null}`) is filled with
+`{"type":"object","properties":{}}`; malformed roots get the same safe fallback,
+while a declared object schema is passed through byte-for-byte. This prevents
+OpenAI's `schema must be a JSON Schema of 'type: "object"', got 'type: null'`
+400 when an MCP client omits a schema type.
+
 ## Features
 
 ### Gateway and routing
@@ -362,6 +369,7 @@ mistake is never multiplied across the pool.
   off by default because prefetching roughly doubles device-quota consumption.
   Tune it with `captcha_pool` and `captcha_pool_ttl_seconds`.
 - Loomy balance, package and model-catalogue refreshes are display-only: a failed read is reported on that row and does not cool down, park, or disable the account; a real chat request or the explicit Test action is what changes account health.
+- Loomy binds the configured invitation code (`P276D2` by default) on auto-login, operator phone login and manual session import; the accounts page can bind the whole enabled pool and can separately redeem points vouchers. An account already bound to another invite code is reported, not overwritten.
 - ZCode JWT / API key channels grouped under one account.
 - OfficeAce (Office Claw) ships as a built-in platform (`officeace`), so there is no relay entry to add. Open its account pool and use **Browser sign-in**: the panel runs the same Huawei account OAuth flow as the OfficeAce client, keeps the returned model-gateway App Key / App Secret in this gateway's own account store, and scans the catalogue published as `officeace/<model>`. Each account keeps the model gateway returned by its own login, so different regions or gateways can coexist; the OfficeAce desktop app does not need to stay open. On Windows, **Import -> Discover local credentials** remains available as a fallback for an already signed-in OfficeAce client.
 

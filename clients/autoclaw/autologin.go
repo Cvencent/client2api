@@ -49,6 +49,10 @@ const (
 	// autoMaxLogLines caps one job's log so a pathological run cannot grow the
 	// response without bound.
 	autoMaxLogLines = 400
+	// autoLoginRetryDelay gives a delivered one-time code one short second
+	// chance before the batch abandons the number.  A retry uses the same
+	// phone and code; sending a fresh SMS would invalidate the first one.
+	autoLoginRetryDelay = time.Second
 )
 
 // autoJob is one auto-login run.  Its log is append-only and every field is
@@ -313,11 +317,22 @@ func (c *Client) autoLogin(ctx context.Context, job *autoJob, req core.AutoLogin
 	}
 	job.logf("已收到验证码 %s", code)
 
-	// 4) Redeem the code for the account's tokens and store them.
+	// 4) Redeem the code for the account's tokens and store them.  The
+	// identity gateway occasionally answers one login request with a transient
+	// 5xx/transport failure even though the code is valid.  A second POST with
+	// the same one-time code is safe and much cheaper than discarding the
+	// number and sending another SMS.
 	job.setStep("confirming")
 	cred, err := c.signInWithCode(ctx, num.Phone, code)
 	if err != nil {
-		return fmt.Errorf("验证码登录失败：%w", err)
+		job.logf("首次验证码提交失败：%v；1 秒后用同一验证码重试", err)
+		if !sleepCtx(ctx, autoLoginRetryDelay) {
+			return ctx.Err()
+		}
+		cred, err = c.signInWithCode(ctx, num.Phone, code)
+		if err != nil {
+			return fmt.Errorf("验证码登录失败（同一验证码已重试一次）：%w", err)
+		}
 	}
 	e := c.storeCredential(ctx, cred)
 	job.logf("账号已保存：%s", e.acct.label())

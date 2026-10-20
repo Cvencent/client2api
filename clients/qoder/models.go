@@ -259,6 +259,12 @@ func (c *Client) fetchModels(ctx context.Context) ([]modelInfo, error) {
 	}
 	var lastErr error
 	for i := 0; i < len(candidates) && i < maxChatAttempts; i++ {
+		// A CLI-only account has no device token to sign the catalogue request
+		// with, and blaming it for the resulting 401 would park a working
+		// account.
+		if candidates[i].cliOnly() {
+			continue
+		}
 		infos, err := c.fetchModelList(ctx, candidates[i])
 		if err == nil {
 			return infos, nil

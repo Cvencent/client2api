@@ -54,6 +54,12 @@ const (
 	// defaultAppID is the application id the account service expects in the
 	// request body's `base.appid`.
 	defaultAppID = "GM3LOOMY"
+
+	// defaultInviteCode is the operator's Loomy invite code.  The desktop
+	// client calls the same value the "使用邀请码兑换积分" button uses; every
+	// account created or imported through this module binds it by default.
+	// A different deployment can override it with clients.loomy.invite_code.
+	defaultInviteCode = "P276D2"
 )
 
 // Defaults for every tuning knob.
@@ -119,6 +125,9 @@ type config struct {
 	AccessKeyID     string `json:"access_key_id"`
 	AccessKeySecret string `json:"access_key_secret"`
 	AppID           string `json:"app_id"`
+	// InviteCode is bound to every account after login/import.  Empty means
+	// defaultInviteCode.  The panel can override it per call.
+	InviteCode string `json:"invite_code"`
 
 	Accounts []accountConfig `json:"accounts"`
 
@@ -192,6 +201,9 @@ func (c config) accessKeySecret() string {
 	return firstNonEmpty(c.AccessKeySecret, defaultAccessKeySecret)
 }
 func (c config) appID() string { return firstNonEmpty(c.AppID, defaultAppID) }
+func (c config) inviteCode() string {
+	return firstNonEmpty(strings.TrimSpace(c.InviteCode), defaultInviteCode)
+}
 
 // tlsProfile / tlsProtocol expose the transport-fingerprint keys to New.
 func (c config) tlsProfile() fingerprint.Profile {
@@ -348,6 +360,7 @@ func applyEnv(cfg *config) {
 	envStr(&cfg.AccessKeyID, "CLIENT2API_LOOMY_ACCESS_KEY_ID")
 	envStr(&cfg.AccessKeySecret, "CLIENT2API_LOOMY_ACCESS_KEY_SECRET")
 	envStr(&cfg.AppID, "CLIENT2API_LOOMY_APP_ID")
+	envStr(&cfg.InviteCode, "CLIENT2API_LOOMY_INVITE_CODE")
 	// EOMSG_TOKEN is shared with workbuddy: it is the same one-time-SMS
 	// platform, so one environment variable can configure both modules.
 	envStr(&cfg.SMSToken, "CLIENT2API_LOOMY_SMS_TOKEN")

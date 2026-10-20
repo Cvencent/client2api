@@ -604,6 +604,15 @@ func (p *panel) handleClientScoped(w http.ResponseWriter, r *http.Request) {
 	case len(segs) == 3 && segs[0] == "accounts" && segs[2] == "checkin":
 		p.checkin(w, r, client, segs[1])
 
+	case len(segs) == 1 && segs[0] == "invites":
+		p.invites(w, r, client)
+
+	case len(segs) == 2 && segs[0] == "invites" && segs[1] == "bind":
+		p.bindInvites(w, r, client)
+
+	case len(segs) == 3 && segs[0] == "accounts" && segs[2] == "redeem":
+		p.redeemAccountCode(w, r, client, segs[1])
+
 	// The operator's escape hatch.  Every module's pool parks a credential on
 	// its own authority (a dead session, a plan limit, a WAF block), and none
 	// of them may shorten that verdict just because time passed.  Only a human

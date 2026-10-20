@@ -109,9 +109,10 @@ func TestSessionPlatformsManualPinSurvivesFailoverBinding(t *testing.T) {
 }
 
 // TestSessionPlatformsManualPinSurvivesTemporaryDegradation keeps the explicit
-// target recorded after its first upstream failure. Automatic stickiness should
-// still fall through to a healthy sibling for the current request, but the next
-// turn must retry the operator's chosen platform instead of forgetting it.
+// target recorded even while its platform is degraded. The routing layer treats
+// that manual pin as a hard constraint, so the caller gets the pinned
+// platform's own error instead of a silent answer from a sibling, and the pin
+// is still there for the next turn rather than being forgotten.
 func TestSessionPlatformsManualPinSurvivesTemporaryDegradation(t *testing.T) {
 	sp := newSessionPlatforms()
 	if !sp.Pin("conv-1", "molly", "gpt-6.1-sol") {
@@ -124,5 +125,28 @@ func TestSessionPlatformsManualPinSurvivesTemporaryDegradation(t *testing.T) {
 	}
 	if rows := sp.List(); len(rows) != 1 || rows[0].Platform != "molly" {
 		t.Fatalf("routes = %#v, want the manual pin retained after degradation", rows)
+	}
+}
+
+// TestSessionPlatformsManualPinDoesNotIdleExpire pins the other half of the
+// operator contract: a force-switch must not quietly lapse after the sticky
+// TTL while the panel still shows the route as bound.  Only automatic
+// bindings age out.
+func TestSessionPlatformsManualPinDoesNotIdleExpire(t *testing.T) {
+	sp := newSessionPlatforms()
+	base := time.Now()
+	sp.now = func() time.Time { return base }
+	if !sp.Pin("conv-1", "molly", "gpt-6.1-sol") {
+		t.Fatal("Pin reported no change")
+	}
+
+	sp.now = func() time.Time { return base.Add(sp.ttl + time.Minute) }
+	got, ok := sp.resolve("conv-1", nil)
+	if !ok || got != "molly" {
+		t.Fatalf("resolve after ttl = %q,%v, want the manual pin retained", got, ok)
+	}
+	rows := sp.List()
+	if len(rows) != 1 || rows[0].Platform != "molly" {
+		t.Fatalf("routes after ttl = %#v, want the manual pin still listed", rows)
 	}
 }

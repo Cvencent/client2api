@@ -65,6 +65,8 @@ func checkinRT(rec *rtRecorder, statusBody, claimBody string) roundTripFunc {
 			return jsonResponse(http.StatusOK, statusBody), nil
 		case strings.HasSuffix(req.URL.Path, ugCheckinClaimPath):
 			return jsonResponse(http.StatusOK, claimBody), nil
+		case strings.HasSuffix(req.URL.Path, ugActivityInfoPath):
+			return jsonResponse(http.StatusOK, `{"code":0,"data":{"commercial_activities":[]}}`), nil
 		default:
 			return jsonResponse(http.StatusInternalServerError, `{"code":1,"msg":"unexpected route"}`), nil
 		}
@@ -76,14 +78,16 @@ func checkinRT(rec *rtRecorder, statusBody, claimBody string) roundTripFunc {
 func TestTraeCheckinActionsOfferTheAction(t *testing.T) {
 	c := testClient(t, nil, []*Auth{testAuth("u1", "TOK_1")}, nil)
 	got := c.CheckinActions(context.Background())
-	if len(got) != 1 {
-		t.Fatalf("got %d actions, want 1: %+v", len(got), got)
+	if len(got) != 2 {
+		t.Fatalf("got %d actions, want 2: %+v", len(got), got)
 	}
-	if got[0].ID != checkinActionUG {
-		t.Errorf("action id = %q, want %q", got[0].ID, checkinActionUG)
+	if got[0].ID != checkinActionUG || got[1].ID != checkinActionLottery {
+		t.Errorf("action ids = %q, %q", got[0].ID, got[1].ID)
 	}
-	if got[0].Label == "" || got[0].Help == "" {
-		t.Errorf("action is missing its label or help: %+v", got[0])
+	for _, a := range got {
+		if a.Label == "" || a.Help == "" {
+			t.Errorf("action is missing its label or help: %+v", a)
+		}
 	}
 }
 
@@ -112,7 +116,7 @@ func TestTraeCheckinCapabilitiesAdvertiseTheAction(t *testing.T) {
 	if !caps.CheckinReady {
 		t.Fatal("caps.CheckinReady = false with an eligible account")
 	}
-	if len(caps.Actions) != 1 || caps.Actions[0].ID != checkinActionUG {
+	if len(caps.Actions) != 2 || caps.Actions[0].ID != checkinActionUG || caps.Actions[1].ID != checkinActionLottery {
 		t.Fatalf("caps.Actions = %+v", caps.Actions)
 	}
 }
@@ -165,8 +169,11 @@ func TestTraeCheckinClaimsWhenNotCheckedIn(t *testing.T) {
 	}
 
 	urls, methods, bodies, _ := rec.snapshot()
-	if len(urls) != 2 {
-		t.Fatalf("made %d requests, want status then claim: %v", len(urls), urls)
+	if len(urls) != 3 {
+		t.Fatalf("made %d requests, want status, claim, activity info: %v", len(urls), urls)
+	}
+	if urls[2] != "https://api.trae.cn"+ugActivityInfoPath {
+		t.Errorf("third url = %q", urls[2])
 	}
 	if urls[0] != "https://api.trae.cn"+ugCheckinStatusPath {
 		t.Errorf("first url = %q", urls[0])
@@ -179,10 +186,13 @@ func TestTraeCheckinClaimsWhenNotCheckedIn(t *testing.T) {
 			t.Errorf("call %d used %s, want POST", i, m)
 		}
 	}
-	for i, b := range bodies {
+	for i, b := range bodies[:2] {
 		if strings.TrimSpace(b) != "{}" {
 			t.Errorf("call %d body = %q, want {}", i, b)
 		}
+	}
+	if !strings.Contains(bodies[2], `"version_code"`) || !strings.Contains(bodies[2], `"req_source":1`) {
+		t.Errorf("activity info body = %q", bodies[2])
 	}
 }
 
@@ -208,8 +218,8 @@ func TestTraeCheckinAlreadyCheckedInSkipsTheClaim(t *testing.T) {
 	if res.Action != checkinActionUG {
 		t.Errorf("Action = %q", res.Action)
 	}
-	if n := rec.count(); n != 1 {
-		t.Fatalf("made %d requests; a claimed day must not be claimed again", n)
+	if n := rec.count(); n != 2 {
+		t.Fatalf("made %d requests; a claimed day must not be claimed again, but should read the lottery", n)
 	}
 }
 
@@ -246,8 +256,150 @@ func TestTraeCheckinWrappedAlreadyDone(t *testing.T) {
 	if done, _ := res.Data["already_done"].(bool); !done {
 		t.Error("already_done = false for a wrapped checked_in=true")
 	}
-	if n := rec.count(); n != 1 {
-		t.Fatalf("made %d requests, want 1", n)
+	if n := rec.count(); n != 2 {
+		t.Fatalf("made %d requests, want status and lottery info", n)
+	}
+}
+
+// --- 1024 lottery -----------------------------------------------------------
+
+func TestTraeCheckinParticipatesIn1024LotteryWhenGrantable(t *testing.T) {
+	rec := &rtRecorder{}
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		rec.record(req)
+		switch {
+		case strings.HasSuffix(req.URL.Path, ugCheckinStatusPath):
+			return jsonResponse(http.StatusOK, `{"checked_in":false,"enable":true,"credits":5}`), nil
+		case strings.HasSuffix(req.URL.Path, ugCheckinClaimPath):
+			return jsonResponse(http.StatusOK, `{"code":0,"msg":"领取成功","credits":10}`), nil
+		case strings.HasSuffix(req.URL.Path, ugActivityInfoPath):
+			return jsonResponse(http.StatusOK, `{"code":0,"data":{"commercial_activities":[{"activity_id":"checkin_1024","Enabled":true,"work_extra":{"eligible":true,"grantable":true,"granted":false}}]}}`), nil
+		case strings.HasSuffix(req.URL.Path, ugActivityActionPath):
+			return jsonResponse(http.StatusOK, `{"code":0,"data":{"work_extra":{"granted":true,"prize_type":1,"prize_text":"100 积分","general_credits":100}}}`), nil
+		default:
+			return jsonResponse(http.StatusInternalServerError, `{"code":1,"msg":"unexpected route"}`), nil
+		}
+	})
+	c := testClient(t, nil, []*Auth{testAuth("u1", "TOK_1")}, rt)
+
+	res, err := c.Checkin(context.Background(), "u1", checkinActionUG)
+	if err != nil {
+		t.Fatalf("Checkin: %v", err)
+	}
+	if !res.OK {
+		t.Fatalf("OK = false: %q", res.Error)
+	}
+	got, ok := res.Data["lottery"].(map[string]any)
+	if !ok || got["state"] != "result" || got["prize_text"] != "100 积分" {
+		t.Fatalf("lottery = %#v", res.Data["lottery"])
+	}
+	if credits, _ := got["credits"].(int64); credits != 100 {
+		t.Errorf("lottery credits = %#v, want 100", got["credits"])
+	}
+
+	_, _, bodies, _ := rec.snapshot()
+	if len(bodies) != 4 {
+		t.Fatalf("made %d calls, want status, claim, info, action: %v", len(bodies), bodies)
+	}
+	if !strings.Contains(bodies[2], `"req_source":1`) || !strings.Contains(bodies[2], `"version_code"`) {
+		t.Errorf("activity info body = %q", bodies[2])
+	}
+	if strings.TrimSpace(bodies[3]) != `{"activity_id":"checkin_1024","req_source":1}` {
+		t.Errorf("activity action body = %q", bodies[3])
+	}
+}
+
+func TestTraeLotteryRecoveryDoesNotClaimAgain(t *testing.T) {
+	rec := &rtRecorder{}
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		rec.record(req)
+		switch {
+		case strings.HasSuffix(req.URL.Path, ugCheckinStatusPath):
+			return jsonResponse(http.StatusOK, `{"checked_in":true,"enable":true,"credits":5}`), nil
+		case strings.HasSuffix(req.URL.Path, ugActivityInfoPath):
+			return jsonResponse(http.StatusOK, `{"commercial_activities":[{"activity_id":"checkin_1024","Enabled":true,"work_extra":{"eligible":true,"grantable":true,"granted":false}}]}`), nil
+		case strings.HasSuffix(req.URL.Path, ugActivityActionPath):
+			return jsonResponse(http.StatusOK, `{"code":0,"data":{"work_extra":{"granted":true,"prize_type":3,"prize_text":"谢谢参与"}}}`), nil
+		default:
+			return jsonResponse(http.StatusInternalServerError, `{"code":1,"msg":"unexpected route"}`), nil
+		}
+	})
+	c := testClient(t, nil, []*Auth{testAuth("u1", "TOK_1")}, rt)
+
+	res, err := c.Checkin(context.Background(), "u1", checkinActionLottery)
+	if err != nil {
+		t.Fatalf("Checkin: %v", err)
+	}
+	if !res.OK || res.Action != checkinActionLottery || res.Data["state"] != "result" {
+		t.Fatalf("result = %+v", res)
+	}
+	urls, _, _, _ := rec.snapshot()
+	if len(urls) != 3 {
+		t.Fatalf("made %d calls, want status, info, action: %v", len(urls), urls)
+	}
+	for _, u := range urls {
+		if strings.HasSuffix(u, ugCheckinClaimPath) {
+			t.Fatal("recovery path claimed check-in a second time")
+		}
+	}
+}
+
+func TestTraeLotteryReadOnlyWhenNotGrantable(t *testing.T) {
+	rec := &rtRecorder{}
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		rec.record(req)
+		switch {
+		case strings.HasSuffix(req.URL.Path, ugCheckinStatusPath):
+			return jsonResponse(http.StatusOK, `{"checked_in":true,"enable":true}`), nil
+		case strings.HasSuffix(req.URL.Path, ugActivityInfoPath):
+			return jsonResponse(http.StatusOK, `{"code":0,"data":{"commercial_activities":[{"activity_id":"checkin_1024","Enabled":true,"work_extra":{"eligible":true,"grantable":false,"granted":false}}]}}`), nil
+		default:
+			return jsonResponse(http.StatusInternalServerError, `{"code":1,"msg":"unexpected route"}`), nil
+		}
+	})
+	c := testClient(t, nil, []*Auth{testAuth("u1", "TOK_1")}, rt)
+
+	res, err := c.Checkin(context.Background(), "u1", checkinActionLottery)
+	if err != nil {
+		t.Fatalf("Checkin: %v", err)
+	}
+	if res.OK || !res.Skipped {
+		t.Fatalf("result = %+v, want a settled skip", res)
+	}
+	if res.Data["state"] != "unavailable" {
+		t.Fatalf("lottery = %#v", res.Data)
+	}
+	if n := rec.count(); n != 2 {
+		t.Fatalf("made %d calls, want status and activity info only", n)
+	}
+}
+
+func TestTraeLotteryActivityActionIsNotRetried(t *testing.T) {
+	rec := &rtRecorder{}
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		rec.record(req)
+		switch {
+		case strings.HasSuffix(req.URL.Path, ugCheckinStatusPath):
+			return jsonResponse(http.StatusOK, `{"checked_in":true,"enable":true}`), nil
+		case strings.HasSuffix(req.URL.Path, ugActivityInfoPath):
+			return jsonResponse(http.StatusOK, `{"code":0,"data":{"commercial_activities":[{"activity_id":"checkin_1024","Enabled":true,"work_extra":{"eligible":true,"grantable":true,"granted":false}}]}}`), nil
+		case strings.HasSuffix(req.URL.Path, ugActivityActionPath):
+			return jsonResponse(http.StatusInternalServerError, `{"code":500,"message":"busy"}`), nil
+		default:
+			return jsonResponse(http.StatusInternalServerError, `{"code":1,"msg":"unexpected route"}`), nil
+		}
+	})
+	c := testClient(t, nil, []*Auth{testAuth("u1", "TOK_1")}, rt)
+
+	res, err := c.Checkin(context.Background(), "u1", checkinActionLottery)
+	if err != nil {
+		t.Fatalf("Checkin: %v", err)
+	}
+	if res.OK {
+		t.Fatal("OK = true for a failed mutating action")
+	}
+	if n := rec.count(); n != 3 {
+		t.Fatalf("action was retried: %d calls (%v)", n, rec.urls)
 	}
 }
 

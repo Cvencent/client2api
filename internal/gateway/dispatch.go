@@ -194,13 +194,32 @@ func (s *server) routeAndServeMessages(w http.ResponseWriter, r *http.Request, i
 	if s.opts.Live != nil {
 		s.sessionPlatforms.setTTL(s.opts.Live.Load().AffinityTTL)
 	}
-	if len(candidates) > 1 {
+	// A manual pin is checked even for a single-candidate model: the pin names
+	// the platform that must answer, and a single candidate on another platform
+	// is still the wrong answer.  Automatic stickiness is a ranking
+	// optimisation, so it only matters when there is something to reorder.
+	if pinnedPlatform, manual := s.sessionPlatforms.pinFor(conversationKey); manual {
+		// A manual force-switch is an operator decision, not a hint.  The
+		// request must be answered by the chosen platform or fail honestly:
+		// silently failing over is exactly the bug where an operator switched a
+		// conversation away from a platform and it kept coming back.
+		pinned, ok := candidateOnPlatform(candidates, pinnedPlatform)
+		if !ok {
+			err := fmt.Errorf("platform %q no longer serves model %q; clear or change the forced switch for this conversation", pinnedPlatform, in.requested)
+			in.stat.status = http.StatusNotFound
+			s.fail(in.rec, err)
+			in.protocolError(w, http.StatusNotFound, "invalid_request_error", err.Error())
+			return
+		}
+		candidates = []core.Candidate{pinned}
+	} else if len(candidates) > 1 {
 		if platform, ok := s.sessionPlatforms.resolve(conversationKey, func(name string) bool {
 			for _, c := range candidates {
 				if c.Client != nil && c.Client.Name() == name {
-					// A platform that cannot serve right now must not keep a
-					// sticky conversation pinned to it; the binding is only an
-					// optimisation and the healthy candidate should win.
+					// A platform that cannot serve right now must not keep an
+					// automatic sticky conversation pinned to it; the binding
+					// is only an optimisation and the healthy candidate should
+					// win.
 					if s.opts.Registry.ModelDegraded(c.Client.Name(), c.Model, time.Now()) {
 						return false
 					}

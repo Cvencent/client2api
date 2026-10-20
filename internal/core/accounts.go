@@ -315,6 +315,11 @@ type Capabilities struct {
 	Balance  bool `json:"balance"`  // BalanceProvider: can report credits left
 	Packages bool `json:"packages"` // PackageProvider: can break credits into tranches
 	Vouchers bool `json:"vouchers"` // VoucherProvider: holds redemption codes
+	// InviteCodes says the module can bind one invite code to accounts and can
+	// redeem a separate redemption code.  The default travels with the flag so
+	// the panel can show the operator exactly what "all accounts" will use.
+	InviteCodes       bool   `json:"invite_codes"`
+	InviteCodeDefault string `json:"invite_code_default,omitempty"`
 	// Conversations says the module implements ConversationBinder, so an
 	// operator can pin one conversation key to one account and thereby test
 	// that account through the ordinary chat route.  Without it the panel must
@@ -750,6 +755,10 @@ func CapabilitiesOf(ctx context.Context, c Client) Capabilities {
 	}
 	if _, ok := c.(VoucherProvider); ok {
 		caps.Vouchers = true
+	}
+	if ip, ok := c.(InviteCodeProvider); ok {
+		caps.InviteCodes = true
+		caps.InviteCodeDefault = ip.InviteCodeDefault(ctx)
 	}
 	if _, ok := c.(ConversationBinder); ok {
 		caps.Conversations = true

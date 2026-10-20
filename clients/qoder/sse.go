@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -146,61 +147,76 @@ func readFrames(ctx context.Context, r io.Reader, onPayload func(payload string)
 // It reports ok=false for frames that carry nothing (empty, "{}", "[DONE]"),
 // and returns a non-empty message when the frame is an error.
 func unwrapFrame(payload string) (raw string, ok bool, errMsg string) {
+	raw, ok, api := unwrapFrameError(payload)
+	if api != nil {
+		return "", false, api.Error()
+	}
+	return raw, ok, ""
+}
+
+// unwrapFrameError is unwrapFrame with the vendor's status preserved.
+//
+// A frame can refuse a request after the HTTP 200 has already been written:
+// {body:"{\"code\":\"400\",...}",statusCodeValue:400}.  The caller must keep
+// that status, because the gateway only demotes a platform/model pair it can
+// classify -- an anonymous string left a permanently broken model first in the
+// routing order.
+func unwrapFrameError(payload string) (raw string, ok bool, api *apiError) {
 	p := strings.TrimSpace(payload)
 	if p == "" || p == "[DONE]" || p == "{}" || p == "null" {
-		return "", false, ""
+		return "", false, nil
 	}
 	var obj map[string]any
 	if err := json.Unmarshal([]byte(p), &obj); err != nil {
 		// Not JSON at all: the payload itself is the message.
-		return p, true, ""
+		return p, true, nil
 	}
 	if obj == nil {
-		return "", false, ""
+		return "", false, nil
 	}
 	if _, has := obj["choices"]; has {
-		return p, true, ""
+		return p, true, nil
 	}
 	if t, _ := obj["object"].(string); t == "chat.completion.chunk" || t == "chat.completion" {
-		return p, true, ""
+		return p, true, nil
 	}
 	if _, has := obj["error"]; has {
-		return "", false, errorMessageOf(obj["error"], 0)
+		return "", false, &apiError{Message: errorMessageOf(obj["error"], 0)}
 	}
 	if code, has := numberField(obj, "statusCodeValue", "status_code", "status"); has && code >= 400 {
-		return "", false, bodyCodeMessage(p, int(code))
+		return "", false, errorFromBody(p, int(code))
 	}
 	body, has := obj["body"]
 	if !has {
 		// Not an envelope.  The vendor also sends bare chunks that carry no
 		// choices at all, such as a usage-only frame at the end of a stream;
 		// parseChunk is what decides whether it means anything.
-		return p, true, ""
+		return p, true, nil
 	}
 	switch v := body.(type) {
 	case string:
 		s := strings.TrimSpace(v)
 		if s == "" || s == "[DONE]" || s == "{}" || s == "null" || s == "[]" {
-			return "", false, ""
+			return "", false, nil
 		}
-		if msg := bodyCodeMessage(s, 0); msg != "" {
-			return "", false, msg
+		if api := errorFromBody(s, 0); api != nil {
+			return "", false, api
 		}
-		return s, true, ""
+		return s, true, nil
 	case map[string]any:
 		if len(v) == 0 {
-			return "", false, ""
+			return "", false, nil
 		}
 		if _, has := v["error"]; has {
-			return "", false, errorMessageOf(v["error"], 0)
+			return "", false, &apiError{Message: errorMessageOf(v["error"], 0)}
 		}
 		b, err := json.Marshal(v)
 		if err != nil {
-			return "", false, ""
+			return "", false, nil
 		}
-		return string(b), true, ""
+		return string(b), true, nil
 	default:
-		return "", false, ""
+		return "", false, nil
 	}
 }
 
@@ -233,6 +249,60 @@ func bodyCodeMessage(raw string, status int) string {
 		return "upstream " + itoa(status) + ": " + cleanErrorText(raw)
 	}
 	return ""
+}
+
+// errorFromBody turns one vendor error body into a classified error.  The body
+// is the vendor's own JSON, which may name the HTTP status only inside the
+// request envelope (statusCodeValue); when the caller already knows the status
+// it passes it in and the body's "code" is used only for the message.
+//
+// A body that says nothing is not an error: the same helper is used on frames
+// that legitimately carry an empty body.
+func errorFromBody(raw string, status int) *apiError {
+	msg := bodyCodeMessage(raw, status)
+	if msg == "" {
+		return nil
+	}
+	code, _ := decodeErrorMessage([]byte(raw))
+	if status == 0 {
+		status = statusFromCode(code)
+	}
+	return &apiError{Status: status, Code: code, Message: strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(msg), "upstream "+itoa(status)+": "))}
+}
+
+// statusFromCode reads the vendor's string status code ("400", "401", "429").
+func statusFromCode(code string) int {
+	n, err := strconv.Atoi(strings.TrimSpace(code))
+	if err != nil || n < 100 || n > 599 {
+		return 0
+	}
+	return n
+}
+
+// failStream turns one stream-error message into a classified error.
+//
+// The vendor's own text already carries the HTTP status ("upstream 400: ..."),
+// because that is the only place it survives once the 200 response was sent.
+// Parsing it back keeps the classification the gateway needs to demote the
+// pair; a message with no status stays a plain error and is reported as-is.
+func failStream(message string) error {
+	message = strings.TrimSpace(message)
+	status := 0
+	if rest, ok := strings.CutPrefix(message, "upstream "); ok {
+		if head, _, found := strings.Cut(rest, ":"); found {
+			status = statusFromCode(head)
+		} else {
+			status = statusFromCode(rest)
+		}
+	}
+	if status == 0 {
+		return errors.New(message)
+	}
+	detail := message
+	if _, after, found := strings.Cut(message, ":"); found {
+		detail = strings.TrimSpace(after)
+	}
+	return &apiError{Status: status, Message: detail}
 }
 
 // errorMessageOf renders an {"error": ...} field, which may be a string or an
@@ -454,6 +524,10 @@ type qoderStream struct {
 	slot     func()
 	slotOnce sync.Once
 
+	// account is the credential this stream was opened with, so a refusal that
+	// arrives inside the 200 stream can still be attributed to it.
+	account string
+
 	once     sync.Once
 	closeErr error
 }
@@ -466,8 +540,24 @@ func (s *qoderStream) takeSlot() {
 	s.slotOnce.Do(s.slot)
 }
 
+// streamFailure wraps one in-stream refusal as the classified failure the
+// gateway routes on.  Only *apiError values reach here: the vendor's status is
+// what decides whether the pair is demoted or the credential is parked.
+func streamFailure(accountID string, api *apiError) error {
+	if api == nil {
+		return nil
+	}
+	return core.Fail("qoder", accountID, failureKind(api), api.Status, api)
+}
+
 // newQoderStream wraps one upstream response body. release and slot may be nil.
 func newQoderStream(parent context.Context, release context.CancelFunc, slot func(), body io.ReadCloser) *qoderStream {
+	return newQoderStreamFor(parent, release, slot, body, "")
+}
+
+// newQoderStreamFor is newQoderStream with the credential that opened it, so an
+// in-stream refusal can name the account it belongs to.
+func newQoderStreamFor(parent context.Context, release context.CancelFunc, slot func(), body io.ReadCloser, accountID string) *qoderStream {
 	if parent == nil {
 		parent = context.Background()
 	}
@@ -479,6 +569,7 @@ func newQoderStream(parent context.Context, release context.CancelFunc, slot fun
 		ch:      make(chan core.Event, 32),
 		release: release,
 		slot:    slot,
+		account: accountID,
 	}
 	// GoSafe is the last-resort net: run reports a panic as an event, but a
 	// panic in that report path would still take the whole process down.
@@ -552,9 +643,9 @@ func (s *qoderStream) run() {
 		if strings.TrimSpace(payload) == "[DONE]" {
 			return errStreamDone
 		}
-		raw, ok, errMsg := unwrapFrame(payload)
-		if errMsg != "" {
-			fatalErr = errors.New(errMsg)
+		raw, ok, api := unwrapFrameError(payload)
+		if api != nil {
+			fatalErr = streamFailure(s.account, api)
 			return errStreamDone
 		}
 		if !ok {

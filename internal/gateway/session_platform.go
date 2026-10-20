@@ -89,8 +89,12 @@ func (s *sessionPlatforms) bindModel(conversationKey, platform, model string) {
 }
 
 // resolve reports the platform bound to conversationKey, and only when that
-// platform is still usable.  An expired or unusable binding is forgotten, so
-// the caller falls back to normal candidate ranking.
+// platform is still usable.  An expired or unusable automatic binding is
+// forgotten, so the caller falls back to normal candidate ranking.
+//
+// A manual binding is different: it is an operator decision, so it is returned
+// even while the platform is degraded, and the caller must treat it as a hard
+// constraint instead of falling through to another platform.
 func (s *sessionPlatforms) resolve(conversationKey string, usable func(string) bool) (string, bool) {
 	if s == nil || conversationKey == "" {
 		return "", false
@@ -102,7 +106,10 @@ func (s *sessionPlatforms) resolve(conversationKey string, usable func(string) b
 	if !ok {
 		return "", false
 	}
-	if s.ttl > 0 && now.Sub(e.lastSeen) > s.ttl {
+	// A manual pin is operator state, not an idle heuristic: GC already skips
+	// it, and expiring it here would silently drop a force-switch after the
+	// sticky TTL while the panel still showed the route as bound.
+	if !e.manual && s.ttl > 0 && now.Sub(e.lastSeen) > s.ttl {
 		delete(s.entries, conversationKey)
 		return "", false
 	}
@@ -111,6 +118,28 @@ func (s *sessionPlatforms) resolve(conversationKey string, usable func(string) b
 		return "", false
 	}
 	return e.platform, true
+}
+
+// pinFor reports the platform and manual flag bound to conversationKey.  It is
+// the request path's read for a binding that must survive degradation: resolve
+// answers "where should this go", while pinFor also answers "may the router
+// fail over from here".
+func (s *sessionPlatforms) pinFor(conversationKey string) (string, bool) {
+	if s == nil || conversationKey == "" {
+		return "", false
+	}
+	now := s.clock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.entries[conversationKey]
+	if !ok {
+		return "", false
+	}
+	if !e.manual && s.ttl > 0 && now.Sub(e.lastSeen) > s.ttl {
+		delete(s.entries, conversationKey)
+		return "", false
+	}
+	return e.platform, e.manual
 }
 
 // forget drops a binding, used when the pinned platform is known to be bad.
@@ -137,11 +166,14 @@ func (s *SessionPlatforms) List() []StickyRoute {
 	defer s.mu.Unlock()
 	out := make([]StickyRoute, 0, len(s.entries))
 	for key, e := range s.entries {
-		if s.ttl > 0 && now.Sub(e.lastSeen) > s.ttl {
+		// Manual pins are operator state, so they are listed even once the idle
+		// window has passed, matching resolve and GC.  Only automatic bindings
+		// age out of the management view.
+		if !e.manual && s.ttl > 0 && now.Sub(e.lastSeen) > s.ttl {
 			continue
 		}
 		row := StickyRoute{Key: key, Platform: e.platform, Model: e.model, LastSeen: e.lastSeen}
-		if s.ttl > 0 {
+		if s.ttl > 0 && !e.manual {
 			row.ExpiresAt = e.lastSeen.Add(s.ttl)
 		}
 		out = append(out, row)
@@ -280,6 +312,18 @@ func (s *sessionPlatforms) clock() time.Time {
 		return s.now()
 	}
 	return time.Now()
+}
+
+// candidateOnPlatform finds the candidate for one platform.  A manual pin is a
+// hard constraint, so the caller must refuse the request when the chosen
+// platform is absent rather than answering from a platform it did not choose.
+func candidateOnPlatform(candidates []core.Candidate, platform string) (core.Candidate, bool) {
+	for _, c := range candidates {
+		if c.Client != nil && c.Client.Name() == platform {
+			return c, true
+		}
+	}
+	return core.Candidate{}, false
 }
 
 // prioritize moves the bound platform to the front of a candidate list.  The

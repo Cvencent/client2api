@@ -120,6 +120,30 @@ func truncate(s string, n int) string {
 	return s[:n] + "…"
 }
 
+// requestTooLarge builds the error for the vendor's 413. The vendor's own
+// message is boilerplate and names no number; the useful facts are how large
+// the request was and what to shrink, so this one error says both.
+func requestTooLarge(encodedBytes int) *apiError {
+	return &apiError{
+		Status:  http.StatusRequestEntityTooLarge,
+		Message: fmt.Sprintf("request body too large (%s): the upstream refuses oversized chat requests; shorten the conversation, drop large images or attachments, or trim tool definitions", humanBytes(encodedBytes)),
+	}
+}
+
+// humanBytes renders a byte count the way a one-line error wants it.
+func humanBytes(n int) string {
+	const kb = 1 << 10
+	const mb = 1 << 20
+	switch {
+	case n >= mb:
+		return fmt.Sprintf("%.1f MB", float64(n)/mb)
+	case n >= kb:
+		return fmt.Sprintf("%.0f KB", float64(n)/kb)
+	default:
+		return fmt.Sprintf("%d B", n)
+	}
+}
+
 // do performs one JSON request/response exchange and decodes `data` into out
 // (when out is non-nil).
 func (c *Client) do(ctx context.Context, method, path string, hdr http.Header, payload, out any) error {
@@ -146,17 +170,29 @@ func (c *Client) do(ctx context.Context, method, path string, hdr http.Header, p
 }
 
 // send performs the HTTP exchange and returns the live response. The caller
-// owns the body.
+// owns the body. Encoding happens here so callers that only need the response
+// keep a single marshal.
 func (c *Client) send(ctx context.Context, method, path string, hdr http.Header, payload any) (*http.Response, error) {
-	var body io.Reader
-	if payload != nil {
-		buf, err := json.Marshal(payload)
-		if err != nil {
-			return nil, fmt.Errorf("raccoon: encoding request: %w", err)
-		}
-		body = bytes.NewReader(buf)
+	if payload == nil {
+		return c.sendMarshaled(ctx, method, path, hdr, nil)
 	}
-	req, err := http.NewRequestWithContext(orBackground(ctx), method, c.cfg.endpoint(path), body)
+	buf, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("raccoon: encoding request: %w", err)
+	}
+	return c.sendMarshaled(ctx, method, path, hdr, buf)
+}
+
+// sendMarshaled issues the request with a body that has already been encoded.
+// postChat goes through it directly: the encoded size is what a 413 refusal is
+// about, and the error should carry it instead of leaving the operator to
+// guess which part of the conversation the vendor choked on.
+func (c *Client) sendMarshaled(ctx context.Context, method, path string, hdr http.Header, body []byte) (*http.Response, error) {
+	var reader io.Reader
+	if body != nil {
+		reader = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(orBackground(ctx), method, c.cfg.endpoint(path), reader)
 	if err != nil {
 		return nil, fmt.Errorf("raccoon: building request: %w", err)
 	}
@@ -169,7 +205,7 @@ func (c *Client) send(ctx context.Context, method, path string, hdr http.Header,
 	if req.Header.Get("Accept") == "" {
 		req.Header.Set("Accept", "application/json")
 	}
-	if payload != nil && req.Header.Get("Content-Type") == "" {
+	if body != nil && req.Header.Get("Content-Type") == "" {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	resp, err := c.httpc.Do(req)

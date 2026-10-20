@@ -166,6 +166,11 @@ type config struct {
 	// which is exactly what a connectivity probe wants.
 	ChatModel string `json:"chat_model"`
 
+	// CLIReasoningEffort is the default --reasoning-effort tier passed to the
+	// local Qoder CLI for the two free models.  Empty means "let the CLI
+	// decide".  A caller's own reasoning_effort still wins over this.
+	CLIReasoningEffort string `json:"cli_reasoning_effort"`
+
 	// SMSToken is the one-time-SMS platform credential (eomsg).  Empty
 	// means the panel's 接码 controls report "not configured" and refuse to
 	// rent a number; the operator can still paste a token into the panel,

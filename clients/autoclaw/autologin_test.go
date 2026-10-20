@@ -27,12 +27,15 @@ type autoLoginVendor struct {
 	emptyPolls int
 	delivered  bool
 
-	sendPhone string
-	redeemed  string
-	released  []string
-	keywords  []string
-	cardTypes []string
-	userInfos int
+	sendPhone     string
+	redeemed      string
+	redeemedCodes []string
+	loginCalls    int
+	loginFailures int
+	released      []string
+	keywords      []string
+	cardTypes     []string
+	userInfos     int
 }
 
 func newAutoLoginVendor() *autoLoginVendor {
@@ -59,9 +62,18 @@ func (f *autoLoginVendor) handler() http.HandlerFunc {
 				Code  int    `json:"code"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&body)
+			code := fmt.Sprintf("%06d", body.Code)
 			f.mu.Lock()
-			f.redeemed = fmt.Sprintf("%06d", body.Code)
+			f.redeemed = code
+			f.redeemedCodes = append(f.redeemedCodes, code)
+			f.loginCalls++
+			fail := f.loginCalls <= f.loginFailures
 			f.mu.Unlock()
+			if fail {
+				w.WriteHeader(http.StatusBadGateway)
+				fmt.Fprint(w, `{"code":0,"message":"temporary identity gateway failure"}`)
+				return
+			}
 			fmt.Fprint(w, `{"code":0,"data":{"user_id":"u-1","access_token":"access-1","refresh_token":"refresh-1","user_name":"tester","user_phone":"`+body.Phone+`"}}`)
 		case pathUserInfo:
 			f.mu.Lock()
@@ -224,6 +236,40 @@ func TestAutoLoginRentsANumberReadsTheCodeAndStoresTheCredential(t *testing.T) {
 	}
 	if snap.AccountID != acc.id() {
 		t.Errorf("job account = %q, want %q", snap.AccountID, acc.id())
+	}
+}
+
+// TestAutoLoginRetriesTheSameCodeBeforeFailingTheNumber: a transient
+// identity-gateway refusal must not discard a code the SMS platform has already
+// delivered. The automatic flow gets one short retry with the same phone and
+// code; only if that also fails may the panel move on to another number.
+func TestAutoLoginRetriesTheSameCodeBeforeFailingTheNumber(t *testing.T) {
+	vendor := newAutoLoginVendor()
+	vendor.loginFailures = 1
+	srv := httptest.NewServer(vendor.handler())
+	defer srv.Close()
+
+	c := newAutoLoginTestClient(t, t.TempDir(), autoLoginConfig(srv), srv.Client().Transport)
+	job := &autoJob{state: core.AutoLoginRunning}
+
+	if err := c.autoLogin(context.Background(), job, core.AutoLoginRequest{}, core.SMSOpts{}); err != nil {
+		t.Fatalf("autoLogin: %v", err)
+	}
+	if got := job.snapshot().State; got != core.AutoLoginSuccess {
+		t.Fatalf("job state = %q, want success after the retry", got)
+	}
+
+	vendor.mu.Lock()
+	defer vendor.mu.Unlock()
+	if vendor.loginCalls != 2 {
+		t.Fatalf("login calls = %d, want 2 (initial attempt plus one retry)", vendor.loginCalls)
+	}
+	if len(vendor.redeemedCodes) != 2 || vendor.redeemedCodes[0] != vendor.code || vendor.redeemedCodes[1] != vendor.code {
+		t.Fatalf("redeemed codes = %v, want the same delivered code %q on both attempts", vendor.redeemedCodes, vendor.code)
+	}
+	accounts := c.pool.all()
+	if len(accounts) != 1 || accounts[0].acct.Phone != vendor.phone {
+		t.Fatalf("stored accounts = %+v, want the original number to remain in use", accounts)
 	}
 }
 

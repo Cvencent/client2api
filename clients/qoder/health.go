@@ -63,5 +63,27 @@ func (c *Client) PoolStats() core.PoolStats {
 	if c.affinity != nil {
 		stats.StickySessions = c.affinity.Count()
 	}
+	// The CLI workers occupy a per-account ceiling of their own, so a pool that
+	// is at it reports the same way a full account does on the HTTP path.
+	if c.cli != nil {
+		workers, _ := c.cli.counters()
+		if workers >= cliMaxTotal {
+			stats.InFlightFull = 1
+		}
+	}
 	return stats
+}
+
+// close releases everything this module owns that outlives a request: the
+// local CLI workers and any half-finished CLI sign-in.  The service calls it on
+// shutdown so an Electron child never outlives the gateway.
+func (c *Client) Close() error {
+	if c == nil {
+		return nil
+	}
+	c.stopCLILogins()
+	if c.cli != nil {
+		c.cli.stop()
+	}
+	return nil
 }

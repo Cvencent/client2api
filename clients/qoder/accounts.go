@@ -52,6 +52,18 @@ type storedAccount struct {
 	// recorded for display only; nothing here renews a credential.
 	RefreshExpiresAtMS int64 `json:"refresh_expires_at_ms,omitempty"`
 	Enabled            bool  `json:"enabled"`
+
+	// CLIDir is the leaf name of this account's Qoder CLI config root under
+	// the module's own DataDir.  It exists because the vendor will not serve
+	// the two zero-cost models (dfmodel / qfmodel) to a device token, only to
+	// its own agent runtime, and that runtime keeps exactly one signed-in
+	// identity per --config-dir.
+	//
+	// An account with a CLIDir and no Token is CLI-only: it can serve the free
+	// models and nothing else.  An account with both can serve either, which is
+	// what an operator gets by importing the desktop token and then signing the
+	// same account in through the panel's CLI login.
+	CLIDir string `json:"cli_dir,omitempty"`
 }
 
 type accountFile struct {
@@ -85,14 +97,26 @@ type account struct {
 }
 
 // selectable reports whether the pool may hand this account a request.
+//
+// A CLI-only account -- one with a config root but no device token -- is
+// selectable too: it can serve the free models, which is the whole reason the
+// CLI path exists.  Which models an account can actually serve is decided per
+// request (see orderedCandidates and cliCandidates in chat.go), because that
+// depends on the model rather than on the credential.
 func (a *account) selectable(now time.Time) bool {
 	if !a.Enabled || a.dead {
 		return false
 	}
-	if strings.TrimSpace(a.Token) == "" {
+	if strings.TrimSpace(a.Token) == "" && strings.TrimSpace(a.CLIDir) == "" {
 		return false
 	}
 	return !now.Before(a.cooldownTill)
+}
+
+// cliOnly reports whether the account has no device token and can therefore
+// serve only the models the CLI bridge provides.
+func (a *account) cliOnly() bool {
+	return strings.TrimSpace(a.Token) == "" && strings.TrimSpace(a.CLIDir) != ""
 }
 
 func (a *account) expired(now time.Time) bool {
@@ -105,6 +129,12 @@ type store struct {
 	path      string
 	statePath string
 	all       []*account
+
+	// onRemoveCLIDir is called with the leaf of a removed account's CLI config
+	// root.  The Client installs it so the store itself stays free of any
+	// knowledge about where those roots live; nil means "nothing to clean up",
+	// which is what a hand-built test store gets.
+	onRemoveCLIDir func(leaf string)
 }
 
 func loadStore(path, statePath string) (*store, error) {
@@ -117,7 +147,7 @@ func loadStore(path, statePath string) (*store, error) {
 		return s, fmt.Errorf("qoder: reading %s: %w", path, err)
 	}
 	for _, sa := range file.Accounts {
-		if strings.TrimSpace(sa.Token) == "" {
+		if strings.TrimSpace(sa.Token) == "" && strings.TrimSpace(sa.CLIDir) == "" {
 			continue
 		}
 		s.all = append(s.all, &account{storedAccount: sa, origin: originStored})
@@ -407,13 +437,72 @@ func (s *store) remove(id string) error {
 		if a.origin == originConfig {
 			return fmt.Errorf("qoder: account %q comes from the configuration and cannot be removed here", id)
 		}
+		leaf := strings.TrimSpace(a.CLIDir)
 		s.all = append(s.all[:i], s.all[i+1:]...)
+		if err := s.save(); err != nil {
+			return err
+		}
+		if err := s.saveState(); err != nil {
+			return err
+		}
+		if leaf != "" {
+			// Removing an account has to remove its local sign-in too, or the
+			// next login would adopt a config root the operator thought they
+			// had deleted.
+			s.onRemoveCLIDir(leaf)
+		}
+		return nil
+	}
+	return fmt.Errorf("qoder: no account %q", id)
+}
+
+// attachCLIDir records that an account can be served through the local CLI.
+//
+// It is deliberately separate from put: a CLI sign-in only ever contributes a
+// config root, and it must not overwrite a device token the account already
+// has -- the two credentials serve different things and an account can
+// legitimately hold both.  When no row matches, one is created.
+func (s *store) attachCLIDir(acc account) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	id := strings.TrimSpace(acc.ID)
+	if id == "" {
+		return errors.New("qoder: a CLI login produced no account id")
+	}
+	for _, a := range s.all {
+		if a.ID != id {
+			continue
+		}
+		a.CLIDir = acc.CLIDir
+		if strings.TrimSpace(a.Label) == "" {
+			a.Label = acc.Label
+		}
+		if strings.TrimSpace(a.Name) == "" {
+			a.Name = acc.Name
+		}
+		if strings.TrimSpace(a.UserType) == "" {
+			a.UserType = acc.UserType
+		}
+		if strings.TrimSpace(a.UserID) == "" {
+			a.UserID = strings.TrimPrefix(id, "qoder-")
+		}
+		a.Enabled = true
+		// A CLI login is fresh evidence that the account works, so any park
+		// left over from the device-token path is cleared.
+		a.dead = false
+		a.failures = 0
+		a.lastError = ""
+		a.cooldownTill = time.Time{}
 		if err := s.save(); err != nil {
 			return err
 		}
 		return s.saveState()
 	}
-	return fmt.Errorf("qoder: no account %q", id)
+	s.all = append(s.all, &acc)
+	if err := s.save(); err != nil {
+		return err
+	}
+	return s.saveState()
 }
 
 // put adds or replaces one account and persists it.
@@ -647,6 +736,16 @@ func (c *Client) RefreshAccount(ctx context.Context, id string) ([]core.RefreshR
 	results := make([]core.RefreshResult, 0, len(targets))
 	for i := range targets {
 		acc := targets[i]
+		if acc.cliOnly() {
+			// A CLI-only account has no device token to verify, and the vendor
+			// does not serve userinfo to one.  The CLI login is its own proof:
+			// the worker refuses the turn when it has expired.
+			results = append(results, core.RefreshResult{
+				AccountID: acc.ID,
+				OK:        true,
+			})
+			continue
+		}
 		probeCtx, cancel := context.WithTimeout(ctx, c.cfg.probeTimeout())
 		_, err := c.up.userInfo(probeCtx, acc.Token)
 		cancel()
@@ -735,11 +834,20 @@ func accountRecord(a *account, now time.Time) core.AccountRecord {
 	if a.RefreshToken != "" {
 		record.Fields["has_refresh_token"] = true
 	}
+	if strings.TrimSpace(a.CLIDir) != "" {
+		// The panel shows this as a tag so the operator can tell a CLI-signed-in
+		// account from one that only holds a device token.
+		record.Fields["cli_login"] = true
+		record.Fields["cli_dir"] = a.CLIDir
+	}
 	if a.ExpiresAtMS > 0 {
 		record.ExpiresAt = time.UnixMilli(a.ExpiresAtMS).UTC().Format(time.RFC3339)
 	}
 
 	switch {
+	case a.cliOnly():
+		record.State = "ready"
+		record.Note = "本机 CLI 登录；仅提供 DeepSeek-Flash / Qwen3.8-Flash，不提供积分、签到与其它模型"
 	case a.dead:
 		record.State = "invalid"
 		record.Note = "令牌已被厂商拒绝；请在账号页点「链接重登」重新登录"

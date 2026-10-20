@@ -51,6 +51,18 @@ func (c *Client) Checkin(ctx context.Context, id, action string) (core.CheckinRe
 	if action == "" {
 		action = checkinActionDaily
 	}
+	if acc.cliOnly() {
+		// Skipped rather than failed: a CLI-only account cannot reach the
+		// campaign routes at all, and the task centre must not count that as a
+		// refused check-in.
+		return core.CheckinResult{
+			OK:        false,
+			AccountID: id,
+			Action:    action,
+			Skipped:   true,
+			Message:   "该账号是本机 CLI 登录，没有可用于签到的设备令牌",
+		}, nil
+	}
 
 	res := core.CheckinResult{
 		AccountID: id,

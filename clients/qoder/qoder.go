@@ -36,7 +36,9 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -85,6 +87,12 @@ type Client struct {
 	// It is nil-safe, so a Client built without New still serves requests.
 	affinity *core.Affinity
 
+	// cli owns the local Qoder CLI workers the two zero-cost models are served
+	// through.  It is created lazily so a Client built by hand in a test -- or
+	// a Client that never touches the free models -- never starts the sweeper.
+	cliMu sync.Mutex
+	cli   *cliPool
+
 	httpOnce sync.Once
 	ownHTTP  *http.Client
 
@@ -102,6 +110,7 @@ type Client struct {
 	// reason about, so only the machine id is persisted.
 	loginMu        sync.Mutex
 	logins         map[string]*loginSession
+	cliLogins      map[string]*cliLoginSession
 	machineIDCache string
 
 	// smsRot spreads consecutive rentals across provinces so one region
@@ -146,8 +155,18 @@ func New(deps core.Deps) (core.Client, error) {
 	}
 	c.store = st
 	c.store.applyConfig(configuredAccounts(cfg))
+	c.store.onRemoveCLIDir = func(leaf string) {
+		dir := c.cliConfigDir(leaf)
+		if strings.TrimSpace(leaf) == "" || !pathWithin(c.cliRootDir(), dir) {
+			return
+		}
+		if err := os.RemoveAll(dir); err != nil {
+			deps.Log("qoder: removing the CLI config root %s: %v", dir, err)
+		}
+	}
 
 	c.up = newUpstream(cfg, deps.HTTPClient, deps.Logf)
+	c.cli = newCLIPool()
 	return c, nil
 }
 
@@ -172,6 +191,7 @@ var (
 	_ core.AccountManager      = (*Client)(nil)
 	_ core.CredentialImporter  = (*Client)(nil)
 	_ core.LoginProvider       = (*Client)(nil)
+	_ core.RealmLoginProvider  = (*Client)(nil)
 	_ core.BalanceProvider     = (*Client)(nil)
 	_ core.CheckinProvider     = (*Client)(nil)
 	_ core.ModelRefresher      = (*Client)(nil)
@@ -257,6 +277,7 @@ func (c *Client) Status(ctx context.Context) core.Status {
 		st.Detail = fmt.Sprintf("%d/%d 个账号可用；本模块提供积分查询、每日签到、活动任务、套餐明细与对话",
 			usable, len(accounts))
 	}
+	st.Detail += c.cliStatusNote()
 
 	if msg, at := c.lastFailure(); msg != "" && !st.Ready {
 		st.Detail += "；最近一次错误 " + msg + "（" + humanAge(time.Since(at)) + " 前）"
@@ -280,4 +301,40 @@ func (c *Client) lastFailure() (string, time.Time) {
 	c.stateMu.Lock()
 	defer c.stateMu.Unlock()
 	return c.lastErr, c.lastErrAt
+}
+
+// cliStatusNote is the one line the panel shows about the local CLI.  It exists
+// because the two zero-cost models are served by a program the operator has to
+// install and sign in to, and "why is DeepSeek-Flash grey" must have an answer
+// on the platform page rather than in a log file.
+func (c *Client) cliStatusNote() string {
+	if c == nil {
+		return ""
+	}
+	if _, err := findCLI(); err != nil {
+		return "；DeepSeek-Flash / Qwen3.8-Flash 需要本机安装 Qoder CN 客户端" +
+			"（设置 CLIENT2API_QODER_CLI_PATH 可指定安装目录），安装后在账号页用「本机 CLI 登录」"
+	}
+	ready := 0
+	for _, acc := range c.store.snapshot() {
+		if c.cliAccountReady(acc) {
+			ready++
+		}
+	}
+	if ready == 0 {
+		return "；本机已安装 Qoder CN，但还没有账号用「本机 CLI 登录」过，" +
+			"DeepSeek-Flash / Qwen3.8-Flash 暂不可用"
+	}
+	return fmt.Sprintf("；本机 CLI 登录 %d 个账号，DeepSeek-Flash / Qwen3.8-Flash 可用", ready)
+}
+
+// cliPoolFor returns this module's CLI worker pool, creating it on first use.
+// New installs it eagerly; this path exists for a Client assembled by hand.
+func (c *Client) cliPoolFor() *cliPool {
+	c.cliMu.Lock()
+	defer c.cliMu.Unlock()
+	if c.cli == nil {
+		c.cli = newCLIPool()
+	}
+	return c.cli
 }

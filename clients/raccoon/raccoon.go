@@ -20,6 +20,7 @@ package raccoon
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -510,7 +511,13 @@ func (c *Client) postChat(ctx context.Context, cred credential, req *core.ChatRe
 	body := buildChatBody(req, model, true)
 	hdr := raccoonHeaders(cred, c.cfg.platform(), c.cfg.version())
 	hdr.Set("Accept", "text/event-stream")
-	resp, err := c.send(ctx, http.MethodPost, pathChat, hdr, body)
+	// Encoded here rather than inside send: the encoded size is the number a
+	// 413 refusal turns on, so the error below can quote it.
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("raccoon: encoding request: %w", err)
+	}
+	resp, err := c.sendMarshaled(ctx, http.MethodPost, pathChat, hdr, encoded)
 	if err != nil {
 		return nil, err
 	}
@@ -526,6 +533,9 @@ func (c *Client) postChat(ctx context.Context, cred credential, req *core.ChatRe
 	}
 	data, derr := decodeEnvelope(resp.StatusCode, raw)
 	if derr != nil {
+		if statusOf(derr) == http.StatusRequestEntityTooLarge {
+			return nil, requestTooLarge(len(encoded))
+		}
 		return nil, derr
 	}
 	if resp.StatusCode >= 400 {

@@ -137,6 +137,57 @@ type VoucherProvider interface {
 	AccountVouchers(ctx context.Context, id string) ([]Voucher, error)
 }
 
+// InviteCodeResult is one account's answer to an invite-code binding attempt.
+//
+// A vendor refusal (bad code, usage limit, already bound to a different code)
+// is a RESULT, not a Go error: the panel shows it on that account's row while
+// the other rows continue.  A Go error is reserved for an attempt that could
+// not be made at all (unknown account, no store).
+type InviteCodeResult struct {
+	AccountID   string `json:"account_id,omitempty"`
+	OK          bool   `json:"ok"`
+	Code        string `json:"code,omitempty"`
+	Activated   bool   `json:"activated,omitempty"`
+	Already     bool   `json:"already,omitempty"`
+	AppliedCode string `json:"applied_code,omitempty"`
+	Reward      int64  `json:"reward,omitempty"`
+	Message     string `json:"message,omitempty"`
+	Error       string `json:"error,omitempty"`
+	At          string `json:"at,omitempty"`
+}
+
+// RedemptionResult is one account's answer to a redemption-code attempt.
+// Points is what the vendor says this redemption added; Balance is the fresh
+// current balance when the vendor reports one.
+type RedemptionResult struct {
+	AccountID string `json:"account_id,omitempty"`
+	OK        bool   `json:"ok"`
+	Code      string `json:"code,omitempty"`
+	Points    int64  `json:"points,omitempty"`
+	Balance   int64  `json:"balance,omitempty"`
+	Message   string `json:"message,omitempty"`
+	Error     string `json:"error,omitempty"`
+	At        string `json:"at,omitempty"`
+}
+
+// InviteCodeProvider lets the panel bind an invite code to an account and
+// redeem a separate redemption code.  Loomy uses two different endpoints for
+// these: the invite code is the "兑换积分" button's activation call, while a
+// redemption code is a points voucher.  Keeping both on one optional interface
+// gives the panel one capability switch and one place to explain the split.
+type InviteCodeProvider interface {
+	Client
+	// InviteCodeDefault is the account-wide invite code the module will use
+	// when the operator does not supply one.  Empty means no default.
+	InviteCodeDefault(ctx context.Context) string
+	// BindAccountInviteCode binds code to one account.  An empty code selects
+	// InviteCodeDefault.  The result reports the vendor's own answer.
+	BindAccountInviteCode(ctx context.Context, id, code string) (InviteCodeResult, error)
+	// RedeemAccountCode redeems a redemption code (not an invite code) for
+	// one account.  The two code namespaces are deliberately separate.
+	RedeemAccountCode(ctx context.Context, id, code string) (RedemptionResult, error)
+}
+
 // AsBalanceProvider narrows a registered client.
 func AsBalanceProvider(c Client) (BalanceProvider, bool) {
 	bp, ok := c.(BalanceProvider)
@@ -153,4 +204,10 @@ func AsPackageProvider(c Client) (PackageProvider, bool) {
 func AsVoucherProvider(c Client) (VoucherProvider, bool) {
 	vp, ok := c.(VoucherProvider)
 	return vp, ok
+}
+
+// AsInviteCodeProvider narrows a registered client.
+func AsInviteCodeProvider(c Client) (InviteCodeProvider, bool) {
+	ip, ok := c.(InviteCodeProvider)
+	return ip, ok
 }

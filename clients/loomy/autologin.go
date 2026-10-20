@@ -326,7 +326,23 @@ func (c *Client) autoLogin(ctx context.Context, job *autoJob, req core.AutoLogin
 		return fmt.Errorf("保存会话失败：%w", err)
 	}
 	job.logf("会话已保存：%s（有效期 14 天）", rec.ID)
-	job.finish(core.AutoLoginSuccess, "登录成功，会话有效期 14 天", rec.ID)
+
+	// 5) Bind the operator's invite code.  This is the same call the desktop
+	// client makes behind "使用邀请码兑换积分".  A binding refusal must not
+	// discard a session that just succeeded; it is logged and retryable from
+	// the accounts page.
+	job.setStep("invite")
+	invite, _ := c.bindInviteAfterLogin(ctx, rec.ID, job.logf)
+	message := "登录成功，会话有效期 14 天"
+	if invite.OK {
+		message += "，邀请码 " + invite.AppliedCode + " 已绑定"
+		if invite.Reward > 0 {
+			message += fmt.Sprintf("（+%d 积分）", invite.Reward)
+		}
+	} else if invite.Error != "" {
+		message += "；邀请码绑定失败，可稍后在账号页重试：" + invite.Error
+	}
+	job.finish(core.AutoLoginSuccess, message, rec.ID)
 	return nil
 }
 

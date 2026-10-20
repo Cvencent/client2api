@@ -4,7 +4,15 @@
 
 账号有两条来源：面板里的浏览器登录（推荐，不需要装客户端），以及从桌面客户端导入的本地凭据。
 
-它同时提供对话能力。Qoder CN 的推理网关 `gateway.qoder.com.cn` 要求逐请求的 COSY 签名；本模块在 `cosy.go` 里实现了这套签名（AES 加密 + RSA 签名 + MD5 摘要），所以模型目录、对话流都能直接调用，不需要客户端常驻。
+它同时提供对话能力，且有两条通道：
+
+- **普通模型**走推理网关 `gateway.qoder.com.cn`。它要求逐请求的 COSY 签名；本模块在
+  `cosy.go` 里实现了这套签名（AES 加密 + RSA 签名 + MD5 摘要），所以模型目录、对话流都能直接调用，
+  不需要客户端常驻。
+- **两个免费模型**（`dfmodel` = DeepSeek-Flash、`qfmodel` = Qwen3.8-Flash）走**本机 Qoder CN 自带的
+  agent CLI**。厂商的推理边缘只把这两个零倍率模型放行给官方运行时，第三方请求（无论签名多忠实）都会得到
+  `400 [FAIL]node:oa_qwen-plus-main msg:Execution failed: null`，所以这两个模型由本模块驱动厂商自己
+  发布的 CLI（`@qoder-ai/qoder-cn-agent-sdk`，stream-json 协议）完成，其余 12 个模型不受影响。
 
 ## 能力
 
@@ -24,6 +32,7 @@
 | 测试/启停/恢复 | 支持 | 测试发送一次最小真实对话请求，调通才算可用 |
 | 模型目录 | 支持 | 读取 `GET /algo/api/v2/model/list?Encode=1`，失败时回退内置目录 |
 | 对话 | 支持 | `POST /algo/api/v2/service/pro/sse/agent_chat_generation`，模型由 `x-model-key` 请求头指定 |
+| 免费模型对话 | 支持（需本机 CLI） | `dfmodel` / `qfmodel` 由本机 Qoder CN 的官方 CLI 驱动，见下文「免费模型与本机 CLI」 |
 
 ## 指定模型：必须发 x-model-key
 
@@ -100,6 +109,34 @@ POST /sash/api/v1/me/campaigns/{campaignId}/claim
 ```
 
 已经领取过的目标不会再次 POST。每日签到通常在 `10:00`（UTC+8）刷新，奖励 Credits 的有效期由厂商决定。
+
+## 免费模型与本机 CLI
+
+厂商只对**官方运行时**放行 `dfmodel`（DeepSeek-Flash）和 `qfmodel`（Qwen3.8-Flash）这两个零倍率模型。
+设备令牌无论怎么签名都会被推理边缘拒绝，所以这两个模型改由驱动厂商自己发布的 agent CLI 完成：
+
+- CLI 可执行体就是已安装的 Qoder CN 桌面客户端（`Qoder CN.exe` 加 `ELECTRON_RUN_AS_NODE=1` 即是
+  Node 运行时），**不需要额外安装 Node**，也不会往客户端安装目录写任何东西。
+- 每个账号一个独立的 `--config-dir`，落在网关自己的数据目录 `data/qoder/cli/<账号>/` 下，
+  与操作员本机的 `~/.qoder-cn` 完全隔离；多个账号各自登录、各自常驻一个 CLI 进程，互不共享凭据。
+- 进程按「账号 + 会话」常驻复用：冷启动约 5–13 秒，之后同一会话的每一轮约 2 秒；空闲 15 分钟或轮次异常
+  结束时自动回收，下次请求自动重启。进程总数有上限（单账号 4 个、全局 16 个），不会无限繁殖。
+- 面板添加账号时有两个登录入口：**「本机 CLI 登录（免费模型）」**会启动 CLI 自己的 `login` 子命令并把它
+  打印的设备码链接显示在面板上，手机确认后账号落地；**「浏览器登录」**仍是原来的设备授权，负责积分、签到、
+  任务和其余模型。两个入口解析的是同一个厂商用户 ID，所以同一个账号两种登录会合并成一行，两个能力都有。
+- 只有本机 CLI 登录的账号（没有设备令牌）**只**能调用这两个免费模型；积分查询、签到、任务对它不可用，
+  面板会如实显示，也不会把这类账号送去调用需要令牌的接口。
+
+相关环境变量：
+
+| 变量 | 说明 |
+| --- | --- |
+| `CLIENT2API_QODER_CLI_PATH` | 指定 Qoder CN 安装目录（或 `Qoder CN.exe` 的完整路径）；默认自动探测各盘常见安装位置 |
+| `CLIENT2API_QODER_CLI_DIR` | 覆盖 CLI 各账号配置根的存放位置；默认 `<DataDir>/qoder/cli` |
+| `clients.qoder.cli_reasoning_effort` | 配置项：这两个模型默认的 `--reasoning-effort` 档位；调用方自己的 `reasoning_effort` 优先 |
+
+已知限制：CLI 桥接是纯文本对话通道，调用方声明的工具（function calling）不会转发给 CLI，CLI 自带的
+文件/终端工具被显式禁用（`--tools ""`），避免模型在网关数据目录里执行任何操作。
 
 ## 配置
 
@@ -193,3 +230,6 @@ POST /sash/api/v1/me/campaigns/{campaignId}/claim
 - `models` 配置会覆盖厂商在线目录，作为运营侧的显式白名单使用；留空时以在线目录为准。
 - 本地凭据解密只支持 Windows，且必须是当前 Windows 用户加密的 DPAPI 数据。
 - 厂商活动规则可能变化；签到接口返回的新状态如果不在已知范围内，会按失败报告，而不是强行当作成功。
+- 免费模型（`dfmodel` / `qfmodel`）依赖本机安装的 Qoder CN 客户端；没有安装时这两个模型会报
+  「需要本机安装 Qoder CN 客户端」，其余模型不受影响。
+- CLI 桥接不转发 function calling，也不支持图片输入；需要这两者的请求请使用其余模型（走 COSY 通道）。

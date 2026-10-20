@@ -2850,6 +2850,7 @@ kbd {
           <span class="note" id="accNote"></span>
           <button class="xs" id="btnRefreshAll" title="重新向上游续期/刷新已启用账号的登录凭据（续期 access token）；平台不提供续期时会如实提示">刷新凭据</button>
           <button class="xs" id="btnBalanceAll" title="让服务端分批刷新余额（每次最多 3 个账号，慢慢来），不会一次性把整个号池问一遍">刷新余额</button>
+          <button class="xs" id="btnInviteAll" hidden>全部绑定邀请码</button>
           <button class="xs" id="btnCheckinAll">全部签到</button>
           <button class="xs" id="btnTestAll">全部测试</button>
         </header>
@@ -3731,6 +3732,34 @@ kbd {
   </div>
 </div>
 
+<!-- 邀请码 / 兑换码：Loomy 的两个积分动作。邀请码绑定是「使用邀请码兑换积分」，
+     兑换码是另一个积分券接口；两者放在一个弹层里但分别提交，避免把两种码混用。 -->
+<div class="veil" id="inviteVeil">
+  <div class="dlg" style="width:520px">
+    <header>
+      <h3>邀请码 / 兑换码 <span class="hint" id="inviteWho"></span></h3>
+      <div class="hint" id="inviteHelp">邀请码用于把账号绑定到指定邀请人；兑换码是积分券，两者的接口和用途不同。</div>
+    </header>
+    <div class="body">
+      <div class="fld">
+        <label class="lb" for="inviteCodeInput">邀请码</label>
+        <input id="inviteCodeInput" type="text" maxlength="64" spellcheck="false" autocomplete="off" placeholder="例如 P276D2" style="width:100%">
+      </div>
+      <div class="fld">
+        <label class="lb" for="redeemCodeInput">兑换码</label>
+        <input id="redeemCodeInput" type="text" maxlength="120" spellcheck="false" autocomplete="off" placeholder="输入积分兑换码" style="width:100%">
+      </div>
+      <div id="inviteMsg" class="state" hidden></div>
+    </div>
+    <footer>
+      <button id="btnInviteBind" class="xs primary">绑定邀请码</button>
+      <button id="btnInviteRedeem" class="xs">兑换积分</button>
+      <span class="grow"></span>
+      <button id="btnInviteClose">关闭</button>
+    </footer>
+  </div>
+</div>
+
 <!-- 模型明细：账号池「模型」列点开的弹层。一个账号一段，列出该账号的模型：
      勾选 = 允许路由到它（默认全勾），取消勾选 = 该账号不再被路由到它；配「强制
      启用」让这个账号无视账号级健康判定（冷却/额度/风控/session 等）直接可用；只有逐模型限流仍然生效。
@@ -3782,7 +3811,7 @@ kbd {
         <select id="stickySwitchPlatform" style="width:100%">
           <option value="">自动选择（现有逻辑）</option>
         </select>
-        <span class="hint">不选择时清除账号和平台粘性；选择后会固定到目标平台，平台内账号仍按优先级自动选择。</span>
+        <span class="hint">不选择时清除账号和平台粘性；选择后会固定到目标平台，平台内账号仍按优先级自动选择。固定期间该会话只走所选平台：平台故障时会直接报错，不会自动切回其它平台。要恢复轮转，请在粘性会话里强制切换并选“自动选择”。</span>
       </label>
     </div>
     <footer>
@@ -5365,6 +5394,9 @@ function renderAccounts() {
   syncAccSortHeader(CUR);
   syncAccStateFilter();
   $("#btnBalanceAll").hidden = !showBal;
+  $("#btnInviteAll").hidden = !caps.invite_codes;
+  $("#btnInviteAll").textContent = caps.invite_codes && caps.invite_code_default ? "全部绑定 " + caps.invite_code_default : "全部绑定邀请码";
+  $("#btnInviteAll").title = caps.invite_codes ? "为所有已启用账号绑定默认邀请码；已绑定的会跳过，绑定了其他邀请码的只报告不覆盖" : "";
   syncBalanceButton(CUR);
   const cols = showBal ? 13 : 12;
   if (!CUR) { tb.innerHTML = '<tr><td colspan="' + cols + '" class="hint">没有已注册的客户端</td></tr>'; $("#accNote").textContent = ""; hideAccPager(); return; }
@@ -5735,6 +5767,7 @@ function accRowHTML(a, caps, acts, showBal, chan, open, groupKey, group) {
   if (caps.manage) {
     btns.push('<button class="xs" data-do="test" data-id="' + esc(a.id) + '">测试</button>');
     btns.push(accToggleButton(a, caps));
+    if (caps.invite_codes) btns.push('<button class="xs" data-do="invite" data-id="' + esc(a.id) + '" title="绑定邀请码，或输入兑换码领取积分">邀请码</button>');
     // 删除是这一行唯一不可逆的动作，给它 danger 色：不用仔细读字就知道它和
     // 旁边那堆随时可撤销的按钮不是一回事。
     btns.push('<button class="xs danger" data-do="del" data-id="' + esc(a.id) + '">删除</button>');
@@ -5874,6 +5907,72 @@ function closeAccountNote() {
   NOTE.id = "";
   $("#noteErr").hidden = true;
   hideVeil($("#noteVeil"));
+}
+
+/* ── 邀请码 / 兑换码 ───────────────────────────────────────────────────
+   Loomy 的「使用邀请码兑换积分」调用 /points/activation，而客户端另一个
+   「兑换码」入口调用 /points/redemption-codes/redeem。两者不是同一种码，
+   所以这里两个输入框、两个提交按钮，绝不互相回退。 */
+let INVITE = { client: "", id: "", code: "" };
+function openInviteDialog(id) {
+  const acc = accById(CUR, id);
+  if (!acc) { toast("找不到账号 " + id, "err"); return; }
+  const caps = capsOf(CUR);
+  INVITE = { client: CUR, id, code: caps.invite_code_default || "" };
+  $("#inviteWho").textContent = "· " + accountIdentity(acc);
+  $("#inviteCodeInput").value = INVITE.code;
+  $("#redeemCodeInput").value = "";
+  $("#inviteMsg").hidden = true;
+  $("#inviteHelp").textContent = INVITE.code
+    ? "默认邀请码：" + INVITE.code + "。绑定会对该账号立即生效。"
+    : "邀请码用于把账号绑定到指定邀请人；兑换码是积分券，两者的接口和用途不同。";
+  showVeil($("#inviteVeil"));
+  $("#inviteCodeInput").focus();
+}
+function closeInviteDialog() {
+  INVITE = { client: "", id: "", code: "" };
+  hideVeil($("#inviteVeil"));
+}
+function inviteShow(msg, bad) {
+  const el = $("#inviteMsg");
+  el.hidden = false;
+  el.className = "state" + (bad ? " err" : " ok");
+  el.textContent = msg;
+}
+async function inviteBind() {
+  const n = INVITE.client, id = INVITE.id;
+  const code = String($("#inviteCodeInput").value || "").trim();
+  if (!code) return inviteShow("请输入邀请码", true);
+  const btn = $("#btnInviteBind"), keep = btn.textContent;
+  btn.disabled = true; btn.textContent = "绑定中…";
+  try {
+    const r = await api(cbase(n) + "/invites/bind", { method: "POST", body: { account: id, code } });
+    if (!r.ok) return inviteShow("绑定失败：" + r.err, true);
+    const x = r.data || {};
+    const results = x.results || [];
+    const first = results[0] || {};
+    if (r.data && r.data.accounts) { applyAccounts(n, r.data); renderAccounts(); }
+    if (first.ok) {
+      inviteShow(first.already ? "该账号已绑定邀请码 " + (first.applied_code || code) : "绑定成功" + (first.reward ? "，获得 " + first.reward + " 积分" : ""));
+    } else {
+      inviteShow(first.error || "绑定失败", true);
+    }
+  } finally { btn.disabled = false; btn.textContent = keep; }
+}
+async function inviteRedeem() {
+  const n = INVITE.client, id = INVITE.id;
+  const code = String($("#redeemCodeInput").value || "").trim();
+  if (!code) return inviteShow("请输入兑换码", true);
+  const btn = $("#btnInviteRedeem"), keep = btn.textContent;
+  btn.disabled = true; btn.textContent = "兑换中…";
+  try {
+    const r = await api(cbase(n) + "/accounts/" + aid(id) + "/redeem", { method: "POST", body: { code } });
+    if (!r.ok) return inviteShow("兑换失败：" + r.err, true);
+    const x = (r.data && r.data.result) || {};
+    if (r.data && r.data.accounts) { applyAccounts(n, r.data); renderAccounts(); }
+    if (x.ok) inviteShow(x.message || "兑换成功");
+    else inviteShow(x.error || "兑换失败", true);
+  } finally { btn.disabled = false; btn.textContent = keep; }
 }
 
 /* ── 模型明细弹层 ─────────────────────────────────────────────────────
@@ -6181,7 +6280,7 @@ function openStickySwitch(client, key, model, button) {
   select.value = "";
   select.disabled = !hasModel;
   $("#stickySwitchHint").textContent = "会话：" + key + "；模型：" + (model || "未知") +
-    (hasModel ? "。选择目标平台后，会固定到该平台并重新选择平台内账号；不选择则清除账号和平台粘性。" :
+    (hasModel ? "。选择目标平台后，会固定到该平台并重新选择平台内账号；固定期间该会话只走此平台，故障时报错而不切回其它平台。不选择则清除账号和平台粘性。" :
       "。这条旧记录没有模型信息，只能按现有逻辑自动切换。");
   showVeil($("#stickySwitchVeil"));
   (hasModel ? select : $("#btnStickySwitchConfirm")).focus();
@@ -6264,7 +6363,7 @@ async function submitStickySwitch() {
     }
     closeStickySwitch(false);
     if (chosen) {
-      toast("已切换到 " + platformLabel(chosen) + "；下一次请求会沿用该平台并重新选择账号");
+      toast("已固定到 " + platformLabel(chosen) + "；该会话只走此平台，故障时会报错而不会切回其它平台");
     } else {
       const d = r.data || {};
       toast(d.forgotten_account || d.forgotten_platform ? "已强制切换；下一次请求会重新选择平台和账号" : "这个会话已经没有粘性绑定");
@@ -6467,6 +6566,9 @@ async function act(btn) {
     } else if (doIt === "note") {
       openAccountNote(id);
       return;
+    } else if (doIt === "invite") {
+      openInviteDialog(id);
+      return;
     }
     if (r && r.ok) { applyAccounts(n, r.data); renderAccounts(); }
   } finally { btn.disabled = false; }
@@ -6495,6 +6597,29 @@ function bulk(kind) {
     // 不再一次性问完全部账号：服务端每次只挑最旧的 3 个慢慢读（中间还隔着几
     // 秒），这里先留着上次的数字，再分几次回读缓存把新数字补上。
     loadBalances(CUR, true);
+  } else if (kind === "invite") {
+    if (!caps.invite_codes) return toast(platformLabel(CUR) + " 不支持邀请码绑定", "err");
+    bindInviteAll();
+  }
+}
+
+// bindInviteAll binds the module's default invite code to every enabled
+// account.  The server walks the pool one account at a time so a single vendor
+// refusal stays on that row; this function only owns the button/progress.
+async function bindInviteAll() {
+  const n = CUR, code = String(capsOf(n).invite_code_default || "").trim();
+  if (!code) return toast("没有配置默认邀请码", "err");
+  if (!confirm("为所有已启用账号绑定邀请码 " + code + "？\n\n已绑定的账号会跳过；绑定了其他邀请码的只报告，不覆盖。")) return;
+  const btn = $("#btnInviteAll"), keep = btn ? btn.textContent : "";
+  if (btn) { btn.disabled = true; btn.textContent = "绑定中…"; }
+  try {
+    const r = await api(cbase(n) + "/invites/bind", { method: "POST", body: { code } });
+    if (!r.ok) return toast("全部绑定失败：" + r.err, "err");
+    if (r.data && r.data.accounts) { applyAccounts(n, r.data); renderAccounts(); }
+    const x = r.data || {};
+    toast("邀请码绑定：成功 " + (x.ok || 0) + "，已绑定 " + (x.already || 0) + "，失败 " + (x.failed || 0), x.failed ? "err" : "");
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = keep || "全部绑定邀请码"; }
   }
 }
 
@@ -12892,8 +13017,12 @@ function topVeil() {
 }
 $("#btnRefreshAll").addEventListener("click", () => bulk("refresh"));
 $("#btnBalanceAll").addEventListener("click", () => bulk("balance"));
+$("#btnInviteAll").addEventListener("click", () => bulk("invite"));
 $("#btnCheckinAll").addEventListener("click", () => bulk("checkin"));
 $("#btnTestAll").addEventListener("click", () => bulk("test"));
+$("#btnInviteClose").addEventListener("click", closeInviteDialog);
+$("#btnInviteBind").addEventListener("click", inviteBind);
+$("#btnInviteRedeem").addEventListener("click", inviteRedeem);
 $("#btnScanAll").addEventListener("click", qcScan);
 $("#btnRunQueue").addEventListener("click", qcRun);
 $("#btnCkScan").addEventListener("click", ckScan);

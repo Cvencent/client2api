@@ -154,6 +154,13 @@ func (c *Client) FinishPhoneCodeLogin(ctx context.Context, challengeID, code str
 	}
 	c.phoneMu.Unlock()
 
+	// Binding the invitation code is part of the login, not a separate
+	// operator step.  It runs after the challenge is retired so a slow/broken
+	// invite endpoint cannot make the successful login look retryable and spend
+	// the one-shot SMS code twice.  A binding refusal is deliberately swallowed:
+	// the account exists and the panel can retry the code from its row.
+	_, _ = c.bindInviteAfterLogin(ctx, record.ID, c.logf)
+
 	return record, nil
 }
 

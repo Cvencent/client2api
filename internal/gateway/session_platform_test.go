@@ -93,3 +93,58 @@ func TestStickyPlatformManagerIsSharedWithThePanel(t *testing.T) {
 		t.Fatal("the next chat skipped alpha instead of re-ranking after the platform binding was cleared")
 	}
 }
+
+// TestManualPinDoesNotFailOverToAnotherPlatform pins the force-switch
+// contract.  The panel's targeted switch writes a manual binding, and the
+// dialog promises the conversation then stays on that platform.  A failure on
+// the chosen platform must therefore be reported, not silently answered by the
+// platform the operator was switching away from.
+func TestManualPinDoesNotFailOverToAnotherPlatform(t *testing.T) {
+	platforms := NewSessionPlatforms()
+	alpha := &testClient{name: "alpha", servedBy: "a1", events: usageEvents(1, 1)}
+	beta := &testClient{
+		name:    "beta",
+		chatErr: core.Fail("beta", "b1", core.FailureUpstream, http.StatusBadGateway, errors.New("boom")),
+	}
+	srv := stickyTestServerWithPlatforms(alpha, beta, platforms)
+	body := `{"model":"m1","messages":[{"role":"user","content":"hi"}],"metadata":{"conversation_id":"conv-force"}}`
+
+	if !platforms.Pin("conv-force", "beta", "m1") {
+		t.Fatal("Pin reported no change")
+	}
+
+	rec := chat(t, srv, body)
+	if rec.Code == http.StatusOK {
+		t.Fatalf("status = %d, body %s: the old platform answered a force-switched conversation",
+			rec.Code, rec.Body.String())
+	}
+	if beta.seen == nil {
+		t.Fatal("the pinned platform was never tried")
+	}
+	if alpha.seen != nil {
+		t.Fatal("the conversation fell back to the platform the operator switched away from")
+	}
+}
+
+// TestManualPinKeepsTheConversationOnTheChosenPlatform is the happy half of the
+// same contract: while both platforms are healthy, the operator's choice wins
+// over platform priority and the sibling is never called.
+func TestManualPinKeepsTheConversationOnTheChosenPlatform(t *testing.T) {
+	platforms := NewSessionPlatforms()
+	alpha := &testClient{name: "alpha", servedBy: "a1", events: usageEvents(1, 1)}
+	beta := &testClient{name: "beta", servedBy: "b1", events: usageEvents(1, 1)}
+	srv := stickyTestServerWithPlatforms(alpha, beta, platforms)
+	body := `{"model":"m1","messages":[{"role":"user","content":"hi"}],"metadata":{"conversation_id":"conv-force-ok"}}`
+
+	if !platforms.Pin("conv-force-ok", "beta", "m1") {
+		t.Fatal("Pin reported no change")
+	}
+	stickyChat(t, srv, body)
+
+	if beta.seen == nil {
+		t.Fatal("the pinned platform did not serve the conversation")
+	}
+	if alpha.seen != nil {
+		t.Fatal("a platform the operator switched away from served the conversation")
+	}
+}

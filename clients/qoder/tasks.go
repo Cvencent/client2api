@@ -213,14 +213,26 @@ func (c *Client) taskAccount(id string) (account, bool, error) {
 		if !ok {
 			return account{}, false, fmt.Errorf("qoder: no account %q", trimmed)
 		}
+		if acc.cliOnly() {
+			// The campaign routes are served by the device token, which a
+			// CLI-only account does not have.  Reporting the vendor's 401 would
+			// park a working account, so the account is refused up front.
+			return account{}, false, errors.New("qoder: 该账号是本机 CLI 登录，仅提供免费模型，没有活动任务")
+		}
 		return acc, true, nil
 	}
 	now := time.Now().UTC()
-	if list := c.store.candidates(now); len(list) > 0 {
-		return list[0], true, nil
+	// An auto-picked account has to be one the campaign routes can actually be
+	// called for, so CLI-only rows are skipped rather than tried and blamed.
+	for _, acc := range c.store.candidates(now) {
+		if !acc.cliOnly() {
+			return acc, true, nil
+		}
 	}
-	if list := c.store.snapshot(); len(list) > 0 {
-		return list[0], true, nil
+	for _, acc := range c.store.snapshot() {
+		if !acc.cliOnly() {
+			return acc, true, nil
+		}
 	}
 	return account{}, false, nil
 }

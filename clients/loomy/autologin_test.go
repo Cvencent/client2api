@@ -19,19 +19,23 @@ import (
 type fakeVendor struct {
 	mu sync.Mutex
 
-	phone         string
-	phoneQueue    []string
-	code          string
-	msgDelivered  bool
-	codeAsked     bool
-	sendPhone     string
-	redeemed      string
-	redeemedPhone string
-	redeemedMsgID string
-	released      []string
-	rejects       int
-	checkCalls    int
-	created       int
+	phone           string
+	phoneQueue      []string
+	code            string
+	msgDelivered    bool
+	codeAsked       bool
+	sendPhone       string
+	redeemed        string
+	redeemedPhone   string
+	redeemedMsgID   string
+	released        []string
+	rejects         int
+	checkCalls      int
+	created         int
+	activationReads int
+	activations     int
+	inviteCode      string
+	inviteDeviceID  string
 }
 
 func newFakeVendor() *fakeVendor {
@@ -122,6 +126,23 @@ func (f *fakeVendor) handler() http.HandlerFunc {
 				return
 			}
 			fmt.Fprint(w, okEnvelope(`{"session":"`+testToken+`","userid":"`+testUserID+`"}`))
+		case r.URL.Path == "/points/activation":
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			if r.Method == http.MethodGet {
+				f.activationReads++
+				fmt.Fprint(w, okEnvelope(`{"activated":false}`))
+				return
+			}
+			var body struct {
+				InviteCode string `json:"inviteCode"`
+				DeviceID   string `json:"deviceId"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			f.activations++
+			f.inviteCode = body.InviteCode
+			f.inviteDeviceID = body.DeviceID
+			fmt.Fprint(w, okEnvelope(`{"activated":true,"alreadyActivated":false,"inviteeReward":5000,"appliedInvitationCode":"P276D2"}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -131,9 +152,39 @@ func (f *fakeVendor) handler() http.HandlerFunc {
 // autoLoginConfig points both halves of the flow at one test server.
 func autoLoginConfig(srv *httptest.Server) string {
 	return `{"account_base":"` + srv.URL + `",` +
+		`"api_base":"` + srv.URL + `",` +
 		`"sms_token":"platform-token",` +
 		`"sms_base":"` + srv.URL + `/zc/data.php",` +
 		`"sms_interval_seconds":1,"sms_polls":3}`
+}
+
+func TestAutoLoginBindsTheConfiguredInviteCode(t *testing.T) {
+	vendor := newFakeVendor()
+	srv := httptest.NewServer(vendor.handler())
+	defer srv.Close()
+
+	c := newTestClientInDir(t, t.TempDir(), autoLoginConfig(srv), srv.Client().Transport)
+	job := &autoJob{state: core.AutoLoginRunning}
+	if err := c.autoLogin(context.Background(), job, core.AutoLoginRequest{}, core.SMSOpts{}); err != nil {
+		t.Fatalf("autoLogin: %v", err)
+	}
+	vendor.mu.Lock()
+	defer vendor.mu.Unlock()
+	if vendor.activationReads != 1 || vendor.activations != 1 {
+		t.Fatalf("activation calls = read %d / write %d, want 1/1", vendor.activationReads, vendor.activations)
+	}
+	if vendor.inviteCode != "P276D2" {
+		t.Fatalf("inviteCode = %q, want P276D2", vendor.inviteCode)
+	}
+	if !strings.HasPrefix(vendor.inviteDeviceID, "loomy-campus-fp-") {
+		t.Fatalf("deviceId = %q, want the stable campus fingerprint", vendor.inviteDeviceID)
+	}
+	if got := job.snapshot().State; got != core.AutoLoginSuccess {
+		t.Fatalf("job state = %q, want success", got)
+	}
+	if msg := job.snapshot().Message; !strings.Contains(msg, "P276D2") {
+		t.Fatalf("message = %q, want the bound code named", msg)
+	}
 }
 
 func TestAutoLoginRentsANumberReadsTheCodeAndStoresTheSession(t *testing.T) {

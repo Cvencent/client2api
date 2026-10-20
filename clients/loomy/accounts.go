@@ -104,6 +104,11 @@ type accountState struct {
 	ProbeAfter      string `json:"probe_after,omitempty"`    // RFC3339
 	LastUsed        string `json:"last_used,omitempty"`      // RFC3339
 	LowCredit       bool   `json:"low_credit,omitempty"`
+	// InviteCode/InviteActivated memoize the last definitive activation answer
+	// so the panel can show what the account is bound to without asking the
+	// vendor on every render.
+	InviteCode      string `json:"invite_code,omitempty"`
+	InviteActivated bool   `json:"invite_activated,omitempty"`
 }
 
 type stateFile struct {
@@ -127,6 +132,8 @@ type account struct {
 	abnormal        bool
 	lastError       string
 	lastUsed        time.Time
+	inviteCode      string
+	inviteActivated bool
 }
 
 // selectable reports whether the pool may hand this account a request.
@@ -190,6 +197,8 @@ func loadStore(path, statePath string) (*store, error) {
 		a.sessionFailures = st.SessionFailures
 		a.cooldownStage = st.CooldownStage
 		a.lastError = st.LastError
+		a.inviteCode = st.InviteCode
+		a.inviteActivated = st.InviteActivated
 		a.cooldownTill = parseRFC3339(st.CooldownTill)
 		a.probeAfter = parseRFC3339(st.ProbeAfter)
 
@@ -262,7 +271,7 @@ func (s *store) saveState() error {
 	}
 	file := stateFile{Accounts: map[string]accountState{}}
 	for _, a := range s.all {
-		if !a.dead && !a.abnormal && a.failures == 0 && a.sessionFailures == 0 && a.cooldownStage == 0 && a.lastError == "" && a.cooldownTill.IsZero() && a.probeAfter.IsZero() && a.lastUsed.IsZero() && !a.lowCredit {
+		if !a.dead && !a.abnormal && a.failures == 0 && a.sessionFailures == 0 && a.cooldownStage == 0 && a.lastError == "" && a.cooldownTill.IsZero() && a.probeAfter.IsZero() && a.lastUsed.IsZero() && !a.lowCredit && a.inviteCode == "" && !a.inviteActivated {
 			continue
 		}
 		st := accountState{
@@ -273,6 +282,8 @@ func (s *store) saveState() error {
 			CooldownStage:   a.cooldownStage,
 			LastError:       a.lastError,
 			LowCredit:       a.lowCredit,
+			InviteCode:      a.inviteCode,
+			InviteActivated: a.inviteActivated,
 		}
 		if !a.cooldownTill.IsZero() {
 			st.CooldownTill = a.cooldownTill.UTC().Format(time.RFC3339)
@@ -315,6 +326,8 @@ func (s *store) applyConfig(configured []account) {
 				acc.abnormal = existing.abnormal
 				acc.lastError = existing.lastError
 				acc.lastUsed = existing.lastUsed
+				acc.inviteCode = existing.inviteCode
+				acc.inviteActivated = existing.inviteActivated
 				// A configured expiry is only a local estimate.  If a successful vendor
 				// call happened after that timestamp, the state file records it in
 				// lastUsed; do not let a restart resurrect the stale, disproved date.
@@ -781,6 +794,30 @@ func (s *store) clearLowCredit() int {
 	return cleared
 }
 
+// setInviteState remembers the last definitive invite binding for an account.
+// It is display metadata, not a credential; the vendor remains the authority
+// and the next status call replaces it.
+func (s *store) setInviteState(id, code string, activated bool) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, a := range s.all {
+		if a.ID != id {
+			continue
+		}
+		code = strings.TrimSpace(code)
+		if a.inviteCode == code && a.inviteActivated == activated {
+			return
+		}
+		a.inviteCode = code
+		a.inviteActivated = activated
+		_ = s.saveState()
+		return
+	}
+}
+
 func (s *store) remove(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -952,6 +989,10 @@ func (c *Client) AddAccount(ctx context.Context, spec core.AccountSpec) (core.Ac
 	if err := c.store.put(acc); err != nil {
 		return core.AccountRecord{}, err
 	}
+	// A hand-pasted session is still an account the operator wants on the
+	// shared invite code.  Binding is best-effort: the credential is already
+	// stored, and a vendor refusal is visible/retryable in the accounts page.
+	_, _ = c.bindInviteAfterLogin(ctx, acc.ID, c.logf)
 	stored, _ := c.store.lookup(acc.ID)
 	record := accountRecord(&stored, time.Now().UTC())
 	return record, nil
@@ -1194,6 +1235,10 @@ func accountRecord(a *account, now time.Time) core.AccountRecord {
 	}
 	if a.ExpiresAtMS == 0 {
 		record.Fields["expiry_known"] = false
+	}
+	if a.inviteCode != "" {
+		record.Fields["invite_code"] = a.inviteCode
+		record.Fields["invite_activated"] = a.inviteActivated
 	}
 	return record
 }

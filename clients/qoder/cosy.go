@@ -207,6 +207,44 @@ type cosySession struct {
 	info    string // base64(AES-128-CBC(identity, tempKey))
 }
 
+// newCosySessionWithIdentity builds a signing session with the full identity the
+// desktop client sends.  The client's WASM signs a userInfoJson containing the
+// credential and the login method, not just the five fields the device-token
+// path used.  Two login methods exist: "token" (device token) and
+// "job_token" (the exchanged job token).
+func newCosySessionWithIdentity(uid, name, email, token, loginMethod string) (cosySession, error) {
+	pub, err := cosyPublicKey()
+	if err != nil {
+		return cosySession{}, err
+	}
+	tempKey, err := randomHex(aes.BlockSize)
+	if err != nil {
+		return cosySession{}, fmt.Errorf("qoder: generating COSY temp key: %w", err)
+	}
+	identity := orderedCompact([]string{"uid", "aid", "name", "email", "login_method", cosyOAuthFieldName}, map[string]any{
+		"uid":              uid,
+		"aid":              "",
+		"name":             name,
+		"email":            email,
+		"login_method":     loginMethod,
+		cosyOAuthFieldName: token,
+	})
+	encrypted, err := aesCBCEncryptPKCS7([]byte(identity), []byte(tempKey))
+	if err != nil {
+		return cosySession{}, fmt.Errorf("qoder: sealing COSY identity: %w", err)
+	}
+	wrapped, err := rsaEncryptPKCS1v15(pub, []byte(tempKey))
+	if err != nil {
+		return cosySession{}, fmt.Errorf("qoder: wrapping COSY temp key: %w", err)
+	}
+	return cosySession{
+		uid:     uid,
+		tempKey: tempKey,
+		cosyKey: base64.StdEncoding.EncodeToString(wrapped),
+		info:    base64.StdEncoding.EncodeToString(encrypted),
+	}, nil
+}
+
 // newCosySession builds a fresh signing session for one account.
 func newCosySession(uid, name, email, token string) (cosySession, error) {
 	pub, err := cosyPublicKey()

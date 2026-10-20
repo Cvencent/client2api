@@ -174,9 +174,11 @@ func (s *loginSession) endPoll() {
 	s.mu.Unlock()
 }
 
-// StartLogin builds the vendor sign-in URL and records the pending session.
-// It makes no network call: the panel's poll is what talks to the vendor.
-func (c *Client) StartLogin(ctx context.Context) (core.LoginState, error) {
+// startBrowserLogin builds the vendor sign-in URL and records the pending
+// session.  It makes no network call: the panel's poll is what talks to the
+// vendor.  The exported entry point is StartLoginRealm in clilogin.go, which
+// dispatches between this route and the local CLI.
+func (c *Client) startBrowserLogin(ctx context.Context) (core.LoginState, error) {
 	verifier := randomPKCEVerifier()
 	nonce := newUUID()
 	sess := &loginSession{
@@ -192,12 +194,15 @@ func (c *Client) StartLogin(ctx context.Context) (core.LoginState, error) {
 	return sess.snapshot(), nil
 }
 
-// PollLogin advances a session by exactly one vendor poll.  The panel owns the
-// cadence, so this method never starts a background poller.
-func (c *Client) PollLogin(ctx context.Context, sessionID string) (core.LoginState, error) {
+// pollBrowserLogin advances a device-token session by exactly one vendor poll.
+// The panel owns the cadence, so this method never starts a background poller.
+func (c *Client) pollBrowserLogin(ctx context.Context, sessionID string) (core.LoginState, error) {
 	id := strings.TrimSpace(sessionID)
 	if id == "" {
 		return core.LoginState{}, errors.New("qoder: PollLogin: empty session id")
+	}
+	if strings.HasPrefix(id, "qoder-cli-login-") {
+		return core.LoginState{}, fmt.Errorf("qoder: %q is a CLI login session", id)
 	}
 	sess := c.loginByID(id)
 	if sess == nil {
@@ -234,9 +239,10 @@ func (c *Client) PollLogin(ctx context.Context, sessionID string) (core.LoginSta
 	return sess.snapshot(), nil
 }
 
-// CancelLogin stops a session.  Cancelling before the vendor hands over a token
-// leaves nothing on disk.
-func (c *Client) CancelLogin(ctx context.Context, sessionID string) error {
+// cancelBrowserLogin stops a device-token session.  Cancelling before the
+// vendor hands over a token leaves nothing on disk.  The exported CancelLogin
+// in clilogin.go dispatches between this and the CLI route.
+func (c *Client) cancelBrowserLogin(sessionID string) error {
 	id := strings.TrimSpace(sessionID)
 	if id == "" {
 		return errors.New("qoder: CancelLogin: empty session id")

@@ -3,6 +3,7 @@ package opencode
 import (
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -227,6 +228,63 @@ func TestBuildChatBodyFillsDefaultToolParameters(t *testing.T) {
 	}
 	if declared, _ := fn1["parameters"].(map[string]any); declared["type"] != "object" {
 		t.Fatalf("declared parameters = %#v", fn1["parameters"])
+	}
+}
+
+// An empty or nullable schema must be converted to an object schema. OpenAI
+// rejects the bare {} as `type: null`, and some MCP clients serialize absent
+// schema types as JSON null. A declared object schema has to survive untouched.
+func TestBuildChatBodyNormalizesNonObjectToolSchemas(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  json.RawMessage
+	}{
+		{name: "empty object", raw: json.RawMessage(`{}`)},
+		{name: "null type", raw: json.RawMessage(`{"type":null}`)},
+		{name: "wrong type", raw: json.RawMessage(`{"type":"string"}`)},
+		{name: "empty properties", raw: json.RawMessage(`{"type":"object","properties":null}`)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := chatRequest("gpt-5.1")
+			req.Tools = []core.Tool{{Name: "t", Parameters: tc.raw}}
+			got := decodeBody(t, Config{}, req)
+			tools, _ := got["tools"].([]any)
+			tool, _ := tools[0].(map[string]any)
+			fn, _ := tool["function"].(map[string]any)
+			params, _ := fn["parameters"].(map[string]any)
+			if params["type"] != "object" {
+				t.Fatalf("parameters.type = %#v, want object (schema %s)", params["type"], tc.raw)
+			}
+			if _, ok := params["properties"].(map[string]any); !ok {
+				t.Fatalf("parameters.properties = %#v, want an object (schema %s)", params["properties"], tc.raw)
+			}
+		})
+	}
+
+	declared := `{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}`
+	if got := normalizeToolParameters(json.RawMessage(declared)); string(got) != declared {
+		t.Fatalf("declared schema was rewritten: got %s, want %s", got, declared)
+	}
+	req := chatRequest("gpt-5.1")
+	req.Tools = []core.Tool{{Name: "weather", Parameters: json.RawMessage(declared)}}
+	got := decodeBody(t, Config{}, req)
+	tools, _ := got["tools"].([]any)
+	tool, _ := tools[0].(map[string]any)
+	fn, _ := tool["function"].(map[string]any)
+	rawParams, err := json.Marshal(fn["parameters"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var gotSchema, wantSchema map[string]any
+	if err := json.Unmarshal(rawParams, &gotSchema); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(declared), &wantSchema); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(gotSchema, wantSchema) {
+		t.Fatalf("declared schema changed: got %s, want %s", rawParams, declared)
 	}
 }
 

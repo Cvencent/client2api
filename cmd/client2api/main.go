@@ -44,7 +44,7 @@ import (
 )
 
 // version is overridable with -ldflags "-X main.version=...".
-var version = "0.1.90"
+var version = "0.1.91"
 
 // restartHandoffEnv marks the replacement half of a panel restart.  It tells a
 // starting process to keep retrying the listen address instead of failing fast,
@@ -1738,6 +1738,17 @@ func run() error {
 	// Stop after the server so the last requests are accounted for, and before
 	// returning so the final flush is not racing the process exit.
 	usage.Stop()
+	// A module that holds child processes (the qoder module drives the vendor's
+	// own CLI workers and half-finished sign-ins) is told to release them here,
+	// so a graceful shutdown never leaves Electron children behind.  Modules
+	// without such state have no Close and are skipped.
+	for _, c := range registry.All() {
+		if closer, ok := c.(interface{ Close() error }); ok {
+			if cerr := closer.Close(); cerr != nil {
+				logger.Printf("[%s] close: %v", c.Name(), cerr)
+			}
+		}
+	}
 	// ctx is already cancelled by the time we reach here, so Run returns
 	// promptly; the wait is bounded so a wedged vendor call inside a batch
 	// cannot keep the process alive.
