@@ -331,6 +331,12 @@ OpenAI's `schema must be a JSON Schema of 'type: "object"', got 'type: null'`
   `xhigh → top` rule still only moves upward to a published tier, and the
   generic unsupported-tier alignment remains the fallback for other levels.
 
+- Raccoon's tool-schema validator rejects JSON Schema regexes containing the
+  ECMAScript null escape `\0`. The Raccoon adapter removes that escape before
+  sending tools; the MCP tool still performs its own runtime validation. This
+  keeps Codex tool definitions such as `capture_process_scenario` from turning
+  an otherwise valid request into an upstream HTTP 400.
+
 - The embedded effort defaults still follow the platform-specific facts rather
   than one global `max`: WorkBuddy CN is `low/high/max` (default `high`),
   WorkBuddy global is `high` only, Cline uses its one global wire vocabulary,

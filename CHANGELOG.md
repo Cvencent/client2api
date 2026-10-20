@@ -8,6 +8,8 @@
 
 ## [Unreleased]
 
+## [0.1.97] - 2026-10-21
+
 ### Added
 
 - **Responses 压缩（compaction）完整实现。** 新增 `POST /v1/responses/compact`：
@@ -36,6 +38,17 @@
     带数字的拒绝继续让网关学到真实窗口，后续请求先裁剪再发送。
   - 措辞识别采用整句匹配（`prompt is too long`、`maximum context length`、`run compaction`
     及中文对应），避免把无关的 400 误判成压缩触发。
+
+- **Raccoon 工具定义中的 `\0` 正则转义会让上游返回 HTTP 400。** 某些 MCP 工具（例如
+  `capture_process_scenario`）的 `propertyNames.pattern` 含 ECMAScript 的 `\0` 转义；
+  SenseNova 的 tool-schema 校验器会直接拒绝。raccoon 适配器现在发送前递归移除该转义，
+  保留其余约束，工具的运行时校验不变。
+
+### Installer
+
+- `client2api-setup-0.1.97.exe`（空包，不含账号凭据或本机配置）
+- SHA256：`DE75DAD13E1077019628B99B3CB67862F9D14E30A4F77AF581738A323A7B1258`
+- 升级会保留现有 `configs/client2api.json`、`data/`、账号池、用量和任务数据。
 
 ## [0.1.96] - 2026-10-21
 

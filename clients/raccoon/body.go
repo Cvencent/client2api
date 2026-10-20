@@ -1,6 +1,7 @@
 package raccoon
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 
@@ -113,7 +114,7 @@ func buildChatBody(req *core.ChatRequest, model string, stream bool) chatBody {
 			Function: chatFunction{
 				Name:        name,
 				Description: t.Description,
-				Parameters:  t.Parameters,
+				Parameters:  sanitizeToolParameters(t.Parameters),
 			},
 		})
 	}
@@ -122,6 +123,60 @@ func buildChatBody(req *core.ChatRequest, model string, stream bool) chatBody {
 	}
 	applyThinkingControl(&body, reasoningEffort(req))
 	return body
+}
+
+// sanitizeToolParameters removes regex constructs that SenseNova's tool-schema
+// validator refuses even though they are valid JSON Schema. In particular,
+// Codex MCP tools may publish a propertyNames pattern containing the
+// ECMAScript null escape `\0`; sending it makes the chat endpoint answer HTTP
+// 400. Dropping that escape keeps the useful part of the pattern (for example
+// "no '=' in an environment key") while leaving runtime validation to the MCP
+// tool that owns the schema.
+func sanitizeToolParameters(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 || (!bytes.Contains(raw, []byte(`\0`)) && !bytes.Contains(raw, []byte{0})) {
+		return raw
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var schema any
+	if err := dec.Decode(&schema); err != nil {
+		return raw
+	}
+	if !sanitizeToolPatterns(schema) {
+		return raw
+	}
+	out, err := json.Marshal(schema)
+	if err != nil {
+		return raw
+	}
+	return out
+}
+
+func sanitizeToolPatterns(v any) bool {
+	changed := false
+	switch node := v.(type) {
+	case map[string]any:
+		if raw, ok := node["pattern"].(string); ok {
+			clean := strings.ReplaceAll(raw, `\0`, "")
+			clean = strings.ReplaceAll(clean, "\x00", "")
+			if clean != raw {
+				node["pattern"] = clean
+				changed = true
+			}
+		}
+		for _, child := range node {
+			if sanitizeToolPatterns(child) {
+				changed = true
+			}
+		}
+	case []any:
+		for _, child := range node {
+			if sanitizeToolPatterns(child) {
+				changed = true
+			}
+		}
+	}
+	return changed
 }
 
 // messageContent renders a message body as either a plain string or an
