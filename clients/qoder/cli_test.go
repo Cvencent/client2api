@@ -1011,3 +1011,108 @@ func TestQueueNoticeRendersWhatTheOperatorNeeds(t *testing.T) {
 		t.Error("an unavailable service is not reported")
 	}
 }
+
+// TestCLILoginCompletesWhenTheCredentialArrivesWithoutTheConsoleLine pins the
+// bug that left a finished sign-in spinning forever.
+//
+// The vendor writes <configDir>/.auth/user as soon as the browser step
+// succeeds, but its console line ("Login successful! Welcome, …") is a
+// separate, cosmetic signal whose wording is not part of any contract.  The
+// poll used to insist on that line before it would look at the store, so a
+// perfectly good credential sat in "pending" and the panel spun on 请稍后.
+// Completion must be decided by the store.
+func TestCLILoginCompletesWhenTheCredentialArrivesWithoutTheConsoleLine(t *testing.T) {
+	dir := os.Getenv("CLIENT2API_QODER_LIVE_CLI_DIR")
+	if dir == "" || os.Getenv("CLIENT2API_QODER_LIVE_CLI_TEST") != "1" {
+		t.Skip("set CLIENT2API_QODER_LIVE_CLI_TEST=1 and CLIENT2API_QODER_LIVE_CLI_DIR")
+	}
+	if _, err := findCLI(); err != nil {
+		t.Skipf("no local Qoder CN install: %v", err)
+	}
+	// Copy the credential into a scratch CLI root first: adoptCLIDir MOVES the
+	// staged login onto the account's own directory, so pointing this test at
+	// the live tree would consume the operator's sign-in and make the test
+	// one-shot.
+	// cliConfigDir is a plain join, so a staged leaf carries its own .staging
+	// prefix -- exactly what cliStageLeaf produces in production.
+	cliRoot := t.TempDir()
+	leaf := filepath.Join(".staging", "login-test")
+	staged := filepath.Join(cliRoot, leaf)
+	if err := os.MkdirAll(filepath.Join(staged, ".auth"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"user", "machine_id"} {
+		b, err := os.ReadFile(filepath.Join(dir, ".auth", name))
+		if err != nil {
+			t.Fatalf("reading %s from %s: %v", name, dir, err)
+		}
+		if err := os.WriteFile(filepath.Join(staged, ".auth", name), b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv(cliDirEnv, cliRoot)
+	cfg := config{}
+	c := &Client{
+		deps: core.Deps{DataDir: t.TempDir(), Logf: func(f string, a ...any) { t.Logf("log: "+f, a...) }},
+		cfg:  cfg,
+		up:   newUpstream(cfg, nil, nil),
+	}
+	c.store = &store{all: make([]*account, 0)}
+	c.logins = map[string]*loginSession{}
+	c.cliLogins = map[string]*cliLoginSession{}
+
+	// A session whose console identity never arrived (who == "", ok == false)
+	// over a config root that IS signed in: exactly the state that used to hang.
+	sess := &cliLoginSession{
+		id:        "qoder-cli-login-test",
+		leaf:      leaf,
+		dir:       staged,
+		expiresAt: time.Now().Add(time.Minute),
+		done:      make(chan struct{}),
+		message:   "waiting",
+	}
+	close(sess.done)
+
+	st, err := c.pollCLILogin(context.Background(), sess)
+	if err != nil {
+		t.Fatalf("pollCLILogin: %v", err)
+	}
+	if st.State != core.LoginSuccess {
+		t.Fatalf("state = %q (%s), want success: a credential was present", st.State, st.Message)
+	}
+	accs := c.store.snapshot()
+	if len(accs) != 1 {
+		t.Fatalf("accounts = %d, want the signed-in account to be stored", len(accs))
+	}
+	if accs[0].Token == "" {
+		t.Error("the stored account carries no device token")
+	}
+	if accs[0].CLIDir == "" {
+		t.Error("the stored account carries no CLI config root")
+	}
+}
+
+// TestCLILoginStaysPendingWhileNoCredentialExists is the other half: a session
+// with nothing on disk must keep waiting, not report success.
+func TestCLILoginStaysPendingWhileNoCredentialExists(t *testing.T) {
+	t.Setenv(cliDirEnv, t.TempDir())
+	c := &Client{deps: core.Deps{DataDir: t.TempDir()}, cfg: config{}}
+	c.store = &store{}
+	c.cliLogins = map[string]*cliLoginSession{}
+
+	sess := &cliLoginSession{
+		id:        "pending",
+		leaf:      filepath.Join("absent", "leaf"),
+		dir:       filepath.Join(t.TempDir(), "nothing-here"),
+		expiresAt: time.Now().Add(time.Minute),
+		done:      make(chan struct{}),
+		message:   "waiting",
+	}
+	st, err := c.pollCLILogin(context.Background(), sess)
+	if err != nil {
+		t.Fatalf("pollCLILogin: %v", err)
+	}
+	if st.State != core.LoginPending {
+		t.Fatalf("state = %q, want pending while no credential exists", st.State)
+	}
+}

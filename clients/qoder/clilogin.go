@@ -206,7 +206,7 @@ func (c *Client) startCLILogin(ctx context.Context) (core.LoginState, error) {
 		leaf:      c.cliStageLeaf(nonce),
 		expiresAt: time.Now().Add(cliLoginTTL),
 		done:      make(chan struct{}),
-		message:   "正在启动本机 Qoder CLI，请稍候……",
+		message:   "正在启动本机 Qoder CLI（首次启动约 10–20 秒），请稍候……",
 	}
 	sess.dir = c.cliConfigDir(sess.leaf)
 	if err := core.EnsureDir(sess.dir); err != nil {
@@ -273,6 +273,12 @@ func (c *Client) startCLILogin(ctx context.Context) (core.LoginState, error) {
 
 	select {
 	case <-urlFound:
+		// The URL is on screen; from here the operator's phone is the only
+		// thing that can move the flow forward, so say so instead of leaving
+		// the generic "starting the CLI" line up.
+		sess.mu.Lock()
+		sess.message = "请在浏览器/手机里确认登录；确认后本页会自动完成，无需再点任何按钮。"
+		sess.mu.Unlock()
 		return sess.snapshot(), nil
 	case <-sess.done:
 		st := sess.snapshot()
@@ -337,24 +343,28 @@ func (c *Client) pollCLILogin(ctx context.Context, sess *cliLoginSession) (core.
 		return st, nil
 	}
 	sess.mu.Lock()
-	who, ok := sess.who, sess.ok
+	who := sess.who
 	sess.mu.Unlock()
-	if !ok {
+
+	// The credential store is the authority, not the CLI's console output.
+	//
+	// This used to wait for a "who" parsed out of the CLI's success line before
+	// it would look at the store at all.  When that line's wording did not
+	// match, a sign-in that had already written a perfectly good credential sat
+	// in "pending" forever and the panel spun on "请稍后" -- the store was right
+	// there the whole time.  Reading the store unconditionally, and treating a
+	// readable credential as the success signal, is what makes the wait end.
+	if !cliSignedIn(sess.dir) {
+		// Nothing written yet: the browser step has not finished.  A child that
+		// has already exited without writing one is a failure, not a wait.
 		select {
 		case <-sess.done:
-			// The child exited without its success line: report the failure it
-			// already recorded rather than inventing another.
 			return sess.snapshot(), nil
 		default:
 			return st, nil
 		}
 	}
 
-	// The credential store is the authority, not the CLI's console output: it
-	// holds the vendor's own user id and the device token the ledger and
-	// check-in need.  Reading it here also means a wording change in the CLI's
-	// success line can no longer leave a finished login stuck as "pending"
-	// (which is exactly what a regex over that line used to do).
 	creds, err := c.readCLICredentials(ctx, sess.dir)
 	if err != nil {
 		// Fall back to the old console-identity path so a store the helper
@@ -370,6 +380,9 @@ func (c *Client) pollCLILogin(ctx context.Context, sess *cliLoginSession) (core.
 			sess.fail("本机 CLI 报告登录成功，但没有写出凭据文件。")
 			return sess.snapshot(), nil
 		}
+		sess.mu.Lock()
+		sess.leaf = leaf
+		sess.mu.Unlock()
 		acc := account{
 			storedAccount: storedAccount{
 				ID:       accountID,
@@ -385,6 +398,10 @@ func (c *Client) pollCLILogin(ctx context.Context, sess *cliLoginSession) (core.
 			sess.fail("登录成功，但凭据无法写入：" + redactErr(err))
 			return sess.snapshot(), nil
 		}
+		// Mark the terminal state through succeed(), not by assigning message:
+		// snapshot() decides "success" from ok, so a bare message assignment
+		// left the panel polling a login that had already been stored.
+		sess.succeed(label)
 		sess.mu.Lock()
 		sess.message = "本机 CLI 登录成功，已保存 " + label + "（凭据读取失败，仅免费模型可用：" + redactErr(err) + "）"
 		sess.mu.Unlock()
@@ -394,11 +411,18 @@ func (c *Client) pollCLILogin(ctx context.Context, sess *cliLoginSession) (core.
 
 	accountID := "qoder-" + creds.UID
 	label := firstNonEmpty(creds.Name, who, "Qoder CLI 账号")
+	// adoptCLIDir MOVES the staged root onto the account's own name, so the
+	// leaf this session was created with no longer exists afterwards.  Carry
+	// the returned leaf through, or the check below looks in the old path and
+	// reports a missing credential the move just created.
 	leaf := c.adoptCLIDir(sess.leaf, accountID)
 	if !cliSignedIn(c.cliConfigDir(leaf)) {
 		sess.fail("本机 CLI 报告登录成功，但没有写出凭据文件。")
 		return sess.snapshot(), nil
 	}
+	sess.mu.Lock()
+	sess.leaf = leaf
+	sess.mu.Unlock()
 	acc := account{
 		storedAccount: storedAccount{
 			ID:       accountID,
@@ -423,6 +447,9 @@ func (c *Client) pollCLILogin(ctx context.Context, sess *cliLoginSession) (core.
 		sess.fail("登录成功，但凭据无法写入：" + redactErr(err))
 		return sess.snapshot(), nil
 	}
+	// succeed() is what snapshot() turns into LoginSuccess; assigning message
+	// alone would leave the panel polling a sign-in that already succeeded.
+	sess.succeed(label)
 	sess.mu.Lock()
 	sess.message = "本机 CLI 登录成功，已保存 " + label
 	sess.mu.Unlock()
