@@ -29,6 +29,7 @@ One OpenAI-compatible gateway in front of more than twenty AI backends:
 | `kilocode/…` | Kilo Code | Kilo AI Gateway (api.kilo.ai) — OpenRouter-shaped multi-vendor router; free models served anonymously, keys optional |
 | `doubao/…` | Doubao | ByteDance Doubao desktop client / web app |
 | `doubaoime/…` | Doubao IME | Doubao Input Method (豆包输入法) online speech-to-text — transcription only, not chat |
+| `officeace/…` | OfficeAce / Huawei | Huawei MaaS / AgentArts model gateway; built in and displayed as **Huawei** |
 | `openai-compat/…` | onmiRoute | Legacy compatible sources and the local OmniRoute bridge; existing `openai-compat/<provider>/<model>` routes remain valid |
 | `<source-id>/…` | Custom relay | Hot-defined OpenAI-compatible platforms, each with its own API root, API-key pool, model scan and routing policies |
 
@@ -117,12 +118,17 @@ account OAuth flow, stores the model-gateway App Key / App Secret in
 `data/officeace/accounts.json`, and publishes the scanned models as
 `officeace/<model>`. Each account keeps the `model_api_url_base` returned by its
 own login. Requests use `Authorization: Basic base64(app_key:app_secret)`.
+A fresh sign-in also opens the free personal-trial entitlement
+`officeace.personal.package.trial`, which carries 500 `officeace_points` and
+200 online searches; an account that already has the trial is only checked and
+is not ordered again.
 The cloud credential from the same login is stored alongside it, which is what
 backs the WorkBuddy-style facilities: **Check-in** posts
 `POST /v1/subscription/bonus/claim` (idempotent), **Balance** reads the
 `officeace_points` position and the online-search meter, and **Packages** lists
-the plan quota and bonus activities. Expired temporary credentials are renewed
-from the OAuth refresh token or the IAM v3/STS exchange.
+the plan quota and bonus activities (new-user and daily-check-in bonuses appear
+as separate activity rows). Expired temporary credentials are renewed from the
+OAuth refresh token or the IAM v3/STS exchange.
 Windows can still use **Import -> Discover local credentials** for an already
 signed-in OfficeAce desktop client.
 
@@ -144,10 +150,65 @@ HTTP 429 endpoint outages, are classified as upstream failures.
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-Current version: **0.1.74**. Full history: [CHANGELOG.md](../CHANGELOG.md).
+Current version: **0.1.90**. Full history: [CHANGELOG.md](../CHANGELOG.md).
+
+## Free models and free-quota accounts
+
+Two different notions of "free" are easy to conflate:
+
+- **Free model** — the vendor prices the id at zero. The module marks
+  `extra.free`, the router sets `core.ChatRequest.FreeModel`; on modules that opted into the
+  account-side rule, an account parked for an empty wallet still serves it, and
+  only the vendor refusing that model on that account parks the pair. WorkBuddy, Cline, CodeArts, Raccoon,
+  QwenWork, OpenRouter, Kilo Code and OpenCode implement the account-side rule.
+- **Free-quota account** — the account receives credits, a trial package or a
+  daily allowance. Those credits are spent by any paid model, so check the
+  multiplier on the **Models and Profiles** page before using one.
+
+The vendor's live catalogue is the authority; the table below records the stable
+capability of each module. Use the panel's **Re-fetch** button for the live list.
+
+| Route | Free model | Free quota / recurring allowance |
+|---|---|---|
+| `openrouter/...` | Yes: `pricing.prompt` and `pricing.completion` must both be zero; `free_only` defaults on; `openrouter/free` is the alias. | The vendor caps free-model calls per day (`free-models-per-day`); an out-of-credit key still serves free ids. No check-in. |
+| `kilocode/...` | Yes: anonymous free tier; `free_only` defaults on; the vendor `isFree` flag, a `free`-style id, or published-zero prices mark a model free. | Anonymous access is shared per IP and rate-limited (200 requests/hour); a signed-in account or API key gets its own limits. No check-in. |
+| `opencode/...` | Yes: anonymous free realm with `x-api-key: public`; `free_only` defaults on, `-free` ids are recognized, and `free_models` adds others. | Anonymous access is rate-limited; a signed-in Console account can still serve free ids. No check-in. |
+| `cline/...` | Yes: the vendor's `recommended-models` `free` array is authoritative; `free_only` defaults on. | No check-in. WorkOS device-code sign-in only. |
+| `gemini/...` | Yes: the Cloud Code Assist / Antigravity free tier. | No check-in; quota is the vendor's rolling 5-hour and weekly windows. |
+| `officeace/...` | No zero-price model marker: the four selectable ids all draw on trial/bonus credits (`glm-5.2`, `glm-5.1`, `deepseek-v4-flash-0731`, `deepseek-v4.1-flash`). | A fresh sign-in opens `officeace.personal.package.trial`: 500 `officeace_points` + 200 online searches. New-user and daily-check-in bonuses appear as separate activity packages. |
+| `workbuddy/...` | Yes: a zero effective multiplier, an open promotion, or a vendor free label; e.g. `hy4-preview` is night-free while `glm-5.2` is only a 0.50x night discount. | CN check-in / intl daily-activity conversation; promotions are only believed inside their validity window. |
+| `codearts/...` | Yes: the vendor's free-quota ("benefit") list; fallback `glm-5.3-flash` and `deepseek-v4.1-flash`. | Daily check-in when the package reports `is_credit_package`. |
+| `qwenwork/...` | Yes: a vendor `credits` multiplier of zero; built-in `pro`, `flash`, `qwen3.8-max-preview`. | Sash daily check-in. |
+| `raccoon/...` | Yes: an effective `billing_multiplier` of zero (including limited-time campaigns); built-in `sn-glm-5-3`, `sn-kimi-k3`, `sn-glm-5-3-flash`, `sn-deepseek-v4-1-flash`. | 300 login credits per day. |
+| `loomy/...` | No: the built-in catalogue is not zero-priced; the daily gift funds the models. | Daily first-login gift allowance. |
+| `qoder/...` | The vendor's Credits decide. | Daily `CLAIM_BENEFIT` Credits when the activity is open. |
+| `tabbit/...` | The vendor catalogue decides. | Daily sign-in restores a slice of the quota (shown as a usage percentage). |
+| `minimaxcode/...` | The vendor catalogue decides. | Seven-day daily sign-in credits. |
+| `lobsterai/...` | The vendor catalogue decides; the Chinese free-quota message parks an exhausted account. | Daily check-in, roughly +100 credits. |
+| `autoclaw/...` | The vendor catalogue decides. | Daily credits claim. |
+| `trae/...` | The vendor catalogue decides. | CN check-in and the 1024 activity; welfare grants (e.g. 4000 credits) are read from the vendor's entitlements. |
+| `zcode/...` | The vendor catalogue decides. | Promotional plan claim (token grants). |
+| `doubao/...` | The vendor catalogue decides. | Credits and package quota are displayed; no check-in. |
+| `kimi/...` | No free-model or free-credit mechanism is implemented. | No check-in. |
+| `openai-compat/...`, custom relays | Vendor-dependent; the platform's `/models` scan decides. | Read the balance through New API, Sub2API or OpenAI Billing when the vendor supports it. |
+| `doubaoime/...` | Speech transcription only. | No chat quota. |
+
+These are vendor ids; prefix them with the route when calling the gateway, e.g.
+`kilocode/kilo-auto/free`, `cline/cline-free/gemini-3.8-flash`,
+`opencode/space-bunny-free`, or `openrouter/openrouter/free`.
+
+Representative built-in/fallback free ids: `openrouter/free`; Kilo's
+`kilo-auto/free`, `stepfun/step-5-preview-free`,
+`nvidia/nemotron-3-ultra-550b-a55b:free`,
+`dots-studio/dots-3-note-preview:free`, `thinkingmachines/inkling-small:free`;
+OpenCode's `space-bunny-free`, `deepseek-v4-flash-free`,
+`mimo-v2.6-flash-free`, `nemotron-3-ultra-free`; Cline's
+`stealth/space-bunny-alpha`, `cline-free/mimo-v2.6-flash`,
+`cline-free/gemini-3.8-flash`; Gemini's `gemini-3.8-flash`; OfficeAce's four
+trial-credit models; and CodeArts' `glm-5.3-flash`,
+`deepseek-v4.1-flash`.
 
 ### Recent highlights (0.1.63 - 0.1.73)
-
 
 * **OfficeAce (Office Claw) platform:** `officeace` is built in with Huawei-account browser sign-in, automatic model-gateway credential storage, account-level gateway addresses, and `officeace/<model>` publication. Windows local credential discovery remains a fallback.
 * **OfficeAce parity with WorkBuddy:** the built-in platform now offers daily check-in, credit balance and package breakdown, with automatic renewal of the temporary cloud credential.
@@ -313,8 +374,6 @@ built binary and a tagged release can never disagree about their version.
 
 Flags: `-config`, `-listen`, `-data-dir`, `-proxy`, `-list-clients`.
 
-
-
 Then:
 
 ```powershell
@@ -370,7 +429,6 @@ carries the binary, `configs/client2api.example.json` and this README. Copy the
 example to `configs/client2api.json` and **fill in `api_key` before starting** —
 an empty key leaves both the gateway and the panel unauthenticated, which the
 program will warn about on every start.
-
 
 ### Windows installer
 

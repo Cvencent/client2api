@@ -12,6 +12,8 @@
 
 ![账号池](docs/images/accounts.png)
 
+> 本文适用于 client2api 0.1.90。免费模型与免费额度账号的对照表见第 6 节。
+
 ## 1. 安装与首次启动
 
 ### Windows 安装包
@@ -190,7 +192,45 @@ X-Api-Key: <你的入站 Key>
 
 这个页面只做本地预演，不调用上游，也不读取账号健康状态。所以它适合确认“路由规则会选谁”，但不能代替真实测试；实际请求还会受账号可用性、冷却、并发和余额影响。
 
-## 6. 模型与档位
+## 6. 免费额度与免费模型怎么选
+
+先分清两个概念，避免把「有免费额度」误当成「所有模型都免费」：
+
+- **免费模型**：厂商定价为 0 的模型。网关标记为 `extra.free` 并优先于付费候选；在已接入账号侧规则的平台，余额为 0 被冷却的账号仍能服务它，只有「上游拒了本账号调用这个模型」才会停这一对账号+模型。目前接入这条规则的平台有 WorkBuddy、Cline、CodeArts、Raccoon、QwenWork、OpenRouter、Kilo Code、OpenCode。
+- **免费额度账号**：账号获得积分、试用套餐或每日赠送。额度会被付费模型消耗，用之前先看「模型与档位」里那一行的倍率。
+
+各平台的免费来源和对应模型：
+
+| 路由 | 免费模型 | 免费额度 / 领取方式 |
+|---|---|---|
+| `openrouter/...` | 有：输入价和输出价都为 `0` 的 ID； `free_only` 默认开启。内置/兜底例子：`openrouter/free`，以及实时目录里所有零价 `:free` 变体。 | 用自己的 Key 消耗该账号免费额度；厂商也有「每日免费模型调用上限」。没有签到。 |
+| `kilocode/...` | 有：匿名免费层默认开启 `free_only`。内置/兜底例子：`kilo-auto/free`、`stepfun/step-5-preview-free`、`nvidia/nemotron-3-ultra-550b-a55b:free`、`nvidia/nemotron-3-super-120b-a12b:free`、`nvidia/nemotron-3.5-lightning:free`、`dots-studio/dots-3-note-preview:free`、`thinkingmachines/inkling-small:free`、`poolside/laguna-s-2.1:free`、`cohere/north-mini-code:free` 等。 | 匿名账号不用登录（共享、默认每 IP 每小时 200 次）；加 API Key 或设备登录后按账号自己的限额。 |
+| `opencode/...` | 有：匿名免费域 + `-free` 后缀。内置/兜底例子：`space-bunny-free`、`deepseek-v4-flash-free`、`mimo-v2.6-flash-free`、`mimo-v2.5-free`、`nemotron-3-ultra-free`、`nemotron-3.5-lightning-free`、`jev-1.13-free`、`longcat-2.5-preview-free` 等。 | 匿名 `x-api-key: public` 不用登录；登录 Console 的账号也可以服务免费 ID。 |
+| `cline/...` | 有：厂商 `free` 数组为准，`free_only` 默认开启。内置/兜底例子：`stealth/space-bunny-alpha`、`cline-free/mimo-v2.6-flash`、`cline-free/gemini-3.8-flash`、`cline-free/muse-spark-1.3-contributor`。 | 没有签到，只支持设备登录。注意：`cline-free/deepseek-v4.1-flash` 已在 2026-10-04 移入付费 `cline-pass/*`，下一次刷新就会从免费列表消失。 |
+| `gemini/...` | 有：Google Cloud Code Assist / Antigravity 免费线。内置/兜底：`gemini-3.8-flash` 一类。 | 没有签到；额度是厂商的 5 小时/周滚动窗口。 |
+| `officeace/...` | 没有逐模型零价标记，四个可选模型都消耗试用/活动积分：`officeace/glm-5.2`、`officeace/glm-5.1`、`officeace/deepseek-v4-flash-0731`、`officeace/deepseek-v4.1-flash`。 | 新登录自动开通免费 trial：500 `officeace_points` + 200 次联网搜索；新用户奖励和每日签到奖励会在「套餐」页拆开列出。 |
+| `workbuddy/...` | 有：有效倍率为 `0` 或促销窗口打开的模型即为免费，厂商免费标签也算。例：`hy4-preview` 在 23:00-08:00 夜间免费；`glm-5.2` 是 0.50x 夜间折扣，不是免费。 | 国内每日签到；国际版每日活跃对话。促销只在有效期内生效。 |
+| `codearts/...` | 有：厂商免费额度（benefit）清单；回退为 `glm-5.3-flash` 和 `deepseek-v4.1-flash`。 | 套餐满足 `is_credit_package` 时可每日签到。 |
+| `qwenwork/...` | 有：厂商 `credits` 倍率解析为 `0` 的模型标为免费。内置：`pro`、`flash`、`qwen3.8-max-preview`。 | Sash 每日签到。 |
+| `raccoon/...` | 有：有效 `billing_multiplier` 为 `0`（含限时活动）即为免费。内置：`sn-glm-5-3`、`sn-kimi-k3`、`sn-glm-5-3-flash`、`sn-deepseek-v4-1-flash`。 | 每日 300 登录积分。 |
+| `loomy/...` | 内置目录不是零价；用每日赠送额度消费。 | 每日首次登录赠送额度。 |
+| `qoder/...` | 由实时目录决定。 | 活动开放时领取每日 `CLAIM_BENEFIT` Credits。 |
+| `tabbit/...` | 由实时目录决定。 | 每日签到返还一部分额度（面板显示为使用百分比）。 |
+| `minimaxcode/...` | 由实时目录决定。 | 七天连续每日签到积分。 |
+| `lobsterai/...` | 由实时目录决定；厂商中文「免费额度已用完」会把账号标记为已耗尽。 | 每日签到，约 +100 积分。 |
+| `autoclaw/...` | 由实时目录决定。 | 每日领取积分。 |
+| `trae/...` | 由实时目录决定。 | 国内每日签到和 1024 活动；观察到的福利包（例如 4000 积分）从厂商权益包读取。 |
+| `zcode/...` | 由实时目录决定。 | 领取活动套餐（token 权益）。 |
+| `doubao/...` | 由实时目录决定。 | 显示积分和套餐额度；未实现签到。 |
+| `kimi/...` | 未实现免费模型或免费积分机制。 | 没有签到。 |
+| `openai-compat/...`、自定义中转站 | 取决于厂商，平台自己的 `/models` 扫描结果为准。 | 厂商支持时可通过 New API、Sub2API 或 OpenAI Billing 协议读取余额。 |
+| `doubaoime/...` | 仅语音转写。 | 没有对话额度。 |
+
+> 表里的「内置/兜底」ID 只保证在实时目录还拿不到时可用；厂商随时会新增、下线或改价。使用前请在「模型与档位」里点 **重新获取**，以后台刷新为准。
+>
+> 示例 ID 都是厂商模型 ID；调用时在前面补平台路由，例如 `kilocode/kilo-auto/free`、`cline/cline-free/gemini-3.8-flash`、`openrouter/openrouter/free`。
+
+## 7. 模型与档位
 
 进入 **模型与档位**，点击 **重新获取** 从各平台刷新模型目录。表格会显示模型来源、倍率、默认档、思考档位、上下文长度、最大输出、输入价、输出价和缓存读取价。
 
@@ -210,7 +250,7 @@ X-Api-Key: <你的入站 Key>
 
 页面支持搜索、按类型筛选、全选、反选、清空和逐项勾选。选择“全部模型”会删除 `exposed_models` 配置，表示全部开放；选择“仅勾选模型”后，空选择表示一个模型也不对外。保存后会写入配置并热重载，不需要重启。配置里存在、但当前模型目录没有的 ID 会保留成 `missing` 行，保存不会把它丢掉。
 
-## 7. 使用 Chat Completions
+## 8. 使用 Chat Completions
 
 Chat Completions 是最常见的 OpenAI 兼容入口：
 
@@ -235,7 +275,7 @@ curl.exe -s -X POST http://127.0.0.1:8790/v1/chat/completions `
 
 如果请求里的模型没有加平台前缀，网关会尝试在唯一的平台中解析。若有歧义，会返回错误并列出候选。固定平台时使用 `平台/模型`。常用检查接口包括 `GET /v1/models`、`GET /v1/status` 和 `GET /healthz`。
 
-## 8. 使用 Responses API、Anthropic Messages 与 Codex
+## 9. 使用 Responses API、Anthropic Messages 与 Codex
 
 Responses 接口：
 
@@ -286,13 +326,13 @@ Responses 接口支持 `instructions`、字符串或数组形式的 `input`、�
 
 需要注意：接口是无状态的，`store` 和 `previous_response_id` 会被接受但不会在上游保存对话；调用方需要在 `input` 里回放历史。内置工具会被跳过，只翻译函数工具。非流式响应请从 `message` 项里读取文本。
 
-## 9. 使用对话测试
+## 10. 使用对话测试
 
 进入 **对话测试**：选择模型，必要时用筛选框缩小列表；选择要测试的账号；输入消息并发送；流式输出过程中可以停止。
 
 这个页面适合新加账号后的真实请求测试、比较不同平台同一模型的响应、检查工具调用和流式输出，以及在接入正式客户端前验证入站 Key 和模型路由。账号池里的 **测试** 也是真实请求，但对话测试更适合人工观察回答质量、速度和失败信息。
 
-## 10. 使用任务中心
+## 11. 使用任务中心
 
 任务中心有三个主要部分：定时任务、批量执行和任务看板。
 
@@ -318,7 +358,7 @@ Responses 接口支持 `instructions`、字符串或数组形式的 `input`、�
 
 任务看板用于查看账号的任务状态。已扫描过的账号会优先使用缓存，新账号会主动拉取；可以点击 **刷新任务状态** 强制重新读取。当账号没有可自动执行的待办时，卡片会变为绿色。任务缓存保存在 `data/panel/task_board_cache.json`。
 
-## 11. 查看用量、积分和告警
+## 12. 查看用量、积分和告警
 
 ### 用量
 
@@ -344,7 +384,7 @@ Responses 接口支持 `instructions`、字符串或数组形式的 `input`、�
 
 运行日志提供结构化日志和频道筛选，常见频道包括网关、账号、调度、任务、对话和上游错误。排查问题时，先看运行日志，再看平台告警，最后看账号池状态。
 
-## 12. 网关配置与热更新
+## 13. 网关配置与热更新
 
 进入 **配置** 页面可以编辑核心配置。常用字段包括：
 
@@ -395,7 +435,7 @@ Responses 接口支持 `instructions`、字符串或数组形式的 `input`、�
 
 配置页的备份与恢复会包含监听地址、入站 Key、数据目录、代理设置、出口中继、账号池与冷却策略、会话粘性、提示词、模型别名与路由组、定时任务、平台路由、自定义中转站、模块配置、模型上下文与价格等手工覆盖，以及所有平台的账号凭据（含 WorkBuddy 已停用的账号）。恢复时会合并配置，模型覆盖整体替换，凭据覆盖同名文件，覆盖前会先备份到 `data/backups/`。备份不含用量、日志、任务运行历史、学习到的上下文窗口和设备身份；如果 WorkBuddy 配置了自定义 `accounts_dir`，其账号不在快照内，导出时会提示。备份文件里包含明文凭据、明文 Key 和可能的出口订阅链接，必须妥善保管。
 
-## 13. 路由、冷却、并发和粘性
+## 14. 路由、冷却、并发和粘性
 
 一次请求通常会按下面的信息选择账号：请求里显式的平台前缀、模型别名和路由组、`Auto/<模型>` 动态聚合、平台优先级和分时优先级、账号优先级、账号状态、冷却、余额、模型可用性、并发限制，以及会话粘性绑定。
 
@@ -409,7 +449,7 @@ Responses 接口支持 `instructions`、字符串或数组形式的 `input`、�
 
 支持会话粘性的平台会把同一段对话尽量固定到同一个账号，以利用上游提示缓存，减少重复计费。粘性通常按“平台 + 会话”绑定。账号被停用、冷却或缺少当前模型时，绑定会被忽略并重新选择账号。
 
-## 14. 面板 API 概览
+## 15. 面板 API 概览
 
 如果要在本机做自动化，可以使用 `/panel/api/` 下的接口。
 
@@ -456,7 +496,7 @@ POST   /panel/api/clients/<name>/import/bundle
 
 模块没有实现对应能力时通常会返回 `501`，并说明缺少什么。账号 ID 可能包含需要 URL 转义的字符，自己调用 API 时要正确编码。设置顶层 `api_key` 后，所有 `/panel/api/*` 都要求 `Authorization: Bearer <key>` 或 `X-Api-Key: <key>`。HTML 外壳不会拦截，因为页面必须先加载才能输入 Key。
 
-## 15. 故障排查
+## 16. 故障排查
 
 ### 401 invalid_api_key
 
@@ -510,7 +550,7 @@ POST   /panel/api/clients/<name>/import/bundle
 
 通常表示进程在运行，但没有可服务的账号。先检查账号池和上游状态。
 
-## 16. 数据安全与升级
+## 17. 数据安全与升级
 
 重要目录：
 
@@ -535,12 +575,12 @@ pwsh -File installer\build.ps1 -NoData
 
 不要监听 `0.0.0.0` 后暴露到公网，不要给别人提供共享中转，不要多个实例共用同一个 `data/`，不要用同一个端口启动两个实例，不要把 `data/` 或配置上传到公开仓库，也不要用本项目绕过平台额度或风控。
 
-## 17. 使用范围总结
+## 18. 使用范围总结
 
 client2api 适合聚合自己拥有的多个 AI 客户端账号、在本机统一调用 Chat Completions 和 Responses、给自己使用的 Codex 或 OpenAI 兼容客户端提供网关、管理账号、任务、余额、用量和价格，以及学习多平台协议适配、账号池调度和网关实现。
 
 client2api 不适合公网服务器架设、面向多人的共享中转、商业售卖访问权限、绕过上游账号限制或风控，也不适合作为任何平台的官方替代品。请把它当作个人自用、学习使用的工具，并遵守所有相关平台的服务条款。
-## 18. 面板页面速览
+## 19. 面板页面速览
 
 下面几张图对应前面提到的其余面板页面，可以用来快速确认每个功能在哪里。
 

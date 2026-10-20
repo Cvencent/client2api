@@ -5,7 +5,7 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-当前版本：**0.1.73**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：**0.1.90**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 流式断流排查：升级后系统日志新增 `stream: id=...` 终止诊断，包含协议、平台/模型、
 上游事件数、`finish_reason`、正文/推理字节数、工具调用数、completion token、
@@ -58,8 +58,60 @@ client2api 是一个**个人自用**的 OpenAI 兼容网关。它把你自己在
 | `kilocode/...` | Kilo Code | Kilo AI Gateway |
 | `doubao/...` | Doubao | 字节跳动 豆包（桌面客户端 / 网页） |
 | `doubaoime/...` | Doubao IME | 豆包输入法在线语音转写（仅转写） |
+| `officeace/...` | OfficeAce / 华为 | 华为 MaaS / AgentArts（内置，显示为 **华为**） |
 | `openai-compat/...` | onmiRoute | 旧兼容来源 |
 | `<source-id>/...` | 自定义中转站 | 自己添加的任意 OpenAI 兼容平台 |
+
+### 免费模型与免费额度账号
+
+另外两件事很容易混淆：
+
+- **免费模型**是厂商自己定价为 0 的模型。网关会标记 `extra.free` 并优先于付费候选；在已接入账号侧规则的平台，余额为 0 被冷却的账号仍能服务它，只有「上游拒绝了本账号调用这个模型」才会把这一对账号+模型停掉。WorkBuddy、Cline、CodeArts、Raccoon、QwenWork、OpenRouter、Kilo Code、OpenCode 都实现了这条规则。
+- **免费额度账号**是账号会拿到积分、试用套餐或每日赠送。这些额度会被付费模型消耗，所以用之前先看「模型与档位」页里的倍率。
+
+实时模型目录才是权威：厂商会随时新增、下线或改价，下面两张表是起点，不是固定清单。
+
+| 路由 | 免费模型（零价 ID） | 免费额度账号 / 周期性领取 |
+|---|---|---|
+| `openrouter/...` | 有：只有输入价和输出价都为 `0` 的 ID 才算免费；`free_only` 默认开启。 | 没有签到；用你自己的 OpenRouter Key 会消耗该账号的免费额度，厂商还会限制每天免费模型调用次数。 |
+| `kilocode/...` | 有：匿名免费层，`free_only` 默认开启，实时目录为准。 | 匿名账号无需登录（共享、默认每 IP 每小时 200 次请求）；登录或 API Key 账号走自己的免费模型限额。 |
+| `opencode/...` | 有：匿名免费域；`free_only` 默认开启，厂商 `-free` 后缀 ID 会被识别。 | 匿名 `x-api-key: public` 无需登录；登录 OpenCode Console 的账号也可以服务免费 ID。 |
+| `cline/...` | 有：厂商 `free` 数组为准，`free_only` 默认开启。 | 没有签到，只支持 WorkOS 设备登录。 |
+| `gemini/...` | 有：Google Cloud Code Assist / Antigravity 免费线。 | 没有签到；额度是厂商的 5 小时/周滚动窗口，不是积分余额。 |
+| `officeace/...` | 没有逐模型零价标记；四个可选模型都消耗试用/活动积分。 | 新登录会自动开通免费 `officeace.personal.package.trial`：500 `officeace_points` + 200 次联网搜索；新用户、每日签到等奖励会在「套餐」页拆开显示。 |
+| `workbuddy/...` | 有：有效倍率为 `0` 或促销窗口已开启的模型即为免费，厂商免费标签也算。 | 国内每日签到；国际版每日活跃对话。免费促销只在有效期内生效。 |
+| `codearts/...` | 有：从网关配置读取厂商的免费额度（benefit）模型清单。 | 套餐满足 `is_credit_package` 时可每日签到。 |
+| `qwenwork/...` | 有：厂商 `credits` 倍率解析为 `0` 的模型标为免费。 | Sash 每日签到。 |
+| `raccoon/...` | 有：有效 `billing_multiplier` 为 `0`（含限时活动）即为免费。 | 通过桌面登录发放接口领取每日 300 积分。 |
+| `loomy/...` | 内置目录不是零价；用每日赠送额度消费。 | 每日首次登录赠送额度。 |
+| `qoder/...` | 由实时目录决定；免费/付费由厂商 Credits 决定。 | 活动开放时领取每日 `CLAIM_BENEFIT` Credits。 |
+| `tabbit/...` | 由实时目录决定。 | 每日签到会返还一部分额度（面板显示为使用百分比）。 |
+| `minimaxcode/...` | 由实时目录决定。 | 七天连续每日签到积分。 |
+| `lobsterai/...` | 由实时目录决定；厂商中文「免费额度已用完」会把账号标记为已耗尽。 | 每日签到，约 +100 积分。 |
+| `autoclaw/...` | 由实时目录决定。 | 每日领取积分。 |
+| `trae/...` | 由实时目录决定。 | 国内每日签到和 1024 活动；观察到的福利包（例如 4000 积分）从厂商权益包读取。 |
+| `zcode/...` | 由实时目录决定。 | 领取活动套餐（token 权益；任务看板的奖励单位显示为积分）。 |
+| `doubao/...` | 由实时目录决定。 | 显示积分和套餐额度；未实现签到。 |
+| `kimi/...` | 未实现免费模型或免费积分机制。 | 没有签到。 |
+| `openai-compat/...`、自定义中转站 | 取决于厂商，平台自己的 `/models` 扫描结果为准。 | 厂商支持时可通过 New API、Sub2API 或 OpenAI Billing 协议读取余额。 |
+| `doubaoime/...` | 仅语音转写。 | 没有对话额度。 |
+
+代表性免费 ID（来自内置/回退表，使用前请在面板刷新）：
+
+| 平台 | 免费 ID |
+|---|---|
+| OpenRouter | `openrouter/free`；实时输入价和输出价都为 `0` 的任意 `vendor/model:free` |
+| Kilo Code | `kilo-auto/free`、`stepfun/step-5-preview-free`、`nvidia/nemotron-3-ultra-550b-a55b:free`、`nvidia/nemotron-3-super-120b-a12b:free`、`nvidia/nemotron-3.5-lightning:free`、`nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`、`dots-studio/dots-3-note-preview:free`、`thinkingmachines/inkling-small:free`、`poolside/laguna-s-2.1:free`、`poolside/laguna-xs-2.1:free`、`cohere/north-mini-code:free`、`liquid/lfm-2.5-2.6b:free`、`inclusionai/ling-3.1-flash`、`stealth/glyph-cluster` |
+| OpenCode Zen | `space-bunny-free`、`deepseek-v4-flash-free`、`mimo-v2.6-flash-free`、`mimo-v2.5-free`、`nemotron-3-ultra-free`、`nemotron-3.5-lightning-free`、`jev-1.13-free`、`longcat-2.5-preview-free`、`ling-3.0-flash-fin-free` |
+| Cline | `stealth/space-bunny-alpha`、`cline-free/mimo-v2.6-flash`、`cline-free/gemini-3.8-flash`、`cline-free/muse-spark-1.3-contributor`。`cline-free/deepseek-v4.1-flash` 已在 2026-10-04 移到付费 `cline-pass/*`，下一次刷新会消失。 |
+| Gemini | 实时目录；内置回退为 `gemini-3.8-flash`（low/medium/high 变体会合并成一行）。 |
+| OfficeAce | `officeace/glm-5.2`、`officeace/glm-5.1`、`officeace/deepseek-v4-flash-0731`、`officeace/deepseek-v4.1-flash`（由试用积分支付，不是零价）。 |
+| CodeArts | 厂商免费额度清单；回退为 `glm-5.3-flash` 和 `deepseek-v4.1-flash`。 |
+| WorkBuddy | 实时目录和促销，例如 `hy4-preview` 在 23:00-08:00 夜间免费；`glm-5.2` 是 0.50x 夜间折扣，不是免费模型。 |
+| QwenWork | 实时目录；内置 ID 为 `pro`、`flash`、`qwen3.8-max-preview`，是否免费由厂商倍率决定。 |
+| Raccoon | 实时目录；内置 ID 包括 `sn-glm-5-3`、`sn-kimi-k3`、`sn-glm-5-3-flash`、`sn-deepseek-v4-1-flash`，是否免费由 `billing_multiplier` 决定。 |
+
+表里是厂商模型 ID；调用网关时要在前面补平台路由，例如 `kilocode/kilo-auto/free`、`cline/cline-free/gemini-3.8-flash`、`opencode/space-bunny-free`、`openrouter/openrouter/free`。
 
 ## 功能总览
 
@@ -185,7 +237,7 @@ client2api 是一个**个人自用**的 OpenAI 兼容网关。它把你自己在
 OfficeAce（Office Claw）已经内置为 `officeace` 平台，不需要自己添加中转站。桌面客户端实际只提供 4 个可选模型：`glm-5.2`、`glm-5.1`、`deepseek-v4-flash-0731`、`deepseek-v4.1-flash`。它们直接走华为 MaaS / AgentArts 的 OpenAI 兼容模型网关：
 
 1. 打开 **平台配置**，展开 **华为**（内置的 `officeace` 平台）。新装实例默认就有这个平台，行内会标为 **内置平台**，不提供删除按钮。
-2. 打开它的账号池，点 **自动添加**：面板会从共享接码平台租一个号码，用无头浏览器走华为手机号验证码登录，自动读取并提交验证码。在弹窗里粘贴接码平台 token（或一次性设置 `EOMSG_TOKEN`），发送方关键字保持默认的 **华为**；任务结束后面板会自动释放号码。想自己登录时，原来的 **浏览器登录 → 获取授权链接** 仍然可用；每次获取的新链接都会先退出浏览器里上一个华为会话，再带着原 OAuth 参数回到登录页，因此连续添加第二个账号不会直接登录成前一个账号。两种方式都会用授权码兑换该账号的模型网关凭据并写入本站账号池。
+2. 打开它的账号池，点 **自动添加**：面板会从共享接码平台租一个号码，用无头浏览器走华为手机号验证码登录，自动读取并提交验证码。在弹窗里粘贴接码平台 token（或一次性设置 `EOMSG_TOKEN`），发送方关键字保持默认的 **华为**；任务结束后面板会自动释放号码。想自己登录时，原来的 **浏览器登录 → 获取授权链接** 仍然可用；每次获取的新链接都会先退出浏览器里上一个华为会话，再带着原 OAuth 参数回到登录页，因此连续添加第二个账号不会直接登录成前一个账号。两种方式都会用授权码兑换该账号的模型网关凭据并写入本站账号池；新账号会自动开通免费的 `officeace.personal.package.trial`（500 `officeace_points` + 200 次联网搜索），已开通的账号不会重复下单。
 3. 登录成功后会自动扫描模型；之后也可以再点 **扫描模型**。模型按 `officeace/<模型名>` 发布，并且只开放客户端实际提供的这 4 个 ID；华为原始目录里的其他条目会被忽略。
 
 每个账号独占华为登录返回的 `model_api_url_base`，所以不同区域、不同模型网关的账号可以共用一个 `officeace` 平台。请求统一用 **HTTP Basic** 认证，账号轮换、故障切换、会话粘性、用量统计、流式输出和工具调用都与其它平台一致。凭据只保存在本机 `data/officeace/accounts.json`，不会写进配置文件或示例配置，登录完成后不需要 OfficeAce 桌面端一直在线。

@@ -28,6 +28,7 @@
 | `kilocode/…` | Kilo Code | Kilo AI Gateway（api.kilo.ai），OpenRouter 形状的多厂路由；免费模型无需登录即可匿名调用，API Key 可选 |
 | `doubao/…` | Doubao | 字节跳动 豆包（桌面客户端 / 网页） |
 | `doubaoime/…` | Doubao IME | 豆包输入法在线语音转写（仅转写，不参与对话） |
+| `officeace/…` | OfficeAce / 华为 | 华为 MaaS / AgentArts 模型网关；内置，面板显示为 **华为** |
 | `openai-compat/…` | onmiRoute | 旧兼容来源与本机 OmniRoute 桥接；原有 `openai-compat/<provider>/<model>` 路由继续可用 |
 | `<source-id>/…` | 自定义中转站 | 热定义的 OpenAI 兼容平台，各自拥有 API 地址、Key 账号池、模型扫描与路由策略 |
 
@@ -104,10 +105,12 @@ OfficeAce（Office Claw）已内置为 `officeace`，不需要写进 `sources`�
 **浏览器登录**，面板会完成华为账号 OAuth、把模型网关返回的 App Key / App Secret 写进
 `data/officeace/accounts.json`，并按 `officeace/<模型名>` 发布模型。每个账号保留自己登录
 返回的 `model_api_url_base`；请求使用 `Authorization: Basic base64(app_key:app_secret)`。
+新登录会自动开通免费的个人体验版权益 `officeace.personal.package.trial`，包含
+500 `officeace_points` 和 200 次联网搜索；已开通体验版的账号只做检查，不会重复下单。
 同一份登录里返回的云端临时凭据也会保存下来，用于对齐 WorkBuddy 的平台能力：账号池的
 **签到**调用 `POST /v1/subscription/bonus/claim`（幂等），**额度/余额**读取
-`officeace_points` 和联网搜索次数，**套餐**列出套餐配额与活动奖励；临时凭据过期后自动
-用 refresh token 或 IAM v3/STS 续期。
+`officeace_points` 和联网搜索次数，**套餐**列出套餐配额与活动奖励（例如新用户奖励、
+每日签到奖励会作为独立的活动包显示）；临时凭据过期后自动用 refresh token 或 IAM v3/STS 续期。
 Windows 上仍可 **导入 → 探测本机凭据** 读取已经登录的桌面客户端作为兜底。
 每个自定义中转站都是**会话粘性**的：多轮对话会
 持续落在已经预热上游提示缓存的同一个 Key 上，因此按缓存前缀计费的中转站不会因为
@@ -118,10 +121,60 @@ Windows 上仍可 **导入 → 探测本机凭据** 读取已经登录的桌面�
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-当前版本：**0.1.74**。完整更新记录见 [CHANGELOG.md](../CHANGELOG.md)。
+当前版本：**0.1.90**。完整更新记录见 [CHANGELOG.md](../CHANGELOG.md)。
+
+## 免费模型与免费额度账号
+
+先分清两类「免费」，否则很容易拿 0 余额账号去调付费模型：
+
+- **免费模型**：厂商把该模型定价为 0。模块标记 `extra.free`，路由写入
+  `core.ChatRequest.FreeModel`；在已接入账号侧规则的模块，账号因余额为 0 被冷却时
+  仍可服务它，只有厂商拒绝「这个账号 + 这个模型」时才会停这一对。已接入账号侧规则的模块：WorkBuddy、Cline、
+  CodeArts、Raccoon、QwenWork、OpenRouter、Kilo Code、OpenCode。
+- **免费额度账号**：账号会获得积分、试用套餐或每日赠送。额度会被付费模型消耗，
+  因此使用前先看「模型与档位」页里那一行的倍率。
+
+厂商实时目录是权威，下面表格是各模块的稳定能力；以面板的 **重新获取** 结果为准。
+
+| 路由 | 免费模型 | 免费额度 / 领取方式 |
+|---|---|---|
+| `openrouter/...` | 有：`pricing.prompt` 和 `pricing.completion` 同时为 0 才算免费；`free_only` 默认开启；别名 `openrouter/free`。 | 厂商限制免费模型每日调用（`free-models-per-day`）；欠费 Key 仍可服务免费 ID；没有签到。 |
+| `kilocode/...` | 有：匿名免费层；`free_only` 默认开启；厂商 `isFree`、`free` 类 ID 或双向零价会标记为免费。 | 匿名访问按 IP 共享并限流（每小时 200 次）；登录或 API Key 后按账号限额；没有签到。 |
+| `opencode/...` | 有：匿名免费域，`x-api-key: public`；`free_only` 默认开启，`-free` 后缀自动识别，`free_models` 可补充。 | 匿名访问有限流；登录 Console 账号后仍可服务免费 ID；没有签到。 |
+| `cline/...` | 有：厂商 `recommended-models` 的 `free` 数组为准；`free_only` 默认开启。 | 没有签到，只支持 WorkOS 设备码登录。 |
+| `gemini/...` | 有：Cloud Code Assist / Antigravity 免费线。 | 没有签到；额度为厂商的 5 小时/周滚动窗口。 |
+| `officeace/...` | 无逐模型零价标记；四个可选模型都消耗试用/活动积分：`glm-5.2`、`glm-5.1`、`deepseek-v4-flash-0731`、`deepseek-v4.1-flash`。 | 新登录自动开通 `officeace.personal.package.trial`：500 `officeace_points` + 200 次联网搜索；新用户、每日签到奖励作为独立活动包显示。 |
+| `workbuddy/...` | 有：有效倍率为 0、促销窗口已开、或厂商免费标签即免费；例如 `hy4-preview` 夜间免费，`glm-5.2` 只是 0.50x 夜间折扣。 | 国内签到 / 国际每日活跃对话；促销只在有效期内生效。 |
+| `codearts/...` | 有：厂商免费额度（benefit）清单；回退 `glm-5.3-flash`、`deepseek-v4.1-flash`。 | 套餐满足 `is_credit_package` 时可每日签到。 |
+| `qwenwork/...` | 有：厂商 `credits` 倍率为 0 的模型；内置 `pro`、`flash`、`qwen3.8-max-preview`。 | Sash 每日签到。 |
+| `raccoon/...` | 有：有效 `billing_multiplier` 为 0（含限时活动）；内置 `sn-glm-5-3`、`sn-kimi-k3`、`sn-glm-5-3-flash`、`sn-deepseek-v4-1-flash`。 | 每日 300 登录积分。 |
+| `loomy/...` | 否：内置目录不是零价，用每日赠送额度消费。 | 每日首次登录赠送额度。 |
+| `qoder/...` | 由厂商 Credits 决定。 | 活动开放时领取每日 `CLAIM_BENEFIT` Credits。 |
+| `tabbit/...` | 由厂商目录决定。 | 每日签到返还部分额度（使用百分比）。 |
+| `minimaxcode/...` | 由厂商目录决定。 | 七天连续每日签到积分。 |
+| `lobsterai/...` | 由厂商目录决定；中文免费额度提示会把账号标记为已耗尽。 | 每日签到，约 +100 积分。 |
+| `autoclaw/...` | 由厂商目录决定。 | 每日领取积分。 |
+| `trae/...` | 由厂商目录决定。 | 国内每日签到和 1024 活动；福利包（例如 4000 积分）按厂商权益读取。 |
+| `zcode/...` | 由厂商目录决定。 | 领取活动套餐（token 权益）。 |
+| `doubao/...` | 由厂商目录决定。 | 显示积分和套餐额度；未实现签到。 |
+| `kimi/...` | 未实现免费模型或免费积分机制。 | 没有签到。 |
+| `openai-compat/...`、自定义中转站 | 取决于厂商，`/models` 扫描结果为准。 | 支持 New API、Sub2API 或 OpenAI Billing 余额协议时读取余额。 |
+| `doubaoime/...` | 仅语音转写。 | 没有对话额度。 |
+
+这些是厂商模型 ID；调用网关时要在前面补平台路由，例如
+`kilocode/kilo-auto/free`、`cline/cline-free/gemini-3.8-flash`、
+`opencode/space-bunny-free`、`openrouter/openrouter/free`。
+
+代表性内置/回退免费 ID：`openrouter/free`；Kilo 的 `kilo-auto/free`、
+`stepfun/step-5-preview-free`、`nvidia/nemotron-3-ultra-550b-a55b:free`、
+`dots-studio/dots-3-note-preview:free`、`thinkingmachines/inkling-small:free`；
+OpenCode 的 `space-bunny-free`、`deepseek-v4-flash-free`、`mimo-v2.6-flash-free`、
+`nemotron-3-ultra-free`；Cline 的 `stealth/space-bunny-alpha`、
+`cline-free/mimo-v2.6-flash`、`cline-free/gemini-3.8-flash`；
+Gemini 的 `gemini-3.8-flash`；OfficeAce 的四个试用积分模型；
+CodeArts 的 `glm-5.3-flash`、`deepseek-v4.1-flash`。刷新后以实时目录为准。
 
 ### 近期重点（0.1.63 - 0.1.73）
-
 
 * **OfficeAce（Office Claw）内置平台**：`officeace` 开箱即用，无需添加中转站；账号池支持华为账号浏览器登录、自动写入模型网关凭据和账号级网关地址，扫描后按 `officeace/<模型名>` 发布，Windows 本机凭据导入作为兜底。
 * **OfficeAce 对齐 WorkBuddy 能力**：同一个内置平台提供每日签到、积分余额和套餐明细，临时凭据过期后自动续期。
@@ -232,7 +285,6 @@ go build -o client2api.exe ./cmd/client2api
 .\client2api.exe -config configs\client2api.json
 ```
 
-
 ### 数据安全
 
 `data/` 包含账号凭据和运行状态，`configs/client2api.json` 包含本机配置；
@@ -303,8 +355,6 @@ make run            # 构建并启动网关
 ```
 
 参数：`-config`、`-listen`、`-data-dir`、`-proxy`、`-list-clients`。
-
-
 
 健康检查与接口：
 

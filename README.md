@@ -5,7 +5,7 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-Current version: **0.1.74**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
+Current version: **0.1.90**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
 
 client2api is a personal, local-only OpenAI-compatible gateway. It aggregates
 the accounts and API Keys **you own** on different AI coding clients and
@@ -64,8 +64,71 @@ people. The built-in default is `127.0.0.1`.
 | `kilocode/...` | Kilo Code | Kilo AI Gateway |
 | `doubao/...` | Doubao | ByteDance Doubao desktop client / web app |
 | `doubaoime/...` | Doubao IME | Doubao Input Method (豆包输入法) online speech-to-text (transcription only) |
+| `officeace/...` | OfficeAce / Huawei | Huawei MaaS / AgentArts (built in; shown as **Huawei**) |
 | `openai-compat/...` | onmiRoute | Legacy compatible sources |
 | `<source-id>/...` | Custom relay | Any OpenAI-compatible platform you add |
+
+### Free quotas and free models
+
+Two different things are easy to confuse:
+
+- A **free model** is priced at zero by the vendor. The gateway marks it
+  `extra.free` and routes it ahead of paid candidates. On platforms that have
+  opted into the account-side rule, an account parked for an empty wallet still
+  serves it; only the vendor refusing *that* model on *that* account parks the
+  pair. WorkBuddy,
+  Cline, CodeArts, Raccoon, QwenWork, OpenRouter, Kilo Code and OpenCode
+  implement this rule.
+- A **free-quota account** receives credits, a trial package or a daily
+  allowance. Those credits are spent by any paid model, so check the multiplier
+  on the **Models and Profiles** page before using one.
+
+The live catalogue is authoritative: vendors add, retire and reprice free ids
+without changing this project. The tables below are the starting point, not a
+fixed list.
+
+| Route | Free model (zero-cost ids) | Free-quota account / recurring allowance |
+|---|---|---|
+| `openrouter/...` | Yes. An id is free only when both prompt and completion prices are `0`; `free_only` is on by default. | No check-in. Your own OpenRouter key spends that account's free quota; the vendor also caps free-model calls per day. |
+| `kilocode/...` | Yes. Anonymous free tier with `free_only` on; the live catalogue is authoritative. | No sign-in needed for the anonymous credential (shared, rate-limited to 200 requests/hour/IP); a Kilo key or device sign-in gets that account's own free-model limits. |
+| `opencode/...` | Yes. Anonymous free realm; `free_only` is on and vendor ids ending in `-free` are recognized. | The anonymous `x-api-key: public` credential needs no sign-in; a signed-in Console account can also serve free ids. |
+| `cline/...` | Yes. The vendor's `free` array is authoritative and `free_only` is on. | No check-in. WorkOS device sign-in only. |
+| `gemini/...` | Yes. Google Cloud Code Assist / Antigravity free line. | No check-in; quota is the vendor's rolling 5-hour and weekly windows rather than a credit balance. |
+| `officeace/...` | No per-model zero-price flag: all four selectable models draw on the trial/bonus credits. | A fresh login gets the free `officeace.personal.package.trial` entitlement: 500 `officeace_points` and 200 online searches. Bonus activities (new-user, daily check-in) are shown separately in **Packages**. |
+| `workbuddy/...` | Yes. A model whose effective multiplier is `0`, or whose promotion is open, is free; a vendor free label also counts. | CN daily check-in; international daily-activity conversation. Free promotions are believed only inside their validity/daily window. |
+| `codearts/...` | Yes. The vendor's free-quota (benefit) model list is read from the gateway config. | Daily check-in for an account whose package reports `is_credit_package`. |
+| `qwenwork/...` | Yes. A model whose vendor `credits` multiplier parses to `0` is marked free. | Sash daily check-in. |
+| `raccoon/...` | Yes. An effective `billing_multiplier` of `0` -- including a limited-time campaign -- is free. | Daily 300 login credits via the desktop login grant. |
+| `loomy/...` | The built-in catalogue is not zero-priced; the daily gift funds the models. | Daily first-login gift allowance. |
+| `qoder/...` | The live catalogue decides; the free/paid split is the vendor's Credits. | Daily `CLAIM_BENEFIT` Credits when the activity is open. |
+| `tabbit/...` | The live catalogue decides. | Daily sign-in restores a slice of the account's quota (shown as a usage percentage). |
+| `minimaxcode/...` | The live catalogue decides. | Seven-day daily sign-in credits. |
+| `lobsterai/...` | The live catalogue decides; the vendor's Chinese free-quota messages park an exhausted account. | Daily check-in, roughly +100 credits per day. |
+| `autoclaw/...` | The live catalogue decides. | Daily credits claim. |
+| `trae/...` | The live catalogue decides. | CN daily check-in and the 1024 activity; observed welfare grants (for example 4000 credits) are read from the vendor's entitlement packs. |
+| `zcode/...` | The live catalogue decides. | Promotional plan claim (token grants; the task board labels the reward unit as 积分). |
+| `doubao/...` | The live catalogue decides. | Credits and package quota are displayed; no check-in is implemented. |
+| `kimi/...` | No free-model or free-credit mechanism is implemented. | No check-in. |
+| `openai-compat/...`, custom relays | Vendor-dependent: the platform's own `/models` scan decides. | Balance can be read through New API, Sub2API or OpenAI Billing protocols when the vendor supports them. |
+| `doubaoime/...` | Speech transcription only. | No chat quota. |
+
+Representative free ids, measured from the built-in/fallback tables (refresh in
+the panel before relying on them):
+
+| Platform | Free ids |
+|---|---|
+| OpenRouter | `openrouter/free`; every `vendor/model:free` whose live prompt and completion prices are both `0` |
+| Kilo Code | `kilo-auto/free`, `stepfun/step-5-preview-free`, `nvidia/nemotron-3-ultra-550b-a55b:free`, `nvidia/nemotron-3-super-120b-a12b:free`, `nvidia/nemotron-3.5-lightning:free`, `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`, `dots-studio/dots-3-note-preview:free`, `thinkingmachines/inkling-small:free`, `poolside/laguna-s-2.1:free`, `poolside/laguna-xs-2.1:free`, `cohere/north-mini-code:free`, `liquid/lfm-2.5-2.6b:free`, `inclusionai/ling-3.1-flash`, `stealth/glyph-cluster` |
+| OpenCode Zen | `space-bunny-free`, `deepseek-v4-flash-free`, `mimo-v2.6-flash-free`, `mimo-v2.5-free`, `nemotron-3-ultra-free`, `nemotron-3.5-lightning-free`, `jev-1.13-free`, `longcat-2.5-preview-free`, `ling-3.0-flash-fin-free` |
+| Cline | `stealth/space-bunny-alpha`, `cline-free/mimo-v2.6-flash`, `cline-free/gemini-3.8-flash`, `cline-free/muse-spark-1.3-contributor`. `cline-free/deepseek-v4.1-flash` was moved to the paid `cline-pass/*` tier on 2026-10-04 and disappears on the next refresh. |
+| Gemini | Live list; built-in fallback is `gemini-3.8-flash` (low/medium/high variants fold into one row). |
+| OfficeAce | `officeace/glm-5.2`, `officeace/glm-5.1`, `officeace/deepseek-v4-flash-0731`, `officeace/deepseek-v4.1-flash` (trial-credit funded, not zero-priced). |
+| CodeArts | Vendor benefit/free-quota list; fallback `glm-5.3-flash` and `deepseek-v4.1-flash`. |
+| WorkBuddy | Live catalogue and promotions, for example `hy4-preview` is night-free 23:00-08:00; `glm-5.2` is a 0.50x night discount, not a free model. |
+| QwenWork | Live catalogue; built-in ids are `pro`, `flash`, `qwen3.8-max-preview`, with freeness decided by the vendor multiplier. |
+| Raccoon | Live catalogue; built-in ids include `sn-glm-5-3`, `sn-kimi-k3`, `sn-glm-5-3-flash` and `sn-deepseek-v4-1-flash`, with freeness decided by `billing_multiplier`. |
+
+The ids above are vendor ids; prefix them with the route when calling the gateway, e.g. `kilocode/kilo-auto/free`, `cline/cline-free/gemini-3.8-flash`, `opencode/space-bunny-free`, or `openrouter/openrouter/free`.
 
 ### OpenCode: a bare HTTP 400 is retried once
 
@@ -284,6 +347,7 @@ mistake is never multiplied across the pool.
   itself is shared in `core.ModelIsFree`.
 - Manual import, local credential discovery, bundle import and browser/device login where supported.
 - Re-login, revive, test, check-in, balance refresh and account deletion.
+- Trae CN's daily check-in and the 1024 activity are one vendor flow: the check-in action first reads/claims the daily credits, then reads `/trae/api/v2/ug/activity/info` and only posts `/trae/api/v2/ug/activity/action` for `checkin_1024` when the activity is enabled, eligible and grantable. A separate "参与 1024 抽奖" action recovers an account that signed in before this flow existed without claiming the same day twice. A lottery failure is reported without turning an already-successful sign-in into a retry or a second claim.
 - Gemini / Google Cloud Code Assist accounts support Google OAuth login,
   account discovery and refresh, quota reads, and Cloud Code Assist request
   translation with streaming responses. Its model list is pulled live from
