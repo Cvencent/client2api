@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -142,8 +143,10 @@ func TestCLIDirStaysInsideTheModuleDataDir(t *testing.T) {
 	if !pathWithin(root, dir) {
 		t.Fatalf("%s is not inside %s", dir, root)
 	}
-	// A leaf that tries to escape must not resolve outside the root.
-	if pathWithin(root, c.cliConfigDir("..\\..\\escape")) {
+	// A leaf that tries to escape must not resolve outside the root.  The
+	// separator is the host's own, so the case means the same thing on every
+	// platform this module is built for.
+	if pathWithin(root, c.cliConfigDir(filepath.Join("..", "..", "escape"))) {
 		t.Fatal("a .. leaf escaped the CLI root")
 	}
 }
@@ -491,22 +494,34 @@ func TestParseCLIStatusReadsTheIdentity(t *testing.T) {
 }
 
 func TestPathWithin(t *testing.T) {
-	parent := `D:\client2api\data\qoder\cli`
+	base := t.TempDir()
+	parent := filepath.Join(base, "data", "qoder", "cli")
 	cases := []struct {
+		name  string
 		child string
 		want  bool
 	}{
-		{`D:\client2api\data\qoder\cli\acc1`, true},
-		{`D:\client2api\data\qoder\cli`, true},
-		{`d:\CLIENT2API\DATA\qoder\CLI\acc1`, true}, // Windows folds case
-		{`D:\client2api\data\qoder\cli-other\acc1`, false},
-		{`D:\somewhere\else`, false},
-		{``, false},
+		{"child", filepath.Join(parent, "acc1"), true},
+		{"same dir", parent, true},
+		{"sibling prefix", filepath.Join(base, "data", "qoder", "cli-other", "acc1"), false},
+		{"outside", filepath.Join(base, "elsewhere"), false},
+		{"empty", "", false},
+	}
+	if runtime.GOOS == "windows" {
+		// Windows compares paths case-insensitively; the other hosts do not,
+		// so the expectation has to follow the platform's own rule.
+		cases = append(cases, struct {
+			name  string
+			child string
+			want  bool
+		}{"case folded", strings.ToUpper(filepath.Join(parent, "acc1")), true})
 	}
 	for _, tc := range cases {
-		if got := pathWithin(parent, tc.child); got != tc.want {
-			t.Errorf("pathWithin(%q, %q) = %v, want %v", parent, tc.child, got, tc.want)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			if got := pathWithin(parent, tc.child); got != tc.want {
+				t.Errorf("pathWithin(%q, %q) = %v, want %v", parent, tc.child, got, tc.want)
+			}
+		})
 	}
 }
 
