@@ -40,6 +40,11 @@ const (
 	kindServer    failureKind = "server"    // 5xx
 	kindClient    failureKind = "client"    // 4xx this module did not anticipate
 	kindTransport failureKind = "transport" // the request never got an answer
+	// kindContext is a prompt that is over the model's serving window.  It is
+	// the request shape that is wrong, not the credential, so it must never
+	// park or disable an account -- it must reach the caller as
+	// core.FailureContextWindow so its own compaction can fire.
+	kindContext failureKind = "context"
 )
 
 // coreKindFor maps the module's finer verdict onto the gateway's vocabulary.
@@ -58,6 +63,11 @@ func coreKindFor(k failureKind) core.FailureKind {
 		return core.FailureRateLimited
 	case kindServer, kindTransport:
 		return core.FailureUpstream
+	case kindContext:
+		// The caller can act on this one: core.FailureContextWindow is the
+		// code a Responses client triggers conversation compaction with, and
+		// the gateway learns the real window from a numbered refusal.
+		return core.FailureContextWindow
 	default:
 		return core.FailureOther
 	}
@@ -124,6 +134,21 @@ var (
 		"insufficient balance", "insufficient funds", "payment required", "billing", "quota"}
 	authMarkers = []string{"missing api key", "invalid api key", "unauthorized", "unauthenticated",
 		"not authenticated", "authentication", "api key"}
+	// contextMarkers are the wordings a prompt-size refusal actually uses.  They
+	// are consulted only after model/rate/quota/free-tier/auth, so no existing
+	// verdict changes, and they are deliberately phrased rather than keyed on the
+	// bare word "context": an unrelated 400 that merely mentions a context field
+	// must stay a client error.  OpenCode Zen answers an oversized prompt with
+	// "Your request resulted in more tokens than this model's maximum context
+	// length allows. Please reduce the length of the messages or run compaction."
+	// and names no numbers at all.
+	contextMarkers = []string{
+		"maximum context length", "context length allows", "context window",
+		"context_length_exceeded", "context length exceeded",
+		"run compaction", "reduce the length of the messages",
+		"prompt is too long", "prompt too long", "input is too long",
+		"too many tokens", "tokens than this model", "exceeds the maximum context",
+	}
 )
 
 // containsMarker reports whether text carries any of markers, case-insensitively.
@@ -231,6 +256,11 @@ func classify(status int, body []byte) verdict {
 		v.kind = kindFreeTier
 	case containsMarker(v.msg, authMarkers):
 		v.kind = kindAuth
+	case containsMarker(v.msg, contextMarkers):
+		// Last, so a message that also names a rate limit or a missing key keeps
+		// the verdict that says something about the account.  A size refusal is
+		// the caller's to fix and is the only 400 that may trigger compaction.
+		v.kind = kindContext
 	default:
 		switch {
 		case status == 402:
@@ -377,8 +407,10 @@ func (c *Client) noteFailure(acct *accountRecord, k failureKind, msg string) {
 		// Never disable: the free-tier gate opens and closes on its own, and a
 		// disabled account would never be retried.  Park it briefly and rotate.
 		c.pool.setCooldown(acct.ID, now.Add(c.cfg.cooldown()), firstNonEmpty(msg, "free tier temporarily unavailable"))
-	case kindModel, kindClient:
-		// Nothing: the account is fine, the request was not.
+	case kindModel, kindClient, kindContext:
+		// Nothing: the account is fine, the request was not.  A prompt that is
+		// over the window says nothing about the credential, and charging it here
+		// is what walks a healthy pool to "abnormal" on one long conversation.
 		return
 	default:
 		c.pool.noteError(acct.ID, msg, now, softErrorThreshold)

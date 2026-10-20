@@ -1141,13 +1141,6 @@ func TestExitedLoginChildStillAdoptsAWrittenCredential(t *testing.T) {
 	}
 	t.Setenv(cliDirEnv, cliRoot)
 
-	if _, err := findCLI(); err == nil {
-		// A real install is present, so pollCLILogin will get far enough to try
-		// the decrypt and fail on the synthetic file.  That still proves the
-		// exit no longer short-circuits, which is what this test is about.
-		t.Log("local Qoder CN install present; the poll will proceed past the exit check")
-	}
-
 	c := &Client{deps: core.Deps{DataDir: t.TempDir()}, cfg: config{}}
 	c.store = &store{}
 	c.cliLogins = map[string]*cliLoginSession{}
@@ -1163,8 +1156,12 @@ func TestExitedLoginChildStillAdoptsAWrittenCredential(t *testing.T) {
 	close(sess.done)
 
 	st, _ := c.pollCLILogin(context.Background(), sess)
-	if st.State == core.LoginFailed && !strings.Contains(st.Message, "读取") {
-		t.Fatalf("a credential on disk was ignored after the child exited: %q", st.Message)
+	// What must not happen is the old behaviour: reporting the child's exit as
+	// the reason and stopping there.  Depending on the host the poll may then
+	// fail for a different, honest reason (no install, or a synthetic file the
+	// decrypt rejects), and both of those are fine here.
+	if st.State == core.LoginFailed && strings.Contains(st.Message, "登录进程已退出") {
+		t.Fatalf("the child's exit was reported as the failure while a credential existed: %q", st.Message)
 	}
 }
 
