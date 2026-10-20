@@ -881,6 +881,7 @@ func (s *server) serveRemainingCandidates(w http.ResponseWriter, r *http.Request
 			probe, probeErr := probeFirstFrame(stream)
 			if probeErr != nil {
 				stream.Close()
+				probeErr = normalizeContextRefusal(probeErr)
 				s.noteFailedCandidate(rec, client, upstreamModel, probeErr)
 				lastClient, lastHint, lastErr = client, hintCtx, probeErr
 				s.opts.Logger.Printf("chat: platform %s model %s failed inside stream (%v), trying the next platform", client.Name(), upstreamModel, probeErr)
@@ -1189,6 +1190,11 @@ func (s *server) openStreamRecorded(ctx context.Context, client core.Client, req
 		}
 		release()
 		req.ReleaseAccountSlot()
+		// Whatever the module concluded, the gateway owns the wire vocabulary:
+		// a refusal the vendor worded as "too long" is a context-window refusal
+		// even when the module only saw an unremarkable 400.  Promoting it here
+		// is what makes the caller compact instead of re-sending the same body.
+		err = normalizeContextRefusal(err)
 		lastErr = err
 
 		// The context guard is told about a size refusal here, BEFORE the two

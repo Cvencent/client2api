@@ -326,6 +326,68 @@ func parseLimitFromMessage(msg string) int64 {
 	return parseRefusalSizes(msg).Limit
 }
 
+// contextRefusalPhrases are the wordings a prompt-size refusal uses when it
+// names no numbers at all.
+//
+// They are deliberately whole phrases rather than the bare words "context" or
+// "length": those appear in unrelated rejections (a malformed context field, a
+// bad length parameter), and promoting one of them would tell the caller to
+// compact a request that has nothing to do with size.  Adding a phrase here is
+// how a newly observed vendor wording becomes a compaction trigger; the pattern
+// based, numbered refusals are handled separately by parseRefusalSizes.
+//
+// OpenCode Zen is the shape this exists for: "Your request resulted in more
+// tokens than this model's maximum context length allows. Please reduce the
+// length of the messages or run compaction."  It carries no token count, so the
+// gateway can neither learn a window from it nor size a trim against it -- but
+// it must still reach the caller as context_window_exceeded, because that is the
+// one code a Responses client triggers conversation compaction on.
+var contextRefusalPhrases = []string{
+	// English
+	"maximum context length",
+	"context length allows",
+	"context length exceeded",
+	"context_length_exceeded",
+	"exceeds the maximum context",
+	"prompt is too long",
+	"prompt too long",
+	"input is too long",
+	"too many tokens",
+	"tokens than this model",
+	"reduce the length of the messages",
+	"run compaction",
+	// The Chinese wordings the same family of vendors uses.  Loomy's own module
+	// classifies its refusal already; this recogniser is the fallback for any
+	// module that does not, so the phrasing lives here too.
+	"内容太长",
+	"上下文过长",
+	"请精简输入",
+	"开启新对话",
+}
+
+// looksLikeContextRefusal reports whether a refusal is about prompt size and,
+// when the vendor named one, the limit it compared against.
+//
+// ok=false means the message is not a size refusal at all.  ok=true with
+// limit==0 means "the vendor said too long but named no number": that is still a
+// context-window verdict for the caller, it just carries nothing the guard can
+// learn from.
+func looksLikeContextRefusal(msg string) (limit int64, ok bool) {
+	text := strings.ToLower(strings.TrimSpace(unescapeWireEscapes(msg)))
+	if text == "" {
+		return 0, false
+	}
+	if limit := parseLimitFromMessage(text); limit > 0 {
+		return limit, true
+	}
+	for _, phrase := range contextRefusalPhrases {
+		if strings.Contains(text, phrase) {
+			return 0, true
+		}
+	}
+	return 0, false
+}
+
 // mentionsSize reports whether a refusal is plausibly about prompt size at all.
 // Kept separate from the patterns so the gate stays readable and the patterns
 // stay about shape.
@@ -359,6 +421,42 @@ func parseTokenCount(s string) (int64, bool) {
 		return 0, false
 	}
 	return n, true
+}
+
+// normalizeContextRefusal promotes a size refusal that a module failed to
+// classify into core.FailureContextWindow.
+//
+// The gateway owns the wire vocabulary, and "the caller should compact" is a
+// decision it is entitled to make from the vendor's own sentence even when the
+// module only saw an unremarkable 400.  Without this, a module that has no
+// context pattern answers invalid_request, which no client compacts on, and the
+// same oversized body is re-sent forever.
+//
+// A refusal that already carries a classified kind is never rewritten: a module
+// that said "rate limited" or "auth" knows something the wording does not.
+func normalizeContextRefusal(err error) error {
+	if err == nil {
+		return nil
+	}
+	if f, ok := core.AsFailure(err); ok && f.Kind != core.FailureOther {
+		return err
+	}
+	limit, ok := looksLikeContextRefusal(err.Error())
+	if !ok {
+		return err
+	}
+	_ = limit // a limit, when the vendor named one, is read separately by the guard
+	var (
+		client, account string
+		status          int
+	)
+	if f, ok := core.AsFailure(err); ok {
+		client, account, status = f.Client, f.Account, f.Status
+	}
+	if status <= 0 {
+		status = 400
+	}
+	return core.Fail(client, account, core.FailureContextWindow, status, err)
 }
 
 // learnWindowFloor is the fraction of the largest prompt this gateway has

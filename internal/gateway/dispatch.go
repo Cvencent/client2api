@@ -384,6 +384,7 @@ func (s *server) routeAndServeMessages(w http.ResponseWriter, r *http.Request, i
 	probe, probeErr := probeFirstFrame(stream)
 	if probeErr != nil {
 		stream.Close()
+		probeErr = normalizeContextRefusal(probeErr)
 		in.rec.Account = core.ErrorAccountID(probeErr)
 		if in.rec.Account == "" {
 			in.rec.Account = servedBy
