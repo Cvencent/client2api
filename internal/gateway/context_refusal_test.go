@@ -1,8 +1,12 @@
 package gateway
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"strings"
 	"testing"
 
 	"client2api/internal/core"
@@ -132,5 +136,65 @@ func TestNormalizeContextRefusalKeepsTheNumberedFormLearnable(t *testing.T) {
 	}
 	if limit := parseLimitFromMessage(got.Error()); limit != 200000 {
 		t.Fatalf("limit = %d, want 200000 still readable", limit)
+	}
+}
+
+// unclassifiedContextClient returns the production OpenCode refusal as an
+// unclassified core.FailureOther 400 -- exactly what the module produced before
+// this change.  It exists to prove the gateway, not the module, is what makes the
+// caller see compaction-triggering code.
+type unclassifiedContextClient struct {
+	name string
+	seen *core.ChatRequest
+}
+
+func (c *unclassifiedContextClient) Name() string { return c.name }
+
+func (c *unclassifiedContextClient) Models(ctx context.Context) ([]core.Model, error) {
+	return []core.Model{{ID: "deepseek-v4.1-flash-free", OwnedBy: c.name, Extra: map[string]any{
+		"context_length": int64(200000),
+	}}}, nil
+}
+
+func (c *unclassifiedContextClient) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, error) {
+	c.seen = req
+	return nil, core.Fail(c.name, "acct", core.FailureOther, 400, errors.New(zenContextRefusal))
+}
+
+func (c *unclassifiedContextClient) Status(ctx context.Context) core.Status {
+	return core.Status{Name: c.name, Ready: true}
+}
+
+// The user-visible regression: an OpenCode-style 400 that the module classified
+// as nothing must still reach the caller as context_window_exceeded, which is the
+// code a Responses client acts on by compacting.  Before this, the caller saw
+// invalid_request, did not compact, and re-sent the same oversized body.
+func TestUnclassifiedContextRefusalReachesTheCallerAsContextWindowExceeded(t *testing.T) {
+	c := &unclassifiedContextClient{name: "opencode"}
+	s := newGuardServer(t, c, "")
+
+	rr := chatHandler(t, s, `{"model":"opencode/deepseek-v4.1-flash-free","messages":[{"role":"user","content":"hi"}]}`)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want the vendor's own 400: %s", rr.Code, rr.Body.String())
+	}
+	var env struct {
+		Error struct {
+			Code string `json:"code"`
+			Type string `json:"type"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+		t.Fatalf("response is not an error envelope: %v: %s", err, rr.Body.String())
+	}
+	if env.Error.Code != "context_window_exceeded" {
+		t.Fatalf("error.code = %q, want context_window_exceeded: %s", env.Error.Code, rr.Body.String())
+	}
+	// The vendor's own words must survive verbatim, even though they include the
+	// literal string invalid_request_error.
+	if !strings.Contains(env.Error.Type, "invalid_request_error") {
+		t.Fatalf("type = %q, want the 400 shape preserved", env.Error.Type)
+	}
+	if !strings.Contains(rr.Body.String(), "run compaction") {
+		t.Fatalf("the vendor's own sentence was lost: %s", rr.Body.String())
 	}
 }
