@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -78,6 +79,37 @@ type responsesRequest struct {
 	ConversationID      string          `json:"conversation_id,omitempty"`
 	ConversationIDCamel string          `json:"conversationId,omitempty"`
 	Metadata            json.RawMessage `json:"metadata,omitempty"`
+	// ContextManagement is the Responses compaction control.  Only the
+	// "compaction" type is meaningful here; an entry with any other type is
+	// ignored rather than rejected, matching the file's rule that a newer
+	// option must never turn a working request into a 400.
+	ContextManagement []responsesContextManagement `json:"context_management,omitempty"`
+}
+
+// responsesContextManagement is one entry of the request's context_management
+// array.  CompactThreshold is the rendered-token count at which the server is
+// asked to fold the conversation; a non-positive value means "no automatic
+// compaction".
+type responsesContextManagement struct {
+	Type             string `json:"type,omitempty"`
+	CompactThreshold int    `json:"compact_threshold,omitempty"`
+}
+
+// compactionThreshold returns the requested automatic-compaction threshold, or
+// 0 when the request did not ask for one.
+func (w *responsesRequest) compactionThreshold() int {
+	if w == nil {
+		return 0
+	}
+	for _, cm := range w.ContextManagement {
+		if !strings.EqualFold(strings.TrimSpace(cm.Type), "compaction") {
+			continue
+		}
+		if cm.CompactThreshold > 0 {
+			return cm.CompactThreshold
+		}
+	}
+	return 0
 }
 
 // responsesTool is a tool declaration.  Responses flattens what Chat nests under
@@ -201,16 +233,35 @@ type responseOutput struct {
 	// received.  Sending an empty string would be worse than sending null,
 	// because "" is a value a client might try to decrypt.
 	EncryptedContent *string `json:"encrypted_content,omitempty"`
+
+	// compaction
+	// CompactionContent is the gateway-owned blob on a compaction item.  It uses
+	// the same wire field as OpenAI's opaque state so a client that understands
+	// the Responses compaction shape replays it unchanged; the difference is that
+	// this gateway can verify and read back what it signed.  See compaction.go.
+	CompactionContent string `json:"-"`
 }
 
 func (o responseOutput) MarshalJSON() ([]byte, error) {
 	type output responseOutput
-	if o.Type == "function_call" {
+	switch o.Type {
+	case "function_call":
 		// Arguments is required on a function call even when no delta arrived.
 		return json.Marshal(struct {
 			output
 			Arguments string `json:"arguments"`
 		}{output: output(o), Arguments: o.Arguments})
+	case "compaction":
+		// A compaction item carries the opaque state under encrypted_content,
+		// which is the field a Responses client replays.  It carries no role,
+		// content, summary or arguments; emitting them as nulls would make the
+		// item's shape disagree with the protocol.
+		return json.Marshal(struct {
+			Type             string `json:"type"`
+			ID               string `json:"id,omitempty"`
+			Status           string `json:"status,omitempty"`
+			EncryptedContent string `json:"encrypted_content"`
+		}{Type: o.Type, ID: o.ID, Status: o.Status, EncryptedContent: o.CompactionContent})
 	}
 	return json.Marshal(output(o))
 }
@@ -334,7 +385,7 @@ func resolveResponsesConversationID(w *responsesRequest) string {
 //   - A reasoning item carries provider-encrypted reasoning that no other vendor
 //     can decrypt. Its human-readable summary is kept (it is genuinely useful
 //     context) and the ciphertext is dropped.
-func toCoreRequestFromResponses(w *responsesRequest) (*core.ChatRequest, error) {
+func toCoreRequestFromResponses(w *responsesRequest, verify *compactionSigner) (*core.ChatRequest, error) {
 	req := &core.ChatRequest{
 		Model:          w.Model,
 		ToolChoice:     w.ToolChoice,
@@ -351,7 +402,7 @@ func toCoreRequestFromResponses(w *responsesRequest) (*core.ChatRequest, error) 
 		req.Messages = append(req.Messages, core.Message{Role: "system", Content: w.Instructions})
 	}
 
-	messages, err := translateResponsesInput(w.Input)
+	messages, err := translateResponsesInput(w.Input, verify)
 	if err != nil {
 		return nil, err
 	}
@@ -486,7 +537,7 @@ func (t responsesTool) resolved() (name, description string, parameters json.Raw
 // Input is either a string or an array; both are accepted, and so is a missing
 // one (a request whose only content is instructions is unusual but legal).  An
 // unknown item type is skipped, never fatal.
-func translateResponsesInput(raw json.RawMessage) ([]core.Message, error) {
+func translateResponsesInput(raw json.RawMessage, verify *compactionSigner) ([]core.Message, error) {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 || string(trimmed) == "null" {
 		return nil, nil
@@ -626,11 +677,35 @@ func translateResponsesInput(raw json.RawMessage) ([]core.Message, error) {
 			})
 
 		case "compaction":
-			// A prior turn's context fold.  Its plaintext summary, when the
-			// caller kept one, is preserved as an assistant turn; the encrypted
-			// form is dropped for the same reason as above.
+			// A prior turn's context fold.  Three shapes reach here:
+			//
+			//   - a blob this gateway minted and signed: it verifies and is
+			//     replayed as the assistant turn it stands for;
+			//   - a plaintext summary smuggled through encrypted_content by some
+			//     relay: preserved verbatim, exactly as before;
+			//   - genuine ciphertext (OpenAI's own, another deployment's, a
+			//     tampered blob): dropped, because this gateway holds no key for
+			//     it and inventing text would be a fabrication.
 			flushPending()
-			if text := strings.TrimSpace(it.EncryptedContent); text != "" && !looksEncrypted(text) {
+			text := strings.TrimSpace(it.EncryptedContent)
+			if text == "" {
+				continue
+			}
+			if summary, ok := verify.parse(text); ok {
+				if summary != compactionNoSummaryMarker {
+					out = append(out, core.Message{Role: "assistant", Content: summary})
+				}
+				continue
+			}
+			if looksLikeCompactionBlob(text) {
+				// Our own wire shape, but the signature did not verify: a blob
+				// from another deployment, a tampered one, or one whose key is
+				// gone.  Dropping it is the only honest answer -- replaying it as
+				// assistant prose would put a base64 string in the model's
+				// context, and inventing a summary would be worse.
+				continue
+			}
+			if !looksEncrypted(text) {
 				out = append(out, core.Message{Role: "assistant", Content: text})
 			}
 
@@ -919,7 +994,7 @@ func (s *server) handleResponses(w http.ResponseWriter, r *http.Request) {
 	stat.model = wire.Model
 	stat.mode = chatMode(wire.Stream)
 
-	req, err := toCoreRequestFromResponses(&wire)
+	req, err := toCoreRequestFromResponses(&wire, s.compaction)
 	if err != nil {
 		stat.status = http.StatusBadRequest
 		s.fail(&rec, err)
@@ -930,16 +1005,380 @@ func (s *server) handleResponses(w http.ResponseWriter, r *http.Request) {
 	rec.SessionID = sessionIDFor(req)
 	rec.ReasoningEffort = reasoningEffortForResponses(&wire)
 
+	// Automatic compaction.  When the caller set compact_threshold and the
+	// assembled request is already at or over it, the history is folded before it
+	// is routed, and the freshly minted compaction item is appended to whatever
+	// this turn returns so the caller can carry it forward.
+	//
+	// The estimate is the same heuristic the context guard uses, so "threshold"
+	// means the same thing on both paths.  A failure to summarise is not fatal: the
+	// turn proceeds with the caller's own history, exactly as it would have
+	// without context_management.
+	var pendingCompaction *responseOutput
+	if threshold := wire.compactionThreshold(); threshold > 0 {
+		if estimateRequestTokens(req) >= threshold {
+			if item := s.autoCompact(ctxForRequest(r), req, &rec); item != nil {
+				pendingCompaction = item
+			}
+		}
+	}
+
 	s.routeAndServe(w, r, routeInput{
-		requested:    wire.Model,
-		req:          req,
-		toolNames:    namespacedTools(wire.Tools),
-		stream:       wire.Stream,
-		modelForWire: wire.Model,
-		rec:          &rec,
-		stat:         stat,
-		emitter:      responsesEmitter{},
+		requested:          wire.Model,
+		req:                req,
+		toolNames:          namespacedTools(wire.Tools),
+		stream:             wire.Stream,
+		modelForWire:       wire.Model,
+		rec:                &rec,
+		stat:               stat,
+		emitter:            responsesEmitter{},
+		trailingCompaction: pendingCompaction,
 	})
+}
+
+// ctxForRequest derives a routing context from an inbound request, so a helper
+// that runs before routeAndServe can still resolve a catalogue and honour the
+// caller's cancellation.
+func ctxForRequest(r *http.Request) context.Context {
+	if r == nil {
+		return context.Background()
+	}
+	return r.Context()
+}
+
+// autoCompact folds req in place for the context_management path and returns the
+// compaction item to append to this turn's output, or nil when nothing was
+// folded.
+func (s *server) autoCompact(ctx context.Context, req *core.ChatRequest, rec *UsageRecord) *responseOutput {
+	if req == nil || len(req.Messages) == 0 {
+		return nil
+	}
+	candidates, err := s.opts.Registry.ResolveCandidates(ctx, req.Model)
+	if err != nil || len(candidates) == 0 {
+		return nil
+	}
+	client := candidates[0].Client
+	beforeTokens := int64(estimateRequestTokens(req))
+	summary, folded, usage, cerr := compactConversation(ctx, s, client, req, 1)
+	if cerr != nil {
+		s.opts.Logger.Printf("compaction: auto-compaction for %s/%s failed (%v); forwarding the full history", client.Name(), req.Model, cerr)
+		return nil
+	}
+	if folded == 0 {
+		return nil
+	}
+	if summary == "" {
+		return nil
+	}
+	start, ok := compactionSplit(req.Messages, 1)
+	if !ok {
+		return nil
+	}
+	kept := make([]core.Message, 0, len(req.Messages)-start+1)
+	for _, m := range req.Messages {
+		if strings.EqualFold(strings.TrimSpace(m.Role), "system") {
+			kept = append(kept, m)
+		}
+	}
+	kept = append(kept, core.Message{Role: "assistant", Content: summary})
+	kept = append(kept, req.Messages[start:]...)
+	req.Messages = kept
+
+	if rec != nil {
+		// folded turns were replaced by the single summary message.
+		rec.Trimmed = true
+		rec.TrimDropped = folded - 1
+		rec.TrimmedFromTokens = beforeTokens
+		rec.TrimmedToTokens = int64(estimateRequestTokens(req))
+	}
+	if usage != nil && rec != nil && rec.PromptTokens == 0 && rec.CompletionTokens == 0 {
+		// The summarisation call's tokens are real spend and belong on the row.
+		// The caller-visible turn reports its own usage later and overwrites
+		// this, so the two are never added together.
+		rec.setUsage(usage)
+	}
+	blob, berr := s.mintCompactionBlob(summary, folded, req.Model)
+	if berr != nil {
+		s.opts.Logger.Printf("compaction: cannot mint a blob for %s/%s: %v", client.Name(), req.Model, berr)
+		return nil
+	}
+	return &responseOutput{
+		Type:              "compaction",
+		ID:                newID("cmp_"),
+		Status:            "completed",
+		CompactionContent: blob,
+	}
+}
+
+// responsesCompactRequest is the inbound body of POST /v1/responses/compact.
+//
+// Only the fields the endpoint acts on are declared; the rest of the published
+// parameter set (service_tier, prompt_cache_key, ...) is accepted by omission,
+// which keeps a client that sends the full set working.
+type responsesCompactRequest struct {
+	Model               string          `json:"model"`
+	Input               json.RawMessage `json:"input,omitempty"`
+	Instructions        string          `json:"instructions,omitempty"`
+	PreviousResponseID  string          `json:"previous_response_id,omitempty"`
+	ConversationID      string          `json:"conversation_id,omitempty"`
+	ConversationIDCamel string          `json:"conversationId,omitempty"`
+	Metadata            json.RawMessage `json:"metadata,omitempty"`
+}
+
+// handleResponsesCompact answers POST /v1/responses/compact: it folds the
+// supplied conversation into a handover summary and returns a
+// response.compaction object whose output is the retained user turns followed by
+// one compaction item.
+//
+// The summary is produced by the routed model through the normal chat pipeline,
+// so account rotation and accounting behave exactly as they do for a
+// user-visible request.  When summarisation cannot run at all (no candidate, an
+// upstream refusal), the endpoint still answers with the deterministic retention
+// list rather than a 500: a shorter honest history is a usable answer, and a
+// fabricated summary is not.
+func (s *server) handleResponsesCompact(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "invalid_request_error", "use POST")
+		return
+	}
+	s.stats.addRequest()
+
+	rec := UsageRecord{At: time.Now(), StartedAt: time.Now()}
+	defer func() {
+		rec.At = time.Now()
+		s.recordUsage(rec)
+	}()
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+	var wire responsesCompactRequest
+	if err := json.NewDecoder(r.Body).Decode(&wire); err != nil {
+		s.fail(&rec, err)
+		writeError(w, http.StatusBadRequest, "invalid_request_error", "invalid JSON: "+err.Error())
+		return
+	}
+	rec.Model = wire.Model
+
+	if strings.TrimSpace(wire.Model) == "" {
+		err := fmt.Errorf("model is required")
+		s.fail(&rec, err)
+		writeError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return
+	}
+
+	req, err := toCoreRequestFromResponses(&responsesRequest{
+		Model:          wire.Model,
+		Input:          wire.Input,
+		Instructions:   wire.Instructions,
+		ConversationID: firstNonEmptyValue(wire.ConversationID, wire.ConversationIDCamel),
+		Metadata:       wire.Metadata,
+	}, s.compaction)
+	if err != nil {
+		s.fail(&rec, err)
+		writeError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return
+	}
+	req.Model = wire.Model
+	if !hasUserTurn(req.Messages) {
+		err := fmt.Errorf("input must contain at least one user message")
+		s.fail(&rec, err)
+		writeError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return
+	}
+	req.ConversationRequestID = strings.TrimSpace(r.Header.Get("X-Conversation-Request-ID"))
+	rec.SessionID = sessionIDFor(req)
+
+	if !s.exposedModelAllowed(r, wire.Model) {
+		err := fmt.Errorf("model %q is not exposed by this gateway", wire.Model)
+		rec.Failed = true
+		s.fail(&rec, err)
+		writeError(w, http.StatusNotFound, "invalid_request_error", err.Error())
+		return
+	}
+	candidates, err := s.opts.Registry.ResolveCandidates(r.Context(), wire.Model)
+	if err != nil {
+		s.fail(&rec, err)
+		writeError(w, http.StatusNotFound, "invalid_request_error", err.Error())
+		return
+	}
+	if len(candidates) == 0 {
+		err := fmt.Errorf("no candidate can serve %q", wire.Model)
+		s.fail(&rec, err)
+		writeError(w, http.StatusNotFound, "invalid_request_error", err.Error())
+		return
+	}
+
+	client := candidates[0].Client
+	req.Model = candidates[0].Model
+	rec.Client = client.Name()
+	rec.Model = client.Name() + "/" + candidates[0].Model
+
+	out, usage, cerr := s.compactHistory(r.Context(), client, req, &rec)
+	if cerr != nil {
+		rec.Failed = true
+		s.fail(&rec, cerr)
+		s.writeUpstreamError(w, client, s.hintContextFunc(r.Context(), client, req.Model, req.Messages), cerr)
+		return
+	}
+	rec.setUsage(usage)
+
+	envelope := responseObject{
+		ID:        newID("resp_"),
+		Object:    "response.compaction",
+		CreatedAt: time.Now().Unix(),
+		Status:    "completed",
+		Model:     wire.Model,
+		Output:    out,
+		Usage:     toResponseUsage(usage),
+	}
+	writeJSON(w, http.StatusOK, envelope)
+}
+
+// compactHistory folds req's older turns into one summary and renders the
+// response.compaction output list.  It returns the rendered items and any usage
+// the summariser reported.
+func (s *server) compactHistory(ctx context.Context, client core.Client, req *core.ChatRequest, rec *UsageRecord) ([]responseOutput, *core.Usage, error) {
+	summary, folded, usage, err := compactConversation(ctx, s, client, req, 1)
+	if err != nil {
+		// The caller still needs a usable history.  Fall back to the
+		// deterministic retention list -- the newest user turn(s) plus whatever
+		// system prompt was supplied -- and report the refusal on the usage row.
+		if rec != nil {
+			rec.FailureReason = core.Redact(err.Error())
+		}
+		s.opts.Logger.Printf("compaction: %s/%s could not summarise (%v); returning the retained turns only", client.Name(), req.Model, err)
+		summary, folded = "", 0
+		usage = nil
+	}
+
+	var out []responseOutput
+	// Instructions / system turns are preserved verbatim: they are standing
+	// direction, not history to fold.
+	start := 0
+	for start < len(req.Messages) && strings.EqualFold(strings.TrimSpace(req.Messages[start].Role), "system") {
+		out = append(out, messageItemFromCore("system-"+newID("msg_"), req.Messages[start]))
+		start++
+	}
+	if summary != "" {
+		out = append(out, responseOutput{
+			Type:   "message",
+			ID:     "msg_" + newID("sum_"),
+			Status: "completed",
+			Role:   "user",
+			Content: []responseOutputContent{{
+				Type:        "input_text",
+				Text:        summary,
+				Annotations: []any{},
+			}},
+		})
+	}
+	// The retained tail: the newest user turn and anything after it.
+	if idx, ok := compactionSplit(req.Messages, 1); ok {
+		for _, m := range req.Messages[idx:] {
+			out = append(out, messageItemFromCore(newID("msg_"), m))
+		}
+	} else {
+		for _, m := range req.Messages[start:] {
+			out = append(out, messageItemFromCore(newID("msg_"), m))
+		}
+	}
+
+	blob, berr := s.mintCompactionBlob(summary, folded, req.Model)
+	if berr != nil {
+		return nil, nil, berr
+	}
+	out = append(out, responseOutput{
+		Type:              "compaction",
+		ID:                newID("cmp_"),
+		Status:            "completed",
+		CompactionContent: blob,
+	})
+	return out, usage, nil
+}
+
+// mintCompactionBlob signs (or, when there is no summary, still mints a
+// placeholder for) the compaction state.
+func (s *server) mintCompactionBlob(summary string, folded int, model string) (string, error) {
+	if s == nil || s.compaction == nil {
+		return "", fmt.Errorf("compaction: no signer is configured")
+	}
+	// A deterministic retention list produces no summary text.  The blob then
+	// carries that fact explicitly rather than an empty string, so a reader can
+	// tell "this run kept the turns instead of summarising" apart from a
+	// truncated blob.
+	text := strings.TrimSpace(summary)
+	if text == "" {
+		text = compactionNoSummaryMarker
+	}
+	return s.compaction.mint(text, compactionPayload{SourceMessages: folded, Model: model})
+}
+
+// compactionNoSummaryMarker is what a blob carries when summarisation was
+// unavailable and the endpoint returned the retained turns instead.  It is
+// plain text on purpose: it is produced by this gateway, never by a vendor.
+const compactionNoSummaryMarker = "(compaction produced no summary; the retained turns carry the state)"
+
+// messageItemFromCore renders one core.Message as a Responses input item.
+func messageItemFromCore(id string, m core.Message) responseOutput {
+	text := m.Content
+	if text == "" {
+		var b strings.Builder
+		for _, p := range m.Parts {
+			if p.Type == "" || p.Type == "text" {
+				b.WriteString(p.Text)
+			}
+		}
+		text = b.String()
+	}
+	role := strings.ToLower(strings.TrimSpace(m.Role))
+	if role == "" {
+		role = "user"
+	}
+	kind := "input_text"
+	if role == "assistant" {
+		kind = "output_text"
+	}
+	return responseOutput{
+		Type:   "message",
+		ID:     id,
+		Status: "completed",
+		Role:   role,
+		Content: []responseOutputContent{{
+			Type:        kind,
+			Text:        text,
+			Annotations: []any{},
+		}},
+	}
+}
+
+// firstNonEmptyValue returns the first argument that is non-empty after
+// trimming, or "".
+func firstNonEmptyValue(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// hasUserTurn reports whether the conversation carries a user message with
+// something in it.  An empty string input decodes to a single blank user turn,
+// and "compact nothing" is a request error rather than a compaction.
+func hasUserTurn(msgs []core.Message) bool {
+	for _, m := range msgs {
+		if !strings.EqualFold(strings.TrimSpace(m.Role), "user") {
+			continue
+		}
+		if strings.TrimSpace(m.Content) != "" {
+			return true
+		}
+		for _, p := range m.Parts {
+			if strings.TrimSpace(p.Text) != "" || (p.Type != "" && p.Type != "text") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // parseResponsesToolOutput decodes the union shape of a Responses

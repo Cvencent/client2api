@@ -62,6 +62,12 @@ type routeInput struct {
 	// (namespace, name) pair it was declared as.  Only the Responses protocol
 	// has namespaces, so every other caller leaves it nil.
 	toolNames map[string]namespacedTool
+	// trailingCompaction, when non-nil, is a compaction item the Responses
+	// endpoint produced before routing (context_management auto-compaction) or
+	// replayed by the caller.  The Responses emitter appends it to the turn's
+	// output so the caller can carry the folded state forward.  Other protocols
+	// leave it nil.
+	trailingCompaction *responseOutput
 }
 
 // moduleUnavailable asks a module's own health surface whether it can serve
@@ -105,8 +111,11 @@ type emitArgs struct {
 	// toolNames is the table routeInput carries, passed through so a vendor's
 	// flattened call can be put back into the pair Codex dispatches on.
 	toolNames map[string]namespacedTool
-	rec       *UsageRecord
-	stat      *chatStat
+	// trailingCompaction is the Responses-only compaction item to append to the
+	// turn's output.  Nil for every other protocol.
+	trailingCompaction *responseOutput
+	rec                *UsageRecord
+	stat               *chatStat
 }
 
 // chatEmitter renders a core.Stream in one wire protocol.  The two methods
@@ -432,7 +441,7 @@ func (s *server) routeAndServeMessages(w http.ResponseWriter, r *http.Request, i
 	}, s.opts.Logger.Printf)
 	defer stream.Close()
 
-	a := emitArgs{s: s, client: client, model: in.modelForWire, stream: stream, hintCtx: hintCtx, toolNames: in.toolNames, rec: in.rec, stat: in.stat}
+	a := emitArgs{s: s, client: client, model: in.modelForWire, stream: stream, hintCtx: hintCtx, toolNames: in.toolNames, trailingCompaction: in.trailingCompaction, rec: in.rec, stat: in.stat}
 	if in.stream {
 		in.emitter.emitStream(w, r, a)
 		return

@@ -1624,6 +1624,10 @@ func run() error {
 		// measurement, not an operator's decision, and must not be exported to
 		// other installations wearing a "manual" label.
 		LearnedWindowsPath: filepath.Join(cfg.DataDir, "learned_context_windows.json"),
+		// The HMAC key that signs Responses compaction blobs.  It lives in the
+		// data directory (which an upgrade preserves) so a blob a client replays
+		// after an install still verifies; see internal/gateway/compaction.go.
+		CompactionKeyPath: filepath.Join(cfg.DataDir, "compaction.key"),
 	})
 
 	errCh := make(chan error, 1)

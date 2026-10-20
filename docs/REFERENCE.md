@@ -700,13 +700,52 @@ bytes; it carries through the one fact the model can act on and drops the rest:
   `[encrypted agent payload omitted]`.
 * A `reasoning` item keeps its `summary` text. Its `encrypted_content` cannot be
   replayed to any vendor but its issuer, so it is dropped rather than forwarded.
-* A `compaction` item keeps its plaintext summary when it holds one, and is
-  skipped when the field is a real ciphertext blob.
+* A `compaction` item keeps its plaintext summary when it holds one; a blob this
+  gateway minted is verified and replayed (see *Compaction* below), and a real
+  ciphertext blob is skipped.
 
 The ciphertext is **never** forwarded to a vendor and never decoded into
 invented text: the gateway does not hold the key, so anything it produced would
 be fabrication. The sub-agent payload's *content* is therefore not replayed;
 what is preserved is the fact that a delegated message exists and who sent it.
+
+### Compaction
+
+`POST /v1/responses/compact` folds a conversation into a handover summary and
+returns an object with `object: "response.compaction"` whose `output` is the
+retained turns followed by exactly one `type: "compaction"` item. On
+`POST /v1/responses`, `context_management: [{"type":"compaction",
+"compact_threshold": N}]` folds the conversation automatically once the estimated
+input reaches `N` tokens and appends the same item to that turn's output.
+
+The item's `encrypted_content` is **gateway-owned**, not OpenAI's opaque state. It
+is a summary this deployment produced and HMAC-signed with a key from
+`data/compaction.key`, which survives an upgrade. Replay rules:
+
+* A blob this deployment signed is verified and materialised as an `assistant`
+  turn, so the folded state is genuinely carried forward.
+* A blob with this gateway's `c2c1.` shape whose signature does **not** verify
+  (another deployment, a tampered value, or a lost key) is dropped. It is never
+  replayed as prose.
+* Genuine OpenAI ciphertext, and a relay's plaintext summary smuggled through the
+  same field, keep their previous behaviour: ciphertext is dropped, plaintext is
+  preserved.
+
+Summarisation runs through the normal routed model, so account rotation, platform
+failover and usage accounting behave as they do for a user-visible turn. When the
+summariser cannot run at all, the endpoint still returns a usable
+`response.compaction` object built from the retained turns rather than a 500.
+
+### Context-window refusals
+
+A vendor refusal that means "the prompt is too large" is surfaced as
+`error.code = "context_window_exceeded"`, which is the code a Responses client
+acts on by compacting. This holds even when a module only saw a plain 400 and
+classified nothing: the gateway itself recognises the wording ("prompt is too
+long", "maximum context length", "run compaction", and their Chinese
+equivalents) and promotes the failure. A numbered refusal additionally teaches
+the gateway the model's real window, so later requests are trimmed before they
+are sent.
 
 ### Limits
 

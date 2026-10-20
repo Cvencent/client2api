@@ -236,6 +236,11 @@ func (s *server) streamResponsesSSE(w http.ResponseWriter, r *http.Request, a em
 			wire["call_id"] = item.CallID
 			wire["name"] = item.Name
 			wire["arguments"] = ""
+		case "compaction":
+			// The blob does not exist until the item is done; the added frame
+			// carries the item shape with an empty placeholder, exactly as an
+			// OpenAI compaction item streams.
+			wire["encrypted_content"] = ""
 		}
 		return ix, emit("response.output_item.added", map[string]any{"output_index": ix, "item": wire})
 	}
@@ -401,6 +406,29 @@ receive:
 		terminal = "empty_completion"
 		emitFailed(errEmptyCompletion())
 		return
+	}
+
+	// A compaction item the endpoint produced before routing is appended after
+	// the turn's own items.  Per the Responses streaming contract the item's
+	// full content is authoritative on output_item.done; there is no delta
+	// stream for it, and a short compaction legitimately emits none.
+	if a.trailingCompaction != nil {
+		item := *a.trailingCompaction
+		if item.Status == "" {
+			item.Status = "completed"
+		}
+		if item.ID == "" {
+			item.ID = newID("cmp_")
+		}
+		ix, ok := addItem(responseOutput{
+			Type:   "compaction",
+			ID:     item.ID,
+			Status: "in_progress",
+		})
+		if !ok {
+			return
+		}
+		output[ix] = item
 	}
 
 	for i := range output {
@@ -594,6 +622,20 @@ receive:
 			Namespace: namespace,
 			Arguments: tc.Arguments,
 		})
+	}
+
+	// A compaction item produced by context_management (or replayed by the
+	// caller) is appended last: it folds everything before it, so placing it
+	// anywhere else would make the retained turns ambiguous.
+	if a.trailingCompaction != nil {
+		item := *a.trailingCompaction
+		if item.Status == "" {
+			item.Status = "completed"
+		}
+		if item.ID == "" {
+			item.ID = newID("cmp_")
+		}
+		output = append(output, item)
 	}
 
 	a.stat.status = http.StatusOK

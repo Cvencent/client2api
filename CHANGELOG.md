@@ -6,6 +6,37 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [Unreleased]
+
+### Added
+
+- **Responses 压缩（compaction）完整实现。** 新增 `POST /v1/responses/compact`：
+  把一段对话折叠成交接摘要，返回 `object: "response.compaction"`，`output` 为保留的轮次
+  加**恰好一个** `type: "compaction"` 项。`POST /v1/responses` 新增
+  `context_management: [{"type":"compaction","compact_threshold": N}]`：估算输入达到 N 个
+  token 时自动折叠，并把该项附加到本次输出；流式按 `response.output_item.added` →
+  `output_item.done` → `response.completed` 的顺序携带它。
+  - `encrypted_content` 是**本网关自有**的摘要 blob，用 `data/compaction.key`
+    （升级保留）做 HMAC-SHA256 签名。回放到本部署会校验并还原成 `assistant` 历史；
+    签名不通过（别的部署、被篡改、换机器）的 blob 直接丢弃，不会被当成明文回放；
+    OpenAI 真正的密文与中继的明文摘要行为不变。
+  - 摘要走正常模型路由，账号轮换、平台故障转移、用量统计一致；摘要完全不可用时返回由保留轮次
+    构成的可对象，而不是 500。
+
+### Fixed
+
+- **提示超限的 400 没有给出"去压缩"的信号。** 上游以"内容太长 / 超过最大上下文 / 请运行
+  compaction"回绝时，若模块没有分类，过去会落到 `invalid_request`，客户端不知道该压缩，
+  于是拿同样的超长请求反复重试（OpenCode 200K 上下文切模型时最常见）。
+  现在：
+  - `clients/opencode` 新增 `kindContext`，命中 prompt-size 措辞即映射为
+    `FailureContextWindow`，保留厂商原始 400，且**不计入账号惩罚**（请求形状问题，不是凭据问题）；
+  - 网关侧新增 `looksLikeContextRefusal` / `normalizeContextRefusal`：模块即使什么都没分类，
+    网关也会按措辞把失败提升为 `context_window_exceeded`，这正是 Responses 客户端触发压缩的代码；
+    带数字的拒绝继续让网关学到真实窗口，后续请求先裁剪再发送。
+  - 措辞识别采用整句匹配（`prompt is too long`、`maximum context length`、`run compaction`
+    及中文对应），避免把无关的 400 误判成压缩触发。
+
 ## [0.1.94] - 2026-10-20
 
 ### Fixed

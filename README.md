@@ -151,7 +151,8 @@ OpenAI's `schema must be a JSON Schema of 'type: "object"', got 'type: null'`
 
 ### Gateway and routing
 
-- OpenAI-compatible `POST /v1/chat/completions`, `POST /v1/responses`, and inbound Anthropic `POST /v1/messages` / `POST /v1/messages/count_tokens`.
+- OpenAI-compatible `POST /v1/chat/completions`, `POST /v1/responses`,
+  `POST /v1/responses/compact`, and inbound Anthropic `POST /v1/messages` / `POST /v1/messages/count_tokens`.
 - The Anthropic Messages ingress supports Claude Code's string or block
   content, system prompts, tools, tool results, thinking, usage, streaming SSE,
   non-streaming responses and Anthropic-shaped errors. It can be served by any
@@ -482,6 +483,25 @@ The Responses API is translated natively for Codex and compatible clients:
 - A tool-call block a model wrote as text that the parser cannot read is surfaced
   as visible text instead of being dropped, so a swallowed call cannot look like
   a clean stop.
+- **Compaction.** `POST /v1/responses/compact` folds a conversation into a
+  handover summary and returns a `response.compaction` object whose `output` is
+  the retained turns plus one `type: "compaction"` item. `context_management:
+  [{"type":"compaction","compact_threshold":N}]` on `/v1/responses` does the same
+  automatically once the estimated input reaches N tokens, and appends the item
+  to that turn's output (streamed as `response.output_item.added` /
+  `.done`, then included in `response.completed`).
+  The compaction item's `encrypted_content` is **gateway-owned**: a summary this
+  deployment produced and HMAC-signed with a key in
+  `data/compaction.key`, not OpenAI's opaque state. Replaying it to this gateway
+  brings the summary back as history; replaying it to another deployment, or
+  replaying genuine OpenAI ciphertext, is dropped exactly as before. See the
+  detailed reference for the full replay rules.
+- Prompt-size refusals a vendor words as "too long" are classified as
+  `context_window_exceeded` even when the module only saw a plain 400 (OpenCode
+  Zen's "more tokens than this model's maximum context length allows ... run
+  compaction" is the case this exists for). That is the code a Responses client
+  triggers its own compaction on, so the caller compacts instead of re-sending a
+  request that is guaranteed to be refused again.
 
 See the detailed reference for translation rules and limitations.
 

@@ -76,7 +76,13 @@ type Options struct {
 	// in-process only, which is the right behaviour for an embedder that has no
 	// data directory; the mechanism degrades to trimming within this run.
 	LearnedWindowsPath string
-	NotifyAlert        func(alerts.Alert)
+	// CompactionKeyPath is where the gateway keeps the HMAC key that signs the
+	// compaction blobs it mints for the Responses compaction surface.  It must
+	// live somewhere the installer preserves (the data directory), because a
+	// client may replay a blob across an upgrade.  Empty selects an in-process
+	// key, which still mints and verifies within one run.
+	CompactionKeyPath string
+	NotifyAlert       func(alerts.Alert)
 }
 
 type server struct {
@@ -104,6 +110,9 @@ type server struct {
 	// a model whose published window turned out to be inflated is judged against
 	// what the vendor actually said.  See context_guard.go.
 	learnedWindows *learnedWindowStore
+	// compaction mints and verifies the gateway-owned blobs carried in Responses
+	// compaction items.  See compaction.go.
+	compaction *compactionSigner
 	// handler is the mux this server serves.  It is kept on the struct so a test
 	// can drive the real routing without opening a listener.
 	handler http.Handler
@@ -164,6 +173,7 @@ func NewServer(opts Options) *http.Server {
 		s.opts.Logger = log.Default()
 	}
 	s.learnedWindows = openLearnedWindowStore(opts.LearnedWindowsPath, s.opts.Logger.Printf)
+	s.compaction = newCompactionSigner(opts.CompactionKeyPath, s.opts.Logger.Printf)
 
 	s.handler = s.routes()
 
@@ -190,6 +200,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("/v1/models", s.auth(s.handleModels))
 	mux.HandleFunc("/v1/chat/completions", s.auth(s.handleChat))
 	mux.HandleFunc("/v1/responses", s.auth(s.handleResponses))
+	mux.HandleFunc("/v1/responses/compact", s.auth(s.handleResponsesCompact))
 	mux.HandleFunc("/v1/messages", s.auth(s.handleMessages))
 	mux.HandleFunc("/v1/messages/count_tokens", s.auth(s.handleCountTokens))
 	mux.HandleFunc("/v1/audio/transcriptions", s.auth(s.handleTranscriptions))

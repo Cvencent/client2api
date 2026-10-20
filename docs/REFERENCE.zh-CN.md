@@ -581,11 +581,39 @@ assistant 消息的事件——只发 delta 的流会显示文字但永远不执
   `[encrypted agent payload omitted]`。
 * `reasoning` 项保留 `summary` 文本。其 `encrypted_content` 除了发给签发它的
   上游之外无法回放，因此丢弃而不转发。
-* `compaction` 项在其中是明文摘要时保留，是真正的密文块时跳过。
+* `compaction` 项在其中是明文摘要时保留；本网关自己签发的 blob 会校验并回放（见下文
+  *压缩* 一节），真正的密文块则跳过。
 
 密文**绝不**转发给任何上游，也不会被解码成杜撰的文本：网关不持有密钥，任何它
 生成的内容都是伪造。因此子代理载荷的**内容**不会被回放；被保留的是「存在一条
 委派消息、以及谁发给谁」这一事实。
+
+### 压缩（Compaction）
+
+`POST /v1/responses/compact` 会把一段对话折叠成一份交接摘要，返回
+`object: "response.compaction"` 的对象：`output` 是保留的若干轮，最后跟**恰好一个**
+`type: "compaction"` 项。在 `POST /v1/responses` 上，`context_management:
+[{"type":"compaction","compact_threshold": N}]` 会在估算输入达到 N 个 token 时自动折叠，
+并把同一个项附加到这一次的输出里。
+
+该项的 `encrypted_content` 是**本网关自有**的，不是 OpenAI 的不透明状态：它是本部署生成的
+摘要，用 `data/compaction.key` 里的密钥做 HMAC 签名，因此升级后依然有效。回放规则：
+
+* 本部署签名过的 blob 会通过校验，并还原成一条 `assistant` 历史，折叠后的状态真正被带下去；
+* 形状是本网关的 `c2c1.`、但签名校验失败的（别的部署、被篡改、密钥丢失）会被丢弃，
+  绝不会当成普通文本回放；
+* 真正的 OpenAI 密文、以及中继塞进同字段的明文摘要，行为保持不变：密文丢弃、明文保留。
+
+摘要走正常的模型路由，所以账号轮换、平台故障转移、用量统计都与用户可见的一次请求一致。
+当摘要完全无法生成时，端点仍会返回可用的 `response.compaction`（由保留轮次构成），而不是 500。
+
+### 上下文超限拒绝
+
+厂商表示"提示过大"的拒绝会以 `error.code = "context_window_exceeded"` 返回，这正是
+Responses 客户端用来触发压缩的代码。即使模块只拿到一个普通的 400、没有做任何分类也成立：
+网关自己识别措辞（`prompt is too long`、`maximum context length`、`run compaction`
+以及对应中文），并把失败提升为超限。带数字的拒绝还会让网关学到模型的真实窗口，
+之后的请求在发出前就会先裁剪。
 
 ### 限制
 
