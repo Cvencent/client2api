@@ -83,12 +83,13 @@ type modelInfo struct {
 	Reason  bool
 }
 
-// fallbackModels is the compiled-in catalogue.  It exists because MiniMax Code
-// exposes no model-list endpoint (see README, "Known gaps"), so a machine with
-// no readable config.yaml must still answer Models() with something true.
-// These four rows are the vendor's own whitelist, verbatim.
+// fallbackModels is the compiled-in catalogue.  It is the last resort: the
+// vendor's own catalogue endpoint is authoritative, the desktop client's
+// config.yaml comes next, and this table answers only when neither is
+// available.  The rows mirror the vendor's whitelist, with the M3.1 id it
+// publishes today (the "-Preview" suffix was dropped upstream on 2026-10-20).
 var fallbackModels = []modelInfo{
-	{ID: "MiniMax-M3.1-Flash-Preview", Name: "M3.1-Flash-Preview", Context: 512000, Output: 128000, Vision: true, Reason: true},
+	{ID: "MiniMax-M3.1-Flash", Name: "M3.1-Flash", Context: 512000, Output: 128000, Vision: true, Reason: true},
 	{ID: "MiniMax-M3", Name: "M3", Context: 512000, Output: 128000, Vision: true, Reason: true},
 	{ID: "MiniMax-M2.7-highspeed", Name: "M2.7-highspeed", Context: 200000, Output: 128000, Reason: true},
 	{ID: "MiniMax-M2.7", Name: "M2.7", Context: 200000, Output: 128000, Reason: true},
@@ -529,11 +530,13 @@ func (c *Config) readCatalogue(logf func(string, ...any)) []modelInfo {
 	return parseModelCatalogue(string(raw))
 }
 
-// coreModels converts the catalogue to the gateway's shape.
-func coreModels(rows []modelInfo) []core.Model {
+// coreModels converts the catalogue to the gateway's shape.  source names
+// where the rows came from ("upstream", "local-config") so the panel can tell
+// a live catalogue from the fallback.
+func coreModels(rows []modelInfo, source string) []core.Model {
 	out := make([]core.Model, 0, len(rows))
 	for _, m := range rows {
-		extra := map[string]any{"source": "local-config"}
+		extra := map[string]any{"source": source}
 		if m.Name != "" {
 			extra["display_name"] = m.Name
 		}

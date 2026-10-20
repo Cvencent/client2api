@@ -69,11 +69,15 @@ type Client struct {
 	// concurrency rather than a second bookkeeping.
 	inFlight atomic.Int64
 
-	// models is the catalogue, re-read from the desktop client's config.yaml by
-	// RefreshModels.  There is no vendor model-list endpoint to call (see
-	// README), so "refresh" means re-reading the local file.
-	mu     sync.RWMutex
-	models []core.Model
+	// models is the catalogue.  RefreshModels fills it from the vendor's own
+	// catalogue endpoint; config.yaml and the compiled-in table stand in only
+	// when that endpoint cannot answer.  modelsAttemptAt throttles the
+	// background refresh so an outage cannot turn every panel poll into an
+	// upstream request.
+	mu              sync.RWMutex
+	models          []core.Model
+	modelsLoading   bool
+	modelsAttemptAt time.Time
 
 	// logins holds the in-flight device-code sign-ins StartLogin opened.  They
 	// are keyed by the session id the panel polls with, kept just long enough
@@ -175,7 +179,10 @@ func New(deps core.Deps) (core.Client, error) {
 	c.affinity = core.NewAffinity(0)
 	c.affinity.StartGC()
 
-	c.setModels(coreModels(cfg.catalogueRows(logf)))
+	// Seed from local knowledge so the first Models() call is cheap and never
+	// empty.  Models() then kicks a background refresh, which replaces this
+	// with the vendor's own catalogue as soon as one is reachable.
+	c.setModels(coreModels(cfg.catalogueRows(logf), "local-config"))
 	return c, nil
 }
 
@@ -189,37 +196,113 @@ func (c *Client) setModels(models []core.Model) {
 }
 
 // Models answers from the cached catalogue.  It is called on every panel
-// refresh, so it must stay cheap: reading the vendor's config.yaml on each call
-// would be wasteful and would make the panel's latency depend on the disk.
+// refresh and by the gateway for every bare model name, so it must stay cheap:
+// it reads the cache and never blocks on the network.  A stale or missing
+// catalogue is refreshed in the background; see refreshModelsAsync.
 func (c *Client) Models(ctx context.Context) ([]core.Model, error) {
 	c.mu.RLock()
-	defer c.mu.RUnlock()
 	out := make([]core.Model, len(c.models))
 	copy(out, c.models)
+	c.mu.RUnlock()
+
+	// The catalogue is the vendor's, so keep it fresh without making the
+	// caller wait for the network.  A failed probe is throttled by
+	// modelsRetryInterval so an outage cannot flood the vendor.
+	c.refreshModelsAsync()
 	return out, nil
 }
 
-// RefreshModels re-reads the model catalogue from the desktop client's own
-// config.yaml.
+// modelsRetryInterval throttles background catalogue refreshes.  The vendor
+// publishes a five-minute TTL, and a failed probe is retried no sooner than
+// this so an outage does not turn every panel poll into an upstream request.
+const modelsRetryInterval = 5 * time.Minute
+
+// refreshModelsAsync starts at most one background refresh.  It never blocks
+// the caller and never replaces a good catalogue with an empty one.
+func (c *Client) refreshModelsAsync() {
+	c.mu.Lock()
+	if c.modelsLoading || (!c.modelsAttemptAt.IsZero() && time.Since(c.modelsAttemptAt) < modelsRetryInterval) {
+		c.mu.Unlock()
+		return
+	}
+	c.modelsLoading = true
+	c.modelsAttemptAt = time.Now()
+	c.mu.Unlock()
+
+	core.GoSafe("minimaxcode model refresh", func(msg string) { c.logf("%s", msg) }, func() {
+		defer func() {
+			c.mu.Lock()
+			c.modelsLoading = false
+			c.mu.Unlock()
+		}()
+
+		ctx, cancel := context.WithTimeout(context.Background(), modelsFetchTimeout)
+		defer cancel()
+		rows, err := c.fetchUpstreamCatalogue(ctx)
+		if err != nil {
+			c.logf("minimaxcode: model catalogue: %v", err)
+			return
+		}
+		models := coreModels(c.filterRows(rows), "upstream")
+		if len(models) == 0 {
+			return
+		}
+		c.setModels(models)
+	})
+}
+
+// RefreshModels asks the vendor for its catalogue and, when that fails, falls
+// back to the desktop client's own config.yaml and finally to the compiled-in
+// table.
 //
-// This is NOT a network refresh: MiniMax publishes no model-list endpoint for
-// this product (the obvious one answers HTTP 503 with
-// errorReason "direct_route_not_configured").  What can change without a restart
-// is the local whitelist, so that is what this re-reads.
-//
-// An unreadable or malformed config.yaml is NOT an error: catalogueRows
-// degrades to the compiled-in table, and that table is what the caller gets.
-// The error return is for the case where nothing at all survives -- an empty
-// file plus a models filter that matches none of it -- because reporting
-// success while handing back no models would silently blank the picker.
+// The two sources are never merged.  When the endpoint answers, its `models`
+// map IS the catalogue: the whitelist still names retired ids that carry no
+// definition, and inventing them back would advertise models the vendor no
+// longer serves.  Only a failed fetch falls back to local knowledge, and that
+// fallback is returned alongside the error so the caller can report it without
+// blanking the picker.
 func (c *Client) RefreshModels(ctx context.Context) ([]core.Model, error) {
-	models := coreModels(c.cfg.catalogueRows(c.logf))
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	var fetchErr error
+	if rows, err := c.fetchUpstreamCatalogue(ctx); err == nil && len(rows) > 0 {
+		if models := coreModels(c.filterRows(rows), "upstream"); len(models) > 0 {
+			c.setModels(models)
+			return models, nil
+		}
+		fetchErr = errors.New("minimaxcode: the vendor catalogue is empty after the configured models filter")
+	} else if err != nil {
+		fetchErr = err
+	}
+
+	// The vendor could not answer.  Serve what the machine itself knows.
+	models := coreModels(c.cfg.catalogueRows(c.logf), "local-config")
 	if len(models) == 0 {
 		last, _ := c.Models(ctx)
-		return last, errors.New("minimaxcode: no model survived the local catalogue and the configured models filter; keeping whatever was already loaded")
+		return last, errors.Join(fetchErr, errors.New("minimaxcode: no model survived the local catalogue and the configured models filter; keeping whatever was already loaded"))
 	}
 	c.setModels(models)
-	return models, nil
+	return models, fetchErr
+}
+
+// filterRows applies the operator's own id filter to a vendor catalogue.
+func (c *Client) filterRows(rows []modelInfo) []modelInfo {
+	if len(c.cfg.Models) == 0 {
+		return rows
+	}
+	allowed := make(map[string]bool, len(c.cfg.Models))
+	for _, id := range c.cfg.Models {
+		allowed[strings.TrimSpace(id)] = true
+	}
+	out := make([]modelInfo, 0, len(rows))
+	for _, m := range rows {
+		if allowed[m.ID] {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 func (c *Client) modelIDs() []string {

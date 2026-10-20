@@ -475,6 +475,53 @@ func (d Deps) Log(format string, args ...any) {
 // Factory builds a module instance.
 type Factory func(deps Deps) (Client, error)
 
+// RepairToolArguments makes every assistant tool call's arguments acceptable to
+// a vendor that parses them as JSON.
+//
+// Chat encodes a call's arguments as a string that holds JSON, and strict
+// relays reject the whole request when it does not parse:
+//
+//	Assistant tool call function.arguments must be valid JSON.
+//
+// That string is not always clean.  Codex replays its own transcript, and
+// transcripts observed in practice contain a missing quote (`"prefix_rule":
+// pwsh`), a leaked control token, a truncated diff, and calls whose payload was
+// freeform text to begin with.  Repairing here -- the one place the gateway
+// normalises history before every candidate -- means one damaged turn no longer
+// costs every failover sibling in the priority order.
+//
+// The repair is conservative and always additive: a value that already parses as
+// a JSON object or array is returned byte for byte, and anything else is
+// preserved under "_raw" so the tool result that follows still has its call.
+func RepairToolArguments(msgs []Message) []Message {
+	for i := range msgs {
+		for j := range msgs[i].ToolCalls {
+			msgs[i].ToolCalls[j].Arguments = safeToolArguments(msgs[i].ToolCalls[j].Arguments)
+		}
+	}
+	return msgs
+}
+
+// safeToolArguments returns a string that parses as JSON.  An empty or null
+// payload becomes an empty object, which is what a call with no arguments
+// means; a valid object or array is passed through untouched.
+func safeToolArguments(args string) string {
+	trimmed := strings.TrimSpace(args)
+	if trimmed == "" || trimmed == "null" {
+		return "{}"
+	}
+	if json.Valid([]byte(trimmed)) {
+		if trimmed[0] == '{' || trimmed[0] == '[' {
+			return args
+		}
+	}
+	obj, err := json.Marshal(map[string]string{"_raw": args})
+	if err != nil {
+		return "{}"
+	}
+	return string(obj)
+}
+
 // RepairToolPairing makes a history acceptable to vendors that require each
 // tool result to follow the assistant turn that declared its call id.
 //

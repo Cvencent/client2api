@@ -912,9 +912,12 @@ func TestRefreshModelsFallsBackToTheCompiledInTableWhenTheFileGoesAway(t *testin
 	if err := os.Remove(path); err != nil {
 		t.Fatalf("remove fixture: %v", err)
 	}
+	// The vendor is unreachable too (the test transport has no handler), so the
+	// refresh reports that failure but still hands back the compiled-in table;
+	// a failed refresh must never blank the picker.
 	after, err := c.RefreshModels(context.Background())
-	if err != nil {
-		t.Fatalf("an unreadable config.yaml must degrade to the compiled-in table, not fail: %v", err)
+	if err == nil {
+		t.Fatal("a refresh that could not reach the vendor must report the error")
 	}
 	if len(after) != len(fallbackModels) {
 		t.Fatalf("RefreshModels = %+v, want the compiled-in %d", after, len(fallbackModels))

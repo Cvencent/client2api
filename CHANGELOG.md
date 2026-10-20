@@ -37,6 +37,33 @@
   - 措辞识别采用整句匹配（`prompt is too long`、`maximum context length`、`run compaction`
     及中文对应），避免把无关的 400 误判成压缩触发。
 
+## [0.1.96] - 2026-10-21
+
+### Changed
+
+- **MiniMax Code 的模型目录改由厂商实时接口决定。** `GET …/mavis/api/v1/models` 匿名返回当前的
+  `models`、`model_order` 和 `whitelist`；模块以 `models` 为唯一来源，按 `model_order` 排序，
+  不再把只存在于 `whitelist`、但厂商已不再定义的 id 重新上架。`Models()` 继续即时返回缓存，
+  并在后台按五分钟节流刷新；面板的“刷新模型”会直接请求厂商。接口不可达时依次回退到本机
+  `~/.minimax/config.yaml` 和内置表，失败时保留已有目录并在错误中说明，不会清空模型列表。
+- **M3.1 的模型 id 更新为 `MiniMax-M3.1-Flash`。** 厂商已于 2026-10-20 去掉 `-Preview`
+  后缀；示例配置同步使用新 id。已下线的 `MiniMax-M2.7` / `MiniMax-M2.7-highspeed`
+  只保留在离线兜底表中。
+
+### Fixed
+
+- **Responses 重放历史里的工具调用不再因参数不是 JSON 而整请求失败。** Codex 的
+  `custom_tool_call` 把自由文本放在 `input`，而没有 `arguments`；过去转成 Chat 历史时得到空字符串，
+  严格上游会以 `Assistant tool call function.arguments must be valid JSON` 拒绝。现在自定义工具调用的
+  原文以 JSON 对象保留，缺失参数写成 `{}`，损坏的历史参数统一保留在 `_raw` 下；转义前后都能无损重放。
+- **所有候选共用同一份可解析的工具参数。** 网关在轮换账号和故障转移前统一修复 assistant 工具调用的
+  `function.arguments`，避免一个损坏的历史轮次让整条优先级链上的模型全部失败。
+
+### Installer
+
+- `client2api-setup-0.1.96.exe`（空包，不含账号凭据或本机配置）
+- SHA256：`D6D08E0CB86F9570BD65764C931FD0EFE63AB3A587E296F4E0A4251065C13574`
+- 升级会保留现有 `configs/client2api.json`、`data/`、账号池、用量和任务数据。
 ## [0.1.95] - 2026-10-20
 
 ### Fixed

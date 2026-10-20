@@ -157,6 +157,13 @@ type responsesInputItem struct {
 	CallID    string          `json:"call_id,omitempty"`
 	Name      string          `json:"name,omitempty"`
 	Arguments json.RawMessage `json:"arguments,omitempty"`
+	// Input is the payload of a custom tool call.  A "custom_tool_call"
+	// (Codex's freeform tools such as exec and apply_patch) carries its body
+	// here as freeform text, not as a JSON "arguments" object: the field is
+	// absent from the item entirely.  It has to be read separately, because
+	// treating the missing arguments as "" produced a history no strict
+	// vendor would accept.
+	Input json.RawMessage `json:"input,omitempty"`
 	// Namespace names the tool namespace a call belongs to.  Codex addresses a
 	// namespaced tool as the pair (namespace, name); a vendor only ever sees the
 	// flattened name, so the pair is the half this gateway has to restore.
@@ -599,6 +606,7 @@ func translateResponsesInput(raw json.RawMessage, verify *compactionSigner) ([]c
 	for i, it := range items {
 		switch it.Type {
 		case "function_call", "custom_tool_call", "local_shell_call":
+			custom := !strings.EqualFold(it.Type, "function_call")
 			// A tool invocation.  In Chat it is an assistant turn that carries
 			// tool_calls; several consecutive calls belong to one such turn, so
 			// an open one is appended to rather than flushed.
@@ -625,11 +633,18 @@ func translateResponsesInput(raw json.RawMessage, verify *compactionSigner) ([]c
 				pending.Reasoning = pendingReasoning
 				pendingReasoning = ""
 			}
+			// A custom tool call has no "arguments" object: its body is
+			// freeform text in "input".  Wrap it so the replayed call still
+			// carries well formed JSON, which every Chat vendor parses.
+			arguments := rawToArgumentString(it.Arguments)
+			if custom {
+				arguments = customToolArguments(it.Input)
+			}
 			pending.ToolCalls = append(pending.ToolCalls, core.ToolCall{
 				ID:        callID,
 				Type:      "function",
 				Name:      callName,
-				Arguments: rawToArgumentString(it.Arguments),
+				Arguments: arguments,
 			})
 
 		case "function_call_output", "custom_tool_call_output":
@@ -948,18 +963,67 @@ func rawToText(raw json.RawMessage) string {
 
 // rawToArgumentString renders tool arguments.  Chat wants a JSON string, so an
 // object is marshalled back to a string and a string is passed through.
+//
+// A missing or null field becomes "{}" rather than "": an empty string is not
+// valid JSON and strict vendors reject the whole request over it, while an
+// empty object is what a call with no arguments actually means.
 func rawToArgumentString(raw json.RawMessage) string {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 || string(trimmed) == "null" {
-		return ""
+		return "{}"
 	}
 	if trimmed[0] == '"' {
 		var s string
 		if json.Unmarshal(trimmed, &s) == nil {
-			return s
+			return ensureJSONObject(s)
 		}
 	}
-	return string(trimmed)
+	return ensureJSONObject(string(trimmed))
+}
+
+// customToolArguments renders a custom tool call's freeform input as the JSON
+// object Chat requires.  The text is preserved verbatim under "input" so the
+// tool result that follows in the history still refers to something the model
+// can read.
+func customToolArguments(raw json.RawMessage) string {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		return "{}"
+	}
+	var s string
+	if json.Unmarshal(trimmed, &s) == nil {
+		if strings.TrimSpace(s) == "" {
+			return "{}"
+		}
+		obj, err := json.Marshal(map[string]string{"input": s})
+		if err == nil {
+			return string(obj)
+		}
+	}
+	// An object-shaped input is already the JSON this call wants.
+	return ensureJSONObject(string(trimmed))
+}
+
+// ensureJSONObject guarantees the string put on the wire parses.  A value that
+// is already valid is returned byte for byte; anything else is preserved under
+// "_raw" instead of being dropped, so the replayed turn stays coherent.
+func ensureJSONObject(s string) string {
+	trimmed := strings.TrimSpace(s)
+	if trimmed == "" {
+		return "{}"
+	}
+	if json.Valid([]byte(trimmed)) {
+		if trimmed[0] == '{' || trimmed[0] == '[' {
+			return trimmed
+		}
+		// A bare JSON scalar is legal but not the object shape a tool call
+		// expects, so it is boxed the same way as a damaged value.
+	}
+	obj, err := json.Marshal(map[string]string{"_raw": s})
+	if err != nil {
+		return "{}"
+	}
+	return string(obj)
 }
 
 // ---------------------------------------------------------------------------

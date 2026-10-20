@@ -870,3 +870,76 @@ func TestAppendTailKeepsTheEnd(t *testing.T) {
 		t.Fatalf("empty append changed the tail: %q", b.String())
 	}
 }
+
+// TestResponses_CustomToolCallKeepsItsFreeformInput pins the translation of a
+// replayed custom tool call.  Responses carries those as "custom_tool_call"
+// items whose payload is freeform text in "input" -- there is no "arguments"
+// field at all.  Reading it as a plain function call produced the empty string
+// in the assistant history, and an upstream that validates arguments refused
+// the whole request with "Assistant tool call function.arguments must be valid
+// JSON".  The item has to reach the vendor as a call with a JSON object.
+func TestResponses_CustomToolCallKeepsItsFreeformInput(t *testing.T) {
+	c := &testClient{name: "t", events: []core.Event{{Type: core.EventDelta, Delta: "ok"}, {Type: core.EventDone, Finish: "stop"}}}
+	srv := newTestServer(t, c, NewStats(), NewUsageStore(10))
+
+	body := `{
+		"model": "t/m1",
+		"input": [
+			{"type":"custom_tool_call","id":"ctc_1","call_id":"call_exec","name":"exec","input":"const x = 1;\ntext(String(x));"},
+			{"type":"custom_tool_call_output","call_id":"call_exec","output":"1"}
+		]
+	}`
+	rec := responses(t, srv, body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+	}
+	call := firstToolCall(t, c.seen)
+	if call.Name != "exec" {
+		t.Errorf("tool name = %q, want exec", call.Name)
+	}
+	if !json.Valid([]byte(call.Arguments)) {
+		t.Fatalf("custom tool call arguments = %q, want valid JSON", call.Arguments)
+	}
+	if !strings.Contains(call.Arguments, "const x = 1;") {
+		t.Errorf("the freeform input was dropped: %q", call.Arguments)
+	}
+}
+
+// TestResponses_MalformedReplayedArgumentsAreRepaired covers the dirty history
+// a strict vendor refuses: the assistant turn is replayed with a tool-call
+// arguments string that is not JSON at all.
+func TestResponses_MalformedReplayedArgumentsAreRepaired(t *testing.T) {
+	c := &testClient{name: "t", events: []core.Event{{Type: core.EventDelta, Delta: "ok"}, {Type: core.EventDone, Finish: "stop"}}}
+	srv := newTestServer(t, c, NewStats(), NewUsageStore(10))
+
+	body := `{
+		"model": "t/m1",
+		"input": [
+			{"type":"function_call","id":"fc_1","call_id":"call_1","name":"exec_command","arguments":"{\"cmd\": \"echo hi\", \"prefix_rule\": pwsh, \"tty\": false}"},
+			{"type":"function_call_output","call_id":"call_1","output":"hi"}
+		]
+	}`
+	rec := responses(t, srv, body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+	}
+	call := firstToolCall(t, c.seen)
+	if !json.Valid([]byte(call.Arguments)) {
+		t.Fatalf("replayed arguments = %q, want valid JSON", call.Arguments)
+	}
+}
+
+// firstToolCall returns the only tool call the module saw, or fails.
+func firstToolCall(t *testing.T, req *core.ChatRequest) core.ToolCall {
+	t.Helper()
+	if req == nil {
+		t.Fatal("module never saw a request")
+	}
+	for i := range req.Messages {
+		if len(req.Messages[i].ToolCalls) > 0 {
+			return req.Messages[i].ToolCalls[0]
+		}
+	}
+	t.Fatalf("no tool call reached the module: %+v", req.Messages)
+	return core.ToolCall{}
+}

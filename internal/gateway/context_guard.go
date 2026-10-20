@@ -908,6 +908,12 @@ func (s *server) prepareCandidateAttempt(ctx context.Context, candidate core.Can
 	// the same valid ordering.  This also prevents a trim boundary from leaving
 	// a result whose call has already disappeared.
 	req.Messages = core.RepairToolPairing(req.Messages)
+	// The arguments a vendor parses as JSON are the other half of that
+	// invariant.  A replayed call can carry text that is not JSON -- observed
+	// in real transcripts as a missing quote or a truncated payload -- and a
+	// strict relay answers it with HTTP 400 for the whole request.  Normalise
+	// it here, on the same pristine history, so every candidate is safe.
+	req.Messages = core.RepairToolArguments(req.Messages)
 	req.Model = model
 	req.FreeModel = candidate.Free
 

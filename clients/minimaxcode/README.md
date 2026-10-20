@@ -22,28 +22,37 @@ non-streaming JSON document) back into `core.Event`s.
 
 | Model | Context | Max output | Notes |
 | --- | --- | --- | --- |
-| `MiniMax-M3.1-Flash-Preview` | 512 000 | 128 000 | text/image/video, up to 4 attachments, reasoning forced on |
+| `MiniMax-M3.1-Flash` | 512 000 | 128 000 | text/image/video, up to 4 attachments, reasoning forced on (“订阅限免”) |
 | `MiniMax-M3` | 512 000 | 128 000 | text/image/video, up to 9 attachments, reasoning switchable |
-| `MiniMax-M2.7-highspeed` | 200 000 | 128 000 | text only, reasoning forced on |
-| `MiniMax-M2.7` | 200 000 | 128 000 | text only, reasoning forced on |
 
-**This list comes from the desktop client's own `config.yaml`**, not from the
-vendor: MiniMax publishes **no model-list endpoint** for this product. The
-obvious candidate answers
+**The vendor's own catalogue is authoritative**, and the module reads it live:
 
 ```
-GET https://agent.minimax.cn/mavis/api/v1/llm/v1/models   (Authorization: Bearer …)
-503 {"error":"open platform service unavailable, please retry","errorCode":50115,
-     "errorReason":"direct_route_not_configured"}
+GET https://agent.minimax.cn/mavis/api/v1/models        (anonymous; 200)
+GET https://agent.minimaxi.com/mavis/api/v1/models      (international build, same body)
 ```
 
-so `Models()` reads `<home>/.minimax/config.yaml` instead — the `models:` blocks
-for the limits and the `whitelist:` for the order. A missing or malformed file
-degrades to the compiled-in table above **without an error**; the `models` config
-key is an operator filter applied on top.
+The body is the same configuration object the desktop client writes to
+`<home>/.minimax/config.yaml` (`providers[0].config` with `models`,
+`model_order` and `whitelist`), and it carries a five-minute TTL hint.
 
-`Models()` never makes a network call: the gateway calls it on every `/v1/models`
-request and the panel calls it on every refresh.
+Two rules decide what the module serves:
+
+* **When the endpoint answers, its `models` map IS the catalogue.** `model_order`
+  picks the display order; the `whitelist` is only an allowlist and is *not* a
+  source of ids. On 2026-10-20 it still named `MiniMax-M2.7` and
+  `MiniMax-M2.7-highspeed`, but the vendor no longer defines either, so neither
+  is advertised — resurrecting them would route callers to ids the product
+  itself has retired. (The two retired ids remain in the compiled-in fallback
+  table below, for a machine that cannot reach the endpoint at all.)
+* **Only a failed fetch falls back**, first to the desktop client's own
+  `config.yaml`, then to the compiled-in table. The sources are never merged.
+
+`RefreshModels` performs the network fetch and returns the fallback *alongside*
+the error when it fails, so a refresh can report the problem without blanking
+the picker. `Models()` stays cheap — it reads the cache and kicks a throttled
+background refresh — because the gateway calls it on every `/v1/models` request
+and the panel on every refresh.
 
 ---
 
@@ -62,7 +71,7 @@ factory).
       "base_url": "",
       "auth_dir": "",
       "config_yaml": "",
-      "models": ["MiniMax-M3.1-Flash-Preview", "MiniMax-M3", "MiniMax-M2.7-highspeed", "MiniMax-M2.7"],
+      "models": ["MiniMax-M3.1-Flash", "MiniMax-M3"],
       "auto_discover": true,
       "max_tokens_default": 8192,
       "max_account_attempts": 3,
@@ -85,7 +94,7 @@ factory).
 | `accounts` | array | `[]` | Explicit credentials, tried before discovered ones. |
 | `base_url` | string | `https://agent.minimax.cn/mavis/api/v1/llm` | Upstream family root; `/v1/messages` is appended. |
 | `auth_dir` | string | `<home>/.minimax/auth` | Root of the desktop client's credential store. |
-| `config_yaml` | string | `<home>/.minimax/config.yaml` | The desktop client's own model catalogue. |
+| `config_yaml` | string | `<home>/.minimax/config.yaml` | The desktop client's own model catalogue, used only when the vendor endpoint cannot answer. |
 | `models` | array | `[]` (publish everything the catalogue holds) | Operator filter on the advertised ids. |
 | `auto_discover` | bool | `true` | Read credentials already on the machine (see *Credential discovery*). |
 | `max_tokens_default` | int | `8192` | `max_tokens` when the caller sends none. |
@@ -255,7 +264,7 @@ The module implements seven of the optional panel capabilities:
 | --- | --- | --- |
 | `core.AccountManager` | **yes** | list, add, remove, enable/disable, test, refresh |
 | `core.CredentialImporter` | **yes** | read-only discovery of the desktop client's store, then an explicit import |
-| `core.ModelRefresher` | **yes** | re-reads the desktop client's own `config.yaml` (no vendor endpoint exists) |
+| `core.ModelRefresher` | **yes** | GET `…/mavis/api/v1/models`; falls back to `config.yaml`, then the compiled-in table |
 | `core.LoginProvider` | **yes** | RFC 8628 device grant against `account.minimax.cn`; the panel shows the URL and user code and polls to completion. The GUI is an alternative, not a requirement |
 | `core.CheckinProvider` | **yes** | the seven-day daily sign-in; status-then-claim, never claims blind |
 | `core.BalanceProvider` | **yes** | `/minimax-cloud/api/v1/credit/details` |
@@ -531,12 +540,14 @@ than two.
   international host is configurable but has not been live-verified here.
 * **The `User-Agent` is an inference.** The capture recorded no UA; a Chromium
   one is sent in place of Go's.
-* **No model-list endpoint.** `RefreshModels` re-reads a **local file**; it is not
-  a network refresh, and the README says so rather than implying the vendor was
-  asked. If the desktop client is not installed on the machine, the compiled-in
-  table is all there is.
-* **The catalogue is a local file, so it can go stale.** A model the vendor
-  removed will still be advertised until `config.yaml` changes.
+* **The catalogue endpoint is undocumented.** `GET …/mavis/api/v1/models`
+  answers 200 anonymously today, but it is not a published API: the sibling
+  `…/llm/v1/models` route returns 503 `direct_route_not_configured`. If the
+  vendor moves or gates it the module degrades to `config.yaml` and then to the
+  compiled-in table, so the picker never empties.
+* **The fallback table can go stale.** It is a snapshot of the vendor's
+  whitelist; a model the vendor removes is still advertised from it while the
+  live endpoint is unreachable.
 * **Thinking signatures are dropped.** Anthropic thinking deltas carry a
   `signature` that must be round-tripped for multi-turn reasoning replay;
   `core.Message` has nowhere to carry it, so `signature_delta` frames are ignored.
@@ -587,7 +598,7 @@ touched). The transport was real; the upstream was the vendor.
 | Check | Result |
 | --- | --- |
 | `GET /healthz` | `"clients":[…,"minimaxcode",…]`; startup log: `[minimaxcode] minimaxcode: tls handshake imitates the chrome client` / `[minimaxcode] loaded` / `clients: 14 loaded, 0 skipped, registered=14` |
-| `GET /v1/models` | `minimaxcode/MiniMax-M2.7`, `minimaxcode/MiniMax-M2.7-highspeed`, `minimaxcode/MiniMax-M3`, `minimaxcode/MiniMax-M3.1-Flash-Preview` |
+| `GET /v1/models` | `minimaxcode/MiniMax-M3.1-Flash`, `minimaxcode/MiniMax-M3` (the vendor's current `models` map) |
 | `GET /panel/api/clients/minimaxcode/capabilities` | `manage`, `import`, `refresh_models`, `login` true; every other flag false |
 | `GET /panel/api/clients/minimaxcode/accounts` | one row: `minimaxcode:prod/cn/mcode-public`, label `MiniMax558560`, `state: "ready"`, `expires_at: "2026-09-29T16:38:28Z"`, fields `{origin, refreshable:true, source:"discovered", tag:"9cdfd475"}` — **no token** |
 | `POST /v1/chat/completions` (non-streaming, `MiniMax-M3`, `max_tokens:32`) | **200** in 1444 ms — `"content":"Hey there, friend!"`, `finish_reason:"stop"`, `usage {prompt_tokens:169, completion_tokens:6, total_tokens:175, prompt_tokens_details:{cached_tokens:128}}` |

@@ -1,7 +1,9 @@
 package core
 
 import (
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -129,4 +131,80 @@ func TestAccountSlotRefusalKeepsTheHeldLease(t *testing.T) {
 	if len(released) != 1 || released[0] != "acct-1" {
 		t.Fatalf("released = %v, want [acct-1]", released)
 	}
+}
+
+// TestRepairToolArgumentsMakesEveryCallVendorSafe pins the invariant the
+// gateway now enforces before any module sees a request: every replayed
+// assistant tool call carries function.arguments that is a JSON object.
+//
+// The dirty inputs are real.  They were extracted from Codex session rollouts,
+// where a model's tool-call output was stored with a missing quote, a leaked
+// control token, or a truncated diff.  A strict upstream answers such a history
+// with "Assistant tool call function.arguments must be valid JSON" and refuses
+// the whole request, so the repair has to happen here rather than at the vendor.
+func TestRepairToolArgumentsMakesEveryCallVendorSafe(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+	}{
+		{"already an object", `{"cmd":"ls"}`},
+		{"empty", ""},
+		{"whitespace", "   \n  "},
+		{"literal null", "null"},
+		{"missing quote around a bare word", `{"cmd": "node --check a.js", "prefix_rule": pwsh, "tty": false}`},
+		{"leaked control token", `{"cmd": "x", "pwsh.exe</| : false, "workdir": "D:\\a"}`},
+		{"unterminated string", `{"diff": "diff --git a/x b/x`},
+		{"session id without quotes", `{"chars": "", "session_id": da7095}`},
+		{"trailing bytes after the object", `{"cmd": "echo hi"}}`},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			msgs := []Message{{
+				Role:      "assistant",
+				ToolCalls: []ToolCall{{ID: "call_1", Type: "function", Name: "exec_command", Arguments: tc.in}},
+			}}
+			got := RepairToolArguments(msgs)
+			if len(got) != 1 || len(got[0].ToolCalls) != 1 {
+				t.Fatalf("the call disappeared: %+v", got)
+			}
+			args := got[0].ToolCalls[0].Arguments
+			if !json.Valid([]byte(args)) {
+				t.Fatalf("arguments = %q, want valid JSON", args)
+			}
+			if !strings.HasPrefix(strings.TrimSpace(args), "{") {
+				t.Fatalf("arguments = %q, want a JSON object", args)
+			}
+			// A repair must never silently lose the original payload: the tool
+			// result in the history was keyed to this call, so dropping the text
+			// would leave the replayed turn incoherent.
+			// Already-valid JSON is returned byte for byte; empty/null payloads
+			// become {} and have no original text worth retaining.
+			if tc.name != "already an object" && strings.TrimSpace(tc.in) != "" && tc.in != "null" && !strings.Contains(args, "_raw") {
+				t.Fatalf("arguments = %q, want the original text preserved under _raw", args)
+			}
+		})
+	}
+
+	t.Run("a well formed call is returned unchanged", func(t *testing.T) {
+		msgs := []Message{{
+			Role:      "assistant",
+			ToolCalls: []ToolCall{{ID: "call_1", Name: "exec_command", Arguments: `{"cmd":"ls"}`}},
+		}}
+		got := RepairToolArguments(msgs)
+		if got[0].ToolCalls[0].Arguments != `{"cmd":"ls"}` {
+			t.Errorf("a valid call was rewritten: %q", got[0].ToolCalls[0].Arguments)
+		}
+	})
+
+	t.Run("non-tool messages are untouched", func(t *testing.T) {
+		msgs := []Message{
+			{Role: "user", Content: `{"not":"a tool call"}`},
+			{Role: "tool", ToolCallID: "call_1", Content: "plain text"},
+		}
+		got := RepairToolArguments(msgs)
+		if got[0].Content != `{"not":"a tool call"}` || got[1].Content != "plain text" {
+			t.Fatalf("non-tool messages were rewritten: %+v", got)
+		}
+	})
 }
