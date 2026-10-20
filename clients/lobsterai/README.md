@@ -96,6 +96,21 @@ reports not-ready.
 
 See `config.example.json` for a copy-paste starting point.
 
+### Invitation code
+
+`invitation_code` pre-fills the portal's invite box and is submitted with the
+same sign-in. LobsterAI has no separate redemption endpoint: the login page
+reads `invitationCode` from its own query string and posts it to
+`/api/auth/callback` alongside the credential, so one login is enough.
+
+```json
+"invitation_code": "AXReH0"
+```
+
+The module appends `invitationCode` to the login URL it hands the panel. An
+empty value adds no parameter, so the default login link is unchanged. A code
+only pays out for a first-time account, and the vendor decides that.
+
 ### Top-level keys
 
 | Key | Type | Default | Meaning |

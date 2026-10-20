@@ -97,6 +97,16 @@ func (p *panel) bindInvites(w http.ResponseWriter, r *http.Request, c core.Clien
 	if !decodeJSON(w, r, &body) { // optional body; empty selects the module default
 		return
 	}
+	// A fleet-wide sweep is only offered to modules that say it is safe. Trae's
+	// new-user-only campaign refuses every pre-existing account, so a caller
+	// that ignores the capability flag is told so instead of being handed a
+	// wall of 9022 refusals.
+	if strings.TrimSpace(body.Account) == "" {
+		if fb, ok := core.AsInviteCodeFleetBinder(c); ok && !fb.InviteCodeBindAllSafe() {
+			writeErr(w, http.StatusBadRequest, c.Name()+" 的邀请码只对新注册账号生效，不能批量绑定已有账号")
+			return
+		}
+	}
 	ctx, cancel := p.ctx(r, 180*time.Second)
 	defer cancel()
 

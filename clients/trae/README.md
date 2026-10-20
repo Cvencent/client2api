@@ -57,6 +57,46 @@ module.
 | `account_host` | overrides the host used for token exchange |
 | `region` | default `CN` |
 
+### Invitation code (`code_fission`)
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `invite_code` | *(empty)* | Code-fission invitation code (e.g. `265795LWHG42`) applied to a **newly registered** account right after login. Empty disables the step. |
+| `invite_activity_id` | `code_fission_202609` | Campaign id; change only when Trae starts a new season. |
+| `invite_new_device_per_login` | `true` | Mint a fresh `machine_id`/`device_id` pair for every login **that carries an invite code**. Only applies when `invite_code` is set; an ordinary re-login keeps reusing the account's existing fingerprint. |
+
+The desktop client's `www.trae.cn/events/code-fission/<code>` banner is **not a
+second login**. Its page logs in with phone + SMS code and then binds the code
+with the *same* session:
+
+```
+smsLogin({mobile, code})          -> one session
+bindCodeFission(session, invite)  -> same session binds the code
+```
+
+This module reproduces exactly that: after `completeLogin` has exchanged the
+callback credential and stored the account, `applyInviteAfterLogin` posts
+
+`POST {account_host}/trae/api/v2/ug/code_fission/bind`
+`{"activity_id":"code_fission_202609","invite_code":"<code>"}`
+
+with `Authorization: Cloud-IDE-JWT <session>`. A binding refusal never discards
+the credential — the account is already stored and the panel says why the bind
+failed.
+
+Trae only accepts an invitee that has **never registered** and whose **device
+has not participated** before; those return business codes `9022` (already
+joined) and `9023` (invalid code) and are reported as results, never retried.
+The module therefore advertises `InviteCodeBindAllSafe() == false`, and the
+panel hides its "bind every account" action for Trae.
+
+The device the campaign checks is the `machine_id`/`device_id` pair carried by
+the login URL and stored on the account, not the browser's `ttwid` cookie.
+`invite_new_device_per_login` (default **true**) mints a new pair for each
+invite-bearing login so two accounts created on the same box do not collide on
+that check. Turning it off restores fingerprint reuse, which is the safer choice
+for ordinary re-logins because Trae silently drops device ids it has never seen.
+
 ### Channel and model
 
 | Key | Default | Meaning |

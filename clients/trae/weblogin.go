@@ -267,6 +267,7 @@ type webLoginSession struct {
 	state      string
 	message    string
 	accountID  string
+	invite     string
 	finishedAt time.Time
 }
 
@@ -299,6 +300,9 @@ func (s *webLoginSession) succeed(accountID, message string) {
 	s.state = core.LoginSuccess
 	s.accountID = accountID
 	s.message = message
+	if s.invite != "" {
+		s.message += "；" + s.invite
+	}
 	s.finishedAt = time.Now()
 }
 
@@ -388,6 +392,13 @@ func (c *Client) StartLogin(ctx context.Context) (core.LoginState, error) {
 	port := tcp.Port
 
 	machineID, deviceID := c.loginFingerprint()
+	// An invite login must look like a brand-new device: the campaign refuses a
+	// second invitee on a device it has already seen.  This is deliberately
+	// scoped to the invite case so an ordinary re-login keeps the fingerprint
+	// the chat channel already recorded for the account.
+	if c.cfg.inviteCode() != "" && c.cfg.inviteNewDevicePerLogin() {
+		machineID, deviceID = newHexID(16), newHexID(16)
+	}
 	ttl := c.cfg.loginSessionTTL()
 
 	sess := &webLoginSession{
@@ -626,6 +637,20 @@ func (c *Client) completeLogin(ctx context.Context, sess *webLoginSession, cred 
 		return "", fmt.Errorf("persist the logged-in account: %w", err)
 	}
 	c.rebuildPool()
+
+	// Bind the configured invite code with the session that just signed in.
+	// This is the same one-session flow the vendor's own "新人福利" page uses:
+	// log in once, then bind.  A refusal is reported on the login result but
+	// never discards the credential, which is already valid and stored.
+	inviteRes, tried := c.applyInviteAfterLogin(exctx, a)
+
+	if tried {
+		if inviteRes.OK {
+			sess.invite = "邀请码 " + inviteRes.AppliedCode + " 绑定成功"
+		} else {
+			sess.invite = "邀请码绑定失败：" + inviteRes.Error
+		}
+	}
 	return sa.ID, nil
 }
 

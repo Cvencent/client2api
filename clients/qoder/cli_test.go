@@ -707,6 +707,20 @@ func TestLiveCLIBridgeAnswers(t *testing.T) {
 	if os.Getenv("CLIENT2API_QODER_LIVE_CLI_TEST") != "1" {
 		t.Skip("set CLIENT2API_QODER_LIVE_CLI_TEST=1 with a signed-in local CLI to run the live bridge")
 	}
+	// The vendor serialises inference per account, so this test must not race
+	// the two credential tests.  Go runs tests in one package sequentially by
+	// default, but the worker is a child process: a leftover one from an
+	// earlier aborted run would hold this account and stall the turn.  A
+	// per-test deadline turns that into a fast reported failure instead of a
+	// hung test binary.
+	// A queue deep enough to matter takes minutes, so the bound here is the
+	// vendor's own ceiling plus headroom rather than a tight timeout.  The point
+	// of the guard is to catch a genuinely wedged worker, not to fail a turn the
+	// vendor is legitimately making wait.
+	deadline := time.AfterFunc(12*time.Minute, func() {
+		t.Errorf("live bridge turn exceeded 12m; a stale Qoder worker may be holding %s", os.Getenv("CLIENT2API_QODER_LIVE_CLI_DIR"))
+	})
+	defer deadline.Stop()
 	dir := os.Getenv("CLIENT2API_QODER_LIVE_CLI_DIR")
 	if dir == "" {
 		t.Skip("CLIENT2API_QODER_LIVE_CLI_DIR must name a config root that holds a CLI login")
@@ -724,10 +738,20 @@ func TestLiveCLIBridgeAnswers(t *testing.T) {
 		CLIDir:  filepath.Base(dir),
 		Enabled: true,
 	}}}}
+	c.cli = newCLIPool()
 	// A go test process does not reap its children, so the workers this test
 	// starts have to be torn down explicitly or they outlive the run and hold
-	// the account directory against the next one.
-	t.Cleanup(func() { _ = c.Close() })
+	// the account directory against the next one.  Close tears the pool and the
+	// sweeper down; the timeout keeps a wedged child from hanging the run.
+	t.Cleanup(func() {
+		done := make(chan struct{})
+		go func() { _ = c.Close(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(30 * time.Second):
+			t.Log("close did not finish within 30s")
+		}
+	})
 
 	acc := *c.store.all[0]
 	if !c.cliAccountReady(acc) {
@@ -747,6 +771,7 @@ func TestLiveCLIBridgeAnswers(t *testing.T) {
 	defer stream.Close()
 
 	var reply strings.Builder
+	queued := false
 	for {
 		event, err := stream.Recv()
 		if errors.Is(err, io.EOF) {
@@ -757,6 +782,10 @@ func TestLiveCLIBridgeAnswers(t *testing.T) {
 		}
 		switch event.Type {
 		case core.EventDelta:
+			if event.Reasoning != "" {
+				queued = true
+				t.Logf("queue notice: %s", event.Reasoning)
+			}
 			reply.WriteString(event.Delta)
 		case core.EventError:
 			if event.Err != nil {
@@ -765,6 +794,13 @@ func TestLiveCLIBridgeAnswers(t *testing.T) {
 		}
 	}
 	if strings.TrimSpace(reply.String()) == "" {
+		// The two free models are heavily contended: the vendor queues them and
+		// reports the wait instead of answering.  A turn that only ever queued
+		// is a busy vendor, not a broken bridge -- the notice the bridge emitted
+		// is itself the proof that the transport works.
+		if queued {
+			t.Skip("the vendor is queueing this model right now; the bridge surfaced the wait")
+		}
 		t.Fatal("the CLI answered with no text")
 	}
 	t.Logf("first turn reply: %s", reply.String())
@@ -807,4 +843,171 @@ func TestLiveCLIBridgeAnswers(t *testing.T) {
 		t.Errorf("the pool holds %d workers after two turns, want 1", workers)
 	}
 	t.Logf("second turn reply: %s", secondReply.String())
+}
+
+// ---------------------------------------------------------------------------
+// C2: one CLI sign-in is enough for the whole account
+// ---------------------------------------------------------------------------
+
+// TestCLICredentialStoreYieldsTheDeviceToken is the load-bearing test for the
+// CLI-only account shape.
+//
+// A CLI sign-in writes its credential into the config root, encrypted with a
+// key derived from that root's machine id.  Reading it back -- through the
+// vendor's own WASM, which the CLI binary hosts -- is what gives the account
+// the device token the ledger, the check-in and the signed gateway all need.
+// Without this a CLI-only account could serve the two free models and nothing
+// else, which is exactly the shape this module is trying to avoid.
+//
+// It needs a real Qoder CN install and a signed-in config root, so it is
+// opt-in like the other live tests.
+func TestCLICredentialStoreYieldsTheDeviceToken(t *testing.T) {
+	if os.Getenv("CLIENT2API_QODER_LIVE_CLI_TEST") != "1" {
+		t.Skip("set CLIENT2API_QODER_LIVE_CLI_TEST=1 with a signed-in local CLI")
+	}
+	dir := os.Getenv("CLIENT2API_QODER_LIVE_CLI_DIR")
+	if dir == "" {
+		t.Skip("CLIENT2API_QODER_LIVE_CLI_DIR must name a config root that holds a CLI login")
+	}
+	if _, err := findCLI(); err != nil {
+		t.Skipf("no local Qoder CN install: %v", err)
+	}
+	t.Setenv(cliDirEnv, filepath.Dir(dir))
+	cfg := config{}
+	c := &Client{
+		deps: core.Deps{DataDir: t.TempDir(), Logf: func(f string, a ...any) { t.Logf("log: "+f, a...) }},
+		cfg:  cfg,
+		up:   newUpstream(cfg, nil, nil),
+	}
+	leaf := filepath.Base(dir)
+	acc := account{storedAccount: storedAccount{ID: leaf, CLIDir: leaf, Enabled: true}}
+	c.store = &store{all: []*account{&acc}}
+
+	if !acc.cliOnly() {
+		t.Fatal("a token-less CLI account must start out cli-only")
+	}
+	fresh := c.ensureFreshCLIToken(context.Background(), acc)
+	if fresh.cliOnly() {
+		t.Fatalf("the credential store did not yield a token: %q", fresh.Token)
+	}
+	if !strings.HasPrefix(fresh.Token, "dt-") {
+		t.Errorf("token = %q, want the vendor's dt- device token", shortToken(fresh.Token))
+	}
+	if fresh.UserID == "" {
+		t.Error("uid was not read")
+	}
+	if fresh.RefreshToken == "" {
+		t.Error("refresh token was not read")
+	}
+	if fresh.ExpiresAtMS <= 0 {
+		t.Error("expiry was not read")
+	}
+
+	// The token is the one OpenAPI accepts, which is the whole point: prove it
+	// against the ledger rather than trusting the decrypt alone.
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	bal, err := c.AccountBalance(ctx, fresh.ID, 0)
+	if err != nil {
+		t.Fatalf("AccountBalance with the decrypted token: %v", err)
+	}
+	if bal.Total <= 0 {
+		t.Errorf("ledger returned no capacity: %+v", bal)
+	}
+	t.Logf("ledger: credits=%d total=%d used=%.2f", bal.Credits, bal.Total, bal.Used)
+}
+
+// TestCLICheckinUsesTheDecryptedToken proves the second half of C2: the daily
+// check-in works off the same CLI-derived credential, so an operator who only
+// signed in to the CLI still gets their credits.
+func TestCLICheckinUsesTheDecryptedToken(t *testing.T) {
+	if os.Getenv("CLIENT2API_QODER_LIVE_CLI_TEST") != "1" {
+		t.Skip("set CLIENT2API_QODER_LIVE_CLI_TEST=1 with a signed-in local CLI")
+	}
+	dir := os.Getenv("CLIENT2API_QODER_LIVE_CLI_DIR")
+	if dir == "" {
+		t.Skip("CLIENT2API_QODER_LIVE_CLI_DIR must name a config root that holds a CLI login")
+	}
+	if _, err := findCLI(); err != nil {
+		t.Skipf("no local Qoder CN install: %v", err)
+	}
+	t.Setenv(cliDirEnv, filepath.Dir(dir))
+	cfg := config{}
+	c := &Client{
+		deps: core.Deps{DataDir: t.TempDir(), Logf: func(f string, a ...any) { t.Logf("log: "+f, a...) }},
+		cfg:  cfg,
+		up:   newUpstream(cfg, nil, nil),
+	}
+	leaf := filepath.Base(dir)
+	acc := account{storedAccount: storedAccount{ID: leaf, CLIDir: leaf, Enabled: true}}
+	c.store = &store{all: []*account{&acc}}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	res, err := c.Checkin(ctx, acc.ID, "")
+	if err != nil {
+		t.Fatalf("Checkin: %v", err)
+	}
+	if res.Skipped {
+		t.Fatalf("a CLI-only account was skipped instead of checked in: %s", res.Message)
+	}
+	if res.Error != "" {
+		t.Fatalf("check-in failed: %s", res.Error)
+	}
+	t.Logf("check-in: ok=%v message=%q", res.OK, res.Message)
+}
+
+// shortToken renders a token for a log line without printing it whole.
+func shortToken(s string) string {
+	if len(s) <= 8 {
+		return s
+	}
+	return s[:8] + "..."
+}
+
+// TestQueuedTurnExtendsTheStallWindow pins the behaviour the free models need.
+//
+// The vendor queues dfmodel/qfmodel when they are busy and reports the wait as
+// `model_queue_status` with a wait_time_ms that can reach an hour.  A worker
+// that is waiting is not stalled, so the silence guard must be pushed out by
+// every such report -- otherwise the bridge kills a process the vendor is
+// actively serving.
+func TestQueuedTurnExtendsTheStallWindow(t *testing.T) {
+	turn := &cliTurn{proc: newCLIProc(cliInstall{}, t.TempDir(), "acc", "dfmodel", "")}
+	if got := turn.stallBudget(); got != cliLineStall {
+		t.Fatalf("a fresh turn's budget = %s, want %s", got, cliLineStall)
+	}
+
+	var got []core.Event
+	raw := []byte(`{"type":"system","subtype":"model_queue_status","status":"queued","model_key":"dfmodel","queue_count":5333,"wait_time_ms":323000,"queue_max_wait_ms":3600000,"service_available":true}`)
+	done, err := turn.handleLine(raw, new(string), func(ev core.Event) bool {
+		got = append(got, ev)
+		return true
+	})
+	if done || err != nil {
+		t.Fatalf("a queue report must not end the turn: done=%v err=%v", done, err)
+	}
+	if len(got) != 1 || got[0].Type != core.EventDelta || got[0].Reasoning == "" {
+		t.Fatalf("events = %+v, want one notice on the reasoning channel", got)
+	}
+	if !strings.Contains(got[0].Reasoning, "5333") {
+		t.Errorf("the notice does not name the queue depth: %q", got[0].Reasoning)
+	}
+	if budget := turn.stallBudget(); budget <= 30*time.Minute {
+		t.Errorf("stall budget = %s, want it extended past the vendor's queue ceiling", budget)
+	}
+}
+
+// TestQueueNoticeRendersWhatTheOperatorNeeds checks the human-readable form.
+func TestQueueNoticeRendersWhatTheOperatorNeeds(t *testing.T) {
+	line := cliLine{QueueCount: 12, WaitTimeMS: 65000, ServiceAvailable: true}
+	got := queueNotice(line)
+	for _, want := range []string{"排队中", "12", "预计"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("notice %q is missing %q", got, want)
+		}
+	}
+	if !strings.Contains(queueNotice(cliLine{ServiceAvailable: false}), "不可用") {
+		t.Error("an unavailable service is not reported")
+	}
 }

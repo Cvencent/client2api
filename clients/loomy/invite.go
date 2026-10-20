@@ -25,6 +25,7 @@ import (
 // the whole pool, including accounts added later through SMS or a pasted token.
 
 var _ core.InviteCodeProvider = (*Client)(nil)
+var _ core.InviteCodeFleetBinder = (*Client)(nil)
 
 // inviteActivation is the shared response of the activation status read and the
 // activation write.  The vendor reports both a boolean and the code that was
@@ -121,6 +122,10 @@ func (c *Client) InviteCodeDefault(context.Context) string {
 	}
 	return c.cfg.inviteCode()
 }
+
+// InviteCodeBindAllSafe reports that Loomy's activation endpoint is idempotent
+// and accepts the code on any account, so a fleet-wide sweep is meaningful.
+func (c *Client) InviteCodeBindAllSafe() bool { return true }
 
 // BindAccountInviteCode implements core.InviteCodeProvider.
 //

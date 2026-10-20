@@ -211,3 +211,22 @@ func AsInviteCodeProvider(c Client) (InviteCodeProvider, bool) {
 	ip, ok := c.(InviteCodeProvider)
 	return ip, ok
 }
+
+// InviteCodeFleetBinder marks the subset of InviteCodeProvider implementations
+// where running the bind across the whole account pool is meaningful and safe.
+//
+// Loomy qualifies: every account can carry the same invite code and the vendor
+// answers "already bound" idempotently.  Trae's code-fission activity does not:
+// the vendor only accepts an invitee that has never registered, so a fleet-wide
+// sweep would fail on every account that already exists.  The panel hides the
+// "bind all" action for a module that does not opt in.
+type InviteCodeFleetBinder interface {
+	InviteCodeBindAllSafe() bool
+}
+
+// AsInviteCodeFleetBinder reports the opt-in without forcing every provider to
+// implement it.
+func AsInviteCodeFleetBinder(c Client) (InviteCodeFleetBinder, bool) {
+	fb, ok := c.(InviteCodeFleetBinder)
+	return fb, ok
+}

@@ -320,6 +320,10 @@ type Capabilities struct {
 	// the panel can show the operator exactly what "all accounts" will use.
 	InviteCodes       bool   `json:"invite_codes"`
 	InviteCodeDefault string `json:"invite_code_default,omitempty"`
+	// InviteCodeNewAccountOnly says the vendor only accepts a code on a
+	// never-registered account, so the panel must not offer "bind all" over an
+	// existing pool.  False means the code can be applied to any account.
+	InviteCodeNewAccountOnly bool `json:"invite_code_new_account_only,omitempty"`
 	// Conversations says the module implements ConversationBinder, so an
 	// operator can pin one conversation key to one account and thereby test
 	// that account through the ordinary chat route.  Without it the panel must
@@ -759,6 +763,9 @@ func CapabilitiesOf(ctx context.Context, c Client) Capabilities {
 	if ip, ok := c.(InviteCodeProvider); ok {
 		caps.InviteCodes = true
 		caps.InviteCodeDefault = ip.InviteCodeDefault(ctx)
+		if fb, ok := c.(InviteCodeFleetBinder); ok {
+			caps.InviteCodeNewAccountOnly = !fb.InviteCodeBindAllSafe()
+		}
 	}
 	if _, ok := c.(ConversationBinder); ok {
 		caps.Conversations = true

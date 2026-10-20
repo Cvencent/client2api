@@ -55,6 +55,15 @@ type cliLine struct {
 	Errors     []string `json:"errors"`
 	StopReason string   `json:"stop_reason"`
 
+	// A queued turn reports itself instead of failing.  The free models are
+	// heavily contended (thousands of requests waiting, up to an hour), so this
+	// is a normal state and not an error.
+	ModelKey         string `json:"model_key"`
+	QueueCount       int    `json:"queue_count"`
+	WaitTimeMS       int64  `json:"wait_time_ms"`
+	QueueMaxWaitMS   int64  `json:"queue_max_wait_ms"`
+	ServiceAvailable bool   `json:"service_available"`
+
 	Usage *cliUsage `json:"usage"`
 }
 
@@ -440,6 +449,45 @@ type cliTurn struct {
 
 	mu   sync.Mutex
 	done bool
+
+	// queuedUntil is pushed forward by every model_queue_status line, so the
+	// stall guard measures silence since the vendor last said "still waiting"
+	// rather than since the turn began.  The vendor's own ceiling is an hour,
+	// which is far past the default guard.
+	queuedUntil time.Time
+}
+
+// noteQueued extends this turn's patience to the vendor's own queue ceiling.
+func (t *cliTurn) noteQueued(waitMS, maxMS int64) {
+	budget := maxMS
+	if budget <= 0 {
+		budget = waitMS
+	}
+	if budget <= 0 {
+		budget = int64(cliLineStall / time.Millisecond)
+	}
+	// The vendor's wait_time_ms is an estimate that moves; a little headroom
+	// past it avoids cutting off a turn that is about to be served.
+	d := time.Duration(budget)*time.Millisecond + 30*time.Second
+	t.mu.Lock()
+	if until := time.Now().Add(d); until.After(t.queuedUntil) {
+		t.queuedUntil = until
+	}
+	t.mu.Unlock()
+}
+
+// stallBudget is how long this turn may stay silent.
+func (t *cliTurn) stallBudget() time.Duration {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.queuedUntil.IsZero() {
+		return cliLineStall
+	}
+	left := time.Until(t.queuedUntil)
+	if left < cliLineStall {
+		return cliLineStall
+	}
+	return left
 }
 
 // newCLITurn wires one turn to its worker.  The reader goroutine starts here
@@ -562,7 +610,7 @@ func (t *cliTurn) consume(emit func(core.Event) bool) error {
 		select {
 		case <-t.ctx.Done():
 			return t.ctx.Err()
-		case <-time.After(cliLineStall):
+		case <-time.After(t.stallBudget()):
 			// The timer restarts on every line, so a slow-but-alive turn is
 			// untouched; only a worker that has gone silent for the whole
 			// window is abandoned here.
@@ -595,6 +643,18 @@ func (t *cliTurn) handleLine(raw []byte, stopReason *string, emit func(core.Even
 		return false, nil
 	}
 	switch line.Type {
+	case "system":
+		// The vendor queues the free models when they are busy.  A turn that is
+		// waiting must look like progress, not like a stalled worker: the stall
+		// guard would otherwise kill a process that is doing exactly what the
+		// vendor told it to do.
+		if line.Subtype == "model_queue_status" {
+			t.noteQueued(line.WaitTimeMS, line.QueueMaxWaitMS)
+			if !emit(core.Event{Type: core.EventDelta, Reasoning: queueNotice(line)}) {
+				return true, nil
+			}
+		}
+		return false, nil
 	case "stream_event":
 		var ev cliEvent
 		if err := json.Unmarshal(line.Event, &ev); err != nil {
@@ -636,6 +696,24 @@ func (t *cliTurn) handleLine(raw []byte, stopReason *string, emit func(core.Even
 		return true, nil
 	}
 	return false, nil
+}
+
+// queueNotice renders one queue report for the caller.  It goes on the
+// reasoning channel so it never pollutes the answer text, and it keeps the
+// caller informed during what can be a multi-minute wait.
+func queueNotice(line cliLine) string {
+	parts := make([]string, 0, 3)
+	parts = append(parts, "排队中")
+	if line.QueueCount > 0 {
+		parts = append(parts, fmt.Sprintf("前面 %d 个请求", line.QueueCount))
+	}
+	if line.WaitTimeMS > 0 {
+		parts = append(parts, fmt.Sprintf("预计 %s", (time.Duration(line.WaitTimeMS)*time.Millisecond).Round(time.Second)))
+	}
+	if !line.ServiceAvailable {
+		parts = append(parts, "服务当前不可用")
+	}
+	return strings.Join(parts, "，") + "…"
 }
 
 // refusalText renders the vendor's own words.  They are kept verbatim: they are

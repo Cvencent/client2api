@@ -474,6 +474,26 @@ func (s *store) attachCLIDir(acc account) error {
 			continue
 		}
 		a.CLIDir = acc.CLIDir
+		// A CLI sign-in also yields the device token the ledger, check-in and
+		// the signed gateway use, so the row that already existed for this
+		// vendor user id gains those capabilities instead of being duplicated.
+		// A token already on the row from the desktop import is replaced only
+		// when the CLI actually produced one.
+		if tok := strings.TrimSpace(acc.Token); tok != "" {
+			a.Token = tok
+		}
+		if rt := strings.TrimSpace(acc.RefreshToken); rt != "" {
+			a.RefreshToken = rt
+		}
+		if acc.ExpiresAtMS > 0 {
+			a.ExpiresAtMS = acc.ExpiresAtMS
+		}
+		if acc.RefreshExpiresAtMS > 0 {
+			a.RefreshExpiresAtMS = acc.RefreshExpiresAtMS
+		}
+		if strings.TrimSpace(acc.UserID) != "" {
+			a.UserID = acc.UserID
+		}
 		if strings.TrimSpace(a.Label) == "" {
 			a.Label = acc.Label
 		}
@@ -847,7 +867,7 @@ func accountRecord(a *account, now time.Time) core.AccountRecord {
 	switch {
 	case a.cliOnly():
 		record.State = "ready"
-		record.Note = "本机 CLI 登录；仅提供 DeepSeek-Flash / Qwen3.8-Flash，不提供积分、签到与其它模型"
+		record.Note = "本机 CLI 已登录，但凭据尚未读取成功；先按仅免费模型可用，稍后会自动重试"
 	case a.dead:
 		record.State = "invalid"
 		record.Note = "令牌已被厂商拒绝；请在账号页点「链接重登」重新登录"

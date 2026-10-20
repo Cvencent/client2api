@@ -39,6 +39,9 @@ const (
 	defaultDeviceBrand    = "83DG"
 	defaultDeviceCPU      = "Intel"
 	defaultTrafficType    = "prod"
+	// defaultInviteActivityID is the code-fission campaign the desktop invite
+	// link belongs to (the "新人福利" page's own constant).
+	defaultInviteActivityID = "code_fission_202609"
 )
 
 // Panel-login defaults, all taken from the trae2api-web reference
@@ -99,6 +102,25 @@ type Config struct {
 	LoginSessionTTLSec int    `json:"login_session_ttl_sec"`
 	LoginAppVersion    string `json:"login_app_version"`
 	LoginPluginVersion string `json:"login_plugin_version"`
+
+	// InviteCode is the Trae code-fission invitation code bound to a newly
+	// registered account immediately after login.  The vendor only accepts it
+	// on an account that has never registered and on a device that has not
+	// participated before, so it is applied at login time, never to an existing
+	// pool.  Empty disables the bind step.
+	InviteCode string `json:"invite_code"`
+	// InviteActivityID overrides the code-fission activity id.  Empty means
+	// defaultInviteActivityID; change it only when Trae starts a new season.
+	InviteActivityID string `json:"invite_activity_id"`
+	// InviteNewDevicePerLogin mints a fresh machine_id/device_id pair for every
+	// login that carries an invite code.  The campaign refuses a second invitee
+	// on a device it has already seen (business code 9022), so a reused
+	// fingerprint makes each new account fail to bind.
+	//
+	// It defaults to TRUE.  It only applies when invite_code is configured:
+	// an ordinary re-login keeps reusing the existing fingerprint, which the
+	// chat channel records as the account's device.
+	InviteNewDevicePerLogin *bool `json:"invite_new_device_per_login"`
 
 	// --- channel / model ---------------------------------------------------
 	ChatHost  string   `json:"chat_host"`
@@ -293,6 +315,26 @@ func (c *Config) loginCallbackHost() string {
 		return c.LoginCallbackHost
 	}
 	return defaultLoginCallbackHost
+}
+
+// inviteCode is the code-fission invitation code applied after a fresh login.
+func (c *Config) inviteCode() string { return strings.TrimSpace(c.InviteCode) }
+
+// inviteActivityID is the activity the invitation code belongs to.
+func (c *Config) inviteActivityID() string {
+	if v := strings.TrimSpace(c.InviteActivityID); v != "" {
+		return v
+	}
+	return defaultInviteActivityID
+}
+
+// inviteNewDevicePerLogin reports whether an invite login should present a
+// brand-new device fingerprint.  Default true; see the field comment.
+func (c *Config) inviteNewDevicePerLogin() bool {
+	if c.InviteNewDevicePerLogin == nil {
+		return true
+	}
+	return *c.InviteNewDevicePerLogin
 }
 
 // loginCallbackPort is the loopback port for the OAuth callback.  0 — the

@@ -245,6 +245,43 @@ func newCosySessionWithIdentity(uid, name, email, token, loginMethod string) (co
 	}, nil
 }
 
+// newCosySessionWithIdentityJSON seals one already-rendered identity object.
+//
+// newCosySession/newCosySessionWithIdentity spell the identity the device-token
+// path used (uid/aid/name/email/security_oauth_token).  The CLI signs a
+// different object -- the runtime auth fields the vendor's own WASM produces:
+//
+//	{"uid":..,"encrypt_user_info":..,"key":..,"data_policy_agreed":..}
+//
+// and the inference edge treats the two differently: a request signed with the
+// legacy shape is served for most models but refused with
+// "[FAIL]node:oa_qwen-plus-main msg:Execution failed: null" for the two
+// zero-cost keys.  This entry point exists so that exact object can be sealed
+// without a second copy of the envelope logic.
+func newCosySessionWithIdentityJSON(identity string) (cosySession, error) {
+	pub, err := cosyPublicKey()
+	if err != nil {
+		return cosySession{}, err
+	}
+	tempKey, err := randomHex(aes.BlockSize)
+	if err != nil {
+		return cosySession{}, fmt.Errorf("qoder: generating COSY temp key: %w", err)
+	}
+	encrypted, err := aesCBCEncryptPKCS7([]byte(identity), []byte(tempKey))
+	if err != nil {
+		return cosySession{}, fmt.Errorf("qoder: sealing COSY identity: %w", err)
+	}
+	wrapped, err := rsaEncryptPKCS1v15(pub, []byte(tempKey))
+	if err != nil {
+		return cosySession{}, fmt.Errorf("qoder: wrapping COSY temp key: %w", err)
+	}
+	return cosySession{
+		tempKey: tempKey,
+		cosyKey: base64.StdEncoding.EncodeToString(wrapped),
+		info:    base64.StdEncoding.EncodeToString(encrypted),
+	}, nil
+}
+
 // newCosySession builds a fresh signing session for one account.
 func newCosySession(uid, name, email, token string) (cosySession, error) {
 	pub, err := cosyPublicKey()

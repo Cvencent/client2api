@@ -298,6 +298,18 @@ func newCLICmdCtx(ctx context.Context, inst cliInstall, baseDir string, args ...
 	return cmd
 }
 
+// newCLIScriptCmd runs an arbitrary script through the vendor's Electron binary
+// (used as a Node host via ELECTRON_RUN_AS_NODE).  Unlike newCLICmd this does
+// not prepend the agent worker: the caller names the script, which is what the
+// credential-decrypt helper needs.
+func newCLIScriptCmd(inst cliInstall, baseDir, script string, args ...string) *exec.Cmd {
+	full := append([]string{script}, args...)
+	cmd := exec.Command(inst.Exe, full...)
+	cmd.Dir = baseDir
+	cmd.Env = cliEnv(baseDir)
+	return cmd
+}
+
 // cliEnv is the environment a worker runs under.  It is deliberately explicit:
 // the operator's own QODERCN_* variables are dropped so a worker can never
 // attach itself to the desktop client's config directory, and the config root

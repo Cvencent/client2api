@@ -13,6 +13,10 @@
   "account_host": "",
   "region": "CN",
 
+  "invite_code": "",
+  "invite_activity_id": "code_fission_202609",
+  "invite_new_device_per_login": true,
+
   "chat_host": "https://trae-api-cn.mchost.guru",
   "function": "solo_work_lite",
   "model": "glm-5.2",

@@ -350,11 +350,50 @@ func (c *Client) pollCLILogin(ctx context.Context, sess *cliLoginSession) (core.
 		}
 	}
 
-	accountID, label, userType, err := c.cliIdentity(ctx, sess.dir, who)
+	// The credential store is the authority, not the CLI's console output: it
+	// holds the vendor's own user id and the device token the ledger and
+	// check-in need.  Reading it here also means a wording change in the CLI's
+	// success line can no longer leave a finished login stuck as "pending"
+	// (which is exactly what a regex over that line used to do).
+	creds, err := c.readCLICredentials(ctx, sess.dir)
 	if err != nil {
-		sess.fail(redactErr(err))
+		// Fall back to the old console-identity path so a store the helper
+		// cannot open does not turn a successful sign-in into a failure.
+		c.logf("qoder: reading the CLI credential store after login: %v", err)
+		accountID, label, userType, ierr := c.cliIdentity(ctx, sess.dir, who)
+		if ierr != nil {
+			sess.fail(redactErr(ierr))
+			return sess.snapshot(), nil
+		}
+		leaf := c.adoptCLIDir(sess.leaf, accountID)
+		if !cliSignedIn(c.cliConfigDir(leaf)) {
+			sess.fail("本机 CLI 报告登录成功，但没有写出凭据文件。")
+			return sess.snapshot(), nil
+		}
+		acc := account{
+			storedAccount: storedAccount{
+				ID:       accountID,
+				Label:    label,
+				Name:     label,
+				UserType: userType,
+				CLIDir:   leaf,
+				Enabled:  true,
+			},
+			origin: originStored,
+		}
+		if err := c.store.attachCLIDir(acc); err != nil {
+			sess.fail("登录成功，但凭据无法写入：" + redactErr(err))
+			return sess.snapshot(), nil
+		}
+		sess.mu.Lock()
+		sess.message = "本机 CLI 登录成功，已保存 " + label + "（凭据读取失败，仅免费模型可用：" + redactErr(err) + "）"
+		sess.mu.Unlock()
+		c.dropCLILogin(sess.id)
 		return sess.snapshot(), nil
 	}
+
+	accountID := "qoder-" + creds.UID
+	label := firstNonEmpty(creds.Name, who, "Qoder CLI 账号")
 	leaf := c.adoptCLIDir(sess.leaf, accountID)
 	if !cliSignedIn(c.cliConfigDir(leaf)) {
 		sess.fail("本机 CLI 报告登录成功，但没有写出凭据文件。")
@@ -365,9 +404,18 @@ func (c *Client) pollCLILogin(ctx context.Context, sess *cliLoginSession) (core.
 			ID:       accountID,
 			Label:    label,
 			Name:     label,
-			UserType: userType,
+			UserType: creds.UserType,
 			CLIDir:   leaf,
 			Enabled:  true,
+			// The token the ledger, check-in and the signed gateway all use.
+			// Carrying it here is what makes a single CLI sign-in enough: the
+			// account gets the free models from the CLI and everything else
+			// from this credential, with no desktop client involved.
+			Token:              creds.bearer(),
+			RefreshToken:       strings.TrimSpace(creds.RefreshToken),
+			UserID:             creds.UID,
+			ExpiresAtMS:        creds.ExpireTime * 1000,
+			RefreshExpiresAtMS: creds.RefreshExpireTime * 1000,
 		},
 		origin: originStored,
 	}

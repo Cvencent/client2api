@@ -9,6 +9,7 @@
 
   "login_port": 0,
   "callback_path": "/auth/callback",
+  "invitation_code": "",
 
   "include_usage": false,
   "extra_models": [],

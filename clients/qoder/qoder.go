@@ -325,7 +325,7 @@ func (c *Client) cliStatusNote() string {
 		return "；本机已安装 Qoder CN，但还没有账号用「本机 CLI 登录」过，" +
 			"DeepSeek-Flash / Qwen3.8-Flash 暂不可用"
 	}
-	return fmt.Sprintf("；本机 CLI 登录 %d 个账号，DeepSeek-Flash / Qwen3.8-Flash 可用", ready)
+	return fmt.Sprintf("；本机 CLI 登录 %d 个账号：免费模型 + 积分/签到均可用", ready)
 }
 
 // cliPoolFor returns this module's CLI worker pool, creating it on first use.

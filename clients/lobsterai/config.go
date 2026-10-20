@@ -167,6 +167,12 @@ type Config struct {
 	LoginPort    int    `json:"login_port,omitempty"`
 	CallbackPath string `json:"callback_path,omitempty"`
 
+	// InvitationCode pre-fills the portal's invite box (the six-character code
+	// on the login page) and is submitted with the same login call.  LobsterAI
+	// has no separate redemption endpoint: the code rides on /api/auth/callback,
+	// so there is exactly one sign-in for both.
+	InvitationCode string `json:"invitation_code,omitempty"`
+
 	// include_usage asks the upstream for a usage block on the SSE stream.  The
 	// vendor's own client does not send stream_options, so this defaults to
 	// false; a usage block that does arrive is parsed either way.
@@ -251,6 +257,7 @@ func (cfg Config) normalize() Config {
 	if !strings.HasPrefix(out.CallbackPath, "/") {
 		out.CallbackPath = "/" + out.CallbackPath
 	}
+	out.InvitationCode = strings.TrimSpace(out.InvitationCode)
 	if out.LoginPort < 0 || out.LoginPort > 65535 {
 		out.LoginPort = 0
 	}
@@ -429,6 +436,11 @@ func (cfg Config) loginURL(redirectURI, state string) string {
 	q.Set("source", "electron")
 	q.Set("redirect_uri", redirectURI)
 	q.Set("state", state)
+	// The portal pre-fills its invite box from this query key and submits it
+	// with the same login request (see LoginView: query.invitationCode).
+	if code := strings.TrimSpace(cfg.InvitationCode); code != "" {
+		q.Set("invitationCode", code)
+	}
 	return cfg.PortalURL + loginPath + "?" + q.Encode()
 }
 

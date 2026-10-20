@@ -5394,9 +5394,12 @@ function renderAccounts() {
   syncAccSortHeader(CUR);
   syncAccStateFilter();
   $("#btnBalanceAll").hidden = !showBal;
-  $("#btnInviteAll").hidden = !caps.invite_codes;
-  $("#btnInviteAll").textContent = caps.invite_codes && caps.invite_code_default ? "全部绑定 " + caps.invite_code_default : "全部绑定邀请码";
-  $("#btnInviteAll").title = caps.invite_codes ? "为所有已启用账号绑定默认邀请码；已绑定的会跳过，绑定了其他邀请码的只报告不覆盖" : "";
+  // 「全部绑定」只对能做到全池绑定的模块显示。新用户专属的活动（Trae）
+  // 对已有账号一律拒绝，铺一个按钮出来只会让每一行都报错。
+  const fleetBind = !!caps.invite_codes && !caps.invite_code_new_account_only;
+  $("#btnInviteAll").hidden = !fleetBind;
+  $("#btnInviteAll").textContent = fleetBind && caps.invite_code_default ? "全部绑定 " + caps.invite_code_default : "全部绑定邀请码";
+  $("#btnInviteAll").title = fleetBind ? "为所有已启用账号绑定默认邀请码；已绑定的会跳过，绑定了其他邀请码的只报告不覆盖" : "";
   syncBalanceButton(CUR);
   const cols = showBal ? 13 : 12;
   if (!CUR) { tb.innerHTML = '<tr><td colspan="' + cols + '" class="hint">没有已注册的客户端</td></tr>'; $("#accNote").textContent = ""; hideAccPager(); return; }

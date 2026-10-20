@@ -48,6 +48,7 @@ func (c *Client) Checkin(ctx context.Context, id, action string) (core.CheckinRe
 	if !ok {
 		return core.CheckinResult{}, fmt.Errorf("qoder: no account %q", id)
 	}
+	acc = c.ensureFreshCLIToken(ctx, acc)
 	if action == "" {
 		action = checkinActionDaily
 	}

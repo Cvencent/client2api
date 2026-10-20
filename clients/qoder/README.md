@@ -33,6 +33,7 @@
 | 模型目录 | 支持 | 读取 `GET /algo/api/v2/model/list?Encode=1`，失败时回退内置目录 |
 | 对话 | 支持 | `POST /algo/api/v2/service/pro/sse/agent_chat_generation`，模型由 `x-model-key` 请求头指定 |
 | 免费模型对话 | 支持（需本机 CLI） | `dfmodel` / `qfmodel` 由本机 Qoder CN 的官方 CLI 驱动，见下文「免费模型与本机 CLI」 |
+| 仅 CLI 登录 | 支持 | 一次「本机 CLI 登录」即可同时获得全部模型、积分余额与每日签到，无需桌面客户端 |
 
 ## 指定模型：必须发 x-model-key
 
@@ -111,6 +112,29 @@ POST /sash/api/v1/me/campaigns/{campaignId}/claim
 已经领取过的目标不会再次 POST。每日签到通常在 `10:00`（UTC+8）刷新，奖励 Credits 的有效期由厂商决定。
 
 ## 免费模型与本机 CLI
+
+### 一次 CLI 登录就够（推荐）
+
+CLI 登录成功后，模块会读回它写下的凭据，把整行账号补齐：
+
+| 能力 | 来源 |
+| --- | --- |
+| 全部 14 个模型 | CLI 常驻进程（免费的两个 + 其余的都走它） |
+| 积分 / 余额 | `.auth/user` 里解出的 `dt-` 设备令牌（`GET /api/v2/quota/usage`） |
+| 每日签到 | 同一把 `dt-`（`GET/POST /sash/api/v1/me/campaigns`） |
+| 其它 HTTP 能力 | 同一把 `dt-` |
+
+也就是说**不需要桌面客户端、也不需要第二次浏览器登录**：面板添加账号时选「本机 CLI 登录」，
+手机确认一次，账号池里那一行就同时拥有免费模型和积分/签到。
+
+凭据是怎么读回来的：CLI 把登录态写在 `<configDir>/.auth/user`，用该目录 `machine_id` 派生的
+密钥加密，解密例程编译在厂商 SDK 的 WASM 里。模块不重写这段 KDF —— 它让**厂商自己的运行时**
+来解：首次使用时把一个内置助手脚本写到网关数据目录（`qoder-decrypt.mjs`），再用同一个
+`Qoder CN.exe`（`ELECTRON_RUN_AS_NODE=1`）执行它。不引入第三方运行时，不复制厂商文件。
+
+CLI 自己会续期令牌，所以余额和签到在每次读取前会重新取一次 CLI 当前持有的凭据，长期运行不会
+用到过期的副本。
+
 
 厂商只对**官方运行时**放行 `dfmodel`（DeepSeek-Flash）和 `qfmodel`（Qwen3.8-Flash）这两个零倍率模型。
 设备令牌无论怎么签名都会被推理边缘拒绝，所以这两个模型改由驱动厂商自己发布的 agent CLI 完成：
@@ -232,4 +256,6 @@ POST /sash/api/v1/me/campaigns/{campaignId}/claim
 - 厂商活动规则可能变化；签到接口返回的新状态如果不在已知范围内，会按失败报告，而不是强行当作成功。
 - 免费模型（`dfmodel` / `qfmodel`）依赖本机安装的 Qoder CN 客户端；没有安装时这两个模型会报
   「需要本机安装 Qoder CN 客户端」，其余模型不受影响。
+- 只做过「本机 CLI 登录」的账号，其积分与签到依赖 CLI 侧凭据可读；若 CLI 升级改变了凭据格式，
+  模块会退回到「仅免费模型可用」并在账号页注明原因，不会假装成功。
 - CLI 桥接不转发 function calling，也不支持图片输入；需要这两者的请求请使用其余模型（走 COSY 通道）。

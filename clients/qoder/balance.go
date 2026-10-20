@@ -32,6 +32,10 @@ func (c *Client) AccountBalance(ctx context.Context, id string, soon time.Durati
 	if !ok {
 		return core.Balance{}, fmt.Errorf("qoder: no account %q", id)
 	}
+	// A CLI-backed account's token is owned by the CLI, which renews it on its
+	// own schedule; pick up whatever it holds now so a long-lived gateway never
+	// reads the ledger with a lapsed copy.
+	acc = c.ensureFreshCLIToken(ctx, acc)
 
 	if acc.cliOnly() {
 		// A CLI-only account has no device token, so the ledger route cannot be
@@ -75,6 +79,7 @@ func (c *Client) AccountPackages(ctx context.Context, id string) (core.PackageRe
 	if !ok {
 		return core.PackageReport{}, fmt.Errorf("qoder: no account %q", id)
 	}
+	acc = c.ensureFreshCLIToken(ctx, acc)
 
 	usage, err := c.up.quotaUsage(ctx, acc.Token)
 	if err != nil {
