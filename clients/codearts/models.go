@@ -23,17 +23,29 @@ import (
 //	GET https://opengw.developer.huaweicloud.com/api/v1/gateway/config
 //	                                       the free-quota ("benefit") models
 //
-// The second one is a plain unauthenticated GET on a different host, and its
-// `result.models` array names the models that do not consume paid credit.  The
+// The second one is a SIGNED GET on a different host, and its `result.models`
+// array names the models that do not consume paid credit.  Both the channel
+// check and the list must be signed: the unauthenticated call answers 401.  The
 // distinction matters on the wire: a benefit model must be requested with the
 // `maas_type: benefit` header inside the signature, and a model that is not a
-// benefit model must not carry it.
+// benefit model must not carry it -- signing it for a paid model is refused
+// with `InferHub.4004.200 benefit not found`.
 
 const (
 	// builtinModelsPath is the catalogue endpoint, relative to the snap origin.
 	builtinModelsPath = "/v1/model/builtin"
-	// defaultGatewayConfigURL is the free-quota model list.
+	// defaultGatewayConfigURL is the free-quota model list.  It is only
+	// meaningful once the benefit channel precheck says the channel is on, and
+	// it must be requested WITH a signature: the unsigned call answers 401.
 	defaultGatewayConfigURL = "https://opengw.developer.huaweicloud.com/api/v1/gateway/config"
+	// benefitGatewayConfigPath is the channel precheck.  The vendor's own client
+	// asks this first and skips the whole benefit channel when it is disabled,
+	// because a benefit request for a disabled channel is refused outright with
+	// `InferHub.4004.200 benefit not found`.
+	benefitGatewayConfigPath = "/v1/benefit-gateway-config"
+	// educationGatewayConfigPath is the sibling channel.  Both are consulted so a
+	// credential that only has education entitlement still gets its models.
+	educationGatewayConfigPath = "/v1/education-gateway-config"
 	// defaultModelsURL is the origin every request in this module goes to.
 	defaultBaseURL = "https://snap-access.cn-north-4.myhuaweicloud.com"
 	// chatAPIPath is the chat completions endpoint, relative to the snap origin.
@@ -62,12 +74,15 @@ var builtinModels = []string{
 	"deepseek-v4.1-flash",
 }
 
-// codeartsBenefitFallback is what the module assumes bills against free quota
-// when neither the live list nor the disk cache can be read.  The reference
-// implementation carries the same two ids for the same reason: an operator
-// whose gateway is temporarily unreachable should still get the free tier
-// rather than silently paying.
-var codeartsBenefitFallback = []string{"glm-5.3-flash", "deepseek-v4.1-flash"}
+// There is deliberately NO built-in list of "probably free" models.
+//
+// An earlier version carried one (glm-5.3-flash, deepseek-v4.1-flash) so an
+// operator whose gateway was unreachable would "still get the free tier".  It
+// did the opposite: the vendor gates the benefit channel per credential, and
+// when that channel is off every request carrying `maas_type: benefit` is
+// refused with `InferHub.4004.200 benefit not found` -- including models the
+// catalogue sells normally and which answer fine WITHOUT the header.  A guess
+// therefore turned two working models into two broken ones.
 
 // contextWindows is the per-model context budget.  The vendor's catalogue does
 // not always carry it, so the values measured in the reference implementation
@@ -157,6 +172,9 @@ type gatewayConfigResponse struct {
 			ModelName string `json:"model_name"`
 		} `json:"models"`
 	} `json:"result"`
+	// ErrorCode carries the vendor's business verdict.  HTTP 200 with a non-zero
+	// code means "no channel configured", which is a definitive empty list.
+	ErrorCode string `json:"error_code"`
 	// Some deployments answer with the list at the top level.
 	Models []struct {
 		ModelID   string `json:"model_id"`
@@ -256,7 +274,7 @@ func (c *Client) fallbackCatalogue() []core.Model {
 	for _, id := range c.cfg.fallbackModels() {
 		out = append(out, newModel(id, "", 0, 0, ""))
 	}
-	return markBenefitModels(out, codeartsBenefitFallback)
+	return markBenefitModels(out, c.benefitIDsLocked())
 }
 
 // ---------------------------------------------------------------------------
@@ -292,21 +310,49 @@ func (c *Client) fetchCatalogue(ctx context.Context, acct account) ([]core.Model
 		return nil, nil, errors.New("codearts: the catalogue endpoint returned no usable models")
 	}
 
-	benefit, berr := c.fetchBenefitIDs(ctx)
+	benefit, berr := c.fetchBenefitIDs(ctx, acct)
 	if berr != nil {
 		c.deps.Log("codearts: fetching the free-quota model list: %v", berr)
 	}
 	return models, benefit, nil
 }
 
-// fetchBenefitIDs reads the free-quota model list.  It is unauthenticated, so
-// it needs no credential.
-func (c *Client) fetchBenefitIDs(ctx context.Context) ([]string, error) {
+// fetchBenefitIDs reads the free-quota model ids for this credential.
+//
+// The vendor gates this behind a per-credential channel check, and BOTH calls
+// must be signed: the unsigned model-list call answers
+// `401 APIG.0301 x-auth-token not found`, which is why the old unauthenticated
+// reader never learned anything and the built-in fallback silently took over.
+//
+// A disabled (or unreadable) channel yields an empty list, and an empty list
+// must mean "no benefit models" -- not "fall back to guessing".  Guessing is
+// what poisons a working model: a paid request that carries
+// `maas_type: benefit` is refused with `InferHub.4004.200 benefit not found`,
+// while the identical request without the header succeeds.
+func (c *Client) fetchBenefitIDs(ctx context.Context, acct account) ([]string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	enabled, err := c.benefitChannelEnabled(ctx, acct)
+	if err != nil {
+		return nil, err
+	}
+	if !enabled {
+		return nil, nil
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.cfg.gatewayConfigURL(), nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Accept", "application/json")
+	signed, err := signRequest(acct.AccessKeyID, acct.SecretAccessKey, acct.SecurityToken, http.MethodGet, c.cfg.gatewayConfigURL(), nil, nil, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	for k, v := range signedRequestHeaders(signed) {
+		req.Header.Set(k, v)
+	}
+	req.Header.Set("Agent-Type", "PromptCenter")
+	req.Header.Set("X-Language", "zh-cn")
 	req.Header.Set("User-Agent", c.cfg.userAgent())
 	resp, err := c.httpClient().Do(req)
 	if err != nil {
@@ -320,7 +366,49 @@ func (c *Client) fetchBenefitIDs(ctx context.Context) ([]string, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return nil, fmt.Errorf("codearts: the free-quota list is not the JSON it should be: %w", err)
 	}
+	// The endpoint answers HTTP 200 with a business error when no channel is
+	// configured; that is a definitive "no benefit models", not a failure.
+	if code := strings.TrimSpace(out.ErrorCode); code != "" && code != "0000" {
+		return nil, nil
+	}
 	return parseBenefitIDs(out.ids()), nil
+}
+
+// benefitChannelEnabled asks the credential's policy centre whether the
+// benefit channel is switched on.  A channel that is off has no models, and
+// requesting one anyway is what produces `benefit not found`.
+func (c *Client) benefitChannelEnabled(ctx context.Context, acct account) (bool, error) {
+	rawURL := strings.TrimRight(c.cfg.policyURL(), "/") + benefitGatewayConfigPath
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return false, err
+	}
+	signed, err := signRequest(acct.AccessKeyID, acct.SecretAccessKey, acct.SecurityToken, http.MethodGet, rawURL, nil, nil, time.Now())
+	if err != nil {
+		return false, err
+	}
+	for k, v := range signedRequestHeaders(signed) {
+		req.Header.Set(k, v)
+	}
+	req.Header.Set("Agent-Type", "PromptCenter")
+	req.Header.Set("X-Language", "zh-cn")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", c.cfg.userAgent())
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return false, fmt.Errorf("codearts: the benefit channel check answered HTTP %d", resp.StatusCode)
+	}
+	var out struct {
+		Enabled *bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return false, fmt.Errorf("codearts: the benefit channel check is not the JSON it should be: %w", err)
+	}
+	return out.Enabled != nil && *out.Enabled, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -353,11 +441,6 @@ func (c *Client) loadModelsCache() {
 		return
 	}
 	benefit := cache.Benefit
-	if len(benefit) == 0 {
-		// The cache does not name a free-quota list, so the built-in one is
-		// what isBenefitModel falls back to; mark the same ids here.
-		benefit = codeartsBenefitFallback
-	}
 	c.modelsMu.Lock()
 	c.models = markBenefitModels(cache.Models, benefit)
 	c.modelsAt = time.Unix(cache.UpdatedAt, 0)
@@ -415,9 +498,10 @@ func (c *Client) isBenefitModel(model string) bool {
 	c.modelsMu.Lock()
 	benefit := append([]string(nil), c.benefit...)
 	c.modelsMu.Unlock()
-	if len(benefit) == 0 {
-		benefit = codeartsBenefitFallback
-	}
+	// An empty list is the vendor saying "no benefit models".  It is NOT a
+	// reason to fall back to a guessed list: a paid model that carries
+	// `maas_type: benefit` is refused with InferHub.4004.200, and that refusal
+	// costs the caller a model that would otherwise answer normally.
 	for _, id := range benefit {
 		if strings.EqualFold(id, model) {
 			return true
@@ -429,10 +513,7 @@ func (c *Client) isBenefitModel(model string) bool {
 // benefitIDsLocked is the free-quota list in force: the live list, then the
 // disk cache, then the built-in fallback.  The caller holds modelsMu.
 func (c *Client) benefitIDsLocked() []string {
-	if len(c.benefit) > 0 {
-		return append([]string(nil), c.benefit...)
-	}
-	return append([]string(nil), codeartsBenefitFallback...)
+	return append([]string(nil), c.benefit...)
 }
 
 // markBenefitModels stamps `extra.free` on the models that bill against the
@@ -441,10 +522,12 @@ func (c *Client) benefitIDsLocked() []string {
 // credit, so a spent wallet must not hide it.  The list is the same one
 // isBenefitModel uses, so the flag and the `maas_type: benefit` header can
 // never disagree.
+// The stamp is authoritative in BOTH directions: a model the vendor no longer
+// lists must lose the flag.  A catalogue cached before the channel was
+// disabled still carries `free: true`, and leaving it there would keep signing
+// `maas_type: benefit` for a model the vendor now refuses with
+// `InferHub.4004.200 benefit not found`.
 func markBenefitModels(models []core.Model, benefit []string) []core.Model {
-	if len(models) == 0 || len(benefit) == 0 {
-		return models
-	}
 	free := make(map[string]bool, len(benefit))
 	for _, id := range benefit {
 		if id = strings.ToLower(strings.TrimSpace(id)); id != "" {
@@ -452,13 +535,17 @@ func markBenefitModels(models []core.Model, benefit []string) []core.Model {
 		}
 	}
 	for i := range models {
-		if !free[strings.ToLower(models[i].ID)] {
+		if free[strings.ToLower(strings.TrimSpace(models[i].ID))] {
+			if models[i].Extra == nil {
+				models[i].Extra = map[string]any{}
+			}
+			models[i].Extra["free"] = true
 			continue
 		}
-		if models[i].Extra == nil {
-			models[i].Extra = map[string]any{}
+		// Drop a stale stamp rather than leaving it in place.
+		if models[i].Extra != nil {
+			delete(models[i].Extra, "free")
 		}
-		models[i].Extra["free"] = true
 	}
 	return models
 }
@@ -524,9 +611,9 @@ func (c *Client) RefreshModels(ctx context.Context) ([]core.Model, error) {
 
 	now := time.Now()
 	c.modelsMu.Lock()
-	if len(benefit) > 0 {
-		c.benefit = benefit
-	}
+	// The vendor's answer replaces the previous one even when it is empty:
+	// "this channel is off" is a fact, not a missing value.
+	c.benefit = benefit
 	models = markBenefitModels(models, c.benefitIDsLocked())
 	c.models = models
 	c.modelsAt = now

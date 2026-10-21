@@ -125,6 +125,25 @@ func buildChatBody(req *core.ChatRequest, model string, stream bool) chatBody {
 	return body
 }
 
+// emptyToolSchema is the canonical schema for a tool that publishes none.
+// SenseNova's validator rejects an absent/empty `parameters` ("is not valid
+// under any of the schemas listed in the 'anyOf' keyword"), which is exactly
+// what Codex's dynamic and MCP tools can produce.
+var emptyToolSchema = json.RawMessage(`{"type":"object","properties":{}}`)
+
+// hasUsableToolSchema reports whether raw is a non-empty JSON object. A missing,
+// null or `{}` schema is substituted rather than forwarded.
+func hasUsableToolSchema(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		return false
+	}
+	if string(trimmed) == "{}" {
+		return false
+	}
+	return true
+}
+
 // sanitizeToolParameters removes regex constructs that SenseNova's tool-schema
 // validator refuses even though they are valid JSON Schema. In particular,
 // Codex MCP tools may publish a propertyNames pattern containing the
@@ -133,7 +152,10 @@ func buildChatBody(req *core.ChatRequest, model string, stream bool) chatBody {
 // "no '=' in an environment key") while leaving runtime validation to the MCP
 // tool that owns the schema.
 func sanitizeToolParameters(raw json.RawMessage) json.RawMessage {
-	if len(raw) == 0 || (!bytes.Contains(raw, []byte(`\0`)) && !bytes.Contains(raw, []byte{0})) {
+	if !hasUsableToolSchema(raw) {
+		return emptyToolSchema
+	}
+	if !bytes.Contains(raw, []byte(`\0`)) && !bytes.Contains(raw, []byte{0}) {
 		return raw
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))

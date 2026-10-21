@@ -104,8 +104,12 @@ type config struct {
 	// reach the real host.
 	STSURL     string `json:"sts_url"`
 	GatewayURL string `json:"gateway_url"`
-	TicketURL  string `json:"ticket_url"`
-	UserAgent  string `json:"user_agent"`
+	// PolicyURL is the policy centre the benefit/education channel check lives
+	// on (the vendor calls it policyCenterDomain).  Empty means the built-in
+	// default.
+	PolicyURL string `json:"policy_url"`
+	TicketURL string `json:"ticket_url"`
+	UserAgent string `json:"user_agent"`
 
 	// Credentials.  Either a list, or the single-account shorthand below.
 	Accounts        []accountConfig `json:"accounts"`
@@ -228,6 +232,16 @@ func (c config) gatewayConfigURL() string {
 		return v
 	}
 	return defaultGatewayConfigURL
+}
+
+// policyURL is the policy centre origin, where the benefit channel check
+// lives.  The vendor's own client reads it from its product config as
+// policyCenterDomain; an operator behind a mirror can override it.
+func (c config) policyURL() string {
+	if v := strings.TrimSpace(c.PolicyURL); v != "" {
+		return strings.TrimRight(v, "/")
+	}
+	return defaultBaseURL
 }
 
 // stsURL is the IAM token endpoint.

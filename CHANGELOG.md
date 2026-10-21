@@ -8,6 +8,34 @@
 
 ## [Unreleased]
 
+## [0.1.98] - 2026-10-21
+
+### Fixed
+
+- **CodeArts 权益模型不再把本来能用的模型毒死。** `deepseek-v4.1-flash` 这类模型过去被硬编码
+  当作“免费权益”模型，请求会签名带上 `maas_type: benefit`。但权益通道是**按凭据逐账号开关**的：
+  厂商的 `/v1/benefit-gateway-config` 返回 `{"enabled":false}` 时，任何带该头的请求都会被拒绝，
+  报 `InferHub.4004.200: benefit not found`——而同一个模型**不带**这个头时能正常出字。更糟的是这份
+  名单本来就取不到：`/api/v1/gateway/config` 现在要求签名，裸调返回
+  `401 APIG.0301 x-auth-token not found`，于是失败后总是回落到那份硬编码猜测。
+  现在权益判定改为**以厂商为准**：先签名查询通道开关，通道关闭（或名单为空、查询失败）时
+  **没有任何模型被当作权益模型**，请求不再带 `maas_type`；只有厂商明确列出的 id 才签名带上该头。
+  新增 `policy_url` 配置项（对应厂商的 policyCentre 域名），并删除了那份硬编码的“猜测免费”名单。
+
+- **Raccoon 的空工具 schema 会让整条请求 400，且真实原因被吞掉。** 两个独立缺陷：
+  1. SenseNova 的 schema 校验器拒绝**缺少 `parameters`** 的函数声明，报
+     `"" is not valid under any of the schemas listed in the 'anyOf' keyword`。Codex 的动态/MCP
+     工具（如 `mcp__java`）可以合法地不带 schema，于是整个请求被拒。适配器现在为缺失、`null`
+     或空对象 `{}` 的 schema 补上规范的空对象 schema。
+  2. 厂商的 400 用的是嵌套结构 `{"error":{"message":...}}`，而模块只解析顶层 `message`，
+     真实原因被降级成无信息量的 `HTTP 400: Bad Request`；现在嵌套的 `error.message` 会直接透出。
+
+### Installer
+
+- `client2api-setup-0.1.98.exe`（空包，不含账号凭据或本机配置）
+- SHA256：`A39300B85E21BDCF2FC789C2FC5A2F63985B0122BAE69157696BB51829F645D7`
+- 升级会保留现有 `configs/client2api.json`、`data/`、账号池、用量和任务数据。
+
 ## [0.1.97] - 2026-10-21
 
 ### Added

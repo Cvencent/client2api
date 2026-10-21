@@ -313,9 +313,15 @@ The catalogue is assembled from two sources:
 
 - `GET /v1/model/builtin` — the regular models, signed, with the unsigned
   `Agent-Type: PromptCenter` and `X-Language: zh-cn` headers.
+- `GET /v1/benefit-gateway-config` (policy centre) — the per-credential
+  **channel check**. The vendor's own client asks this first and skips the
+  whole benefit channel when it answers `{"enabled":false}`.
 - `GET https://opengw.developer.huaweicloud.com/api/v1/gateway/config` — the
-  **free-quota** ("benefit") models. This one is **not signed** and carries no
-  `Authorization` header at all.
+  **free-quota** ("benefit") model ids. It must be requested **with a
+  Huawei Cloud signature** and the unsigned `Agent-Type: PromptCenter` /
+  `X-Language: zh-cn` pair: the unauthenticated call answers
+  `401 APIG.0301 x-auth-token not found`, and HTTP 200 with
+  `error_code: "4000"` means no channel is configured.
 
 Ids are normalised by stripping a trailing four-digit build stamp, so
 `deepseek-v4-flash-0731` and `deepseek-v4-flash` are the same model. The rule is
@@ -332,10 +338,15 @@ normalisation. This is subtle and easy to get wrong: `deepseek-v4-flash` and
 free-quota-ness, so mapping the dated id onto the undated one would mark a paid
 model as free.
 
-When neither the live list nor the disk cache is readable, the module falls back
-to `glm-5.3-flash` and `deepseek-v4.1-flash` — the same two ids the reference
-implementation carries — so an operator whose gateway is briefly unreachable
-still gets the free tier rather than silently paying.
+**There is no built-in list of "probably free" models.** An empty list — a
+disabled channel, a failed check, a first run before any refresh — means *no
+model is treated as a benefit model*, and every request goes out without
+`maas_type`. This is deliberate and it is what keeps the models usable: the
+vendor refuses any request that carries `maas_type: benefit` for a credential
+whose benefit channel is off, answering
+`InferHub.4004.200 benefit not found`, while the *same* model answers normally
+without the header. Guessing "free" therefore converts a working paid model
+into a broken one.
 
 `Models` answers from the cache and refreshes in the background, so a bare-name
 model resolve never blocks on the network.
@@ -393,7 +404,8 @@ number, which is read as **seconds**.
 | `chat_url` | `base_url` + `/api/v2/chat/completions` | full chat URL |
 | `models_url` | `base_url` + `/v1/model/builtin` | catalogue URL |
 | `sts_url` | the Huawei STS endpoint | token exchange URL |
-| `gateway_url` | the vendor gateway config URL | free-quota model list |
+| `gateway_url` | the vendor gateway config URL | free-quota model list (signed) |
+| `policy_url` | `base_url` | policy centre for the benefit channel check |
 | `ticket_url` | `base_url` + `/snap-manager/v1/login/ticket` | legacy login |
 | `user_agent` | `client2api/codearts` | `User-Agent` |
 | `accounts` | `[]` | credential list |

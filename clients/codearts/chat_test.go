@@ -318,15 +318,21 @@ func TestChatRequestShape(t *testing.T) {
 func TestChatSignsTheBenefitHeaderOnlyForBenefitModels(t *testing.T) {
 	f := newChatFixture(t)
 	c := f.client(t, "")
+	// The benefit list is vendor-gated, so seed the vendor's verdict directly:
+	// the wire rule under test is which models carry the signed header.
+	c.modelsMu.Lock()
+	c.benefit = []string{"glm-5.3-flash"}
+	c.modelsMu.Unlock()
 
 	for _, tc := range []struct {
 		model       string
 		wantBenefit bool
 		why         string
 	}{
-		{"glm-5.3-flash", true, "a built-in free-quota model"},
+		{"glm-5.3-flash", true, "a model the vendor named as free-quota"},
 		{"GLM-5.3-FLASH", true, "the match is case-insensitive, as the vendor's is"},
 		{"deepseek-v4-pro", false, "a paid model"},
+		{"deepseek-v4.1-flash", false, "a model no longer on the vendor's list"},
 	} {
 		before := len(f.chatRequests())
 		st, err := c.Chat(context.Background(), &core.ChatRequest{

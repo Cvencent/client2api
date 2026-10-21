@@ -26,11 +26,19 @@ const refreshCodeDead = 200003
 const maxResponseBytes = 8 << 20
 
 // envelope is the vendor's universal response shape.
+//
+// Some refusals (notably tool-schema validation) come back in OpenAI's nested
+// shape instead: `{"error":{"message":...,"type":...}}`. Both are read here, so
+// the operator sees the vendor's real reason rather than a bare "Bad Request".
 type envelope struct {
 	Code    int             `json:"code"`
 	Message string          `json:"message"`
 	Details string          `json:"details"`
 	Data    json.RawMessage `json:"data"`
+	Error   *struct {
+		Message string `json:"message"`
+		Type    string `json:"type"`
+	} `json:"error"`
 }
 
 // apiError is one failed upstream call.
@@ -95,8 +103,11 @@ func decodeEnvelope(status int, raw []byte) (json.RawMessage, error) {
 		}
 		return nil, &apiError{Status: status, Message: "unparseable response: " + truncate(string(raw), 300)}
 	}
-	if env.Code != 0 {
+	if env.Code != 0 || (env.Error != nil && env.Error.Message != "") {
 		msg := strings.TrimSpace(env.Message)
+		if env.Error != nil && strings.TrimSpace(env.Error.Message) != "" {
+			msg = strings.TrimSpace(env.Error.Message)
+		}
 		if d := strings.TrimSpace(env.Details); d != "" {
 			if msg == "" {
 				msg = d
@@ -107,6 +118,9 @@ func decodeEnvelope(status int, raw []byte) (json.RawMessage, error) {
 		return nil, &apiError{Status: status, Code: env.Code, Message: msg}
 	}
 	if status >= 400 {
+		if env.Error != nil && strings.TrimSpace(env.Error.Message) != "" {
+			return nil, &apiError{Status: status, Message: strings.TrimSpace(env.Error.Message)}
+		}
 		return nil, &apiError{Status: status, Message: http.StatusText(status)}
 	}
 	return env.Data, nil

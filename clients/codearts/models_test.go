@@ -140,21 +140,16 @@ func TestParseBenefitIDsSkipsRewrittenIDs(t *testing.T) {
 	}
 }
 
-func TestIsBenefitModelFallsBackWhenNothingIsKnown(t *testing.T) {
+// Nothing known means NOTHING is free.  The old behaviour guessed two ids and
+// that guess is exactly what broke them: the vendor refuses a benefit request
+// on a credential whose benefit channel is off with InferHub.4004.200, while
+// the same model answers normally without the header.
+func TestIsBenefitModelGuessesNothingWhenNothingIsKnown(t *testing.T) {
 	c := newTestClient(t, `{"base_url":"http://127.0.0.1:1"}`)
-	if !c.isBenefitModel("glm-5.3-flash") {
-		t.Error("glm-5.3-flash was not recognised as a free-quota model")
-	}
-	if !c.isBenefitModel("deepseek-v4.1-flash") {
-		t.Error("deepseek-v4.1-flash was not recognised as a free-quota model")
-	}
-	// A model no list mentions is NOT free: guessing "free" would send the
-	// benefit header for a paid model and get it refused.
-	if c.isBenefitModel("deepseek-v4-pro") {
-		t.Error("a model no list mentions was treated as free")
-	}
-	if c.isBenefitModel("") {
-		t.Error("an empty model id was treated as free")
+	for _, id := range []string{"glm-5.3-flash", "deepseek-v4.1-flash", "deepseek-v4-pro", ""} {
+		if c.isBenefitModel(id) {
+			t.Errorf("%q was treated as a benefit model without the vendor saying so", id)
+		}
 	}
 }
 
@@ -165,7 +160,7 @@ func TestIsBenefitModelPrefersTheLiveList(t *testing.T) {
 		t.Error("the live list was not honoured")
 	}
 	if c.isBenefitModel("glm-5.3-flash") {
-		t.Error("the built-in fallback overrode the live list")
+		t.Error("a model outside the live list was treated as free")
 	}
 }
 
@@ -233,6 +228,9 @@ func TestFetchCatalogueAndModelLimits(t *testing.T) {
 	var sawCatalogue, sawBenefit bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case benefitGatewayConfigPath:
+			// The channel precheck gates the whole benefit list.
+			_, _ = w.Write([]byte(`{"enabled":true}`))
 		case builtinModelsPath:
 			sawCatalogue = true
 			if r.Header.Get("Authorization") == "" {
@@ -249,8 +247,8 @@ func TestFetchCatalogueAndModelLimits(t *testing.T) {
 			_, _ = w.Write([]byte(`{"builtinModels":[{"model_id":"deepseek-v4-flash-0731","model_name":"Flash","context_length":1048576}]}`))
 		case "/gateway/config":
 			sawBenefit = true
-			if r.Header.Get("Authorization") != "" {
-				t.Error("the free-quota list is unauthenticated but carried an Authorization header")
+			if r.Header.Get("Authorization") == "" {
+				t.Error("the free-quota list must be signed; the vendor answers 401 without it")
 			}
 			_, _ = w.Write([]byte(`{"result":{"models":[{"model_id":"deepseek-v4.1-flash"}]}}`))
 		default:
@@ -262,6 +260,7 @@ func TestFetchCatalogueAndModelLimits(t *testing.T) {
 	c := newTestClient(t, `{
 		"base_url": `+jsonString(srv.URL)+`,
 		"gateway_url": `+jsonString(srv.URL+"/gateway/config")+`,
+		"policy_url": `+jsonString(srv.URL)+`,
 		"access_key_id":"AKIDEXAMPLE","secret_access_key":"SKEXAMPLE","security_token":"TOKEXAMPLE"
 	}`)
 
@@ -363,6 +362,7 @@ func TestRefreshModelsSurvivesAFailingBenefitList(t *testing.T) {
 	c := newTestClient(t, `{
 		"base_url": `+jsonString(srv.URL)+`,
 		"gateway_url": `+jsonString(srv.URL+"/gateway/config")+`,
+		"policy_url": `+jsonString(srv.URL)+`,
 		"access_key_id":"AKIDEXAMPLE","secret_access_key":"SKEXAMPLE","security_token":"TOKEXAMPLE"
 	}`)
 	models, err := c.RefreshModels(context.Background())
@@ -372,9 +372,11 @@ func TestRefreshModelsSurvivesAFailingBenefitList(t *testing.T) {
 	if len(models) != 1 || models[0].ID != "glm-5.3-flash" {
 		t.Fatalf("models = %+v, want the catalogue despite the benefit failure", models)
 	}
-	// With no live benefit list the built-in fallback still answers.
-	if !c.isBenefitModel("glm-5.3-flash") {
-		t.Error("the built-in free-quota fallback was not used")
+	// A failing precheck must NOT mark anything free: a guess is what sends
+	// `maas_type: benefit` for a model the vendor does not exempt, which it
+	// refuses with InferHub.4004.200 even though the model itself works.
+	if c.isBenefitModel("glm-5.3-flash") {
+		t.Error("a model was marked free without the vendor confirming the channel")
 	}
 }
 
@@ -464,4 +466,123 @@ func newTestClient(t *testing.T, cfg string) *Client {
 		t.Fatalf("newClient returned %T, want *Client", c)
 	}
 	return client
+}
+
+// TestBenefitChannelDisabledMeansNoBenefitModels pins the vendor's own
+// algorithm, measured against the live service: the free-quota list is only
+// consulted after the channel precheck says the channel is on, and a disabled
+// channel means there are no benefit models at all.
+//
+// This is not a nicety -- it is the difference between a working request and a
+// broken one.  When the channel is off, the vendor refuses any request that
+// carries `maas_type: benefit` with `InferHub.4004.200 benefit not found`,
+// while the very same model answers normally without the header.
+func TestBenefitChannelDisabledMeansNoBenefitModels(t *testing.T) {
+	var sawListRequest bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case benefitGatewayConfigPath:
+			if r.Header.Get("Authorization") == "" {
+				t.Error("the benefit channel precheck must be signed")
+			}
+			if r.Header.Get("Agent-Type") != "PromptCenter" {
+				t.Errorf("precheck Agent-Type = %q, want PromptCenter", r.Header.Get("Agent-Type"))
+			}
+			_, _ = w.Write([]byte(`{"enabled":false}`))
+		case "/gateway/config":
+			sawListRequest = true
+			_, _ = w.Write([]byte(`{"result":{"models":[{"model_id":"deepseek-v4.1-flash"}]}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	c := newTestClient(t, `{
+		"base_url": `+jsonString(srv.URL)+`,
+		"gateway_url": `+jsonString(srv.URL+"/gateway/config")+`,
+		"policy_url": `+jsonString(srv.URL)+`,
+		"access_key_id":"AKIDEXAMPLE","secret_access_key":"SKEXAMPLE","security_token":"TOKEXAMPLE"
+	}`)
+
+	got, err := c.fetchBenefitIDs(context.Background(), testAccount())
+	if err != nil {
+		t.Fatalf("fetchBenefitIDs: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("benefit ids = %v, want none when the channel is disabled", got)
+	}
+	if sawListRequest {
+		t.Error("the model list was fetched even though the channel is disabled")
+	}
+
+	// And the disabled channel must not leave the built-in ids marked free.
+	c.modelsMu.Lock()
+	c.benefit = got
+	c.modelsMu.Unlock()
+	if c.isBenefitModel("deepseek-v4.1-flash") {
+		t.Error("deepseek-v4.1-flash was still treated as a benefit model, so the request would carry maas_type: benefit and be refused")
+	}
+}
+
+// TestBenefitChannelEnabledFetchesTheSignedList is the other half: when the
+// vendor says the channel is on, the list is fetched WITH a signature (the
+// unsigned call answers 401) and its ids become the benefit models.
+func TestBenefitChannelEnabledFetchesTheSignedList(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case benefitGatewayConfigPath:
+			_, _ = w.Write([]byte(`{"enabled":true}`))
+		case "/gateway/config":
+			if r.Header.Get("Authorization") == "" {
+				t.Error("the free-quota list must be signed; the vendor answers 401 without it")
+			}
+			_, _ = w.Write([]byte(`{"result":{"models":[{"model_id":"only-this-one"}]}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	c := newTestClient(t, `{
+		"base_url": `+jsonString(srv.URL)+`,
+		"gateway_url": `+jsonString(srv.URL+"/gateway/config")+`,
+		"policy_url": `+jsonString(srv.URL)+`,
+		"access_key_id":"AKIDEXAMPLE","secret_access_key":"SKEXAMPLE","security_token":"TOKEXAMPLE"
+	}`)
+
+	got, err := c.fetchBenefitIDs(context.Background(), testAccount())
+	if err != nil {
+		t.Fatalf("fetchBenefitIDs: %v", err)
+	}
+	if len(got) != 1 || got[0] != "only-this-one" {
+		t.Fatalf("benefit ids = %v, want [only-this-one]", got)
+	}
+}
+
+// A catalogue cached while the benefit channel was still on carries `free: true`.
+// Once the vendor says the channel is off, that stale stamp MUST be cleared --
+// otherwise the model keeps being requested with `maas_type: benefit` and keeps
+// being refused, even though the fix is otherwise in place.
+func TestBenefitStampIsClearedWhenTheVendorStopsListingIt(t *testing.T) {
+	models := []core.Model{
+		{ID: "deepseek-v4.1-flash", Extra: map[string]any{"free": true, "context_length": 1000000}},
+		{ID: "glm-5.3-flash", Extra: map[string]any{"free": false}},
+	}
+	got := markBenefitModels(models, nil)
+	for _, m := range got {
+		if _, ok := m.Extra["free"]; ok {
+			t.Errorf("model %s kept a stale free stamp: %v", m.ID, m.Extra)
+		}
+	}
+	// An unrelated extra field must survive the cleanup.
+	if got[0].Extra["context_length"] != 1000000 {
+		t.Errorf("unrelated extra was lost: %v", got[0].Extra)
+	}
+
+	// And the live list still stamps what it names.
+	marked := markBenefitModels([]core.Model{{ID: "only-this-one"}}, []string{"only-this-one"})
+	if marked[0].Extra["free"] != true {
+		t.Errorf("a listed model was not marked free: %v", marked[0].Extra)
+	}
 }
