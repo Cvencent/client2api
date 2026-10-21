@@ -143,19 +143,33 @@ only to that loopback listener:
   code is rotated and a fresh QR is returned; `success` is only accepted when
   the reply carries an access token, otherwise the session stays pending.
 - **短信登录** — the operator solves the vendor's Aliyun slider captcha
-  (`sceneId=1pkmy0x3`, `prefix=hk1r5l`, loaded from the vendor CDN only when
-  this tab is selected), then submits the phone number and captcha param to
-  `/raccoon/sms/send` and the code to `/raccoon/sms/verify`. The phone is
-  encrypted host-side. A retryable SMS error is returned to the page and the
+  (`sceneId=1pkmy0x3`, `region=cn`, `prefix=hk1r5l`, loaded from the vendor CDN
+  only when this tab is selected), then submits the phone number and captcha
+  token to `/raccoon/sms/send` and the code to `/raccoon/sms/verify`. The phone
+  is encrypted host-side. A retryable SMS error is returned to the page and the
   session stays pending, so a mistyped code does not end the login.
-- **接码登录 / 自动登录** — the panel's 一键接码 path rents a number from the
-  eomsg platform (`sms_token`), mints the Aliyun slider parameter in a local
-  Chromium-family browser, sends the number through the same vendor SMS API,
-  polls the eomsg message with sender keyword `商汤科技`, exchanges the code
-  for a credential and stores the account.  The run is a job: the panel starts
-  it, renders each step, and can cancel it.  A headless mint is tried first;
-  if Aliyun refuses it, the module retries with a visible browser so the
-  operator can finish the slider once by hand.
+  Both legs run against the IAM service: `POST /api/iam/v1/sms/send`
+  (`captcha_token`, `scene=login`) answers with a `verification_id`, and
+  `POST /api/iam/v1/auth/login/sms` quotes that id beside the `verification_code`.
+  The legacy `/api/web/auth/v1/send_sms` and `/login_with_sms` are **dead**
+  (they answer every login request with a captcha failure), which is why the
+  send/verify pair moved to IAM. QR and token refresh stayed on the web API.
+- **一键接码 / 自动登录 — 已关闭**（deliberately not offered).  This module used
+  to implement `core.AutoLoginProvider`: rent a number from the eomsg platform
+  (`sms_token`), mint the Aliyun slider parameter in a local Chromium-family
+  browser, send the number through the vendor's SMS API, read the code back and
+  store the credential.  It no longer advertises that capability, so the panel
+  hides the 一键接码 button.
+
+  Why: the vendor moved SMS login to the IAM service **and** hardened the Aliyun
+  scene so the traceless fast path no longer auto-passes.  Measured against the
+  live site, their own login page now mounts an interactive slider that needs a
+  human to drag it, and a parameter minted locally — in a real browser, from the
+  vendor's own origin, in the same session, with the same cookies — is rejected
+  with `captcha_token invalid`.  An unattended run therefore cannot obtain a
+  usable token, so the button could only ever fail.  The manual 接码 controls
+  above are unaffected: they still rent a number and read the code, while the
+  operator solves the slider in the vendor's own page.
 
 On success the credential is enriched through `/api/web/auth/v1/user_info`,
 written through the same pool as an imported token, and the desktop
@@ -358,17 +372,17 @@ copy-paste starting point.
 | `refresh_margin` | duration | `300s` | renew this long before expiry |
 | `store_flush` | duration | `5s` | debounce for writing `accounts.json`/`state.json` |
 | `login_timeout` | duration | `5m` | how long an interactive QR/SMS login stays pending before it expires |
-| `sms_token` | string | — | eomsg (接码平台) credential for the SMS and auto-login providers |
+| `sms_token` | string | — | eomsg (接码平台) credential for the manual 接码 controls |
 | `sms_keyword` | string | `商汤科技` | sender keyword the platform filters on; a wrong keyword reads as "no message" |
 | `sms_base` | string | eomsg | platform endpoint override |
 | `sms_provinces` | array | built-in pool | province rotation; empty keeps the built-in pool, `["none"]` lets the platform choose |
 | `sms_card_type` | string | `全部` | eomsg card class: `实卡`, `虚卡` or `全部` |
-| `browser_path` | string | auto-detect | Chromium-family executable used to mint the Aliyun slider |
-| `browser_headless` | bool | `true` | headless first; a refused mint retries with a visible window |
-| `auto_login_timeout_seconds` | int | `300` | whole auto-login run timeout |
-| `sms_polls` | int | `12` | polls per rented number before the run gives up |
-| `sms_interval_seconds` | int | `5` | pause between SMS polls |
 | `dup_retries` | int | `6` | extra draws when the platform returns a virtual or already-used number |
+
+`browser_path`, `browser_headless`, `auto_login_timeout_seconds`, `sms_polls`
+and `sms_interval_seconds` were removed along with the auto-login flow. A config
+that still carries them keeps loading — unknown keys are ignored — but they no
+longer do anything.
 
 Durations accept a Go duration string (`"90s"`, `"5m"`) or a bare JSON number
 read as seconds. A value that cannot be parsed falls back to the default.
@@ -399,11 +413,11 @@ call: it is not parked and it does not spend one of the `max_attempts` attempts.
 | `core.PackageProvider` | yes | the balance's pools as separate packages |
 | `core.LoginProvider` | yes | loopback QR/SMS page; `RealmLoginProvider` is not implemented (a single sign-in flow) |
 | `core.SMSProvider` | yes | eomsg rent/poll/release; sender keyword defaults to `商汤科技` |
-| `core.AutoLoginProvider` | yes | rent a number, mint the Aliyun slider, SMS login end to end and store the credential |
+| `core.AutoLoginProvider` | **no** | deliberately dropped: the vendor's Aliyun scene now needs a human slider, so an unattended 一键接码 run cannot get a usable captcha token |
 | `core.CheckinProvider` | yes | one action, `login-points`: claims the daily 300 login credits through the desktop login grant |
 | `core.VoucherProvider` | **no** | the vendor exposes no voucher concept |
 | `core.TaskProvider` / `core.BatchProvider` | **no** | nothing to offer |
-| `core.CaptchaProvider` | **no** | the interactive SMS tab loads the vendor's Aliyun slider in the browser; the auto-login path mints it in a local throwaway browser, falling back to a visible one when needed |
+| `core.CaptchaProvider` | **no** | the interactive SMS tab loads the vendor's Aliyun slider in the browser for the operator to solve |
 | `core.HintProvider` | **no** | nothing to hint at |
 
 `TestAccount` sends one minimum-size real chat completion through the account under

@@ -894,6 +894,229 @@ func TestChatQuotaRefusalIsRetryable(t *testing.T) {
 	}
 }
 
+// The exact failure this test was written for: CodeArts answers HTTP 200 and
+// puts `InferHub.ModelArts.81114.429` -- "the rate limit is 50000000 tokens per
+// minute" -- in the SSE body.  The first account is refused, a second account
+// serves the turn, and the caller must see a normal answer.
+//
+// Before the probe existed the refusal was delivered as a terminal stream error
+// with no classification at all: the gateway could not rotate, could not park
+// the pair, and the caller got a 502 for a request a healthy account could
+// have answered.
+func TestChatInStreamRateLimitRotatesAccounts(t *testing.T) {
+	f := newChatFixture(t)
+	f.onCha = func(w http.ResponseWriter, _ *http.Request, rec recordedRequest, n int) {
+		if rec.Header.Get("x-security-token") == "TOK1" {
+			writeSSE(w, sse(mustJSON(map[string]any{
+				"error_code": "InferHub.ModelArts.81114.429",
+				"error_msg":  "Too many requests, the rate limit is 50000000 tokens per minute.",
+			})))
+			return
+		}
+		writeSSE(w, happySSE)
+	}
+	c := f.client(t, `,"max_attempts":2,"accounts":[
+		{"label":"first","access_key_id":"AK1","secret_access_key":"SK1","security_token":"TOK1"},
+		{"label":"second","access_key_id":"AK2","secret_access_key":"SK2","security_token":"TOK2"}
+	]`)
+
+	st, err := c.Chat(context.Background(), &core.ChatRequest{
+		Model:    "deepseek-v4.1-flash",
+		Messages: []core.Message{{Role: "user", Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("Chat: %v (the second account should have served the turn)", err)
+	}
+	defer st.Close()
+
+	var content strings.Builder
+	for {
+		ev, err := st.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Recv: %v (the caller must not see the first account's refusal)", err)
+		}
+		if ev.Type == core.EventDelta {
+			content.WriteString(ev.Delta)
+		}
+	}
+	if got := content.String(); got != "Hello, world" {
+		t.Errorf("content = %q, want the second account's answer", got)
+	}
+	// The refusal really was the reason for the second call, and it came from
+	// the first credential.
+	got := f.chatRequests()
+	if len(got) != 2 {
+		t.Fatalf("the chat endpoint was called %d times, want 2", len(got))
+	}
+	if got[1].Header.Get("x-security-token") != "TOK2" {
+		t.Errorf("the retry used %q, want the second account", got[1].Header.Get("x-security-token"))
+	}
+}
+
+// The control: with no spare account the same refusal is reported to the caller
+// as a classified, retryable rate limit rather than as an unclassified blob.
+// That classification is what lets the gateway move to the next platform and
+// park the (account, model) pair.
+func TestChatInStreamRateLimitIsClassifiedWhenThePoolIsExhausted(t *testing.T) {
+	f := newChatFixture(t)
+	f.onCha = func(w http.ResponseWriter, _ *http.Request, _ recordedRequest, _ int) {
+		writeSSE(w, sse(mustJSON(map[string]any{
+			"error_code": "InferHub.ModelArts.81114.429",
+			"error_msg":  "Too many requests, the rate limit is 50000000 tokens per minute.",
+		})))
+	}
+	c := f.client(t, `,"max_attempts":1`)
+
+	_, err := c.Chat(context.Background(), &core.ChatRequest{
+		Model:    "deepseek-v4.1-flash",
+		Messages: []core.Message{{Role: "user", Content: "hi"}},
+	})
+	if err == nil {
+		t.Fatal("an in-stream rate limit reported success")
+	}
+	fl, ok := core.AsFailure(err)
+	if !ok {
+		t.Fatalf("err = %v, want a *core.Failure so the gateway can classify it", err)
+	}
+	if fl.Kind != core.FailureRateLimited {
+		t.Errorf("Failure.Kind = %q, want %q", fl.Kind, core.FailureRateLimited)
+	}
+	if !core.Retryable(fl.Kind) {
+		t.Error("an in-stream rate limit must be retryable so the gateway can fail over")
+	}
+	if fl.AccountID() == "" {
+		t.Error("the failure does not name the account it came from")
+	}
+	if fl.Status != http.StatusTooManyRequests {
+		t.Errorf("Failure.Status = %d, want 429", fl.Status)
+	}
+	if !strings.Contains(err.Error(), "81114.429") {
+		t.Errorf("err = %q, want the vendor's own code carried through", err.Error())
+	}
+}
+
+// The refused credential must actually step aside.  Without a pool-side
+// cooldown the very next request picks the same rate-limited account again and
+// burns another attempt.
+func TestChatInStreamRateLimitCoolsTheRefusedAccount(t *testing.T) {
+	f := newChatFixture(t)
+	f.onCha = func(w http.ResponseWriter, _ *http.Request, rec recordedRequest, _ int) {
+		if rec.Header.Get("x-security-token") == "TOK1" {
+			writeSSE(w, sse(mustJSON(map[string]any{
+				"error_code": "InferHub.ModelArts.81114.429",
+				"error_msg":  "Too many requests, the rate limit is 50000000 tokens per minute.",
+			})))
+			return
+		}
+		writeSSE(w, happySSE)
+	}
+	c := f.client(t, `,"max_attempts":2,"accounts":[
+		{"label":"first","access_key_id":"AK1","secret_access_key":"SK1","security_token":"TOK1"},
+		{"label":"second","access_key_id":"AK2","secret_access_key":"SK2","security_token":"TOK2"}
+	]`)
+
+	st, err := c.Chat(context.Background(), &core.ChatRequest{
+		Model:    "deepseek-v4.1-flash",
+		Messages: []core.Message{{Role: "user", Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	st.Close()
+
+	var cooled string
+	for _, e := range c.pool.all() {
+		if e.acct.SecurityToken == "TOK1" {
+			cooled = e.state
+			if e.fails == 0 {
+				t.Error("the refused account recorded no failure")
+			}
+		}
+	}
+	if cooled != stateCooling {
+		t.Errorf("the refused account is in state %q, want %q", cooled, stateCooling)
+	}
+}
+
+// A refusal that names the concurrency queue is NOT the per-minute token
+// ceiling, so the probe must not rotate accounts for it: the vendor's queue code
+// names a condition the queue-status endpoint describes, and the module keeps
+// reporting it to the caller -- classified, so the gateway can decide -- exactly
+// as it always did.  Rotating here would burn an account on a queue that is not
+// per-credential.
+func TestChatInStreamQueueCodeIsNotTreatedAsATokenCeiling(t *testing.T) {
+	f := newChatFixture(t)
+	var queued bool
+	f.onCha = func(w http.ResponseWriter, _ *http.Request, _ recordedRequest, _ int) {
+		writeSSE(w, sse(mustJSON(map[string]any{
+			"error_code": "TM.00001041",
+			"error_msg":  "peak usage, try again after 10:00",
+		})))
+	}
+	f.onQue = func(w http.ResponseWriter, _ *http.Request, _ int) {
+		queued = true
+		writeJSONBody(w, http.StatusOK, map[string]any{"status": "working"})
+	}
+	c := f.client(t, `,"max_attempts":3`)
+
+	st, err := c.Chat(context.Background(), &core.ChatRequest{
+		Model:    "deepseek-v4-pro",
+		Messages: []core.Message{{Role: "user", Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	defer st.Close()
+
+	if _, err := st.Recv(); err == nil {
+		t.Fatal("the queue refusal was swallowed")
+	} else if !strings.Contains(err.Error(), "TM.00001041") {
+		t.Errorf("Recv = %v, want the vendor's own code", err)
+	}
+	if got := len(f.chatRequests()); got != 1 {
+		t.Errorf("the chat endpoint was called %d times, want 1: a queue code must not rotate accounts", got)
+	}
+	if queued {
+		t.Error("an in-stream queue code was polled; the queue wait belongs to the HTTP-400 path")
+	}
+}
+
+// A non-retryable in-stream refusal still reaches the caller with the vendor's
+// own words, and is not mistaken for a credential problem.
+func TestChatInStreamClientRefusalReachesTheCaller(t *testing.T) {
+	f := newChatFixture(t)
+	f.onCha = func(w http.ResponseWriter, _ *http.Request, _ recordedRequest, _ int) {
+		writeSSE(w, sse(mustJSON(map[string]any{
+			"error_code": "InferHub.4004.200",
+			"error_msg":  "benefit not found",
+		})))
+	}
+	c := f.client(t, `,"max_attempts":2`)
+
+	st, err := c.Chat(context.Background(), &core.ChatRequest{
+		Model:    "deepseek-v4.1-flash",
+		Messages: []core.Message{{Role: "user", Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	defer st.Close()
+
+	if _, err := st.Recv(); err == nil {
+		t.Fatal("the refusal was swallowed")
+	} else if !strings.Contains(err.Error(), "benefit not found") {
+		t.Errorf("Recv = %v, want the vendor's own message", err)
+	}
+	for _, e := range c.pool.all() {
+		if e.fails != 0 {
+			t.Errorf("account %s was blamed for a non-retryable client refusal", e.id())
+		}
+	}
+}
+
 // The account is marked served on the request, which is how the gateway
 // attributes usage.  The field must not reach the vendor.
 func TestChatNotesTheServedByAccount(t *testing.T) {

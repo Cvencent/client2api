@@ -103,7 +103,7 @@ func TestSmsSendRejectsMissingPhoneAndCaptcha(t *testing.T) {
 	if ok, _ := body["ok"].(bool); ok {
 		t.Fatal("a missing captcha was accepted")
 	}
-	if up.countPath(pathSendSMS) != 0 {
+	if up.countPath(pathIAMSendSMS) != 0 {
 		t.Fatal("an invalid form reached the vendor")
 	}
 }
@@ -119,12 +119,15 @@ func TestSmsSendEncryptsThePhone(t *testing.T) {
 	if ok, _ := body["ok"].(bool); !ok {
 		t.Fatalf("response = %v, want ok", body)
 	}
-	sent := lastBodyFor(t, up, pathSendSMS)
+	sent := lastBodyFor(t, up, pathIAMSendSMS)
 	if sent["nation_code"] != "86" {
 		t.Fatalf("nation_code = %v, want 86", sent["nation_code"])
 	}
-	if sent["captcha_param"] != "captcha-token" {
-		t.Fatalf("captcha_param = %v, want the slider token", sent["captcha_param"])
+	if sent["captcha_token"] != "captcha-token" {
+		t.Fatalf("captcha_token = %v, want the slider token", sent["captcha_token"])
+	}
+	if sent["scene"] != smsLoginScene {
+		t.Fatalf("scene = %v, want %q", sent["scene"], smsLoginScene)
 	}
 	enc, _ := sent["phone"].(string)
 	if enc == "" || enc == "13800001111" {
@@ -149,9 +152,12 @@ func TestSmsLoginStoresTheAccount(t *testing.T) {
 	if ok, _ := body["ok"].(bool); !ok {
 		t.Fatalf("response = %v, want ok", body)
 	}
-	login := lastBodyFor(t, up, pathLoginSMS)
-	if login["sms_code"] != "654321" {
-		t.Fatalf("sms_code = %v, want 654321", login["sms_code"])
+	login := lastBodyFor(t, up, pathIAMLoginSMS)
+	if login["verification_code"] != "654321" {
+		t.Fatalf("verification_code = %v, want 654321", login["verification_code"])
+	}
+	if login["verification_id"] != "v-test" {
+		t.Fatalf("verification_id = %v, want the id the send step returned", login["verification_id"])
 	}
 	if enc, _ := login["phone"].(string); decryptPhone(t, enc) != "13800001111" {
 		t.Fatalf("login phone did not decrypt to the typed number")
@@ -182,7 +188,7 @@ func mustSessionID(t *testing.T, c *Client) string {
 }
 
 func TestSmsErrorsDoNotEndTheSession(t *testing.T) {
-	up := &loginUpstream{smsSendErr: "验证码错误"}
+	up := &loginUpstream{smsSendErr: "captcha_token invalid"}
 	c, base := startLogin(t, up)
 
 	status, body := postLocalLogin(t, base, pathSmsSend, `{"phone":"13800001111","captchaParam":"captcha-token"}`)
@@ -227,7 +233,7 @@ func TestSmsVerifyWithoutASendIsRefused(t *testing.T) {
 	if ok, _ := body["ok"].(bool); ok {
 		t.Fatal("a verify with no phone on record was accepted")
 	}
-	if up.countPath(pathLoginSMS) != 0 {
+	if up.countPath(pathIAMLoginSMS) != 0 {
 		t.Fatal("a verify with no phone reached the vendor")
 	}
 }

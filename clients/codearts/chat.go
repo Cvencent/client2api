@@ -197,7 +197,7 @@ func (c *Client) openStream(ctx context.Context, req *core.ChatRequest, release 
 						c.pool.markFailure(e, kindQuota, msg)
 					}
 					rateLimit[acctID] = true
-				case kindQueue, kindTransient, kindNetwork:
+				case kindQueue, kindRateLimit, kindTransient, kindNetwork:
 					c.pool.markFailure(e, kind, msg)
 				default:
 					// A client error is this module's own bug: it must not
@@ -212,8 +212,38 @@ func (c *Client) openStream(ctx context.Context, req *core.ChatRequest, release 
 			}
 		}
 
+		// CodeArts folds refusals into the 200 body, so "the POST was
+		// accepted" says nothing about whether the turn will be served.
+		// Reading the first frame here is what turns the vendor's per-minute
+		// token ceiling (`InferHub.ModelArts.8111x.429`) into an account
+		// rotation instead of a caller-visible failure: nothing has been
+		// rendered yet, so the retry costs the caller nothing.  Every other
+		// frame is replayed, so the answer the vendor did send reaches the
+		// caller unchanged.
+		st, probeErr := newProbedStream(ctx, resp.Body, c.cfg.firstTokenWait(), c.cfg.chunkWait(), release, acctID)
+		if probeErr != nil {
+			_ = resp.Body.Close()
+			lastErr, lastAcct = probeErr, acctID
+			// The probe only ever returns the vendor's per-minute token
+			// ceiling, which is per credential.  Classify it anyway rather than
+			// assuming: a future refusal that becomes retryable must not be
+			// mislabelled here.
+			kind, msg := classifyErr(probeErr)
+			if msg == "" {
+				msg = probeErr.Error()
+			}
+			c.pool.markFailure(e, kind, msg)
+			// Tell the gateway about the attempt even though the loop may
+			// recover, so the (account, model) pair is parked and the panel can
+			// attribute the refusal.
+			req.NoteAccountFailure(acctID, c.classified(probeErr, acctID))
+			if !retryable(kind) {
+				return nil, c.terminal(probeErr, acctID)
+			}
+			continue
+		}
 		c.pool.markUsedFor(e, freeModel)
-		return newStream(ctx, resp.Body, c.cfg.firstTokenWait(), c.cfg.chunkWait(), release), nil
+		return st, nil
 	}
 
 	if lastErr == nil {
@@ -350,7 +380,10 @@ type queueStatus struct {
 // failure.
 func retryable(kind errKind) bool {
 	switch kind {
-	case kindAuth, kindQuota, kindQueue, kindTransient, kindNetwork:
+	// kindRateLimit is retryable because the ceiling is per credential: the
+	// account it refused is the one that has to step aside, and the next
+	// account has its own budget.
+	case kindAuth, kindQuota, kindQueue, kindRateLimit, kindTransient, kindNetwork:
 		return true
 	default:
 		return false
@@ -363,6 +396,16 @@ func (c *Client) terminal(err error, acctID string) error {
 	if err == nil {
 		return core.ErrNotConfigured
 	}
+	return c.classified(err, acctID)
+}
+
+// classified builds the core.Failure the gateway attributes an absorbed
+// attempt to.  It mirrors terminal, so a failure the module recovered from is
+// described exactly like one it gave up on.
+func (c *Client) classified(err error, acctID string) error {
+	if err == nil {
+		return nil
+	}
 	kind, msg := classifyErr(err)
 	if msg == "" {
 		msg = err.Error()
@@ -370,9 +413,9 @@ func (c *Client) terminal(err error, acctID string) error {
 	status := 0
 	if ue, ok := asUpstreamError(err); ok {
 		status = ue.Status
+	} else if se, ok := asStreamError(err); ok {
+		status = se.status()
 	}
-	// The message is redacted before it is wrapped: it travels to the client
-	// and into the log.
 	return core.Fail("codearts", acctID, failureKind(kind), status, errors.New(core.Redact(msg)))
 }
 

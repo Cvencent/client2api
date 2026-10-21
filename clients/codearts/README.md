@@ -283,6 +283,35 @@ module then polls `/api/v1/queue/status?model=…&task_id=…` every
 `queue_poll_interval` for up to `queue_max_wait`, and resends once when the
 queue reports `working`. A `queue_full` or `error` status ends the attempt.
 
+### The in-stream refusal
+
+CodeArts does not rely on HTTP status codes for its refusals. A per-minute token
+ceiling arrives as **HTTP 200** with the refusal inside the SSE body, as
+`error_code: InferHub.ModelArts.81114.429` and a message such as *“Too many
+requests, the rate limit is 50000000 tokens per minute.”* An auth failure and a
+quota refusal arrive the same way.
+
+A 200 therefore says nothing about whether a turn will be served, so `openStream`
+reads the **first frame** before handing the stream to the caller:
+
+- A token ceiling (`8111x.429`, `TPM`, `tokens per minute`) is a **rate limit**.
+  The ceiling is per credential, so the account is cooled down, the
+  (account, model) pair is reported to the gateway, and the next account is
+  tried. Nothing has been rendered yet, so this costs the caller nothing. If
+  every account is exhausted the refusal is returned **classified**
+  (`FailureRateLimited`, status 429) so the gateway can still fail over to
+  another platform.
+- A queue code (`TM.00001041`, peak-usage wording) stays distinct from the token
+  ceiling: an in-stream frame carries no queue position to poll for, so the
+  refusal is reported to the caller rather than parked on a queue wait.
+- Any other refusal is the platform's answer to this prompt. It is delivered to
+  the caller unchanged, in its original position in the stream, and the account
+  is **not** blamed — re-sending the same content on a fresh credential is the
+  amplification the shared failure kinds exist to prevent.
+
+A frame that is not a refusal is replayed, so a normal answer reaches the caller
+byte-identical to what the vendor sent.
+
 ### Retrying
 
 `openStream` tries up to `max_attempts` accounts. For each attempt it picks an
@@ -291,15 +320,21 @@ sending, so a failure part-way through still reports which account was used.
 An account whose per-account in-flight slot is already held is skipped before
 that point: it never reaches the vendor and does not spend an attempt.
 
-- An auth rejection (`401`/`403`, `APIG.0602`, or invalid-token wording)
-  triggers **one** silent refresh and resend, which does not consume an attempt.
-- A queue rejection triggers the queue wait and one resend.
+- An auth rejection (`401`/`403` or `APIG.0602`) triggers **one** silent refresh
+  and resend, which does not consume an attempt.
+- A queue rejection **on the wire** (`400`) triggers the queue wait and one
+  resend. An in-stream queue code carries no queue position the queue-status
+  endpoint could describe, so it is reported to the caller instead of being
+  parked on a wait.
+- A per-minute token ceiling rotates to the next account and cools the one that
+  was refused.
 - A client error (`400` that is not a queue error) is terminal and does **not**
   cool the account — the request was malformed, the credential is fine.
 - Because an account is marked tried before its attempt, **rotation needs at
   least two accounts**: a single-account pool cannot retry the same account, and
-  a rate-limit refusal ends the request. That is the honest behaviour — retrying
-  the same rate-limited credential in a loop is worse than failing.
+  a rate limit with no spare credential ends the request. That is the honest
+  behaviour — retrying the same rate-limited credential in a loop is worse than
+  failing.
 
 `ModelOutputLimit`-style budgets come from `ModelMaxOutputTokens`, which answers
 from the cached catalogue only and never guesses: an unknown model reports
@@ -322,6 +357,19 @@ The catalogue is assembled from two sources:
   `X-Language: zh-cn` pair: the unauthenticated call answers
   `401 APIG.0301 x-auth-token not found`, and HTTP 200 with
   `error_code: "4000"` means no channel is configured.
+
+The catalogue also carries the vendor's per-model **倍率** in
+`credit[].ratio_display` (`0.18x`, `0.7x`, …). It is surfaced as
+`extra.billing_multiplier` / `extra.billing_effective_multiplier`, the same
+keys the panel renders for every other platform, and a zero multiplier marks
+the model `free`.
+
+Promotional slots are resolved against the vendor's own schedule, so the
+effective rate is the one actually in force: `deepseek-v4.1-flash` shows
+`0.18x` by day and `0.09x` from 21:00 to 07:59 Asia/Shanghai. A slot with no
+schedule is never assumed to be running — an unproven discount is worse than
+showing the list price — and the schedule is evaluated in UTC+8 via a fixed
+zone so a Windows host needs no IANA database.
 
 Ids are normalised by stripping a trailing four-digit build stamp, so
 `deepseek-v4-flash-0731` and `deepseek-v4-flash` are the same model. The rule is
@@ -418,7 +466,7 @@ number, which is read as **seconds**.
 | `first_token_timeout` | `300s` | how long the stream may stay silent before its first byte |
 | `chunk_timeout` | `600s` | how long it may stay silent between two bytes |
 | `cooldown` | `60s` | how long an account rests after a transient failure |
-| `short_cooldown` | `15s` | after a queue rejection |
+| `short_cooldown` | `15s` | after a queue rejection or an in-stream token ceiling |
 | `quota_cooldown` | `24h` | after a quota rejection |
 | `refresh_margin` | `30m` | refresh a credential this long before it expires |
 | `login_timeout` | `10m` | how long a sign-in session stays open |

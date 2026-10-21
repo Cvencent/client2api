@@ -76,6 +76,11 @@ type Options struct {
 	// in-process only, which is the right behaviour for an embedder that has no
 	// data directory; the mechanism degrades to trimming within this run.
 	LearnedWindowsPath string
+	// EstimateCalibrationPath is where the gateway records, per (client, model),
+	// the ratio between this gateway's token estimate and the vendor's own
+	// prompt_tokens for the same request.  Empty keeps that memory in-process
+	// only, which degrades to the plain heuristic.  See estimate_calibration.go.
+	EstimateCalibrationPath string
 	// CompactionKeyPath is where the gateway keeps the HMAC key that signs the
 	// compaction blobs it mints for the Responses compaction surface.  It must
 	// live somewhere the installer preserves (the data directory), because a
@@ -110,6 +115,11 @@ type server struct {
 	// a model whose published window turned out to be inflated is judged against
 	// what the vendor actually said.  See context_guard.go.
 	learnedWindows *learnedWindowStore
+	// estimates is the per-model calibration between this gateway's token
+	// heuristic and the vendor's own count for the same bytes.  It is applied
+	// to the guard's budget, never to the estimate itself.  See
+	// estimate_calibration.go.
+	estimates *estimateCalibrationStore
 	// compaction mints and verifies the gateway-owned blobs carried in Responses
 	// compaction items.  See compaction.go.
 	compaction *compactionSigner
@@ -173,6 +183,7 @@ func NewServer(opts Options) *http.Server {
 		s.opts.Logger = log.Default()
 	}
 	s.learnedWindows = openLearnedWindowStore(opts.LearnedWindowsPath, s.opts.Logger.Printf)
+	s.estimates = newEstimateCalibrationStore(opts.EstimateCalibrationPath, s.opts.Logger.Printf)
 	s.compaction = newCompactionSigner(opts.CompactionKeyPath, s.opts.Logger.Printf)
 
 	s.handler = s.routes()
@@ -1242,6 +1253,7 @@ func (s *server) openStreamRecorded(ctx context.Context, client core.Client, req
 							rec.TrimDropped = report.DroppedMessages
 							rec.TrimmedFromTokens = report.BeforeTokens
 							rec.TrimmedToTokens = report.AfterTokens
+							rec.EstimatedPromptTokens = report.AfterTokens
 							rec.ContextWindow = sizes.Limit
 						}
 						s.opts.Logger.Printf(
@@ -1269,6 +1281,7 @@ func (s *server) openStreamRecorded(ctx context.Context, client core.Client, req
 								rec.TrimDropped = report.DroppedMessages
 								rec.TrimmedFromTokens = report.BeforeTokens
 								rec.TrimmedToTokens = report.AfterTokens
+								rec.EstimatedPromptTokens = report.AfterTokens
 								rec.ContextWindow = window
 							}
 							s.opts.Logger.Printf(
@@ -1467,12 +1480,18 @@ func failureReason(err error) string {
 // metadata. An unknown price leaves Cost unset instead of recording a
 // misleading zero.
 func (s *server) recordUsage(rec UsageRecord) {
+	model := rec.Model
+	if prefix, rest, ok := strings.Cut(model, "/"); ok && strings.EqualFold(prefix, rec.Client) && rest != "" {
+		model = rest
+	}
+	// A completed call is the only place both numbers exist: the vendor's own
+	// count of the request, and this gateway's estimate of the same bytes.  A
+	// failed row never reached the vendor's tokenizer, so it teaches nothing.
+	if !rec.Failed && rec.PromptTokens > 0 && rec.EstimatedPromptTokens > 0 {
+		s.estimates.observe(rec.Client, model, int64(rec.PromptTokens), rec.EstimatedPromptTokens)
+	}
 	if rec.Client != "" && rec.Model != "" &&
 		(rec.PromptTokens > 0 || rec.CompletionTokens > 0 || rec.HasCachedTokens) {
-		model := rec.Model
-		if prefix, rest, ok := strings.Cut(model, "/"); ok && strings.EqualFold(prefix, rec.Client) && rest != "" {
-			model = rest
-		}
 		provider := modelmeta.New(modelmeta.Options{Client: rec.Client, Overrides: s.opts.ModelOverrides})
 		meta := provider.MergeAt(model, modelmeta.Meta{}, rec.At)
 		if meta.HasPrice {

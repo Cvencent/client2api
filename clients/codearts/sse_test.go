@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -260,6 +261,73 @@ func TestEventForInFrameError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "81111.429") {
 		t.Errorf("err = %q, want the upstream code carried through", err.Error())
+	}
+}
+
+// The per-minute token ceiling must be classified as a plain rate limit, so the
+// account retry loop rotates instead of reporting it to the caller.  This is the
+// exact refusal that was reaching users as an unclassified 502: CodeArts sends
+// it as HTTP 200 with the error inside the body.
+func TestEventForTokenCeilingIsARateLimit(t *testing.T) {
+	for _, payload := range []string{
+		`{"error_code":"InferHub.ModelArts.81114.429","error_msg":"Too many requests, the rate limit is 50000000 tokens per minute."}`,
+		`{"error_code":"InferHub.ModelArts.81111.429","error_msg":"TPM limit reached"}`,
+		`{"error_msg":"the rate limit is 50000000 tokens per minute"}`,
+		`{"error_msg":"TPM limit reached"}`,
+	} {
+		f, err := parseFrame(payload)
+		if err != nil {
+			t.Fatalf("parseFrame(%s): %v", payload, err)
+		}
+		_, err = eventFor(f)
+		se, ok := asStreamError(err)
+		if !ok {
+			t.Fatalf("eventFor(%s) = %T, want *streamError", payload, err)
+		}
+		if got := se.kind(); got != kindRateLimit {
+			t.Errorf("kind(%s) = %v, want kindRateLimit", payload, got)
+		}
+		if got := se.status(); got != http.StatusTooManyRequests {
+			t.Errorf("status(%s) = %d, want 429", payload, got)
+		}
+		if !se.queueRetryable() {
+			t.Errorf("%s was not reported as retryable", payload)
+		}
+	}
+}
+
+// A queue code is NOT the token ceiling: it names a queue the queue-status
+// endpoint describes, so it keeps its own kind and is not polled from an
+// in-stream frame.
+func TestEventForQueueCodeKeepsItsOwnKind(t *testing.T) {
+	f, err := parseFrame(`{"error_code":"TM.00001041","error_msg":"peak usage, try again after 10:00"}`)
+	if err != nil {
+		t.Fatalf("parseFrame: %v", err)
+	}
+	_, err = eventFor(f)
+	se, ok := asStreamError(err)
+	if !ok {
+		t.Fatalf("eventFor = %T, want *streamError", err)
+	}
+	if got := se.kind(); got != kindQueue {
+		t.Errorf("kind = %v, want kindQueue", got)
+	}
+}
+
+// An auth failure inside the body is still recognised as an auth failure, so the
+// gateway can explain it even though it stays terminal for the caller.
+func TestEventForInStreamAuthIsClassified(t *testing.T) {
+	f, _ := parseFrame(`{"error_code":"APIG.0602","error_msg":"Invalid token"}`)
+	_, err := eventFor(f)
+	se, ok := asStreamError(err)
+	if !ok {
+		t.Fatalf("eventFor = %T, want *streamError", err)
+	}
+	if got := se.kind(); got != kindAuth {
+		t.Errorf("kind = %v, want kindAuth", got)
+	}
+	if got := se.status(); got != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", got)
 	}
 }
 

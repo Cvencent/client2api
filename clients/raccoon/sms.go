@@ -13,8 +13,13 @@ import (
 
 // sms.go implements core.SMSProvider for Raccoon.  The vendor's SMS login is a
 // phone-code HTTP flow, so the module can rent a number from the one-time-SMS
-// platform and read the code back without a human owning the phone.  The
-// browser-driven part lives in autologin.go; this file is the platform half.
+// platform and read the code back without a human owning the phone.
+//
+// This is the platform half only, and the panel drives it by hand: the operator
+// rents a number here, types it into the vendor's own login page and solves the
+// Aliyun slider there, then reads the code back through these controls.  The
+// unattended 一键接码 flow that used to drive the browser itself was removed —
+// see README.md under 自动登录.
 
 const (
 	// defaultSMSProvider is the only one-time-SMS platform this module speaks.

@@ -586,3 +586,93 @@ func TestBenefitStampIsClearedWhenTheVendorStopsListingIt(t *testing.T) {
 		t.Errorf("a listed model was not marked free: %v", marked[0].Extra)
 	}
 }
+
+// The vendor's builtin-model catalogue carries a per-model 倍率 in
+// credit[].ratio_display (for example "0.18x").  The module used to drop the
+// whole credit array, so the panel could not show what a model costs and a
+// zero-multiplier model could not be recognised as free.
+func TestParseModelCatalogueCarriesTheVendorMultiplier(t *testing.T) {
+	entries := []modelInfo{
+		{
+			ModelID:   "deepseek-v4.1-flash",
+			ModelName: "DeepSeek-V4.1-Flash",
+			Credit: []creditEntry{
+				{Ratio: "0.05", RatioDisplay: "0.18x", TimeSlotID: "default", InputPrice: "2", OutputPrice: "8"},
+				{Ratio: "0.05", RatioDisplay: "0.09x", TimeSlotID: "off_peak", BeforeDisplayRatio: "0.18x"},
+			},
+		},
+		{
+			ModelID:   "promo-free",
+			ModelName: "Promo Free",
+			Credit:    []creditEntry{{Ratio: "0", RatioDisplay: "0x", TimeSlotID: "default"}},
+		},
+	}
+
+	models := parseModelCatalogue(entries)
+	if len(models) != 2 {
+		t.Fatalf("parsed %d models, want 2", len(models))
+	}
+
+	if got := models[0].Extra["billing_multiplier"]; got != 0.18 {
+		t.Errorf("billing_multiplier = %#v, want 0.18", got)
+	}
+	if got := models[0].Extra["billing_effective_multiplier"]; got != 0.18 {
+		t.Errorf("billing_effective_multiplier = %#v, want 0.18", got)
+	}
+	if _, ok := models[0].Extra["free"]; ok {
+		t.Error("a paid model must not be marked free")
+	}
+
+	if free, _ := models[1].Extra["free"].(bool); !free {
+		t.Errorf("a zero-multiplier model must be marked free, extra = %#v", models[1].Extra)
+	}
+}
+
+// The vendor prices \`deepseek-v4.1-flash\` at 0.18x by day and 0.09x in the
+// off-peak window (21:00-07:59 Asia/Shanghai).  Advertising the night rate at
+// noon would be a lie, so the effective multiplier has to be resolved against
+// the vendor's own schedule at the moment the catalogue is read.
+func TestOffPeakWindowSelectsTheEffectiveMultiplier(t *testing.T) {
+	cst := time.FixedZone("CST", 8*3600)
+	model := modelInfo{
+		ModelID:   "deepseek-v4.1-flash",
+		ModelName: "DeepSeek-V4.1-Flash",
+		Credit: []creditEntry{
+			{RatioDisplay: "0.18x", TimeSlotID: "default", InputFrom: 0},
+			{RatioDisplay: "0.09x", TimeSlotID: "off_peak", InputFrom: 0},
+		},
+		TimeSlots: map[string]timeSlot{
+			"default":  {},
+			"off_peak": {Timezone: "Asia/Shanghai", Schedule: strPtr("0 0 21 * * *"), Duration: floatPtr(11), TimeUnit: "hour"},
+		},
+	}
+
+	cases := []struct {
+		name string
+		at   time.Time
+		want float64
+	}{
+		{"midday", time.Date(2026, 10, 21, 12, 0, 0, 0, cst), 0.18},
+		{"window opens", time.Date(2026, 10, 21, 21, 0, 0, 0, cst), 0.09},
+		{"inside window", time.Date(2026, 10, 21, 23, 30, 0, 0, cst), 0.09},
+		{"after midnight", time.Date(2026, 10, 22, 3, 0, 0, 0, cst), 0.09},
+		{"window closes", time.Date(2026, 10, 22, 8, 0, 0, 0, cst), 0.18},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := parseModelCatalogueAt([]modelInfo{model}, tc.at)
+			if len(m) != 1 {
+				t.Fatalf("parsed %d models, want 1", len(m))
+			}
+			if got := m[0].Extra["billing_multiplier"]; got != 0.18 {
+				t.Errorf("billing_multiplier = %#v, want the daytime list rate 0.18", got)
+			}
+			if got := m[0].Extra["billing_effective_multiplier"]; got != tc.want {
+				t.Errorf("billing_effective_multiplier = %#v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func strPtr(s string) *string     { return &s }
+func floatPtr(f float64) *float64 { return &f }

@@ -25,11 +25,6 @@
   "sms_provinces": [],
   "sms_card_type": "全部",
 
-  "browser_path": "",
-  "browser_headless": true,
-  "auto_login_timeout_seconds": 300,
-  "sms_polls": 12,
-  "sms_interval_seconds": 5,
   "dup_retries": 6,
 
   "credential_paths": [],

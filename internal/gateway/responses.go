@@ -1086,6 +1086,18 @@ func (s *server) handleResponses(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	// The context guard would otherwise trim this request, and a trimmed turn
+	// looks like an ordinary success to the caller: it re-sends the same
+	// oversized history next turn and gets trimmed again, forever.  Folding the
+	// history instead turns that silent, repeating loss into a compaction item
+	// the caller carries forward.  It costs one summarisation call, so it only
+	// runs when the guard would really have cut something -- and if it cannot
+	// summarise, the guard's own trim still applies and the turn still succeeds.
+	if pendingCompaction == nil && s.responsesWouldTrim(ctxForRequest(r), req) {
+		if item := s.autoCompact(ctxForRequest(r), req, &rec); item != nil {
+			pendingCompaction = item
+		}
+	}
 
 	s.routeAndServe(w, r, routeInput{
 		requested:          wire.Model,
@@ -1108,6 +1120,43 @@ func ctxForRequest(r *http.Request) context.Context {
 		return context.Background()
 	}
 	return r.Context()
+}
+
+// responsesWouldTrim reports whether the context guard would shorten this
+// request for the candidate that would serve it.
+//
+// It answers the same question prepareCandidateAttempt later asks, using the
+// same promptBudget, so "the turn was trimmed" and "we folded instead" are
+// decided from one number.  It is deliberately conservative: when the model
+// cannot be resolved or its window is unknown, it says no and the guard's own
+// behaviour is unchanged.
+func (s *server) responsesWouldTrim(ctx context.Context, req *core.ChatRequest) bool {
+	if req == nil || len(req.Messages) == 0 {
+		return false
+	}
+	candidates, err := s.opts.Registry.ResolveCandidates(ctx, req.Model)
+	if err != nil || len(candidates) == 0 {
+		return false
+	}
+	client, model := candidates[0].Client, candidates[0].Model
+	maxOutput := 0
+	if req.MaxTokens != nil {
+		maxOutput = *req.MaxTokens
+	} else if n, ok := s.resolveMaxOutputTokens(ctx, client, model); ok {
+		maxOutput = n
+	}
+	budget := s.promptBudget(ctx, client, model, maxOutput, req.ContextWindowLimit)
+	if budget <= 0 {
+		return false
+	}
+	report, trimmed := applyContextBudget(cloneChatRequest(req), budget)
+	if report.Impossible {
+		// The newest turn alone is over the window.  Folding older history
+		// cannot help, and the guard will refuse it with the code the caller
+		// acts on; there is nothing for a compaction item to fix.
+		return false
+	}
+	return trimmed
 }
 
 // autoCompact folds req in place for the context_management path and returns the

@@ -17,8 +17,8 @@ import (
 // The catalogue is what a fresh install — and an outage — answers with, so it
 // must line up with the live list: one entry per id, no duplicates, no blanks.
 func TestStaticCatalogueIsWellFormed(t *testing.T) {
-	if len(staticCatalogue) != 84 {
-		t.Fatalf("staticCatalogue has %d entries, want the 84 ids GET /models served on 2026-10-01",
+	if len(staticCatalogue) != 93 {
+		t.Fatalf("staticCatalogue has %d entries, want the 93 ids GET /models served on 2026-10-21",
 			len(staticCatalogue))
 	}
 	seen := make(map[string]bool, len(staticCatalogue))
@@ -46,36 +46,32 @@ func TestStaticCatalogueIsWellFormed(t *testing.T) {
 	}
 }
 
-// The vendor publishes context/output limits for only 11 of the 84 live ids
-// (the models.dev registry entry embedded in the opencode binary).  Every other
-// entry must answer "unknown" rather than carry an invented number.
-func TestStaticCatalogueCarriesOnlyPublishedLimits(t *testing.T) {
-	withOutput := make(map[string]int, len(staticCatalogue))
-	for _, m := range staticCatalogue {
-		if m.output > 0 {
-			withOutput[m.id] = m.output
+// models.dev publishes a context/output limit for 82 of the live ids, and the
+// static table must carry every one of them: the gateway sizes its pre-send trim
+// against the advertised window, and a model with no window cannot be trimmed at
+// all.  Only the ids models.dev does NOT describe may stay "unknown".
+func TestStaticCatalogueCarriesEveryPublishedLimit(t *testing.T) {
+	for _, id := range []string{
+		"deepseek-v4.1-flash-free",
+		"glm-5.3-flash-free",
+		"minimax-m3.1-flash-free",
+		"deepseek-v4.1-flash",
+		"gpt-5.4",
+	} {
+		m, ok := staticIndex[id]
+		if !ok {
+			t.Errorf("%s is absent from the static catalogue, so an over-long request cannot be trimmed", id)
+			continue
+		}
+		if m.context <= 0 {
+			t.Errorf("%s carries no context window, so the gateway cannot size a trim", id)
 		}
 	}
-	want := map[string]int{
-		"claude-opus-4-5":        64000,
-		"claude-sonnet-4":        64000,
-		"gemini-3.5-flash":       65536,
-		"gemini-3-flash":         65536,
-		"gpt-5":                  128000,
-		"deepseek-v4-flash":      384000,
-		"glm-5.1":                131072,
-		"minimax-m2.5":           131072,
-		"deepseek-v4-flash-free": 128000,
-		"mimo-v2.5-free":         32000,
-		"nemotron-3-ultra-free":  128000,
-	}
-	if len(withOutput) != len(want) {
-		t.Fatalf("%d ids carry an output limit, want exactly %d: %v",
-			len(withOutput), len(want), sortedKeys(withOutput))
-	}
-	for id, n := range want {
-		if withOutput[id] != n {
-			t.Fatalf("output limit for %q = %d, want %d", id, withOutput[id], n)
+
+	// A model the registry does not describe must stay honest: no invented number.
+	for _, id := range []string{"jev-1.13", "jev-1.13-free"} {
+		if m, ok := staticIndex[id]; ok && m.context != 0 {
+			t.Errorf("%s carries context %d but the registry publishes none", id, m.context)
 		}
 	}
 }
@@ -187,7 +183,9 @@ func TestNewModelCarriesKnownMetadata(t *testing.T) {
 	if dep.Extra["deprecated"] != true {
 		t.Fatalf("deprecated = %#v, want true", dep.Extra["deprecated"])
 	}
-	if _, ok := dep.Extra["max_output_tokens"]; ok {
+	// jev-1.13 is an id models.dev does not describe, so it must carry no limit
+	// rather than an invented one.
+	if _, ok := newModel("jev-1.13", clientName).Extra["max_output_tokens"]; ok {
 		t.Fatal("an id with no published limit carries max_output_tokens")
 	}
 
@@ -471,8 +469,8 @@ func TestModelMaxOutputTokensAnswersFromTheStaticTable(t *testing.T) {
 	if n, ok := c.ModelMaxOutputTokens(context.Background(), "  claude-opus-4-5  "); !ok || n != 64000 {
 		t.Fatalf("ModelMaxOutputTokens(trimmed) = %d, %v; want 64000, true", n, ok)
 	}
-	// The 73 ids with no published limit must decline rather than guess.
-	for _, id := range []string{"", "   ", "gpt-5.1", "claude-opus-5", "kimi-k2.5", "brand-new"} {
+	// An id neither the table nor the registry describes must decline rather than guess.
+	for _, id := range []string{"", "   ", "jev-1.13", "brand-new"} {
 		if n, ok := c.ModelMaxOutputTokens(context.Background(), id); ok {
 			t.Fatalf("ModelMaxOutputTokens(%q) = %d, true; want a decline, not an invented cap", id, n)
 		}
@@ -483,10 +481,10 @@ func TestModelMaxOutputTokensAnswersFromTheStaticTable(t *testing.T) {
 func TestModelMaxOutputTokensHonoursACachedLiveLimit(t *testing.T) {
 	c := newTestClient(t, Config{})
 	c.storeModels([]core.Model{{
-		ID:    "gpt-5.1",
+		ID:    "jev-1.13",
 		Extra: map[string]any{"max_output_tokens": int64(12345)},
 	}})
-	if n, ok := c.ModelMaxOutputTokens(context.Background(), "gpt-5.1"); !ok || n != 12345 {
+	if n, ok := c.ModelMaxOutputTokens(context.Background(), "jev-1.13"); !ok || n != 12345 {
 		t.Fatalf("ModelMaxOutputTokens = %d, %v; want 12345, true from the cache", n, ok)
 	}
 }
@@ -653,4 +651,31 @@ func modelIDsOf(models []core.Model) []string {
 		out = append(out, m.ID)
 	}
 	return out
+}
+
+// opencode serves `deepseek-v4.1-flash-free` to anonymous/free-only
+// deployments.  It was missing from the static table, so it carried no context
+// window; the gateway could therefore not size a trim for it, forwarded the
+// over-long request unchanged, and the vendor answered a 400 whose message names
+// no number -- so the guard could not learn a window from it either, and the
+// request failed hard.  models.dev, the documented provenance of this table,
+// publishes 200000 context / 32000 output for it.
+func TestStaticCatalogueCarriesTheLimitsThatLetTheGatewayTrim(t *testing.T) {
+	want := map[string]struct{ context, output int }{
+		"deepseek-v4.1-flash-free": {200000, 32000},
+		"glm-5.3-flash-free":       {200000, 32000},
+		"minimax-m3.1-flash-free":  {1000000, 512000},
+		"deepseek-v4.1-flash":      {1000000, 384000},
+		"gpt-5.4":                  {1050000, 128000},
+	}
+	for id, lim := range want {
+		m, ok := staticIndex[id]
+		if !ok {
+			t.Errorf("%s is absent from the static catalogue, so an over-long request cannot be trimmed", id)
+			continue
+		}
+		if m.context != lim.context || m.output != lim.output {
+			t.Errorf("%s limits = %d/%d, want %d/%d", id, m.context, m.output, lim.context, lim.output)
+		}
+	}
 }

@@ -177,6 +177,11 @@ type UsageRecord struct {
 	// something was.
 	TrimmedFromTokens int64 `json:"trimmed_from_tokens,omitempty"`
 	TrimmedToTokens   int64 `json:"trimmed_to_tokens,omitempty"`
+	// EstimatedPromptTokens is this gateway's own estimate of the request it
+	// actually sent.  Paired with PromptTokens -- the vendor's count of the same
+	// bytes -- it is what calibrates the estimator for this model.  See
+	// estimate_calibration.go.
+	EstimatedPromptTokens int64 `json:"estimated_prompt_tokens,omitempty"`
 	// ContextWindow is the window the request was budgeted against, recorded so a
 	// later reader can tell whether the trim was caused by a tight window or by
 	// a request that was simply enormous.

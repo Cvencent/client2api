@@ -31,6 +31,11 @@ const (
 	aliyunCaptchaScript  = "https://o.alicdn.com/captcha-frontend/aliyunCaptcha/AliyunCaptcha.js"
 	aliyunCaptchaSceneID = "1pkmy0x3"
 	aliyunCaptchaPrefix  = "hk1r5l"
+	// aliyunCaptchaRegion is load-bearing, not decorative.  The vendor ships
+	// `region: "cn"`; leaving it out makes the widget skip the traceless fast
+	// path and fall back to an interactive slider nobody is there to solve, so
+	// the mint never returns a parameter.
+	aliyunCaptchaRegion = "cn"
 )
 
 // phonePattern is the mainland mobile number the vendor's own form accepts.
@@ -115,7 +120,8 @@ func (c *Client) handleSmsSend(sess *loginSession) http.HandlerFunc {
 			writeLoginJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "请先完成滑块验证"})
 			return
 		}
-		if err := c.sendSMS(r.Context(), phone, captcha); err != nil {
+		challenge, err := c.sendSMS(r.Context(), phone, captcha)
+		if err != nil {
 			// A failed send does NOT end the session: the slider may simply
 			// have expired, and the operator can retry in place.
 			writeLoginJSON(w, http.StatusOK, map[string]any{"ok": false, "message": c.scrub(err.Error())})
@@ -124,6 +130,7 @@ func (c *Client) handleSmsSend(sess *loginSession) http.HandlerFunc {
 		sess.mu.Lock()
 		if !sess.terminal() {
 			sess.phone = phone
+			sess.verificationID = challenge.VerificationID
 		}
 		sess.mu.Unlock()
 		writeLoginJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -144,6 +151,7 @@ func (c *Client) handleSmsVerify(sess *loginSession) http.HandlerFunc {
 		code := strings.TrimSpace(asString(body["smsCode"]))
 		sess.mu.Lock()
 		phone := sess.phone
+		verificationID := sess.verificationID
 		sess.mu.Unlock()
 		if phone == "" {
 			writeLoginJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "请先获取手机验证码"})
@@ -153,7 +161,7 @@ func (c *Client) handleSmsVerify(sess *loginSession) http.HandlerFunc {
 			writeLoginJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "请输入验证码"})
 			return
 		}
-		cred, err := c.loginWithSMS(r.Context(), phone, code)
+		cred, err := c.loginWithSMS(r.Context(), phone, verificationID, code)
 		if err != nil {
 			writeLoginJSON(w, http.StatusOK, map[string]any{"ok": false, "message": c.scrub(err.Error())})
 			return
@@ -224,6 +232,7 @@ func renderLoginPage(qrSVG string) string {
 		"__CAPTCHA_SRC__":    aliyunCaptchaScript,
 		"__CAPTCHA_SCENE__":  aliyunCaptchaSceneID,
 		"__CAPTCHA_PREFIX__": aliyunCaptchaPrefix,
+		"__CAPTCHA_REGION__": aliyunCaptchaRegion,
 	}
 	for k, v := range replacements {
 		page = strings.ReplaceAll(page, k, v)
@@ -308,6 +317,7 @@ const loginPageTemplate = `<!DOCTYPE html>
   var CAPTCHA_SRC = '__CAPTCHA_SRC__';
   var CAPTCHA_SCENE = '__CAPTCHA_SCENE__';
   var CAPTCHA_PREFIX = '__CAPTCHA_PREFIX__';
+  var CAPTCHA_REGION = '__CAPTCHA_REGION__';
 
   var tabQr = document.getElementById('tabQr');
   var tabSms = document.getElementById('tabSms');
@@ -390,6 +400,7 @@ const loginPageTemplate = `<!DOCTYPE html>
     window.initAliyunCaptcha({
       SceneId: CAPTCHA_SCENE,
       prefix: CAPTCHA_PREFIX,
+      region: CAPTCHA_REGION,
       mode: 'popup',
       element: '#captcha-element',
       button: '#sendCode',

@@ -85,19 +85,27 @@ func (u *loginUpstream) handler(t *testing.T) http.HandlerFunc {
 			}})
 		case pathPointsGrant:
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{"granted": true}})
-		case pathSendSMS:
+		case pathIAMSendSMS:
 			if u.smsSendErr != "" {
-				_ = json.NewEncoder(w).Encode(map[string]any{"code": 100006, "message": u.smsSendErr})
+				// IAM reports failures with a symbolic code and its own
+				// request id, not the web API's numeric one.
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"code": "COMMON_INVALID_ARGUMENT", "message": u.smsSendErr,
+					"request_id": "req-test", "details": map[string]any{},
+				})
 				return
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{}})
-		case pathLoginSMS:
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": "OK", "data": map[string]any{
+				"verification_id": "v-test", "expires_in": 300, "retry_after": 60,
+			}})
+		case pathIAMLoginSMS:
 			tok := u.smsLoginToken
 			if tok == "" {
 				tok = "sms-token"
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{
-				"access_token": tok, "refresh_token": "sms-refresh", "office_identity": "personal",
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": "OK", "data": map[string]any{
+				"access_token": tok, "refresh_token": "sms-refresh", "token_type": "bearer",
+				"office_identity": "personal",
 			}})
 		default:
 			w.WriteHeader(http.StatusNotFound)

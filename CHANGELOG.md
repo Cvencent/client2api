@@ -8,6 +8,61 @@
 
 ## [Unreleased]
 
+## [0.1.99] - 2026-10-21
+
+### Changed
+
+- **Raccoon 的短信登录整条搬到 IAM 服务，一键接码关闭。** 厂商把小浣熊的短信登录从
+  `/api/web/auth/v1/*` 迁到了 `/api/iam/v1/*`，并换了字段名和信封：
+  `POST /api/iam/v1/sms/send`（`captcha_token` + `scene=login`）返回 `verification_id`，
+  `POST /api/iam/v1/auth/login/sms` 用该 id 加 `verification_code` 登录。旧的
+  `/send_sms` 与 `/login_with_sms` 已经废弃——**任何**请求都回 `100006 图形验证码校验失败`，
+  这也正是“点自动添加就报错”的真正原因。适配器现在同时解析两套信封（旧 API 的数字 `code`
+  与 IAM 的字符串 `code`），旧接口的数字含义原样保留，所以 `100006` 的判定没有被改坏。
+  扫码登录、token 刷新、余额、模型目录仍在旧 web API 上，均未受影响。
+  面板「短信登录」标签页一并修好，人工拖滑块后可用。
+- **Raccoon 的「一键接码 / 自动登录」已从能力位移除。** 厂商加固了阿里云滑块场景，
+  traceless 快路径不再自动通过：实测用真浏览器、在厂商自己的域下、同一会话、带齐
+  cookies，取到的参数一律被判 `captcha_token invalid`，厂商自己的登录页现在也要人拖滑块。
+  无人值守跑不通，于是不再声明 `core.AutoLoginProvider`，面板因此收起该按钮，不会再误点。
+  手动接码（租号 / 取码 / 释放）保留不变。随之下线的配置项有 `browser_path`、
+  `browser_headless`、`auto_login_timeout_seconds`、`sms_polls`、`sms_interval_seconds`
+  ——旧配置带着它们仍能正常加载（未知键被忽略），只是不再生效。
+- **CodeArts 的限流识别与倍率目录。** 厂商的拒绝不走 HTTP 状态码：每分钟 token 上限以
+  **HTTP 200** 落在 SSE 帧里（`error_code: InferHub.ModelArts.8111x.429`）。`openStream`
+  现在读第一帧再交给调用方：token 上限按**限流**处理（冷却该账号、上报网关、换下一个账号），
+  队列码保持独立，其余拒绝原样透传给调用方且**不归罪账号**。模型目录开始读取厂商的
+  `credit[].ratio_display` 倍率（`0.18x` 等），并按厂商自己的时间表解析促销档位
+  （`deepseek-v4.1-flash` 白天 `0.18x`、21:00–07:59 为 `0.09x`），未给出时间表的档位不假定生效。
+- **Opencode 内置目录补齐上下文窗口与输出上限。** 这些数字不只用于显示：网关按模型宣称的
+  窗口决定裁剪，目录里缺窗口的模型无法被裁剪，超长请求会原样转发并被厂商以不带数字的 400
+  拒绝。凡是 models.dev 给出上限的 id 现在都带上该上限，免费 id 也不例外。
+
+### Fixed
+
+- **逐模型的估算校准，修掉 Autoclaw 被反复裁剪的问题。** 字符启发式对不同厂商的 tokenizer
+  误差方向都不一样：实测 Autoclaw 少算约 8%（厂商 861713 / 本网关 931735），而 WorkBuddy
+  多算约 2.3 倍（厂商 1477004 / 本网关 628884），一个全局常数不可能同时正确。现在每次成功
+  调用都用厂商自己的 `prompt_tokens` 与本网关对同一份字节的估算配对，按 `(平台, 模型)`
+  把比值记在 `data/estimate_calibration.json`，并以 0.5 的权重平滑、限制在 0.5–4.0 之间。
+  该校准只作用于**守卫的预算**，用量行和 `/v1/messages/count_tokens` 报告的仍是针对请求本身
+  的估算。Autoclaw 的 8% 过读原本正好吃掉守卫预留的 8% 安全边界，这正是一直被裁剪的原因。
+- **Responses 的上下文裁剪改为返回压缩项，不再静默丢历史。** 静默裁剪对调用方看起来就是一次
+  普通成功，于是下一轮原样重发同样的超长历史，再被裁一次，如此循环。现在守卫**本会**裁剪时，
+  网关改为折叠历史并返回一个 `compaction` 项，把这条信号交给调用方；若压缩跑不起来，
+  守卫原有的裁剪仍然生效、该轮照常成功。只有 `/v1/responses` 有这条通道——Chat 与 Anthropic
+  协议没有压缩词汇，那里仍以 `context_window_exceeded` 回报，交由调用方处理。
+- **面板账号页的模型清单改用实时目录。** 账号池的模型列与弹层过去读 overview 里的
+  `Status.Models`，而那可能只是模块的静态兜底列表（trae 即如此），于是与「模型与档位」页
+  显示两套模型名。现在两处共用 `/panel/api/models` 的实时目录（60s 节流、并发合并、失败不写入），
+  模块上架新模型后不必手动「重新获取」即可跟上。
+
+### Installer
+
+- `client2api-setup-0.1.99.exe`（空包，不含账号凭据或本机配置）
+- SHA256：`EA4FAFBFF1CB10E5605D24483F2E7815BBADD05A51B36382DD9B5B73862D4041`
+- 升级会保留现有 `configs/client2api.json`、`data/`、账号池、用量和任务数据。
+
 ## [0.1.98] - 2026-10-21
 
 ### Fixed

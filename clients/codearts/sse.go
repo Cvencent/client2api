@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -290,6 +291,11 @@ func usageFrom(u *sseUsage) core.Usage {
 }
 
 // streamError is an error the upstream delivered inside an HTTP 200 stream.
+//
+// CodeArts folds its refusals into the body, so the HTTP status carries no
+// verdict and the vendor's own code and wording are the only evidence.  The
+// kind is read from them here because an in-stream refusal the module cannot
+// name is a refusal the gateway cannot park, rotate away from or attribute.
 type streamError struct {
 	code    string
 	message string
@@ -302,6 +308,54 @@ func (e *streamError) Error() string {
 	return e.message
 }
 
+// kind reports how this in-stream refusal must be handled.
+//
+// The per-minute token ceiling (`InferHub.ModelArts.8111x.429`) is a plain rate
+// limit: another credential has its own budget, so the caller may rotate.  The
+// concurrency-queue code stays its own kind -- an in-stream refusal carries no
+// queue position to poll for, so waiting on the queue-status endpoint would
+// stall the request over a condition the endpoint cannot describe.
+func (e *streamError) kind() errKind {
+	if e == nil {
+		return kindNone
+	}
+	switch {
+	case isRateLimitErrorCode(e.code) || isRateLimitErrorCode(e.message):
+		return kindRateLimit
+	case isQueueErrorCode(e.code) || isQueueErrorCode(e.message):
+		return kindQueue
+	case isAuthBody(0, e.code) || isAuthBody(0, e.message):
+		return kindAuth
+	case reQuotaBody.MatchString(e.code) || reQuotaBody.MatchString(e.message):
+		return kindQuota
+	}
+	return kindNone
+}
+
+// status is the HTTP status the same refusal would have carried had the vendor
+// not folded it into a 200 response.  A zero means the module has no better
+// answer than its own default.
+func (e *streamError) status() int {
+	switch e.kind() {
+	case kindRateLimit:
+		return http.StatusTooManyRequests
+	case kindAuth:
+		return http.StatusUnauthorized
+	case kindQuota:
+		return http.StatusPaymentRequired
+	}
+	return 0
+}
+
+// asStreamError unwraps a *streamError out of an error chain.
+func asStreamError(err error) (*streamError, bool) {
+	var se *streamError
+	if errors.As(err, &se) {
+		return se, true
+	}
+	return nil, false
+}
+
 // queueRetryable reports whether this in-stream error is one the caller should
 // retry the whole request for.  CodeArts reports a per-minute token limit as
 // `InferHub.ModelArts.81111.429` inside a 200 stream rather than as a 429.
@@ -309,7 +363,8 @@ func (e *streamError) queueRetryable() bool {
 	if e == nil {
 		return false
 	}
-	return isQueueErrorCode(e.code) || isQueueErrorCode(e.message)
+	k := e.kind()
+	return k == kindRateLimit || k == kindQueue
 }
 
 // ---------------------------------------------------------------------------
@@ -334,6 +389,24 @@ type stream struct {
 	err  error
 	fin  string
 	stop bool
+
+	// head holds events decoded from frames that were read BEFORE this stream
+	// was built -- the first frame is consumed by the account retry loop so a
+	// refusal the vendor folded into the 200 body is classified there rather
+	// than surfacing to the caller.  They are delivered first, in order, so the
+	// caller still sees every frame the vendor sent.
+	head []core.Event
+
+	// headErr is an in-stream refusal the retry loop chose NOT to act on: it
+	// is neither a credential nor a rate problem, so no other account could
+	// answer it and the vendor's own words must reach the caller unchanged.
+	// It is delivered after head, exactly where the frame sat in the stream.
+	headErr error
+
+	// drained marks a stream the probe built after already reading everything
+	// there was to read.  It has no reader goroutine, so Recv must do the
+	// reader loop's cleanup -- releasing the request context -- itself.
+	drained bool
 }
 
 // newStream builds a stream around an already-open response body.
@@ -342,16 +415,117 @@ type stream struct {
 // finishes, and is where the caller puts whatever has to be undone (usually
 // the chat context's cancel function).
 func newStream(ctx context.Context, body io.ReadCloser, firstWait, chunkWait time.Duration, release func()) *stream {
+	wd := newWatchdogBody(body, firstWait, chunkWait)
+	return newStreamOver(ctx, wd, bufio.NewReaderSize(wd, 64<<10), release, nil)
+}
+
+// newStreamOver builds a stream that continues reading from br rather than from
+// the start of body, with head delivered before anything br produces.
+//
+// br must already wrap body, because a caller that inspected the first frame
+// must hand the SAME reader along: buffering the body twice would drop the
+// bytes the first frame's read pulled past its own line.
+func newStreamOver(ctx context.Context, body io.ReadCloser, br *bufio.Reader, release func(), head []core.Event) *stream {
 	s := &stream{
 		events:  make(chan core.Event, 32),
 		done:    make(chan struct{}),
 		release: release,
 		body:    body,
+		head:    head,
 	}
-	wd := newWatchdogBody(body, firstWait, chunkWait)
 	core.GoSafe("codearts stream", nil, func() {
-		s.run(ctx, wd)
+		s.run(ctx, br)
 	})
+	return s
+}
+
+// newProbedStream reads the first frame before building the stream.
+//
+// CodeArts folds refusals into a 200 response, so "the request opened" says
+// nothing about whether it will be served.  Reading one frame here is what lets
+// the account retry loop rotate away from a rate-limited credential instead of
+// handing the caller a turn that dies on its first read.  A frame that is not a
+// refusal is replayed, so nothing is lost.
+func newProbedStream(ctx context.Context, body io.ReadCloser, firstWait, chunkWait time.Duration, release func(), acctID string) (*stream, error) {
+	wd := newWatchdogBody(body, firstWait, chunkWait)
+	br := bufio.NewReaderSize(wd, 64<<10)
+
+	payload, err := readFrame(br)
+	if err != nil {
+		if errors.Is(err, errStreamDone) || errors.Is(err, io.EOF) {
+			// The vendor answered with nothing at all.  The reader loop
+			// reports that as one done event, so the probe does the same
+			// rather than inventing a different verdict.
+			return newDrainedStream(wd, release, []core.Event{{Type: core.EventDone}}), nil
+		}
+		// A transport failure is delivered at Recv exactly as it always was:
+		// the probe merely read it a moment earlier.
+		return newTerminalStream(wd, release, err), nil
+	}
+	frame, err := parseFrame(payload)
+	if err != nil {
+		return newTerminalStream(wd, release, err), nil
+	}
+	events, err := eventFor(frame)
+	if err != nil {
+		// The vendor refused the request inside the body.  The per-minute token
+		// ceiling is the one refusal another credential clears, so it is handed
+		// back to the retry loop BEFORE any frame reaches the client: nothing
+		// has been rendered yet, so rotating costs the caller nothing.
+		//
+		// Every other in-stream refusal stays what it always was -- a terminal
+		// error the caller reads from Recv.  Rotating for one would either
+		// re-send content the vendor objected to or park the request on a queue
+		// this side cannot observe.  The module still classifies what it
+		// recognises so the gateway can park the pair and explain the failure.
+		if se, ok := asStreamError(err); ok && se.kind() == kindRateLimit {
+			_ = wd.Close()
+			return nil, err
+		}
+		return newTerminalStream(wd, release, classifyStreamRefusal(acctID, err)), nil
+	}
+	if len(events) == 0 {
+		// A keep-alive-ish frame carries no event.  The reader loop treats it
+		// as a no-op, so the probe must too, and simply keep reading.
+		return newStreamOver(ctx, wd, br, release, nil), nil
+	}
+	return newStreamOver(ctx, wd, br, release, events), nil
+}
+
+// classifyStreamRefusal gives a named in-stream refusal the classification the
+// gateway needs in order to park the (account, model) pair and explain the
+// failure, while leaving the vendor's own wording on the error.  A refusal the
+// module cannot name is passed through untouched, so an unknown code keeps
+// reaching the caller verbatim instead of being guessed at.
+func classifyStreamRefusal(acctID string, err error) error {
+	se, ok := asStreamError(err)
+	if !ok || se.kind() == kindNone {
+		return err
+	}
+	return core.Fail("codearts", acctID, failureKind(se.kind()), se.status(), errors.New(core.Redact(se.Error())))
+}
+
+// newDrainedStream builds a stream that replays events and then reads clean.
+// It has no reader goroutine: there is nothing left to read.
+func newDrainedStream(body io.Closer, release func(), events []core.Event) *stream {
+	s := &stream{
+		events:  make(chan core.Event),
+		done:    make(chan struct{}),
+		release: release,
+		body:    body,
+		head:    events,
+		drained: true,
+	}
+	close(s.events)
+	return s
+}
+
+// newTerminalStream builds a stream whose one terminal error is delivered on
+// the first Recv, after which it reads clean.  It is how a refusal the probe
+// read -- or a transport failure it hit -- reaches the caller unchanged.
+func newTerminalStream(body io.Closer, release func(), err error) *stream {
+	s := newDrainedStream(body, release, nil)
+	s.headErr = err
 	return s
 }
 
@@ -359,6 +533,15 @@ func newStream(ctx context.Context, body io.ReadCloser, firstWait, chunkWait tim
 // end of the stream; every other error is terminal and carries the upstream's
 // own message.
 func (s *stream) Recv() (core.Event, error) {
+	if ev, ok := s.takeHead(); ok {
+		return ev, nil
+	}
+	if err := s.takeHeadErr(); err != nil {
+		// A seeded refusal is terminal, exactly as a reader-loop error is:
+		// nothing more will arrive, so the request context goes back now.
+		s.releaseNow()
+		return core.Event{}, err
+	}
 	select {
 	case ev, ok := <-s.events:
 		if ok {
@@ -367,13 +550,49 @@ func (s *stream) Recv() (core.Event, error) {
 	case <-s.done:
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.err != nil {
-		err := s.err
-		s.err = nil // the error is delivered once, then the stream reads clean
+	err := s.err
+	s.err = nil // the error is delivered once, then the stream reads clean
+	drained := s.drained
+	s.mu.Unlock()
+	if err != nil {
+		s.releaseNow()
 		return core.Event{}, err
 	}
+	if drained {
+		// No reader goroutine ever ran for this stream, so the release the
+		// reader loop would have performed belongs to Recv.
+		s.releaseNow()
+	}
 	return core.Event{}, io.EOF
+}
+
+// releaseNow returns the request context once.  Both Close and the reader loop
+// call it, so a stream that is drained and then closed does not cancel twice.
+func (s *stream) releaseNow() {
+	if release := s.takeRelease(); release != nil {
+		release()
+	}
+}
+
+// takeHead returns the next already-decoded event, if any.
+func (s *stream) takeHead() (core.Event, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.head) == 0 {
+		return core.Event{}, false
+	}
+	ev := s.head[0]
+	s.head = s.head[1:]
+	return ev, true
+}
+
+// takeHeadErr delivers a seeded refusal exactly once, then reads clean.
+func (s *stream) takeHeadErr() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	err := s.headErr
+	s.headErr = nil
+	return err
 }
 
 // Close releases the response body and the request context.  It is safe to
@@ -384,9 +603,7 @@ func (s *stream) Close() error {
 		if s.body != nil {
 			_ = s.body.Close()
 		}
-		if release := s.takeRelease(); release != nil {
-			release()
-		}
+		s.releaseNow()
 	})
 	return nil
 }
@@ -405,7 +622,7 @@ func (s *stream) takeRelease() func() {
 
 // run is the reader loop.  It is the only writer of the events channel and the
 // only place the terminal error or finish reason is set.
-func (s *stream) run(ctx context.Context, body io.Reader) {
+func (s *stream) run(ctx context.Context, br *bufio.Reader) {
 	defer func() {
 		// Releasing here rather than only in Close is what keeps a fully
 		// drained stream from leaking its request context.
@@ -414,7 +631,6 @@ func (s *stream) run(ctx context.Context, body io.Reader) {
 		}
 	}()
 
-	br := bufio.NewReaderSize(body, 64<<10)
 	var finish string
 	for {
 		if err := ctx.Err(); err != nil {

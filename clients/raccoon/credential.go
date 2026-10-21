@@ -34,11 +34,17 @@ const (
 	pathPointsPrefix  = "/api/web/points/v1"
 	pathDesktopPrefix = "/api/web/desktop/v1"
 
+	// The interactive login was split off onto the IAM service.  QR and token
+	// refresh stayed on the web API, but the SMS endpoints moved: the web
+	// bundle now calls /api/iam/v1/sms/send and /api/iam/v1/auth/login/sms,
+	// the latter keyed by the verification_id the send step returns.
+	pathIAMPrefix   = "/api/iam/v1"
+	pathIAMSendSMS  = pathIAMPrefix + "/sms/send"
+	pathIAMLoginSMS = pathIAMPrefix + "/auth/login/sms"
+
 	pathRefresh     = pathAuthPrefix + "/refresh"
 	pathUserInfo    = pathAuthPrefix + "/user_info"
 	pathQRLogin     = pathAuthPrefix + "/login_with_qrcode_code"
-	pathSendSMS     = pathAuthPrefix + "/send_sms"
-	pathLoginSMS    = pathAuthPrefix + "/login_with_sms"
 	pathCatalog     = pathLLMPrefix + "/model_catalog"
 	pathChat        = pathLLMPrefix + "/chat/completions"
 	pathBalance     = pathPointsPrefix + "/balance"
@@ -47,9 +53,8 @@ const (
 
 	// phoneCipherSecret is a PUBLIC constant that ships inside the vendor's
 	// own front-end bundle. It is not a security boundary; it exists only so
-	// the SMS path would not put a plaintext phone number on the wire. This
-	// module does not implement the SMS path, but the cipher is kept (and
-	// pinned by a test) because it is part of the transcribed protocol.
+	// the SMS path does not put a plaintext phone number on the wire. Both the
+	// IAM send and the IAM login encrypt the phone with it.
 	phoneCipherSecret = "senseraccoon2023"
 
 	// tokenRefreshWindow is how early the pool renews an access token.
@@ -62,6 +67,11 @@ const (
 	clientVersion  = "v1.0.35"
 	userAgent      = "Raccoon Work/1.0.35 (Windows)"
 	vendorLanguage = "zh"
+
+	// smsLoginScene is the scene the IAM SMS endpoints require. The vendor's own
+	// login page sends it on every send, and the endpoint rejects a request
+	// that omits it.
+	smsLoginScene = "login"
 )
 
 // flexString decodes a JSON string OR a bare JSON number/boolean into a

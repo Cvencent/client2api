@@ -22,6 +22,12 @@ import (
 // core.CheckinProvider is implemented in checkin.go (the desktop login-points
 // grant, which is how the daily 300 credits are claimed).
 // Deliberately NOT implemented (and why):
+//   - core.AutoLoginProvider: the one-click 一键接码 flow is OFF.  The vendor
+//     moved SMS login to the IAM service and hardened the Aliyun scene so the
+//     traceless fast path no longer auto-passes: their own login page now
+//     needs a human to drag the slider, so an unattended run can never get a
+//     usable captcha token.  Rather than leave a button that always fails, the
+//     module no longer advertises the capability and the panel hides it.
 //   - core.TaskProvider / core.BatchProvider / core.CaptchaProvider /
 //     core.HintProvider: the vendor exposes nothing of the sort.
 var (
@@ -33,7 +39,6 @@ var (
 	_ core.BalanceProvider     = (*Client)(nil)
 	_ core.PackageProvider     = (*Client)(nil)
 	_ core.SMSProvider         = (*Client)(nil)
-	_ core.AutoLoginProvider   = (*Client)(nil)
 )
 
 const probeTimeout = 30 * time.Second

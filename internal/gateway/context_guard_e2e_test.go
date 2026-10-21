@@ -86,11 +86,15 @@ func newGuardServer(t *testing.T, c core.Client, learnedPath string, opts ...fun
 		started:          time.Now(),
 		stats:            o.Stats,
 		sessionPlatforms: o.SessionPlatforms,
+		estimates:        newEstimateCalibrationStore(o.EstimateCalibrationPath, nil),
 	}
 	if s.opts.Logger == nil {
 		s.opts.Logger = log.Default()
 	}
 	s.learnedWindows = openLearnedWindowStore(o.LearnedWindowsPath, s.opts.Logger.Printf)
+	// Mirror NewServer: a test that exercises compaction needs the same signer
+	// the real process builds.
+	s.compaction = newCompactionSigner(o.CompactionKeyPath, s.opts.Logger.Printf)
 	s.handler = s.routes()
 	return s
 }

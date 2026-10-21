@@ -103,6 +103,15 @@ func (s *server) promptBudget(ctx context.Context, client core.Client, model str
 	if budget < promptBudgetFloor {
 		return 0
 	}
+	// The budget is expressed in this gateway's estimate units, because that is
+	// what applyContextBudget measures the request in.  A vendor whose
+	// tokenizer reads fewer tokens per estimated token can hold proportionally
+	// more of them, so the vendor-space budget is divided by how many vendor
+	// tokens one estimated token is worth.  A model that has never been
+	// measured reports 1 and this is a no-op, exactly as before.
+	if factor := s.estimates.factor(client.Name(), model); factor > 0 && factor != 1 {
+		budget = int64(float64(budget) / factor)
+	}
 	return budget
 }
 
@@ -983,6 +992,12 @@ func (s *server) prepareCandidateAttempt(ctx context.Context, candidate core.Can
 		if sentEffort != "" && sentEffort != rec.ReasoningEffort {
 			rec.SentReasoningEffort = sentEffort
 		}
+	}
+	if rec != nil {
+		// The usage row carries this gateway's own estimate of the request it
+		// actually sent, so the vendor's reported prompt_tokens can later be
+		// compared against it for the same bytes.  See estimate_calibration.go.
+		rec.EstimatedPromptTokens = int64(estimateRequestTokens(req))
 	}
 	// This is a gateway-only sizing instruction, not part of the upstream wire
 	// request. Clear it after the guard has used it so no module can mistake it

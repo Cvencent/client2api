@@ -96,6 +96,10 @@ type loginSession struct {
 	qrStatus  string
 	phone     string
 	expiredAt string
+	// verificationID is the IAM challenge id the send step returned.  The
+	// login step must quote it, so it is kept beside the phone it belongs to
+	// and cleared whenever the phone changes.
+	verificationID string
 
 	state     string
 	message   string
@@ -379,47 +383,89 @@ func (c *Client) pollQR(ctx context.Context, sess *loginSession) {
 	}
 }
 
+// smsChallenge is what a successful send hands back: the id the login step
+// must quote, and the vendor's own retry window.
+type smsChallenge struct {
+	VerificationID string     `json:"verification_id"`
+	ExpiresIn      flexString `json:"expires_in"`
+	RetryAfter     flexString `json:"retry_after"`
+}
+
 // sendSMS asks the vendor to text a verification code.  The phone travels
 // encrypted, never in the clear.
-func (c *Client) sendSMS(ctx context.Context, phone, captchaParam string) error {
+//
+// This is the IAM endpoint, not the old web one: the web bundle migrated the
+// SMS login there, and the legacy /api/web/auth/v1/send_sms now answers every
+// request with a captcha failure regardless of the token.  The reply carries a
+// verification_id which the login step must quote, so the caller has to keep it.
+func (c *Client) sendSMS(ctx context.Context, phone, captchaParam string) (smsChallenge, error) {
 	enc, err := encryptPhoneRandom(phone)
 	if err != nil {
-		return err
+		return smsChallenge{}, err
 	}
 	ctx, cancel := withTimeout(ctx, requestTimeout)
 	defer cancel()
-	err = c.do(ctx, http.MethodPost, pathSendSMS, nil, map[string]string{
-		"captcha_param": captchaParam,
+	var res smsChallenge
+	err = c.do(ctx, http.MethodPost, pathIAMSendSMS, nil, map[string]string{
+		"captcha_token": captchaParam,
 		"nation_code":   "86",
 		"phone":         enc,
-	}, nil)
+		"scene":         smsLoginScene,
+	}, &res)
 	if err != nil {
-		var ae *apiError
-		if errors.As(err, &ae) && ae.Code == 100006 {
-			return errors.New("raccoon: 图形验证码校验失败，请重新完成滑块验证")
-		}
+		return smsChallenge{}, smsSendError(err)
+	}
+	if strings.TrimSpace(res.VerificationID) == "" {
+		return smsChallenge{}, errors.New("raccoon: 验证码接口没有返回 verification_id")
+	}
+	return res, nil
+}
+
+// smsSendError turns a send refusal into the operator-facing sentence. The
+// captcha failures are the retryable, actionable ones: the operator can simply
+// solve the slider again, so they are named explicitly instead of being passed
+// through as a bare vendor code. Every other refusal keeps its own message —
+// a bad phone number must never be reported as a captcha problem.
+func smsSendError(err error) error {
+	var ae *apiError
+	if !errors.As(err, &ae) {
 		return err
 	}
-	return nil
+	// 100006 is the legacy web code. The IAM service, which is what the send
+	// now goes through, reports the same condition against the captcha_token
+	// field, so the message is what identifies it.
+	if ae.Code == 100006 || strings.Contains(strings.ToLower(ae.Message), "captcha") {
+		return errors.New("raccoon: 图形验证码校验失败，请重新完成滑块验证")
+	}
+	return err
 }
 
 // loginWithSMS exchanges a verification code for a credential.
-func (c *Client) loginWithSMS(ctx context.Context, phone, smsCode string) (credential, error) {
+//
+// Like sendSMS this is the IAM endpoint.  It is keyed by the verification_id
+// the send step returned rather than by the phone alone, which is why the
+// challenge has to be carried through from send to login.
+func (c *Client) loginWithSMS(ctx context.Context, phone, verificationID, smsCode string) (credential, error) {
 	enc, err := encryptPhoneRandom(phone)
 	if err != nil {
 		return credential{}, err
+	}
+	if strings.TrimSpace(verificationID) == "" {
+		return credential{}, errors.New("raccoon: 缺少 verification_id，无法完成短信登录")
 	}
 	ctx, cancel := withTimeout(ctx, requestTimeout)
 	defer cancel()
 	var res struct {
 		AccessToken    string `json:"access_token"`
 		RefreshToken   string `json:"refresh_token"`
+		TokenType      string `json:"token_type"`
 		OfficeIdentity string `json:"office_identity"`
 	}
-	if err := c.do(ctx, http.MethodPost, pathLoginSMS, nil, map[string]string{
-		"nation_code": "86",
-		"phone":       enc,
-		"sms_code":    smsCode,
+	if err := c.do(ctx, http.MethodPost, pathIAMLoginSMS, nil, map[string]string{
+		"nation_code":       "86",
+		"phone":             enc,
+		"verification_id":   verificationID,
+		"verification_code": smsCode,
 	}, &res); err != nil {
 		return credential{}, err
 	}
@@ -436,6 +482,29 @@ func (c *Client) loginWithSMS(ctx context.Context, phone, smsCode string) (crede
 		cred.ExpiresAt = flexString(strconv.FormatInt(ms, 10))
 	}
 	return cred, nil
+}
+
+// storeCredential enriches, stores and rewards a fresh credential the same way
+// a pasted key is stored: user_info fills in the label, then the pool writes it
+// through to disk so it survives a restart and shows up in the account table.
+func (c *Client) storeCredential(ctx context.Context, cred credential) *entry {
+	if info, err := c.fetchUserInfo(ctx, cred); err == nil {
+		if info.ID != "" {
+			cred.UserID = info.ID
+		}
+		if info.Name != "" {
+			cred.Nickname = info.Name
+		}
+		if info.Phone != "" {
+			cred.Phone = info.Phone
+		}
+		if info.OfficeIdentity != "" {
+			cred.OfficeIdentity = info.OfficeIdentity
+		}
+	}
+	e := c.pool.put(account{credential: cred, Label: cred.displayName(), Origin: originStored})
+	c.grantLoginPointsBestEffort(ctx, e)
+	return e
 }
 
 // finishLogin enriches a fresh credential, stores it and marks the session

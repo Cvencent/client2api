@@ -44,7 +44,7 @@ import (
 )
 
 // version is overridable with -ldflags "-X main.version=...".
-var version = "0.1.98"
+var version = "0.1.99"
 
 // restartHandoffEnv marks the replacement half of a panel restart.  It tells a
 // starting process to keep retrying the listen address instead of failing fast,
@@ -1624,6 +1624,10 @@ func run() error {
 		// measurement, not an operator's decision, and must not be exported to
 		// other installations wearing a "manual" label.
 		LearnedWindowsPath: filepath.Join(cfg.DataDir, "learned_context_windows.json"),
+		// Per-model calibration between this gateway's token heuristic and the
+		// vendor's own count.  A measurement, not a setting, so it lives beside
+		// the learned windows and survives an upgrade with the data directory.
+		EstimateCalibrationPath: filepath.Join(cfg.DataDir, "estimate_calibration.json"),
 		// The HMAC key that signs Responses compaction blobs.  It lives in the
 		// data directory (which an upgrade preserves) so a blob a client replays
 		// after an install still verifies; see internal/gateway/compaction.go.

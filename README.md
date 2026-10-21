@@ -292,6 +292,27 @@ OpenAI's `schema must be a JSON Schema of 'type: "object"', got 'type: null'`
   survives restarts). A refusal often names a limit that applies to one condition
   rather than the model's real window, and this stops one such refusal from
   permanently shrinking a model to a fraction of what it demonstrably handles.
+- The estimator is calibrated per model. The character heuristic is closer to
+  some vendors' tokenizers than to others, and the error does not even point the
+  same way: measured in production, Autoclaw's tokenizer reads ~8% *fewer*
+  tokens than this gateway estimates for the same bytes, while WorkBuddy reads
+  ~2.3x *more*. One global constant cannot be right for both. Every completed
+  call pairs the vendor's own `prompt_tokens` with this gateway's estimate of the
+  same request, and the ratio is stored per `(platform, model)` in
+  `data/estimate_calibration.json`. It is applied to the guard's budget only, so
+  the estimate the usage row and `/v1/messages/count_tokens` report stays a
+  statement about the request. A model with no measurement is unaffected.
+  This is what stopped Autoclaw from being trimmed on every turn: its ~8%
+  over-read was consuming exactly the 8% safety margin the guard reserves.
+- When the Responses context guard would have trimmed a turn, the gateway folds
+  the history and returns a `compaction` item instead of silently dropping the
+  oldest turns. A silent trim looks like an ordinary success, so the caller
+  re-sends the same oversized history next turn and is trimmed again forever;
+  the compaction item is the signal it carries forward. If summarisation cannot
+  run, the guard's own trim still applies and the turn still succeeds. Only
+  `/v1/responses` has this channel -- the Chat and Anthropic protocols have no
+  compaction vocabulary, so there a size refusal is still reported as
+  `context_window_exceeded` for the caller to act on.
 - A request whose newest turn alone exceeds the window is refused with
   `context_window_exceeded` rather than trimmed, because cutting into the question
   would answer a different one.

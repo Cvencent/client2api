@@ -578,7 +578,7 @@ func cooldownFor(kind errKind) (time.Duration, string) {
 		return defaultQuotaCooldown, stateExhausted
 	case kindAuth:
 		return defaultCooldown, stateCooling
-	case kindQueue, kindTransient, kindNetwork:
+	case kindQueue, kindRateLimit, kindTransient, kindNetwork:
 		return defaultShortCooldown, stateCooling
 	default:
 		return 0, stateUnknown

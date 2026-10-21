@@ -35,6 +35,13 @@ const (
 	kindAuth
 	kindQuota
 	kindQueue
+	// kindRateLimit is the vendor's own per-minute token ceiling
+	// (`InferHub.ModelArts.8111x.429`).  It is deliberately separate from
+	// kindQueue: a queue refusal names a wait the queue-status endpoint can
+	// follow, while a TPM ceiling names nothing to poll for.  Treating the two
+	// as one kind would park the request on a queue that is not the reason it
+	// was refused.
+	kindRateLimit
 	kindTransient
 	kindClient
 )
@@ -51,6 +58,8 @@ func (k errKind) String() string {
 		return "quota"
 	case kindQueue:
 		return "queue"
+	case kindRateLimit:
+		return "rate_limit"
 	case kindTransient:
 		return "transient"
 	case kindClient:
@@ -62,16 +71,17 @@ func (k errKind) String() string {
 
 // failureKind maps this module's classification onto the gateway's.
 //
-// kindQueue is reported as FailureRateLimited rather than FailureUpstream: the
-// gateway's rotation policy treats a rate-limited failure as retryable, which
-// is exactly what a concurrency-queue rejection is.
+// kindQueue and kindRateLimit are both reported as FailureRateLimited rather
+// than FailureUpstream: the gateway's rotation policy treats a rate-limited
+// failure as retryable, which is exactly what a concurrency-queue rejection
+// and a per-minute token ceiling both are.
 func failureKind(k errKind) core.FailureKind {
 	switch k {
 	case kindQuota:
 		return core.FailureQuota
 	case kindAuth:
 		return core.FailureAuth
-	case kindQueue, kindTransient, kindNetwork:
+	case kindQueue, kindRateLimit, kindTransient, kindNetwork:
 		return core.FailureRateLimited
 	case kindClient:
 		return core.FailureOther
@@ -89,8 +99,15 @@ var (
 	reQueueBody = regexp.MustCompile(`(?i)peak\s+usage|try\s+again\s+after|peak\s+hours|high\s+demand|too\s+many\s+requests`)
 	reAuthBody  = regexp.MustCompile(`(?i)invalid\s+token|token\s+expired|token\s+is\s+invalid`)
 	reQueueCode = regexp.MustCompile(`(?i)81111|TPM|429|rate.?limit|too many requests|排队|限流`)
-	reQuotaBody = regexp.MustCompile(`(?i)insufficient\s+(balance|quota|credit)|quota\s+(exceeded|exhausted)|out\s+of\s+(credit|quota)|not\s+enough\s+credit`)
-	reCtxBody   = regexp.MustCompile(`(?i)context\s+length|maximum\s+context|too\s+long|exceeds?\s+the\s+maximum`)
+	// reRateLimitCode is the per-minute token ceiling the vendor folds into a
+	// 200 body (`InferHub.ModelArts.81114.429`, "the rate limit is 50000000
+	// tokens per minute").  It is a subset of reQueueCode on purpose: the
+	// concurrency-queue code names a queue the queue-status endpoint can poll,
+	// while a token ceiling names nothing to wait on -- another credential has
+	// its own budget.
+	reRateLimitCode = regexp.MustCompile(`(?i)8111\d\.429|TPM|tokens?\s+per\s+minute|rate.?limit|too many requests|429`)
+	reQuotaBody     = regexp.MustCompile(`(?i)insufficient\s+(balance|quota|credit)|quota\s+(exceeded|exhausted)|out\s+of\s+(credit|quota)|not\s+enough\s+credit`)
+	reCtxBody       = regexp.MustCompile(`(?i)context\s+length|maximum\s+context|too\s+long|exceeds?\s+the\s+maximum`)
 )
 
 // isQueueBody reports whether a 400 body describes the concurrency queue.
@@ -119,6 +136,17 @@ func isQueueErrorCode(code string) bool {
 		return false
 	}
 	return code == "TM.00001041" || reQueueCode.MatchString(code)
+}
+
+// isRateLimitErrorCode reports whether an SSE-embedded code or message names
+// the per-minute token ceiling.  Unlike a concurrency-queue rejection this is
+// answered by whichever credential still has budget left, so the caller may
+// rotate for it.
+func isRateLimitErrorCode(text string) bool {
+	if strings.TrimSpace(text) == "" {
+		return false
+	}
+	return reRateLimitCode.MatchString(text)
 }
 
 // classifyStatus turns a status code plus body into an errKind.
@@ -188,6 +216,9 @@ func classifyErr(err error) (errKind, string) {
 	}
 	if ue, ok := asUpstreamError(err); ok {
 		return ue.Kind, ue.Message
+	}
+	if se, ok := asStreamError(err); ok {
+		return se.kind(), se.message
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return kindTransient, err.Error()

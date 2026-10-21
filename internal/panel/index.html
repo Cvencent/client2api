@@ -3950,6 +3950,15 @@ const aid = id => encodeURIComponent(id);
 
 /* ── 状态 ─────────────────────────────────────────────────────────────── */
 let SNAP = { clients: [] }, OVER = null, NAMES = [], REG = [], ACCTS = {}, CUR = null, MODELS = [], MODEL_NAMES = {}, MODEL_META = {}, MODEL_NAMES_READY = {}, VIEW = "accounts", POOL = null;
+// MODEL_CATALOG: 每个平台最近一次从 /panel/api/models 取到的实时目录（client -> id 数组）。
+// 账号池的模型列 / 弹层优先用它，只在某平台还没取到目录时才退回 overview 的
+// Status.Models（模块的静态兜底列表），否则两个页面会显示两套模型名。
+let MODEL_CATALOG = {};
+// 实时目录的刷新节流：/panel/api/models 会让每个模块向上游取一次，账号页每
+// 5s 轮询不能每轮都打一遍。TTL 内的重复调用直接复用上次结果；并发调用合并成
+// 一次；失败不写入目录，也不记「刚刷新过」，所以下一轮还能重试。
+const MODEL_CATALOG_TTL_MS = 60000;
+let MODEL_CATALOG_AT = 0, MODEL_CATALOG_INFLIGHT = null;
 // OVER_FULL: the last /panel/api/overview carried the complete account list and the
 // traffic slice, so the poll must not re-ask every module for what it already has.
 // BOOT: the first refresh has not finished yet; the accounts table shows a skeleton
@@ -4577,7 +4586,12 @@ function catalogForRealm(models, realm, realms, customSource) {
 function realmModels(n, realm) {
   const c = clientInfo(n);
   const caps = capsOf(n) || {};
-  return catalogForRealm((c && c.models) || [], realm, caps.realms, !!caps.custom_source);
+  // 优先用 /panel/api/models 的实时目录：overview 里的 Status.Models 可能只是
+  // 模块的静态兜底列表（trae 就是如此），用它会让账号弹层缺掉上游新模型。
+  // 只有这个平台还没取到实时目录时才退回 Status.Models。
+  const live = MODEL_CATALOG[n];
+  const models = (Array.isArray(live) && live.length) ? live : ((c && c.models) || []);
+  return catalogForRealm(models, realm, caps.realms, !!caps.custom_source);
 }
 
 // accountModelCatalog 取一行账号能用的模型清单。优先使用账号记录自带的
@@ -6065,18 +6079,52 @@ function modelCellHTML(client, m, p, editable, disabled, realm) {
   return '<div class="mpark-m limit"><span class="ic">✕</span>' + name + rate + parkStateHTML(p) + '</div>';
 }
 
-async function ensureModelNames() {
-  if (MODEL_NAMES_READY[""]) return;
-  const r = await api("/panel/api/models");
-  if (!r.ok) return;
-  ((r.data && r.data.clients) || []).forEach(c => {
+// applyModelCatalog 把一份 /panel/api/models 的结果同时写进两份缓存：友好名
+// （MODEL_NAMES/MODEL_META）和每个平台的实时模型 id（MODEL_CATALOG）。后者是
+// 账号池模型列 / 弹层的目录来源；不写它，弹层就只能退回 overview 里的静态
+// Status.Models，两个页面会显示两套模型名。
+function applyModelCatalog(clients) {
+  (clients || []).forEach(c => {
+    MODEL_CATALOG[c.name] = (c.models || []).map(m => String((m && m.id) || "")).filter(Boolean);
     (c.models || []).forEach(m => rememberModelMeta(c.name, m));
   });
   MODEL_NAMES_READY[""] = true;
 }
 
-function openModelsDialog(n, ids) {
-  if (!MODEL_NAMES_READY[""]) { ensureModelNames().then(() => openModelsDialog(n, ids)); return; }
+// refreshModelCatalog 拉一次 /panel/api/models 并写进两份缓存。force 用于手动
+// 「重新获取」和首次打开账号页；TTL 内的重复调用、以及同一时刻的并发调用都会
+// 被合并成一次网络请求。失败返回 false 且不改目录，调用方据此决定是否要重试。
+async function refreshModelCatalog(force) {
+  if (MODEL_CATALOG_INFLIGHT) return MODEL_CATALOG_INFLIGHT;
+  if (!force && MODEL_CATALOG_AT && Date.now() - MODEL_CATALOG_AT < MODEL_CATALOG_TTL_MS) return true;
+  const run = (async () => {
+    const r = await api("/panel/api/models");
+    if (!r.ok) return false;
+    applyModelCatalog(r.data && r.data.clients);
+    MODEL_CATALOG_AT = Date.now();
+    return true;
+  })();
+  MODEL_CATALOG_INFLIGHT = run;
+  try {
+    return await run;
+  } finally {
+    MODEL_CATALOG_INFLIGHT = null;
+  }
+}
+
+async function ensureModelNames() {
+  if (MODEL_NAMES_READY[""]) return true;
+  return refreshModelCatalog(true);
+}
+
+function openModelsDialog(n, ids, triedCatalog) {
+  // 第一次打开且还没有实时目录时，先拉一次再画，避免先把静态列表闪出来。
+  // 只补一次：接口失败时立刻用现有目录渲染（退回 Status.Models），不能
+  // 无条件递归重试，否则目录接口一坏弹层就打不开了。
+  if (!MODEL_NAMES_READY[""] && !triedCatalog) {
+    ensureModelNames().then(() => openModelsDialog(n, ids, true));
+    return;
+  }
   const list = (ids || []).filter(Boolean);
   // model_policy: the module keeps its own blacklist and can also force an
   // account-level park back to ready.  model_policy_store: the module keeps no
@@ -7835,7 +7883,8 @@ async function renderModels(refresh) {
     });
   });
   MODELS = cls;
-  MODEL_NAMES_READY[""] = true;
+  // 账号池的模型列 / 弹层读的是同一份实时目录；每次渲染模型表都顺手刷新它。
+  applyModelCatalog(cls);
   MD_ITEMS = items;
   // 刷新后模型可能增删：丢掉指向已消失模型的历史编辑，避免保存时提交幽灵行。
   const liveKeys = {};
@@ -14201,7 +14250,14 @@ async function refreshVisible() {
   if (ADD.timer || CHAT.busy) return;
   if (VIEW !== "accounts") return;
   visBusy = true;
-  try { await refreshAll(false); } finally { visBusy = false; }
+  try {
+    // 顺带把实时模型目录刷新一遍：模块上架新模型时，账号弹层不必等用户手动点
+    // 「重新获取」就能跟上。故意不 await——这个接口会 fan-out 到所有模块（预算
+    // 8s），等它回来会把账号表的刷新拖慢；它内部有 TTL 节流和并发合并，失败也
+    // 只是这轮不更新，不会影响下面这一步。
+    refreshModelCatalog(false).catch(() => {});
+    await refreshAll(false);
+  } finally { visBusy = false; }
 }
 /* The release smoke test asserts this marker in a real browser.  A syntax
    error or an exception during boot leaves it unset, so a broken panel cannot

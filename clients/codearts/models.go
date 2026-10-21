@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -139,12 +140,246 @@ type builtinModelsResponse struct {
 
 // modelInfo is one entry of the catalogue.
 type modelInfo struct {
-	ModelID       string `json:"model_id"`
-	ModelName     string `json:"model_name"`
-	ContextLength int    `json:"context_length"`
-	MaxTokens     int    `json:"max_tokens"`
-	MaxOutput     int    `json:"max_output_tokens"`
-	Provider      string `json:"provider"`
+	ModelID       string              `json:"model_id"`
+	ModelName     string              `json:"model_name"`
+	ContextLength int                 `json:"context_length"`
+	MaxTokens     int                 `json:"max_tokens"`
+	MaxOutput     int                 `json:"max_output_tokens"`
+	Provider      string              `json:"provider"`
+	Credit        []creditEntry       `json:"credit"`
+	TimeSlots     map[string]timeSlot `json:"time_slots"`
+}
+
+// timeSlot is one entry of the vendor's time_slots table.  A slot with no
+// schedule (the "default" one) is always in force; a promotional slot names a
+// cron-like schedule plus how long each occurrence lasts.
+type timeSlot struct {
+	Timezone string   `json:"timezone"`
+	Schedule *string  `json:"schedule"`
+	Duration *float64 `json:"duration"`
+	TimeUnit string   `json:"timeunit"`
+}
+
+// creditEntry is one row of the vendor's credit table.  `ratio_display` is the
+// 倍率 the vendor's own client shows ("0.18x"); `ratio` is an internal credit
+// factor on a different scale and must not be substituted for it.  A row is
+// scoped to a time slot (`time_slot_id`) and/or an input-token range.
+type creditEntry struct {
+	Ratio              string `json:"ratio"`
+	RatioDisplay       string `json:"ratio_display"`
+	BeforeDisplayRatio string `json:"before_display_ratio"`
+	InputPrice         string `json:"input_price"`
+	CachePrice         string `json:"cache_price"`
+	OutputPrice        string `json:"output_price"`
+	TimeSlotID         string `json:"time_slot_id"`
+	InputFrom          int    `json:"input_from"`
+	InputTo            int    `json:"input_to"`
+	OutputFrom         int    `json:"output_from"`
+	OutputTo           int    `json:"output_to"`
+}
+
+// vendorZone is the timezone the vendor quotes its promotions in.  A
+// FixedZone is used rather than time.LoadLocation: Windows ships no IANA
+// database, and every slot the vendor publishes is UTC+8 without DST.
+var vendorZone = time.FixedZone("CST", 8*3600)
+
+// multiplierFromCredits returns the list 倍率 and the 倍率 in force at now.
+//
+// The vendor publishes one row per (time slot, input range).  Rows in the
+// `default` slot are the list price; a promotional slot such as `off_peak`
+// only applies inside its own window.  Advertising the night rate at noon would
+// be a lie, so the effective value is resolved against the vendor's schedule.
+func multiplierFromCredits(credits []creditEntry, slots map[string]timeSlot, now time.Time) (list, effective float64, ok bool) {
+	var listSet, effSet bool
+	for _, c := range credits {
+		slot := strings.TrimSpace(c.TimeSlotID)
+		if slot != "" && !strings.EqualFold(slot, "default") {
+			continue
+		}
+		if v, ok := parseMultiplier(c.RatioDisplay); ok {
+			list, listSet = v, true
+			break
+		}
+	}
+	if !listSet {
+		return 0, 0, false
+	}
+	effective = list
+	// Prefer the promotional slot whose window covers `now`; the deepest
+	// discount wins if the vendor ever overlaps two of them.
+	for _, c := range credits {
+		slot := strings.TrimSpace(c.TimeSlotID)
+		if slot == "" || strings.EqualFold(slot, "default") {
+			continue
+		}
+		v, ok := parseMultiplier(c.RatioDisplay)
+		if !ok || !slotActive(slots[slot], now) {
+			continue
+		}
+		if !effSet || v < effective {
+			effective, effSet = v, true
+		}
+	}
+	return list, effective, true
+}
+
+// slotActive reports whether a promotional slot is in force at now.
+//
+// A slot with no schedule is NOT assumed to be running: the vendor only names
+// the window it publishes, and claiming an unproven discount is worse than
+// showing the list price.  The "default" slot is skipped by the caller, so
+// everything reaching here is promotional.
+//
+// The schedule is a six-field cron
+// ("0 0 21 * * *" = 21:00 daily); only the fields the vendor actually varies
+// are honoured -- minute, hour and day-of-month/month are matched literally and
+// any other value is treated as "every".  A duration extends each occurrence,
+// so 21:00 + 11h covers 21:00-07:59 across midnight.
+func slotActive(s timeSlot, now time.Time) bool {
+	if s.Schedule == nil || strings.TrimSpace(*s.Schedule) == "" {
+		return false
+	}
+	loc := vendorZone
+	if tz := strings.TrimSpace(s.Timezone); tz != "" && tz != "Asia/Shanghai" {
+		if l, err := time.LoadLocation(tz); err == nil {
+			loc = l
+		}
+	}
+	local := now.In(loc)
+	// Match the schedule against every day the window could still cover: a
+	// window that opened yesterday evening may still be running now.
+	span := time.Duration(0)
+	if s.Duration != nil && *s.Duration > 0 {
+		span = slotDuration(*s.Duration, s.TimeUnit)
+	}
+	days := int(span/(24*time.Hour)) + 1
+	for d := 0; d <= days; d++ {
+		day := local.AddDate(0, 0, -d)
+		start, ok := slotStart(*s.Schedule, day, loc)
+		if !ok {
+			continue
+		}
+		if !local.Before(start) && local.Before(start.Add(spanOrDay(span))) {
+			return true
+		}
+	}
+	return false
+}
+
+// spanOrDay is the effective length of an occurrence.  A slot with no duration
+// is treated as covering the rest of its day.
+func spanOrDay(span time.Duration) time.Duration {
+	if span <= 0 {
+		return 24 * time.Hour
+	}
+	return span
+}
+
+// slotDuration converts the vendor's duration+unit pair.
+func slotDuration(n float64, unit string) time.Duration {
+	switch strings.ToLower(strings.TrimSpace(unit)) {
+	case "minute", "minutes", "分", "分钟":
+		return time.Duration(n * float64(time.Minute))
+	case "second", "seconds", "秒":
+		return time.Duration(n * float64(time.Second))
+	case "day", "days", "天":
+		return time.Duration(n * 24 * float64(time.Hour))
+	}
+	return time.Duration(n * float64(time.Hour))
+}
+
+// slotStart resolves a six-field cron against one local day.  Only minute,
+// hour and day-of-month/month are honoured; "*" or "?" means "any".
+func slotStart(expr string, day time.Time, loc *time.Location) (time.Time, bool) {
+	f := strings.Fields(expr)
+	if len(f) < 5 {
+		return time.Time{}, false
+	}
+	// Six-field form is "sec min hour dom mon dow"; five-field drops the seconds.
+	var sec, min, hour, dom, mon string
+	if len(f) >= 6 {
+		sec, min, hour, dom, mon = f[0], f[1], f[2], f[3], f[4]
+	} else {
+		sec, min, hour, dom, mon = "0", f[0], f[1], f[2], f[3]
+	}
+	d, ok := cronField(dom, day.Day())
+	if !ok {
+		return time.Time{}, false
+	}
+	m, ok := cronField(mon, int(day.Month()))
+	if !ok {
+		return time.Time{}, false
+	}
+	secN, ok1 := cronValue(sec, 0, 59)
+	minN, ok2 := cronValue(min, 0, 59)
+	hourN, ok3 := cronValue(hour, 0, 23)
+	if !ok1 || !ok2 || !ok3 {
+		return time.Time{}, false
+	}
+	return time.Date(day.Year(), time.Month(m), d, hourN, minN, secN, 0, loc), true
+}
+
+// cronField matches one numeric cron field.
+func cronField(field string, want int) (int, bool) {
+	field = strings.TrimSpace(field)
+	if field == "*" || field == "?" || field == "" {
+		return want, true
+	}
+	v, ok := cronValue(field, 0, 0)
+	if !ok {
+		return 0, false
+	}
+	return v, v == want
+}
+
+// cronValue reads a literal cron field.
+func cronValue(field string, min, max int) (int, bool) {
+	field = strings.TrimSpace(field)
+	if field == "*" || field == "?" || field == "" {
+		return min, true
+	}
+	n, err := strconv.Atoi(field)
+	if err != nil || n < min || n > max {
+		return 0, false
+	}
+	return n, true
+}
+
+// parseMultiplier reads the vendor's display rate ("0.18x", "0.7x", "免费").
+func parseMultiplier(s string) (float64, bool) {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if s == "" {
+		return 0, false
+	}
+	if s == "免费" || s == "free" {
+		return 0, true
+	}
+	s = strings.TrimSpace(strings.TrimSuffix(s, "x"))
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil || v < 0 {
+		return 0, false
+	}
+	return v, true
+}
+
+// creditMultiplierIsZero reports whether a model's advertised 倍率 is zero.
+func creditMultiplierIsZero(extra map[string]any) bool {
+	if extra == nil {
+		return false
+	}
+	for _, key := range []string{"billing_effective_multiplier", "billing_multiplier"} {
+		switch v := extra[key].(type) {
+		case float64:
+			if v == 0 {
+				return true
+			}
+		case int:
+			if v == 0 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // entries returns whichever list the response actually carried.
@@ -201,6 +436,12 @@ func (r *gatewayConfigResponse) ids() []string {
 // parseModelCatalogue turns a catalogue response into the model list this
 // module serves, deduplicating by normalised id and dropping vision variants.
 func parseModelCatalogue(entries []modelInfo) []core.Model {
+	return parseModelCatalogueAt(entries, time.Now())
+}
+
+// parseModelCatalogueAt is parseModelCatalogue with an explicit clock, so the
+// promotional window can be exercised without waiting for 21:00.
+func parseModelCatalogueAt(entries []modelInfo, now time.Time) []core.Model {
 	var out []core.Model
 	seen := make(map[string]bool)
 	for _, e := range entries {
@@ -217,7 +458,18 @@ func parseModelCatalogue(entries []modelInfo) []core.Model {
 		}
 		seen[id] = true
 		name := normalizeModelID(firstNonEmpty(e.ModelName, raw))
-		out = append(out, newModel(id, name, e.ContextLength, firstNonZero(e.MaxOutput, e.MaxTokens), e.Provider))
+		m := newModel(id, name, e.ContextLength, firstNonZero(e.MaxOutput, e.MaxTokens), e.Provider)
+		if list, eff, ok := multiplierFromCredits(e.Credit, e.TimeSlots, now); ok {
+			if m.Extra == nil {
+				m.Extra = map[string]any{}
+			}
+			m.Extra["billing_multiplier"] = list
+			m.Extra["billing_effective_multiplier"] = eff
+			if eff == 0 {
+				m.Extra["free"] = true
+			}
+		}
+		out = append(out, m)
 	}
 	return out
 }
@@ -535,7 +787,10 @@ func markBenefitModels(models []core.Model, benefit []string) []core.Model {
 		}
 	}
 	for i := range models {
-		if free[strings.ToLower(strings.TrimSpace(models[i].ID))] {
+		id := strings.ToLower(strings.TrimSpace(models[i].ID))
+		// Two independent sources can prove a model spends no credit: the
+		// vendor's benefit list, and a zero 倍率 in its own price table.
+		if free[id] || creditMultiplierIsZero(models[i].Extra) {
 			if models[i].Extra == nil {
 				models[i].Extra = map[string]any{}
 			}

@@ -42,27 +42,40 @@ type envelope struct {
 }
 
 // apiError is one failed upstream call.
+//
+// The web API and the IAM service report failures differently, so a failure
+// carries both spellings: the web API uses a numeric `code` (100006 and
+// friends) while IAM uses a symbolic one ("COMMON_INVALID_ARGUMENT"). Only one
+// of the two is ever set.
 type apiError struct {
-	Status  int
-	Code    int
-	Message string
+	Status    int
+	Code      int
+	IAMCode   string
+	Message   string
+	RequestID string
 }
 
 func (e *apiError) Error() string {
 	msg := strings.TrimSpace(e.Message)
+	if msg == "" {
+		msg = strings.TrimSpace(e.IAMCode)
+	}
 	if msg == "" {
 		msg = http.StatusText(e.Status)
 	}
 	if msg == "" {
 		msg = "upstream error"
 	}
-	if e.Code != 0 {
+	switch {
+	case e.Code != 0:
 		return fmt.Sprintf("raccoon: %s (code %d)", msg, e.Code)
-	}
-	if e.Status >= 400 {
+	case e.IAMCode != "":
+		return fmt.Sprintf("raccoon: %s (%s)", msg, e.IAMCode)
+	case e.Status >= 400:
 		return fmt.Sprintf("raccoon: HTTP %d: %s", e.Status, msg)
+	default:
+		return "raccoon: " + msg
 	}
-	return "raccoon: " + msg
 }
 
 func statusOf(err error) int {
@@ -95,7 +108,15 @@ func isAuthError(err error) bool {
 //
 // `code == 0` is success. When `code` is absent the HTTP status is the
 // authority, so a >= 400 response is an error even with no envelope.
+//
+// The IAM service answers with a different envelope (see iamEnvelope), so the
+// symbolic shape is tried first and the numeric one second. Trying IAM first is
+// safe because `code` there is a string: unmarshalling it into the numeric
+// envelope fails, and the numeric path is the only one that can then succeed.
 func decodeEnvelope(status int, raw []byte) (json.RawMessage, error) {
+	if data, err, matched := decodeIAMEnvelope(status, raw); matched {
+		return data, err
+	}
 	var env envelope
 	if err := json.Unmarshal(raw, &env); err != nil {
 		if status >= 400 {
@@ -124,6 +145,59 @@ func decodeEnvelope(status int, raw []byte) (json.RawMessage, error) {
 		return nil, &apiError{Status: status, Message: http.StatusText(status)}
 	}
 	return env.Data, nil
+}
+
+// iamEnvelope is the IAM service's response shape. `code` is a symbolic string
+// ("OK" on success) rather than the web API's number, and failures carry their
+// own `message`/`details` and a `request_id`.
+type iamEnvelope struct {
+	Code      string          `json:"code"`
+	Message   string          `json:"message"`
+	Details   json.RawMessage `json:"details"`
+	RequestID string          `json:"request_id"`
+	Data      json.RawMessage `json:"data"`
+}
+
+// iamOK is the only success code IAM uses.
+const iamOK = "OK"
+
+// decodeIAMEnvelope decodes the IAM shape. matched is false when the body is
+// not an IAM envelope at all (no string `code`), which leaves the caller free
+// to parse it as the web API's numeric one.
+func decodeIAMEnvelope(status int, raw []byte) (data json.RawMessage, err error, matched bool) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return nil, nil, false
+	}
+	var env iamEnvelope
+	if jerr := json.Unmarshal(trimmed, &env); jerr != nil {
+		return nil, nil, false
+	}
+	code := strings.TrimSpace(env.Code)
+	// A body with no string code is not an IAM envelope; a 404 page, for
+	// example, must fall through to the numeric parser so it is reported as
+	// the HTTP error it is.
+	if code == "" {
+		return nil, nil, false
+	}
+	// A purely numeric code belongs to the web API even when it arrives
+	// quoted, so it must keep its numeric meaning (code 100006 and friends
+	// are matched on it). Only a symbolic code is IAM's.
+	if _, aerr := strconv.Atoi(code); aerr == nil {
+		return nil, nil, false
+	}
+	if env.Code == iamOK && status < 400 {
+		return env.Data, nil, true
+	}
+	msg := strings.TrimSpace(env.Message)
+	if d := strings.TrimSpace(string(env.Details)); d != "" && d != "{}" && d != "null" {
+		if msg == "" {
+			msg = d
+		} else if !strings.Contains(msg, d) {
+			msg = msg + ": " + d
+		}
+	}
+	return nil, &apiError{Status: status, IAMCode: env.Code, Message: msg, RequestID: strings.TrimSpace(env.RequestID)}, true
 }
 
 func truncate(s string, n int) string {
