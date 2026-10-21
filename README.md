@@ -5,7 +5,7 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-Current version: **0.1.90**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
+Current version: **0.2.0**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
 
 client2api is a personal, local-only OpenAI-compatible gateway. It aggregates
 the accounts and API Keys **you own** on different AI coding clients and
@@ -203,7 +203,7 @@ OpenAI's `schema must be a JSON Schema of 'type: "object"', got 'type: null'`
 - Per-platform and per-account concurrency limits.
 - Per-account per-model enable/disable from the account's model dialog, on every platform: WorkBuddy keeps its module-side policy (including "force enable"), the others write a shared blacklist the gateway's account hook enforces on the next request. Each model carries its current effective multiplier (or a free tag) when the platform publishes one; a rate-limited model also shows when it will be released and how long is left.
 - Any upstream 429 parks the `(platform, account, model)` triple for a cooldown: 60 seconds at first, doubling per consecutive failure and capped at 30 minutes, or the vendor's own `Retry-After` when it sent one (also capped). The gateway refuses that account for that model while the park is live, so a module rotates to another account or platform instead of walking back into the same rate limit, and the account's model dialog shows when the park is released and how much time is left. A module that reports every attempt through `core.ChatRequest.NoteAccountFailure` is covered even when it recovers on another account; the rest fall back to the gateway's terminal-failure record.
-- Conversation stickiness, retries, cooldown and automatic failover, with panel controls that show each live binding's model and can force-unbind or force-switch a session. A force-switch can clear platform/account stickiness for automatic selection again or pin a chosen platform while still auto-selecting its account.
+- Conversation stickiness, retries, cooldown and automatic failover, with panel controls that show each live binding's model and can force-unbind or force-switch a session. A force-switch can clear platform/account stickiness for automatic selection again or pin a chosen platform while still auto-selecting its account. A request that started before the switch may finish normally, but its late success cannot recreate the old binding; the next turn ranks from the operator's latest state.
 - OpenAI-shaped error mapping for auth, quota, WAF, timeout and rate-limit failures.
 - Failover also covers failures a platform reports after the stream has already been
   opened. Some vendors answer a spent quota with HTTP 200 and an SSE frame carrying
@@ -304,13 +304,16 @@ OpenAI's `schema must be a JSON Schema of 'type: "object"', got 'type: null'`
   statement about the request. A model with no measurement is unaffected.
   This is what stopped Autoclaw from being trimmed on every turn: its ~8%
   over-read was consuming exactly the 8% safety margin the guard reserves.
+- **Responses auto-compaction targets the candidate's real model id.** The
+  caller may name a model group, but the summarisation call goes to a concrete
+  module model; using the group name made compaction fail with `ErrUnsupported`
+  and fall back to a silent trim.
 - **Summary generation waits out transient in-flight refusals instead of giving
   up.** A platform configured with `max_in_flight_per_account: 1` reports
   `ErrBusy` whenever another request already holds the only slot, and losing
   that race degraded straight back into the silent trim. It retries up to three
   times, 200ms apart, and only for local backpressure -- a real upstream verdict
   is still returned as it was.
-
 - When the Responses context guard would have trimmed a turn, the gateway folds
   the history and returns a `compaction` item instead of silently dropping the
   oldest turns. A silent trim looks like an ordinary success, so the caller
@@ -364,6 +367,10 @@ OpenAI's `schema must be a JSON Schema of 'type: "object"', got 'type: null'`
   sending tools; the MCP tool still performs its own runtime validation. This
   keeps Codex tool definitions such as `capture_process_scenario` from turning
   an otherwise valid request into an upstream HTTP 400.
+- Raccoon's IAM SMS login now confirms the business session before reading the
+  profile. A call that still answers HTTP 400 / code `200901` is confirmed and
+  replayed once, so an account stored before this step existed heals itself
+  instead of remaining a nameless bare token.
 
 - The embedded effort defaults still follow the platform-specific facts rather
   than one global `max`: WorkBuddy CN is `low/high/max` (default `high`),
@@ -384,7 +391,7 @@ OpenAI's `schema must be a JSON Schema of 'type: "object"', got 'type: null'`
   it, and only the vendor refusing *that* model on *that* account takes the pair
   out. Cooldowns that are not about money -- rate limits, WAF blocks, dead
   sessions, risk flags, the breaker -- keep applying. WorkBuddy, Cline,
-  CodeArts, Raccoon, QwenWork and OpenRouter implement the account-side rule today; the
+  CodeArts, Raccoon, QwenWork, OpenRouter, Kilo Code and OpenCode implement the account-side rule today; the
   module-facing contract is `core.ChatRequest.FreeModel`, and the free labelling
   itself is shared in `core.ModelIsFree`.
 - Manual import, local credential discovery, bundle import and browser/device login where supported.

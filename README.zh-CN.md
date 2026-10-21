@@ -5,7 +5,7 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-当前版本：**0.1.90**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：**0.2.0**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 流式断流排查：升级后系统日志新增 `stream: id=...` 终止诊断，包含协议、平台/模型、
 上游事件数、`finish_reason`、正文/推理字节数、工具调用数、completion token、
@@ -140,10 +140,13 @@ client2api 是一个**个人自用**的 OpenAI 兼容网关。它把你自己在
 - 平台优先级、账号优先级和按北京时间生效的分时优先级。
 - 可选 `egress` 出口中继。`client` 模式接受 HTTP、HTTPS、SOCKS5 或 SOCKS5H 代理地址；`subscription` 模式会把订阅 URL 交给本进程托管的 mihomo，并把网关流量指向它的 loopback mixed port。启用后优先于顶层 `proxy`；修改这个配置需要重启进程。
 - 平台级、账号级、账号内并发限制。
-- 会话粘性、重试、冷却和自动故障切换；面板会列出粘性会话使用的模型，可强制解绑账号，也可在强制切换时指定目标平台；不指定时则清除账号和平台粘性并重新按优先级选择。
+- 会话粘性、重试、冷却和自动故障切换；面板会列出粘性会话使用的模型，可强制解绑账号，也可在强制切换时指定目标平台；不指定时则清除账号和平台粘性并重新按优先级选择。切换前已经发出的请求可以正常完成，但它的成功回调不能再把旧平台粘性写回来；下一次请求会从操作员的最新选择重新选路。
 - 统一把鉴权、额度、WAF、超时、限流等错误映射为 OpenAI 形状。
 - 部分厂商会在 HTTP 200 的 SSE 流里返回额度、鉴权、限流或 WAF 错误。网关会在提交流之前先读第一帧；如果这是可重试错误，就关闭该流并交给下一个候选平台，而不是把 502 直接丢给调用方。零余额账号会退出轮换，直到充值、签到或余额刷新读到正数。
-- 上下文窗口守卫：请求超过模型窗口时先按预算丢掉最旧的历史（system 提示和最新一轮永远保留），用量日志标出「已裁剪」；上游拒绝里写明的真实窗口会写入 `data/learned_context_windows.json` 并由 `/v1/models` 发布。若拒绝同时给出「实测 N tokens > M maximum」，而请求按估算本应放得下，网关会按实测比例裁剪并立刻重试一次，避免这类对话每次「继续」都报 400。
+- Responses 上下文守卫在本会裁剪时，会折叠旧历史并返回一个 `compaction` 项，而不是静默丢掉最旧的消息；调用方下一轮可以携带这条压缩状态。压缩失败时仍回退到原来的裁剪路径，聊天与 Anthropic 协议没有压缩词汇，仍以 `context_window_exceeded` 回报。
+- Responses 自动压缩使用候选平台实际能服务的具体模型 ID；调用方可以写模型组名，但不能再拿组名直接请求模块，否则会报 `ErrUnsupported` 并退回静默裁剪。
+- 自动压缩撞上本地 `max_in_flight_per_account` 限制时会等待背压：最多重试 3 次、间隔 200ms，真实上游错误仍立即返回。
+- 上下文窗口守卫会把上游拒绝里写明的真实窗口写入 `data/learned_context_windows.json` 并由 `/v1/models` 发布。若拒绝同时给出「实测 N tokens > M maximum」，而请求按估算本应放得下，网关会按实测比例裁剪并立刻重试一次，避免这类对话每次「继续」都报 400。
 - 思考档位按“平台 + 模型”解析：优先级为手动配置、模块缓存目录、内置预设；
   “模型与档位”页可以查看和修改支持的档位及默认档，手动值优先于可能过期的模块缓存。
 - “封顶对齐”现在对所有平台、所有模型默认开启，包括 `Auto/<模型>` 和模型组行；面板仍可按模型手动关闭或恢复默认。
@@ -155,7 +158,8 @@ client2api 是一个**个人自用**的 OpenAI 兼容网关。它把你自己在
 ### 账号与平台
 
 - 账号池支持启用/停用、备注、身份标识、优先级和余额显示。
-- 平台自报免费的模型（倍率为 0、免费额度清单，或名字/分组/模型 id 里带 Free——例如 `cline-free/...`、`vendor/model:free`）按上游的答复路由，而不是按余额：余额为 0 被冷却的账号依然可以服务它，只有「上游拒绝了本账号调用这个模型」才会把这一对账号+模型停下来。与钱无关的冷却照常生效——限流、WAF、会话失效、风控、熔断都不会因为模型免费而放行。目前 WorkBuddy、Cline、CodeArts、Raccoon、QwenWork、OpenRouter 已接入账号侧规则；模块侧契约是 `core.ChatRequest.FreeModel`，免费判定本身是共享的（`core.ModelIsFree`）。
+- 平台自报免费的模型（倍率为 0、免费额度清单，或名字/分组/模型 id 里带 Free——例如 `cline-free/...`、`vendor/model:free`）按上游的答复路由，而不是按余额：余额为 0 被冷却的账号依然可以服务它，只有「上游拒绝了本账号调用这个模型」才会把这一对账号+模型停下来。与钱无关的冷却照常生效——限流、WAF、会话失效、风控、熔断都不会因为模型免费而放行。目前 WorkBuddy、Cline、CodeArts、Raccoon、QwenWork、OpenRouter、Kilo Code、OpenCode 已接入账号侧规则；模块侧契约是 `core.ChatRequest.FreeModel`，免费判定本身是共享的（`core.ModelIsFree`）。
+- Raccoon 的 IAM 短信登录会在读取资料前确认业务会话；仍返回 HTTP 400 / code `200901` 的调用会先确认再重放一次，因此修复前保存的裸令牌账号也会自愈。
 - 支持手动添加、本地凭据发现、整包导入，以及模块支持时的浏览器/设备登录。
 - 支持重新登录、恢复、测试、签到、刷新余额和删除账号。
 - Gemini / Google Cloud Code Assist 支持 Google OAuth 登录、账号发现与刷新、额度查询，以及 Cloud Code Assist 请求翻译和流式返回。它的模型列表从上游 `fetchAvailableModels` 实时拉取（失败时退到额度桶里的模型名），平台新增或下线模型不需要改代码。浏览器登录开箱即用：模块内置了 Cloud Code IDE 自己的 OAuth 客户端，`client_id` / `client_secret`（或环境变量 `CLIENT2API_GEMINI_CLIENT_ID` / `CLIENT2API_GEMINI_CLIENT_SECRET`）可以换成自己注册的客户端。
