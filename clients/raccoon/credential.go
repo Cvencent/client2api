@@ -42,6 +42,15 @@ const (
 	pathIAMSendSMS  = pathIAMPrefix + "/sms/send"
 	pathIAMLoginSMS = pathIAMPrefix + "/auth/login/sms"
 
+	// pathIAMConfirm completes an IAM sign-in by confirming the BUSINESS
+	// session those tokens were minted for.  The vendor's own web client posts
+	// it immediately after login, and again (then retries) whenever a business
+	// call answers 200901.  Without it the access token is perfectly valid but
+	// every business endpoint -- balance, user_info, model catalog, chat --
+	// refuses it with `iam_confirm_required`, which looks exactly like an empty
+	// unfunded account to the operator.
+	pathIAMConfirm = pathAuthPrefix + "/iam/confirm"
+
 	pathRefresh     = pathAuthPrefix + "/refresh"
 	pathUserInfo    = pathAuthPrefix + "/user_info"
 	pathQRLogin     = pathAuthPrefix + "/login_with_qrcode_code"

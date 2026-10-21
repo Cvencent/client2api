@@ -36,10 +36,11 @@ type SessionPlatforms struct {
 type sessionPlatforms = SessionPlatforms
 
 type sessionPlatformEntry struct {
-	platform string
-	model    string
-	manual   bool
-	lastSeen time.Time
+	platform   string
+	model      string
+	manual     bool
+	generation uint64
+	lastSeen   time.Time
 }
 
 // sessionPlatformTTL is the default idle window for a platform binding.  It
@@ -79,13 +80,52 @@ func (s *sessionPlatforms) bindModel(conversationKey, platform, model string) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.bindModelLocked(conversationKey, platform, model, s.entries[conversationKey].generation)
+}
+
+// bindingRevision snapshots the operator-generation of one conversation.  A
+// route may only be written back by a request that started in the same
+// generation; Pin and Forget advance it so an older in-flight success cannot
+// undo a force-switch after the fact.
+func (s *sessionPlatforms) bindingRevision(conversationKey string) uint64 {
+	if s == nil || conversationKey == "" {
+		return 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.entries[conversationKey].generation
+}
+
+// bindModelIfRevision is the request-path write.  The validation and the write
+// share one lock, so a force-switch either happens wholly before this call (and
+// rejects it) or wholly after it (and removes what was written).
+func (s *sessionPlatforms) bindModelIfRevision(conversationKey, platform, model string, revision uint64) bool {
+	if s == nil || conversationKey == "" || platform == "" {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current := s.entries[conversationKey]
+	if current.generation != revision || current.manual {
+		return false
+	}
+	s.bindModelLocked(conversationKey, platform, model, revision)
+	return true
+}
+
+func (s *sessionPlatforms) bindModelLocked(conversationKey, platform, model string, generation uint64) {
 	if s.entries == nil {
 		s.entries = map[string]sessionPlatformEntry{}
 	}
 	if current, ok := s.entries[conversationKey]; ok && current.manual {
 		return
 	}
-	s.entries[conversationKey] = sessionPlatformEntry{platform: platform, model: model, lastSeen: s.clock()}
+	s.entries[conversationKey] = sessionPlatformEntry{
+		platform:   platform,
+		model:      model,
+		generation: generation,
+		lastSeen:   s.clock(),
+	}
 }
 
 // resolve reports the platform bound to conversationKey, and only when that
@@ -103,7 +143,7 @@ func (s *sessionPlatforms) resolve(conversationKey string, usable func(string) b
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	e, ok := s.entries[conversationKey]
-	if !ok {
+	if !ok || e.platform == "" {
 		return "", false
 	}
 	// A manual pin is operator state, not an idle heuristic: GC already skips
@@ -132,7 +172,7 @@ func (s *sessionPlatforms) pinFor(conversationKey string) (string, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	e, ok := s.entries[conversationKey]
-	if !ok {
+	if !ok || e.platform == "" {
 		return "", false
 	}
 	if !e.manual && s.ttl > 0 && now.Sub(e.lastSeen) > s.ttl {
@@ -166,6 +206,11 @@ func (s *SessionPlatforms) List() []StickyRoute {
 	defer s.mu.Unlock()
 	out := make([]StickyRoute, 0, len(s.entries))
 	for key, e := range s.entries {
+		// Empty-platform rows are force-switch fences, not routes.  Keep them
+		// internal until their idle window expires.
+		if e.platform == "" {
+			continue
+		}
 		// Manual pins are operator state, so they are listed even once the idle
 		// window has passed, matching resolve and GC.  Only automatic bindings
 		// age out of the management view.
@@ -193,27 +238,37 @@ func (s *SessionPlatforms) Pin(conversationKey, platform, model string) bool {
 	if s.entries == nil {
 		s.entries = map[string]sessionPlatformEntry{}
 	}
+	generation := s.entries[conversationKey].generation + 1
 	s.entries[conversationKey] = sessionPlatformEntry{
-		platform: platform,
-		model:    model,
-		manual:   true,
-		lastSeen: s.clock(),
+		platform:   platform,
+		model:      model,
+		manual:     true,
+		generation: generation,
+		lastSeen:   s.clock(),
 	}
 	return true
 }
 
-// Forget drops one platform route and reports whether it existed.
+// Forget drops one platform route and reports whether one was live.  It leaves
+// an empty-platform fence with a fresh generation behind: a request that started
+// before the operator's switch may still finish, but it cannot recreate the
+// route.  The ordinary TTL/GC path removes the fence after the idle window.
 func (s *SessionPlatforms) Forget(conversationKey string) bool {
 	if s == nil || conversationKey == "" {
 		return false
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.entries[conversationKey]; !ok {
-		return false
+	if s.entries == nil {
+		s.entries = map[string]sessionPlatformEntry{}
 	}
-	delete(s.entries, conversationKey)
-	return true
+	current, ok := s.entries[conversationKey]
+	existed := ok && current.platform != ""
+	s.entries[conversationKey] = sessionPlatformEntry{
+		generation: current.generation + 1,
+		lastSeen:   s.clock(),
+	}
+	return existed
 }
 
 // setTTL retunes the idle window on a live reload.

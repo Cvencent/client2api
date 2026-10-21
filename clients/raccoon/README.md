@@ -154,6 +154,14 @@ only to that loopback listener:
   The legacy `/api/web/auth/v1/send_sms` and `/login_with_sms` are **dead**
   (they answer every login request with a captcha failure), which is why the
   send/verify pair moved to IAM. QR and token refresh stayed on the web API.
+  IAM hands back an identity token for a business session that still has to be
+  **confirmed**: the vendor's own web client follows the login with
+  `POST /api/web/auth/v1/iam/confirm` (empty JSON body, same bearer token) and
+  replays any business call that answers `400` + code `200901`. Skipping it
+  makes a brand-new account look broke — balance, `user_info` and the model
+  catalog all refuse with `iam_confirm_required`, and the credential is stored
+  as a nameless bare token. The module confirms before the profile read and
+  retries once on `200901`, so accounts stored before the fix heal themselves.
 - **一键接码 / 自动登录 — 已关闭**（deliberately not offered).  This module used
   to implement `core.AutoLoginProvider`: rent a number from the eomsg platform
   (`sms_token`), mint the Aliyun slider parameter in a local Chromium-family

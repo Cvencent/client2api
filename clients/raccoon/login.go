@@ -488,6 +488,11 @@ func (c *Client) loginWithSMS(ctx context.Context, phone, verificationID, smsCod
 // a pasted key is stored: user_info fills in the label, then the pool writes it
 // through to disk so it survives a restart and shows up in the account table.
 func (c *Client) storeCredential(ctx context.Context, cred credential) *entry {
+	// An IAM sign-in hands back tokens for a business session that still has to
+	// be CONFIRMED.  Doing it here means the profile read below (and every
+	// later call) sees a working account instead of a 200901-refused, nameless
+	// bare token.
+	c.confirmBusinessSessionBestEffort(ctx, cred)
 	if info, err := c.fetchUserInfo(ctx, cred); err == nil {
 		if info.ID != "" {
 			cred.UserID = info.ID
@@ -505,6 +510,20 @@ func (c *Client) storeCredential(ctx context.Context, cred credential) *entry {
 	e := c.pool.put(account{credential: cred, Label: cred.displayName(), Origin: originStored})
 	c.grantLoginPointsBestEffort(ctx, e)
 	return e
+}
+
+// confirmBusinessSessionBestEffort confirms a fresh credential's business
+// session.  It is best effort on purpose: the reactive path in do() retries
+// any 200901 anyway, so a hiccup here must not fail an otherwise good login.
+func (c *Client) confirmBusinessSessionBestEffort(ctx context.Context, cred credential) {
+	if strings.TrimSpace(cred.AccessToken) == "" {
+		return
+	}
+	ctx, cancel := withTimeout(ctx, requestTimeout)
+	defer cancel()
+	if err := c.confirmBusinessSession(ctx, raccoonHeaders(cred, "", "")); err != nil {
+		c.deps.Log("raccoon: business session confirm failed for %s: %v", cred.identity(), c.scrub(err.Error()))
+	}
 }
 
 // finishLogin enriches a fresh credential, stores it and marks the session

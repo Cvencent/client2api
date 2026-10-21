@@ -481,6 +481,22 @@ func (c *Client) chatWith(ctx context.Context, cancel context.CancelFunc, e *ent
 // into an error (or re-framed as a single-frame stream) so the caller never
 // tries to parse a JSON error body as SSE.
 func (c *Client) postChat(ctx context.Context, cred credential, req *core.ChatRequest, model string) (*http.Response, error) {
+	resp, err := c.postChatOnce(ctx, cred, req, model)
+	if err == nil || !needsBusinessConfirm(err) {
+		return resp, err
+	}
+	// A brand new IAM sign-in answers 200901 until the business session is
+	// confirmed.  The refusal is a complete buffered body (nothing has been
+	// streamed yet), so confirming and replaying the identical request is safe.
+	if cerr := c.confirmBusinessSession(ctx, raccoonHeaders(cred, c.cfg.platform(), c.cfg.version())); cerr != nil {
+		c.deps.Log("raccoon: business session confirm failed: %v", c.scrub(cerr.Error()))
+		return nil, err
+	}
+	return c.postChatOnce(ctx, cred, req, model)
+}
+
+// postChatOnce is one chat attempt with no confirm/retry logic.
+func (c *Client) postChatOnce(ctx context.Context, cred credential, req *core.ChatRequest, model string) (*http.Response, error) {
 	body := buildChatBody(req, model, true)
 	hdr := raccoonHeaders(cred, c.cfg.platform(), c.cfg.version())
 	hdr.Set("Accept", "text/event-stream")

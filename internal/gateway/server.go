@@ -911,7 +911,7 @@ func (s *server) serveRemainingCandidates(w http.ResponseWriter, r *http.Request
 			}
 			stream = withProbedFrame(stream, probe)
 			s.opts.Registry.NoteModelSuccess(client.Name(), upstreamModel, time.Now())
-			s.sessionPlatforms.bindModel(core.ConversationKeyOf(baseReq), client.Name(), upstreamModel)
+			s.sessionPlatforms.bindModelIfRevision(core.ConversationKeyOf(baseReq), client.Name(), upstreamModel, in.platformRevision)
 			if servedBy != "" {
 				rec.Account = servedBy
 				stat.uid = servedBy

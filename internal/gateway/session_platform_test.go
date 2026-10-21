@@ -1,11 +1,16 @@
 package gateway
 
 import (
+	"context"
 	"errors"
 	"io"
 	"log"
 	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"client2api/internal/core"
 )
@@ -146,5 +151,107 @@ func TestManualPinKeepsTheConversationOnTheChosenPlatform(t *testing.T) {
 	}
 	if alpha.seen != nil {
 		t.Fatal("a platform the operator switched away from served the conversation")
+	}
+}
+
+// switchRaceClient holds its first Chat call after the request has entered the
+// platform.  That gives the test a deterministic window in which an operator
+// can force-switch the conversation before the old request has opened its
+// stream and written a platform binding.
+type switchRaceClient struct {
+	name    string
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+	calls   int
+}
+
+func (c *switchRaceClient) Name() string { return c.name }
+
+func (c *switchRaceClient) Models(context.Context) ([]core.Model, error) {
+	return []core.Model{{ID: "m1", OwnedBy: c.name}}, nil
+}
+
+func (c *switchRaceClient) Chat(context.Context, *core.ChatRequest) (core.Stream, error) {
+	c.calls++
+	c.once.Do(func() { close(c.started) })
+	<-c.release
+	return &fakeStream{events: usageEvents(1, 1)}, nil
+}
+
+func (c *switchRaceClient) Status(context.Context) core.Status {
+	return core.Status{Name: c.name, Ready: true}
+}
+
+// TestForceSwitchDuringInFlightTurnDoesNotRebindTheOldPlatform reproduces the
+// production race: the old request has already selected a platform, the
+// operator force-switches to automatic routing, and only then does the old
+// request receive its first frame.  That late success must not overwrite the
+// decision; the next turn has to rank the remaining platforms normally.
+func TestForceSwitchDuringInFlightTurnDoesNotRebindTheOldPlatform(t *testing.T) {
+	const key = "conv-force-race"
+	platforms := NewSessionPlatforms()
+	old := &switchRaceClient{name: "opencode", started: make(chan struct{}), release: make(chan struct{})}
+	preferred := &testClient{name: "preferred", events: usageEvents(1, 1)}
+
+	reg := core.NewRegistry()
+	reg.Add(old)
+	reg.Add(preferred)
+	reg.SetPlatformConfigs(map[string]core.PlatformConfig{
+		"opencode":  {Priority: 10},
+		"preferred": {Priority: -10},
+	})
+	srv := NewServer(Options{
+		Registry:         reg,
+		Version:          "test",
+		Logger:           log.New(io.Discard, "", 0),
+		Stats:            NewStats(),
+		Usage:            NewUsageStore(4),
+		SessionPlatforms: platforms,
+	})
+
+	// Start the conversation on the old platform, but model the switch before
+	// that request has reached its first upstream frame.
+	if !platforms.Pin(key, "opencode", "m1") {
+		t.Fatal("Pin reported no change")
+	}
+	body := `{"model":"m1","messages":[{"role":"user","content":"hi"}],"metadata":{"conversation_id":"` + key + `"}}`
+	first := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		srv.Handler.ServeHTTP(rec, req)
+		first <- rec
+	}()
+
+	select {
+	case <-old.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the first request never reached the old platform")
+	}
+	pinned, manual := platforms.pinFor(key)
+	if !manual || pinned != "opencode" {
+		t.Fatalf("before switch pin = %q/%v, want opencode/true", pinned, manual)
+	}
+	platforms.Forget(key)
+	close(old.release)
+	if rec := <-first; rec.Code != http.StatusOK {
+		t.Fatalf("first status = %d, body %s", rec.Code, rec.Body.String())
+	}
+
+	if rows := platforms.List(); len(rows) != 0 {
+		t.Fatalf("the in-flight success recreated the switched platform: %#v", rows)
+	}
+
+	second := chat(t, srv, body)
+	if second.Code != http.StatusOK {
+		t.Fatalf("second status = %d, body %s", second.Code, second.Body.String())
+	}
+	if preferred.chatCalls != 1 {
+		t.Fatalf("preferred platform calls = %d, want 1 after re-ranking", preferred.chatCalls)
+	}
+	if old.calls != 1 {
+		t.Fatalf("old platform calls = %d, want only the pre-switch request", old.calls)
 	}
 }

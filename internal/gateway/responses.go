@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -1159,6 +1160,37 @@ func (s *server) responsesWouldTrim(ctx context.Context, req *core.ChatRequest) 
 	return trimmed
 }
 
+// Compaction must survive a transient in-flight refusal.  A platform configured
+// with max_in_flight_per_account=1 reports ErrBusy whenever another request --
+// including the user's own concurrent turn -- already holds the only slot.
+// That is backpressure, not a verdict, so giving up on the first refusal would
+// turn a momentary collision back into the silent trim this whole path exists
+// to avoid.
+const (
+	compactionBusyAttempts = 3
+	compactionBusyDelay    = 200 * time.Millisecond
+)
+
+func (s *server) compactConversationWaitingOutBackpressure(ctx context.Context, client core.Client, model string, req *core.ChatRequest, keepTurns int) (string, int, *core.Usage, error) {
+	var lastErr error
+	for attempt := 0; attempt < compactionBusyAttempts; attempt++ {
+		summary, folded, used, err := compactConversation(ctx, s, client, model, req, keepTurns)
+		if err == nil || !errors.Is(err, core.ErrBusy) {
+			return summary, folded, used, err
+		}
+		lastErr = err
+		if attempt+1 == compactionBusyAttempts {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return "", 0, nil, lastErr
+		case <-time.After(compactionBusyDelay):
+		}
+	}
+	return "", 0, nil, lastErr
+}
+
 // autoCompact folds req in place for the context_management path and returns the
 // compaction item to append to this turn's output, or nil when nothing was
 // folded.
@@ -1170,11 +1202,11 @@ func (s *server) autoCompact(ctx context.Context, req *core.ChatRequest, rec *Us
 	if err != nil || len(candidates) == 0 {
 		return nil
 	}
-	client := candidates[0].Client
+	client, model := candidates[0].Client, candidates[0].Model
 	beforeTokens := int64(estimateRequestTokens(req))
-	summary, folded, usage, cerr := compactConversation(ctx, s, client, req, 1)
+	summary, folded, usage, cerr := s.compactConversationWaitingOutBackpressure(ctx, client, model, req, 1)
 	if cerr != nil {
-		s.opts.Logger.Printf("compaction: auto-compaction for %s/%s failed (%v); forwarding the full history", client.Name(), req.Model, cerr)
+		s.opts.Logger.Printf("compaction: auto-compaction for %s/%s failed (%v); forwarding the full history", client.Name(), model, cerr)
 		return nil
 	}
 	if folded == 0 {
@@ -1212,7 +1244,7 @@ func (s *server) autoCompact(ctx context.Context, req *core.ChatRequest, rec *Us
 	}
 	blob, berr := s.mintCompactionBlob(summary, folded, req.Model)
 	if berr != nil {
-		s.opts.Logger.Printf("compaction: cannot mint a blob for %s/%s: %v", client.Name(), req.Model, berr)
+		s.opts.Logger.Printf("compaction: cannot mint a blob for %s/%s: %v", client.Name(), model, berr)
 		return nil
 	}
 	return &responseOutput{
@@ -1350,7 +1382,7 @@ func (s *server) handleResponsesCompact(w http.ResponseWriter, r *http.Request) 
 // response.compaction output list.  It returns the rendered items and any usage
 // the summariser reported.
 func (s *server) compactHistory(ctx context.Context, client core.Client, req *core.ChatRequest, rec *UsageRecord) ([]responseOutput, *core.Usage, error) {
-	summary, folded, usage, err := compactConversation(ctx, s, client, req, 1)
+	summary, folded, usage, err := compactConversation(ctx, s, client, req.Model, req, 1)
 	if err != nil {
 		// The caller still needs a usable history.  Fall back to the
 		// deterministic retention list -- the newest user turn(s) plus whatever

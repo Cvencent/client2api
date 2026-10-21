@@ -254,7 +254,11 @@ const compactionInputBudget = 32 * 1024
 // The split is deliberate: the caller's most recent request must survive
 // verbatim, because a summary is not a substitute for the question being asked.
 // Older history, which is exactly what no longer fits, is what gets folded.
-func compactConversation(ctx context.Context, s *server, client core.Client, req *core.ChatRequest, keepTurns int) (summary string, folded int, used *core.Usage, err error) {
+// model is the concrete platform model to summarise with.  It is deliberately
+// not req.Model: req.Model is the name the caller wrote (often a model-group
+// name), and a module can only serve its own catalogue ids.  Passing the group
+// name here made every compaction on such a platform fail with ErrUnsupported.
+func compactConversation(ctx context.Context, s *server, client core.Client, model string, req *core.ChatRequest, keepTurns int) (summary string, folded int, used *core.Usage, err error) {
 	if req == nil || len(req.Messages) == 0 {
 		return "", 0, nil, errors.New("compaction: nothing to compact")
 	}
@@ -284,7 +288,7 @@ func compactConversation(ctx context.Context, s *server, client core.Client, req
 		haveUse  bool
 	)
 	for _, chunk := range chunks {
-		text, use, cerr := summariseMessages(ctx, s, client, req.Model, chunk)
+		text, use, cerr := summariseMessages(ctx, s, client, model, chunk)
 		if cerr != nil {
 			return "", 0, nil, cerr
 		}

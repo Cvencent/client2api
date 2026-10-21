@@ -304,6 +304,13 @@ OpenAI's `schema must be a JSON Schema of 'type: "object"', got 'type: null'`
   statement about the request. A model with no measurement is unaffected.
   This is what stopped Autoclaw from being trimmed on every turn: its ~8%
   over-read was consuming exactly the 8% safety margin the guard reserves.
+- **Summary generation waits out transient in-flight refusals instead of giving
+  up.** A platform configured with `max_in_flight_per_account: 1` reports
+  `ErrBusy` whenever another request already holds the only slot, and losing
+  that race degraded straight back into the silent trim. It retries up to three
+  times, 200ms apart, and only for local backpressure -- a real upstream verdict
+  is still returned as it was.
+
 - When the Responses context guard would have trimmed a turn, the gateway folds
   the history and returns a `compaction` item instead of silently dropping the
   oldest turns. A silent trim looks like an ordinary success, so the caller

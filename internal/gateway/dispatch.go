@@ -46,6 +46,10 @@ type routeInput struct {
 	// the caller's own name, not the resolved upstream id, because that is what
 	// a client echoes into its next turn.
 	modelForWire string
+	// platformRevision is the conversation's force-switch generation sampled
+	// before routing.  The success path may only write the platform route back
+	// while this generation is still current.
+	platformRevision uint64
 	// rec and stat are this request's usage row and console row.  The caller
 	// owns them -- it defers their completion -- so that a request refused
 	// before routing is still recorded.
@@ -203,6 +207,7 @@ func (s *server) routeAndServeMessages(w http.ResponseWriter, r *http.Request, i
 	if s.opts.Live != nil {
 		s.sessionPlatforms.setTTL(s.opts.Live.Load().AffinityTTL)
 	}
+	in.platformRevision = s.sessionPlatforms.bindingRevision(conversationKey)
 	// A manual pin is checked even for a single-candidate model: the pin names
 	// the platform that must answer, and a single candidate on another platform
 	// is still the wrong answer.  Automatic stickiness is a ranking
@@ -427,7 +432,7 @@ func (s *server) routeAndServeMessages(w http.ResponseWriter, r *http.Request, i
 		in.stat.uid = servedBy
 	}
 	s.opts.Registry.NoteModelSuccess(client.Name(), upstreamModel, time.Now())
-	s.sessionPlatforms.bindModel(conversationKey, client.Name(), upstreamModel)
+	s.sessionPlatforms.bindModelIfRevision(conversationKey, client.Name(), upstreamModel, in.platformRevision)
 	stream = wrapStickyFailure(stream, client, conversationKey)
 	// A turn that ends with "stop" and nothing to act on is the shape that
 	// silently closes an agent loop; one more attempt is spent on it before the

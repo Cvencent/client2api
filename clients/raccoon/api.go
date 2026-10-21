@@ -22,6 +22,13 @@ var errSessionDead = errors.New("raccoon: refresh token rejected, please sign in
 // refreshCodeDead is the vendor's envelope code for a dead refresh token.
 const refreshCodeDead = 200003
 
+// codeIAMConfirmRequired is the vendor's "business session not confirmed"
+// envelope code.  It arrives with HTTP 400 even though the bearer token is
+// valid: the token has simply not been exchanged for a working business
+// session yet.  Retrying it verbatim never helps, so it is confirmed and then
+// retried once instead of being reported as an auth failure.
+const codeIAMConfirmRequired = 200901
+
 // maxResponseBytes bounds a non-streaming response body.
 const maxResponseBytes = 8 << 20
 
@@ -234,7 +241,61 @@ func humanBytes(n int) string {
 
 // do performs one JSON request/response exchange and decodes `data` into out
 // (when out is non-nil).
+//
+// It also repairs the one recoverable refusal the vendor has: a 200901
+// `iam_confirm_required`.  The web client handles that by confirming the
+// business session and replaying the request, which is what happens here, so
+// an account signed in before this step existed heals itself instead of
+// sitting in the pool looking broke.
 func (c *Client) do(ctx context.Context, method, path string, hdr http.Header, payload, out any) error {
+	err := c.doOnce(ctx, method, path, hdr, payload, out)
+	if err == nil || path == pathIAMConfirm || !needsBusinessConfirm(err) || !hasBearer(hdr) {
+		return err
+	}
+	if cerr := c.confirmBusinessSession(ctx, hdr); cerr != nil {
+		// The original refusal is the one the operator can act on: a confirm
+		// failure only adds noise, but it must not be swallowed silently.
+		c.deps.Log("raccoon: business session confirm failed: %v", c.scrub(cerr.Error()))
+		return err
+	}
+	return c.doOnce(ctx, method, path, hdr, payload, out)
+}
+
+// needsBusinessConfirm reports whether err is the vendor's "confirm the
+// business session first" refusal.  The vendor keys it on HTTP 400 plus the
+// numeric code, and so does this predicate.
+func needsBusinessConfirm(err error) bool {
+	var ae *apiError
+	if !errors.As(err, &ae) {
+		return false
+	}
+	return ae.Status == http.StatusBadRequest && ae.Code == codeIAMConfirmRequired
+}
+
+// hasBearer reports whether hdr carries a usable bearer token.  Unauthenticated
+// calls (the IAM send/login pair) must never trigger a confirm.
+func hasBearer(hdr http.Header) bool {
+	if hdr == nil {
+		return false
+	}
+	v := strings.TrimSpace(hdr.Get("Authorization"))
+	rest := strings.TrimSpace(strings.TrimPrefix(v, "Bearer "))
+	return strings.HasPrefix(v, "Bearer ") && rest != ""
+}
+
+// confirmBusinessSession confirms the business session the bearer token was
+// minted for: POST /api/web/auth/v1/iam/confirm with an empty body, exactly as
+// the vendor's web client does.  It goes through doOnce so a refusal from the
+// confirm endpoint itself can never recurse.
+func (c *Client) confirmBusinessSession(ctx context.Context, hdr http.Header) error {
+	if !hasBearer(hdr) {
+		return errors.New("raccoon: business session confirm needs a bearer token")
+	}
+	return c.doOnce(ctx, http.MethodPost, pathIAMConfirm, hdr, map[string]any{}, nil)
+}
+
+// doOnce is one exchange with no retry logic.
+func (c *Client) doOnce(ctx context.Context, method, path string, hdr http.Header, payload, out any) error {
 	resp, err := c.send(ctx, method, path, hdr, payload)
 	if err != nil {
 		return err
