@@ -381,9 +381,9 @@ func TestUsageViewShowsTheWindowAverageLatency(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		`k: "输入 tokens", v: numf(pt)`,
-		`k: "输出 tokens", v: numf(ct)`,
-		`k: "合计 tokens", v: numf(total)`,
+		`k: "输入 tokens", v: fmtTok(pt)`,
+		`k: "输出 tokens", v: fmtTok(ct)`,
+		`k: "合计 tokens", v: fmtTok(total)`,
 		`k: "平均延迟", v: fmtMs(t.avg_latency_ms)`,
 	} {
 		if !strings.Contains(tiles, want) {

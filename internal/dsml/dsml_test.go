@@ -18,6 +18,9 @@ func TestFeedSurfacesUnparsableClosedBlock(t *testing.T) {
 	if !strings.Contains(text, "not an invoke") {
 		t.Fatalf("the unparsable block was swallowed: %q", text)
 	}
+	if !p.Malformed() {
+		t.Fatal("the unparsable block was not reported as malformed")
+	}
 	if !strings.Contains(text, "before") || !strings.Contains(text, "after") {
 		t.Fatalf("visible text around the block was lost: %q", text)
 	}
@@ -34,6 +37,9 @@ func TestFeedSurfacesNamelessInvoke(t *testing.T) {
 	if !strings.Contains(text, "invoke") {
 		t.Fatalf("the nameless invoke was swallowed: %q", text)
 	}
+	if !p.Malformed() {
+		t.Fatal("the nameless invoke was not reported as malformed")
+	}
 }
 
 // The well-formed path must keep working exactly as before.
@@ -49,5 +55,23 @@ func TestFeedStillParsesWellFormedBlock(t *testing.T) {
 	}
 	if text != "hi " {
 		t.Fatalf("visible text = %q, want %q", text, "hi ")
+	}
+}
+
+// Malformed distinguishes complete-but-unusable and truncated tool markup from
+// ordinary visible text. The gateway can then fail the turn instead of leaking
+// protocol syntax to the caller.
+func TestMalformedReportsIncompleteBlock(t *testing.T) {
+	p := NewParser()
+	text, calls := p.Feed(`<tool_calls><invoke name="exec"><parameter name="arguments">{}`)
+	if text != "" || len(calls) != 0 {
+		t.Fatalf("text = %q calls = %+v, want both empty", text, calls)
+	}
+	text, calls = p.Finish()
+	if text == "" || len(calls) != 0 {
+		t.Fatalf("finish = %q, %+v; want leftover text and no calls", text, calls)
+	}
+	if !p.Malformed() {
+		t.Fatal("truncated tool markup was not reported as malformed")
 	}
 }

@@ -2,6 +2,8 @@ package panel
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -32,11 +34,24 @@ type routeSpeedResult struct {
 	Error            string  `json:"error,omitempty"`
 }
 
+type routeSpeedCompletion struct {
+	index  int
+	result routeSpeedResult
+}
+
+type routeSpeedEvent struct {
+	Model  string            `json:"model"`
+	Result *routeSpeedResult `json:"result,omitempty"`
+	Done   bool              `json:"done,omitempty"`
+}
+
 // handleRouteSpeed runs one tiny live request through every step in the
-// static route chain.  The gateway itself never routes this request: calling
-// the selected module directly is what guarantees the row belongs to the
-// platform the operator is measuring, and each module still chooses its own
-// available account through its normal pool.
+// static route chain. The probes are concurrent: a browser asks for SSE and
+// receives each platform in completion order, while older JSON callers still
+// receive the complete set in route order. The gateway itself never routes this
+// request: calling the selected module directly is what guarantees the row
+// belongs to the platform the operator is measuring, and each module still
+// chooses its own available account through its normal pool.
 func (p *panel) handleRouteSpeed(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeErr(w, http.StatusMethodNotAllowed, "use POST")
@@ -58,14 +73,68 @@ func (p *panel) handleRouteSpeed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results := make([]routeSpeedResult, 0, len(plan.Steps))
-	for _, step := range plan.Steps {
-		results = append(results, p.speedRouteStep(r.Context(), step))
+	streaming := strings.Contains(strings.ToLower(r.Header.Get("Accept")), "text/event-stream")
+	var flusher http.Flusher
+	if streaming {
+		var ok bool
+		flusher, ok = w.(http.Flusher)
+		if !ok {
+			writeErr(w, http.StatusInternalServerError, "streaming is unavailable")
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("X-Accel-Buffering", "no")
+		w.WriteHeader(http.StatusOK)
+	}
+
+	completions := make(chan routeSpeedCompletion, len(plan.Steps))
+	for i, step := range plan.Steps {
+		index, probe := i, step
+		go func() {
+			completions <- routeSpeedCompletion{
+				index:  index,
+				result: p.speedRouteStep(r.Context(), probe),
+			}
+		}()
+	}
+	if streaming {
+		flusher.Flush()
+	}
+
+	results := make([]routeSpeedResult, len(plan.Steps))
+	for i := 0; i < len(plan.Steps); i++ {
+		completion := <-completions
+		results[completion.index] = completion.result
+		if streaming {
+			if err := writeRouteSpeedEvent(w, routeSpeedEvent{
+				Model:  plan.Model,
+				Result: &completion.result,
+			}); err != nil {
+				return
+			}
+			flusher.Flush()
+		}
+	}
+
+	if streaming {
+		_ = writeRouteSpeedEvent(w, routeSpeedEvent{Model: plan.Model, Done: true})
+		flusher.Flush()
+		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"model":   plan.Model,
 		"results": results,
 	})
+}
+
+func writeRouteSpeedEvent(w io.Writer, event routeSpeedEvent) error {
+	body, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(w, "data: %s\n\n", body)
+	return err
 }
 
 func (p *panel) speedRouteStep(parent context.Context, step core.RoutePlanStep) routeSpeedResult {

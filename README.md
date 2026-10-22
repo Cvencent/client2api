@@ -203,7 +203,7 @@ OpenAI's `schema must be a JSON Schema of 'type: "object"', got 'type: null'`
 - Per-platform and per-account concurrency limits.
 - Per-account per-model enable/disable from the account's model dialog, on every platform: WorkBuddy keeps its module-side policy (including "force enable"), the others write a shared blacklist the gateway's account hook enforces on the next request. Each model carries its current effective multiplier (or a free tag) when the platform publishes one; a rate-limited model also shows when it will be released and how long is left.
 - Any upstream 429 parks the `(platform, account, model)` triple for a cooldown: 60 seconds at first, doubling per consecutive failure and capped at 30 minutes, or the vendor's own `Retry-After` when it sent one (also capped). The gateway refuses that account for that model while the park is live, so a module rotates to another account or platform instead of walking back into the same rate limit, and the account's model dialog shows when the park is released and how much time is left. A module that reports every attempt through `core.ChatRequest.NoteAccountFailure` is covered even when it recovers on another account; the rest fall back to the gateway's terminal-failure record.
-- Conversation stickiness, retries, cooldown and automatic failover, with panel controls that show each live binding's model and can force-unbind or force-switch a session. A force-switch can clear platform/account stickiness for automatic selection again or pin a chosen platform while still auto-selecting its account. A request that started before the switch may finish normally, but its late success cannot recreate the old binding; the next turn ranks from the operator's latest state.
+- Conversation stickiness, retries, cooldown and automatic failover, with panel controls that show each live binding's model and can force-unbind or force-switch a session. A force-switch can clear platform/account stickiness for automatic selection again or pin a chosen platform while still auto-selecting its account. The sticky-session dialog also has a one-click 一键强制切换 that runs 自动选择 for every listed conversation at once, so the next turn re-ranks platforms and accounts from scratch. A request that started before the switch may finish normally, but its late success cannot recreate the old binding; the next turn ranks from the operator's latest state.
 - OpenAI-shaped error mapping for auth, quota, WAF, timeout and rate-limit failures.
 - Failover also covers failures a platform reports after the stream has already been
   opened. Some vendors answer a spent quota with HTTP 200 and an SSE frame carrying
@@ -239,11 +239,26 @@ OpenAI's `schema must be a JSON Schema of 'type: "object"', got 'type: null'`
   healthy account is not parked
   and the request gets the degraded-prompt retry instead. CN keeps its
   5.7.7 / 2.137.1 pair and its header set unchanged.
-- Context-window guard: a request larger than the model's window is shortened before
-  it is sent, so it is served instead of refused. The system prompt and the newest
-  turn are always kept; only the stale middle is dropped. Every trimmed request is
-  marked `已裁剪` in the usage log with how much was dropped and the sizes either
-  side.
+- Context-window guard: a request the guard's estimator thinks is too large is not
+  trimmed immediately. For a (platform, model) whose real window this gateway has
+  never tested, the request is forwarded whole once and the vendor decides
+  (features.probe_before_trim, default true). If the vendor serves it, the proven
+  size becomes a floor for that model and the same size is never trimmed again;
+  if the vendor refuses it as oversized, the guard falls back to the existing
+  learn-the-window + trim + single-retry path. The verdict is sticky per
+  (platform, model): one probe settles the question until an operator clears it,
+  which the models page offers as a clear-probe button beside a never-probed /
+  accepted / refused badge. Every probe forward is marked as probed in the usage
+  log. Set features.probe_before_trim to false in configs/client2api.json to
+  restore the old trim-first behaviour; the panel settings page exposes the same
+  switch and it applies on the next request.
+- Order of preference when a request is over budget: probe and learn, then compact, then
+  trim. A model this gateway has never tested is probed first -- the request goes to the
+  vendor whole, and the outcome teaches the real window (accepted size becomes a floor;
+  a refusal is learned as the limit). Only a model already settled that way is folded
+  first, because folding keeps the old turns in the summary the caller carries forward
+  while a trim drops them for good. Trim is the last resort, used only when compaction
+  fails.
 - A trim never leaves an orphaned tool result behind. The kept window cannot begin
   with a `tool` message whose assistant call was dropped: vendors validate that
   pairing, so an orphan turns a recoverable "too long" into an unrecoverable
@@ -443,7 +458,7 @@ OpenAI's `schema must be a JSON Schema of 'type: "object"', got 'type: null'`
 ### Panel
 
 - Accounts
-- Sticky-session management from the Accounts overview: inspect account/platform bindings and their last model, force-unbind an account, or force-switch back to normal selection or to a chosen platform
+- Sticky-session management from the Accounts overview: inspect account/platform bindings and their last model, force-unbind an account, or force-switch back to normal selection or to a chosen platform; the dialog's 一键强制切换 button clears every listed binding at once and lets the next turn re-rank platforms and accounts
 - Chat Test
 - Chat Test switches to a microphone transcription check when the selected model is a
   speech model (for example `doubaoime/...`): the recording is posted to
@@ -521,9 +536,10 @@ The Responses API is translated natively for Codex and compatible clients:
   deliberation on a request that offered tools -- is retried once upstream
   instead of being handed back as a finished turn, which is the shape that made
   Codex close the turn and wait for the operator to type the next prompt.
-- A tool-call block a model wrote as text that the parser cannot read is surfaced
-  as visible text instead of being dropped, so a swallowed call cannot look like
-  a clean stop.
+- Tool-call markup that a model emits as visible text is normalised at the
+  gateway boundary: well-formed DSML/XML calls become structured `tool_calls`
+  for both Chat Completions and Responses. Incomplete or unparsable markup
+  fails the turn instead of leaking protocol syntax into the answer.
 - **Compaction.** `POST /v1/responses/compact` folds a conversation into a
   handover summary and returns a `response.compaction` object whose `output` is
   the retained turns plus one `type: "compaction"` item. `context_management:

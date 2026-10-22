@@ -68,6 +68,117 @@ const promptOutputCap = 32 * 1024
 // are all of it.
 const promptFixedOverhead = 512
 
+// probeEnabled reports whether the probe-before-trim behaviour is on.
+//
+// The live snapshot is authoritative when the panel is wired: an operator can
+// turn the behaviour off from the settings page and have it apply to the next
+// request, without a restart.  The startup option is the fallback for embedders
+// that never build a live holder.
+func (s *server) probeEnabled() bool {
+	if s.opts.Live != nil {
+		return s.opts.Live.Load().ProbeBeforeTrim
+	}
+	return s.opts.ProbeBeforeTrim
+}
+
+// probeAdjustedBudget is the trim budget after the model's accepted floor is
+// taken into account.
+//
+// A probe that the vendor served proves the estimator was wrong about that
+// size: the bytes were servable.  Leaving the budget where it was would trim
+// the very request the probe just vindicated, so the floor becomes the budget.
+// It is an observation, not a declaration, which is why it is used directly
+// rather than being scaled by the safety margin that guards a vendor's claimed
+// window.
+//
+// A manual override still wins.  The operator's number is the final authority
+// for this deployment, and a measurement must not quietly route around it.
+func (s *server) probeAdjustedBudget(ctx context.Context, client core.Client, model string, maxOutput int, limit int64) int64 {
+	budget := s.promptBudget(ctx, client, model, maxOutput, limit)
+	if s.probes == nil || client == nil || model == "" {
+		return budget
+	}
+	rec, ok := s.probes.get(client.Name(), model)
+	if !ok || rec.Outcome != probeOutcomeAccepted || rec.EstimateTokens <= 0 {
+		return budget
+	}
+	floor := rec.EstimateTokens
+	if s.opts.ModelOverrides != nil {
+		if o, ok := s.opts.ModelOverrides.Get(client.Name(), model); ok && o.ContextLength > 0 {
+			if floor > o.ContextLength {
+				floor = o.ContextLength
+			}
+		}
+	}
+	if floor > budget {
+		return floor
+	}
+	return budget
+}
+
+// probeVerdict is the guard's decision for one request before it is sent.
+type probeVerdict int
+
+const (
+	// probeProceed means the normal budget logic owns this request.
+	probeProceed probeVerdict = iota
+	// probeForwardWhole means the vendor should decide: the estimate exceeds
+	// the budget, but this (platform, model) has never been tested.
+	probeForwardWhole
+	// probeTrimExceeded means the request is too far over to be worth a probe.
+	probeTrimExceeded
+)
+
+// probeDecision decides whether to trust the estimator or the vendor for this
+// request.
+//
+// The order is deliberate.  An unknown window leaves the request untouched,
+// which is the guard's oldest rule.  A request inside the budget needs no
+// decision.  A model that has already been probed is settled by that verdict
+// forever -- accepted means the recorded floor is the budget, refused means the
+// normal window path applies.  Everything else is a model this gateway has
+// never tested, and the vendor -- not the estimator -- decides whether it fits.
+// There is deliberately no "too far over to bother" cutoff: the estimator is
+// exactly the thing that cannot be trusted here, so any size it rejects is
+// still worth one vendor round trip before the guard shortens the caller.
+func (s *server) probeDecision(ctx context.Context, req *core.ChatRequest, client core.Client, model string, maxOutput int, limit int64) probeVerdict {
+	if req == nil || client == nil || len(req.Messages) == 0 {
+		return probeProceed
+	}
+	budget := s.probeAdjustedBudget(ctx, client, model, maxOutput, limit)
+	if budget <= 0 {
+		// The window is unknown: forward untouched, exactly as before.
+		return probeProceed
+	}
+	estimate := int64(estimateRequestTokens(req))
+	if estimate <= budget {
+		return probeProceed
+	}
+	if s.probes != nil {
+		if rec, ok := s.probes.get(client.Name(), model); ok {
+			if !rec.Probed {
+				// An explicit clear: the operator asked to re-verify this
+				// model, so it is probed again despite any published window.
+				return probeForwardWhole
+			}
+			if rec.Outcome == probeOutcomeAccepted {
+				// The accepted floor is already folded into the budget this
+				// decision was made against, so reaching here means the request
+				// is above the proven size: trim it.
+				return probeTrimExceeded
+			}
+			// Already refused: the lease on probing this model is spent.
+			return probeProceed
+		}
+	}
+	// A published window is not proof: the whole reason this path exists is
+	// that the catalogue can be wrong in the caller's favour.  So a model with
+	// a known window but no verdict is still worth one vendor round trip.  The
+	// models page shows such a model as "已探测" because a number exists, but
+	// the first request that actually exceeds the budget still verifies it.
+	return probeForwardWhole
+}
+
 // requestContextWindow is the window a single request is judged against: the
 // configured/vendor window, capped by any per-request test limit the caller
 // supplied.  The limit is only ever a cap; it never widens a model.
@@ -1017,11 +1128,30 @@ func (s *server) guardRequestContext(ctx context.Context, req *core.ChatRequest,
 	if req != nil {
 		limit = req.ContextWindowLimit
 	}
-	budget := s.promptBudget(ctx, client, model, maxOutput, limit)
+	budget := s.probeAdjustedBudget(ctx, client, model, maxOutput, limit)
 	if budget <= 0 {
 		// The window is unknown, or too small to trim against.  Forwarding the
 		// request untouched is the only safe answer.
 		return trimReport{}, false
+	}
+	// Before trusting the estimator enough to shorten the caller's history,
+	// give the vendor the first word on a model this gateway has never tested.
+	// The vendor has the final say on its own window; the estimator is only a
+	// heuristic, and when it runs high it cuts turns that would have been
+	// served.  One accepted probe settles the question for this (platform,
+	// model) permanently, so this is a one-time round trip, not a per-request
+	// tax.
+	if s.probeEnabled() && rec != nil {
+		switch s.probeDecision(ctx, req, client, model, maxOutput, limit) {
+		case probeForwardWhole:
+			rec.Probed = true
+			rec.ProbedFromTokens = int64(estimateRequestTokens(req))
+			return trimReport{}, false
+		case probeTrimExceeded:
+			// Too far over to be worth a probe; fall through to the trim.
+		default:
+			// probeProceed: the normal budget path decides.
+		}
 	}
 	report, trimmed := applyContextBudget(req, budget)
 	if trimmed && rec != nil {

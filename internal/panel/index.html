@@ -600,6 +600,88 @@ legend { font-size: 12px; color: var(--ink-3); font-weight: 600; padding-bottom:
   @keyframes usgrow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
   .ustile .meter i { transform-origin: left center; }
 
+  /* 总览专属层级：主卡回答窗口有多热，辅卡负责拆解。 */
+  .ustiles.ustat-grid {
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    gap: 12px; margin-bottom: 16px; align-items: stretch;
+  }
+  .ustile.ustat-primary {
+    grid-column: span 4; grid-row: span 2; min-height: 176px;
+    padding: 18px 20px 17px;
+    border-color: color-mix(in srgb, var(--accent) 34%, var(--line-soft));
+    background:
+      radial-gradient(130% 140% at 100% 0%, var(--accent-soft) 0%, transparent 58%),
+      linear-gradient(145deg, color-mix(in srgb, var(--surface-2) 92%, var(--accent) 8%), var(--surface-2));
+  }
+  .ustile.ustat-primary::before { height: 3px; opacity: 1; }
+  .ustile.ustat-primary .v {
+    margin-top: 12px; font-size: clamp(34px, 3.2vw, 48px);
+    line-height: 1; letter-spacing: -.045em;
+  }
+  .ustile.ustat-primary .sub { margin-top: 9px; font-size: 12px; }
+  .ustile.ustat-mini {
+    grid-column: span 2; min-height: 82px; padding: 11px 12px 12px;
+  }
+  .ustile.ustat-mini .k { font-size: 11px; }
+  .ustile.ustat-mini .v { margin-top: 6px; font-size: clamp(18px, 1.55vw, 24px); }
+  .ustile.ustat-mini .sub { margin-top: 4px; min-height: 0; font-size: 10.5px; }
+  .ustile.ustat-wide { grid-column: span 3; }
+  .ustile .ustat-spark {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    width: 100%; height: 52px; pointer-events: none; opacity: .85;
+  }
+  .ustile.ustat-primary { padding-bottom: 62px; }
+  .ustile .ustat-spark polyline {
+    fill: none; stroke: var(--accent); stroke-width: 1.6;
+    stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 140 140;
+    animation: usspark 700ms var(--ease-out) both;
+  }
+  .ustile .ustat-spark path.usspark-area { fill: color-mix(in srgb, var(--accent) 30%, transparent); stroke: none; }
+  @keyframes usspark { from { stroke-dashoffset: 140; } to { stroke-dashoffset: 0; } }
+
+  /* 数值变化只动 opacity/transform，不触发布局。 */
+  .ustile .v { transition: opacity 180ms var(--ease-out), transform 220ms var(--ease-out); }
+  .ustile .v.us-num-change { opacity: .34; transform: translateY(4px); }
+
+  .uschart {
+    border-radius: var(--radius-panel);
+    background: linear-gradient(180deg, color-mix(in srgb, var(--surface-2) 74%, transparent), var(--surface));
+  }
+  .uschart-hd {
+    background: linear-gradient(180deg, color-mix(in srgb, var(--surface-2) 76%, transparent), transparent);
+  }
+  .uschart-body .ustrend {
+    fill: none; stroke: var(--accent-text); stroke-width: 1.15;
+    stroke-dasharray: 3 4; opacity: .42; pointer-events: none;
+    animation: ustrend-in 520ms var(--ease-out) both;
+  }
+  @keyframes ustrend-in { from { opacity: 0; } to { opacity: .42; } }
+  .uschart-body .usbar {
+    transition: opacity 140ms var(--ease-out), filter 140ms var(--ease-out);
+  }
+
+  /* 窄屏降级：12 列在平板以下会把主卡压成细条，小屏则两列。 */
+  @media (max-width: 980px) {
+    .ustiles.ustat-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+    .ustile.ustat-primary { grid-column: span 3; grid-row: span 2; }
+    .ustile.ustat-mini { grid-column: span 3; }
+    .ustile.ustat-wide { grid-column: span 3; }
+  }
+  @media (max-width: 560px) {
+    .ustiles.ustat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .ustile.ustat-primary { grid-column: span 2; grid-row: auto; min-height: 150px; }
+    .ustile.ustat-mini, .ustile.ustat-wide { grid-column: span 1; }
+    .ustile.ustat-primary .v { font-size: clamp(30px, 11vw, 40px); }
+    .ustile .ustat-spark { height: 40px; }
+  }
+
+  /* 读数条从图上方滑入；离开瞬时收起，避免轮询时滞留。 */
+  .usread {
+    opacity: 0; transform: translateY(-4px);
+    transition: opacity 160ms var(--ease-out), transform 180ms var(--ease-out);
+  }
+  .usread.is-in { opacity: 1; transform: translateY(0); }
+
   /* 图表上方的读数条。鼠标停在某根柱子上时，这里报出那个时间点的输入 / 输出 /
      次数 —— 原来只能靠 <title> 的原生提示，要等一秒才弹、样式也和各平台不一样。 */
   .usread {
@@ -3015,6 +3097,7 @@ kbd {
               <span class="grow"></span>
               <span class="usread-i"><span class="sw sw-p"></span><span id="usReadP">-</span></span>
               <span class="usread-i"><span class="sw sw-c"></span><span id="usReadC">-</span></span>
+              <span class="usread-i usread-q" id="usReadA"></span>
               <span class="usread-i usread-q" id="usReadQ"></span>
             </div>
             <div class="uschart-body" id="usChart"></div>
@@ -3354,7 +3437,7 @@ kbd {
             <input id="rpModel" type="search" placeholder="模型名，例如 Auto/MIMO-2.6Flash" spellcheck="false" autocomplete="off" style="min-width:280px">
             <button class="xs" id="btnRpTest">测试链路</button>
             <button class="xs" id="btnRpSpeed">测速</button>
-            <span class="hint">测试链路只做本地静态预演；测速会为每个平台实际调用一次。拖动结果会把顺序写回「模型优先级」，即平台配置里该模型行上的那个数字（比下一行小 1），两处始终同一个值。</span>
+            <span class="hint">测试链路只做本地静态预演；测速会并发调用每个平台，哪个先完成就先显示。拖动结果会把顺序写回「模型优先级」，即平台配置里该模型行上的那个数字（比下一行小 1），两处始终同一个值。</span>
           </div>
           <div class="pad" id="rpResult"><div class="hint">输入模型名后点「测试链路」，查看平台的调用顺序、上下文窗口和优先级。</div></div>
         </div>
@@ -3785,12 +3868,13 @@ kbd {
   <div class="dlg sticky-dlg" role="dialog" aria-modal="true" aria-labelledby="stickyTitle">
     <header>
       <h3 id="stickyTitle">粘性会话</h3>
-      <div class="hint">强制解绑只清除账号绑定；强制切换可选择目标平台，不选则清除账号和平台绑定并重新路由。</div>
+      <div class="hint">强制解绑只清除账号绑定；强制切换可选择目标平台，不选则清除账号和平台绑定并重新路由。一键强制切换会对下列全部会话执行“自动选择”。</div>
     </header>
     <div class="body" id="stickyBody">
       <div class="sticky-rows" id="stickyRows"></div>
     </div>
     <footer>
+      <button class="danger" id="btnStickySwitchAll" title="清除所有粘性会话的账号与平台绑定，下一次请求重新选择平台和账号">一键强制切换</button>
       <span class="grow"></span>
       <button id="btnStickyClose">关闭</button>
     </footer>
@@ -6430,6 +6514,42 @@ async function submitStickySwitch() {
   }
 }
 
+
+// switchAllStickySessions is the one-click bulk action on the dialog footer: it
+// runs 自动选择 for every listed conversation, so the next turn re-ranks
+// platforms and accounts. The destructive scope is spelled out in the confirm
+// text because a single click clears every binding the list is showing.
+async function switchAllStickySessions() {
+  const rows = Array.from(document.querySelectorAll("#stickyRows .sticky-row"));
+  if (!rows.length) { toast("当前没有粘性会话"); return; }
+  const ask = "确定对全部 " + rows.length + " 条粘性会话执行强制切换？\n\n" +
+    "这会清除每条会话的账号绑定和平台绑定；下一次请求会重新选择平台和账号。\n" +
+    "已经发出的请求可能正常结束，但不会再把旧绑定写回来。";
+  if (!confirm(ask)) return;
+
+  const button = $("#btnStickySwitchAll");
+  const label = button.textContent;
+  button.disabled = true;
+  button.textContent = "处理中…";
+  try {
+    const r = await api("/panel/api/sticky-sessions/switch-all", { method: "POST", body: {} });
+    if (!r.ok) {
+      toast("一键强制切换失败：" + r.err, "err");
+      return;
+    }
+    const d = r.data || {};
+    const total = Number(d.total || 0);
+    const switched = Number(d.switched || 0);
+    toast(total ? "已强制切换 " + switched + "/" + total + " 条会话；下一次请求会重新选择平台和账号" : "当前没有粘性会话");
+    await loadStickySessions();
+    refreshAll(false);
+  } catch (e) {
+    toast("一键强制切换失败：" + String(e && e.message || e), "err");
+  } finally {
+    if (document.contains(button)) { button.disabled = false; button.textContent = label; }
+  }
+}
+
 async function saveAccountNote() {
   const id = NOTE.id;
   if (!id) return;
@@ -6801,10 +6921,14 @@ function usageChartSVG(series) {
     pts.push({ t: t, scope: p.scope, raw: String(p.t || ""), pt: pt, ct: ct,
       tt: Number(p.total_tokens || 0) || (pt + ct), req: Number(p.requests || 0) });
   });
+  // API 已按时间排序，但图表不应依赖上游顺序；一次乱序就会让 x 轴和柱位错位。
+  pts.sort((a, b) => a.t - b.t);
   if (!pts.length) return '<div class="us-empty">暂无用量数据。发起一次对话后再刷新。</div>';
   const W = 760, H = 180, PL = 52, PR = 12, PT = 12, PB = 30;
   const iw = W - PL - PR, ih = H - PT - PB, yBase = PT + ih;
   const t0 = pts[0].t, t1 = pts[pts.length - 1].t, span = Math.max(1, t1 - t0);
+  // 跨天窗口只写 13:00 / 01:00 会让时间看起来在倒序，刻度必须带月日。
+  const multiDay = span > 24 * 60 * 60 * 1000;
   const max = Math.max(1, ...pts.map(p => p.tt));
   let minGap = span;
   for (let i = 1; i < pts.length; i++) {
@@ -6824,19 +6948,46 @@ function usageChartSVG(series) {
   // 没数据的空档，指针很难落准。所以命中区固定取「相邻柱间距」那么宽，一格一根，
   // 眼睛看到哪根就一定能指到哪根。柱体本身画在命中区正中。
   const slot = Math.max(bw, pts.length > 1 ? (iw / (pts.length - 1)) : bw);
+  // 合计趋势线放在柱前面：只做节奏提示，悬停/读数仍由柱子负责。
+  // 缺桶（数据稀疏）不能直连，否则会凭空画出不存在的尖峰/深谷。
+  const maxTrendGap = Math.max(2 * 60 * 60 * 1000, minGap * 1.6);
+  const trendRuns = [];
+  let run = [];
+  pts.forEach(p => {
+    if (run.length) {
+      const prev = run[run.length - 1];
+      if (p.t - prev.t > maxTrendGap) { trendRuns.push(run); run = []; }
+    }
+    run.push(p);
+  });
+  if (run.length) trendRuns.push(run);
+  trendRuns.forEach(r => {
+    if (r.length < 2) return;
+    const trendPoints = r.map(p => {
+      const y = yBase - ih * (p.tt / max);
+      return xOf(p.t).toFixed(2) + "," + y.toFixed(2);
+    }).join(" ");
+    out += '<polyline class="ustrend" points="' + trendPoints + '" vector-effect="non-scaling-stroke"/>';
+  });
   const stamp = new Date().toISOString().slice(0, 16);
   pts.forEach((p, i) => {
     const cx = xOf(p.t), x = cx - bw / 2, hTot = ih * (p.tt / max);
     const hP = p.tt ? hTot * (p.pt / p.tt) : 0;
-    const hC = Math.max(p.ct ? 1 : 0, hTot - hP);
+    // 输出段必须严格吃掉剩余高度；小于 1px 时另画顶帽，不能用最小值
+    // 把总柱高抬起来，否则相近的数据点会出现 Token 更多但柱子更矮。
+    const hC = Math.max(0, hTot - hP);
+    const cap = p.ct && hTot > 0 && hC < 1
+      ? '<rect class="usbar-cap" x="' + x.toFixed(2) + '" y="' + (yBase - hTot).toFixed(2) +
+        '" width="' + bw.toFixed(2) + '" height="1" fill="var(--ok)"/>'
+      : '';
     const label = p.scope === "day"
       ? new Date(p.t).toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" })
       : new Date(p.t).toLocaleString("zh-CN", { hour12: false, month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
     out += '<g class="uscol" data-us-i="' + i + '" data-us-t="' + esc(label) +
       '" data-us-p="' + fmtTok(p.pt) + '" data-us-c="' + fmtTok(p.ct) +
-      '" data-us-q="' + p.req + '" data-us-v="' + esc(stamp) + '">' +
+      '" data-us-a="' + fmtTok(p.tt) + '" data-us-q="' + p.req + '" data-us-v="' + esc(stamp) + '">' +
       '<title>' + esc(p.raw) + '  ' + fmtTok(p.pt) + ' prompt / ' + fmtTok(p.ct) +
-      ' completion / ' + p.req + ' 次</title>' +
+      ' completion / 合计 ' + fmtTok(p.tt) + ' / ' + p.req + ' 次</title>' +
       '<rect class="hit" x="' + (cx - slot / 2).toFixed(2) + '" y="' + PT + '" width="' + slot.toFixed(2) +
       '" height="' + ih + '"/>' +
       '<line class="cursor" x1="' + cx.toFixed(2) + '" y1="' + PT + '" x2="' + cx.toFixed(2) + '" y2="' + yBase + '"/>' +
@@ -6847,7 +6998,7 @@ function usageChartSVG(series) {
       '<rect class="usbar" x="' + x.toFixed(2) + '" y="' + (yBase - hP).toFixed(2) + '" width="' + bw.toFixed(2) +
       '" height="' + hP.toFixed(2) + '" fill="var(--accent)"/>' +
       '<rect class="usbar" x="' + x.toFixed(2) + '" y="' + (yBase - hP - hC).toFixed(2) + '" width="' + bw.toFixed(2) +
-      '" height="' + hC.toFixed(2) + '" fill="var(--ok)"/>' +
+      '" height="' + hC.toFixed(2) + '" fill="var(--ok)"/>' + cap +
       '</g>';
   });
   let prevDay = -1;
@@ -6873,7 +7024,8 @@ function usageChartSVG(series) {
     const p = pts[best], cx = xOf(p.t), dt = new Date(p.t);
     const label = p.scope === "day"
       ? (dt.getMonth() + 1) + "-" + String(dt.getDate()).padStart(2, "0")
-      : String(dt.getHours()).padStart(2, "0") + ":00";
+      : (multiDay ? String(dt.getMonth() + 1) + "-" + String(dt.getDate()).padStart(2, "0") + " " : "") +
+        String(dt.getHours()).padStart(2, "0") + ":00";
     const anchor = cx < PL + 16 ? "start" : (cx > W - PR - 16 ? "end" : "middle");
     out += '<text class="tk" x="' + Math.max(PL, Math.min(W - PR, cx)).toFixed(1) + '" y="' + (yBase + 15) +
       '" text-anchor="' + anchor + '">' + label + '</text>';
@@ -6897,7 +7049,7 @@ function usageChartWiring() {
   box.addEventListener("mouseleave", () => {
     box.querySelectorAll(".uscol.on").forEach(n => n.classList.remove("on"));
     const read = $("#usRead");
-    if (read) read.hidden = true;
+    if (read) { read.classList.remove("is-in"); read.hidden = true; }
   });
 }
 
@@ -6934,14 +7086,14 @@ function usageChartKeys() {
       list.forEach(n => n.classList.remove("on"));
       at = -1;
       const read = $("#usRead");
-      if (read) read.hidden = true;
+      if (read) { read.classList.remove("is-in"); read.hidden = true; }
     }
   });
   box.addEventListener("blur", () => {
     cols().forEach(n => n.classList.remove("on"));
     at = -1;
     const read = $("#usRead");
-    if (read) read.hidden = true;
+    if (read) { read.classList.remove("is-in"); read.hidden = true; }
   });
 }
 
@@ -7063,6 +7215,13 @@ function renderUsageTiles(d, t, rate) {
   const share = n => (total ? Math.round(n / total * 100) : 0);
   const tiles = [
     {
+      k: "合计 tokens", v: fmtTok(total), title: numf(total), role: "primary",
+      tint: "accent", tintText: "accent-text",
+      sub: "平均 " + fmtRate(t.avg_tokens_per_second) + " · " +
+        (d.window_hours ? d.window_hours + " 小时窗口" : "全部保留记录"),
+      spark: (d.series || []).map(x => Number(x.total_tokens || 0)),
+    },
+    {
       k: "成功率", v: rate + "%", tint: "ok", tintText: "ok-text",
       sub: t.failures
         ? '<em>' + numf(t.failures) + " 次失败</em>"
@@ -7070,11 +7229,11 @@ function renderUsageTiles(d, t, rate) {
       meter: rate,
     },
     {
-      k: "输入 tokens", v: numf(pt), tint: "accent", tintText: "accent-text",
+      k: "输入 tokens", v: fmtTok(pt), title: numf(pt), tint: "accent", tintText: "accent-text",
       sub: "占合计 " + share(pt) + "%",
     },
     {
-      k: "输出 tokens", v: numf(ct), tint: "accent", tintText: "accent-text",
+      k: "输出 tokens", v: fmtTok(ct), title: numf(ct), tint: "accent", tintText: "accent-text",
       sub: "占合计 " + share(ct) + "%",
     },
     {
@@ -7087,24 +7246,44 @@ function renderUsageTiles(d, t, rate) {
       sub: unpriced ? numf(unpriced) + " 条未定价，未计入" : (t.has_cost ? "按模型价格估算" : "没有可计价请求"),
     },
     {
-      k: "合计 tokens", v: numf(total), tint: "ok", tintText: "ok-text",
-      sub: "平均 " + fmtRate(t.avg_tokens_per_second),
-    },
-    {
       k: "平均延迟", v: fmtMs(t.avg_latency_ms), tint: "warn", tintText: "warn-text",
       sub: (d.window_hours ? d.window_hours + " 小时窗口" : "全部保留记录"),
     },
   ];
   const host = $("#usTiles");
   if (!host) return;
-  host.innerHTML = tiles.map(x =>
-    '<div class="ustile" style="--tint:var(--' + x.tint + ');--tint-soft:var(--' + x.tint + '-soft);--tint-text:var(--' + x.tintText + ')">' +
+  const spark = xs => {
+    const vals = (xs || []).map(Number).filter(Number.isFinite);
+    if (vals.length < 2) return "";
+    const w = 260, h = 52, max = Math.max(1, ...vals), min = Math.min(...vals);
+    const span = Math.max(1, max - min);
+    const pts = vals.map((v, i) => (i / (vals.length - 1) * w).toFixed(1) + "," +
+      (h - 3 - (v - min) / span * (h - 6)).toFixed(1)).join(" ");
+    const area = "M0," + h + " L" + pts.replaceAll(" ", " L") + " L" + w + "," + h + " Z";
+    return '<svg class="ustat-spark" viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none" aria-hidden="true">' +
+      '<path class="usspark-area" d="' + area + '"/>' +
+      '<polyline pathLength="140" points="' + pts + '"/></svg>';
+  };
+  host.classList.add("ustat-grid");
+  host.innerHTML = tiles.map(x => {
+    const cls = "ustile " + (x.role === "primary" ? "ustat-primary" : "ustat-mini") +
+      (x.k === "成功率" || x.k === "缓存命中率" ? " ustat-wide" : "");
+    return '<div class="' + cls + '"' + (x.title ? ' title="' + esc(x.title) + '"' : '') +
+      ' style="--tint:var(--' + x.tint + ');--tint-soft:var(--' + x.tint + '-soft);--tint-text:var(--' + x.tintText + ')">' +
       '<div class="k"><span class="dot"></span>' + esc(x.k) + '</div>' +
       '<div class="v">' + esc(x.v) + '</div>' +
       '<div class="sub">' + x.sub + '</div>' +
       (x.meter == null ? '' : '<div class="meter"><i style="width:' + x.meter + '%"></i></div>') +
-    '</div>'
-  ).join("");
+      (x.spark ? spark(x.spark) : '') +
+    '</div>';
+  }).join("");
+  // 先让旧值落下，再在下一帧抬起；reduced-motion 时直接给最终态。
+  if (!matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    host.querySelectorAll(".ustile .v").forEach(v => v.classList.add("us-num-change"));
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      host.querySelectorAll(".ustile .v").forEach(v => v.classList.remove("us-num-change"));
+    }));
+  }
 }
 
 // usageChartHover 是图表的交互层：鼠标停在某根柱子上时，把那个时间点的输入 /
@@ -7126,15 +7305,17 @@ function usageChartHover(el) {
   // 读数条上 —— 那时它报的是一个已经不在这张图里的时间点。所以先对一下时间戳。
   if (!el.getAttribute("data-us-v")) {
     box.querySelectorAll(".uscol.on").forEach(n => n.classList.remove("on"));
-    read.hidden = true;
+    read.classList.remove("is-in"); read.hidden = true;
     return;
   }
   box.querySelectorAll(".uscol").forEach(n => n.classList.toggle("on", n === el));
   $("#usReadT").textContent = el.getAttribute("data-us-t") || "";
   $("#usReadP").textContent = el.getAttribute("data-us-p") || "-";
   $("#usReadC").textContent = el.getAttribute("data-us-c") || "-";
+  $("#usReadA").textContent = "合计 " + (el.getAttribute("data-us-a") || "-");
   $("#usReadQ").textContent = (el.getAttribute("data-us-q") || "0") + " 次请求";
   read.hidden = false;
+  requestAnimationFrame(() => read.classList.add("is-in"));
 }
 
 async function renderUsage() {
@@ -7773,6 +7954,26 @@ async function mdSave() {
 // 重排，永远不重新请求上游 —— 800 多行每次输入都去问一遍厂商是不可接受的。
 let MD_ITEMS = [];
 
+// ctxProbeBadge renders the context-probe verdict for one model: whether the
+// gateway has already let the vendor settle this (platform, model)'s real
+// window, and what it decided.  A missing state means "never probed", which is
+// the row the operator can expect to be probed on the next oversized request.
+function ctxProbeBadge(m) {
+  const ps = m.probe_state;
+  if (!ps || !ps.probed) {
+    return '<span class="chip" title="这个模型还没探测过。下一次请求超出估算预算时，网关会先原样放行让厂商裁决，并按结果记住答案。">未探测</span>';
+  }
+  if (ps.outcome === "known") {
+    return '<span class="chip ok" title="这个模型的上下文长度已经知道（来自厂商目录、学到的窗口或手工填写），所以不再探测。点「清除探测」可以让它下次重新探测。">已探测</span>';
+  }
+  if (ps.outcome === "accepted") {
+    const n = ps.estimate_tokens ? numf(ps.estimate_tokens) : "?";
+    const vendor = ps.vendor_tokens ? "，厂商实测 " + numf(ps.vendor_tokens) : "";
+    return '<span class="chip ok" title="厂商原样接受了约 ' + esc(String(n)) + ' tokens 的请求' + esc(vendor) + '。该规模以后不再被裁剪。">已探测 · 接受 ' + esc(String(n)) + '</span>';
+  }
+  return '<span class="chip warn" title="厂商以超限拒绝了探测请求。该模型已转为按已知窗口裁剪，不再探测。">已探测 · 拒绝</span>';
+}
+
 // mdCopyButton copies the exact routed id rather than the friendly display
 // name in the cell, so it can be pasted into an API client unchanged.
 function mdCopyButton(client, model) {
@@ -7861,7 +8062,7 @@ async function renderModels(refresh) {
         free: free,
         text: haystack([c.name, m.id, nm, m.owned_by, ex]).join(" "),
         html: '<tr data-client="' + esc(c.name) + '" data-model="' + esc(m.id) + '"><td><div class="mdmodel"><b>' + esc(m.id) + '</b>' + mdCopyButton(c.name, m.id) + '</div>' + (nm ? '<div class="hint">' + esc(nm) + '</div>' : '') +
-          (free ? '<span class="chip ok" title="' + esc(freeTitle) + '">免费</span>' : '') + capBadges(ex) + '</td>' +
+          (free ? '<span class="chip ok" title="' + esc(freeTitle) + '">免费</span>' : '') + capBadges(ex) + ctxProbeBadge(m) + '</td>' +
           '<td>' + esc(platformLabel(c.name)) + '</td>' +
           '<td>' + (isFallback
             ? '<span class="chip err" title="' + esc(srcTitle) + '">基线</span>'
@@ -7875,7 +8076,10 @@ async function renderModels(refresh) {
           mdPriceCell("input", m.input_per_million, m.input_price_source, m.input_price_default, m.has_price, m.default_has_price) +
           mdPriceCell("output", m.output_per_million, m.output_price_source, m.output_price_default, m.has_price, m.default_has_price) +
           mdPriceCell("cache", m.cache_read_per_million, m.cache_read_price_source, m.cache_read_price_default, m.has_cache_read, m.default_has_cache_read) +
-          '<td class="mdacts"><button class="xs mdRestore" type="button" title="清掉手动值，回到上游值或官方预设">恢复官方默认</button></td>' +
+          '<td class="mdacts"><button class="xs mdRestore" type="button" title="清掉手动值，回到上游值或官方预设">恢复官方默认</button>' +
+            (m.probe_state && m.probe_state.probed
+              ? '<button class="xs mdClearProbe" type="button" data-client="' + esc(c.name) + '" data-model="' + esc(m.id) + '" title="忘掉这个模型的探测结果，下次超预算请求会重新放行探测">清除探测</button>'
+              : '') + '</td>' +
           // 所属和客户端是同一个名字时留一个破折号：大部分行都这样，重复一遍
           // 只是把这一列变成噪音。两边真的不一样（上游自报的归属不同）才显示。
           '<td>' + (m.owned_by && m.owned_by !== c.name ? esc(m.owned_by) : '<span class="hint">—</span>') + '</td></tr>',
@@ -8855,16 +9059,68 @@ async function runRouteSpeed() {
   btn.disabled = true;
   if (testBtn) testBtn.disabled = true;
   btn.textContent = "测速中…";
-  try {
-    const r = await api("/panel/api/route_speed", { method: "POST", body: { model: model, catalogs: routeCatalogs(PF.models) } });
-    if (!r.ok || !r.data) { toast("测速失败：" + (r.err || "没有结果"), "err"); return; }
-    const byPlatform = {};
-    (r.data.results || []).forEach(x => { byPlatform[x.platform] = x; });
+  out.querySelectorAll(".rpSpeed").forEach(cell => {
+    cell.innerHTML = '<span class="hint rpPending">测速中…</span>';
+  });
+  const apply = x => {
+    if (!x) return;
+    const platform = String(x.platform || "");
     out.querySelectorAll(".rpStep").forEach(row => {
+      if (String(row.dataset.rpPlatform || "") !== platform) return;
       const cell = row.querySelector(".rpSpeed");
-      if (cell) cell.innerHTML = routeSpeedCellHTML(byPlatform[row.dataset.rpPlatform]);
+      if (cell) cell.innerHTML = routeSpeedCellHTML(x);
     });
+  };
+  try {
+    const headers = { "Accept": "text/event-stream", "Content-Type": "application/json" };
+    if (KEY) headers["Authorization"] = "Bearer " + KEY;
+    let res;
+    try {
+      res = await fetch("/panel/api/route_speed", {
+        method: "POST",
+        headers,
+        cache: "no-store",
+        body: JSON.stringify({ model: model, catalogs: routeCatalogs(PF.models) }),
+      });
+    } catch (e) {
+      toast("测速失败：" + String((e && e.message) || e), "err");
+      return;
+    }
+    if (res.status === 401 || res.status === 403) showKey();
+    if (!res.ok) {
+      const txt = await res.text();
+      let msg = txt;
+      try { const j = JSON.parse(txt); msg = j.error || j.message || txt; } catch (e) {}
+      toast("测速失败：" + (msg || ("HTTP " + res.status)), "err");
+      return;
+    }
+    if (!res.body || !res.body.getReader) throw new Error("浏览器不支持流式响应");
+
+    // 每个平台独立调用、独立返回。服务端用 SSE 按完成顺序推送，收到一条
+    // 就立刻更新该平台所在行；慢平台仍显示“测速中”，不会拖住其余结果。
+    const reader = res.body.getReader(), dec = new TextDecoder();
+    let buf = "";
+    while (true) {
+      const step = await reader.read();
+      if (step.done) break;
+      buf += dec.decode(step.value, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, nl).replace(/\r$/, "").trim();
+        buf = buf.slice(nl + 1);
+        if (line.slice(0, 5) !== "data:") continue;
+        let ev;
+        try { ev = JSON.parse(line.slice(5).trim()); } catch (e) { continue; }
+        if (ev.result) apply(ev.result);
+        if (ev.done) return;
+      }
+    }
+  } catch (e) {
+    toast("测速失败：" + String((e && e.message) || e), "err");
   } finally {
+    out.querySelectorAll(".rpPending").forEach(cell => {
+      cell.innerHTML = '<span class="hint">未返回</span>';
+    });
     btn.disabled = false;
     btn.textContent = "测速";
     if (testBtn) testBtn.disabled = false;
@@ -13204,6 +13460,21 @@ $("#mdBody").addEventListener("click", ev => {
     );
     return;
   }
+  const clearProbe = ev.target.closest(".mdClearProbe");
+  if (clearProbe) {
+    // Forget one model's context-probe verdict so the next oversized request
+    // is forwarded whole again.  The learned window and any manual override
+    // are separate stores and are left alone on purpose.
+    const client = clearProbe.dataset.client || "";
+    const model = clearProbe.dataset.model || "";
+    if (!client || !model) return;
+    api("/panel/api/model_probe/clear", { method: "POST", body: { client, model } }).then(r => {
+      if (!r.ok) { toast("清除探测失败：" + r.err, "err"); return; }
+      toast("已清除探测，下次会重新探测", "ok");
+      renderModels(false);
+    });
+    return;
+  }
   const btn = ev.target.closest(".mdRestore");
   if (!btn) return;
   const tr = btn.closest("tr[data-client]");
@@ -13619,6 +13890,7 @@ $("#stickyVeil").addEventListener("click", ev => { if (ev.target === $("#stickyV
 $("#stickySwitchVeil").addEventListener("click", ev => { if (ev.target === $("#stickySwitchVeil")) closeStickySwitch(); });
 $("#btnStickySwitchCancel").addEventListener("click", closeStickySwitch);
 $("#btnStickySwitchConfirm").addEventListener("click", submitStickySwitch);
+$("#btnStickySwitchAll").addEventListener("click", switchAllStickySessions);
 $("#stickyRows").addEventListener("click", ev => {
   const button = ev.target.closest && ev.target.closest("[data-sticky-action]");
   if (!button) return;

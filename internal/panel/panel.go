@@ -135,6 +135,10 @@ type Options struct {
 	// Scheduler reports the automation timetable so the dashboard can show
 	// that the unattended work exists and when it next fires.  May be nil.
 	Scheduler Scheduler
+	// Probes is the gateway's context-probe memory, shared by reference so the
+	// models table can show which (platform, model) pairs have settled their
+	// window and let an operator clear one to re-probe.  Nil hides the column.
+	Probes ProbeSource
 	// ProbeFile is the model output-limit probe results written out-of-band by
 	// probe_max_tokens.py --panel-out.  Empty (or a file that does not exist)
 	// makes /panel/api/model_probes answer an empty set, and the models view
@@ -239,11 +243,13 @@ func New(opts Options) http.Handler {
 	api("/panel/api/models/refresh", p.handleModelsRefresh)
 	api("/panel/api/exposed_models", p.handleExposedModels)
 	api("/panel/api/model_context", p.handleModelContext)
+	api("/panel/api/model_probe/clear", p.handleModelProbeClear)
 	api("/panel/api/usage", p.handleUsage)
 	api("/panel/api/usage/save", p.handleUsageSave)
 	api("/panel/api/sticky-sessions", p.handleStickySessions)
 	api("/panel/api/sticky-sessions/unbind", p.handleStickySessionUnbind)
 	api("/panel/api/sticky-sessions/switch", p.handleStickySessionSwitch)
+	api("/panel/api/sticky-sessions/switch-all", p.handleStickySessionSwitchAll)
 	api("/panel/api/alerts", p.handleAlerts)
 	api("/panel/api/config", p.handleConfig)
 	api("/panel/api/sources/", p.handleSource)
@@ -294,6 +300,16 @@ func New(opts Options) http.Handler {
 		}
 		mux.ServeHTTP(w, r)
 	})
+}
+
+// ProbeSource is the slice of the gateway's context-probe store the panel needs.
+//
+// It is an interface rather than the concrete store because that type is
+// unexported: the gateway owns the storage, and the panel only reads a snapshot
+// and asks for one entry to be forgotten.
+type ProbeSource interface {
+	Snapshot() map[string]map[string]gateway.ProbeRecord
+	Clear(client, model string) bool
 }
 
 type panel struct {

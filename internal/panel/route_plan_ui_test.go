@@ -67,11 +67,13 @@ func TestRoutePlanUIWiresTheSpeedButton(t *testing.T) {
 	src := poolStatsUISource(t)
 	body := poolStatsFuncBody(t, src, "runRouteSpeed")
 	for _, want := range []string{
-		`api("/panel/api/route_speed"`,
+		`fetch("/panel/api/route_speed"`,
 		`method: "POST"`,
+		`text/event-stream`,
+		`getReader()`,
+		`ev.result`,
 		`PF.models`,
 		`catalogs`,
-		`results`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("runRouteSpeed 缺少 %q", want)

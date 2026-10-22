@@ -195,3 +195,69 @@ func TestStickySessionSwitchValidatesTheChosenPlatformBeforeMutating(t *testing.
 		t.Fatalf("failed validation changed the route: %#v", route)
 	}
 }
+
+// TestStickySessionSwitchAllClearsEveryConversation pins the one-click bulk
+// action the operator asked for: every listed conversation, whether it carries
+// an account binding, a platform route, or both, must end up with both layers
+// cleared so the next turn re-ranks platforms and accounts from scratch.
+func TestStickySessionSwitchAllClearsEveryConversation(t *testing.T) {
+	verbs := binderClient("verbs", core.AccountRecord{ID: "A1"})
+	verbs.entries["conv-1"] = "A1"
+	verbs.entries["conv-2"] = "A1"
+	beta := binderClient("beta", core.AccountRecord{ID: "B1"})
+	beta.entries["conv-3"] = "B1"
+	platforms := &fakePlatformStore{routes: map[string]gateway.StickyRoute{
+		"conv-1": {Key: "conv-1", Platform: "verbs", Model: "m1"},
+		"conv-3": {Key: "conv-3", Platform: "beta", Model: "m1"},
+		// A platform-only row: no module holds this key, so only the gateway
+		// half has anything to forget.
+		"conv-4": {Key: "conv-4", Platform: "verbs", Model: "m2"},
+	}}
+	h := stickyPanel(t, platforms, verbs, beta)
+
+	rec := hitRoute(t, h, http.MethodPost, "/panel/api/sticky-sessions/switch-all", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	got := decodeMap(t, rec)
+	if got["total"] != float64(4) || got["switched"] != float64(4) {
+		t.Fatalf("switch-all response = %s, want total/ switched 4", rec.Body.String())
+	}
+	for _, key := range []string{"conv-1", "conv-2"} {
+		if _, ok := verbs.bound(key); ok {
+			t.Fatalf("account binding for %s survived 一键强制切换", key)
+		}
+	}
+	if _, ok := beta.bound("conv-3"); ok {
+		t.Fatal("account binding for conv-3 survived 一键强制切换")
+	}
+	if len(platforms.routes) != 0 {
+		t.Fatalf("platform routes survived 一键强制切换: %#v", platforms.routes)
+	}
+}
+
+// TestStickySessionSwitchAllWithNothingToDoIsNotAnError keeps the empty state
+// honest: a dialog with no rows must report zero rather than fail.
+func TestStickySessionSwitchAllWithNothingToDoIsNotAnError(t *testing.T) {
+	h := stickyPanel(t, &fakePlatformStore{routes: map[string]gateway.StickyRoute{}}, binderClient("verbs"))
+
+	rec := hitRoute(t, h, http.MethodPost, "/panel/api/sticky-sessions/switch-all", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	got := decodeMap(t, rec)
+	if got["total"] != float64(0) || got["switched"] != float64(0) {
+		t.Fatalf("switch-all response = %s, want zeros", rec.Body.String())
+	}
+}
+
+// TestStickySessionSwitchAllRejectsOtherMethods matches the per-key routes: a
+// GET must not silently perform the destructive bulk action.
+func TestStickySessionSwitchAllRejectsOtherMethods(t *testing.T) {
+	h := stickyPanel(t, &fakePlatformStore{routes: map[string]gateway.StickyRoute{}}, binderClient("verbs"))
+
+	rec := hitRoute(t, h, http.MethodGet, "/panel/api/sticky-sessions/switch-all", "")
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}

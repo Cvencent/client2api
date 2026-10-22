@@ -177,6 +177,15 @@ type UsageRecord struct {
 	// something was.
 	TrimmedFromTokens int64 `json:"trimmed_from_tokens,omitempty"`
 	TrimmedToTokens   int64 `json:"trimmed_to_tokens,omitempty"`
+	// Probed marks a turn the guard forwarded whole rather than trimming,
+	// because this (platform, model) had never been tested against the vendor.
+	// It is recorded so the panel can explain why a large request was not cut.
+	Probed bool `json:"probed,omitempty"`
+	// ProbedFromTokens is the estimate that was forwarded whole, in this
+	// gateway's estimate space.  It becomes the model's accepted floor when the
+	// vendor serves the turn, and is what a later retry records as the probe
+	// verdict.
+	ProbedFromTokens int64 `json:"probed_from_tokens,omitempty"`
 	// EstimatedPromptTokens is this gateway's own estimate of the request it
 	// actually sent.  Paired with PromptTokens -- the vendor's count of the same
 	// bytes -- it is what calibrates the estimator for this model.  See

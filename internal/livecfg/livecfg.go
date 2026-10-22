@@ -27,6 +27,10 @@ type Snapshot struct {
 	SoftCooldown time.Duration `json:"soft_cooldown"`
 	// SanitizeFingerprints toggles the outbound body sanitiser.
 	SanitizeFingerprints bool `json:"sanitize_fingerprints"`
+	// ProbeBeforeTrim forwards an over-budget request whole once for a model
+	// this gateway has never tested, so the vendor -- not the estimator --
+	// decides whether it fits.  A panel reload moves it with the rest.
+	ProbeBeforeTrim bool `json:"probe_before_trim"`
 	// PromptMode / PromptFile drive system-prompt replacement.
 	PromptMode string `json:"prompt_mode"`
 	PromptFile string `json:"prompt_file"`

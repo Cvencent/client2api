@@ -166,6 +166,76 @@ func TestResponses_ToolCallBecomesFunctionCallItem(t *testing.T) {
 	}
 }
 
+// A DeepSeek-family model can put its tool call in the visible content as
+// DSML instead of returning it through tool_calls. Codex sees that text as an
+// answer and never runs the tool, so the gateway protocol boundary must turn
+// it into the same function_call event a native call produces.
+func TestResponses_DSMLTextBecomesFunctionCallItem(t *testing.T) {
+	marker := "<" + strings.Repeat("\uFF5C", 2) + "DSML" + strings.Repeat("\uFF5C", 2)
+	closeMarker := strings.TrimPrefix(marker, "<")
+	dsml := marker + " calls>\n" +
+		marker + ` invoke name="exec">` + "\n" +
+		marker + ` parameter name="arguments" string="true">{"cmd":"git status --short"}</` + closeMarker + " parameter>\n" +
+		"</" + closeMarker + " invoke>\n" +
+		"</" + closeMarker + " calls>"
+
+	events := make([]core.Event, 0, len([]rune(dsml))+1)
+	for _, r := range dsml {
+		events = append(events, core.Event{Type: core.EventDelta, Delta: string(r)})
+	}
+	events = append(events, core.Event{Type: core.EventDone, Finish: "stop"})
+
+	c := &testClient{name: "t", events: events}
+	srv := newTestServer(t, c, NewStats(), NewUsageStore(10))
+	rec := responses(t, srv, `{"model":"t/m1","stream":true,"input":"run it","tools":[{"type":"function","name":"exec","parameters":{"type":"object"}}]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+	}
+	if strings.Contains(rec.Body.String(), "DSML") {
+		t.Fatalf("raw DSML leaked to the caller: %s", rec.Body)
+	}
+
+	done := firstOfType(decodeSSE(t, rec.Body.String()), "response.output_item.done")
+	if done == nil {
+		t.Fatal("no output_item.done")
+	}
+	item := done["item"].(map[string]any)
+	if item["type"] != "function_call" || item["name"] != "exec" {
+		t.Fatalf("done item = %#v, want exec function_call", item)
+	}
+	if item["arguments"] != `{"cmd":"git status --short"}` {
+		t.Fatalf("arguments = %v", item["arguments"])
+	}
+}
+
+// A truncated DSML block must fail the turn rather than leak markup as visible
+// answer text. Otherwise Codex again receives protocol syntax it cannot act on.
+func TestResponses_IncompleteDSMLFailsWithoutLeakingMarkup(t *testing.T) {
+	marker := "<" + strings.Repeat("\uFF5C", 2) + "DSML" + strings.Repeat("\uFF5C", 2)
+	dsml := marker + " calls>\n" +
+		marker + ` invoke name="exec">` + "\n" +
+		marker + ` parameter name="arguments" string="true">{"cmd":"pwd"}`
+
+	events := make([]core.Event, 0, len([]rune(dsml))+1)
+	for _, r := range dsml {
+		events = append(events, core.Event{Type: core.EventDelta, Delta: string(r)})
+	}
+	events = append(events, core.Event{Type: core.EventDone, Finish: "stop"})
+
+	c := &testClient{name: "t", events: events}
+	srv := newTestServer(t, c, NewStats(), NewUsageStore(10))
+	rec := responses(t, srv, `{"model":"t/m1","stream":true,"input":"run it","tools":[{"type":"function","name":"exec","parameters":{"type":"object"}}]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+	}
+	if strings.Contains(rec.Body.String(), "DSML") {
+		t.Fatalf("incomplete DSML leaked to the caller: %s", rec.Body)
+	}
+	if !hasType(decodeSSE(t, rec.Body.String()), "response.failed") {
+		t.Fatalf("incomplete DSML did not fail the response: %s", rec.Body)
+	}
+}
+
 func TestResponses_BufferedReturnsResponseObject(t *testing.T) {
 	c := &testClient{name: "t", events: []core.Event{
 		{Type: core.EventDelta, Delta: "answer"},

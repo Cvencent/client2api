@@ -276,3 +276,39 @@ func stickyBinderError(name string, status int) string {
 		return "no registry"
 	}
 }
+
+// handleStickySessionSwitchAll is the one-click bulk form of
+// handleStickySessionSwitch: every conversation the dialog lists has its
+// account binding and platform route cleared so the next turn re-ranks
+// platforms and accounts from a clean slate.
+//
+// It deliberately mirrors the single-key "自动选择" switch rather than pinning
+// a platform: pinning needs a per-row model to validate, and the list can hold
+// legacy rows without one.  A row that fails is skipped and counted, never
+// forced into the totals -- the dialog reports what really happened.
+func (p *panel) handleStickySessionSwitchAll(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "use POST")
+		return
+	}
+	rows := p.stickySessions()
+	switched := 0
+	for _, row := range rows {
+		changed := false
+		if row.AccountBound && row.Client != "" {
+			if binder, ok, _ := p.stickyBinder(row.Client); ok {
+				changed = binder.UnbindConversation(row.Key) || changed
+			}
+		}
+		if p != nil && p.opts.SessionPlatforms != nil {
+			changed = p.opts.SessionPlatforms.Forget(row.Key) || changed
+		}
+		if changed {
+			switched++
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"total":    len(rows),
+		"switched": switched,
+	})
+}

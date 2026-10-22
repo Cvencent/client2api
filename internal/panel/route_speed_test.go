@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"client2api/internal/core"
 )
@@ -39,6 +41,8 @@ type routeSpeedClient struct {
 	account  string
 	chatErr  error
 	events   []core.Event
+	started  chan<- string
+	release  <-chan struct{}
 	calls    atomic.Int64
 	gotModel atomic.Value
 	gotFree  atomic.Bool
@@ -48,6 +52,12 @@ func (c *routeSpeedClient) Chat(ctx context.Context, req *core.ChatRequest) (cor
 	c.calls.Add(1)
 	c.gotModel.Store(req.Model)
 	c.gotFree.Store(req.FreeModel)
+	if c.started != nil {
+		c.started <- c.fakeClient.name
+	}
+	if c.release != nil {
+		<-c.release
+	}
 	if req.ServedBy != nil && c.account != "" {
 		*req.ServedBy = c.account
 	}
@@ -206,6 +216,132 @@ func TestRouteSpeedKeepsGoingWhenOnePlatformFails(t *testing.T) {
 	}
 	if !got.Results[1].OK {
 		t.Fatalf("beta result = %+v, want the later platform to still succeed", got.Results[1])
+	}
+	if alpha.calls.Load() != 1 || beta.calls.Load() != 1 {
+		t.Fatalf("calls = alpha %d / beta %d, want 1 each", alpha.calls.Load(), beta.calls.Load())
+	}
+}
+
+func TestRouteSpeedStreamsEachPlatformAsItCompletes(t *testing.T) {
+	started := make(chan string, 2)
+	releaseAlpha := make(chan struct{})
+	alpha := &routeSpeedClient{
+		fakeClient: &fakeClient{name: "alpha", models: []core.Model{{ID: "gpt-x"}}},
+		account:    "alpha-account",
+		started:    started,
+		release:    releaseAlpha,
+		events: []core.Event{
+			{Type: core.EventDelta, Delta: "ok"},
+			{Type: core.EventUsage, Usage: &core.Usage{CompletionTokens: 1}},
+			{Type: core.EventDone},
+		},
+	}
+	beta := &routeSpeedClient{
+		fakeClient: &fakeClient{name: "beta", models: []core.Model{{ID: "gpt-x"}}},
+		account:    "beta-account",
+		started:    started,
+		events: []core.Event{
+			{Type: core.EventDelta, Delta: "ok"},
+			{Type: core.EventUsage, Usage: &core.Usage{CompletionTokens: 1}},
+			{Type: core.EventDone},
+		},
+	}
+	reg := registryOf(alpha, beta)
+	reg.SetPlatformConfigs(map[string]core.PlatformConfig{
+		"alpha": {Priority: 1},
+		"beta":  {Priority: 2},
+	})
+	server := httptest.NewServer(New(Options{Registry: reg}))
+	defer server.Close()
+	released := false
+	defer func() {
+		if !released {
+			close(releaseAlpha)
+		}
+	}()
+
+	req, err := http.NewRequest(http.MethodPost, server.URL+"/panel/api/route_speed", strings.NewReader(`{
+		"model":"Auto/gpt-x",
+		"catalogs":{
+			"alpha":[{"id":"gpt-x"}],
+			"beta":[{"id":"gpt-x"}]
+		}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "text/event-stream") {
+		t.Fatalf("Content-Type = %q, want text/event-stream", ct)
+	}
+
+	// Both calls must be in flight before either probe is released. This is the
+	// regression guard against the old serial loop.
+	for i := 0; i < 2; i++ {
+		select {
+		case <-started:
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for both platform probes to start")
+		}
+	}
+
+	lines := make(chan string)
+	go func() {
+		scanner := bufio.NewScanner(resp.Body)
+		for scanner.Scan() {
+			lines <- scanner.Text()
+		}
+		close(lines)
+	}()
+	readEvent := func() routeSpeedEvent {
+		for {
+			select {
+			case line, ok := <-lines:
+				if !ok {
+					t.Fatal("stream ended before the expected event")
+					return routeSpeedEvent{}
+				}
+				line = strings.TrimSpace(line)
+				if !strings.HasPrefix(line, "data:") {
+					continue
+				}
+				var event routeSpeedEvent
+				if err := json.Unmarshal([]byte(strings.TrimSpace(strings.TrimPrefix(line, "data:"))), &event); err != nil {
+					t.Fatalf("bad SSE event: %v\n%s", err, line)
+				}
+				return event
+			case <-time.After(2 * time.Second):
+				t.Fatal("timed out waiting for the next SSE event")
+				return routeSpeedEvent{}
+			}
+		}
+	}
+
+	// Alpha is deliberately still blocked. Beta must already have its own
+	// flushed event rather than waiting for the whole route chain.
+	first := readEvent()
+	if first.Done || first.Result == nil || first.Result.Platform != "beta" || !first.Result.OK {
+		t.Fatalf("first event = %+v, want a completed beta result", first)
+	}
+
+	close(releaseAlpha)
+	released = true
+	second := readEvent()
+	if second.Done || second.Result == nil || second.Result.Platform != "alpha" || !second.Result.OK {
+		t.Fatalf("second event = %+v, want the released alpha result", second)
+	}
+	last := readEvent()
+	if !last.Done || last.Result != nil {
+		t.Fatalf("last event = %+v, want the stream done marker", last)
 	}
 	if alpha.calls.Load() != 1 || beta.calls.Load() != 1 {
 		t.Fatalf("calls = alpha %d / beta %d, want 1 each", alpha.calls.Load(), beta.calls.Load())

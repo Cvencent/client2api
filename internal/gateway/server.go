@@ -71,6 +71,14 @@ type Options struct {
 	// operator's permanent choice, while a park is a transient window learned
 	// from an upstream 429.  Nil disables the fallback.
 	ModelParks *modelpark.Store
+	// ProbeStore remembers, per (platform, model), whether the vendor has been
+	// asked to decide the context question and what it said.  Nil disables the
+	// probe path and leaves the guard trimming exactly as it did before.
+	ProbeStore *probeStore
+	// ProbeBeforeTrim forwards an over-budget request whole once, when the
+	// (platform, model) has not been probed yet, instead of trimming it before
+	// the vendor ever sees it.  Off restores the pre-probe behaviour.
+	ProbeBeforeTrim bool
 	// LearnedWindowsPath is where the gateway records the context windows that
 	// vendors reported in their own refusals.  Empty keeps that memory
 	// in-process only, which is the right behaviour for an embedder that has no
@@ -115,6 +123,7 @@ type server struct {
 	// a model whose published window turned out to be inflated is judged against
 	// what the vendor actually said.  See context_guard.go.
 	learnedWindows *learnedWindowStore
+	probes         *probeStore
 	// estimates is the per-model calibration between this gateway's token
 	// heuristic and the vendor's own count for the same bytes.  It is applied
 	// to the guard's budget, never to the estimate itself.  See
@@ -183,6 +192,9 @@ func NewServer(opts Options) *http.Server {
 		s.opts.Logger = log.Default()
 	}
 	s.learnedWindows = openLearnedWindowStore(opts.LearnedWindowsPath, s.opts.Logger.Printf)
+	if opts.ProbeStore != nil {
+		s.probes = opts.ProbeStore
+	}
 	s.estimates = newEstimateCalibrationStore(opts.EstimateCalibrationPath, s.opts.Logger.Printf)
 	s.compaction = newCompactionSigner(opts.CompactionKeyPath, s.opts.Logger.Printf)
 
@@ -1208,6 +1220,7 @@ func (s *server) openStreamRecorded(ctx context.Context, client core.Client, req
 		req.ReleaseAccountSlot()
 		stream, err := client.Chat(ctx, req)
 		if err == nil {
+			stream = wrapToolMarkup(stream, req)
 			return &releaseStream{Stream: stream, release: release, account: req.ReleaseAccountSlot}, nil
 		}
 		release()
@@ -1233,6 +1246,12 @@ func (s *server) openStreamRecorded(ctx context.Context, client core.Client, req
 			// over-packing.  The request itself still fails this time; retrying it
 			// unchanged would just fail again.
 			s.learnContextWindowFromFailure(ctx, client, req.Model, err)
+			// The probe's lease is now spent: the vendor has answered the
+			// question, and this (platform, model) must not be probed again
+			// until an operator clears the verdict.
+			if rec != nil && rec.Probed && s.probes != nil {
+				s.probes.recordRefused(client.Name(), req.Model, rec.ProbedFromTokens)
+			}
 			// The refusal also carries the vendor's own measurement of this
 			// exact request.  When that measurement says the request did not fit
 			// while the gateway's estimate said it would, the estimate is the
@@ -1489,6 +1508,17 @@ func (s *server) recordUsage(rec UsageRecord) {
 	// failed row never reached the vendor's tokenizer, so it teaches nothing.
 	if !rec.Failed && rec.PromptTokens > 0 && rec.EstimatedPromptTokens > 0 {
 		s.estimates.observe(rec.Client, model, int64(rec.PromptTokens), rec.EstimatedPromptTokens)
+	}
+	// A probed turn that the vendor served is the one measurement that settles
+	// the context question for this (platform, model): the size the gateway
+	// doubted was demonstrably servable.  Recording it turns the next request
+	// of that size -- or anything under it -- into a normal, untrimmed send.
+	// Only a probe the vendor served WITHOUT a trim proves anything.  A probe
+	// that was refused and then served from a shortened retry is the opposite
+	// verdict: the original size did not fit, and that row is already recorded
+	// as refused by the retry loop above.
+	if !rec.Failed && rec.Probed && !rec.Trimmed && rec.PromptTokens > 0 && s.probes != nil {
+		s.probes.recordAccepted(rec.Client, model, rec.ProbedFromTokens, int64(rec.PromptTokens))
 	}
 	if rec.Client != "" && rec.Model != "" &&
 		(rec.PromptTokens > 0 || rec.CompletionTokens > 0 || rec.HasCachedTokens) {

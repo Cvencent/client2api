@@ -34,12 +34,20 @@ func HasMarker(s string) bool {
 // visible text plus any tool calls that became complete. It is not safe for
 // concurrent use.
 type Parser struct {
-	buf     strings.Builder
-	inBlock bool
+	buf       strings.Builder
+	inBlock   bool
+	malformed bool
 }
 
 // NewParser returns an empty parser.
 func NewParser() *Parser { return &Parser{} }
+
+// Malformed reports whether a recognized tool-call construct closed or ended
+// without yielding a usable call. Callers can fail the turn instead of showing
+// protocol markup as ordinary assistant text.
+func (p *Parser) Malformed() bool {
+	return p != nil && p.malformed
+}
 
 // Feed consumes one text delta.
 func (p *Parser) Feed(delta string) (string, []Call) {
@@ -68,6 +76,7 @@ loop:
 			p.inBlock = false
 			parsed := parseBlock(inner)
 			if len(parsed) == 0 {
+				p.malformed = true
 				// A block that closed but yielded no call would otherwise vanish.
 				// That turns "the model tried to call a tool and the gateway could
 				// not read it" into a clean-looking stop, so the text is handed back
@@ -91,6 +100,7 @@ loop:
 			p.replaceBuf(s[invokeLoc[1]:])
 			parsed := parseBlock(block)
 			if len(parsed) == 0 {
+				p.malformed = true
 				// A nameless invoke is the other silent-drop path.
 				out.WriteString(block)
 			}
@@ -123,6 +133,7 @@ func (p *Parser) Finish() (string, []Call) {
 		if calls := parseBlock(s); len(calls) > 0 {
 			return "", calls
 		}
+		p.malformed = true
 		// The upstream stopped in the middle of a tool-call block.  There is
 		// no complete call to execute, but silently dropping the tail makes a
 		// truncated answer look like a clean stop.  Return it as visible text

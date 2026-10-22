@@ -44,7 +44,7 @@ import (
 )
 
 // version is overridable with -ldflags "-X main.version=...".
-var version = "0.2.0"
+var version = "0.3.0"
 
 // restartHandoffEnv marks the replacement half of a panel restart.  It tells a
 // starting process to keep retrying the listen address instead of failing fast,
@@ -576,6 +576,11 @@ type cooldownConfig struct {
 
 type featuresConfig struct {
 	SanitizeBlacklistFingerprints *bool `json:"sanitize_blacklist_fingerprints"`
+	// ProbeBeforeTrim forwards an over-budget request whole once for a model
+	// this gateway has never tested, letting the vendor decide the context
+	// question instead of trusting the estimator.  Nil means the documented
+	// default of true.
+	ProbeBeforeTrim *bool `json:"probe_before_trim"`
 }
 
 // panelConfig holds the dashboard's own presentation settings -- the ones the
@@ -1060,6 +1065,7 @@ func (c *fileConfig) liveSnapshot() livecfg.Snapshot {
 		APIKey:               c.APIKey,
 		SoftCooldown:         dur(c.Cooldown.SoftRate, 600*time.Second),
 		SanitizeFingerprints: boolOr(c.Features.SanitizeBlacklistFingerprints, true),
+		ProbeBeforeTrim:      boolOr(c.Features.ProbeBeforeTrim, true),
 		PromptMode:           c.Prompt.Mode,
 		PromptFile:           c.Prompt.File,
 		AffinityTTL:          dur(c.SessionSticky.TTL, core.DefaultAffinityTTL),
@@ -1551,6 +1557,11 @@ func run() error {
 	sessionPlatforms.StartGC()
 	defer sessionPlatforms.StopGC()
 
+	// The context-probe memory is shared by reference between the gateway
+	// (which writes verdicts) and the panel (which shows and clears them), so
+	// it is built once here and handed to both.
+	probeStore := gateway.OpenProbeStore(filepath.Join(cfg.DataDir, "observed_context_windows.json"), logger.Printf)
+
 	panelHandler := panel.New(panel.Options{
 		Registry:   registry,
 		Version:    version,
@@ -1579,6 +1590,9 @@ func run() error {
 		// directory, so the probe tool and the panel agree without a second
 		// path setting.  Missing file = no annotation, never an error.
 		ProbeFile: filepath.Join(cfg.DataDir, panel.DefaultProbeFileName),
+		// The same context-probe store the gateway writes, so the models
+		// table shows a verdict the moment it is recorded.
+		Probes: probeStore,
 		// The balance view asks a module how much of its credit lapses soon.
 		// That window is pool.expiring_soon -- the reference threads its
 		// scheduler's window in here, and this is where the operator actually
@@ -1628,6 +1642,11 @@ func run() error {
 		// vendor's own count.  A measurement, not a setting, so it lives beside
 		// the learned windows and survives an upgrade with the data directory.
 		EstimateCalibrationPath: filepath.Join(cfg.DataDir, "estimate_calibration.json"),
+		// The probe verdicts: a measurement this gateway took by itself, so it
+		// lives beside the learned windows rather than in the operator's model
+		// overrides.  An upgrade keeps the data directory, so a probe survives.
+		ProbeStore:      probeStore,
+		ProbeBeforeTrim: cfg.liveSnapshot().ProbeBeforeTrim,
 		// The HMAC key that signs Responses compaction blobs.  It lives in the
 		// data directory (which an upgrade preserves) so a blob a client replays
 		// after an install still verifies; see internal/gateway/compaction.go.

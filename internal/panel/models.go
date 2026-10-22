@@ -84,6 +84,10 @@ type modelInfo struct {
 	// the model inherits. The panel needs the distinction to render an empty
 	// box (inherit) versus a written one (override).
 	ModelPriority *int `json:"model_priority,omitempty"`
+	// ProbeState is the context probe verdict for this (platform, model), or
+	// nil when it has never been probed.  The models table shows it so an
+	// operator can see that a model has already settled its window.
+	ProbeState *modelProbeView `json:"probe_state,omitempty"`
 }
 
 type clientModels struct {
@@ -562,6 +566,7 @@ func (p *panel) modelsFor(ctx context.Context, c core.Client, refresh bool) clie
 			MaxOutputEditable:       p.opts.ModelOverrides != nil,
 			EffortsEditable:         p.opts.ModelOverrides != nil,
 			ElevateTopEditable:      p.opts.ModelOverrides != nil,
+			ProbeState:              probeViewFor(p.opts.Probes, c.Name(), m.ID, meta.ContextLength),
 		})
 	}
 	return row

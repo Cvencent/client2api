@@ -1146,7 +1146,27 @@ func (s *server) responsesWouldTrim(ctx context.Context, req *core.ChatRequest) 
 	} else if n, ok := s.resolveMaxOutputTokens(ctx, client, model); ok {
 		maxOutput = n
 	}
-	budget := s.promptBudget(ctx, client, model, maxOutput, req.ContextWindowLimit)
+	// A model this gateway has never tested gets probed first.  That costs one
+	// round trip and teaches the real window: if the vendor serves it, the size
+	// is proven servable; if it refuses, the refusal names the limit and the
+	// retry path learns it.  Folding first would spend a summarisation call to
+	// answer a question the vendor was about to answer for free -- and would
+	// throw away the history the probe exists to test.
+	//
+	// Once the model is settled, compaction outranks trimming: folding keeps
+	// the old turns in the summary the caller carries forward, while a trim
+	// drops them for good.
+	if s.probeEnabled() {
+		switch s.probeDecision(ctx, req, client, model, maxOutput, req.ContextWindowLimit) {
+		case probeForwardWhole:
+			return false
+		case probeProceed, probeTrimExceeded:
+			// probeProceed only means "the normal budget logic owns this", and
+			// that logic may still trim.  Fall through so the trim report below
+			// decides whether folding can help.
+		}
+	}
+	budget := s.probeAdjustedBudget(ctx, client, model, maxOutput, req.ContextWindowLimit)
 	if budget <= 0 {
 		return false
 	}

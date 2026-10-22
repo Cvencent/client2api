@@ -49,3 +49,20 @@ func TestStickySessionDialogUsesTheManagementRoutes(t *testing.T) {
 		}
 	}
 }
+
+// TestStickySessionDialogOffersOneClickSwitchAll pins the bulk affordance: the
+// dialog owns a labelled danger button that calls the aggregate route, and the
+// action is confirmed before it runs because it clears every sticky binding.
+func TestStickySessionDialogOffersOneClickSwitchAll(t *testing.T) {
+	src := string(indexHTML)
+	for _, want := range []string{
+		`id="btnStickySwitchAll"`,
+		`/panel/api/sticky-sessions/switch-all`,
+		`$("#btnStickySwitchAll").addEventListener("click"`,
+		`async function switchAllStickySessions()`,
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("粘性会话一键强制切换缺少 %s", want)
+		}
+	}
+}
