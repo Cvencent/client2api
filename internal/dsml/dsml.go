@@ -39,6 +39,17 @@ var (
 	reParameter  = regexp.MustCompile(`(?is)<\s*` + namePrefix + `parameter([^>]*)>(.*?)(?:</\s*` + namePrefix + `parameter\s*>|</\s*[｜]+\s*>)`)
 	reAttrDouble = regexp.MustCompile(`(?i)\bname\s*=\s*"([^"]*)"`)
 	reAttrSingle = regexp.MustCompile(`(?i)\bname\s*=\s*'([^']*)'`)
+	// The vendor sometimes writes the element's own name as a bare attribute
+	// with no key at all -- `<｜｜ parameter="cmd" string="true">` --
+	// which leaves `="cmd"` at the head of the attribute string.
+	reBareAttrDouble = regexp.MustCompile(`(?:^|\s)="([^"]*)"`)
+	reBareAttrSingle = regexp.MustCompile(`(?:^|\s)='([^']*)'`)
+	// reBareInvokeOpen recognises the start of a fullwidth-bar invoke element.
+	// It holds a truncated envelope back instead of leaking it as prose, so
+	// unlike reInvoke it insists on the bar marker: with no close tag to confirm
+	// the shape, accepting a markerless `<invoke ...>` would let ordinary prose
+	// be swallowed as a call.
+	reBareInvokeOpen = regexp.MustCompile(`(?is)<\s*[｜]+\s*invoke([^>]*)>`)
 	// reMarkerless finds the bars-only envelope, which is distinguishable only
 	// by a fullwidth bar run glued to an element or attribute name.
 	reMarkerless = regexp.MustCompile(`[｜]{1,}\s*(?:tool_calls|calls|invoke|parameter)\b`)
@@ -109,8 +120,16 @@ loop:
 		}
 		openLoc := reOpenCalls.FindStringIndex(s)
 		invokeLoc := reInvoke.FindStringIndex(s)
+		bareLoc := reBareInvokeOpen.FindStringIndex(s)
 
 		switch {
+		case bareLoc != nil && (openLoc == nil || bareLoc[0] < openLoc[0]) && (invokeLoc == nil || bareLoc[0] < invokeLoc[0]):
+			// A bars invoke with no matching close is a truncated envelope.  Hold it
+			// back so Finish can still parse the calls it does contain; leaking it
+			// as prose is what ended the turn with no tool call.
+			out.WriteString(s[:bareLoc[0]])
+			p.replaceBuf(s[bareLoc[0]:])
+			p.inBlock = true
 		case openLoc != nil && (invokeLoc == nil || openLoc[0] <= invokeLoc[0]):
 			out.WriteString(s[:openLoc[0]])
 			p.replaceBuf(s[openLoc[1]:])
@@ -138,8 +157,10 @@ loop:
 	return out.String(), calls
 }
 
-// Finish flushes whatever is left. An unterminated block is parsed when its
-// complete invoke elements are present; leftover visible text is returned.
+// Finish flushes whatever is left. A block that never closed still carries
+// complete `parameter` elements, so it is parsed with the same rules as a
+// closed one; only when that yields nothing is the text handed back so the
+// caller can surface the truncation instead of a clean-looking stop.
 func (p *Parser) Finish() (string, []Call) {
 	if p == nil {
 		return "", nil
@@ -151,14 +172,18 @@ func (p *Parser) Finish() (string, []Call) {
 	}
 	if p.inBlock {
 		p.inBlock = false
+		// A complete `invoke` inside a wrapper that never closed is still a
+		// usable call; that is the ordinary truncated-wrapper case.
 		if calls := parseBlock(s); len(calls) > 0 {
 			return "", calls
 		}
+		// Otherwise the invoke itself was cut off, so there is no `</invoke>`
+		// to match and only the parameters it did send can be recovered.
+		if calls := parseTruncatedBlock(s); len(calls) > 0 {
+			return "", calls
+		}
+		// Nothing usable: fail the turn rather than hand back a silent stop.
 		p.malformed = true
-		// The upstream stopped in the middle of a tool-call block.  There is
-		// no complete call to execute, but silently dropping the tail makes a
-		// truncated answer look like a clean stop.  Return it as visible text
-		// so the caller can surface and diagnose the truncation.
 		return s, nil
 	}
 	return s, nil
@@ -196,30 +221,62 @@ func parseBlock(inner string) []Call {
 		if name == "" {
 			continue
 		}
-		args := map[string]string{}
-		argumentsJSON := ""
-		for _, pm := range reParameter.FindAllStringSubmatch(m[2], -1) {
-			pname := attrValue(pm[1])
-			if pname == "" {
-				continue
-			}
-			value := unescapeXMLText(strings.TrimSpace(pm[2]))
-			if pname == "arguments" {
-				argumentsJSON = normalizeArguments(value)
-				continue
-			}
-			args[pname] = value
-		}
-		callArgs := marshalArgs(args)
-		if argumentsJSON != "" {
-			callArgs = argumentsJSON
-		}
-		calls = append(calls, Call{Name: name, Arguments: callArgs})
+		calls = append(calls, Call{Name: name, Arguments: parseParameters(m[2])})
 	}
 	if len(calls) > 0 {
 		return calls
 	}
 	return parseJSONBlock(inner)
+}
+
+// parseTruncatedBlock reads an envelope the upstream cut off mid-flight: the
+// `invoke` element opened but never closed, so there is no `</invoke>` for
+// parseBlock to match. The parameters before the cut are complete, and they
+// are exactly what the call needs, so the element is parsed as if it had
+// closed. Only a bars-marked invoke is accepted here: at end of stream the
+// closing tag can no longer disambiguate, and a markerless `<invoke ...>` in
+// ordinary prose must not become a call.
+func parseTruncatedBlock(inner string) []Call {
+	var calls []Call
+	for _, m := range reBareInvokeOpen.FindAllStringSubmatchIndex(inner, -1) {
+		attrs := inner[m[2]:m[3]]
+		name := attrValue(attrs)
+		if name == "" {
+			continue
+		}
+		// Everything up to the next opening invoke (or end of stream) is this
+		// call's body.
+		body := inner[m[1]:]
+		if next := reBareInvokeOpen.FindStringIndex(body); next != nil {
+			body = body[:next[0]]
+		}
+		calls = append(calls, Call{Name: name, Arguments: parseParameters(body)})
+	}
+	return calls
+}
+
+// parseParameters marshals the `parameter` elements of one invoke body into
+// the JSON object the call carries. A parameter named `arguments` is the
+// whole-object form and wins over the named ones.
+func parseParameters(body string) string {
+	args := map[string]string{}
+	argumentsJSON := ""
+	for _, pm := range reParameter.FindAllStringSubmatch(body, -1) {
+		pname := attrValue(pm[1])
+		if pname == "" {
+			continue
+		}
+		value := unescapeXMLText(strings.TrimSpace(pm[2]))
+		if pname == "arguments" {
+			argumentsJSON = normalizeArguments(value)
+			continue
+		}
+		args[pname] = value
+	}
+	if argumentsJSON != "" {
+		return argumentsJSON
+	}
+	return marshalArgs(args)
 }
 
 // parseJSONBlock handles a JSON payload wrapped in a tool-call block, e.g.
@@ -302,6 +359,14 @@ func attrValue(attrs string) string {
 		return strings.TrimSpace(m[1])
 	}
 	if m := reAttrSingle.FindStringSubmatch(attrs); m != nil {
+		return strings.TrimSpace(m[1])
+	}
+	// The bare-attribute spelling leaves the name at the head of the
+	// attribute string with no key, so it is read before the generic scan.
+	if m := reBareAttrDouble.FindStringSubmatch(attrs); m != nil {
+		return strings.TrimSpace(m[1])
+	}
+	if m := reBareAttrSingle.FindStringSubmatch(attrs); m != nil {
 		return strings.TrimSpace(m[1])
 	}
 	fields := strings.Fields(attrs)

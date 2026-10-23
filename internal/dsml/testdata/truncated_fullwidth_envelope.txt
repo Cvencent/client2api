@@ -1,0 +1,11 @@
+
+<｜｜ invoke name="exec_command">
+<｜｜ parameter="cmd" string="true">git status --short; echo "=== TSC ==="; node node_modules/typescript/bin/tsc --noEmit 2>&1 | Select-Object -First 12; echo "EXIT=$LASTEXITCODE"</｜｜｜ parameter>
+<｜｜｜ parameter name="justification" string="true"></｜｜｜>
+<｜｜｜ parameter name="login" string="false">true</｜｜｜>
+<｜｜｜ parameter name="max_output_tokens" string="false">6000</｜｜｜>
+<｜｜｜ parameter name="sandbox_permissions" string="true">use_default</｜｜｜>
+<｜｜｜ parameter name="shell" string="true">powershell</｜｜｜>
+<｜｜｜ parameter name="tty" string="false">false</｜｜｜>
+<｜｜｜ parameter name="workdir" string="true">F:\aiNovelWriter\repo</｜｜｜>
+<｜｜｜ parameter name="yield_time_ms" string="false">180000</｜｜｜>

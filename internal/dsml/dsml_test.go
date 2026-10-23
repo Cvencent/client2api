@@ -2,6 +2,7 @@ package dsml
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 )
@@ -200,5 +201,137 @@ func TestFeedParsesCapturedLeakedEnvelope(t *testing.T) {
 	}
 	if vis != "" {
 		t.Fatalf("visible text leaked: %q", vis)
+	}
+}
+
+const truncBars = "\uFF5C"
+
+// TestFinishParsesTruncatedBareInvokeEnvelope pins the captured shape that
+// still leaked after the markerless fix: the envelope has no `<... calls>`
+// wrapper, the stream simply stops after the last parameter, and a parameter
+// may spell its name as the element's own attribute (`parameter="cmd"`)
+// instead of `name="cmd"`. None of it forms a complete `<invoke>...</invoke>`,
+// so the old parser saw plain prose and the turn ended with no tool call.
+func TestFinishParsesTruncatedBareInvokeEnvelope(t *testing.T) {
+	text := "\n" +
+		"<" + truncBars + truncBars + " invoke name=\"exec_command\">\n" +
+		"<" + truncBars + truncBars + " parameter=\"cmd\" string=\"true\">git status --short</" + truncBars + truncBars + truncBars + " parameter>\n" +
+		"<" + truncBars + truncBars + truncBars + " parameter name=\"workdir\" string=\"true\">F:\\repo</" + truncBars + truncBars + truncBars + ">\n" +
+		"<" + truncBars + truncBars + truncBars + " parameter name=\"yield_time_ms\" string=\"false\">180000</" + truncBars + truncBars + truncBars + ">\n"
+
+	p := NewParser()
+	vis, calls := p.Feed(text)
+	if len(calls) != 0 {
+		t.Fatalf("a truncated envelope must not be emitted mid-stream: %+v", calls)
+	}
+	// Whitespace before the envelope is ordinary prose; the markup itself
+	// must not survive.
+	if strings.TrimSpace(vis) != "" || strings.Contains(vis, truncBars) {
+		t.Fatalf("a truncated envelope leaked as visible text: %q", vis)
+	}
+	tail, calls := p.Finish()
+	if tail != "" {
+		t.Fatalf("finish returned visible text: %q", tail)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("calls = %+v, want one", calls)
+	}
+	if calls[0].Name != "exec_command" {
+		t.Fatalf("name = %q", calls[0].Name)
+	}
+	var got map[string]string
+	if err := json.Unmarshal([]byte(calls[0].Arguments), &got); err != nil {
+		t.Fatalf("arguments %q: %v", calls[0].Arguments, err)
+	}
+	want := map[string]string{"cmd": "git status --short", "workdir": "F:\\repo", "yield_time_ms": "180000"}
+	for k, v := range want {
+		if got[k] != v {
+			t.Fatalf("argument %q = %q, want %q (all: %#v)", k, got[k], v, got)
+		}
+	}
+}
+
+// TestFeedHoldsTruncatedBareInvokeUntilFinish arrives one rune at a time.
+func TestFeedHoldsTruncatedBareInvokeUntilFinish(t *testing.T) {
+	full := "<" + truncBars + truncBars + " invoke name=\"exec_command\">\n" +
+		"<" + truncBars + truncBars + " parameter=\"cmd\" string=\"true\">ls</" + truncBars + truncBars + truncBars + " parameter>\n"
+	p := NewParser()
+	var leaked strings.Builder
+	var calls []Call
+	for _, r := range full {
+		vis, got := p.Feed(string(r))
+		leaked.WriteString(vis)
+		calls = append(calls, got...)
+	}
+	if leaked.String() != "" {
+		t.Fatalf("truncated envelope leaked as visible text: %q", leaked.String())
+	}
+	tail, finishCalls := p.Finish()
+	calls = append(calls, finishCalls...)
+	if tail != "" {
+		t.Fatalf("finish returned visible text: %q", tail)
+	}
+	if len(calls) != 1 || calls[0].Name != "exec_command" || calls[0].Arguments != "{\"cmd\":\"ls\"}" {
+		t.Fatalf("calls = %+v", calls)
+	}
+}
+
+// TestFeedKeepsProseBeforeATruncatedEnvelope: prose before the envelope stays
+// visible, and the call still comes back at Finish.
+func TestFeedKeepsProseBeforeATruncatedEnvelope(t *testing.T) {
+	text := "let me check.\n<" + truncBars + truncBars + " invoke name=\"exec_command\">\n" +
+		"<" + truncBars + truncBars + " parameter=\"cmd\" string=\"true\">pwd</" + truncBars + truncBars + truncBars + " parameter>\n"
+	p := NewParser()
+	vis, _ := p.Feed(text)
+	if vis != "let me check.\n" {
+		t.Fatalf("visible = %q, want the prose before the envelope", vis)
+	}
+	_, calls := p.Finish()
+	if len(calls) != 1 || calls[0].Arguments != "{\"cmd\":\"pwd\"}" {
+		t.Fatalf("calls = %+v", calls)
+	}
+}
+
+func TestRealLeakedTruncatedEnvelope(t *testing.T) {
+	raw, err := os.ReadFile("testdata/truncated_fullwidth_envelope.txt")
+	if err != nil {
+		t.Skipf("sample not present: %v", err)
+	}
+	p := NewParser()
+	if vis, calls := p.Feed(string(raw)); len(calls) != 0 || len(vis) > 2 {
+		t.Fatalf("mid-stream: calls=%+v visible=%q", calls, vis)
+	}
+	tail, calls := p.Finish()
+	if tail != "" {
+		t.Fatalf("finish leaked back into visible text: %q", tail)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("calls = %+v, want one", calls)
+	}
+	if calls[0].Name != "exec_command" {
+		t.Fatalf("name = %q, want exec_command", calls[0].Name)
+	}
+	var got map[string]string
+	if err := json.Unmarshal([]byte(calls[0].Arguments), &got); err != nil {
+		t.Fatalf("arguments %q: %v", calls[0].Arguments, err)
+	}
+	want := map[string]string{
+		"cmd":                 "git status --short; echo \"=== TSC ===\"; node node_modules/typescript/bin/tsc --noEmit 2>&1 | Select-Object -First 12; echo \"EXIT=$LASTEXITCODE\"",
+		"justification":       "",
+		"login":               "true",
+		"max_output_tokens":   "6000",
+		"sandbox_permissions": "use_default",
+		"shell":               "powershell",
+		"tty":                 "false",
+		"workdir":             "F:\\aiNovelWriter\\repo",
+		"yield_time_ms":       "180000",
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Fatalf("argument %q = %q, want %q\nall: %#v", k, got[k], v, got)
+		}
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d arguments, want %d: %#v", len(got), len(want), got)
 	}
 }
