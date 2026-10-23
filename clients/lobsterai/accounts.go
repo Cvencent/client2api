@@ -128,6 +128,7 @@ func (c *Client) AddAccount(ctx context.Context, spec core.AccountSpec) (core.Ac
 		UUID:          spec.Field("uuid"),
 		AccessToken:   token,
 		RefreshToken:  spec.Field("refresh_token"),
+		ExpiresAt:     spec.Field("expires_at"),
 		FirstKeyfrom:  spec.Field("first_keyfrom"),
 		LatestKeyfrom: spec.Field("latest_keyfrom"),
 	}, c.now())

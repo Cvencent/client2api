@@ -29,6 +29,14 @@ type grantRecorder struct {
 	status  int
 	reply   string
 	onServe func()
+
+	// billsReply answers the read-only `GET /api/web/points/v1/bills` call the
+	// refusal path makes to find out whether today's extension already
+	// happened. Empty means "an empty ledger", which is what most refusal
+	// tests want: no completed extension, so the refusal stays retryable.
+	billsReply string
+	billsFail  bool
+	billsCalls int
 }
 
 func (g *grantRecorder) handler(t *testing.T) http.HandlerFunc {
@@ -36,6 +44,22 @@ func (g *grantRecorder) handler(t *testing.T) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		raw, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 		g.mu.Lock()
+		if r.URL.Path == pathBills {
+			g.billsCalls++
+			billsReply, billsFail := g.billsReply, g.billsFail
+			g.mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			if billsFail {
+				w.WriteHeader(http.StatusBadGateway)
+				_, _ = io.WriteString(w, `{"code":500000,"message":"ledger unavailable"}`)
+				return
+			}
+			if billsReply == "" {
+				billsReply = `{"code":0,"data":{"items":[]}}`
+			}
+			_, _ = io.WriteString(w, billsReply)
+			return
+		}
 		g.calls++
 		g.method = r.Method
 		g.path = r.URL.Path
@@ -55,6 +79,20 @@ func (g *grantRecorder) handler(t *testing.T) http.HandlerFunc {
 		}
 		_, _ = io.WriteString(w, reply)
 	}
+}
+
+// setBills installs the ledger answer used by the refusal path.
+func (g *grantRecorder) setBills(reply string) {
+	g.mu.Lock()
+	g.billsReply = reply
+	g.mu.Unlock()
+}
+
+// ledgerReads reports how many times the refusal path consulted the ledger.
+func (g *grantRecorder) ledgerReads() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.billsCalls
 }
 
 func (g *grantRecorder) count() int {
@@ -249,14 +287,160 @@ func TestCheckinTreatsNotGrantedAsARefusalNotAnError(t *testing.T) {
 	if !strings.Contains(res.Error, "did not grant") {
 		t.Errorf("Error = %q, want it to say the vendor granted nothing", res.Error)
 	}
-	if !res.Skipped {
-		t.Error("skipped = false for granted:false, want the vendor's definitive no as unavailable")
-	}
 	if strings.Contains(res.Error, "once per day") {
 		t.Errorf("Error = %q, but the client documents no such window: the reward window is the vendor's business, and guessing at it would be a fabricated claim", res.Error)
 	}
 	if res.Data["granted"] != false {
 		t.Errorf("data.granted = %#v, want false", res.Data["granted"])
+	}
+}
+
+// TestCheckinRefusalIsNotLatchedForTheDay pins the defect that made the panel
+// show "今日已签到/今日不可签" while the vendor was still handing the reward out
+// hours later.
+//
+// The grant endpoint only EXTENDS the day's 300 points. A refusal at 01:00
+// says nothing about 21:00, so recording it as a settled "unavailable" would
+// disable the row until the next midnight and lose every later chance. The
+// recorder's ledger answer here is "no completed extension today", which must
+// leave the action retryable.
+func TestCheckinRefusalIsNotLatchedForTheDay(t *testing.T) {
+	g := &grantRecorder{reply: `{"code":0,"data":{"granted":false}}`}
+	c, id, _ := newGrantClient(t, g)
+
+	res, err := c.Checkin(context.Background(), id, "")
+	if err != nil {
+		t.Fatalf("Checkin: %v", err)
+	}
+	if res.Skipped {
+		t.Error("a refused grant must NOT be recorded as a settled day-level no: the vendor keeps extending the day's points on later sign-ins, so the operator must be able to retry")
+	}
+	if !strings.Contains(res.Error, "not final for the day") {
+		t.Errorf("Error = %q, want it to say the refusal is not the day's last word", res.Error)
+	}
+	if res.Data["already_done"] == true {
+		t.Error("already_done must not be claimed without a completed extension in the ledger")
+	}
+}
+
+// TestCheckinRefusalResolvesAgainstTheLedger proves the one case that IS a
+// settled no: the ledger already holds today's extension. The vendor stamps a
+// completed one with an expiry seven days out, while the base 00:00 issuance
+// expires the SAME day.
+func TestCheckinRefusalResolvesAgainstTheLedger(t *testing.T) {
+	now := time.Now().In(checkinDayLocation)
+	today := now.Format("2006-01-02")
+	expiry := now.AddDate(0, 0, 6).Format("2006-01-02")
+	g := &grantRecorder{reply: `{"code":0,"data":{"granted":false}}`}
+	c, id, _ := newGrantClient(t, g)
+	g.setBills(`{"code":0,"data":{"items":[
+		{"biz_type":"daily_expire","event_name":"每日积分到期清零","points":-300,"grant_at":"` + today + `T00:00:00+08:00","expire_at":"` + today + `T23:59:59+08:00"},
+		{"biz_type":"daily_grant","event_name":"每日积分发放","points":300,"grant_at":"` + today + `T00:00:00+08:00","expire_at":"` + expiry + `T23:59:59+08:00"}
+	]}}`)
+
+	res, err := c.Checkin(context.Background(), id, "")
+	if err != nil {
+		t.Fatalf("Checkin: %v", err)
+	}
+	if !res.OK {
+		t.Fatalf("OK = false with today's extension already in the ledger; the operator asked whether the day's reward is in hand and the answer is yes: %#v", res)
+	}
+	if res.Skipped {
+		t.Error("a completed extension is a success, not an unavailable skip")
+	}
+	if res.Data["already_done"] != true {
+		t.Errorf("data.already_done = %#v, want true", res.Data["already_done"])
+	}
+}
+
+// TestCheckinRefusalStaysRetryableWhenTheVendorOnlyIssuedTheBaseAllowance
+// guards the discriminator: the 00:00 row is a daily_grant too, but it expires
+// the same day, so it is NOT evidence that the desktop extension happened.
+func TestCheckinRefusalStaysRetryableWhenTheVendorOnlyIssuedTheBaseAllowance(t *testing.T) {
+	today := time.Now().In(checkinDayLocation).Format("2006-01-02")
+	g := &grantRecorder{reply: `{"code":0,"data":{"granted":false}}`}
+	c, id, _ := newGrantClient(t, g)
+	g.setBills(`{"code":0,"data":{"items":[
+		{"biz_type":"daily_grant","event_name":"每日积分发放","points":300,"grant_at":"` + today + `T00:00:00+08:00","expire_at":"` + today + `T23:59:59+08:00"}
+	]}}`)
+
+	res, err := c.Checkin(context.Background(), id, "")
+	if err != nil {
+		t.Fatalf("Checkin: %v", err)
+	}
+	if res.Skipped || res.Data["already_done"] == true {
+		t.Errorf("the un-extended 00:00 issuance must not read as already claimed: %#v", res)
+	}
+}
+
+// TestCheckinRefusalStaysRetryableWhenTheLedgerCannotBeRead keeps the honesty
+// rule: a diagnostic read that fails must not be promoted into a verdict.
+func TestCheckinRefusalStaysRetryableWhenTheLedgerCannotBeRead(t *testing.T) {
+	g := &grantRecorder{
+		reply:     `{"code":0,"data":{"granted":false}}`,
+		billsFail: true,
+	}
+	c, id, _ := newGrantClient(t, g)
+
+	res, err := c.Checkin(context.Background(), id, "")
+	if err != nil {
+		t.Fatalf("Checkin: %v", err)
+	}
+	if res.Skipped {
+		t.Error("an unreadable ledger must not turn a refusal into a settled no")
+	}
+	if res.OK || res.Data["already_done"] == true {
+		t.Errorf("a failed ledger read must not fabricate a success: %#v", res)
+	}
+}
+
+// flexFloatPtr builds the pointer the ledger structs use, mirroring f64 but
+// for the module's flexFloat type.
+func flexFloatPtr(v float64) *flexFloat {
+	f := flexFloat(v)
+	return &f
+}
+
+// TestDailyExtensionTodayMatchesTheVendorLedger pins the predicate against
+// rows copied from a real account's points ledger.
+func TestDailyExtensionTodayMatchesTheVendorLedger(t *testing.T) {
+	now := time.Date(2026, 10, 23, 21, 41, 0, 0, checkinDayLocation)
+	today := now.Format("2006-01-02")
+
+	// The un-extended day: the 21:00-22:00 issuance expires the same day.
+	baseOnly := []billItem{{
+		BizType: "daily_grant", EventName: "每日积分发放", Points: flexFloatPtr(300),
+		GrantAt: today + "T00:00:00+08:00", ExpireAt: today + "T23:59:59+08:00",
+	}}
+	if dailyExtensionToday(baseOnly, now) {
+		t.Error("a same-day expiry is the base issuance, not a completed extension")
+	}
+
+	// A completed day: the 00:00 issuance PLUS the extension dated 7 days out.
+	extended := append(append([]billItem(nil), baseOnly...), billItem{
+		BizType: "daily_grant", EventName: "每日积分发放", Points: flexFloatPtr(300),
+		GrantAt: today + "T00:00:00+08:00", ExpireAt: "2026-10-29T23:59:59+08:00",
+	})
+	if !dailyExtensionToday(extended, now) {
+		t.Error("a 7-day expiry is the completed extension and must read as already claimed")
+	}
+
+	// Yesterday's extension must not leak into today.
+	old := []billItem{{
+		BizType: "daily_grant", EventName: "每日积分发放", Points: flexFloatPtr(300),
+		GrantAt: "2026-10-22T00:00:00+08:00", ExpireAt: "2026-10-28T23:59:59+08:00",
+	}}
+	if dailyExtensionToday(old, now) {
+		t.Error("yesterday's extension must not count for today")
+	}
+
+	// A reward row of another kind never counts.
+	other := []billItem{{
+		BizType: "reward_grant", EventName: "桌面端登录奖励", Points: flexFloatPtr(3000),
+		GrantAt: today + "T00:00:00+08:00", ExpireAt: "2027-10-23T00:00:00+08:00",
+	}}
+	if dailyExtensionToday(other, now) {
+		t.Error("only a daily_grant row can settle the daily reward")
 	}
 }
 

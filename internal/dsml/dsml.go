@@ -14,20 +14,41 @@ type Call struct {
 	Arguments string
 }
 
-const namePrefix = `(?:[｜|]*\s*(?:DSML|dsml|antml)\s*[｜|]*\s*:?\s*)?`
+// namePrefix matches the optional marker that an upstream leaves in front of an
+// element name.  Two spellings occur in real upstream text:
+//
+//	<DSML｜｜: calls>  labelled, with bars around the label
+//	<｜｜ calls>       bars only -- the vendor already stripped the label
+//
+// The bars-only spelling is restricted to the fullwidth bar: a bare ascii pipe
+// run before an element name is far more likely to be prose than an envelope.
+// The run is matched as one-or-more rather than as an exact count because an
+// upstream may open with two bars and close with three.
+//
+// The label used to be mandatory, so a markerless envelope fell through to the
+// caller as visible text and the turn ended with no tool call at all.
+const namePrefix = `(?:[｜]+\s*|[｜|]*\s*(?:DSML|dsml|antml)\s*[｜|]*\s*:?\s*)?`
 
 var (
 	reOpenCalls  = regexp.MustCompile(`(?is)<\s*` + namePrefix + `(?:tool_calls|calls)\s*>`)
 	reCloseCalls = regexp.MustCompile(`(?is)</\s*` + namePrefix + `(?:tool_calls|calls)\s*>`)
 	reInvoke     = regexp.MustCompile(`(?is)<\s*` + namePrefix + `invoke([^>]*)>(.*?)</\s*` + namePrefix + `invoke\s*>`)
-	reParameter  = regexp.MustCompile(`(?is)<\s*` + namePrefix + `parameter([^>]*)>(.*?)</\s*` + namePrefix + `parameter\s*>`)
+	// A leaked envelope may close a parameter with the bare bar tag
+	// (`</｜｜｜>`) instead of naming it, so accept either close.
+	// Otherwise the value runs on into the next parameter.
+	reParameter  = regexp.MustCompile(`(?is)<\s*` + namePrefix + `parameter([^>]*)>(.*?)(?:</\s*` + namePrefix + `parameter\s*>|</\s*[｜]+\s*>)`)
 	reAttrDouble = regexp.MustCompile(`(?i)\bname\s*=\s*"([^"]*)"`)
 	reAttrSingle = regexp.MustCompile(`(?i)\bname\s*=\s*'([^']*)'`)
+	// reMarkerless finds the bars-only envelope, which is distinguishable only
+	// by a fullwidth bar run glued to an element or attribute name.
+	reMarkerless = regexp.MustCompile(`[｜]{1,}\s*(?:tool_calls|calls|invoke|parameter)\b`)
 )
 
 // HasMarker reports whether s contains a likely DSML/XML tool-call marker.
+// The labelled spellings are substring tests; the bars-only envelope needs the
+// pattern, because a vendor that stripped the label leaves nothing else behind.
 func HasMarker(s string) bool {
-	return strings.Contains(s, "DSML") || strings.Contains(s, "tool_calls") || strings.Contains(s, "antml")
+	return strings.Contains(s, "DSML") || strings.Contains(s, "tool_calls") || strings.Contains(s, "antml") || reMarkerless.MatchString(s)
 }
 
 // Parser is a streaming parser. Feed it text deltas in order; it returns the

@@ -2,10 +2,12 @@ package trae
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"client2api/internal/core"
 )
@@ -176,5 +178,94 @@ func TestTraeAccountBalanceHonoursContextCancellation(t *testing.T) {
 	cancel()
 	if _, err := c.AccountBalance(ctx, "u1", 0); err == nil {
 		t.Fatal("expected a cancellation error")
+	}
+}
+
+// A token that crossed the refresh skew used to make the balance read fail with
+// the vendor's "user not signed in" reply until some unrelated test or chat
+// renewed it as a side effect.  With self_renew on the read must renew it
+// itself, before the entitlement call, and then succeed on the fresh token.
+func TestTraeAccountBalanceRefreshesExpiredToken(t *testing.T) {
+	var rec rtRecorder
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		rec.record(req)
+		switch req.URL.Path {
+		case epExchange:
+			return jsonResponse(http.StatusOK, `{
+				"Token": "NEW_TOK",
+				"RefreshToken": "RT2",
+				"TokenExpireDuration": 3600
+			}`), nil
+		case ugEntUsagePath:
+			if got := req.Header.Get("Authorization"); got != "Cloud-IDE-JWT NEW_TOK" {
+				return jsonResponse(http.StatusUnauthorized, `{"code":1001,"msg":"user not signed in"}`), nil
+			}
+			return jsonResponse(http.StatusOK, `{
+				"usage_summary": {"consumed_amount": 1, "total_amount": 10}
+			}`), nil
+		}
+		return jsonResponse(http.StatusNotFound, `{"code":404,"msg":"wrong path"}`), nil
+	})
+
+	cfg := loadConfig(json.RawMessage(`{"self_renew":true}`), nil)
+	a := testAuth("u1", "OLD_TOK")
+	a.ExpiresAt = time.Now().Add(-time.Minute)
+	a.RefreshToken = "RT1"
+	c := testClient(t, cfg, []*Auth{a}, rt)
+
+	bal, err := c.AccountBalance(context.Background(), "u1", 0)
+	if err != nil {
+		t.Fatalf("AccountBalance: %v", err)
+	}
+	if bal.Credits != 9 || bal.Total != 10 {
+		t.Fatalf("balance = %+v, want 9/10", bal)
+	}
+
+	urls, _, bodies, headers := rec.snapshot()
+	if len(urls) != 2 {
+		t.Fatalf("upstream calls = %v, want the exchange then the entitlement read", urls)
+	}
+	if urls[0] != "https://api.trae.cn"+epExchange || urls[1] != "https://api.trae.cn"+ugEntUsagePath {
+		t.Fatalf("upstream calls = %v, want [%s %s]", urls, epExchange, ugEntUsagePath)
+	}
+	if !strings.Contains(bodies[0], `"RefreshToken":"RT1"`) {
+		t.Errorf("exchange body = %q, want the stored refresh token", bodies[0])
+	}
+	if got := headers[0].Get("Authorization"); got != "" {
+		t.Errorf("exchange Authorization = %q, want none", got)
+	}
+	if got := headers[1].Get("Authorization"); got != "Cloud-IDE-JWT NEW_TOK" {
+		t.Errorf("entitlement Authorization = %q, want the refreshed token", got)
+	}
+	if a.Token() != "NEW_TOK" {
+		t.Errorf("stored token = %q, want the refreshed one", a.Token())
+	}
+}
+
+// With self_renew off the module must not reach for the network to mint a
+// token.  An already expired credential has to fail fast with an auth error and
+// leave the entitlement endpoint untouched.
+func TestTraeAccountBalanceRefusesExpiredTokenWhenSelfRenewOff(t *testing.T) {
+	var calls int
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		calls++
+		return jsonResponse(http.StatusOK, `{}`), nil
+	})
+
+	a := testAuth("u1", "OLD_TOK")
+	a.ExpiresAt = time.Now().Add(-time.Minute)
+	a.RefreshToken = "RT1"
+	c := testClient(t, nil, []*Auth{a}, rt)
+
+	_, err := c.AccountBalance(context.Background(), "u1", 0)
+	if err == nil {
+		t.Fatal("expected an auth error for the expired token")
+	}
+	var e *Error
+	if !errors.As(err, &e) || e.Kind != ErrAuth {
+		t.Fatalf("error = %v, want a trae auth error", err)
+	}
+	if calls != 0 {
+		t.Fatalf("upstream calls = %d, want none when self_renew is off", calls)
 	}
 }

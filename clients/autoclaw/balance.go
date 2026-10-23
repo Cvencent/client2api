@@ -91,6 +91,25 @@ func (c *Client) fetchCredits(ctx context.Context, cred credential) (creditsSnap
 	return creditsSnapshot{}, err
 }
 
+// fetchCreditsWithRefresh reads the credits snapshot, renewing once and
+// retrying exactly once when the server rejects the access token.
+//
+// The retry lives OUTSIDE fetchCredits on purpose: fetchCredits falls back
+// from v2 to v1, and that fallback swallows the v2 refusal (it returns the v2
+// error) - so an auth rejection has to be judged on the whole read, not on a
+// single attempt, or a stale token would be reported as a permanent failure
+// until the operator happened to run a chat/test that renewed it.
+func (c *Client) fetchCreditsWithRefresh(ctx context.Context, e *entry) (creditsSnapshot, error) {
+	snap, err := c.fetchCredits(ctx, e.acct.cred())
+	if err == nil || !isAuthError(err) || !e.acct.cred().refreshable() {
+		return snap, err
+	}
+	if rerr := c.refreshAccount(ctx, e); rerr != nil {
+		return snap, err
+	}
+	return c.fetchCredits(ctx, e.acct.cred())
+}
+
 func (c *Client) fetchWalletsV2(ctx context.Context, cred credential) (creditsSnapshot, error) {
 	ctx, cancel := withTimeout(ctx, balanceTimeout)
 	defer cancel()
@@ -161,7 +180,8 @@ func (c *Client) AccountBalance(ctx context.Context, id string, soon time.Durati
 	if err != nil {
 		return core.Balance{}, err
 	}
-	snap, err := c.fetchCredits(ctx, e.acct.cred())
+	c.ensureFresh(ctx, e)
+	snap, err := c.fetchCreditsWithRefresh(ctx, e)
 	if err != nil {
 		c.noteFailure(err)
 		return core.Balance{}, err
@@ -228,7 +248,8 @@ func (c *Client) AccountPackages(ctx context.Context, id string) (core.PackageRe
 	if err != nil {
 		return core.PackageReport{}, err
 	}
-	snap, err := c.fetchCredits(ctx, e.acct.cred())
+	c.ensureFresh(ctx, e)
+	snap, err := c.fetchCreditsWithRefresh(ctx, e)
 	if err != nil {
 		c.noteFailure(err)
 		return core.PackageReport{}, err

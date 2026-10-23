@@ -452,13 +452,7 @@ func (p *pool) panelRecords() []core.AccountRecord {
 		if e.acct.OfficeIdentity != "" {
 			fields["office_identity"] = e.acct.OfficeIdentity
 		}
-		if ms, ok := e.acct.cred().expiresAtMs(); ok {
-			fields["expires_in"] = int64(time.Until(time.UnixMilli(ms)).Seconds())
-		}
-		if !e.until.IsZero() && e.until.After(now) {
-			fields["cooldown_until"] = e.until.UTC().Format(time.RFC3339)
-		}
-		out = append(out, core.AccountRecord{
+		rec := core.AccountRecord{
 			ID:       e.acct.id(),
 			Label:    panelLabel(e.acct),
 			Enabled:  !e.acct.Disabled,
@@ -466,7 +460,21 @@ func (p *pool) panelRecords() []core.AccountRecord {
 			Note:     e.note,
 			Fields:   fields,
 			Identity: e.acct.cred().identity(),
-		})
+		}
+		// expires_at is published at the TOP level, not just as expires_in:
+		// the background renewal sweep (cmd/client2api/renew.go) reads
+		// AccountRecord.ExpiresAt and skips any account whose field is empty,
+		// so omitting it here silently excluded every Raccoon account from
+		// proactive renewal.
+		if ms, ok := e.acct.cred().expiresAtMs(); ok {
+			exp := time.UnixMilli(ms).UTC()
+			rec.ExpiresAt = exp.Format(time.RFC3339)
+			fields["expires_in"] = int64(exp.Sub(now).Seconds())
+		}
+		if !e.until.IsZero() && e.until.After(now) {
+			fields["cooldown_until"] = e.until.UTC().Format(time.RFC3339)
+		}
+		out = append(out, rec)
 	}
 	return out
 }

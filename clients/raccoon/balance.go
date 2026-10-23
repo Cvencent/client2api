@@ -39,6 +39,21 @@ func (c *Client) balanceAccount(id string) (*entry, error) {
 	return nil, core.ErrNotConfigured
 }
 
+// fetchBalanceWithRefresh reads the points balance, renewing once and retrying
+// exactly once when the server rejects the access token. Without this the
+// panel reported "user not signed in" until the operator happened to run a
+// chat or a connection test, which renewed the token as a side effect.
+func (c *Client) fetchBalanceWithRefresh(ctx context.Context, e *entry) (balanceData, error) {
+	data, err := c.fetchBalance(ctx, e.acct.cred())
+	if err == nil || !isAuthError(err) || !e.acct.cred().refreshable() {
+		return data, err
+	}
+	if rerr := c.refreshAccount(ctx, e); rerr != nil {
+		return data, err
+	}
+	return c.fetchBalance(ctx, e.acct.cred())
+}
+
 // AccountBalance implements core.BalanceProvider. `soon` is ignored: the
 // vendor reports no expiry for points, so there is nothing to warn about.
 //
@@ -52,7 +67,8 @@ func (c *Client) AccountBalance(ctx context.Context, id string, soon time.Durati
 	}
 	ctx, cancel := c.deadline(ctx)
 	defer cancel()
-	data, err := c.fetchBalance(ctx, e.acct.cred())
+	c.ensureFresh(ctx, e)
+	data, err := c.fetchBalanceWithRefresh(ctx, e)
 	if err != nil {
 		return core.Balance{}, err
 	}
@@ -73,7 +89,8 @@ func (c *Client) AccountPackages(ctx context.Context, id string) (core.PackageRe
 	}
 	ctx, cancel := c.deadline(ctx)
 	defer cancel()
-	data, err := c.fetchBalance(ctx, e.acct.cred())
+	c.ensureFresh(ctx, e)
+	data, err := c.fetchBalanceWithRefresh(ctx, e)
 	if err != nil {
 		return core.PackageReport{}, err
 	}

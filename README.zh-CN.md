@@ -5,7 +5,7 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-当前版本：**0.2.0**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：**0.3.1**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 流式断流排查：升级后系统日志新增 `stream: id=...` 终止诊断，包含协议、平台/模型、
 上游事件数、`finish_reason`、正文/推理字节数、工具调用数、completion token、
@@ -162,6 +162,12 @@ client2api 是一个**个人自用**的 OpenAI 兼容网关。它把你自己在
 - Raccoon 的 IAM 短信登录会在读取资料前确认业务会话；仍返回 HTTP 400 / code `200901` 的调用会先确认再重放一次，因此修复前保存的裸令牌账号也会自愈。
 - 支持手动添加、本地凭据发现、整包导入，以及模块支持时的浏览器/设备登录。
 - 支持重新登录、恢复、测试、签到、刷新余额和删除账号。
+- AutoClaw、Raccoon、LobsterAI、Trae CN 的余额读取自己保证令牌新鲜，不再依赖「碰巧有
+  一次测试或聊天顺手续期」：AutoClaw 与 Raccoon 在令牌进入续期窗口时先续期、被厂商以
+  鉴权错误拒绝时再续期并重试一次；LobsterAI 对 HTTP 200 响应体里 `code != 0` 的拒绝也
+  重试一次；Trae CN 走与聊天、签到相同的 `ensureToken` 路径。AutoClaw 与 Raccoon 的账号
+  记录同时补发顶层 `expires_at`，后台空闲续期扫描才会覆盖它们（此前字段为空被静默跳过）。
+  令牌过期后不再一直显示「未登录」。
 - Gemini / Google Cloud Code Assist 支持 Google OAuth 登录、账号发现与刷新、额度查询，以及 Cloud Code Assist 请求翻译和流式返回。它的模型列表从上游 `fetchAvailableModels` 实时拉取（失败时退到额度桶里的模型名），平台新增或下线模型不需要改代码。浏览器登录开箱即用：模块内置了 Cloud Code IDE 自己的 OAuth 客户端，`client_id` / `client_secret`（或环境变量 `CLIENT2API_GEMINI_CLIENT_ID` / `CLIENT2API_GEMINI_CLIENT_SECRET`）可以换成自己注册的客户端。
 - ZCode 可以选择开启单槽验证码参数预取池：请求取用新鲜参数，后台立即补充；默认关闭，因为预取大约会让设备额度消耗翻倍。对应配置是 `captcha_pool` 和 `captcha_pool_ttl_seconds`。
 - 「模型」列点开可以逐账号启用/禁用单个模型，所有平台都可编辑：WorkBuddy 沿用模块自己的模型策略（含「强制启用」），其余平台写入网关共享的账号模型黑名单，在下一次请求选取账号时生效。限流中的模型会显示解除时刻和剩余时间。
@@ -234,6 +240,11 @@ client2api 是一个**个人自用**的 OpenAI 兼容网关。它把你自己在
 - 模型把工具调用写成可见文本时，网关会在公共事件层统一归一化：完整的 DSML/XML
   调用会转换成结构化的 `tool_calls`，Chat Completions 和 Responses 都适用；不完整或
   无法解析的标记会让该回合失败，而不是把协议标记当正文透出。
+- 上游把 `DSML` 标签丢掉、只留下全角竖线时（`<｜｜ calls>`、`<｜｜ invoke ...>`，
+  闭合标签还可能是 `</｜｜｜>`）网关同样认得出来。以前这种写法整段落成普通正文，
+  回合以 `tool_calls=0`、`finish_reason=stop` 结束，Codex 直接收尾、工具从未执行。现在标签
+  可选、竖线长度不严格，参数也接受裸竖线闭合标签；只有全角竖线算 envelope，ASCII `|` 仍当
+  普通文本。
 
 完整翻译规则和限制见详细参考文档。
 

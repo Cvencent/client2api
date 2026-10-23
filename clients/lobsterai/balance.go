@@ -2,6 +2,7 @@ package lobsterai
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -44,28 +45,36 @@ func (c *Client) AccountBalance(ctx context.Context, id string, soon time.Durati
 	if err := c.ensureFresh(ctx, acct); err != nil {
 		return core.Balance{}, err
 	}
-	version := c.clientVersion(ctx)
-	spec := requestSpec{
-		method:  http.MethodGet,
-		url:     c.cfg.profileSummaryURL(),
-		bearer:  acct.AccessToken,
-		version: version,
-		timeout: c.cfg.modelsTimeout(),
+	// ensureFresh renews INTO the pool, and byID hands out a copy of the
+	// record: re-read before calling upstream, or the request below would
+	// carry the stale access token that just triggered the renewal.
+	if fresh := c.pool.byID(id); fresh != nil {
+		acct = fresh
 	}
-	status, body, err := c.doJSON(ctx, spec)
+	obj, err := c.fetchProfileSummary(ctx, acct)
+	if err != nil && failureKindOfError(err) == kindSessionDead && acct.RefreshToken != "" {
+		// The credential was refused even though it looked fresh (the vendor
+		// can invalidate a token early, and its reply may arrive either as a
+		// 401 or as code != 0 inside a 200 body). Renew once and retry with
+		// the token the renewal produced; only the retried verdict is
+		// recorded, so a merely stale token no longer parks the account.
+		if rerr := c.refreshCredential(ctx, acct); rerr == nil {
+			if fresh := c.pool.byID(id); fresh != nil {
+				acct = fresh
+			}
+			obj, err = c.fetchProfileSummary(ctx, acct)
+		}
+	}
 	if err != nil {
-		return core.Balance{}, c.classifyErrFor(acct, err)
-	}
-	if status != http.StatusOK {
-		return core.Balance{}, c.classifyHTTP("balance", acct.ID, status, body)
-	}
-	raw, err := decodeEnvelope("balance", body)
-	if err != nil {
+		// An envelope verdict is worth recording against the account: that is
+		// what parks a credential the vendor definitively refused. A response
+		// whose data is simply not an object is a shape problem, not a
+		// credential verdict, so it is returned untouched as before.
+		var ue *upstreamError
+		if errors.As(err, &ue) {
+			return core.Balance{}, c.classifyErrFor(acct, err)
+		}
 		return core.Balance{}, err
-	}
-	obj := objectOf(anyOf(raw))
-	if obj == nil {
-		return core.Balance{}, fmt.Errorf("balance: the response data was not an object")
 	}
 	credits, ok := firstIntOK(obj, "totalCreditsRemaining")
 	if !ok {
@@ -114,6 +123,40 @@ func (c *Client) AccountBalance(ctx context.Context, id string, soon time.Durati
 		bal.EarliestAt = earliest
 	}
 	return bal, nil
+}
+
+// fetchProfileSummary performs one profile-summary read with the given
+// credential and returns the decoded data object.
+//
+// It is factored out so a refused token (the vendor can invalidate one early)
+// can be renewed and the read retried against the token the renewal produced.
+// The error is returned UNCLASSIFIED on purpose: AccountBalance has to inspect
+// the verdict to decide whether a renewal is worth trying, and it must record
+// the failure exactly once, for the final attempt only.
+func (c *Client) fetchProfileSummary(ctx context.Context, acct *accountRecord) (map[string]any, error) {
+	spec := requestSpec{
+		method:  http.MethodGet,
+		url:     c.cfg.profileSummaryURL(),
+		bearer:  acct.AccessToken,
+		version: c.clientVersion(ctx),
+		timeout: c.cfg.modelsTimeout(),
+	}
+	status, body, err := c.doJSON(ctx, spec)
+	if err != nil {
+		return nil, err
+	}
+	if status != http.StatusOK {
+		return nil, &upstreamError{Op: "balance", Status: status, Msg: errorTextOf(body)}
+	}
+	raw, err := decodeEnvelope("balance", body)
+	if err != nil {
+		return nil, err
+	}
+	obj := objectOf(anyOf(raw))
+	if obj == nil {
+		return nil, fmt.Errorf("balance: the response data was not an object")
+	}
+	return obj, nil
 }
 
 // parseExpiryLoose is parseExpiry plus the space-separated spellings the

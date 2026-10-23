@@ -106,6 +106,14 @@ func (c *Client) AccountBalance(ctx context.Context, id string, soon time.Durati
 	rctx, cancel := context.WithTimeout(ctx, checkinTimeout)
 	defer cancel()
 
+	// Read the balance with the same token check the chat and check-in paths
+	// use.  Without it a token that crossed the refresh skew failed here with
+	// "user not signed in" until an unrelated test or chat happened to renew
+	// the credential as a side effect.
+	if err := c.ensureToken(rctx, a); err != nil {
+		return core.Balance{}, err
+	}
+
 	var reply ugEntUsageReply
 	if err := c.doJSON(rctx, c.cfg.authHost()+ugEntUsagePath, c.ugHeaders(a), []byte("{}"), &reply); err != nil {
 		return core.Balance{}, err

@@ -482,10 +482,13 @@ Rules:
   then `POST …/signin/claim`, one action named `daily-signin`), **qwenwork**
   (`GET /sash/api/v1/me/daily-check-in/status` then `/claim`, one action named
   `daily`), **raccoon** (`POST /api/web/desktop/v1/login/points/grant`, one
-  action named `login-points` — that desktop *login* grant is exactly how the
-  daily 300 credits are claimed: a real grant writes a `daily_grant` of +300 to
-  the points ledger, and a same-day repeat answers `granted:false`. The reply
-  carries no reason, so a refusal is reported honestly, not guessed at),
+  action named `login-points` — that desktop *login* grant EXTENDS the day's
+  300 credits rather than minting them: the 00:00 issuance expires the same day
+  and the grant pushes the expiry to 7 days. A `granted:false` reply says nothing
+  about the rest of the day, so the module resolves it against
+  `GET /api/web/points/v1/bills`: a `daily_grant` for today that expires beyond
+  today is a real "already claimed" success; anything else — including an
+  unreadable ledger — stays a retryable refusal instead of latching the day),
   **lobsterai**, **codearts** and **loomy** have a real one. kimi, tabbit,
   openrouter and opencode have none.
   A module whose action is blocked by a vendor control it cannot satisfy still

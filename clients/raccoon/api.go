@@ -476,6 +476,12 @@ type billItem struct {
 	BizType   string     `json:"biz_type"`
 	EventName string     `json:"event_name"`
 	Points    *flexFloat `json:"points"`
+	// The timestamps the ledger stamps on a reward row. They are what lets the
+	// check-in tell "today's 300 is already in hand" from "this attempt was
+	// refused but the reward may still land later today". See checkin.go.
+	CreatedAt string `json:"created_at"`
+	GrantAt   string `json:"grant_at"`
+	ExpireAt  string `json:"expire_at"`
 }
 
 type billsData struct {

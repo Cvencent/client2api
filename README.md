@@ -5,7 +5,7 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-Current version: **0.2.0**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
+Current version: **0.3.1**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
 
 client2api is a personal, local-only OpenAI-compatible gateway. It aggregates
 the accounts and API Keys **you own** on different AI coding clients and
@@ -411,6 +411,24 @@ OpenAI's `schema must be a JSON Schema of 'type: "object"', got 'type: null'`
   itself is shared in `core.ModelIsFree`.
 - Manual import, local credential discovery, bundle import and browser/device login where supported.
 - Re-login, revive, test, check-in, balance refresh and account deletion.
+- AutoClaw, Raccoon, LobsterAI and Trae CN balance reads renew the access token
+  themselves instead of depending on an unrelated Test or chat to renew it as
+  a side effect. AutoClaw and Raccoon do it before reading when the token is
+  inside the configured refresh window and retry once if the vendor still
+  rejects the old one with an authentication error; LobsterAI also retries once
+  on an envelope-level `code != 0` refusal; Trae CN refreshes an expired token
+  through the same `ensureToken` path its chat and check-in flows use. AutoClaw
+  and Raccoon account records additionally publish `expires_at` at the top
+  level, so the background idle-token renewal sweep covers them instead of
+  silently skipping every account. A stale token therefore no longer surfaces
+  as "user not signed in".
+- Raccoon's daily 300 points are **extended**, not minted, by the desktop login
+  grant: the vendor issues them at 00:00 with a same-day expiry and the desktop
+  grant pushes the expiry out to 7 days. A `granted:false` reply is therefore
+  resolved against the points ledger -- a `daily_grant` for today that expires
+  beyond today means "already claimed", anything else stays retryable. Latching
+  a mid-day refusal as a settled no used to disable the row until midnight and
+  lose the reward for the rest of the day.
 - Trae CN's daily check-in and the 1024 activity are one vendor flow: the check-in action first reads/claims the daily credits, then reads `/trae/api/v2/ug/activity/info` and only posts `/trae/api/v2/ug/activity/action` for `checkin_1024` when the activity is enabled, eligible and grantable. A separate "参与 1024 抽奖" action recovers an account that signed in before this flow existed without claiming the same day twice. A lottery failure is reported without turning an already-successful sign-in into a retry or a second claim.
 - Gemini / Google Cloud Code Assist accounts support Google OAuth login,
   account discovery and refresh, quota reads, and Cloud Code Assist request
@@ -540,6 +558,10 @@ The Responses API is translated natively for Codex and compatible clients:
   gateway boundary: well-formed DSML/XML calls become structured `tool_calls`
   for both Chat Completions and Responses. Incomplete or unparsable markup
   fails the turn instead of leaking protocol syntax into the answer.
+- The DSML envelope is also read when a vendor strips the label and leaves
+  only the fullwidth-bar run (`<｜｜ calls>`). That shape used to arrive
+  as ordinary prose with no `tool_calls` and `finish_reason=stop`, which ends
+  the turn instead of running the tool.
 - **Compaction.** `POST /v1/responses/compact` folds a conversation into a
   handover summary and returns a `response.compaction` object whose `output` is
   the retained turns plus one `type: "compaction"` item. `context_management:

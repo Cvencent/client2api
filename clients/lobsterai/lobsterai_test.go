@@ -1413,3 +1413,170 @@ func TestChatSurvivesASlowFirstChunk(t *testing.T) {
 		t.Errorf("finish = %q, want stop", finish)
 	}
 }
+
+// --- balance token renewal --------------------------------------------------
+
+// TestBalanceRenewsARejectedTokenOnce pins the fix for "用户未登录" on the
+// balance card: the read itself must renew a refused access token and retry
+// once, exactly like the chat path does.  Before the fix the panel only
+// recovered after an unrelated Test or chat call happened to renew the token
+// in the pool as a side effect.
+//
+// The stored expiry is deliberately in the future and outside the renewal
+// margin, so ensureFresh must NOT renew pre-flight -- that is what makes this
+// test exercise the reactive retry, not the proactive sweep.
+func TestBalanceRenewsARejectedTokenOnce(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, nil, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/user/profile-summary":
+			if r.Header.Get("Authorization") != "Bearer access-2" {
+				w.WriteHeader(http.StatusUnauthorized)
+				io.WriteString(w, `{"code":40100,"msg":"token rejected","data":null}`)
+				return
+			}
+			io.WriteString(w, `{"code":0,"data":{"totalCreditsRemaining":4200}}`)
+		case "/api/auth/refresh":
+			io.WriteString(w, `{"code":0,"data":{"accessToken":"access-2","refreshToken":"refresh-2","expiresIn":7200}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	_, err := f.client.AddAccount(ctx, core.AccountSpec{Fields: map[string]string{
+		"access_token":  "access-1",
+		"refresh_token": "refresh-1",
+		"uid":           "777",
+		"expires_at":    f.client.now().Add(6 * time.Hour).UTC().Format(time.RFC3339),
+	}})
+	if err != nil {
+		t.Fatalf("AddAccount: %v", err)
+	}
+
+	bal, err := f.client.AccountBalance(ctx, "lobsterai:777", 0)
+	if err != nil {
+		t.Fatalf("AccountBalance: %v", err)
+	}
+	if bal.Credits != 4200 {
+		t.Errorf("credits = %d, want 4200 after the renewal retry", bal.Credits)
+	}
+
+	var summaryHeaders []string
+	refreshes := 0
+	for _, c := range f.rec.all() {
+		switch c.path {
+		case "/api/user/profile-summary":
+			summaryHeaders = append(summaryHeaders, c.header.Get("Authorization"))
+		case "/api/auth/refresh":
+			refreshes++
+		}
+	}
+	if refreshes != 1 {
+		t.Errorf("refresh calls = %d, want exactly 1", refreshes)
+	}
+	if len(summaryHeaders) != 2 {
+		t.Fatalf("profile-summary reads = %d, want 2 (the rejected one plus the retry)", len(summaryHeaders))
+	}
+	if summaryHeaders[0] != "Bearer access-1" || summaryHeaders[1] != "Bearer access-2" {
+		t.Errorf("profile-summary used %v, want the stale token then the refreshed one", summaryHeaders)
+	}
+}
+
+// TestBalanceRenewsOnEnvelopeRefusal covers the vendor's other "not logged in"
+// shape: HTTP 200 with a non-zero envelope code.  It must renew just like the
+// 401 does.
+func TestBalanceRenewsOnEnvelopeRefusal(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, nil, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/user/profile-summary":
+			if r.Header.Get("Authorization") != "Bearer access-2" {
+				io.WriteString(w, `{"code":40100,"msg":"token rejected","data":null}`)
+				return
+			}
+			io.WriteString(w, `{"code":0,"data":{"totalCreditsRemaining":900}}`)
+		case "/api/auth/refresh":
+			io.WriteString(w, `{"code":0,"data":{"accessToken":"access-2","refreshToken":"refresh-2","expiresIn":7200}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	_, err := f.client.AddAccount(ctx, core.AccountSpec{Fields: map[string]string{
+		"access_token":  "access-1",
+		"refresh_token": "refresh-1",
+		"uid":           "777",
+		"expires_at":    f.client.now().Add(6 * time.Hour).UTC().Format(time.RFC3339),
+	}})
+	if err != nil {
+		t.Fatalf("AddAccount: %v", err)
+	}
+
+	bal, err := f.client.AccountBalance(ctx, "lobsterai:777", 0)
+	if err != nil {
+		t.Fatalf("AccountBalance: %v", err)
+	}
+	if bal.Credits != 900 {
+		t.Errorf("credits = %d, want 900 after the envelope-refusal retry", bal.Credits)
+	}
+	refreshes := 0
+	for _, c := range f.rec.all() {
+		if c.path == "/api/auth/refresh" {
+			refreshes++
+		}
+	}
+	if refreshes != 1 {
+		t.Errorf("refresh calls = %d, want exactly 1", refreshes)
+	}
+}
+
+// TestBalanceWithNoRefreshTokenDoesNotRetry pins the boundary: an account with
+// no refresh token cannot be renewed, so the read must return the vendor's
+// refusal instead of silently turning into a success.
+func TestBalanceWithNoRefreshTokenDoesNotRetry(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, nil, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		io.WriteString(w, `{"code":40100,"msg":"token rejected","data":null}`)
+	})
+	addAccount(t, f.client, "access-1")
+
+	if _, err := f.client.AccountBalance(ctx, "lobsterai:777", 0); err == nil {
+		t.Fatal("AccountBalance accepted a 401 for an account with no refresh token")
+	}
+	for _, c := range f.rec.all() {
+		if c.path == "/api/auth/refresh" {
+			t.Fatal("the balance read tried to renew an account that has no refresh token")
+		}
+	}
+}
+
+// TestBalanceRenewalFailureKeepsTheRefusal pins the other boundary: when the
+// renewal endpoint itself refuses, the original balance error must surface
+// rather than a fabricated number.
+func TestBalanceRenewalFailureKeepsTheRefusal(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, nil, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/user/profile-summary":
+			w.WriteHeader(http.StatusUnauthorized)
+			io.WriteString(w, `{"code":40100,"msg":"token rejected","data":null}`)
+		case "/api/auth/refresh":
+			w.WriteHeader(http.StatusUnauthorized)
+			io.WriteString(w, `{"code":40100,"msg":"refresh token was rejected","data":null}`)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	_, err := f.client.AddAccount(ctx, core.AccountSpec{Fields: map[string]string{
+		"access_token":  "access-1",
+		"refresh_token": "refresh-1",
+		"uid":           "777",
+		"expires_at":    f.client.now().Add(6 * time.Hour).UTC().Format(time.RFC3339),
+	}})
+	if err != nil {
+		t.Fatalf("AddAccount: %v", err)
+	}
+
+	if _, err := f.client.AccountBalance(ctx, "lobsterai:777", 0); err == nil {
+		t.Fatal("AccountBalance reported success after a refused renewal")
+	}
+}
