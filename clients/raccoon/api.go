@@ -345,7 +345,7 @@ func (c *Client) sendMarshaled(ctx context.Context, method, path string, hdr htt
 	if err != nil {
 		return nil, fmt.Errorf("raccoon: building request: %w", err)
 	}
-	req.Header.Set("User-Agent", c.cfg.userAgent())
+	req.Header.Set("User-Agent", userAgentFor(c.cfg.userAgent(), hdr.Get("X-Client-Platform"), hdr.Get("X-Client-Version"), hdr.Get("X-Client-Device-ID")))
 	for k, vs := range hdr {
 		for _, v := range vs {
 			req.Header.Set(k, v)
@@ -428,7 +428,7 @@ type userInfo struct {
 // fetchUserInfo is best effort: the reference returns an empty object on any
 // failure rather than throwing, so a metadata hiccup never breaks chat.
 func (c *Client) fetchUserInfo(ctx context.Context, cred credential) (userInfo, error) {
-	hdr := raccoonHeaders(cred, "", "")
+	hdr := raccoonHeaders(cred, c.cfg.platform(), c.cfg.version())
 	var info userInfo
 	err := c.do(ctx, http.MethodGet, pathUserInfo, hdr, nil, &info)
 	return info, err
@@ -439,7 +439,7 @@ func (c *Client) fetchUserInfo(ctx context.Context, cred credential) (userInfo, 
 func (c *Client) fetchCatalog(ctx context.Context, cred credential) ([]core.Model, error) {
 	ctx, cancel := withTimeout(ctx, c.cfg.modelsTimeout())
 	defer cancel()
-	hdr := raccoonHeaders(cred, "", "")
+	hdr := raccoonHeaders(cred, c.cfg.platform(), c.cfg.version())
 	resp, err := c.send(ctx, http.MethodGet, pathCatalog, hdr, nil)
 	if err != nil {
 		return nil, err
@@ -466,7 +466,7 @@ type balanceData struct {
 }
 
 func (c *Client) fetchBalance(ctx context.Context, cred credential) (balanceData, error) {
-	hdr := raccoonHeaders(cred, "", "")
+	hdr := raccoonHeaders(cred, c.cfg.platform(), c.cfg.version())
 	var b balanceData
 	err := c.do(ctx, http.MethodGet, pathBalance, hdr, nil, &b)
 	return b, err
@@ -495,7 +495,7 @@ func (c *Client) fetchBills(ctx context.Context, cred credential, limit, offset 
 		limit = 50
 	}
 	path := pathBills + "?paging.limit=" + strconv.Itoa(limit) + "&paging.offset=" + strconv.Itoa(offset)
-	hdr := raccoonHeaders(cred, "", "")
+	hdr := raccoonHeaders(cred, c.cfg.platform(), c.cfg.version())
 	var b billsData
 	err := c.do(ctx, http.MethodGet, path, hdr, nil, &b)
 	return b.Items, err

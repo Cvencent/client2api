@@ -751,12 +751,28 @@ func (p *pool) putLocked(a account) *entry {
 	for _, e := range p.entries {
 		if e.acct.id() == id {
 			e.acct = mergeAccount(e.acct, a)
+			e.acct.DeviceID = ensureDeviceID(e.acct.DeviceID)
 			return e
 		}
 	}
+	// Every account carries a stable device identity, exactly as the desktop
+	// client does (desktop-device-identity.json).  Credentials imported from a
+	// token dump usually have none; minting one here means the first request
+	// already looks like the client rather than an anonymous web caller.
+	a.DeviceID = ensureDeviceID(a.DeviceID)
 	e := &entry{acct: a, state: stateReady}
 	p.entries = append(p.entries, e)
 	return e
+}
+
+// ensureDeviceID returns the existing device id when the credential already
+// has one, so a stored account keeps the SAME identity across restarts; it
+// only mints a fresh UUID for a credential that never had one.
+func ensureDeviceID(existing string) string {
+	if v := strings.TrimSpace(existing); v != "" {
+		return v
+	}
+	return newDeviceID()
 }
 
 func (p *pool) remove(id string) bool {

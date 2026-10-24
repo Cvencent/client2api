@@ -6,6 +6,31 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.3.4] - 2026-10-24
+
+### Fixed
+
+- **Raccoon 账号补齐桌面端身份，不再被上游当成匿名 Web 调用方。** 之前网关发出的
+  `User-Agent` 停在 1.0.35 的裸字符串，也没有 `X-Client-Device-ID`：厂商的桌面前端会
+  从 `navigator.userAgent` 里回读 `Raccoon-Platform` / `Raccoon-Version` /
+  `Raccoon-Device-ID` 再来拼 `X-Client-*`，缺了这几个标记，请求身份和真正的客户端对不上。
+  现在对齐已安装的 1.0.38 桌面版：
+
+  - `User-Agent` 换成真实的 Electron 串（Chromium + `raccoon-ai/1.0.38`），并按平台/
+    版本/设备拼上同名的身份标记；
+  - `X-Client-Version` 跟随升到 `v1.0.38`；
+  - 每个账号首次进入账号池时补发一个 v4 UUID 作为 `X-Client-Device-ID`
+    （等价于桌面端的 `desktop-device-identity.json`），已经存过的账号保留原值，
+    重启不会换身份；
+  - `user_info`、模型目录、余额、账单这些读取请求现在也带上平台/版本头，和聊天
+    请求保持一致。
+
+### Installer
+
+- `client2api-setup-0.3.4.exe`（空包，不含账号凭据或本机配置）
+- SHA256：`4142A65FB643DB747F9E14681ADEDB6616C5BC4F3247497DFDFAD7C500F22C05`
+- 升级会保留现有 `configs/client2api.json`、`data/`、账号池、用量和任务数据。
+
 ## [0.3.3] - 2026-10-24
 
 ### Added

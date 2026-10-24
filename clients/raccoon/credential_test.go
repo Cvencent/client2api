@@ -306,7 +306,7 @@ func TestConfigDefaults(t *testing.T) {
 		want any
 	}{
 		{"baseURL", cfg.baseURL(), raccoonAPIBase},
-		{"userAgent", cfg.userAgent(), userAgent},
+		{"userAgent", cfg.userAgent(), userAgentBase},
 		{"platform", cfg.platform(), clientPlatform},
 		{"version", cfg.version(), clientVersion},
 		{"maxAttempts", cfg.maxAttempts(), defaultMaxAttempts},
@@ -492,5 +492,49 @@ func TestAccountIDIsStableAcrossSources(t *testing.T) {
 	}
 	if a.id() != accountIDFor(credential{UserID: "u-1", AccessToken: "other"}) {
 		t.Fatal("the same user id must produce the same account id regardless of token")
+	}
+}
+
+// ---- desktop identity -------------------------------------------------
+
+func TestNewDeviceIDMatchesDesktopShape(t *testing.T) {
+	seen := map[string]bool{}
+	for i := 0; i < 32; i++ {
+		id := newDeviceID()
+		if len(id) != 36 {
+			t.Fatalf(`newDeviceID() = %q, want 36 chars`, id)
+		}
+		if id[8] != 45 || id[13] != 45 || id[18] != 45 || id[23] != 45 {
+			t.Fatalf(`newDeviceID() = %q, want UUID dashes`, id)
+		}
+		if id[14] != 52 {
+			t.Fatalf(`newDeviceID() = %q, want version nibble 4`, id)
+		}
+		if seen[id] {
+			t.Fatalf(`newDeviceID() repeated %q`, id)
+		}
+		seen[id] = true
+	}
+}
+
+func TestEnsureDeviceIDKeepsAnExistingIdentity(t *testing.T) {
+	const existing = `11111111-2222-4333-8444-555555555555`
+	if got := ensureDeviceID(existing); got != existing {
+		t.Fatalf(`ensureDeviceID(%q) = %q, want unchanged`, existing, got)
+	}
+	if got := ensureDeviceID(`   `); got == `` {
+		t.Fatal(`ensureDeviceID(blank) minted nothing`)
+	}
+}
+
+func TestUserAgentCarriesTheDesktopIdentityTags(t *testing.T) {
+	ua := userAgentFor(``, clientPlatform, clientVersion, `dev-1234`)
+	for _, want := range []string{`Mozilla/5.0`, `raccoon-ai/` + productVersion, `Raccoon-Platform=` + clientPlatform, `Raccoon-Version=` + clientVersion, `Raccoon-Device-ID=dev-1234`} {
+		if !strings.Contains(ua, want) {
+			t.Errorf(`userAgentFor(...) = %q, missing %q`, ua, want)
+		}
+	}
+	if got := userAgentFor(`custom-ua`, ``, ``, ``); got != `custom-ua` {
+		t.Fatalf(`userAgentFor(custom) = %q, want custom-ua`, got)
 	}
 }

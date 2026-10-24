@@ -166,7 +166,7 @@ func (c config) userAgent() string {
 	if v := strings.TrimSpace(c.UserAgent); v != "" {
 		return v
 	}
-	return userAgent
+	return userAgentBase
 }
 
 func (c config) platform() string {

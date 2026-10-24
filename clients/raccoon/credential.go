@@ -73,8 +73,14 @@ const (
 	requestTimeout = 60 * time.Second
 
 	clientPlatform = "desktop-windows"
-	clientVersion  = "v1.0.35"
-	userAgent      = "Raccoon Work/1.0.35 (Windows)"
+	// The shipped desktop client this gateway presents as.  The version is
+	// echoed in X-Client-Version and in the User-Agent Raccoon-Version tag.
+	clientVersion  = "v1.0.38"
+	productVersion = "1.0.38"
+	// userAgentBase is the desktop client's real UA: Electron appends
+	// "<package name>/<version>" to Chromium's, and the vendor ships the
+	// package as raccoon-ai.  Verified against the installed 1.0.38 build.
+	userAgentBase  = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) raccoon-ai/" + productVersion + " Chrome/146.0.7680.72 Electron/41.0.1 Safari/537.36"
 	vendorLanguage = "zh"
 
 	// smsLoginScene is the scene the IAM SMS endpoints require. The vendor's own
@@ -218,6 +224,44 @@ func maskPhone(p string) string {
 		return p
 	}
 	return p[:3] + "****" + p[len(p)-4:]
+}
+
+// newDeviceID mints a version-4 UUID, the shape the desktop client stores
+// in desktop-device-identity.json and sends as X-Client-Device-ID.
+func newDeviceID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return ""
+	}
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
+
+// userAgentFor renders one request's User-Agent.  The desktop front-end
+// parses Raccoon-Platform / Raccoon-Version / Raccoon-Device-ID back out of
+// navigator.userAgent to build its X-Client-* headers (see the vendor's
+// own createHeaders).  Appending the same tags here keeps the UA and the
+// headers consistent, exactly as a tagged desktop build presents them.
+func userAgentFor(base, platform, version, deviceID string) string {
+	ua := strings.TrimSpace(base)
+	if ua == "" {
+		ua = userAgentBase
+	}
+	var tags []string
+	if platform != "" {
+		tags = append(tags, "Raccoon-Platform="+platform)
+	}
+	if version != "" {
+		tags = append(tags, "Raccoon-Version="+version)
+	}
+	if deviceID != "" {
+		tags = append(tags, "Raccoon-Device-ID="+deviceID)
+	}
+	if len(tags) == 0 {
+		return ua
+	}
+	return ua + " " + strings.Join(tags, " ")
 }
 
 // raccoonHeaders builds the header set every authenticated request carries.
