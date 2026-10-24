@@ -218,3 +218,33 @@ func TestWorkbuddyReviveSurvivesAReload(t *testing.T) {
 		t.Fatalf("pick after reload = %v/%v", picked, ok)
 	}
 }
+
+// TestWorkbuddyANewFailureDoesNotDowngradeAnInvalidPark pins the ordering rule
+// the chat path depends on: attempt() refreshes on a dead session, and when the
+// refresh itself is refused it parks the credential as 账号异常 -- and then the
+// original 401 is fed back through MarkFailure.  That second call must not
+// overwrite the invalid verdict with the short session-dead cooling, or the row
+// silently returns to 冷却中 and the dead token is picked again.
+func TestWorkbuddyANewFailureDoesNotDowngradeAnInvalidPark(t *testing.T) {
+	c, _ := newTestClient(t, nil)
+	a := reviveTestAccount(t, c)
+
+	c.pool.MarkInvalid(a, refreshRejectedReason)
+	before := c.pool.Snapshot()[0]
+	if before.State != stateInvalid {
+		t.Fatalf("setup state = %q, want %q", before.State, stateInvalid)
+	}
+
+	c.pool.MarkFailure(a, &Error{Kind: ErrSessionDead, Status: 401, Msg: "still dead"})
+
+	after := c.pool.Snapshot()[0]
+	if after.State != stateInvalid {
+		t.Fatalf("state after a later 401 = %q, want the invalid park to survive", after.State)
+	}
+	if !strings.Contains(after.Note, "refresh token rejected") {
+		t.Fatalf("note = %q, want the re-login verdict to survive", after.Note)
+	}
+	if after.Enabled {
+		t.Fatal("a credential parked for re-login must not be enabled")
+	}
+}

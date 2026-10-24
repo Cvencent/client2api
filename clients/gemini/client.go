@@ -275,6 +275,13 @@ func (c *Client) openChat(ctx context.Context, cancel context.CancelFunc, req *c
 		c.bindServedConversation(req, acct.ID)
 		if err := c.ensureFresh(ctx, acct); err != nil {
 			c.pool.release(acct.ID)
+			// The token endpoint refused the refresh token itself: nothing a
+			// retry can fix, so park the credential as 账号异常 rather than
+			// cooling it down and re-selecting it on the next loop.
+			if isRefreshRejected(err) {
+				c.pool.markRejected(acct.ID, "the vendor rejected the refresh token; sign in again")
+				c.persistPool()
+			}
 			lastErr = c.classify(ctx, acct, err)
 			continue
 		}
@@ -288,6 +295,9 @@ func (c *Client) openChat(ctx context.Context, cancel context.CancelFunc, req *c
 			lastErr = c.classify(ctx, acct, err)
 			continue
 		}
+		// The vendor served this request, so any earlier "this credential was
+		// rejected" verdict is stale.
+		c.pool.noteServed(acct.ID)
 		return stream, nil
 	}
 	if lastErr != nil {
@@ -535,10 +545,22 @@ func (c *Client) generationFor(project string, req *core.ChatRequest, lane strin
 // ---------------------------------------------------------------------------
 
 // classifyHTTP maps an upstream status onto a core error and updates the pool.
+//
+// A 401 is singled out from the other auth-ish statuses because it is the only
+// one that says the credential itself is not accepted.  Parking it for one
+// cooldown and re-selecting it is the loop that leaves the panel showing 冷却中
+// for a token only a re-login can repair, so the account is disabled and the row
+// becomes 账号异常 with the re-login control.  403 is left on the cooling path on
+// purpose: Gemini answers it for a project that lacks a permission or a quota,
+// neither of which a re-login fixes.
 func (c *Client) classifyHTTP(acct *accountRecord, status int, body []byte) error {
 	msg := describeBody(status, body)
 	switch {
-	case status == http.StatusUnauthorized || status == http.StatusForbidden:
+	case status == http.StatusUnauthorized:
+		c.pool.markRejected(acct.ID, "the vendor rejected this credential (HTTP 401): "+msg)
+		c.persistPool()
+		return fmt.Errorf("%w: %s", core.ErrNotConfigured, msg)
+	case status == http.StatusForbidden:
 		c.pool.noteError(acct.ID, msg, c.now(), 1, c.cfg.cooldown())
 		c.persistPool()
 		return fmt.Errorf("%w: %s", core.ErrNotConfigured, msg)

@@ -421,6 +421,13 @@ is the way to set them:
 4. On failure the account is cooled: 401/403 → refresh then one retry; 429/5xx →
    short cooldown (honouring `Retry-After`); quota/credit exhaustion → long
    cooldown; the request then moves to the next account, up to `max_attempts`.
+   A 401 is **never** a cooldown: it is the credential, so it is classified
+   `session_dead` whatever its body says (the vendor's `12153` envelope, a
+   generic `token expired`, and the edge gateway's bare HTML page all land
+   there). The first two strikes cool the account briefly because a refresh may
+   still repair it; the third parks it as `invalid` (账号异常). When the
+   refresh itself is refused the park is immediate, because waiting cannot
+   repair a dead refresh token.
    A 6004 rate limit is scoped to that account and model: when the message dates
    its reset (for example `your usage will reset at 2026-10-18 21:43:41 UTC+8`),
    the model park lasts until that exact vendor instant rather than stopping at

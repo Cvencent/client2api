@@ -22,6 +22,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"client2api/internal/core"
 )
 
 const (
@@ -32,8 +34,12 @@ const (
 	officeAcePremiumPathSecurityTok        = "/v3.0/OS-CREDENTIAL/securitytokens"
 	officeAcePremiumTokenPath              = "/v1/oauth2/tokens"
 	officeAceTrialSKUCode                  = "officeace.personal.package.trial"
-	// Huawei APIG reports a stale signature separately from an expired security token.
+	// Huawei APIG reports a stale signature separately from an expired security
+	// token.  APIGW.0301 is the general-gateway spelling of the same "the IAM
+	// authentication information is wrong" refusal; the trial order hit it in
+	// the wild right after a login, so it must refresh and retry too.
 	officeAceSignerStaleCode       = "APIG.0301"
+	officeAceIAMAuthErrorCode      = "APIGW.0301"
 	officeAceSecurityTokenExpired  = "APIG.0602"
 	officeAceV3DurationSecs        = 24 * 60 * 60
 	officeAceRefreshTTL            = 30 * 24 * time.Hour
@@ -189,7 +195,7 @@ func (p *officeAcePremium) cloudFetchWithSigner(ctx context.Context, base, metho
 
 func officeAceCredentialRejected(status int, code string) bool {
 	switch code {
-	case officeAceSignerStaleCode:
+	case officeAceSignerStaleCode, officeAceIAMAuthErrorCode:
 		return status == http.StatusUnauthorized
 	case officeAceSecurityTokenExpired:
 		return status == http.StatusBadRequest
@@ -591,6 +597,33 @@ func (p *officeAcePremium) ensureTrial(ctx context.Context) error {
 		return err
 	}
 	return p.createTrialOrder(ctx, atomicProductID)
+}
+
+// officeAceRepairWindow is how long a panel read waits before it retries the
+// login-time trial order for the same account.  Without the window an account
+// the cloud keeps refusing (unpaid order, ineligible tenant) would fire a
+// subscription probe plus a SKU query on every balance refresh.
+const officeAceRepairWindow = 30 * time.Minute
+
+// repairTrial is the panel-read half of ensureTrial.  The login-time order is
+// best-effort -- a credential hiccup such as a 401 APIGW.0301 right after the
+// login leaves the account without the personal trial, and nothing else would
+// ever retry it -- so the balance and package reads re-check and place the
+// missing order.  Accounts that already carry the trial never reach this path,
+// and refusals are throttled by officeAceRepairDue.
+func (p *officeAcePremium) repairTrial(ctx context.Context) officeAceSubscription {
+	if !p.src.officeAceRepairDue(p.row.ID, p.now()) {
+		return officeAceSubscription{}
+	}
+	if err := p.ensureTrial(ctx); err != nil {
+		p.src.deps.Log("%s: panel read could not open the free trial: %v", officeAceSourceID, core.Redact(err.Error()))
+		return officeAceSubscription{}
+	}
+	sub, err := p.subscription(ctx)
+	if err != nil {
+		return officeAceSubscription{}
+	}
+	return sub
 }
 
 func (s officeAceSubscription) hasTrial() bool {

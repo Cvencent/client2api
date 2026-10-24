@@ -560,6 +560,24 @@ func Classify(status int, body string) ErrKind {
 	if strings.Contains(body, badParamsMarkerMsg) || hasBusinessCode(body, badParamsCode) || hasBusinessCode(body, functionParamsCode) {
 		return ErrBadParams
 	}
+	if status == http.StatusUnauthorized {
+		// A 401 is the credential, whatever its body says.  The vendor answers
+		// it three ways in practice: the documented business envelope
+		// ("Offline user session not found" / code 12153, matched above), a
+		// generic `{"code":1,"msg":"token expired"}`, and a bare edge-gateway
+		// HTML page from the APISIX front end.  Only the first used to be
+		// recognised, so the other two fell through to ErrClient: the pool then
+		// charged them to the degrade counter, showed 冷却中 for ten minutes,
+		// and picked the same dead token again the moment the park lapsed --
+		// forever, since ErrClient never escalates to 账号异常.  A 401 is not a
+		// request-shape complaint; it means this credential cannot authenticate
+		// until it is refreshed or re-imported.
+		//
+		// This is checked after IsWafBlocked so an edge 403 still reports as a
+		// WAF block, and after the account-fault markers so the vendor's own
+		// 400-level vocabulary keeps its more specific meaning.
+		return ErrSessionDead
+	}
 	if status >= 400 {
 		return ErrClient
 	}

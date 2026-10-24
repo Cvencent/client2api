@@ -514,3 +514,42 @@ func batchNames(bs []core.Batch) []string {
 	}
 	return out
 }
+
+// TestWorkbuddyScheduledKeepaliveParksADeadRefreshToken pins the other half of
+// the dead-credential rule: when the keepalive's own refresh call is refused,
+// the credential is not merely cooling, it needs a re-login.  Before this the
+// chore fed the refusal to MarkFailure, which for a bare 401 (the edge gateway's
+// HTML page) landed on ErrClient and only ever produced a 10-minute degrade
+// park -- the panel showed 冷却中 and re-selected the dead token forever.
+func TestWorkbuddyScheduledKeepaliveParksADeadRefreshToken(t *testing.T) {
+	rt := &fakeRT{handler: func(req *http.Request) (*http.Response, error) {
+		if strings.HasSuffix(req.URL.Path, refreshTokenPath) {
+			return jsonResponse(http.StatusUnauthorized,
+				`<html><head><title>401 Authorization Required</title></head></html>`), nil
+		}
+		return jsonResponse(http.StatusInternalServerError, `{"code":1,"msg":"unexpected route"}`), nil
+	}}
+	c, _ := panelClient(t, rt, cnAccountFiles())
+	a := wbCNAuth(t, c)
+
+	res, err := c.RunTask(context.Background(), a.ID(), choreKeepalive)
+	if err != nil {
+		t.Fatalf("RunTask: %v", err)
+	}
+	if res.OK {
+		t.Fatal("a refused refresh was reported as kept alive")
+	}
+	if wbCalls(rt, refreshTokenPath) != 1 {
+		t.Fatalf("refresh calls = %d, want 1", wbCalls(rt, refreshTokenPath))
+	}
+	snap := c.pool.Snapshot()
+	if len(snap) != 1 {
+		t.Fatalf("snapshot = %+v, want one account", snap)
+	}
+	if snap[0].State != stateInvalid {
+		t.Fatalf("state after a refused refresh = %q, want %q", snap[0].State, stateInvalid)
+	}
+	if snap[0].Enabled {
+		t.Fatal("an account whose refresh token was refused must not stay enabled")
+	}
+}

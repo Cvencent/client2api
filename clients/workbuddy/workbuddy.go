@@ -1075,10 +1075,20 @@ func (c *Client) attempt(ctx context.Context, a *Auth, body []byte, meta ChatMet
 }
 
 // refreshAccount refreshes and persists one account's token.
+//
+// A refused refresh parks the credential as 账号异常 only when the vendor
+// actually judged it -- a 401 or an empty grant.  A dial timeout or a 5xx is
+// a fault of the link, not of the token, and parking a healthy account for the
+// full invalidCooldown over one of those would take it out of rotation for an
+// hour for no reason; that case is left to the ordinary failure accounting.
 func (c *Client) refreshAccount(a *Auth) error {
 	if err := c.up.RefreshToken(a); err != nil {
 		c.up.log("workbuddy: token refresh failed for account %s: %v", core.MaskSecret(a.ID()), err)
-		c.pool.MarkInvalid(a, "token refresh failed")
+		if refreshRefusalIsTerminal(err) {
+			c.pool.MarkInvalid(a, refreshRejectedReason)
+		} else {
+			c.pool.MarkFailure(a, err)
+		}
 		return err
 	}
 	if err := a.SaveAtomic(); err != nil {

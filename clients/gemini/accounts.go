@@ -172,6 +172,12 @@ func (c *Client) RefreshAccount(ctx context.Context, id string) ([]core.RefreshR
 		if err != nil {
 			res.OK = false
 			res.Error = core.Redact(err.Error())
+			// A refusal of the refresh token itself is a verdict about the
+			// credential, not a hiccup: park it so the panel offers the
+			// re-login control instead of retrying it forever.
+			if isRefreshRejected(err) {
+				c.pool.markRejected(a.ID, "the vendor rejected the refresh token; sign in again")
+			}
 			results = append(results, res)
 			continue
 		}

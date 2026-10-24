@@ -18,14 +18,18 @@ import (
 // source is one operator-defined platform. Each immutable transport snapshot
 // reuses the compat body/SSE implementation without sharing mutable config.
 type source struct {
-	name       string
-	deps       core.Deps
-	mu         sync.Mutex
-	cfg        core.SourceConfig
-	now        func() time.Time
-	rows       []storedProvider
-	pool       *providerPool
-	cooling    map[string]time.Time
+	name    string
+	deps    core.Deps
+	mu      sync.Mutex
+	cfg     core.SourceConfig
+	now     func() time.Time
+	rows    []storedProvider
+	pool    *providerPool
+	cooling map[string]time.Time
+	// invalid holds the vendor's own verdict about one key (it answered 401).
+	// It is separate from Disabled, which is the operator's switch, and it is
+	// runtime-only so a reload never resurrects a rejected credential.
+	invalid    map[string]bool
 	lastUsed   map[string]uint64
 	sequence   uint64
 	rpmWindow  time.Time
@@ -53,6 +57,7 @@ func newSource(name string, cfg core.SourceConfig, deps core.Deps) (*source, err
 		now:        time.Now,
 		pool:       newProviderPool(),
 		cooling:    map[string]time.Time{},
+		invalid:    map[string]bool{},
 		lastUsed:   map[string]uint64{},
 		accountRPM: map[string]*sourceRateWindow{},
 		affinity:   core.NewAffinity(0),
@@ -215,6 +220,9 @@ func (s *source) Status(ctx context.Context) core.Status {
 		a.Extra["model_cooldowns"] = parks
 		if !a.Enabled {
 			a.State = "invalid"
+		} else if s.invalid[a.ID] {
+			// The vendor rejected this key; waiting does not bring it back.
+			a.State = "invalid"
 		} else if now.Before(s.cooling[a.ID]) {
 			a.State = "cooling"
 		} else {
@@ -264,7 +272,7 @@ func (s *source) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 		}
 		candidates := []storedProvider{}
 		for _, p := range s.rows {
-			if p.Disabled || tried[p.ID] {
+			if p.Disabled || tried[p.ID] || s.invalid[p.ID] {
 				continue
 			}
 			for _, m := range p.Models {
@@ -335,6 +343,12 @@ func (s *source) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 		stream, err := transport.doChat(ctx, prov, p.ID, body)
 		attempts++
 		if err == nil {
+			// A served request is direct evidence that the key works, so it
+			// retires both the rate-limit park and the rejected-key verdict.
+			s.mu.Lock()
+			delete(s.cooling, p.ID)
+			delete(s.invalid, p.ID)
+			s.mu.Unlock()
 			return &sourceStream{Stream: stream, source: s, id: p.ID, key: p.APIKey, base: prov.BaseURL}, nil
 		}
 		req.ReleaseAccountSlot()
@@ -362,13 +376,21 @@ func (s *source) noteFailure(id, key, base string, err error) {
 	for _, p := range s.rows {
 		if p.ID == id && p.APIKey == key && s.accountBaseLocked(p) == strings.TrimRight(base, "/") {
 			s.lastErr = describeError(err)
-			switch core.FailureKindOf(err) {
+			kind := core.FailureKindOf(err)
+			switch kind {
 			case core.FailureRateLimited:
 				s.parkLocked(id, core.FailureRateLimited)
 			case core.FailureAuth, core.FailureQuota:
-				s.parkLocked(id, core.FailureKindOf(err))
+				s.parkLocked(id, kind)
 			case core.FailureUpstream:
 				s.parkLocked(id, core.FailureUpstream)
+			}
+			// A rejected key is terminal for a static API key: there is
+			// nothing to refresh, so cooling it down only re-selects it every
+			// cooldown.  Marking it invalid is what turns the row into
+			// 账号异常 and gives the operator the re-import path.
+			if kind == core.FailureAuth {
+				s.invalid[id] = true
 			}
 			break
 		}

@@ -786,6 +786,9 @@ func TestClassify(t *testing.T) {
 		{"image invalid", 400, `{"code":11135,"msg":"invalid image_url content"}`, ErrImageInvalid},
 		{"image marker", 400, "replace the image", ErrImageInvalid},
 		{"generic client", 400, "something else", ErrClient},
+		{"naked 401", 401, "<html><head><title>401 Authorization Required</title></head></html>", ErrSessionDead},
+		{"empty 401", 401, "", ErrSessionDead},
+		{"token expired 401", 401, `{"code":1,"msg":"token expired"}`, ErrSessionDead},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

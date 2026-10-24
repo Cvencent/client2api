@@ -3,6 +3,7 @@ package gemini
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -670,5 +671,95 @@ func TestTranslateMessagePartsDoesNotRepeatTheTextPart(t *testing.T) {
 	}
 	if len(partsOnly) != 1 || partsOnly[0].Text != "hello world" {
 		t.Fatalf("parts-only parts = %#v, want the text part kept", partsOnly)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// A 401 (or a refresh the token endpoint refused) is a verdict about the
+// credential, not a cooldown.  Before this the row showed 冷却中 and the pool
+// kept handing the same dead token out every cooldown; the point of these two
+// tests is that the account leaves rotation and reads as 账号异常 instead.
+// ---------------------------------------------------------------------------
+
+func TestGeminiA401MarksTheCredentialRejected(t *testing.T) {
+	c := newTestClient(t, "")
+	c.pool.upsert(accountRecord{
+		ID:          "g-1",
+		AccessToken: "ya29.stale",
+		Enabled:     true,
+	})
+
+	if err := c.classifyHTTP(c.pool.byID("g-1"), http.StatusUnauthorized, []byte(`{"error":"invalid credentials"}`)); err == nil {
+		t.Fatal("a 401 must return an error")
+	}
+
+	got := c.pool.byID("g-1")
+	if got == nil {
+		t.Fatal("the account disappeared")
+	}
+	if !got.Rejected {
+		t.Fatal("a 401 must mark the credential rejected")
+	}
+	if state := stateOf(got, c.now()); state != "invalid" {
+		t.Fatalf("state after a 401 = %q, want %q", state, "invalid")
+	}
+	if _, err := c.pool.acquire(c.now(), 0); err == nil {
+		t.Fatal("a rejected credential must not be selected")
+	}
+	// The operator's 恢复 control is the way back out.
+	if !c.pool.clearCooldown("g-1") {
+		t.Fatal("clearCooldown did not find the account")
+	}
+	if got := c.pool.byID("g-1"); got.Rejected {
+		t.Fatal("reviving must clear the rejected verdict")
+	}
+}
+
+func TestGeminiA403StaysACooldown(t *testing.T) {
+	c := newTestClient(t, "")
+	c.pool.upsert(accountRecord{
+		ID:          "g-2",
+		AccessToken: "ya29.good",
+		Enabled:     true,
+	})
+
+	if err := c.classifyHTTP(c.pool.byID("g-2"), http.StatusForbidden, []byte(`{"error":"permission denied"}`)); err == nil {
+		t.Fatal("a 403 must return an error")
+	}
+	got := c.pool.byID("g-2")
+	if got.Rejected {
+		t.Fatal("a 403 (missing permission / project quota) must not disable the credential")
+	}
+	if state := stateOf(got, c.now()); state != "cooling" {
+		t.Fatalf("state after a 403 = %q, want %q", state, "cooling")
+	}
+}
+
+func TestGeminiARefusedRefreshIsTerminal(t *testing.T) {
+	var rej error = &refreshRejectedError{status: http.StatusBadRequest, err: errors.New("invalid_grant")}
+	if !isRefreshRejected(rej) {
+		t.Fatal("a 4xx token-endpoint refusal must be recognised")
+	}
+	if isRefreshRejected(errors.New("token endpoint HTTP 503")) {
+		t.Fatal("a 5xx token-endpoint failure must NOT be treated as a dead credential")
+	}
+
+	c := newTestClient(t, "")
+	c.pool.upsert(accountRecord{
+		ID:           "g-3",
+		AccessToken:  "ya29.stale",
+		RefreshToken: "1//dead",
+		Enabled:      true,
+	})
+	if !c.pool.markRejected("g-3", "the vendor rejected the refresh token") {
+		t.Fatal("markRejected did not find the account")
+	}
+	if got := c.pool.byID("g-3"); stateOf(got, c.now()) != "invalid" {
+		t.Fatalf("state = %q, want invalid", stateOf(got, c.now()))
+	}
+	// A served request (or the operator) retires the verdict.
+	c.pool.noteServed("g-3")
+	if got := c.pool.byID("g-3"); got.Rejected {
+		t.Fatal("a served request must clear the rejected verdict")
 	}
 }

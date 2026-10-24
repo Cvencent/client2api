@@ -1665,3 +1665,39 @@ func TestBuiltinCatalogueSurvivesACompleteOutage(t *testing.T) {
 		}
 	}
 }
+
+// TestAnUnrefreshable401ParksTheCredential pins the terminal case: a 401 on a
+// credential with no refresh token cannot be repaired by waiting, so it must be
+// parked (账号异常 / the re-login control) rather than cooled down and
+// re-selected every cooldown.  Accounts that CAN refresh take the refresh
+// branch and are covered by TestAnExpiredAccountIsRefreshedBeforeThePoolIsAsked.
+func TestAnUnrefreshable401ParksTheCredential(t *testing.T) {
+	f := newFakeServer(t)
+	f.json(chatPath, http.StatusUnauthorized, `{"error":"invalid token"}`)
+
+	c := newTestClient(t, f, "")
+	c.pool.put(account{
+		ID:          "no-refresh",
+		AccessToken: "workos:stale",
+		AccountID:   "usr-1",
+		// No RefreshToken: refreshable() is false, so there is no repair path.
+	})
+
+	_, err := c.Chat(context.Background(), &core.ChatRequest{Model: "m"})
+	if err == nil {
+		t.Fatal("Chat against a 401 unexpectedly succeeded")
+	}
+	if got := f.count(refreshPath); got != 0 {
+		t.Fatalf("refresh was attempted %d times for an unrefreshable account, want 0", got)
+	}
+	st := c.Status(context.Background())
+	if len(st.Accounts) != 1 {
+		t.Fatalf("accounts = %+v, want one row", st.Accounts)
+	}
+	if got := st.Accounts[0].State; got != stateInvalid {
+		t.Fatalf("state after an unrefreshable 401 = %q, want %q", got, stateInvalid)
+	}
+	if st.Accounts[0].Enabled {
+		t.Fatal("a credential parked for re-login must not stay enabled")
+	}
+}

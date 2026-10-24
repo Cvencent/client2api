@@ -689,6 +689,21 @@ func (c *Client) openChat(ctx context.Context, release context.CancelFunc, req *
 			}
 		}
 
+		// A credential the vendor rejected that cannot renew itself is
+		// finished: cooling it down and re-selecting it every cooldown is the
+		// loop that leaves the row showing 冷却中 while every request 401s.  The
+		// refreshable case already took the branch above, so reaching here
+		// without a refresh token means only a re-login can repair it.
+		if ue.Kind == kindAuth && c.pool.refreshTokenOf(e) == "" {
+			c.pool.markDead(e, cleanErrorText(ue.Message))
+			skip[e.acct.id()] = true
+			lastErr, lastAcct = ue, e.acct
+			if !retryable(ue.Kind) {
+				break
+			}
+			continue
+		}
+
 		if freeModel && ue.Kind == kindQuota {
 			// A free model spends no credit, so a refusal of one says
 			// nothing about the wallet: remember the pair and leave the

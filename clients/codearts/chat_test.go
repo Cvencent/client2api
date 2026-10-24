@@ -1232,3 +1232,37 @@ func TestChatHonoursTheCallerContext(t *testing.T) {
 		t.Fatalf("Recv = %v, want the first-token idle timeout", err)
 	}
 }
+
+// TestChatUnrefreshable401ParksTheCredential pins the terminal half of the auth
+// path: when the credential cannot refresh itself, a 401 is not something to
+// cool down and retry -- waiting never repairs it.  Previously that account was
+// parked for the short auth cooldown and handed out again, so the row kept
+// reading 冷却中 while every request was refused.
+func TestChatUnrefreshable401ParksTheCredential(t *testing.T) {
+	f := newChatFixture(t)
+	f.onCha = func(w http.ResponseWriter, _ *http.Request, _ recordedRequest, _ int) {
+		writeJSONBody(w, http.StatusUnauthorized, map[string]any{
+			"error_code": "APIG.0301", "error_msg": "Invalid token",
+		})
+	}
+
+	// The default fixture credential has no refresh_token and no DPoP key, so
+	// refreshable() is false: there is no repair path.
+	c := f.client(t, "")
+
+	_, err := c.Chat(context.Background(), &core.ChatRequest{
+		Model:    "deepseek-v4-pro",
+		Messages: []core.Message{{Role: "user", Content: "hi"}},
+	})
+	if err == nil {
+		t.Fatal("Chat against a 401 unexpectedly succeeded")
+	}
+
+	st := c.Status(context.Background())
+	if len(st.Accounts) != 1 {
+		t.Fatalf("accounts = %+v, want one row", st.Accounts)
+	}
+	if got := st.Accounts[0].State; got != stateInvalid {
+		t.Fatalf("state after an unrefreshable 401 = %q, want %q", got, stateInvalid)
+	}
+}

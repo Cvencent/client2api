@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -125,6 +126,37 @@ func expiryFrom(expiresIn int) string {
 	return time.Now().Add(time.Duration(expiresIn) * time.Second).UTC().Format(time.RFC3339)
 }
 
+// refreshRejectedError marks a token-endpoint refusal that no retry can fix:
+// the refresh token itself is no longer valid, so the credential has to be
+// signed in again.  It exists as a type rather than a string so the pool can
+// act on it without matching vendor prose, and so a transient failure (timeout,
+// 503) is never mistaken for a dead credential.
+type refreshRejectedError struct {
+	status int
+	err    error
+}
+
+func (e *refreshRejectedError) Error() string {
+	if e == nil || e.err == nil {
+		return "the token endpoint rejected the refresh token"
+	}
+	return fmt.Sprintf("the token endpoint rejected the refresh token (HTTP %d): %v", e.status, e.err)
+}
+
+func (e *refreshRejectedError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.err
+}
+
+// isRefreshRejected reports whether err is the vendor refusing the refresh
+// token itself, as opposed to a network or server hiccup on the way there.
+func isRefreshRejected(err error) bool {
+	var rej *refreshRejectedError
+	return errors.As(err, &rej)
+}
+
 // postForm sends an application/x-www-form-urlencoded request.
 func (c *Client) postForm(ctx context.Context, endpoint string, form url.Values) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
@@ -143,11 +175,18 @@ func (c *Client) postForm(ctx context.Context, endpoint string, form url.Values)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		grant, perr := parseTokenGrant(body, "")
-		if perr != nil {
-			return nil, fmt.Errorf("token endpoint HTTP %d: %v", resp.StatusCode, perr)
+		if perr == nil {
+			perr = fmt.Errorf("token endpoint HTTP %d", resp.StatusCode)
 		}
 		_ = grant
-		return nil, fmt.Errorf("token endpoint HTTP %d", resp.StatusCode)
+		// Only a 4xx is the endpoint judging the credential.  A 5xx or a
+		// gateway error is the service being unavailable, and treating that as
+		// a dead refresh token would disable a healthy account until an
+		// operator re-signed in for no reason.
+		if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+			return nil, &refreshRejectedError{status: resp.StatusCode, err: perr}
+		}
+		return nil, perr
 	}
 	return body, nil
 }

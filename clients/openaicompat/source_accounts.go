@@ -31,7 +31,14 @@ func (s *source) Accounts(context.Context) ([]core.AccountRecord, error) {
 	defer s.mu.Unlock()
 	out := s.pool.records(time.Now())
 	for i := range out {
-		if out[i].Enabled && time.Now().Before(s.cooling[out[i].ID]) {
+		if !out[i].Enabled {
+			continue
+		}
+		if s.invalid[out[i].ID] {
+			out[i].State = "invalid"
+			continue
+		}
+		if time.Now().Before(s.cooling[out[i].ID]) {
 			out[i].State = "cooling"
 		}
 	}

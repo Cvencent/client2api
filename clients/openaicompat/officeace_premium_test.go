@@ -731,3 +731,136 @@ func TestOfficeAceFetchV3AcceptsCreated(t *testing.T) {
 		t.Fatalf("v3 credential = %+v", got)
 	}
 }
+
+// TestOfficeAceV3RetriesOnIAMAuthRefusal replays the 2026-10-24 login where the
+// trial SKU query was refused with 401 APIGW.0301 ("Incorrect IAM
+// authentication information") right after a successful sign-in.  That code is
+// an IAM-auth refusal like APIG.0301, so the request must clear the stored V3
+// credential, mint a fresh one and retry instead of giving up on the trial.
+func TestOfficeAceV3RetriesOnIAMAuthRefusal(t *testing.T) {
+	var skuCalls, mintCalls, orderCalls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == officeAcePremiumPathSubscription:
+			if !strings.HasPrefix(r.Header.Get("Authorization"), officeAceV11SignAlgorithm) {
+				http.Error(w, `{"error_code":"APIG.0301"}`, http.StatusUnauthorized)
+				return
+			}
+			_, _ = io.WriteString(w, `{"subscribe_status":"SUBSCRIBED","skus":[],"bonus_skus":[]}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/skus/"+officeAceTrialSKUCode:
+			skuCalls.Add(1)
+			if !strings.HasPrefix(r.Header.Get("Authorization"), officeAceSignAlgorithm) {
+				http.Error(w, `{"error_code":"APIGW.0301","error_msg":"not SDK signed"}`, http.StatusUnauthorized)
+				return
+			}
+			if r.Header.Get("X-Security-Token") != "fresh-v3-token" {
+				// The stored credential is refused exactly the way the live
+				// gateway refused the post-login order.
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = io.WriteString(w, `{"error_code":"APIGW.0301","error_msg":"Incorrect IAM authentication information: get token error,status:400"}`)
+				return
+			}
+			_, _ = io.WriteString(w, `{"product_sales_cycles":[{"id":"atomic-trial-product","status":"ONSALE"}]}`)
+		case r.Method == http.MethodPost && r.URL.Path == officeAcePremiumPathSecurityTok:
+			mintCalls.Add(1)
+			_, _ = io.WriteString(w, `{"credential":{"access":"fresh-v3-access","secret":"fresh-v3-secret","securitytoken":"fresh-v3-token","expires_at":"2099-01-01T00:00:00Z"}}`)
+		case r.Method == http.MethodPost && r.URL.Path == officeAcePremiumPathSubscriptionPeriod:
+			orderCalls.Add(1)
+			if r.Header.Get("X-Security-Token") != "fresh-v3-token" {
+				http.Error(w, "the order must ride the re-minted credential", http.StatusUnauthorized)
+				return
+			}
+			_, _ = io.WriteString(w, `{"status":"SUBSCRIBED","order_id":"order-1"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	o := officeAcePremiumSource(t, srv)
+	id := officeAceAddAccountWithSession(t, o, srv, officeAceStoredSession{
+		Region:          "cn-southwest-2",
+		AccessKey:       "v11-access",
+		SecretKey:       "v11-secret",
+		SecurityToken:   "v11-token",
+		ProjectID:       "project-1",
+		ExpiresAt:       "2099-01-01T00:00:00Z",
+		V3AccessKey:     "stale-v3-access",
+		V3SecretKey:     "stale-v3-secret",
+		V3SecurityToken: "stale-v3-token",
+		V3ProjectID:     "project-1",
+		V3ExpiresAt:     "2099-01-01T00:00:00Z",
+	})
+
+	if err := o.ensureOfficeAceTrial(context.Background(), id); err != nil {
+		t.Fatalf("ensure trial: %v", err)
+	}
+	if skuCalls.Load() != 2 {
+		t.Fatalf("sku calls = %d, want one refusal and one retry", skuCalls.Load())
+	}
+	if mintCalls.Load() != 1 {
+		t.Fatalf("v3 mints = %d, want 1", mintCalls.Load())
+	}
+	if orderCalls.Load() != 1 {
+		t.Fatalf("order calls = %d, want 1", orderCalls.Load())
+	}
+}
+
+// TestOfficeAcePanelReadRepairsMissingTrial covers the other half of the
+// incident: the login-time order failed, so the trial stayed missing.  The
+// panel's package read is the repair hook -- it places the order once, and the
+// repair window keeps a cloud that keeps refusing from being probed on every
+// refresh.
+func TestOfficeAcePanelReadRepairsMissingTrial(t *testing.T) {
+	var skuCalls, orderCalls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == officeAcePremiumPathSubscription:
+			// The vendor never shows the trial here: this account stays in the
+			// broken state the login left behind, so every read would hit the
+			// repair path without the throttle.
+			_, _ = io.WriteString(w, `{"subscribe_status":"SUBSCRIBED","skus":[],"bonus_skus":[]}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/skus/"+officeAceTrialSKUCode:
+			skuCalls.Add(1)
+			_, _ = io.WriteString(w, `{"product_sales_cycles":[{"id":"atomic-trial-product","status":"ONSALE"}]}`)
+		case r.Method == http.MethodPost && r.URL.Path == officeAcePremiumPathSubscriptionPeriod:
+			orderCalls.Add(1)
+			_, _ = io.WriteString(w, `{"status":"SUBSCRIBED","order_id":"order-1"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	o := officeAcePremiumSource(t, srv)
+	id := officeAceAddAccountWithSession(t, o, srv, officeAceStoredSession{
+		Region:          "cn-southwest-2",
+		AccessKey:       "v11-access",
+		SecretKey:       "v11-secret",
+		SecurityToken:   "v11-token",
+		ProjectID:       "project-1",
+		ExpiresAt:       "2099-01-01T00:00:00Z",
+		V3AccessKey:     "v3-access",
+		V3SecretKey:     "v3-secret",
+		V3SecurityToken: "v3-token",
+		V3ProjectID:     "project-1",
+		V3ExpiresAt:     "2099-01-01T00:00:00Z",
+	})
+	ctx := context.Background()
+
+	if _, err := o.AccountPackages(ctx, id); err != nil {
+		t.Fatalf("first packages read: %v", err)
+	}
+	if skuCalls.Load() != 1 || orderCalls.Load() != 1 {
+		t.Fatalf("first read did not repair: sku=%d order=%d", skuCalls.Load(), orderCalls.Load())
+	}
+	if _, err := o.AccountBalance(ctx, id, 0); err != nil {
+		t.Fatalf("second read (balance): %v", err)
+	}
+	if _, err := o.AccountPackages(ctx, id); err != nil {
+		t.Fatalf("third read (packages): %v", err)
+	}
+	if skuCalls.Load() != 1 || orderCalls.Load() != 1 {
+		t.Fatalf("the repair window did not throttle: sku=%d order=%d", skuCalls.Load(), orderCalls.Load())
+	}
+}

@@ -185,7 +185,17 @@ func (c *Client) openStream(ctx context.Context, req *core.ChatRequest, release 
 				}
 				switch kind {
 				case kindAuth:
-					c.pool.markFailure(e, kindAuth, msg)
+					// A credential the vendor rejected and that cannot renew
+					// itself is finished: cooling it down and re-selecting it
+					// every cooldown is the loop that leaves the row showing
+					// 冷却中 while every request 401s.  The refreshable case
+					// already took the branch above, so reaching here without a
+					// refresh token means only a re-login can repair it.
+					if !e.acct.refreshable() {
+						c.pool.markDead(e, msg)
+					} else {
+						c.pool.markFailure(e, kindAuth, msg)
+					}
 				case kindQuota:
 					if freeModel {
 						// A free model spends no credit, so a refusal of one

@@ -333,6 +333,19 @@ func (c *Client) openChat(ctx context.Context, release context.CancelFunc, req *
 			}
 		}
 
+		// A 401/403 on a credential that has no refresh token cannot be
+		// repaired by waiting.  Cooling it down and re-selecting it every
+		// cooldown is the loop that leaves the panel showing 冷却中 for a
+		// credential only a re-import can fix, so park it for the operator
+		// instead.  Accounts that *can* refresh already took the branch above;
+		// this is only the case where that branch was unavailable.
+		if ue.Kind == kindAuth && !e.acct.refreshable() {
+			c.pool.markDead(e, cleanErrorText(ue.Message))
+			skip[e.acct.id()] = true
+			lastErr, lastAcct = ue, e.acct
+			continue
+		}
+
 		// A quota answer parks the account for the models that cost money.  A
 		// free model spends none, so that park cannot be the whole verdict: what
 		// disqualifies the pair is the vendor refusing *this* model for free, and

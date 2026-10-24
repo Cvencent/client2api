@@ -128,6 +128,14 @@ func (o *officeAceSource) AccountBalance(ctx context.Context, id string, soon ti
 	if err != nil {
 		return core.Balance{}, err
 	}
+	// A login whose trial order was refused would otherwise stay broken
+	// forever: this read is the repair hook the comment on ensureTrial
+	// promises, and repairTrial throttles refusals per account.
+	if !sub.hasTrial() {
+		if fresh := p.repairTrial(ctx); fresh.hasTrial() {
+			sub = fresh
+		}
+	}
 	now := time.Now()
 	points := sub.points(now)
 	bal := core.Balance{
@@ -167,6 +175,11 @@ func (o *officeAceSource) AccountPackages(ctx context.Context, id string) (core.
 	sub, err := p.subscription(officeAceContext(ctx))
 	if err != nil {
 		return core.PackageReport{}, err
+	}
+	if !sub.hasTrial() {
+		if fresh := p.repairTrial(ctx); fresh.hasTrial() {
+			sub = fresh
+		}
 	}
 	now := time.Now()
 	out := make([]core.CreditPackage, 0, len(sub.Skus)+len(sub.Bonus))

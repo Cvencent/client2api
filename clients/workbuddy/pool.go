@@ -109,6 +109,11 @@ const (
 	sessionDeadThreshold = 3
 	// sessionDeadReason is the reference's operator-facing label.
 	sessionDeadReason = "12153 session dead"
+	// refreshRejectedReason is the note for a refresh token the vendor refused.
+	// The panel's note table keys off the leading words "refresh token
+	// rejected", so this spelling is what turns the row into
+	// 刷新令牌被上游拒绝，需要重新登录 rather than a bare 状态异常.
+	refreshRejectedReason = "refresh token rejected; re-login required"
 )
 
 // Selection policy.  See weightOf.
@@ -1719,6 +1724,27 @@ func (p *Pool) MarkFailure(a *Auth, err error) (ErrKind, time.Duration) {
 		// override and drop the account back to 冷却中/账号异常.
 		if e.forceOverride() {
 			e.note = kind.String()
+			p.dirty = true
+			p.saveLocked()
+			return kind, d
+		}
+		// A verdict that says "the credential has to be re-imported" must not be
+		// downgraded by the very failure that produced it.  The chat path parks
+		// the account through MarkInvalid when its refresh is refused, and then
+		// feeds the original 401 back through here; without this guard that
+		// second call rewrote the row as 冷却中, the panel lost the re-login
+		// control, and the dead token went back into rotation an hour later.
+		//
+		// Nothing but the failure counter moves: the verdict, its deadline and
+		// the operator-facing re-login note stay exactly as MarkInvalid left
+		// them.  A success (markSuccess) or the operator's revive lifts the
+		// park, so a recovered credential is never stuck here.
+		//
+		// The deadline is part of the test on purpose.  Once invalidCooldown has
+		// lapsed the pool will hand the account out again, and the next refusal
+		// has to be allowed to re-park it; guarding on the state alone would
+		// leave an expired park permanently un-re-parkable.
+		if e.state == stateInvalid && p.now().Before(e.until) {
 			p.dirty = true
 			p.saveLocked()
 			return kind, d

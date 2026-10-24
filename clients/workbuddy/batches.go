@@ -268,9 +268,12 @@ func runScheduledActivity(ctx context.Context, c *Client, a *Auth, res core.Task
 // runScheduledKeepalive refreshes the access token so the account is not parked
 // for inactivity.
 //
-// Failure goes through the pool's own accounting rather than a local counter:
-// one 12153 session-dead answer must not park an account, and the pool is where
-// the consecutive-strike rule lives.
+// A refusal that is a verdict about the credential parks the account for good,
+// because no amount of waiting repairs a dead refresh token and the panel has to
+// offer the re-login control; a transient refusal only cools it.  Recording it
+// through the pool rather than a local counter keeps one bad answer from
+// parking anything, and keeps the 12153 strike rule in the one place that owns
+// it.
 func runScheduledKeepalive(ctx context.Context, c *Client, a *Auth, res core.TaskResult) core.TaskResult {
 	if strings.TrimSpace(a.RefreshTokenValue()) == "" {
 		res.OK = false
@@ -278,7 +281,11 @@ func runScheduledKeepalive(ctx context.Context, c *Client, a *Auth, res core.Tas
 		return res
 	}
 	if err := c.up.RefreshToken(a); err != nil {
-		c.pool.MarkFailure(a, err)
+		if refreshRefusalIsTerminal(err) {
+			c.pool.MarkInvalid(a, refreshRejectedReason)
+		} else {
+			c.pool.MarkFailure(a, err)
+		}
 		res.OK = false
 		res.Message = "the token refresh was refused"
 		res.Error = core.Redact(describeFailure(err))

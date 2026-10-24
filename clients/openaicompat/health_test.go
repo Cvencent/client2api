@@ -1,6 +1,7 @@
 package openaicompat
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -154,5 +155,59 @@ func TestOpenAICompatInFlightSurvivesFailedCall(t *testing.T) {
 	}
 	if stats.InFlightFull != 0 {
 		t.Fatalf("in-flight-full after a refused call = %d, want 0", stats.InFlightFull)
+	}
+}
+
+// TestSourceRejectedKeyIsParkedAsInvalid pins the terminal case for a static
+// API key: a 401 means the vendor will not accept the key, and there is nothing
+// to refresh.  Cooling it down only re-selects the same dead key every cooldown
+// and leaves the row reading 冷却中, so the verdict has to be "invalid" -- the
+// state the panel turns into 账号异常 with the re-import control.
+func TestSourceRejectedKeyIsParkedAsInvalid(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":{"message":"invalid api key"}}`))
+	}))
+	defer srv.Close()
+
+	s, err := newSource("relay", core.SourceConfig{BaseURL: srv.URL + "/v1"}, core.Deps{
+		DataDir: t.TempDir(), HTTPClient: srv.Client(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddAccount(context.Background(), core.AccountSpec{
+		Fields: map[string]string{"api_key": "bad-key", "models": "m"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := &core.ChatRequest{
+		Model:    "m",
+		Messages: []core.Message{{Role: "user", Content: "ping"}},
+	}
+	req.SetAccountAcquirer(func(string) (func(), error) { return func() {}, nil })
+	if _, err := s.Chat(context.Background(), req); err == nil {
+		t.Fatal("Chat against a 401 provider unexpectedly succeeded")
+	}
+
+	// The row must read invalid, and the key must not be offered again.
+	records, err := s.Accounts(context.Background())
+	if err != nil {
+		t.Fatalf("Accounts: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("records = %+v, want one provider", records)
+	}
+	if got := records[0].State; got != "invalid" {
+		t.Fatalf("state after a 401 = %q, want invalid", got)
+	}
+	req2 := &core.ChatRequest{
+		Model:    "m",
+		Messages: []core.Message{{Role: "user", Content: "ping again"}},
+	}
+	req2.SetAccountAcquirer(func(string) (func(), error) { return func() {}, nil })
+	if _, err := s.Chat(context.Background(), req2); err == nil {
+		t.Fatal("a rejected key must not serve a second request")
 	}
 }

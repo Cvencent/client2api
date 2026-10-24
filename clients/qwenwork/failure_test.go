@@ -348,3 +348,38 @@ func TestStatusExtraHoldsOnlyDocumentedHealthKeys(t *testing.T) {
 		}
 	}
 }
+
+// TestQwenworkUnrefreshable401ParksTheCredential pins the terminal case: a 401
+// on a credential with no refresh token cannot be repaired by waiting, so it
+// must be parked (账号异常, re-login) rather than cooled down and re-selected on
+// every rotation.  Previously the auth cooldown parked it for a minute at a
+// time, so the row kept reading 冷却中 while every request was refused.
+func TestQwenworkUnrefreshable401ParksTheCredential(t *testing.T) {
+	rt := &fakeTransport{handler: func(_ int, req *http.Request, _ string) (*http.Response, error) {
+		if strings.Contains(req.URL.String(), "/algo/api/v2/service/pro/sse/agent_chat_generation") {
+			return fakeResponse(req, http.StatusUnauthorized, `{"code":401,"message":"token expired"}`), nil
+		}
+		return nil, errors.New("offline test: unrouted " + req.URL.String())
+	}}
+	// No refresh_token in the config, so there is no repair path.
+	_, qc := terminalTestClient(t, rt, cfgOneAccount)
+
+	err := terminalChat(t, qc, context.Background())
+	if err == nil {
+		t.Fatal("Chat against a 401 unexpectedly succeeded")
+	}
+
+	recs := qc.pool.panelRecords()
+	if len(recs) != 1 {
+		t.Fatalf("records = %+v, want one account", recs)
+	}
+	if recs[0].State != stateInvalid {
+		t.Fatalf("state after an unrefreshable 401 = %q, want %q", recs[0].State, stateInvalid)
+	}
+	if recs[0].Enabled {
+		t.Fatal("a credential parked for re-login must not stay enabled")
+	}
+	if picked := qc.pool.pick(nil); picked != nil {
+		t.Fatal("a parked credential must not be handed out again")
+	}
+}

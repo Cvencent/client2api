@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"client2api/internal/core"
 	"client2api/internal/smscap"
@@ -54,6 +55,13 @@ type officeAceSource struct {
 
 	trialMu    sync.Mutex
 	trialLocks map[string]*sync.Mutex
+
+	// repairAt throttles the panel-side trial repair: an account whose
+	// login-time order was refused is retried on panel reads, but at most once
+	// per officeAceRepairWindow so a permanently ineligible tenant does not
+	// knock on the cloud on every balance refresh.
+	repairMu sync.Mutex
+	repairAt map[string]time.Time
 
 	// SMS and auto-login state.  The platform token and per-call overrides
 	// travel through core.SMSOpts/core.AutoLoginRequest, so no credential is
@@ -113,6 +121,23 @@ func (o *officeAceSource) officeAceTrialLock(id string) *sync.Mutex {
 		o.trialLocks[id] = lock
 	}
 	return lock
+}
+
+// officeAceRepairDue reports whether a panel read may retry this account's
+// login-time trial order, and records the attempt when it may.  The window is
+// in-memory only: a restart clears it, which is the desired behaviour -- a
+// fresh process gets one repair chance per account per read.
+func (o *officeAceSource) officeAceRepairDue(id string, now time.Time) bool {
+	o.repairMu.Lock()
+	defer o.repairMu.Unlock()
+	if last, ok := o.repairAt[id]; ok && now.Sub(last) < officeAceRepairWindow {
+		return false
+	}
+	if o.repairAt == nil {
+		o.repairAt = map[string]time.Time{}
+	}
+	o.repairAt[id] = now
+	return true
 }
 
 func wrapOfficeAceSource(name string, cfg core.SourceConfig, s *source) core.SourceClient {

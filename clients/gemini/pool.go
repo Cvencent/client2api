@@ -41,6 +41,12 @@ type accountRecord struct {
 	CooldownUntil string `json:"cooldown_until,omitempty"`
 	LastError     string `json:"last_error,omitempty"`
 	ErrCount      int    `json:"err_count,omitempty"`
+	// Rejected is the vendor's verdict that this credential is not accepted
+	// (a 401, or a refresh the token endpoint refused).  It is runtime-only:
+	// it describes the last upstream answer, not the operator's Enabled
+	// switch, so it is not written into the credential file and the panel's
+	// 恢复 control can clear it.
+	Rejected bool `json:"-"`
 
 	// Tier is the account's Google tier (Pro/Free), a display-only note.
 	Tier string `json:"tier,omitempty"`
@@ -154,7 +160,7 @@ func (p *pool) len() int {
 }
 
 func (p *pool) selectable(a *accountRecord, now time.Time, limit int) bool {
-	if !a.Enabled || a.AccessToken == "" {
+	if !a.Enabled || a.Rejected || a.AccessToken == "" {
 		return false
 	}
 	if limit > 0 && a.inFlight >= limit {
@@ -403,6 +409,43 @@ func (p *pool) clearCooldown(id string) bool {
 	a.CooldownUntil = ""
 	a.LastError = ""
 	a.ErrCount = 0
+	// The operator's 恢复 is also the way out of a rejected credential: they
+	// are asserting the key is good, so the verdict must not outlive it.
+	a.Rejected = false
+	return true
+}
+
+// noteServed records a request this credential actually served.  A served
+// request is direct evidence that the key works, so it retires the
+// rejected-credential verdict along with the cooldown and the error count.
+func (p *pool) noteServed(id string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	a := p.find(id)
+	if a == nil {
+		return false
+	}
+	a.CooldownUntil = ""
+	a.LastError = ""
+	a.ErrCount = 0
+	a.Rejected = false
+	return true
+}
+
+// markRejected records that the vendor refused this credential itself (a 401,
+// or a refresh the token endpoint rejected).  A rejected account is not
+// selected at all rather than cooling down and being retried on the next loop;
+// the panel shows 账号异常 and offers the re-login control.
+func (p *pool) markRejected(id, reason string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	a := p.find(id)
+	if a == nil {
+		return false
+	}
+	a.Rejected = true
+	a.LastError = truncate(reason, 300)
+	a.CooldownUntil = ""
 	return true
 }
 
@@ -478,6 +521,8 @@ func (p *pool) statuses(now time.Time) []core.AccountStatus {
 func stateOf(a *accountRecord, now time.Time) string {
 	switch {
 	case !a.Enabled:
+		return "invalid"
+	case a.Rejected:
 		return "invalid"
 	case a.AccessToken == "":
 		return "invalid"
