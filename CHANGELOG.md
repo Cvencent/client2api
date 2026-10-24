@@ -6,6 +6,30 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.3.5] - 2026-10-24
+
+### Fixed
+
+- **liteLLM 风格的超限拒绝不再变成死 400。** 网关拿到厂商拒绝里的两个数字后，会按比例裁剪并
+  **同请求重试一次**：「你这次用了 N tokens」和「窗口是 M」。liteLLM 挡在好几个平台前面，
+  而它的措辞把**窗口写在前面、实测写在后面**：
+
+  ```
+  This model's maximum context length is 1048576 tokens. However, you requested
+  1263369 tokens (1163369 in the messages, 100000 in the completion).
+  ```
+
+  旧解析器只匹配到前者「maximum context length is N tokens」就返回，实测值读成 0；而重试以
+  「两个数字都在」为前提，于是根本没触发——用户只拿到一个只能手工处理的 400（例如 `raccoon`
+  的 `litellm.ContextWindowExceededError`）。现在两个数字**各自独立**地在整段文本里查找，
+  不假设先后顺序；实测值必须严格大于窗口值才算数，避免把窗口自身当成测量；只有窗口、
+  没有实测的拒绝仍然只学窗口、不编造测量。
+
+### Installer
+
+- `client2api-setup-0.3.5.exe`（空包，不含账号凭据或本机配置）
+- SHA256：待构建后填写
+- 升级会保留现有 `configs/client2api.json`、`data/`、账号池、用量和任务数据。
 ## [0.3.4] - 2026-10-24
 
 ### Fixed

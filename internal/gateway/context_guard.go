@@ -358,11 +358,17 @@ func applyContextBudget(req *core.ChatRequest, budget int64) (trimReport, bool) 
 // tooLongPatterns find a vendor's own limit in an upstream refusal.
 //
 // Each vendor words this differently and the gateway sees whatever the module
-// put in the error string, so the patterns are anchored on the "N tokens" plus a
-// comparison shape rather than on one vendor's phrasing.  A pattern only counts
-// when it yields a plausible positive limit; anything else is treated as "the
-// vendor did not say", which leaves the request failing exactly as it does today
-// rather than inventing a limit.
+// put in the error string, so the patterns are anchored on the "N tokens" plus
+// a comparison shape rather than on one vendor's phrasing.  A pattern only
+// counts when it yields a plausible positive limit; anything else is treated as
+// "the vendor did not say", which leaves the request failing exactly as it does
+// today rather than inventing a limit.
+// The vendor's own measurement of the refused request is read separately, by
+// measuredSizePatterns: litellm -- which fronts several of the platforms this
+// gateway routes to -- writes the limit FIRST and the measurement second
+// ("maximum context length is 1048576 tokens. However, you requested 1263369
+// tokens"), the opposite of the "N tokens > M maximum" shape, so one pass over
+// the text cannot assume an order.
 var tooLongPatterns = []*regexp.Regexp{
 	// "prompt is too long: 100001 tokens > 100000 maximum"
 	regexp.MustCompile(`(?i)\b(\d[\d,_]*)\s*tokens?\b[^0-9]{0,40}?[>>=]{1,2}\s*(\d[\d,_]*)`),
@@ -372,6 +378,18 @@ var tooLongPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)exceed[^0-9]{0,30}?(\d[\d,_]*)\s*tokens?\s*(?:limit|window|context)`),
 	// "context length 100000 exceeded"
 	regexp.MustCompile(`(?i)context[^0-9]{0,20}?(?:length|window|limit)[^0-9]{0,20}?(\d[\d,_]*)[^0-9]{0,20}?exceed`),
+}
+
+// measuredSizePatterns find the size the vendor measured THIS request at, when
+// the refusal names it.  They are tried independently of the limit patterns
+// because the two numbers arrive in either order; a refusal that names only
+// its window keeps Observed at 0, which means "the vendor did not say" rather
+// than a fabricated measurement.
+var measuredSizePatterns = []*regexp.Regexp{
+	// litellm: "However, you requested 1263369 tokens (1163369 in the messages, ...)"
+	regexp.MustCompile(`(?i)(?:you\s+)?requested\s+(\d[\d,_]*)\s*tokens?`),
+	// "1427021 tokens > 1048576 maximum" -- the comparison form, measurement first
+	regexp.MustCompile(`(?i)\b(\d[\d,_]*)\s*tokens?\s*[>>=]{1,2}`),
 }
 
 // wireUnicodeEscapeRE matches the JSON escapes a vendor's own error body may
@@ -413,27 +431,40 @@ func parseRefusalSizes(msg string) refusalSizes {
 	if lower == "" || !mentionsSize(lower) {
 		return refusalSizes{}
 	}
+
+	// The limit and the measured size are found independently: vendors write
+	// them in either order (litellm puts the limit first, workbuddy puts the
+	// measurement first), and each may be absent on its own.
+	var sizes refusalSizes
 	for _, re := range tooLongPatterns {
 		m := re.FindStringSubmatch(lower)
 		if m == nil {
 			continue
 		}
-		// With two capture groups the first number is what the vendor measured
-		// this request at and the second is the limit it compared against; with
-		// one, the only number is the limit itself.
-		limit, ok := parseTokenCount(m[len(m)-1])
-		if !ok {
+		// With two capture groups the second is the limit; with one, the only
+		// number is the limit itself.
+		if limit, ok := parseTokenCount(m[len(m)-1]); ok {
+			sizes.Limit = limit
+			break
+		}
+	}
+	for _, re := range measuredSizePatterns {
+		m := re.FindStringSubmatch(lower)
+		if m == nil {
 			continue
 		}
-		sizes := refusalSizes{Limit: limit}
-		if len(m) > 2 {
-			if observed, ok := parseTokenCount(m[1]); ok && observed > limit {
-				sizes.Observed = observed
-			}
+		if observed, ok := parseTokenCount(m[1]); ok {
+			sizes.Observed = observed
+			break
 		}
-		return sizes
 	}
-	return refusalSizes{}
+	// A "measurement" that is not actually larger than the limit is one of
+	// the limit's own numbers seen twice, not a measurement.  Dropping it
+	// keeps Observed meaning exactly what it says.
+	if sizes.Limit > 0 && sizes.Observed <= sizes.Limit {
+		sizes.Observed = 0
+	}
+	return sizes
 }
 
 // parseLimitFromMessage extracts a model's real context window from an upstream
