@@ -1498,7 +1498,7 @@ func TestApplyHeadersJWTChannel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRequest: %v", err)
 	}
-	c.applyHeaders(req, acct, "cn", "PARAM123")
+	c.applyHeaders(req, acct, "cn", "PARAM123", false)
 
 	if got := req.Header.Get("Authorization"); got != "Bearer "+jwt {
 		t.Errorf("Authorization = %q", got)
@@ -1549,7 +1549,7 @@ func TestApplyHeadersAPIKeyChannel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRequest: %v", err)
 	}
-	c.applyHeaders(req, acct, "", "")
+	c.applyHeaders(req, acct, "", "", false)
 
 	if got := req.Header.Get("X-Api-Key"); got != key {
 		t.Errorf("x-api-key = %q", got)

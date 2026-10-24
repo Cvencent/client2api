@@ -299,7 +299,7 @@ to `/oauth/cli/init` as `provider`, which is what makes the returned
 | Realm | Service | Sign-in page | What the poll returns |
 | --- | --- | --- | --- |
 | `zai` (international, default) | Z.AI / chat.z.ai | `chat.z.ai/api/oauth/authorize` | an OAuth access token, which the module walks through `api.z.ai` to mint a coding-plan API key; the plan JWT is kept as a fallback |
-| `bigmodel` (mainland) | BigModel / bigmodel.cn | `bigmodel.cn/login?appId=zcode` | the plan JWT the vendor hands back directly; there is **no** `api.z.ai` business-token walk |
+| `bigmodel` (mainland) | BigModel / bigmodel.cn | `bigmodel.cn/login?appId=zcode` | the OAuth access token is exchanged on the mainland console into a coding-plan API key; the plan JWT is kept only as a fallback when that exchange fails |
 
 A mainland phone number entered on the international page passes its human
 check and then fails with the vendor's "请求失败", and vice versa, so the realm
@@ -315,7 +315,15 @@ store a credential the operator cannot use.
 
 The realm also becomes the new account's `region`, and therefore its provider
 and default base URL, so a mainland sign-in is filed as `bigmodel` rather than
-as an international account. Sessions started before the picker existed carry
+as an international account.
+
+Both realms now prefer an **API key**. The vendor moved chat to `/api/v1/ultra*`
+(see [Endpoint routing](#endpoint-routing)) and no longer accepts a bare plan
+JWT there: the retired route answers `405` code `3012` and the current one
+`401 SERVICE_AUTHENTICATION_INVALID`. A mainland sign-in therefore runs the
+same token -> API-key walk against `bigmodel.cn` (`oauth_exchange_bigmodel_base`,
+overridable). If that walk fails the sign-in still succeeds with the plan JWT,
+which remains valid for the read-only plan endpoints but not for chat. Sessions started before the picker existed carry
 no realm and keep using the international walk, which is the only path that
 existed then.
 
@@ -681,6 +689,29 @@ reads it even when the region is pinned — see
 [The browser captcha path](#the-browser-captcha-path).
 
 ### System blocks
+
+### Endpoint routing
+
+The vendor retired the direct chat URLs. `GET /api/v1/agent/configs` now
+publishes a `proxyEndpoint.mapping` table that the official client applies
+before sending:
+
+| Retired URL | Current route |
+| --- | --- |
+| `https://open.bigmodel.cn/api/anthropic/v1/messages` | `https://zcode.z.ai/api/v1/ultra/anthropic/v1/messages` |
+| `https://api.z.ai/api/anthropic/v1/messages` | `https://zcode.z.ai/api/v1/ultra-zai/anthropic/v1/messages` |
+
+The retired URLs do not answer `404`. They answer **HTTP 405 with envelope code
+`3012`**, the same shape as a risk-control block, so posting to one looked like
+a WAF refusal and fed the shared IP-level gate — which is how a single dead
+route could park every other client on the machine.
+
+`routing.go` carries that table as a compiled-in default and rewrites the chat
+URL before dialling; a routed request also carries `X-Zcode-Authorization`.
+URLs outside the table (an operator `base_url` override, a local gateway) are
+left untouched. `parseAgentConfigs` reads the vendor document so a future route
+change can be diffed against the vendored table in `routing_test.go`.
+
 
 The upstream rejects a request that lacks the official CLI-prefix /
 agent-identity / environment system blocks (it answers `3012`), so they are

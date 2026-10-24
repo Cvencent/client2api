@@ -6,6 +6,35 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.3.6] - 2026-10-25
+
+### Fixed
+
+- **ZCode 聊天全部 405/3012 的问题修掉了。** 厂商把直连聊天地址迁到了
+  `/api/v1/ultra*`，并把鉴权头换成 `X-Zcode-Authorization`（见它自己发布的
+  `GET /api/v1/agent/configs` 路由表）。旧地址不再返回 404，而是回
+  **HTTP 405 + envelope code 3012**——和风控封禁长得一模一样，于是模块把它当
+  WAF 上报，触发了**全局 IP 门禁**，连别的平台一起停掉。现在模块按厂商路由表
+  改写聊天地址；表外的地址（`base_url` 覆盖、本地网关）原样不动。
+
+- **ZCode 面板登录现在两个 realm 都优先兑换 API key。** 纯 plan JWT 在聊天
+  路由上已经不被接受（旧地址 405/3012，新地址 401
+  `SERVICE_AUTHENTICATION_INVALID`）。国内版登录原本只存 JWT，现在也走
+  `bigmodel.cn` 自己的兑换流程；兑换失败仍回退 JWT 并注明「chat needs an API
+  key」，不会让一次本来能成功的登录失败。
+
+- **凭证被厂商拒绝时显示「账号异常」而不是「冷却中」。** 覆盖 Cline、CodeArts、
+  Gemini、QwenWork、WorkBuddy、OfficeAce 等平台：401 现在是关于凭证的结论，
+  不管响应体是厂商业务信封、裸 `token expired` 还是边缘网关的 HTML 页；能不
+  刷新的模块会先试一次刷新，**只有刷新令牌本身被拒**才算终结（超时、5xx、网关
+  错误不算）。被拒的凭证停在那里等操作员重新导入，而不是每次轮换又被选中；成功
+  一次即自动恢复，面板的「恢复」也始终能手动解除。
+
+### Installer
+
+- `client2api-setup-0.3.6.exe`（空包，不含账号凭据或本机配置）
+- 升级会保留现有 `configs/client2api.json`、`data/`、账号池、用量和任务数据。
+
 ## [0.3.5] - 2026-10-24
 
 ### Fixed

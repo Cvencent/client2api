@@ -47,7 +47,7 @@ people. The built-in default is `127.0.0.1`.
 | `workbuddy/...` | WorkBuddy | Tencent WorkBuddy / CodeBuddy |
 | `autoclaw/...` | AutoClaw | AutoClaw desktop (independent platform) |
 | `trae/...` | Trae | TRAE SOLO / Trae CN |
-| `zcode/...` | ZCode | Z.AI coding plan |
+| `zcode/...` | ZCode | Z.AI coding plan (chat now routes through `zcode.z.ai/api/v1/ultra*`) |
 | `kimi/...` | Kimi | Kimi Code CLI |
 | `qoder/...` | Qoder CN | Qoder CN |
 | `qwenwork/...` | QwenWork | Qwen Office / QoderWork CN |
@@ -205,6 +205,16 @@ OpenAI's `schema must be a JSON Schema of 'type: "object"', got 'type: null'`
 - Any upstream 429 parks the `(platform, account, model)` triple for a cooldown: 60 seconds at first, doubling per consecutive failure and capped at 30 minutes, or the vendor's own `Retry-After` when it sent one (also capped). The gateway refuses that account for that model while the park is live, so a module rotates to another account or platform instead of walking back into the same rate limit, and the account's model dialog shows when the park is released and how much time is left. A module that reports every attempt through `core.ChatRequest.NoteAccountFailure` is covered even when it recovers on another account; the rest fall back to the gateway's terminal-failure record.
 - Conversation stickiness, retries, cooldown and automatic failover, with panel controls that show each live binding's model and can force-unbind or force-switch a session. A force-switch can clear platform/account stickiness for automatic selection again or pin a chosen platform while still auto-selecting its account. The sticky-session dialog also has a one-click 一键强制切换 that runs 自动选择 for every listed conversation at once, so the next turn re-ranks platforms and accounts from scratch. A request that started before the switch may finish normally, but its late success cannot recreate the old binding; the next turn ranks from the operator's latest state.
 - OpenAI-shaped error mapping for auth, quota, WAF, timeout and rate-limit failures.
+- A credential the vendor rejects is reported as 账号异常, not 冷却中, on every
+  platform. A 401 is a verdict about the credential whatever its body says (the
+  vendor's business envelope, a generic `token expired`, or the edge gateway's
+  bare HTML page), so a module that cannot renew the credential parks it as
+  `invalid` for the operator to re-import instead of cooling it down and
+  re-selecting the same dead token on every rotation. A module that *can* renew
+  tries one refresh first, and only a refusal of the refresh token itself — not
+  a timeout or a 5xx on the way there — is terminal. A served request clears the
+  verdict, so a credential that starts working again returns to the pool, and
+  the panel's 恢复 control always lifts it.
 - Failover also covers failures a platform reports after the stream has already been
   opened. Some vendors answer a spent quota with HTTP 200 and an SSE frame carrying
   the error, so the gateway reads the first frame before committing to the platform:
@@ -604,7 +614,7 @@ See the detailed reference for translation rules and limitations.
 OfficeAce (Office Claw) is built in as the `officeace` platform. Its desktop client exposes exactly four selectable models -- `glm-5.2`, `glm-5.1`, `deepseek-v4-flash-0731` and `deepseek-v4.1-flash` -- through the Huawei MaaS / AgentArts OpenAI-compatible model gateway. No relay entry or manual API root is required:
 
 1. Open **Platform Configuration** and expand **Huawei** (the built-in `officeace` platform). It is present on a fresh install; it is shown as **built-in** and has no Delete button.
-2. Open its account pool and choose **Auto add**. The panel rents a number from the shared one-time-SMS platform, drives a headless browser through the Huawei phone-code login, reads the verification code and submits it for you (including the Huawei Cloud user-agreement step shown for a fresh account). Paste the SMS-platform token into the dialog (or set `EOMSG_TOKEN` once) and leave the default sender keyword **华为**; the number is released automatically when the run ends. If you would rather sign in yourself, **Browser sign-in -> Get authorization link** still works. That link first visits Huawei's logout endpoint to clear the previous browser session, then returns to the login page with the OAuth request intact, so adding a second account does not silently reuse the first one. Either way the panel exchanges the authorization code for the account's model-gateway credential, writes it into this gateway's account store, and makes sure the account has the free `officeace.personal.package.trial` entitlement (500 credits and 200 online searches). An account that already has the trial is only checked and is not ordered again.
+2. Open its account pool and choose **Auto add**. The panel rents a number from the shared one-time-SMS platform, drives a headless browser through the Huawei phone-code login, reads the verification code and submits it for you (including the Huawei Cloud user-agreement step shown for a fresh account). Paste the SMS-platform token into the dialog (or set `EOMSG_TOKEN` once) and leave the default sender keyword **华为**; the number is released automatically when the run ends. If you would rather sign in yourself, **Browser sign-in -> Get authorization link** still works. That link first visits Huawei's logout endpoint to clear the previous browser session, then returns to the login page with the OAuth request intact, so adding a second account does not silently reuse the first one. Either way the panel exchanges the authorization code for the account's model-gateway credential, writes it into this gateway's account store, and makes sure the account has the free `officeace.personal.package.trial` entitlement (500 credits and 200 online searches). An account that already has the trial is only checked and is not ordered again. If the login-time order was refused (for example a transient IAM authentication error), the balance and package reads re-open the trial automatically, at most one repair attempt per account every 30 minutes.
 3. Model scanning runs automatically after a successful sign-in. **Scan models** can be pressed again later. The catalogue is published as `officeace/<model>`, and only those four ids are exposed. Other entries in Huawei's raw catalogue are ignored, matching the desktop client's picker exactly.
 
 Each account keeps the `model_api_url_base` returned by its own Huawei login, so accounts on different regions or model gateways can share one `officeace` platform. Requests use HTTP Basic authentication and behave like every other platform: account rotation, failover, conversation affinity, usage accounting, streaming and tool calls all work unchanged. Credentials stay in the local `data/officeace/accounts.json`; they are never written to the config file or the example config.

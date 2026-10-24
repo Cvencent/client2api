@@ -22,6 +22,7 @@ package zcode
 
 import (
 	"context"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -119,9 +120,14 @@ func TestStartLoginDefaultsToZaiUnlessConfigured(t *testing.T) {
 // bigmodel 的轮询结果不需要（也不能）走 api.z.ai 的兑换：国内版没有 business
 // token 这一步，凭据就是轮询直接给的计划 JWT。这条用例同时钉住「没有多打一次
 // 兑换请求」和「账号被记在 bigmodel 服务上」。
-func TestBigmodelLoginStoresThePlanCredentialWithoutTheZaiExchange(t *testing.T) {
+func TestBigmodelLoginMintsItsOwnAPIKey(t *testing.T) {
 	env := newPanelEnv(t, `{"auto_discover":false}`)
-	transport := happyRoutes().transport()
+	inner := happyRoutes().transport()
+	var hosts []string
+	transport := &fakeTransport{handler: func(req *http.Request) (*http.Response, error) {
+		hosts = append(hosts, req.URL.Host)
+		return inner.handler(req)
+	}}
 	c := env.client(t, transport)
 
 	st, err := c.StartLoginRealm(context.Background(), regionBigmodel)
@@ -135,9 +141,19 @@ func TestBigmodelLoginStoresThePlanCredentialWithoutTheZaiExchange(t *testing.T)
 	if final.State != core.LoginSuccess {
 		t.Fatalf("state = %q (%s), want success", final.State, final.Message)
 	}
-	// init + poll，仅此两条。多出来的就是误走的 z.ai 兑换。
-	if transport.count() != 2 {
-		t.Errorf("a mainland sign-in made %d requests, want 2 (init + poll; no business-token exchange)", transport.count())
+
+	// The mainland sign-in must use its own console, never the z.ai exchange.
+	sawBigmodelExchange := false
+	for _, h := range hosts {
+		if strings.Contains(h, "api.z.ai") {
+			t.Errorf("the mainland sign-in must not use the z.ai exchange (host %q)", h)
+		}
+		if strings.HasPrefix(h, "bigmodel.cn") || strings.HasPrefix(h, "open.bigmodel.cn") {
+			sawBigmodelExchange = true
+		}
+	}
+	if !sawBigmodelExchange {
+		t.Errorf("the mainland sign-in never reached a bigmodel exchange endpoint; hosts=%v", hosts)
 	}
 
 	recs, err := c.Accounts(context.Background())
@@ -148,8 +164,8 @@ func TestBigmodelLoginStoresThePlanCredentialWithoutTheZaiExchange(t *testing.T)
 		t.Fatalf("stored %d accounts, want 1", len(recs))
 	}
 	rec := recs[0]
-	if rec.Fields["kind"] != kindJWT {
-		t.Errorf("kind = %v, want the polled plan JWT (bigmodel has no api-key exchange)", rec.Fields["kind"])
+	if rec.Fields["kind"] != kindAPIKey {
+		t.Errorf("kind = %v, want the minted coding-plan API key (a plan JWT is no longer accepted for chat)", rec.Fields["kind"])
 	}
 	if rec.Fields["provider"] != providerBigmodel {
 		t.Errorf("provider = %v, want %q", rec.Fields["provider"], providerBigmodel)
