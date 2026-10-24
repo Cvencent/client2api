@@ -49,7 +49,7 @@
 ### Installer
 
 - `client2api-setup-0.3.3.exe`（空包，不含账号凭据或本机配置）
-- SHA256：待构建后填写
+- SHA256：`D525E9B84F5FF2ED9B46C5737D9A3008BA026504EC2C613C031AAA035C81728A`
 - 升级会保留现有 `configs/client2api.json`、`data/`、账号池、用量和任务数据。
 ## [0.3.2] - 2026-10-24
 
