@@ -157,3 +157,49 @@ func TestChatCompletionsBufferedDSMLBecomesToolCalls(t *testing.T) {
 		t.Fatalf("tool_calls = %#v", calls)
 	}
 }
+
+// A call written as the tool's own element name (`<exec_command>` with
+// `parameter` children) is normalised too, using the request's tool list to
+// tell it apart from ordinary markup.
+func TestToolMarkupStreamConvertsNamedToolElement(t *testing.T) {
+	text := `<exec_command>
+<parameter name="cmd">git status</parameter>
+</exec_command>`
+	stream := wrapToolMarkup(&toolMarkupTestStream{events: dsmlTestEvents(text, "stop")}, &core.ChatRequest{
+		Tools: []core.Tool{{Type: "function", Name: "exec_command"}},
+	})
+	var visible strings.Builder
+	var calls []*core.ToolCallDelta
+	finish := ""
+	for {
+		ev, err := stream.Recv()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Recv: %v", err)
+		}
+		switch ev.Type {
+		case core.EventDelta:
+			visible.WriteString(ev.Delta)
+		case core.EventToolCall:
+			calls = append(calls, ev.ToolCall)
+		case core.EventDone:
+			finish = ev.Finish
+		case core.EventError:
+			t.Fatalf("unexpected protocol error: %v", ev.Err)
+		}
+	}
+	if visible.String() != "" {
+		t.Fatalf("visible = %q, want empty", visible.String())
+	}
+	if len(calls) != 1 || calls[0].Name != "exec_command" {
+		t.Fatalf("calls = %#v", calls)
+	}
+	if !strings.Contains(calls[0].Arguments, "git status") {
+		t.Fatalf("arguments = %q", calls[0].Arguments)
+	}
+	if finish != "tool_calls" {
+		t.Fatalf("finish = %q, want tool_calls", finish)
+	}
+}

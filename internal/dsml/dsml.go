@@ -69,10 +69,53 @@ type Parser struct {
 	buf       strings.Builder
 	inBlock   bool
 	malformed bool
+
+	// Some upstreams write a call as the tool's own element name --
+	// `<exec_command>` with `parameter` children -- instead of
+	// `<invoke name="exec_command">`.  That spelling can only be told
+	// apart from ordinary markup by checking the name against the tools the
+	// caller actually offered, so these stay nil unless a tool list is given.
+	named     *regexp.Regexp
+	namedOpen *regexp.Regexp
 }
 
-// NewParser returns an empty parser.
+// NewParser returns an empty parser. It recognises the labelled and
+// fullwidth-bar DSML envelopes but not the named-element spelling, which
+// needs the caller's tool list.
 func NewParser() *Parser { return &Parser{} }
+
+// NewParserWithTools returns a parser that also recognises a call written as
+// the tool's own element name (`<exec_command>` with `parameter` children).
+// The names come from the request's tool list; without them any element name
+// would look like a call.
+func NewParserWithTools(names []string) *Parser {
+	p := &Parser{}
+	p.named, p.namedOpen = namedToolRegexps(names)
+	return p
+}
+
+// namedToolRegexps builds the two patterns used for the named-element
+// spelling. RE2 has no backreferences, so the close tag is matched with the
+// same alternation and the two captured names are compared at match time.
+func namedToolRegexps(names []string) (*regexp.Regexp, *regexp.Regexp) {
+	seen := make(map[string]bool, len(names))
+	alts := make([]string, 0, len(names))
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		alts = append(alts, regexp.QuoteMeta(name))
+	}
+	if len(alts) == 0 {
+		return nil, nil
+	}
+	alt := strings.Join(alts, "|")
+	call := regexp.MustCompile(`(?is)<\s*(` + alt + `)\s*>(.*?)</\s*(` + alt + `)\s*>`)
+	open := regexp.MustCompile(`(?is)<\s*(` + alt + `)\s*>`)
+	return call, open
+}
 
 // Malformed reports whether a recognized tool-call construct closed or ended
 // without yielding a usable call. Callers can fail the turn instead of showing
@@ -121,6 +164,13 @@ loop:
 		openLoc := reOpenCalls.FindStringIndex(s)
 		invokeLoc := reInvoke.FindStringIndex(s)
 		bareLoc := reBareInvokeOpen.FindStringIndex(s)
+		var namedLoc, namedOpenLoc []int
+		if p.named != nil {
+			namedLoc = p.named.FindStringIndex(s)
+		}
+		if p.namedOpen != nil {
+			namedOpenLoc = p.namedOpen.FindStringIndex(s)
+		}
 
 		switch {
 		case bareLoc != nil && (openLoc == nil || bareLoc[0] < openLoc[0]) && (invokeLoc == nil || bareLoc[0] < invokeLoc[0]):
@@ -145,6 +195,22 @@ loop:
 				out.WriteString(block)
 			}
 			calls = append(calls, parsed...)
+		case namedLoc != nil:
+			out.WriteString(s[:namedLoc[0]])
+			block := s[namedLoc[0]:namedLoc[1]]
+			p.replaceBuf(s[namedLoc[1]:])
+			parsed := parseNamedCalls(p.named, block)
+			if len(parsed) == 0 {
+				p.malformed = true
+				out.WriteString(block)
+			}
+			calls = append(calls, parsed...)
+		case namedOpenLoc != nil:
+			// An opening tool element with no close yet: hold it back so a
+			// truncated call is recovered at Finish instead of leaking as prose.
+			out.WriteString(s[:namedOpenLoc[0]])
+			p.replaceBuf(s[namedOpenLoc[0]:])
+			p.inBlock = true
 		default:
 			keep := partialTagTail(s)
 			if keep >= len(s) {
@@ -180,6 +246,12 @@ func (p *Parser) Finish() (string, []Call) {
 		// Otherwise the invoke itself was cut off, so there is no `</invoke>`
 		// to match and only the parameters it did send can be recovered.
 		if calls := parseTruncatedBlock(s); len(calls) > 0 {
+			return "", calls
+		}
+		if calls := parseNamedCalls(p.named, s); len(calls) > 0 {
+			return "", calls
+		}
+		if calls := parseTruncatedNamedCalls(p.namedOpen, s); len(calls) > 0 {
 			return "", calls
 		}
 		// Nothing usable: fail the turn rather than hand back a silent stop.
@@ -249,6 +321,50 @@ func parseTruncatedBlock(inner string) []Call {
 		body := inner[m[1]:]
 		if next := reBareInvokeOpen.FindStringIndex(body); next != nil {
 			body = body[:next[0]]
+		}
+		// A cut-off call with no parameter at all is not something to run:
+		// there is no evidence of what it was meant to do.
+		if len(reParameter.FindAllStringSubmatch(body, -1)) == 0 {
+			continue
+		}
+		calls = append(calls, Call{Name: name, Arguments: parseParameters(body)})
+	}
+	return calls
+}
+
+// parseNamedCalls turns `<tool>...</tool>` blocks into calls. The closing
+// name must equal the opening one: RE2 has no backreferences, so the match
+// is checked here rather than in the pattern.
+func parseNamedCalls(re *regexp.Regexp, text string) []Call {
+	if re == nil {
+		return nil
+	}
+	var calls []Call
+	for _, m := range re.FindAllStringSubmatch(text, -1) {
+		if m[1] != m[3] {
+			continue
+		}
+		calls = append(calls, Call{Name: m[1], Arguments: parseParameters(m[2])})
+	}
+	return calls
+}
+
+// parseTruncatedNamedCalls reads a `<tool>` element the upstream cut off
+// before its close tag. As with the fullwidth-bar envelope, only the
+// parameters that actually completed are used.
+func parseTruncatedNamedCalls(re *regexp.Regexp, text string) []Call {
+	if re == nil {
+		return nil
+	}
+	var calls []Call
+	for _, m := range re.FindAllStringSubmatchIndex(text, -1) {
+		name := text[m[2]:m[3]]
+		body := text[m[1]:]
+		if next := re.FindStringIndex(body); next != nil {
+			body = body[:next[0]]
+		}
+		if len(reParameter.FindAllStringSubmatch(body, -1)) == 0 {
+			continue
 		}
 		calls = append(calls, Call{Name: name, Arguments: parseParameters(body)})
 	}

@@ -25,7 +25,15 @@ func wrapToolMarkup(stream core.Stream, req *core.ChatRequest) core.Stream {
 	if stream == nil || !requestCanUseTools(req) {
 		return stream
 	}
-	return &toolMarkupStream{Stream: stream, parser: dsml.NewParser()}
+	// The tool list is what lets the parser tell a call written as the tool's
+	// own element name (`<exec_command>`) apart from ordinary markup.
+	names := make([]string, 0, len(req.Tools))
+	for _, tool := range req.Tools {
+		if tool.Name != "" {
+			names = append(names, tool.Name)
+		}
+	}
+	return &toolMarkupStream{Stream: stream, parser: dsml.NewParserWithTools(names)}
 }
 
 // requestCanUseTools keeps ordinary prose containing XML-looking examples from

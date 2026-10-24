@@ -51,6 +51,36 @@ const (
 	officeAceSelRegisterContinue = `#submitBtn_reg_open`
 )
 
+// Huawei's sign-in page is an Angular SPA, and its phone-code control is a DIV
+// wired up by the framework rather than by the markup.  Fill() dispatches
+// input/change synchronously, so a click issued in the same tick lands before
+// the next digest: the handler is not armed yet, the click is silently
+// dropped, and the page fires no SMS request at all.  The operator then watches
+// the code reader poll a number that was never texted.
+//
+// officeAcePhoneSettle lets that digest run before the click is issued.
+// officeAceResendVisibleExpr is the acknowledgement Huawei renders only once a
+// send request was really accepted ("重新获取 (NN)"), which the control's own
+// disabled/enabled class cannot tell us.  A click that produced neither is
+// retried; the retry is free because the control is disabled while the resend
+// countdown is on screen.
+const officeAceSendCodeAttempts = 2
+
+// The two timings are variables, not constants, so a test can shrink them the
+// same way the WorkBuddy settle knobs do.  Production never reassigns them.
+var (
+	officeAcePhoneSettle  = 1500 * time.Millisecond
+	officeAceSendCodeWait = 8 * time.Second
+)
+
+// officeAceResendVisibleExpr is true while the "get code" control shows the
+// resend countdown Huawei renders after it accepted a send request.
+const officeAceResendVisibleExpr = `(function(){` +
+	`var e=document.querySelector('[ht="click_changePhoneAccount_getAuthcode"]');` +
+	`if(!e){return false;}` +
+	`var t=((e.innerText||e.textContent||'')+'').trim();` +
+	`return /重新获取|重新发送|重发|秒后/.test(t);})()`
+
 // officeAceAutoDriver is the browser half of one auto-login.  Drive must
 // return after submitting the phone code; the caller then polls the existing
 // OfficeAce login provider until the cloud has the authorization result.
@@ -65,6 +95,7 @@ type officeAceAutoPage interface {
 	Exists(ctx context.Context, selector string) (bool, error)
 	Click(ctx context.Context, selector string) (bool, error)
 	EvalBool(ctx context.Context, expression string) (bool, error)
+	EvalString(ctx context.Context, expression string) (string, error)
 }
 
 const (
@@ -478,10 +509,8 @@ func (officeAceBrowserDriver) Drive(ctx context.Context, url, phone string, wait
 	}
 	logf("已填写手机号")
 
-	if ok, err := page.Click(ctx, officeAceSelSendCode); err != nil {
-		return fmt.Errorf("点击获取验证码失败：%w", err)
-	} else if !ok {
-		return errors.New("找不到获取验证码按钮")
+	if err := requestOfficeAceSMSCode(ctx, page, logf); err != nil {
+		return err
 	}
 	logf("已请求发送验证码")
 
@@ -498,6 +527,11 @@ func (officeAceBrowserDriver) Drive(ctx context.Context, url, phone string, wait
 		return fmt.Errorf("填写验证码失败：%w", err)
 	} else if !ok {
 		return errors.New("找不到验证码输入框")
+	}
+	// Same Angular digest race as the phone field: let the model commit before
+	// the submit control is clicked.
+	if !sleepOfficeAce(ctx, officeAcePhoneSettle) {
+		return ctx.Err()
 	}
 	if ok, err := page.Click(ctx, officeAceSelSubmit); err != nil {
 		return fmt.Errorf("提交验证码失败：%w", err)
@@ -559,6 +593,51 @@ func acceptOfficeAceRegistrationConsentWithin(ctx context.Context, page officeAc
 	}
 	logf("已同意华为云用户协议，继续华为授权…")
 	return nil
+}
+
+// requestOfficeAceSMSCode clicks Huawei's "get code" control and does not
+// return success until the page confirms the request was really accepted.  A
+// bare click is not enough: see the officeAcePhoneSettle comment above for the
+// settle/digest race this closes.
+func requestOfficeAceSMSCode(ctx context.Context, page officeAceAutoPage, logf func(string, ...any)) error {
+	if ok, err := waitOfficeAceSelector(ctx, page, officeAceSelSendCode, 20*time.Second); err != nil {
+		return fmt.Errorf("等待获取验证码按钮失败：%w", err)
+	} else if !ok {
+		return errors.New("找不到获取验证码按钮")
+	}
+	if !sleepOfficeAce(ctx, officeAcePhoneSettle) {
+		return ctx.Err()
+	}
+	for attempt := 1; attempt <= officeAceSendCodeAttempts; attempt++ {
+		ok, err := page.Click(ctx, officeAceSelSendCode)
+		if err != nil {
+			return fmt.Errorf("点击获取验证码失败：%w", err)
+		}
+		if !ok {
+			return errors.New("找不到获取验证码按钮")
+		}
+		if attempt > 1 {
+			logf("第一次点击未触发发码，正在重试…")
+		}
+		sent, err := waitOfficeAceCondition(ctx, page, officeAceResendVisibleExpr, officeAceSendCodeWait)
+		if err != nil {
+			return fmt.Errorf("确认验证码已发送失败：%w", err)
+		}
+		if sent {
+			return nil
+		}
+	}
+	return errors.New("点了「获取验证码」但华为没有发码（页面未进入重新获取倒计时）：确认手机号格式和登录页版本后重试")
+}
+
+// sleepOfficeAce waits for d, reporting false when ctx ends first.
+func sleepOfficeAce(ctx context.Context, d time.Duration) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case <-time.After(d):
+		return true
+	}
 }
 
 func waitOfficeAceCondition(ctx context.Context, page officeAceAutoPage, expression string, timeout time.Duration) (bool, error) {

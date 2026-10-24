@@ -644,3 +644,31 @@ func overrideEndpoints(url string) func() {
 	endpointDaily, endpointSandbox = url, url
 	return func() { endpointDaily, endpointSandbox = prevDaily, prevSandbox }
 }
+
+// A content-array request leaves the same text in Content and in a text part.
+// The wire parts must carry the caller's prose once, not twice.
+func TestTranslateMessagePartsDoesNotRepeatTheTextPart(t *testing.T) {
+	m := core.Message{
+		Role:    "user",
+		Content: "hello world",
+		Parts:   []core.ContentPart{{Type: "text", Text: "hello world"}},
+	}
+	parts, err := translateMessageParts(m, "user", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parts) != 1 || parts[0].Text != "hello world" {
+		t.Fatalf("parts = %#v, want exactly one text part carrying the body", parts)
+	}
+	// With no flattened body the text part is the only copy and must survive.
+	partsOnly, err := translateMessageParts(core.Message{
+		Role:  "user",
+		Parts: []core.ContentPart{{Type: "text", Text: "hello world"}},
+	}, "user", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(partsOnly) != 1 || partsOnly[0].Text != "hello world" {
+		t.Fatalf("parts-only parts = %#v, want the text part kept", partsOnly)
+	}
+}

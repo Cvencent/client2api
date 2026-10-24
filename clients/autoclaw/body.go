@@ -161,13 +161,17 @@ func messageContent(m core.Message) any {
 		return m.Content
 	}
 	parts := make([]map[string]any, 0, len(m.Parts)+1)
-	if strings.TrimSpace(m.Content) != "" {
+	// Content is the flattened body of the text parts, so emitting both would
+	// send the caller's prose twice.  Prefer Content; the text parts are the
+	// fallback for a message that carries no flattened body at all.
+	hasBody := strings.TrimSpace(m.Content) != ""
+	if hasBody {
 		parts = append(parts, map[string]any{"type": "text", "text": m.Content})
 	}
 	for _, p := range m.Parts {
 		switch strings.ToLower(strings.TrimSpace(p.Type)) {
 		case "", "text":
-			if p.Text != "" {
+			if !hasBody && p.Text != "" {
 				parts = append(parts, map[string]any{"type": "text", "text": p.Text})
 			}
 		case "image_url", "image":

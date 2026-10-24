@@ -641,6 +641,13 @@ func (p *fakeOfficeAceConsentPage) EvalBool(_ context.Context, expression string
 	}
 }
 
+// EvalString exists because officeAceAutoPage widened to include it for the
+// send-code acknowledgement probe.  The consent flow never asks for a string,
+// so an empty answer is the honest one here.
+func (p *fakeOfficeAceConsentPage) EvalString(_ context.Context, _ string) (string, error) {
+	return "", nil
+}
+
 func TestOfficeAceRegistrationConsentSelectsAgreementAndContinues(t *testing.T) {
 	page := &fakeOfficeAceConsentPage{hasAgreement: true}
 	var logs []string
@@ -668,6 +675,86 @@ func TestOfficeAceRegistrationConsentSkipsExistingAccount(t *testing.T) {
 	}
 	if page.agreementClicks != 0 || page.continueClicks != 0 {
 		t.Fatalf("clicks agreement=%d continue=%d, want no clicks for an existing account", page.agreementClicks, page.continueClicks)
+	}
+}
+
+// fakeOfficeAceSendCodePage models Huawei's get-code control: the click can be
+// dropped (the SPA had not armed its handler yet), and only an accepted send
+// puts the resend countdown on screen.
+type fakeOfficeAceSendCodePage struct {
+	clicks        int
+	sendSucceeds  int // click index (1-based) that actually triggers the send
+	resendVisible bool
+}
+
+func (p *fakeOfficeAceSendCodePage) Exists(_ context.Context, selector string) (bool, error) {
+	return selector == officeAceSelSendCode, nil
+}
+
+func (p *fakeOfficeAceSendCodePage) Click(_ context.Context, selector string) (bool, error) {
+	if selector != officeAceSelSendCode {
+		return false, nil
+	}
+	p.clicks++
+	if p.sendSucceeds > 0 && p.clicks >= p.sendSucceeds {
+		p.resendVisible = true
+	}
+	return true, nil
+}
+
+func (p *fakeOfficeAceSendCodePage) EvalBool(_ context.Context, expression string) (bool, error) {
+	if expression == officeAceResendVisibleExpr {
+		return p.resendVisible, nil
+	}
+	return false, nil
+}
+
+func (p *fakeOfficeAceSendCodePage) EvalString(_ context.Context, _ string) (string, error) {
+	return "", nil
+}
+
+// shrinkOfficeAceSendCodeTimings keeps these tests fast without changing the
+// production defaults.  t.Cleanup puts the real values back.
+func shrinkOfficeAceSendCodeTimings(t *testing.T) {
+	t.Helper()
+	settle, wait := officeAcePhoneSettle, officeAceSendCodeWait
+	officeAcePhoneSettle, officeAceSendCodeWait = 10*time.Millisecond, 50*time.Millisecond
+	t.Cleanup(func() { officeAcePhoneSettle, officeAceSendCodeWait = settle, wait })
+}
+
+func TestOfficeAceSendCodeWaitsForTheFrameworkAndRetriesADroppedClick(t *testing.T) {
+	shrinkOfficeAceSendCodeTimings(t)
+	page := &fakeOfficeAceSendCodePage{sendSucceeds: 2}
+	var logs []string
+	err := requestOfficeAceSMSCode(context.Background(), page, func(format string, args ...any) {
+		logs = append(logs, fmt.Sprintf(format, args...))
+	})
+	if err != nil {
+		t.Fatalf("requestOfficeAceSMSCode: %v", err)
+	}
+	if page.clicks != 2 {
+		t.Fatalf("clicks = %d, want the dropped first click retried", page.clicks)
+	}
+	if !page.resendVisible {
+		t.Fatal("the send was accepted but the run did not observe the resend countdown")
+	}
+	if !strings.Contains(strings.Join(logs, "\n"), "重试") {
+		t.Fatalf("logs = %v, want the retry reported", logs)
+	}
+}
+
+func TestOfficeAceSendCodeFailsWhenThePageNeverAcceptsTheNumber(t *testing.T) {
+	shrinkOfficeAceSendCodeTimings(t)
+	page := &fakeOfficeAceSendCodePage{} // every click is dropped
+	err := requestOfficeAceSMSCode(context.Background(), page, func(string, ...any) {})
+	if err == nil {
+		t.Fatal("requestOfficeAceSMSCode reported success though the page never entered the resend countdown")
+	}
+	if !strings.Contains(err.Error(), "没有发码") {
+		t.Fatalf("err = %v, want the no-send diagnosis", err)
+	}
+	if page.clicks != officeAceSendCodeAttempts {
+		t.Fatalf("clicks = %d, want %d attempts", page.clicks, officeAceSendCodeAttempts)
 	}
 }
 

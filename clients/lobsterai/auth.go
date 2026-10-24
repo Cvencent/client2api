@@ -249,9 +249,10 @@ type refreshRequest struct {
 
 // exchange redeems an authCode for a credential.
 //
-// firstKeyfrom is minted once, at login, and latestKeyfrom is minted now; both
-// are persisted because every later renewal must replay them verbatim.
-func (c *Client) exchange(ctx context.Context, authCode, uuid, firstKeyfrom, version string) (accountRecord, error) {
+// firstKeyfrom and latestKeyfrom are the desktop client's acquisition
+// attribution; both are persisted because every later renewal must replay them
+// verbatim.
+func (c *Client) exchange(ctx context.Context, authCode, uuid, firstKeyfrom, latestKeyfrom, version string) (accountRecord, error) {
 	now := c.now()
 	if strings.TrimSpace(authCode) == "" {
 		return accountRecord{}, fmt.Errorf("%w: the login callback carried no authCode", core.ErrNotConfigured)
@@ -259,20 +260,24 @@ func (c *Client) exchange(ctx context.Context, authCode, uuid, firstKeyfrom, ver
 	if uuid == "" {
 		uuid = newUUID()
 	}
+	firstKeyfrom = strings.TrimSpace(firstKeyfrom)
 	if firstKeyfrom == "" {
-		firstKeyfrom = millisString(now)
+		firstKeyfrom = defaultFirstKeyfrom
+	}
+	latestKeyfrom = strings.TrimSpace(latestKeyfrom)
+	if latestKeyfrom == "" {
+		latestKeyfrom = defaultLatestKeyfrom
 	}
 	if !validVersion(version) {
 		version = c.cfg.ClientVersion
 	}
-	// At sign-in both keyfrom values are the same instant.  Minting a second
-	// value from a fresh clock read would drift by a millisecond and store a
-	// credential whose first and latest keyfrom disagree, which the renewal
-	// path then replays forever.
+	// The desktop client replays acquisition attribution here; it does not
+	// invent a timestamp.  The first value is sticky and the latest value
+	// follows the build channel, so both are sent exactly as configured.
 	body, err := json.Marshal(exchangeRequest{
 		AuthCode:      authCode,
 		FirstKeyfrom:  firstKeyfrom,
-		LatestKeyfrom: firstKeyfrom,
+		LatestKeyfrom: latestKeyfrom,
 		UUID:          uuid,
 		Version:       version,
 	})
@@ -312,17 +317,24 @@ func (c *Client) exchange(ctx context.Context, authCode, uuid, firstKeyfrom, ver
 		tokenFingerprint(payload.AccessToken),
 	)
 	label := firstNonEmpty(payload.User.Nickname, uid)
+	yid := asString(payload.User.YID)
+	if yid == "" {
+		if fromToken, ok := jwtYID(payload.AccessToken); ok {
+			yid = fromToken
+		}
+	}
 	rec := accountRecord{
 		ID:            accountID(uid),
 		Label:         label,
 		UID:           uid,
 		UserID:        asString(payload.User.UserID),
+		YID:           yid,
 		UUID:          uuid,
 		AccessToken:   payload.AccessToken,
 		RefreshToken:  payload.RefreshToken,
 		ExpiresAt:     expiryOf(payload, now),
 		FirstKeyfrom:  firstKeyfrom,
-		LatestKeyfrom: millisString(now),
+		LatestKeyfrom: latestKeyfrom,
 		Nickname:      payload.User.Nickname,
 		Enabled:       true,
 		AddedAt:       now.UTC().Format(time.RFC3339),
@@ -347,7 +359,7 @@ func (c *Client) refreshCredential(ctx context.Context, acct *accountRecord) err
 		LatestKeyfrom: acct.LatestKeyfrom,
 		Version:       c.clientVersion(ctx),
 		UUID:          acct.UUID,
-		UserID:        acct.UserID,
+		UserID:        acct.accountConfig().vendorUserID(),
 		RefreshToken:  acct.RefreshToken,
 	})
 	if err != nil {
@@ -426,6 +438,22 @@ func expiryOf(payload tokenPayload, now time.Time) string {
 	return ""
 }
 
+// isTimestampKeyfrom recognises the broken attribution the module used to
+// mint at login.  The desktop client's keyfrom values are short channel names
+// such as "bing" and "official", never a 13-digit unix-millisecond stamp.
+func isTimestampKeyfrom(raw string) bool {
+	raw = strings.TrimSpace(raw)
+	if len(raw) != 13 {
+		return false
+	}
+	for _, r := range raw {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 // parseExpiry reads a stored expiry.  Both RFC3339 and a bare unix second count
 // are accepted, because a hand-written config is likely to carry the latter.
 func parseExpiry(raw string) (time.Time, bool) {
@@ -443,6 +471,30 @@ func parseExpiry(raw string) (time.Time, bool) {
 		return time.Unix(secs, 0), true
 	}
 	return time.Time{}, false
+}
+
+// jwtYID decodes the vendor account id from the access token.  Older stores
+// did not persist yid separately, but every issued token carries it, so the
+// migration is lossless and needs no network call.
+func jwtYID(token string) (string, bool) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return "", false
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		if raw, err = base64.StdEncoding.DecodeString(parts[1]); err != nil {
+			return "", false
+		}
+	}
+	var claims struct {
+		YID string `json:"yid"`
+	}
+	if err := json.Unmarshal(raw, &claims); err != nil {
+		return "", false
+	}
+	yid := strings.TrimSpace(claims.YID)
+	return yid, yid != ""
 }
 
 // jwtExpiry decodes the exp claim of an unverified JWT.  The signature is not
@@ -482,10 +534,6 @@ func remarshal(v any, out any) error {
 	}
 	return json.Unmarshal(raw, out)
 }
-
-// millisString renders a timestamp the way the vendor's client does: unix
-// milliseconds as a string.
-func millisString(t time.Time) string { return strconv.FormatInt(t.UnixMilli(), 10) }
 
 // --- client version ---------------------------------------------------------
 

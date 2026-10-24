@@ -175,9 +175,18 @@ func estimateMessageTokens(m core.Message) int {
 	n += estimateContentTokens(m.Content)
 	n += estimateTextTokens(m.Reasoning)
 	n += estimateTextTokens(m.Name)
+	// A text part is the same bytes as the body, not extra context.  The inbound
+	// decoders flatten every text block into Content and also keep it as a part
+	// (see parseContent and decodeAnthropicContent), so charging both counts the
+	// caller's own prose twice and trims a conversation that would have fit.  A
+	// part is the sole copy only when Content carries nothing at all.
+	hasBody := m.Content != ""
 	for _, p := range m.Parts {
 		if p.Type != "" && p.Type != "text" {
 			n += inlineImageTokens
+			continue
+		}
+		if hasBody {
 			continue
 		}
 		n += estimateContentTokens(p.Text)

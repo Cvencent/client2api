@@ -171,3 +171,27 @@ func TestChatClassifiesAnUpstream500ForGatewayFailover(t *testing.T) {
 		t.Fatalf("failure kind = %q, want a retryable upstream kind", f.Kind)
 	}
 }
+
+// A content-array request leaves the same text in Content and in a text part.
+// The wire body must carry the caller's prose once, not twice.
+func TestMessageContentDoesNotRepeatTheTextPart(t *testing.T) {
+	got := messageContent(core.Message{
+		Role:    "user",
+		Content: "hello world",
+		Parts:   []core.ContentPart{{Type: "text", Text: "hello world"}},
+	})
+	parts, ok := got.([]map[string]any)
+	if !ok || len(parts) != 1 {
+		t.Fatalf("content = %#v, want exactly one text part", got)
+	}
+	if parts[0]["text"] != "hello world" {
+		t.Errorf("text = %#v, want the body once", parts[0]["text"])
+	}
+	partsOnly := messageContent(core.Message{
+		Role:  "user",
+		Parts: []core.ContentPart{{Type: "text", Text: "hello world"}},
+	})
+	if p, ok := partsOnly.([]map[string]any); !ok || len(p) != 1 || p[0]["text"] != "hello world" {
+		t.Fatalf("parts-only content = %#v, want the text part kept", partsOnly)
+	}
+}

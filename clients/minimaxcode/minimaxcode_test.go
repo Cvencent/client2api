@@ -1116,3 +1116,22 @@ func TestMinimaxcodeChatNamesTheServedAccount(t *testing.T) {
 		t.Errorf("ServedBy = %q, want %q", served, "acct-2")
 	}
 }
+
+// A content-array request leaves the same text in Content and in a text part.
+// The wire blocks must carry the caller's prose once, not twice.
+func TestUserBlocksDoesNotRepeatTheTextPart(t *testing.T) {
+	m := core.Message{
+		Role:    "user",
+		Content: "hello world",
+		Parts:   []core.ContentPart{{Type: "text", Text: "hello world"}},
+	}
+	blocks := userBlocks(&m)
+	if len(blocks) != 1 {
+		t.Fatalf("blocks = %#v, want exactly one text block", blocks)
+	}
+	// With no flattened body the text part is the only copy and must survive.
+	partsOnly := core.Message{Role: "user", Parts: []core.ContentPart{{Type: "text", Text: "hello world"}}}
+	if got := userBlocks(&partsOnly); len(got) != 1 {
+		t.Fatalf("parts-only blocks = %#v, want the text block kept", got)
+	}
+}

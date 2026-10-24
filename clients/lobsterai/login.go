@@ -34,12 +34,13 @@ type loginCallback struct {
 
 // loginSession is one in-flight sign-in.
 type loginSession struct {
-	id           string
-	url          string
-	state        string
-	uuid         string
-	firstKeyfrom string
-	startedAt    time.Time
+	id            string
+	url           string
+	state         string
+	uuid          string
+	firstKeyfrom  string
+	latestKeyfrom string
+	startedAt     time.Time
 
 	server   *http.Server
 	listener net.Listener
@@ -133,13 +134,14 @@ func (c *Client) newLoginSession() (*loginSession, error) {
 		return nil, fmt.Errorf("lobsterai: no entropy for a sign-in id: %w", err)
 	}
 	s := &loginSession{
-		id:           id,
-		state:        state,
-		uuid:         id,
-		firstKeyfrom: millisString(c.now()),
-		startedAt:    c.now(),
-		status:       core.LoginPending,
-		callbacks:    make(chan loginCallback, 1),
+		id:            id,
+		state:         state,
+		uuid:          id,
+		firstKeyfrom:  c.cfg.FirstKeyfrom,
+		latestKeyfrom: c.cfg.LatestKeyfrom,
+		startedAt:     c.now(),
+		status:        core.LoginPending,
+		callbacks:     make(chan loginCallback, 1),
 	}
 	addr := fmt.Sprintf("127.0.0.1:%d", c.cfg.LoginPort)
 	ln, err := net.Listen("tcp", addr)
@@ -193,7 +195,7 @@ func (c *Client) completeLogin(ctx context.Context, s *loginSession, code string
 	// here rather than signing in with the fallback the config supplies.
 	c.refreshVersionIfStale(ctx)
 	version := c.clientVersion(ctx)
-	acct, err := c.exchange(ctx, code, s.uuid, s.firstKeyfrom, version)
+	acct, err := c.exchange(ctx, code, s.uuid, s.firstKeyfrom, s.latestKeyfrom, version)
 	if err != nil {
 		s.finish(core.LoginFailed, "the token exchange failed: "+c.describeError(err), "")
 		return

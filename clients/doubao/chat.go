@@ -183,7 +183,10 @@ func normaliseRole(role string) string {
 
 // messageText flattens a message's text parts.
 func messageText(m core.Message) string {
-	if m.Content != "" && len(m.Parts) == 0 {
+	// Content is the flattened body of the text parts; concatenating both would
+	// send the caller's prose twice.  Fall back to the parts only when there is
+	// no flattened body.
+	if strings.TrimSpace(m.Content) != "" {
 		return m.Content
 	}
 	var b strings.Builder

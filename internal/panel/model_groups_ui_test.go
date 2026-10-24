@@ -32,7 +32,7 @@ const group = {
 function row(member, priority) {
   const m = {value:member}, p = {value:priority};
   const r = {querySelector:s=>s===".pfGMember"?m:p};
-  p.closest = s => s === ".pfGPrio" ? p : (s === ".pfGroup" ? group : r);
+  p.closest = s => s === ".pfGPrio" ? p : (s === ".pfGroup" ? group : (s === ".pfGRow" ? r : null));
   m.closest = s => s === ".pfGMember" ? m : (s === ".pfGroup" ? group : (s === ".pfGRow" ? r : null));
   return r;
 }
@@ -120,6 +120,96 @@ func TestModelGroupUIEditorContract(t *testing.T) {
 		if !strings.Contains(src, want) {
 			t.Errorf("model-group editor has no event branch for %q", want)
 		}
+	}
+}
+
+// With dozens of routing groups the editor must stay navigable: the toolbar
+// filters by group name or member, and each group can collapse to one summary
+// row. A unique search hit opens automatically so the operator can edit it
+// without another click.
+func TestModelGroupUIHasSearchAndCollapseForLargeLists(t *testing.T) {
+	src := poolStatsUISource(t)
+
+	editor := poolStatsFuncBody(t, src, "pfModelGroupsHTML")
+	for _, want := range []string{
+		`pfGroupSearch`, `pfGExpandAll`, `pfGCollapseAll`,
+		`pfgFilterNote`, `pfgEmpty`, `pfModelGroupHTML`,
+	} {
+		if !strings.Contains(editor, want) {
+			t.Errorf("pfModelGroupsHTML does not render %q", want)
+		}
+	}
+
+	group := poolStatsFuncBody(t, src, "pfModelGroupHTML")
+	for _, want := range []string{
+		`pfgToggle`, `aria-expanded`, `aria-controls`, `pfgBody`, `pfgTitle`, `pfgMeta`,
+	} {
+		if !strings.Contains(group, want) {
+			t.Errorf("pfModelGroupHTML does not render %q", want)
+		}
+	}
+
+	filter := poolStatsFuncBody(t, src, "pfGroupFilter")
+	for _, want := range []string{
+		`pfGroupSearch`, `pfGroupMatchesQuery`, `pfGroupSetOpen`, `pfgFilterNote`, `pfgEmpty`,
+	} {
+		if !strings.Contains(filter, want) {
+			t.Errorf("pfGroupFilter does not mention %q", want)
+		}
+	}
+
+	listener := ""
+	inputStart := strings.Index(src, `$("#pfGroups").addEventListener("input"`)
+	clickStart := strings.Index(src, `$("#pfGroups").addEventListener("click"`)
+	if inputStart >= 0 && clickStart > inputStart {
+		rest := src[clickStart:]
+		if end := strings.Index(rest, "\n});"); end >= 0 {
+			listener = src[inputStart:clickStart] + rest[:end+4]
+		}
+	}
+	for _, want := range []string{
+		`ev.target.closest(".pfGroupSearch")`,
+		`pfGroupFilter()`,
+		`ev.target.closest(".pfGExpandAll")`,
+		`ev.target.closest(".pfGCollapseAll")`,
+		`ev.target.closest(".pfgToggle")`,
+	} {
+		if !strings.Contains(listener, want) {
+			t.Errorf("model-group listener has no branch for %q", want)
+		}
+	}
+}
+
+func TestModelGroupNameEditorDoesNotStretchOnNarrowScreens(t *testing.T) {
+	src := poolStatsUISource(t)
+	if !strings.Contains(src, `  .pfgNameLabel { flex: none; width: 100%;`) {
+		t.Error("the narrow-screen group-name label must not inherit the desktop 360px flex basis")
+	}
+	if !strings.Contains(src, `  .pfgNameLabel .pfGName { flex: none; width: 100%;`) {
+		t.Error("the narrow-screen group-name input must not grow vertically")
+	}
+}
+
+func TestModelGroupSearchMatchesNamesAndMembersCaseInsensitively(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not on PATH")
+	}
+	src := poolStatsUISource(t)
+	match := poolStatsFuncBody(t, src, "pfGroupMatchesQuery") + "\n}"
+	code, _ := json.Marshal(match)
+	program := `
+const assert = require("assert");
+const match = new Function("return " + ` + string(code) + ` + ";")();
+assert.strictEqual(match("", "DeepSeek-Flash", ["cline/a"]), true, "blank query should match everything");
+assert.strictEqual(match("DEEP", "DeepSeek-Flash", ["cline/a"]), true, "group names should be case-insensitive");
+assert.strictEqual(match("AUTO/FOO", "shared", ["Auto/foo"]), true, "member names should be case-insensitive");
+assert.strictEqual(match("shared cline", "shared", ["cline/a"]), true, "space-separated terms should all match");
+assert.strictEqual(match("shared missing", "shared", ["cline/a"]), false, "every search term must match");
+assert.strictEqual(match("nope", "shared", ["cline/a"]), false);
+`
+	if out, err := exec.Command(node, "-e", program).CombinedOutput(); err != nil {
+		t.Fatalf("model-group search behavior: %v\n%s", err, out)
 	}
 }
 

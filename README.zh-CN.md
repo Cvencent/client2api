@@ -5,7 +5,7 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-当前版本：**0.3.2**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：**0.3.3**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 流式断流排查：升级后系统日志新增 `stream: id=...` 终止诊断，包含协议、平台/模型、
 上游事件数、`finish_reason`、正文/推理字节数、工具调用数、completion token、
@@ -146,6 +146,7 @@ client2api 是一个**个人自用**的 OpenAI 兼容网关。它把你自己在
 - Responses 上下文守卫在本会裁剪时，会折叠旧历史并返回一个 `compaction` 项，而不是静默丢掉最旧的消息；调用方下一轮可以携带这条压缩状态。压缩失败时仍回退到原来的裁剪路径，聊天与 Anthropic 协议没有压缩词汇，仍以 `context_window_exceeded` 回报。
 - Responses 自动压缩使用候选平台实际能服务的具体模型 ID；调用方可以写模型组名，但不能再拿组名直接请求模块，否则会报 `ErrUnsupported` 并退回静默裁剪。
 - 自动压缩撞上本地 `max_in_flight_per_account` 限制时会等待背压：最多重试 3 次、间隔 200ms，真实上游错误仍立即返回。
+- 同一条消息的正文只计一次：调用方可能把同一段文字以字符串或内容数组（`input_text` / `text` 块）发出，入站解码会把数组里的文本块同时写进 `Content` 和 `Parts`，估算器过去会把两处都算上，等于把正文按双倍计。后果是裁剪阈值被提前触发：厂商实测只有约 42 万 tokens 的会话，网关按约 110 万 tokens 的估算在 1048576 的窗口上反复裁掉最早的消息，而这段历史本来能完整放下。现在只有 `Content` 为空、文本块是正文唯一副本时才计分。同一形状还让 Raccoon、Autoclaw、MiniMax Code、Doubao 和 Gemini 在上游报文里把正文发了两遍，这些模块改为优先用 `Content`，仅在其为空时回退到文本块。
 - 上下文窗口守卫会把上游拒绝里写明的真实窗口写入 `data/learned_context_windows.json` 并由 `/v1/models` 发布。若拒绝同时给出「实测 N tokens > M maximum」，而请求按估算本应放得下，网关会按实测比例裁剪并立刻重试一次，避免这类对话每次「继续」都报 400。
 - 思考档位按“平台 + 模型”解析：优先级为手动配置、模块缓存目录、内置预设；
   “模型与档位”页可以查看和修改支持的档位及默认档，手动值优先于可能过期的模块缓存。
@@ -213,7 +214,7 @@ client2api 是一个**个人自用**的 OpenAI 兼容网关。它把你自己在
 ### 任务、用量与计费
 
 - 定时任务按平台分 Tab，使用北京时间，可逐平台覆盖；间隔支持秒/分钟/小时和对称随机抖动。
-- 每日余额刷新支持按时刻、按间隔或 5/6 段 Cron 表达式。
+- 每日余额刷新支持按时刻、按间隔或 5/6 段 Cron 表达式；已停用账号会被跳过，定时读取不会让账号恢复，只会反复触发厂商拒绝。
 - 批量执行和任务看板，覆盖模块支持的各种账号任务。
 - 恢复探测、每日余额刷新和签到任务。
 - 签到当天已成功、或厂商明确表示该账号当天不可签到时，账号的签到按钮会置灰并显示状态，批量签到也会跳过；网络/鉴权等临时失败仍可点击重试。状态按北京时间跨天自动重置。

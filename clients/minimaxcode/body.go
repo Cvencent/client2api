@@ -198,6 +198,9 @@ func assistantBlocks(m *core.Message) []any {
 // userBlocks renders a user turn, including any inline images.
 func userBlocks(m *core.Message) []any {
 	blocks := make([]any, 0, len(m.Parts)+1)
+	// Content is the flattened body of the text parts, so emitting both would
+	// send the caller's prose twice.  Prefer Content; the text parts are the
+	// fallback for a message that carries no flattened body at all.
 	text := strings.TrimSpace(m.Content)
 	if text != "" {
 		blocks = append(blocks, map[string]any{"type": "text", "text": m.Content})
@@ -205,7 +208,7 @@ func userBlocks(m *core.Message) []any {
 	for _, p := range m.Parts {
 		switch strings.ToLower(strings.TrimSpace(p.Type)) {
 		case "text", "":
-			if p.Text != "" {
+			if text == "" && p.Text != "" {
 				blocks = append(blocks, map[string]any{"type": "text", "text": p.Text})
 			}
 		case "image_url", "image":

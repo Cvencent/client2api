@@ -64,12 +64,19 @@ const (
 
 	// defaultCapabilities is the capability token the vendor's own desktop
 	// client sends.  Dropping it changes which models the backend will serve.
-	defaultCapabilities = "kimi-k3-agentic-v1"
+	defaultCapabilities = "kimi-k3-agentic-v1,thinking-level-control-v1"
 
 	// defaultUserAgent is the vendor's own desktop client's user agent.  The
 	// "0.1.0" inside it is unrelated to the dynamic version header above and
 	// must stay a constant.
 	defaultUserAgent = "LobsterAI/0.1.0"
+
+	// The desktop client sends acquisition attribution, not a timestamp, in
+	// the keyfrom fields.  The first value is sticky for the installation and
+	// the latest value follows the build channel.  These defaults match the
+	// installed client observed on this host and can be overridden in config.
+	defaultFirstKeyfrom  = "bing"
+	defaultLatestKeyfrom = "official"
 
 	// Check-in query parameters.  platform=win32 is sent on every OS: it is the
 	// desktop client's disguise, not a statement about this machine.
@@ -119,17 +126,19 @@ var versionPattern = regexp.MustCompile(`^(\d+(?:\.\d+)*)(?:-[0-9A-Za-z.-]+)?$`)
 
 // AccountConfig is one credential, as it appears in the config file.
 //
-// It is embedded anonymously in Config so the same six fields can be written at
-// the top level for a single-account deployment -- the spelling clients/tabbit
-// and clients/qwenwork already use.
+// It is embedded anonymously in Config so the same identity fields can be
+// written at the top level for a single-account deployment -- the spelling
+// clients/tabbit and clients/qwenwork already use.
 //
 // first_keyfrom, latest_keyfrom and uuid are not optional decorations: renewal
 // sends them back, and the vendor rejects a refresh that does not replay them.
-// They are minted once at login and must be stored from then on.
+// The keyfrom values are the desktop client's acquisition attribution, not
+// timestamps; they must be stored once and replayed verbatim.
 type AccountConfig struct {
 	Label         string `json:"label,omitempty"`
 	UID           string `json:"uid,omitempty"`
 	UserID        string `json:"user_id,omitempty"`
+	YID           string `json:"yid,omitempty"`
 	UUID          string `json:"uuid,omitempty"`
 	AccessToken   string `json:"access_token,omitempty"`
 	RefreshToken  string `json:"refresh_token,omitempty"`
@@ -138,6 +147,13 @@ type AccountConfig struct {
 	LatestKeyfrom string `json:"latest_keyfrom,omitempty"`
 	Nickname      string `json:"nickname,omitempty"`
 	Disabled      bool   `json:"disabled,omitempty"`
+}
+
+// vendorUserID is the identity the desktop client puts in userId query/body
+// fields.  It uses the vendor's yid (the phone/email account id), falling back
+// to the numeric user id only for old credentials that did not persist a yid.
+func (a AccountConfig) vendorUserID() string {
+	return firstNonEmpty(strings.TrimSpace(a.YID), strings.TrimSpace(a.UserID))
 }
 
 // Config is the clients.lobsterai config block.
@@ -248,6 +264,12 @@ func (cfg Config) normalize() Config {
 	if out.UserAgent == "" {
 		out.UserAgent = defaultUserAgent
 	}
+	out.FirstKeyfrom = keyfromOr(out.FirstKeyfrom, defaultFirstKeyfrom)
+	out.LatestKeyfrom = keyfromOr(out.LatestKeyfrom, defaultLatestKeyfrom)
+	for i := range out.Accounts {
+		out.Accounts[i].FirstKeyfrom = keyfromOr(out.Accounts[i].FirstKeyfrom, defaultFirstKeyfrom)
+		out.Accounts[i].LatestKeyfrom = keyfromOr(out.Accounts[i].LatestKeyfrom, defaultLatestKeyfrom)
+	}
 	out.TLSProfile = strings.TrimSpace(out.TLSProfile)
 	out.TLSProtocol = strings.TrimSpace(out.TLSProtocol)
 	out.CallbackPath = strings.TrimSpace(out.CallbackPath)
@@ -330,6 +352,17 @@ func reservedHeader(key string) bool {
 
 // --- duration accessors -----------------------------------------------------
 
+// keyfromOr normalises one attribution value.  Empty and the old
+// millisecond-stamp shape both mean the stored credential predates the
+// desktop-compatible attribution; the caller gets the configured default.
+func keyfromOr(raw, def string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || isTimestampKeyfrom(raw) {
+		return def
+	}
+	return raw
+}
+
 // durationOr parses a Go duration string, falling back to def when it is empty
 // or unparseable.  A negative value is treated as unset rather than as "no
 // timeout", because a zero timeout silently disables the guard.
@@ -392,22 +425,37 @@ func (cfg Config) exchangeURL() string { return cfg.BaseURL + "/api/auth/exchang
 
 func (cfg Config) refreshURL() string { return cfg.BaseURL + "/api/auth/refresh" }
 
-func (cfg Config) profileSummaryURL() string { return cfg.BaseURL + "/api/user/profile-summary" }
-
-// modelsURL carries the keyfrom body as a query string.  The vendor wants the
-// same identity fields it wants in a renewal body, minus the refresh token.
-func (cfg Config) modelsURL(acct AccountConfig, version string) string {
+// identityQuery is the attribution block the desktop client appends to every
+// account-scoped read.  It is deliberately shared by models and profile-summary
+// so the two requests cannot drift apart.
+func (cfg Config) identityQuery(acct AccountConfig, version string) url.Values {
 	q := url.Values{}
-	q.Set("firstKeyfrom", acct.FirstKeyfrom)
-	q.Set("latestKeyfrom", acct.LatestKeyfrom)
-	q.Set("version", version)
-	if acct.UUID != "" {
-		q.Set("uuid", acct.UUID)
+	if v := strings.TrimSpace(acct.FirstKeyfrom); v != "" {
+		q.Set("firstKeyfrom", v)
 	}
-	if acct.UserID != "" {
-		q.Set("userId", acct.UserID)
+	if v := strings.TrimSpace(acct.LatestKeyfrom); v != "" {
+		q.Set("latestKeyfrom", v)
 	}
-	return cfg.BaseURL + "/api/models/available?" + q.Encode()
+	if v := strings.TrimSpace(version); v != "" {
+		q.Set("version", v)
+	}
+	if v := strings.TrimSpace(acct.UUID); v != "" {
+		q.Set("uuid", v)
+	}
+	if v := acct.vendorUserID(); v != "" {
+		q.Set("userId", v)
+	}
+	return q
+}
+
+func (cfg Config) profileSummaryURL(acct AccountConfig, version string) string {
+	return cfg.BaseURL + "/api/user/profile-summary?" + cfg.identityQuery(acct, version).Encode()
+}
+
+// modelsURL carries the same identity fields as profile-summary.  The vendor
+// wants the renewal attribution minus the refresh token.
+func (cfg Config) modelsURL(acct AccountConfig, version string) string {
+	return cfg.BaseURL + "/api/models/available?" + cfg.identityQuery(acct, version).Encode()
 }
 
 func (cfg Config) activitySlotURL(version string) string {

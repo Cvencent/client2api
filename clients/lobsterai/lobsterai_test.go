@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -244,9 +245,11 @@ func TestLoginExchange(t *testing.T) {
 	if body["authCode"] != "auth-code-1" {
 		t.Errorf("authCode = %v, want auth-code-1", body["authCode"])
 	}
-	if body["firstKeyfrom"] != body["latestKeyfrom"] {
-		t.Errorf("firstKeyfrom %v != latestKeyfrom %v at login; both are minted together",
-			body["firstKeyfrom"], body["latestKeyfrom"])
+	if got := body["firstKeyfrom"]; got != "bing" {
+		t.Errorf("firstKeyfrom = %v, want the desktop client's first attribution bing", got)
+	}
+	if got := body["latestKeyfrom"]; got != "official" {
+		t.Errorf("latestKeyfrom = %v, want the desktop client's current attribution official", got)
 	}
 	if body["version"] != "2026.9.4" {
 		t.Errorf("version = %v, want the version the manifest published", body["version"])
@@ -277,8 +280,8 @@ func TestLoginExchange(t *testing.T) {
 	if acct == nil {
 		t.Fatal("the signed-in account is not in the pool")
 	}
-	if acct.FirstKeyfrom == "" || acct.LatestKeyfrom == "" || acct.UUID == "" {
-		t.Errorf("the renewal fields were not persisted: %+v", acct)
+	if acct.FirstKeyfrom != "bing" || acct.LatestKeyfrom != "official" || acct.UUID == "" {
+		t.Errorf("the renewal fields were not persisted with the desktop attribution: %+v", acct)
 	}
 }
 
@@ -326,6 +329,7 @@ func TestRenewalReplaysKeyfromAndSendsNoAuthorization(t *testing.T) {
 		"refresh_token":  "refresh-1",
 		"uid":            "777",
 		"user_id":        "u-777",
+		"yid":            "yid-777",
 		"uuid":           "uuid-1",
 		"first_keyfrom":  "fk-1",
 		"latest_keyfrom": "lk-1",
@@ -351,7 +355,7 @@ func TestRenewalReplaysKeyfromAndSendsNoAuthorization(t *testing.T) {
 		"firstKeyfrom":  "fk-1",
 		"latestKeyfrom": "lk-1",
 		"uuid":          "uuid-1",
-		"userId":        "u-777",
+		"userId":        "yid-777",
 		"refreshToken":  "refresh-1",
 	}
 	for key, wantVal := range want {
@@ -763,6 +767,45 @@ func TestBalanceComesFromProfileSummary(t *testing.T) {
 	}
 }
 
+func TestBalanceUsesDesktopIdentityQuery(t *testing.T) {
+	f := newFixture(t, nil, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/user/profile-summary" {
+			http.NotFound(w, r)
+			return
+		}
+		io.WriteString(w, `{"code":0,"data":{"totalCreditsRemaining":42}}`)
+	})
+	acct, err := f.client.AddAccount(context.Background(), core.AccountSpec{Fields: map[string]string{
+		"access_token":   "access-1",
+		"uid":            "777",
+		"user_id":        "u-777",
+		"yid":            "yid-777",
+		"uuid":           "uuid-1",
+		"first_keyfrom":  "bing",
+		"latest_keyfrom": "official",
+	}})
+	if err != nil {
+		t.Fatalf("AddAccount: %v", err)
+	}
+	if _, err := f.client.AccountBalance(context.Background(), acct.ID, 0); err != nil {
+		t.Fatalf("AccountBalance: %v", err)
+	}
+	req := f.find(t, "/api/user/profile-summary")
+	for key, want := range map[string]string{
+		"firstKeyfrom":  "bing",
+		"latestKeyfrom": "official",
+		"userId":        "yid-777",
+		"uuid":          "uuid-1",
+	} {
+		if got := req.query.Get(key); got != want {
+			t.Errorf("profile-summary query %s = %q, want %q", key, got, want)
+		}
+	}
+	if got := req.query.Get("version"); got == "" {
+		t.Error("profile-summary query has no version")
+	}
+}
+
 func TestBalanceClampsNegativeToZero(t *testing.T) {
 	f := newFixture(t, nil, func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, `{"code":0,"data":{"totalCreditsRemaining":-12}}`)
@@ -1049,6 +1092,48 @@ func TestModelsComeFromTheUpstream(t *testing.T) {
 	}
 }
 
+func TestModelsUseDesktopIdentityQuery(t *testing.T) {
+	f := newFixture(t, nil, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/models/available" {
+			http.NotFound(w, r)
+			return
+		}
+		io.WriteString(w, `{"code":0,"data":[{"modelId":"only-model"}]}`)
+	})
+	_, err := f.client.AddAccount(context.Background(), core.AccountSpec{Fields: map[string]string{
+		"access_token":   "access-1",
+		"uid":            "777",
+		"user_id":        "u-777",
+		"yid":            "yid-777",
+		"uuid":           "uuid-1",
+		"first_keyfrom":  "bing",
+		"latest_keyfrom": "official",
+	}})
+	if err != nil {
+		t.Fatalf("AddAccount: %v", err)
+	}
+	if _, err := f.client.Models(context.Background()); err != nil {
+		t.Fatalf("Models: %v", err)
+	}
+	req := f.find(t, "/api/models/available")
+	for key, want := range map[string]string{
+		"firstKeyfrom":  "bing",
+		"latestKeyfrom": "official",
+		"userId":        "yid-777",
+		"uuid":          "uuid-1",
+	} {
+		if got := req.query.Get(key); got != want {
+			t.Errorf("model query %s = %q, want %q", key, got, want)
+		}
+	}
+	if got := req.query.Get("version"); got == "" {
+		t.Error("model query has no version")
+	}
+	if got := req.query.Get("refreshToken"); got != "" {
+		t.Errorf("model query leaked refreshToken = %q", got)
+	}
+}
+
 // TestModelLimitsProviderIsNotImplemented records the honest answer: the vendor
 // publishes no output budget, and the one way to learn it would be to fetch the
 // list, which ModelLimitsProvider must never do.
@@ -1186,6 +1271,12 @@ func TestConfigDefaultsAndGuards(t *testing.T) {
 	if cfg.ClientVersion != defaultClientVersion {
 		t.Errorf("client version = %q", cfg.ClientVersion)
 	}
+	if cfg.Capabilities != "kimi-k3-agentic-v1,thinking-level-control-v1" {
+		t.Errorf("client capabilities = %q, want the two capabilities the desktop client sends", cfg.Capabilities)
+	}
+	if cfg.FirstKeyfrom != "bing" || cfg.LatestKeyfrom != "official" {
+		t.Errorf("keyfrom defaults = %q/%q, want bing/official", cfg.FirstKeyfrom, cfg.LatestKeyfrom)
+	}
 	if cfg.callbackPath() != defaultCallbackPath {
 		t.Errorf("callback path = %q", cfg.callbackPath())
 	}
@@ -1214,6 +1305,41 @@ func TestConfigDefaultsAndGuards(t *testing.T) {
 	}
 	if nh.ExtraHeaders["x-custom"] != "1" {
 		t.Error("a harmless custom header was dropped")
+	}
+}
+
+func TestLoadCredentialsReplacesTimestampKeyfrom(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, credentialsFile)
+	recs := []accountRecord{
+		{
+			ID:            "lobsterai:timestamped",
+			AccessToken:   "access-1",
+			FirstKeyfrom:  "1791907775209",
+			LatestKeyfrom: "1791907805311",
+			AddedAt:       "2026-10-14T00:10:05Z",
+		},
+		{
+			ID:            "lobsterai:custom",
+			AccessToken:   "access-2",
+			FirstKeyfrom:  "partner-a",
+			LatestKeyfrom: "partner-b",
+			AddedAt:       "2026-10-14T00:10:06Z",
+		},
+	}
+	if err := saveCredentials(path, recs); err != nil {
+		t.Fatalf("saveCredentials: %v", err)
+	}
+
+	got := loadCredentials(path)
+	if len(got) != 2 {
+		t.Fatalf("loadCredentials returned %d accounts, want 2", len(got))
+	}
+	if got[0].FirstKeyfrom != defaultFirstKeyfrom || got[0].LatestKeyfrom != defaultLatestKeyfrom {
+		t.Errorf("timestamp keyfrom was not migrated: %+v", got[0])
+	}
+	if got[1].FirstKeyfrom != "partner-a" || got[1].LatestKeyfrom != "partner-b" {
+		t.Errorf("non-timestamp keyfrom was overwritten: %+v", got[1])
 	}
 }
 

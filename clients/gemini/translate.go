@@ -257,13 +257,17 @@ func translateMessageParts(m core.Message, role string, names map[string]string,
 		return parts, nil
 	}
 
-	if m.Content != "" {
+	// Content is the flattened body of the text parts; emitting both would send
+	// the caller's prose twice.  The text parts are the fallback for a message
+	// that carries no flattened body.
+	hasBody := m.Content != ""
+	if hasBody {
 		parts = append(parts, geminiPart{Text: m.Content})
 	}
 	for _, p := range m.Parts {
 		switch p.Type {
 		case "text":
-			if p.Text != "" {
+			if !hasBody && p.Text != "" {
 				parts = append(parts, geminiPart{Text: p.Text})
 			}
 		case "image_url":

@@ -181,3 +181,22 @@ func TestChatWithoutAccountIsErrNotConfigured(t *testing.T) {
 		t.Fatalf("Chat with no account = %v, want ErrNotConfigured", err)
 	}
 }
+
+// A content-array request leaves the same text in Content and in a text part.
+// The flattened prompt must carry the caller's prose once, not twice.
+func TestMessageTextDoesNotRepeatTheTextPart(t *testing.T) {
+	got := messageText(core.Message{
+		Role:    "user",
+		Content: "hello world",
+		Parts:   []core.ContentPart{{Type: "text", Text: "hello world"}},
+	})
+	if got != "hello world" {
+		t.Fatalf("messageText = %q, want the body once", got)
+	}
+	if partsOnly := messageText(core.Message{
+		Role:  "user",
+		Parts: []core.ContentPart{{Type: "text", Text: "hello world"}},
+	}); partsOnly != "hello world" {
+		t.Fatalf("parts-only messageText = %q, want the text kept", partsOnly)
+	}
+}

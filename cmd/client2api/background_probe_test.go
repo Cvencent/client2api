@@ -128,6 +128,54 @@ func TestRefreshBalancesSkipsRecoverableAccounts(t *testing.T) {
 	}
 }
 
+func TestBalanceSweepsSkipDisabledAccounts(t *testing.T) {
+	runs := []struct {
+		name          string
+		call          func(*gatedSweepClient)
+		wantGateCalls int
+	}{
+		{
+			name:          "soft",
+			wantGateCalls: 1,
+			call: func(f *gatedSweepClient) {
+				reg := core.NewRegistry()
+				reg.Add(f)
+				refreshBalances(context.Background(), reg, 0, quietLogger(), nil)
+			},
+		},
+		{
+			name:          "recovery",
+			wantGateCalls: 0,
+			call: func(f *gatedSweepClient) {
+				reg := core.NewRegistry()
+				reg.Add(f)
+				refreshBalancesForClient(context.Background(), reg, "loomy", 0, quietLogger(), true, nil)
+			},
+		},
+	}
+	for _, tc := range runs {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &gatedSweepClient{
+				renewFakeClient: &renewFakeClient{
+					name: "loomy",
+					accounts: []core.AccountRecord{
+						{ID: "enabled", Enabled: true, State: "ready"},
+						{ID: "disabled", Enabled: false, State: "ready"},
+					},
+				},
+				allowed: map[string]bool{"enabled": true, "disabled": true},
+			}
+			tc.call(f)
+			if got := f.AccountBalanceCalls(); len(got) != 1 || got[0] != "enabled" {
+				t.Fatalf("balance sweep called %v, want only the enabled account", got)
+			}
+			if got := f.GateCalls(); len(got) != tc.wantGateCalls || (len(got) > 0 && got[0] != "enabled") {
+				t.Fatalf("background gate consulted %v, want %d enabled-account call(s)", got, tc.wantGateCalls)
+			}
+		})
+	}
+}
+
 func TestRecoveryBalanceSweepIncludesRecoverableAndBypassesGate(t *testing.T) {
 	f := &gatedSweepClient{
 		renewFakeClient: &renewFakeClient{

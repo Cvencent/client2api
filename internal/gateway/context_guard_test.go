@@ -80,6 +80,39 @@ func TestEstimateTextTokensCountsCJKWhole(t *testing.T) {
 	}
 }
 
+// A caller may send the same prose either as a plain string or as a content
+// array.  Both are one message carrying the same bytes, so the estimator must
+// charge them the same.  Counting the array twice made the context guard trim
+// conversations whose vendor-measured prompt was barely half the estimate, so
+// this pins the invariant that regression broke.
+func TestEstimateTreatsContentArrayTextLikeAPlainString(t *testing.T) {
+	body := strings.Repeat("The quick brown fox jumps over the lazy dog. ", 500)
+	plain := &core.ChatRequest{Messages: []core.Message{{Role: "user", Content: body}}}
+	array := &core.ChatRequest{Messages: []core.Message{{
+		Role:    "user",
+		Content: body,
+		Parts:   []core.ContentPart{{Type: "text", Text: body}},
+	}}}
+	if got, want := estimateRequestTokens(array), estimateRequestTokens(plain); got != want {
+		t.Fatalf("array-form estimate = %d, want %d (the same as the string form)", got, want)
+	}
+}
+
+// The text part is still the only copy of the body when Content is empty, which
+// is the shape a message carrying nothing but structured text parts has.
+func TestEstimateCountsTextPartsWhenContentIsEmpty(t *testing.T) {
+	body := strings.Repeat("The quick brown fox jumps over the lazy dog. ", 500)
+	partsOnly := &core.ChatRequest{Messages: []core.Message{{
+		Role:  "user",
+		Parts: []core.ContentPart{{Type: "text", Text: body}},
+	}}}
+	if got, want := estimateRequestTokens(partsOnly), estimateRequestTokens(&core.ChatRequest{
+		Messages: []core.Message{{Role: "user", Content: body}},
+	}); got != want {
+		t.Fatalf("parts-only estimate = %d, want %d (the text must still be charged)", got, want)
+	}
+}
+
 func TestEstimateRequestTokensCountsToolsAndHistory(t *testing.T) {
 	bare := &core.ChatRequest{Messages: []core.Message{{Role: "user", Content: "hi"}}}
 	withHistory := &core.ChatRequest{Messages: []core.Message{

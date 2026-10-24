@@ -44,7 +44,7 @@ import (
 )
 
 // version is overridable with -ldflags "-X main.version=...".
-var version = "0.3.2"
+var version = "0.3.3"
 
 // restartHandoffEnv marks the replacement half of a panel restart.  It tells a
 // starting process to keep retrying the listen address instead of failing fast,
@@ -1017,6 +1017,12 @@ func refreshBalancesMatching(ctx context.Context, reg *core.Registry, client str
 			continue
 		}
 		for _, acct := range accounts {
+			// A disabled account is an explicit operator decision.  Reading its
+			// balance on a timer cannot make it usable again and only turns a
+			// vendor 403 into recurring log noise.
+			if !acct.Enabled {
+				continue
+			}
 			if !balanceProbeEligible(acct.State, includeRecoverable) {
 				continue
 			}

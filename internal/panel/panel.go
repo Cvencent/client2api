@@ -218,6 +218,7 @@ func New(opts Options) http.Handler {
 	p.initBalanceCache()
 	p.initCheckins()
 	p.initTaskBoardCache()
+	p.initChatHistory()
 	p.queue = newBatchQueue(p.sweeps)
 	p.queue.run = p.execSweep
 	p.queue.report = p.panicReport()
@@ -246,6 +247,8 @@ func New(opts Options) http.Handler {
 	api("/panel/api/model_probe/clear", p.handleModelProbeClear)
 	api("/panel/api/usage", p.handleUsage)
 	api("/panel/api/usage/save", p.handleUsageSave)
+	api("/panel/api/chat/conversations", p.handleChatConversations)
+	api("/panel/api/chat/conversations/", p.handleChatConversationRoute)
 	api("/panel/api/sticky-sessions", p.handleStickySessions)
 	api("/panel/api/sticky-sessions/unbind", p.handleStickySessionUnbind)
 	api("/panel/api/sticky-sessions/switch", p.handleStickySessionSwitch)
@@ -349,6 +352,10 @@ type panel struct {
 	// reference keeps the same lock, and two accounts of one vendor are
 	// genuinely independent.
 	taskLocks *accountLocks
+	// chatHistory is the persisted conversation record for the chat test page.
+	// It is created in New from DataDir so records follow the data directory
+	// instead of living in one browser's localStorage.
+	chatHistory *chatHistoryStore
 }
 
 func (p *panel) ctx(r *http.Request, d time.Duration) (context.Context, context.CancelFunc) {
@@ -400,6 +407,7 @@ func balanceHandler(opts Options) (*panel, http.Handler) {
 	p.initBalanceCache()
 	p.initCheckins()
 	p.initTaskBoardCache()
+	p.initChatHistory()
 	p.queue = newBatchQueue(p.sweeps)
 	p.queue.run = p.execSweep
 	p.queue.report = p.panicReport()

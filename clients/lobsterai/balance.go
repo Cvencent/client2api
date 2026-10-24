@@ -134,11 +134,12 @@ func (c *Client) AccountBalance(ctx context.Context, id string, soon time.Durati
 // the verdict to decide whether a renewal is worth trying, and it must record
 // the failure exactly once, for the final attempt only.
 func (c *Client) fetchProfileSummary(ctx context.Context, acct *accountRecord) (map[string]any, error) {
+	version := c.clientVersion(ctx)
 	spec := requestSpec{
 		method:  http.MethodGet,
-		url:     c.cfg.profileSummaryURL(),
+		url:     c.cfg.profileSummaryURL(acct.accountConfig(), version),
 		bearer:  acct.AccessToken,
-		version: c.clientVersion(ctx),
+		version: version,
 		timeout: c.cfg.modelsTimeout(),
 	}
 	status, body, err := c.doJSON(ctx, spec)

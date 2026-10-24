@@ -118,8 +118,10 @@ only pays out for a first-time account, and the vendor decides that.
 | `portal_url` | string | `https://lobsterai.youdao.com` | Origin the sign-in page is built from. |
 | `base_url` | string | `https://lobsterai-server.youdao.com` | Origin every API endpoint is built from. |
 | `version_url` | string | the api-overmind manifest | Where the client version is read from. |
+| `first_keyfrom` | string | `bing` | Sticky acquisition attribution sent when a new sign-in exchanges its code. |
+| `latest_keyfrom` | string | `official` | Current build/channel attribution sent with sign-in and account reads. |
 | `client_version` | string | `0.1.0` | `X-LobsterAI-Client-Version`. A value that is not version-shaped (`latest`, `v0.1.0`) is discarded for the default. The live value replaces it as soon as the manifest answers. |
-| `client_capabilities` | string | `kimi-k3-agentic-v1` | `X-LobsterAI-Client-Capabilities`. |
+| `client_capabilities` | string | `kimi-k3-agentic-v1,thinking-level-control-v1` | `X-LobsterAI-Client-Capabilities`. |
 | `user_agent` | string | `LobsterAI/0.1.0` | `User-Agent` on every request. |
 | `login_port` | int | `0` | Loopback port for the sign-in callback. `0` picks a free one. |
 | `callback_path` | string | `/auth/callback` | Path the callback server listens on. |
@@ -148,7 +150,8 @@ failing the module.
 | --- | --- | --- |
 | `label` | string | Human note for the panel; never a token. |
 | `uid` | string | Vendor user id. Also the account's identity in the pool. |
-| `user_id` | string | The vendor's `userId`, replayed on renewal when present. |
+| `user_id` | string | Numeric vendor user id; used only when `yid` is absent. |
+| `yid` | string | Vendor account identity the desktop client sends as `userId`; preferred over `user_id`. |
 | `uuid` | string | The device uuid minted at sign-in. **Replayed on renewal.** |
 | `nickname` | string | Display identity. |
 | `access_token` | string | **Required** — an entry without it is dropped. |
@@ -206,12 +209,15 @@ library doing so is intrusive.
    {"authCode": "…", "firstKeyfrom": "…", "latestKeyfrom": "…", "uuid": "…", "version": "…"}
    ```
 
-   and **no `Authorization` header**. At sign-in `firstKeyfrom` and
-   `latestKeyfrom` are the **same instant** — the credential records one
-   timestamp, and the renewal path replays it forever.
+   and **no `Authorization` header**. At sign-in the module sends the
+   configured acquisition attribution (`first_keyfrom`, default `bing`, and
+   `latest_keyfrom`, default `official`), matching the desktop client. It never
+   substitutes a timestamp.
 
    The account's uid falls back through exactly four levels:
    `user.id` → `user.userId` → `user.yid` → `sha256(accessToken)[:16]`.
+   The vendor `yid` is persisted separately and used as `userId` on every
+   account-scoped request, with `user_id` only as a fallback for old records.
    Expiry comes from `expiresIn`, else from the JWT's `exp` claim (the signature
    is deliberately not verified — we are reading our own token, not trusting it).
 
@@ -228,16 +234,16 @@ vendor does not require the old token to mint a new one. The body is:
 {"firstKeyfrom": "…", "latestKeyfrom": "…", "version": "…", "uuid": "…", "userId": "…", "refreshToken": "…"}
 ```
 
-`uuid` and `userId` are sent only when non-empty.
+`uuid` and `userId` are sent only when non-empty; `userId` is the vendor `yid`
+when present, otherwise the numeric `user_id` for legacy records.
 
 **`first_keyfrom`, `latest_keyfrom` and `uuid` must be persisted and replayed
-verbatim.** They are what the vendor issued at sign-in, and renewal stops
-working if they are missing or invented. In particular this module does **not**
-rewrite `latest_keyfrom` on refresh: the integration document's TypeScript
-sketch suggested `latestKeyfrom: String(Date.now())` ("update it every
-refresh"), but the only production-validated implementation changes the token
-and the expiry and nothing else. A hand-added account that has no keyfrom values
-cannot renew — it must be signed in again.
+verbatim.** They are the desktop client's acquisition attribution, not a clock:
+the defaults are `bing`/`official`, and both are configurable. The module does
+**not** rewrite `latest_keyfrom` on refresh. Old stores whose keyfrom fields
+were 13-digit millisecond stamps are migrated to those defaults on load, and a
+missing `yid` is recovered from the access token's `yid` claim without a network
+call.
 
 A terminal renewal failure is HTTP 401/403 or envelope code `40100`/`40101`;
 that disables the account.
@@ -275,8 +281,10 @@ work is a lie.
 
 ## Balance
 
-`GET /api/user/profile-summary` → `data.totalCreditsRemaining`, with
-`creditItems[]{type, creditsRemaining, expiresAt}` for the expiry breakdown.
+`GET /api/user/profile-summary?firstKeyfrom=…&latestKeyfrom=…&uuid=…&userId=…&version=…`
+→ `data.totalCreditsRemaining`, with `creditItems[]{type, creditsRemaining, expiresAt}`
+for the expiry breakdown. The identity query is shared with the model catalogue
+so both requests send the same attribution and `yid`-based `userId`.
 
 **Do not use `/api/user/quota`.** It reports only `freeCreditsTotal` (300) and
 omits the activity credits (measured ≈ 5000), so a well-funded account would
@@ -487,8 +495,9 @@ interoperability facts; the implementation is original.
 ### Account-ban risk
 
 The module presents itself as the first-party desktop client — the
-`LobsterAI/0.1.0` user agent, the `kimi-k3-agentic-v1` capability header, and
-`platform=win32` on check-in even off Windows. The multi-account pool with
-rotation and a 12 h quota cooldown is, in effect, automation for collecting
-free-tier credit across accounts, and that is the behaviour most likely to be
-read as abuse. Run it against one account you own.
+`LobsterAI/0.1.0` user agent, the two capability markers
+(`kimi-k3-agentic-v1,thinking-level-control-v1`), the `bing`/`official` keyfrom
+attribution, and `platform=win32` on check-in even off Windows. The multi-account
+pool with rotation and a 12 h quota cooldown is, in effect, automation for
+collecting free-tier credit across accounts, and that is the behaviour most
+likely to be read as abuse. Run it against one account you own.

@@ -5,7 +5,7 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-Current version: **0.3.2**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
+Current version: **0.3.3**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
 
 client2api is a personal, local-only OpenAI-compatible gateway. It aggregates
 the accounts and API Keys **you own** on different AI coding clients and
@@ -270,6 +270,16 @@ OpenAI's `schema must be a JSON Schema of 'type: "object"', got 'type: null'`
   ~18k tokens. That one overcount put the guard's estimate an order of magnitude
   ahead of the vendor's own measurement on any conversation that had just looked
   at a screenshot.
+- One message's text is charged once, not twice. The same prose may arrive as a
+  plain string or as a content array (`input_text` / `text` blocks); the inbound
+  decoders flatten those blocks into `Content` and also keep them as parts, and
+  the estimator used to bill both. That doubling trimmed conversations whose
+  vendor-measured prompt was a fraction of the estimate: a session the vendor
+  billed at ~420k tokens was trimmed against a ~1.1M-token estimate on a 1M
+  window, so the guard kept discarding the oldest turns of a conversation that
+  fit many times over. The same shape made Raccoon, Autoclaw, MiniMax Code,
+  Doubao and Gemini emit the body twice on the wire; those modules now prefer
+  `Content` and fall back to the text parts only when it is empty.
 - A virtual model advertises the widest member window so the downstream client can
   keep the large-window experience. If routing falls through to a narrower platform,
   that candidate alone is trimmed and, if needed, retried; the next candidate always
@@ -477,7 +487,12 @@ OpenAI's `schema must be a JSON Schema of 'type: "object"', got 'type: null'`
 
 - Accounts
 - Sticky-session management from the Accounts overview: inspect account/platform bindings and their last model, force-unbind an account, or force-switch back to normal selection or to a chosen platform; the dialog's 一键强制切换 button clears every listed binding at once and lets the next turn re-rank platforms and accounts
-- Chat Test
+- Chat Test, a multi-conversation workspace: a history rail with rename / delete /
+  clear-all, model and account picked per conversation, compact advanced settings, and
+  a normal chat composer with Enter-to-send and a stop button.
+- Chat Test keeps its records in the data directory
+  (`data/panel/chat_history.json`, written atomically), not in the browser, so the
+  history follows a moved `data` folder and survives clearing site data.
 - Chat Test switches to a microphone transcription check when the selected model is a
   speech model (for example `doubaoime/...`): the recording is posted to
   `POST /v1/audio/transcriptions` and the raw status code and response body are shown
@@ -523,7 +538,7 @@ OpenAI's `schema must be a JSON Schema of 'type: "object"', got 'type: null'`
 
 - Scheduled tasks with Asia/Shanghai times and per-platform overrides, including second/minute/hour intervals with symmetric jitter.
 - Batch execution and a task board for supported account actions.
-- Daily balance refresh can run by time, by interval, or by a 5/6-field cron expression.
+- Daily balance refresh can run by time, by interval, or by a 5/6-field cron expression. A disabled account is skipped: a timer cannot make it usable again, and probing it only repeats the vendor's refusal.
 - Recovery probes, daily balance refresh and check-in.
 - A check-in the vendor settles (already done today, or the vendor says the account cannot check in today) greys out that account's button for the rest of the Shanghai day, whether it came from the account button, task centre or scheduler, and is skipped by batch runs; transient network/auth errors stay clickable and reset automatically at the next Shanghai day.
 - Success rate, latency, token totals, cache hit rate and recent calls.

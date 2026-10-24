@@ -980,24 +980,9 @@ details.cfg summary { cursor: pointer; color: var(--ink-3); font-size: 12.5px; }
 .batchbar .grow { flex: 1; }
 
 /* ── 对话测试 ─────────────────────────────────────────────────────────── */
-.chat-setup { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; }
-.chat-setup .sel-note { margin: 0; }
 /* 模型下拉在 cline 上有四百多项，原生 select 找起来很痛苦；这个搜索框只过滤
    select 的选项，不改发出去的 id。 */
 .sel-note input[type="search"] { width: 190px; padding: 3px 9px; font-size: 12px; }
-.chatlog { display: flex; flex-direction: column; gap: 10px; min-height: 180px; max-height: 54vh; overflow: auto; padding: 2px; }
-.chatmsg { display: flex; gap: 10px; align-items: flex-start; }
-.chatmsg .who { flex: 0 0 44px; text-align: right; padding-top: 4px; font: 600 11px var(--sans); color: var(--ink-3); }
-.chatmsg .bub { flex: 1; min-width: 0; white-space: pre-wrap; word-break: break-word; background: var(--surface-2); border: 1px solid var(--line-soft); border-radius: 8px; padding: 8px 11px; font-size: 13px; line-height: 1.6; }
-.chatmsg.me .bub { background: var(--accent-soft); border-color: transparent; }
-.chatmsg.err .bub { background: var(--bad-soft); border-color: transparent; color: var(--bad); }
-.chatmsg .bub .meta { display: block; margin-top: 6px; font: 11px var(--mono); color: var(--ink-3); }
-.chatmsg.err .bub .meta { color: var(--bad); }
-.chatrow { display: flex; gap: 10px; align-items: flex-end; margin-top: 14px; }
-.chatrow textarea { flex: 1; min-width: 0; resize: vertical; font: 13px/1.55 var(--sans); }
-.chatbtns { display: flex; flex-direction: column; gap: 6px; }
-/* 语音转写测试：设置行里三个对话专用参数用 display:contents 展开，好让整块被
-   hidden 一次收起；选中转写模型时下面换成录音面板。 */
 .chat-opts { display: contents; }
 .chatrec { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
 .chatrec .note { font-variant-numeric: tabular-nums; }
@@ -1248,10 +1233,6 @@ button.primary:active:not(:disabled) { filter: brightness(.94); }
 #usChart > .qbar { display: none; }
 #usChart > svg, #usChart > .us-empty, #usChart > .state { grid-column: 1 / -1; }
 
-/* 七、对话页。发送/停止改成并排一行，输入框给一个舒服的最小高度。 */
-.chatrow textarea { min-height: 76px; max-height: 40vh; }
-.chatbtns { flex-direction: row; align-items: flex-start; }
-.chatbtns button { min-width: 72px; }
 
 /* 八、配置页。输入框铺满 2000px 的窗口既难读也难对齐，收一个可读宽度；
    分组之间加一条分隔线，扫读时知道一段到哪里结束。 */
@@ -1320,21 +1301,54 @@ button.primary:active:not(:disabled) { filter: brightness(.94); }
 .pfmodels .pfFilter { width: 260px; max-width: 100%; padding: 5px 10px; font-size: 12.5px; border-radius: 6px; margin-bottom: 8px; }
 .pfmodels .hint { font-size: 12px; color: var(--ink-3); }
 .pfmodels .pfNoMatch { margin-top: 6px; }
-/* 模型路由组：同一个模型在不同平台的名字绑成一组，组名和成员名互为等价名。 */
+/* 模型路由组：同一个模型在不同平台的名字绑成一组，组名和成员名互为等价名。
+   组多时默认折叠，顶部提供搜索和批量展开，避免配置页被几十张卡片拉成长卷。 */
 .pfgsec { margin-bottom: 12px; }
 .pfghd { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 7px; }
 .pfghd strong { font-size: 12.5px; color: var(--ink-2); }
-.pfghd .hint { font-size: 11.5px; }
+.pfgCount { display: inline-flex; align-items: center; min-height: 22px; padding: 1px 8px; border: 1px solid var(--line-soft); border-radius: 999px; background: color-mix(in srgb, var(--surface-2) 72%, transparent); color: var(--ink-3); font: 11px/1.4 var(--mono); font-variant-numeric: tabular-nums; }
+.pfgHelp { max-width: 920px; margin: 0 0 10px; color: var(--ink-3); font-size: 11.5px; line-height: 1.65; }
+.pfgTools { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; padding: 8px 9px; border: 1px solid var(--line-soft); border-radius: 9px; background: color-mix(in srgb, var(--surface-2) 42%, transparent); }
+.pfgTools .pfGroupSearch { flex: 1 1 260px; min-width: 180px; max-width: 440px; padding: 6px 10px; font-size: 12.5px; }
+.pfgFilterNote { color: var(--ink-3); font-size: 11.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pfgTools .grow { flex: 1; }
 .pfgList { display: flex; flex-direction: column; gap: 8px; }
-.pfGroup { border: 1px solid var(--line-soft); border-radius: 7px; background: var(--surface); }
-.pfghead { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 7px 9px; border-bottom: 1px solid var(--line-soft); }
+.pfGroup { border: 1px solid var(--line-soft); border-radius: 8px; background: var(--surface); overflow: hidden; transition: border-color var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out); }
+.pfGroup.open { border-color: color-mix(in srgb, var(--accent) 34%, var(--line-soft)); }
+.pfghead { display: flex; align-items: center; gap: 4px; padding: 0; border-bottom: 0; }
+button.pfgToggle { display: flex; align-items: center; gap: 8px; flex: 1 1 auto; min-width: 0; min-height: 38px; padding: 8px 10px; border: 0; border-radius: 0; background: transparent; color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+button.pfgToggle:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 7%, transparent); color: var(--ink); border-color: transparent; }
+.pfgChevron { flex: none; width: 14px; color: var(--ink-3); font: 700 12px/1 var(--mono); text-align: center; transition: transform var(--dur-fast) var(--ease-out); }
+.pfGroup.open .pfgChevron { transform: rotate(90deg); }
+.pfgTitle { min-width: 0; font-weight: 650; overflow-wrap: anywhere; }
+.pfgMeta { flex: 1 1 180px; min-width: 0; overflow: hidden; color: var(--ink-3); font: 11.5px/1.5 var(--mono); text-overflow: ellipsis; white-space: nowrap; }
+.pfghead > .pfGDel { flex: none; margin: 0 9px; }
 .pfgBuiltin { display: inline-flex; align-items: center; border: 1px solid var(--line-soft); border-radius: 999px; padding: 1px 7px; color: var(--ink-3); font-size: 11px; white-space: nowrap; }
+.pfgBody { border-top: 1px solid var(--line-soft); }
+.pfgNameRow { display: flex; align-items: center; gap: 8px; padding: 9px 9px 0; }
+.pfgNameLabel { display: flex; align-items: center; gap: 8px; flex: 1 1 360px; min-width: 0; color: var(--ink-3); font-size: 12px; }
+.pfgNameLabel .pfGName { flex: 1; min-width: 0; width: auto; }
 .pfgrows { display: flex; flex-direction: column; gap: 5px; padding: 8px 9px 0; }
 .pfGRow { display: grid; grid-template-columns: minmax(180px, 1fr) 96px auto; align-items: center; gap: 8px; }
 .pfGRow input { width: 100%; min-width: 0; }
 .pfGPrio { text-align: center; }
-.pfgfoot { padding: 8px 9px 9px; }
-@media (max-width: 700px) { .pfGRow { grid-template-columns: 1fr; } }
+.pfgfoot { display: flex; align-items: center; gap: 8px; padding: 8px 9px 9px; }
+.pfgEmpty { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 18px 12px; border: 1px dashed var(--line-soft); border-radius: 8px; }
+.pfgEmpty .grow { flex: 1; }
+@media (max-width: 700px) {
+  .pfgTools .pfGroupSearch { flex-basis: 100%; max-width: none; }
+  .pfgFilterNote { white-space: normal; }
+  button.pfgToggle { align-items: flex-start; flex-wrap: wrap; }
+  .pfgMeta { flex-basis: 100%; padding-left: 22px; white-space: normal; }
+  .pfgNameRow { align-items: flex-start; flex-direction: column; }
+  .pfgNameLabel { flex: none; width: 100%; flex-direction: column; align-items: stretch; }
+  .pfgNameLabel .pfGName { flex: none; width: 100%; }
+  .pfGRow { grid-template-columns: minmax(0, 1fr) 76px auto; gap: 6px; }
+}
+@media (max-width: 460px) {
+  .pfGRow { grid-template-columns: 1fr; }
+}
+
 /* WorkBuddy 是唯一有内置账号池的平台，号池配置只在它的展开区里出现。 */
 .pfwbset { margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--line-soft); }
 .pfwbhd { display: flex; align-items: baseline; gap: 8px; margin-bottom: 3px; color: var(--ink-2); font-size: 12.5px; font-weight: 600; }
@@ -1750,7 +1764,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); box-sha
 button:focus-visible, .chip:focus-visible, .nav a:focus-visible, summary:focus-visible, [tabindex]:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 55%, transparent); outline-offset: 2px; }
 input:focus-visible, select:focus-visible, textarea:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 
-.box, .stats, .uschart, .pfplat, .chat-setup, .tblbar, .pager, .savebar, .pk-card, .sms-box, .auto-box, .ownkey, .qc-box, .qc-card, .logbox, .cfgjson, .auto-log, .vc, .mpark-m {
+.box, .stats, .uschart, .pfplat .tblbar, .pager, .savebar, .pk-card, .sms-box, .auto-box, .ownkey, .qc-box, .qc-card, .logbox, .cfgjson, .auto-log, .vc, .mpark-m {
   border-color: var(--hairline);
 }
 .box, .stats, .uschart, .pfplat, .pk-card, .sms-box, .auto-box, .ownkey, .qc-box, .qc-card, .logbox, .cfgjson, .auto-log, .vc {
@@ -1827,12 +1841,6 @@ details.cfg summary:hover, details.adv summary:hover { color: var(--accent-text)
 .pfplat, .vc, .pk-card { background: color-mix(in srgb, var(--surface) 82%, transparent); transition: border-color var(--dur-panel) var(--ease-smooth), box-shadow var(--dur-panel) var(--ease-smooth), transform var(--dur-panel) var(--ease-smooth); }
 .pfplat:hover, .vc:hover, .pk-card:hover { transform: translateY(-2px); border-color: color-mix(in srgb, var(--accent) 36%, var(--line)); box-shadow: var(--shadow-float); }
 .pfhead { background: color-mix(in srgb, var(--surface-2) 86%, transparent); border-bottom: 1px solid var(--hairline); }
-
-.chatlog { gap: 12px; }
-.chatmsg .bub { border-radius: 14px; padding: 10px 13px; background: color-mix(in srgb, var(--surface-2) 88%, transparent); box-shadow: 0 1px 2px rgba(0,0,0,.04); }
-.chatmsg.me .bub { background: color-mix(in srgb, var(--accent) 13%, var(--surface)); border-color: color-mix(in srgb, var(--accent) 18%, transparent); }
-.chatrow textarea { border-radius: 13px; min-height: 82px; }
-.chatbtns button { border-radius: var(--radius-control); }
 
 .veil {
   background: rgba(0,0,0,.38); backdrop-filter: blur(22px) saturate(160%); -webkit-backdrop-filter: blur(22px) saturate(160%);
@@ -1981,8 +1989,7 @@ details.cfg summary:hover, details.adv summary:hover { color: var(--accent-text)
 .pfmodels { background: color-mix(in srgb, var(--surface) 90%, transparent); }
 .pfmodels .pfFilter { background: color-mix(in srgb, var(--surface-2) 82%, transparent); }
 .pfGroup { border-color: var(--hairline); background: color-mix(in srgb, var(--surface-2) 46%, transparent); }
-.pfghead { border-bottom-color: var(--hairline); }
-.pfGRow input { border-radius: 8px; }
+.pfgBody { border-top-color: var(--hairline); }.pfGRow input { border-radius: 8px; }
 .pfm { border-radius: 999px; background: color-mix(in srgb, var(--surface-2) 82%, transparent); transition: border-color var(--dur-quick) var(--ease-smooth), background var(--dur-quick) var(--ease-smooth), color var(--dur-quick) var(--ease-smooth); }
 .pfm:hover { border-color: color-mix(in srgb, var(--accent) 52%, var(--hairline)); background: var(--accent-soft); color: var(--accent-text); }
 
@@ -2059,60 +2066,6 @@ details.cfg summary:hover, details.adv summary:hover { color: var(--accent-text)
   #usChart > .row { padding: 11px 12px; }
 }
 
-/* -- 9. Chat tester ------------------------------------------------------
-   The setup row reads as one labeled tool band, messages become real bubbles
-   (mine right, model left) and the composer is a single framed control. */
-#view-chat .chat-setup {
-  padding: 13px 18px; gap: 9px 18px;
-  background: color-mix(in srgb, var(--surface-2) 46%, transparent);
-  border-bottom: 1px solid var(--hairline);
-}
-#view-chat .chat-setup .sel-note { color: var(--ink-3); font-size: 11.5px; letter-spacing: .01em; }
-#view-chat .sel-note select, #view-chat .sel-note input[type="search"],
-#view-chat .sel-note input[type="number"], #view-chat .sel-note input[type="text"] { border-radius: 9px; }
-#view-chat .sel-note input[type="search"] { width: 200px; }
-#view-chat #chatSysRow { padding: 12px 18px 16px; background: color-mix(in srgb, var(--surface-2) 46%, transparent); }
-
-#view-chat .chatlog { padding: 4px 2px; gap: 14px; }
-.chatmsg .who { flex: 0 0 48px; font-weight: 650; letter-spacing: .02em; }
-.chatmsg .bub {
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--surface-2) 88%, transparent);
-  box-shadow: 0 1px 2px rgba(0,0,0,.04);
-}
-.chatmsg .bub .meta {
-  margin-top: 8px; padding-top: 6px; font-size: 10.5px;
-  border-top: 1px solid color-mix(in srgb, var(--line-soft) 70%, transparent);
-}
-/* 我发的消息贴右：整行反向排列，头像列与气泡左右互换，DOM 不动。 */
-.chatmsg.me { flex-direction: row-reverse; }
-.chatmsg.me .who { text-align: left; color: var(--accent-text); }
-.chatmsg.me .bub {
-  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
-  border-color: color-mix(in srgb, var(--accent) 20%, transparent);
-}
-.chatmsg.err .who { color: var(--bad-text); }
-
-/* 输入区套一层容器，聚焦时整块亮起，textarea 自己退成无边框。 */
-#view-chat .chatrow {
-  gap: 12px; margin-top: 16px; padding: 9px; align-items: stretch;
-  border: 1px solid var(--hairline); border-radius: 16px;
-  background: color-mix(in srgb, var(--surface-2) 52%, transparent);
-  transition: border-color var(--dur-quick) var(--ease-smooth), box-shadow var(--dur-quick) var(--ease-smooth);
-}
-#view-chat .chatrow:focus-within {
-  border-color: color-mix(in srgb, var(--accent) 42%, var(--hairline));
-  box-shadow: var(--focus-ring);
-}
-#view-chat .chatrow textarea {
-  border-color: transparent; background: transparent; box-shadow: none;
-  border-radius: 10px; padding: 8px 10px; min-height: 72px;
-}
-#view-chat .chatrow textarea:hover:not(:focus), #view-chat .chatrow textarea:focus { border-color: transparent; box-shadow: none; }
-#view-chat .chatbtns { gap: 8px; }
-#view-chat .chatbtns button { min-width: 86px; }
-#view-chat .chattransout { border-radius: 12px; background: color-mix(in srgb, var(--surface-2) 78%, transparent); }
-
 /* -- 10. Platform alerts -------------------------------------------------
    A quiet status table: time recedes, platform leads, empty state centers. */
 #view-alerts .acc thead th { letter-spacing: .02em; }
@@ -2175,7 +2128,6 @@ details.cfg summary:hover, details.adv summary:hover { color: var(--accent-text)
 #view-packages .acc tbody td[colspan] { padding: 44px 20px; color: var(--ink-3); }
 
 @media (max-width: 560px) {
-  #view-chat .chat-setup { padding: 12px 14px; }
   #view-chat .sel-note input[type="search"] { width: 100%; }
   #view-chat .chatrow { padding: 8px; }
   #pkExpiry:not(:empty) .pk-expiry-chart { padding: 10px 6px 4px; }
@@ -2434,9 +2386,7 @@ kbd {
 .acc input,
 .sms-box input,
 .ownkey input,
-.qc-card input,
-.chat-setup input,
-.chat-setup select {
+.qc-card input {
   min-height: 0;
 }
 
@@ -2750,6 +2700,11 @@ kbd {
   .cfgrow > .k { flex-basis: 104px; }
   .cfgrow .cfghelp { margin-left: 114px; }
 }
+/* 对话头部的客户端/模型下拉在窄屏换行，别把消息区挤到没法用。 */
+@media (max-width: 980px) {
+  .chat-head .sel-note { flex: 1 1 200px; }
+  .chat-head .sel-note select { width: 100%; max-width: none; }
+}
 @media (max-width: 760px) {
   .topbar {
     min-height: 0;
@@ -2829,6 +2784,159 @@ kbd {
 /* legacy safety */
 @supports not (backdrop-filter: blur(1px)) {
   .nav, .topbar, .savebar, .dlg, .toast, .tst { background: var(--surface); }
+}
+/* -- 13. Chat workspace --------------------------------------------------
+   A real multi-conversation surface: history column on the left, transcript
+   and composer on the right. Records live on the server so they follow the
+   data directory; the sidebar is only a view over that store. */
+#view-chat { padding: 0; max-width: none; }
+#view-chat .chat-workspace {
+  display: grid; grid-template-columns: 268px minmax(0, 1fr);
+  height: calc(100vh - 59px); min-height: 460px;
+}
+#view-chat .chat-workspace.side-hidden { grid-template-columns: minmax(0, 1fr); }
+#view-chat .chat-workspace.side-hidden .chat-side { display: none; }
+
+.chat-side {
+  display: flex; flex-direction: column; min-width: 0;
+  border-right: 1px solid var(--hairline);
+  background: color-mix(in srgb, var(--surface) 74%, transparent);
+}
+.chat-side-head { display: flex; gap: 8px; padding: 12px 12px 8px; }
+.chat-side-head .primary {
+  flex: 1; display: flex; align-items: center; justify-content: center; gap: 7px;
+  min-height: 36px; font-weight: 560;
+}
+.chat-side-head .icon { min-width: 36px; min-height: 36px; }
+.chat-side-search { padding: 0 12px 8px; }
+.chat-side-search input { border-radius: var(--radius-control); }
+.chat-threads { flex: 1; overflow: auto; padding: 2px 8px 8px; }
+.chat-thread {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center;
+  gap: 6px; padding: 8px 9px; margin-bottom: 2px; border-radius: 10px;
+  border: 1px solid transparent; cursor: pointer; text-align: left;
+}
+.chat-thread:hover { background: var(--surface-2); }
+.chat-thread.on { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 26%, transparent); }
+.chat-thread .t-title {
+  font-size: 13px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.chat-thread.on .t-title { color: var(--accent-text); font-weight: 560; }
+.chat-thread .t-meta {
+  font-size: 11px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+.chat-thread .t-acts { display: flex; gap: 2px; opacity: 0; transition: opacity var(--dur-quick) var(--ease-smooth); }
+.chat-thread:hover .t-acts, .chat-thread:focus-within .t-acts, .chat-thread.on .t-acts { opacity: 1; }
+.chat-thread .t-act {
+  padding: 3px 5px; border: 0; background: transparent; color: var(--ink-3); border-radius: 6px;
+}
+.chat-thread .t-act:hover { color: var(--ink); background: var(--surface); }
+.chat-thread .t-act.danger:hover { color: var(--bad); }
+.chat-thread-empty {
+  margin: 4px 14px; padding: 18px 12px; text-align: center;
+  color: var(--ink-3); font-size: 12.5px;
+}
+.chat-side-foot { padding: 8px 12px 12px; border-top: 1px solid var(--hairline); }
+.chat-side-foot button { width: 100%; }
+
+.chat-turn { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.chat-head {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px;
+  padding: 10px 16px; border-bottom: 1px solid var(--hairline);
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+}
+.chat-head-title { min-width: 0; }
+.chat-head-title h3 { font-size: 14.5px; font-weight: 620; }
+.chat-head-title .note { font-size: 11.5px; }
+.chat-head .sel-note { margin: 0; font-size: 11.5px; color: var(--ink-3); }
+.chat-head .sel-note select { min-width: 140px; max-width: 260px; }
+.chat-head .sel-note { display: flex; align-items: center; gap: 6px; }
+.chat-advanced {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 9px 16px;
+  padding: 10px 16px; border-bottom: 1px solid var(--hairline);
+  background: color-mix(in srgb, var(--surface-2) 46%, transparent);
+}
+.chat-advanced .sel-note { margin: 0; font-size: 11.5px; color: var(--ink-3); }
+.chat-advanced .sel-note input[type="search"] { width: 190px; }
+.chat-sys { flex: 1 1 320px; }
+.chat-sys input { margin-top: 4px; }
+
+.chat-scroll { flex: 1; overflow: auto; min-height: 0; scroll-behavior: smooth; }
+.chatlog {
+  display: flex; flex-direction: column; gap: 18px;
+  max-width: 900px; margin: 0 auto; padding: 22px 24px 8px;
+  min-height: 0; max-height: none;
+}
+.chatmsg { display: flex; gap: 11px; align-items: flex-start; }
+.chatmsg .who {
+  flex: 0 0 30px; width: 30px; height: 30px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font: 600 11px var(--sans); color: var(--ink-2);
+  background: var(--surface-2); border: 1px solid var(--hairline);
+}
+.chatmsg .bub {
+  flex: 1; min-width: 0; white-space: pre-wrap; word-break: break-word;
+  background: transparent; border: 0; padding: 4px 0 0; font-size: 14px; line-height: 1.7;
+}
+.chatmsg .bub .meta {
+  display: block; margin-top: 8px; font: 11px var(--mono); color: var(--ink-3);
+}
+.chatmsg .bub .think {
+  display: block; margin-top: 8px; padding: 8px 10px; border-left: 2px solid var(--line);
+  color: var(--ink-3); font-size: 12.5px; white-space: pre-wrap;
+}
+.chatmsg.me { flex-direction: row-reverse; }
+.chatmsg.me .who { background: var(--accent-soft); color: var(--accent-text); border-color: transparent; }
+.chatmsg.me .bub {
+  flex: 0 1 auto; max-width: 74%;
+  background: color-mix(in srgb, var(--accent) 13%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, transparent);
+  border-radius: 16px; padding: 10px 14px;
+}
+.chatmsg.err .who { color: var(--bad-text); }
+.chatmsg.err .bub { color: var(--bad-text); }
+.chatmsg.pending .bub::after {
+  content: ""; display: inline-block; width: 7px; height: 14px; margin-left: 3px;
+  vertical-align: -2px; background: var(--ink-3);
+  animation: chatCaret 1s steps(2, start) infinite;
+}
+@keyframes chatCaret { 50% { opacity: 0; } }
+
+.chat-empty { padding: 12vh 24px 24px; text-align: center; color: var(--ink-3); }
+.chat-empty h4 { font-size: 20px; font-weight: 620; color: var(--ink); margin-bottom: 8px; }
+.chat-empty p { font-size: 13px; }
+.chat-suggests { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 18px; }
+.chat-suggests button { font-size: 12.5px; border-radius: 999px; }
+
+.chat-composer { border-top: 1px solid var(--hairline); background: color-mix(in srgb, var(--surface) 72%, transparent); }
+.chat-tags { justify-content: center; max-width: 900px; margin: 0 auto; padding: 8px 24px 0; min-height: 0; }
+.chat-composer .chatrow {
+  max-width: 900px; margin: 0 auto; padding: 10px 24px 4px;
+  gap: 10px; margin-top: 0; align-items: flex-end;
+  border: 0; background: transparent; box-shadow: none;
+}
+.chat-composer .chatrow:focus-within { border-color: transparent; box-shadow: none; }
+.chat-composer textarea {
+  min-height: 48px; max-height: 200px; resize: none; border-radius: 16px;
+  padding: 12px 14px; font: 14px/1.6 var(--sans);
+}
+.chat-composer .chatbtns { flex-direction: row; gap: 8px; }
+.chat-composer .chatbtns button { min-width: 76px; min-height: 44px; border-radius: 14px; }
+.chat-hint {
+  max-width: 900px; margin: 0 auto; padding: 0 24px 10px;
+  min-height: 16px; font-size: 11px; color: var(--ink-3); font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 860px) {
+  #view-chat .chat-workspace { grid-template-columns: minmax(0, 1fr); height: auto; min-height: 0; }
+  #view-chat .chat-side {
+    border-right: 0; border-bottom: 1px solid var(--hairline); max-height: 240px;
+  }
+  #view-chat .chat-scroll { min-height: 46vh; }
+  .chatmsg.me .bub { max-width: 86%; }
+  .chatlog { padding: 16px 14px 6px; }
+  .chat-composer .chatrow, .chat-tags, .chat-hint { padding-left: 14px; padding-right: 14px; }
 }
 </style>
 </head>
@@ -2989,57 +3097,69 @@ kbd {
 
     <!-- 对话测试 -->
     <section class="view" id="view-chat" hidden>
-      <div class="box">
-        <header>
-          <h3>测试设置</h3>
-          <span class="grow"></span>
-          <span class="note" id="chatNote">走真实网关 /v1/chat/completions</span>
-        </header>
-        <div class="pad chat-setup">
-          <label class="sel-note">客户端 <select id="chatClient"></select></label>
-          <label class="sel-note">模型 <select id="chatModel"></select></label>
-          <label class="sel-note">筛选 <input id="chatModelFilt" type="search" placeholder="缩小模型列表" spellcheck="false" autocomplete="off"></label>
-          <label class="sel-note" id="chatAccountRow">账号 <select id="chatAccount"></select></label>
-          <span id="chatChatOpts" class="chat-opts">
-            <label class="sel-note">max_tokens <input id="chatMax" type="number" min="1" max="1000000" value="512" style="width:92px"></label>
-            <label class="sel-note">上下文窗口 <input id="chatContextWindow" type="number" min="1" max="10000000" step="1024" placeholder="按模型配置" style="width:108px" title="仅本次测试：填写后会临时按此窗口裁剪，不保存到模型设置"></label>
-            <label class="sel-note">温度 <input id="chatTemp" type="number" min="0" max="2" step="0.1" value="0.7" style="width:74px"></label>
-            <label class="sel-note"><input id="chatStream" type="checkbox" checked> 流式</label>
-          </span>
-          <!-- 只有选中转写模型时才出现：对话测试的其它参数对它没有意义。 -->
-          <label class="sel-note" id="chatResponseFormatRow" hidden>response_format
-            <select id="chatResponseFormat">
-              <option value="json" selected>json</option>
-              <option value="text">text</option>
-              <option value="verbose_json">verbose_json</option>
-              <option value="srt">srt</option>
-              <option value="vtt">vtt</option>
-            </select>
-          </label>
-        </div>
-        <div class="pad" id="chatSysRow" style="padding-top:0">
-          <label class="sel-note" style="display:block">系统提示
-            <input id="chatSys" type="text" placeholder="留空则不发送 system 消息" style="width:100%;margin-top:5px">
-          </label>
-        </div>
-      </div>
+      <div class="chat-workspace" id="chatWorkspace">
+        <aside class="chat-side" id="chatSide" aria-label="对话记录">
+          <div class="chat-side-head">
+            <button class="primary" id="btnChatNew">
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9"/></svg>
+              新对话
+            </button>
+          </div>
+          <div class="chat-side-search">
+            <input id="chatSearch" type="search" placeholder="搜索对话" spellcheck="false" autocomplete="off" aria-label="搜索对话">
+          </div>
+          <div class="chat-threads" id="chatThreads" role="list"></div>
+          <div class="chat-thread-empty" id="chatThreadEmpty" hidden></div>
+          <div class="chat-side-foot">
+            <button class="xs ghost danger" id="btnChatClearAll">清空全部记录</button>
+          </div>
+        </aside>
 
-      <div class="box" id="chatTurn">
-        <header>
-          <h3>对话</h3>
-          <div class="chips" id="chatTags"></div>
-          <span class="grow"></span>
-          <span class="note" id="chatDiag"></span>
-          <button class="xs" id="btnChatClear">清空</button>
-        </header>
-        <div class="pad">
-          <div class="chatlog" id="chatLog"></div>
-          <div class="chatrow">
-            <textarea id="chatInput" rows="3" placeholder="输入消息，Enter 发送，Shift+Enter 换行"></textarea>
-            <div class="chatbtns">
-              <button class="primary" id="btnChatSend">发送</button>
-              <button id="btnChatStop" disabled>停止</button>
+        <div class="chat-turn" id="chatTurn">
+          <header class="chat-head">
+            <div class="chat-head-title">
+              <h3 id="chatTitle">新对话</h3>
+              <span class="note" id="chatSubTitle"></span>
             </div>
+            <span class="grow"></span>
+            <label class="sel-note">客户端 <select id="chatClient"></select></label>
+            <label class="sel-note">模型 <select id="chatModel"></select></label>
+            <button class="icon ghost" id="chatSideToggle" title="收起对话记录" aria-label="收起对话记录" aria-expanded="true">
+              <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M2.5 3.2h11v9.6h-11z"/><path d="M6.4 3.2v9.6"/></svg>
+            </button>
+            <button class="xs" id="btnChatAdvanced" aria-expanded="false" aria-controls="chatAdvanced">高级设置</button>
+            <button class="xs" id="btnChatClear">清空当前对话</button>
+          </header>
+
+          <div class="chat-advanced" id="chatAdvanced" hidden>
+            <span class="chat-opts" id="chatChatOpts">
+              <label class="sel-note">筛选 <input id="chatModelFilt" type="search" placeholder="缩小模型列表" spellcheck="false" autocomplete="off"></label>
+              <label class="sel-note" id="chatAccountRow">账号 <select id="chatAccount"></select></label>
+              <label class="sel-note">max_tokens <input id="chatMax" type="number" min="1" max="1000000" value="512" style="width:92px"></label>
+              <label class="sel-note">上下文窗口 <input id="chatContextWindow" type="number" min="1" max="10000000" step="1024" placeholder="按模型配置" style="width:118px" title="仅本次测试：填写后会临时按此窗口裁剪，不保存到模型设置"></label>
+              <label class="sel-note">温度 <input id="chatTemp" type="number" min="0" max="2" step="0.1" value="0.7" style="width:74px"></label>
+              <label class="sel-note"><input id="chatStream" type="checkbox" checked> 流式</label>
+            </span>
+            <label class="sel-note chat-sys" id="chatSysRow">系统提示
+              <input id="chatSys" type="text" placeholder="留空则不发送 system 消息">
+            </label>
+            <span class="note" id="chatNote">走真实网关 /v1/chat/completions</span>
+          </div>
+
+          <div class="chat-scroll" id="chatScroll">
+            <div class="chatlog" id="chatLog" aria-live="polite"></div>
+          </div>
+
+          <div class="chat-composer" id="chatComposer">
+            <div class="chips chat-tags" id="chatTags"></div>
+            <div class="chatrow">
+              <textarea id="chatInput" rows="1" placeholder="给模型发消息…（Enter 发送，Shift+Enter 换行）" aria-label="输入消息"></textarea>
+              <div class="chatbtns">
+                <button class="primary" id="btnChatSend">发送</button>
+                <button id="btnChatStop" disabled>停止</button>
+              </div>
+            </div>
+            <div class="chat-hint"><span id="chatDiag"></span></div>
           </div>
         </div>
       </div>
@@ -3053,6 +3173,15 @@ kbd {
         </header>
         <div class="pad chatrec" style="padding-bottom:0">
           <button class="primary" id="btnChatRecord">开始录音</button>
+          <label class="sel-note" id="chatResponseFormatRow" hidden>response_format
+            <select id="chatResponseFormat">
+              <option value="json" selected>json</option>
+              <option value="text">text</option>
+              <option value="verbose_json">verbose_json</option>
+              <option value="srt">srt</option>
+              <option value="vtt">vtt</option>
+            </select>
+          </label>
           <span class="note" id="chatRecordStatus" aria-live="polite"></span>
         </div>
         <div class="pad" style="padding-top:0">
@@ -4148,6 +4277,7 @@ function restorePlatformDraft(draft) {
     p.querySelector(".pfToggle").textContent = d.open ? "▾" : "▸";
     pfCount(p);
   });
+  pfGroupFilter();
   pfSyncPrioritySchedule(); pfApply();
 }
 
@@ -8720,6 +8850,27 @@ function pfSyncPrioritySchedule() {
   });
 }
 
+let PFG_BODY_SEQ = 0;
+
+// pfGroupMatchesQuery is deliberately self-contained so the panel's Node
+// regression test can exercise the same search semantics the browser uses.
+function pfGroupMatchesQuery(query, name, members) {
+  const terms = String(query == null ? "" : query).trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (!terms.length) return true;
+  const haystack = [String(name == null ? "" : name)]
+    .concat(Array.isArray(members) ? members : [])
+    .join("\n").toLowerCase();
+  return terms.every(term => haystack.indexOf(term) >= 0);
+}
+
+function pfGroupMemberSummary(members) {
+  const list = (Array.isArray(members) ? members : [])
+    .map(m => String(m == null ? "" : m).trim()).filter(Boolean);
+  if (!list.length) return "尚无成员";
+  const shown = list.slice(0, 2).join(" · ");
+  return list.length + " 个成员 · " + shown + (list.length > 2 ? " +" + (list.length - 2) : "");
+}
+
 // pfModelGroupMemberHTML builds one "client/model + priority" row. Priority
 // blank means "fall back to the platform's global priority".
 function pfModelGroupMemberHTML(member, prio) {
@@ -8733,41 +8884,138 @@ function pfModelGroupMemberHTML(member, prio) {
 }
 
 // pfModelGroupHTML renders one routing group. Member rows carry their own
-// priority input, which is keyed by the member's client on save.
-function pfModelGroupHTML(name, g) {
+// priority input, which is keyed by the member's client on save. Collapsing a
+// group keeps the inputs in the DOM, so unsaved edits survive search and save.
+function pfModelGroupHTML(name, g, open) {
   const group = g || {};
   const builtin = group.builtin === true;
   const canDelete = !builtin;
   const prios = group.platform_priorities || {};
   const members = Array.isArray(group.members) ? group.members : [];
+  const bodyID = "pfgBody-" + (++PFG_BODY_SEQ);
+  const isOpen = open === true;
   const rows = members.map(m => {
     const client = String(m).split("/")[0];
     return pfModelGroupMemberHTML(m, prios[client]);
   }).join("");
-  return '<div class="pfGroup">' +
-    '<div class="pfghead"><label class="sel-note">组名 <input class="cfgtext pfGName" type="text" value="' + esc(name || "") + '" placeholder="deepseek-v4.1-flash" spellcheck="false" autocomplete="off"' + (builtin ? ' readonly title="内置 GPT 原生模型名；可改成员和优先级，组名保持不变"' : '') + '></label>' +
+  const summaryMembers = members.map(m => String(m == null ? "" : m).trim()).filter(Boolean);
+  const summary = pfGroupMemberSummary(summaryMembers);
+  const title = String(name == null ? "" : name).trim() || "未命名路由组";
+  return '<div class="pfGroup' + (isOpen ? " open" : "") + '" role="listitem">' +
+    '<div class="pfghead">' +
+    '<button class="pfgToggle" type="button" aria-expanded="' + (isOpen ? "true" : "false") + '" aria-controls="' + bodyID + '" title="' + (isOpen ? "收起路由组" : "展开路由组以编辑成员") + '">' +
+    '<span class="pfgChevron" aria-hidden="true">▸</span>' +
+    '<span class="pfgTitle">' + esc(title) + '</span>' +
     (builtin ? '<span class="pfgBuiltin">内置</span>' : '') +
-    '<span class="grow"></span>' +
-    '<button class="xs pfGDel" type="button"' + (canDelete ? '' : ' disabled title="内置组不能删除；可改成员和优先级"') + '>删除组</button></div>' +
+    '<span class="pfgMeta">' + esc(summary) + '</span>' +
+    '</button>' +
+    '<button class="xs pfGDel" type="button"' + (canDelete ? '' : ' disabled title="内置组不能删除；可改成员和优先级"') + '>删除组</button>' +
+    '</div>' +
+    '<div class="pfgBody" id="' + bodyID + '"' + (isOpen ? '' : ' hidden') + '>' +
+    '<div class="pfgNameRow"><label class="pfgNameLabel"><span>组名</span><input class="cfgtext pfGName" type="text" value="' + esc(name || "") + '" placeholder="deepseek-v4.1-flash" spellcheck="false" autocomplete="off"' + (builtin ? ' readonly title="内置 GPT 原生模型名；可改成员和优先级，组名保持不变"' : '') + '></label></div>' +
     '<div class="pfgrows">' + rows + '</div>' +
     '<div class="pfgfoot"><button class="xs pfGAddMember" type="button">新增成员</button></div>' +
-    '</div>';
+    '</div></div>';
 }
 
 // pfModelGroupsHTML renders the whole routing-group editor from the saved
-// config. New groups start as one blank member row.
+// config. Small collections start open; large ones start collapsed so the
+// operator sees a compact index instead of a wall of inputs.
 function pfModelGroupsHTML(groups) {
   const keys = Object.keys(groups || {});
+  const totalMembers = keys.reduce((n, k) => {
+    const g = (groups || {})[k] || {};
+    return n + (Array.isArray(g.members) ? g.members.filter(m => String(m == null ? "" : m).trim()).length : 0);
+  }, 0);
+  const defaultOpen = keys.length > 0 && keys.length <= 2;
+  const emptyText = keys.length
+    ? "没有匹配的模型路由组。"
+    : "还没有路由组。新增一个组，就能把同一模型在不同平台的名字绑成等价名。";
   const out = ['<div class="pfgsec">'];
-  out.push('<div class="pfghd"><strong>模型路由组</strong>' +
-    '<span class="hint">组名和成员模型名等价：调哪个都路由到整组；成员可写 client/model，也可写 Auto/model 自动覆盖所有实际提供该模型的平台；Auto 成员填写组内优先级可调整整个 Auto 池的位置，池内仍按平台全局优先级与时段排序；同一成员不能出现在两个组里。</span>' +
+  out.push('<div class="pfghd"><strong>模型路由组</strong><span class="pfgCount">' + keys.length + ' 组 · ' + totalMembers + ' 个成员</span>' +
     '<span class="grow"></span>' +
     '<button class="xs pfGAdd" type="button">新增路由组</button></div>');
-  out.push('<div class="pfgList">');
-  if (!keys.length) out.push('<div class="hint">还没有路由组。新增一个组，就能把同一模型在不同平台的名字绑成等价名。</div>');
-  keys.forEach(k => out.push(pfModelGroupHTML(k, (groups || {})[k])));
+  out.push('<div class="pfgHelp">组名和成员模型名等价：调哪个都路由到整组；成员可写 client/model，也可写 Auto/model 自动覆盖所有实际提供该模型的平台；Auto 成员填写组内优先级可调整整个 Auto 池的位置，池内仍按平台全局优先级与时段排序；同一成员不能出现在两个组里。</div>');
+  out.push('<div class="pfgTools" role="search">' +
+    '<input class="cfgtext pfGroupSearch" type="search" placeholder="搜索组名 / 成员（/）" aria-label="搜索模型路由组" spellcheck="false" autocomplete="off">' +
+    '<span class="pfgFilterNote" aria-live="polite"></span>' +
+    '<span class="grow"></span>' +
+    '<button class="xs pfGExpandAll" type="button" title="展开当前筛选结果中的全部路由组">全部展开</button>' +
+    '<button class="xs pfGCollapseAll" type="button" title="收起当前筛选结果中的全部路由组">全部收起</button></div>');
+  out.push('<div class="pfgList" role="list">');
+  keys.forEach(k => out.push(pfModelGroupHTML(k, (groups || {})[k], defaultOpen)));
+  out.push('<div class="pfgEmpty hint"' + (keys.length ? ' hidden' : '') + '><span class="pfgEmptyText">' + emptyText + '</span><span class="grow"></span><button class="xs pfGroupClear" type="button" hidden>清除搜索</button></div>');
   out.push('</div></div>');
   return out.join("");
+}
+
+function pfGroupSetOpen(group, open) {
+  if (!group) return;
+  const body = group.querySelector(".pfgBody");
+  const toggle = group.querySelector(".pfgToggle");
+  if (!body || !toggle) return;
+  body.hidden = !open;
+  toggle.setAttribute("aria-expanded", open ? "true" : "false");
+  toggle.title = open ? "收起路由组" : "展开路由组以编辑成员";
+  group.classList.toggle("open", !!open);
+}
+
+function pfGroupSyncSummary(group) {
+  if (!group) return;
+  const nameEl = group.querySelector(".pfGName");
+  const members = Array.from(group.querySelectorAll(".pfGMember"))
+    .map(el => String(el.value || "").trim()).filter(Boolean);
+  const titleEl = group.querySelector(".pfgTitle");
+  const metaEl = group.querySelector(".pfgMeta");
+  if (titleEl) titleEl.textContent = (nameEl ? String(nameEl.value || "").trim() : "") || "未命名路由组";
+  if (metaEl) metaEl.textContent = pfGroupMemberSummary(members);
+}
+
+function pfGroupSetAll(open) {
+  const root = $("#pfGroups");
+  if (!root) return;
+  root.querySelectorAll(".pfGroup").forEach(group => {
+    if (!group.hidden) pfGroupSetOpen(group, open);
+  });
+}
+
+// pfGroupFilter updates the compact index, count and empty state together.
+// Search terms are ANDed; a unique hit opens so Enter/typing lands on the editor.
+function pfGroupFilter() {
+  const root = $("#pfGroups");
+  if (!root) return;
+  const search = root.querySelector(".pfGroupSearch");
+  const query = search ? search.value : "";
+  const activeQuery = String(query == null ? "" : query).trim() !== "";
+  const groups = Array.from(root.querySelectorAll(".pfGroup"));
+  const countEl = root.querySelector(".pfgCount");
+  const noteEl = root.querySelector(".pfgFilterNote");
+  const emptyEl = root.querySelector(".pfgEmpty");
+  const emptyText = emptyEl ? emptyEl.querySelector(".pfgEmptyText") : null;
+  const clearBtn = root.querySelector(".pfGroupClear");
+  const hits = [];
+  let totalMembers = 0;
+  groups.forEach(group => {
+    const nameEl = group.querySelector(".pfGName");
+    const members = Array.from(group.querySelectorAll(".pfGMember"))
+      .map(el => String(el.value || "").trim()).filter(Boolean);
+    totalMembers += members.length;
+    const hit = pfGroupMatchesQuery(query, nameEl ? nameEl.value : "", members);
+    group.hidden = !hit;
+    if (hit) hits.push(group);
+  });
+  if (countEl) countEl.textContent = groups.length + " 组 · " + totalMembers + " 个成员";
+  if (noteEl) {
+    noteEl.textContent = groups.length === 0
+      ? "暂无路由组"
+      : (activeQuery ? "匹配 " + hits.length + " / " + groups.length + " 组" : "支持组名 / 成员 / 空格组合");
+  }
+  if (activeQuery && hits.length === 1) pfGroupSetOpen(hits[0], true);
+  if (emptyEl) emptyEl.hidden = !(groups.length === 0 || (activeQuery && hits.length === 0));
+  if (emptyText) emptyText.textContent = groups.length
+    ? "没有匹配的模型路由组。"
+    : "还没有路由组。新增一个组，就能把同一模型在不同平台的名字绑成等价名。";
+  if (clearBtn) clearBtn.hidden = !activeQuery;
 }
 
 // pfReadModelGroups turns the editor back into the config shape and mirrors
@@ -8880,7 +9128,26 @@ async function renderPlatforms(preserveDraft = false) {
     groupsBaseline: JSON.parse(JSON.stringify(c.model_groups || {})),
   };
   const groupsEl = $("#pfGroups");
-  if (groupsEl) groupsEl.innerHTML = pfModelGroupsHTML(c.model_groups || {}, cfg.data.model_group_defaults || []);
+  const groupSearch = groupsEl ? groupsEl.querySelector(".pfGroupSearch") : null;
+  const groupQuery = groupSearch ? groupSearch.value : "";
+  const openGroupNames = groupsEl ? Array.from(groupsEl.querySelectorAll(".pfGroup")).filter(group => {
+    const body = group.querySelector(".pfgBody");
+    const name = group.querySelector(".pfGName");
+    return body && !body.hidden && name && name.value.trim();
+  }).map(group => group.querySelector(".pfGName").value.trim().toLowerCase()) : [];
+  if (groupsEl) {
+    groupsEl.innerHTML = pfModelGroupsHTML(c.model_groups || {}, cfg.data.model_group_defaults || []);
+    const nextSearch = groupsEl.querySelector(".pfGroupSearch");
+    if (nextSearch) nextSearch.value = groupQuery;
+    openGroupNames.forEach(name => {
+      const group = Array.from(groupsEl.querySelectorAll(".pfGroup")).find(item => {
+        const field = item.querySelector(".pfGName");
+        return field && field.value.trim().toLowerCase() === name;
+      });
+      if (group) pfGroupSetOpen(group, true);
+    });
+    pfGroupFilter();
+  }
 
   let totalOff = 0;
   const out = [];
@@ -13738,12 +14005,22 @@ $("#sourceVeil").addEventListener("click", ev => { if (ev.target === $("#sourceV
 $("#btnPfExpand").addEventListener("click", () => pfSetAll(true));
 $("#btnPfCollapse").addEventListener("click", () => pfSetAll(false));
 $("#pfGroups").addEventListener("input", ev => {
+  if (ev.target.closest(".pfGroupSearch")) {
+    pfGroupFilter();
+    return;
+  }
+  const name = ev.target.closest(".pfGName");
   const priority = ev.target.closest(".pfGPrio");
   const member = ev.target.closest(".pfGMember");
-  if (!priority && !member) return;
+  if (!name && !priority && !member) return;
   const group = ev.target.closest(".pfGroup");
+  if (!group) return;
+  if (name) {
+    pfGroupSyncSummary(group);
+    return;
+  }
   const row = ev.target.closest(".pfGRow");
-  if (!group || !row) return;
+  if (!row) return;
   const platform = item => item.querySelector(".pfGMember").value.trim().split("/")[0].toLowerCase();
   const client = platform(row);
   if (!client) return;
@@ -13753,23 +14030,107 @@ $("#pfGroups").addEventListener("input", ev => {
   } else if (peers.length) {
     row.querySelector(".pfGPrio").value = peers[0].querySelector(".pfGPrio").value;
   }
+  if (member) pfGroupSyncSummary(group);
 });
 $("#pfGroups").addEventListener("click", ev => {
+  if (ev.target.closest(".pfGExpandAll")) {
+    pfGroupSetAll(true);
+    return;
+  }
+  if (ev.target.closest(".pfGCollapseAll")) {
+    pfGroupSetAll(false);
+    return;
+  }
+  if (ev.target.closest(".pfGroupClear")) {
+    const search = $("#pfGroups").querySelector(".pfGroupSearch");
+    if (search) {
+      search.value = "";
+      pfGroupFilter();
+      search.focus();
+    }
+    return;
+  }
   if (ev.target.closest(".pfGAdd")) {
     const list = $("#pfGroups").querySelector(".pfgList");
-    if (list) list.insertAdjacentHTML("beforeend", pfModelGroupHTML("", { members: [""], platform_priorities: {} }));
+    const search = $("#pfGroups").querySelector(".pfGroupSearch");
+    if (search && search.value) {
+      search.value = "";
+      pfGroupFilter();
+    }
+    if (list) {
+      const empty = list.querySelector(".pfgEmpty");
+      const markup = pfModelGroupHTML("", { members: [""], platform_priorities: {} }, true);
+      if (empty) empty.insertAdjacentHTML("beforebegin", markup);
+      else list.insertAdjacentHTML("beforeend", markup);
+      pfGroupFilter();
+      const groups = list.querySelectorAll(".pfGroup");
+      const group = groups[groups.length - 1];
+      const name = group && group.querySelector(".pfGName");
+      if (name) { name.focus(); name.select(); }
+    }
+    return;
+  }
+  const toggle = ev.target.closest(".pfgToggle");
+  if (toggle) {
+    const group = toggle.closest(".pfGroup");
+    const body = group && group.querySelector(".pfgBody");
+    if (group && body) pfGroupSetOpen(group, body.hidden);
     return;
   }
   const group = ev.target.closest(".pfGroup");
   if (!group) return;
-  if (ev.target.closest(".pfGDel")) { group.remove(); return; }
+  if (ev.target.closest(".pfGDel")) {
+    group.remove();
+    pfGroupFilter();
+    return;
+  }
   if (ev.target.closest(".pfGAddMember")) {
     const rows = group.querySelector(".pfgrows");
-    if (rows) rows.insertAdjacentHTML("beforeend", pfModelGroupMemberHTML("", ""));
+    if (rows) {
+      rows.insertAdjacentHTML("beforeend", pfModelGroupMemberHTML("", ""));
+      const added = rows.lastElementChild;
+      const field = added && added.querySelector(".pfGMember");
+      if (field) field.focus();
+      pfGroupSyncSummary(group);
+      pfGroupFilter();
+    }
     return;
   }
   const remove = ev.target.closest(".pfGDelMember");
-  if (remove) { const row = remove.closest(".pfGRow"); if (row) row.remove(); }
+  if (remove) {
+    const row = remove.closest(".pfGRow");
+    if (row) {
+      row.remove();
+      pfGroupSyncSummary(group);
+      pfGroupFilter();
+    }
+  }
+});
+$("#pfGroups").addEventListener("keydown", ev => {
+  const search = ev.target.closest(".pfGroupSearch");
+  if (search && ev.key === "Escape") {
+    if (!search.value) return;
+    search.value = "";
+    pfGroupFilter();
+    return;
+  }
+  if (search && ev.key === "Enter") {
+    const hits = Array.from($("#pfGroups").querySelectorAll(".pfGroup")).filter(group => !group.hidden);
+    if (hits.length === 1) {
+      pfGroupSetOpen(hits[0], true);
+      const name = hits[0].querySelector(".pfGName");
+      if (name) name.focus();
+    }
+    ev.preventDefault();
+    return;
+  }
+  if (ev.key !== "/" || ev.ctrlKey || ev.metaKey || ev.altKey) return;
+  if (ev.target.closest("input, textarea, select")) return;
+  const box = $("#pfGroups").querySelector(".pfGroupSearch");
+  if (!box) return;
+  ev.preventDefault();
+  box.focus();
+  box.select();
 });
 $("#pfSearch").addEventListener("input", pfApply);
 $("#pfOnlyOff").addEventListener("change", pfApply);
@@ -14002,7 +14363,7 @@ window.addEventListener("keydown", ev => {
   if (ev.key === "/" && !typing && !topVeil()) {
     const box = VIEW === "models" ? $("#mdSearch")
       : VIEW === "accounts" ? $("#accSearch")
-        : VIEW === "chat" ? $("#chatModelFilt") : null;
+        : VIEW === "chat" ? chatOpenAdvanced(true) : null;
     if (!box) return;
     ev.preventDefault();
     box.focus();
@@ -14013,10 +14374,18 @@ window.addEventListener("keydown", ev => {
 });
 
 /* ── 对话测试 ─────────────────────────────────────────────────────────── */
+/* ── 对话测试 ─────────────────────────────────────────────────────────── */
 // 这个页签直接打真实网关（/v1/models、/v1/chat/completions），不做任何面板侧的
 // “友好封装”：要看的就是 API 调用方能看到的东西，所以状态码、error.code、
 // usage、finish_reason 全部原样展示。
-const CHAT = { models: [], key: "", msgs: [], busy: false, ctrl: null };
+//
+// 对话记录本身由面板持久化在 <data>/panel/chat_history.json：换浏览器、换机器、
+// 清掉站点数据以后都还在。浏览器只缓存一份内存副本用于渲染，唯一的数据源是
+// /panel/api/chat/conversations。
+const CHAT = {
+  models: [], key: "", msgs: [], busy: false, ctrl: null,
+  threads: [], current: null, editing: "", sideHidden: false,
+};
 // 语音转写测试的运行时状态。recorder 非空 = 正在录音；busy = 上传中。
 const TRANS = { recorder: null, stream: null, chunks: [], started: 0, timer: 0, model: "", busy: false, starting: false, drop: false };
 
@@ -14063,17 +14432,19 @@ function chatIsTranscription(entry) { return chatModelKind(entry) === "transcrip
 // 模型决定这个页签测什么：普通模型是对话，转写模型换成录音面板。
 function chatModeSync() {
   const trans = chatIsTranscription(chatSelectedModel());
+  $("#chatWorkspace").hidden = trans;
   $("#chatTurn").hidden = trans;
-  $("#chatTranscribe").hidden = !trans;
   $("#chatChatOpts").hidden = trans;
   $("#chatSysRow").hidden = trans;
   $("#chatAccountRow").hidden = trans;
   $("#chatResponseFormatRow").hidden = !trans;
+  $("#chatTranscribe").hidden = !trans;
   $("#chatNote").textContent = trans ? "走真实网关 /v1/audio/transcriptions" : "走真实网关 /v1/chat/completions";
   // 切回对话时把还在录的音频掐掉，并标记为丢弃：那段音频属于刚才的转写模型，
   // 不该在切走以后才偷偷上传。
   if (!trans && TRANS.recorder) { TRANS.drop = true; chatRecordStop(); }
   if (!trans) $("#chatRecordStatus").textContent = "";
+  chatAutosize();
 }
 
 // 容器按浏览器能力挑：Chrome/Edge 出 WebM-Opus，Safari 只出 MP4；网关两种都能解。
@@ -14291,9 +14662,230 @@ function chatFillAccounts() {
   if (want && rows.some(a => a.id === want)) sel.value = want;
 }
 
+// ---------------------------------------------------------------------------
+// 对话记录：服务端持久化
+// ---------------------------------------------------------------------------
+
+function chatThreadMeta(t) {
+  const bits = [];
+  if (t.model) bits.push(String(t.model).split("/").pop());
+  const n = (t.messages || []).length;
+  if (n) bits.push(n + " 条");
+  if (t.updated_at) {
+    const d = new Date(t.updated_at);
+    const today = new Date();
+    bits.push(d.toDateString() === today.toDateString()
+      ? d.toTimeString().slice(0, 5)
+      : (d.getMonth() + 1) + "/" + d.getDate());
+  }
+  return bits.join(" · ");
+}
+
+function chatTitleOf(t) {
+  return (t && t.title) || "新对话";
+}
+
+async function chatLoadThreads(keepCurrent) {
+  const r = await api("/panel/api/chat/conversations");
+  if (!r.ok) { toast("读取对话记录失败：" + r.err, "err"); return false; }
+  CHAT.threads = (r.data && r.data.conversations) || [];
+  if (CHAT.current && !CHAT.threads.some(t => t.id === CHAT.current)) CHAT.current = "";
+  if (!CHAT.current && keepCurrent !== false && CHAT.threads.length) CHAT.current = CHAT.threads[0].id;
+  const cur = CHAT.threads.find(t => t.id === CHAT.current);
+  CHAT.msgs = cur ? (cur.messages || []) : [];
+  CHAT.key = (cur && cur.key) || "";
+  chatDrawThreads();
+  chatDraw();
+  chatSyncHead();
+  return true;
+}
+
+function chatSyncHead() {
+  const t = CHAT.threads.find(x => x.id === CHAT.current);
+  $("#chatTitle").textContent = t ? chatTitleOf(t) : "新对话";
+  $("#chatSubTitle").textContent = t ? chatThreadMeta(t) : "还没有开始";
+}
+
+async function chatNewThread() {
+  if (CHAT.busy) { toast("正在生成回复，先停止再新建对话", "err"); return; }
+  const body = {
+    title: "新对话",
+    client: $("#chatClient").value || "",
+    model: $("#chatModel").value || "",
+    account: $("#chatAccount").value || "",
+  };
+  const r = await api("/panel/api/chat/conversations", { method: "POST", body: body });
+  if (!r.ok) { toast("新建对话失败：" + r.err, "err"); return; }
+  const t = r.data || {};
+  CHAT.threads.unshift(t);
+  CHAT.current = t.id || "";
+  CHAT.msgs = [];
+  CHAT.key = "";
+  chatDrawThreads();
+  chatDraw();
+  chatSyncHead();
+  $("#chatInput").focus();
+}
+
+async function chatOpenThread(id) {
+  if (CHAT.busy) { toast("正在生成回复，先停止再切换对话", "err"); return; }
+  if (CHAT.current === id) return;
+  CHAT.current = id;
+  const t = CHAT.threads.find(x => x.id === id);
+  CHAT.msgs = t ? (t.messages || []) : [];
+  CHAT.key = (t && t.key) || "";
+  if (t && t.model) {
+    const e = chatEntry({ id: t.model });
+    const clients = Array.from($("#chatClient").options).map(o => o.value);
+    if (e.group && clients.indexOf(e.group) >= 0) { $("#chatClient").value = e.group; chatFillModels(); }
+    if (Array.from($("#chatModel").options).some(o => o.value === t.model)) $("#chatModel").value = t.model;
+  }
+  if (t && t.account) {
+    const opts = Array.from($("#chatAccount").options).map(o => o.value);
+    if (opts.indexOf(t.account) >= 0) $("#chatAccount").value = t.account;
+  }
+  chatDrawThreads();
+  chatDraw();
+  chatSyncHead();
+  $("#chatInput").focus();
+}
+
+function chatDrawThreads() {
+  const box = $("#chatThreads"), empty = $("#chatThreadEmpty");
+  const q = ($("#chatSearch").value || "").trim().toLowerCase();
+  const rows = CHAT.threads.filter(t => !q || chatTitleOf(t).toLowerCase().indexOf(q) >= 0 ||
+    (t.messages || []).some(m => String(m.content || "").toLowerCase().indexOf(q) >= 0));
+  if (!rows.length) {
+    box.innerHTML = "";
+    empty.hidden = false;
+    empty.textContent = CHAT.threads.length ? "没有匹配的对话" : "还没有对话记录。点「新对话」开始。";
+    return;
+  }
+  empty.hidden = true;
+  box.innerHTML = rows.map(t => {
+    const on = t.id === CHAT.current ? " on" : "";
+    return '<div class="chat-thread' + on + '" role="listitem" data-thread="' + esc(t.id) + '" tabindex="0">' +
+      '<div class="t-text"><div class="t-title">' + esc(chatTitleOf(t)) + '</div>' +
+      '<div class="t-meta">' + esc(chatThreadMeta(t)) + '</div></div>' +
+      '<div class="t-acts">' +
+      // chatRenameThread / chatDeleteThread 处理行内按钮，点整行由 chatOpenThread 处理。
+      '<button class="t-act" type="button" data-act="rename" data-id="' + esc(t.id) + '" title="重命名" aria-label="重命名对话">' +
+      '<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M10.6 2.9l2.5 2.5-7.3 7.3-3.1.6.6-3.1z"/></svg></button>' +
+      '<button class="t-act danger" type="button" data-act="delete" data-id="' + esc(t.id) + '" title="删除" aria-label="删除对话">' +
+      '<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M3.5 4.5h9M6.5 4.5V3h3v1.5M5 4.5l.6 8h4.8l.6-8"/></svg></button>' +
+      '</div></div>';
+  }).join("");
+}
+
+async function chatRenameThread(id) {
+  const t = CHAT.threads.find(x => x.id === id);
+  if (!t) return;
+  const next = window.prompt("对话名称", chatTitleOf(t));
+  if (next == null) return;
+  const title = next.trim();
+  if (!title) return;
+  const r = await api("/panel/api/chat/conversations/" + encodeURIComponent(id), { method: "PATCH", body: { title: title } });
+  if (!r.ok) { toast("重命名失败：" + r.err, "err"); return; }
+  t.title = title;
+  if (CHAT.current === id) chatSyncHead();
+  chatDrawThreads();
+}
+
+async function chatDeleteThread(id) {
+  const t = CHAT.threads.find(x => x.id === id);
+  if (!t) return;
+  if (!window.confirm("删除对话「" + chatTitleOf(t) + "」？删了就找不回来了。")) return;
+  const r = await api("/panel/api/chat/conversations/" + encodeURIComponent(id), { method: "DELETE" });
+  if (!r.ok) { toast("删除失败：" + r.err, "err"); return; }
+  CHAT.threads = CHAT.threads.filter(x => x.id !== id);
+  if (CHAT.current === id) {
+    CHAT.current = "";
+    CHAT.msgs = [];
+    CHAT.key = "";
+    if (CHAT.threads.length) CHAT.current = CHAT.threads[0].id;
+    const cur = CHAT.threads.find(x => x.id === CHAT.current);
+    CHAT.msgs = cur ? (cur.messages || []) : [];
+    CHAT.key = (cur && cur.key) || "";
+  }
+  chatDrawThreads();
+  chatDraw();
+  chatSyncHead();
+}
+
+async function chatClearAllThreads() {
+  if (CHAT.busy) { toast("正在生成回复，先停止再清空记录", "err"); return; }
+  if (!CHAT.threads.length) return;
+  if (!window.confirm("清空全部 " + CHAT.threads.length + " 条对话记录？此操作不可恢复。")) return;
+  const r = await api("/panel/api/chat/conversations", { method: "DELETE" });
+  if (!r.ok) { toast("清空失败：" + r.err, "err"); return; }
+  CHAT.threads = [];
+  CHAT.current = "";
+  CHAT.msgs = [];
+  CHAT.key = "";
+  chatDrawThreads();
+  chatDraw();
+  chatSyncHead();
+}
+
+async function chatSaveThread(id, patch, quiet) {
+  if (!id) return null;
+  const r = await api("/panel/api/chat/conversations/" + encodeURIComponent(id), { method: "PATCH", body: patch });
+  if (!r.ok) {
+    if (!quiet) toast("保存对话失败：" + r.err, "err");
+    return null;
+  }
+  const saved = r.data;
+  if (saved) {
+    // 保存的是可回传上游的干净上下文（user/assistant）。当前会话里可能还有
+    // 失败气泡（role=error），它不会写进记录，但必须留在屏幕上——否则一保存，
+    // 操作员就看到错误自己消失了。
+    if (CHAT.current === id && CHAT.msgs.length) saved.messages = CHAT.msgs.slice();
+    const i = CHAT.threads.findIndex(t => t.id === id);
+    if (i >= 0) CHAT.threads[i] = saved; else CHAT.threads.unshift(saved);
+    CHAT.threads.sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0));
+    if (CHAT.current === id) {
+      CHAT.msgs = saved.messages || [];
+      CHAT.key = saved.key || "";
+      chatSyncHead();
+    }
+    chatDrawThreads();
+  }
+  return saved;
+}
+
+async function chatEnsureThread() {
+  if (CHAT.current) return CHAT.current;
+  const body = {
+    title: "新对话",
+    client: $("#chatClient").value || "",
+    model: $("#chatModel").value || "",
+    account: $("#chatAccount").value || "",
+  };
+  const r = await api("/panel/api/chat/conversations", { method: "POST", body: body });
+  if (!r.ok) { toast("新建对话失败：" + r.err, "err"); return ""; }
+  const t = r.data || {};
+  CHAT.current = t.id || "";
+  CHAT.threads.unshift(t);
+  chatDrawThreads();
+  chatSyncHead();
+  return CHAT.current;
+}
+
+function chatAutosize() {
+  const ta = $("#chatInput");
+  if (!ta) return;
+  ta.style.height = "auto";
+  ta.style.height = Math.min(ta.scrollHeight, 200) + "px";
+}
+
+function chatScrollBottom() {
+  const box = $("#chatScroll");
+  if (box) box.scrollTop = box.scrollHeight;
+}
 async function renderChat(force) {
   if (force || !CHAT.models.length) CHAT.models = await chatModels();
-  chatFillClients(); chatFillModels(); chatFillAccounts(); chatDraw();
+  chatFillClients(); chatFillModels(); chatFillAccounts();
+  await chatLoadThreads();
 }
 
 function chatDraw() {
@@ -14301,20 +14893,28 @@ function chatDraw() {
   if (CHAT.key) tags.push('<span class="chip on">会话 ' + esc(CHAT.key) + "</span>");
   if (CHAT.msgs.length) tags.push('<span class="chip">' + CHAT.msgs.length + " 条消息</span>");
   $("#chatTags").innerHTML = tags.join("");
+
   const box = $("#chatLog");
   if (!CHAT.msgs.length) {
-    box.innerHTML = '<div class="empty">还没有消息。选好客户端和模型，发一句试试。</div>';
+    box.innerHTML = '<div class="chat-empty"><h4>开始一段新对话</h4>' +
+      '<p>选好客户端和模型，把问题发出去。记录会保存在 data 目录，随时可以接着问。</p>' +
+      '<div class="chat-suggests">' +
+      '<button type="button" data-suggest="你好，先做个自我介绍">自我介绍</button>' +
+      '<button type="button" data-suggest="用三点说明你可以做什么">你能做什么</button>' +
+      '<button type="button" data-suggest="写一段 Python 快速排序并解释">写一段代码</button>' +
+      '</div></div>';
     return;
   }
-  box.innerHTML = CHAT.msgs.map(m => {
+  box.innerHTML = CHAT.msgs.map((m, i) => {
     const me = m.role === "user", err = m.role === "error";
-    const who = me ? "我" : err ? "错误" : "模型";
-    const think = m.reasoning ? '<span class="meta">思考 ' + esc(m.reasoning) + "</span>" : "";
+    const who = me ? "我" : err ? "!" : "AI";
+    const cls = me ? " me" : err ? " err" : "";
+    const think = m.reasoning ? '<span class="think">' + esc(m.reasoning) + "</span>" : "";
     const meta = m.meta ? '<span class="meta">' + esc(m.meta) + "</span>" : "";
-    return '<div class="chatmsg' + (me ? " me" : err ? " err" : "") + '"><div class="who">' + who +
+    return '<div class="chatmsg' + cls + '" data-i="' + i + '"><div class="who">' + who +
       '</div><div class="bub">' + esc(m.content) + think + meta + "</div></div>";
   }).join("");
-  box.scrollTop = box.scrollHeight;
+  chatScrollBottom();
 }
 
 // 把这次对话钉到选中的账号：先绑一个 key，再在 chat 请求里带
@@ -14339,7 +14939,6 @@ function chatSettle(out, status, t0, ttft, usage, finish) {
   if (ttft) parts.push("首字 " + Math.round(ttft) + " ms");
   if (finish) parts.push("finish=" + finish);
   if (usage) parts.push("tokens " + (usage.prompt_tokens || 0) + "+" + (usage.completion_tokens || 0) + "=" + (usage.total_tokens || 0));
-  if (CHAT.key) parts.push("会话 " + CHAT.key);
   out.meta = parts.join(" · ");
   chatDiag(out.meta);
 }
@@ -14351,11 +14950,15 @@ async function chatSend() {
   if (!text) return;
   const model = $("#chatModel").value;
   if (!model) { toast("没有可用模型", "err"); return; }
+  if (!(await chatEnsureThread())) return;
+  const threadID = CHAT.current;
   if (!(await chatBind())) return;
 
   const sys = ($("#chatSys").value || "").trim(), stream = $("#chatStream").checked;
   input.value = "";
+  chatAutosize();
   CHAT.msgs.push({ role: "user", content: text });
+
   const msgs = [];
   if (sys) msgs.push({ role: "system", content: sys });
   CHAT.msgs.forEach(m => { if (m.role === "user" || m.role === "assistant") msgs.push({ role: m.role, content: m.content }); });
@@ -14370,11 +14973,28 @@ async function chatSend() {
   CHAT.busy = true; $("#btnChatSend").disabled = true; $("#btnChatStop").disabled = false;
   CHAT.ctrl = new AbortController();
   chatDraw();
+  chatScrollBottom();
 
   const t0 = performance.now();
   let ttft = 0, usage = null, finish = "", res = null;
-  const stop = () => { CHAT.busy = false; $("#btnChatSend").disabled = false; $("#btnChatStop").disabled = true; CHAT.ctrl = null; chatDraw(); };
-  const fail = (msg, status) => { out.role = "error"; out.content = msg; chatSettle(out, status, t0, ttft, usage, finish); stop(); };
+  // turnOK 为真时才从服务端重读一次：失败气泡（role=error）是本地事件，不写进
+  // 记录，重读会把它从屏幕上抹掉，看起来像错误自己消失了。
+  let turnOK = true;
+  const settle = async () => {
+    CHAT.busy = false; $("#btnChatSend").disabled = false; $("#btnChatStop").disabled = true; CHAT.ctrl = null;
+    chatDraw();
+    const cur = chatCurrentThread();
+    await chatSaveThread(threadID, {
+      messages: CHAT.msgs.filter(m => m.role === "user" || m.role === "assistant"),
+      model: model,
+      client: $("#chatClient").value || "",
+      account: $("#chatAccount").value || "",
+      key: CHAT.key || "",
+      title: (cur && cur.title && cur.title !== "新对话") ? cur.title : text.slice(0, 24),
+    }, true);
+    if (turnOK) await chatLoadThreads();
+  };
+  const fail = async (msg, status) => { turnOK = false; out.role = "error"; out.content = msg; chatSettle(out, status, t0, ttft, usage, finish); await settle(); };
 
   try {
     const h = { "Content-Type": "application/json" };
@@ -14385,7 +15005,7 @@ async function chatSend() {
     h["X-Client2API-Internal-Test"] = "1";
     res = await fetch("/v1/chat/completions", { method: "POST", headers: h, body: JSON.stringify(body), cache: "no-store", signal: CHAT.ctrl.signal });
   } catch (e) {
-    fail((CHAT.ctrl && CHAT.ctrl.signal.aborted) ? "已停止" : "请求失败：" + String((e && e.message) || e), 0);
+    await fail((CHAT.ctrl && CHAT.ctrl.signal.aborted) ? "已停止" : "请求失败：" + String((e && e.message) || e), 0);
     return;
   }
   if (res.status === 401 || res.status === 403) showKey();
@@ -14395,7 +15015,7 @@ async function chatSend() {
       const txt = await res.text();
       let code = "", msg = txt;
       try { const er = (JSON.parse(txt) || {}).error || {}; code = er.code || ""; msg = er.message || txt; } catch (e) {}
-      fail(msg + (code ? "（code=" + code + "）" : ""), res.status);
+      await fail(msg + (code ? "（code=" + code + "）" : ""), res.status);
       return;
     }
     if (!stream) {
@@ -14405,7 +15025,7 @@ async function chatSend() {
       if (m.reasoning_content) out.reasoning = m.reasoning_content;
       finish = ch.finish_reason || ""; usage = j.usage || null;
       if (!out.content && !out.reasoning) out.content = "（空回复）";
-      chatSettle(out, res.status, t0, ttft, usage, finish); stop();
+      chatSettle(out, res.status, t0, ttft, usage, finish); await settle();
       return;
     }
     // 流式：网关按 OpenAI SSE 写 data: {...}，最后一行 data: [DONE]。
@@ -14425,41 +15045,96 @@ async function chatSend() {
         let ev; try { ev = JSON.parse(payload); } catch (e) { continue; }
         if (ev.error) {
           const er = ev.error;
-          fail((er.message || "上游错误") + (er.code ? "（code=" + er.code + "）" : ""), res.status);
+          await fail((er.message || "上游错误") + (er.code ? "（code=" + er.code + "）" : ""), res.status);
           return;
         }
         const ch = (ev.choices || [])[0] || {}, d = ch.delta || {};
-        if (d.content) { if (!ttft) ttft = performance.now() - t0; out.content += chatText(d.content); chatDraw(); }
+        if (d.content) { if (!ttft) ttft = performance.now() - t0; out.content += chatText(d.content); chatDraw(); chatScrollBottom(); }
         if (d.reasoning_content) out.reasoning += d.reasoning_content;
         if (ev.usage) usage = ev.usage;
         if (ch.finish_reason) finish = ch.finish_reason;
       }
     }
     if (!out.content && !out.reasoning) out.content = "（空回复）";
-    chatSettle(out, res.status, t0, ttft, usage, finish); stop();
+    chatSettle(out, res.status, t0, ttft, usage, finish); await settle();
   } catch (e) {
     if (CHAT.ctrl && CHAT.ctrl.signal.aborted) {
       out.content = out.content ? out.content + "\n\n（已停止）" : "已停止";
-      chatSettle(out, res.status, t0, ttft, usage, finish); stop();
+      chatSettle(out, res.status, t0, ttft, usage, finish); await settle();
     } else {
-      fail("读取响应失败：" + String((e && e.message) || e), res.status);
+      await fail("读取响应失败：" + String((e && e.message) || e), res.status);
     }
   }
 }
 
-$("#chatClient").addEventListener("change", () => { CHAT.key = ""; $("#chatModelFilt").value = ""; chatFillModels(); chatFillAccounts(); });
+$("#chatClient").addEventListener("change", () => { $("#chatModelFilt").value = ""; chatFillModels(); chatFillAccounts(); });
 $("#chatModelFilt").addEventListener("input", () => chatFillModels());
 $("#chatModelFilt").addEventListener("keydown", ev => {
   if (ev.key !== "Escape" || !ev.target.value) return;
   ev.target.value = "";
   chatFillModels();
 });
-$("#chatModel").addEventListener("change", () => { CHAT.key = ""; chatModeSync(); });
+$("#chatModel").addEventListener("change", () => { chatModeSync(); });
 $("#chatAccount").addEventListener("change", () => { CHAT.key = ""; });
 $("#btnChatSend").addEventListener("click", () => chatSend());
 $("#btnChatStop").addEventListener("click", () => { if (CHAT.ctrl) CHAT.ctrl.abort(); });
 $("#btnChatRecord").addEventListener("click", () => chatRecordToggle());
-$("#btnChatClear").addEventListener("click", () => { CHAT.msgs = []; CHAT.key = ""; chatDiag(""); chatDraw(); });
+$("#btnChatNew").addEventListener("click", () => chatNewThread());
+$("#btnChatClear").addEventListener("click", () => {
+  if (CHAT.busy) { toast("正在生成回复，先停止再清空", "err"); return; }
+  if (!CHAT.current) return;
+  if (!window.confirm("清空当前对话的消息？对话本身会保留。")) return;
+  CHAT.msgs = [];
+  CHAT.key = "";
+  chatDraw();
+  chatSaveThread(CHAT.current, { messages: [] });
+});
+$("#btnChatClearAll").addEventListener("click", () => chatClearAllThreads());
+$("#chatSearch").addEventListener("input", () => chatDrawThreads());
+$("#btnChatAdvanced").addEventListener("click", () => {
+  chatOpenAdvanced(!!$("#chatAdvanced").hidden);
+});
+// chatOpenAdvanced 返回筛选框本身，好让 "/" 快捷键先展开再聚焦：筛选框在高级设置
+// 里，折叠状态下直接 focus 一个 hidden 元素是没有任何效果的。
+function chatOpenAdvanced(open) {
+  if (open) $("#chatAdvanced").hidden = false;
+  $("#btnChatAdvanced").setAttribute("aria-expanded", $("#chatAdvanced").hidden ? "false" : "true");
+  return $("#chatModelFilt");
+}
+
+$("#chatSideToggle").addEventListener("click", () => {
+  CHAT.sideHidden = !CHAT.sideHidden;
+  $("#chatWorkspace").classList.toggle("side-hidden", CHAT.sideHidden);
+  $("#chatSideToggle").setAttribute("aria-expanded", CHAT.sideHidden ? "false" : "true");
+  $("#chatSideToggle").title = CHAT.sideHidden ? "展开对话记录" : "收起对话记录";
+});
+$("#chatThreads").addEventListener("click", ev => {
+  const act = ev.target.closest("[data-act]");
+  if (act) {
+    ev.stopPropagation();
+    const id = act.getAttribute("data-id");
+    if (act.getAttribute("data-act") === "rename") chatRenameThread(id);
+    else chatDeleteThread(id);
+    return;
+  }
+  const row = ev.target.closest("[data-thread]");
+  if (row) chatOpenThread(row.getAttribute("data-thread"));
+});
+$("#chatThreads").addEventListener("keydown", ev => {
+  if (ev.key !== "Enter" && ev.key !== " ") return;
+  const row = ev.target.closest("[data-thread]");
+  if (!row) return;
+  ev.preventDefault();
+  chatOpenThread(row.getAttribute("data-thread"));
+});
+$("#chatLog").addEventListener("click", ev => {
+  const b = ev.target.closest("[data-suggest]");
+  if (!b) return;
+  $("#chatInput").value = b.getAttribute("data-suggest");
+  chatAutosize();
+  $("#chatInput").focus();
+});
+$("#chatInput").addEventListener("input", () => chatAutosize());
 $("#chatInput").addEventListener("keydown", ev => {
   if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); chatSend(); }
 });

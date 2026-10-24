@@ -24,6 +24,7 @@ type accountRecord struct {
 	Label         string `json:"label,omitempty"`
 	UID           string `json:"uid,omitempty"`
 	UserID        string `json:"user_id,omitempty"`
+	YID           string `json:"yid,omitempty"`
 	UUID          string `json:"uuid,omitempty"`
 	AccessToken   string `json:"access_token,omitempty"`
 	RefreshToken  string `json:"refresh_token,omitempty"`
@@ -57,6 +58,7 @@ func (a *accountRecord) accountConfig() AccountConfig {
 		Label:         a.Label,
 		UID:           a.UID,
 		UserID:        a.UserID,
+		YID:           a.YID,
 		UUID:          a.UUID,
 		AccessToken:   a.AccessToken,
 		RefreshToken:  a.RefreshToken,
@@ -72,9 +74,15 @@ func (a *accountRecord) accountConfig() AccountConfig {
 // derived from the uid, falling back to a hash of the token so a credential
 // pasted without a uid still gets a stable name.
 func accountFromConfig(cfg AccountConfig, now time.Time) accountRecord {
-	uid := firstNonEmpty(cfg.UID, cfg.UserID)
+	uid := firstNonEmpty(cfg.UID, cfg.UserID, cfg.YID)
 	if uid == "" {
 		uid = tokenFingerprint(cfg.AccessToken)
+	}
+	yid := strings.TrimSpace(cfg.YID)
+	if yid == "" {
+		if fromToken, ok := jwtYID(cfg.AccessToken); ok {
+			yid = fromToken
+		}
 	}
 	label := cfg.Label
 	if label == "" {
@@ -85,12 +93,13 @@ func accountFromConfig(cfg AccountConfig, now time.Time) accountRecord {
 		Label:         label,
 		UID:           uid,
 		UserID:        cfg.UserID,
+		YID:           yid,
 		UUID:          cfg.UUID,
 		AccessToken:   cfg.AccessToken,
 		RefreshToken:  cfg.RefreshToken,
 		ExpiresAt:     cfg.ExpiresAt,
-		FirstKeyfrom:  cfg.FirstKeyfrom,
-		LatestKeyfrom: cfg.LatestKeyfrom,
+		FirstKeyfrom:  keyfromOr(cfg.FirstKeyfrom, defaultFirstKeyfrom),
+		LatestKeyfrom: keyfromOr(cfg.LatestKeyfrom, defaultLatestKeyfrom),
 		Nickname:      cfg.Nickname,
 		Enabled:       !cfg.Disabled,
 		AddedAt:       now.UTC().Format(time.RFC3339),
@@ -632,6 +641,17 @@ func loadCredentials(path string) []accountRecord {
 		if rec.ID == "" {
 			continue
 		}
+		if strings.TrimSpace(rec.FirstKeyfrom) == "" || isTimestampKeyfrom(rec.FirstKeyfrom) {
+			rec.FirstKeyfrom = defaultFirstKeyfrom
+		}
+		if strings.TrimSpace(rec.LatestKeyfrom) == "" || isTimestampKeyfrom(rec.LatestKeyfrom) {
+			rec.LatestKeyfrom = defaultLatestKeyfrom
+		}
+		if strings.TrimSpace(rec.YID) == "" {
+			if yid, ok := jwtYID(rec.AccessToken); ok {
+				rec.YID = yid
+			}
+		}
 		if rec.AddedAt == "" {
 			rec.AddedAt = time.Now().UTC().Format(time.RFC3339)
 		}
@@ -687,6 +707,8 @@ func decodeCredentialsBody(raw []byte) ([]AccountConfig, error) {
 			acct := *nested.Auth
 			if nested.Account != nil {
 				acct.UID = firstNonEmpty(asString(nested.Account.UID), asString(nested.Account.UserID), asString(nested.Account.YID))
+				acct.UserID = firstNonEmpty(asString(nested.Account.UserID), acct.UserID)
+				acct.YID = firstNonEmpty(asString(nested.Account.YID), acct.YID)
 				acct.Nickname = firstNonEmpty(acct.Nickname, nested.Account.Nickname)
 			}
 			return []AccountConfig{acct}, nil
