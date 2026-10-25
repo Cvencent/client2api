@@ -39,7 +39,7 @@ import (
 // version is the packaging default; build.ps1 injects the authoritative value
 // from cmd/client2api/main.go with -X main.version=... .  installer's guard
 // test fails if this literal ever drifts from the source of truth.
-var version = "0.3.9"
+var version = "0.4.0"
 
 const (
 	appName      = "client2api"

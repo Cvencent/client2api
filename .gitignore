@@ -102,3 +102,6 @@ client2api.pid
 /!loop.has(x.name)
 /output/*.jsonl
 /output/playwright/*.txt
+
+# oil-ui 设计会话的工作产物（截图/探针/临时脚本），只有 .gitignore 自身，不入库。
+.oil-ui/

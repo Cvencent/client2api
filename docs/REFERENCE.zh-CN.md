@@ -78,6 +78,7 @@ Anthropic 风格错误，再交给与 OpenAI 兼容入口相同的内部对话�
       "label": "我的中转站",
       "base_url": "https://api.example.com/v1",
       "max_tokens_field": "max_tokens",
+      "proxy": "socks5://127.0.0.1:1080",
       "disabled": false
     }
   },
@@ -92,7 +93,9 @@ Anthropic 风格错误，再交给与 OpenAI 兼容入口相同的内部对话�
 ```
 
 API 地址只接受 HTTP(S)，需要 `/v1` 等前缀的服务请一并填写。
-输出上限字段可选 `max_tokens` 或 `max_completion_tokens`。平台 ID 以小写
+输出上限字段可选 `max_tokens` 或 `max_completion_tokens`。`proxy`（可选）是
+`http`、`https`、`socks5` 或 `socks5h` 地址，这个中转站的对话、扫描模型、
+余额和账号测试全部走它；不填则沿用网关自己的出口。平台 ID 以小写
 字母开头，只含小写字母、数字和连字符，不能与内置平台或保留目录重名。
 显示名称可以随时改，路由 ID 保持不变。客户端使用网关统一的入站 Key 调用
 `my-relay/上游模型名`；也可以按现有规则使用裸模型名、模型组、平台优先级、

@@ -62,6 +62,31 @@ func TestSourceValidationBalanceProtocol(t *testing.T) {
 	}
 }
 
+func TestSourceValidationProxy(t *testing.T) {
+	for _, proxy := range []string{
+		"",
+		"http://127.0.0.1:7890",
+		"https://proxy.example:8443",
+		"socks5://127.0.0.1:1080",
+		"socks5h://user:pass@127.0.0.1:1080",
+	} {
+		if err := ValidateSources(map[string]SourceConfig{"relay": {BaseURL: "https://relay.example/v1", Proxy: proxy}}); err != nil {
+			t.Errorf("rejected proxy %q: %v", proxy, err)
+		}
+	}
+	for _, proxy := range []string{
+		"file:///tmp/sock",
+		"relay.example:8080",
+		"http://",
+		"http://proxy.example/#frag",
+		"socks4://127.0.0.1:1080",
+	} {
+		if err := ValidateSources(map[string]SourceConfig{"relay": {BaseURL: "https://relay.example/v1", Proxy: proxy}}); err == nil {
+			t.Errorf("accepted proxy %q", proxy)
+		}
+	}
+}
+
 func TestSourceReconciliationRetainsInstancesAndRemovesRoutes(t *testing.T) {
 	// A test-specific factory avoids changing the module factory used by other tests.
 	r := NewRegistry()

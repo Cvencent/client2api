@@ -135,6 +135,38 @@ func TestSourceLimitsEditorIsWired(t *testing.T) {
 	}
 }
 
+func TestSourceHandlerPersistsThePerSourceProxy(t *testing.T) {
+	path := configFile(t, `{}`)
+	p := configPanel(path)
+	p.opts.Registry = core.NewRegistry()
+	p.opts.Reload = func() error { return nil }
+	w := httptest.NewRecorder()
+	body := `{"base_url":"https://relay.example/v1","proxy":"socks5://user:pass@127.0.0.1:1080"}`
+	p.handleSource(w, httptest.NewRequest(http.MethodPut, "/panel/api/sources/relay", strings.NewReader(body)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("save: %d %s", w.Code, w.Body.String())
+	}
+	src := onDisk(t, path)["sources"].(map[string]any)["relay"].(map[string]any)
+	if src["proxy"] != "socks5://user:pass@127.0.0.1:1080" {
+		t.Fatalf("proxy was not persisted: %v", src)
+	}
+}
+
+func TestSourceProxyEditorIsWired(t *testing.T) {
+	src := string(indexHTML)
+	for _, want := range []string{
+		`id="sourceProxy"`,
+		`$("#sourceProxy").value = cfg.proxy || "";`,
+		`proxy: $("#sourceProxy").value.trim(),`,
+		`function sourceProxyHost(raw) {`,
+		`SOURCE_DEFS[n].proxy ? ' · 代理 '`,
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("source proxy editor is missing %q", want)
+		}
+	}
+}
+
 func TestSourceHandlerRequiresHotReloadBeforeWriting(t *testing.T) {
 	p := configPanel(configFile(t, `{}`))
 	w := httptest.NewRecorder()

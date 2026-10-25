@@ -36,6 +36,12 @@ type SourceConfig struct {
 	BalanceProtocol    string  `json:"balance_protocol,omitempty"`
 	BalanceQuotaPerUSD float64 `json:"balance_quota_per_usd,omitempty"`
 
+	// Proxy routes every request this source makes through the given proxy
+	// (http, https, socks5 or socks5h), independently of the gateway-wide
+	// proxy.  Empty means "use the gateway client unchanged", so a relay that
+	// needs its own egress does not drag the other platforms with it.
+	Proxy string `json:"proxy,omitempty"`
+
 	// RequestsPerMinute caps every upstream attempt for this source.  Zero
 	// means no per-source RPM ceiling.
 	RequestsPerMinute int `json:"requests_per_minute,omitempty"`
@@ -213,6 +219,9 @@ func ValidateSources(sources map[string]SourceConfig) error {
 		if math.IsNaN(cfg.BalanceQuotaPerUSD) || math.IsInf(cfg.BalanceQuotaPerUSD, 0) || cfg.BalanceQuotaPerUSD < 0 {
 			return fmt.Errorf("source %q: balance_quota_per_usd must be positive when set", id)
 		}
+		if err := validateSourceProxy(cfg.Proxy); err != nil {
+			return fmt.Errorf("source %q: %w", id, err)
+		}
 		if cfg.RequestsPerMinute < 0 {
 			return fmt.Errorf("source %q: requests_per_minute must be >= 0", id)
 		}
@@ -236,6 +245,31 @@ func ValidateSources(sources map[string]SourceConfig) error {
 				return fmt.Errorf("source %q: %s %v", id, name, err)
 			}
 		}
+	}
+	return nil
+}
+
+// validateSourceProxy accepts the same schemes the egress proxy does.  An
+// empty value is valid: it means "inherit the gateway client".
+func validateSourceProxy(raw string) error {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("proxy: %w", err)
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "http", "https", "socks5", "socks5h":
+	default:
+		return fmt.Errorf("proxy must use http, https, socks5 or socks5h")
+	}
+	if u.Hostname() == "" {
+		return fmt.Errorf("proxy must include a host")
+	}
+	if u.Fragment != "" {
+		return fmt.Errorf("proxy must not carry a fragment")
 	}
 	return nil
 }

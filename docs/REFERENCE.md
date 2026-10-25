@@ -83,6 +83,7 @@ If the API root changes, scan again to populate its new catalogue.
       "label": "My relay",
       "base_url": "https://api.example.com/v1",
       "max_tokens_field": "max_tokens",
+      "proxy": "socks5://127.0.0.1:1080",
       "disabled": false
     }
   },
@@ -97,7 +98,10 @@ If the API root changes, scan again to populate its new catalogue.
 ```
 
 API roots must use HTTP(S); include the service's version prefix when needed.
-`max_tokens_field` accepts `max_tokens` or `max_completion_tokens`. IDs use
+`max_tokens_field` accepts `max_tokens` or `max_completion_tokens`. `proxy`
+(optional) is an `http`, `https`, `socks5` or `socks5h` URL, and routes every
+request this one relay makes — chat, model scan, balance and account tests — through
+it; leave it out to keep using the gateway's own egress. IDs use
 lowercase ASCII letters, digits and hyphens, start with a letter, and cannot
 reuse a built-in platform or reserved directory name. Display names can change
 without changing routing IDs. Call `my-relay/<upstream-model>` using the

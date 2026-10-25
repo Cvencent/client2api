@@ -22,6 +22,7 @@
       "base_url": "https://api.example.com/v1",
       "disabled": true,
       "max_tokens_field": "max_tokens",
+      "proxy": "",
       "requests_per_minute": 120,
       "requests_per_minute_per_account": 30,
       "max_in_flight": 8,

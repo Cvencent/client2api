@@ -698,10 +698,21 @@ block. Because the module classifies 3012 as `FailureWAF`, that also fed the
 shared IP-level gate and parked every other platform on the machine, so one
 stale request shape looked like a machine-wide block.
 
-So `buildSystem` folds the powered-by line INTO the last preamble block instead
-of appending it; the block count stays identical to the official client. The
-preamble text lives in `system.go`; the reference data file was not copied.
-`system_test.go` pins the three-block invariant and the fold.
+A live differential replay (2026-10-26, one variable at a time against the
+production endpoint) pinned the exact rule:
+
+- **at most three blocks** -- a fourth block, even plain caller text, is a 3012;
+- blocks 0 and 1 must be **byte-exact**: rewriting a word, or trimming the
+  leading newline, is a 3012 (appending to block 1 is tolerated);
+- block 1 without block 0 ahead of it is a 3012;
+- the last block is free-form: the environment text, the folded powered-by
+  line and caller prose all pass there.
+
+So `buildSystem` folds BOTH the powered-by line and any caller-supplied system
+message INTO the last preamble block instead of appending a block; the block
+count never exceeds three. The preamble text lives in `system.go`; the
+reference data file was not copied. `system_test.go` pins the invariants and
+the fold.
 
 ---
 
@@ -848,3 +859,4 @@ During recon, a live API key was observed in clear text in a credential file and
 in session logs. **That key must be rotated.** It is not hardcoded here, not
 committed here, and never logged: this module masks secrets with
 `core.MaskSecret` before they can reach a log line.
+

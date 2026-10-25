@@ -180,7 +180,9 @@ func TestMakefileReadsTheVersionFromThisFile(t *testing.T) {
 	}
 
 	// That sed program only matches one source shape, so check the shape itself.
-	src := repoFile(t, "cmd/client2api/main.go")
+	// A Windows checkout materialises the file with CRLF endings and Go's
+	// regexp only treats \n as a line boundary, so normalise first.
+	src := strings.ReplaceAll(repoFile(t, "cmd/client2api/main.go"), "\r\n", "\n")
 	m := regexp.MustCompile(`(?m)^var version = "([^"]*)"$`).FindStringSubmatch(src)
 	if m == nil {
 		t.Fatalf("cmd/client2api/main.go has no line of the form `var version = \"...\"` for the Makefile's sed to match")
@@ -189,3 +191,4 @@ func TestMakefileReadsTheVersionFromThisFile(t *testing.T) {
 		t.Errorf("sed would extract %q but the built-in version is %q", m[1], version)
 	}
 }
+

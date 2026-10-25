@@ -384,11 +384,7 @@ func (s *source) readOpenAISubscription(ctx context.Context, base string, accoun
 }
 
 func (s *source) doBalanceRequest(req *http.Request) ([]byte, error) {
-	client := s.deps.HTTPClient
-	if client == nil {
-		client = defaultHTTPClient
-	}
-	resp, err := client.Do(req)
+	resp, err := s.httpClient().Do(req)
 	if err != nil {
 		return nil, err
 	}

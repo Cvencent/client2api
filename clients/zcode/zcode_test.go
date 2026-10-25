@@ -537,10 +537,11 @@ func TestIdentityPreambleInjected(t *testing.T) {
 	if err := json.Unmarshal(got, &doc); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	// The vendor risk-controls the block COUNT: a standalone powered-by block
-	// is answered 405/3012, so the line must live inside the environment block.
-	if len(doc.System) != 4 {
-		t.Fatalf("want 3 identity blocks + 1 caller block (the powered-by line folds into the environment block), got %d (%s)", len(doc.System), got)
+	// The vendor risk-controls the block COUNT: a fourth block -- standalone
+	// powered-by OR caller text -- is answered 405/3012, so both lines fold
+	// into the environment block.
+	if len(doc.System) != 3 {
+		t.Fatalf("want exactly 3 blocks (powered-by and caller text fold into the environment block), got %d (%s)", len(doc.System), got)
 	}
 	if doc.System[0].Text != "You are ZCode, an interactive coding agent" {
 		t.Errorf("first identity block = %q", doc.System[0].Text)
@@ -557,8 +558,8 @@ func TestIdentityPreambleInjected(t *testing.T) {
 	if !strings.Contains(doc.System[2].Text, "- You are powered by the model named GLM-5.3.") {
 		t.Errorf("the powered-by line should be folded into the environment block, got %q", doc.System[2].Text)
 	}
-	if doc.System[3].Text != "caller system" {
-		t.Errorf("caller system block = %q", doc.System[3].Text)
+	if !strings.Contains(doc.System[2].Text, "caller system") {
+		t.Errorf("caller text should fold into the environment block, got %q", doc.System[2].Text)
 	}
 	// Only the three preamble blocks carry the marker; the caller block is
 	// the caller text verbatim.
@@ -1943,3 +1944,4 @@ func TestZcodeChatNamesTheServedAccount(t *testing.T) {
 		t.Errorf("ServedBy = %q, want %q", served, "k1")
 	}
 }
+

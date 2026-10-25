@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"reflect"
 	"sort"
@@ -46,6 +48,17 @@ type source struct {
 	affinity      *core.Affinity
 	scanFilter    sourceModelFilter
 	wireModel     func(string) string
+
+	// httpMu guards the per-source HTTP client below.  It is a separate lock
+	// from mu so a request path can fetch its client without touching the
+	// pool/config state.
+	httpMu sync.RWMutex
+	// httpc is what every request this source makes goes through: the shared
+	// gateway client when no per-source proxy is configured, otherwise a clone
+	// of it pointed at the operator's proxy.  proxy records the value httpc
+	// was built for, so a reload that does not touch it keeps the connections.
+	httpc *http.Client
+	proxy string
 }
 
 type sourceModelFilter func(context.Context, storedProvider, []modelCatalogueEntry) ([]modelCatalogueEntry, error)
@@ -72,6 +85,85 @@ func newSource(name string, cfg core.SourceConfig, deps core.Deps) (*source, err
 		return nil, err
 	}
 	return s, nil
+}
+
+// depsWithClient copies the module deps with this source's HTTP client in
+// place.  Everything built from it -- chat, model scan, balance, account test
+// -- therefore leaves through the source's proxy.
+func (s *source) depsWithClient() core.Deps {
+	d := s.deps
+	d.HTTPClient = s.httpClient()
+	return d
+}
+
+// httpClient returns the client every request for this source must use.
+func (s *source) httpClient() *http.Client {
+	s.httpMu.RLock()
+	c := s.httpc
+	s.httpMu.RUnlock()
+	if c != nil {
+		return c
+	}
+	if s.deps.HTTPClient != nil {
+		return s.deps.HTTPClient
+	}
+	return defaultHTTPClient
+}
+
+// setProxy installs the client for the configured proxy.  An empty proxy keeps
+// the gateway's shared client, which already honours the global proxy and the
+// process environment; a non-empty one clones that transport and points it at
+// the operator's proxy.  Validation has already rejected a malformed URL, so an
+// unparsable hand-built value falls back to the shared client rather than
+// breaking the platform.
+func (s *source) setProxy(raw string) {
+	want := strings.TrimSpace(raw)
+	s.httpMu.Lock()
+	defer s.httpMu.Unlock()
+	if s.httpc != nil && s.proxy == want {
+		return
+	}
+	base := s.deps.HTTPClient
+	if base == nil {
+		base = defaultHTTPClient
+	}
+	old := s.httpc
+	if want == "" {
+		s.httpc, s.proxy = base, ""
+	} else if u, err := url.Parse(want); err == nil && u.Hostname() != "" {
+		tr := cloneTransport(base.Transport)
+		tr.Proxy = http.ProxyURL(u)
+		s.httpc = &http.Client{Transport: tr, Timeout: base.Timeout, CheckRedirect: base.CheckRedirect, Jar: base.Jar}
+		s.proxy = want
+	} else {
+		s.httpc, s.proxy = base, ""
+	}
+	if old != nil && old != s.httpc && old != base {
+		closeIdleConnections(old)
+	}
+}
+
+// cloneTransport copies the shared transport so the per-source proxy cannot
+// alter the gateway client's settings.  A non-*http.Transport round tripper (a
+// test stub, for instance) cannot be cloned, so the stock transport is used.
+func cloneTransport(rt http.RoundTripper) *http.Transport {
+	if t, ok := rt.(*http.Transport); ok {
+		return t.Clone()
+	}
+	base, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return &http.Transport{Proxy: http.ProxyFromEnvironment, ForceAttemptHTTP2: true}
+	}
+	return base.Clone()
+}
+
+func closeIdleConnections(c *http.Client) {
+	if c == nil {
+		return
+	}
+	if tr, ok := c.Transport.(*http.Transport); ok {
+		tr.CloseIdleConnections()
+	}
 }
 
 func (s *source) Name() string   { return s.name }
@@ -123,6 +215,7 @@ func (s *source) ConfigureSource(cfg core.SourceConfig) error {
 	s.cfg = cfg
 	s.rows = rows
 	s.publishLocked()
+	s.setProxy(cfg.Proxy)
 	return nil
 }
 
@@ -157,7 +250,7 @@ func (s *source) transportLocked() *Client {
 	for _, p := range s.rows {
 		providers = append(providers, s.providerLocked(p))
 	}
-	return &Client{instanceName: s.name, deps: s.deps, cfg: Config{MaxTokensField: field, Providers: providers}, pool: s.pool, now: time.Now, wireModel: s.wireModel}
+	return &Client{instanceName: s.name, deps: s.depsWithClient(), cfg: Config{MaxTokensField: field, Providers: providers}, pool: s.pool, now: time.Now, wireModel: s.wireModel}
 }
 func (s *source) providerLocked(p storedProvider) ProviderConfig {
 	return ProviderConfig{ID: p.ID, APIKey: p.APIKey, AppSecret: p.AppSecret, BaseURL: s.accountBaseLocked(p), Models: append([]string(nil), p.Models...), ProbeModels: append([]string(nil), p.ProbeModels...), Label: p.Label, Disabled: p.Disabled}

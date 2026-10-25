@@ -1047,6 +1047,32 @@ details.cfg summary { cursor: pointer; color: var(--ink-3); font-size: 12.5px; }
 .tblbar .grow { flex: 1; }
 .tblbar label.chk { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; color: var(--ink-2); white-space: nowrap; cursor: pointer; }
 .tblbar label.chk input { margin: 0; }
+/* 模型页的客户端筛选是联想输入框：输入即出建议，提交值才参与筛选。浮层要盖住
+   下面的表（sticky 表头 z-index 3/4），所以给到 30；[hidden] 必须显式压住 flex。 */
+.mdcombo { position: relative; display: inline-flex; align-items: center; }
+.mdcombo input { width: 170px; padding-right: 26px; }
+.mdcombo-clear {
+  position: absolute; right: 5px; width: 18px; height: 18px; padding: 0; border: 0;
+  background: none; color: var(--ink-3); font-size: 14px; line-height: 1; cursor: pointer; border-radius: 4px;
+}
+.mdcombo-clear:hover { color: var(--ink); background: var(--surface-2); }
+.mdcombo-list {
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 30; min-width: 250px; max-height: 300px;
+  overflow: auto; padding: 4px; display: flex; flex-direction: column; gap: 1px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 8px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.22);
+}
+.mdcombo-list[hidden] { display: none; }
+.mdcombo-item {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 14px; width: 100%;
+  text-align: left; padding: 6px 9px; border: 0; background: none; border-radius: 6px;
+  font-size: 12.5px; color: var(--ink-2); cursor: pointer;
+}
+.mdcombo-item .mdcombo-sub { font: 11px var(--mono); color: var(--ink-3); white-space: nowrap; }
+.mdcombo-item:hover, .mdcombo-item.active { background: var(--surface-2); color: var(--ink); }
+.mdcombo-item.on { color: var(--accent); }
+.mdcombo-item.on .mdcombo-sub { color: var(--accent); }
+.mdcombo-empty { padding: 6px 9px; }
 .box > header { flex-wrap: wrap; row-gap: 8px; }
 .box > header input.filt { width: 180px; flex: none; padding: 5px 10px; font-size: 12.5px; border-radius: 6px; }
 kbd { font: 11px var(--mono); color: var(--ink-3); background: var(--surface-2); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 1px 5px; }
@@ -4455,7 +4481,11 @@ input, select, textarea, .stat, .subtab {
              不重新请求上游 —— 数据已经在内存里，重拉一次只会更慢。 -->
         <div class="tblbar">
           <input id="mdSearch" type="search" placeholder="搜索模型名 / 客户端 / 归属（/）" spellcheck="false" autocomplete="off">
-          <select id="mdClient"><option value="">全部客户端</option></select>
+          <div class="mdcombo" id="mdClientCombo">
+            <input id="mdClient" type="text" placeholder="全部客户端" title="输入以联想客户端；清空 = 全部" spellcheck="false" autocomplete="off" aria-label="按客户端筛选模型" role="combobox" aria-expanded="false" aria-controls="mdClientList" aria-autocomplete="list">
+            <button class="mdcombo-clear" id="mdClientClear" type="button" title="清除客户端筛选，回到全部" aria-label="清除客户端筛选，回到全部客户端" hidden>×</button>
+            <div class="mdcombo-list" id="mdClientList" role="listbox" aria-label="客户端建议" hidden></div>
+          </div>
           <label class="chk"><input type="checkbox" id="mdUpOnly">只看上游</label>
           <label class="chk"><input type="checkbox" id="mdFreeOnly">只看免费</label>
           <span class="grow"></span>
@@ -4468,6 +4498,25 @@ input, select, textarea, .stat, .subtab {
           </tr></thead>
           <tbody id="mdBody"></tbody>
         </table>
+        </div>
+        <!-- 模型动辄八百多行，整表一次画完会把页面卡死；分页默认每页 20 行，
+             其余的用搜索 / 客户端联想框找。 -->
+        <div class="pager" id="mdPager" hidden>
+          <span class="grow"></span>
+          <span class="note" id="mdPageInfo"></span>
+          <label class="sel-note">每页 <select id="mdPageSize">
+            <option value="20" selected>20</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+            <option value="200">200</option>
+          </select></label>
+          <span class="pgbtns">
+            <button class="xs" id="mdPageFirst" title="第一页" aria-label="第一页">«</button>
+            <button class="xs" id="mdPagePrev" title="上一页" aria-label="上一页">‹</button>
+            <span class="pgnum" id="mdPageNow"></span>
+            <button class="xs" id="mdPageNext" title="下一页" aria-label="下一页">›</button>
+            <button class="xs" id="mdPageLast" title="最后一页" aria-label="最后一页">»</button>
+          </span>
         </div>
       </div>
       </div>
@@ -4688,6 +4737,7 @@ input, select, textarea, .stat, .subtab {
       <div class="fld"><label class="lb" for="sourceURL">API 地址 *</label><input id="sourceURL" type="url" required placeholder="https://api.example.com/v1" autocomplete="off" spellcheck="false"></div>
       <div class="fld" id="sourceKeyField"><label class="lb" for="sourceKey">首个 API Key（可选）</label><input id="sourceKey" type="password" autocomplete="new-password" spellcheck="false"></div>
       <div class="fld"><label class="lb" for="sourceTokens">输出上限字段</label><select id="sourceTokens"><option value="max_tokens">max_tokens</option><option value="max_completion_tokens">max_completion_tokens</option></select></div>
+      <div class="fld"><label class="lb" for="sourceProxy">代理（可选）</label><input id="sourceProxy" placeholder="http://127.0.0.1:7890 或 socks5://127.0.0.1:1080" autocomplete="off" spellcheck="false"><span class="hint">这个中转站的全部请求（对话、扫描模型、余额、测试）都走这个代理；留空表示跟随网关的全局代理。</span></div>
       <div class="fld"><label class="lb" for="sourceBalanceProtocol">余额协议</label><select id="sourceBalanceProtocol"><option value="auto">自动识别</option><option value="newapi">New API</option><option value="sub2api">Sub2API</option><option value="openai_billing">OpenAI Billing</option><option value="none">不查询</option></select></div>
       <div class="fld"><label class="lb" for="sourceBalanceQuota">每美元额度</label><input id="sourceBalanceQuota" type="number" min="0" step="1" value="500000" placeholder="500000" inputmode="numeric"></div>
       <fieldset class="source-policy">
@@ -5190,6 +5240,11 @@ function platformLabel(n) {
 }
 
 function closeSource() { hideVeil($("#sourceVeil")); $("#sourceKey").value = ""; }
+// sourceProxyHost shows where a relay exits without echoing the proxy's
+// credentials into the platform list.
+function sourceProxyHost(raw) {
+  try { const u = new URL(String(raw)); return u.protocol + "//" + u.host; } catch (e) { return String(raw || ""); }
+}
 function sourceIntField(selector) {
   const raw = $(selector).value.trim();
   if (raw === "") return null;
@@ -5205,6 +5260,7 @@ function openSource(id) {
   $("#sourceLabel").value = cfg.label || "";
   $("#sourceURL").value = cfg.base_url || "";
   $("#sourceTokens").value = cfg.max_tokens_field || "max_tokens";
+  $("#sourceProxy").value = cfg.proxy || "";
   $("#sourceBalanceProtocol").value = cfg.balance_protocol || "auto";
   $("#sourceBalanceQuota").value = cfg.balance_quota_per_usd || 500000;
   const intText = value => value == null ? "" : String(value);
@@ -5301,6 +5357,7 @@ async function saveSource(ev) {
       label: $("#sourceLabel").value.trim(), base_url: $("#sourceURL").value.trim(),
       disabled: !$("#sourceEnabled").checked, max_tokens_field: $("#sourceTokens").value,
       balance_protocol: $("#sourceBalanceProtocol").value,
+      proxy: $("#sourceProxy").value.trim(),
       balance_quota_per_usd: Number($("#sourceBalanceQuota").value)
     };
     const rpm = sourceIntField("#sourceRPM");
@@ -9380,23 +9437,29 @@ async function renderModels(refresh) {
   const liveKeys = {};
   items.forEach(it => { liveKeys[it.key] = true; });
   Object.keys(MD_EDITS).forEach(k => { if (!liveKeys[k]) delete MD_EDITS[k]; });
-  // 客户端下拉只列这次真的返回了模型的模块，并按名字排序。已经选中的值跨刷新保留，
-  // 否则每按一次「重新获取」都要重新选一遍。
+  // 客户端联想框的数据源只列这次真的返回了模型的模块，并按名字排序。已经选中的
+  // 值跨刷新保留；这个客户端这次没返回模型时退回「全部」，别让表格永远筛不出一行。
   const names = cls.filter(c => (c.models || []).length).map(c => c.name).sort();
+  MD_CLIENTS = names;
+  MD_CLIENT_COUNTS = {};
+  cls.forEach(c => { if ((c.models || []).length) MD_CLIENT_COUNTS[c.name] = c.models.length; });
   const sel = $("#mdClient");
   const platformSignature = JSON.stringify(names.map(n => [n, platformLabel(n)]));
   if (sel.dataset.built !== platformSignature) {
-    const keep = sel.value;
     sel.dataset.built = platformSignature;
-    sel.innerHTML = '<option value="">全部客户端</option>' +
-      names.map(x => '<option value="' + esc(x) + '">' + esc(platformLabel(x)) + '</option>').join("");
-    sel.value = names.indexOf(keep) >= 0 ? keep : "";
+    if (MD_CLIENT_COMMITTED && names.indexOf(MD_CLIENT_COMMITTED) < 0) {
+      if (sel.value === MD_CLIENT_COMMITTED) sel.value = "";
+      MD_CLIENT_COMMITTED = "";
+      mdComboClearVis();
+    }
+    if (MD_COMBO.open) mdComboOpen(); // 建议列表开着时用新目录重画
   }
   const mdSortHeader = $("#mdSortContext");
   if (mdSortHeader) {
     mdSortHeader.dataset.mdSortDir = MD_CONTEXT_SORT;
     mdSortHeader.setAttribute("aria-sort", MD_CONTEXT_SORT === "asc" ? "ascending" : "descending");
   }
+  MD_KEEP_PAGE = true; // 刷新数据不动页码：每页内容换新，页码越界时 mdApply 会夹回来
   mdApply();
   $("#mdNote").textContent = n + " 个模型 · " + canRefresh + "/" + cls.length + " 支持上游刷新 · " + (r.data.refreshed_at || "").replace("T", " ").slice(0, 19) +
     (fallbackRows ? " · " + fallbackRows + "/" + n + " 行来自回退列表" : " · 全部来自上游") +
@@ -9413,6 +9476,7 @@ function mdContextSortToggle() {
     th.dataset.mdSortDir = MD_CONTEXT_SORT;
     th.setAttribute("aria-sort", MD_CONTEXT_SORT === "asc" ? "ascending" : "descending");
   }
+  MD_KEEP_PAGE = true; // 排序不是筛选：留在当前页重排
   mdApply();
 }
 function mdContextSorted(rows) {
@@ -9422,8 +9486,15 @@ function mdContextSorted(rows) {
     return String(a.model).localeCompare(String(b.model), "zh-CN");
   });
 }
-// mdApply 只做过滤和重排，不碰网络。三个条件（搜索词 / 客户端 / 只看上游）是"与"
-// 关系；搜索词按空格拆成多个词，每个词都要在同一行里命中才算命中。
+// 分页状态：MD_PAGE 从 1 起。筛选条件一变就回第 1 页（mdApply 的默认行为）；
+// 翻页、排序、重新拉数据时先用 MD_KEEP_PAGE 保留当前页。八百多行整表一次画完
+// 是模型页卡顿的根源，所以 tbody 永远只画一页。
+let MD_PAGE = 1;
+let MD_PAGE_SIZE = 20;
+let MD_PAGES = 1;
+let MD_KEEP_PAGE = false;
+// mdApply 只做过滤和重排，不碰网络。四个条件（搜索词 / 客户端 / 只看上游 / 只看免费）
+// 是"与"关系；搜索词按空格拆成多个词，每个词都要在同一行里命中才算命中。
 function mdApply() {
   const q = ($("#mdSearch").value || "").trim().toLowerCase();
   const cl = $("#mdClient").value;
@@ -9433,16 +9504,138 @@ function mdApply() {
   const rows = mdContextSorted(MD_ITEMS.filter(it =>
     (!cl || it.client === cl) && (!upOnly || it.up) && (!freeOnly || it.free) &&
     words.every(w => it.text.indexOf(w) >= 0)));
-  $("#mdBody").innerHTML = rows.map(it => it.html).join("") ||
+  MD_PAGES = Math.max(1, Math.ceil(rows.length / MD_PAGE_SIZE));
+  if (MD_KEEP_PAGE) MD_KEEP_PAGE = false;
+  else MD_PAGE = 1;
+  if (MD_PAGE > MD_PAGES) MD_PAGE = MD_PAGES;
+  if (MD_PAGE < 1) MD_PAGE = 1;
+  const from = (MD_PAGE - 1) * MD_PAGE_SIZE;
+  const pageRows = rows.slice(from, from + MD_PAGE_SIZE);
+  $("#mdBody").innerHTML = pageRows.map(it => it.html).join("") ||
     '<tr class="filtered"><td colspan="14" class="hint">' +
-    (MD_ITEMS.length ? "没有模型匹配当前筛选条件，清空搜索框即可回到全量" : "没有任何模块返回模型") + '</td></tr>';
+    (MD_ITEMS.length ? "没有模型匹配当前筛选条件，清空搜索框即可回到全部" : "没有任何模块返回模型") + '</td></tr>';
   mdReapplyEdits();
+  renderMdPager(rows.length, from, pageRows.length);
   // 计数只在真的筛掉了东西时才着色：否则这个数字会一直在抢注意力。
   const filtered = MD_ITEMS.length > 0 && rows.length < MD_ITEMS.length;
   $("#mdCount").textContent = MD_ITEMS.length
     ? (filtered ? "筛出 " + rows.length + " / " + MD_ITEMS.length + " 行" : MD_ITEMS.length + " 行")
     : "";
   $("#mdCount").style.color = filtered ? "var(--accent)" : "";
+}
+
+// 分页条和账号池那条长得一样：只在多于一页时出现，页码、范围、总数都写在条上。
+// 收条子时连里面的字一起清掉，免得切走后残留上一个目录的「共 N 行」。
+function hideMdPager() {
+  const pg = $("#mdPager");
+  if (!pg) return;
+  pg.hidden = true;
+  $("#mdPageInfo").textContent = "";
+  $("#mdPageNow").textContent = "";
+}
+function renderMdPager(total, from, shownCount) {
+  const pg = $("#mdPager");
+  if (!pg) return;
+  if (MD_PAGES <= 1) { hideMdPager(); return; }
+  pg.hidden = false;
+  $("#mdPageNow").textContent = MD_PAGE + " / " + MD_PAGES;
+  $("#mdPageInfo").textContent = "第 " + (from + 1) + "-" + (from + shownCount) + " 行，共 " + total + " 行";
+  // 到头了就禁用对应的那一侧，而不是让操作员点一下发现没反应。
+  $("#mdPageFirst").disabled = MD_PAGE <= 1;
+  $("#mdPagePrev").disabled = MD_PAGE <= 1;
+  $("#mdPageNext").disabled = MD_PAGE >= MD_PAGES;
+  $("#mdPageLast").disabled = MD_PAGE >= MD_PAGES;
+}
+// mdGoPage 翻到某一页并重画。夹在 [1, pages] 里，所以按钮禁用只是省一次点击，
+// 不是正确性依赖；翻完把表格滚回顶部，否则看起来像没翻动。
+function mdGoPage(p) {
+  const next = Math.min(MD_PAGES, Math.max(1, p));
+  if (next === MD_PAGE) return;
+  MD_PAGE = next;
+  MD_KEEP_PAGE = true; // 翻页不是筛选，别被 mdApply 拉回第 1 页
+  mdApply();
+  const wrap = $("#view-models .tbl-wrap");
+  if (wrap) wrap.scrollTop = 0;
+}
+
+/* ── 客户端联想下拉 ─────────────────────────────────────────────────── */
+// 原来 #mdClient 是原生 select，模块一多就得滚动找。现在输入即出建议，回车 /
+// 点击提交；真正参与筛选的只有提交值 MD_CLIENT_COMMITTED（"" = 全部），输入框里
+// 的半截文本失焦就还原，避免把表格筛成一张空表。
+let MD_CLIENTS = [];
+let MD_CLIENT_COUNTS = {};
+let MD_CLIENT_COMMITTED = "";
+let MD_COMBO = { open: false, active: -1, items: [] };
+function mdComboOpen() {
+  const q = ($("#mdClient").value || "").trim().toLowerCase();
+  const hit = q
+    ? MD_CLIENTS.filter(n => n.toLowerCase().indexOf(q) >= 0 || platformLabel(n).toLowerCase().indexOf(q) >= 0)
+    : MD_CLIENTS.slice();
+  MD_COMBO.items = [{ value: "", label: "全部客户端", sub: "" }].concat(
+    hit.map(n => ({ value: n, label: platformLabel(n), sub: n + " · " + (MD_CLIENT_COUNTS[n] || 0) })));
+  MD_COMBO.active = -1;
+  mdComboPaint();
+  $("#mdClientList").hidden = false;
+  $("#mdClient").setAttribute("aria-expanded", "true");
+  MD_COMBO.open = true;
+}
+function mdComboPaint() {
+  const cur = MD_CLIENT_COMMITTED;
+  $("#mdClientList").innerHTML = MD_COMBO.items.map((it, i) =>
+    '<button type="button" class="mdcombo-item' + (cur === it.value ? " on" : "") + (i === MD_COMBO.active ? " active" : "") +
+    '" data-client="' + esc(it.value) + '" role="option" aria-selected="' + (cur === it.value) + '">' +
+    '<span>' + esc(it.label) + '</span>' + (it.sub ? '<span class="mdcombo-sub">' + esc(it.sub) + '</span>' : '') + '</button>'
+  ).join("");
+}
+function mdComboClose() {
+  MD_COMBO.open = false;
+  MD_COMBO.active = -1;
+  $("#mdClientList").hidden = true;
+  $("#mdClient").setAttribute("aria-expanded", "false");
+}
+function mdComboClearVis() {
+  const clear = $("#mdClientClear");
+  if (clear) clear.hidden = !MD_CLIENT_COMMITTED;
+}
+function mdComboCommit(value) {
+  MD_CLIENT_COMMITTED = value || "";
+  $("#mdClient").value = MD_CLIENT_COMMITTED;
+  mdComboClearVis();
+  mdComboClose();
+  mdApply(); // 提交是一次筛选变化，mdApply 会把页码拉回第 1 页
+}
+function mdComboKeydown(ev) {
+  if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+    ev.preventDefault();
+    if (!MD_COMBO.open) { mdComboOpen(); return; }
+    const last = MD_COMBO.items.length - 1;
+    MD_COMBO.active = ev.key === "ArrowDown" ? Math.min(MD_COMBO.active + 1, last) : Math.max(MD_COMBO.active - 1, -1);
+    mdComboPaint();
+    return;
+  }
+  if (ev.key === "Enter" && MD_COMBO.open) {
+    ev.preventDefault();
+    const cur = $("#mdClient").value.trim();
+    const exact = MD_COMBO.items.find(it => it.value === cur);
+    if (exact) { mdComboCommit(exact.value); return; }
+    if (MD_COMBO.active >= 0 && MD_COMBO.items[MD_COMBO.active]) { mdComboCommit(MD_COMBO.items[MD_COMBO.active].value); return; }
+    if (MD_COMBO.items.length === 1) mdComboCommit(MD_COMBO.items[0].value);
+    return;
+  }
+  if (ev.key === "Escape" && MD_COMBO.open) {
+    // 先收起建议、还原半截文本；stopPropagation 别让这次 Esc 顺带关掉别的浮层。
+    ev.stopPropagation();
+    $("#mdClient").value = MD_CLIENT_COMMITTED;
+    mdComboClearVis();
+    mdComboClose();
+  }
+}
+function mdComboBlur() {
+  if (MD_COMBO.open) mdComboClose();
+  if ($("#mdClient").value !== MD_CLIENT_COMMITTED) {
+    $("#mdClient").value = MD_CLIENT_COMMITTED; // 半截文本不算筛选
+    mdComboClearVis();
+  }
 }
 
 /* ── 对外模型选择 ─────────────────────────────────────────────────────── */
@@ -10333,7 +10526,7 @@ async function renderPlatforms(preserveDraft = false) {
       '<button class="xs pfNone" type="button">全禁用</button>' +
       '</div>');
     out.push('<div class="pfmodels" hidden>');
-    if (SOURCE_DEFS[n]) out.push('<div class="hint">' + esc(n) + ' · ' + esc(SOURCE_DEFS[n].base_url) + ' · 余额 ' + esc(SOURCE_DEFS[n].balance_protocol || 'auto') + (BUILTIN_SOURCES.has(n) ? ' · 内置平台' : '') + (SOURCE_DEFS[n].disabled ? ' · 已停用' : '') + '</div>');
+    if (SOURCE_DEFS[n]) out.push('<div class="hint">' + esc(n) + ' · ' + esc(SOURCE_DEFS[n].base_url) + ' · 余额 ' + esc(SOURCE_DEFS[n].balance_protocol || 'auto') + (SOURCE_DEFS[n].proxy ? ' · 代理 ' + esc(sourceProxyHost(SOURCE_DEFS[n].proxy)) : '') + (BUILTIN_SOURCES.has(n) ? ' · 内置平台' : '') + (SOURCE_DEFS[n].disabled ? ' · 已停用' : '') + '</div>');
     // 展开区顶部是 priority_schedule 分时规则编辑器，下方才是模型清单。
     out.push(pfPriorityScheduleHTML(entry));
     if (n === "workbuddy") out.push(pfWorkBuddyPoolHTML(c));
@@ -14737,7 +14930,35 @@ $("#mdSearch").addEventListener("keydown", ev => {
   ev.target.value = "";
   mdApply();
 });
-$("#mdClient").addEventListener("change", mdApply);
+// 客户端联想框：聚焦 / 输入都重画建议；点击或回车提交；失焦还原半截文本。
+// （原来是 select + change 监听；换成 text 输入后 change 的时机不可靠，一律走提交函数。）
+$("#mdClient").addEventListener("focus", mdComboOpen);
+$("#mdClient").addEventListener("input", () => { mdComboOpen(); mdComboClearVis(); });
+$("#mdClient").addEventListener("keydown", mdComboKeydown);
+$("#mdClient").addEventListener("blur", mdComboBlur);
+$("#mdClientList").addEventListener("mousedown", ev => {
+  // 按下不转移焦点：blur 不会先于 click，输入框保住焦点，建议项才能正常提交。
+  if (ev.target.closest(".mdcombo-item")) ev.preventDefault();
+});
+$("#mdClientList").addEventListener("click", ev => {
+  const item = ev.target.closest(".mdcombo-item");
+  if (item) mdComboCommit(item.dataset.client || "");
+});
+$("#mdClientClear").addEventListener("mousedown", ev => ev.preventDefault());
+$("#mdClientClear").addEventListener("click", () => mdComboCommit(""));
+// 模型表分页：和账号池同一套交互（首/上/下/末 + 每页条数）。
+$("#mdPageFirst").addEventListener("click", () => mdGoPage(1));
+$("#mdPagePrev").addEventListener("click", () => mdGoPage(MD_PAGE - 1));
+$("#mdPageNext").addEventListener("click", () => mdGoPage(MD_PAGE + 1));
+$("#mdPageLast").addEventListener("click", () => mdGoPage(1e9));
+// 每页条数一改，旧页码就没意义了：回第 1 页再按新尺寸渲染。
+$("#mdPageSize").addEventListener("change", ev => {
+  const n = parseInt(ev.target.value, 10);
+  if (!n || n < 1) return;
+  MD_PAGE_SIZE = n;
+  MD_PAGE = 1;
+  mdApply();
+});
 $("#mdUpOnly").addEventListener("change", mdApply);
 $("#mdFreeOnly").addEventListener("change", mdApply);
 $("#btnExRefresh").addEventListener("click", () => renderExposedModels(true));

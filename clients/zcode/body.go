@@ -143,26 +143,33 @@ func buildRequestBody(req *core.ChatRequest, cfg *Config, acct *Account, model s
 }
 
 // buildSystem assembles the system blocks: the mandatory identity preamble
-// first, then whatever the caller supplied.
+// first, with caller-supplied system text folded into the last block.
 //
-// The vendor risk-controls the SHAPE of this array.  The official 3.16.3 client
-// sends exactly three blocks and writes the "- You are powered by the model
-// named ..." line INSIDE the environment block rather than as a block of its
-// own.  Appending that line as a fourth block is answered with HTTP 405
-// envelope code 3012 ("unusual activity") -- the same refusal as a WAF block --
-// on a request that is otherwise byte-identical to a working one.  So when the
-// line is wanted it is FOLDED INTO the preamble, which keeps the block count
-// identical to that of the official client.
+// Live differential replay against the 2026-10-26 upstream pinned the rule the
+// comments below summarise: the array may carry at most three blocks, blocks 0
+// and 1 must be the byte-exact official identity and harness text, and the last
+// block is free-form.  Both the powered-by line and any caller system text are
+// therefore FOLDED into the final (environment) block -- a fourth block, which
+// buildSystem used to append, is itself answered with HTTP 405 envelope code
+// 3012 ("unusual activity") on a request that is otherwise byte-identical to a
+// working one.
 func buildSystem(cfg *Config, userParts []string, model string) []json.RawMessage {
 	var sys []json.RawMessage
 	if cfg.injectSystemBlocks() {
 		sys = append(sys, identityBlocks()...)
-		if model != "" {
-			sys = foldIntoLastBlock(sys, "- You are powered by the model named "+model+".")
-		}
+	}
+	if model != "" && len(sys) > 0 {
+		sys = foldIntoLastBlock(sys, "- You are powered by the model named "+model+".")
 	}
 	for _, part := range userParts {
-		sys = append(sys, rawJSON(map[string]any{"type": "text", "text": part}))
+		if strings.TrimSpace(part) == "" {
+			continue
+		}
+		if len(sys) == 0 {
+			sys = append(sys, rawJSON(map[string]any{"type": "text", "text": part}))
+			continue
+		}
+		sys = foldIntoLastBlock(sys, part)
 	}
 	return sys
 }
@@ -183,9 +190,15 @@ func foldIntoLastBlock(sys []json.RawMessage, line string) []json.RawMessage {
 	if err := json.Unmarshal(sys[i], &block); err != nil || block.Type != "text" {
 		return sys
 	}
+	sep := "\n"
+	if !strings.HasPrefix(line, "- ") {
+		// Multi-line caller prose reads as its own paragraph inside the
+		// environment block; the powered-by line stays a list item.
+		sep = "\n\n"
+	}
 	merged := map[string]any{
 		"type": "text",
-		"text": strings.TrimRight(block.Text, "\n") + "\n" + line,
+		"text": strings.TrimRight(block.Text, "\n") + sep + line,
 	}
 	if len(block.CacheControl) > 0 {
 		merged["cache_control"] = block.CacheControl
