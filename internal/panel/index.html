@@ -14853,6 +14853,10 @@ async function chatSaveThread(id, patch, quiet) {
   return saved;
 }
 
+function chatCurrentThread() {
+  return CHAT.threads.find(t => t.id === CHAT.current) || null;
+}
+
 async function chatEnsureThread() {
   if (CHAT.current) return CHAT.current;
   const body = {

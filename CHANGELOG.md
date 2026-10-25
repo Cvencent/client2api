@@ -6,6 +6,25 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.3.7] - 2026-10-25
+
+### Fixed
+
+- **对话测试发送后不再抛 `ReferenceError: chatCurrentThread is not defined`。**
+  对话工作区上线时，`settle()` 依赖的 `chatCurrentThread()` 在一次改动里被整段删掉，
+  但它仍被调用。请求一结束（无论成功还是失败）都会走进 `settle()`，于是：
+  - 控制台报 `ReferenceError`；
+  - 更严重的是，抛错发生在写回记录之前——**每一轮对话都没有真正保存**，
+    刷新或切换会话后历史是空的。
+  现在补回该函数，并新增一条静态回归：扫描聊天脚本里所有 `chat*` 函数定义与调用，
+  任何「调用了但没定义」的名字都会让 `go test` 失败，而不是等到用户发消息时才在浏览器里炸。
+
+### Installer
+
+- `client2api-setup-0.3.7.exe`（空包，不含账号凭据或本机配置）
+- SHA256：`PENDING`
+- 升级会保留现有 `configs/client2api.json`、`data/`、账号池、用量和任务数据。
+- 顺带修正 README 里滞后到 0.3.5 的版本号。
 ## [0.3.6] - 2026-10-25
 
 ### Fixed
