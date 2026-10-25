@@ -6,6 +6,22 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.4.1] - 2026-10-26
+
+### Added
+
+- **中转站单独 User-Agent** —— 个别站（如 agentrouter.org）按编码客户端白名单放行
+  `/v1/*`，通用 UA 一律 401 `unauthorized client detected`（扫描、对话、甚至不带
+  key 的请求都一样）。中转站配置新增可选 `user_agent`（面板编辑框同步），填它期望
+  的客户端 UA（例如 `codex_cli_rs/0.0.1`），平台级设置对全部账号生效，账号级可覆盖；
+  留空保持本网关默认 UA。顺带修复：面板里给账号填的 `extra_headers` 之前从未
+  传到扫描/对话请求上。
+
+### Installer
+
+- `client2api-setup-0.4.1.exe`（本次构建包含当前账号数据，仅自用，不外发）
+- SHA256：`2CFB5C865EB99375545E7D43877AB4D643BB19F60D14BE786B2579FDDC45ABDE`
+- 升级会保留现有 `configs/client2api.json`、`data/`、账号池、用量和任务数据。
 ## [0.4.0] - 2026-10-26
 
 ### Added
