@@ -1222,13 +1222,21 @@ func (s *server) autoCompact(ctx context.Context, req *core.ChatRequest, rec *Us
 	if err != nil || len(candidates) == 0 {
 		return nil
 	}
-	client, model := candidates[0].Client, candidates[0].Model
 	beforeTokens := int64(estimateRequestTokens(req))
-	summary, folded, usage, cerr := s.compactConversationWaitingOutBackpressure(ctx, client, model, req, 1)
-	if cerr != nil {
-		s.opts.Logger.Printf("compaction: auto-compaction for %s/%s failed (%v); forwarding the full history", client.Name(), model, cerr)
+	result := s.compactWithFailover(ctx, req, candidates)
+	if !result.attempted {
+		// Every candidate's own health surface already says nothing can serve.
+		// The caller-visible turn is about to learn the same thing; spending a
+		// summarisation round trip first would only add latency and noise.
 		return nil
 	}
+	if result.err != nil {
+		s.opts.Logger.Printf("compaction: auto-compaction for %s/%s failed (%v); forwarding the full history",
+			result.client.Name(), result.model, result.err)
+		return nil
+	}
+	summary, folded, usage := result.summary, result.folded, result.usage
+	client, model := result.client, result.model
 	if folded == 0 {
 		return nil
 	}
@@ -1273,6 +1281,82 @@ func (s *server) autoCompact(ctx context.Context, req *core.ChatRequest, rec *Us
 		Status:            "completed",
 		CompactionContent: blob,
 	}
+}
+
+// compactionResult is what one auto-compaction attempt produced.  attempted
+// separates "no candidate was worth trying" from "a candidate was tried and
+// failed": the caller stays silent for the first and logs a real reason for the
+// second.
+type compactionResult struct {
+	summary   string
+	folded    int
+	usage     *core.Usage
+	client    core.Client
+	model     string
+	err       error
+	attempted bool
+}
+
+// compactWithFailover folds the older history using the first candidate that can
+// actually serve it.
+//
+// Summarising through candidates[0] alone was a real production failure.  The
+// caller-visible turn may fail over to a sibling -- workbuddy parks accounts per
+// model, which its own Health() cannot express -- while the fold stayed pinned to
+// the exhausted platform, failed, and degraded straight back into the silent trim
+// the compaction path exists to prevent.  Walking the same candidate chain the
+// request itself uses keeps the fold on a platform that can answer.
+func (s *server) compactWithFailover(ctx context.Context, req *core.ChatRequest, candidates []core.Candidate) compactionResult {
+	var (
+		attempted bool
+		last      compactionResult
+	)
+	for _, candidate := range candidates {
+		c, m := candidate.Client, candidate.Model
+		last.client, last.model = c, m
+		if _, unavailable := moduleUnavailable(c); unavailable != nil {
+			// The module itself says nothing can serve right now.  Entering
+			// Chat would only repeat the empty rotation the turn is about to
+			// hit, so this candidate is skipped without paying a round trip.
+			continue
+		}
+		attempted = true
+		summary, folded, usage, err := s.compactConversationWaitingOutBackpressure(ctx, c, m, req, 1)
+		if err == nil {
+			return compactionResult{
+				summary:   summary,
+				folded:    folded,
+				usage:     usage,
+				client:    c,
+				model:     m,
+				attempted: true,
+			}
+		}
+		last.err = err
+		if !compactionMayFailOver(err) {
+			// A content-policy refusal or a malformed-request verdict would be
+			// repeated verbatim by every sibling, so keep the real reason.
+			return compactionResult{client: c, model: m, err: err, attempted: true}
+		}
+	}
+	last.attempted = attempted
+	return last
+}
+
+// compactionMayFailOver reports whether another candidate is worth trying for a
+// failed summarisation.  Only verdicts about the platform or the account are:
+// the folded request is unchanged, so a sibling may well serve it.
+func compactionMayFailOver(err error) bool {
+	if err == nil {
+		return false
+	}
+	if candidateUnavailable(err) {
+		return true
+	}
+	if f, ok := core.AsFailure(err); ok && core.Retryable(f.Kind) {
+		return true
+	}
+	return false
 }
 
 // responsesCompactRequest is the inbound body of POST /v1/responses/compact.

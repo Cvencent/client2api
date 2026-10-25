@@ -372,17 +372,12 @@ func (c *Client) attempt(ctx context.Context, req *core.ChatRequest, acct *Accou
 		}
 	}()
 
-	// The vendor retired the direct chat endpoints: the published routing
-	// table rewrites them onto /api/v1/ultra*, and the retired URL answers
-	// 405 code 3012.  Apply the rewrite before dialling so the module never
-	// posts to a route the vendor no longer serves; an unmapped URL (an
-	// operator base_url override) is left untouched.  See routing.go.
-	target, includeZCodeAuth := routeFor(c.upstreamURL(acct))
-	httpReq, err := http.NewRequestWithContext(reqCtx, http.MethodPost, target, bytes.NewReader(payload))
+	url := c.upstreamURL(acct)
+	httpReq, err := http.NewRequestWithContext(reqCtx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
 		return nil, fmt.Errorf("zcode: build http request: %w", err)
 	}
-	c.applyHeaders(httpReq, acct, region, verifyParam, includeZCodeAuth)
+	c.applyHeaders(httpReq, acct, region, verifyParam)
 
 	resp, err := c.http.Do(httpReq)
 	if err != nil {
@@ -470,7 +465,7 @@ func (c *Client) applyIdentityHeaders(h http.Header) {
 
 // applyHeaders installs the identity, auth and trace headers.  Values that are
 // not printable ASCII are dropped rather than sent.
-func (c *Client) applyHeaders(req *http.Request, acct *Account, region, verifyParam string, includeZCodeAuth bool) {
+func (c *Client) applyHeaders(req *http.Request, acct *Account, region, verifyParam string) {
 	h := req.Header
 	c.applyIdentityHeaders(h)
 
@@ -490,12 +485,6 @@ func (c *Client) applyHeaders(req *http.Request, acct *Account, region, verifyPa
 			setHeader(h, "x-request-id", trace)
 			setHeader(h, "x-zcode-session-type", "main")
 			setHeader(h, "x-zcode-trace-id", trace)
-			// A routed request carries the plan credential again under the
-			// header the vendor mapping names, in addition to Authorization.
-			// See routing.go.
-			if includeZCodeAuth && acct.jwt != "" {
-				setHeader(h, headerZCodeAuth, "Bearer "+acct.jwt)
-			}
 		case modeAPIKey:
 			if s := acct.secret(); s != "" {
 				setHeader(h, "x-api-key", s)

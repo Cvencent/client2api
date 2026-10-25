@@ -143,17 +143,22 @@ func buildRequestBody(req *core.ChatRequest, cfg *Config, acct *Account, model s
 }
 
 // buildSystem assembles the system blocks: the mandatory identity preamble
-// first, then the dynamic model statement, then whatever the caller supplied.
+// first, then whatever the caller supplied.
+//
+// The vendor risk-controls the SHAPE of this array.  The official 3.16.3 client
+// sends exactly three blocks and writes the "- You are powered by the model
+// named ..." line INSIDE the environment block rather than as a block of its
+// own.  Appending that line as a fourth block is answered with HTTP 405
+// envelope code 3012 ("unusual activity") -- the same refusal as a WAF block --
+// on a request that is otherwise byte-identical to a working one.  So when the
+// line is wanted it is FOLDED INTO the preamble, which keeps the block count
+// identical to that of the official client.
 func buildSystem(cfg *Config, userParts []string, model string) []json.RawMessage {
 	var sys []json.RawMessage
 	if cfg.injectSystemBlocks() {
 		sys = append(sys, identityBlocks()...)
 		if model != "" {
-			sys = append(sys, rawJSON(map[string]any{
-				"type":          "text",
-				"text":          "- You are powered by the model named " + model + ".",
-				"cache_control": map[string]any{"type": "ephemeral"},
-			}))
+			sys = foldIntoLastBlock(sys, "- You are powered by the model named "+model+".")
 		}
 	}
 	for _, part := range userParts {
@@ -162,6 +167,32 @@ func buildSystem(cfg *Config, userParts []string, model string) []json.RawMessag
 	return sys
 }
 
+// foldIntoLastBlock appends a line to the text of the final system block,
+// preserving its cache_control.  This is how the powered-by line joins the
+// environment block instead of becoming a block of its own.
+func foldIntoLastBlock(sys []json.RawMessage, line string) []json.RawMessage {
+	if len(sys) == 0 || strings.TrimSpace(line) == "" {
+		return sys
+	}
+	i := len(sys) - 1
+	var block struct {
+		Type         string          `json:"type"`
+		Text         string          `json:"text"`
+		CacheControl json.RawMessage `json:"cache_control,omitempty"`
+	}
+	if err := json.Unmarshal(sys[i], &block); err != nil || block.Type != "text" {
+		return sys
+	}
+	merged := map[string]any{
+		"type": "text",
+		"text": strings.TrimRight(block.Text, "\n") + "\n" + line,
+	}
+	if len(block.CacheControl) > 0 {
+		merged["cache_control"] = block.CacheControl
+	}
+	sys[i] = rawJSON(merged)
+	return sys
+}
 func buildTools(tools []core.Tool) []anthropicTool {
 	out := make([]anthropicTool, 0, len(tools))
 	for _, t := range tools {

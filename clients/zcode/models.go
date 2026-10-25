@@ -352,9 +352,7 @@ func (c *Client) fetchModelsFrom(ctx context.Context, acct *Account) ([]core.Mod
 	// The captcha headers are deliberately absent -- a model list is not a
 	// chat turn, and solving the captcha here would burn a solver run per
 	// catalogue refresh.
-	// The model list is not a chat turn and is not part of the vendor
-	// proxyEndpoint mapping, so it never carries the routed auth header.
-	c.applyHeaders(req, acct, "", "", false)
+	c.applyHeaders(req, acct, "", "")
 
 	resp, err := c.http.Do(req)
 	if err != nil {

@@ -537,8 +537,10 @@ func TestIdentityPreambleInjected(t *testing.T) {
 	if err := json.Unmarshal(got, &doc); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if len(doc.System) != 5 {
-		t.Fatalf("want 3 identity blocks + model block + caller block, got %d (%s)", len(doc.System), got)
+	// The vendor risk-controls the block COUNT: a standalone powered-by block
+	// is answered 405/3012, so the line must live inside the environment block.
+	if len(doc.System) != 4 {
+		t.Fatalf("want 3 identity blocks + 1 caller block (the powered-by line folds into the environment block), got %d (%s)", len(doc.System), got)
 	}
 	if doc.System[0].Text != "You are ZCode, an interactive coding agent" {
 		t.Errorf("first identity block = %q", doc.System[0].Text)
@@ -552,16 +554,15 @@ func TestIdentityPreambleInjected(t *testing.T) {
 	if !strings.Contains(doc.System[2].Text, "# Environment") {
 		t.Error("third identity block should carry the environment section")
 	}
-	if !strings.Contains(doc.System[3].Text, "- You are powered by the model named GLM-5.3.") {
-		t.Errorf("model statement block = %q", doc.System[3].Text)
+	if !strings.Contains(doc.System[2].Text, "- You are powered by the model named GLM-5.3.") {
+		t.Errorf("the powered-by line should be folded into the environment block, got %q", doc.System[2].Text)
 	}
-	if doc.System[4].Text != "caller system" {
-		t.Errorf("caller system block = %q", doc.System[4].Text)
+	if doc.System[3].Text != "caller system" {
+		t.Errorf("caller system block = %q", doc.System[3].Text)
 	}
-	for i, b := range doc.System {
-		if i >= 4 {
-			break
-		}
+	// Only the three preamble blocks carry the marker; the caller block is
+	// the caller text verbatim.
+	for i, b := range doc.System[:3] {
 		if b.CacheControl == nil || b.CacheControl.Type != "ephemeral" {
 			t.Errorf("identity block %d should carry an ephemeral cache marker", i)
 		}
@@ -1498,7 +1499,7 @@ func TestApplyHeadersJWTChannel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRequest: %v", err)
 	}
-	c.applyHeaders(req, acct, "cn", "PARAM123", false)
+	c.applyHeaders(req, acct, "cn", "PARAM123")
 
 	if got := req.Header.Get("Authorization"); got != "Bearer "+jwt {
 		t.Errorf("Authorization = %q", got)
@@ -1549,7 +1550,7 @@ func TestApplyHeadersAPIKeyChannel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRequest: %v", err)
 	}
-	c.applyHeaders(req, acct, "", "", false)
+	c.applyHeaders(req, acct, "", "")
 
 	if got := req.Header.Get("X-Api-Key"); got != key {
 		t.Errorf("x-api-key = %q", got)

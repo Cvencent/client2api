@@ -57,11 +57,6 @@ const (
 	// ZAI_EXCHANGE_ORIGIN = ZAI_API_ORIGIN.
 	defaultOAuthAPIBase      = "https://zcode.z.ai/api/v1"
 	defaultOAuthExchangeBase = "https://api.z.ai"
-	// defaultOAuthExchangeBigmodelBase is the mainland console origin that serves
-	// the same exchange walk.  BigModel issues coding-plan API keys there, and a
-	// mainland panel sign-in has to mint one too: the plan JWT alone is no longer
-	// accepted for chat.
-	defaultOAuthExchangeBigmodelBase = "https://bigmodel.cn"
 )
 
 // oauthProviderDefault is the provider the panel sign-in used before the
@@ -177,9 +172,6 @@ type Config struct {
 	// OAuthExchangeBase serves the /api/auth/z/login -> organisation/project ->
 	// API key walk that turns an OAuth access token into a usable credential.
 	OAuthExchangeBase string `json:"oauth_exchange_base"`
-	// OAuthExchangeBigmodelBase serves the same walk on the mainland console.
-	// It is separate because the two realms are different services.
-	OAuthExchangeBigmodelBase string `json:"oauth_exchange_bigmodel_base"`
 	// OAuthClientID is sent as "client_id" on init *only when set*.  The
 	// reference flow does not use one (it sends provider:"zai" alone), so the
 	// default is empty and the field exists purely as an escape hatch for a
@@ -336,14 +328,6 @@ func (c *Config) oauthExchangeBase() string {
 		return strings.TrimRight(v, "/")
 	}
 	return defaultOAuthExchangeBase
-}
-
-// oauthExchangeBigmodelBase is the mainland origin that serves the exchange.
-func (c *Config) oauthExchangeBigmodelBase() string {
-	if v := strings.TrimSpace(c.OAuthExchangeBigmodelBase); v != "" {
-		return strings.TrimRight(v, "/")
-	}
-	return defaultOAuthExchangeBigmodelBase
 }
 
 // loginTTL is how long a started flow may be polled before it is abandoned.

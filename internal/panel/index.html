@@ -231,6 +231,9 @@ label.fld > .hint { display: block; font-size: 11.5px; color: var(--ink-3); marg
 .stat .k { color: var(--ink-3); font-size: 11.5px; margin-top: 5px; }
 .stat.good .v { color: var(--ok); } .stat.warn .v { color: var(--warn); } .stat.bad .v { color: var(--bad); }
 
+/* 计数为 0 的告警格不该继续发红：健康状态下首屏顶部全是红色数字，等于没有告警。
+   正数才用语义色，0 回落到普通正文色。 */
+
 /* ── 面板块 ───────────────────────────────────────────────────────── */
 .box { background: var(--surface); border: 1px solid var(--line); border-radius: 11px; box-shadow: var(--shadow); margin-bottom: 20px; overflow: clip; }
 .box { transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out); }
@@ -1093,18 +1096,18 @@ html { scrollbar-gutter: stable; }
 #view-accounts table.acc .mark { width: 7px; min-width: 7px; padding: 0; }
 #view-accounts table.acc { table-layout: fixed; width: 100%; }
 #view-accounts table.acc .col-mark { width: 1%; }
-#view-accounts table.acc .col-account { width: 11%; }
-#view-accounts table.acc .col-state { width: 6%; }
+#view-accounts table.acc .col-account { width: 12%; }
+#view-accounts table.acc .col-state { width: 5%; }
 #view-accounts table.acc .col-models { width: 6%; }
-#view-accounts table.acc .col-prio { width: 6.5%; }
-#view-accounts table.acc .col-bal { width: 7.5%; }
-#view-accounts table.acc .col-rate { width: 6%; }
+#view-accounts table.acc .col-prio { width: 5%; }
+#view-accounts table.acc .col-bal { width: 8%; }
+#view-accounts table.acc .col-rate { width: 5%; }
 #view-accounts table.acc .col-inflight { width: 4%; }
-#view-accounts table.acc .col-usage { width: 12%; }
-#view-accounts table.acc .col-last { width: 7%; }
-#view-accounts table.acc .col-expiry { width: 6%; }
-#view-accounts table.acc .col-note { width: 17%; }
-#view-accounts table.acc .col-acts { width: 10%; }
+#view-accounts table.acc .col-usage { width: 10.5%; }
+#view-accounts table.acc .col-last { width: 6%; }
+#view-accounts table.acc .col-expiry { width: 5%; }
+#view-accounts table.acc .col-note { width: 10%; }
+#view-accounts table.acc .col-acts { width: 22.5%; }
 #view-accounts table.acc th.sortable { cursor: pointer; user-select: none; white-space: nowrap; transition: color .15s ease, background .15s ease; }
 #view-accounts table.acc th.sortable:hover { color: var(--accent-text); background: var(--surface-2); }
 #view-accounts table.acc th.sortable:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
@@ -1496,7 +1499,7 @@ input[type=checkbox] { width: 14px; height: 14px; padding: 0; accent-color: var(
 .chip.err { color: var(--bad-text); }
 /* 选中的客户端用实心蓝：这是这一页的主导航，必须一眼看出来。 */
 .chips .chip.on, button.chip.on {
-  background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600;
+  background: var(--accent-solid); border-color: var(--accent-solid); color: var(--accent-ink); font-weight: 600;
 }
 .chips .chip.on .pulse { background: var(--accent-ink) !important; }
 .pfm.off { color: var(--bad-text); background: var(--bad-soft); border-color: var(--bad-soft); }
@@ -2034,6 +2037,32 @@ details.cfg summary:hover, details.adv summary:hover { color: var(--accent-text)
 .logbox .l:last-child, #logBox .ln:last-child { border-bottom: none; }
 .cfgjson { border-color: var(--hairline); background: color-mix(in srgb, var(--bg) 60%, var(--surface-2)); }
 
+/* -- 6. 账号池：一屏放下更多账号 -------------------------------------
+   实测：改版前 1440px 下每行 159px、375px 下 188px，一屏只看得到 2 个账号。
+   根因是操作列只有 10% 宽（约 115px），6 个按钮竖着排成 3 行。
+   操作列放宽到 22.5%（宽度定义在上面的列配方里），按钮改成自适应网格，
+   行高回落到 72px 上下。 */
+#view-accounts table.acc th, #view-accounts table.acc td { padding: 6px 7px; }
+#view-accounts table.acc .c-acts { white-space: normal; vertical-align: middle; }
+#view-accounts table.acc .c-acts .actwrap {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px;
+}
+#view-accounts table.acc .c-acts button {
+  width: 100%; max-width: none; min-height: 24px; padding: 2px 4px;
+  font-size: 11px; letter-spacing: -.01em; border-radius: 6px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+#view-accounts table.acc .mark { width: 5px; min-width: 5px; }
+#view-accounts table.acc .mark i { width: 3px; min-height: 28px; border-radius: var(--radius-pill); opacity: .8; }
+#view-accounts table.acc tbody tr:hover .mark i { opacity: 1; }
+#view-accounts table.acc thead th:nth-child(2) { position: sticky; left: 0; z-index: 5; background: color-mix(in srgb, var(--surface-2) 88%, transparent); box-shadow: inset -1px 0 0 var(--hairline); }
+#view-accounts table.acc tbody td:nth-child(2) { position: sticky; left: 0; z-index: 2; background: var(--surface); box-shadow: inset -1px 0 0 var(--line-soft); }
+#view-accounts table.acc tbody tr:hover td:nth-child(2) { background: color-mix(in srgb, var(--accent) 5%, var(--surface-2)); }
+#view-accounts table.acc tbody tr.acc-grp td:nth-child(2) { background: color-mix(in srgb, var(--surface-2) 92%, transparent); }
+/* 13 列在窄窗口里会被压到不可读；到 1200px 以下让表格保持可读宽度，
+   横向滚动留在 .tbl-wrap 内部（粘性首列此时正好派上用场）。 */
+@media (max-width: 1200px) { #view-accounts table.acc { min-width: 1040px; } }
+
 /* -- 7. Empty states & hints ---------------------------------------------
    One muted treatment everywhere a list can come back empty. */
 .empty { padding: 44px 20px; color: var(--ink-3); }
@@ -2126,6 +2155,18 @@ details.cfg summary:hover, details.adv summary:hover { color: var(--accent-text)
 #view-packages .acc tbody td:first-child { font-weight: 600; }
 #view-packages .acc tbody td .chip { min-height: 22px; padding: 1px 8px; font-size: 11px; }
 #view-packages .acc tbody td[colspan] { padding: 44px 20px; color: var(--ink-3); }
+
+/* 能力矩阵里「是」是绝大多数格子的常态，画成实心绿胶囊会变成一片绿色点阵，
+   真正的「未就绪 / 否」反而沉下去。常态降为安静的勾，只有偏差保留颜色。 */
+#view-packages .acc tbody td .chip.ok {
+  min-height: 0; padding: 0; border: 0; background: none;
+  color: var(--ok-text); font-weight: 600;
+}
+#view-packages .acc tbody td .chip.ok::before { content: "✓ "; font-size: 10px; }
+#view-packages .acc tbody td .chip.err {
+  font-weight: 600; color: var(--bad-text); background: var(--bad-soft);
+  border-color: color-mix(in srgb, var(--bad) 24%, transparent);
+}
 
 @media (max-width: 560px) {
   #view-chat .sel-note input[type="search"] { width: 100%; }
@@ -2938,6 +2979,383 @@ kbd {
   .chatlog { padding: 16px 14px 6px; }
   .chat-composer .chatrow, .chat-tags, .chat-hint { padding-left: 14px; padding-right: 14px; }
 }
+
+/* ===== client2api authoritative workbench layer ===== */
+/* ==========================================================================
+   client2api · 工作台视觉与交互层（权威层）
+   --------------------------------------------------------------------------
+   北极星：把这套面板做成一台"精密仪器" —— 数据是主角，控件退到环境里，
+   每一次操作都立刻有回应。方向来自这个品类本身：运维控制台，11 个视图、
+   高信息密度表格、连续批处理操作；所以做成安静的观测工具，而不是展示页。
+
+   从这一层开始，面板的视觉只有这一处权威定义：语义令牌在最上面，
+   组件按"壳层 → 控件 → 表格 → 面板 → 状态 → 弹层 → 动效 → 响应式"排列。
+   它排在文件最后，因此先到先得地覆盖此前各轮补丁；旧层保留是为了不大改
+   结构，规则冲突一律以本层为准。
+   ========================================================================== */
+
+/* -- 1. 令牌：一套语义变量，明暗两套取值 ------------------------------- */
+:root {
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 20px; --sp-6: 26px;
+  --ctl-h: 34px; --ctl-h-sm: 28px;
+  --type-xs: 11px; --type-sm: 12px; --type-md: 12.5px; --type-base: 13px; --type-lg: 14px;
+  --radius-ctl: 9px; --radius-card: 14px; --radius-pill: 999px;
+  --dur: 150ms; --dur-slow: 260ms; --ease: cubic-bezier(.22, 1, .36, 1);
+  --ring: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
+  --hairline: color-mix(in srgb, var(--line) 70%, transparent);
+  /* 兼容早期层与测试引用的旧名 */
+  --radius-control: 9px; --radius-panel: 14px;
+  --ease-smooth: cubic-bezier(.22, 1, .36, 1);
+  --dur-quick: 150ms; --dur-page: 260ms; --dur-panel: 300ms;
+  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
+  --material: color-mix(in srgb, var(--surface) 80%, transparent);
+  --material-strong: color-mix(in srgb, var(--surface) 92%, transparent);
+  --shadow-panel: 0 1px 2px rgba(0,0,0,.04), 0 10px 28px -20px rgba(0,0,0,.3);
+  --shadow-float: 0 18px 52px -24px rgba(0,0,0,.46);
+}
+[data-theme="dark"] {
+  --bg: #0d0e11;
+  --surface: rgba(26,27,31,.86);
+  --surface-2: rgba(38,40,45,.86);
+  --raise: #26282d;
+  --line: rgba(255,255,255,.14);
+  --line-soft: rgba(255,255,255,.075);
+  --ink: #f2f3f5;
+  --ink-2: #c8cbd1;
+  --ink-3: #9498a0;
+  --accent: #3d9bff;
+  --accent-hover: #63b0ff;
+  --accent-active: #2b7fe0;
+  --accent-ink: #ffffff;
+  --accent-soft: rgba(61,155,255,.16);
+  --accent-text: #7cc0ff;
+  /* 实心主色另用一档：亮蓝配白字只有 2.9:1，主按钮和选中 chip 用深一档的
+     实心蓝，白字 4.9:1，既保住蓝色识别度又过对比度。 */
+  --accent-solid: #0a6fdc;
+  --accent-solid-hover: #1283f0;
+  --accent-solid-active: #0857ad;
+  --ok: #37d067;
+  --ok-soft: rgba(55,208,103,.15);
+  --ok-text: #74dd94;
+  --warn: #ffcc3d;
+  --warn-soft: rgba(255,204,61,.15);
+  --warn-text: #ffdc78;
+  --bad: #ff5f57;
+  --bad-soft: rgba(255,95,87,.15);
+  --bad-text: #ff918a;
+  --shadow: 0 12px 36px -22px rgba(0,0,0,.8);
+  --shadow-sm: 0 1px 3px rgba(0,0,0,.36);
+}
+[data-theme="light"] {
+  --bg: #f3f4f7;
+  --surface: rgba(255,255,255,.92);
+  --surface-2: rgba(243,244,248,.94);
+  --raise: #ffffff;
+  --line: rgba(24,28,38,.16);
+  --line-soft: rgba(24,28,38,.085);
+  --ink: #171a20;
+  --ink-2: #464b55;
+  --ink-3: #666c76;
+  --accent: #0a67d8;
+  --accent-hover: #1a7bec;
+  --accent-active: #0857b8;
+  --accent-ink: #ffffff;
+  --accent-soft: rgba(10,103,216,.11);
+  --accent-text: #0a5cbf;
+  --accent-solid: #0a67d8;
+  --accent-solid-hover: #1a7bec;
+  --accent-solid-active: #085cae;
+  --ok: #1d8a3c;
+  --ok-soft: rgba(29,138,60,.12);
+  --ok-text: #17702f;
+  --warn: #9a6a06;
+  --warn-soft: rgba(211,146,12,.14);
+  --warn-text: #7d5504;
+  --bad: #c62a20;
+  --bad-soft: rgba(198,42,32,.11);
+  --bad-text: #ac231a;
+  --shadow: 0 12px 36px -26px rgba(16,20,30,.28);
+  --shadow-sm: 0 1px 2px rgba(16,20,30,.06), 0 6px 18px -14px rgba(16,20,30,.22);
+}
+
+/* -- 2. 壳层：侧栏与顶栏 ----------------------------------------------- */
+body {
+  font-family: "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-size: var(--type-base);
+  background: radial-gradient(1200px 640px at 78% -20%, color-mix(in srgb, var(--accent) 6%, transparent), transparent 60%), var(--bg);
+}
+.shell { grid-template-columns: 216px minmax(0, 1fr); }
+.nav { background: var(--material); border-right: 1px solid var(--hairline); backdrop-filter: blur(18px) saturate(170%); -webkit-backdrop-filter: blur(18px) saturate(170%); }
+.brand { padding: 20px 18px 15px; border-bottom: 1px solid var(--hairline); }
+.brand .name { font-size: 15px; font-weight: 650; }
+.brand .sub { margin-top: 3px; font-size: var(--type-xs); }
+.nav ul { padding: 12px 10px; }
+.nav a {
+  position: relative; min-height: 38px; padding: 0 12px; gap: 10px;
+  border-radius: var(--radius-ctl); color: var(--ink-2);
+  transition: color var(--dur) var(--ease), background-color var(--dur) var(--ease);
+}
+.nav a::before {
+  content: ""; position: absolute; left: 2px; top: 50%; width: 3px; height: 16px;
+  border-radius: var(--radius-pill); background: var(--accent); opacity: 0;
+  transform: translateY(-50%) scaleY(.4);
+  transition: opacity var(--dur) var(--ease), transform var(--dur-slow) var(--ease);
+}
+.nav a:hover { background: color-mix(in srgb, var(--surface-2) 80%, transparent); color: var(--ink); }
+.nav a.on { background: var(--accent-soft); color: var(--accent-text); font-weight: 620; }
+.nav a.on::before { opacity: 1; transform: translateY(-50%) scaleY(1); }
+.nav a svg { width: 15px; height: 15px; opacity: .9; }
+.nav .sig { padding: 13px 17px; border-top: 1px solid var(--hairline); font-size: var(--type-xs); }
+
+.topbar {
+  min-height: 56px; padding: 11px 24px; gap: 12px;
+  background: var(--material); border-bottom: 1px solid var(--hairline);
+  backdrop-filter: blur(18px) saturate(170%); -webkit-backdrop-filter: blur(18px) saturate(170%);
+}
+.topbar h2 { font-size: 15.5px; font-weight: 660; letter-spacing: 0; }
+.topbar .sep { color: var(--line); }
+.topbar .meta { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-3); font-size: var(--type-xs); font-variant-numeric: tabular-nums; }
+.view { padding: 22px 24px 76px; }
+.view:not([hidden]) { animation: uiViewIn var(--dur-page) var(--ease) both; }
+@keyframes uiViewIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+/* -- 3. 控件 ------------------------------------------------------------ */
+button, input, select, textarea { border-color: var(--hairline); }
+button {
+  min-height: var(--ctl-h); padding: 6px 13px; border-radius: var(--radius-ctl);
+  color: var(--ink-2); background: color-mix(in srgb, var(--surface-2) 82%, transparent);
+  transition: color var(--dur) var(--ease), background-color var(--dur) var(--ease), border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+button:hover:not(:disabled) {
+  color: var(--accent-text); border-color: color-mix(in srgb, var(--accent) 50%, var(--hairline));
+  background: color-mix(in srgb, var(--accent-soft) 70%, var(--surface));
+}
+button:active:not(:disabled) { transform: translateY(1px); }
+button.primary {
+  color: var(--accent-ink); border-color: color-mix(in srgb, var(--accent-solid) 80%, black);
+  background: linear-gradient(180deg, var(--accent-solid-hover), var(--accent-solid));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.16);
+}
+button.primary:hover:not(:disabled) { color: var(--accent-ink); background: linear-gradient(180deg, var(--accent-solid-hover), var(--accent-solid-active)); }
+button.ghost { background: transparent; border-color: transparent; }
+button.xs { min-height: 26px; padding: 2px 9px; font-size: var(--type-xs); border-radius: 7px; }
+button.icon { min-height: var(--ctl-h); padding: 6px 9px; }
+input, select, textarea { min-height: var(--ctl-h); border-radius: var(--radius-ctl); background: color-mix(in srgb, var(--surface) 94%, transparent); }
+input[type=checkbox] { min-height: 0; }
+input:focus, select:focus, textarea:focus, button:focus-visible, a:focus-visible, [tabindex]:focus-visible, summary:focus-visible {
+  outline: none; border-color: var(--accent); box-shadow: var(--ring);
+}
+.chip, .tag, .realm-tag, .lch, kbd { border-radius: var(--radius-pill); font-size: var(--type-xs); min-height: 22px; }
+.chip { padding: 2px 9px; border: 1px solid var(--hairline); background: color-mix(in srgb, var(--surface-2) 80%, transparent); color: var(--ink-2); }
+.chip.ok, .tag.ok { color: var(--ok-text); background: var(--ok-soft); border-color: color-mix(in srgb, var(--ok) 24%, transparent); }
+.chip.warn, .tag.warn { color: var(--warn-text); background: var(--warn-soft); border-color: color-mix(in srgb, var(--warn) 24%, transparent); }
+.chip.err, .tag.bad { color: var(--bad-text); background: var(--bad-soft); border-color: color-mix(in srgb, var(--bad) 24%, transparent); }
+.tag.mute { color: var(--ink-3); background: color-mix(in srgb, var(--surface-2) 74%, transparent); border-color: var(--hairline); }
+/* 二级标签：分段控件，当前段是唯一的主色实心块 */
+.subtabs {
+  display: inline-flex; flex-wrap: wrap; gap: 2px; padding: 3px; margin: 0 0 16px;
+  border: 1px solid var(--hairline); border-radius: 11px; background: color-mix(in srgb, var(--surface-2) 72%, transparent);
+}
+.subtabs .subtab {
+  min-height: 30px; padding: 5px 14px; border: 0; border-radius: 8px; background: transparent;
+  color: var(--ink-3); font-size: var(--type-md); cursor: pointer;
+  transition: color var(--dur) var(--ease), background-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+.subtabs .subtab:hover { color: var(--ink); background: color-mix(in srgb, var(--surface) 60%, transparent); }
+.subtabs .subtab.on {
+  color: var(--accent-solid); background: var(--surface); font-weight: 620;
+  box-shadow: 0 1px 2px rgba(0,0,0,.16);
+}
+.subtabs .subtab.on:hover { color: var(--accent-text); }
+.subtab-panel:not([hidden]) { animation: panelIn var(--dur) var(--ease) both; }
+@keyframes panelIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+/* -- 4. 面板与统计 ------------------------------------------------------ */
+.box, .stats, .uschart, .pfplat, .pk-card, .sms-box, .auto-box, .ownkey, .qc-box, .qc-card, .logbox, .cfgjson, .auto-log, .vc {
+  border-color: var(--hairline); box-shadow: var(--shadow-panel);
+}
+.box { margin-bottom: 16px; background: var(--material-strong); }
+.box:hover { border-color: var(--hairline); box-shadow: var(--shadow-panel); }
+.box > header {
+  min-height: 50px; padding: 12px 18px; gap: 10px 12px;
+  background: color-mix(in srgb, var(--surface-2) 42%, transparent); border-bottom: 1px solid var(--hairline);
+}
+.box > header h3 { font-size: 13.5px; font-weight: 640; }
+.box > header h3 .hint { font-size: var(--type-xs); font-weight: 400; color: var(--ink-3); }
+.box > header .note { color: var(--ink-3); font-size: var(--type-xs); min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.box .pad { padding: 16px 18px; }
+.stats { margin-bottom: 16px; background: var(--material-strong); }
+.stat { min-height: 78px; padding: 14px 17px; border-right: 1px solid var(--hairline); border-bottom: 1px solid var(--hairline); }
+.stat:hover { background: color-mix(in srgb, var(--surface-2) 66%, transparent); }
+.stat .v { font: 620 23px/1.15 var(--mono); letter-spacing: 0; }
+.stat .k { margin-top: 5px; color: var(--ink-3); font-size: var(--type-xs); }
+.stat.is-zero .v { color: var(--ink-2); }
+
+/* -- 5. 表格 ------------------------------------------------------------ */
+.tbl-wrap { overflow: auto; max-height: max(260px, calc(100vh - 244px)); }
+
+.dlg .tbl-wrap { max-height: none; }
+.tbl-wrap > table > thead th { position: sticky; top: 0; z-index: 3; box-shadow: inset 0 -1px 0 var(--line); }
+.acc { color: var(--ink-2); }
+.acc th, .acc td { padding: 9px 12px; border-bottom: 1px solid var(--hairline); }
+.acc thead th { color: var(--ink-3); background: color-mix(in srgb, var(--surface-2) 88%, transparent); font-size: var(--type-xs); font-weight: 620; }
+.acc tbody tr { transition: background-color var(--dur) var(--ease); }
+.acc tbody tr:hover { background: color-mix(in srgb, var(--accent) 5%, var(--surface-2)); }
+.acc tbody tr.acc-grp { background: color-mix(in srgb, var(--surface-2) 92%, transparent); font-weight: 600; }
+.acc .name { font-weight: 620; }
+.acc .num, .acc .mdsrc, .acc .usage-item { font-variant-numeric: tabular-nums; }
+.acc td > .hint, .acc td > .note { color: var(--ink-3); }
+.tblbar, .pager {
+  min-height: 44px; padding: 9px 16px; gap: 8px 10px;
+  background: color-mix(in srgb, var(--surface) 74%, transparent); border-color: var(--hairline);
+}
+.tblbar input, .tblbar select, .pager select, .box > header input.filt { min-height: var(--ctl-h); }
+
+/* -- 7. 状态、空态与加载 ------------------------------------------------ */
+.empty { padding: 44px 20px; color: var(--ink-3); text-align: center; }
+.empty .big { margin-bottom: 8px; color: var(--ink-2); font-size: 20px; }
+.tc-empty {
+  margin: 4px 0 0; padding: 32px 18px; border: 1px dashed var(--hairline);
+  border-radius: var(--radius-card); background: color-mix(in srgb, var(--surface-2) 36%, transparent);
+}
+.models-chip { display: inline-flex; align-items: center; min-height: 22px; padding: 2px 9px; border-radius: var(--radius-pill); font-size: var(--type-xs); font-variant-numeric: tabular-nums; }
+.filtered td, .acc tbody tr.filtered td { color: var(--ink-3); font-size: var(--type-md); }
+.state { min-height: 22px; }
+.state.ok { color: var(--ok-text); }
+.state.err { color: var(--bad-text); }
+/* 读取中的表格：不给跳动的骨架条，只把内容压到低对比并标一行说明 */
+.is-loading { color: var(--ink-3); }
+.is-loading > * { opacity: .55; }
+
+/* -- 8. 弹层与提示 ------------------------------------------------------ */
+.veil { background: rgba(8,10,14,.5); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); }
+.veil.on { animation: veilIn 140ms var(--ease) both; }
+@keyframes veilIn { from { opacity: 0; } to { opacity: 1; } }
+.dlg {
+  border: 1px solid var(--hairline); border-radius: 18px; background: var(--material-strong);
+  box-shadow: var(--shadow-float);
+  animation: dlgIn var(--dur-slow) var(--ease) both;
+}
+@keyframes dlgIn { from { opacity: 0; transform: translateY(8px) scale(.985); } to { opacity: 1; transform: none; } }
+.dlg header { padding: 16px 20px 13px; border-bottom: 1px solid var(--hairline); background: color-mix(in srgb, var(--surface-2) 46%, transparent); }
+.dlg header h3 { font-size: 15px; font-weight: 640; }
+.dlg footer { padding: 13px 20px; border-top: 1px solid var(--hairline); background: color-mix(in srgb, var(--surface-2) 46%, transparent); }
+.dlg .tabs { border-radius: 11px; background: color-mix(in srgb, var(--surface-2) 80%, transparent); }
+/* 弹窗头部是标题 + 分段标签的一行：h3 是块级元素，不改成 flex 的话标签会掉到
+   下一行、并在头部右下角留出一大片空白。 */
+.dlg header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 2px; }
+.dlg header h3 { flex: 0 0 auto; }
+.dlg header .hint { flex: 1 1 100%; margin-top: 0; }
+/* 弹窗里的分段标签和页面上的 .subtabs 用同一套观感，切换位置不再有两种语言。 */
+.dlg .tabs .tab { min-height: 28px; padding: 4px 13px; border-radius: 8px; color: var(--ink-3); background: transparent; font: 550 var(--type-md) var(--sans); box-shadow: none; }
+.dlg .tabs .tab:hover { color: var(--ink); background: color-mix(in srgb, var(--surface) 60%, transparent); }
+.dlg .tabs .tab.on { color: var(--accent-text); background: var(--surface); font-weight: 620; box-shadow: 0 1px 2px rgba(0,0,0,.16); }
+.dlg .tabs .tab.on { color: var(--accent-text); background: var(--surface); }
+#toasts { right: 18px; bottom: 18px; gap: 8px; }
+.toast, .tst {
+  border-radius: 12px; background: var(--material-strong); border: 1px solid var(--hairline);
+  border-left: 3px solid var(--accent); box-shadow: var(--shadow-float);
+  backdrop-filter: blur(16px) saturate(170%); -webkit-backdrop-filter: blur(16px) saturate(170%);
+  padding: 10px 14px; font-size: var(--type-md);
+  opacity: 0; transform: translateY(8px);
+  transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease);
+}
+.toast.in { opacity: 1; transform: none; }
+.toast.ok, .tst.ok { border-left-color: var(--ok); }
+.toast.err, .tst.err { border-left-color: var(--bad); }
+.savebar { border-top: 1px solid var(--hairline); background: color-mix(in srgb, var(--surface-2) 88%, transparent); }
+
+/* 表单字段：早期只给了 label.fld 样式，而「添加账号」弹窗用的是
+   <div class="fld">，一直没有规则 —— 标签和控件贴在一起、间距塌掉。
+   这里补通用 .fld，手写和动态生成的字段用同一套间距。 */
+.fld { display: block; margin-bottom: 15px; }
+.fld > .lb { display: block; font-size: var(--type-md); color: var(--ink-2); font-weight: 520; margin-bottom: 6px; }
+.fld > .hint { display: block; font-size: var(--type-xs); color: var(--ink-3); margin-top: 5px; line-height: 1.6; }
+.fld > .fldErr { display: block; font-size: var(--type-xs); color: var(--bad-text); margin-top: 5px; }
+.dlg .body > .fld:last-child, .dlg .body > :last-child { margin-bottom: 0; }
+.dlg .realm-row { margin: 0 0 15px; }
+.dlg .tab-panel { min-height: 0; }
+/* 弹窗底部动作：主动作靠右，取消/关闭留在旁边而不是被拉满宽。 */
+.dlg footer { align-items: center; justify-content: flex-end; gap: 8px; }
+.dlg footer .grow { flex: 1; }
+.alert-badge { box-shadow: 0 0 0 2px var(--surface); }
+
+/* -- 9. 动效：只动 transform / opacity / 颜色 -------------------------- */
+button, .chip, .tag, .nav a, .acc tbody tr, .qrow, .srow, .pfm, .vc, .pfplat, .pk-card,
+input, select, textarea, .stat, .subtab {
+  transition-duration: var(--dur); transition-timing-function: var(--ease);
+}
+.vc, .pfplat, .pk-card { transition: border-color var(--dur-panel) var(--ease), box-shadow var(--dur-panel) var(--ease), transform var(--dur-panel) var(--ease); }
+.vc:hover, .pfplat:hover, .pk-card:hover { transform: translateY(-1px); border-color: color-mix(in srgb, var(--accent) 30%, var(--hairline)); }
+.tblbar, .pager, .savebar, .qgroup, .cfgsec { border-color: var(--hairline); }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; scroll-behavior: auto !important; }
+  .view:not([hidden]), .subtab-panel:not([hidden]), .veil, .veil.on, .dlg, .toast,
+  .pfplat, .vc, .pk-card, button, .chip, .nav a, .toast, .dlg, input, select, textarea {
+    transition-duration: .01ms !important; animation: none !important;
+  }
+}
+
+/* -- 10. 响应式 --------------------------------------------------------- */
+@media (max-width: 1200px) {
+}
+@media (max-width: 980px) {
+  .view { padding: 20px 18px 70px; }
+  .topbar { padding: 11px 18px; }
+}
+@media (max-width: 760px) {
+  .shell { grid-template-columns: minmax(0, 1fr); }
+  .nav { position: static; height: auto; flex-direction: column; border-right: 0; border-bottom: 1px solid var(--hairline); background: var(--material-strong); }
+  .nav, .nav ul, .nav .sig { min-width: 0; max-width: 100%; }
+  .brand { display: flex; align-items: baseline; gap: 10px; padding: 11px 14px 6px; border-bottom: 0; }
+  .brand .sub { margin: 0; }
+  .nav ul { display: flex; gap: 5px; padding: 0 10px 9px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+  .nav ul::-webkit-scrollbar { display: none; }
+  .nav li { flex: 0 0 auto; }
+  .nav a { flex: 0 0 auto; white-space: nowrap; min-height: 34px; padding: 0 12px; margin: 0; }
+  .nav a::before { left: 50%; top: auto; bottom: 3px; width: 16px; height: 2px; transform: translateX(-50%) scaleX(.4); }
+  .nav a.on::before { transform: translateX(-50%) scaleX(1); }
+  .nav .sig { display: flex; align-items: center; gap: 12px; padding: 0 14px 9px; border-top: 0; overflow-x: auto; white-space: nowrap; }
+  .nav .sig .row { margin: 0 !important; }
+  .topbar { min-height: 0; padding: 10px 12px; gap: 8px; flex-wrap: wrap; }
+  .topbar .meta, .topbar .sep { display: none; }
+  .view { padding: 16px 12px 60px; }
+  .box { margin-bottom: 13px; }
+  .box > header { min-height: 0; padding: 11px 13px; align-items: flex-start; }
+  .box > header h3 { flex: 1 1 100%; }
+  .box > header .note { flex: 1 1 100%; }
+  .box > header .chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+  .box > header .chips::-webkit-scrollbar { display: none; }
+  .tblbar, .pager { padding: 9px 12px; }
+  .tblbar input[type="search"] { flex: 1 1 100%; min-width: 0; max-width: none; }
+  .subtabs { display: flex; width: 100%; overflow-x: auto; scrollbar-width: none; }
+  .subtabs::-webkit-scrollbar { display: none; }
+  .subtabs .subtab { flex: 0 0 auto; }
+  /* 窄屏的账号行：操作按钮两列，行高不塌也不暴涨 */
+  #view-accounts table.acc .c-acts .actwrap { grid-template-columns: repeat(2, minmax(54px, 1fr)); }
+  .stat { min-height: 72px; padding: 12px 14px; }
+  .dlg { border-radius: 15px; }
+  .dlg header, .dlg footer { padding-left: 16px; padding-right: 16px; }
+  .dlg .body { padding: 16px; }
+}
+@media (max-width: 560px) {
+  .view { padding: 14px 10px 56px; }
+  .stat { min-height: 68px; padding: 11px 12px; }
+  .stat .v { font-size: 20px; }
+}
+/* 9 个统计格在 375px 下一行一个会占满整屏、把账号表推到折叠线以下；
+   保持两列，数值仍在 19px 上下，扫读一眼就能看完。 */
+@media (max-width: 560px) {
+  .stat { flex-basis: 46%; min-height: 64px; padding: 10px 12px; }
+  .stat .v { font-size: 19px; }
+  .stat .k { font-size: 10.5px; }
+}
+
+/* legacy safety */
+@supports not (backdrop-filter: blur(1px)) {
+  .nav, .topbar, .savebar, .dlg, .toast, .tst { background: var(--surface); }
+}
+
 </style>
 </head>
 <body>
@@ -3322,7 +3740,7 @@ kbd {
         <header>
           <h3>客户端能力矩阵</h3>
           <span class="grow"></span>
-          <span class="note" id="pkNote">能力由模块自身实现决定，核心不含任何 per-client 分支</span>
+          <span class="note" id="pkNote">按模块自身的实际能力统计</span>
           <button class="xs" id="btnPk">重新探测</button>
         </header>
         <div class="tbl-wrap">
@@ -4693,6 +5111,11 @@ function renderStats() {
   $("#sRisk").textContent = risk;
   $("#sFault").textContent = fault;
   $("#sDisabled").textContent = disabled;
+  // 0 不是告警：把该格的语义色收起来，只有真的有账号落在这个状态时才亮红。
+  ["sRisk", "sFault", "sDisabled"].forEach(id => {
+    const el = $("#" + id);
+    if (el) el.parentElement.classList.toggle("is-zero", Number(el.textContent) === 0);
+  });
   $("#sClients").textContent = NAMES.length;
   $("#sReady").textContent = (SNAP.clients || []).filter(c => c.ready).length;
   // 粘性会话是全网关的口径（其余几块也是跨客户端累加）。没有任何客户端报
@@ -4918,7 +5341,7 @@ function acctModelSummary(n, a) {
 
 // modelSummaryBits 把四个计数拼成一行「可用 N · 已关闭 K · 限流 M · 不支持 J」。
 function modelSummaryBits(avail, limited, unsupported, blocked) {
-  const bits = ["可用 " + avail];
+  const bits = [avail + " 个"];
   if (blocked) bits.push("已关闭 " + blocked);
   if (limited) bits.push("限流 " + limited);
   if (unsupported) bits.push("不支持 " + unsupported);
@@ -4930,8 +5353,8 @@ function modelSummaryBits(avail, limited, unsupported, blocked) {
 // 明细在弹层里。
 function modelCellBits(avail, limited, unsupported, blocked) {
   const bad = limited + unsupported;
-  if (!bad && !blocked) return "可用 " + avail;
-  const parts = [];
+  if (!bad && !blocked) return avail + " 个";
+  const parts = [avail + " 个"];
   if (blocked) parts.push("已关闭 " + blocked);
   if (limited) parts.push("限流 " + limited);
   if (unsupported) parts.push("不支持 " + unsupported);
@@ -5704,7 +6127,7 @@ function renderAccounts() {
     const hits = elsewhereClients(q);
     const tail = hits.length
       ? "其他客户端里有匹配：" + hits.map(h => '<button class="xs chip" data-goto="' + esc(h.name) + '">' + esc(h.name) + ' <b>' + h.n + '</b></button>').join(" ")
-      : (stateFilter ? (qRaw ? "换个状态或关键词试试" : "换个状态试试") : "换个关键词试试");
+      : (stateFilter ? (qRaw ? "换个状态或关键词试试" : "换个状态试试（上方计数含全部客户端）") : "换个关键词试试");
     const emptyText = stateFilter
       ? "没有「" + accStateFilterLabel(stateFilter) + "」状态的账号" + (qRaw ? "，关键词「" + qRaw + "」" : "")
       : "没有账号匹配「" + qRaw + "」";
@@ -7342,7 +7765,17 @@ function renderUsageTiles(d, t, rate) {
   const cachePrompt = Number(t.cache_prompt_tokens || 0);
   const hit = usageCacheHitRate(cacheHit, cachePrompt, t.has_cached_tokens);
   const unpriced = Number(t.unpriced_requests || 0);
-  const share = n => (total ? Math.round(n / total * 100) : 0);
+  // 占比用一位小数：整数四舍五入会把真实的 0.4% 印成 0%、把 99.6% 印成 100%，
+  // 于是「输入 6.5B / 输出 27M / 合计 6.53B」看起来自相矛盾。极小但非零的份额
+  // 直接写「<0.1%」，避免出现一个看起来是 0 的数。
+  const share = n => {
+    if (!total) return "0";
+    const pct = n / total * 100;
+    if (pct > 0 && pct < 0.1) return "<0.1";
+    let v = pct.toFixed(1);
+    if (v.endsWith(".0")) v = v.slice(0, -2);
+    return v;
+  };
   const tiles = [
     {
       k: "合计 tokens", v: fmtTok(total), title: numf(total), role: "primary",
@@ -7627,7 +8060,7 @@ async function renderClients() {
   $("#pkBody").innerHTML = NAMES.map(n => {
     const c = clientInfo(n) || {}, k = capsOf(n), a = ACCTS[n] || { accounts: [] };
     return '<tr><td><b>' + esc(platformLabel(n)) + '</b></td>' +
-      '<td>' + (c.ready ? '<span class="chip ok">ready</span>' : '<span class="chip err">no</span>') + '</td>' +
+      '<td>' + (c.ready ? '<span class="chip ok">就绪</span>' : '<span class="chip err">未就绪</span>') + '</td>' +
       '<td>' + yn(k.manage) + '</td><td>' + yn(k.import) + '</td><td>' + yn(k.login) + '</td>' +
       '<td>' + yn(k.sms) + '</td><td>' + yn(k.auto_login) + '</td>' +
       '<td>' + yn(k.checkin) + '</td><td>' + yn(k.refresh_models) + '</td>' +
@@ -14900,12 +15333,12 @@ function chatDraw() {
 
   const box = $("#chatLog");
   if (!CHAT.msgs.length) {
-    box.innerHTML = '<div class="chat-empty"><h4>开始一段新对话</h4>' +
-      '<p>选好客户端和模型，把问题发出去。记录会保存在 data 目录，随时可以接着问。</p>' +
+    box.innerHTML = '<div class="chat-empty"><h4>还没有对话</h4>' +
+      '<p>选好客户端和模型，发一条消息验证这条链路。</p>' +
       '<div class="chat-suggests">' +
-      '<button type="button" data-suggest="你好，先做个自我介绍">自我介绍</button>' +
-      '<button type="button" data-suggest="用三点说明你可以做什么">你能做什么</button>' +
-      '<button type="button" data-suggest="写一段 Python 快速排序并解释">写一段代码</button>' +
+      '<button type="button" data-suggest="只回复 OK">连通性</button>' +
+      '<button type="button" data-suggest="用 JSON 返回 {&quot;ok&quot;:true}">结构化输出</button>' +
+      '<button type="button" data-suggest="用一句话解释这段报错：">报错解释</button>' +
       '</div></div>';
     return;
   }

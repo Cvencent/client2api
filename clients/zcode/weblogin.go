@@ -665,31 +665,19 @@ func (c *Client) credentialFromAuth(ctx context.Context, data oauthPollData, rea
 	userID := jwtUserID(jwt)
 
 	if realm == regionBigmodel {
-		// 国内版同样优先兑换 API key。厂商已经把聊天迁到 /api/v1/ultra*
-		// 并且不再接受纯 plan JWT：JWT 在旧路由回 405/3012、在新路由回 401。
-		// 兑换走 bigmodel.cn 自己的兑换流程；它不可用时仍退回 JWT，这样一次
-		// 本来能成功的登录不会因为多试一次兑换而失败（JWT 仍可用于领取等
-		// 只读接口）。
-		if access != "" {
-			if key, err := c.exchangeAPIKeyAt(ctx, c.cfg.oauthExchangeBigmodelBase(), access); err == nil {
-				acct, acctErr := c.panelAccount(kindAPIKey, key, userID, realm)
-				if acctErr != nil {
-					return managedAccount{}, "", acctErr
-				}
-				return acct, "signed in; the mainland API key was stored as a new account", nil
-			} else {
-				c.pool.log("zcode: mainland API-key exchange failed, keeping the plan JWT: %v", scrubSecrets(err.Error(), access, jwt))
-			}
-		}
+		// 国内版没有 z.ai 的 business-token 交换：厂商自己的 BigModel 适配器原样
+		// 使用轮询回来的 token set（连 businessTokenResolver 都没有），所以这里也
+		// 只认它直接给的凭据。多打一次 api.z.ai 的兑换只会拿到 401/404，然后让一次
+		// 本来成功的登录在最后一步失败。
 		if jwt == "" {
 			return managedAccount{}, "", errors.New(
-				"the vendor reported the mainland sign-in as complete but returned no credential")
+				"the vendor reported the mainland sign-in as complete but returned no plan credential")
 		}
 		acct, err := c.panelAccount(kindJWT, jwt, userID, realm)
 		if err != nil {
 			return managedAccount{}, "", err
 		}
-		return acct, "signed in; the mainland service returned a plan JWT (chat needs an API key)", nil
+		return acct, "signed in; the mainland service returned a plan JWT", nil
 	}
 
 	if access == "" {
@@ -771,13 +759,7 @@ func panelLoginRegion(realm string) string {
 // project -> API key, and returns "<apiKey>.<secretKey>", the credential shape
 // the module's api-key accounts already use.
 func (c *Client) exchangeAPIKey(ctx context.Context, accessToken string) (string, error) {
-	return c.exchangeAPIKeyAt(ctx, c.cfg.oauthExchangeBase(), accessToken)
-}
-
-// exchangeAPIKeyAt runs the same walk against an explicit origin, so the
-// mainland console can mint its own key without sharing the z.ai base.
-func (c *Client) exchangeAPIKeyAt(ctx context.Context, base, accessToken string) (string, error) {
-	bizToken, err := c.exchangeLoginAt(ctx, base, accessToken)
+	bizToken, err := c.exchangeLogin(ctx, accessToken)
 	if err != nil {
 		return "", err
 	}
@@ -791,11 +773,11 @@ func (c *Client) exchangeAPIKeyAt(ctx context.Context, base, accessToken string)
 		}
 		return errors.New(scrubSecrets(err.Error(), accessToken, bizToken))
 	}
-	orgID, projID, err := c.exchangeOrgAt(ctx, base, bizToken)
+	orgID, projID, err := c.exchangeOrg(ctx, bizToken)
 	if err != nil {
 		return "", scrub(err)
 	}
-	keyURL := base + fmt.Sprintf(exchangeKeysPath,
+	keyURL := c.cfg.oauthExchangeBase() + fmt.Sprintf(exchangeKeysPath,
 		url.PathEscape(orgID), url.PathEscape(projID))
 	keyID, err := c.exchangeKey(ctx, bizToken, keyURL)
 	if err != nil {
@@ -809,16 +791,12 @@ func (c *Client) exchangeAPIKeyAt(ctx context.Context, base, accessToken string)
 }
 
 func (c *Client) exchangeLogin(ctx context.Context, accessToken string) (string, error) {
-	return c.exchangeLoginAt(ctx, c.cfg.oauthExchangeBase(), accessToken)
-}
-
-func (c *Client) exchangeLoginAt(ctx context.Context, base, accessToken string) (string, error) {
 	payload, err := json.Marshal(map[string]string{"token": accessToken})
 	if err != nil {
 		return "", redactedErr("the exchange request could not be built: %v", err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		base+exchangeLoginPath, bytes.NewReader(payload))
+		c.cfg.oauthExchangeBase()+exchangeLoginPath, bytes.NewReader(payload))
 	if err != nil {
 		return "", redactedErr("the exchange request could not be built: %v", err)
 	}
@@ -855,11 +833,7 @@ func (c *Client) exchangeLoginAt(ctx context.Context, base, accessToken string) 
 // back to the first entry; we additionally skip entries without an id, which
 // the reference would turn into a request against an empty path segment.
 func (c *Client) exchangeOrg(ctx context.Context, bizToken string) (string, string, error) {
-	return c.exchangeOrgAt(ctx, c.cfg.oauthExchangeBase(), bizToken)
-}
-
-func (c *Client) exchangeOrgAt(ctx context.Context, base, bizToken string) (string, string, error) {
-	req, err := c.bizGet(ctx, base+exchangeCustomerPath, bizToken)
+	req, err := c.bizGet(ctx, c.cfg.oauthExchangeBase()+exchangeCustomerPath, bizToken)
 	if err != nil {
 		return "", "", err
 	}

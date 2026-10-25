@@ -354,9 +354,16 @@ func compactionSplit(msgs []core.Message, keepTurns int) (int, bool) {
 }
 
 // splitForSummarisation groups messages into chunks whose estimated size stays
-// under budget.  A single message larger than the budget becomes its own chunk
-// trimmed to fit, because dropping it entirely would lose the fact that it
-// happened.
+// under budget.  A single round trip larger than the budget becomes its own
+// chunk trimmed to fit, because dropping it entirely would lose the fact that
+// it happened.
+//
+// Chunks are built from whole tool round trips, never from individual messages.
+// A run of tool results belongs to the assistant turn that declared their calls,
+// and a boundary between them is an orphaned result: WorkBuddy rejects that
+// shape with code 11148 ("tool calls and tool results do not match").  Keeping
+// each round trip inside one chunk is what makes the summarisation call a valid
+// history.
 func splitForSummarisation(msgs []core.Message, budget int) [][]core.Message {
 	if budget <= 0 {
 		budget = compactionInputBudget
@@ -373,20 +380,53 @@ func splitForSummarisation(msgs []core.Message, budget int) [][]core.Message {
 			curSz = 0
 		}
 	}
-	for _, m := range msgs {
-		sz := estimateMessageTokens(m)
+	for _, unit := range summarisationUnits(msgs) {
+		sz := estimateMessagesTokens(unit)
 		if sz > budget {
+			// One round trip is larger than the whole chunk budget.  It still
+			// travels as a single chunk: splitting the call from its results
+			// would hand the vendor a malformed history, so the oversized
+			// bodies are truncated instead and the pairing is preserved.
 			flush()
-			out = append(out, []core.Message{truncateMessageForSummary(m, budget)})
+			out = append(out, truncateUnitForSummary(unit, budget))
 			continue
 		}
 		if curSz+sz > budget {
 			flush()
 		}
-		cur = append(cur, m)
+		cur = append(cur, unit...)
 		curSz += sz
 	}
 	flush()
+	return out
+}
+
+// summarisationUnits groups a history into indivisible slices: one message, or
+// an assistant turn that declared tool calls together with every tool result
+// answering it.  Only these units may be packed into a chunk, so a chunk
+// boundary can never fall inside a tool round trip.
+func summarisationUnits(msgs []core.Message) [][]core.Message {
+	var units [][]core.Message
+	for _, m := range msgs {
+		if isToolMessage(m) && len(units) > 0 {
+			// A result always stays with the turn that owns its call.  Reaching
+			// here with no open unit means the history already began with an
+			// orphan, which RepairToolPairing removes before a request is sent.
+			units[len(units)-1] = append(units[len(units)-1], m)
+			continue
+		}
+		units = append(units, []core.Message{m})
+	}
+	return units
+}
+
+// truncateUnitForSummary caps the oversized bodies of one indivisible round trip
+// while keeping its messages together.
+func truncateUnitForSummary(unit []core.Message, budget int) []core.Message {
+	out := make([]core.Message, 0, len(unit))
+	for _, m := range unit {
+		out = append(out, truncateMessageForSummary(m, budget))
+	}
 	return out
 }
 
@@ -430,9 +470,16 @@ func mergeOldest(chunks [][]core.Message, n int) [][]core.Message {
 // routing path, so account selection, rotation and accounting all behave the
 // same way a user-visible call does.
 func summariseMessages(ctx context.Context, s *server, client core.Client, model string, msgs []core.Message) (string, *core.Usage, error) {
+	// A caller can replay a history whose tool result outlived its call -- Codex
+	// does exactly that when it trims on its own side.  The fold is still worth
+	// attempting on the turns that remain, so the pairing is repaired here the
+	// same way every user-visible request is repaired before a module sees it.
+	// Without this the vendor answers "tool calls and tool results do not match"
+	// and the guard falls back to a silent trim.
+	body := core.RepairToolPairing(core.RepairToolArguments(append([]core.Message(nil), msgs...)))
 	req := &core.ChatRequest{
 		Model:    model,
-		Messages: append([]core.Message{{Role: "system", Content: compactionSystemPrompt}}, msgs...),
+		Messages: append([]core.Message{{Role: "system", Content: compactionSystemPrompt}}, body...),
 		Stream:   true,
 	}
 	stream, err := s.openStream(ctx, client, req)

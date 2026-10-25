@@ -5,7 +5,7 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-Current version: **0.3.7**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
+Current version: **0.3.8**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
 
 client2api is a personal, local-only OpenAI-compatible gateway. It aggregates
 the accounts and API Keys **you own** on different AI coding clients and
@@ -47,7 +47,7 @@ people. The built-in default is `127.0.0.1`.
 | `workbuddy/...` | WorkBuddy | Tencent WorkBuddy / CodeBuddy |
 | `autoclaw/...` | AutoClaw | AutoClaw desktop (independent platform) |
 | `trae/...` | Trae | TRAE SOLO / Trae CN |
-| `zcode/...` | ZCode | Z.AI coding plan (chat now routes through `zcode.z.ai/api/v1/ultra*`) |
+| `zcode/...` | ZCode | Z.AI coding plan |
 | `kimi/...` | Kimi | Kimi Code CLI |
 | `qoder/...` | Qoder CN | Qoder CN |
 | `qwenwork/...` | QwenWork | Qwen Office / QoderWork CN |
@@ -349,6 +349,24 @@ OpenAI's `schema must be a JSON Schema of 'type: "object"', got 'type: null'`
   that race degraded straight back into the silent trim. It retries up to three
   times, 200ms apart, and only for local backpressure -- a real upstream verdict
   is still returned as it was.
+- **Summary generation walks the same candidate chain the turn itself uses.**
+  Counting on `candidates[0]` pinned the fold to a platform that could not serve
+  it: WorkBuddy parks accounts per model, which its own `Health()` cannot
+  express, so the caller-visible turn failed over to a sibling and succeeded
+  while the fold failed on the parked platform and degraded back into a silent
+  trim -- the caller never received the compaction item and re-sent the same
+  oversized history forever. A summarisation now fails over on platform or
+  account verdicts, and skips candidates whose health surface already says
+  nothing can serve; a content-policy or malformed-request verdict is returned
+  as it is, because every sibling would repeat it.
+- **A summarisation chunk never splits a tool round trip, and the fold repairs
+  an orphaned result before it is sent.** Greedy size-based chunking could cut
+  between an assistant turn that declared a tool call and the result answering
+  it, and the summariser sent that chunk verbatim, so WorkBuddy refused every
+  fold with code 11148 ("tool calls and tool results do not match"). Chunks are
+  now built from whole round trips, and the summarisation request runs the same
+  `RepairToolPairing` / `RepairToolArguments` pass every user-visible request
+  gets, so a caller-side trim that orphaned a result no longer costs the fold.
 - When the Responses context guard would have trimmed a turn, the gateway folds
   the history and returns a `compaction` item instead of silently dropping the
   oldest turns. A silent trim looks like an ordinary success, so the caller

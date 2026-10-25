@@ -267,7 +267,7 @@ func TestAccountPriorityColumnStaysNarrow(t *testing.T) {
 	src := string(indexHTML)
 	for _, want := range []string{
 		`<col class="col-prio">`,
-		`#view-accounts table.acc .col-prio { width: 6.5%; }`,
+		`#view-accounts table.acc .col-prio { width: 5%; }`,
 		`#view-accounts table.acc .accPrio { width: 52px; min-width: 52px;`,
 	} {
 		if !strings.Contains(src, want) {
@@ -279,12 +279,12 @@ func TestAccountPriorityColumnStaysNarrow(t *testing.T) {
 func TestAccountColumnsSplitTheTableEvenly(t *testing.T) {
 	src := string(indexHTML)
 	for _, want := range []string{
-		`#view-accounts table.acc .col-account { width: 11%; }`,
-		`#view-accounts table.acc .col-usage { width: 12%; }`,
-		`#view-accounts table.acc .col-last { width: 7%; }`,
-		`#view-accounts table.acc .col-bal { width: 7.5%; }`,
-		`#view-accounts table.acc .col-note { width: 17%; }`,
-		`#view-accounts table.acc .col-acts { width: 10%; }`,
+		`#view-accounts table.acc .col-account { width: 12%; }`,
+		`#view-accounts table.acc .col-usage { width: 10.5%; }`,
+		`#view-accounts table.acc .col-last { width: 6%; }`,
+		`#view-accounts table.acc .col-bal { width: 8%; }`,
+		`#view-accounts table.acc .col-note { width: 10%; }`,
+		`#view-accounts table.acc .col-acts { width: 22.5%; }`,
 		`#view-accounts table.acc td.c-usage,`,
 		`#view-accounts table.acc td.c-last { overflow: hidden; }`,
 		`<td class="c-usage">' + accUsageCell(a) + '</td>`,
