@@ -50,6 +50,7 @@
 ### Installer
 
 - client2api-setup-0.3.8.exe（空包，不含账号凭据或本机配置）
+- SHA256：`B0ADAD0F19824CF15130C9229C3E47452B4A2F5BD947BA9E6E2397F324CAB748`
 - 升级会保留现有 configs/client2api.json、data/、账号池、用量和任务数据。
 
 ## [0.3.7] - 2026-10-25
