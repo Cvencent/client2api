@@ -22,7 +22,7 @@
 ### Installer
 
 - `client2api-setup-0.3.7.exe`（空包，不含账号凭据或本机配置）
-- SHA256：`PENDING`
+- SHA256：`07580FA55B8105B3F5D6338B91FFA51BC34FC1DAC990D9E559EC7DF1EA0A0A93`
 - 升级会保留现有 `configs/client2api.json`、`data/`、账号池、用量和任务数据。
 - 顺带修正 README 里滞后到 0.3.5 的版本号。
 ## [0.3.6] - 2026-10-25
