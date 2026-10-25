@@ -1103,10 +1103,10 @@ html { scrollbar-gutter: stable; }
 #view-accounts table.acc .col-bal { width: 8%; }
 #view-accounts table.acc .col-rate { width: 5%; }
 #view-accounts table.acc .col-inflight { width: 4%; }
-#view-accounts table.acc .col-usage { width: 10.5%; }
+#view-accounts table.acc .col-usage { width: 9.5%; }
 #view-accounts table.acc .col-last { width: 6%; }
-#view-accounts table.acc .col-expiry { width: 5%; }
-#view-accounts table.acc .col-note { width: 10%; }
+#view-accounts table.acc .col-expiry { width: 7.5%; }
+#view-accounts table.acc .col-note { width: 8.5%; }
 #view-accounts table.acc .col-acts { width: 22.5%; }
 #view-accounts table.acc th.sortable { cursor: pointer; user-select: none; white-space: nowrap; transition: color .15s ease, background .15s ease; }
 #view-accounts table.acc th.sortable:hover { color: var(--accent-text); background: var(--surface-2); }
@@ -3356,62 +3356,589 @@ input, select, textarea, .stat, .subtab {
   .nav, .topbar, .savebar, .dlg, .toast, .tst { background: var(--surface); }
 }
 
+
+/* ===== round2: IA redesign layer ===== */
+/* ==========================================================================
+   第二轮：信息架构重构层（权威层之后追加，最终生效）
+   --------------------------------------------------------------------------
+   用户要求「交互、层级都可以完全重来，只要功能还在」。这一层做三件事：
+     1. 导航从 11 项平铺改成 4 组收纳 + 计数徽标，顶栏拆成「标题区 / 动作区」；
+     2. 新增总览页：一个健康度环 + 待处理清单 + KPI + 构成条，回答「现在有没有问题」；
+     3. 视觉从「安静的灰仪表盘」升级为有层次的深色工作台：玻璃质感的分组、
+        环形健康度、堆叠构成条、指标卡，全部走同一套令牌。
+   ========================================================================== */
+
+/* -- 1. 壳层重构 -------------------------------------------------------- */
+.shell { grid-template-columns: 232px minmax(0, 1fr); }
+
+.nav { padding: 0; }
+.brand {
+  display: flex; align-items: center; gap: 11px;
+  padding: 18px 16px 16px; border-bottom: 1px solid var(--hairline);
+}
+.brand .logo {
+  width: 34px; height: 34px; flex: none; border-radius: 11px;
+  display: grid; place-items: center;
+  font: 700 13px/1 var(--mono); letter-spacing: -.02em; color: #fff;
+  background: linear-gradient(145deg, var(--accent-hover), var(--accent-active));
+  box-shadow: 0 6px 16px -8px color-mix(in srgb, var(--accent) 80%, transparent), inset 0 1px 0 rgba(255,255,255,.28);
+}
+.brand .name { font-size: 14.5px; font-weight: 680; letter-spacing: -.01em; }
+.brand .sub { font-size: 11px; margin-top: 1px; }
+
+.navscroll { flex: 1; overflow-y: auto; padding: 10px 10px 14px; min-height: 0; }
+.navgroup + .navgroup { margin-top: 14px; }
+.navgroup-t {
+  display: flex; align-items: center; gap: 7px;
+  padding: 0 8px 7px; color: var(--ink-3);
+}
+.navgroup-n { font-size: 10.5px; font-weight: 680; letter-spacing: .1em; text-transform: uppercase; }
+.navgroup-t::after { content: ""; flex: 1; height: 1px; background: var(--hairline); }
+.nav ul { padding: 0; flex: none; }
+.nav a {
+  display: flex; align-items: center; gap: 10px;
+  min-height: 36px; padding: 0 11px; margin-bottom: 2px;
+  border-radius: 10px; color: var(--ink-2); font-size: 13px;
+  transition: color var(--dur) var(--ease), background-color var(--dur) var(--ease);
+}
+.nav a svg { width: 15px; height: 15px; flex: none; opacity: .9; }
+.nav a .navlabel { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nav a .navcount {
+  flex: none; min-width: 20px; height: 18px; padding: 0 6px; border-radius: 999px;
+  display: grid; place-items: center; font: 650 10.5px/1 var(--mono);
+  background: var(--bad-soft); color: var(--bad-text);
+}
+.nav a:hover { background: color-mix(in srgb, var(--surface-2) 80%, transparent); color: var(--ink); }
+.nav a.on {
+  color: var(--accent-text); font-weight: 620;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 20%, transparent), color-mix(in srgb, var(--accent) 7%, transparent));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 26%, transparent);
+}
+.nav a.on svg { opacity: 1; }
+.nav a.on::before { display: none; }
+
+.nav .sig {
+  padding: 11px 15px 13px; border-top: 1px solid var(--hairline);
+  display: flex; flex-direction: column; gap: 5px; font-size: 11px;
+}
+.sigline { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.sigmeta { color: var(--ink-3); font-family: var(--mono); }
+.sigmeta > span { white-space: nowrap; }
+.sig .dot { width: 3px; height: 3px; border-radius: 50%; background: currentColor; flex: none; }
+
+/* 顶栏：左边标题带副标题，右边动作；不再是「标题 / 分隔符 / 长串元信息」一行 */
+.topbar { min-height: 62px; padding: 12px 22px; gap: 10px; align-items: center; }
+.topbar-lead { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.topbar h1 { font-size: 17px; font-weight: 680; letter-spacing: -.015em; line-height: 1.2; }
+.topbar .meta { font-size: 11.5px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.topbar .sep { display: none; }
+
+.view { padding: 20px 24px 72px; }
+
+/* -- 2. 总览页 ---------------------------------------------------------- */
+.ov-hero {
+  display: grid; grid-template-columns: 168px minmax(0, 1fr); gap: 22px; align-items: center;
+  padding: 20px 22px; margin-bottom: 16px;
+  border: 1px solid var(--hairline); border-radius: var(--radius-card);
+  background:
+    radial-gradient(560px 260px at 8% -30%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 62%),
+    var(--material-strong);
+  box-shadow: var(--shadow-panel);
+}
+.ov-ring { position: relative; width: 168px; height: 168px; }
+.ov-ring svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+.ov-ring-bg { fill: none; stroke: color-mix(in srgb, var(--line) 70%, transparent); stroke-width: 10; }
+.ov-ring-fg {
+  fill: none; stroke: var(--ok); stroke-width: 10; stroke-linecap: round;
+  transition: stroke-dashoffset 700ms var(--ease), stroke 300ms var(--ease);
+}
+#ovRing.warn .ov-ring-fg { stroke: var(--warn); }
+#ovRing.bad .ov-ring-fg { stroke: var(--bad); }
+.ov-ring-mid { position: absolute; inset: 0; display: grid; align-content: center; justify-items: center; gap: 2px; }
+.ov-ring-mid b { font: 700 30px/1 var(--mono); letter-spacing: -.03em; }
+.ov-ring-mid span { font-size: 11px; color: var(--ink-3); }
+.ov-hero-t { font-size: 12px; font-weight: 640; color: var(--ink-3); letter-spacing: .02em; margin-bottom: 9px; }
+.ov-attn { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.ov-pill {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 26px; padding: 3px 11px;
+  border-radius: 999px; font-size: 12.5px; font-weight: 560;
+  border: 1px solid transparent;
+}
+.ov-pill.ok { color: var(--ok-text); background: var(--ok-soft); border-color: color-mix(in srgb, var(--ok) 26%, transparent); }
+.ov-pill.warn { color: var(--warn-text); background: var(--warn-soft); border-color: color-mix(in srgb, var(--warn) 26%, transparent); }
+.ov-pill.bad { color: var(--bad-text); background: var(--bad-soft); border-color: color-mix(in srgb, var(--bad) 26%, transparent); }
+.ov-attn-list { display: flex; flex-wrap: wrap; gap: 6px; width: 100%; margin-top: 2px; }
+.ov-attn-item {
+  display: inline-flex; align-items: center; gap: 8px; min-height: 28px; padding: 3px 11px;
+  border-radius: 9px; border: 1px solid var(--hairline);
+  background: color-mix(in srgb, var(--surface-2) 74%, transparent);
+  color: var(--ink-2); font-size: 12px; cursor: pointer;
+}
+.ov-attn-item b { color: var(--bad-text); font-weight: 640; }
+.ov-attn-item:hover { border-color: var(--accent); color: var(--ink); }
+
+.ov-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+.ov-kpi {
+  padding: 14px 16px; border: 1px solid var(--hairline); border-radius: 13px;
+  background: var(--material-strong); box-shadow: var(--shadow-panel);
+}
+.ov-kpi .k { font-size: 11.5px; color: var(--ink-3); }
+.ov-kpi .v { margin-top: 6px; font: 680 26px/1.1 var(--mono); font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+.ov-kpi .s { margin-top: 3px; font-size: 11px; color: var(--ink-3); }
+
+.ov-cols { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 16px; margin-bottom: 16px; }
+.ov-panel .pad { padding: 16px 18px; }
+.ov-stack { display: flex; height: 14px; border-radius: 999px; overflow: hidden; background: var(--surface-2); }
+.ov-stack i { display: block; min-width: 3px; transition: flex 400ms var(--ease); }
+.ov-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 13px; font-size: 12px; color: var(--ink-2); }
+.ov-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.ov-legend i { width: 9px; height: 9px; border-radius: 3px; flex: none; }
+.ov-legend b { font-variant-numeric: tabular-nums; color: var(--ink); }
+.ov-usage { display: grid; gap: 1px; }
+.ov-usage-row {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+  padding: 9px 0; border-bottom: 1px solid var(--hairline);
+}
+.ov-usage-row:last-child { border-bottom: 0; }
+.ov-usage-row .k { font-size: 12px; color: var(--ink-3); }
+.ov-usage-row b { font: 620 15px var(--mono); font-variant-numeric: tabular-nums; }
+.ov-empty { padding: 26px 0; text-align: center; color: var(--ink-3); font-size: 12.5px; }
+
+.ov-jump { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; padding: 16px 18px; }
+.ov-jump-item {
+  display: flex; flex-direction: column; gap: 3px; align-items: flex-start;
+  min-height: 62px; padding: 11px 13px; border-radius: 12px;
+  border: 1px solid var(--hairline); background: color-mix(in srgb, var(--surface-2) 60%, transparent);
+  color: var(--ink); cursor: pointer; text-align: left;
+  transition: border-color var(--dur) var(--ease), background-color var(--dur) var(--ease), transform var(--dur) var(--ease);
+}
+.ov-jump-item b { font-size: 13px; font-weight: 640; }
+.ov-jump-item span { font-size: 11px; color: var(--ink-3); }
+.ov-jump-item:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--hairline)); background: color-mix(in srgb, var(--accent) 8%, var(--surface-2)); transform: translateY(-1px); }
+
+/* -- 3. 响应式 --------------------------------------------------------- */
+@media (max-width: 1200px) {
+  .ov-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ov-cols { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 900px) {
+  .ov-hero { grid-template-columns: minmax(0, 1fr); justify-items: center; text-align: center; }
+  .ov-hero-main { width: 100%; }
+  .ov-attn { justify-content: center; }
+}
+@media (max-width: 760px) {
+  .shell { grid-template-columns: minmax(0, 1fr); }
+  .nav { position: static; height: auto; flex-direction: column; border-right: 0; border-bottom: 1px solid var(--hairline); }
+  .brand { padding: 12px 14px 10px; border-bottom: 0; }
+  .brand .logo { width: 28px; height: 28px; border-radius: 9px; font-size: 11px; }
+  .navscroll { display: flex; gap: 14px; align-items: flex-start; padding: 0 12px 10px; overflow-x: auto; scrollbar-width: none; }
+  .navscroll::-webkit-scrollbar { display: none; }
+  .navgroup { flex: none; }
+  .navgroup + .navgroup { margin-top: 0; }
+  .navgroup-t { padding: 0 4px 6px; }
+  .navgroup ul { display: flex; gap: 5px; }
+  .nav a { min-height: 32px; padding: 0 11px; margin: 0; white-space: nowrap; }
+  .nav a .navcount { display: none; }
+  .nav .sig { flex-direction: row; gap: 12px; padding: 0 14px 10px; border-top: 0; overflow-x: auto; white-space: nowrap; }
+  .topbar { padding: 10px 12px; flex-wrap: wrap; }
+  .topbar h1 { font-size: 15.5px; }
+  .topbar .meta { max-width: 46vw; }
+  .view { padding: 14px 12px 58px; }
+  .ov-hero { padding: 16px 14px; }
+  .ov-ring { width: 132px; height: 132px; }
+  .ov-ring-mid b { font-size: 24px; }
+  .ov-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .ov-kpi { padding: 12px 13px; }
+  .ov-kpi .v { font-size: 21px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ov-ring-fg, .ov-stack i, .ov-jump-item { transition: none !important; }
+}
+
+
+/* ===== round2b ===== */
+/* -- 4. 账号池：把「13 列宽表」改成可扫读的密集网格 + 更明确的层级 ------ */
+#view-accounts .box > header { border-bottom: 0; }
+#view-accounts table.acc { font-size: 12.5px; }
+#view-accounts table.acc th, #view-accounts table.acc td { padding: 7px 8px; }
+#view-accounts table.acc thead th {
+  background: color-mix(in srgb, var(--surface-2) 92%, transparent);
+  border-bottom: 1px solid var(--hairline);
+}
+/* 账号名是这一行的主角：加大加粗，说明文字降到下一行 */
+#view-accounts table.acc .name { font-size: 13px; font-weight: 660; letter-spacing: -.005em; }
+#view-accounts table.acc td > .hint { font-size: 11px; }
+/* 行内状态点改成带光晕的小圆点，扫视列时更醒目 */
+#view-accounts table.acc .pulse { width: 8px; height: 8px; box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 16%, transparent); }
+/* 批量操作条：只有在有选中时才出现，安静但明确 */
+.bulkbar {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px;
+  padding: 10px 14px; border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--hairline));
+  border-radius: 12px; background: color-mix(in srgb, var(--accent) 8%, var(--surface-2));
+}
+.bulkbar .n { font-weight: 640; font-size: 12.5px; }
+.bulkbar .grow { flex: 1; }
+
+/* -- 5. 其余页面的层级统一 --------------------------------------------- */
+/* 页头：每个视图的标题条都收成同一条节奏，标题 + 说明 + 动作 */
+.box > header h3 { font-size: 13.5px; font-weight: 660; }
+.box > header .note { font-size: 11.5px; }
+/* 卡片统一的悬浮层次：静态时更平，hover 才抬起 */
+.box { transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease), transform var(--dur) var(--ease); }
+.box:hover { transform: translateY(-1px); box-shadow: 0 10px 30px -22px rgba(0,0,0,.42); }
+/* 数字与图表配同一套等宽数字，刷新时列不跳 */
+.acc .num, .stat .v, .ov-kpi .v, .ov-usage-row b, .tblbar .note, .pager .note { font-variant-numeric: tabular-nums; }
+
+/* -- 6. 深色主题下把层次再拉开一档 ------------------------------------- */
+[data-theme="dark"] .ov-hero { background: radial-gradient(620px 280px at 6% -34%, color-mix(in srgb, var(--accent) 20%, transparent), transparent 64%), var(--material-strong); }
+[data-theme="dark"] .ov-kpi,
+[data-theme="dark"] .box { border-color: color-mix(in srgb, var(--line) 78%, transparent); }
+
+/* -- 7. 过渡：视图切换加一点点位移，不阻塞导航 ------------------------- */
+.view:not([hidden]) { animation: ovIn 240ms var(--ease) both; }
+@keyframes ovIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .view:not([hidden]), .box { animation: none !important; transition: none !important; }
+}
+
+
+/* ===== round2c ===== */
+/* -- 8. 账号池：状态说明列不再被压成两行乱码 ---------------------------- */
+/* 状态说明里的 JSON 片段（error_code: "TM...", error...）会撑破 10% 的列，
+   把它按「最多两行 + 省略号」收紧，完整内容仍走 title / 弹层。 */
+#view-accounts table.acc td .note {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; line-height: 1.4; overflow-wrap: anywhere;
+}
+/* 成功/失败列的两个数字用同一条基线，斜杠变淡 */
+#view-accounts table.acc td.num { font-variant-numeric: tabular-nums; }
+
+/* -- 9. 平台配置 / 任务中心：把长说明收进可展开的帮助 ------------------- */
+.pfgHelp, .cfghelp { max-width: 74ch; }
+.savebar > .hint { max-width: 76ch; }
+
+/* -- 10. 弹窗与抽屉：统一圆角与层次 ------------------------------------ */
+.veil { backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); }
+.dlg { border-radius: 18px; }
+.dlg header h3 { font-size: 15.5px; font-weight: 680; letter-spacing: -.01em; }
+
+/* -- 11. 滚动条：细一点，别抢视觉 -------------------------------------- */
+* { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--line) 80%, transparent) transparent; }
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--line) 85%, transparent); border-radius: 999px; border: 2px solid transparent; background-clip: content-box; }
+::-webkit-scrollbar-thumb:hover { background: var(--ink-3); background-clip: content-box; }
+
+/* -- 12. 选中态：全站统一的强调描边 ------------------------------------ */
+.chips .chip.on, button.chip.on {
+  background: linear-gradient(180deg, var(--accent-solid-hover), var(--accent-solid));
+  border-color: color-mix(in srgb, var(--accent-solid) 80%, black);
+  color: var(--accent-ink); font-weight: 620;
+  box-shadow: 0 6px 16px -12px color-mix(in srgb, var(--accent) 90%, transparent);
+}
+
+
+/* ===== round2d ===== */
+/* -- 13. 保存条不再压住正文，长说明收成一行 ---------------------------- */
+/* 保存条是 sticky 在视口底部的；内容滚到底时它会盖住最后一排。给带保存条的
+   视图留出与它等高的底部空间，最后一行就完整可见了。 */
+.view { padding-bottom: 88px; }
+.savebar {
+  min-height: 54px; gap: 12px; padding: 10px 18px;
+  border-top: 1px solid var(--hairline);
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  backdrop-filter: blur(16px) saturate(170%); -webkit-backdrop-filter: blur(16px) saturate(170%);
+  box-shadow: 0 -20px 40px -32px rgba(0,0,0,.7);
+}
+.savebar > .hint {
+  flex: 1 1 auto; min-width: 0; max-width: 72ch;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 12px; color: var(--ink-3);
+}
+.savebar > .hint:hover { white-space: normal; }
+.savebar > button { min-height: 34px; }
+
+/* -- 14. 375px：导航分组要有「还有更多」的可发现性 -------------------- */
+@media (max-width: 760px) {
+  /* 侧栏在窄屏是横向工具带；右侧渐隐表示「还能往右滑」，当前组自动滚进视野。 */
+  .navscroll { position: relative; }
+  .navscroll::after {
+    content: ""; position: sticky; right: 0; align-self: stretch; flex: 0 0 26px;
+    background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--surface) 92%, transparent));
+    pointer-events: none;
+  }
+  .navgroup-solo ul { padding-left: 0; }
+  .nav a.on { scroll-margin-inline: 24px 40px; }
+}
+
+/* -- 15. 用量：数据系列与状态色分离 ----------------------------------- */
+/* 输入/输出是「数据系列」，不是状态；用中性—强调两档，把绿/黄/红留给状态。 */
+.uschart .legend .sw-p, .sw.sw-p { background: var(--accent) !important; }
+.uschart .legend .sw-c, .sw.sw-c { background: color-mix(in srgb, var(--accent) 42%, var(--ink-3)) !important; }
+.usbar { fill: var(--accent); }
+.usbar.c { fill: color-mix(in srgb, var(--accent) 42%, var(--ink-3)); }
+
+/* -- 16. 每个视图一条自己的页头节奏 ----------------------------------- */
+/* 主区第一屏给一个「这个页面是干什么的」的一句话，而不是把说明塞进面板头。 */
+.view > .box:first-child > header { min-height: 46px; }
+
+
+/* ===== round2e ===== */
+/* -- 17. 账号池：指标条即筛选器 --------------------------------------
+   原来选账号状态要去「状态」下拉里找，而首屏上方已经有一个更大的状态指标条。
+   现在那排指标直接可点：点一下就按该状态筛选，再点一下取消。
+   这不是装饰——每个指标变成一个到它能解释的那批账号的入口。 */
+.stats { position: relative; }
+.stat.clickable { cursor: pointer; text-align: left; position: relative; }
+.stat.clickable::after {
+  content: ""; position: absolute; left: 14px; right: 14px; bottom: 0; height: 2px;
+  background: var(--accent); border-radius: 2px 2px 0 0;
+  transform: scaleX(0); transform-origin: left; transition: transform var(--dur) var(--ease);
+}
+.stat.clickable:hover { background: color-mix(in srgb, var(--surface-2) 78%, transparent); }
+.stat.clickable:hover::after { transform: scaleX(1); }
+.stat.clickable.on { background: color-mix(in srgb, var(--accent) 12%, var(--surface-2)); }
+.stat.clickable.on::after { transform: scaleX(1); }
+.stat.clickable .k::before { content: "筛选 " ; opacity: 0; font-size: 10px; }
+.stat.clickable:hover .k::before, .stat.clickable.on .k::before { opacity: .7; }
+
+/* -- 18. 账号池工具条：搜索之外的东西收进一个「更多」按钮 ------------ */
+#view-accounts .box > header > .xs { white-space: nowrap; }
+
+/* -- 19. 卡片 hover 不再整体抬升（密集表格里会晃眼），只变边框 --------- */
+.view:hover .box { transform: none; }
+.box:hover { box-shadow: var(--shadow-panel); border-color: color-mix(in srgb, var(--accent) 22%, var(--hairline)); }
+
+
+/* ===== round2f ===== */
+/* -- 20a. 宽表：右侧还有内容这件事要看得见 --------------------------
+   模型表列多，1440px 下最右边会被容器裁掉。滚动条本身在 Windows 上很细，
+   看不见不等于没有，所以在表格容器右侧加一条渐隐，进入时提示「还能往右」，
+   滚到底部自动收起——用 scroll-driven 的 :has 判断不可靠，改成 JS 打标记。 */
+.tbl-wrap { position: relative; }
+.tbl-wrap.scrollable-x::after {
+  content: ""; position: absolute; top: 0; right: 0; bottom: 0; width: 34px;
+  pointer-events: none; border-radius: 0 10px 10px 0;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--surface) 92%, transparent));
+}
+/* 顶部表头里给一句「列多，可横向滚动」的说明，比纯视觉渐隐更明确。 */
+.mdscrollhint { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--ink-3); }
+.mdscrollhint::before { content: "⇆"; font-size: 12px; }
+
+/* -- 20b. 命令面板触发按钮在窄屏只留图标 ------------------------------ */
+@media (max-width: 900px) { .kbtn span { display: none; } }
+
+/* -- 20c. 空态统一：一句话 + 一个动作 --------------------------------- */
+.ov-empty, .tc-empty .d, .empty { text-wrap: pretty; }
+
+/* -- 20. 命令面板：Ctrl/Cmd+K ---------------------------------------- */
+/* 命令面板永远在最上层：keyVeil 也带 .veil.on，若两者同时存在，DOM 里靠后的那个
+   会盖住靠前的，所以这里显式抬高一层，不靠插入顺序。 */
+.cmdveil { z-index: 95; align-items: flex-start; padding-top: 12vh; background: rgba(6,8,12,.55); }
+.cmdk {
+  width: min(620px, 100%); max-height: 66vh; display: flex; flex-direction: column;
+  border: 1px solid color-mix(in srgb, var(--line) 86%, transparent);
+  border-radius: 16px; overflow: hidden;
+  background: var(--material-strong);
+  box-shadow: 0 30px 70px -30px rgba(0,0,0,.7), 0 2px 6px rgba(0,0,0,.3);
+  backdrop-filter: blur(20px) saturate(180%); -webkit-backdrop-filter: blur(20px) saturate(180%);
+  animation: cmdkIn 180ms var(--ease) both;
+}
+@keyframes cmdkIn { from { opacity: 0; transform: translateY(-8px) scale(.985); } to { opacity: 1; transform: none; } }
+.cmdk-input { display: flex; align-items: center; gap: 11px; padding: 14px 16px; border-bottom: 1px solid var(--hairline); }
+.cmdk-input svg { width: 16px; height: 16px; flex: none; color: var(--ink-3); }
+.cmdk-input input {
+  flex: 1; min-width: 0; border: 0; background: none; padding: 0; min-height: 0;
+  font-size: 15px; color: var(--ink); outline: none; box-shadow: none !important;
+}
+.cmdk-input input:focus { border: 0; box-shadow: none; }
+.cmdk-input kbd, .cmdk-foot kbd {
+  font: 10.5px var(--mono); color: var(--ink-3); background: var(--surface-2);
+  border: 1px solid var(--hairline); border-radius: 5px; padding: 2px 6px;
+}
+.cmdk-list { overflow-y: auto; padding: 6px; min-height: 0; }
+.cmdk-group { padding: 8px 10px 4px; font-size: 10.5px; font-weight: 680; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); }
+.cmdk-item {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 9px 11px; border: 0; border-radius: 9px; background: transparent;
+  color: var(--ink-2); font-size: 13px; text-align: left; cursor: pointer;
+}
+.cmdk-item .ic { width: 16px; text-align: center; color: var(--ink-3); flex: none; }
+.cmdk-item .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cmdk-item .h { font-size: 11px; color: var(--ink-3); flex: none; }
+.cmdk-item.sel { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--ink); }
+.cmdk-item.sel .ic { color: var(--accent-text); }
+.cmdk-empty { padding: 26px 14px; text-align: center; color: var(--ink-3); font-size: 12.5px; }
+.cmdk-foot {
+  display: flex; align-items: center; gap: 14px; padding: 9px 14px;
+  border-top: 1px solid var(--hairline); background: color-mix(in srgb, var(--surface-2) 44%, transparent);
+  font-size: 11px; color: var(--ink-3);
+}
+.cmdk-foot span { display: inline-flex; align-items: center; gap: 4px; }
+.cmdk-foot #cmdkCount { margin-left: auto; font-variant-numeric: tabular-nums; }
+/* 顶栏那个「搜索」按钮，提示键位 */
+.kbtn { display: inline-flex; align-items: center; gap: 8px; color: var(--ink-3); }
+.kbtn kbd { font: 10.5px var(--mono); border: 1px solid var(--hairline); border-radius: 5px; padding: 1px 5px; background: var(--surface-2); }
+@media (max-width: 760px) {
+  .cmdveil { padding-top: 6vh; padding-left: 10px; padding-right: 10px; }
+  .cmdk { max-height: 78vh; }
+  .kbtn kbd { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { .cmdk { animation: none !important; } }
+
+
+/* ===== round2g ===== */
+/* -- 21. 顶部那一墙等权胶囊：让它有层级，别和异常抢注意力 -------
+   账号池 / 任务中心的平台筛选原来是一排同尺寸同颜色的胶囊，健康的和异常的
+   看起来一样重。改成：有账号的客户端保持普通，红色状态点自带一层软底，
+   当前项用实心强调；再把整条压缩一行高度，少占首屏。 */
+.chips { gap: 5px; }
+.chips .chip, button.chip {
+  min-height: 23px; padding: 2px 9px; border-radius: 999px;
+  font-size: 11px; line-height: 1.5;
+  background: color-mix(in srgb, var(--surface-2) 72%, transparent);
+  border: 1px solid color-mix(in srgb, var(--line) 62%, transparent);
+  color: var(--ink-2);
+  transition: color var(--dur) var(--ease), background-color var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+.chips .chip:hover, button.chip:hover { border-color: color-mix(in srgb, var(--accent) 40%, var(--hairline)); color: var(--ink); }
+/* 带红/黄状态点的客户端：给它一点底色，但比胶囊本身淡得多，不喧宾夺主。 */
+.chips .chip .pulse[style*="--bad"], .chips .chip .pulse[style*="255,95,87"] { box-shadow: 0 0 0 3px color-mix(in srgb, var(--bad) 22%, transparent); }
+.chips .chip .pulse { width: 6px; height: 6px; }
+
+/* 面板头里的 chips 允许换行但收紧行距，首屏少占一行 */
+.box > header .chips { row-gap: 4px; }
+
+/* -- 22. 任务中心：平台筛选换成一行摘要 + 展开 -------------------------- */
+#view-taskscenter .tblbar .chips, #scChips { max-height: 62px; overflow: hidden; }
+#view-taskscenter .tblbar .chips:hover { max-height: none; }
+
+/* -- 23. 空态与载入态统一措辞节奏 ------------------------------------- */
+.state { font-size: 12.5px; }
+.dots { color: var(--ink-3); }
+
+
+/* ===== round2h ===== */
+/* -- 24. 运行日志：首行不再被吸顶筛选条压掉 ---------------------------- */
+/* 面板头是 sticky，日志框滚到顶时第一行会贴在它下沿；给日志框留出与面板头
+   等高的上内边距已被 .pad 占掉，这里改成「滚动容器自己顶部留白」。 */
+#logBox { scroll-padding-top: 8px; }
+#logBox > .ln:first-child, #logBox > .l:first-child { margin-top: 2px; }
+.pad > #logBox { padding-top: 13px; }
+
+/* -- 25. 宽表右缘：末列不再被硬切 -------------------------------------
+   模型表 14 列在 1440px 下会超出容器，硬切会让最后一个表头和单元格看起来
+   像「坏了」。给容器右侧留出滚动条的空间，并让末列始终完整。 */
+.tbl-wrap { scrollbar-gutter: stable; }
+.acc.md { padding-right: 0; }
+.acc.md th:last-child, .acc.md td:last-child { padding-right: 14px; }
+/* 模型表里被压到 3 行的模型名，最多两行 + 省略号 */
+.acc.md .mdmodel > b { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+
+/* -- 26. 总览严重度：冷却不等于告警 -----------------------------------
+   53 个冷却中是常规排队，不该把整屏染成红。环的颜色只由「真正不可用」决定，
+   冷却单独用中性提示，不参与告警色。 */
+#ovRing.warn .ov-ring-fg { stroke: var(--accent); }
+#ovRing.bad .ov-ring-fg { stroke: var(--bad); }
+.ov-pill.warn { color: var(--ink-2); background: color-mix(in srgb, var(--surface-2) 74%, transparent); border-color: var(--hairline); }
+/* 「需要处理」里冷却那一枚降权，真正不可用的保持红。 */
+.ov-pill.warn::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+
+/* -- 27. 用量：输入/输出两条序列要一眼可分 ---------------------------- */
+.uschart .legend .sw-p, .sw.sw-p { background: var(--accent) !important; }
+.uschart .legend .sw-c, .sw.sw-c { background: color-mix(in srgb, var(--accent) 34%, var(--ink-3)) !important; }
+/* 指标卡顶部那条 1px 彩边承担状态含义：成功/花费/延迟各一色，不再是无意义装饰。 */
+.ustile.ustat-mini, .ustile.ustat-primary { outline: 0; }
+
+/* -- 28. 对话测试：两条常驻报错不要再压在输入区旁边 ------------------- */
+#toasts { max-width: min(420px, calc(100vw - 36px)); }
+#toasts .toast { box-shadow: var(--shadow-float); }
+
 </style>
 </head>
 <body>
 <div class="shell">
-  <nav class="nav">
+  <nav class="nav" aria-label="主导航">
     <div class="brand">
-      <div class="name">client2api</div>
-      <div class="sub" id="navSub">控制台</div>
+      <span class="logo" aria-hidden="true">c2</span>
+      <div>
+        <div class="name">client2api</div>
+        <div class="sub" id="navSub">控制台</div>
+      </div>
     </div>
-    <ul>
-      <li><a href="#accounts" data-view="accounts" class="on">
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="5.5" r="2.6"/><path d="M2.8 13.5c.6-2.6 2.7-4 5.2-4s4.6 1.4 5.2 4"/></svg>
-        账号池</a></li>
-      <li><a href="#chat" data-view="chat">
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.4 3.4h11.2v7.2H7.6l-3.4 2.6v-2.6H2.4z"/><path d="M5.6 6.4h4.8M5.6 8.6h3"/></svg>
-        对话测试</a></li>
-      <li><a href="#usage" data-view="usage">
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 13.5h12"/><path d="M4.5 13.5V8.2M8 13.5V3.5M11.5 13.5v-3"/></svg>
-        用量</a></li>
-      <li><a href="#alerts" data-view="alerts">
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4 7a4 4 0 1 1 8 0v3l1.2 1.5H2.8L4 10z"/><path d="M6.4 13a1.8 1.8 0 0 0 3.2 0"/></svg>
-        平台告警</a></li>
-      <li><a href="#credits" data-view="credits">
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><ellipse cx="8" cy="4.2" rx="5.2" ry="2.1"/><path d="M2.8 4.2v3.2c0 1.2 2.3 2.1 5.2 2.1s5.2-.9 5.2-2.1V4.2"/><path d="M2.8 7.4v3.2c0 1.2 2.3 2.1 5.2 2.1s5.2-.9 5.2-2.1V7.4"/></svg>
-        积分构成</a></li>
-      <li><a href="#packages" data-view="packages">
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.2 5.4 8 2.5l5.8 2.9v5.2L8 13.5l-5.8-2.9z"/><path d="M2.2 5.4 8 8.3l5.8-2.9M8 8.3v5.2"/></svg>
-        客户端</a></li>
-      <li><a href="#taskscenter" data-view="taskscenter">
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 2.5h10v9H8l-3 3v-3H3z"/><path d="M6 6.5h4M6 9h2.5"/></svg>
-        任务中心</a></li>
-      <li><a href="#models" data-view="models">
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M8 1.8 14 5v6L8 14.2 2 11V5z"/><path d="M2 5l6 3.2L14 5M8 8.2v6"/></svg>
-        模型与档位</a></li>
-      <li><a href="#platforms" data-view="platforms">
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 3.5h4a2 2 0 0 1 2 2v5a2 2 0 0 0 2 2h2"/><circle cx="3" cy="3.5" r="1.5"/><circle cx="13" cy="12.5" r="1.5"/><circle cx="8" cy="8" r="1.5"/></svg>
-        平台配置</a></li>
-      <li><a href="#config" data-view="config">
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.6v1.9M8 12.5v1.9M1.6 8h1.9M12.5 8h1.9M3.5 3.5l1.3 1.3M11.2 11.2l1.3 1.3M12.5 3.5l-1.3 1.3M4.8 11.2l-1.3 1.3"/></svg>
-        配置</a></li>
-      <li><a href="#logs" data-view="logs">
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 3.5h11M2.5 8h11M2.5 12.5h7"/></svg>
-        运行日志</a></li>
-    </ul>
+    <div class="navscroll">
+      <div class="navgroup navgroup-solo" data-group="home">
+        <ul>
+          <li><a href="#overview" data-view="overview">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="2" width="5.2" height="5.2" rx="1.4"/><rect x="8.8" y="2" width="5.2" height="5.2" rx="1.4"/><rect x="2" y="8.8" width="5.2" height="5.2" rx="1.4"/><rect x="8.8" y="8.8" width="5.2" height="5.2" rx="1.4"/></svg>
+            <span class="navlabel">总览</span></a></li>
+        </ul>
+      </div>
+      <div class="navgroup" data-group="resources">
+        <div class="navgroup-t"><span class="navgroup-n">资源</span></div>
+        <ul>
+          <li><a href="#accounts" data-view="accounts">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="5.5" r="2.6"/><path d="M2.8 13.5c.6-2.6 2.7-4 5.2-4s4.6 1.4 5.2 4"/></svg>
+            <span class="navlabel">账号池</span><span class="navcount" id="navCountAccounts" hidden></span></a></li>
+          <li><a href="#packages" data-view="packages">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.2 5.4 8 2.5l5.8 2.9v5.2L8 13.5l-5.8-2.9z"/><path d="M2.2 5.4 8 8.3l5.8-2.9M8 8.3v5.2"/></svg>
+            <span class="navlabel">客户端</span></a></li>
+          <li><a href="#credits" data-view="credits">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><ellipse cx="8" cy="4.2" rx="5.2" ry="2.1"/><path d="M2.8 4.2v3.2c0 1.2 2.3 2.1 5.2 2.1s5.2-.9 5.2-2.1V4.2"/><path d="M2.8 7.4v3.2c0 1.2 2.3 2.1 5.2 2.1s5.2-.9 5.2-2.1V7.4"/></svg>
+            <span class="navlabel">积分构成</span></a></li>
+        </ul>
+      </div>
+      <div class="navgroup" data-group="traffic">
+        <div class="navgroup-t"><span class="navgroup-n">流量</span></div>
+        <ul>
+          <li><a href="#usage" data-view="usage">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 13.5h12"/><path d="M4.5 13.5V8.2M8 13.5V3.5M11.5 13.5v-3"/></svg>
+            <span class="navlabel">用量</span></a></li>
+          <li><a href="#models" data-view="models">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M8 1.8 14 5v6L8 14.2 2 11V5z"/><path d="M2 5l6 3.2L14 5M8 8.2v6"/></svg>
+            <span class="navlabel">模型与档位</span></a></li>
+          <li><a href="#platforms" data-view="platforms">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 3.5h4a2 2 0 0 1 2 2v5a2 2 0 0 0 2 2h2"/><circle cx="3" cy="3.5" r="1.5"/><circle cx="13" cy="12.5" r="1.5"/><circle cx="8" cy="8" r="1.5"/></svg>
+            <span class="navlabel">平台配置</span></a></li>
+          <li><a href="#chat" data-view="chat">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.4 3.4h11.2v7.2H7.6l-3.4 2.6v-2.6H2.4z"/><path d="M5.6 6.4h4.8M5.6 8.6h3"/></svg>
+            <span class="navlabel">对话测试</span></a></li>
+        </ul>
+      </div>
+      <div class="navgroup" data-group="system">
+        <div class="navgroup-t"><span class="navgroup-n">系统</span></div>
+        <ul>
+          <li><a href="#alerts" data-view="alerts">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4 7a4 4 0 1 1 8 0v3l1.2 1.5H2.8L4 10z"/><path d="M6.4 13a1.8 1.8 0 0 0 3.2 0"/></svg>
+            <span class="navlabel">平台告警</span><span class="navcount" id="navCountAlerts" hidden></span></a></li>
+          <li><a href="#taskscenter" data-view="taskscenter">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 2.5h10v9H8l-3 3v-3H3z"/><path d="M6 6.5h4M6 9h2.5"/></svg>
+            <span class="navlabel">任务中心</span></a></li>
+          <li><a href="#logs" data-view="logs">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 3.5h11M2.5 8h11M2.5 12.5h7"/></svg>
+            <span class="navlabel">运行日志</span></a></li>
+          <li><a href="#config" data-view="config">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.6v1.9M8 12.5v1.9M1.6 8h1.9M12.5 8h1.9M3.5 3.5l1.3 1.3M11.2 11.2l1.3 1.3M12.5 3.5l-1.3 1.3M4.8 11.2l-1.3 1.3"/></svg>
+            <span class="navlabel">配置</span></a></li>
+        </ul>
+      </div>
+    </div>
     <div class="sig">
-      <div class="row"><span class="pulse" id="navPulse"></span><span id="navState">连接中</span></div>
-      <div class="row" style="margin-top:5px"><span id="navVer">v-</span> · <span id="navRedis">-</span></div>
+      <div class="sigline"><span class="pulse" id="navPulse"></span><span id="navState">连接中</span></div>
+      <div class="sigline sigmeta"><span id="navVer">v-</span><span class="dot"></span><span id="navRedis">-</span></div>
     </div>
   </nav>
 
   <div class="main">
     <div class="topbar">
-      <h2 id="ttl">账号池</h2>
-      <span class="sep">/</span>
-      <span class="meta" id="subMeta">-</span>
+      <div class="topbar-lead">
+        <h1 id="ttl">总览</h1>
+        <span class="meta" id="subMeta">-</span>
+      </div>
       <div class="grow"></div>
+      <button class="kbtn" id="btnCmdk" title="命令面板（Ctrl+K）" aria-label="打开命令面板">
+        <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="7" cy="7" r="4.2"/><path d="M10.2 10.2 14 14"/></svg>
+        <span>跳转</span><kbd>Ctrl K</kbd>
+      </button>
       <button class="icon ghost alert-btn" id="btnAlertCenter" title="平台告警" aria-label="平台告警">
         <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4 7a4 4 0 1 1 8 0v3l1.2 1.5H2.8L4 10z"/><path d="M6.4 13a1.8 1.8 0 0 0 3.2 0"/></svg>
         <span class="alert-badge" id="alertBadge" hidden>0</span>
@@ -3421,18 +3948,56 @@ input, select, textarea, .stat, .subtab {
       </button>
       <!-- 统一的刷新入口：任何视图都在这个位置，按当前视图分派到真正干活的函数。 -->
       <button id="btnRefresh" title="重新读取当前页面的数据">刷新</button>
-      <button class="primary" id="btnAdd">添加账号</button>
+      <button class="primary" id="btnAdd" hidden>添加账号</button>
     </div>
+
+    <!-- 总览：一屏回答「现在有没有问题」，再往下钻到具体页面 -->
+    <section class="view" id="view-overview">
+      <div class="ov-hero">
+        <div class="ov-ring" id="ovRing" role="img" aria-label="账号池健康度">
+          <svg viewBox="0 0 120 120" aria-hidden="true">
+            <circle class="ov-ring-bg" cx="60" cy="60" r="52"></circle>
+            <circle class="ov-ring-fg" id="ovRingFg" cx="60" cy="60" r="52"></circle>
+          </svg>
+          <div class="ov-ring-mid">
+            <b id="ovRingPct">-</b>
+            <span>可用</span>
+          </div>
+        </div>
+        <div class="ov-hero-main">
+          <div class="ov-hero-t">需要处理</div>
+          <div class="ov-attn" id="ovAttn"></div>
+        </div>
+      </div>
+
+      <div class="ov-kpis" id="ovKpis"></div>
+
+      <div class="ov-cols">
+        <div class="box ov-panel">
+          <header><h3>账号健康</h3><span class="grow"></span><span class="note" id="ovAccNote"></span></header>
+          <div class="ov-bars" id="ovBars"></div>
+        </div>
+        <div class="box ov-panel">
+          <header><h3>流量</h3><span class="grow"></span><span class="note" id="ovUsageNote"></span></header>
+          <div class="ov-usage" id="ovUsage"></div>
+        </div>
+      </div>
+
+      <div class="box ov-panel">
+        <header><h3>快捷入口</h3></header>
+        <div class="ov-jump" id="ovJump"></div>
+      </div>
+    </section>
 
     <!-- 账号池 -->
     <section class="view" id="view-accounts">
       <div class="stats">
-        <div class="stat"><div class="v" id="sTotal">-</div><div class="k">账号总数</div></div>
-        <div class="stat good"><div class="v" id="sHealthy">-</div><div class="k">可用</div></div>
-        <div class="stat warn"><div class="v" id="sCooling">-</div><div class="k">冷却中</div></div>
-        <div class="stat bad"><div class="v" id="sRisk">-</div><div class="k">风控</div></div>
-        <div class="stat bad"><div class="v" id="sFault">-</div><div class="k">账号异常</div></div>
-        <div class="stat bad"><div class="v" id="sDisabled">-</div><div class="k">已停用</div></div>
+        <button type="button" class="stat clickable" data-state-filter="" title="显示全部账号"><div class="v" id="sTotal">-</div><div class="k">账号总数</div></button>
+        <button type="button" class="stat good clickable" data-state-filter="ready" title="只看可用账号"><div class="v" id="sHealthy">-</div><div class="k">可用</div></button>
+        <button type="button" class="stat warn clickable" data-state-filter="cooling" title="只看冷却中的账号"><div class="v" id="sCooling">-</div><div class="k">冷却中</div></button>
+        <button type="button" class="stat bad clickable" data-state-filter="risk" title="只看风控账号"><div class="v" id="sRisk">-</div><div class="k">风控</div></button>
+        <button type="button" class="stat bad clickable" data-state-filter="fault" title="只看异常账号"><div class="v" id="sFault">-</div><div class="k">账号异常</div></button>
+        <button type="button" class="stat bad clickable" data-state-filter="disabled" title="只看已停用账号"><div class="v" id="sDisabled">-</div><div class="k">已停用</div></button>
         <div class="stat"><div class="v" id="sClients">-</div><div class="k">已接入客户端</div></div>
         <div class="stat"><div class="v" id="sReady">-</div><div class="k">就绪客户端</div></div>
         <button type="button" class="stat sticky-tile" id="sStickyTile" aria-haspopup="dialog" aria-controls="stickyVeil" title="查看并管理粘性会话">
@@ -4453,6 +5018,22 @@ input, select, textarea, .stat, .subtab {
   </div>
 </div>
 
+<!-- 命令面板：一个键跳到任何视图、客户端或动作。
+     这个控制台有 12 个视图、上百个账号，逐个点侧栏是这里最慢的一步；
+     Ctrl/Cmd+K 打开、输入几个字母、回车到达，键盘全流程可用。
+     它只做导航和已有动作，不新增任何会改数据的路径。 -->
+<div class="veil cmdveil" id="cmdkVeil" hidden>
+  <div class="cmdk" role="dialog" aria-modal="true" aria-label="命令面板">
+    <div class="cmdk-input">
+      <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="4.2"/><path d="M10.2 10.2 14 14"/></svg>
+      <input id="cmdkInput" type="text" spellcheck="false" autocomplete="off" placeholder="跳到视图、客户端，或执行动作…" aria-controls="cmdkList" aria-expanded="true" role="combobox" aria-autocomplete="list">
+      <kbd>Esc</kbd>
+    </div>
+    <div class="cmdk-list" id="cmdkList" role="listbox" aria-label="命令结果"></div>
+    <div class="cmdk-foot"><span><kbd>↑</kbd><kbd>↓</kbd> 选择</span><span><kbd>Enter</kbd> 打开</span><span id="cmdkCount"></span></div>
+  </div>
+</div>
+
 <!-- 密钥 -->
 <div class="veil" id="keyVeil" data-lock="1">
   <div class="dlg" style="width:420px">
@@ -4886,21 +5467,22 @@ function setNav(ok, msg) {
   $("#navState").textContent = ok ? "已连接" : (msg || "未连接");
   $("#navVer").textContent = "v" + (SNAP.version || "-");
   $("#navRedis").textContent = NAMES.length + " 客户端 / " + ready + " 就绪 · " + redisLabel();
-  $("#subMeta").textContent = (SNAP.listen || "-") + " · 运行 " + (SNAP.uptime || "-");
+  $("#subMeta").textContent = SNAP.listen || "-";
 }
 
 /* ── 视图路由 ─────────────────────────────────────────────────────────── */
-const TITLES = { accounts: "账号池", chat: "对话测试", usage: "用量", alerts: "平台告警", credits: "积分构成", packages: "客户端", taskscenter: "任务中心", models: "模型与档位", platforms: "平台配置", config: "配置", logs: "运行日志" };
+const TITLES = { overview: "总览", accounts: "账号池", chat: "对话测试", usage: "用量", alerts: "平台告警", credits: "积分构成", packages: "客户端", taskscenter: "任务中心", models: "模型与档位", platforms: "平台配置", config: "配置", logs: "运行日志" };
 function go(v) {
   if (!TITLES[v]) v = "accounts";
   VIEW = v;
   $$(".nav a").forEach(a => a.classList.toggle("on", a.dataset.view === v));
   $$(".view").forEach(s => { s.hidden = s.id !== "view-" + v; });
   $("#ttl").textContent = TITLES[v];
-  // 顶栏「添加账号」只对账号池有意义，别处隐藏。刷新则相反：它现在是全站统一
-  // 入口，任何视图都要能点，所以不再按视图隐藏。
-  const onAccounts = v === "accounts";
-  $("#btnAdd").hidden = !onAccounts;
+  // 顶栏「添加账号」只对账号池有意义（总览页从快捷入口进）。刷新则相反：
+  // 它现在是全站统一入口，任何视图都要能点，所以不按视图隐藏。
+  $("#btnAdd").hidden = v !== "accounts";
+  if (v === "overview") renderOverview();
+  if (v) setTimeout(markScrollableTables, 0);
   if (v === "accounts") renderAccounts();
   if (v === "chat") renderChat();
   if (v === "usage") renderUsage();
@@ -4913,13 +5495,14 @@ function go(v) {
   if (v === "logs") renderLogs();
   if (v === "taskscenter") { renderSchedule(); renderQC(); renderTaskBoard(); reattachQueueView(); }
 }
-window.addEventListener("hashchange", () => go((location.hash || "#accounts").slice(1)));
+window.addEventListener("hashchange", () => go((location.hash || "#overview").slice(1)));
 
 /* 顶栏那个刷新按钮的落点表。刷新原本散落在各卡片 header 里，位置不统一、有几个
    页面（对话测试、运行日志）还根本没有；现在统一到顶栏一处，按当前视图分派到下面
    这些真正干活的函数，而不是笼统地 refreshAll 一次。
    任务中心有三个子面板，一个视图键要刷新全部三块，所以那个分支带函数体。 */
 const REFRESH_BY_VIEW = {
+  "overview": () => refreshAll(true),
   "accounts": () => refreshAll(true),
   "chat": () => renderChat(true),
   "usage": () => renderUsage(),
@@ -5072,6 +5655,20 @@ function elsewhereClients(q) {
   return out;
 }
 
+// elsewhereByState 回答的是「指标条说这个状态有 8 个，可当前客户端一个都没有」。
+// 它按同一套 accountState() 口径数出别的客户端里各有多少个，好让空态直接给入口，
+// 而不是让人自己一个个点渠道去找。
+function elsewhereByState(state) {
+  const out = [];
+  if (!state) return out;
+  NAMES.forEach(n => {
+    if (n === CUR) return;
+    const hit = accGroups(ACCTS[n] && ACCTS[n].accounts).filter(g => accountState(accGroupStat(g)).key === state).length;
+    if (hit) out.push({ name: n, n: hit });
+  });
+  return out;
+}
+
 function renderChips() {
   const box = $("#clientChips");
   box.innerHTML = NAMES.map(n => {
@@ -5085,6 +5682,120 @@ function renderChips() {
     return '<button class="xs chip' + (n === CUR ? " on" : "") + '" data-client="' + esc(n) + '" title="' + esc((ok ? "就绪" : ((c && c.detail) || "未就绪")) + " · " + label + " 个账号可用") + '">' +
       '<span class="pulse" style="background:' + (ok ? "var(--ok)" : "var(--bad)") + '"></span>' + esc(platformLabel(n)) + ' <b>' + esc(label) + '</b></button>';
   }).join("");
+}
+
+/* ── 总览 ─────────────────────────────────────────────────────────────────
+   首屏只回答一个问题：现在有没有问题。所以顺序是「一个环 + 一条待处理清单」，
+   先给结论，再给数字，最后才是入口。所有数字都来自已经加载好的 ACCTS / SNAP /
+   OVER，不额外发请求——总览不该比账号表更慢。 */
+async function renderOverview() {
+  const cls = { ready: 0, cooling: 0, risk: 0, fault: 0, disabled: 0, unknown: 0 };
+  let total = 0;
+  const needAttention = [];
+  NAMES.forEach(n => {
+    const groups = accGroups(ACCTS[n] && ACCTS[n].accounts);
+    let bad = 0;
+    groups.forEach(g => {
+      const st = accGroupStat(g);
+      const key = accountState(st).key;
+      total++;
+      if (cls[key] === undefined) cls.unknown++; else cls[key]++;
+      if (key === "risk" || key === "fault" || key === "disabled") bad++;
+    });
+    if (bad) needAttention.push({ name: n, label: platformLabel(n), n: bad, kind: "bad" });
+    else if (groups.length === 0) needAttention.push({ name: n, label: platformLabel(n), n: 0, kind: "empty" });
+  });
+  const ok = cls.ready;
+  const pct = total ? Math.round(ok / total * 100) : 0;
+
+  // 健康度环：只画一次弧，剩下的交给 CSS 过渡（reduced-motion 下直接到位）。
+  const ring = $("#ovRingFg");
+  if (ring) {
+    const C = 2 * Math.PI * 52;
+    ring.style.strokeDasharray = String(C);
+    ring.style.strokeDashoffset = String(C * (1 - pct / 100));
+  }
+  $("#ovRingPct").textContent = total ? pct + "%" : "-";
+  // 严重度只由「真正不可用」决定。冷却中是常规排队，不该把整屏染成告警色；
+  // 所以有不可用 = 红，只有冷却 = 中性强调色，都干净 = 绿。
+  const ringBox = $("#ovRing");
+  const hard = cls.risk + cls.fault + cls.disabled;
+  if (ringBox) {
+    ringBox.classList.toggle("bad", hard > 0);
+    ringBox.classList.toggle("warn", hard === 0 && cls.cooling > 0);
+    ringBox.classList.toggle("ok", hard === 0 && cls.cooling === 0);
+  }
+  $("#ovRing").setAttribute("aria-label", total
+    ? "账号池健康度：" + total + " 个账号中 " + ok + " 个可用"
+    : "账号池健康度：暂无账号");
+
+  // 待处理清单：有异常就先报异常，其次报空池；都干净时才说干净。
+  const attn = $("#ovAttn");
+  const badTotal = cls.risk + cls.fault + cls.disabled;
+  const bits = [];
+  if (badTotal) bits.push('<span class="ov-pill bad">' + badTotal + ' 个账号不可用</span>');
+  if (cls.cooling) bits.push('<span class="ov-pill warn">' + cls.cooling + ' 个冷却中</span>');
+  const alertN = ($("#alertBadge").hidden ? 0 : Number($("#alertBadge").textContent || 0));
+  if (alertN) bits.push('<span class="ov-pill bad">' + alertN + ' 条平台告警</span>');
+  if (needAttention.length) {
+    bits.push('<div class="ov-attn-list">' + needAttention.slice(0, 4).map(x =>
+      '<button class="ov-attn-item" type="button" data-goto="' + esc(x.name) + '">' +
+      esc(x.label) + '<b>' + (x.kind === "empty" ? "无账号" : x.n + " 不可用") + '</b></button>').join("") +
+      (needAttention.length > 4 ? '<span class="hint">还有 ' + (needAttention.length - 4) + ' 个</span>' : "") + '</div>');
+  } else if (!bits.length) {
+    bits.push('<span class="ov-pill ok">全部正常</span>');
+  }
+  attn.innerHTML = bits.join("");
+
+  // KPI：四格纵向节奏，跟正文同一套数字字体。
+  const sticky = poolSum("sticky_sessions");
+  const inflight = poolSum("in_flight");
+  const kpis = [
+    { k: "账号总数", v: String(total), s: ok + " 可用" },
+    { k: "冷却中", v: String(cls.cooling), s: cls.cooling ? "等待窗口" : "无" },
+    { k: "在途请求", v: inflight == null ? "-" : String(inflight), s: "跨平台合计" },
+    { k: "粘性会话", v: sticky == null ? "-" : String(sticky), s: "已绑定" },
+  ];
+  $("#ovKpis").innerHTML = kpis.map(x =>
+    '<div class="ov-kpi"><div class="k">' + esc(x.k) + '</div><div class="v">' + esc(x.v) + '</div><div class="s">' + esc(x.s) + '</div></div>').join("");
+
+  // 账号健康：一条堆叠横条 + 图例，扫一眼就知道比例。
+  $("#ovAccNote").textContent = total ? total + " 个账号" : "";
+  const segs = [
+    { k: "可用", n: cls.ready, c: "var(--ok)" },
+    { k: "冷却中", n: cls.cooling, c: "var(--warn)" },
+    { k: "风控", n: cls.risk, c: "var(--bad)" },
+    { k: "账号异常", n: cls.fault, c: "var(--bad)" },
+    { k: "已停用", n: cls.disabled, c: "var(--ink-3)" },
+  ].filter(x => x.n > 0);
+  $("#ovBars").innerHTML = total
+    ? '<div class="ov-stack">' + segs.map(x => '<i style="flex:' + x.n + ';background:' + x.c + '" title="' + esc(x.k) + ' ' + x.n + '"></i>').join("") + '</div>' +
+      '<div class="ov-legend">' + segs.map(x => '<span><i style="background:' + x.c + '"></i>' + esc(x.k) + ' <b>' + x.n + '</b></span>').join("") + '</div>'
+    : '<div class="ov-empty">还没有接入账号</div>';
+
+  // 流量：/overview 只回网关自开始以来的请求/失败累计，不带 24 小时窗口
+  // （那是 /usage 的活）。这里就画这两个真实存在的数，不假装有一个窗口切片。
+  const reqs = Number((SNAP && SNAP.requests) || 0);
+  const fails = Number((SNAP && SNAP.failures) || 0);
+  const rate = reqs ? Math.round((reqs - fails) / reqs * 100) : 0;
+  $("#ovUsageNote").textContent = "进程累计";
+  $("#ovUsage").innerHTML =
+    '<div class="ov-usage-row"><span class="k">请求</span><b>' + numf(reqs) + '</b></div>' +
+    '<div class="ov-usage-row"><span class="k">失败</span><b>' + numf(fails) + '</b></div>' +
+    '<div class="ov-usage-row"><span class="k">成功率</span><b>' + (reqs ? rate + "%" : "-") + '</b></div>' +
+    '<div class="ov-usage-row"><span class="k">日志行</span><b>' + numf((SNAP && SNAP.log_lines) || 0) + '</b></div>';
+
+  // 快捷入口：把最常去的几个页面放成按钮，省掉一次侧栏寻找。
+  const jumps = [
+    { v: "accounts", t: "账号池", d: total + " 个账号" },
+    { v: "usage", t: "用量", d: "调用与花费" },
+    { v: "taskscenter", t: "任务中心", d: "签到与巡检" },
+    { v: "platforms", t: "平台配置", d: "优先级与路由" },
+    { v: "logs", t: "运行日志", d: "实时输出" },
+    { v: "config", t: "配置", d: "网关参数" },
+  ];
+  $("#ovJump").innerHTML = jumps.map(j =>
+    '<button class="ov-jump-item" type="button" data-view-jump="' + j.v + '"><b>' + esc(j.t) + '</b><span>' + esc(j.d) + '</span></button>').join("");
 }
 
 function renderStats() {
@@ -5106,6 +5817,9 @@ function renderStats() {
     else if (cls.key === "disabled") disabled++;
   }));
   $("#sTotal").textContent = total;
+  // 侧栏徽标：账号池显示总数，告警显示未读条数（由 refreshAlertBadge 填）。
+  const navAcc = $("#navCountAccounts");
+  if (navAcc) { navAcc.textContent = String(total); navAcc.title = "账号总数"; navAcc.hidden = !total; navAcc.style.background = "color-mix(in srgb, var(--accent) 18%, transparent)"; navAcc.style.color = "var(--accent-text)"; }
   $("#sHealthy").textContent = ready;
   $("#sCooling").textContent = cool;
   $("#sRisk").textContent = risk;
@@ -5868,7 +6582,13 @@ function accStateFilter() {
 }
 function syncAccStateFilter() {
   const el = $("#accStateFilter");
-  if (el) el.value = (CUR && ACC_FILTER[CUR]) || "";
+  const want = (CUR && ACC_FILTER[CUR]) || "";
+  if (el) el.value = want;
+  // 指标条上的高亮跟着同一个值走，别让「筛选器显示 A、指标条高亮 B」。
+  $$(".stat.clickable").forEach(t => {
+    t.classList.toggle("on", (t.dataset.stateFilter || "") === want);
+    t.setAttribute("aria-pressed", ((t.dataset.stateFilter || "") === want) ? "true" : "false");
+  });
 }
 function accSortDir(n) { return accSort(n).dir; }
 function accSortDefaultDir(col) {
@@ -6124,9 +6844,9 @@ function renderAccounts() {
   // 有账号、只是被搜索框筛掉了：给一句看得懂的空态，而不是一张空白表。别的客户端
   // 里命中的账号直接列成可点的徽章，点一下就切过去并保留关键词。
   if (!shown.length) {
-    const hits = elsewhereClients(q);
+    const hits = stateFilter ? elsewhereByState(stateFilter) : elsewhereClients(q);
     const tail = hits.length
-      ? "其他客户端里有匹配：" + hits.map(h => '<button class="xs chip" data-goto="' + esc(h.name) + '">' + esc(h.name) + ' <b>' + h.n + '</b></button>').join(" ")
+      ? (stateFilter ? "其他客户端里有：" : "其他客户端里有匹配：") + hits.map(h => '<button class="xs chip" data-goto="' + esc(h.name) + '">' + esc(h.name) + ' <b>' + h.n + '</b></button>').join(" ")
       : (stateFilter ? (qRaw ? "换个状态或关键词试试" : "换个状态试试（上方计数含全部客户端）") : "换个关键词试试");
     const emptyText = stateFilter
       ? "没有「" + accStateFilterLabel(stateFilter) + "」状态的账号" + (qRaw ? "，关键词「" + qRaw + "」" : "")
@@ -8014,6 +8734,9 @@ function updateAlertBadge(n) {
   if (!badge) return;
   badge.textContent = n > 99 ? "99+" : String(n || 0);
   badge.hidden = !n;
+  // 侧栏那一项也带同一个数，从任何视图都能看到积了多少条告警。
+  const nav = $("#navCountAlerts");
+  if (nav) { nav.textContent = n > 99 ? "99+" : String(n || 0); nav.hidden = !n; nav.title = (n || 0) + " 条未读告警"; }
 }
 
 async function renderAlerts() {
@@ -13924,6 +14647,31 @@ $("#accBody").addEventListener("keydown", ev => {
 // 账号池搜索：只重排已经拿到的行，不重新请求上游。输入用 requestAnimationFrame 合并
 // 同一帧里的多次事件（中文输入法一次上屏会连发好几个 input），避免每敲一个字都重建
 // 整张表。#accSearch 在 box header 里，renderAccounts 只动 tbody，所以焦点不会丢。
+// 指标条即筛选器：点一下按该状态过滤，再点一下（或点「账号总数」）清空。
+// 这是原来只能去「状态」下拉里做的事，现在入口就在它解释的那批账号上方。
+document.addEventListener("click", ev => {
+  const tile = ev.target.closest && ev.target.closest(".stat.clickable");
+  if (!tile || VIEW !== "accounts") return;
+  const want = tile.dataset.stateFilter || "";
+  const sel = $("#accStateFilter");
+  if (!sel) return;
+  const next = sel.value === want ? "" : want;
+  sel.value = next;
+  sel.dispatchEvent(new Event("change", { bubbles: true }));
+});
+
+// 表格横向可滚动时打个标记，让右侧渐隐只在真的能往右滚时出现。
+function markScrollableTables() {
+  $$(".tbl-wrap").forEach(w => {
+    const more = w.scrollWidth - w.clientWidth - w.scrollLeft > 4;
+    w.classList.toggle("scrollable-x", more);
+  });
+}
+window.addEventListener("resize", markScrollableTables);
+document.addEventListener("scroll", ev => {
+  if (ev.target && ev.target.classList && ev.target.classList.contains("tbl-wrap")) markScrollableTables();
+}, true);
+
 let accSearchTick = 0;
 $("#accSearch").addEventListener("input", () => {
   if (accSearchTick) return;
@@ -14766,6 +15514,91 @@ $("#quickConnect").addEventListener("click", ev => {
   if (ev.target.closest("[data-qc-probe]")) { qcProbe(n, card); return; }
   if (ev.target.closest("[data-qc-connect]")) { qcConnect(n, card); return; }
 });
+/* 总览页的入口与「待处理」条目都只是导航，不改任何数据。 */
+document.addEventListener("click", ev => {
+  const jump = ev.target.closest && ev.target.closest("[data-view-jump]");
+  if (jump) { location.hash = "#" + jump.dataset.viewJump; return; }
+  const goto = ev.target.closest && ev.target.closest("#ovAttn [data-goto]");
+  if (goto) { CUR = goto.dataset.goto; ACC_PAGE = 1; location.hash = "#accounts"; go("accounts"); }
+});
+/* ── 命令面板（Ctrl/Cmd+K）───────────────────────────────────────────────
+   12 个视图 + 上百个账号，用侧栏逐个点是最慢的一条路。这里把「去哪里」变成
+   一次输入：视图、客户端、以及几个只读动作。动作全部复用已有函数，
+   面板自己不新开任何会写数据的路径。 */
+const CMDK = { open: false, items: [], sel: 0 };
+function cmdkCommands() {
+  const out = [];
+  Object.keys(TITLES).forEach(v => out.push({
+    kind: "视图", label: TITLES[v], hint: v, icon: "▪", run: () => { location.hash = "#" + v; },
+  }));
+  NAMES.forEach(n => {
+    const c = clientInfo(n) || {};
+    out.push({
+      kind: "客户端", label: platformLabel(n), hint: c.ready ? "就绪" : "未就绪", icon: "◎",
+      run: () => { CUR = n; ACC_PAGE = 1; location.hash = "#accounts"; go("accounts"); },
+    });
+  });
+  out.push({ kind: "动作", label: "刷新当前页面", hint: TITLES[VIEW] || "", icon: "⟳", run: () => refreshCurrentView() });
+  out.push({ kind: "动作", label: "切换明暗主题", hint: "深 → 浅 → 跟随系统", icon: "◐", run: () => $("#btnTheme").click() });
+  if (VIEW === "accounts" || true) out.push({ kind: "动作", label: "添加账号", hint: "打开添加弹窗", icon: "+", run: () => { location.hash = "#accounts"; go("accounts"); $("#btnAdd").click(); } });
+  return out;
+}
+function cmdkRender() {
+  const q = String($("#cmdkInput").value || "").trim().toLowerCase();
+  const all = cmdkCommands();
+  const hit = q ? all.filter(c => (c.kind + " " + c.label + " " + c.hint).toLowerCase().indexOf(q) >= 0) : all;
+  CMDK.items = hit.slice(0, 60);
+  if (CMDK.sel >= CMDK.items.length) CMDK.sel = 0;
+  const list = $("#cmdkList");
+  if (!CMDK.items.length) {
+    list.innerHTML = '<div class="cmdk-empty">没有匹配的命令</div>';
+  } else {
+    let html = "", lastKind = "";
+    CMDK.items.forEach((c, i) => {
+      if (c.kind !== lastKind) { html += '<div class="cmdk-group">' + esc(c.kind) + '</div>'; lastKind = c.kind; }
+      html += '<button class="cmdk-item' + (i === CMDK.sel ? " sel" : "") + '" type="button" role="option" aria-selected="' + (i === CMDK.sel) + '" data-cmd="' + i + '">' +
+        '<span class="ic">' + esc(c.icon || "•") + '</span><span class="t">' + esc(c.label) + '</span><span class="h">' + esc(c.hint) + '</span></button>';
+    });
+    list.innerHTML = html;
+  }
+  $("#cmdkCount").textContent = CMDK.items.length + " / " + all.length;
+  const sel = list.querySelector(".cmdk-item.sel");
+  if (sel && sel.scrollIntoView) sel.scrollIntoView({ block: "nearest" });
+}
+function cmdkOpen() {
+  CMDK.open = true; CMDK.sel = 0;
+  showVeil($("#cmdkVeil"));
+  $("#cmdkInput").value = "";
+  cmdkRender();
+  $("#cmdkInput").focus();
+}
+function cmdkClose() { CMDK.open = false; hideVeil($("#cmdkVeil")); }
+function cmdkRun(i) {
+  const c = CMDK.items[i];
+  if (!c) return;
+  cmdkClose();
+  c.run();
+}
+$("#btnCmdk").addEventListener("click", cmdkOpen);
+$("#cmdkVeil").addEventListener("click", ev => { if (ev.target === $("#cmdkVeil")) cmdkClose(); });
+$("#cmdkInput").addEventListener("input", () => { CMDK.sel = 0; cmdkRender(); });
+$("#cmdkList").addEventListener("click", ev => {
+  const b = ev.target.closest && ev.target.closest("[data-cmd]");
+  if (b) cmdkRun(Number(b.dataset.cmd));
+});
+$("#cmdkInput").addEventListener("keydown", ev => {
+  if (ev.key === "ArrowDown") { ev.preventDefault(); CMDK.sel = Math.min(CMDK.sel + 1, CMDK.items.length - 1); cmdkRender(); }
+  else if (ev.key === "ArrowUp") { ev.preventDefault(); CMDK.sel = Math.max(CMDK.sel - 1, 0); cmdkRender(); }
+  else if (ev.key === "Enter") { ev.preventDefault(); cmdkRun(CMDK.sel); }
+  else if (ev.key === "Escape") { ev.preventDefault(); cmdkClose(); }
+});
+window.addEventListener("keydown", ev => {
+  if ((ev.ctrlKey || ev.metaKey) && String(ev.key).toLowerCase() === "k") {
+    ev.preventDefault();
+    CMDK.open ? cmdkClose() : cmdkOpen();
+  }
+});
+
 $("#btnRefresh").addEventListener("click", refreshCurrentView);
 $("#btnCapClose").addEventListener("click", () => { if (CAP.resolve) capSettle(false, new Error("已取消人机验证")); });
 $("#capVeil").addEventListener("click", ev => { if (ev.target === $("#capVeil") && CAP.resolve) capSettle(false, new Error("已取消人机验证")); });
@@ -14803,7 +15636,12 @@ window.addEventListener("keydown", ev => {
     box.select();
     return;
   }
-  if (ev.key === "Escape") closeTopVeil();
+  if (ev.key === "Escape") {
+    // 命令面板是最上面的一层：它有焦点时优先关它，别让下面那个带 data-lock 的
+    // 密钥框把 Esc 吞掉（closeTopVeil 见到 lock 会直接返回 false）。
+    if (typeof CMDK !== "undefined" && CMDK.open) { cmdkClose(); return; }
+    closeTopVeil();
+  }
 });
 
 /* ── 对话测试 ─────────────────────────────────────────────────────────── */
@@ -15610,7 +16448,10 @@ async function refreshAll(loud) {
   // a gateway that cannot answer /overview falls back to the per-client path.
   if (!OVER_FULL || loud) await loadAllAccounts(!loud);
   renderAccounts();
+  markScrollableTables();
   refreshAlertBadge().catch(() => {});
+  // 总览读的是 ACCTS / SNAP，必须在账号加载完之后再画一次；否则首屏会显示 0。
+  renderOverview();
   if (VIEW === "chat") renderChat(true);
   if (VIEW === "usage") renderUsage();
   if (VIEW === "alerts") renderAlerts();
@@ -15664,7 +16505,7 @@ window.addEventListener("error", ev => {
 window.addEventListener("unhandledrejection", ev => panelBootError(ev.reason));
 (async function boot() {
   try {
-    go((location.hash || "#accounts").slice(1));
+    go((location.hash || "#overview").slice(1));
     await refreshAll();
     refreshAlertBadge().catch(() => {});
     setInterval(() => { if (VIEW === "logs") renderLogs(); }, 4000);

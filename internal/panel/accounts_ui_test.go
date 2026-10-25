@@ -280,10 +280,10 @@ func TestAccountColumnsSplitTheTableEvenly(t *testing.T) {
 	src := string(indexHTML)
 	for _, want := range []string{
 		`#view-accounts table.acc .col-account { width: 12%; }`,
-		`#view-accounts table.acc .col-usage { width: 10.5%; }`,
+		`#view-accounts table.acc .col-usage { width: 9.5%; }`,
 		`#view-accounts table.acc .col-last { width: 6%; }`,
 		`#view-accounts table.acc .col-bal { width: 8%; }`,
-		`#view-accounts table.acc .col-note { width: 10%; }`,
+		`#view-accounts table.acc .col-note { width: 8.5%; }`,
 		`#view-accounts table.acc .col-acts { width: 22.5%; }`,
 		`#view-accounts table.acc td.c-usage,`,
 		`#view-accounts table.acc td.c-last { overflow: hidden; }`,

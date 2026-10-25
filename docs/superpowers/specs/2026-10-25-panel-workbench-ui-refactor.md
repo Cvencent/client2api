@@ -98,3 +98,64 @@
 - 模型表在 1440px 下的多列裁切与模型 ID 三行折行是改版前既有问题，未在本轮改动表格列结构。
 - 顶部 KPI 是「全部客户端」口径、状态筛选是「当前客户端」口径，本轮只补了空态提示（「上方计数含全部客户端」），没有改统计口径。
 - 任务中心平台筛选胶囊、平台配置底部常驻说明条的收纳，属于信息架构调整，留待后续。
+
+
+---
+
+# 第二轮：信息架构与交互重做
+
+用户明确要求「交互、层级、布局都可以完全重来，不必参考现在的形态，只要功能还在」，
+于是这一轮不再只是换皮，重新决定了导航模型、落地页和几个交互方式。
+
+## 与上一版的差别
+
+| 维度 | 上一版 | 这一版 |
+| --- | --- | --- |
+| 导航 | 11 项平铺一级列表 | 4 组收纳（总览 / 资源 / 流量 / 系统）+ 计数徽标 |
+| 落地页 | 直接落到账号表 | **总览页**：健康度环 + 待处理清单 + KPI + 构成条 + 快捷入口 |
+| 顶栏 | 标题 / 分隔符 / 长串元信息 | 标题+副标题 / 动作区；新增命令面板入口 |
+| 账号状态筛选 | 只能去「状态」下拉 | **指标条本身就是筛选器**，再点一次取消 |
+| 全局跳转 | 逐个点侧栏 | **命令面板 Ctrl/Cmd+K**：12 视图 + 全部客户端 + 常用动作 |
+
+## 新增的交互
+
+1. **总览页（默认落地）** —— 一个圆环回答「现在健不健康」，旁边就是「需要处理」清单；
+   清单里的每一项都可点，直接跳到对应客户端的账号表。
+2. **指标条即筛选器** —— 首屏那排状态数字不再只是读数；点「账号异常」就按该状态过滤。
+   筛选后当前客户端没有匹配时，空态会列出**确实有这个状态的其它客户端**，一点直达。
+3. **命令面板 Ctrl/Cmd+K** —— 12 个视图、全部客户端、刷新/切主题/添加账号都能一次输入到达；
+   ↑↓ 选择、Enter 打开、Esc 关闭。只做导航与既有动作，不新开写数据的路径。
+4. **宽表横向提示** —— 能往右滚的表格右侧出现渐隐，滚到底自动收起。
+5. **保存条改为悬浮** —— 长表单滚到底时最后一行不再被保存条盖住。
+
+## 修掉的既有缺陷
+
+- 总览最初读了 `/overview` 里并不存在的 `usage` 字段（那个接口只回网关累计），
+  已改成只画真实存在的请求/失败/日志行，不假装有一个 24 小时窗口切片。
+- 命令面板与密钥弹窗同时存在时，DOM 顺序会让密钥弹窗盖住面板，Esc 也会被
+  `data-lock` 的密钥框吞掉；已显式抬高层级并让 Esc 优先关面板。
+
+## 验证
+
+- `go build ./...` 通过；`go test ./...` 45 个包全绿。
+- 真浏览器 smoke（panelsmoke + 无头 Edge）：面板干净启动，无 boot error。
+- 自建只读预览 42 项交互 + 34 项命令面板/新交互检查全过、0 运行时异常。
+- 375/760/1024/1440/2200 五档无页面级横向滚动。
+
+## Review fixes (round 2, independent review 7/10)
+
+1. The account pool expiry column collided with the status-note column: at 1440px it
+   had 57px but needed 82px. Expiry goes 5% -> 7.5%, usage and note each give up a
+   little, so the total is still 100% and nothing overlaps.
+2. The overview read cooling as an alarm. Severity is now decided only by genuinely
+   unavailable accounts: some unavailable = red, cooling only = neutral blue, clean = green.
+3. Wide tables were hard-clipped on the right with no affordance. Added
+   scrollbar-gutter, a right pad on the last column, a two-line clamp on model names,
+   and a right-edge fade that appears only when the table can actually scroll.
+4. The usage input/output series were nearly the same colour; input is now the accent
+   and output a mix of accent and neutral, in both bars and legend.
+5. Top bar no longer shows the per-second uptime; client filter chips are quieter.
+
+Also fixed a defect I introduced earlier: the command palette and the API-key prompt
+could both be open, and DOM order let the key prompt cover the palette while its
+data-lock swallowed Esc. The palette now sits above it and Esc closes the palette first.
