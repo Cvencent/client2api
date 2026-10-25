@@ -512,7 +512,7 @@ OpenAI's `schema must be a JSON Schema of 'type: "object"', got 'type: null'`
   `http://127.0.0.1:7890`, `socks5://127.0.0.1:1080` or a `user:pass@` URL) in
   the relay dialog and every request that relay makes — chat, model scan,
   balance and account tests — leaves through it, while the rest of the gateway
-  keeps its global egress. Leave it empty to inherit the gateway client.
+  keeps its global egress. Leave it empty to inherit the gateway client. A relay that gates by client allowlist also accepts `user_agent`: set it to the client the relay expects when a generic UA is refused with 401 "unauthorized client detected".
 - Custom relays have their own rate-limit and cooldown policy, editable in the panel's
   relay dialog. `requests_per_minute` caps upstream attempts across the relay and
   `requests_per_minute_per_account` caps each key; a full key is skipped in favour of

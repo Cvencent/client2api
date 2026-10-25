@@ -253,7 +253,13 @@ func (s *source) transportLocked() *Client {
 	return &Client{instanceName: s.name, deps: s.depsWithClient(), cfg: Config{MaxTokensField: field, Providers: providers}, pool: s.pool, now: time.Now, wireModel: s.wireModel}
 }
 func (s *source) providerLocked(p storedProvider) ProviderConfig {
-	return ProviderConfig{ID: p.ID, APIKey: p.APIKey, AppSecret: p.AppSecret, BaseURL: s.accountBaseLocked(p), Models: append([]string(nil), p.Models...), ProbeModels: append([]string(nil), p.ProbeModels...), Label: p.Label, Disabled: p.Disabled}
+	ua := p.UserAgent
+	if ua == "" {
+		// A source-level UA is the operator default for every account on the
+		// platform; an account-level value wins.
+		ua = s.cfg.UserAgent
+	}
+	return ProviderConfig{ID: p.ID, APIKey: p.APIKey, AppSecret: p.AppSecret, BaseURL: s.accountBaseLocked(p), Models: append([]string(nil), p.Models...), ProbeModels: append([]string(nil), p.ProbeModels...), ExtraHeaders: p.Headers, UserAgent: ua, Label: p.Label, Disabled: p.Disabled}
 }
 
 // accountBaseLocked is the effective API root for one stored account.  An

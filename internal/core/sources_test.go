@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -83,6 +84,23 @@ func TestSourceValidationProxy(t *testing.T) {
 	} {
 		if err := ValidateSources(map[string]SourceConfig{"relay": {BaseURL: "https://relay.example/v1", Proxy: proxy}}); err == nil {
 			t.Errorf("accepted proxy %q", proxy)
+		}
+	}
+}
+
+func TestSourceValidationUserAgent(t *testing.T) {
+	for _, ua := range []string{
+		"",
+		"codex_cli_rs/0.0.1 (client2api)",
+		"KiloCode/4.0 (Windows)",
+	} {
+		if err := ValidateSources(map[string]SourceConfig{"relay": {BaseURL: "https://relay.example/v1", UserAgent: ua}}); err != nil {
+			t.Errorf("rejected user_agent %q: %v", ua, err)
+		}
+	}
+	for _, ua := range []string{"two\nlines", "line\r\nbreak", strings.Repeat("x", 513)} {
+		if err := ValidateSources(map[string]SourceConfig{"relay": {BaseURL: "https://relay.example/v1", UserAgent: ua}}); err == nil {
+			t.Errorf("accepted user_agent %q", ua[:20])
 		}
 	}
 }

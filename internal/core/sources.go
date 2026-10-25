@@ -42,6 +42,13 @@ type SourceConfig struct {
 	// needs its own egress does not drag the other platforms with it.
 	Proxy string `json:"proxy,omitempty"`
 
+	// UserAgent replaces the module's default User-Agent on every request
+	// this source makes.  Some relays gate their API surface by a client
+	// allowlist and answer a generic UA with 401 "unauthorized client
+	// detected"; the operator names the client the relay expects.  Empty
+	// keeps the module identity.
+	UserAgent string `json:"user_agent,omitempty"`
+
 	// RequestsPerMinute caps every upstream attempt for this source.  Zero
 	// means no per-source RPM ceiling.
 	RequestsPerMinute int `json:"requests_per_minute,omitempty"`
@@ -221,6 +228,9 @@ func ValidateSources(sources map[string]SourceConfig) error {
 		}
 		if err := validateSourceProxy(cfg.Proxy); err != nil {
 			return fmt.Errorf("source %q: %w", id, err)
+		}
+		if strings.ContainsAny(cfg.UserAgent, "\r\n") || len(cfg.UserAgent) > 512 {
+			return fmt.Errorf("source %q: user_agent must be a single header line under 512 bytes", id)
 		}
 		if cfg.RequestsPerMinute < 0 {
 			return fmt.Errorf("source %q: requests_per_minute must be >= 0", id)

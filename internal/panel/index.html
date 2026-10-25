@@ -4737,7 +4737,7 @@ input, select, textarea, .stat, .subtab {
       <div class="fld"><label class="lb" for="sourceURL">API 地址 *</label><input id="sourceURL" type="url" required placeholder="https://api.example.com/v1" autocomplete="off" spellcheck="false"></div>
       <div class="fld" id="sourceKeyField"><label class="lb" for="sourceKey">首个 API Key（可选）</label><input id="sourceKey" type="password" autocomplete="new-password" spellcheck="false"></div>
       <div class="fld"><label class="lb" for="sourceTokens">输出上限字段</label><select id="sourceTokens"><option value="max_tokens">max_tokens</option><option value="max_completion_tokens">max_completion_tokens</option></select></div>
-      <div class="fld"><label class="lb" for="sourceProxy">代理（可选）</label><input id="sourceProxy" placeholder="http://127.0.0.1:7890 或 socks5://127.0.0.1:1080" autocomplete="off" spellcheck="false"><span class="hint">这个中转站的全部请求（对话、扫描模型、余额、测试）都走这个代理；留空表示跟随网关的全局代理。</span></div>
+      <div class="fld"><label class="lb" for="sourceProxy">代理（可选）</label><input id="sourceProxy" placeholder="http://127.0.0.1:7890 或 socks5://127.0.0.1:1080" autocomplete="off" spellcheck="false"><span class="hint">这个中转站的全部请求（对话、扫描模型、余额、测试）都走这个代理；留空表示跟随网关的全局代理。</span></div>      <div class="fld"><label class="lb" for="sourceUserAgent">User-Agent（可选）</label><input id="sourceUserAgent" placeholder="codex_cli_rs/0.0.1 (client2api)" autocomplete="off" spellcheck="false"><span class="hint">个别中转站按客户端白名单放行，通用 UA 会被拒（401 unauthorized client detected）；这里填它期望的客户端 UA，留空用本网关默认。</span></div>
       <div class="fld"><label class="lb" for="sourceBalanceProtocol">余额协议</label><select id="sourceBalanceProtocol"><option value="auto">自动识别</option><option value="newapi">New API</option><option value="sub2api">Sub2API</option><option value="openai_billing">OpenAI Billing</option><option value="none">不查询</option></select></div>
       <div class="fld"><label class="lb" for="sourceBalanceQuota">每美元额度</label><input id="sourceBalanceQuota" type="number" min="0" step="1" value="500000" placeholder="500000" inputmode="numeric"></div>
       <fieldset class="source-policy">
@@ -5261,6 +5261,7 @@ function openSource(id) {
   $("#sourceURL").value = cfg.base_url || "";
   $("#sourceTokens").value = cfg.max_tokens_field || "max_tokens";
   $("#sourceProxy").value = cfg.proxy || "";
+  $("#sourceUserAgent").value = cfg.user_agent || "";
   $("#sourceBalanceProtocol").value = cfg.balance_protocol || "auto";
   $("#sourceBalanceQuota").value = cfg.balance_quota_per_usd || 500000;
   const intText = value => value == null ? "" : String(value);
@@ -5358,6 +5359,7 @@ async function saveSource(ev) {
       disabled: !$("#sourceEnabled").checked, max_tokens_field: $("#sourceTokens").value,
       balance_protocol: $("#sourceBalanceProtocol").value,
       proxy: $("#sourceProxy").value.trim(),
+      user_agent: $("#sourceUserAgent").value.trim(),
       balance_quota_per_usd: Number($("#sourceBalanceQuota").value)
     };
     const rpm = sourceIntField("#sourceRPM");

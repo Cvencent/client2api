@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -120,5 +121,73 @@ func TestSourceProxyIsRevalidatedOnReload(t *testing.T) {
 	}
 	if err := c.ConfigureSource(core.SourceConfig{BaseURL: "https://relay.example/v1", Proxy: "socks4://127.0.0.1:1080"}); err == nil {
 		t.Fatal("a malformed proxy was accepted on reload")
+	}
+}
+
+// TestSourceUserAgentReachesTheWire pins the per-source UA: a relay that gates
+// by client allowlist (agentrouter answers a generic UA with 401 "unauthorized
+// client detected") needs the operator's UA on every request the module makes,
+// and a source-level value must win over the module default.
+func TestSourceUserAgentReachesTheWire(t *testing.T) {
+	var mu sync.Mutex
+	var seen []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seen = append(seen, r.Header.Get("User-Agent"))
+		mu.Unlock()
+		fmt.Fprint(w, `{"data":[{"id":"demo"}]}`)
+	}))
+	defer srv.Close()
+
+	c, err := newSource("relay", core.SourceConfig{BaseURL: srv.URL, UserAgent: "codex_cli_rs/0.0.1 (client2api)"}, core.Deps{DataDir: t.TempDir(), HTTPClient: srv.Client()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.AddAccount(context.Background(), core.AccountSpec{Fields: map[string]string{"api_key": "demo-key", "models": "demo"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.RefreshModels(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seen) == 0 {
+		t.Fatal("no request reached the test server")
+	}
+	for _, ua := range seen {
+		if ua != "codex_cli_rs/0.0.1 (client2api)" {
+			t.Errorf("request went out with UA %q, want the configured source UA", ua)
+		}
+	}
+}
+
+// Without a configured UA the module keeps its own identity.
+func TestSourceDefaultUserAgentUnchanged(t *testing.T) {
+	var mu sync.Mutex
+	var seen []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seen = append(seen, r.Header.Get("User-Agent"))
+		mu.Unlock()
+		fmt.Fprint(w, `{"data":[{"id":"demo"}]}`)
+	}))
+	defer srv.Close()
+
+	c, err := newSource("relay", core.SourceConfig{BaseURL: srv.URL}, core.Deps{DataDir: t.TempDir(), HTTPClient: srv.Client()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.AddAccount(context.Background(), core.AccountSpec{Fields: map[string]string{"api_key": "demo-key", "models": "demo"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.RefreshModels(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, ua := range seen {
+		if ua != "client2api/1.0 (+openai-compat)" {
+			t.Errorf("request went out with UA %q, want the module default", ua)
+		}
 	}
 }

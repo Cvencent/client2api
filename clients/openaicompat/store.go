@@ -23,6 +23,7 @@ type storedProvider struct {
 	Models             []string          `json:"models,omitempty"`
 	ProbeModels        []string          `json:"probe_models,omitempty"`
 	Headers            map[string]string `json:"extra_headers,omitempty"`
+	UserAgent          string            `json:"user_agent,omitempty"`
 	BalanceAccessToken string            `json:"balance_access_token,omitempty"`
 	BalanceUserID      string            `json:"balance_user_id,omitempty"`
 	// OfficeAce keeps the Huawei cloud credential one OfficeAce login minted,
@@ -91,6 +92,7 @@ func storedToConfig(p storedProvider) ProviderConfig {
 		Models:       p.Models,
 		ProbeModels:  p.ProbeModels,
 		ExtraHeaders: p.Headers,
+		UserAgent:    p.UserAgent,
 		Disabled:     p.Disabled,
 	}
 }
@@ -106,6 +108,7 @@ func configToStored(p ProviderConfig) storedProvider {
 		Models:      p.Models,
 		ProbeModels: p.ProbeModels,
 		Headers:     p.ExtraHeaders,
+		UserAgent:   p.UserAgent,
 		Disabled:    p.Disabled,
 	}
 }

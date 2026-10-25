@@ -366,6 +366,9 @@ func (s *source) RefreshAccount(ctx context.Context, id string) ([]core.RefreshR
 			for i := range jobs {
 				p := selected[i]
 				prov := storedToConfig(p)
+				if prov.UserAgent == "" {
+					prov.UserAgent = cfg.UserAgent
+				}
 				// OfficeAce stores the model gateway that belongs to each
 				// Huawei login. An ordinary relay still follows the
 				// platform-level URL after a config edit, but an OfficeAce

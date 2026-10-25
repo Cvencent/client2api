@@ -63,6 +63,11 @@ type ProviderConfig struct {
 	ProbeModels []string `json:"-"`
 	// ExtraHeaders are appended to every request to this provider.
 	ExtraHeaders map[string]string `json:"extra_headers"`
+	// UserAgent replaces the module's default User-Agent for this provider.
+	// Some relays gate their /v1 surface by client allowlist and answer a
+	// generic UA with 401 "unauthorized client detected", so an operator may
+	// need to name the coding client the relay expects.
+	UserAgent string `json:"user_agent,omitempty"`
 
 	// Source records whether this row came from the config file or from the
 	// panel (accounts.json).  It is set at merge time and never serialised,
@@ -609,7 +614,15 @@ func (p ProviderConfig) applyHeaders(req *request) {
 	case p.APIKey != "":
 		req.Header.Set("Authorization", "Bearer "+p.APIKey)
 	}
-	req.Header.Set("User-Agent", "client2api/1.0 (+openai-compat)")
+	ua := "client2api/1.0 (+openai-compat)"
+	if p.UserAgent != "" {
+		// A per-provider UA is an explicit operator decision (it is set
+		// through its own config field, never through extra_headers, so a
+		// config file cannot quietly strip the module's identity from every
+		// other relay).
+		ua = p.UserAgent
+	}
+	req.Header.Set("User-Agent", ua)
 	for k, v := range p.ExtraHeaders {
 		req.Header.Set(k, v)
 	}

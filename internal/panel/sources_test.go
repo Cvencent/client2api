@@ -166,6 +166,35 @@ func TestSourceProxyEditorIsWired(t *testing.T) {
 		}
 	}
 }
+func TestSourceHandlerPersistsTheUserAgent(t *testing.T) {
+	path := configFile(t, `{}`)
+	p := configPanel(path)
+	p.opts.Registry = core.NewRegistry()
+	p.opts.Reload = func() error { return nil }
+	w := httptest.NewRecorder()
+	body := `{"base_url":"https://relay.example/v1","user_agent":"codex_cli_rs/0.0.1 (client2api)"}`
+	p.handleSource(w, httptest.NewRequest(http.MethodPut, "/panel/api/sources/relay", strings.NewReader(body)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("save: %d %s", w.Code, w.Body.String())
+	}
+	src := onDisk(t, path)["sources"].(map[string]any)["relay"].(map[string]any)
+	if src["user_agent"] != "codex_cli_rs/0.0.1 (client2api)" {
+		t.Fatalf("user_agent was not persisted: %v", src)
+	}
+}
+
+func TestSourceUserAgentEditorIsWired(t *testing.T) {
+	src := string(indexHTML)
+	for _, want := range []string{
+		`id="sourceUserAgent"`,
+		`$("#sourceUserAgent").value = cfg.user_agent || "";`,
+		`user_agent: $("#sourceUserAgent").value.trim(),`,
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("source user-agent editor is missing %q", want)
+		}
+	}
+}
 
 func TestSourceHandlerRequiresHotReloadBeforeWriting(t *testing.T) {
 	p := configPanel(configFile(t, `{}`))
