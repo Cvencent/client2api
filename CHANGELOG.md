@@ -33,6 +33,12 @@
 - **Windows 检出下的版本守卫测试** —— `packaging_test.go` 的版本行正则在
   CRLF 工作区必然失败（Go regexp 只认 `\n` 行尾），匹配前先归一化换行。
 
+### Installer
+
+- `client2api-setup-0.4.0.exe`（本次构建包含当前账号数据，仅自用，不外发）
+- SHA256：`0B66F6C2E4FA8B6B892243BCAC872B00E774CF8A95C30C687CE2732AA07AB75A`
+- 升级会保留现有 `configs/client2api.json`、`data/`、账号池、用量和任务数据。
+
 ## [0.3.9] - 2026-10-25
 
 ### Changed
