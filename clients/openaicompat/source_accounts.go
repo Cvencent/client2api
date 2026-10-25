@@ -281,6 +281,11 @@ func (s *source) scan(ctx context.Context, p storedProvider, transport *Client, 
 	probed := map[string]bool{}
 	for _, m := range list {
 		id := strings.TrimSpace(m.ID)
+		// Google's OpenAI-compatible layer names every id "models/<name>",
+		// while its chat endpoint accepts the bare name too.  Storing the
+		// bare name keeps routing ids vendor-neutral; chat never re-adds a
+		// prefix, it forwards the caller's id verbatim.
+		id = strings.TrimPrefix(id, "models/")
 		if id != "" && !seen[id] {
 			seen[id] = true
 			models = append(models, id)
