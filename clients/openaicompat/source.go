@@ -29,18 +29,23 @@ type source struct {
 	// invalid holds the vendor's own verdict about one key (it answered 401).
 	// It is separate from Disabled, which is the operator's switch, and it is
 	// runtime-only so a reload never resurrects a rejected credential.
-	invalid    map[string]bool
-	lastUsed   map[string]uint64
-	sequence   uint64
-	rpmWindow  time.Time
-	rpmUsed    int
-	accountRPM map[string]*sourceRateWindow
-	lastErr    string
-	active     bool
-	generation uint64
-	affinity   *core.Affinity
-	scanFilter sourceModelFilter
-	wireModel  func(string) string
+	invalid map[string]bool
+	// authExhausted is the wrapper's veto on that verdict: an auth-shaped
+	// refusal that is really "this credit package is drained" (the OfficeAce
+	// gateway answers a zero-credit account with a bare 401) is a cooldown,
+	// because a refill revives it.  Nil on plain relays.
+	authExhausted func(id string) bool
+	lastUsed      map[string]uint64
+	sequence      uint64
+	rpmWindow     time.Time
+	rpmUsed       int
+	accountRPM    map[string]*sourceRateWindow
+	lastErr       string
+	active        bool
+	generation    uint64
+	affinity      *core.Affinity
+	scanFilter    sourceModelFilter
+	wireModel     func(string) string
 }
 
 type sourceModelFilter func(context.Context, storedProvider, []modelCatalogueEntry) ([]modelCatalogueEntry, error)
@@ -377,6 +382,14 @@ func (s *source) noteFailure(id, key, base string, err error) {
 		if p.ID == id && p.APIKey == key && s.accountBaseLocked(p) == strings.TrimRight(base, "/") {
 			s.lastErr = describeError(err)
 			kind := core.FailureKindOf(err)
+			if kind == core.FailureAuth && s.authExhausted != nil && s.authExhausted(id) {
+				// The wrapper knows this account is out of credits: the
+				// auth-shaped refusal is the drained-package verdict, not a
+				// dead key.  Park it on the quota path -- a refill (daily
+				// check-in, a new trial, a top-up) revives the row without
+				// operator action.
+				kind = core.FailureQuota
+			}
 			switch kind {
 			case core.FailureRateLimited:
 				s.parkLocked(id, core.FailureRateLimited)
@@ -388,7 +401,9 @@ func (s *source) noteFailure(id, key, base string, err error) {
 			// A rejected key is terminal for a static API key: there is
 			// nothing to refresh, so cooling it down only re-selects it every
 			// cooldown.  Marking it invalid is what turns the row into
-			// 账号异常 and gives the operator the re-import path.
+			// 账号异常 and gives the operator the re-import path.  The
+			// authExhausted veto above covers the one auth-shaped refusal a
+			// cooldown does answer.
 			if kind == core.FailureAuth {
 				s.invalid[id] = true
 			}

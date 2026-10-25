@@ -233,30 +233,32 @@ func TestPerAccountCeilingRefusesUntilTheStreamCloses(t *testing.T) {
 }
 
 func TestLimiterSweepRemovesIdleEntriesButKeepsLiveSlots(t *testing.T) {
-	srv := &server{}
+	st := NewInFlightTrackers()
 	now := time.Unix(1700000000, 0)
-	srv.limiters = map[string]*platformLimiter{
+	st.platform = map[string]*platformLimiter{
 		"idle":   {max: 1},
 		"active": {max: 1, used: 1},
 	}
-	srv.accountLimiters = map[accountKey]*platformLimiter{
+	st.account = map[accountKey]*platformLimiter{
 		{platform: "p", account: "idle"}:   {max: 1},
 		{platform: "p", account: "active"}: {max: 1, used: 1},
 	}
-	srv.limiterSweep = now.Add(-time.Second)
+	st.nextSweep = now.Add(-time.Second)
 
-	srv.sweepLimitersLocked(now)
+	st.mu.Lock()
+	st.sweepLocked(now)
+	st.mu.Unlock()
 
-	if _, ok := srv.limiters["idle"]; ok {
+	if _, ok := st.platform["idle"]; ok {
 		t.Fatal("idle platform limiter was not swept")
 	}
-	if _, ok := srv.limiters["active"]; !ok {
+	if _, ok := st.platform["active"]; !ok {
 		t.Fatal("active platform limiter was swept")
 	}
-	if _, ok := srv.accountLimiters[accountKey{platform: "p", account: "idle"}]; ok {
+	if _, ok := st.account[accountKey{platform: "p", account: "idle"}]; ok {
 		t.Fatal("idle account limiter was not swept")
 	}
-	if _, ok := srv.accountLimiters[accountKey{platform: "p", account: "active"}]; !ok {
+	if _, ok := st.account[accountKey{platform: "p", account: "active"}]; !ok {
 		t.Fatal("active account limiter was swept")
 	}
 }
@@ -271,10 +273,11 @@ func TestTakePlatformLimiterDoesNotLoseSlotsAcrossSweep(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first acquire: %v", err)
 	}
-	srv.limMu.Lock()
-	srv.limiterSweep = time.Now().Add(-time.Second)
-	srv.sweepLimitersLocked(time.Now())
-	srv.limMu.Unlock()
+	st := srv.trackers()
+	st.mu.Lock()
+	st.nextSweep = time.Now().Add(-time.Second)
+	st.sweepLocked(time.Now())
+	st.mu.Unlock()
 
 	if _, err := srv.acquirePlatformSlot("p"); err != core.ErrBusy {
 		t.Fatalf("second acquire error = %v, want ErrBusy while the slot is live", err)

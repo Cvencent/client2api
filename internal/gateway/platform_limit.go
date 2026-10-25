@@ -59,64 +59,27 @@ func (l *platformLimiter) release() {
 // process lifetime. A live limiter is never evicted.
 const limiterSweepInterval = 10 * time.Minute
 
-// sweepLimitersLocked drops limiter entries that are idle and therefore
-// cannot affect an in-flight request. Callers hold s.limMu.
-func (s *server) sweepLimitersLocked(now time.Time) {
-	if !s.limiterSweep.IsZero() && now.Before(s.limiterSweep) {
-		return
+// trackers returns the server's limiter store, building one on first use so a
+// bare &server{} (tests, embedders) still enforces its ceilings.  NewServer
+// installs the shared store the panel reads, so this lazy path never runs in
+// production.
+func (s *server) trackers() *InFlightTrackers {
+	s.trackMu.Lock()
+	defer s.trackMu.Unlock()
+	if s.inflight == nil {
+		s.inflight = NewInFlightTrackers()
 	}
-	s.limiterSweep = now.Add(limiterSweepInterval)
-	for name, l := range s.limiters {
-		l.mu.Lock()
-		idle := l.used == 0
-		l.mu.Unlock()
-		if idle {
-			delete(s.limiters, name)
-		}
-	}
-	for key, l := range s.accountLimiters {
-		l.mu.Lock()
-		idle := l.used == 0
-		l.mu.Unlock()
-		if idle {
-			delete(s.accountLimiters, key)
-		}
-	}
+	return s.inflight
 }
 
-// takePlatformLimiter resolves, refreshes and acquires one platform slot while
-// holding limMu, so an idle sweep cannot detach the limiter between lookup and
-// acquisition. The returned release func is nil when max is zero.
+// takePlatformLimiter resolves the operator's per-platform ceiling and
+// acquires one slot in the shared store.
 func (s *server) takePlatformLimiter(name string) (func(), error) {
 	max := 0
 	if s.opts.Registry != nil {
 		max = s.opts.Registry.MaxInFlightFor(name)
 	}
-	s.limMu.Lock()
-	defer s.limMu.Unlock()
-	s.sweepLimitersLocked(time.Now())
-	if s.limiters == nil {
-		s.limiters = map[string]*platformLimiter{}
-	}
-	l := s.limiters[name]
-	if l == nil {
-		l = &platformLimiter{}
-		s.limiters[name] = l
-	}
-	l.mu.Lock()
-	l.max = max
-	if l.max <= 0 {
-		l.mu.Unlock()
-		return func() {}, nil
-	}
-	if l.used >= l.max {
-		l.mu.Unlock()
-		return nil, core.ErrBusy
-	}
-	l.used++
-	l.mu.Unlock()
-	var once sync.Once
-	return func() { once.Do(l.release) }, nil
+	return s.trackers().acquirePlatform(name, max)
 }
 
 // acquirePlatformSlot takes one in-flight slot for the platform.  When every
@@ -159,40 +122,16 @@ type accountKey struct {
 	account  string
 }
 
-// takeAccountLimiter resolves, refreshes and acquires one per-account slot
-// while holding limMu, so an idle sweep cannot detach the limiter between
-// lookup and acquisition. The returned release func is nil when max is zero.
+// takeAccountLimiter resolves the operator's per-account ceiling and acquires
+// one slot in the shared store.  The store keeps counting even when the
+// ceiling is zero, so the panel can display a real in-flight number for
+// platforms the operator left unlimited.
 func (s *server) takeAccountLimiter(platform, accountID string) (func(), error) {
 	max := 0
 	if s.opts.Registry != nil {
 		max = s.opts.Registry.MaxInFlightPerAccountFor(platform)
 	}
-	key := accountKey{platform: platform, account: accountID}
-	s.limMu.Lock()
-	defer s.limMu.Unlock()
-	s.sweepLimitersLocked(time.Now())
-	if s.accountLimiters == nil {
-		s.accountLimiters = map[accountKey]*platformLimiter{}
-	}
-	l := s.accountLimiters[key]
-	if l == nil {
-		l = &platformLimiter{}
-		s.accountLimiters[key] = l
-	}
-	l.mu.Lock()
-	l.max = max
-	if l.max <= 0 {
-		l.mu.Unlock()
-		return func() {}, nil
-	}
-	if l.used >= l.max {
-		l.mu.Unlock()
-		return nil, core.ErrBusy
-	}
-	l.used++
-	l.mu.Unlock()
-	var once sync.Once
-	return func() { once.Do(l.release) }, nil
+	return s.trackers().acquireAccount(platform, accountID, max)
 }
 
 // acquireAccountSlot takes one in-flight slot for (platform, account), after

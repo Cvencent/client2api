@@ -43,12 +43,21 @@ const (
 	officeAceSelSendCode = `[ht="click_changePhoneAccount_getAuthcode"]`
 	officeAceSelCode     = `input[ht="input_changePhoneAccount_authcode"]`
 	officeAceSelSubmit   = `[ht="click_login_phoneSubmit"]`
-	// A fresh Huawei account lands on the OfficeAce/AgentArts registration
-	// consent page after the SMS code is accepted.  The page stays there until
-	// this checkbox is selected and the primary action is clicked; otherwise
-	// the OAuth callback never runs and auto-login eventually times out.
-	officeAceSelRegisterAgree    = `input.ti-checkbox-input`
-	officeAceSelRegisterContinue = `#submitBtn_reg_open`
+	// A fresh Huawei account has to accept Huawei Cloud's user agreement and
+	// privacy statement before the OAuth callback runs; otherwise auto-login
+	// stalls at the authorization poll until it times out.
+	//
+	// Huawei replaced the older Angular registration page with a Vue dialog
+	// (UnifiedIDMPortal "agreement.vue", loaded as agreement-legacy.js).  Its
+	// checkbox is not an <input>: cas-checkbox renders a role="radio" DIV that
+	// keeps the ticked state in aria-checked, the agreement text is injected as
+	// HTML next to it, and the footer's "同意并继续" button is inert until the
+	// box is ticked.  Both flavours are recognised below because accounts can
+	// still be served the older page.
+	officeAceSelCloudAgreementDialog = `[HT="agreement_dialog"]`
+	officeAceSelCloudAgreementCheck  = `[HT="click_reg_select_Agreement"]`
+	officeAceSelRegisterAgree        = `input.ti-checkbox-input`
+	officeAceSelRegisterContinue     = `#submitBtn_reg_open`
 )
 
 // Huawei's sign-in page is an Angular SPA, and its phone-code control is a DIV
@@ -99,14 +108,42 @@ type officeAceAutoPage interface {
 }
 
 const (
+	// The Vue dialog's checkbox state.  cas-checkbox has no <input>, so
+	// aria-checked is the only honest answer to "did the box get ticked".
+	officeAceCloudAgreementCheckedExpr = `(function(){` +
+		`var el=document.querySelector('[HT="click_reg_select_Agreement"]');` +
+		`return !!(el && el.getAttribute('aria-checked')==='true');})()`
+	// Click the dialog's right footer button.  The dialog title element
+	// (HT="agreement_dialog") anchors the lookup so an unrelated dialog on the
+	// page cannot be confirmed by mistake.  Returns false while the button is
+	// still rendered disabled, which is how Huawei blocks an unticked box.
+	officeAceCloudAgreementAcceptExpr = `(function(){` +
+		`var h=document.querySelector('[HT="agreement_dialog"]');` +
+		`if(!h){return false;}` +
+		`var root=h.closest('.hwid-dialog-main')||h.parentNode;` +
+		`if(!root){return false;}` +
+		`var b=root.querySelector('[HT="click_dialog_rightbtn"]');` +
+		`if(!b){return false;}` +
+		`if(b.querySelector('.hwid-disabled')||b.closest('.hwid-disabled')){return false;}` +
+		`b.click();return true;})()`
+	officeAceCloudAgreementClosedExpr = `(function(){` +
+		`return !document.querySelector('[HT="agreement_dialog"]');})()`
+
 	officeAceRegistrationAgreeCheckedExpr = `(function(){` +
 		`var el=document.querySelector('input.ti-checkbox-input');` +
 		`return !!(el && el.checked);})()`
 	officeAceRegistrationContinueEnabledExpr = `(function(){` +
 		`var el=document.querySelector('#submitBtn_reg_open');` +
 		`return !!(el && !el.disabled && !el.classList.contains('is-disabled'));})()`
-	officeAceRegistrationAgreementWait = 5 * time.Second
+	// officeAceRegistrationAgreementWait is how long the run watches for the
+	// first-login agreement.  The poll returns the moment either dialog shows
+	// up, so the window only costs that much when there is nothing to consent
+	// to at all.
+	officeAceRegistrationAgreementWait = 12 * time.Second
 	officeAceRegistrationContinueWait  = 10 * time.Second
+	// officeAceCloudAgreementAcceptAttempts bounds how often the confirm click
+	// is re-issued while Vue re-renders the footer after the box is ticked.
+	officeAceCloudAgreementAcceptAttempts = 3
 )
 
 // officeAceAutoJob is one in-flight auto-login.  Every field is read under mu
@@ -545,23 +582,153 @@ func (officeAceBrowserDriver) Drive(ctx context.Context, url, phone string, wait
 	return nil
 }
 
-// acceptOfficeAceRegistrationConsent handles the extra Huawei Cloud
-// registration page shown for a freshly created account. The page is
-// conditional: an existing account goes straight back to the OAuth callback,
-// so a missing checkbox is a successful no-op rather than an error.
+// officeAceConsentKind says which first-login agreement, if any, the sign-in
+// page put in front of the operator.
+type officeAceConsentKind int
+
+const (
+	officeAceConsentNone officeAceConsentKind = iota
+	// officeAceConsentCloudDialog is the Vue dialog the current sign-in page
+	// renders.  See officeAceSelCloudAgreementDialog for its shape.
+	officeAceConsentCloudDialog
+	// officeAceConsentLegacyPage is the older Angular registration page.
+	officeAceConsentLegacyPage
+)
+
+// acceptOfficeAceRegistrationConsent handles the extra Huawei Cloud user
+// agreement shown for a freshly created account.  The step is conditional: an
+// existing account goes straight back to the OAuth callback, so nothing
+// appearing is a successful no-op rather than an error.  Both the current Vue
+// dialog and the older Angular page are recognised; only one of them can be
+// present at a time.
 func acceptOfficeAceRegistrationConsent(ctx context.Context, page officeAceAutoPage, logf func(string, ...any)) error {
 	return acceptOfficeAceRegistrationConsentWithin(ctx, page, officeAceRegistrationAgreementWait, officeAceRegistrationContinueWait, logf)
 }
 
 func acceptOfficeAceRegistrationConsentWithin(ctx context.Context, page officeAceAutoPage, agreementWait, continueWait time.Duration, logf func(string, ...any)) error {
-	appeared, err := waitOfficeAceSelector(ctx, page, officeAceSelRegisterAgree, agreementWait)
+	kind, err := waitOfficeAceConsent(ctx, page, agreementWait)
 	if err != nil {
 		return err
 	}
-	if !appeared {
+	switch kind {
+	case officeAceConsentCloudDialog:
+		return confirmOfficeAceCloudAgreement(ctx, page, continueWait, logf)
+	case officeAceConsentLegacyPage:
+		return confirmOfficeAceLegacyRegistrationPage(ctx, page, continueWait, logf)
+	default:
 		return nil
 	}
+}
 
+// waitOfficeAceConsent polls for either agreement flavour and reports which
+// one showed up first.  Polling both in one loop keeps an old account's run
+// from paying two full waits (one per flavour) for a step that never appears.
+func waitOfficeAceConsent(ctx context.Context, page officeAceAutoPage, timeout time.Duration) (officeAceConsentKind, error) {
+	candidates := []struct {
+		kind     officeAceConsentKind
+		selector string
+	}{
+		{officeAceConsentCloudDialog, officeAceSelCloudAgreementDialog},
+		{officeAceConsentLegacyPage, officeAceSelRegisterAgree},
+	}
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for {
+		for _, candidate := range candidates {
+			kind, selector := candidate.kind, candidate.selector
+			ok, err := page.Exists(ctx, selector)
+			if err != nil {
+				lastErr = err
+				continue
+			}
+			if ok {
+				return kind, nil
+			}
+		}
+
+		if time.Now().After(deadline) {
+			return officeAceConsentNone, lastErr
+		}
+		select {
+		case <-ctx.Done():
+			return officeAceConsentNone, ctx.Err()
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+}
+
+// confirmOfficeAceCloudAgreement ticks the Vue dialog's checkbox and confirms
+// it.  The dialog only closes once the cloud has recorded the acceptance, so
+// waiting for it to disappear is what proves the step really worked instead of
+// letting the run drift into a 90-second OAuth poll that can never succeed.
+func confirmOfficeAceCloudAgreement(ctx context.Context, page officeAceAutoPage, continueWait time.Duration, logf func(string, ...any)) error {
+	logf("检测到华为云用户协议，正在勾选并同意…")
+
+	checked, err := page.EvalBool(ctx, officeAceCloudAgreementCheckedExpr)
+	if err != nil {
+		return fmt.Errorf("读取协议勾选状态失败：%w", err)
+	}
+	if !checked {
+		clicked, err := page.Click(ctx, officeAceSelCloudAgreementCheck)
+		if err != nil {
+			return fmt.Errorf("勾选用户协议失败：%w", err)
+		}
+		if !clicked {
+			return errors.New("找不到用户协议勾选框")
+		}
+		checked, err = waitOfficeAceCondition(ctx, page, officeAceCloudAgreementCheckedExpr, officeAceRegistrationAgreementWait)
+		if err != nil {
+			return fmt.Errorf("确认协议勾选状态失败：%w", err)
+		}
+		if !checked {
+			return errors.New("勾选用户协议后勾选框仍未选中")
+		}
+	}
+
+	clickedAccept := false
+	for attempt := 1; attempt <= officeAceCloudAgreementAcceptAttempts; attempt++ {
+		closed, err := page.EvalBool(ctx, officeAceCloudAgreementClosedExpr)
+		if err != nil {
+			return fmt.Errorf("读取协议弹窗状态失败：%w", err)
+		}
+		if closed {
+			logf("已同意华为云用户协议，继续华为授权…")
+			return nil
+		}
+		accepted, err := page.EvalBool(ctx, officeAceCloudAgreementAcceptExpr)
+		if err != nil {
+			return fmt.Errorf("点击“同意并继续”失败：%w", err)
+		}
+		if accepted {
+			clickedAccept = true
+		} else {
+			if attempt == officeAceCloudAgreementAcceptAttempts {
+				break
+			}
+			// Vue re-renders the footer right after the box is ticked; give it
+			// a beat before re-issuing the click.
+			if !sleepOfficeAce(ctx, 250*time.Millisecond) {
+				return ctx.Err()
+			}
+			continue
+		}
+		closed, err = waitOfficeAceCondition(ctx, page, officeAceCloudAgreementClosedExpr, continueWait)
+		if err != nil {
+			return fmt.Errorf("等待协议弹窗关闭失败：%w", err)
+		}
+		if closed {
+			logf("已同意华为云用户协议，继续华为授权…")
+			return nil
+		}
+	}
+	if !clickedAccept {
+		return errors.New("勾选用户协议后“同意并继续”按钮始终不可点击")
+	}
+	return errors.New("已点击“同意并继续”，但华为云协议弹窗仍未关闭")
+}
+
+// confirmOfficeAceLegacyRegistrationPage drives the older Angular consent page.
+func confirmOfficeAceLegacyRegistrationPage(ctx context.Context, page officeAceAutoPage, continueWait time.Duration, logf func(string, ...any)) error {
 	logf("检测到华为云用户协议，正在确认…")
 	checked, err := page.EvalBool(ctx, officeAceRegistrationAgreeCheckedExpr)
 	if err != nil {

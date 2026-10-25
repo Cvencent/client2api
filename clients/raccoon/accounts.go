@@ -20,7 +20,8 @@ import (
 //
 // core.LoginProvider is implemented in login.go (loopback QR + SMS page);
 // core.CheckinProvider is implemented in checkin.go (the desktop login-points
-// grant, which is how the daily 300 credits are claimed).
+// grant, which extends the daily 300 credits and which the vendor only grants
+// to its own desktop app).
 // Deliberately NOT implemented (and why):
 //   - core.AutoLoginProvider: the one-click 一键接码 flow is OFF.  The vendor
 //     moved SMS login to the IAM service and hardened the Aliyun scene so the

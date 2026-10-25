@@ -41,3 +41,37 @@ func HealthOf(c Client) (Health, bool) {
 	}
 	return hp.Health(), true
 }
+
+// ModelAvailabilityProvider is the optional capability a module implements
+// when it can answer "could you serve THIS model right now" from state it
+// already holds, without going upstream.
+//
+// Health answers an account-level question, but a park is often per
+// (account, model): WorkBuddy's vendor parks one model on a credential while
+// the credential stays perfectly healthy for every other model, so its account
+// census says "ready" while the picker has nothing to hand out for that id.
+// The router asks this before entering Chat, so such a platform is skipped for
+// a sibling instead of paying a round trip that only re-learns what the module
+// already knew.
+//
+// Available returns nil when at least one account could take the request, and
+// otherwise the refusal Chat itself would have produced for the same state, so
+// the router and the caller see the same answer either way.  A module that
+// keeps no per-model state simply does not implement this capability and keeps
+// the optimistic path.
+type ModelAvailabilityProvider interface {
+	// Available reports whether any account could serve one model right now.
+	// free marks a model the vendor charges nothing for, because a pool that
+	// parks accounts on an empty wallet may still serve it.
+	Available(model string, free bool) error
+}
+
+// AsModelAvailability reports the module's per-model availability probe, when
+// it implements one.  ok is false for a module that has not opted in.
+func AsModelAvailability(c Client) (ModelAvailabilityProvider, bool) {
+	if c == nil {
+		return nil, false
+	}
+	p, ok := c.(ModelAvailabilityProvider)
+	return p, ok
+}

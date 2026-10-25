@@ -484,11 +484,13 @@ Rules:
   `daily`), **raccoon** (`POST /api/web/desktop/v1/login/points/grant`, one
   action named `login-points` — that desktop *login* grant EXTENDS the day's
   300 credits rather than minting them: the 00:00 issuance expires the same day
-  and the grant pushes the expiry to 7 days. A `granted:false` reply says nothing
-  about the rest of the day, so the module resolves it against
-  `GET /api/web/points/v1/bills`: a `daily_grant` for today that expires beyond
-  today is a real "already claimed" success; anything else — including an
-  unreadable ledger — stays a retryable refusal instead of latching the day),
+  and the grant pushes the expiry to 7 days. The vendor grants it to its own
+  desktop app alone, so a gateway call is always answered `granted:false`. The
+  module resolves it against `GET /api/web/points/v1/bills`: a `daily_grant` for
+  today that expires beyond today is a real "already claimed" success; anything
+  else — including an unreadable ledger — is a settled `skipped`
+  ("unavailable — claim it from the desktop client"), so the panel greys the row
+  for the rest of the Shanghai day),
   **lobsterai**, **codearts** and **loomy** have a real one. kimi, tabbit,
   openrouter and opencode have none.
   A module whose action is blocked by a vendor control it cannot satisfy still

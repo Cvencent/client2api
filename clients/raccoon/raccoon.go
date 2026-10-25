@@ -11,10 +11,12 @@
 //   - interactive sign-in IS implemented: a loopback page carries a locally
 //     rendered QR code and an SMS form.  The QR encoder is stdlib-only (see
 //     qr.go), so no dependency was added.
-//   - the daily 300 login credits are claimed through the desktop login grant
+//   - the daily 300 login credits are extended through the desktop login grant
 //     (POST /api/web/desktop/v1/login/points/grant), exposed as the
-//     `login-points` CheckinProvider action; the server grants them once per
-//     day and answers `granted:false` on a repeat request.
+//     `login-points` CheckinProvider action. The vendor hands that extension to
+//     its own desktop app alone: a gateway call is always answered
+//     `granted:false`, so the action reads as "unavailable -- claim it from the
+//     desktop client". See checkin.go.
 package raccoon
 
 import (

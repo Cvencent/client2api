@@ -171,6 +171,20 @@ type Options struct {
 	// gateway's conversation-to-platform bindings alongside each module's
 	// account bindings.
 	SessionPlatforms SessionPlatformStore
+	// InFlight, when non-nil, is the gateway's per-account in-flight counter.
+	// The account pool's 在途 column reads it for every module that does not
+	// report an in-flight count of its own, and the platform configuration
+	// page's per-account ceiling comes from the registry either way.  Nil
+	// leaves those cells to whatever the module itself reported.
+	InFlight AccountInFlightSource
+}
+
+// AccountInFlightSource is the slice of the gateway's in-flight bookkeeping
+// the panel needs: how many requests the gateway is carrying against one
+// account of one platform right now.  It is an interface rather than the
+// concrete store so tests and embedders can stand in for the gateway.
+type AccountInFlightSource interface {
+	AccountInFlight(platform, accountID string) int
 }
 
 // clientView is a module's self-report plus what the panel is allowed to ask
@@ -446,6 +460,7 @@ func (p *panel) handleStatus(w http.ResponseWriter, r *http.Request) {
 				Capabilities: p.capabilities(ctx, c),
 			}
 			mergeModelParks(&view.Status, c.Name(), p.opts.ModelParks)
+			p.decorateAccountInFlight(c.Name(), view.Status.Accounts)
 			// Both are optional capabilities, so a module that has neither is
 			// simply reported as such instead of as zeroes.
 			if ps, ok := core.PoolStatsOf(c); ok {
@@ -1421,6 +1436,66 @@ func (p *panel) decorateAccountNotes(platform string, list []core.AccountRecord)
 		if note := strings.TrimSpace(p.opts.Registry.AccountNote(platform, list[i].ID)); note != "" {
 			list[i].OperatorNote = note
 		}
+	}
+}
+
+// decorateAccountInFlight fills the account pool's 在途 column from the two
+// sources that actually know the answer:
+//
+//   - the ceiling is the operator's per-account setting on the platform
+//     configuration page (max_in_flight_per_account, with the per-source
+//     override for relay platforms); the gateway enforces exactly that value,
+//     so it is the honest "最大并发数".  A module that enforces a stricter
+//     ceiling of its own (workbuddy's 号池单账号在途, say) wins when it is
+//     lower, because that is the number the account really stops at.
+//   - the current count is the module's own report when it keeps one, and the
+//     gateway's per-account slot counter otherwise.  The gateway counts every
+//     request it routes to the account, including streams, so "the module says
+//     nothing" no longer has to mean "the cell says —".
+//
+// A ceiling of 0 (both sides unlimited) is written as 0 and the page renders
+// ∞, which keeps the one display rule the 在途 column ever had.
+func (p *panel) decorateAccountInFlight(platform string, accounts []core.AccountStatus) {
+	if p == nil || len(accounts) == 0 {
+		return
+	}
+	ceiling := 0
+	if p.opts.Registry != nil {
+		ceiling = p.opts.Registry.MaxInFlightPerAccountFor(platform)
+	}
+	for i := range accounts {
+		extra := accounts[i].Extra
+		if extra == nil {
+			extra = map[string]any{}
+			accounts[i].Extra = extra
+		}
+		if _, own := extra["in_flight"]; !own && p.opts.InFlight != nil {
+			extra["in_flight"] = p.opts.InFlight.AccountInFlight(platform, accounts[i].ID)
+		}
+		if p.opts.Registry == nil {
+			continue
+		}
+		limit := ceiling
+		if own := ceilingOf(extra["in_flight_limit"]); own > 0 && (limit == 0 || own < limit) {
+			limit = own
+		}
+		extra["in_flight_limit"] = limit
+	}
+}
+
+// ceilingOf reads a module-reported in_flight_limit.  Modules write plain ints
+// into Extra; the wider switch only keeps the decoration honest if one ever
+// writes a JSON-ish number type instead.
+func ceilingOf(v any) int {
+	switch n := v.(type) {
+	case int:
+		return n
+	case int64:
+		return int(n)
+	case float64:
+		return int(n)
+	default:
+		return 0
 	}
 }
 

@@ -27,20 +27,26 @@ import (
 // desktop grant adds another `daily_grant` of +300 whose `expire_at` reaches
 // seven days out, which is what the popup announces.
 //
-// That makes `granted:false` a statement about THIS attempt, not about the
-// day: the extension did not apply this time. Treating it as a day-level
-// verdict is a bug with teeth -- the panel latches a skipped action as
-// "unavailable" until the next Shanghai midnight and disables the button, so
-// one refusal at 01:00 silently burned the reward for the rest of the day even
-// though the vendor was still handing it out at 21:41.
+// **The vendor only hands this reward to its own desktop app.** What that app
+// sends is a plain authenticated POST -- the same method, URL, headers and
+// empty body this module sends -- but replaying it from the gateway is answered
+// with `{"code":0,"data":{"granted":false}}` for every account and every
+// variation tried (device id, client version, Origin, cookies, UA, org header,
+// body shape). What gives the caller away is not the request: a real account's
+// ledger shows the extension landing on exactly 10/08 18:41, 10/16 08:22,
+// 10/20 18:12 and 10/23 21:41, each within seconds of that app's own
+// `app-startup` log line; on 10/20 the gateway's 07:00 attempt was refused while
+// the same account's 18:12 attempt -- fired by the app -- was granted. The
+// discriminator is the caller, not the request shape and not the clock.
 //
-// So a refusal is resolved against the ledger instead of guessed at:
+// `granted:false` is therefore the settled answer for a gateway call, not a
+// transient one, and the module records it as UNAVAILABLE (Skipped) so the row
+// greys out until the next Shanghai midnight instead of reading as a failure.
+// The ledger is still consulted for the one benign reading of a refusal:
 //
-//   - a `daily_grant` for today whose expiry reaches past today proves the
-//     reward is in hand            -> OK, Data["already_done"] = true
-//   - no such row                  -> a RETRYABLE refusal, never Skipped
-//   - the ledger cannot be read    -> also retryable; a nicety must not
-//     fabricate a verdict
+//	- a `daily_grant` for today whose expiry reaches past today proves the
+//	  extension is already in hand   -> OK, Data["already_done"] = true
+//	- no such row                     -> the desktop-only refusal -> Skipped
 //
 // The vendor's own hook is fire-and-forget: it logs a failure to the console
 // and shows a popup only when `granted` is true.
@@ -90,7 +96,7 @@ func (c *Client) CheckinActions(ctx context.Context) []core.CheckinAction {
 	return []core.CheckinAction{{
 		ID:    checkinActionLoginPoints,
 		Label: "领取每日 300 积分",
-		Help:  "领取本账号当天 300 桌面登录积分（POST /api/web/desktop/v1/login/points/grant）。服务端每天发放一次；重复请求或不在发放时段会返回 granted:false，本模块把它记成拒绝而不是错误。",
+		Help:  "领取本账号当天 300 桌面登录积分（POST /api/web/desktop/v1/login/points/grant）。这条奖励厂商只发给它自己的桌面客户端：网关调用一律得到 granted:false，本模块记成「不可用（需桌面端登录领取）」，不再当失败。",
 	}}
 }
 
@@ -168,16 +174,17 @@ func (c *Client) Checkin(ctx context.Context, id, action string) (core.CheckinRe
 
 // resolveRefusedGrant decides what a `granted:false` reply actually means.
 //
-// The endpoint only EXTENDS today's 300-point allowance, so a refusal inside
-// the day is not evidence that today's allowance is spent -- see the file
-// header. Latching it as a day-level "unavailable" disables the row until the
-// next Shanghai midnight and loses the reward for every remaining hour.
+// See the file header: the vendor hands this reward to its own desktop app and
+// to nobody else, so a refusal is the SETTLED answer for a gateway call, not a
+// statement that can still change later in the day. The row is therefore
+// recorded as unavailable -- the panel greys it out until the next Shanghai
+// midnight -- with the operator told where the reward can actually be claimed.
 //
-// The ledger is the authority, so ask it. A `daily_grant` stamped for today
-// whose expiry reaches beyond today is a completed extension: that IS the
-// "already claimed today" answer the panel wants to show. Anything else is a
-// refusal the operator may retry, and it must stay retryable rather than
-// being recorded as a settled no.
+// The ledger is still worth a look, because it separates the two readings of a
+// refusal. A `daily_grant` stamped for today whose expiry reaches beyond today
+// is a completed extension: the day's allowance is protected, which is the
+// honest "already claimed" answer the panel wants to show. Anything else --
+// no such row, or a ledger that cannot be read -- is the desktop-only refusal.
 func (c *Client) resolveRefusedGrant(ctx context.Context, res core.CheckinResult, e *entry, start time.Time) core.CheckinResult {
 	if inHand, err := c.dailyRewardInHand(ctx, e); err == nil && inHand {
 		res.OK = true
@@ -186,12 +193,11 @@ func (c *Client) resolveRefusedGrant(ctx context.Context, res core.CheckinResult
 		res.Data["already_done"] = true
 		return c.finishCheckin(res, start)
 	}
-	// Either the ledger holds no completed extension for today, or it could
-	// not be read. Both mean "not settled": the operator may try again later
-	// in the day, which is exactly how the vendor's own client behaves when
-	// its mount-time grant is refused.
-	res.Skipped = false
-	res.Error = "the vendor did not grant the daily 300 login points this time (granted:false); this is not final for the day -- the vendor also extends the day's 300 points on later sign-ins, so retry later"
+	res.OK = false
+	res.Skipped = true
+	res.Error = ""
+	res.Message = "厂商只把这条奖励发给它自己的桌面客户端，请在桌面端登录领取"
+	res.Data["needs_desktop_client"] = true
 	return c.finishCheckin(res, start)
 }
 

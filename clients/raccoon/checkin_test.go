@@ -33,7 +33,8 @@ type grantRecorder struct {
 	// billsReply answers the read-only `GET /api/web/points/v1/bills` call the
 	// refusal path makes to find out whether today's extension already
 	// happened. Empty means "an empty ledger", which is what most refusal
-	// tests want: no completed extension, so the refusal stays retryable.
+	// tests want: no completed extension, so the refusal is the settled
+	// desktop-only unavailable rather than a fabricated "already done".
 	billsReply string
 	billsFail  bool
 	billsCalls int
@@ -273,38 +274,50 @@ func TestCheckinNeverInventsAPointTotal(t *testing.T) {
 
 // ---- refusals --------------------------------------------------------------
 
-func TestCheckinTreatsNotGrantedAsARefusalNotAnError(t *testing.T) {
+// TestCheckinTreatsNotGrantedAsASettledUnavailableNotAnError pins the shape of
+// a `granted:false` reply. It is a business answer, not a Go error -- and the
+// module records it as the settled "unavailable" the panel greys out, because
+// the vendor only hands this reward to its own desktop app (see the file
+// header in checkin.go). A gateway click cannot do anything else, so making it
+// read as a failure would only mislead the operator.
+func TestCheckinTreatsNotGrantedAsASettledUnavailableNotAnError(t *testing.T) {
 	g := &grantRecorder{reply: `{"code":0,"data":{"granted":false}}`}
 	c, id, _ := newGrantClient(t, g)
 
 	res, err := c.Checkin(context.Background(), id, "")
 	if err != nil {
-		t.Fatalf("a `granted:false` reply is a refusal, not an error: %v", err)
+		t.Fatalf("a `granted:false` reply is a business answer, not an error: %v", err)
 	}
 	if res.OK {
-		t.Fatal("OK must be false when no points moved")
+		t.Error("OK must be false when no points moved")
 	}
-	if !strings.Contains(res.Error, "did not grant") {
-		t.Errorf("Error = %q, want it to say the vendor granted nothing", res.Error)
+	if !res.Skipped {
+		t.Error("the refusal must be recorded as a settled unavailable, so the panel greys the row instead of reporting a failed request")
 	}
-	if strings.Contains(res.Error, "once per day") {
-		t.Errorf("Error = %q, but the client documents no such window: the reward window is the vendor's business, and guessing at it would be a fabricated claim", res.Error)
+	if res.Error != "" {
+		t.Errorf("Error = %q, want empty: an unavailable action is not a failure", res.Error)
+	}
+	if !strings.Contains(res.Message, "桌面端") {
+		t.Errorf("Message = %q, want it to point the operator at the desktop client, the only place this reward is handed out", res.Message)
 	}
 	if res.Data["granted"] != false {
 		t.Errorf("data.granted = %#v, want false", res.Data["granted"])
 	}
+	if res.Data["needs_desktop_client"] != true {
+		t.Errorf("data.needs_desktop_client = %#v, want true", res.Data["needs_desktop_client"])
+	}
+	if res.Data["already_done"] == true {
+		t.Error("already_done must not be claimed without a completed extension in the ledger")
+	}
 }
 
-// TestCheckinRefusalIsNotLatchedForTheDay pins the defect that made the panel
-// show "今日已签到/今日不可签" while the vendor was still handing the reward out
-// hours later.
-//
-// The grant endpoint only EXTENDS the day's 300 points. A refusal at 01:00
-// says nothing about 21:00, so recording it as a settled "unavailable" would
-// disable the row until the next midnight and lose every later chance. The
-// recorder's ledger answer here is "no completed extension today", which must
-// leave the action retryable.
-func TestCheckinRefusalIsNotLatchedForTheDay(t *testing.T) {
+// TestCheckinRefusalIsSettledForTheDay pins the corrected verdict. The grant
+// endpoint only EXTENDS the day's 300 points, and the vendor hands that
+// extension to its own desktop app alone -- measured, not guessed (see the
+// file header). A gateway refusal is therefore final for today: recording it
+// as unavailable greys the row until the next Shanghai midnight, instead of
+// leaving a button whose every later click fails the same way.
+func TestCheckinRefusalIsSettledForTheDay(t *testing.T) {
 	g := &grantRecorder{reply: `{"code":0,"data":{"granted":false}}`}
 	c, id, _ := newGrantClient(t, g)
 
@@ -312,21 +325,22 @@ func TestCheckinRefusalIsNotLatchedForTheDay(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Checkin: %v", err)
 	}
-	if res.Skipped {
-		t.Error("a refused grant must NOT be recorded as a settled day-level no: the vendor keeps extending the day's points on later sign-ins, so the operator must be able to retry")
+	if !res.Skipped {
+		t.Error("a gateway refusal is settled: the vendor does not hand this reward to anything but its own desktop app")
 	}
-	if !strings.Contains(res.Error, "not final for the day") {
-		t.Errorf("Error = %q, want it to say the refusal is not the day's last word", res.Error)
+	if res.Error != "" {
+		t.Errorf("Error = %q, want empty", res.Error)
 	}
-	if res.Data["already_done"] == true {
-		t.Error("already_done must not be claimed without a completed extension in the ledger")
+	if g.ledgerReads() == 0 {
+		t.Error("the refusal path must still read the ledger, so 'already extended' can be told apart from 'gateway cannot claim it'")
 	}
 }
 
-// TestCheckinRefusalResolvesAgainstTheLedger proves the one case that IS a
-// settled no: the ledger already holds today's extension. The vendor stamps a
-// completed one with an expiry seven days out, while the base 00:00 issuance
-// expires the SAME day.
+// TestCheckinRefusalResolvesAgainstTheLedger proves the one benign reading of a
+// refusal: the ledger already holds today's extension, so the day's allowance
+// is protected and the honest answer is "already done" rather than
+// "unavailable". The vendor stamps a completed one with an expiry seven days
+// out, while the base 00:00 issuance expires the SAME day.
 func TestCheckinRefusalResolvesAgainstTheLedger(t *testing.T) {
 	now := time.Now().In(checkinDayLocation)
 	today := now.Format("2006-01-02")
@@ -353,10 +367,11 @@ func TestCheckinRefusalResolvesAgainstTheLedger(t *testing.T) {
 	}
 }
 
-// TestCheckinRefusalStaysRetryableWhenTheVendorOnlyIssuedTheBaseAllowance
-// guards the discriminator: the 00:00 row is a daily_grant too, but it expires
-// the same day, so it is NOT evidence that the desktop extension happened.
-func TestCheckinRefusalStaysRetryableWhenTheVendorOnlyIssuedTheBaseAllowance(t *testing.T) {
+// TestCheckinRefusalIgnoresTheUnextendedBaseAllowance guards the discriminator:
+// the 00:00 row is a daily_grant too, but it expires the same day, so it is NOT
+// evidence that the desktop extension happened. The verdict must stay the
+// settled desktop-only unavailable, not a fabricated "already done".
+func TestCheckinRefusalIgnoresTheUnextendedBaseAllowance(t *testing.T) {
 	today := time.Now().In(checkinDayLocation).Format("2006-01-02")
 	g := &grantRecorder{reply: `{"code":0,"data":{"granted":false}}`}
 	c, id, _ := newGrantClient(t, g)
@@ -368,14 +383,22 @@ func TestCheckinRefusalStaysRetryableWhenTheVendorOnlyIssuedTheBaseAllowance(t *
 	if err != nil {
 		t.Fatalf("Checkin: %v", err)
 	}
-	if res.Skipped || res.Data["already_done"] == true {
+	if res.Data["already_done"] == true {
 		t.Errorf("the un-extended 00:00 issuance must not read as already claimed: %#v", res)
+	}
+	if !res.Skipped || res.Error != "" {
+		t.Errorf("res = %#v, want the settled desktop-only unavailable", res)
+	}
+	if g.ledgerReads() == 0 {
+		t.Error("the discriminator needs the ledger; it must have been read")
 	}
 }
 
-// TestCheckinRefusalStaysRetryableWhenTheLedgerCannotBeRead keeps the honesty
-// rule: a diagnostic read that fails must not be promoted into a verdict.
-func TestCheckinRefusalStaysRetryableWhenTheLedgerCannotBeRead(t *testing.T) {
+// TestCheckinRefusalIsUnavailableWhenTheLedgerCannotBeRead keeps the honesty
+// rule: a failed ledger read must not be promoted into an "already done". The
+// verdict, however, does not depend on the ledger -- the gateway cannot claim
+// this reward either way -- so it stays the settled unavailable.
+func TestCheckinRefusalIsUnavailableWhenTheLedgerCannotBeRead(t *testing.T) {
 	g := &grantRecorder{
 		reply:     `{"code":0,"data":{"granted":false}}`,
 		billsFail: true,
@@ -386,11 +409,14 @@ func TestCheckinRefusalStaysRetryableWhenTheLedgerCannotBeRead(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Checkin: %v", err)
 	}
-	if res.Skipped {
-		t.Error("an unreadable ledger must not turn a refusal into a settled no")
-	}
 	if res.OK || res.Data["already_done"] == true {
 		t.Errorf("a failed ledger read must not fabricate a success: %#v", res)
+	}
+	if !res.Skipped || res.Error != "" {
+		t.Errorf("res = %#v, want the settled desktop-only unavailable", res)
+	}
+	if g.ledgerReads() == 0 {
+		t.Error("the refusal path must try the ledger before settling")
 	}
 }
 

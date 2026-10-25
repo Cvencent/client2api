@@ -537,9 +537,13 @@ func (c *Client) finishLogin(ctx context.Context, sess *loginSession, cred crede
 // grantLoginPointsBestEffort fires the desktop login-points grant once, right
 // after a successful sign-in, the way the vendor's own client does on launch.
 //
-// It deliberately does NOT go through Checkin: that path records a failure
-// against the account, and a fresh credential must not be born with a note or
-// a failure count because a best-effort reward call was refused.
+// The vendor only grants that extension to its own desktop app, so this call is
+// expected to come back `granted:false`; it is kept because it is exactly what
+// the vendor's client does, and costs one request per sign-in.
+//
+// It deliberately does NOT go through Checkin: that path records a definitive
+// state against the account, and a fresh credential must not be born with a
+// note or a failure count because a best-effort reward call was refused.
 func (c *Client) grantLoginPointsBestEffort(ctx context.Context, e *entry) {
 	if e == nil {
 		return

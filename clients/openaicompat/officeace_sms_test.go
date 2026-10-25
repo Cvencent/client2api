@@ -678,6 +678,139 @@ func TestOfficeAceRegistrationConsentSkipsExistingAccount(t *testing.T) {
 	}
 }
 
+// fakeOfficeAceCloudAgreementPage models the agreement dialog Huawei's current
+// sign-in page renders for a first-time Huawei Cloud account.  It is a Vue
+// dialog ("agreement.vue"): the checkbox is a role="radio" DIV that keeps its
+// state in aria-checked, and the footer's right button stays inert until the
+// box is ticked.  There is no input[type=checkbox] anywhere on the page, which
+// is why the old selectors never matched and the run stalled at the OAuth poll.
+type fakeOfficeAceCloudAgreementPage struct {
+	dialogOpen    bool
+	checked       bool
+	checkClicks   int
+	acceptClicks  int
+	acceptIgnored int
+}
+
+func (p *fakeOfficeAceCloudAgreementPage) Exists(_ context.Context, selector string) (bool, error) {
+	return p.dialogOpen && selector == officeAceSelCloudAgreementDialog, nil
+}
+
+func (p *fakeOfficeAceCloudAgreementPage) Click(_ context.Context, selector string) (bool, error) {
+	if selector != officeAceSelCloudAgreementCheck {
+		return false, nil
+	}
+	p.checkClicks++
+	p.checked = !p.checked
+	return true, nil
+}
+
+func (p *fakeOfficeAceCloudAgreementPage) EvalBool(_ context.Context, expression string) (bool, error) {
+	switch expression {
+	case officeAceCloudAgreementCheckedExpr:
+		return p.checked, nil
+	case officeAceCloudAgreementAcceptExpr:
+		if !p.dialogOpen {
+			return false, nil
+		}
+		if !p.checked {
+			// Huawei's button is disabled until the box is ticked.
+			p.acceptIgnored++
+			return false, nil
+		}
+		p.acceptClicks++
+		p.dialogOpen = false
+		return true, nil
+	case officeAceCloudAgreementClosedExpr:
+		return !p.dialogOpen, nil
+	default:
+		return false, nil
+	}
+}
+
+func (p *fakeOfficeAceCloudAgreementPage) EvalString(_ context.Context, _ string) (string, error) {
+	return "", nil
+}
+
+func TestOfficeAceRegistrationConsentConfirmsHuaweiCloudAgreementDialog(t *testing.T) {
+	page := &fakeOfficeAceCloudAgreementPage{dialogOpen: true}
+	var logs []string
+	err := acceptOfficeAceRegistrationConsentWithin(context.Background(), page, 20*time.Millisecond, 20*time.Millisecond, func(format string, args ...any) {
+		logs = append(logs, fmt.Sprintf(format, args...))
+	})
+	if err != nil {
+		t.Fatalf("acceptOfficeAceRegistrationConsent: %v", err)
+	}
+	if page.checkClicks != 1 {
+		t.Fatalf("agreement checkbox clicks = %d, want 1", page.checkClicks)
+	}
+	if page.acceptClicks != 1 || !page.checked || page.dialogOpen {
+		t.Fatalf("dialog state = %+v, want the box ticked and 同意并继续 clicked once", page)
+	}
+	if page.acceptIgnored != 0 {
+		t.Fatalf("clicked a disabled 同意并继续 %d times, want 0", page.acceptIgnored)
+	}
+	if !strings.Contains(strings.Join(logs, "\n"), "已同意华为云用户协议") {
+		t.Fatalf("logs = %v, want the agreement step reported", logs)
+	}
+}
+
+func TestOfficeAceRegistrationConsentIgnoresAnAlreadyTickedDialog(t *testing.T) {
+	page := &fakeOfficeAceCloudAgreementPage{dialogOpen: true, checked: true}
+	if err := acceptOfficeAceRegistrationConsentWithin(context.Background(), page, 20*time.Millisecond, 20*time.Millisecond, func(string, ...any) {}); err != nil {
+		t.Fatalf("acceptOfficeAceRegistrationConsent: %v", err)
+	}
+	if page.checkClicks != 0 || page.acceptClicks != 1 || page.dialogOpen {
+		t.Fatalf("dialog state = %+v, want the tick left alone and the dialog confirmed", page)
+	}
+}
+
+// fakeOfficeAceStuckAgreementPage ticks the box but never enables the confirm
+// button, which is what a slow or rejected consent round-trip looks like.
+type fakeOfficeAceStuckAgreementPage struct{ checked bool }
+
+func (p *fakeOfficeAceStuckAgreementPage) Exists(_ context.Context, selector string) (bool, error) {
+	return selector == officeAceSelCloudAgreementDialog, nil
+}
+
+func (p *fakeOfficeAceStuckAgreementPage) Click(_ context.Context, selector string) (bool, error) {
+	if selector != officeAceSelCloudAgreementCheck {
+		return false, nil
+	}
+	p.checked = true
+	return true, nil
+}
+
+func (p *fakeOfficeAceStuckAgreementPage) EvalBool(_ context.Context, expression string) (bool, error) {
+	switch expression {
+	case officeAceCloudAgreementCheckedExpr:
+		return p.checked, nil
+	case officeAceCloudAgreementClosedExpr:
+		return false, nil
+	default:
+		// The accept probe reports false: the button is still disabled.
+		return false, nil
+	}
+}
+
+func (p *fakeOfficeAceStuckAgreementPage) EvalString(_ context.Context, _ string) (string, error) {
+	return "", nil
+}
+
+func TestOfficeAceRegistrationConsentReportsAStuckConfirmButton(t *testing.T) {
+	page := &fakeOfficeAceStuckAgreementPage{}
+	err := acceptOfficeAceRegistrationConsentWithin(context.Background(), page, 10*time.Millisecond, 10*time.Millisecond, func(string, ...any) {})
+	if err == nil {
+		t.Fatal("consent reported success though 同意并继续 never became clickable")
+	}
+	if !strings.Contains(err.Error(), "始终不可点击") {
+		t.Fatalf("err = %v, want the stuck-button diagnosis", err)
+	}
+	if !page.checked {
+		t.Fatal("the agreement box was never ticked")
+	}
+}
+
 // fakeOfficeAceSendCodePage models Huawei's get-code control: the click can be
 // dropped (the SPA had not armed its handler yet), and only an accepted send
 // puts the resend countdown on screen.

@@ -44,7 +44,7 @@ import (
 )
 
 // version is overridable with -ldflags "-X main.version=...".
-var version = "0.3.8"
+var version = "0.3.9"
 
 // restartHandoffEnv marks the replacement half of a panel restart.  It tells a
 // starting process to keep retrying the listen address instead of failing fast,
@@ -1563,6 +1563,12 @@ func run() error {
 	sessionPlatforms.StartGC()
 	defer sessionPlatforms.StopGC()
 
+	// One store for the gateway's per-platform and per-account in-flight
+	// brakes: the gateway takes and releases slots through it, and the panel
+	// reads the account counters so the account pool can show "now / ceiling"
+	// for every platform from the numbers the gateway actually enforces.
+	inFlightTrackers := gateway.NewInFlightTrackers()
+
 	// The context-probe memory is shared by reference between the gateway
 	// (which writes verdicts) and the panel (which shows and clears them), so
 	// it is built once here and handed to both.
@@ -1620,6 +1626,9 @@ func run() error {
 		// through, so force-switch is a live reset rather than a bookkeeping
 		// illusion.
 		SessionPlatforms: sessionPlatforms,
+		// The account pool's 在途 column reads the same per-account counters
+		// the gateway enforces, so "0 / 2" is the gateway's own bookkeeping.
+		InFlight: inFlightTrackers,
 	})
 
 	srv := gateway.NewServer(gateway.Options{
@@ -1638,6 +1647,8 @@ func run() error {
 		ModelPolicies:    modelPolicies,
 		ModelParks:       modelParks,
 		SessionPlatforms: sessionPlatforms,
+		// The same limiter store the panel reads for the account pool.
+		InFlightTrackers: inFlightTrackers,
 		// The context guard learns a model's real window from the vendor's own
 		// refusal, so it needs somewhere durable to remember it.  It lives beside
 		// the model overrides rather than inside them: a learned limit is a

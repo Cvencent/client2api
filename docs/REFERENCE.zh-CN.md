@@ -147,7 +147,7 @@ Windows 上仍可 **导入 → 探测本机凭据** 读取已经登录的桌面�
 | `workbuddy/...` | 有：有效倍率为 0、促销窗口已开、或厂商免费标签即免费；例如 `hy4-preview` 夜间免费，`glm-5.2` 只是 0.50x 夜间折扣。 | 国内签到 / 国际每日活跃对话；促销只在有效期内生效。 |
 | `codearts/...` | 有：厂商免费额度（benefit）清单；回退 `glm-5.3-flash`、`deepseek-v4.1-flash`。 | 套餐满足 `is_credit_package` 时可每日签到。 |
 | `qwenwork/...` | 有：厂商 `credits` 倍率为 0 的模型；内置 `pro`、`flash`、`qwen3.8-max-preview`。 | Sash 每日签到。 |
-| `raccoon/...` | 有：有效 `billing_multiplier` 为 0（含限时活动）；内置 `sn-glm-5-3`、`sn-kimi-k3`、`sn-glm-5-3-flash`、`sn-deepseek-v4-1-flash`。 | 每日 300 登录积分。 |
+| `raccoon/...` | 有：有效 `billing_multiplier` 为 0（含限时活动）；内置 `sn-glm-5-3`、`sn-kimi-k3`、`sn-glm-5-3-flash`、`sn-deepseek-v4-1-flash`。 | 桌面登录发放接口延长每日 300 积分有效期，但该奖励厂商只发给自己的桌面客户端。 |
 | `loomy/...` | 否：内置目录不是零价，用每日赠送额度消费。 | 每日首次登录赠送额度。 |
 | `qoder/...` | 由厂商 Credits 决定。 | 活动开放时领取每日 `CLAIM_BENEFIT` Credits。 |
 | `tabbit/...` | 由厂商目录决定。 | 每日签到返还部分额度（使用百分比）。 |
@@ -807,7 +807,7 @@ WorkBuddy 提示词与指纹清洗，都在 **平台配置** 页里按平台/模
 | lobsterai | 是 | 是 | 是，浏览器交接 | 是，每日签到 |
 | codearts | 是 | 否 | 是，门户登录 | 是，每日签到 |
 | loomy | 是 | 否 | 是，一键短信登录 | 是，首次登录奖励 |
-| raccoon | 是 | 是 | 是，本机二维码/短信页 | 是，领取每日 300 积分（桌面登录发放接口） |
+| raccoon | 是 | 是 | 是，本机二维码/短信页 | 是，`login-points`（桌面登录发放接口，延长每日 300 积分）；该奖励厂商只发给自己的桌面客户端，网关调用记为「不可用」 |
 | opencode | 是 | 是 | 是，匿名免费或 Console 设备码 | 否 |
 | openrouter | 是 | 是 | 是，浏览器 PKCE | 否 |
 | kilocode | 是 | 是，API Key、`KILO_API_KEY`、Kilo CLI/Desktop 登录文件，或内置匿名凭据 | 是，设备授权；也支持 API Key 和匿名免费访问 | 否，无签到、余额或任务接口 |

@@ -105,6 +105,11 @@ func (o *officeAceSource) Checkin(ctx context.Context, id, action string) (core.
 	data := map[string]any{"claimed": names}
 	if sub, serr := p.subscription(ctx); serr == nil {
 		points := sub.points(time.Now())
+		remaining := int64(-1)
+		if !points.Unlimited {
+			remaining = points.remaining()
+		}
+		o.noteOfficeAcePoints(id, remaining, time.Now())
 		data["credits"] = points.remaining()
 		data["total"] = points.Total
 		data["used"] = points.Used
@@ -138,6 +143,11 @@ func (o *officeAceSource) AccountBalance(ctx context.Context, id string, soon ti
 	}
 	now := time.Now()
 	points := sub.points(now)
+	remaining := int64(-1)
+	if !points.Unlimited {
+		remaining = points.remaining()
+	}
+	o.noteOfficeAcePoints(id, remaining, now)
 	bal := core.Balance{
 		Credits:   points.remaining(),
 		Total:     points.Total,
@@ -182,6 +192,12 @@ func (o *officeAceSource) AccountPackages(ctx context.Context, id string) (core.
 		}
 	}
 	now := time.Now()
+	pkgPoints := sub.points(now)
+	pkgRemaining := int64(-1)
+	if !pkgPoints.Unlimited {
+		pkgRemaining = pkgPoints.remaining()
+	}
+	o.noteOfficeAcePoints(id, pkgRemaining, now)
 	out := make([]core.CreditPackage, 0, len(sub.Skus)+len(sub.Bonus))
 	var remain, size int64
 	for _, sku := range sub.Skus {

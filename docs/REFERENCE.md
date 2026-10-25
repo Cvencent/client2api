@@ -179,7 +179,7 @@ capability of each module. Use the panel's **Re-fetch** button for the live list
 | `workbuddy/...` | Yes: a zero effective multiplier, an open promotion, or a vendor free label; e.g. `hy4-preview` is night-free while `glm-5.2` is only a 0.50x night discount. | CN check-in / intl daily-activity conversation; promotions are only believed inside their validity window. |
 | `codearts/...` | Yes: the vendor's free-quota ("benefit") list; fallback `glm-5.3-flash` and `deepseek-v4.1-flash`. | Daily check-in when the package reports `is_credit_package`. |
 | `qwenwork/...` | Yes: a vendor `credits` multiplier of zero; built-in `pro`, `flash`, `qwen3.8-max-preview`. | Sash daily check-in. |
-| `raccoon/...` | Yes: an effective `billing_multiplier` of zero (including limited-time campaigns); built-in `sn-glm-5-3`, `sn-kimi-k3`, `sn-glm-5-3-flash`, `sn-deepseek-v4-1-flash`. | 300 login credits per day. |
+| `raccoon/...` | Yes: an effective `billing_multiplier` of zero (including limited-time campaigns); built-in `sn-glm-5-3`, `sn-kimi-k3`, `sn-glm-5-3-flash`, `sn-deepseek-v4-1-flash`. | The desktop login grant extends the day's 300 credits, but the vendor grants it to its own desktop app only. |
 | `loomy/...` | No: the built-in catalogue is not zero-priced; the daily gift funds the models. | Daily first-login gift allowance. |
 | `qoder/...` | The vendor's Credits decide. | Daily `CLAIM_BENEFIT` Credits when the activity is open. |
 | `tabbit/...` | The vendor catalogue decides. | Daily sign-in restores a slice of the quota (shown as a usage percentage). |
@@ -941,7 +941,14 @@ on a live reload; `session_sticky.enabled=false` turns both off.
 
 Independent of stickiness, the gateway demotes a platform that cannot serve
 **right now** -- every account busy or cooling, or no usable account at all --
-behind the healthy candidates for 30 seconds.  This is backpressure, not a
+behind the healthy candidates for 30 seconds. The check runs *before* the
+platform is entered, not after it fails: `Health`, the module's optional
+per-model availability probe (for parks that apply to one `(account, model)`
+pair) and the gateway's own `max_in_flight` / `max_in_flight_per_account`
+counters are all local, so a candidate that cannot serve is skipped for the next
+priority without spending a call or filing a failed-candidate row. The last
+candidate in a chain is never pre-checked, because a local verdict is allowed to
+reorder the chain but not to refuse the request.  This is backpressure, not a
 failure: it raises no alert, and the platform stays in the candidate list as a
 last resort.  Repeated upstream failures still take the full 10-minute cooldown.
 `schedule.balance_refresh_enabled` (default **on**, as in the reference) adds a
@@ -1552,7 +1559,7 @@ renderer never calls it either — so there is nothing honest to implement from.
 | lobsterai | yes | yes | yes — browser hand-off; the module returns the URL and watches for the credential it leaves behind | yes — a daily check-in action |
 | codearts | yes | no — the IDE plugin keeps no discoverable credential file | yes — the portal's own sign-in, driven as a pending session | yes — the daily check-in |
 | loomy | yes | no — nothing on disk holds a usable session | yes — one-click SMS login the module runs itself (`core.AutoLoginProvider` + `core.SMSProvider`): the panel rents a number, the module sends the code, reads it back and stores the 14-day session | yes — the first-login allowance |
-| raccoon | yes | yes | yes — loopback QR/SMS page with a stdlib QR encoder; WeChat scan or SMS, phone encrypted host-side | yes — `login-points`, the desktop login grant that claims the daily 300 credits |
+| raccoon | yes | yes | yes — loopback QR/SMS page with a stdlib QR encoder; WeChat scan or SMS, phone encrypted host-side | yes — `login-points`, the desktop login grant that extends the daily 300 credits; the vendor grants it to its own desktop app only, so a gateway call settles as "unavailable" |
 | opencode | yes | yes — the `opencode` entry of `~/.local/share/opencode/auth.json`, plus every `*.json` in `<data_dir>/import/` | yes — two realms: anonymous free (`x-api-key: public`) and Console device-code OAuth | no — Zen has no check-in and no task API |
 | openrouter | yes | yes — `OPENROUTER_API_KEY`, the conventional credential files, an `env:NAME` reference, or a pasted key | yes — browser PKCE; the issued key is stored like a pasted one | no — the vendor has no check-in |
 | kilocode | yes | yes — API key, `KILO_API_KEY`, Kilo CLI/Desktop sign-in file, or the built-in anonymous credential | yes — device authorisation; API keys and anonymous free access are also supported | no — no check-in, balance, or task API |

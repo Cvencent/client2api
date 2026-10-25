@@ -39,26 +39,36 @@ expiry. The vendor's own wording states the rule: 每日积分每天 00:00 发�
 当日 24:00 清零，当天登录后有效期延长至 7 天. The ledger matches: the 00:00
 issuance is a `daily_grant` of `+300` expiring **the same day**, and a
 successful desktop grant adds another `daily_grant` of `+300` whose `expire_at`
-reaches **seven days** out. A live check against a real account confirmed
-both shapes.
+reaches **seven days** out.
 
-That distinction decides what a `granted:false` reply means. It is a statement
-about **this attempt**, not about the day: the extension did not apply right
-now. So the module resolves a refusal against the points ledger instead of
-guessing:
+**The vendor only hands this reward to its own desktop app.** The request that
+app sends is a plain authenticated POST — the same method, URL, headers and
+empty body this module sends — but replaying it from the gateway is answered
+with `{"code":0,"data":{"granted":false}}` for **every** account and every
+variation tried (device id, client version, `Origin`, cookies, user agent, org
+header, body shape). What gives the caller away is not the request: a real
+account's ledger shows the extension landing on exactly 10/08 18:41, 10/16
+08:22, 10/20 18:12 and 10/23 21:41, each within seconds of that app's own
+`app-startup` log line, and on 10/20 this gateway's 07:00 attempt was refused
+while the same account's 18:12 attempt — fired by the app — was granted. The
+discriminator is the caller, not the request and not the clock.
+
+`granted:false` is therefore the **settled** answer for a gateway call, not a
+transient one, and the module records it as `skipped` (the panel greys the row
+out until the next Shanghai midnight) instead of reading as a failed request.
+The ledger is still consulted, for the one benign reading of a refusal:
 
 | Ledger state | Verdict |
 | --- | --- |
 | today's `daily_grant` expires beyond today | already claimed — `OK` with `data.already_done = true` |
-| only the same-day 00:00 issuance | retryable refusal, **not** `skipped` |
-| ledger unreadable | retryable refusal, **not** `skipped` |
+| only the same-day 00:00 issuance | desktop-only refusal — `skipped`, `data.needs_desktop_client = true` |
+| ledger unreadable | desktop-only refusal — `skipped`, `data.needs_desktop_client = true` |
 
-The earlier behaviour treated every `granted:false` as a settled, day-level
-no. The panel latches a `skipped` action as "unavailable" until the next
-Shanghai midnight and disables the row, so a single refusal at 01:00 burned the
-reward for the rest of the day even though the vendor was still handing it out
-at 21:41. A refusal is now never latched unless the ledger proves the extension
-already happened.
+An earlier revision treated every `granted:false` as a retryable refusal, on the
+theory that the vendor kept handing the extension out later in the day. It does
+— to its own desktop app. Read from the gateway the same request is refused all
+day long, so leaving the row enabled only produced a button whose every click
+failed, and the batch runs counted it as a refusal every morning and evening.
 
 **No vendor-storage auto-discovery.** See "Where credentials come from".
 
@@ -212,10 +222,11 @@ listener.
 
 **The daily 300 credits ride on the desktop `login-points` grant.** The vendor
 writes them to the points ledger as `daily_grant`; the panel's check-in button
-calls `POST /api/web/desktop/v1/login/points/grant` to extend the day's 300. A
-`granted:false` reply is resolved against the ledger — see the overview — so it
-only becomes a settled, non-retryable "already claimed" when a `daily_grant`
-for today expires beyond today.
+calls `POST /api/web/desktop/v1/login/points/grant` to extend the day's 300.
+The vendor only grants it to its own desktop app, so a `granted:false` is the
+settled answer for a gateway call: the module resolves it against the ledger
+(see the overview) and records it as "unavailable — claim it from the desktop
+client" unless the ledger proves today's extension is already in hand.
 
 ---
 
@@ -234,7 +245,7 @@ All paths are relative to `https://xiaohuanxiong.com` (override with `base_url`)
 | `POST` | `/api/web/llm/v2/chat/completions` | streaming chat completions |
 | `GET` | `/api/web/points/v1/balance` | credit balance (read-only) |
 | `GET` | `/api/web/points/v1/bills?paging.limit=N&paging.offset=M` | credit ledger (read-only) |
-| `POST` | `/api/web/desktop/v1/login/points/grant` | desktop login reward, action `login-points` (the `CheckinProvider`): extends the day's 300 points to a 7-day expiry; the vendor's own hook fires it on every launch. A `granted:false` is resolved against the ledger above |
+| `POST` | `/api/web/desktop/v1/login/points/grant` | desktop login reward, action `login-points` (the `CheckinProvider`): extends the day's 300 points to a 7-day expiry. The vendor grants it to its own desktop app alone, so a gateway call is answered `granted:false` and resolved against the ledger above |
 
 Headers on every request: `Accept: application/json` (or `text/event-stream` for
 chat), `Content-Type: application/json`. Authenticated requests also carry
@@ -443,7 +454,7 @@ call: it is not parked and it does not spend one of the `max_attempts` attempts.
 | `core.LoginProvider` | yes | loopback QR/SMS page; `RealmLoginProvider` is not implemented (a single sign-in flow) |
 | `core.SMSProvider` | yes | eomsg rent/poll/release; sender keyword defaults to `商汤科技` |
 | `core.AutoLoginProvider` | **no** | deliberately dropped: the vendor's Aliyun scene now needs a human slider, so an unattended 一键接码 run cannot get a usable captcha token |
-| `core.CheckinProvider` | yes | one action, `login-points`: extends the daily 300 login credits through the desktop login grant, resolving a `granted:false` against the points ledger so a mid-day refusal stays retryable |
+| `core.CheckinProvider` | yes | one action, `login-points`: extends the daily 300 login credits through the desktop login grant. The vendor only grants it to its own desktop app, so a `granted:false` resolves against the points ledger into either "already claimed" or a settled "unavailable — claim it from the desktop client" |
 | `core.VoucherProvider` | **no** | the vendor exposes no voucher concept |
 | `core.TaskProvider` / `core.BatchProvider` | **no** | nothing to offer |
 | `core.CaptchaProvider` | **no** | the interactive SMS tab loads the vendor's Aliyun slider in the browser for the operator to solve |
@@ -479,13 +490,14 @@ parse, SSE framing and chunk parsing, tool-call fragment merging, the
 whole-JSON-completion reframing, the `ErrNotConfigured` path, and the check-in
 suite (`checkin_test.go`): the action list with and without accounts, the grant
 request's headers and empty-JSON body, envelope unwrapping, a popup-carrying
-grant, `granted:false` as a refusal rather than an error, the refusal-resolution
-rule (a completed extension in the ledger reads as already claimed; the
-un-extended 00:00 issuance, and an unreadable ledger, both stay retryable), the
-ledger predicate pinned against rows copied from a real account, an unknown
-action refused without a call, an unknown account id as a real error, a
-rejected token parking the account, a *client* error not parking it, the token
-never leaking into the error text, and one grant per click.
+grant, `granted:false` as a settled unavailable rather than an error, the
+refusal-resolution rule (a completed extension in the ledger reads as already
+claimed; the un-extended 00:00 issuance and an unreadable ledger both read as
+the desktop-only unavailable), the ledger predicate pinned against rows copied
+from a real account, an unknown action refused without a call, an unknown
+account id as a real error, a rejected token parking the account, a *client*
+error not parking it, the token never leaking into the error text, and one
+grant per click.
 
 `login_test.go`, `login_sms_test.go` and `qr_test.go` cover the loopback page
 and its security boundary, the QR state machine (`pending`/`logging`/
@@ -502,9 +514,15 @@ Marked honestly rather than asserted:
 - **Live checks were run against `xiaohuanxiong.com` for the points surface.**
   `GET /api/web/points/v1/balance`, `GET /api/web/points/v1/bills` (with
   `paging.limit` / `paging.offset`) and `POST /api/web/desktop/v1/login/points/grant`
-  were all exercised with a real account; the grant reply and the resulting
-  `daily_grant` of `+300` in the ledger are therefore measured, not inferred.
-  The chat/streaming endpoints remain ported from the reference.
+  were all exercised with a real account. The grant endpoint's request shape is
+  measured against the vendor's own installed client (`app.asar`): same method,
+  URL and headers. Its **reply** is measured too — every replay from this
+  gateway, including with the desktop client's own stored token, the real
+  `X-Client-Device-ID`, both `Origin` values, cookies and several client
+  versions, came back `granted:false`. The `daily_grant` of `+300` with a
+  seven-day expiry is in the ledger, but only at the timestamps where the real
+  desktop app had just started. The chat/streaming endpoints remain ported from
+  the reference.
 - **The access-token lifetime (~3 h) and the 300 s renewal window** come from the
   reference's measurements; the module only relies on the JWT `exp`.
 - **`max_output_tokens` values** are the vendor's `params.max_tokens` as recorded
@@ -514,18 +532,27 @@ Marked honestly rather than asserted:
   hand-written in `qr.go` (byte mode, ECC level M, versions 1-10) so no
   dependency is added; the reference used a QR library. No live scan has been
   performed from this machine.
+- **The desktop gate itself is unexplained; that it exists is measured.** The
+  vendor's own desktop client sends the same request this module sends, yet
+  only that client is granted the extension. Whatever the server keys on (a
+  desktop-bound session, a device link, an online presence) is not in the
+  request bytes, so this module does not pretend to reproduce it: it reports
+  the settled refusal instead.
 - **Deviation:** the reference exposes a check-in-shaped credits view. This
-  module exposes one action, `login-points`, wired to the desktop login grant,
-  which is how the daily 300 credits are claimed.
+  module exposes one action, `login-points`, wired to the desktop login grant.
+  From this gateway that grant is refused (see above), so the action reads as
+  "unavailable — claim it from the desktop client" rather than as a claim that
+  succeeded.
 - **The reward window is unknown; the expiry is not.** The grant reply is
   `{granted, popup?}`: no reason and no "next available at", so the module
   never invents one. What it does read is the ledger's own `expire_at`, which is
   what separates "the extension already happened" from "it has not yet".
-  Earlier drafts of this module asserted "at most one grant per account per
-  day"; that claim was **removed** because nothing in the vendor bundle supports
-  it, and
-  `TestCheckinTreatsNotGrantedAsARefusalNotAnError` fails if the message ever
-  claims such a window again.
+  Earlier drafts asserted "at most one grant per account per day", then that a
+  mid-day refusal was merely "not final for the day"; both claims were
+  **removed** once the ledger and the desktop app's own launch log showed that
+  the discriminator is the caller, not the hour.
+  `TestCheckinRefusalIsSettledForTheDay` fails if the verdict drifts back to
+  "retry later".
 - **Deviation:** the reference can read the desktop client's own credential
   storage; this module does not, because no such storage could be verified on
   this machine. `credential_paths` is the substitute.

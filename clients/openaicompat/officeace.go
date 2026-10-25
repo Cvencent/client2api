@@ -63,6 +63,16 @@ type officeAceSource struct {
 	repairMu sync.Mutex
 	repairAt map[string]time.Time
 
+	// The panel's credit reads are the only place that learns an account's
+	// live point position, and a drained package makes the model gateway
+	// refuse the model key with a bare 401 APIG.1009.  This cache lets the
+	// chat failure path tell that exhaustion verdict apart from a genuinely
+	// dead key: the former cools down (a refill revives it), the latter is
+	// terminal.  A value of -1 means "not drained" (unlimited or credit left).
+	pointsMu sync.Mutex
+	points   map[string]int64
+	pointsAt map[string]time.Time
+
 	// SMS and auto-login state.  The platform token and per-call overrides
 	// travel through core.SMSOpts/core.AutoLoginRequest, so no credential is
 	// added to SourceConfig.  smsBase is only set by tests.
@@ -140,12 +150,63 @@ func (o *officeAceSource) officeAceRepairDue(id string, now time.Time) bool {
 	return true
 }
 
+// officeAceExhaustedWindow bounds how long a cached zero-credit position may
+// drive the exhaustion verdict.  The panel sweeps balances every few minutes,
+// so a fresh read is almost always available; after the window the verdict
+// expires and a refusal falls back to the dead-key case.
+const officeAceExhaustedWindow = 30 * time.Minute
+
+// noteOfficeAcePoints records the credit position a premium read observed and,
+// when it shows a drained package, supersedes a stale dead-key verdict with
+// the quota cooldown: points may come back (daily check-in, a new trial, a
+// top-up), a revoked key does not.  remaining -1 records "not drained".
+func (o *officeAceSource) noteOfficeAcePoints(id string, remaining int64, now time.Time) {
+	o.pointsMu.Lock()
+	if o.points == nil {
+		o.points = map[string]int64{}
+		o.pointsAt = map[string]time.Time{}
+	}
+	o.points[id] = remaining
+	o.pointsAt[id] = now
+	o.pointsMu.Unlock()
+	if remaining != 0 || o.source == nil {
+		return
+	}
+	s := o.source
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.invalid[id] {
+		delete(s.invalid, id)
+		s.parkLocked(id, core.FailureQuota)
+	}
+}
+
+// officeAceCreditsExhausted reports whether a recent panel read saw the
+// account's credits at zero.
+func (o *officeAceSource) officeAceCreditsExhausted(id string, now time.Time) bool {
+	o.pointsMu.Lock()
+	defer o.pointsMu.Unlock()
+	at, ok := o.pointsAt[id]
+	if !ok || now.Sub(at) > officeAceExhaustedWindow {
+		return false
+	}
+	return o.points[id] == 0
+}
+
+// bindAuthExhaustedHook teaches the generic source about the exhaustion veto.
+func (o *officeAceSource) bindAuthExhaustedHook() {
+	o.source.authExhausted = func(id string) bool {
+		return o.officeAceCreditsExhausted(id, time.Now())
+	}
+}
+
 func wrapOfficeAceSource(name string, cfg core.SourceConfig, s *source) core.SourceClient {
 	if s == nil || !officeAceEndpoint(name, cfg.BaseURL) {
 		return s
 	}
 	oa := &officeAceSource{source: s, eps: defaultOfficeAceEndpoints()}
 	oa.enableDesktopModelSelection()
+	oa.bindAuthExhaustedHook()
 	if !officeAceLocalSupported() {
 		return oa
 	}

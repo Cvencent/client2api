@@ -245,9 +245,38 @@ func (s *server) routeAndServeMessages(w http.ResponseWriter, r *http.Request, i
 			candidates = prioritizeStickyPlatform(candidates, platform)
 		}
 	}
+	// Pessimistic pre-flight.  A platform the gateway can already tell cannot
+	// serve this model right now -- an empty or fully parked account pool, a
+	// park for this exact model, or every account at its in-flight ceiling --
+	// is skipped before Chat is entered, so the router does not spend a round
+	// trip (or a 候选失败 row) re-learning it.  The short demotion is recorded
+	// so the next request already prefers a healthy sibling.
+	//
+	// The last remaining candidate is deliberately never pre-checked: a local
+	// verdict may reorder the chain between siblings, never refuse the request.
+	// That candidate then continues through the ordinary single-candidate path
+	// below, which is free to answer from Health without entering Chat.
+	skipTo := 0
+	for len(candidates)-skipTo > 1 {
+		candidate := candidates[skipTo]
+		unavailable := s.candidateUnavailable(r.Context(), candidate)
+		if unavailable == nil {
+			break
+		}
+		if candidate.Client != nil {
+			s.opts.Registry.NoteModelUnavailable(candidate.Client.Name(), candidate.Model, time.Now())
+			s.opts.Logger.Printf("chat: platform %s model %s cannot serve right now (%v); skipping to the next platform",
+				candidate.Client.Name(), candidate.Model, unavailable)
+		}
+		skipTo++
+	}
+	if skipTo > 0 {
+		candidates = candidates[skipTo:]
+	}
+	in.rec.Candidate = skipTo + 1
 	client, upstreamModel := candidates[0].Client, candidates[0].Model
 	attemptCtx := withCatalogueExtra(r.Context(), candidates[0])
-	in.rec.Candidate = 1
+
 	if len(candidates) == 1 && !candidates[0].Free {
 		// A free model is the one exception to the account-level health verdict:
 		// a credit-parked account may still be able to serve it, and the module
@@ -296,7 +325,7 @@ func (s *server) routeAndServeMessages(w http.ResponseWriter, r *http.Request, i
 			(s.opts.Guard == nil || !s.opts.Guard.IP.Active()) {
 			s.opts.Logger.Printf("chat: platform %s model %s cannot fit the newest turn, trying the next platform", client.Name(), upstreamModel)
 			var handled bool
-			client, hintCtx, prepErr, handled = s.serveRemainingCandidates(w, r, in, candidates[1:], 2, maxTokensExplicit, baseReq)
+			client, hintCtx, prepErr, handled = s.serveRemainingCandidates(w, r, in, candidates[1:], skipTo+2, maxTokensExplicit, baseReq)
 			if handled {
 				return
 			}
@@ -377,7 +406,7 @@ func (s *server) routeAndServeMessages(w http.ResponseWriter, r *http.Request, i
 			}
 			s.opts.Logger.Printf("chat: platform %s model %s failed (%v), trying the next platform", client.Name(), upstreamModel, err)
 			var handled bool
-			client, hintCtx, err, handled = s.serveRemainingCandidates(w, r, in, candidates[1:], 2, maxTokensExplicit, baseReq)
+			client, hintCtx, err, handled = s.serveRemainingCandidates(w, r, in, candidates[1:], skipTo+2, maxTokensExplicit, baseReq)
 			if handled {
 				return
 			}
@@ -414,7 +443,7 @@ func (s *server) routeAndServeMessages(w http.ResponseWriter, r *http.Request, i
 			s.noteFailedCandidate(in.rec, client, upstreamModel, probeErr)
 			s.opts.Logger.Printf("chat: platform %s model %s failed inside stream (%v), trying the next platform", client.Name(), upstreamModel, probeErr)
 			var handled bool
-			client, hintCtx, probeErr, handled = s.serveRemainingCandidates(w, r, in, candidates[1:], 2, maxTokensExplicit, baseReq)
+			client, hintCtx, probeErr, handled = s.serveRemainingCandidates(w, r, in, candidates[1:], skipTo+2, maxTokensExplicit, baseReq)
 			if handled {
 				return
 			}

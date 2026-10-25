@@ -15,10 +15,11 @@ import (
 // (desktop/v1/login/points/grant) is a one-off reward that must never be
 // fired from a status refresh.
 //
-// The daily 300 login credits are claimed by the `login-points` check-in
-// action (POST /api/web/desktop/v1/login/points/grant, see checkin.go).
-// That one-off write must never be fired from a status refresh, so nothing
-// here tries to claim them.
+// The daily 300 login credits are extended by the `login-points` check-in
+// action (POST /api/web/desktop/v1/login/points/grant, see checkin.go); the
+// vendor only grants it to its own desktop app, so the action settles as
+// "unavailable" rather than as a claim. That one-off write must never be fired
+// from a status refresh, so nothing here tries to claim it.
 
 // balanceAccount resolves the account a credits call should use. An empty id
 // means "any usable account".

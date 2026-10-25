@@ -5,7 +5,7 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-Current version: **0.3.8**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
+Current version: **0.3.9**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
 
 client2api is a personal, local-only OpenAI-compatible gateway. It aggregates
 the accounts and API Keys **you own** on different AI coding clients and
@@ -98,7 +98,7 @@ fixed list.
 | `workbuddy/...` | Yes. A model whose effective multiplier is `0`, or whose promotion is open, is free; a vendor free label also counts. | CN daily check-in; international daily-activity conversation. Free promotions are believed only inside their validity/daily window. |
 | `codearts/...` | Yes. The vendor's free-quota (benefit) model list is read from the gateway config. | Daily check-in for an account whose package reports `is_credit_package`. |
 | `qwenwork/...` | Yes. A model whose vendor `credits` multiplier parses to `0` is marked free. | Sash daily check-in. |
-| `raccoon/...` | Yes. An effective `billing_multiplier` of `0` -- including a limited-time campaign -- is free. | Daily 300 login credits via the desktop login grant. |
+| `raccoon/...` | Yes. An effective `billing_multiplier` of `0` -- including a limited-time campaign -- is free. | The desktop login grant extends the daily 300 credits; the vendor grants it to its own desktop app only. |
 | `loomy/...` | The built-in catalogue is not zero-priced; the daily gift funds the models. | Daily first-login gift allowance. |
 | `qoder/...` | The live catalogue decides; the free/paid split is the vendor's Credits. | Daily `CLAIM_BENEFIT` Credits when the activity is open. |
 | `tabbit/...` | The live catalogue decides. | Daily sign-in restores a slice of the account's quota (shown as a usage percentage). |
@@ -172,6 +172,16 @@ OpenAI's `schema must be a JSON Schema of 'type: "object"', got 'type: null'`
   its own meaning and skips groups, searching the concrete catalogues directly. Every
   group entry also publishes the fixed `low/medium/high/xhigh/max` ladder in
   `extra.supported_efforts`; each selected member still applies its own effort policy.
+- Pessimistic platform selection. Before a candidate in a failover chain is entered,
+  the router asks three local sources whether that platform could serve the request
+  right now: the module's own `Health` verdict, its optional per-model availability
+  probe (a park is often per account+model, which an account census cannot express),
+  and the gateway's own in-flight counters for `max_in_flight` /
+  `max_in_flight_per_account`. A platform that cannot serve is skipped for the next
+  priority instead of being sent a request that could only report the same thing, so
+  a bare model no longer pays a failed candidate row per saturated sibling. The last
+  candidate in the chain is never pre-checked: a local verdict may reorder the chain
+  but never refuses the request.
 - An operator-set outward model whitelist (`exposed_models`). The gateway builds the
   full final catalogue first -- `platform/model` ids, `Auto/<model>` names,
   `model_groups` names, aliases and transcription ids -- then serves only the ids the
@@ -462,11 +472,13 @@ OpenAI's `schema must be a JSON Schema of 'type: "object"', got 'type: null'`
   as "user not signed in".
 - Raccoon's daily 300 points are **extended**, not minted, by the desktop login
   grant: the vendor issues them at 00:00 with a same-day expiry and the desktop
-  grant pushes the expiry out to 7 days. A `granted:false` reply is therefore
-  resolved against the points ledger -- a `daily_grant` for today that expires
-  beyond today means "already claimed", anything else stays retryable. Latching
-  a mid-day refusal as a settled no used to disable the row until midnight and
-  lose the reward for the rest of the day.
+  grant pushes the expiry out to 7 days. The vendor only grants that extension
+  to its own desktop app -- replaying the same authenticated POST from the
+  gateway is answered `granted:false` with every account, device id, client
+  version, `Origin`, cookie and user agent tried -- so the action settles as
+  "unavailable, claim it from the desktop client" instead of a failed request.
+  The points ledger is still read: a `daily_grant` for today that expires beyond
+  today reads as "already claimed".
 - Trae CN's daily check-in and the 1024 activity are one vendor flow: the check-in action first reads/claims the daily credits, then reads `/trae/api/v2/ug/activity/info` and only posts `/trae/api/v2/ug/activity/action` for `checkin_1024` when the activity is enabled, eligible and grantable. A separate "参与 1024 抽奖" action recovers an account that signed in before this flow existed without claiming the same day twice. A lottery failure is reported without turning an already-successful sign-in into a retry or a second claim.
 - Gemini / Google Cloud Code Assist accounts support Google OAuth login,
   account discovery and refresh, quota reads, and Cloud Code Assist request
@@ -632,7 +644,7 @@ See the detailed reference for translation rules and limitations.
 OfficeAce (Office Claw) is built in as the `officeace` platform. Its desktop client exposes exactly four selectable models -- `glm-5.2`, `glm-5.1`, `deepseek-v4-flash-0731` and `deepseek-v4.1-flash` -- through the Huawei MaaS / AgentArts OpenAI-compatible model gateway. No relay entry or manual API root is required:
 
 1. Open **Platform Configuration** and expand **Huawei** (the built-in `officeace` platform). It is present on a fresh install; it is shown as **built-in** and has no Delete button.
-2. Open its account pool and choose **Auto add**. The panel rents a number from the shared one-time-SMS platform, drives a headless browser through the Huawei phone-code login, reads the verification code and submits it for you (including the Huawei Cloud user-agreement step shown for a fresh account). Paste the SMS-platform token into the dialog (or set `EOMSG_TOKEN` once) and leave the default sender keyword **华为**; the number is released automatically when the run ends. If you would rather sign in yourself, **Browser sign-in -> Get authorization link** still works. That link first visits Huawei's logout endpoint to clear the previous browser session, then returns to the login page with the OAuth request intact, so adding a second account does not silently reuse the first one. Either way the panel exchanges the authorization code for the account's model-gateway credential, writes it into this gateway's account store, and makes sure the account has the free `officeace.personal.package.trial` entitlement (500 credits and 200 online searches). An account that already has the trial is only checked and is not ordered again. If the login-time order was refused (for example a transient IAM authentication error), the balance and package reads re-open the trial automatically, at most one repair attempt per account every 30 minutes.
+2. Open its account pool and choose **Auto add**. The panel rents a number from the shared one-time-SMS platform, drives a headless browser through the Huawei phone-code login, reads the verification code and submits it for you. A fresh account then has to tick and confirm Huawei Cloud's user-agreement dialog before the OAuth callback runs; the run recognises both the current Vue dialog and the older registration page. If the cloud keeps that dialog open, the job fails with a message saying so instead of silently stalling at the authorization poll. Paste the SMS-platform token into the dialog (or set `EOMSG_TOKEN` once) and leave the default sender keyword **华为**; the number is released automatically when the run ends. If you would rather sign in yourself, **Browser sign-in -> Get authorization link** still works. That link first visits Huawei's logout endpoint to clear the previous browser session, then returns to the login page with the OAuth request intact, so adding a second account does not silently reuse the first one. Either way the panel exchanges the authorization code for the account's model-gateway credential, writes it into this gateway's account store, and makes sure the account has the free `officeace.personal.package.trial` entitlement (500 credits and 200 online searches). An account that already has the trial is only checked and is not ordered again. If the login-time order was refused (for example a transient IAM authentication error), the balance and package reads re-open the trial automatically, at most one repair attempt per account every 30 minutes.
 3. Model scanning runs automatically after a successful sign-in. **Scan models** can be pressed again later. The catalogue is published as `officeace/<model>`, and only those four ids are exposed. Other entries in Huawei's raw catalogue are ignored, matching the desktop client's picker exactly.
 
 Each account keeps the `model_api_url_base` returned by its own Huawei login, so accounts on different regions or model gateways can share one `officeace` platform. Requests use HTTP Basic authentication and behave like every other platform: account rotation, failover, conversation affinity, usage accounting, streaming and tool calls all work unchanged. Credentials stay in the local `data/officeace/accounts.json`; they are never written to the config file or the example config.
@@ -703,3 +715,4 @@ source tree if an installed instance is already using the same port.
 This repository is for personal use, study and research. It does not grant any
 right to run a public or commercial relay service, and it does not change the
 terms of any upstream provider. See [LICENSE](LICENSE).
+

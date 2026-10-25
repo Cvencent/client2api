@@ -1125,6 +1125,51 @@ func (p *Pool) PickForModel(skip map[string]bool, model string) (*Auth, bool) {
 	return p.PickForModelInRealm(skip, model, "")
 }
 
+// CanServe reports whether any account could take a request for model right
+// now.  It applies exactly the filter PickForModelInRealmFor applies -- a
+// usable account (or, for a free model, one whose only park is the wallet), the
+// realm match, the per-account model policy, a live per-model park, and the
+// per-account in-flight ceiling -- but it is a pure read: no slot, no rotation
+// cursor, no counter and no binding is written.
+//
+// The router uses it before entering Chat, so a platform whose accounts are all
+// parked for one model is skipped for a sibling instead of paying a call that
+// could only repeat the same filter.
+func (p *Pool) CanServe(model, realm string, freeModel bool) bool {
+	if p == nil {
+		return false
+	}
+	now := p.now()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, e := range p.entries {
+		if e == nil || e.auth == nil {
+			continue
+		}
+		if freeModel {
+			if !e.usableForFreeModel(now) {
+				continue
+			}
+		} else if !e.usable(now) {
+			continue
+		}
+		if !realmMatches(e, realm) {
+			continue
+		}
+		if model != "" && !e.auth.ModelAllowed(model) {
+			continue
+		}
+		if model != "" && e.modelCooled(now, model) {
+			continue
+		}
+		if p.fullLocked(e) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
 // PickForModelFor is PickForModel for a request the router has already priced:
 // freeModel says the vendor charges nothing for this model, so an account
 // parked for an empty wallet is still a candidate.  Every other park keeps

@@ -58,6 +58,10 @@ type Options struct {
 	// SessionPlatforms carries the gateway-level conversation-to-platform
 	// bindings.  A caller may inject one so the panel can manage the same table.
 	SessionPlatforms *SessionPlatforms
+	// InFlightTrackers carries the gateway's per-platform and per-account
+	// in-flight brakes.  A caller may inject one so the panel reads the same
+	// counters the gateway enforces; nil makes NewServer build a private one.
+	InFlightTrackers *InFlightTrackers
 	// NotifyAlert receives operator-facing platform health alerts.  It is
 	// called synchronously and may be nil.
 	// ModelOverrides is the operator-edited model metadata shared with the panel.
@@ -103,17 +107,13 @@ type server struct {
 	started time.Time
 	stats   *Stats
 
-	// limMu guards limiters, the per-platform in-flight brakes installed by
-	// the platform configuration page.  See platform_limit.go.
-	limMu    sync.Mutex
-	limiters map[string]*platformLimiter
-	// accountLimiters is the second brake, keyed by (platform, account): the
-	// operator's per-account ceiling.  limMu also guards this map.
-	accountLimiters map[accountKey]*platformLimiter
-	// limiterSweep is the next time a refill may evict idle limiter entries.
-	// It keeps the hot path to one time comparison per request and bounds the
-	// bookkeeping for transient account ids without touching live slots.
-	limiterSweep time.Time
+	// inflight is the shared limiter store behind the per-platform and
+	// per-account in-flight brakes.  The host passes the same instance to the
+	// panel, so the account pool displays the numbers the gateway enforces.
+	// trackMu only guards the lazy init in trackers(); slot bookkeeping is
+	// guarded by the store's own mutex.  See platform_limit.go.
+	trackMu  sync.Mutex
+	inflight *InFlightTrackers
 	// sessionPlatforms keeps a bare-model conversation on the platform that
 	// last served it, so failover does not ping-pong between a healthy and a
 	// broken sibling on every turn.
@@ -182,11 +182,15 @@ func NewServer(opts Options) *http.Server {
 	if opts.SessionPlatforms == nil {
 		opts.SessionPlatforms = newSessionPlatforms()
 	}
+	if opts.InFlightTrackers == nil {
+		opts.InFlightTrackers = NewInFlightTrackers()
+	}
 	s := &server{
 		opts:             opts,
 		started:          time.Now(),
 		stats:            opts.Stats,
 		sessionPlatforms: opts.SessionPlatforms,
+		inflight:         opts.InFlightTrackers,
 	}
 	if s.opts.Logger == nil {
 		s.opts.Logger = log.Default()
@@ -872,11 +876,30 @@ func (s *server) serveRemainingCandidates(w http.ResponseWriter, r *http.Request
 		lastHint   func() core.HintContext
 		lastErr    error
 	)
-	for _, candidate := range candidates {
+	for i, candidate := range candidates {
 		client, upstreamModel := candidate.Client, candidate.Model
 		attemptCtx := withCatalogueExtra(r.Context(), candidate)
 		rec.Candidate = firstCandidate
 		firstCandidate++
+		// Pessimistic pre-flight, same rule as the first candidate: a platform
+		// the gateway already knows cannot serve this model is skipped instead
+		// of being entered.  The last remaining candidate keeps the ordinary
+		// path, so a stale verdict reorders the chain but never refuses it.
+		if len(candidates)-i > 1 {
+			if unavailable := s.candidateUnavailable(r.Context(), candidate); unavailable != nil {
+				if candidate.Client != nil {
+					s.opts.Registry.NoteModelUnavailable(candidate.Client.Name(), candidate.Model, time.Now())
+					s.opts.Logger.Printf("chat: platform %s model %s cannot serve right now (%v); skipping to the next platform",
+						candidate.Client.Name(), candidate.Model, unavailable)
+				}
+				if lastErr == nil {
+					lastClient = client
+					lastHint = s.hintContextFunc(attemptCtx, client, upstreamModel, baseReq.Messages)
+					lastErr = unavailable
+				}
+				continue
+			}
+		}
 
 		attemptReq, prepErr := s.prepareCandidateAttempt(attemptCtx, candidate, in.requested, baseReq, rec, maxTokensExplicit)
 		if prepErr != nil {

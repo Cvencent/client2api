@@ -6,6 +6,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -72,6 +73,7 @@ func officeAcePremiumSource(t *testing.T, srv *httptest.Server) *officeAceSource
 		ClientID:     "test-client",
 	}}
 	o.enableDesktopModelSelection()
+	o.bindAuthExhaustedHook()
 	return o
 }
 
@@ -862,5 +864,214 @@ func TestOfficeAcePanelReadRepairsMissingTrial(t *testing.T) {
 	}
 	if skuCalls.Load() != 1 || orderCalls.Load() != 1 {
 		t.Fatalf("the repair window did not throttle: sku=%d order=%d", skuCalls.Load(), orderCalls.Load())
+	}
+}
+
+// officeAceDrainedSubscriptionJSON is a subscription whose points are spent to
+// the last one: exactly the state the live OfficeAce gateway answers with a
+// bare 401 APIG.1009 on the model key.
+const officeAceDrainedSubscriptionJSON = `{
+  "subscribe_status": "SUBSCRIBED",
+  "skus": [{
+    "sku_code": "officeace.personal.package.trial",
+    "subscribe_status": "SUBSCRIBED",
+    "quotas": [
+      {"sku_attr_code": "officeace_points", "sku_value": "4600", "current_value": "4600",
+       "effective_time": "2026-10-16T09:21:49.739Z", "expired_time": "2099-01-01T00:00:00.000Z"}
+    ]
+  }],
+  "bonus_skus": []
+}`
+
+func officeAceChatServer(t *testing.T, subscription string, chatCalls *atomic.Int32) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/chat/completions"):
+			chatCalls.Add(1)
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = io.WriteString(w, `{"error_msg":"AppKey or AppSecret is invalid","error_code":"APIG.1009"}`)
+		case r.Method == http.MethodGet && r.URL.Path == officeAcePremiumPathSubscription:
+			_, _ = io.WriteString(w, subscription)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+}
+
+func officeAceAddChatAccount(t *testing.T, o *officeAceSource, srv *httptest.Server) string {
+	t.Helper()
+	rec, err := o.source.addAccount(context.Background(), core.AccountSpec{
+		ID:     "oa-test",
+		Label:  "test-user",
+		Fields: map[string]string{"api_key": "test-app-key", "app_secret": "test-app-secret", "models": "m"},
+	}, srv.URL+"/v2")
+	if err != nil {
+		t.Fatalf("add account: %v", err)
+	}
+	if err := o.saveOfficeAceSession(rec.ID, officeAceStoredSession{
+		Region:        "cn-southwest-2",
+		AccessKey:     "access",
+		SecretKey:     "secret",
+		SecurityToken: "sec-token",
+		ProjectID:     "project-1",
+		ExpiresAt:     time.Now().Add(6 * time.Hour).UTC().Format(time.RFC3339),
+	}); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+	return rec.ID
+}
+
+func officeAceChatOnce(t *testing.T, s *source) error {
+	t.Helper()
+	req := &core.ChatRequest{
+		Model:    "m",
+		Messages: []core.Message{{Role: "user", Content: "ping"}},
+	}
+	req.SetAccountAcquirer(func(string) (func(), error) { return func() {}, nil })
+	_, err := s.Chat(context.Background(), req)
+	return err
+}
+
+// TestOfficeAceDrainedPackageParksQuotaNotInvalid pins the exhaustion veto: a
+// zero-credit account whose model key is refused with a bare 401 must cool
+// down like any other out-of-quota account, not read 账号异常 -- a refill
+// (daily check-in, a new trial) revives it, so the row must stay on the
+// cooling path instead of demanding a re-login.
+func TestOfficeAceDrainedPackageParksQuotaNotInvalid(t *testing.T) {
+	var chatCalls atomic.Int32
+	srv := officeAceChatServer(t, officeAceDrainedSubscriptionJSON, &chatCalls)
+	defer srv.Close()
+
+	o := officeAcePremiumSource(t, srv)
+	id := officeAceAddChatAccount(t, o, srv)
+
+	// The panel sweep has seen the drained package, so the wrapper knows the
+	// refusal is the exhaustion verdict.
+	if _, err := o.AccountBalance(context.Background(), id, 0); err != nil {
+		t.Fatalf("balance: %v", err)
+	}
+	if err := officeAceChatOnce(t, o.source); err == nil {
+		t.Fatal("chat against a drained account unexpectedly succeeded")
+	}
+	records, err := o.source.Accounts(context.Background())
+	if err != nil {
+		t.Fatalf("accounts: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("records = %+v, want one account", records)
+	}
+	if got := records[0].State; got != "cooling" {
+		t.Fatalf("state after a drained-package 401 = %q, want cooling", got)
+	}
+	// The quota park must hold the account out of rotation: a request inside
+	// the cooldown window answers busy without another vendor roundtrip.
+	if err := officeAceChatOnce(t, o.source); !errors.Is(err, core.ErrBusy) {
+		t.Fatalf("second chat during the quota cooldown = %v, want busy", err)
+	}
+	if got := chatCalls.Load(); got != 1 {
+		t.Fatalf("chat calls = %d, want 1 (the cooldown must park, not retry)", got)
+	}
+}
+
+// TestOfficeAceBalanceReadSupersedesDeadKeyVerdict covers the self-heal half:
+// an account parked as invalid before its first credit read (a restart wipes
+// the cache) is downgraded to the quota cooldown by the next balance sweep
+// that observes zero credits.
+func TestOfficeAceBalanceReadSupersedesDeadKeyVerdict(t *testing.T) {
+	var chatCalls atomic.Int32
+	srv := officeAceChatServer(t, officeAceDrainedSubscriptionJSON, &chatCalls)
+	defer srv.Close()
+
+	o := officeAcePremiumSource(t, srv)
+	id := officeAceAddChatAccount(t, o, srv)
+
+	if err := officeAceChatOnce(t, o.source); err == nil {
+		t.Fatal("chat against a refused key unexpectedly succeeded")
+	}
+	records, err := o.source.Accounts(context.Background())
+	if err != nil {
+		t.Fatalf("accounts: %v", err)
+	}
+	if got := records[0].State; got != "invalid" {
+		t.Fatalf("state with an empty credit cache = %q, want invalid", got)
+	}
+	if _, err := o.AccountBalance(context.Background(), id, 0); err != nil {
+		t.Fatalf("balance: %v", err)
+	}
+	records, err = o.source.Accounts(context.Background())
+	if err != nil {
+		t.Fatalf("accounts: %v", err)
+	}
+	if got := records[0].State; got != "cooling" {
+		t.Fatalf("state after a zero-credit read = %q, want cooling", got)
+	}
+}
+
+// TestOfficeAceLiveCreditKeepsDeadKeyInvalid is the guard on the veto itself:
+// when the account still has credits, the same 401 is a verdict about the key
+// and must stay invalid with the re-login path.
+func TestOfficeAceLiveCreditKeepsDeadKeyInvalid(t *testing.T) {
+	var chatCalls atomic.Int32
+	live := `{
+  "subscribe_status": "SUBSCRIBED",
+  "skus": [{
+    "sku_code": "officeace.personal.package.trial",
+    "subscribe_status": "SUBSCRIBED",
+    "quotas": [
+      {"sku_attr_code": "officeace_points", "sku_value": "5300", "current_value": "0",
+       "effective_time": "2026-10-16T09:21:49.739Z", "expired_time": "2099-01-01T00:00:00.000Z"}
+    ]
+  }],
+  "bonus_skus": []
+}`
+	srv := officeAceChatServer(t, live, &chatCalls)
+	defer srv.Close()
+
+	o := officeAcePremiumSource(t, srv)
+	id := officeAceAddChatAccount(t, o, srv)
+
+	if err := officeAceChatOnce(t, o.source); err == nil {
+		t.Fatal("chat against a refused key unexpectedly succeeded")
+	}
+	if _, err := o.AccountBalance(context.Background(), id, 0); err != nil {
+		t.Fatalf("balance: %v", err)
+	}
+	records, err := o.source.Accounts(context.Background())
+	if err != nil {
+		t.Fatalf("accounts: %v", err)
+	}
+	if got := records[0].State; got != "invalid" {
+		t.Fatalf("state with credits remaining = %q, want invalid", got)
+	}
+	// An invalid key is not offered again at all.
+	if err := officeAceChatOnce(t, o.source); !errors.Is(err, core.ErrNotConfigured) {
+		t.Fatalf("second chat with an invalid key = %v, want not-configured", err)
+	}
+	if got := chatCalls.Load(); got != 1 {
+		t.Fatalf("chat calls = %d, want 1 (an invalid key must not retry)", got)
+	}
+}
+
+// TestOfficeAceExhaustedVerdictExpires pins the freshness window: a stale
+// zero-credit read must not pin the veto forever, or an account that refilled
+// while the panel sweep was off would cool down instead of surfacing the
+// dead-key verdict.
+func TestOfficeAceExhaustedVerdictExpires(t *testing.T) {
+	o := &officeAceSource{source: &source{}}
+	now := time.Now()
+	o.noteOfficeAcePoints("a", 0, now)
+	if !o.officeAceCreditsExhausted("a", now.Add(29*time.Minute)) {
+		t.Fatal("a fresh zero-credit read must count as exhausted")
+	}
+	if o.officeAceCreditsExhausted("a", now.Add(31*time.Minute)) {
+		t.Fatal("the exhaustion verdict must expire with its window")
+	}
+	if o.officeAceCreditsExhausted("missing", now) {
+		t.Fatal("an account without a cached read must not count as exhausted")
+	}
+	o.noteOfficeAcePoints("b", -1, now)
+	if o.officeAceCreditsExhausted("b", now) {
+		t.Fatal("an unlimited position must not count as exhausted")
 	}
 }
