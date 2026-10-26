@@ -2,7 +2,6 @@ package openaicompat
 
 import (
 	"context"
-	"time"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"client2api/internal/core"
 )
