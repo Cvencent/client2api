@@ -10,7 +10,12 @@ import (
 
 // buildChatBody converts a gateway request into the OpenAI-compatible wire
 // shape for one provider.  The model id on the wire is the unqualified form.
+// A source configured with api_format "responses" gets the Responses wire
+// instead (responses.go); every other provider keeps chat/completions.
 func buildChatBody(cfg Config, prov ProviderConfig, model string, req *core.ChatRequest) ([]byte, error) {
+	if cfg.APIFormat == responsesFormat {
+		return buildResponsesBody(cfg, prov, model, req)
+	}
 	if req == nil {
 		return nil, fmt.Errorf("%w: nil chat request", core.ErrUnsupported)
 	}

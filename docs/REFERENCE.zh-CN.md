@@ -80,6 +80,7 @@ Anthropic 风格错误，再交给与 OpenAI 兼容入口相同的内部对话�
       "max_tokens_field": "max_tokens",
       "proxy": "socks5://127.0.0.1:1080",
       "user_agent": "codex_cli_rs/0.0.1 (client2api)",
+      "api_format": "responses",
       "disabled": false
     }
   },
@@ -96,7 +97,10 @@ Anthropic 风格错误，再交给与 OpenAI 兼容入口相同的内部对话�
 API 地址只接受 HTTP(S)，需要 `/v1` 等前缀的服务请一并填写。
 输出上限字段可选 `max_tokens` 或 `max_completion_tokens`。`proxy`（可选）是
 `http`、`https`、`socks5` 或 `socks5h` 地址，这个中转站的对话、扫描模型、
-余额和账号测试全部走它；不填则沿用网关自己的出口。每个中转站还可以单独配置 `user_agent`：个别站按客户端白名单放行，通用 UA 会被拒（401 unauthorized client detected），填它期望的客户端 UA，留空用本网关默认。平台 ID 以小写
+余额和账号测试全部走它；不填则沿用网关自己的出口。每个中转站还可以单独配置 `user_agent`：个别站按客户端白名单放行，通用 UA 会被拒（401 unauthorized client detected），填它期望的客户端 UA，留空用本网关默认。
+`api_format`（可选）切换对话协议：`responses` 走 `/v1/responses`，给那些模型
+拒绝 `/chat/completions`（提示改用 Responses API）的中转站用；默认走
+`/chat/completions`。平台 ID 以小写
 字母开头，只含小写字母、数字和连字符，不能与内置平台或保留目录重名。
 显示名称可以随时改，路由 ID 保持不变。客户端使用网关统一的入站 Key 调用
 `my-relay/上游模型名`；也可以按现有规则使用裸模型名、模型组、平台优先级、

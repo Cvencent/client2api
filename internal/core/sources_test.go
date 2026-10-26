@@ -88,6 +88,19 @@ func TestSourceValidationProxy(t *testing.T) {
 	}
 }
 
+func TestSourceValidationAPIFormat(t *testing.T) {
+	for _, fmt_ := range []string{"", "chat", "openai-chat-completions", "responses", "openai-responses"} {
+		if err := ValidateSources(map[string]SourceConfig{"relay": {BaseURL: "https://relay.example/v1", APIFormat: fmt_}}); err != nil {
+			t.Errorf("rejected api_format %q: %v", fmt_, err)
+		}
+	}
+	for _, fmt_ := range []string{"anthropic", "grpc", "bogus"} {
+		if err := ValidateSources(map[string]SourceConfig{"relay": {BaseURL: "https://relay.example/v1", APIFormat: fmt_}}); err == nil {
+			t.Errorf("accepted api_format %q", fmt_)
+		}
+	}
+}
+
 func TestSourceValidationUserAgent(t *testing.T) {
 	for _, ua := range []string{
 		"",

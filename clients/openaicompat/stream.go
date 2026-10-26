@@ -184,6 +184,13 @@ type chatStream struct {
 
 	toolCalls map[int]*core.ToolCallDelta
 	toolOrder []int
+
+	// wire selects the SSE dialect: "" is chat-completions chunks,
+	// "responses" is the OpenAI Responses event stream (responses.go).
+	wire string
+	// respCalls buffers the function_call items announced on a Responses
+	// stream, keyed by output_index.
+	respCalls map[int]*respCall
 }
 
 // httpResponse is the stream's handle on the underlying HTTP response; it is
@@ -208,6 +215,8 @@ func newChatStream(c *Client, resp *httpResponseAlias, prov ProviderConfig, acco
 		cancel:    cancel,
 		finish:    "stop",
 		toolCalls: make(map[int]*core.ToolCallDelta),
+		wire:      c.wireFormat(),
+		respCalls: make(map[int]*respCall),
 	}
 }
 
@@ -272,6 +281,10 @@ func (s *chatStream) absorb(frame sseFrame) {
 	if isDonePayload(data) {
 		s.terminated = true
 		s.endStream()
+		return
+	}
+	if s.wire == responsesFormat {
+		s.absorbResponses(data)
 		return
 	}
 	var chunk oaiChunk

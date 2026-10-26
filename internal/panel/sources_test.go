@@ -196,6 +196,42 @@ func TestSourceUserAgentEditorIsWired(t *testing.T) {
 	}
 }
 
+func TestSourceHandlerPersistsTheAPIFormat(t *testing.T) {
+	path := configFile(t, `{}`)
+	p := configPanel(path)
+	p.opts.Registry = core.NewRegistry()
+	p.opts.Reload = func() error { return nil }
+	w := httptest.NewRecorder()
+	body := `{"base_url":"https://relay.example/v1","api_format":"responses"}`
+	p.handleSource(w, httptest.NewRequest(http.MethodPut, "/panel/api/sources/relay", strings.NewReader(body)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("save: %d %s", w.Code, w.Body.String())
+	}
+	src := onDisk(t, path)["sources"].(map[string]any)["relay"].(map[string]any)
+	if src["api_format"] != "responses" {
+		t.Fatalf("api_format was not persisted: %v", src)
+	}
+	w = httptest.NewRecorder()
+	body = `{"base_url":"https://relay.example/v1","api_format":"bogus"}`
+	p.handleSource(w, httptest.NewRequest(http.MethodPut, "/panel/api/sources/relay", strings.NewReader(body)))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("bogus api_format: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestSourceAPIFormatEditorIsWired(t *testing.T) {
+	src := string(indexHTML)
+	for _, want := range []string{
+		`id="sourceAPIFormat"`,
+		`$("#sourceAPIFormat").value = cfg.api_format || "";`,
+		`api_format: $("#sourceAPIFormat").value,`,
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("source api-format editor is missing %q", want)
+		}
+	}
+}
+
 func TestSourceHandlerRequiresHotReloadBeforeWriting(t *testing.T) {
 	p := configPanel(configFile(t, `{}`))
 	w := httptest.NewRecorder()

@@ -272,10 +272,23 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 	return stream, nil
 }
 
-// doChat issues one POST /chat/completions against a provider.
+// wireFormat reports the SSE dialect the configured api_format selects.
+func (c *Client) wireFormat() string {
+	if c != nil && c.cfg.APIFormat == responsesFormat {
+		return responsesFormat
+	}
+	return ""
+}
+
+// doChat issues one POST against a provider: /chat/completions on the default
+// wire, /responses when the source's api_format says so.
 func (c *Client) doChat(ctx context.Context, prov ProviderConfig, accountID string, body []byte) (core.Stream, error) {
 	reqCtx, cancel := context.WithTimeout(ctxOrBackground(ctx), c.cfg.chatTimeout())
-	httpReq, err := http.NewRequestWithContext(reqCtx, http.MethodPost, prov.chatURL(), bytes.NewReader(body))
+	endpoint := prov.chatURL()
+	if c.cfg.APIFormat == responsesFormat {
+		endpoint = prov.responsesURL()
+	}
+	httpReq, err := http.NewRequestWithContext(reqCtx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("openai-compat: build request: %w", err)

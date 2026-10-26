@@ -49,6 +49,11 @@ type SourceConfig struct {
 	// keeps the module identity.
 	UserAgent string `json:"user_agent,omitempty"`
 
+	// APIFormat switches the chat wire for this source: "" (default) posts
+	// to /chat/completions, "responses" posts to /v1/responses for relays
+	// whose models only speak the OpenAI Responses protocol.
+	APIFormat string `json:"api_format,omitempty"`
+
 	// RequestsPerMinute caps every upstream attempt for this source.  Zero
 	// means no per-source RPM ceiling.
 	RequestsPerMinute int `json:"requests_per_minute,omitempty"`
@@ -231,6 +236,11 @@ func ValidateSources(sources map[string]SourceConfig) error {
 		}
 		if strings.ContainsAny(cfg.UserAgent, "\r\n") || len(cfg.UserAgent) > 512 {
 			return fmt.Errorf("source %q: user_agent must be a single header line under 512 bytes", id)
+		}
+		switch strings.ToLower(strings.TrimSpace(cfg.APIFormat)) {
+		case "", "chat", "openai-chat-completions", "responses", "openai-responses":
+		default:
+			return fmt.Errorf("source %q: api_format must be chat or responses", id)
 		}
 		if cfg.RequestsPerMinute < 0 {
 			return fmt.Errorf("source %q: requests_per_minute must be >= 0", id)

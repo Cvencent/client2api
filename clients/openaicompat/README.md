@@ -88,6 +88,13 @@ Config-level knobs: the timeout/cooldown durations, `max_in_flight`,
 `max_tokens_field` (`max_tokens`, the default, or `max_completion_tokens`), and
 `extra_models` (appended to every provider whose own list is empty).
 
+Two source-level knobs (set on the platform in `sources`, not per provider)
+handle the gatekeeping relays: `user_agent` names the client for relays that
+allowlist by User-Agent, and `api_format: "responses"` switches chat traffic to
+the OpenAI Responses wire (`POST /v1/responses`) for relays whose models reject
+`/chat/completions`. Both apply to every request the source makes -- chat,
+model scan, balance, account test.
+
 ### Built-in providers
 
 | id | base URL | sample models in the cold-start table |

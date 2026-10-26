@@ -85,6 +85,7 @@ If the API root changes, scan again to populate its new catalogue.
       "max_tokens_field": "max_tokens",
       "proxy": "socks5://127.0.0.1:1080",
       "user_agent": "codex_cli_rs/0.0.1 (client2api)",
+      "api_format": "responses",
       "disabled": false
     }
   },
@@ -105,7 +106,11 @@ request this one relay makes — chat, model scan, balance and account tests —
 it; leave it out to keep using the gateway's own egress. `user_agent`
 (optional) replaces the module's User-Agent on every request this relay makes —
 some relays gate by client allowlist and refuse a generic UA with 401
-"unauthorized client detected". IDs use
+"unauthorized client detected".
+`api_format`
+(optional) switches the chat wire: `responses` posts to `/v1/responses` for
+relays whose models reject `/chat/completions` with "please use the Responses
+API"; the default posts to `/chat/completions`. IDs use
 lowercase ASCII letters, digits and hyphens, start with a letter, and cannot
 reuse a built-in platform or reserved directory name. Display names can change
 without changing routing IDs. Call `my-relay/<upstream-model>` using the

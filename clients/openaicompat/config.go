@@ -108,6 +108,11 @@ type Config struct {
 	// "max_completion_tokens" is the OpenRouter spelling.
 	MaxTokensField string `json:"max_tokens_field"`
 
+	// APIFormat switches the chat wire: "" (default) posts to
+	// /chat/completions, "responses" posts to /v1/responses for relays whose
+	// models only speak the OpenAI Responses protocol.
+	APIFormat string `json:"api_format,omitempty"`
+
 	// ExtraModels are appended to the built-in catalogue for every provider.
 	ExtraModels []string `json:"extra_models"`
 }
@@ -195,6 +200,7 @@ func (cfg Config) normalize() Config {
 	if cfg.MaxTokensField == "" {
 		cfg.MaxTokensField = "max_tokens"
 	}
+	cfg.APIFormat = normalizeAPIFormat(cfg.APIFormat)
 	if cfg.MaxInFlight < 0 {
 		cfg.MaxInFlight = 0
 	}

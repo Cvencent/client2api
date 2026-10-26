@@ -513,6 +513,9 @@ OpenAI's `schema must be a JSON Schema of 'type: "object"', got 'type: null'`
   the relay dialog and every request that relay makes — chat, model scan,
   balance and account tests — leaves through it, while the rest of the gateway
   keeps its global egress. Leave it empty to inherit the gateway client. A relay that gates by client allowlist also accepts `user_agent`: set it to the client the relay expects when a generic UA is refused with 401 "unauthorized client detected".
+- A relay whose models only speak the OpenAI Responses protocol is covered by
+  `api_format: "responses"` on the source: chat traffic then goes to
+  `/v1/responses` (agentrouter.org, for example).
 - Custom relays have their own rate-limit and cooldown policy, editable in the panel's
   relay dialog. `requests_per_minute` caps upstream attempts across the relay and
   `requests_per_minute_per_account` caps each key; a full key is skipped in favour of
@@ -523,7 +526,7 @@ OpenAI's `schema must be a JSON Schema of 'type: "object"', got 'type: null'`
   `auth_cooldown` and `upstream_cooldown` override it per failure kind. An unset
   specific value uses the built-in default (30s for rate limits, 5m for quota/auth,
   10s for upstream failures); `0s` disables that cooldown.
-- Model scanning for relay platforms, with cached catalogues when a scan fails.
+- Model scanning for relay platforms, with cached catalogues when a scan fails. A vendor that names catalogue ids with a literal `models/` prefix (Google's OpenAI-compatible layer) has that prefix stripped, so relay routing ids stay `relay/<model>`.
 - Balance refresh for relay platforms via `balance_protocol`: `auto` (default) probes New API `GET /api/usage/token/`, then Sub2API `GET /v1/usage`, then the New API console `GET /api/user/self` (only when console credentials are set), then OpenAI Billing `credit_grants` + `subscription`. Pin a single protocol with `newapi`, `sub2api` or `openai_billing`, or set `none` to skip balance reads.
 - `balance_quota_per_usd` (default `500000`) converts New API quota units to USD; Sub2API and OpenAI Billing values are read as real USD.
 - Optional per-account advanced fields `balance_access_token` and `balance_user_id` supply the New API console credentials when the plain API Key cannot read the balance.

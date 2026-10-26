@@ -250,7 +250,7 @@ func (s *source) transportLocked() *Client {
 	for _, p := range s.rows {
 		providers = append(providers, s.providerLocked(p))
 	}
-	return &Client{instanceName: s.name, deps: s.depsWithClient(), cfg: Config{MaxTokensField: field, Providers: providers}, pool: s.pool, now: time.Now, wireModel: s.wireModel}
+	return &Client{instanceName: s.name, deps: s.depsWithClient(), cfg: Config{MaxTokensField: field, APIFormat: normalizeAPIFormat(s.cfg.APIFormat), Providers: providers}, pool: s.pool, now: time.Now, wireModel: s.wireModel}
 }
 func (s *source) providerLocked(p storedProvider) ProviderConfig {
 	ua := p.UserAgent
