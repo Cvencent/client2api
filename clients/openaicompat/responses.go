@@ -288,9 +288,9 @@ func (u *respUsage) toCore() *core.Usage {
 }
 
 type respResponseEnvelope struct {
-	ID                string `json:"id"`
-	Status            string `json:"status"`
-	Error             *struct {
+	ID     string `json:"id"`
+	Status string `json:"status"`
+	Error  *struct {
 		Code    any    `json:"code"`
 		Message string `json:"message"`
 	} `json:"error"`
@@ -331,9 +331,9 @@ type respStreamEvent struct {
 // fragments by concatenation, so a single complete fragment is the shape
 // least likely to break on a relay that skips or repeats deltas.
 type respCall struct {
-	id    string
-	name  string
-	args  string
+	id      string
+	name    string
+	args    string
 	emitted bool
 }
 

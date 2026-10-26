@@ -191,4 +191,3 @@ func TestMakefileReadsTheVersionFromThisFile(t *testing.T) {
 		t.Errorf("sed would extract %q but the built-in version is %q", m[1], version)
 	}
 }
-
