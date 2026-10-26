@@ -1944,4 +1944,3 @@ func TestZcodeChatNamesTheServedAccount(t *testing.T) {
 		t.Errorf("ServedBy = %q, want %q", served, "k1")
 	}
 }
-
