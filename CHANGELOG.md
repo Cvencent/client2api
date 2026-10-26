@@ -6,6 +6,23 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.4.2] - 2026-10-26
+
+### Added
+
+- **中转站对话协议 `api_format: "responses"`** —— agentrouter.org 这类站点的模型
+  只提供 OpenAI Responses 接口，`/chat/completions` 直接 400「请改用
+  /v1/responses」。来源配置新增 `api_format`（面板编辑框「对话协议」下拉）：
+  选 `responses` 后对话走 `/v1/responses`——system 文本进 `instructions`、
+  工具调用映射为 `function_call` 项、工具结果映射为 `function_call_output`、
+  流式事件（文本/摘要推理/函数调用/用量）完整回译；轮换、冷却、RPM、会话
+  亲和全部照常。已对 agentrouter.org 实测：扫描 + 流式对话全链路打通。
+
+### Installer
+
+- `client2api-setup-0.4.2.exe`（本次构建包含当前账号数据，仅自用，不外发）
+- SHA256：`<pending>`
+- 升级会保留现有 `configs/client2api.json`、`data/`、账号池、用量和任务数据。
 ## [0.4.1] - 2026-10-26
 
 ### Added
