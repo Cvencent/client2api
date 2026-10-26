@@ -20,8 +20,8 @@
 
 ### Installer
 
-- `client2api-setup-0.4.2.exe`（本次构建包含当前账号数据，仅自用，不外发）
-- SHA256：`6ECF5CE683D911C6588E5BBDEAAE0F6ABD6F11CC8460D86D9E88EE7A840E83F5`
+- `client2api-setup-0.4.2.exe`（空包，不含账号凭据或本机配置）
+- SHA256：`BA1C3F503623B80BC29FABE261057CB8BC9D7B14C78FC2AF83CFF69EF0413E59`
 - 升级会保留现有 `configs/client2api.json`、`data/`、账号池、用量和任务数据。
 ## [0.4.1] - 2026-10-26
 
@@ -36,8 +36,8 @@
 
 ### Installer
 
-- `client2api-setup-0.4.1.exe`（本次构建包含当前账号数据，仅自用，不外发）
-- SHA256：`2CFB5C865EB99375545E7D43877AB4D643BB19F60D14BE786B2579FDDC45ABDE`
+- `client2api-setup-0.4.1.exe`（空包，不含账号凭据或本机配置）
+- SHA256：`D3A1FFA516F910C9A12E257BF62A11519E4893ED5920BB1B77846BBB59573AF2`
 - 升级会保留现有 `configs/client2api.json`、`data/`、账号池、用量和任务数据。
 ## [0.4.0] - 2026-10-26
 
@@ -68,8 +68,8 @@
 
 ### Installer
 
-- `client2api-setup-0.4.0.exe`（本次构建包含当前账号数据，仅自用，不外发）
-- SHA256：`0B66F6C2E4FA8B6B892243BCAC872B00E774CF8A95C30C687CE2732AA07AB75A`
+- `client2api-setup-0.4.0.exe`（空包，不含账号凭据或本机配置）
+- SHA256：`2A1F6D303D629D3A5A81B8D0E1342A30E06E70A0B1A4C6C8B93C6D33AF534EF2`
 - 升级会保留现有 `configs/client2api.json`、`data/`、账号池、用量和任务数据。
 
 ## [0.3.9] - 2026-10-25

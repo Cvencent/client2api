@@ -60,6 +60,27 @@ Set-Location 'D:\client2api-src'
   （示例配置、不含账号数据），对方用面板的导入功能恢复自己的数据。
 - 不带 `-NoData` 打出来的包会把当前账号数据一起打进去，不要外发。
 
+
+## 发版（Release）
+
+- 发布流程是**全自动**的：`git tag vX.Y.Z` + `git push origin vX.Y.Z`，
+  `.github/workflows/go-binaries.yml` 会跑门禁（gofmt / panel smoke / vet /
+  test / -race）并自动创建 GitHub Release——标题 `client2api vX.Y.Z`，
+  正文从 `CHANGELOG.md` 对应小节生成（`### Added/Fixed/…` 自动翻成
+  `## 新增/修复/…`），并附五平台便携版 + `checksums.txt`。
+  **绝不手动 `gh release create`**：手动建会把标题/正文格式顶掉，还会和
+  流水线抢时序。
+- tag 前先本地过一遍和 CI 相同的门禁，尤其是 `gofmt -l`（按仓库 blob 校验，
+  本地 autocrlf 检出会误报，用 `git cat-file blob HEAD:<file> | gofmt -l`
+  这类字节级校验）。**写文件不要用 PS 5.1 的 `Set-Content -Encoding UTF8`**
+  （带 BOM），用 python utf-8 或 `[System.IO.File]::WriteAllText`。
+- Release 上挂的 Windows 安装包必须是 **`-NoData` 空包**（仓库是 public 的，
+  数据包含全部账号凭据）。空包在对应 tag 的 worktree 里单独构建后
+  `gh release upload`，同时把它的 SHA256 回填进 `CHANGELOG.md` 对应小节
+  （正文生成自 CHANGELOG，必须先改再打 tag）。
+- 版本号只有 `cmd/client2api/main.go` 一处真源，installer 侧跟改；
+  `tag == 源码 version` 有 CI 断言。
+
 ## 其他
 
 - 面板 UI 在 `internal/panel/index.html`。
