@@ -328,6 +328,7 @@ go build -o client2api.exe ./cmd/client2api
 - [详细参考文档（中文）](docs/REFERENCE.zh-CN.md)
 - [Detailed reference (English)](docs/REFERENCE.md)
 - [模块接口契约](docs/MODULE-CONTRACT.md)
+- [0.5 方向说明](docs/ROADMAP.md)
 - [上游协议记录](docs/upstream)
 - [更新记录](CHANGELOG.md)
 

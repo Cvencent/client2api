@@ -728,6 +728,7 @@ source tree if an installed instance is already using the same port.
 - [Detailed reference (English)](docs/REFERENCE.md)
 - [详细参考文档（中文）](docs/REFERENCE.zh-CN.md)
 - [Module contract](docs/MODULE-CONTRACT.md)
+- [0.5 roadmap (Chinese)](docs/ROADMAP.md)
 - [Upstream protocol notes](docs/upstream)
 - [Changelog](CHANGELOG.md)
 
