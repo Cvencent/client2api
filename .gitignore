@@ -110,3 +110,8 @@ client2api.pid
 
 # oil-ui 设计会话的工作产物（截图/探针/临时脚本），只有 .gitignore 自身，不入库。
 .oil-ui/
+
+# 本地协作代理的工作目录：里面是任务笔记、进度日志一类的本机状态，不是项目产物。
+# 和 .omo/ / .codegraph/ / .oil-ui/ 同一类。agent 会顺手往里写 markdown，而仓库是
+# public 的，漏挡一次就可能把本地笔记连同别的痕迹一起推上去。
+.workbuddy/
