@@ -537,7 +537,7 @@ Marked honestly rather than asserted:
   on a *fresh* account is also refused; \/api/web/auth/v1/devices_current_bind\ +
   `devices_current_heartbeat` (both answer `trusted_device:true`) do **not** unlock it either.
   The desktop client mints its session through its own local
-  \/api/electron/auth/v1\ proxy at login, so the server-side marker the grant checks is a property
+  `/api/electron/auth/v1` proxy at login, so the server-side marker the grant checks is a property
   of how the session was created, not of anything request-shape or device-state can add afterwards.
   Token rotation note: refreshing a session out-of-band invalidates the previous access token
   immediately (the vendor rotates on refresh), so probes must persist the rotation like the module does.
