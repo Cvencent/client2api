@@ -158,6 +158,11 @@ func (p *panel) speedRouteStep(parent context.Context, step core.RoutePlanStep) 
 	ctx, cancel := context.WithTimeout(parent, routeSpeedTimeout)
 	defer cancel()
 
+	// now is the probe's time source.  Production reads the wall clock; a test
+	// can install a scripted one so the window arithmetic is asserted exactly
+	// instead of depending on where the wall clock falls inside a timer tick.
+	now := p.clock()
+
 	maxTokens := routeSpeedMaxTokens
 	var servedBy string
 	chatReq := &core.ChatRequest{
@@ -168,16 +173,16 @@ func (p *panel) speedRouteStep(parent context.Context, step core.RoutePlanStep) 
 		ServedBy:  &servedBy,
 		FreeModel: step.Free,
 	}
-	started := time.Now()
+	started := now()
 	stream, err := client.Chat(ctx, chatReq)
 	if err != nil {
 		result.Error = core.Redact(err.Error())
-		result.ElapsedMS = elapsedMS(started)
+		result.ElapsedMS = elapsedMS(now, started)
 		return result
 	}
 	if stream == nil {
 		result.Error = "platform returned no stream"
-		result.ElapsedMS = elapsedMS(started)
+		result.ElapsedMS = elapsedMS(now, started)
 		return result
 	}
 	defer stream.Close()
@@ -189,9 +194,8 @@ func (p *panel) speedRouteStep(parent context.Context, step core.RoutePlanStep) 
 		// decodeStart / lastContent bound the generation window: queueing,
 		// prompt processing and trailing bookkeeping (usage, done, EOF) are
 		// excluded, which is what made a 3-token probe read as 1 tok/s on a
-		// 100 tok/s vendor.  On Windows the whole reply can land inside one
-		// timer tick, so the window may read as exactly zero; the rate then
-		// falls back to elapsed-minus-TTFT instead of total elapsed.
+		// 100 tok/s vendor.  Both stamps come from the probe's injectable clock,
+		// so a test can pin the window exactly (route_speed_clock_test.go).
 		decodeStart time.Time
 		lastContent time.Time
 	)
@@ -202,7 +206,7 @@ func (p *panel) speedRouteStep(parent context.Context, step core.RoutePlanStep) 
 		}
 		if recvErr != nil {
 			result.Error = core.Redact(recvErr.Error())
-			result.ElapsedMS = elapsedMS(started)
+			result.ElapsedMS = elapsedMS(now, started)
 			return result
 		}
 		if ev.Type == core.EventError {
@@ -211,18 +215,18 @@ func (p *panel) speedRouteStep(parent context.Context, step core.RoutePlanStep) 
 			} else {
 				result.Error = "upstream stream error"
 			}
-			result.ElapsedMS = elapsedMS(started)
+			result.ElapsedMS = elapsedMS(now, started)
 			return result
 		}
 		isContent := ev.Type == core.EventDelta || ev.Type == core.EventToolCall || strings.TrimSpace(ev.Reasoning) != ""
 		if isContent {
-			now := time.Now()
+			stamp := now()
 			if !firstEvent {
 				firstEvent = true
-				result.FirstEventMS = elapsedMS(started)
-				decodeStart = now
+				result.FirstEventMS = stamp.Sub(started).Milliseconds()
+				decodeStart = stamp
 			}
-			lastContent = now
+			lastContent = stamp
 		}
 		if ev.Type == core.EventUsage && ev.Usage != nil {
 			usage = *ev.Usage
@@ -232,46 +236,54 @@ func (p *panel) speedRouteStep(parent context.Context, step core.RoutePlanStep) 
 
 	result.OK = true
 	result.AccountID = servedBy
-	elapsed := time.Since(started)
+	elapsed := now().Sub(started)
 	result.ElapsedMS = elapsed.Milliseconds()
 	if usageSeen {
 		result.CompletionTokens = usage.CompletionTokens
-		if usage.CompletionTokens > 0 {
-			// Decode window: first content event -> last content event, so
-			// queueing, prompt processing and trailing bookkeeping never
-			// deflate the rate.  A reply with no content at all falls back to
-			// total elapsed.  Windows timer granularity can make the window
-			// read as exactly zero when the whole reply lands in one tick:
-			// fall back to elapsed-minus-TTFT (still decode-ish) with a 1ms
-			// floor rather than presenting a successful call as 0 tok/s.
-			seconds := elapsed.Seconds()
-			if firstEvent {
-				if d := lastContent.Sub(decodeStart).Seconds(); d > 0 {
-					// A measurable generation window: the honest decode rate.
-					seconds = d
-				} else {
-					// The whole reply landed inside one timer tick (a single
-					// content event, or all of them together): a decode rate
-					// cannot be measured, so leave it unset - the UI shows a
-					// dash instead of a number that is pure TTFT noise.
-					result.TokensPerSecond = 0
-					_ = seconds
-					goto rateDone
-				}
-			}
-			if seconds <= 0 {
-				seconds = 0.001
-			}
-			result.TokensPerSecond = float64(usage.CompletionTokens) / seconds
-		rateDone:
+		var ttft time.Duration
+		if firstEvent {
+			ttft = decodeStart.Sub(started)
 		}
+		result.TokensPerSecond = routeSpeedRate(
+			usage.CompletionTokens, ttft, firstEvent, decodeStart, lastContent, elapsed)
 	}
 	return result
 }
 
-func elapsedMS(started time.Time) int64 {
+// routeSpeedRate turns a completion-token count into tok/s.  The denominator is
+// the generation window - the gap between the first and the last content event
+// - so queueing, prompt processing and the trailing usage/done frames never
+// deflate the rate.  When that window cannot be measured the probe must not
+// invent one:
+//
+//   - a reply whose content never spans two clock readings (a single content
+//     event, or every event landing inside one tick) leaves a zero-width
+//     window, so it returns 0 - "no rate", which the UI renders as a dash,
+//     rather than the false-high total-elapsed number it used to show;
+//   - a reply with no content event at all leaves nothing to bracket, so it
+//     falls back to the call itself minus its first-event latency (elapsed -
+//     TTFT, with TTFT unset, i.e. the whole call), which is what a vendor that
+//     drops the stream without a terminal content frame still leaves us.
+func routeSpeedRate(tokens int, ttft time.Duration, firstEvent bool, decodeStart, lastContent time.Time, elapsed time.Duration) float64 {
+	if tokens <= 0 {
+		return 0
+	}
+	if !firstEvent {
+		seconds := (elapsed - ttft).Seconds()
+		if seconds <= 0 {
+			seconds = 0.001
+		}
+		return float64(tokens) / seconds
+	}
+	if window := lastContent.Sub(decodeStart).Seconds(); window > 0 {
+		return float64(tokens) / window
+	}
+	return 0
+}
+
+func elapsedMS(now func() time.Time, started time.Time) int64 {
 	if started.IsZero() {
 		return 0
 	}
-	return time.Since(started).Milliseconds()
+	return now().Sub(started).Milliseconds()
 }

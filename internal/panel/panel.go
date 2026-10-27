@@ -228,7 +228,7 @@ type snapshot struct {
 // treat the shell as trusted.
 func New(opts Options) http.Handler {
 	mux := http.NewServeMux()
-	p := &panel{opts: opts, runs: newTaskRuns(), sweeps: newBatchRuns(), chores: newTaskQueues(), taskLocks: newAccountLocks()}
+	p := &panel{opts: opts, now: time.Now, runs: newTaskRuns(), sweeps: newBatchRuns(), chores: newTaskQueues(), taskLocks: newAccountLocks()}
 	p.initBalanceCache()
 	p.initCheckins()
 	p.initTaskBoardCache()
@@ -331,6 +331,12 @@ type ProbeSource interface {
 
 type panel struct {
 	opts Options
+	// now is the clock the route-speed probe reads.  New installs time.Now so
+	// production measures the wall clock; a test may replace it with a
+	// deterministic sequence and assert the tok/s denominator without depending
+	// on where the wall clock happens to fall inside a timer tick.  Nil falls
+	// back to time.Now, which keeps a panel built as a bare struct working.
+	now func() time.Time
 	// balances is the last-known balance of every account plus the gentle
 	// refresh that moves the column forward a few accounts at a time.
 	// Created in New; nil when the panel has no registry (some tests).
@@ -374,6 +380,16 @@ type panel struct {
 
 func (p *panel) ctx(r *http.Request, d time.Duration) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(r.Context(), d)
+}
+
+// clock is the probe's time source.  A panel assembled as a bare struct in a
+// test (or by an embedder that never called New) has no clock installed, and
+// then reads the wall clock so the probe still measures something real.
+func (p *panel) clock() func() time.Time {
+	if p == nil || p.now == nil {
+		return time.Now
+	}
+	return p.now
 }
 
 // initBalanceCache wires the last-known-balance store.  Split out of New so a
