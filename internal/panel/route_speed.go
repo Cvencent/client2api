@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	routeSpeedMaxTokens = 32
+	routeSpeedMaxTokens = 256
 	routeSpeedTimeout   = 60 * time.Second
 )
 
@@ -162,7 +162,7 @@ func (p *panel) speedRouteStep(parent context.Context, step core.RoutePlanStep) 
 	var servedBy string
 	chatReq := &core.ChatRequest{
 		Model:     step.ModelID,
-		Messages:  []core.Message{{Role: "user", Content: "Reply with exactly: ok"}},
+		Messages:  []core.Message{{Role: "user", Content: "Count from 1 to 30, digits only, separated by spaces. No other words."}},
 		MaxTokens: &maxTokens,
 		Stream:    true,
 		ServedBy:  &servedBy,
@@ -186,6 +186,14 @@ func (p *panel) speedRouteStep(parent context.Context, step core.RoutePlanStep) 
 		firstEvent bool
 		usage      core.Usage
 		usageSeen  bool
+		// decodeStart / lastContent bound the generation window: queueing,
+		// prompt processing and trailing bookkeeping (usage, done, EOF) are
+		// excluded, which is what made a 3-token probe read as 1 tok/s on a
+		// 100 tok/s vendor.  On Windows the whole reply can land inside one
+		// timer tick, so the window may read as exactly zero; the rate then
+		// falls back to elapsed-minus-TTFT instead of total elapsed.
+		decodeStart time.Time
+		lastContent time.Time
 	)
 	for {
 		ev, recvErr := stream.Recv()
@@ -206,9 +214,15 @@ func (p *panel) speedRouteStep(parent context.Context, step core.RoutePlanStep) 
 			result.ElapsedMS = elapsedMS(started)
 			return result
 		}
-		if !firstEvent && (ev.Type == core.EventDelta || ev.Type == core.EventToolCall || strings.TrimSpace(ev.Reasoning) != "") {
-			firstEvent = true
-			result.FirstEventMS = elapsedMS(started)
+		isContent := ev.Type == core.EventDelta || ev.Type == core.EventToolCall || strings.TrimSpace(ev.Reasoning) != ""
+		if isContent {
+			now := time.Now()
+			if !firstEvent {
+				firstEvent = true
+				result.FirstEventMS = elapsedMS(started)
+				decodeStart = now
+			}
+			lastContent = now
 		}
 		if ev.Type == core.EventUsage && ev.Usage != nil {
 			usage = *ev.Usage
@@ -223,14 +237,33 @@ func (p *panel) speedRouteStep(parent context.Context, step core.RoutePlanStep) 
 	if usageSeen {
 		result.CompletionTokens = usage.CompletionTokens
 		if usage.CompletionTokens > 0 {
+			// Decode window: first content event -> last content event, so
+			// queueing, prompt processing and trailing bookkeeping never
+			// deflate the rate.  A reply with no content at all falls back to
+			// total elapsed.  Windows timer granularity can make the window
+			// read as exactly zero when the whole reply lands in one tick:
+			// fall back to elapsed-minus-TTFT (still decode-ish) with a 1ms
+			// floor rather than presenting a successful call as 0 tok/s.
 			seconds := elapsed.Seconds()
+			if firstEvent {
+				if d := lastContent.Sub(decodeStart).Seconds(); d > 0 {
+					// A measurable generation window: the honest decode rate.
+					seconds = d
+				} else {
+					// The whole reply landed inside one timer tick (a single
+					// content event, or all of them together): a decode rate
+					// cannot be measured, so leave it unset - the UI shows a
+					// dash instead of a number that is pure TTFT noise.
+					result.TokensPerSecond = 0
+					_ = seconds
+					goto rateDone
+				}
+			}
 			if seconds <= 0 {
-				// A synthetic or loopback stream can finish inside the clock's
-				// reported resolution.  Keep the rate finite and non-zero
-				// rather than presenting a successful call as 0 tok/s.
 				seconds = 0.001
 			}
 			result.TokensPerSecond = float64(usage.CompletionTokens) / seconds
+		rateDone:
 		}
 	}
 	return result

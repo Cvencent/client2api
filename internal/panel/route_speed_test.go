@@ -46,6 +46,9 @@ type routeSpeedClient struct {
 	calls    atomic.Int64
 	gotModel atomic.Value
 	gotFree  atomic.Bool
+	// chatStreamOverride, when set, replaces events as the stream the probe
+	// consumes (used by tests that need controlled event timing).
+	chatStreamOverride core.Stream
 }
 
 func (c *routeSpeedClient) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, error) {
@@ -63,6 +66,9 @@ func (c *routeSpeedClient) Chat(ctx context.Context, req *core.ChatRequest) (cor
 	}
 	if c.chatErr != nil {
 		return nil, c.chatErr
+	}
+	if c.chatStreamOverride != nil {
+		return c.chatStreamOverride, nil
 	}
 	return &routeSpeedStream{events: append([]core.Event(nil), c.events...)}, nil
 }
@@ -151,8 +157,13 @@ func TestRouteSpeedCallsEveryPlatformAndReportsTiming(t *testing.T) {
 	if first.FirstEventMS < 0 || first.ElapsedMS < 0 {
 		t.Fatalf("alpha timing is negative: %+v", first)
 	}
-	if first.CompletionTokens != 3 || first.TokensPerSecond <= 0 {
-		t.Fatalf("alpha tokens = %d / %.3f, want 3 and a positive rate", first.CompletionTokens, first.TokensPerSecond)
+	if first.CompletionTokens != 3 {
+		t.Fatalf("alpha tokens = %d, want 3", first.CompletionTokens)
+	}
+	// A 2-delta reply lands inside one timer tick, so no decode window is
+	// measurable and the rate is deliberately left unset (UI shows a dash).
+	if first.TokensPerSecond != 0 {
+		t.Fatalf("alpha tokens_per_second = %.3f, want 0 (no measurable decode window)", first.TokensPerSecond)
 	}
 	if first.Context != 200000 || first.ContextSrc != "manual" ||
 		got.Results[1].Context != 1048576 || got.Results[1].ContextSrc != "static" {
