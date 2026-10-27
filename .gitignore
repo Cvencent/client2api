@@ -80,6 +80,11 @@ client2api.pid
 # （`0){n++`、`console.log(JSON.stringify({ip` 这类），git status 里会和真实改动混在
 # 一起，`git add -A` 会把它们连同账号探针输出一起提交。根目录下的 `[!({0-9]` 开头
 # 只可能是这类碎片：仓库里没有任何合法文件长这样。
+#
+# /cmd/*-temp/ 只放临时 scratch，不进版本库。要长期留用的探针别放这里：它属于
+# 模块默认构建面，会跟着 `go vet/build/test ./...` 一起编译。放到 tools/<name>/
+# 并加 `//go:build ignore`（见 tools/README.md）；installer/probe_surface_test.go
+# 的守卫会在 cmd/*-temp 里出现可编译的 .go 文件时失败。
 /.tmp-*
 /.codex_tmp/
 /tmp_*.go
