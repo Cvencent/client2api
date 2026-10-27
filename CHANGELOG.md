@@ -15,6 +15,11 @@
   每天都被自动发放（4/4 相关性），不携带的一律 `granted:false`。模块加载账号时现在会为缺失
   `device_id` 的凭证铸造并持久化一个稳定 ID，重启后首个请求就带上该头。
 
+### Installer
+
+- `client2api-setup-0.4.3.exe`（空包，不含账号凭据或本机配置）
+- SHA256：`<pending>`
+- 升级会保留现有 `configs/client2api.json`、`data/`、账号池、用量和任务数据。
 ## [0.4.2] - 2026-10-26
 
 ### Added
