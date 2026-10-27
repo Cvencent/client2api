@@ -186,13 +186,21 @@ func (p *panel) speedRouteStep(parent context.Context, step core.RoutePlanStep) 
 		firstEvent bool
 		usage      core.Usage
 		usageSeen  bool
-		// decodeStart / lastContent bound the generation window: queueing,
-		// prompt processing and trailing bookkeeping (usage, done, EOF) are
-		// excluded, which is what made a 3-token probe read as 1 tok/s on a
-		// 100 tok/s vendor.  On Windows the whole reply can land inside one
-		// timer tick, so the window may read as exactly zero; the rate then
-		// falls back to elapsed-minus-TTFT instead of total elapsed.
-		decodeStart time.Time
+		// lastContent is when the final content frame arrived; the rate is
+		// measured over request start -> lastContent.
+		//
+		// It is deliberately not "first content -> last content".  That span
+		// looks like the purest decode measurement, but completion tokens reach
+		// this probe through a buffering SSE reader: a vendor that flushes its
+		// answer in a few bursts delivers ~100 tokens in frames two or three
+		// milliseconds apart.  Dividing by that span reported 400-4400 tok/s for
+		// vendors that generate at 100-200 tok/s (DeepSeek-V4.1-Flash), which is
+		// a flush artifact rather than a speed, and it made the platform ranking
+		// follow buffer sizes instead of throughput.  A vendor's decode cadence
+		// is only observable when it happens to stream one token per frame,
+		// which no relay guarantees; the whole response window always is
+		// observable, it is the throughput the caller actually experiences, and
+		// it agrees with the usage page's tok/s (completion tokens over latency).
 		lastContent time.Time
 	)
 	for {
@@ -220,7 +228,6 @@ func (p *panel) speedRouteStep(parent context.Context, step core.RoutePlanStep) 
 			if !firstEvent {
 				firstEvent = true
 				result.FirstEventMS = elapsedMS(started)
-				decodeStart = now
 			}
 			lastContent = now
 		}
@@ -232,38 +239,20 @@ func (p *panel) speedRouteStep(parent context.Context, step core.RoutePlanStep) 
 
 	result.OK = true
 	result.AccountID = servedBy
-	elapsed := time.Since(started)
-	result.ElapsedMS = elapsed.Milliseconds()
+	result.ElapsedMS = elapsedMS(started)
 	if usageSeen {
 		result.CompletionTokens = usage.CompletionTokens
-		if usage.CompletionTokens > 0 {
-			// Decode window: first content event -> last content event, so
-			// queueing, prompt processing and trailing bookkeeping never
-			// deflate the rate.  A reply with no content at all falls back to
-			// total elapsed.  Windows timer granularity can make the window
-			// read as exactly zero when the whole reply lands in one tick:
-			// fall back to elapsed-minus-TTFT (still decode-ish) with a 1ms
-			// floor rather than presenting a successful call as 0 tok/s.
-			seconds := elapsed.Seconds()
-			if firstEvent {
-				if d := lastContent.Sub(decodeStart).Seconds(); d > 0 {
-					// A measurable generation window: the honest decode rate.
-					seconds = d
-				} else {
-					// The whole reply landed inside one timer tick (a single
-					// content event, or all of them together): a decode rate
-					// cannot be measured, so leave it unset - the UI shows a
-					// dash instead of a number that is pure TTFT noise.
-					result.TokensPerSecond = 0
-					_ = seconds
-					goto rateDone
-				}
+		if usage.CompletionTokens > 0 && firstEvent {
+			// Queueing and prompt processing stay in the denominator because
+			// they are part of what the caller waits for; only the closing
+			// frames sent after the last token are excluded.  A rate is
+			// reported only when a content frame actually arrived: with no
+			// observable span there is nothing to divide by, so the field stays
+			// unset and the UI shows a dash instead of a number invented from a
+			// 1ms floor.
+			if window := lastContent.Sub(started); window > 0 {
+				result.TokensPerSecond = float64(usage.CompletionTokens) / window.Seconds()
 			}
-			if seconds <= 0 {
-				seconds = 0.001
-			}
-			result.TokensPerSecond = float64(usage.CompletionTokens) / seconds
-		rateDone:
 		}
 	}
 	return result

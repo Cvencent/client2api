@@ -583,7 +583,12 @@ OpenAI's `schema must be a JSON Schema of 'type: "object"', got 'type: null'`
   state or calling upstream. **Speed Test** resolves the same chain, then sends
   one minimal live request per platform through that platform's own account pool
   and reports first-event latency, total elapsed time, the serving account,
-  completion tokens and tok/s. The result rows can be dragged or moved with
+  completion tokens and tok/s. The tok/s figure is throughput over the whole
+  response (request start to the last content frame, so queueing and
+  first-token wait are included and agree with the usage page). It is
+  deliberately not the "first token to last token" window: relays buffer their
+  answer into a few large flushes, and dividing by that narrow span reported
+  thousands of tok/s for vendors generating at 100-200 tok/s. The result rows can be dragged or moved with
   Up/Down; saving writes the displayed order back to the per-model priority on
   each platform's model row -- a row outranks the one below it by one, so moving
   a platform above a row showing `0` writes `-1` -- and hot-reloads it. Clearing
