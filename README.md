@@ -5,7 +5,7 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-Current version: **0.3.9**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
+Current version: **0.4.5**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
 
 client2api is a personal, local-only OpenAI-compatible gateway. It aggregates
 the accounts and API Keys **you own** on different AI coding clients and
@@ -527,10 +527,10 @@ OpenAI's `schema must be a JSON Schema of 'type: "object"', got 'type: null'`
   starts the window at the first charged request (the legacy behaviour). Counters
   persist in `data/<source>/request_limits.json`, so a restart does not reset the
   quota. The old `requests_per_minute` and `requests_per_minute_per_account`
-  fields are still accepted and are migrated to `first` rules when the panel
-  saves. `max_in_flight` and `max_in_flight_per_account` override the
-  platform/account in-flight ceilings: leave them unset to inherit the platform
-  policy, or set `0` for no ceiling.
+  fields are still accepted and run as `1m` + `first` rules; the panel rewrites
+  them into `request_limits` on save. `max_in_flight` and
+  `max_in_flight_per_account` override the platform/account in-flight ceilings:
+  leave them unset to inherit the platform policy, or set `0` for no ceiling.
   `cooldown` is the shared fallback; `rate_limit_cooldown`, `quota_cooldown`,
   `auth_cooldown` and `upstream_cooldown` override it per failure kind. An unset
   specific value uses the built-in default (30s for rate limits, 5m for quota/auth,
@@ -581,14 +581,18 @@ OpenAI's `schema must be a JSON Schema of 'type: "object"', got 'type: null'`
   and shows each platform model's effective context window and source so the
   order can be judged with context capacity in view, without reading account
   state or calling upstream. **Speed Test** resolves the same chain, then sends
-  one minimal live request per platform through that platform's own account pool
-  and reports first-event latency, total elapsed time, the serving account,
-  completion tokens and tok/s. The result rows can be dragged or moved with
-  Up/Down; saving writes the displayed order back to the per-model priority on
-  each platform's model row -- a row outranks the one below it by one, so moving
-  a platform above a row showing `0` writes `-1` -- and hot-reloads it. Clearing
-  that box deletes the override so the model inherits the platform priority
-  again.
+  one live request per platform through that platform's own account pool
+  (256 max tokens, asking the model to count) and reports first-event latency,
+  total elapsed time, the serving account, completion tokens and tok/s. The
+  tok/s denominator is the generation window — last content event minus first
+  content event — so queueing and prompt processing do not deflate it, and
+  first-token latency is reported separately; a reply that lands inside one
+  clock tick shows `-` instead of a noise-derived number. The result rows can be
+  dragged or moved with Up/Down; saving writes the displayed order back to the
+  per-model priority on each platform's model row -- a row outranks the one
+  below it by one, so moving a platform above a row showing `0` writes `-1` --
+  and hot-reloads it. Clearing that box deletes the override so the model
+  inherits the platform priority again.
 - Runtime Log
 
 ### Tasks, usage and accounting

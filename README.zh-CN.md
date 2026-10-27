@@ -5,7 +5,7 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-当前版本：**0.3.9**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：**0.4.5**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 流式断流排查：升级后系统日志新增 `stream: id=...` 终止诊断，包含协议、平台/模型、
 上游事件数、`finish_reason`、正文/推理字节数、工具调用数、completion token、
@@ -182,9 +182,15 @@ client2api 是一个**个人自用**的 OpenAI 兼容网关。它把你自己在
 - 每个中转站可以单独配置出口代理 `proxy`（例如 `http://127.0.0.1:7890`、`socks5://127.0.0.1:1080`，也支持 `user:pass@` 写法）：这个中转站发出的全部请求——对话、扫描模型、余额、账号测试——都会走这个代理，其它平台不受影响。留空表示跟随网关的全局代理。 每个中转站还可以单独配置 `user_agent`：个别站按客户端白名单放行，通用 UA 会被拒（401 unauthorized client detected），这里填它期望的客户端 UA，留空用本网关默认。
 - 只提供 OpenAI Responses 协议的中转站（如 agentrouter.org），给来源配置加
   `api_format: "responses"` 即可：对话会走 `/v1/responses`。
-- 自定义中转站支持独立的限流与冷却策略，且可在面板的“编辑中转站”里直接修改：
-  `requests_per_minute` 限制整个中转站每分钟的上游尝试数，`requests_per_minute_per_account`
-  限制单把 Key；一把 Key 达到上限时会自动换下一把，全部达到上限才报忙。
+- 自定义中转站支持独立的请求次数限额与冷却策略，且可在面板的“编辑中转站”里直接修改：
+  `request_limits` 是表单化的规则数组，每条规则有 `scope`（`account` 每把 Key /
+  `source` 整个中转站）、`limit`、`window`（至少 `1s` 的 Go duration，如 `1m`、`24h`）
+  和 `reset`（`rolling` 滚动窗口 / `calendar` 自然周期 / `first` 首次请求起算），
+  `calendar` 还要 `timezone` 和可选的 `reset_at`（`HH:MM`）。多条规则同时生效：
+  单 Key 规则满了自动换下一把，整个中转站规则满了才报忙。计数落盘到
+  `data/<平台ID>/request_limits.json`，重启不重置。旧的 `requests_per_minute`（整个中转站）
+  和 `requests_per_minute_per_account`（每把 Key）仍可读取，等价于 `1m` + `first` 规则；
+  面板保存后迁移到 `request_limits`。
   `max_in_flight` / `max_in_flight_per_account` 覆盖平台级和账号级在途上限，留空继承平台配置，
   显式 `0` 表示不限制。`cooldown` 是通用冷却，`rate_limit_cooldown`、`quota_cooldown`、
   `auth_cooldown`、`upstream_cooldown` 分别覆盖限流、额度、鉴权和上游故障；专用值优先于
@@ -212,7 +218,7 @@ client2api 是一个**个人自用**的 OpenAI 兼容网关。它把你自己在
   全选/反选/清空、逐项勾选；保存后写入 `exposed_models` 并热重载，无需重启。配置里存在、
   但当前目录没有的 ID 会保留成 `missing` 行，保存不会丢。
 - 平台配置
-- 平台配置页的路由链有两个独立按钮。「链路测试」输入模型名后静态显示故障切换顺序、实际模型、优先级和优先级来源，不读账号状态、不发上游请求；「测速」复用同一条链路，按平台逐个通过各自账号池发一次最小真实请求，显示首字延迟、总耗时、实际账号、输出 token 和 tok/s。结果行可以直接拖动，也可以用「上移/下移」调整顺序；保存后把显示顺序写回平台优先级、模型组成员优先级或分时优先级，并热加载生效。
+- 平台配置页的路由链有两个独立按钮。「链路测试」输入模型名后静态显示故障切换顺序、实际模型、优先级和优先级来源，不读账号状态、不发上游请求；「测速」复用同一条链路，按平台逐个通过各自账号池发一次真实请求（`max_tokens` 256，要求模型数数），显示首字延迟、总耗时、实际账号、输出 token 和 tok/s；tok/s 的分母是生成窗口（末个内容事件减首个内容事件），排队和提示词处理不计入，首字延迟单独显示，整个回复落在一个时钟刻度里时显示 `-`。结果行可以直接拖动，也可以用「上移/下移」调整顺序；保存后把显示顺序写回平台优先级、模型组成员优先级或分时优先级，并热加载生效。
 - 配置
 - 运行日志
 
