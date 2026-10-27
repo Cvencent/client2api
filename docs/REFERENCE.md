@@ -163,7 +163,75 @@ HTTP 429 endpoint outages, are classified as upstream failures.
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-Current version: **0.1.90**. Full history: [CHANGELOG.md](../CHANGELOG.md).
+Current version: **0.4.5**. Full history: [CHANGELOG.md](../CHANGELOG.md).
+
+### Request-count limits
+
+A relay's request-count limits are added as form rows under
+**Platform Configuration → Edit Relay → Request-count limits**. Each row is one
+entry in the `sources.<id>.request_limits` array of `configs/client2api.json`,
+so the JSON is never edited by hand:
+
+```json
+{
+  "sources": {
+    "my-relay": {
+      "request_limits": [
+        {"scope": "account", "limit": 60, "window": "1m", "reset": "rolling"},
+        {"scope": "account", "limit": 100, "window": "24h", "reset": "calendar", "timezone": "Asia/Shanghai", "reset_at": "00:00"},
+        {"scope": "source", "limit": 500, "window": "24h", "reset": "first"}
+      ]
+    }
+  }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `scope` | `account` counts each key on its own; `source` shares one counter across the whole relay |
+| `limit` | Upstream requests allowed in the window; must be greater than 0 |
+| `window` | The period as a Go duration (`30s`, `5m`, `2h`, `24h`), at least 1 second; the panel takes a number plus seconds/minutes/hours/days |
+| `reset` | `rolling` (default), `calendar` or `first` |
+| `timezone` | `calendar` only; an IANA zone such as `Asia/Shanghai`, defaulting to the process's local zone |
+| `reset_at` | `calendar` only; `HH:MM`, default `00:00`; every day aligns to this clock time |
+
+The three reset modes:
+
+- `rolling` — an exact sliding window. A request frees its slot one `window`
+  after it happened, so with 24 hours / 100 requests the 101st waits until the
+  earliest request is 24 hours old.
+- `calendar` — a fixed natural period aligned by `timezone` and `reset_at`.
+  `window` must divide 24 hours and cannot exceed it (`1h`, `30m`, `24h`), so
+  natural weeks or months are not supported; use `rolling` or `first` with a
+  long window instead. Daylight-saving transitions follow Go's zone rules.
+- `first` — a fixed window that starts at the first charged request and clears
+  after one full `window`; this is what the legacy `requests_per_minute*` fields
+  did.
+
+Multiple rules apply together: before any upstream request is sent for a key,
+every applicable rule must still have room, and one full rule blocks the send.
+`account` rules constrain only the current key, so a full key rotates to the next
+one; when every usable key is full, or a `source` rule is full, the gateway
+answers busy (`core.ErrBusy`, HTTP 429). A request is charged before it leaves
+for upstream: local validation failures, account-slot refusals and request-body
+build failures do not count, while upstream 401, 402, 429, 5xx and network
+errors all count as one.
+
+Counters are stored per “rule signature + counted subject (a key, or the whole
+relay)” in `data/<source>/request_limits.json`, so a restart does not reset the
+quota. Changing only `limit` keeps the usage already charged and blocks at the
+new ceiling immediately; changing `scope`, `window`, `reset`, `timezone` or
+`reset_at` makes a different rule with fresh counters; deleting a key prunes its
+counters. Two rules with the same `scope + window + reset + timezone + reset_at`
+are rejected as duplicates. A missing counter file means no usage yet; a corrupt
+one fails to load the relay rather than treating the usage as zero.
+
+The legacy `requests_per_minute` (whole relay) and
+`requests_per_minute_per_account` (per key) fields are still read and behave like
+`source` / `account` rules with a `1m` window and `first` reset; when
+`request_limits` is non-empty the array wins and the old fields are ignored.
+Opening an old relay in the panel shows those two fields as rule rows, and
+saving writes `request_limits` without the old fields.
 
 ## Free models and free-quota accounts
 
@@ -241,10 +309,16 @@ trial-credit models; and CodeArts' `glm-5.3-flash`,
   `Retry-After`.
 * **Route-plan preview and speed test:** Platform Configuration → Link Test
   statically replays failover order without reading account state or calling
-  upstream. Speed Test resolves the same chain and sends one minimal live
-  request per platform through that platform's account pool, reporting
-  first-event latency, total elapsed time, the serving account, completion
-  tokens and tok/s.
+  upstream. Speed Test resolves the same chain and sends one live request per
+  platform through that platform's account pool (256 max tokens, asking the
+  model to count), reporting first-event latency, total elapsed time, the
+  serving account, completion tokens and tok/s. The tok/s denominator is the
+  generation window — the last content event minus the first content event — so
+  queueing, prompt processing and trailing bookkeeping never deflate it, and
+  first-token latency is reported on its own. When the whole reply lands inside
+  one clock tick (typically a single content event) no decode rate can be
+  measured, so tok/s shows `-`; a reply with no content event at all falls back
+  to total elapsed time.
 * **Route-chain reordering:** result rows can be dragged or moved with Up/Down.
   Saving writes the displayed order back to platform priority, model-group
   member priority or schedule-window priority and hot-reloads it.

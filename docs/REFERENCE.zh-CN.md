@@ -129,7 +129,64 @@ Windows 上仍可 **导入 → 探测本机凭据** 读取已经登录的桌面�
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-当前版本：**0.1.90**。完整更新记录见 [CHANGELOG.md](../CHANGELOG.md)。
+当前版本：**0.4.5**。完整更新记录见 [CHANGELOG.md](../CHANGELOG.md)。
+
+### 请求次数限额
+
+中转站的请求次数限额在 **平台配置 → 编辑中转站 → 请求次数限额** 里用表单添加，
+每条规则是 `configs/client2api.json` 里 `sources.<平台ID>.request_limits` 数组中的
+一项，不需要手写 JSON：
+
+```json
+{
+  "sources": {
+    "my-relay": {
+      "request_limits": [
+        {"scope": "account", "limit": 60, "window": "1m", "reset": "rolling"},
+        {"scope": "account", "limit": 100, "window": "24h", "reset": "calendar", "timezone": "Asia/Shanghai", "reset_at": "00:00"},
+        {"scope": "source", "limit": 500, "window": "24h", "reset": "first"}
+      ]
+    }
+  }
+}
+```
+
+| 字段 | 说明 |
+|---|---|
+| `scope` | `account` 表示每把 Key 独立计数；`source` 表示整个中转站共用一个计数 |
+| `limit` | 周期内允许的上游请求次数，必须大于 0 |
+| `window` | 周期，Go duration 字符串（`30s`、`5m`、`2h`、`24h`），至少 1 秒；面板按“数值 + 秒/分钟/小时/天”填写 |
+| `reset` | `rolling`（默认）、`calendar` 或 `first` |
+| `timezone` | 仅 `calendar` 使用，IANA 时区（如 `Asia/Shanghai`）；省略时用进程本地时区 |
+| `reset_at` | 仅 `calendar` 使用，`HH:MM` 格式，默认 `00:00`；周期每天从这个时刻对齐 |
+
+三种重置方式：
+
+- `rolling`：精确滚动窗口。每次请求在发生时刻起满一个 `window` 后才释放额度，
+  例如 24 小时 100 次，第 101 次必须等最早那次请求满 24 小时。
+- `calendar`：固定自然周期，按 `timezone` 和 `reset_at` 对齐。`window` 必须能整除
+  24 小时且不超过 24 小时（例如 `1h`、`30m`、`24h`），所以不支持自然周/自然月，
+  这类需求用 `rolling` 或 `first` 配长周期；跨夏令时按 Go 的时区规则处理。
+- `first`：固定窗口从第一次计数开始，满一个 `window` 后整段清零；这是旧
+  `requests_per_minute*` 的行为。
+
+多条规则同时生效：每次向某个 Key 发上游请求前，所有适用规则都必须有余量，任意一条
+满了本次就不能发出。`account` 规则只约束当前 Key，满了会自动换下一把 Key；所有可用
+Key 都满，或 `source` 规则满了，网关返回忙（`core.ErrBusy`，HTTP 429）。
+次数在真正发往上游之前扣减并落盘：本地校验失败、账号槽位拒绝和构建请求体失败不计数，
+上游返回 401、402、429、5xx 或网络错误都算一次。
+
+计数按“规则签名 + 计数对象（Key 或整个中转站）”保存在
+`data/<平台ID>/request_limits.json`，重启不会清零。只改 `limit` 时保留已用次数
+（调低后立即按新上限阻塞）；改 `scope`、`window`、`reset`、`timezone` 或 `reset_at`
+视为另一条规则，重新计数；删除 Key 会清理它的计数。相同
+`scope + window + reset + timezone + reset_at` 的重复规则会被拒绝。计数文件缺失表示
+从未使用；文件损坏时该中转站加载失败，不会把已用次数当成 0。
+
+旧的 `requests_per_minute`（整个中转站）和 `requests_per_minute_per_account`（每把
+Key）仍然读取，分别等价于 `source` / `account` 范围、`1m` 周期、`first` 重置的规则；
+`request_limits` 非空时以新数组为准，旧字段忽略。面板打开旧配置时会把两个字段显示成
+规则行，保存后写入 `request_limits`，旧字段不再写回。
 
 ## 免费模型与免费额度账号
 
@@ -198,7 +255,7 @@ CodeArts 的 `glm-5.3-flash`、`deepseek-v4.1-flash`。刷新后以实时目录�
 * **账号模型策略与 429 停靠**：可按账号禁用单个模型、查看限流解除时间，并把
   `(平台, 账号, 模型)` 冷却 60 秒，连续失败翻倍，封顶 30 分钟或使用厂商的
   `Retry-After`。
-* **路由链预演与测速**：平台配置 → 链路测试只做本地静态预演，不读账号状态、不发上游请求；测速复用同一条链路，按平台分别通过各自账号池发一次最小真实请求，显示首字延迟、总耗时、实际账号、输出 token 和 tok/s。
+* **路由链预演与测速**：平台配置 → 链路测试只做本地静态预演，不读账号状态、不发上游请求；测速复用同一条链路，按平台分别通过各自账号池发一次真实请求（`max_tokens` 256，要求模型数数），显示首字延迟、总耗时、实际账号、输出 token 和 tok/s。tok/s 的分母是生成窗口，即末个内容事件减去首个内容事件，排队、提示词处理和收尾记账都不计入；首字延迟单独显示。整个回复落在一个时钟刻度里（典型是只有一个内容事件）时测不出生成速度，tok/s 显示 `-`；完全没有内容事件时退回按总耗时计算。
 * **路由链排序**：结果行可以直接拖动，也可以用「上移/下移」调整；保存后把显示顺序写回平台优先级、模型组成员优先级或分时优先级，并热加载生效。
 * **托管出口中继**：可以走已有 HTTP/SOCKS 代理，也可以由本进程托管 mihomo 加载订阅。
 * **ZCode 验证码预取**：通过 `captcha_pool` 和 `captcha_pool_ttl_seconds` 开启单槽参数池。
