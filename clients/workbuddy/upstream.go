@@ -291,6 +291,9 @@ const (
 	functionParamsCode  = "11129"
 	modelBlockCode      = "11102"
 	modelBlockMsgMarker = "service info not found"
+
+	userTypeBlockCode      = "11158"
+	userTypeBlockMsgMarker = "is not allowed for user type"
 	// ModelBlockReason is the operator-facing explanation for code 11102.
 	ModelBlockReason = "11102 model not available"
 )
@@ -324,6 +327,19 @@ func isPromptTooLongStatus(status int) bool {
 // IsModelBlocked detects business code 11102 ("service info not found"), which
 // means this account cannot use this model at all.  It is only meaningful on
 // 400/404.
+// isUserTypeModelBlock reports the vendor's 11158 answer: the model exists on
+// this platform but the ACCOUNT TYPE cannot use it ("not allowed for user
+// type [personal_free_user]"). Model-scoped, exactly like 11102.
+func isUserTypeModelBlock(body string) bool {
+	if body == "" {
+		return false
+	}
+	if !hasBusinessCode(body, userTypeBlockCode) {
+		return false
+	}
+	return strings.Contains(body, userTypeBlockMsgMarker) ||
+		strings.Contains(strings.ToLower(body), strings.ToLower(userTypeBlockMsgMarker))
+}
 func IsModelBlocked(status int, body string) bool {
 	if status != 400 && status != 404 {
 		return false
@@ -499,6 +515,9 @@ func containsAny(body, lower string, markers []string) bool {
 // more specific signals are tested first.
 func Classify(status int, body string) ErrKind {
 	if IsModelBlocked(status, body) {
+		return ErrModelBlocked
+	}
+	if status == 400 && isUserTypeModelBlock(body) {
 		return ErrModelBlocked
 	}
 	if status == 402 {

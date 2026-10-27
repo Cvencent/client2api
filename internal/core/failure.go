@@ -43,6 +43,12 @@ const (
 	// cannot know whether a second attempt would help, and the reference's
 	// own amplification analysis says guessing is worse than failing.
 	FailureOther FailureKind = "other"
+	// FailureModelRefused is a model-scoped refusal: this platform or account
+	// tier cannot serve THIS model (vendor "model blocked", "not allowed for
+	// user type", "service info not found").  The account is healthy, so
+	// nothing is parked; the gateway moves the request to the next platform
+	// in the chain and records the model as unavailable on the refusing one.
+	FailureModelRefused FailureKind = "model_refused"
 )
 
 // Failure is a classified upstream error.

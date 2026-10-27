@@ -1105,7 +1105,16 @@ func (s *server) noteFailedCandidate(rec *UsageRecord, client core.Client, model
 // account is not at fault, so nothing is parked.
 func modelRefusal(err error) bool {
 	f, ok := core.AsFailure(err)
-	return ok && f.Kind == core.FailureOther && f.Status == http.StatusNotFound
+	if !ok {
+		return false
+	}
+	if f.Kind == core.FailureModelRefused {
+		// A model-scoped refusal names the model, not the account: this
+		// platform cannot serve it for this caller tier. Status is whatever
+		// the vendor chose (400 or 404); the verdict is in the kind.
+		return true
+	}
+	return f.Kind == core.FailureOther && f.Status == http.StatusNotFound
 }
 
 // explicitPlatformRequest reports whether the caller named this platform in

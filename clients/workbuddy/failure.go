@@ -32,6 +32,8 @@ func coreFailureKind(kind ErrKind) core.FailureKind {
 		return core.FailureContextWindow
 	case ErrServer:
 		return core.FailureUpstream
+	case ErrModelBlocked:
+		return core.FailureModelRefused
 	default:
 		return core.FailureOther
 	}
