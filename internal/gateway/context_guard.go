@@ -378,6 +378,8 @@ var tooLongPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)exceed[^0-9]{0,30}?(\d[\d,_]*)\s*tokens?\s*(?:limit|window|context)`),
 	// "context length 100000 exceeded"
 	regexp.MustCompile(`(?i)context[^0-9]{0,20}?(?:length|window|limit)[^0-9]{0,20}?(\d[\d,_]*)[^0-9]{0,20}?exceed`),
+	// "context limit (1048568 tokens)"
+	regexp.MustCompile(`(?i)context\s+limit[^0-9]{0,20}?(\d[\d,_]*)\s*tokens?`),
 }
 
 // measuredSizePatterns find the size the vendor measured THIS request at, when
@@ -500,6 +502,7 @@ var contextRefusalPhrases = []string{
 	"context length exceeded",
 	"context_length_exceeded",
 	"exceeds the maximum context",
+	"exceeds the context limit",
 	"prompt is too long",
 	"prompt too long",
 	"input is too long",
@@ -1193,6 +1196,25 @@ func (s *server) guardRequestContext(ctx context.Context, req *core.ChatRequest,
 		rec.ContextWindow = s.requestContextWindow(ctx, client, model, limit)
 	}
 	return report, trimmed
+}
+
+// contextRetrySpentError marks a context-window refusal whose same-platform
+// trim retry has already been spent.  The routing layer treats it as "this
+// candidate has done everything it can with this request": it may move on to
+// a sibling platform instead of returning the vendor's 400 immediately.  The
+// wrapper deliberately preserves the underlying message and Failure so the
+// caller still sees the vendor's own words and the context_window_exceeded
+// code if every sibling refuses too.
+type contextRetrySpentError struct{ err error }
+
+func (e *contextRetrySpentError) Error() string { return e.err.Error() }
+func (e *contextRetrySpentError) Unwrap() error { return e.err }
+
+func contextRetryExhausted(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &contextRetrySpentError{err: err}
 }
 
 // contextWindowRefusal is the error the gateway returns when it knows a request

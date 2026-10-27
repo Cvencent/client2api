@@ -1144,6 +1144,13 @@ func candidateUnavailable(err error) bool {
 	return errors.Is(err, core.ErrNotConfigured) || errors.Is(err, core.ErrBusy)
 }
 
+// contextRetrySpent reports whether a context-window refusal has already used
+// its one same-platform trim retry.
+func contextRetrySpent(err error) bool {
+	var spent *contextRetrySpentError
+	return errors.As(err, &spent)
+}
+
 func cloneChatRequest(src *core.ChatRequest) *core.ChatRequest {
 	if src == nil {
 		return nil
@@ -1322,8 +1329,11 @@ func (s *server) openStreamRecorded(ctx context.Context, client core.Client, req
 				// one conservative retry against a fraction of it is worth trying:
 				// a served answer beats a dead end, and a second refusal is
 				// returned to the caller exactly as it would have been.
-				if sizes.Observed == 0 && sizes.Limit == 0 {
-					window := s.effectiveContextWindow(ctx, client, req.Model)
+				if sizes.Observed == 0 {
+					window := sizes.Limit
+					if window <= 0 {
+						window = s.effectiveContextWindow(ctx, client, req.Model)
+					}
 					if budget := retryBudgetForUnmeasuredRefusal(req, window, maxOutput); budget > 0 {
 						if report, trimmed := applyContextBudget(req, budget); trimmed {
 							contextRetried = true
@@ -1346,6 +1356,12 @@ func (s *server) openStreamRecorded(ctx context.Context, client core.Client, req
 			}
 		}
 
+		if contextRetried {
+			if f, ok := core.AsFailure(err); ok && f.Kind == core.FailureContextWindow {
+				err = contextRetryExhausted(err)
+				lastErr = err
+			}
+		}
 		// The module has already walked its whole account pool.  Re-running
 		// it here would repeat the same exhausted rotation; move to the next
 		// platform instead.

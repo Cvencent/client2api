@@ -198,3 +198,33 @@ func TestUnclassifiedContextRefusalReachesTheCallerAsContextWindowExceeded(t *te
 		t.Fatalf("the vendor's own sentence was lost: %s", rr.Body.String())
 	}
 }
+
+const tokenrhythmContextRefusal = "openai-compat: chat (HTTP 400): Input exceeds the context limit (1048568 tokens). Please shorten the input. Request id: 021793094705280024308930c9cd2045e280adee16650f78af512"
+
+func TestLooksLikeContextRefusalRecognisesTheTokenrhythmSentence(t *testing.T) {
+	sizes := parseRefusalSizes(tokenrhythmContextRefusal)
+	if sizes.Limit != 1048568 {
+		t.Fatalf("parseRefusalSizes limit = %d, want 1048568", sizes.Limit)
+	}
+	if _, ok := looksLikeContextRefusal(tokenrhythmContextRefusal); !ok {
+		t.Fatalf("the TokenRhythm refusal was not recognised: %q", tokenrhythmContextRefusal)
+	}
+}
+
+func TestNormalizeContextRefusalPromotesTheTokenrhythmUnclassified400(t *testing.T) {
+	raw := core.Fail("tokenrhythm", "key-18ae2bb845ab7c614610d813", core.FailureOther, 400, errors.New(tokenrhythmContextRefusal))
+	got := normalizeContextRefusal(raw)
+	f, ok := core.AsFailure(got)
+	if !ok {
+		t.Fatalf("normalizeContextRefusal returned %T, want *core.Failure", got)
+	}
+	if f.Kind != core.FailureContextWindow {
+		t.Fatalf("kind = %q, want %q", f.Kind, core.FailureContextWindow)
+	}
+	if f.Status != 400 || f.Client != "tokenrhythm" || f.Account != "key-18ae2bb845ab7c614610d813" {
+		t.Fatalf("attribution/status lost: %+v", f)
+	}
+	if limit := parseLimitFromMessage(got.Error()); limit != 1048568 {
+		t.Fatalf("limit from normalized error = %d, want 1048568", limit)
+	}
+}
