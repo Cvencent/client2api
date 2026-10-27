@@ -532,6 +532,15 @@ Marked honestly rather than asserted:
   hand-written in `qr.go` (byte mode, ECC level M, versions 1-10) so no
   dependency is added; the reference used a QR library. No live scan has been
   performed from this machine.
+- **2026-10-27 deep dive (CDP + wire)**: the desktop app was launched with a debug port and its
+  startup grant observed; an in-renderer replay of the grant (same session, same origin, same TLS)
+  on a *fresh* account is also refused; \/api/web/auth/v1/devices_current_bind\ +
+  \devices_current_heartbeat\ (both answer \	rusted_device:true\) do **not** unlock it either.
+  The desktop client mints its session through its own local
+  \/api/electron/auth/v1\ proxy at login, so the server-side marker the grant checks is a property
+  of how the session was created, not of anything request-shape or device-state can add afterwards.
+  Token rotation note: refreshing a session out-of-band invalidates the previous access token
+  immediately (the vendor rotates on refresh), so probes must persist the rotation like the module does.
 - **The desktop gate itself is unexplained; that it exists is measured.** The
   vendor's own desktop client sends the same request this module sends, yet
   only that client is granted the extension. Whatever the server keys on (a
