@@ -6799,10 +6799,19 @@ function accSortDefaultDir(col) {
   }
   return "asc";
 }
+// accSortFor 算出「再点一次这个列头」之后的排序状态。
+// 循环是 默认方向 → 反方向 → 撤销 → 默认方向…，默认方向只决定从哪一头进。原来的
+// 写法把循环写死成 asc → desc → 撤销，默认方向是 desc 的列（余额、用量、最近成功…）
+// 第二次点击就撤销了，永远走不到 asc——用户看到的「有的列只能降序」就是这个。
 function accSortFor(col) {
   const x = accSort(CUR);
-  const same = col === x.col;
-  const next = same ? (x.dir ? (x.dir === "asc" ? "desc" : "") : accSortDefaultDir(col)) : accSortDefaultDir(col);
+  const base = accSortDefaultDir(col);
+  const flip = base === "asc" ? "desc" : "asc";
+  let next = base;
+  if (col === x.col) {
+    if (x.dir === base) next = flip;
+    else if (x.dir === flip) next = "";
+  }
   if (next) ACC_SORT[CUR] = { col: col, dir: next }; else delete ACC_SORT[CUR];
   return { col: col, dir: next };
 }
@@ -6891,7 +6900,8 @@ function syncAccSortHeader() {
   document.querySelectorAll("th[data-sort]").forEach(th => {
     const on = th.dataset.sort === sort.col;
     th.classList.toggle("sort-on", on);
-    th.setAttribute("aria-sort", on ? "ascending" : sort.dir === "desc" ? "descending" : "none");
+    // aria-sort 必须报真实方向：早先命中列一律写 "ascending"，降序时读屏软件读反。
+    th.setAttribute("aria-sort", on && sort.dir === "asc" ? "ascending" : on && sort.dir === "desc" ? "descending" : "none");
     const mark = th.querySelector(".sort-mark");
     if (mark) mark.textContent = on ? (sort.dir === "asc" ? "↑" : "↓") : "↕";
   });
