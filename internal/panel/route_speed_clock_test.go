@@ -67,10 +67,11 @@ func runSpeedStep(t *testing.T, p *panel) routeSpeedResult {
 	return res
 }
 
-// A multi-event stream's rate is completion tokens divided by the generation
-// window -- the gap between the FIRST and the LAST content event -- so
-// queueing/TTFT and the trailing usage/done frames never deflate it.  The
-// numbers are exact here: 40 tokens over a 20ms window on a 50ms call.
+// A multi-event stream's rate is completion tokens over request start ->
+// lastContent -- queueing and prompt processing stay in the denominator
+// because they are part of what the caller waits for; only the trailing
+// usage/done frames are excluded.  The numbers are exact here: 40 tokens over
+// a 30ms window on a 50ms call.
 func TestRouteSpeedRateUsesTheContentWindow(t *testing.T) {
 	const tokens = 40
 	base := time.Date(2026, 10, 27, 10, 0, 0, 0, time.UTC)
@@ -81,8 +82,9 @@ func TestRouteSpeedRateUsesTheContentWindow(t *testing.T) {
 		{at: base.Add(30 * time.Millisecond), ev: core.Event{Type: core.EventUsage, Usage: &core.Usage{CompletionTokens: tokens}}},
 		{at: base.Add(30 * time.Millisecond), ev: core.Event{Type: core.EventDone}},
 		// The stream ends 20ms after the last content event.  Elapsed is 50ms,
-		// the generation window is 20ms: a denominator that regressed to total
-		// elapsed would read 800 tok/s (40/50ms) instead of 2000.
+		// the rated window is 30ms (start -> lastContent): a denominator that
+		// regressed to total elapsed would read 800 tok/s (40/50ms) instead of
+		// 1333.
 		{at: base.Add(50 * time.Millisecond)},
 	}}
 	res := runSpeedStep(t, speedPanelWithClock(clk, stream))
@@ -96,16 +98,16 @@ func TestRouteSpeedRateUsesTheContentWindow(t *testing.T) {
 	if res.CompletionTokens != tokens {
 		t.Errorf("completion_tokens = %d, want %d", res.CompletionTokens, tokens)
 	}
-	// 40 tokens / 20ms = 2000 tok/s.  Exact, so a small epsilon is all we need.
-	if want := 2000.0; math.Abs(res.TokensPerSecond-want) > 1e-6 {
-		t.Errorf("tokens_per_second = %.3f, want %.1f (tokens / generation window)", res.TokensPerSecond, want)
+	// 40 tokens / 30ms = 1333 tok/s.  Exact, so a small epsilon is all we need.
+	if want := 4000.0 / 3.0; math.Abs(res.TokensPerSecond-want) > 1e-6 {
+		t.Errorf("tokens_per_second = %.3f, want %.1f (tokens / whole-response window)", res.TokensPerSecond, want)
 	}
 }
 
-// A single content event leaves a zero-width window: a decode rate cannot be
-// measured, so the probe leaves it unset and the UI shows a dash.  The stream is
-// deliberately slow to end (elapsed - TTFT is 30ms) so this case cannot be
-// confused with the elapsed-minus-TTFT fallback below.
+// A single content event with the usage frame landing in the same instant as
+// the first content frame brackets a 10ms window (request start -> the content
+// stamp); the rate is well-defined there (5 tokens / 10ms = 500 tok/s), so the
+// probe reports it instead of leaving a dash.
 func TestRouteSpeedLeavesTheRateBlankForASingleContentEvent(t *testing.T) {
 	base := time.Date(2026, 10, 27, 10, 0, 0, 0, time.UTC)
 	clk := &steppedClock{at: base}
@@ -120,18 +122,19 @@ func TestRouteSpeedLeavesTheRateBlankForASingleContentEvent(t *testing.T) {
 	if res.FirstEventMS != 10 || res.ElapsedMS != 40 {
 		t.Errorf("timing = first %dms / elapsed %dms, want 10 / 40", res.FirstEventMS, res.ElapsedMS)
 	}
-	// elapsed - TTFT is 30ms (nonzero), and total elapsed is 40ms: neither must
-	// leak in.  A single event has no measurable window, so the rate stays 0.
-	if res.TokensPerSecond != 0 {
-		t.Errorf("tokens_per_second = %.3f, want 0 (no measurable decode window)", res.TokensPerSecond)
+	// The window is request start (0ms) -> the single content event (10ms);
+	// the trailing usage/done/EOF stamps are excluded, so 5/10ms = 500.
+	if want := 500.0; math.Abs(res.TokensPerSecond-want) > 1e-6 {
+		t.Errorf("tokens_per_second = %.3f, want %.1f (start -> lastContent window)", res.TokensPerSecond, want)
 	}
 }
 
-// A stream that stops without ever delivering a content frame leaves nothing to
-// bracket, so the probe falls back to elapsed minus TTFT.  With no content
-// event, TTFT is unset and the fallback is the whole call -- the path a vendor
-// that drops the stream without a terminal frame leaves us on.  (A vendor that
-// does send an intact single-event reply is the case above: that stays blank.)
+// A stream that stops without ever delivering a content frame cannot bracket a
+// window from request start to lastContent.  It used to fall back to elapsed
+// minus TTFT (with TTFT unset, i.e. the whole call); the throughput semantics
+// report no rate instead -- there is no observable content window, and a rate
+// computed from trailing bookkeeping frames is TTFT noise.  (A vendor that
+// sends an intact single-event reply is the case above: that stays blank too.)
 func TestRouteSpeedFallsBackToElapsedWithoutAContentFrame(t *testing.T) {
 	const tokens = 10
 	base := time.Date(2026, 10, 27, 10, 0, 0, 0, time.UTC)
@@ -149,8 +152,7 @@ func TestRouteSpeedFallsBackToElapsedWithoutAContentFrame(t *testing.T) {
 	if res.ElapsedMS != 20 {
 		t.Errorf("elapsed_ms = %d, want 20", res.ElapsedMS)
 	}
-	// 10 tokens over the 20ms call (elapsed - TTFT, TTFT unset) = 500 tok/s.
-	if want := 500.0; math.Abs(res.TokensPerSecond-want) > 1e-6 {
-		t.Errorf("tokens_per_second = %.3f, want %.1f (elapsed minus TTFT fallback)", res.TokensPerSecond, want)
+	if res.TokensPerSecond != 0 {
+		t.Errorf("tokens_per_second = %.3f, want 0 (no content window to divide by)", res.TokensPerSecond)
 	}
 }
