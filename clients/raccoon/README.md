@@ -541,6 +541,12 @@ Marked honestly rather than asserted:
   of how the session was created, not of anything request-shape or device-state can add afterwards.
   Token rotation note: refreshing a session out-of-band invalidates the previous access token
   immediately (the vendor rotates on refresh), so probes must persist the rotation like the module does.
+- **2026-10-27 root cause found: the missing device id.** The grant is answered `granted:false` exactly for accounts whose stored credential carries **no** `device_id` (token-dump imports) and
+  granted for accounts that carry one — 4/4 correlation across the pool, plus a bind+heartbeat probe on
+  a device-less account still refused. `loadLocked` now mints and persists a device id for any stored
+  credential that lacks one, so the `X-Client-Device-ID` header rides on every request from the first
+  restart on. (The in-app replay result stands: inside the real client the same call is refused for an
+  account whose daily grant was already taken — that reading is `already_done`, not the gate.)
 - **The desktop gate itself is unexplained; that it exists is measured.** The
   vendor's own desktop client sends the same request this module sends, yet
   only that client is granted the extension. Whatever the server keys on (a

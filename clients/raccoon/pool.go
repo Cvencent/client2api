@@ -217,6 +217,12 @@ func (p *pool) loadLocked(configured []account) {
 		stored := p.readStoreLocked()
 		health := p.readHealthLocked()
 		for i := range stored {
+			// A stored credential without a device id is one the desktop-grant
+			// endpoint will refuse (granted:false): the X-Client-Device-ID
+			// header must ride on every request from the first one on. Mint
+			// here AND persist through the closing saveLocked, so the identity
+			// is stable across restarts.
+			stored[i].DeviceID = ensureDeviceID(stored[i].DeviceID)
 			e := &entry{acct: stored[i]}
 			if h, ok := health[e.acct.id()]; ok {
 				e.acct.LastUsed = h.LastUsed
