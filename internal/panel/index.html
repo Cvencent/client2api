@@ -10761,7 +10761,12 @@ function routeSpeedCellHTML(x) {
   bits.push("首字 " + fmtMs(x.first_event_ms));
   bits.push("总 " + fmtMs(x.elapsed_ms));
   if (x.completion_tokens) bits.push("输出 " + x.completion_tokens + " tok");
-  if (x.tokens_per_second) bits.push(fmtRate(x.tokens_per_second));
+  // tok/s 是「请求发出 → 最后一个内容分片」的整体速度（含排队与首字等待），
+  // 不是「首字 → 末字」的纯生成窗口：中转站把回答攒成几个大包下发时，
+  // 后者会把 100 tok 的回答算成四五千 tok/s。
+  if (x.tokens_per_second) {
+    bits.push('<span title="整体速度：输出 token ÷（请求发出 → 最后一个内容分片），含排队与首字等待">' + fmtRate(x.tokens_per_second) + '</span>');
+  }
   return '<span class="tag ok">可用</span>' + esc(bits.join(" · "));
 }
 
