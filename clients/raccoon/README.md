@@ -534,7 +534,7 @@ Marked honestly rather than asserted:
   performed from this machine.
 - **2026-10-27 deep dive (CDP + wire)**: the desktop app was launched with a debug port and its
   startup grant observed; an in-renderer replay of the grant (same session, same origin, same TLS)
-  on a *fresh* account is also refused; \/api/web/auth/v1/devices_current_bind\ +
+  on a *fresh* account is also refused; `/api/web/auth/v1/devices_current_bind` +
   `devices_current_heartbeat` (both answer `trusted_device:true`) do **not** unlock it either.
   The desktop client mints its session through its own local
   `/api/electron/auth/v1` proxy at login, so the server-side marker the grant checks is a property
