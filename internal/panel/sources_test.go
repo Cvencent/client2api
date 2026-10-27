@@ -1,8 +1,10 @@
 package panel
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -109,29 +111,135 @@ func TestSourceBalanceEditorIsWired(t *testing.T) {
 }
 
 func TestSourceLimitsEditorIsWired(t *testing.T) {
-	src := string(indexHTML)
+	src := poolStatsUISource(t)
 	for _, want := range []string{
-		`id="sourceRPM"`,
-		`id="sourceAccountRPM"`,
+		`id="sourceRequestLimits"`,
+		`id="sourceRequestLimitsEmpty"`,
+		`id="btnAddSourceLimit"`,
+		`function sourceLimitConfig(cfg)`,
+		`function sourceLimitWindowParts(window)`,
+		`function sourceLimitWindow(every, unit)`,
+		`function addSourceLimitRow(rule)`,
+		`function renderSourceLimits(rules)`,
+		`function readSourceLimits()`,
+		`renderSourceLimits(sourceLimitConfig(cfg));`,
+		`cfg.request_limits = readSourceLimits();`,
 		`id="sourceMaxInFlight"`,
 		`id="sourceAccountMaxInFlight"`,
-		`id="sourceCooldown"`,
-		`id="sourceRateCooldown"`,
-		`id="sourceQuotaCooldown"`,
-		`id="sourceAuthCooldown"`,
-		`id="sourceUpstreamCooldown"`,
-		`const intText = value => value == null ? "" : String(value);`,
-		`$("#sourceMaxInFlight").value = intText(cfg.max_in_flight);`,
-		`if (maxInFlight != null) cfg.max_in_flight = maxInFlight;`,
-		`["#sourceCooldown", "cooldown"]`,
-		`["#sourceRateCooldown", "rate_limit_cooldown"]`,
-		`["#sourceQuotaCooldown", "quota_cooldown"]`,
-		`["#sourceAuthCooldown", "auth_cooldown"]`,
-		`["#sourceUpstreamCooldown", "upstream_cooldown"]`,
 	} {
 		if !strings.Contains(src, want) {
 			t.Errorf("source limits editor is missing %q", want)
 		}
+	}
+	if strings.Contains(src, `id="sourceRPM"`) || strings.Contains(src, `id="sourceAccountRPM"`) {
+		t.Error("legacy RPM inputs are still rendered; rules should be the only request-count editor")
+	}
+	start := strings.Index(src, `<form class="dlg" id="sourceForm">`)
+	if start < 0 {
+		t.Fatal("source form not found")
+	}
+	form := src[start:]
+	if end := strings.Index(form, "</form>"); end >= 0 {
+		form = form[:end]
+	}
+	if strings.Contains(form, "<textarea") || strings.Contains(form, "sourceLimitJSON") {
+		t.Error("source form exposes a JSON/textarea editor; it must be form controls only")
+	}
+}
+
+func TestSourceHandlerPersistsRequestLimits(t *testing.T) {
+	path := configFile(t, `{}`)
+	p := configPanel(path)
+	p.opts.Registry = core.NewRegistry()
+	p.opts.Reload = func() error { return nil }
+	w := httptest.NewRecorder()
+	body := `{
+		"base_url":"https://relay.example/v1",
+		"request_limits":[
+			{"scope":"account","limit":100,"window":"24h","reset":"rolling"},
+			{"scope":"source","limit":500,"window":"24h","reset":"calendar","timezone":"Asia/Shanghai","reset_at":"08:00"}
+		]
+	}`
+	p.handleSource(w, httptest.NewRequest(http.MethodPut, "/panel/api/sources/relay", strings.NewReader(body)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("save: %d %s", w.Code, w.Body.String())
+	}
+	src := onDisk(t, path)["sources"].(map[string]any)["relay"].(map[string]any)
+	limits, ok := src["request_limits"].([]any)
+	if !ok || len(limits) != 2 {
+		t.Fatalf("request_limits was not persisted: %#v", src["request_limits"])
+	}
+	second := limits[1].(map[string]any)
+	if second["timezone"] != "Asia/Shanghai" || second["reset_at"] != "08:00" {
+		t.Fatalf("calendar rule was not persisted: %#v", second)
+	}
+}
+
+func TestSourceLimitsMigrateLegacyRPM(t *testing.T) {
+	src := poolStatsUISource(t)
+	body := poolStatsFuncBody(t, src, "sourceLimitConfig")
+	for _, want := range []string{
+		`cfg.request_limits`,
+		`cfg.requests_per_minute`,
+		`cfg.requests_per_minute_per_account`,
+		`scope: "source"`,
+		`scope: "account"`,
+		`reset: "first"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("legacy RPM migration is missing %q", want)
+		}
+	}
+}
+
+func TestSourceLimitsWindowAndMigration(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not on PATH")
+	}
+	src := poolStatsUISource(t)
+	code, _ := json.Marshal(
+		poolStatsFuncBody(t, src, "sourceLimitWindowParts") + "\n}" +
+			poolStatsFuncBody(t, src, "sourceLimitWindow") + "\n}" +
+			poolStatsFuncBody(t, src, "sourceLimitConfig") + "\n}")
+	program := `
+const assert=require("assert");
+const vm=require("vm");
+const ctx={}; vm.createContext(ctx);
+vm.runInContext(` + string(code) + `+"\nthis.config=sourceLimitConfig;this.window=sourceLimitWindow;", ctx);
+const legacy=ctx.config({requests_per_minute:120, requests_per_minute_per_account:30});
+assert.strictEqual(legacy.length, 2);
+assert.deepStrictEqual(JSON.parse(JSON.stringify(legacy[0])), {scope:"source", limit:120, every:1, unit:"m", reset:"first", timezone:"Asia/Shanghai", reset_at:"00:00"});
+assert.deepStrictEqual(JSON.parse(JSON.stringify(legacy[1])), {scope:"account", limit:30, every:1, unit:"m", reset:"first", timezone:"Asia/Shanghai", reset_at:"00:00"});
+const current=ctx.config({request_limits:[{scope:"account", limit:100, window:"24h", reset:"rolling"}]});
+assert.strictEqual(current.length, 1);
+assert.strictEqual(current[0].every, 24);
+assert.strictEqual(current[0].unit, "h");
+assert.strictEqual(ctx.window(2, "d"), "48h");
+assert.strictEqual(ctx.window(90, "m"), "90m");
+const compound=ctx.config({request_limits:[{scope:"account", limit:1, window:"1h30m"}]})[0];
+assert.strictEqual(compound.every, 90);
+assert.strictEqual(compound.unit, "m");
+`
+	if out, err := exec.Command(node, "-e", program).CombinedOutput(); err != nil {
+		t.Fatalf("source limit JS behavior: %v\n%s", err, out)
+	}
+}
+
+func TestSourceLimitsEditorPreservesExplicitZeroInFlight(t *testing.T) {
+	path := configFile(t, `{}`)
+	p := configPanel(path)
+	p.opts.Registry = core.NewRegistry()
+	p.opts.Reload = func() error { return nil }
+	w := httptest.NewRecorder()
+	body := `{"base_url":"https://relay.example/v1","max_in_flight":0,"request_limits":[{"scope":"account","limit":1,"window":"1h"}]}`
+	p.handleSource(w, httptest.NewRequest(http.MethodPut, "/panel/api/sources/relay", strings.NewReader(body)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("save: %d %s", w.Code, w.Body.String())
+	}
+	src := onDisk(t, path)["sources"].(map[string]any)["relay"].(map[string]any)
+	if got, ok := src["max_in_flight"]; !ok || got != float64(0) {
+		t.Fatalf("max_in_flight = %#v (present=%v), want explicit zero", got, ok)
 	}
 }
 

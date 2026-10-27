@@ -61,6 +61,9 @@ type SourceConfig struct {
 	// When one key is full the source tries the next key; only when every
 	// eligible key is full does it report busy.
 	RequestsPerMinutePerAccount int `json:"requests_per_minute_per_account,omitempty"`
+	// RequestLimits is the form-driven request-count policy. When non-empty it
+	// replaces the two legacy minute fields above.
+	RequestLimits []SourceRequestLimit `json:"request_limits,omitempty"`
 	// MaxInFlight and MaxInFlightPerAccount feed the gateway's existing
 	// platform brakes.  A pointer keeps "absent" distinct from an explicit
 	// zero, which means no ceiling.
@@ -75,6 +78,68 @@ type SourceConfig struct {
 	QuotaCooldown     string `json:"quota_cooldown,omitempty"`
 	AuthCooldown      string `json:"auth_cooldown,omitempty"`
 	UpstreamCooldown  string `json:"upstream_cooldown,omitempty"`
+}
+
+// SourceRequestLimit is one request-count rule for a relay.  Scope is either
+// "account" (one credential) or "source" (the whole relay).  Window is a Go
+// duration string.  Reset is "rolling", "calendar", or "first"; the latter is
+// the behaviour of the legacy requests_per_minute fields.
+type SourceRequestLimit struct {
+	Scope    string `json:"scope"`
+	Limit    int    `json:"limit"`
+	Window   string `json:"window"`
+	Reset    string `json:"reset,omitempty"`
+	Timezone string `json:"timezone,omitempty"`
+	ResetAt  string `json:"reset_at,omitempty"`
+}
+
+// EffectiveRequestLimits returns the new rule list when it is present.  Old
+// configurations only have the two minute fields; those become "first"
+// windows so their behaviour does not change.
+func (cfg SourceConfig) EffectiveRequestLimits() []SourceRequestLimit {
+	if len(cfg.RequestLimits) > 0 {
+		out := make([]SourceRequestLimit, len(cfg.RequestLimits))
+		copy(out, cfg.RequestLimits)
+		return out
+	}
+	out := make([]SourceRequestLimit, 0, 2)
+	if cfg.RequestsPerMinute > 0 {
+		out = append(out, SourceRequestLimit{Scope: "source", Limit: cfg.RequestsPerMinute, Window: "1m", Reset: "first"})
+	}
+	if cfg.RequestsPerMinutePerAccount > 0 {
+		out = append(out, SourceRequestLimit{Scope: "account", Limit: cfg.RequestsPerMinutePerAccount, Window: "1m", Reset: "first"})
+	}
+	return out
+}
+
+// Signature identifies a rule for persisted counters.  It deliberately
+// excludes Limit: lowering or raising a limit must keep the usage already
+// charged to the same window.  Fields that do not affect a non-calendar rule
+// are excluded as well.
+func (limit SourceRequestLimit) Signature() string {
+	scope := strings.ToLower(strings.TrimSpace(limit.Scope))
+	window := strings.TrimSpace(limit.Window)
+	if d, err := time.ParseDuration(window); err == nil {
+		window = d.String()
+	}
+	reset := strings.ToLower(strings.TrimSpace(limit.Reset))
+	if reset == "" {
+		reset = "rolling"
+	}
+	timezone, resetAt := "", ""
+	if reset == "calendar" {
+		timezone = strings.TrimSpace(limit.Timezone)
+		if timezone == "" {
+			timezone = time.Local.String()
+		} else if loc, err := time.LoadLocation(timezone); err == nil {
+			timezone = loc.String()
+		}
+		resetAt = strings.TrimSpace(limit.ResetAt)
+		if resetAt == "" {
+			resetAt = "00:00"
+		}
+	}
+	return strings.Join([]string{scope, window, reset, timezone, resetAt}, "|")
 }
 
 // CooldownFor resolves one failure's cooldown.  The specific field wins over
@@ -248,6 +313,9 @@ func ValidateSources(sources map[string]SourceConfig) error {
 		if cfg.RequestsPerMinutePerAccount < 0 {
 			return fmt.Errorf("source %q: requests_per_minute_per_account must be >= 0", id)
 		}
+		if err := validateSourceRequestLimits(id, cfg.RequestLimits); err != nil {
+			return err
+		}
 		if cfg.MaxInFlight != nil && *cfg.MaxInFlight < 0 {
 			return fmt.Errorf("source %q: max_in_flight must be >= 0", id)
 		}
@@ -265,6 +333,52 @@ func ValidateSources(sources map[string]SourceConfig) error {
 				return fmt.Errorf("source %q: %s %v", id, name, err)
 			}
 		}
+	}
+	return nil
+}
+
+func validateSourceRequestLimits(id string, limits []SourceRequestLimit) error {
+	seen := map[string]struct{}{}
+	for i, limit := range limits {
+		scope := strings.ToLower(strings.TrimSpace(limit.Scope))
+		if scope != "account" && scope != "source" {
+			return fmt.Errorf("source %q: request_limits[%d].scope must be account or source", id, i)
+		}
+		if limit.Limit <= 0 {
+			return fmt.Errorf("source %q: request_limits[%d].limit must be > 0", id, i)
+		}
+		window, err := time.ParseDuration(strings.TrimSpace(limit.Window))
+		if err != nil || window < time.Second {
+			return fmt.Errorf("source %q: request_limits[%d].window must be at least 1s", id, i)
+		}
+		reset := strings.ToLower(strings.TrimSpace(limit.Reset))
+		if reset == "" {
+			reset = "rolling"
+		}
+		switch reset {
+		case "rolling", "first":
+		case "calendar":
+			if window > 24*time.Hour || (24*time.Hour)%window != 0 {
+				return fmt.Errorf("source %q: request_limits[%d].calendar window must divide 24h", id, i)
+			}
+			if raw := strings.TrimSpace(limit.ResetAt); raw != "" {
+				if _, err := time.Parse("15:04", raw); err != nil {
+					return fmt.Errorf("source %q: request_limits[%d].reset_at must be HH:MM", id, i)
+				}
+			}
+			if raw := strings.TrimSpace(limit.Timezone); raw != "" {
+				if _, err := time.LoadLocation(raw); err != nil {
+					return fmt.Errorf("source %q: request_limits[%d].timezone is invalid", id, i)
+				}
+			}
+		default:
+			return fmt.Errorf("source %q: request_limits[%d].reset must be rolling, calendar or first", id, i)
+		}
+		sig := limit.Signature()
+		if _, ok := seen[sig]; ok {
+			return fmt.Errorf("source %q: request_limits[%d] duplicates another rule", id, i)
+		}
+		seen[sig] = struct{}{}
 	}
 	return nil
 }

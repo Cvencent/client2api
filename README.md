@@ -516,12 +516,21 @@ OpenAI's `schema must be a JSON Schema of 'type: "object"', got 'type: null'`
 - A relay whose models only speak the OpenAI Responses protocol is covered by
   `api_format: "responses"` on the source: chat traffic then goes to
   `/v1/responses` (agentrouter.org, for example).
-- Custom relays have their own rate-limit and cooldown policy, editable in the panel's
-  relay dialog. `requests_per_minute` caps upstream attempts across the relay and
-  `requests_per_minute_per_account` caps each key; a full key is skipped in favour of
-  the next, and the relay reports busy only when every key is full. `max_in_flight`
-  and `max_in_flight_per_account` override the platform/account in-flight ceilings:
-  leave them unset to inherit the platform policy, or set `0` for no ceiling.
+- Custom relays have a form-driven request-count policy in the panel's relay
+  dialog. `request_limits` is an array of rules; each rule has `scope`
+  (`account` or `source`), `limit`, `window` (a Go duration of at least `1s`, such as
+  `1m` or `24h`), `reset` (`rolling`, `calendar` or `first`), and for `calendar` a
+  `timezone` plus optional `reset_at` (`HH:MM`). Multiple rules apply together.
+  Account rules are per key, so a full key rotates to the next one; source rules
+  are shared and return busy when full. `rolling` is an exact sliding window,
+  `calendar` resets at the configured clock time in its timezone, and `first`
+  starts the window at the first charged request (the legacy behaviour). Counters
+  persist in `data/<source>/request_limits.json`, so a restart does not reset the
+  quota. The old `requests_per_minute` and `requests_per_minute_per_account`
+  fields are still accepted and are migrated to `first` rules when the panel
+  saves. `max_in_flight` and `max_in_flight_per_account` override the
+  platform/account in-flight ceilings: leave them unset to inherit the platform
+  policy, or set `0` for no ceiling.
   `cooldown` is the shared fallback; `rate_limit_cooldown`, `quota_cooldown`,
   `auth_cooldown` and `upstream_cooldown` override it per failure kind. An unset
   specific value uses the built-in default (30s for rate limits, 5m for quota/auth,

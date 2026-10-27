@@ -1,6 +1,7 @@
 package core
 
 import (
+	"reflect"
 	"sync"
 	"testing"
 )
@@ -35,7 +36,7 @@ func TestOperatorConfigOverridesAndDisablesBuiltinSource(t *testing.T) {
 	id := registerBuiltinSourceTest(t)
 	override := SourceConfig{Label: "operator label", BaseURL: "https://operator.example.test/v1"}
 	got := WithBuiltinSources(map[string]SourceConfig{id: override})
-	if got[id] != override {
+	if !reflect.DeepEqual(got[id], override) {
 		t.Fatalf("override = %+v, want %+v", got[id], override)
 	}
 

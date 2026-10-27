@@ -16,6 +16,7 @@ func TestAccountStatusNotesRenderInChinese(t *testing.T) {
 		`const NOTE_SENTENCES = {`,
 		`"no credential has been imported yet": "尚未导入凭据"`,
 		`"not configured": "尚未配置"`,
+		`"request limit reached": "请求限额已满"`,
 		`"disabled by operator": "已被操作员停用"`,
 		`[/^plan JWT in the ZCode desktop client credential store$/i, "ZCode 桌面客户端凭据库中的套餐 JWT"]`,
 		`const cjk = /[\u3400-\u9fff]/;`,
@@ -52,6 +53,7 @@ func TestAccountStatusNoteTranslationCoversKnownModulePhrases(t *testing.T) {
 		`"access token expired": "访问令牌已过期"`,
 		`[/^\d+\s+session dead$/i, "会话失效"]`,
 		`[/^web\.tabbit\.com is rate limiting this session/i, "Tabbit 正在限制这个会话；请稍后再试"]`,
+		`"request limit reached": "请求限额已满"`,
 		`[/^web\.tabbit\.com answered;\s*/i, "Tabbit 已正常响应："]`,
 		`[/^not checked yet;\s*/i, "尚未检查；请点击测试"]`,
 	} {

@@ -3875,6 +3875,17 @@ input, select, textarea, .stat, .subtab {
 /* 指标卡顶部那条 1px 彩边承担状态含义：成功/花费/延迟各一色，不再是无意义装饰。 */
 .ustile.ustat-mini, .ustile.ustat-primary { outline: 0; }
 
+/* -- 28. 中转站请求限额规则：表单行不依赖 JSON 输入 ------------------- */
+.source-limit-list { display: grid; gap: 8px; }
+.source-limit-card { border: 1px solid var(--hairline); border-radius: 8px; padding: 10px; background: var(--surface-2); }
+.source-limit-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.source-limit-card .fld { margin: 0; }
+.source-limit-card .hint { margin-top: 2px; }
+.source-limit-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.source-limit-head .grow { flex: 1; }
+.source-limit-card .sourceLimitCalendar[hidden] { display: none; }
+@media (max-width: 720px) { .source-limit-grid { grid-template-columns: 1fr 1fr; } }
+
 /* -- 28. 对话测试：两条常驻报错不要再压在输入区旁边 ------------------- */
 #toasts { max-width: min(420px, calc(100vw - 36px)); }
 #toasts .toast { box-shadow: var(--shadow-float); }
@@ -4741,10 +4752,16 @@ input, select, textarea, .stat, .subtab {
       <div class="fld"><label class="lb" for="sourceAPIFormat">对话协议</label><select id="sourceAPIFormat"><option value="">chat/completions（默认）</option><option value="responses">Responses（/v1/responses）</option></select></div><div class="fld"><label class="lb" for="sourceBalanceProtocol">余额协议</label><select id="sourceBalanceProtocol"><option value="auto">自动识别</option><option value="newapi">New API</option><option value="sub2api">Sub2API</option><option value="openai_billing">OpenAI Billing</option><option value="none">不查询</option></select></div>
       <div class="fld"><label class="lb" for="sourceBalanceQuota">每美元额度</label><input id="sourceBalanceQuota" type="number" min="0" step="1" value="500000" placeholder="500000" inputmode="numeric"></div>
       <fieldset class="source-policy">
-        <legend>限流与冷却</legend>
+        <legend>请求次数限额</legend>
+        <div class="hint">按范围、次数和周期添加规则；多条规则同时生效。单 Key 规则满了会自动换 Key，整个中转站规则满了才返回忙。</div>
+        <div class="hint">滚动窗口按每次请求的实际时间计算；自然周期按所选时区对齐；首次请求起算用于兼容旧配置。</div>
+        <div id="sourceRequestLimits" class="source-limit-list"></div>
+        <div class="hint" id="sourceRequestLimitsEmpty">未设置请求次数限制</div>
+        <button type="button" class="xs" id="btnAddSourceLimit">添加规则</button>
+      </fieldset>
+      <fieldset class="source-policy">
+        <legend>并发与冷却</legend>
         <div class="grid2">
-          <label class="fld"><span class="lb">中转站每分钟请求数</span><input id="sourceRPM" type="number" min="0" step="1" placeholder="留空 = 不限制" inputmode="numeric"><span class="hint">整个中转站每分钟允许发起的上游尝试数；留空或 0 表示不限制。</span></label>
-          <label class="fld"><span class="lb">单账号每分钟请求数</span><input id="sourceAccountRPM" type="number" min="0" step="1" placeholder="留空 = 不限制" inputmode="numeric"><span class="hint">每把 Key 独立计算；一把达到上限时自动换下一把。</span></label>
           <label class="fld"><span class="lb">中转站在途上限</span><input id="sourceMaxInFlight" type="number" min="0" step="1" placeholder="留空 = 继承平台配置" inputmode="numeric"><span class="hint">留空继承平台配置；填 0 表示不限制；正整数覆盖平台上限。</span></label>
           <label class="fld"><span class="lb">单账号在途上限</span><input id="sourceAccountMaxInFlight" type="number" min="0" step="1" placeholder="留空 = 继承平台配置" inputmode="numeric"><span class="hint">留空继承平台配置；填 0 表示不限制；达到上限时换下一把 Key。</span></label>
         </div>
@@ -5249,8 +5266,124 @@ function sourceIntField(selector) {
   const raw = $(selector).value.trim();
   if (raw === "") return null;
   const value = Number(raw);
-  if (!Number.isInteger(value) || value < 0) throw new Error("限流和并发上限必须是 0 或正整数");
+  if (!Number.isInteger(value) || value < 0) throw new Error("并发上限必须是 0 或正整数");
   return value;
+}
+function sourceLimitWindowParts(window) {
+  const raw = String(window || "1m").trim();
+  let total = 0, consumed = 0;
+  const re = /([0-9]+)(d|h|m|s)/g;
+  let match;
+  while ((match = re.exec(raw)) !== null) {
+    consumed += match[0].length;
+    const n = Number(match[1]);
+    if (match[2] === "d") total += n * 86400;
+    else if (match[2] === "h") total += n * 3600;
+    else if (match[2] === "m") total += n * 60;
+    else total += n;
+  }
+  if (consumed !== raw.length || total < 1) return { every: 1, unit: "h" };
+  if (total % 3600 === 0) return { every: total / 3600, unit: "h" };
+  if (total % 60 === 0) return { every: total / 60, unit: "m" };
+  return { every: total, unit: "s" };
+}
+function sourceLimitWindow(every, unit) {
+  const n = Number(every);
+  if (!Number.isInteger(n) || n < 1) throw new Error("请求周期必须是正整数");
+  if (unit === "s") return n + "s";
+  if (unit === "m") return n + "m";
+  if (unit === "h") return n + "h";
+  if (unit === "d") return (n * 24) + "h";
+  throw new Error("请求周期单位无效");
+}
+function sourceLimitConfig(cfg) {
+  const out = [];
+  const limits = Array.isArray(cfg.request_limits) ? cfg.request_limits : [];
+  if (limits.length) {
+    limits.forEach(rule => {
+      const parts = sourceLimitWindowParts(rule.window);
+      out.push({
+        scope: rule.scope === "source" ? "source" : "account",
+        limit: Number(rule.limit || 0),
+        every: parts.every,
+        unit: parts.unit,
+        reset: rule.reset || "rolling",
+        timezone: rule.timezone || "Asia/Shanghai",
+        reset_at: rule.reset_at || "00:00",
+      });
+    });
+    return out;
+  }
+  const rpm = Number(cfg.requests_per_minute || 0);
+  const accountRPM = Number(cfg.requests_per_minute_per_account || 0);
+  if (rpm > 0) out.push({ scope: "source", limit: rpm, every: 1, unit: "m", reset: "first", timezone: "Asia/Shanghai", reset_at: "00:00" });
+  if (accountRPM > 0) out.push({ scope: "account", limit: accountRPM, every: 1, unit: "m", reset: "first", timezone: "Asia/Shanghai", reset_at: "00:00" });
+  return out;
+}
+function syncSourceLimitRow(row) {
+  const calendar = row.querySelector(".sourceLimitReset").value === "calendar";
+  row.querySelectorAll(".sourceLimitCalendar").forEach(el => { el.hidden = !calendar; });
+}
+function syncSourceLimitEmpty() {
+  const list = $("#sourceRequestLimits");
+  $("#sourceRequestLimitsEmpty").hidden = !!(list && list.children.length);
+}
+function addSourceLimitRow(rule) {
+  const r = rule || { scope: "account", limit: 100, every: 1, unit: "d", reset: "rolling", timezone: "Asia/Shanghai", reset_at: "00:00" };
+  const card = document.createElement("div");
+  card.className = "source-limit-card";
+  card.innerHTML = `
+    <div class="source-limit-head"><span class="lb">请求规则</span><span class="grow"></span><button type="button" class="xs sourceLimitRemove">删除</button></div>
+    <div class="source-limit-grid">
+      <label class="fld"><span class="lb">范围</span><select class="sourceLimitScope"><option value="account">每个 Key</option><option value="source">整个中转站</option></select></label>
+      <label class="fld"><span class="lb">最多次数</span><input class="sourceLimitCount" type="number" min="1" step="1" inputmode="numeric"></label>
+      <label class="fld"><span class="lb">周期</span><div class="row"><input class="sourceLimitEvery" type="number" min="1" step="1" inputmode="numeric"><select class="sourceLimitUnit"><option value="s">秒</option><option value="m">分钟</option><option value="h">小时</option><option value="d">天</option></select></div></label>
+      <label class="fld"><span class="lb">重置方式</span><select class="sourceLimitReset"><option value="rolling">滚动窗口</option><option value="calendar">自然周期</option><option value="first">首次请求起算</option></select></label>
+    </div>
+    <div class="source-limit-grid sourceLimitCalendar">
+      <label class="fld"><span class="lb">每天重置时刻</span><input class="sourceLimitAt" type="time" value="00:00"></label>
+      <label class="fld"><span class="lb">时区</span><input class="sourceLimitTimezone" type="text" placeholder="Asia/Shanghai" autocomplete="off" spellcheck="false"></label>
+    </div>`;
+  card.querySelector(".sourceLimitScope").value = r.scope === "source" ? "source" : "account";
+  card.querySelector(".sourceLimitCount").value = String(r.limit || 1);
+  card.querySelector(".sourceLimitEvery").value = String(r.every || 1);
+  card.querySelector(".sourceLimitUnit").value = r.unit || "d";
+  card.querySelector(".sourceLimitReset").value = r.reset || "rolling";
+  card.querySelector(".sourceLimitAt").value = r.reset_at || "00:00";
+  card.querySelector(".sourceLimitTimezone").value = r.timezone || "Asia/Shanghai";
+  syncSourceLimitRow(card);
+  $("#sourceRequestLimits").appendChild(card);
+  syncSourceLimitEmpty();
+}
+function renderSourceLimits(rules) {
+  const list = $("#sourceRequestLimits");
+  list.textContent = "";
+  (rules || []).forEach(addSourceLimitRow);
+  syncSourceLimitEmpty();
+}
+function readSourceLimits() {
+  const out = [];
+  document.querySelectorAll("#sourceRequestLimits .source-limit-card").forEach(card => {
+    const scope = card.querySelector(".sourceLimitScope").value;
+    const limit = Number(card.querySelector(".sourceLimitCount").value);
+    const every = Number(card.querySelector(".sourceLimitEvery").value);
+    const unit = card.querySelector(".sourceLimitUnit").value;
+    const reset = card.querySelector(".sourceLimitReset").value;
+    if (scope !== "account" && scope !== "source") throw new Error("请求限额范围无效");
+    if (!Number.isInteger(limit) || limit < 1) throw new Error("请求次数必须是正整数");
+    if (!Number.isInteger(every) || every < 1) throw new Error("请求周期必须是正整数");
+    if (["s", "m", "h", "d"].indexOf(unit) < 0) throw new Error("请求周期单位无效");
+    if (["rolling", "calendar", "first"].indexOf(reset) < 0) throw new Error("重置方式无效");
+    const rule = { scope, limit, window: sourceLimitWindow(every, unit), reset };
+    if (reset === "calendar") {
+      const timezone = card.querySelector(".sourceLimitTimezone").value.trim();
+      if (!timezone) throw new Error("自然周期必须填写时区");
+      rule.timezone = timezone;
+      rule.reset_at = card.querySelector(".sourceLimitAt").value || "00:00";
+    }
+    out.push(rule);
+  });
+  return out;
 }
 function openSource(id) {
   const cfg = SOURCE_DEFS[id] || {};
@@ -5265,9 +5398,8 @@ function openSource(id) {
   $("#sourceAPIFormat").value = cfg.api_format || "";
   $("#sourceBalanceProtocol").value = cfg.balance_protocol || "auto";
   $("#sourceBalanceQuota").value = cfg.balance_quota_per_usd || 500000;
+  renderSourceLimits(sourceLimitConfig(cfg));
   const intText = value => value == null ? "" : String(value);
-  $("#sourceRPM").value = intText(cfg.requests_per_minute);
-  $("#sourceAccountRPM").value = intText(cfg.requests_per_minute_per_account);
   $("#sourceMaxInFlight").value = intText(cfg.max_in_flight);
   $("#sourceAccountMaxInFlight").value = intText(cfg.max_in_flight_per_account);
   $("#sourceCooldown").value = cfg.cooldown || "";
@@ -5364,12 +5496,9 @@ async function saveSource(ev) {
       api_format: $("#sourceAPIFormat").value,
       balance_quota_per_usd: Number($("#sourceBalanceQuota").value)
     };
-    const rpm = sourceIntField("#sourceRPM");
-    const accountRPM = sourceIntField("#sourceAccountRPM");
+    cfg.request_limits = readSourceLimits();
     const maxInFlight = sourceIntField("#sourceMaxInFlight");
     const accountMaxInFlight = sourceIntField("#sourceAccountMaxInFlight");
-    if (rpm != null) cfg.requests_per_minute = rpm;
-    if (accountRPM != null) cfg.requests_per_minute_per_account = accountRPM;
     if (maxInFlight != null) cfg.max_in_flight = maxInFlight;
     if (accountMaxInFlight != null) cfg.max_in_flight_per_account = accountMaxInFlight;
     for (const [selector, field] of [
@@ -6266,6 +6395,7 @@ const NOTE_WORDS = {
   "the vendor rejected this key": "上游拒绝了这把密钥",
   "disabled by operator": "已被操作员停用", "disabled by the operator": "已被操作员停用",
   "not configured": "尚未配置", "no access token": "没有访问令牌",
+  "request limit reached": "请求限额已满",
   "access token expired": "访问令牌已过期",
   hard_credit: "额度已用尽", soft_rate: "被限流", not_found: "模型或资源不存在",
   server: "上游服务异常", content_blocked: "内容被上游拦截", bad_params: "请求参数错误",
@@ -15406,6 +15536,18 @@ $("#rpResult").addEventListener("click", ev => {
 });
 $("#btnSourceAdd").addEventListener("click", () => openSource());
 $("#btnSourceCancel").addEventListener("click", closeSource);
+$("#btnAddSourceLimit").addEventListener("click", () => addSourceLimitRow());
+$("#sourceRequestLimits").addEventListener("click", ev => {
+  const btn = ev.target.closest && ev.target.closest(".sourceLimitRemove");
+  if (!btn) return;
+  const card = btn.closest(".source-limit-card");
+  if (card) card.remove();
+  syncSourceLimitEmpty();
+});
+$("#sourceRequestLimits").addEventListener("change", ev => {
+  const card = ev.target.closest && ev.target.closest(".source-limit-card");
+  if (card && ev.target.classList.contains("sourceLimitReset")) syncSourceLimitRow(card);
+});
 $("#sourceForm").addEventListener("submit", saveSource);
 $("#sourceVeil").addEventListener("click", ev => { if (ev.target === $("#sourceVeil")) closeSource(); });
 $("#btnPfExpand").addEventListener("click", () => pfSetAll(true));

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
@@ -39,9 +40,7 @@ type source struct {
 	authExhausted func(id string) bool
 	lastUsed      map[string]uint64
 	sequence      uint64
-	rpmWindow     time.Time
-	rpmUsed       int
-	accountRPM    map[string]*sourceRateWindow
+	limits        *sourceRequestLimiter
 	lastErr       string
 	active        bool
 	generation    uint64
@@ -63,22 +62,21 @@ type source struct {
 
 type sourceModelFilter func(context.Context, storedProvider, []modelCatalogueEntry) ([]modelCatalogueEntry, error)
 
-type sourceRateWindow struct {
-	start time.Time
-	used  int
-}
-
 func newSource(name string, cfg core.SourceConfig, deps core.Deps) (*source, error) {
+	limits, err := newSourceRequestLimiter(filepath.Join(deps.DataDir, "request_limits.json"), cfg.EffectiveRequestLimits())
+	if err != nil {
+		return nil, err
+	}
 	s := &source{
-		name:       name,
-		deps:       deps,
-		now:        time.Now,
-		pool:       newProviderPool(),
-		cooling:    map[string]time.Time{},
-		invalid:    map[string]bool{},
-		lastUsed:   map[string]uint64{},
-		accountRPM: map[string]*sourceRateWindow{},
-		affinity:   core.NewAffinity(0),
+		name:     name,
+		deps:     deps,
+		now:      time.Now,
+		pool:     newProviderPool(),
+		cooling:  map[string]time.Time{},
+		invalid:  map[string]bool{},
+		lastUsed: map[string]uint64{},
+		limits:   limits,
+		affinity: core.NewAffinity(0),
 	}
 	s.affinity.StartGC()
 	if err := s.ConfigureSource(cfg); err != nil {
@@ -186,6 +184,15 @@ func (s *source) ConfigureSource(cfg core.SourceConfig) error {
 		return fmt.Errorf("unsupported source account store version %d", store.Version)
 	}
 	rows := store.Providers
+	if s.limits == nil {
+		limits, err := newSourceRequestLimiter(filepath.Join(s.deps.DataDir, "request_limits.json"), cfg.EffectiveRequestLimits())
+		if err != nil {
+			return err
+		}
+		s.limits = limits
+	} else if err := s.limits.Configure(cfg.EffectiveRequestLimits()); err != nil {
+		return err
+	}
 	base := strings.TrimRight(cfg.BaseURL, "/")
 	changed := false
 	for i := range rows {
@@ -214,6 +221,11 @@ func (s *source) ConfigureSource(cfg core.SourceConfig) error {
 	s.active = !cfg.Disabled
 	s.cfg = cfg
 	s.rows = rows
+	ids := make(map[string]struct{}, len(rows))
+	for _, p := range rows {
+		ids[p.ID] = struct{}{}
+	}
+	s.limits.PruneAccounts(ids)
 	s.publishLocked()
 	s.setProxy(cfg.Proxy)
 	return nil
@@ -298,6 +310,14 @@ func (s *source) Status(ctx context.Context) core.Status {
 	defer s.mu.Unlock()
 	st.Label = firstNonEmpty(s.cfg.Label, s.name)
 	st.Detail = s.lastErr
+	sourceLimit := s.sourceLimitBlocked(now)
+	if sourceLimit != nil {
+		detail := "请求限额已满；恢复时间 " + sourceLimit.Until.UTC().Format(time.RFC3339)
+		if st.Detail != "" {
+			st.Detail += "; "
+		}
+		st.Detail += detail
+	}
 	for _, m := range models {
 		st.Models = append(st.Models, m.ID)
 	}
@@ -313,26 +333,41 @@ func (s *source) Status(ctx context.Context) core.Status {
 		for _, m := range supported {
 			allowed[m] = true
 		}
+		limitBlock := s.accountLimitBlocked(a.ID, now)
 		parks := []map[string]any{}
 		for _, m := range models {
 			if !allowed[m.ID] {
 				parks = append(parks, map[string]any{"model": m.ID, "kind": "unsupported"})
 			} else if until := s.cooling[a.ID]; now.Before(until) {
 				parks = append(parks, map[string]any{"model": m.ID, "kind": "rate_limit", "until": until.UTC().Format(time.RFC3339)})
+			} else if limitBlock != nil {
+				parks = append(parks, map[string]any{"model": m.ID, "kind": "request_limit", "until": limitBlock.Until.UTC().Format(time.RFC3339)})
 			}
 		}
 		a.Extra["model_cooldowns"] = parks
-		if !a.Enabled {
+		switch {
+		case !a.Enabled:
 			a.State = "invalid"
-		} else if s.invalid[a.ID] {
+		case s.invalid[a.ID]:
 			// The vendor rejected this key; waiting does not bring it back.
 			a.State = "invalid"
-		} else if now.Before(s.cooling[a.ID]) {
+		case now.Before(s.cooling[a.ID]):
 			a.State = "cooling"
-		} else {
+			if limitBlock != nil {
+				a.Note = "request limit reached"
+				a.ExpiresAt = limitBlock.Until.UTC().Format(time.RFC3339)
+			}
+		case limitBlock != nil:
+			a.State = "cooling"
+			a.Note = "request limit reached"
+			a.ExpiresAt = limitBlock.Until.UTC().Format(time.RFC3339)
+		default:
 			st.Ready = true
 		}
 		st.Accounts = append(st.Accounts, a)
+	}
+	if sourceLimit != nil {
+		st.Ready = false
 	}
 	return st
 }
@@ -362,7 +397,7 @@ func (s *source) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 	tried := map[string]bool{}
 	var last error
 	cooling := false
-	rpmBlocked := false
+	var limitBlock *requestLimitBlock
 	conversationKey := core.ConversationKeyOf(req)
 	bound, _ := s.affinity.Resolve(conversationKey, s.usableFor(req.Model))
 	// Account-slot contention does not spend a network retry; inspect all keys.
@@ -373,6 +408,11 @@ func (s *source) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 		if !s.active {
 			s.mu.Unlock()
 			return nil, fmt.Errorf("%w: source %s is disabled or removed", core.ErrNotConfigured, s.name)
+		}
+		if block := s.sourceLimitBlocked(now); block != nil {
+			limitBlock = block
+			s.mu.Unlock()
+			break
 		}
 		candidates := []storedProvider{}
 		for _, p := range s.rows {
@@ -385,9 +425,11 @@ func (s *source) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 						cooling = true
 						break
 					}
-					if !s.accountRPMAllowedLocked(p.ID, now) {
-						rpmBlocked = true
-						continue
+					if block := s.accountLimitBlocked(p.ID, now); block != nil {
+						if laterBlock(limitBlock, block) {
+							limitBlock = block
+						}
+						break
 					}
 					candidates = append(candidates, p)
 					break
@@ -422,26 +464,30 @@ func (s *source) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 		}
 		transport, prov := s.transportLocked(), s.providerLocked(p)
 		s.mu.Unlock()
+
+		body, err := buildChatBody(transport.cfg, prov, transport.wireModelID(req.Model), req)
+		if err != nil {
+			return nil, err
+		}
 		if err := req.AcquireAccountSlot(p.ID); err != nil {
 			last = err
 			continue
 		}
-		// RPM is charged only after the local account slot is secured: a slot
-		// refusal never reached the vendor and must not consume the next
-		// caller's minute.
-		s.mu.Lock()
-		if !s.acquireRPMsLocked(p.ID, s.now()) {
-			s.mu.Unlock()
-			req.ReleaseAccountSlot()
-			last = core.ErrBusy
-			cooling = true
-			break
-		}
-		s.mu.Unlock()
-		body, err := buildChatBody(transport.cfg, prov, transport.wireModelID(req.Model), req)
+		block, err := s.acquireRequestLimit(p.ID, s.now())
 		if err != nil {
 			req.ReleaseAccountSlot()
 			return nil, err
+		}
+		if block != nil {
+			req.ReleaseAccountSlot()
+			last = core.ErrBusy
+			if laterBlock(limitBlock, block) {
+				limitBlock = block
+			}
+			if block.Scope == "source" {
+				break
+			}
+			continue
 		}
 		core.NoteServedBy(req, p.ID)
 		stream, err := transport.doChat(ctx, prov, p.ID, body)
@@ -465,10 +511,34 @@ func (s *source) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 	if last != nil {
 		return nil, last
 	}
-	if cooling || rpmBlocked {
+	if limitBlock != nil {
+		return nil, fmt.Errorf("%w: %s request limit reached; retry after %s", core.ErrBusy, s.name, limitBlock.Until.Format(time.RFC3339))
+	}
+	if cooling {
 		return nil, fmt.Errorf("%w: %s has a key for model %q but it is cooling down", core.ErrBusy, s.name, req.Model)
 	}
 	return nil, fmt.Errorf("%w: %s has no ready API key for model %q; scan models first", core.ErrNotConfigured, s.name, req.Model)
+}
+
+func (s *source) accountLimitBlocked(id string, now time.Time) *requestLimitBlock {
+	if s.limits == nil {
+		return nil
+	}
+	return s.limits.AccountBlocked(id, now)
+}
+
+func (s *source) sourceLimitBlocked(now time.Time) *requestLimitBlock {
+	if s.limits == nil {
+		return nil
+	}
+	return s.limits.SourceBlocked(now)
+}
+
+func (s *source) acquireRequestLimit(id string, now time.Time) (*requestLimitBlock, error) {
+	if s.limits == nil {
+		return nil, nil
+	}
+	return s.limits.Acquire(id, now)
 }
 
 func (s *source) noteFailure(id, key, base string, err error) {
@@ -531,47 +601,6 @@ func sourceDefaultCooldown(kind core.FailureKind) time.Duration {
 	default:
 		return 0
 	}
-}
-
-func (s *source) accountRPMAllowedLocked(id string, now time.Time) bool {
-	limit := s.cfg.RequestsPerMinutePerAccount
-	if limit <= 0 {
-		return true
-	}
-	window := s.accountRPM[id]
-	if window == nil || now.Sub(window.start) >= time.Minute {
-		return true
-	}
-	return window.used < limit
-}
-
-func (s *source) acquireRPMsLocked(id string, now time.Time) bool {
-	if s.cfg.RequestsPerMinute > 0 {
-		if s.rpmWindow.IsZero() || now.Sub(s.rpmWindow) >= time.Minute {
-			s.rpmWindow = now
-			s.rpmUsed = 0
-		}
-		if s.rpmUsed >= s.cfg.RequestsPerMinute {
-			return false
-		}
-	}
-	if s.cfg.RequestsPerMinutePerAccount > 0 {
-		window := s.accountRPM[id]
-		if window == nil || now.Sub(window.start) >= time.Minute {
-			window = &sourceRateWindow{start: now}
-			s.accountRPM[id] = window
-		}
-		if window.used >= s.cfg.RequestsPerMinutePerAccount {
-			return false
-		}
-	}
-	if s.cfg.RequestsPerMinute > 0 {
-		s.rpmUsed++
-	}
-	if s.cfg.RequestsPerMinutePerAccount > 0 {
-		s.accountRPM[id].used++
-	}
-	return true
 }
 
 type sourceStream struct {
