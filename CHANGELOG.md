@@ -18,7 +18,7 @@
 ### Installer
 
 - `client2api-setup-0.4.3.exe`（空包，不含账号凭据或本机配置）
-- SHA256：`<pending>`
+- SHA256：`9155F2E0D60975BF3B62575BB3FDFFBEECA17040786D205E8797966F4E480BD2`
 - 升级会保留现有 `configs/client2api.json`、`data/`、账号池、用量和任务数据。
 ## [0.4.2] - 2026-10-26
 
