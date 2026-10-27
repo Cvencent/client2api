@@ -158,6 +158,11 @@ func (p *panel) speedRouteStep(parent context.Context, step core.RoutePlanStep) 
 	ctx, cancel := context.WithTimeout(parent, routeSpeedTimeout)
 	defer cancel()
 
+	// now is the probe's time source.  Production reads the wall clock; a test
+	// can install a scripted one so the window arithmetic is asserted exactly
+	// instead of depending on where the wall clock falls inside a timer tick.
+	now := p.clock()
+
 	maxTokens := routeSpeedMaxTokens
 	var servedBy string
 	chatReq := &core.ChatRequest{
@@ -168,16 +173,16 @@ func (p *panel) speedRouteStep(parent context.Context, step core.RoutePlanStep) 
 		ServedBy:  &servedBy,
 		FreeModel: step.Free,
 	}
-	started := time.Now()
+	started := now()
 	stream, err := client.Chat(ctx, chatReq)
 	if err != nil {
 		result.Error = core.Redact(err.Error())
-		result.ElapsedMS = elapsedMS(started)
+		result.ElapsedMS = elapsedMS(now, started)
 		return result
 	}
 	if stream == nil {
 		result.Error = "platform returned no stream"
-		result.ElapsedMS = elapsedMS(started)
+		result.ElapsedMS = elapsedMS(now, started)
 		return result
 	}
 	defer stream.Close()
@@ -210,7 +215,7 @@ func (p *panel) speedRouteStep(parent context.Context, step core.RoutePlanStep) 
 		}
 		if recvErr != nil {
 			result.Error = core.Redact(recvErr.Error())
-			result.ElapsedMS = elapsedMS(started)
+			result.ElapsedMS = elapsedMS(now, started)
 			return result
 		}
 		if ev.Type == core.EventError {
@@ -219,17 +224,17 @@ func (p *panel) speedRouteStep(parent context.Context, step core.RoutePlanStep) 
 			} else {
 				result.Error = "upstream stream error"
 			}
-			result.ElapsedMS = elapsedMS(started)
+			result.ElapsedMS = elapsedMS(now, started)
 			return result
 		}
 		isContent := ev.Type == core.EventDelta || ev.Type == core.EventToolCall || strings.TrimSpace(ev.Reasoning) != ""
 		if isContent {
-			now := time.Now()
+			stamp := now()
 			if !firstEvent {
 				firstEvent = true
-				result.FirstEventMS = elapsedMS(started)
+				result.FirstEventMS = elapsedMS(now, started)
 			}
-			lastContent = now
+			lastContent = stamp
 		}
 		if ev.Type == core.EventUsage && ev.Usage != nil {
 			usage = *ev.Usage
@@ -239,7 +244,7 @@ func (p *panel) speedRouteStep(parent context.Context, step core.RoutePlanStep) 
 
 	result.OK = true
 	result.AccountID = servedBy
-	result.ElapsedMS = elapsedMS(started)
+	result.ElapsedMS = elapsedMS(now, started)
 	if usageSeen {
 		result.CompletionTokens = usage.CompletionTokens
 		if usage.CompletionTokens > 0 && firstEvent {
@@ -258,9 +263,9 @@ func (p *panel) speedRouteStep(parent context.Context, step core.RoutePlanStep) 
 	return result
 }
 
-func elapsedMS(started time.Time) int64 {
+func elapsedMS(now func() time.Time, started time.Time) int64 {
 	if started.IsZero() {
 		return 0
 	}
-	return time.Since(started).Milliseconds()
+	return now().Sub(started).Milliseconds()
 }
