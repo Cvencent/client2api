@@ -65,10 +65,21 @@ const claimOKBody = `{"base_resp":{"status_code":0,"status_msg":"ok"},"data":{` 
 
 // creditDetailsBody is the real credit/details payload: details and total_count
 // sit at the TOP level, with no data wrapper.
-const creditDetailsBody = `{"details":[` +
-	`{"credit_type":2,"granted_amount":"800.00","remaining_amount":"781.47",` +
-	`"consumed_amount":"18.53","granted_at_ms":1790667507262,"expire_at_ms":1793203200000}` +
-	`],"total_count":1,"base_resp":{"status_code":0,"status_msg":"ok"}}`
+//
+// The expiry is built from time.Now rather than written as a literal.  It used
+// to be a fixed epoch, which made the fixture's meaning drift with the calendar:
+// the test that feeds it to AccountBalance asserts the tranche is NOT expiring
+// inside a one-hour window, and that was true only until the literal's date
+// arrived.  A relative stamp keeps the fixture describing what the test says it
+// describes ("a tranche a year out") on every run.
+func creditDetailsBody() string {
+	expire := time.Now().Add(365 * 24 * time.Hour).UnixMilli()
+	granted := time.Now().Add(-30 * 24 * time.Hour).UnixMilli()
+	return fmt.Sprintf(`{"details":[`+
+		`{"credit_type":2,"granted_amount":"800.00","remaining_amount":"781.47",`+
+		`"consumed_amount":"18.53","granted_at_ms":%d,"expire_at_ms":%d}`+
+		`],"total_count":1,"base_resp":{"status_code":0,"status_msg":"ok"}}`, granted, expire)
+}
 
 // signinConfig is one enabled account with a pinned timezone, so the tests can
 // assert on the timezone_id the module sends instead of on whatever zone the
@@ -382,7 +393,7 @@ func TestCheckinActionsOffersNothingWhenNoAccountCanAct(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestAccountBalanceReadsTheUnwrappedCreditDetails(t *testing.T) {
-	s := &scriptedSignin{creditBody: creditDetailsBody}
+	s := &scriptedSignin{creditBody: creditDetailsBody()}
 	c, ft := newTestClient(t, signinConfig(), s.handler())
 
 	bal, err := c.AccountBalance(context.Background(), "acct-1", 0)
@@ -399,9 +410,11 @@ func TestAccountBalanceReadsTheUnwrappedCreditDetails(t *testing.T) {
 	if bal.EarliestRemaining != 781 {
 		t.Errorf("earliest_remaining = %d, want 781", bal.EarliestRemaining)
 	}
-	want := time.Unix(1793203200, 0)
-	if !bal.EarliestAt.Equal(want) {
-		t.Errorf("earliest_at = %s, want %s", bal.EarliestAt, want)
+	// The fixture's expiry is relative now, so assert the round trip rather than
+	// a calendar date: whatever creditDetailsBody() stamped must come back out.
+	want := time.Now().Add(365 * 24 * time.Hour)
+	if d := bal.EarliestAt.Sub(want); d > time.Minute || d < -time.Minute {
+		t.Errorf("earliest_at = %s, want about %s (off by %s)", bal.EarliestAt, want, d)
 	}
 	// soon == 0 means "do not compute that bucket at all".
 	if bal.Expiring != 0 {
@@ -416,7 +429,7 @@ func TestAccountBalanceReadsTheUnwrappedCreditDetails(t *testing.T) {
 }
 
 func TestAccountBalanceCountsTranchesExpiringInsideTheWindow(t *testing.T) {
-	s := &scriptedSignin{creditBody: creditDetailsBody}
+	s := &scriptedSignin{creditBody: creditDetailsBody()}
 	c, _ := newTestClient(t, signinConfig(), s.handler())
 
 	soon, err := c.AccountBalance(context.Background(), "acct-1", time.Hour)
@@ -516,7 +529,7 @@ func TestAccountPackagesNamesAndSortsTheTranches(t *testing.T) {
 }
 
 func TestAccountBalanceReportsAMissingAccountAsAnError(t *testing.T) {
-	s := &scriptedSignin{creditBody: creditDetailsBody}
+	s := &scriptedSignin{creditBody: creditDetailsBody()}
 	c, _ := newTestClient(t, signinConfig(), s.handler())
 
 	if _, err := c.AccountBalance(context.Background(), "nobody", 0); err == nil {
