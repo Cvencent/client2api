@@ -89,13 +89,21 @@ func TestPlatformsPageSplitsGroupsAndPlatformRulesIntoTabs(t *testing.T) {
 	}
 
 	rules := subtabPanelHTML(t, src, "platforms-rules")
-	for _, want := range []string{`id="pfSearch"`, `id="pfOnlyOff"`, `id="btnPfExpand"`, `id="btnPfCollapse"`, `id="pfBody"`} {
+	for _, want := range []string{`id="pfSearch"`, `id="pfOnlyOff"`, `id="pfBody"`} {
 		if !strings.Contains(rules, want) {
 			t.Errorf("平台与模型面板缺少 %q", want)
 		}
 	}
 	if strings.Contains(rules, `id="pfGroups"`) {
 		t.Error("平台与模型面板不应包含模型路由组 #pfGroups")
+	}
+	// 展开 / 收起搬到了本页顶部的「更多」菜单：它作用于整份平台配置的展示，
+	// 不属于「平台与模型」这一个子页。按钮必须仍在平台配置页内且仍被脚本引用。
+	page := viewHTML(t, src, "platforms")
+	for _, want := range []string{`id="btnPfExpand"`, `id="btnPfCollapse"`} {
+		if !strings.Contains(page, want) {
+			t.Errorf("平台配置页缺少 %q", want)
+		}
 	}
 
 	if strings.Contains(subtabOpenTag(t, src, "platforms-groups"), " hidden") {

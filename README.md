@@ -5,7 +5,7 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-Current version: **0.4.7**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
+Current version: **0.5.0**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
 
 client2api is a personal, local-only OpenAI-compatible gateway. It aggregates
 the accounts and API Keys **you own** on different AI coding clients and
@@ -325,6 +325,13 @@ OpenAI's `schema must be a JSON Schema of 'type: "object"', got 'type: null'`
   prompt text, so the screenshots a coding agent's history keeps re-sending
   refuse the request outright. Vision-capable Loomy models keep their images.
   Details in `clients/loomy/README.md`.
+- Platforms with no image input anywhere in the product (LobsterAI) publish
+  `supports_images: false` on their catalogue entries, and the router's
+  pre-flight reads it: an image-carrying request skips such a platform toward a
+  sibling that can serve the image instead of paying the module's
+  "accepts text only" refusal first. A text-only request and a catalogue entry
+  that stays silent keep the existing order — only a stated `false` is
+  acted on.
 - A refusal that names both numbers is also a measurement of the request that was
   just sent. When the gateway's own estimate read low enough to forward that request
   unchanged, the history is trimmed to the proportion the vendor's window can hold and
@@ -507,7 +514,13 @@ OpenAI's `schema must be a JSON Schema of 'type: "object"', got 'type: null'`
   empty object skeleton filled in, and every assistant turn carries
   `reasoning_content` (as `""` when there is no trace). Without these the relay
   answers 400 with messages like "当前模型或上游不支持工具调用" or a bare
-  "HTTP 400", neither of which means what it says.
+  "HTTP 400", neither of which means what it says. A relay that answers 400
+  with a tool-capability refusal ("当前模型或上游不支持工具调用", "tools are
+  not supported" and their English siblings) even after the downgrade is
+  classified as a model-scoped refusal (`model_refused`): the account stays
+  healthy, the panel row reads 模型不适用于该平台, and a request that arrived
+  through a model group moves to the next member instead of failing -- naming
+  that platform explicitly (`relay/model`) still returns the 400 honestly.
 - A custom relay can use its own egress proxy: set `proxy` (for example
   `http://127.0.0.1:7890`, `socks5://127.0.0.1:1080` or a `user:pass@` URL) in
   the relay dialog and every request that relay makes — chat, model scan,

@@ -63,6 +63,17 @@ func (c *taskBoardCache) load() {
 	c.clients = doc.Clients
 }
 
+// taskBoardCacheTTL bounds how long a remembered task list is served without
+// asking the module again.
+//
+// The cache is a write-through read cache and used to have no expiry at all,
+// which meant an entry written once was served for ever: a board could still be
+// rendering an account's state from weeks earlier, long after the vendor had
+// released a new grant or the module had changed its mind.  A task row is
+// vendor-derived and cheap to re-read (the module itself caches the underlying
+// billing call), so a few minutes of staleness is the most this is worth.
+const taskBoardCacheTTL = 5 * time.Minute
+
 func (c *taskBoardCache) entry(client, id string) (taskBoardCacheEntry, bool) {
 	if c == nil {
 		return taskBoardCacheEntry{}, false
@@ -75,6 +86,11 @@ func (c *taskBoardCache) entry(client, id string) (taskBoardCacheEntry, bool) {
 	}
 	e, ok := byID[id]
 	if !ok {
+		return taskBoardCacheEntry{}, false
+	}
+	// A stale entry is reported as a miss so the caller fetches again; the
+	// module decides what is current, this cache only avoids the round trip.
+	if e.FetchedAt > 0 && time.Since(time.UnixMilli(e.FetchedAt)) > taskBoardCacheTTL {
 		return taskBoardCacheEntry{}, false
 	}
 	if e.Tasks != nil {

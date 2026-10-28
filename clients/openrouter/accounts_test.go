@@ -495,7 +495,7 @@ func TestCoreKindForMapsEveryVerdict(t *testing.T) {
 		kindAuth:       core.FailureAuth,
 		kindServer:     core.FailureUpstream,
 		kindBlocked:    core.FailureContentBlocked,
-		kindNotFound:   core.FailureOther,
+		kindNotFound:   core.FailureModelRefused,
 		kindClient:     core.FailureOther,
 		kindNone:       core.FailureOther,
 	}
@@ -537,8 +537,13 @@ func TestClassifyHTTPLeavesANoteButParksNothingForANotFound(t *testing.T) {
 	id := accountIDFor(testKey)
 
 	err := c.classifyHTTP("chat", id, http.StatusNotFound, []byte(`{"error":{"message":"No endpoints found for that model","code":404}}`), admission{model: "paid/model"})
-	if core.FailureKindOf(err) != core.FailureOther {
-		t.Fatalf("kind = %q, want other", core.FailureKindOf(err))
+	// A not-found names the model, not the key: FailureModelRefused means
+	// "do not rotate accounts, but do move to the next platform".
+	if core.FailureKindOf(err) != core.FailureModelRefused {
+		t.Fatalf("kind = %q, want model_refused", core.FailureKindOf(err))
+	}
+	if core.Retryable(core.FailureKindOf(err)) {
+		t.Error("a not-found must not rotate accounts")
 	}
 	if core.ErrorAccountID(err) != id || core.ErrorClient(err) != clientName {
 		t.Fatalf("failure = %v, want it attributed to %q", err, id)

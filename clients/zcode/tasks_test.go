@@ -220,13 +220,15 @@ func TestTasksReportsAClaimablePlan(t *testing.T) {
 	}
 }
 
-func TestTasksWithoutASolverSaysSoAndCallsNothing(t *testing.T) {
+func TestTasksWithoutASolverSaysSoInsteadOfClaiming(t *testing.T) {
 	// With neither a solver nor a browser attached, the board's own 领取 button
 	// cannot work: RunTask has no captcha token to hand over.  So the row has to
 	// stay locked AND say where the operator should go instead -- the account
 	// list, where the click happens in their own browser and the panel can run
-	// the vendor's SDK.  It must not spend a request discovering what it
-	// already knows.
+	// the vendor's SDK.  It must not spend a claim or a captcha discovering what
+	// it already knows.  One billing read is allowed and expected: a grant the
+	// vendor handed over needs no captcha, so "is one already held?" is the one
+	// question this board can still answer without a solver.
 	c, ft, _ := claimEnv(t, previewRoutes(), false)
 
 	tasks, err := c.Tasks(context.Background(), "")
@@ -245,8 +247,11 @@ func TestTasksWithoutASolverSaysSoAndCallsNothing(t *testing.T) {
 	if !strings.Contains(tasks[0].Note, "浏览器") || !strings.Contains(tasks[0].Note, "账号列表") {
 		t.Errorf("note = %q, want the browser route named", tasks[0].Note)
 	}
-	if ft.count() != 0 {
-		t.Errorf("made %d HTTP requests, want 0", ft.count())
+	if n := pathCount(ft, planClaimPath); n != 0 {
+		t.Errorf("posted %d claims without a solver, want 0", n)
+	}
+	if n := pathCount(ft, planCurrentPath); n > 1 {
+		t.Errorf("read the held plan %d times, want at most 1", n)
 	}
 }
 

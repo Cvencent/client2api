@@ -955,7 +955,7 @@ func TestChatDoesNotFailOverAContentBlock(t *testing.T) {
 func TestBareModelSkipsAPlatformThatCannotServeTheModel(t *testing.T) {
 	cline := &testClient{
 		name:    "cline",
-		chatErr: core.Fail("cline", "c1", core.FailureOther, http.StatusNotFound, errors.New("upstream returned HTTP 404: model not found")),
+		chatErr: core.Fail("cline", "c1", core.FailureModelRefused, http.StatusNotFound, errors.New("upstream returned HTTP 404: model not found")),
 		catalogue: []core.Model{
 			{ID: "cline-free/deepseek-v4.1-flash", OwnedBy: "cline", Extra: map[string]any{"free": true}},
 			{ID: "deepseek/deepseek-v4.1-flash", OwnedBy: "deepseek"},
@@ -1002,7 +1002,7 @@ func TestBareModelSkipsAPlatformThatCannotServeTheModel(t *testing.T) {
 func TestModelRefusalForANamedPlatformIsNotHidden(t *testing.T) {
 	cline := &testClient{
 		name:      "cline",
-		chatErr:   core.Fail("cline", "c1", core.FailureOther, http.StatusNotFound, errors.New("upstream returned HTTP 404: model not found")),
+		chatErr:   core.Fail("cline", "c1", core.FailureModelRefused, http.StatusNotFound, errors.New("upstream returned HTTP 404: model not found")),
 		catalogue: []core.Model{{ID: "cline-free/deepseek-v4.1-flash", OwnedBy: "cline", Extra: map[string]any{"free": true}}},
 	}
 	workbuddy := &testClient{

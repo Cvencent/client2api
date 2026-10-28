@@ -509,6 +509,82 @@ func (c *Client) claimPlanOnce(ctx context.Context, acct *Account, planID, verif
 	return payload.Plan.StartsAt, payload.Plan.EndsAt, nil
 }
 
+// planCurrentPath lists the plans the account is *holding*, as opposed to
+// planPreviewPath, which lists the plans it could *claim*.
+//
+// The two are not the same mechanism and that matters here.  The manual claim
+// is a promotion the operator clicks through, and it is captcha-gated.  The
+// daily grant is not: the vendor decides it from the account's liveness signal
+// (see reportActivation) and hands it over without any captcha, so it never
+// appears in a preview.  A build that only ever read the preview could hold a
+// live plan and still report "nothing to claim", which is exactly the state
+// that made an account with 300,000,000 granted tokens look exhausted.
+const planCurrentPath = "/api/v1/zcode-plan/billing/current"
+
+// planCurrentOf reads the plans the account currently holds, newest document
+// shape first.  Unlike a preview, an empty answer here is a real "no active
+// plan": this endpoint reports what was granted, not what might be offered.
+func (c *Client) planCurrentOf(ctx context.Context, acct *Account) (*planBalances, error) {
+	q := url.Values{}
+	q.Set("app_version", c.appVersion())
+
+	var env planEnvelope
+	if err := c.planDo(ctx, http.MethodGet, planCurrentPath+"?"+q.Encode(), acct, "", "", nil, &env); err != nil {
+		return nil, err
+	}
+	data, err := env.open(planCurrentPath)
+	if err != nil {
+		return nil, err
+	}
+
+	out := &planBalances{}
+	if len(data) > 0 {
+		if err := json.Unmarshal(data, out); err != nil {
+			return nil, fmt.Errorf("zcode: decode %s: %w", planCurrentPath, err)
+		}
+	}
+	return out, nil
+}
+
+// planWindow is an active plan's validity window, in the vendor's own seconds.
+type planWindow struct {
+	PlanID   string
+	Name     string
+	StartsAt time.Time
+	EndsAt   time.Time
+}
+
+// activePlanWindow returns the highest-priority active plan that has not
+// expired yet, or false when the document holds no such plan.
+//
+// "Active" is both the vendor's status field and the clock: a plan whose status
+// still says active but whose ends_at has passed is over, and treating it as
+// live would keep an account in rotation on quota it can no longer spend.
+func activePlanWindow(doc *planBalances, now time.Time) (planWindow, bool) {
+	if doc == nil || len(doc.Plans) == 0 {
+		return planWindow{}, false
+	}
+	top := topActivePlan(doc)
+	if top.id() == "" {
+		return planWindow{}, false
+	}
+	if status := strings.ToLower(strings.TrimSpace(top.Status)); status != "" && status != "active" {
+		return planWindow{}, false
+	}
+	w := planWindow{PlanID: top.id(), Name: top.Name}
+	if top.StartsAt > 0 {
+		w.StartsAt = time.Unix(top.StartsAt, 0)
+	}
+	if top.EndsAt <= 0 {
+		return planWindow{}, false
+	}
+	w.EndsAt = time.Unix(top.EndsAt, 0)
+	if !now.Before(w.EndsAt) {
+		return planWindow{}, false
+	}
+	return w, true
+}
+
 // planBalance is one row of the vendor's per-entitlement balance list.
 //
 // Remaining and Available are pointers because a genuinely empty tranche reads
@@ -787,6 +863,27 @@ func (c *Client) Checkin(ctx context.Context, id, action string) (core.CheckinRe
 		return done()
 	}
 	if len(plans) == 0 {
+		// An empty preview is not the same thing as an empty account.  The
+		// vendor grants the daily window from the liveness signal and hands it
+		// over without a captcha, so a build that only read the preview would
+		// report "nothing to claim" while the account is holding a live grant.
+		// Ask what is actually active before settling the verdict.
+		if win, ok := c.heldPlanWindow(ctx, acct); ok {
+			res.OK = true
+			res.Code = 0
+			res.Message = fmt.Sprintf("已持有 %s，有效期至 %s",
+				firstNonEmpty(win.Name, win.PlanID), win.EndsAt.Local().Format("2006-01-02 15:04"))
+			res.Data = map[string]any{
+				"plan_id":   win.PlanID,
+				"plan_name": win.Name,
+				"starts_at": win.StartsAt.UTC().Format(time.RFC3339),
+				"ends_at":   win.EndsAt.UTC().Format(time.RFC3339),
+			}
+			// A live grant proves the quota is back, so any exhausted mark
+			// recorded before it must not keep the account parked.
+			c.pool.clearPenalty(acct.ID)
+			return done()
+		}
 		// Nothing to claim is a definitive answer for today, not a transport
 		// failure.  Mark it skipped so the panel can disable the action until
 		// the next Shanghai day instead of inviting the same empty click.
@@ -868,6 +965,26 @@ func (c *Client) Checkin(ctx context.Context, id, action string) (core.CheckinRe
 	res.Code = claimCodeUnavailable
 	res.Message = "nothing is claimable right now"
 	return done()
+}
+
+// heldPlanWindow reads billing/current and returns the live window it names,
+// reporting false when the account holds none.
+//
+// It is one small read with no captcha, which is the whole point: the daily
+// grant arrives without one, so the check-in leg can settle the question for
+// such an account even on an install that has no solver at all.  A failed read
+// is reported as false -- the caller then keeps its usual "nothing to claim"
+// verdict, which is right for a vendor that did not answer.
+func (c *Client) heldPlanWindow(ctx context.Context, acct *Account) (planWindow, bool) {
+	current, err := c.planCurrentOf(ctx, acct)
+	if err != nil {
+		// Not an error the operator can act on: a preview already ran, so the
+		// only thing a failed follow-up read changes is whether the account is
+		// reported as holding a grant.  Log it and keep the old verdict.
+		c.pool.log("zcode: reading held plan for %s failed: %v", acct.ID, err)
+		return planWindow{}, false
+	}
+	return activePlanWindow(current, time.Now())
 }
 
 // claimFailure records an error that stopped the action before the vendor

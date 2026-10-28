@@ -886,7 +886,7 @@ func (s *server) serveRemainingCandidates(w http.ResponseWriter, r *http.Request
 		// of being entered.  The last remaining candidate keeps the ordinary
 		// path, so a stale verdict reorders the chain but never refuses it.
 		if len(candidates)-i > 1 {
-			if unavailable := s.candidateUnavailable(r.Context(), candidate); unavailable != nil {
+			if unavailable := s.candidateUnavailableFor(r.Context(), candidate, baseReq.Messages); unavailable != nil {
 				if candidate.Client != nil {
 					s.opts.Registry.NoteModelUnavailable(candidate.Client.Name(), candidate.Model, time.Now())
 					s.opts.Logger.Printf("chat: platform %s model %s cannot serve right now (%v); skipping to the next platform",
@@ -1103,18 +1103,23 @@ func (s *server) noteFailedCandidate(rec *UsageRecord, client core.Client, model
 // not exist on this platform.  A bare-name/Auto request did not choose the
 // platform, so the router may move on to a candidate that does serve it; the
 // account is not at fault, so nothing is parked.
+//
+// The verdict comes from the shared decision table (core.NextPlatformOn), not
+// from a predicate kept here.  It used to carry a second arm -- "unclassified
+// with status 404" -- left over from the 0.1.11 model-not-found fix, back when
+// modules had no way to say "this model is not served here" and the gateway
+// guessed from the status.  Modules now say it: trae/kilocode/openrouter/
+// minimaxcode/lobsterai map their own not-found onto FailureModelRefused, and
+// workbuddy deliberately keeps its 404 as a transient account problem (it
+// parks the account for 60s and rotates).  That difference is exactly why the
+// status must not be the input: the same 404 means opposite things on two
+// platforms, and only the module can tell them apart.
 func modelRefusal(err error) bool {
 	f, ok := core.AsFailure(err)
 	if !ok {
 		return false
 	}
-	if f.Kind == core.FailureModelRefused {
-		// A model-scoped refusal names the model, not the account: this
-		// platform cannot serve it for this caller tier. Status is whatever
-		// the vendor chose (400 or 404); the verdict is in the kind.
-		return true
-	}
-	return f.Kind == core.FailureOther && f.Status == http.StatusNotFound
+	return core.NextPlatformOn(f.Kind)
 }
 
 // explicitPlatformRequest reports whether the caller named this platform in
@@ -1532,6 +1537,12 @@ func failureReason(err error) string {
 		label = "内容被上游拦截"
 	case core.FailureContextWindow:
 		label = "上下文超限"
+	case core.FailureModelRefused:
+		// A model-scoped refusal ("this relay cannot serve tools for that
+		// model", "not allowed for user type"): the account is healthy and a
+		// sibling platform usually serves the same model, so the row must not
+		// read as an upstream rejection of the request itself.
+		label = "模型不适用于该平台"
 	case core.FailureOther:
 		label = "上游拒绝"
 	}

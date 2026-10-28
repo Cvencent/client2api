@@ -114,6 +114,13 @@ func coreKindFor(k failureKind) core.FailureKind {
 		return core.FailureSessionDead
 	case kindServer:
 		return core.FailureUpstream
+	case kindNotFound:
+		// No endpoint on this platform serves the model, so every account here
+		// answers the same: the request has to move to the next platform.  That
+		// is FailureModelRefused (no rotation, yes next platform), not
+		// FailureOther -- the gateway used to have to infer it from a bare
+		// "unclassified + 404".
+		return core.FailureModelRefused
 	default:
 		return core.FailureOther
 	}

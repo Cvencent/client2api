@@ -528,8 +528,17 @@ func TestChatReturnsTypedHTTPError(t *testing.T) {
 	if !errors.As(err, &f) {
 		t.Fatalf("err = %v, want *core.Failure", err)
 	}
-	if f.Kind != core.FailureOther {
-		t.Errorf("kind = %v, want Other (not-found does not blame the account)", f.Kind)
+	if f.Kind != core.FailureModelRefused {
+		t.Errorf("kind = %v, want FailureModelRefused (not-found does not blame the account, but the request must move to the next platform)", f.Kind)
+	}
+	// The two halves that matter, asserted directly so the intent survives a
+	// future reclassification: a missing model must not park a healthy key,
+	// but it must let the request move to the next platform.
+	if core.Retryable(f.Kind) {
+		t.Error("a not-found must not rotate accounts: every account on this platform answers the same")
+	}
+	if !core.NextPlatformOn(f.Kind) {
+		t.Error("a not-found must let the request move to the next platform")
 	}
 }
 

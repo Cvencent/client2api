@@ -987,6 +987,7 @@ POST   /panel/api/models/refresh
 GET    /panel/api/exposed_models
 POST   /panel/api/route_plan
 POST   /panel/api/route_speed
+GET    /panel/api/route_live?limit=N&window=HOURS
 GET    /panel/api/model_probes
 GET    /panel/api/usage?window=HOURS
 POST   /panel/api/usage/save

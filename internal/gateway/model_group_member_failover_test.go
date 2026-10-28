@@ -19,7 +19,7 @@ func TestChatFailsOverFromGroupMemberRefusal(t *testing.T) {
 	alpha := &testClient{
 		name:      "alpha",
 		catalogue: []core.Model{{ID: "alpha-model"}},
-		chatErr:   core.Fail("alpha", "a1", core.FailureOther, http.StatusNotFound, errors.New("model not found")),
+		chatErr:   core.Fail("alpha", "a1", core.FailureModelRefused, http.StatusNotFound, errors.New("model not found")),
 	}
 	beta := &testClient{
 		name:      "beta",

@@ -462,20 +462,48 @@ declared cannot be diagnosed.
 
 The task board is deliberately read-only about *whether* a claim will succeed.
 Three states produce one locked row each, naming the fix, and none of them sends
-a request:
+a request — except for the one billing read described under [Held grants](#held-grants),
+which needs no captcha and therefore runs even when no solver is available:
 
 | Situation | The row says |
 | --- | --- |
 | no `jwt` account at all | 没有可用的 ZCode 计划 (jwt) 账号；活动套餐只走 jwt 通道 |
-| a `jwt` account but no local solver (built-in browser unavailable and no `captcha_command`) | 这个看板的领取按钮没有浏览器可用；请在账号列表里点「领取」，那一步会用你自己的浏览器过验证码 |
+| a `jwt` account but no local solver (built-in browser unavailable and no `captcha_command`), and no held grant | 这个看板的领取按钮没有浏览器可用；请在账号列表里点「领取」，那一步会用你自己的浏览器过验证码 |
+| the preview is empty but the account holds a live grant (see [Held grants](#held-grants)) | `活动套餐生效中` with the plan name and its expiry; no button, because the vendor granted it |
 | the preview is empty and the balance has an active plan | `活动套餐已领取` with the active plan name and remaining token grants; the panel renders this as 已领取 / 已完成 and offers no second claim button |
 | the preview is empty and the balance is empty too | 厂商当前没有可领取的活动套餐 |
 | the preview is empty and the balance read fails | 厂商当前没有可领取的活动套餐（已领取计划暂无法确认） |
 
-`Tasks` caches its preview, and the active-plan balance read that follows an
-empty preview, for ten seconds (`claimBoardTTL`), because the panel re-reads the
-board every three seconds while a run is live and both are billing endpoints. A
-*failed* preview is never cached.
+### Held grants
+
+Not every plan arrives through `billing/claim`. The vendor also grants a daily
+window on its own, decided from the account's liveness signal — the same
+`app_launch` / `app_daily_active` report described under
+[Liveness reporting](#liveness-reporting) — and hands it over **without a
+captcha**. A granted window never appears in `billing/preview`, so a build that
+only read the preview reported "nothing to claim" while the account was holding
+one; observed live, such a grant was `ZCODE GLOBAL BUILD`, active 21:00 → 09:00
+the next morning, 300,000,000 `GLM-5.3-Flash` tokens.
+
+`billing/current` is the endpoint that names it. It is read in exactly two
+places, both only when the preview came back empty:
+
+* `Checkin` asks before settling its verdict. A live window is a **success**
+  (nothing to click, no captcha spent) and it clears an `exhausted` verdict,
+  because a live grant is proof the quota is back.
+* `Tasks` renders it as `活动套餐生效中` with the expiry, so the operator can see
+  a window that closes by itself.
+
+A window is live only while the vendor's status still says `active` **and**
+`ends_at` is in the future. A plan whose status says active after its window
+closed is over, and treating it as live would return an account to rotation on
+quota it can no longer spend.
+
+`Tasks` caches its preview, the active-plan balance read, and the held-plan read
+for ten seconds (`claimBoardTTL`), because the panel re-reads the board every
+three seconds while a run is live and all three are billing endpoints. A
+*failed* preview is never cached. The panel's own task board cache, which is
+separate and survives restarts, expires after five minutes (`taskBoardCacheTTL`).
 
 Two deliberate omissions in the result mapping:
 

@@ -68,6 +68,23 @@ func subtabOpenTag(t *testing.T, src, name string) string {
 	return src[open : at+end+1]
 }
 
+// viewHTML returns one top-level view's whole section, so an assertion can cover
+// chrome the view owns but that sits outside any single secondary-tab panel --
+// the task centre's shared action bar, for instance.
+func viewHTML(t *testing.T, src, view string) string {
+	t.Helper()
+	marker := `<section class="view" id="view-` + view + `"`
+	at := strings.Index(src, marker)
+	if at < 0 {
+		t.Fatalf("index.html has no view %q", view)
+	}
+	end := strings.Index(src[at:], "</section>")
+	if end < 0 {
+		t.Fatalf("view %q is not closed", view)
+	}
+	return src[at : at+end]
+}
+
 func TestUsagePageHasThreeSecondaryTabs(t *testing.T) {
 	src := poolStatsUISource(t)
 	nav := subtabNavHTML(t, src, "usage")
@@ -134,7 +151,7 @@ func TestTasksCenterHasThreeSecondaryTabs(t *testing.T) {
 	}{
 		// btnScRunsReload / btnTbReload 同样并入了顶栏统一刷新。
 		{"tasks-schedule", []string{`id="scBody"`, `id="scRunsBody"`, `id="scRunsNote"`}},
-		{"tasks-batch", []string{`id="qcList"`, `id="ckList"`, `id="btnScanAll"`, `id="btnCkRun"`}},
+		{"tasks-batch", []string{`id="qcList"`, `id="ckList"`}},
 		{"tasks-board", []string{`id="tbBody"`, `id="tbNote"`}},
 	} {
 		panel := subtabPanelHTML(t, src, tc.panel)
@@ -142,6 +159,18 @@ func TestTasksCenterHasThreeSecondaryTabs(t *testing.T) {
 			if !strings.Contains(panel, id) {
 				t.Errorf("任务中心面板 %s 不包含 %s", tc.panel, id)
 			}
+		}
+	}
+	// 批量动作（扫描 / 执行）搬到了三个子页共用的动作栏，不再每个子页各挂一份；
+	// 但它们必须仍然存在于这个视图里，否则按钮就真的没了。
+	tcPanel := viewHTML(t, src, "taskscenter")
+	for _, id := range []string{
+		`id="btnTcScan"`, `id="btnTcRun"`,
+		`id="btnScanAll"`, `id="btnRunQueue"`, `id="btnCkScan"`, `id="btnCkRun"`,
+		`id="btnTbRefreshTasks"`, `id="btnTbRunAll"`,
+	} {
+		if !strings.Contains(tcPanel, id) {
+			t.Errorf("任务中心动作栏缺少 %s", id)
 		}
 	}
 	if strings.Contains(subtabOpenTag(t, src, "tasks-schedule"), " hidden") {

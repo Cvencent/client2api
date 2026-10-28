@@ -259,7 +259,7 @@ func (s *server) routeAndServeMessages(w http.ResponseWriter, r *http.Request, i
 	skipTo := 0
 	for len(candidates)-skipTo > 1 {
 		candidate := candidates[skipTo]
-		unavailable := s.candidateUnavailable(r.Context(), candidate)
+		unavailable := s.candidateUnavailableFor(r.Context(), candidate, in.req.Messages)
 		if unavailable == nil {
 			break
 		}

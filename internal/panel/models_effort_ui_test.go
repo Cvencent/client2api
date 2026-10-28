@@ -23,8 +23,12 @@ func TestModelsViewEditsEffortPolicy(t *testing.T) {
 			t.Errorf("renderModels missing %q", want)
 		}
 	}
-	if !strings.Contains(src, `>封顶对齐</th>`) {
-		t.Error("model table header is missing the cap-alignment column")
+	// 封顶对齐不再是表头的一列：模型表改成「主行 6 列 + 可展开详情」，思考档位
+	// 那组字段都在详情面板里，标签由 CSS 按 data-field 提供。要守的是「这个字段
+	// 仍然可编辑、并且有可见的中文标签」，不是它挂在哪一行。
+	if !strings.Contains(src, `td[data-field="elevate_top"]::before`) ||
+		!strings.Contains(src, `content: "封顶对齐"`) {
+		t.Error("model detail panel is missing the cap-alignment field label")
 	}
 	for _, want := range []string{`data-field="efforts"`, `data-field="default_effort"`, `data-field="elevate_top"`, "默认开启", "手动开启"} {
 		if !strings.Contains(src, want) {

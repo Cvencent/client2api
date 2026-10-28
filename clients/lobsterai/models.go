@@ -75,6 +75,11 @@ func fallbackModels(cfg Config) []core.Model {
 func newModel(id, ownedBy string, contextLength int64, displayName string) core.Model {
 	extra := map[string]any{
 		"context_length": contextLength,
+		// LobsterAI has no image input anywhere in the product (see
+		// wireMessage's refusal), and stating that here is what lets the
+		// gateway route an image request straight to a platform that can
+		// serve it instead of paying the refusal round trip first.
+		"supports_images": false,
 	}
 	// The panel prefers display_name over the raw id, and the vendor does
 	// publish a human-readable modelName ("DeepSeek-V4.1-Flash"); only set it

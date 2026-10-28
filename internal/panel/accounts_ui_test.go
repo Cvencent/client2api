@@ -242,11 +242,16 @@ func TestRecentCallAccountPrefersHumanReadableName(t *testing.T) {
 func TestClientChipsShowUsableOverTotalAccounts(t *testing.T) {
 	src := string(indexHTML)
 	body := poolStatsFuncBody(t, src, "renderChips")
+	// The chip now renders through a per-platform row struct (so the strip can
+	// put platforms that have accounts first), so the label is built from the
+	// row fields.  What must not change is the ratio itself: the same grouping
+	// the table uses, and a "usable/total" label on the chip.
 	for _, want := range []string{
-		`const groups = accGroups(ACCTS[n] && ACCTS[n].accounts);`,
-		`const usable = groups.filter(g => { const st = accGroupStat(g); return st.enabled && st.state === "ready"; }).length;`,
-		`const label = usable + "/" + cnt;`,
-		`esc(platformLabel(n)) + ' <b>' + esc(label) + '</b>`,
+		`accGroups(ACCTS[n] && ACCTS[n].accounts)`,
+		`return st.enabled && st.state === "ready"; }`,
+		`const label = r.usable + "/" + r.cnt;`,
+		`esc(platformLabel(r.n)) +`,
+		`' <b>' + esc(label) + '</b>`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("client chip account ratio is missing %s", want)

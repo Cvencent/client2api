@@ -1852,6 +1852,7 @@ POST   /panel/api/models/refresh
 GET    /panel/api/exposed_models                         the final catalogue plus the selected whitelist
 POST   /panel/api/route_plan                             {"model":"…","catalogs":{…}}; static only
 POST   /panel/api/route_speed                            same body; one live request per platform
+GET    /panel/api/route_live?limit=N&window=HOURS        recent requests, each with the candidates it tried
 GET    /panel/api/model_probes                          (optional; the probe file)
 GET    /panel/api/usage?window=HOURS
 POST   /panel/api/usage/save

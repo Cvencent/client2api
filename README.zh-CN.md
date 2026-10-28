@@ -5,7 +5,7 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-当前版本：**0.4.7**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：**0.5.0**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 流式断流排查：升级后系统日志新增 `stream: id=...` 终止诊断，包含协议、平台/模型、
 上游事件数、`finish_reason`、正文/推理字节数、工具调用数、completion token、
@@ -176,9 +176,20 @@ client2api 是一个**个人自用**的 OpenAI 兼容网关。它把你自己在
 - 「模型」列点开可以逐账号启用/禁用单个模型，所有平台都可编辑：WorkBuddy 沿用模块自己的模型策略（含「强制启用」），其余平台写入网关共享的账号模型黑名单，在下一次请求选取账号时生效。限流中的模型会显示解除时刻和剩余时间。
 - 任何上游 429 都会给「平台 + 账号 + 模型」记一段冷却：首次 60 秒，连续失败翻倍，封顶 30 分钟；上游给了 `Retry-After` 就优先用它（同样封顶）。冷却期间网关拒绝该账号的这个模型，模块会换账号或换平台，不再撞同一个限流；账号的模型弹窗会显示解除时刻和剩余时间。模块每次尝试都通过 `core.ChatRequest.NoteAccountFailure` 上报时，即使它已经轮转到别的账号成功也会记上；没有上报的模块由网关在整体失败时兜底记录。
 - Loomy 的余额、套餐和模型目录刷新只用于展示：读取失败只在该行报错，不会让账号冷却、异常或停用；账号健康只由真实对话请求或手动「测试」决定。
+- 产品本身没有图片输入的平台（LobsterAI）会在模型目录上发布 `supports_images: false`，
+  路由预检会读这个标记：带图的请求直接跳过这类平台，交给能处理图片的兄弟平台，
+  不再先付一次「仅支持文本」的拒绝。纯文本请求和没有声明该标记的目录条目维持原有
+  顺序——只有显式的 `false` 会被执行。
 - ZCode 的 JWT 与 coding-plan API Key 会按同一账号聚合为多条通道。
 - OfficeAce（Office Claw）现在内置为 `officeace` 平台，面板里显示为 **华为**，不需要手动添加中转站。打开它的账号池，点 **自动添加** 可以让面板自己租号、驱动华为手机号验证码登录并写入账号；也可以点 **浏览器登录 → 获取授权链接** 自己完成华为账号 OAuth。两种方式都会把返回的模型网关 App Key / App Secret 写进本站账号池，并把模型按 `officeace/<模型名>` 发布。每个账号保留自己登录返回的模型网关地址，因此不同区域或网关的账号可以放在同一个平台里；登录完成后不再依赖 OfficeAce 桌面端在线。Windows 上仍保留 **导入 → 探测本机凭据** 作为已有客户端登录的兜底路径。
 - 支持动态添加 OpenAI 兼容中转站，每个平台有自己的 API 地址和 Key 池。
+  中转请求出站前会按 DeepSeek/LiteLLM 一族的习惯归一化：强制 `tool_choice`
+  （`"required"` 或指定函数）降级为 `"auto"`，没有 `properties` 的工具参数
+  （命名空间或 MCP 声明可能产生裸 `{}`）补上空对象骨架。如果中转站在降级
+  之后仍然回答 400「当前模型或上游不支持工具调用」（以及同类英文报错），
+  该失败归类为模型级拒绝（`model_refused`）：账号保持健康，面板行显示
+  「模型不适用于该平台」，走模型组进来的请求自动切到组内下一个平台；
+  显式指定该平台（`relay/模型名`）仍然如实返回 400。
 - 每个中转站可以单独配置出口代理 `proxy`（例如 `http://127.0.0.1:7890`、`socks5://127.0.0.1:1080`，也支持 `user:pass@` 写法）：这个中转站发出的全部请求——对话、扫描模型、余额、账号测试——都会走这个代理，其它平台不受影响。留空表示跟随网关的全局代理。 每个中转站还可以单独配置 `user_agent`：个别站按客户端白名单放行，通用 UA 会被拒（401 unauthorized client detected），这里填它期望的客户端 UA，留空用本网关默认。
 - 只提供 OpenAI Responses 协议的中转站（如 agentrouter.org），给来源配置加
   `api_format: "responses"` 即可：对话会走 `/v1/responses`。

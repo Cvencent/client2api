@@ -37,7 +37,7 @@ func (c *windowClient) Chat(ctx context.Context, req *core.ChatRequest) (core.St
 	c.calls++
 	c.seen = req
 	if c.fail {
-		return nil, core.Fail(c.name, "", core.FailureOther, http.StatusNotFound, errors.New("model not found"))
+		return nil, core.Fail(c.name, "", core.FailureModelRefused, http.StatusNotFound, errors.New("model not found"))
 	}
 	return &fakeStream{events: []core.Event{{Type: core.EventDone, Finish: "stop"}}}, nil
 }

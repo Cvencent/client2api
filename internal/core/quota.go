@@ -71,11 +71,19 @@ type Balance struct {
 // tell a signup gift from a reward.  Modules that have no such breakdown simply
 // do not implement PackageProvider.
 type CreditPackage struct {
-	Name           string `json:"name"`
-	Remain         int64  `json:"remain"`
-	Used           int64  `json:"used"`
-	Size           int64  `json:"size"`
-	EndTime        string `json:"end_time,omitempty"`
+	Name   string `json:"name"`
+	Remain int64  `json:"remain"`
+	Used   int64  `json:"used"`
+	Size   int64  `json:"size"`
+	// EndTime is the human-readable expiry, RFC3339.  Prefer it when the vendor
+	// gives one: it carries its own timezone and cannot be misread.
+	EndTime string `json:"end_time,omitempty"`
+	// ExpiresAt is the same instant as a unix timestamp.  The unit is NOT part
+	// of this contract: zcode forwards the vendor's seconds while minimaxcode
+	// stores milliseconds, and the panel has to sniff which is which.  That is
+	// a defect, not a design -- a caller reading this field cannot know the
+	// unit.  Set EndTime whenever the vendor provides one; new modules should
+	// prefer EndTime and leave ExpiresAt to the ones that already emit it.
 	ExpiresAt      int64  `json:"expires_at,omitempty"`
 	CreatedAt      string `json:"created_at,omitempty"`
 	PackageCode    string `json:"package_code,omitempty"`

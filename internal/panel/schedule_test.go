@@ -282,7 +282,10 @@ func TestRunOutcomeDistinguishesSuccessFromRefusal(t *testing.T) {
 func TestScheduleRunRowsShowSkippedAndRefusalReasons(t *testing.T) {
 	src := scheduleShellSource(t)
 	body := scheduleFuncBody(t, src, "scRenderRuns")
-	for _, want := range []string{"r.skipped", "r.skip_reasons", "<th>跳过</th>", "reasons.join"} {
+	// 运行记录从 11 列宽表改成了时间线卡片，所以这里不再钉住表头文字
+	// （"<th>跳过</th>"）。要守住的是那两件事本身：跳过的次数必须被画出来，
+	// 拒绝 / 跳过的原因必须合并成一句可读的说明。
+	for _, want := range []string{"r.skipped", "r.skip_reasons", "reasons.join", "跳过 "} {
 		if !strings.Contains(body, want) {
 			t.Errorf("scRenderRuns is missing %q", want)
 		}

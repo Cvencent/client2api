@@ -67,7 +67,7 @@ func refreshButtonWiring(t *testing.T, src string) []string {
 // refreshViews 是导航里能到达的每一个视图。少一个键位就意味着那个页面没有
 // 刷新按钮——这正是要修的毛病，所以它同时是覆盖清单。
 var refreshViews = []string{
-	"overview", "accounts", "chat", "usage", "alerts", "credits", "packages",
+	"routelive", "overview", "accounts", "chat", "usage", "alerts", "credits", "packages",
 	"taskscenter", "models", "platforms", "config", "logs",
 }
 

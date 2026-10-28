@@ -21,6 +21,9 @@ type preflightClient struct {
 	available func(model string, free bool) error
 	// free marks the catalogue entry so the router sees a free model.
 	free bool
+	// extra, when set, is merged onto the catalogue entry's Extra map, so a
+	// test can publish capability flags the pre-flight reads.
+	extra map[string]any
 	// failWith, when set, is the refusal Chat returns.
 	failWith error
 	chatN    int
@@ -33,6 +36,12 @@ func (c *preflightClient) Models(context.Context) ([]core.Model, error) {
 	m := core.Model{ID: "m1", OwnedBy: c.name}
 	if c.free {
 		m.Extra = map[string]any{"free": true}
+	}
+	for k, v := range c.extra {
+		if m.Extra == nil {
+			m.Extra = map[string]any{}
+		}
+		m.Extra[k] = v
 	}
 	return []core.Model{m}, nil
 }
@@ -375,5 +384,84 @@ func TestPreflightKeepsPriorityPositionsAcrossFailover(t *testing.T) {
 	}
 	if final.Candidate != 3 {
 		t.Fatalf("final candidate = %d, want 3: the skip must not renumber the chain", final.Candidate)
+	}
+}
+
+// TestPreflightSkipsAnImageBlindPlatform pins the capability half of the
+// pre-flight: a request that carries an image is not entered into a platform
+// whose catalogue states supports_images=false, because the module would only
+// answer its refusal ("accepts text only") after the round trip.  A text-only
+// request and a silent catalogue entry keep the optimistic path.
+//
+// Every scenario builds its own clients: the counters belong to one server's
+// verdict, and two servers sharing a client would add them together.
+func TestPreflightSkipsAnImageBlindPlatform(t *testing.T) {
+	imageBody := `{"model":"m1","messages":[{"role":"user","content":[` +
+		`{"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA"}}]}]}`
+
+	// The stated image-blind platform is skipped while the sibling serves the
+	// image, and the skip files no failed-attempt row because nothing was
+	// entered.
+	blind := &preflightClient{
+		name:   "blind",
+		health: core.Health{Servable: true, Total: 1, Ready: 1},
+		extra:  map[string]any{"supports_images": false},
+	}
+	visual := &preflightClient{
+		name:   "visual",
+		health: core.Health{Servable: true, Total: 1, Ready: 1},
+		served: "visual-acct",
+	}
+	srv, usage := newPreflightServer(t, nil, blind, visual)
+	rec := chat(t, srv, imageBody)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
+	}
+	if blind.chatN != 0 {
+		t.Fatalf("the image-blind platform was entered %d time(s); the pre-flight must skip it", blind.chatN)
+	}
+	if visual.chatN != 1 {
+		t.Fatalf("visual platform calls = %d, want 1", visual.chatN)
+	}
+	if rows := attemptRows(usage.Snapshot()); len(rows) != 0 {
+		t.Fatalf("a capability skip must not file a failed-attempt row, got %+v", rows)
+	}
+
+	// The flag only speaks about images: a text-only request follows plain
+	// priority order and stays on the first platform.
+	textBlind := &preflightClient{
+		name:   "blind",
+		health: core.Health{Servable: true, Total: 1, Ready: 1},
+		extra:  map[string]any{"supports_images": false},
+	}
+	textVisual := &preflightClient{
+		name:   "visual",
+		health: core.Health{Servable: true, Total: 1, Ready: 1},
+		served: "visual-acct",
+	}
+	srv2, _ := newPreflightServer(t, nil, textBlind, textVisual)
+	rec = chat(t, srv2, `{"model":"m1","messages":[{"role":"user","content":"plain text turn"}]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("text status = %d, body %s", rec.Code, rec.Body.String())
+	}
+	if textBlind.chatN != 1 || textVisual.chatN != 0 {
+		t.Fatalf("text-only calls = blind:%d visual:%d, want 1/0", textBlind.chatN, textVisual.chatN)
+	}
+
+	// A catalogue entry that says nothing keeps the optimistic path: the
+	// gateway must not invent the capability fact.
+	silent := &preflightClient{name: "silent", health: core.Health{Servable: true, Total: 1, Ready: 1}}
+	receptive := &preflightClient{
+		name:   "receptive",
+		health: core.Health{Servable: true, Total: 1, Ready: 1},
+		served: "receptive-acct",
+	}
+	srv3, _ := newPreflightServer(t, nil, silent, receptive)
+	rec = chat(t, srv3, imageBody)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("silent status = %d, body %s", rec.Code, rec.Body.String())
+	}
+	if silent.chatN != 1 || receptive.chatN != 0 {
+		t.Fatalf("silent-catalogue calls = silent:%d receptive:%d, want 1/0 (no invented refusal)", silent.chatN, receptive.chatN)
 	}
 }

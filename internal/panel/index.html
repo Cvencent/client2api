@@ -1406,6 +1406,9 @@ button.pfgToggle:hover:not(:disabled) { background: color-mix(in srgb, var(--acc
 .acc.sc .hint { display: block; margin-top: 2px; font-size: 11px; color: var(--ink-3);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 240px; }
 .acc.sc .scHours { width: 104px; }
+/* 时点列：输入框在上、24 小时日轨在下，两者表示同一个值。 */
+.acc.sc .scWhen { display: flex; flex-direction: column; align-items: stretch; gap: 6px; min-width: 210px; }
+.acc.sc .scRail { display: block; }
 .acc.sc .scEditor { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 4px; }
 .acc.sc .scMode { width: 84px; }
 .acc.sc .scCron { width: 148px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
@@ -3434,6 +3437,9 @@ input, select, textarea, .stat, .subtab {
   display: grid; place-items: center; font: 650 10.5px/1 var(--mono);
   background: var(--bad-soft); color: var(--bad-text);
 }
+/* 路由实况的徽章数是「发生改道」的次数，那是这项功能的正常度量，不是告警：
+   用强调色，免得和「失败」的红色抢同一个语义。 */
+.nav a .navcount.rl { background: var(--accent-soft); color: var(--accent-text); }
 .nav a:hover { background: color-mix(in srgb, var(--surface-2) 80%, transparent); color: var(--ink); }
 .nav a.on {
   color: var(--accent-text); font-weight: 620;
@@ -3449,7 +3455,9 @@ input, select, textarea, .stat, .subtab {
 }
 .sigline { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .sigmeta { color: var(--ink-3); font-family: var(--mono); }
-.sigmeta > span { white-space: nowrap; }
+/* 窄侧栏里三个字段并排会顶出边界：各自可缩，末项截断，不越过侧栏的右边框。 */
+.sigmeta > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.sigline > span:not(.dot) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .sig .dot { width: 3px; height: 3px; border-radius: 50%; background: currentColor; flex: none; }
 
 /* 顶栏：左边标题带副标题，右边动作；不再是「标题 / 分隔符 / 长串元信息」一行 */
@@ -3890,6 +3898,1029 @@ input, select, textarea, .stat, .subtab {
 #toasts { max-width: min(420px, calc(100vw - 36px)); }
 #toasts .toast { box-shadow: var(--shadow-float); }
 
+/* -- 29. 路由实况：线路图 ------------------------------------------------
+   一条线路 = 一个模型。站点 = 候选账号，从左到右就是失败切换的顺序。
+   列车 = 正在处理的请求；它停在哪个站，就是这次选了谁。
+   全部图形由 /panel/api/route_live 的真实记录生成，没有一条线是编的。 */
+.rl-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+.rl-head h2 { font-size: 17px; font-weight: 600; letter-spacing: .2px; }
+.rl-head .sub { color: var(--ink-3); font-size: 12.5px; }
+.rl-head .grow { flex: 1; }
+.rl-live { display: inline-flex; align-items: center; gap: 7px; font: 11px/1 var(--mono); color: var(--ok-text); }
+.rl-live i { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
+.rl-live.on i { animation: rlPulse 2s ease-out infinite; }
+@keyframes rlPulse { 70% { box-shadow: 0 0 0 7px rgba(103,194,58,0); } 100% { box-shadow: 0 0 0 0 rgba(103,194,58,0); } }
+.rl-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 16px; }
+.rl-kpi { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+.rl-kpi .v { font: 600 20px/1.2 var(--mono); letter-spacing: -.4px; }
+.rl-kpi .l { font-size: 11.5px; color: var(--ink-3); margin-top: 4px; }
+
+.rl-map { position: relative; padding: 6px 0 2px; }
+.rl-line { position: relative; display: grid; grid-template-columns: minmax(150px, 210px) minmax(0, 1fr); align-items: center; gap: 18px; padding: 12px 0; }
+.rl-line + .rl-line { border-top: 1px dashed var(--line-soft); }
+.rl-name { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.rl-name i { width: 9px; height: 9px; border-radius: 2.5px; flex: 0 0 auto; }
+.rl-name b { display: block; font-size: 12.5px; font-weight: 560; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rl-name small { display: block; font: 10px/1.4 var(--mono); color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rl-name .n { font: 10.5px/1 var(--mono); color: var(--ink-3); margin-left: auto; flex: 0 0 auto; }
+.rl-track { position: relative; height: 52px; }
+.rl-track .rail { position: absolute; left: 0; right: 0; top: 18px; height: 2px; border-radius: 2px; background: var(--line); }
+/* 有命中时轨道点亮并缓慢流动：这条线最近有请求真的走通了，不是装饰。 */
+.rl-track .rail.hot { background: linear-gradient(90deg, var(--line), var(--accent), var(--line)); background-size: 200% 100%; animation: rlFlow 2.4s linear infinite; }
+@keyframes rlFlow { to { background-position: -200% 0; } }
+/* 站点按 candidate 顺序均匀落位：位置由行内 left% 决定，宽度限死并居中，
+   站名才不会和邻站压在一起。 */
+.rl-stops { position: absolute; inset: 0; }
+.rl-stop { position: absolute; top: 0; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 5px; max-width: 168px; }
+/* 站点永远画在列车之上，并用一圈底色把列车从点后面「抠」掉：列车停在命中站上，
+   而这一屏最要紧的信息就是那一点，不能被挡住。 */
+.rl-stop .dot { position: relative; z-index: 3; width: 9px; height: 9px; margin-top: 14px; border-radius: 50%;
+  background: var(--surface); border: 2px solid var(--ink-3); box-shadow: 0 0 0 2px var(--surface);
+  transition: all var(--dur-med) var(--ease-out); }
+.rl-stop em { position: relative; z-index: 3; font: 10px/1.3 var(--mono); color: var(--ink-3); font-style: normal; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rl-stop.hit .dot { background: var(--ok); border-color: var(--ok); box-shadow: 0 0 0 2px var(--surface), 0 0 0 6px var(--ok-soft); }
+.rl-stop.hit em { color: var(--ink-2); }
+.rl-stop.dead .dot { border-color: var(--bad); background: var(--surface); }
+.rl-stop.dead em { color: var(--bad-text); }
+/* 列车画在站点下面，位置压在轨道线上；未确定去向时用同色但实心，不再是灰雾。 */
+.rl-train { position: absolute; top: 18px; left: 0; transform: translate(-50%, -50%); display: flex; gap: 1.5px; z-index: 2; transition: left .9s cubic-bezier(.25,.8,.25,1); }
+.rl-train span { width: 11px; height: 7px; border-radius: 2px; background: var(--ink); opacity: .92; }
+.rl-train.ghost span { background: var(--ink-2); opacity: .6; }
+
+.rl-empty { padding: 36px 18px; text-align: center; color: var(--ink-3); font-size: 13px; }
+.rl-legend { display: flex; gap: 16px; flex-wrap: wrap; font: 10.5px/1 var(--mono); color: var(--ink-3); padding: 10px 2px 0; }
+.rl-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.rl-legend i { width: 7px; height: 7px; border-radius: 50%; }
+
+.rl-events { display: grid; }
+.rl-ev { display: grid; grid-template-columns: 66px 132px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 8px 18px; border-bottom: 1px solid var(--line-soft); font-size: 12.5px; }
+.rl-ev:last-child { border-bottom: 0; }
+.rl-ev .t { font: 10.5px/1 var(--mono); color: var(--ink-3); }
+.rl-ev .who { font-weight: 520; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rl-ev .w { color: var(--ink-2); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rl-ev .lat { font: 10.5px/1 var(--mono); color: var(--ok-text); text-align: right; }
+.rl-ev.bad .lat { color: var(--bad-text); }
+.rl-ev .tag { font-size: 10px; padding: 1px 6px; border-radius: 5px; margin-left: 7px; background: var(--bad-soft); color: var(--bad-text); }
+.rl-ev .tag.move { background: var(--warn-soft); color: var(--warn-text); }
+.rl-chain { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+.rl-chain em { font: 10px/1 var(--mono); font-style: normal; padding: 2px 6px; border-radius: 4px; background: var(--surface-2); color: var(--ink-3); }
+.rl-chain em.win { background: var(--ok-soft); color: var(--ok-text); }
+.rl-chain em.lose { background: var(--bad-soft); color: var(--bad-text); text-decoration: line-through; }
+.rl-chain .arr { color: var(--ink-3); font-size: 10px; }
+@media (max-width: 1100px) { .rl-kpis { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 760px) {
+  .rl-line { grid-template-columns: 1fr; gap: 8px; }
+  .rl-ev { grid-template-columns: 58px minmax(0, 1fr) auto; }
+  .rl-ev .w { display: none; }
+}
+
+/* -- 30. 外壳（权威层）----------------------------------------------------
+   这个文件的外壳在此之前被四轮改版各写过一遍（第 61、1558、3025、3401 行附近
+   各有一套 .shell/.nav/.topbar 规则叠着），同一个元素最多四条规则在拉锯，
+   改一处要看三层覆盖。这一段是最后一层，也是唯一该再改的一层：它把外壳的
+   结构、间距和状态收成一套，并把侧栏做成可折叠的两档。
+
+   结构：一列固定侧栏 + 一列内容。内容列自己滚动，侧栏不动——长表格滚到底时
+   导航还在原位，这是控制台该有的行为，也是原来缺的。 */
+.shell {
+  --nav-w: 236px;
+  display: grid;
+  grid-template-columns: var(--nav-w) minmax(0, 1fr);
+  height: 100vh;
+  overflow: hidden;
+}
+.shell.navmini { --nav-w: 68px; }
+.shell.navmini .navlabel,
+.shell.navmini .navcount,
+.shell.navmini .navgroup-t,
+.shell.navmini .brand-text,
+.shell.navmini .sig { display: none; }
+.shell.navmini .brand { justify-content: center; padding: 16px 0 14px; }
+.shell.navmini .navscroll { padding: 8px 10px 14px; }
+.shell.navmini .nav a { justify-content: center; padding: 0; gap: 0; }
+.shell.navmini .nav a svg { width: 17px; height: 17px; }
+.shell.navmini .navgroup + .navgroup { margin-top: 10px; }
+.shell.navmini .navgroup { position: relative; }
+.shell.navmini .navgroup + .navgroup::before {
+  content: ""; position: absolute; left: 12px; right: 12px; top: -5px;
+  height: 1px; background: var(--hairline);
+}
+/* 收起态：悬停某一项时用浮出的文字说明它是哪一页 */
+.shell.navmini .nav a[data-view]:hover::after {
+  content: attr(data-view); position: absolute; left: 58px; z-index: 40;
+  padding: 5px 10px; border-radius: 7px; white-space: nowrap;
+  background: var(--raise); color: var(--ink); font-size: 12px;
+  border: 1px solid var(--line); box-shadow: var(--shadow);
+}
+
+.nav {
+  display: flex; flex-direction: column; min-height: 0;
+  background: var(--surface); border-right: 1px solid var(--hairline);
+}
+.brand {
+  display: flex; align-items: center; gap: 11px; flex: none;
+  padding: 17px 16px 15px; border-bottom: 1px solid var(--hairline);
+  position: relative;
+}
+.brand .logo {
+  width: 32px; height: 32px; flex: none; border-radius: 10px;
+  display: grid; place-items: center;
+  font: 700 12.5px/1 var(--mono); letter-spacing: -.02em; color: #fff;
+  background: linear-gradient(145deg, var(--accent-hover), var(--accent-active));
+  box-shadow: 0 6px 16px -9px color-mix(in srgb, var(--accent) 85%, transparent), inset 0 1px 0 rgba(255,255,255,.26);
+}
+.brand-text { min-width: 0; }
+.brand .name { font-size: 14.5px; font-weight: 680; letter-spacing: -.01em; line-height: 1.2; }
+.brand .sub { font-size: 10.5px; color: var(--ink-3); font-family: var(--mono); margin-top: 2px; }
+/* 折叠按钮就放在品牌区右侧，是这一列自己的控件，不占顶栏。 */
+.navtoggle {
+  position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+  width: 24px; height: 24px; padding: 0; border-radius: 7px;
+  display: grid; place-items: center; cursor: pointer;
+  background: transparent; border: 1px solid transparent; color: var(--ink-3);
+}
+.navtoggle:hover { background: var(--surface-2); border-color: var(--line); color: var(--ink); }
+.navtoggle svg { width: 13px; height: 13px; transition: transform var(--dur-med) var(--ease); }
+.shell.navmini .navtoggle { position: static; transform: none; margin: 0 auto; }
+.shell.navmini .navtoggle svg { transform: rotate(180deg); }
+
+.navscroll { flex: 1 1 auto; overflow-y: auto; overscroll-behavior: contain; padding: 12px 10px 16px; min-height: 0; }
+.navgroup + .navgroup { margin-top: 16px; }
+.navgroup-t { display: flex; align-items: center; gap: 8px; padding: 0 9px 8px; color: var(--ink-3); }
+.navgroup-n { font-size: 10px; font-weight: 700; letter-spacing: .11em; text-transform: uppercase; }
+.navgroup-t::after { content: ""; flex: 1; height: 1px; background: var(--hairline); }
+.nav ul { list-style: none; padding: 0; margin: 0; }
+.nav a {
+  position: relative; display: flex; align-items: center; gap: 10px;
+  min-height: 34px; padding: 0 10px; margin-bottom: 2px;
+  border-radius: 9px; color: var(--ink-2); font-size: 13px;
+  text-decoration: none; transition: background-color var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.nav a svg { width: 15px; height: 15px; flex: none; opacity: .88; }
+.nav a .navlabel { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nav a .navcount {
+  flex: none; min-width: 19px; height: 17px; padding: 0 5px; border-radius: 999px;
+  display: grid; place-items: center; font: 650 10px/1 var(--mono);
+  background: var(--bad-soft); color: var(--bad-text);
+}
+.nav a .navcount.rl { background: var(--accent-soft); color: var(--accent-text); }
+.nav a:hover { background: color-mix(in srgb, var(--surface-2) 85%, transparent); color: var(--ink); }
+/* 当前页只有一条指示：左侧一根 3px 的强调竖条 + 极浅底。
+   之前是「渐变底 + 内描边 + 换字重」三样一起上，比别处所有选中态都重。 */
+.nav a.on { color: var(--ink); font-weight: 600; background: color-mix(in srgb, var(--accent) 9%, transparent); }
+.nav a.on svg { opacity: 1; color: var(--accent-text); }
+.nav a.on::before {
+  content: ""; position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+  width: 3px; height: 17px; border-radius: 0 3px 3px 0; background: var(--accent);
+}
+.shell.navmini .nav a.on::before { left: -10px; }
+
+.nav .sig {
+  flex: none; padding: 11px 14px 13px; border-top: 1px solid var(--hairline);
+  display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--ink-3);
+}
+.sigline { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.sigline > span:not(.dot):not(.pulse) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.sigmeta { font-family: var(--mono); font-size: 10.5px; }
+.sig .dot { width: 3px; height: 3px; border-radius: 50%; background: currentColor; flex: none; }
+
+/* 内容列：自己滚动。顶栏 sticky 在这一列里，滚表格时标题和操作不跑掉。 */
+.main { min-width: 0; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.topbar {
+  flex: none; display: flex; align-items: center; gap: 10px;
+  min-height: 58px; padding: 10px 22px;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(14px) saturate(160%); -webkit-backdrop-filter: blur(14px) saturate(160%);
+  border-bottom: 1px solid var(--hairline); z-index: 30;
+}
+.topbar-lead { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.topbar h1 { font-size: 17px; font-weight: 680; letter-spacing: -.015em; line-height: 1.2; white-space: nowrap; }
+/* 副标题（监听地址）在宽度够时才有意义；它不该把标题挤成省略号。 */
+.topbar .meta {
+  font: 11px/1 var(--mono); color: var(--ink-3);
+  padding: 3px 7px; border-radius: 6px; background: var(--surface-2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px;
+}
+.topbar .grow { flex: 1; }
+.topbar .sep { display: none; }
+/* 顶栏按钮统一高度，图标和文字对齐到同一条中线；原来几个按钮高低不一。 */
+.topbar > button, .topbar .kbtn, .topbar > .icon {
+  height: 32px; min-height: 32px; display: inline-flex; align-items: center;
+  justify-content: center; gap: 7px; padding: 0 11px;
+  border-radius: 8px; border: 1px solid var(--line); background: var(--surface);
+  color: var(--ink-2); font-size: 12.5px; cursor: pointer;
+  transition: background-color var(--dur) var(--ease), border-color var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.topbar > button:hover, .topbar .kbtn:hover, .topbar > .icon:hover {
+  background: var(--surface-2); border-color: var(--ink-3); color: var(--ink);
+}
+.topbar > .icon, .topbar .kbtn.icon { width: 32px; padding: 0; }
+.topbar .kbtn { color: var(--ink-3); }
+.topbar .kbtn kbd {
+  font: 650 10px/1 var(--mono); padding: 3px 5px; border-radius: 5px;
+  background: var(--surface-2); border: 1px solid var(--line); color: var(--ink-3);
+}
+.topbar > button.primary {
+  background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600;
+}
+.topbar > button.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.topbar .alert-btn { position: relative; }
+.topbar .alert-badge {
+  position: absolute; top: -5px; right: -5px; min-width: 16px; height: 16px; padding: 0 4px;
+  border-radius: 999px; display: grid; place-items: center;
+  font: 650 9.5px/1 var(--mono); background: var(--bad); color: #fff;
+}
+
+/* 视图容器：这一列唯一的滚动区。 */
+.viewwrap { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; min-height: 0; }
+.view { padding: 20px 24px 72px; max-width: 2200px; width: 100%; margin: 0 auto; }
+.view:not([hidden]) { animation: shellViewIn 200ms var(--ease) both; }
+@keyframes shellViewIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
+
+/* 窄屏：侧栏收成一条顶部工具带，内容列照旧自己滚。 */
+@media (max-width: 900px) {
+  /* 窄屏两行：导航带在上、内容在下。min-height:100vh 会把剩余高度按比例分摊到
+     两行，导航那一行因此被撑出一块空白。改用 grid-template-rows: auto 1fr，
+     第一行只占内容高度，剩下全部给内容列。 */
+  .shell, .shell.navmini {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    height: auto; min-height: 100vh; overflow: visible;
+  }
+  /* 旧规则给 .nav 写了 height:100vh + position:sticky（宽屏竖栏用），窄屏不改它
+     就会让导航独占整屏、内容被顶到视口外，看起来是一片空白。 */
+  /* 窄屏 .shell 是单列网格：.nav 和 .main 落在两行上。旧规则把 .nav 设成
+     sticky/100vh，导致它独占一行并把内容顶出视口。这里把它还原成普通块，
+     两行各占自己的高度。 */
+  .shell > .nav {
+    height: auto; min-height: 0; position: static;
+    flex-direction: column; align-items: stretch; overflow: visible;
+    grid-column: 1; grid-row: 1; align-self: start;
+    border-right: none; border-bottom: 1px solid var(--hairline);
+  }
+  .shell > .main { grid-column: 1; grid-row: 2; align-self: start; }
+  .brand { padding: 11px 14px 8px; }
+  .navtoggle { display: none; }
+  .navscroll {
+    display: flex; gap: 16px; align-items: flex-start;
+    padding: 0 12px 4px; overflow-x: auto; overflow-y: hidden; flex: none;
+    max-height: none; scrollbar-width: none;
+  }
+  .navscroll::-webkit-scrollbar { display: none; }
+  .navgroup { flex: none; }
+  .navgroup + .navgroup { margin-top: 0; }
+  .navgroup-t { padding: 0 4px 6px; white-space: nowrap; }
+  .navgroup-t::after { display: none; }
+  .nav ul { display: flex; gap: 5px; }
+  .nav a { white-space: nowrap; padding: 0 12px; margin: 0; }
+  .nav a.on::before { display: none; }
+  .nav .sig {
+    flex-direction: row; flex-wrap: nowrap; gap: 12px; align-items: center;
+    padding: 6px 14px 8px; border-top: none; overflow-x: auto;
+    font-size: 10.5px; order: 3;
+  }
+  .sigmeta { display: none; }   /* 窄屏只留连接状态，版本号和就绪数不值得占一行 */
+  .main { overflow: visible; }
+  .viewwrap { overflow: visible; }
+  .topbar { position: sticky; top: 0; padding: 9px 12px; min-height: 52px; }
+  .topbar h1 { font-size: 15.5px; }
+  .topbar .meta { display: none; }
+  .view { padding: 14px 12px 56px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .view:not([hidden]) { animation: none !important; }
+  .navtoggle svg { transition: none !important; }
+}
+
+/* -- 31. 统计带（权威层）--------------------------------------------------
+   .stats 在旧代码里被五处规则轮流定义（grid repeat(7,1fr)、flex wrap、
+   不同的 margin 和背景），账号页因此把 7 个格子拆成 6+3 两行、还留白一角。
+
+   统计带是「一条汇总」，不是「一张网格」：它应该始终是一行。折成两行时第二行
+   只剩两格、右边空出一大片，看起来像没加载完。这里改成不换行的一条，格子等分
+   剩余宽度；实在放不下时整条横向滚动，而不是折行。 */
+.stats {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 0;
+  border: 1px solid var(--line); border-radius: 12px;
+  background: var(--surface); overflow: hidden;
+  margin-bottom: 20px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .04), var(--shadow-sm);
+  position: relative;
+}
+.stats > .stat, .stats > button.stat {
+  flex: 1 1 0;
+  min-width: 118px;
+  display: flex; flex-direction: column; align-items: flex-start; justify-content: center;
+  gap: 3px; padding: 14px 16px;
+  border: 0; border-right: 1px solid var(--line-soft); border-radius: 0;
+  background: transparent; text-align: left; color: inherit;
+  font: inherit; cursor: default;
+}
+.stats > .stat:last-child { border-right: 0; }
+.stats > .stat .v {
+  font: 620 21px/1.15 var(--mono); letter-spacing: -.5px;
+  font-variant-numeric: tabular-nums; color: var(--ink);
+}
+.stats > .stat .k {
+  font-size: 11.5px; color: var(--ink-3); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; max-width: 100%;
+}
+.stats > button.stat { cursor: pointer; transition: background-color var(--dur) var(--ease); }
+.stats > button.stat:hover { background: var(--surface-2); }
+/* 当前筛选：只把数字染色 + 一条 2px 底边，不再整格填蓝底。
+   整格填色会让它看起来像一个被选中的标签页，而不是一个筛选状态。 */
+.stats > button.stat.on { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.stats > button.stat.on .v { color: var(--accent-text); }
+.stats > button.stat.on::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 2px;
+  background: var(--accent);
+}
+.stats > button.stat.on { position: relative; }
+.stats .stat.good .v { color: var(--ok-text); }
+.stats .stat.warn .v { color: var(--warn-text); }
+.stats .stat.bad .v { color: var(--bad-text); }
+@media (max-width: 900px) {
+  .stats { overflow-x: auto; scrollbar-width: none; }
+  .stats::-webkit-scrollbar { display: none; }
+  .stats > .stat, .stats > button.stat { flex: 0 0 auto; min-width: 108px; padding: 11px 13px; }
+  .stats > .stat .v { font-size: 18px; }
+}
+
+/* -- 32. 表格里的行内动作（权威层）---------------------------------------
+   账号表的操作列原来被压成「账/测/停/删」单字竖排。根因有两层：旧规则给了
+   .c-acts「white-space: normal」让按钮逐字折行；而某一轮又给 td.c-acts 写了
+   width:1px 想在固定布局里「按内容定宽」——固定布局下 td 宽度会盖过 colgroup
+   的 22.5%，于是整列真的塌成 1px。
+
+   现在：列宽交回 colgroup（22.5%），按钮排成两列、文字不折行、每颗按内容宽。
+   一行 4–6 个动作时读起来是「2 列 × 2–3 行」的小键盘，而不是一串单字。 */
+#view-accounts table.acc .c-acts {
+  white-space: normal;
+  vertical-align: middle;
+}
+#view-accounts table.acc .c-acts .actwrap {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  justify-items: stretch;
+}
+#view-accounts table.acc .c-acts button {
+  white-space: nowrap; word-break: keep-all;
+  max-width: none; width: 100%;
+  padding: 3px 6px; font-size: 11.5px;
+  overflow: hidden; text-overflow: ellipsis;
+}
+/* 账号表有 11 列，压到 100% 宽时每列只剩两个字的位置，「账/测/停」被逐字
+   折断、状态说明变成竖排。给它一个能读下所有列的最小宽度，由 .tbl-wrap
+   横向滚动——列宽百分比和 100% 合计的约定不变，只是不再无限压缩。 */
+#view-accounts table.acc { min-width: 1180px; }
+.acc td, .acc th { word-break: normal; }
+
+/* -- 33. 折叠面板与操作菜单（权威层）-------------------------------------
+   参考 magpie 的组织方式：一页只有一个主角和一个主操作，次要内容收进折叠区，
+   一排小按钮收进一个「更多操作」菜单。它用的是原生 <details>——浏览器自带
+   键盘与无障碍支持，不需要再造一个下拉组件。
+
+   规则：一个卡片头最多留 1 个主按钮 + 1 个「更多」；超过就说明还没整理。 */
+.opmore { position: relative; display: inline-block; }
+.opmore > summary {
+  list-style: none; cursor: pointer; user-select: none;
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 28px; padding: 0 10px; border-radius: 8px;
+  border: 1px solid var(--line); background: var(--surface);
+  color: var(--ink-2); font-size: 12px; white-space: nowrap;
+}
+.opmore > summary::-webkit-details-marker { display: none; }
+.opmore > summary::after {
+  content: ""; width: 6px; height: 6px; margin-left: 1px;
+  border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg) translate(-1px, -1px); transition: transform var(--dur) var(--ease);
+}
+.opmore[open] > summary { background: var(--surface-2); border-color: var(--ink-3); color: var(--ink); }
+.opmore[open] > summary::after { transform: rotate(-135deg) translate(-1px, -1px); }
+.opmore > .opmenu {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 60;
+  min-width: 190px; padding: 5px;
+  background: var(--raise); border: 1px solid var(--line);
+  border-radius: 10px; box-shadow: var(--shadow);
+  display: flex; flex-direction: column; gap: 1px;
+}
+.opmore > .opmenu > button, .opmore > .opmenu > label {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 7px 9px; border: 0; border-radius: 7px;
+  background: transparent; color: var(--ink-2);
+  font: inherit; font-size: 12.5px; text-align: left; cursor: pointer;
+}
+.opmore > .opmenu > button:hover, .opmore > .opmenu > label:hover {
+  background: var(--surface-2); color: var(--ink);
+}
+.opmore > .opmenu > button[disabled] { opacity: .45; cursor: not-allowed; }
+.opmore > .opmenu .opsep { height: 1px; margin: 4px 6px; background: var(--line-soft); }
+.opmore > .opmenu .ophint {
+  padding: 5px 9px 3px; font-size: 11px; color: var(--ink-3);
+}
+/* 主操作：一页一个，用实心强调色 */
+.btnmain {
+  display: inline-flex; align-items: center; gap: 7px;
+  height: 28px; padding: 0 12px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--accent); background: var(--accent);
+  color: var(--accent-ink); font-size: 12.5px; font-weight: 600; white-space: nowrap;
+}
+.btnmain:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.btnmain[disabled] { opacity: .5; cursor: not-allowed; }
+
+/* 折叠区：次要内容默认收起，展开状态记在 localStorage。 */
+.fold { border-top: 1px solid var(--line-soft); }
+.fold:first-child { border-top: 0; }
+.fold > summary {
+  list-style: none; cursor: pointer; display: flex; align-items: center; gap: 9px;
+  padding: 12px 18px; font-size: 13px; font-weight: 560; color: var(--ink-2);
+  user-select: none;
+}
+.fold > summary::-webkit-details-marker { display: none; }
+.fold > summary::before {
+  content: ""; flex: none; width: 7px; height: 7px;
+  border-right: 1.6px solid var(--ink-3); border-bottom: 1.6px solid var(--ink-3);
+  transform: rotate(-45deg); transition: transform var(--dur) var(--ease);
+}
+.fold[open] > summary::before { transform: rotate(45deg); }
+.fold > summary:hover { color: var(--ink); background: var(--surface-2); }
+.fold > summary .fnote { font-size: 11.5px; font-weight: 400; color: var(--ink-3); margin-left: auto; }
+.fold > .foldbody { padding: 2px 18px 14px; }
+
+/* 任务中心的统一动作栏：子页标签在左，动作在右。
+   刻意不做 sticky：顶栏已经吸在顶部，再加一条吸附条会叠成两层，而且滚动时
+   它会盖住下面的卡片标题。让它在文档流里、跟着内容走。 */
+.tcbar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-bottom: 16px; padding: 8px 12px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 11px;
+}
+.tcbar .subtabs { margin: 0; }
+.tcbar .grow { flex: 1; }
+/* 平台页链路测试的动作组 */
+.rpactions { display: inline-flex; gap: 6px; }
+
+/* config 页里成组的可选设置（如出口中继）：默认收起，用一个和 .cfghd 同款
+   的标题行表示它是一组设置，而不是普通的一张卡片。 */
+.foldcfg { border-top: 1px solid var(--hairline); padding-top: 14px; margin-top: 18px; }
+.foldcfg:first-child { border-top: 0; padding-top: 0; margin-top: 0; }
+.foldcfg > summary {
+  list-style: none; cursor: pointer; user-select: none;
+  display: flex; align-items: center; gap: 9px;
+  color: var(--ink-2); font-size: 12.5px; font-weight: 650; letter-spacing: .01em;
+}
+.foldcfg > summary::-webkit-details-marker { display: none; }
+.foldcfg > summary::before {
+  content: ""; order: 0; flex: none; width: 8px; height: 8px; border-radius: 3px;
+  background: color-mix(in srgb, var(--accent) 72%, var(--surface-2));
+}
+.foldcfg > summary::after { content: ""; flex: 1; height: 1px; background: var(--hairline); order: 1; }
+.foldcfg > summary .fnote { order: 2; font-size: 11.5px; font-weight: 450; color: var(--ink-3); }
+.foldcfg > summary .fchev {
+  order: 2; width: 7px; height: 7px; margin-left: 2px;
+  border-right: 1.6px solid var(--ink-3); border-bottom: 1.6px solid var(--ink-3);
+  transform: rotate(-45deg); transition: transform var(--dur) var(--ease);
+}
+.foldcfg[open] > summary .fchev { transform: rotate(45deg); }
+.foldcfg > summary:hover { color: var(--ink); }
+.foldcfg > .foldbody { padding-top: 12px; }
+
+/* -- 34. 日轨（24 小时时间轴）-------------------------------------------
+   定时任务的本质是「一天里哪几个点会跑」。`9, 21` 这两个数字用表格读要脑补，
+   画成一条 24 小时的轨道，哪个时段有任务一眼就看到。
+   一行 = 一个任务；轨道 = 00:00→24:00；亮点 = 会触发的时点。 */
+.dayrail { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.dayrail-track {
+  position: relative; flex: 1; min-width: 90px; height: 22px;
+  border-radius: 6px; background: var(--surface-2);
+  border: 1px solid var(--line-soft); overflow: hidden;
+}
+/* 一天的刻度：每 6 小时一根淡线，帮眼睛定位到时刻 */
+.dayrail-track::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: repeating-linear-gradient(90deg,
+    transparent 0, transparent calc(25% - 1px),
+    color-mix(in srgb, var(--line) 70%, transparent) calc(25% - 1px),
+    color-mix(in srgb, var(--line) 70%, transparent) 25%);
+}
+.dayrail-tick {
+  position: absolute; top: 3px; bottom: 3px; width: 2px; border-radius: 2px;
+  background: var(--accent); transform: translateX(-1px);
+  animation: railIn 260ms var(--ease) both;
+}
+@keyframes railIn { from { transform: translateX(-1px) scaleY(.2); opacity: 0; } }
+/* 整段区间（按间隔跑的任务）：不是「某个时刻」而是「一直在跑」 */
+.dayrail-band {
+  position: absolute; top: 7px; bottom: 7px; border-radius: 3px;
+  background: repeating-linear-gradient(115deg,
+    color-mix(in srgb, var(--accent) 55%, transparent) 0 5px,
+    color-mix(in srgb, var(--accent) 22%, transparent) 5px 10px);
+  animation: railIn 260ms var(--ease) both;
+}
+.dayrail-none { position: absolute; inset: 0; display: grid; place-items: center;
+  font-size: 10.5px; color: var(--ink-3); }
+.dayrail-hint { font: 10.5px/1 var(--mono); color: var(--ink-3); flex: none; white-space: nowrap; }
+/* 悬停某个刻度时显示它对应的时刻 */
+.dayrail-tick:hover::after {
+  content: attr(data-h); position: absolute; left: 50%; bottom: calc(100% + 6px);
+  transform: translateX(-50%); z-index: 5;
+  padding: 3px 6px; border-radius: 5px; white-space: nowrap;
+  background: var(--raise); border: 1px solid var(--line); color: var(--ink);
+  font: 10.5px/1 var(--mono);
+}
+
+/* -- 35. 动效（权威层）---------------------------------------------------
+   原则和前一层一致：只动 transform / opacity / 颜色，不动会触发重排的属性。
+   这一层补三件具体的事：视图进场时区块依次浮现、统计数字读出来后滚到位、
+   折叠区展开时高度平滑过渡。全部在 prefers-reduced-motion 下一并关掉。 */
+
+/* 1) 视图进场：同级区块按顺序错峰浮现（0/40/80ms…，最多 5 档）。
+      每屏只演一次；切回来的视图带 .settle，直接就是最终状态。 */
+.view:not([hidden]):not(.settle) > .box,
+.view:not([hidden]):not(.settle) > .stats,
+.view:not([hidden]):not(.settle) > .tcbar,
+.view:not([hidden]):not(.settle) > .rl-head,
+.view:not([hidden]):not(.settle) > .rl-kpis {
+  animation: blockIn 320ms var(--ease) both;
+}
+.view:not([hidden]):not(.settle) > :nth-child(1) { animation-delay: 0ms; }
+.view:not([hidden]):not(.settle) > :nth-child(2) { animation-delay: 40ms; }
+.view:not([hidden]):not(.settle) > :nth-child(3) { animation-delay: 80ms; }
+.view:not([hidden]):not(.settle) > :nth-child(4) { animation-delay: 120ms; }
+.view:not([hidden]):not(.settle) > :nth-child(n+5) { animation-delay: 160ms; }
+@keyframes blockIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* 2) 统计数字：值变化时轻轻向上淡入，让「刚读到的数」和「之前的数」分得开。
+      只对 .stat .v 生效，表格里的数字不动——那里的行一直在刷新，动会晃眼。 */
+.stats .stat .v, .rl-kpi .v {
+  animation: numIn 220ms var(--ease) both;
+}
+@keyframes numIn { from { opacity: .35; transform: translateY(-3px); } }
+
+/* 3) 折叠区：展开时高度与透明度一起过渡。details 的原生展开是瞬跳，
+      这里给 .foldbody 加一段进场，读起来像是「展开」而不是「换了一屏」。 */
+details[open] > .foldbody,
+details[open] > .fold > .foldbody,
+.foldcfg[open] > .foldbody {
+  animation: foldOpen 220ms var(--ease) both;
+}
+@keyframes foldOpen {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: none; }
+}
+.opmore[open] > .opmenu {
+  animation: menuIn 140ms var(--ease) both;
+  transform-origin: top right;
+}
+@keyframes menuIn {
+  from { opacity: 0; transform: scale(.97) translateY(-4px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* 4) 行内出现：表格/队列的新行淡入。列表整体重画时不加类，只有真正
+      「新出现的一条」才带上 .rowin，避免整表闪一遍。 */
+.rowin { animation: rowIn 260ms var(--ease) both; }
+@keyframes rowIn { from { opacity: 0; transform: translateX(-6px); } }
+
+/* 5) 聚焦与按压：给按钮一点实际的反馈，而不是只有颜色变化。 */
+.topbar > button:active, .btnmain:active, .opmore > summary:active,
+.nav a:active, .chip:active, .stat.clickable:active { transform: translateY(1px); }
+.opmore > summary, .btnmain, .nav a, .stat.clickable, .chip {
+  transition: background-color var(--dur) var(--ease), border-color var(--dur) var(--ease),
+              color var(--dur) var(--ease), transform 90ms var(--ease), box-shadow var(--dur) var(--ease);
+}
+
+/* 6) 加载骨架：读数据的那一瞬间先给出形状，避免内容整块跳进来。 */
+.skel {
+  display: block; border-radius: 6px;
+  background: linear-gradient(90deg, var(--surface-2) 25%, var(--raise) 37%, var(--surface-2) 63%);
+  background-size: 400% 100%;
+  animation: skel 1.4s ease-in-out infinite;
+}
+@keyframes skel { from { background-position: 100% 0; } to { background-position: 0 0; } }
+.skel-row { height: 13px; margin: 10px 0; }
+.skel-row.short { width: 42%; }
+
+@media (prefers-reduced-motion: reduce) {
+  .view:not([hidden]) > *, .stats .stat .v, .rl-kpi .v,
+  details[open] > .foldbody, .foldcfg[open] > .foldbody,
+  .opmore[open] > .opmenu, .rowin, .dayrail-tick, .dayrail-band, .skel {
+    animation: none !important;
+  }
+  .topbar > button:active, .btnmain:active, .opmore > summary:active,
+  .nav a:active, .chip:active, .stat.clickable:active { transform: none !important; }
+}
+
+/* -- 36. 运行记录时间线 ---------------------------------------------------
+   原来是一张 11 列的宽表，9 列里大半是 0；真正要看的「为什么失败」被挤在
+   最右边一格。改成一列时间线：左边时刻，右边一句摘要，非零的计数才画徽章。 */
+.runline-list {
+  list-style: none; margin: 0; padding: 6px 18px 12px;
+  display: flex; flex-direction: column;
+}
+.runitem {
+  position: relative; display: grid; grid-template-columns: 74px minmax(0, 1fr);
+  gap: 14px; padding: 10px 0 10px 16px;
+  border-left: 2px solid var(--line-soft);
+  animation: rowIn 260ms var(--ease) both;
+}
+.runitem:last-child { border-left-color: transparent; }
+/* 时间线上的节点：好事一个小实点，失败一个醒目的红点 */
+.runitem::before {
+  content: ""; position: absolute; left: -5px; top: 15px;
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--surface); border: 2px solid var(--ink-3);
+}
+.runitem.live::before { border-color: var(--warn); animation: runPulse 1.6s ease-out infinite; }
+.runitem.bad::before { border-color: var(--bad); background: var(--bad); }
+@keyframes runPulse { 60% { box-shadow: 0 0 0 7px rgba(230,162,60,0); } 100% { box-shadow: 0 0 0 0 rgba(230,162,60,0); } }
+.runt {
+  font: 10.5px/1.5 var(--mono); color: var(--ink-3);
+  font-variant-numeric: tabular-nums; padding-top: 2px;
+}
+.runt i { display: block; font-style: normal; font-size: 10px; opacity: .8; }
+.runb { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.runline { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; }
+.runline b { font-size: 13px; font-weight: 560; color: var(--ink); }
+.runwho { font: 10.5px/1 var(--mono); color: var(--ink-3); }
+.runline .grow { flex: 1; }
+.runms { font: 10.5px/1 var(--mono); color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.runbadges { display: flex; flex-wrap: wrap; gap: 5px; }
+.rb {
+  font: 10.5px/1 var(--mono); padding: 3px 7px; border-radius: 5px;
+  background: var(--surface-2); color: var(--ink-3); border: 1px solid var(--line-soft);
+}
+.rb.ok { background: var(--ok-soft); color: var(--ok-text); border-color: transparent; }
+.rb.warn { background: var(--warn-soft); color: var(--warn-text); border-color: transparent; }
+.rb.bad { background: var(--bad-soft); color: var(--bad-text); border-color: transparent; }
+/* 失败原因给足宽度：它是这一条记录里唯一需要读句子而不是读数字的部分。 */
+.runwhy {
+  font-size: 11.5px; line-height: 1.5; color: var(--ink-2);
+  background: var(--surface-2); border-radius: 7px; padding: 6px 9px;
+  overflow-wrap: anywhere;
+}
+.runitem.bad .runwhy { background: var(--bad-soft); color: var(--bad-text); }
+
+/* -- 37. 质感（权威层）---------------------------------------------------
+   这一层只改「看起来有多贵」，不改任何布局与交互：
+   降饱和、用发丝线分层、给表面一点极浅的顶光、让数字成为主角。
+   原来的界面廉价感来自三处——亮绿的粗圆环和通栏绿条（色块面积过大）、
+   纯黑平铺背景（没有空气感）、所有卡片同一条边框堆在同一平面（没有层次）。
+   这里逐条处理，不动任何功能。 */
+
+/* 1) 色板：把 Element 默认那套高饱和色换成更沉稳的一档。
+      同色相、降饱和、提一点明度对比，状态色仍然一眼可辨，但不刺眼。 */
+:root {
+  --bg: #0a0b0e;
+  --surface: #111318;
+  --surface-2: #171a20;
+  --raise: #1e222a;
+  --line: rgba(255, 255, 255, .085);
+  --line-soft: rgba(255, 255, 255, .05);
+  --ink: #eceef3;
+  --ink-2: #b6bcc8;
+  --ink-3: #7d8492;
+
+  --accent: #4c7dff;
+  --accent-hover: #6b93ff;
+  --accent-active: #3d6ae0;
+  --accent-soft: rgba(76, 125, 255, .14);
+  --accent-text: #8fb0ff;
+
+  --ok: #3fb950;
+  --ok-soft: rgba(63, 185, 80, .15);
+  --ok-text: #56d364;
+  --warn: #d29922;
+  --warn-soft: rgba(210, 153, 34, .15);
+  --warn-text: #e3b341;
+  --bad: #f85149;
+  --bad-soft: rgba(248, 81, 73, .14);
+  --bad-text: #ff7b72;
+
+  /* 阴影只用来看出层次，不用来装饰：大范围、极低不透明度。 */
+  --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 12px 32px -16px rgba(0, 0, 0, .7);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, .3);
+  --shadow-float: 0 8px 32px -8px rgba(0, 0, 0, .75), 0 2px 8px rgba(0, 0, 0, .4);
+
+  /* 字体：优先 Windows 11 的 Segoe UI Variable，退到系统 UI 栈。
+     字距在标题上收紧一点，正文保持默认——这是「印刷感」的主要来源。 */
+  --sans: "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui,
+          "PingFang SC", "Microsoft YaHei", sans-serif;
+  --mono: "SF Mono", "Cascadia Mono", "JetBrains Mono", Consolas, ui-monospace, monospace;
+}
+[data-theme="light"] {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-2: #f7f8fa;
+  --raise: #ffffff;
+  --line: rgba(16, 24, 40, .10);
+  --line-soft: rgba(16, 24, 40, .06);
+  --ink: #14181f;
+  --ink-2: #4a5260;
+  --ink-3: #7a828f;
+
+  --accent: #3d6ae0;
+  --accent-hover: #4c7dff;
+  --accent-active: #2f55bd;
+  --accent-soft: rgba(61, 106, 224, .09);
+  --accent-text: #2f55bd;
+
+  --ok: #1a7f37; --ok-soft: rgba(26, 127, 55, .10); --ok-text: #1a7f37;
+  --warn: #9a6700; --warn-soft: rgba(154, 103, 0, .10); --warn-text: #9a6700;
+  --bad: #cf222e; --bad-soft: rgba(207, 34, 46, .09); --bad-text: #cf222e;
+
+  --shadow: 0 1px 2px rgba(16, 24, 40, .05), 0 12px 28px -18px rgba(16, 24, 40, .22);
+  --shadow-sm: 0 1px 2px rgba(16, 24, 40, .05);
+  --shadow-float: 0 10px 32px -10px rgba(16, 24, 40, .22), 0 2px 6px rgba(16, 24, 40, .07);
+}
+
+/* 2) 背景：一层极淡的顶光 + 一层几乎看不见的颗粒。
+      纯平的黑会让所有卡片浮在真空里；有了这两层，表面才有「房间」感。 */
+body {
+  background-color: var(--bg);
+  background-image:
+    radial-gradient(1100px 520px at 50% -12%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 70%),
+    radial-gradient(900px 600px at 100% 0%, color-mix(in srgb, var(--ink) 3%, transparent), transparent 60%);
+  background-attachment: fixed;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+}
+/* 颗粒：4% 不透明度的噪点，只在深色下加，浅色会显脏。 */
+html:not([data-theme="light"]) body::after {
+  content: ""; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  opacity: .028;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/></filter><rect width='140' height='140' filter='url(%23n)'/></svg>");
+}
+.shell { position: relative; z-index: 1; }
+
+/* 3) 表面：发丝线 + 一道极浅的顶光。这是「精密仪器」和「网页卡片」的分界——
+      网页卡片靠阴影浮起来，仪器靠边缘的一线高光。 */
+.box, .rl-kpi, .kpi, .ov-panel, .cfgsec, .pk-card, .vc, .pfplat, .runline-list {
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--surface) 92%, var(--ink) 8%),
+    var(--surface) 42%);
+  border: 1px solid var(--line);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .045), var(--shadow-sm);
+}
+[data-theme="light"] .box,
+[data-theme="light"] .rl-kpi,
+[data-theme="light"] .kpi {
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+.box { border-radius: 12px; }
+.box > header { border-bottom: 1px solid var(--line-soft); }
+.box > header h3 { letter-spacing: -.012em; }
+
+/* 4) 数字：全站等宽、对齐、字距收紧。表格里的观测值一律 tabular-nums，
+      这样一列数字的小数点才会落在同一条线上。 */
+.stat .v, .kpi .v, .rl-kpi .v, .acc td.num, .acc-num, .runms, .runt,
+.pgnum, .usread, .num, table.acc td, table.acc th {
+  font-variant-numeric: tabular-nums;
+}
+.stat .v, .kpi .v, .rl-kpi .v { letter-spacing: -.035em; }
+
+/* 5) 总览那个圆环：原来是 10px 粗的亮绿甜甜圈，色块面积大到抢戏。
+      改成 4px 的细弧 + 圆头 + 一层同色微光，把「可用率」还原成一个读数，
+      而不是一块装饰。 */
+.ov-ring { width: 152px; height: 152px; }
+.ov-ring-bg { stroke-width: 4; stroke: color-mix(in srgb, var(--ink) 10%, transparent); }
+/* 正常状态用中性强调色，不用绿色。
+   一个「一切正常」的仪表不该用最饱和的颜色喊出来——绿只该在值得注意时出现。
+   这样整屏平时是安静的蓝灰，出问题时红/黄才跳出来，颜色的信噪比就上去了。 */
+.ov-ring-fg {
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke: var(--accent);
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--accent) 35%, transparent));
+  transition: stroke-dashoffset 600ms var(--ease), stroke 300ms var(--ease);
+}
+#ovRing.warn .ov-ring-fg { stroke: var(--warn); filter: drop-shadow(0 0 5px color-mix(in srgb, var(--warn) 45%, transparent)); }
+#ovRing.bad .ov-ring-fg { stroke: var(--bad); filter: drop-shadow(0 0 5px color-mix(in srgb, var(--bad) 45%, transparent)); }
+.ov-ring-mid b { font-size: 30px; font-weight: 620; letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
+.ov-ring-mid span { font-size: 11px; color: var(--ink-3); letter-spacing: .06em; }
+
+/* 6) 账号健康那条通栏绿条：原来是 14px 高的满色圆角条，整条铺满时像一条
+      「警报解除」的横幅。改成 6px 的量表：分段之间留 2px 缝，段与段之间能看出
+      比例关系，而不是糊成一片色块。 */
+.ov-stack { display: flex; gap: 2px; height: 6px; border-radius: 3px; overflow: hidden; background: var(--surface-2); }
+.ov-stack i { display: block; min-width: 3px; border-radius: 3px; transition: flex 400ms var(--ease); }
+.ov-legend i { width: 7px; height: 7px; border-radius: 2px; }
+
+/* 7) 徽章与 chip：去掉实心高饱和底，改成描边 + 极浅底。
+      原来每一颗都是一块实色，一行十几个凑在一起就是「调色盘」。 */
+.chip, .tag, .rb {
+  background: color-mix(in srgb, var(--surface-2) 88%, transparent);
+  border: 1px solid var(--line);
+  color: var(--ink-2);
+}
+.chip.ok, .tag.ok, .rb.ok { background: var(--ok-soft); border-color: color-mix(in srgb, var(--ok) 32%, transparent); color: var(--ok-text); }
+.chip.warn, .tag.warn, .rb.warn { background: var(--warn-soft); border-color: color-mix(in srgb, var(--warn) 32%, transparent); color: var(--warn-text); }
+.chip.err, .chip.bad, .tag.bad, .rb.bad { background: var(--bad-soft); border-color: color-mix(in srgb, var(--bad) 32%, transparent); color: var(--bad-text); }
+
+/* 8) 标题层级：主标题收紧字距、副标题放松。字距的对比比字号对比更显克制。 */
+.topbar h1 { letter-spacing: -.028em; }
+.view > .box > header h3, .rl-head h2 { letter-spacing: -.015em; }
+.rl-name b { letter-spacing: -.01em; }
+
+/* 9) 焦点环：只在键盘导航时出现，颜色跟随强调色，粗细一致。 */
+:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent); outline-offset: 2px; }
+
+/* 10) 滚动条：更细，且只在悬停时显形——常驻的滚动条会把界面切碎。 */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--ink) 14%, transparent);
+  border-radius: 999px; border: 3px solid transparent; background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--ink) 26%, transparent); background-clip: content-box; }
+
+/* 11) 顶栏与侧栏：用极浅的底色差把「框架」和「内容」分开，而不是靠粗边框。 */
+.nav { background: color-mix(in srgb, var(--surface) 55%, var(--bg)); border-right: 1px solid var(--line-soft); }
+.topbar {
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  border-bottom: 1px solid var(--line-soft);
+}
+.nav a.on { background: color-mix(in srgb, var(--accent) 11%, transparent); }
+/* 平台筛选条：有账号的一档（带状态点 + 计数）、没账号的一档（只有名字）。
+   两档之间用一道竖线分开，扫读时不必逐个看数字判断哪些是「在用」的。 */
+.chips > .chip.idle {
+  color: var(--ink-3);
+  background: transparent;
+  border-color: transparent;
+  opacity: .72;
+}
+.chips > .chip.idle:hover { opacity: 1; background: var(--surface-2); border-color: var(--line); }
+.chips > .chip.has { color: var(--ink-2); }
+.chips > .chip.has b { color: var(--ink); font-variant-numeric: tabular-nums; }
+/* 两档的分界：第一个 idle 之前画一条淡竖线 */
+.chips > .chip.has + .chip.idle { margin-left: 6px; }
+.chips > .chip.has + .chip.idle::before {
+  content: ""; position: absolute; left: -7px; top: 50%; transform: translateY(-50%);
+  width: 1px; height: 14px; background: var(--line);
+}
+.chips > .chip.idle { position: relative; }
+
+/* 用量磁贴：顶部那条 2px 身份色改成中性发丝线。七张磁贴七条彩线，一屏读下来
+   像一张色卡，注意力被横条分走；小圆点已经足够把磁贴和它的色对上。
+   进度条也收细、统一用强调色——它表示「比例」，不表示「状态」。 */
+.ustile::before { background: var(--line); opacity: 1; height: 1px; }
+.ustile .meter { height: 3px; }
+.ustile .meter i { background: var(--accent); opacity: .85; }
+
+/* 模型表有 14 列，其中「倍率 / 默认档 / 上下文 / 价格」都是固定宽度的输入框。
+   自动布局下它们先吃饱，模型名那一列被压到几十像素——「Auto/gpt-6-astra」被
+   折成「Aut o…」，一屏 393 行全是这种读不出来的名字。
+   给整表一个能放下所有列的最小宽度，由 .tbl-wrap 横向滚动；模型名单独给下限，
+   它是这张表的主键，任何情况下都不该被截断。 */
+#view-models .acc.md { min-width: 900px; }
+#view-models .acc.md thead th:first-child,
+#view-models .acc.md tbody td:first-child { min-width: 264px; }
+
+/* 模型表：主行 + 可展开的详情行。
+   主行六列（模型 / 客户端 / 来源 / 上下文 / 价格 / 详情），详情行里是十一个
+   可编辑字段。详情行的 <td> 被 display:contents 拉平成一个网格，所以字段
+   仍然是原来的单元格（编辑逻辑一行没改），只是摆成了两列三列的卡片。 */
+#view-models .acc.md tr.mdmain > td { border-bottom: 1px solid var(--line-soft); }
+#view-models .acc.md tr.mddetail > td {
+  padding: 0; border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface-2) 60%, transparent);
+}
+#view-models .acc.md tr.mdmain:hover > td { background: color-mix(in srgb, var(--accent) 4%, transparent); }
+.mdbadges { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 5px; }
+.mdbadges:empty { display: none; }
+.mdpricecell { font-variant-numeric: tabular-nums; white-space: nowrap; }
+#view-models .acc.md td.mdacts { text-align: right; white-space: nowrap; }
+
+.mddgrid { padding: 14px 16px 16px; }
+/* 把 table/tbody/tr 都拉平成透明容器，让下面的 <td> 直接成为网格项。
+   注意 tbody 是浏览器自动插入的：选择器少写它一层，整张表就退化成
+   「一行一列的表格」，字段会竖着堆成一条。 */
+.mddgrid > table,
+.mddgrid > table > tbody,
+.mddgrid > table > tbody > tr { display: contents; }
+.mddgrid td {
+  display: block; min-width: 0; padding: 0 !important; border: 0 !important;
+  background: transparent !important;
+}
+.mddgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(186px, 1fr)); gap: 14px 18px; }
+/* 字段标签：每个单元格按 data-field 显示自己的名字。放在 CSS 里而不是 HTML 里，
+   是因为这些单元格由原有构造函数生成，加标签不该动它们的结构。 */
+.mddgrid td[data-field]::before {
+  display: block; margin-bottom: 4px;
+  font-size: 10.5px; letter-spacing: .04em; color: var(--ink-3);
+}
+.mddgrid td[data-field="rate"]::before { content: "计费倍率"; }
+.mddgrid td[data-field="default_effort"]::before { content: "默认档"; }
+.mddgrid td[data-field="efforts"]::before { content: "思考档位"; }
+.mddgrid td[data-field="elevate_top"]::before { content: "封顶对齐"; }
+.mddgrid td[data-field="context"]::before { content: "上下文窗口"; }
+.mddgrid td[data-field="output"]::before { content: "最大输出"; }
+.mddgrid td[data-field="price-input"]::before { content: "输入价 ¥/M"; }
+.mddgrid td[data-field="price-output"]::before { content: "输出价 ¥/M"; }
+.mddgrid td[data-field="price-cache"]::before { content: "缓存读取价 ¥/M"; }
+.mddgrid td[data-field="owned_by"]::before { content: "所属"; }
+.mddgrid .mdro { font-size: 12.5px; color: var(--ink-2); padding: 5px 0; }
+.mddgrid .mdacts { grid-column: 1 / -1; display: flex; gap: 6px; justify-content: flex-end; padding-top: 2px !important; }
+/* 详情里的输入框撑满单元格，和主行的紧凑数字形成对比。 */
+.mddgrid input.mdtxt, .mddgrid input.mdnum, .mddgrid input.mdmap, .mddgrid input.mdshort {
+  width: 100% !important; text-align: left;
+}
+.mddgrid input.mdnum { text-align: right; }
+
+/* 卡片标题里的说明文字：原来是紧贴标题的一个 span，长说明读起来像标题的一部分
+   （「平台路由配置设置模型路由组、平台优先级…」）。拉开距离、压低一级，并限宽：
+   说明可以截断，标题和右侧按钮不能被它挤到第二行。 */
+.box > header h3 {
+  display: flex; align-items: baseline; gap: 0;
+  min-width: 0; flex: 0 1 auto;
+}
+.box > header h3 .hint {
+  margin-left: 10px;
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--ink-3);
+  line-height: 1.45;
+  min-width: 0;
+  max-width: 52ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 能力矩阵的勾与横线：勾是「有」，用中性前景色；横线是「没有」，压到最淡。
+   一屏几十个勾，只有「有」这一种状态，不该每个都带一块底色。 */
+.yn { display: inline-block; min-width: 14px; text-align: center; font-size: 12.5px; line-height: 1; }
+.yn.yes { color: var(--ink-2); }
+.yn.no { color: color-mix(in srgb, var(--ink-3) 45%, transparent); }
+
+/* -- 38. 对话页 ------------------------------------------------------------
+   两处问题：头部把「新对话 / 还没有开始」和客户端、模型两个下拉挤在同一行，
+   标题被压成两行还紧贴着控件；空状态用 12vh 顶开，内容悬在半空、下面一大片
+   什么都没有。这里把头部拆成「标题区（可截断）」和「控件区（可换行）」两段，
+   空状态改成在可用高度里真正居中。 */
+.chat-head { padding: 11px 16px; gap: 10px 14px; }
+.chat-head-title {
+  flex: 1 1 220px;
+  display: flex; align-items: baseline; gap: 9px;
+  min-width: 0;
+}
+.chat-head-title h3 { white-space: nowrap; }
+/* 副标题（还没有开始 / 模型名）单行截断：它是状态说明，不该把标题挤成两行。 */
+.chat-head-title .note {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--ink-3);
+}
+.chat-head .sel-note { flex: 0 0 auto; }
+.chat-head .sel-note select { min-width: 132px; max-width: 240px; }
+/* 模型名比客户端名长得多，给它更宽的一档。 */
+#chatModel { min-width: 180px !important; max-width: 300px !important; }
+
+/* 空状态：在滚动区里垂直居中，内容收在一个可读宽度内。 */
+.chat-scroll { display: flex; flex-direction: column; }
+.chat-empty {
+  flex: 1 1 auto;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 28px 24px 40px; text-align: center; color: var(--ink-3);
+}
+.chat-empty h4 { font-size: 17px; font-weight: 620; color: var(--ink); margin-bottom: 7px; letter-spacing: -.01em; }
+.chat-empty p { font-size: 13px; line-height: 1.6; max-width: 40ch; }
+.chat-suggests { margin-top: 20px; gap: 8px; }
+.chat-suggests button {
+  padding: 7px 15px; border-radius: 999px; font-size: 12.5px;
+  background: var(--surface-2); border: 1px solid var(--line);
+  transition: border-color var(--dur) var(--ease), background-color var(--dur) var(--ease), transform 90ms var(--ease);
+}
+.chat-suggests button:hover { border-color: var(--accent); color: var(--accent-text); background: var(--accent-soft); }
+.chat-suggests button:active { transform: translateY(1px); }
+
+/* -- 39. 卡片头部的下拉不再被拉满 ------------------------------------------
+   全局给 input/select 写了 width:100%，那是给表单用的。放进卡片头部或工具栏时
+   它会把整行撑满——「最近调用」那个结果筛选下拉横跨了 1100px，看起来像一个
+   忘了配的输入框。这类控件按内容宽度、右对齐。 */
+.box > header > select,
+.box > header > label > select,
+.tblbar > select {
+  width: auto;
+  flex: 0 0 auto;
+  min-width: 108px;
+  max-width: 220px;
+}
+
+/* 对外模型表：五列，用固定布局把宽度钉住。
+   不钉的话，表格的 min-width 会把多出来的宽度平摊给每一列，那个 56px 的勾选列
+   会被撑到两百多像素，而模型名那一列反而没有变宽。 */
+#models-panel-exposed .acc.md { min-width: 720px; table-layout: fixed; }
+#models-panel-exposed .acc.md th:nth-child(1) { width: 62px; }
+#models-panel-exposed .acc.md th:nth-child(2) { width: 36%; }
+#models-panel-exposed .acc.md th:nth-child(3) { width: 92px; }
+#models-panel-exposed .acc.md th:nth-child(4) { width: 15%; }
+
 </style>
 </head>
 <body>
@@ -3897,14 +4928,21 @@ input, select, textarea, .stat, .subtab {
   <nav class="nav" aria-label="主导航">
     <div class="brand">
       <span class="logo" aria-hidden="true">c2</span>
-      <div>
+      <div class="brand-text">
         <div class="name">client2api</div>
         <div class="sub" id="navSub">控制台</div>
       </div>
+      <button class="navtoggle" id="btnNavToggle" type="button"
+              title="收起 / 展开侧栏" aria-label="收起或展开侧栏" aria-expanded="true">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 3.5 5 8l4.5 4.5"/></svg>
+      </button>
     </div>
     <div class="navscroll">
       <div class="navgroup navgroup-solo" data-group="home">
         <ul>
+          <li><a href="#routelive" data-view="routelive">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M1.8 11.5h12.4"/><circle cx="4" cy="11.5" r="1.5"/><circle cx="8" cy="11.5" r="1.5"/><circle cx="12" cy="11.5" r="1.5"/><path d="M6.4 6.2h3.2l1.6 2.1H4.8z"/></svg>
+            <span class="navlabel">路由实况</span><span class="navcount rl" id="navCountRouteLive" hidden></span></a></li>
           <li><a href="#overview" data-view="overview">
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="2" width="5.2" height="5.2" rx="1.4"/><rect x="8.8" y="2" width="5.2" height="5.2" rx="1.4"/><rect x="2" y="8.8" width="5.2" height="5.2" rx="1.4"/><rect x="8.8" y="8.8" width="5.2" height="5.2" rx="1.4"/></svg>
             <span class="navlabel">总览</span></a></li>
@@ -3988,7 +5026,47 @@ input, select, textarea, .stat, .subtab {
       <button class="primary" id="btnAdd" hidden>添加账号</button>
     </div>
 
+    <!-- 视图容器：内容列里唯一的滚动区，顶栏和侧栏都不跟着滚 -->
+    <div class="viewwrap" id="viewWrap">
     <!-- 总览：一屏回答「现在有没有问题」，再往下钻到具体页面 -->
+    <!-- 路由实况：把网关每一次选号画成线路图 -->
+    <section class="view" id="view-routelive" hidden>
+      <div class="rl-head">
+        <span class="sub">每一次选号，边发生边画</span>
+        <span class="grow"></span>
+        <label class="chk"><input type="checkbox" id="rlAuto" checked> 自动刷新</label>
+        <span class="rl-live on" id="rlLive"><i></i><span id="rlLiveText">实时</span></span>
+      </div>
+
+      <div class="rl-kpis" id="rlKpis"></div>
+
+      <div class="box">
+        <header>
+          <h3>线路图 <span class="hint" id="rlMapNote">-</span></h3>
+          <span class="grow"></span>
+          <span class="note" id="rlWindowNote"></span>
+          <button class="xs" id="btnRlRefresh">立即刷新</button>
+        </header>
+        <div class="pad">
+          <div class="rl-map" id="rlMap"></div>
+          <div class="rl-legend">
+            <span><i style="background:var(--ok)"></i>命中</span>
+            <span><i style="background:var(--surface);border:2px solid var(--bad)"></i>失败</span>
+            <span><i style="background:var(--surface);border:2px solid var(--ink-3)"></i>未轮到</span>
+            <span><i style="background:var(--accent)"></i>线路有活动</span>
+            <span>列车 = 最近一次请求停在谁那里</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="box">
+        <header>
+          <h3>请求流水 <span class="hint" id="rlEvNote">-</span></h3>
+        </header>
+        <div class="rl-events" id="rlEvents"></div>
+      </div>
+    </section>
+
     <section class="view" id="view-overview">
       <div class="ov-hero">
         <div class="ov-ring" id="ovRing" role="img" aria-label="账号池健康度">
@@ -4059,10 +5137,20 @@ input, select, textarea, .stat, .subtab {
           </select></label>
           <span class="note" id="accNote"></span>
           <button class="xs" id="btnRefreshAll" title="重新向上游续期/刷新已启用账号的登录凭据（续期 access token）；平台不提供续期时会如实提示">刷新凭据</button>
-          <button class="xs" id="btnBalanceAll" title="让服务端分批刷新余额（每次最多 3 个账号，慢慢来），不会一次性把整个号池问一遍">刷新余额</button>
-          <button class="xs" id="btnInviteAll" hidden>全部绑定邀请码</button>
-          <button class="xs" id="btnCheckinAll">全部签到</button>
-          <button class="xs" id="btnTestAll">全部测试</button>
+          <!-- 号池的批量动作原来五个平铺在表头，读的人要先分清哪个是「刷新」哪个是
+               「执行」。现在只留最常用的「刷新凭据」在外面，其余收进按用途分组的菜单。 -->
+          <details class="opmore" id="accMore">
+            <summary>批量操作</summary>
+            <div class="opmenu">
+              <div class="ophint">读取最新状态</div>
+              <button type="button" id="btnBalanceAll" title="让服务端分批刷新余额（每次最多 3 个账号，慢慢来），不会一次性把整个号池问一遍">刷新余额</button>
+              <button type="button" id="btnTestAll">测试全部账号</button>
+              <div class="opsep"></div>
+              <div class="ophint">执行每日任务</div>
+              <button type="button" id="btnCheckinAll">全部签到</button>
+              <button type="button" id="btnInviteAll" hidden>全部绑定邀请码</button>
+            </div>
+          </details>
         </header>
         <div class="tbl-wrap">
         <table class="acc">
@@ -4361,17 +5449,45 @@ input, select, textarea, .stat, .subtab {
 
     <!-- 任务中心 -->
    <section class="view" id="view-taskscenter" hidden>
-      <div class="subtabs" data-subtabs="taskscenter" role="tablist" aria-label="任务中心视图">
-        <button class="chip subtab on" type="button" id="tasks-tab-schedule" role="tab" aria-selected="true" aria-controls="tasks-panel-schedule" data-subtab="schedule">定时任务</button>
-        <button class="chip subtab" type="button" id="tasks-tab-batch" role="tab" aria-selected="false" aria-controls="tasks-panel-batch" data-subtab="batch" tabindex="-1">批量执行</button>
-        <button class="chip subtab" type="button" id="tasks-tab-board" role="tab" aria-selected="false" aria-controls="tasks-panel-board" data-subtab="board" tabindex="-1">任务看板</button>
+      <!-- 任务中心：三个子页各有自己的数据，但动作只有两种——「读一遍现在有什么」
+           和「把该做的做掉」。以前每个子页各挂两三个按钮、共 8 个，互相重叠；
+           现在收成一条统一的动作栏：一个主操作 + 一个「更多操作」折叠菜单。 -->
+      <div class="tcbar">
+        <div class="subtabs" data-subtabs="taskscenter" role="tablist" aria-label="任务中心视图">
+          <button class="chip subtab on" type="button" id="tasks-tab-schedule" role="tab" aria-selected="true" aria-controls="tasks-panel-schedule" data-subtab="schedule">定时任务</button>
+          <button class="chip subtab" type="button" id="tasks-tab-batch" role="tab" aria-selected="false" aria-controls="tasks-panel-batch" data-subtab="batch" tabindex="-1">批量执行</button>
+          <button class="chip subtab" type="button" id="tasks-tab-board" role="tab" aria-selected="false" aria-controls="tasks-panel-board" data-subtab="board" tabindex="-1">任务看板</button>
+        </div>
+        <span class="grow"></span>
+        <button class="xs" id="btnTcScan" title="读取当前子页的任务状态">扫描</button>
+        <button class="xs primary" id="btnTcRun" title="执行当前子页里所有可自动完成的任务">执行待办</button>
+        <details class="opmore" id="tcMore">
+          <summary>更多操作</summary>
+          <div class="opmenu">
+            <div class="ophint">执行范围</div>
+            <button type="button" id="btnScanAll">扫描成长任务</button>
+            <button type="button" id="btnRunQueue">执行成长任务</button>
+            <button type="button" id="btnCkScan">扫描可签到账号</button>
+            <button type="button" id="btnCkRun">执行批量签到</button>
+            <div class="opsep"></div>
+            <button type="button" id="btnTbRefreshTasks">刷新看板任务状态</button>
+            <button type="button" id="btnTbRunAll">执行看板可自动任务</button>
+            <div class="opsep"></div>
+            <label class="sel-note" style="padding:7px 9px">并发
+              <select id="qcConc"><option value="1" selected>1</option><option value="2">2</option><option value="3">3</option></select>
+            </label>
+            <button type="button" id="btnSchoolVouchers" hidden title="开学季抽奖抽中的第三方券码，可直接复制到对应 App / 小程序兑换">查询开学季券码</button>
+          </div>
+        </details>
       </div>
+
       <div class="subtab-panel" data-subtab-panel="tasks-schedule" id="tasks-panel-schedule" role="tabpanel" aria-labelledby="tasks-tab-schedule">
      <div class="box">
        <header>
          <h3>定时任务 <span class="hint" id="scNote">-</span></h3>
           <span class="grow"></span>
           <label class="chk scMaster"><input type="checkbox" id="scMaster"> 总开关</label>
+          <span class="chip warn" id="scDirty" hidden>有未保存的改动</span>
           <button class="xs primary" id="btnScSave">保存并生效</button>
         </header>
         <div class="cfghelp" id="scState"></div>
@@ -4381,19 +5497,15 @@ input, select, textarea, .stat, .subtab {
           <input id="scSearch" type="search" placeholder="搜索任务（/）" spellcheck="false" autocomplete="off">
           <label class="chk"><input type="checkbox" id="scOnlyOwn">只看已自定义</label>
           <span class="note" id="scCount"></span>
-          <span class="chip warn" id="scDirty" hidden>有未保存的改动</span>
         </div>
         <div class="cfghelp scHint">时点按北京时间、逗号分隔 0-23（例如 <code>9, 21</code>）；留空 = 该平台此任务永不跑。改了任一行就按右上角「保存并生效」提交，热加载即时生效。</div>
         <div id="scBody"></div>
       </div>
 
-      <div class="box">
-        <header>
-          <h3>运行记录 <span class="hint" id="scRunsNote">-</span></h3>
-          <span class="grow"></span>
-        </header>
-        <div id="scRunsBody"></div>
-      </div>
+      <details class="fold" id="scRunsFold">
+        <summary>运行记录 <span class="fnote" id="scRunsNote">-</span></summary>
+        <div class="foldbody"><div id="scRunsBody"></div></div>
+      </details>
       </div>
       <div class="subtab-panel" data-subtab-panel="tasks-batch" id="tasks-panel-batch" role="tabpanel" aria-labelledby="tasks-tab-batch" hidden>
 
@@ -4402,10 +5514,6 @@ input, select, textarea, .stat, .subtab {
           <h3>成长任务队列 <span class="hint" id="qcSummary"></span></h3>
           <span class="grow"></span>
           <div class="chips" id="qcChips"></div>
-          <label class="sel-note">并发 <select id="qcConc"><option value="1" selected>1</option><option value="2">2</option><option value="3">3</option></select></label>
-          <button class="xs" id="btnScanAll">扫描待办</button>
-          <button class="xs primary" id="btnRunQueue">执行全部待办</button>
-          <button class="xs" id="btnSchoolVouchers" hidden title="开学季抽奖抽中的第三方券码，可直接复制到对应 App / 小程序兑换">查询券码</button>
         </header>
         <div class="batchbar" id="qcBatchBar" hidden>
           <span class="note">一次性批量（原版看板的「全部」按钮，这里按客户端下发）</span>
@@ -4423,7 +5531,7 @@ input, select, textarea, .stat, .subtab {
             <circle cx="35" cy="33" r="8"/><path d="m40 38 5 5"/>
           </svg>
           <div class="t">还没有扫描过</div>
-          <div class="d">扫描当前客户端账号的成长任务与开学季待办，把没做的排成一列，一键执行。</div>
+          <div class="d">点右上角「扫描」读取当前客户端账号的成长任务与开学季待办，把没做的排成一列，再「执行待办」。</div>
         </div>
         <div id="qcList"></div>
       </div>
@@ -4432,8 +5540,6 @@ input, select, textarea, .stat, .subtab {
         <header>
           <h3>批量签到 <span class="hint" id="ckSummary"></span></h3>
           <span class="grow"></span>
-          <button class="xs" id="btnCkScan">扫描可签到账号</button>
-          <button class="xs primary" id="btnCkRun">执行全部签到</button>
         </header>
         <div class="qprog" id="ckProg" hidden>
           <div class="qbar"><i id="ckBarFill"></i></div>
@@ -4446,7 +5552,7 @@ input, select, textarea, .stat, .subtab {
             <circle cx="35" cy="33" r="8"/><path d="m40 38 5 5"/>
           </svg>
           <div class="t">还没有扫描过</div>
-          <div class="d">扫描所有客户端里有签到能力的账号，排成一队，一键执行。</div>
+          <div class="d">点右上角「扫描」读取所有客户端里有签到能力的账号，排成一队，再「执行待办」。</div>
         </div>
         <div id="ckList"></div>
       </div>
@@ -4458,8 +5564,6 @@ input, select, textarea, .stat, .subtab {
           <h3>任务看板 <span class="hint" id="tbNote">-</span></h3>
           <span class="grow"></span>
           <div class="chips" id="tbChips"></div>
-          <button class="xs" id="btnTbRefreshTasks">刷新任务状态</button>
-          <button class="xs primary" id="btnTbRunAll">执行全部可自动任务</button>
         </header>
         <div class="tblbar tb-accounts" id="tbAccountsBar" hidden>
           <span class="note">账号</span>
@@ -4505,7 +5609,10 @@ input, select, textarea, .stat, .subtab {
         <div class="tbl-wrap">
         <table class="acc md">
           <thead><tr>
-            <th>模型</th><th>客户端</th><th>来源</th><th>倍率</th><th>默认档</th><th>思考档位</th><th>封顶对齐</th><th class="sortable" id="mdSortContext" data-md-sort="context" tabindex="0" aria-sort="none" title="按上下文窗口排序">上下文 <span class="sort-mark" aria-hidden="true">↕</span></th><th>最大输出</th><th>输入价<br><span class="hint">¥/百万 tokens</span></th><th>输出价<br><span class="hint">¥/百万 tokens</span></th><th>缓存读取价<br><span class="hint">¥/百万 tokens</span></th><th>操作</th><th>所属</th>
+            <th>模型</th><th>客户端</th><th>来源</th>
+            <th class="sortable" id="mdSortContext" data-md-sort="context" tabindex="0" aria-sort="none" title="按上下文窗口排序">上下文 <span class="sort-mark" aria-hidden="true">↕</span></th>
+            <th title="输入 / 输出，人民币每百万 tokens">价格</th>
+            <th></th>
           </tr></thead>
           <tbody id="mdBody"></tbody>
         </table>
@@ -4582,9 +5689,20 @@ input, select, textarea, .stat, .subtab {
           <h3>平台路由配置 <span class="hint">设置模型路由组、平台优先级、模型黑名单、并发与最低余额；WorkBuddy 还带账号池治理</span></h3>
           <span class="grow"></span>
           <span class="note" id="pfNote">-</span>
-          <button class="xs" id="btnSourceAdd" type="button">添加中转站</button>
-          <button class="xs" id="btnPfExport">导出</button>
-          <button class="xs" id="btnPfImport">导入</button>
+          <button class="xs primary" id="btnSourceAdd" type="button">添加中转站</button>
+          <!-- 导出 / 导入是对「整份平台配置」的搬运，不是日常操作，收进菜单。 -->
+          <details class="opmore" id="pfMore">
+            <summary>更多</summary>
+            <div class="opmenu">
+              <div class="ophint">整份平台配置</div>
+              <button type="button" id="btnPfExport">导出到文件</button>
+              <button type="button" id="btnPfImport">从文件导入</button>
+              <div class="opsep"></div>
+              <div class="ophint">当前子页视图</div>
+              <button type="button" id="btnPfExpand">全部展开</button>
+              <button type="button" id="btnPfCollapse">全部收起</button>
+            </div>
+          </details>
         </header>
         <div class="subtabs pfSubtabs" data-subtabs="platforms" role="tablist" aria-label="平台路由配置视图">
           <button class="chip subtab on" type="button" id="platforms-tab-groups" role="tab" aria-selected="true" aria-controls="platforms-panel-groups" data-subtab="groups">模型路由组</button>
@@ -4599,17 +5717,20 @@ input, select, textarea, .stat, .subtab {
             <input id="pfSearch" type="search" placeholder="搜索平台 / 模型（/）" spellcheck="false" autocomplete="off">
             <label class="chk"><input type="checkbox" id="pfOnlyOff">只看已禁用</label>
             <span class="grow"></span>
-            <button class="xs" id="btnPfExpand">全部展开</button>
-            <button class="xs" id="btnPfCollapse">全部收起</button>
+            <span class="hint">展开 / 收起在右上角「更多」里</span>
           </div>
           <div class="pad" id="pfBody"><div class="hint">正在读取平台与模型…</div></div>
         </div>
         <div class="subtab-panel" data-subtab-panel="platforms-plan" id="platforms-panel-plan" role="tabpanel" aria-labelledby="platforms-tab-plan" hidden>
           <div class="tblbar">
             <input id="rpModel" type="search" placeholder="模型名，例如 Auto/MIMO-2.6Flash" spellcheck="false" autocomplete="off" style="min-width:280px">
-            <button class="xs" id="btnRpTest">测试链路</button>
-            <button class="xs" id="btnRpSpeed">测速</button>
-            <span class="hint">测试链路只做本地静态预演；测速会并发调用每个平台，哪个先完成就先显示。拖动结果会把顺序写回「模型优先级」，即平台配置里该模型行上的那个数字（比下一行小 1），两处始终同一个值。</span>
+            <!-- 两个动作分开是必要的：预演不花钱、测速会真的调用上游。合并成一个
+                按钮就会藏起这个差别，所以只把它们编成一组、标明代价。 -->
+            <span class="rpactions">
+              <button class="xs" id="btnRpTest" title="只做本地静态预演，不调用上游">预演顺序</button>
+              <button class="xs" id="btnRpSpeed" title="并发真实调用每个平台，会产生费用">实测速率</button>
+            </span>
+            <span class="hint">预演只算顺序、不花钱；实测会真的调用上游。拖动结果会把顺序写回「模型优先级」，即平台配置里该模型行上的那个数字（比下一行小 1），两处始终同一个值。</span>
           </div>
           <div class="pad" id="rpResult"><div class="hint">输入模型名后点「测试链路」，查看平台的调用顺序、上下文窗口和优先级。</div></div>
         </div>
@@ -4668,6 +5789,7 @@ input, select, textarea, .stat, .subtab {
         <div class="pad"><div class="logbox" id="logBox"></div></div>
       </div>
     </section>
+    </div><!-- /viewwrap -->
   </div>
 </div>
 
@@ -5660,17 +6782,66 @@ function setNav(ok, msg) {
   $("#subMeta").textContent = SNAP.listen || "-";
 }
 
+/* ── 外壳：侧栏折叠与视图切换 ────────────────────────────────────────────
+   折叠状态记在 localStorage 里，刷新和切页都保持。窄屏下侧栏本来就是横条，
+   折叠按钮在那里没有意义，所以只在宽屏出现（CSS 负责隐藏）。 */
+// 已演过进场动画的视图。每屏只演一次：切回来重播会让频繁来回切换变得烦躁。
+const VIEW_ENTERED = new Set();
+
+const SHELL = {
+  root: null,
+  key: "navmini",
+  init() {
+    this.root = document.querySelector(".shell");
+    if (!this.root) return;
+    // 窄屏不恢复折叠态：横向工具带没有「收起」这一档。
+    if (window.matchMedia("(max-width: 900px)").matches) {
+      this.root.classList.remove("navmini");
+    } else if (LS.get(this.key, "") === "1") {
+      this.root.classList.add("navmini");
+      this.syncAria(false);
+    }
+    const btn = $("#btnNavToggle");
+    if (btn) btn.addEventListener("click", () => this.toggle());
+  },
+  toggle() {
+    if (!this.root) return;
+    const mini = this.root.classList.toggle("navmini");
+    LS.set(this.key, mini ? "1" : "");
+    this.syncAria(!mini);
+    // 收起时侧栏变窄，图表类页面需要重新量一次宽度。
+    setTimeout(() => window.dispatchEvent(new Event("resize")), 180);
+  },
+  syncAria(expanded) {
+    const btn = $("#btnNavToggle");
+    if (btn) btn.setAttribute("aria-expanded", String(expanded));
+  },
+};
+
 /* ── 视图路由 ─────────────────────────────────────────────────────────── */
-const TITLES = { overview: "总览", accounts: "账号池", chat: "对话测试", usage: "用量", alerts: "平台告警", credits: "积分构成", packages: "客户端", taskscenter: "任务中心", models: "模型与档位", platforms: "平台配置", config: "配置", logs: "运行日志" };
+const TITLES = { routelive: "路由实况", overview: "总览", accounts: "账号池", chat: "对话测试", usage: "用量", alerts: "平台告警", credits: "积分构成", packages: "客户端", taskscenter: "任务中心", models: "模型与档位", platforms: "平台配置", config: "配置", logs: "运行日志" };
 function go(v) {
   if (!TITLES[v]) v = "accounts";
   VIEW = v;
   $$(".nav a").forEach(a => a.classList.toggle("on", a.dataset.view === v));
   $$(".view").forEach(s => { s.hidden = s.id !== "view-" + v; });
+  // 进场动画只演一次：给已经看过的视图打上 settle，CSS 那边就不再重播。
+  const shown = $("#view-" + v);
+  if (shown) {
+    if (VIEW_ENTERED.has(v)) shown.classList.add("settle");
+    else { VIEW_ENTERED.add(v); shown.classList.remove("settle"); }
+  }
   $("#ttl").textContent = TITLES[v];
+  document.title = TITLES[v] + " · client2api";
+  // 换页回到这一列的顶部：视图容器自己滚，浏览器不会替它复位。
+  const wrap = $("#viewWrap");
+  if (wrap) wrap.scrollTop = 0;
   // 顶栏「添加账号」只对账号池有意义（总览页从快捷入口进）。刷新则相反：
   // 它现在是全站统一入口，任何视图都要能点，所以不按视图隐藏。
   $("#btnAdd").hidden = v !== "accounts";
+  // 路由实况是唯一会自己关掉轮询的视图：离开就停，回来再开。
+  if (v !== "routelive") rlStopPolling();
+  if (v === "routelive") { renderRouteLive(); rlStartPolling(); }
   if (v === "overview") renderOverview();
   if (v) setTimeout(markScrollableTables, 0);
   if (v === "accounts") renderAccounts();
@@ -5692,6 +6863,7 @@ window.addEventListener("hashchange", () => go((location.hash || "#overview").sl
    这些真正干活的函数，而不是笼统地 refreshAll 一次。
    任务中心有三个子面板，一个视图键要刷新全部三块，所以那个分支带函数体。 */
 const REFRESH_BY_VIEW = {
+  "routelive": () => renderRouteLive(true),
   "overview": () => refreshAll(true),
   "accounts": () => refreshAll(true),
   "chat": () => renderChat(true),
@@ -5861,17 +7033,264 @@ function elsewhereByState(state) {
 
 function renderChips() {
   const box = $("#clientChips");
-  box.innerHTML = NAMES.map(n => {
+  // 平台筛选条原来把 22 个平台平铺成一排，每个都挂一个红点 + 「0/0」：
+  // 没用过的平台也在喊错，整条读下来全是噪音。
+  //
+  // 现在按「有没有账号」分成两档：有账号的排在前面、带状态点和计数；
+  // 没账号的只留名字、变暗、不带点也不带 0/0——它们只是「还没接」，
+  // 不是「坏了」。排序也让常用平台固定在最左边。
+  const rows = NAMES.map(n => {
     const c = clientInfo(n), ok = c && c.ready;
     // 徽章数和表里的行数必须是同一个口径：表按账号分组，徽章也得数账号。
-    // 前面是可用账号数，后面是账号总数（可用只算绿色 ready，不含冷却/禁用）。
     const groups = accGroups(ACCTS[n] && ACCTS[n].accounts);
     const cnt = groups.length;
     const usable = groups.filter(g => { const st = accGroupStat(g); return st.enabled && st.state === "ready"; }).length;
-    const label = usable + "/" + cnt;
-    return '<button class="xs chip' + (n === CUR ? " on" : "") + '" data-client="' + esc(n) + '" title="' + esc((ok ? "就绪" : ((c && c.detail) || "未就绪")) + " · " + label + " 个账号可用") + '">' +
-      '<span class="pulse" style="background:' + (ok ? "var(--ok)" : "var(--bad)") + '"></span>' + esc(platformLabel(n)) + ' <b>' + esc(label) + '</b></button>';
+    return { n: n, ok: ok, c: c, cnt: cnt, usable: usable };
+  });
+  rows.sort((a, b) => {
+    if ((b.cnt > 0) !== (a.cnt > 0)) return (b.cnt > 0 ? 1 : 0) - (a.cnt > 0 ? 1 : 0);
+    if (b.cnt !== a.cnt) return b.cnt - a.cnt;
+    return a.n.localeCompare(b.n);
+  });
+  box.innerHTML = rows.map(r => {
+    const on = r.n === CUR ? " on" : "";
+    if (!r.cnt) {
+      // 没账号：安静的一格。仍然可点（点了看这个平台的模型/能力），只是不表态。
+      return '<button class="xs chip idle' + on + '" data-client="' + esc(r.n) + '" title="' +
+        esc(platformLabel(r.n) + " · 还没有账号") + '">' + esc(platformLabel(r.n)) + '</button>';
+    }
+    const label = r.usable + "/" + r.cnt;
+    const tone = r.usable > 0 ? "var(--ok)" : (r.ok ? "var(--warn)" : "var(--bad)");
+    return '<button class="xs chip has' + on + '" data-client="' + esc(r.n) + '" title="' +
+      esc((r.ok ? "就绪" : ((r.c && r.c.detail) || "未就绪")) + " · " + label + " 个账号可用") + '">' +
+      '<span class="pulse" style="background:' + tone + '"></span>' + esc(platformLabel(r.n)) +
+      ' <b>' + esc(label) + '</b></button>';
   }).join("");
+}
+
+/* ── 路由实况 ─────────────────────────────────────────────────────────────
+   把 /panel/api/route_live 的记录画成线路图：一条线 = 一个模型，站点 = 候选账号
+   按失败切换的顺序排开，列车停在这条线最近一次请求真正落到的那一站。
+
+   这里不推断任何东西。哪条线、哪几站、谁亮谁灭，全部来自那一条接口返回的
+   traces 与 lanes；没有记录时画一句「还没有请求」，而不是画一条好看的假线路。 */
+let RL_TIMER = null, RL_DATA = null, RL_LOADING = false;
+
+// 线路配色：稳定地按模型名取色，同一个模型每次刷新都是同一条颜色。
+const RL_COLORS = ["var(--accent)", "var(--ok)", "var(--warn)", "#b687e8", "#4fc3d9", "#e8734a"];
+function rlColor(seed) {
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
+  return RL_COLORS[h % RL_COLORS.length];
+}
+
+function rlLatency(ms, has) {
+  if (!has) return "—";
+  if (ms >= 1000) return (ms / 1000).toFixed(1) + "s";
+  return ms + "ms";
+}
+
+function rlTime(ts) {
+  if (!ts) return "-";
+  const d = new Date(ts);
+  if (isNaN(d)) return "-";
+  const p = n => String(n).padStart(2, "0");
+  return p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
+}
+
+// rlStopId is the one identity a lane has on a line.  Stops and the train are
+// matched by it, so both sides must build it the same way -- deriving it twice
+// with a different field order is what left the train parked mid-track while
+// its stop was lit.
+function rlStopId(lane) {
+  const label = lane.account_label || lane.account || lane.client || "默认账号";
+  return (lane.client || "") + "\u0000" + (lane.account || label);
+}
+
+// rlLines 把 traces 折成「每个模型一条线」：线内站点按 candidate 顺序取第一个
+// 出现过的账号，线内最后一个请求的 winner 决定列车停在哪。
+function rlLines(traces) {
+  const byModel = new Map();
+  (traces || []).forEach((t, ti) => {
+    const key = t.model || t.requested || "未命名模型";
+    // 同一个模型常被调用方用不同大小写请求（Auto/GLM-5.3 与 auto/glm-5.3），
+    // 那是同一批账号、同一份线路，按 casefold 合并，否则线路上会并排出现两条
+    // 一模一样的线。展示名沿用第一次见到的那个写法。
+    const fold = key.toLowerCase();
+    let line = byModel.get(fold);
+    if (!line) {
+      line = { model: key, stops: [], seen: new Set(), train: -1, traces: 0, fails: 0 };
+      byModel.set(fold, line);
+    }
+    line.traces++;
+    if (t.failed) line.fails++;
+    // 站点按 candidate 升序稳定追加，同一条线上不会因为刷新而重排。
+    const lanes = (t.lanes || []).slice().sort((a, b) => a.candidate - b.candidate);
+    lanes.forEach(l => {
+      const id = rlStopId(l);
+      if (!line.seen.has(id)) {
+        line.seen.add(id);
+        line.stops.push({ id: id, label: l.account_label || l.account || l.client || "默认账号", client: l.client || "", failed: false, hit: false });
+      }
+    });
+    // 最新的一条 trace 决定列车位置（traces 已经是新的在前）。
+    if (ti === 0 && !t.failed && t.winner >= 0) {
+      const w = lanes[t.winner];
+      if (w) line.train = line.stops.findIndex(s => s.id === rlStopId(w));
+    }
+  });
+
+  // 每条线最近一次请求里，谁失败、谁命中。
+  byModel.forEach(line => {
+    const fold = line.model.toLowerCase();
+    const last = (traces || []).find(t => (t.model || t.requested || "未命名模型").toLowerCase() === fold);
+    if (!last) return;
+    const lanes = (last.lanes || []).slice().sort((a, b) => a.candidate - b.candidate);
+    lanes.forEach(l => {
+      const stop = line.stops.find(s => s.id === rlStopId(l));
+      if (!stop) return;
+      if (l.failed) stop.failed = true;
+      if (!last.failed && last.winner >= 0 && lanes[last.winner] === l) stop.hit = true;
+    });
+  });
+
+  return [...byModel.values()];
+}
+
+// rlShortModel 缩短线路名：调用方前缀（trae/、zcode/my-client/）和模型名里
+// 真正有区分度的部分分开显示，行宽不够时不至于只剩省略号。
+function rlShortModel(model) {
+  const parts = String(model || "").split("/").filter(Boolean);
+  if (parts.length <= 1) return { main: model || "未命名模型", pre: "" };
+  return { main: parts[parts.length - 1], pre: parts.slice(0, -1).join("/") };
+}
+
+function rlRenderMap(lines) {
+  const map = $("#rlMap");
+  if (!lines.length) {
+    map.innerHTML = '<div class="rl-empty">还没有请求记录。用任意客户端调用一次网关，这里就会出现对应的线路。</div>';
+    return;
+  }
+  map.innerHTML = lines.slice(0, 8).map(line => {
+    const shown = line.stops.slice(0, 6);
+    const n = shown.length;
+    // 每站可用的横向宽度决定标签上限：站数少时给得多，站名不被无谓截断。
+    const slotPct = n > 1 ? 84 / (n - 1) : 100;
+    const stops = shown.map((s, i) => {
+      const cls = s.failed ? "dead" : (s.hit ? "hit" : "");
+      const ttl = s.client ? (s.client + " · " + s.label) : s.label;
+      // 均匀落位，两端各留半个标签宽，站名不出界。
+      const pct = n === 1 ? 50 : 8 + (84 * i) / (n - 1);
+      return '<div class="rl-stop ' + cls + '" style="left:' + pct.toFixed(1) + '%;max-width:calc(' +
+        slotPct.toFixed(2) + '% - 10px)" title="' + esc(ttl) + '">' +
+        '<span class="dot"></span><em>' + esc(s.label) + '</em></div>';
+    }).join("");
+    const trainPct = line.train >= 0 && n > 1
+      ? 8 + (84 * line.train) / (n - 1)
+      : (line.train === 0 ? 8 : 50);
+    const ghost = line.train < 0 ? " ghost" : "";
+    const m = rlShortModel(line.model);
+    return '<div class="rl-line">' +
+      '<div class="rl-name"><i style="background:' + rlColor(line.model) + '"></i>' +
+      '<div style="min-width:0"><b title="' + esc(line.model) + '">' + esc(m.main) + '</b>' +
+      (m.pre ? '<small title="' + esc(line.model) + '">' + esc(m.pre) + '</small>' : '') + '</div>' +
+      '<span class="n">' + line.traces + '</span></div>' +
+      '<div class="rl-track">' +
+      '<div class="rail' + (line.train >= 0 ? " hot" : "") + '"></div>' +
+      '<div class="rl-stops">' + stops + '</div>' +
+      '<div class="rl-train' + ghost + '" style="left:' + trainPct.toFixed(1) + '%"><span></span><span></span></div>' +
+      '</div></div>';
+  }).join("");
+}
+
+function rlRenderEvents(traces) {
+  const box = $("#rlEvents");
+  if (!traces || !traces.length) {
+    box.innerHTML = '<div class="rl-empty">暂无请求流水。</div>';
+    return;
+  }
+  $("#rlEvNote").textContent = "最近 " + traces.length + " 条";
+  box.innerHTML = traces.slice(0, 30).map(t => {
+    const lanes = (t.lanes || []).slice().sort((a, b) => a.candidate - b.candidate);
+    const winLane = lanes.find((_, i) => i === t.winner) || null;
+    const head = winLane ? (winLane.account_label || winLane.account || winLane.client || "?")
+      : (lanes[0] && (lanes[0].client || "?")) || t.client || "?";
+    // 只有真的换了候选才画整条链路；单候选时那一串就是上面那个名字，重复。
+    const moved = lanes.length > 1;
+    const chain = moved
+      ? '<span class="rl-chain">' + lanes.map((l, i) => {
+          const cls = l.failed ? "lose" : (i === t.winner ? "win" : "");
+          const nm = l.account_label || l.account || l.client || "?";
+          const ttl = l.failed ? (l.reason || "失败") : rlLatency(l.latency_ms, l.has_latency);
+          return '<em class="' + cls + '" title="' + esc(ttl) + '">' + esc(nm) + '</em>';
+        }).join('<span class="arr">→</span>') + '</span>'
+      : '<span class="rl-chain"><em class="' + (t.failed ? "lose" : "win") + '" title="' +
+        esc(t.failed ? (t.reason || "失败") : (winLane && winLane.model) || t.model || "") + '">' +
+        esc((winLane && winLane.model) || t.model || "—") + '</em></span>';
+    const tag = t.failed ? '<span class="tag">全部失败</span>' : (moved ? '<span class="tag move">改道</span>' : '');
+    return '<div class="rl-ev' + (t.failed ? " bad" : "") + '">' +
+      '<span class="t">' + rlTime(t.at) + '</span>' +
+      '<span class="who" title="' + esc(head) + '">' + esc(head) + '</span>' +
+      '<span class="w">' + chain + '</span>' +
+      '<span class="lat">' + (t.has_latency ? rlLatency(t.latency_ms, true) : (t.failed ? "失败" : "—")) + '</span>' +
+      '</div>';
+  }).join("");
+}
+
+function rlRenderKpis(report) {
+  const traces = report.traces || [];
+  const ok = traces.filter(t => !t.failed).length;
+  const fail = traces.length - ok;
+  const lat = traces.filter(t => t.has_latency);
+  const avg = lat.length ? Math.round(lat.reduce((a, t) => a + t.latency_ms, 0) / lat.length) : 0;
+  const kpis = [
+    { v: traces.length, l: "窗口内请求" },
+    { v: fail, l: "全部失败", bad: fail > 0 },
+    { v: report.rerouted || 0, l: "发生改道", warn: (report.rerouted || 0) > 0 },
+    { v: avg ? rlLatency(avg, true) : "—", l: "平均延迟" },
+  ];
+  $("#rlKpis").innerHTML = kpis.map(k =>
+    '<div class="rl-kpi"><div class="v"' + (k.bad ? ' style="color:var(--bad-text)"' : k.warn ? ' style="color:var(--warn-text)"' : '') + '>' +
+    esc(k.v) + '</div><div class="l">' + esc(k.l) + '</div></div>').join("");
+}
+
+async function renderRouteLive(force) {
+  if (RL_LOADING) return;
+  RL_LOADING = true;
+  const r = await api("/panel/api/route_live?limit=60&window=24");
+  RL_LOADING = false;
+  const live = $("#rlLive");
+  if (!r.ok || !r.data) {
+    live.classList.remove("on");
+    $("#rlLiveText").textContent = "读取失败";
+    $("#rlMap").innerHTML = '<div class="rl-empty">' + esc(r.err || "读取路由记录失败") + '</div>';
+    return;
+  }
+  RL_DATA = r.data;
+  live.classList.add("on");
+  $("#rlLiveText").textContent = "实时";
+  $("#rlWindowNote").textContent = "近 " + (r.data.window_hours || 24) + " 小时";
+
+  const traces = r.data.traces || [];
+  rlRenderKpis(r.data);
+  rlRenderMap(rlLines(traces));
+  rlRenderEvents(traces);
+  $("#rlMapNote").textContent = traces.length ? (rlLines(traces).length + " 条线路") : "暂无数据";
+  $("#navCountRouteLive").hidden = !(r.data.rerouted > 0);
+  $("#navCountRouteLive").textContent = r.data.rerouted > 0 ? r.data.rerouted : "";
+}
+
+function rlStartPolling() {
+  rlStopPolling();
+  const tick = () => {
+    if (VIEW !== "routelive") { rlStopPolling(); return; }
+    if ($("#rlAuto") && $("#rlAuto").checked) renderRouteLive();
+    RL_TIMER = setTimeout(tick, 5000);
+  };
+  RL_TIMER = setTimeout(tick, 5000);
+}
+function rlStopPolling() {
+  if (RL_TIMER) { clearTimeout(RL_TIMER); RL_TIMER = null; }
 }
 
 /* ── 总览 ─────────────────────────────────────────────────────────────────
@@ -5950,9 +7369,11 @@ async function renderOverview() {
     '<div class="ov-kpi"><div class="k">' + esc(x.k) + '</div><div class="v">' + esc(x.v) + '</div><div class="s">' + esc(x.s) + '</div></div>').join("");
 
   // 账号健康：一条堆叠横条 + 图例，扫一眼就知道比例。
+  // 「可用」用中性强调色而不是绿色：一切正常时整屏该是安静的，绿色留给异常
+  // 状态（冷却/风控）去对比。这样出问题时那一段才真的跳出来。
   $("#ovAccNote").textContent = total ? total + " 个账号" : "";
   const segs = [
-    { k: "可用", n: cls.ready, c: "var(--ok)" },
+    { k: "可用", n: cls.ready, c: "var(--accent)" },
     { k: "冷却中", n: cls.cooling, c: "var(--warn)" },
     { k: "风控", n: cls.risk, c: "var(--bad)" },
     { k: "账号异常", n: cls.fault, c: "var(--bad)" },
@@ -8978,17 +10399,32 @@ async function refreshAlertBadge() {
   if (r.ok) updateAlertBadge(Number((r.data && r.data.unread) || 0));
 }
 
-function yn(b) { return b ? '<span class="chip ok">是</span>' : '<span class="hint">-</span>'; }
+// 能力矩阵的一格：有就是一枚安静的勾，没有是一条更淡的横线。
+// 原来是「是」字加绿底 chip，14 列乘 20 行全是绿色小方块，整页读下来只剩颜色；
+// 勾号本身已经表达了「有」，不必再给它一块底色。
+function yn(b) {
+  return b
+    ? '<span class="yn yes" title="支持">✓</span>'
+    : '<span class="yn no" title="不支持">–</span>';
+}
 async function renderClients() {
   await loadAllAccounts();
   $("#pkBody").innerHTML = NAMES.map(n => {
     const c = clientInfo(n) || {}, k = capsOf(n), a = ACCTS[n] || { accounts: [] };
+    const count = (a.accounts || []).length;
+    // 一个账号都没有的平台不是「未就绪」——那听起来像坏了，而它只是还没接。
+    // 三档：没有账号 = 未接入（中性）、有账号且就绪 = 就绪（绿）、有账号但没起来
+    // = 未就绪（红）。红色留给真的出了问题的那一档。
+    let state;
+    if (!count) state = '<span class="chip">未接入</span>';
+    else if (c.ready) state = '<span class="chip ok">就绪</span>';
+    else state = '<span class="chip err">未就绪</span>';
     return '<tr><td><b>' + esc(platformLabel(n)) + '</b></td>' +
-      '<td>' + (c.ready ? '<span class="chip ok">就绪</span>' : '<span class="chip err">未就绪</span>') + '</td>' +
+      '<td>' + state + '</td>' +
       '<td>' + yn(k.manage) + '</td><td>' + yn(k.import) + '</td><td>' + yn(k.login) + '</td>' +
       '<td>' + yn(k.sms) + '</td><td>' + yn(k.auto_login) + '</td>' +
       '<td>' + yn(k.checkin) + '</td><td>' + yn(k.refresh_models) + '</td>' +
-      '<td class="num">' + (a.accounts || []).length + '</td>' +
+      '<td class="num">' + count + '</td>' +
       '<td class="hint">' + ((k.fields || []).length) + ' 项</td></tr>';
   }).join("") || '<tr><td colspan="11" class="hint">无已注册客户端</td></tr>';
 }
@@ -9263,7 +10699,27 @@ function mdPriceCell(field, value, source, def, configured, defaultConfigured) {
     '<div class="mdsrc' + (source === "manual" ? " manual" : "") + '">' + esc(mdSrcText(source)) + '</div></td>';
 }
 let MD_EDITS = {};
+// 哪些模型行是展开的（client\0model）。只存在内存里：刷新页面回到全部收起，
+// 免得下次打开模型页时半屏都是展开的详情。
+let MD_OPEN = {};
 function mdKey(client, model) { return client + "\u0000" + model; }
+
+// mdField 给一个字段单元格补上 data-field，详情面板的网格靠它取标签。
+// 单元格构造函数返回的是 <td ...>，这里只在开标签里插一个属性，不重写它们。
+function mdField(cellHTML, field) {
+  return String(cellHTML).replace(/^<td([^>]*)>/, '<td$1 data-field="' + field + '">');
+}
+
+// mdPriceSummary 是主行「价格」列的一行摘要：输入/输出两个数，未公开就说明白。
+// 明细（含缓存价与每个值的来源）在详情面板里。
+function mdPriceSummary(m) {
+  if (!m.has_price) return '<span class="hint">未公开</span>';
+  const inp = Number(m.input_per_million || 0);
+  const out = Number(m.output_per_million || 0);
+  if (inp === 0 && out === 0) return '<span class="chip ok">免费</span>';
+  const f = v => v === 0 ? "0" : String(Math.round(v * 1000) / 1000);
+  return '<span title="输入 / 输出，人民币每百万 tokens">' + f(inp) + ' / ' + f(out) + '</span>';
+}
 function mdRowKey(tr) { return mdKey(tr.dataset.client, tr.dataset.model); }
 function mdInputs(tr) {
   const q = f => tr.querySelector('input[data-field="' + f + '"]');
@@ -9290,7 +10746,7 @@ function mdSyncDirty() {
   if (btn) btn.disabled = n === 0;
   const note = $("#mdDirty");
   if (note) note.textContent = n ? n + " 项未保存" : "";
-  document.querySelectorAll("#mdBody tr[data-client]").forEach(tr => {
+  document.querySelectorAll("#mdBody tr.mddetail[data-client]").forEach(tr => {
     const { ctx, out, inPrice, outPrice, cachePrice, efforts, defaultEffort, elevateTop, effortMappings } = mdInputs(tr);
     [ctx, out, inPrice, outPrice, cachePrice, efforts, defaultEffort, elevateTop, effortMappings].forEach(input => {
       if (!input) return;
@@ -9319,7 +10775,7 @@ function mdRecord(tr, restore) {
 }
 // 过滤会重建 tbody，所以每次重建后要把还没保存的编辑贴回去。
 function mdReapplyEdits() {
-  document.querySelectorAll("#mdBody tr[data-client]").forEach(tr => {
+  document.querySelectorAll("#mdBody tr.mddetail[data-client]").forEach(tr => {
     const e = MD_EDITS[mdRowKey(tr)];
     if (!e) return;
     const { ctx, out, inPrice, outPrice, cachePrice, efforts, defaultEffort, elevateTop, effortMappings } = mdInputs(tr);
@@ -9548,28 +11004,47 @@ async function renderModels(refresh) {
         up: !isFallback,
         free: free,
         text: haystack([c.name, m.id, nm, m.owned_by, ex]).join(" "),
-        html: '<tr data-client="' + esc(c.name) + '" data-model="' + esc(m.id) + '"><td><div class="mdmodel"><b>' + esc(m.id) + '</b>' + mdCopyButton(c.name, m.id) + '</div>' + (nm ? '<div class="hint">' + esc(nm) + '</div>' : '') +
-          (free ? '<span class="chip ok" title="' + esc(freeTitle) + '">免费</span>' : '') + capBadges(ex) + ctxProbeBadge(m) + '</td>' +
+        // 一行拆成两行：主行只回答「这是什么模型、能不能用、上下文多大、多少钱」，
+        // 十一个可编辑字段收进下面那行详情面板，点「详情」才展开。
+        //
+        // 原来 14 列平铺，393 行乘 14 列 = 一屏看不到三个模型，而其中九列是
+        // 大多数时候不用改的数值。拆开之后主行 6 列可以横向不滚动地读完。
+        //
+        // 详情行仍然带 data-client/data-model：编辑逻辑按 closest("tr[data-client]")
+        // 找行，所以点详情里的输入框拿到的就是这一行，mdRowKey 也照旧成立。
+        html: '<tr class="mdmain" data-client="' + esc(c.name) + '" data-model="' + esc(m.id) + '">' +
+          '<td class="mdnamecell"><div class="mdmodel"><b>' + esc(m.id) + '</b>' + mdCopyButton(c.name, m.id) + '</div>' +
+            (nm ? '<div class="hint">' + esc(nm) + '</div>' : '') +
+            '<div class="mdbadges">' + (free ? '<span class="chip ok" title="' + esc(freeTitle) + '">免费</span>' : '') +
+            capBadges(ex) + ctxProbeBadge(m) + '</div></td>' +
           '<td>' + esc(platformLabel(c.name)) + '</td>' +
           '<td>' + (isFallback
             ? '<span class="chip err" title="' + esc(srcTitle) + '">基线</span>'
             : '<span class="chip ok" title="' + esc(srcTitle) + '">上游</span>') + '</td>' +
-          rateCell(ex) +
-          mdDefaultEffortCell(m) +
-          mdEffortsCell(m) +
-          mdElevateTopCell(m) +
+          '<td class="num">' + (ctx > 0 ? esc(fmtK(ctx)) : '<span class="hint">—</span>') + '</td>' +
+          '<td class="num mdpricecell">' + mdPriceSummary(m) + '</td>' +
+          '<td class="mdacts"><button class="xs mdopen" type="button" aria-expanded="false" title="展开这个模型的全部可编辑字段">详情</button></td>' +
+          '</tr>' +
+          '<tr class="mddetail" data-client="' + esc(c.name) + '" data-model="' + esc(m.id) + '" hidden>' +
+          '<td colspan="6"><div class="mddgrid"><table><tr>' +
+          mdField(rateCell(ex), "rate") +
+          mdField(mdDefaultEffortCell(m), "default_effort") +
+          mdField(mdEffortsCell(m), "efforts") +
+          mdField(mdElevateTopCell(m), "elevate_top") +
           mdNumCell("context", m.context_length, m.context_source, m.context_default) +
           mdNumCell("output", m.max_output_tokens, m.max_output_source, m.max_output_default, probe) +
           mdPriceCell("input", m.input_per_million, m.input_price_source, m.input_price_default, m.has_price, m.default_has_price) +
           mdPriceCell("output", m.output_per_million, m.output_price_source, m.output_price_default, m.has_price, m.default_has_price) +
           mdPriceCell("cache", m.cache_read_per_million, m.cache_read_price_source, m.cache_read_price_default, m.has_cache_read, m.default_has_cache_read) +
-          '<td class="mdacts"><button class="xs mdRestore" type="button" title="清掉手动值，回到上游值或官方预设">恢复官方默认</button>' +
+          // 所属和客户端是同一个名字时留破折号：大部分行都这样，重复一遍只是噪音。
+          '<td class="mdedit" data-field="owned_by"><div class="mdsrc">所属</div><div class="mdro">' +
+            (m.owned_by && m.owned_by !== c.name ? esc(m.owned_by) : '—') + '</div></td>' +
+          '<td class="mdacts mddetailacts">' +
+            '<button class="xs mdRestore" type="button" title="清掉手动值，回到上游值或官方预设">恢复官方默认</button>' +
             (m.probe_state && m.probe_state.probed
               ? '<button class="xs mdClearProbe" type="button" data-client="' + esc(c.name) + '" data-model="' + esc(m.id) + '" title="忘掉这个模型的探测结果，下次超预算请求会重新放行探测">清除探测</button>'
-              : '') + '</td>' +
-          // 所属和客户端是同一个名字时留一个破折号：大部分行都这样，重复一遍
-          // 只是把这一列变成噪音。两边真的不一样（上游自报的归属不同）才显示。
-          '<td>' + (m.owned_by && m.owned_by !== c.name ? esc(m.owned_by) : '<span class="hint">—</span>') + '</td></tr>',
+              : '') +
+          '</td></tr></table></div></td></tr>',
       });
     });
   });
@@ -9639,6 +11114,19 @@ let MD_PAGES = 1;
 let MD_KEEP_PAGE = false;
 // mdApply 只做过滤和重排，不碰网络。四个条件（搜索词 / 客户端 / 只看上游 / 只看免费）
 // 是"与"关系；搜索词按空格拆成多个词，每个词都要在同一行里命中才算命中。
+// mdRestoreOpen 在表格重画后把之前展开的模型重新展开。
+// mdApply 每次筛选/翻页都会重建 tbody，不恢复的话用户刚展开的详情会突然合上。
+function mdRestoreOpen() {
+  document.querySelectorAll("#mdBody tr.mdmain[data-client]").forEach(main => {
+    if (!MD_OPEN[mdRowKey(main)]) return;
+    const detail = main.nextElementSibling;
+    if (!detail || !detail.classList.contains("mddetail")) return;
+    detail.hidden = false;
+    const btn = main.querySelector(".mdopen");
+    if (btn) { btn.setAttribute("aria-expanded", "true"); btn.textContent = "收起"; }
+  });
+}
+
 function mdApply() {
   const q = ($("#mdSearch").value || "").trim().toLowerCase();
   const cl = $("#mdClient").value;
@@ -9656,8 +11144,9 @@ function mdApply() {
   const from = (MD_PAGE - 1) * MD_PAGE_SIZE;
   const pageRows = rows.slice(from, from + MD_PAGE_SIZE);
   $("#mdBody").innerHTML = pageRows.map(it => it.html).join("") ||
-    '<tr class="filtered"><td colspan="14" class="hint">' +
+    '<tr class="filtered"><td colspan="6" class="hint">' +
     (MD_ITEMS.length ? "没有模型匹配当前筛选条件，清空搜索框即可回到全部" : "没有任何模块返回模型") + '</td></tr>';
+  mdRestoreOpen();
   mdReapplyEdits();
   renderMdPager(rows.length, from, pageRows.length);
   // 计数只在真的筛掉了东西时才着色：否则这个数字会一直在抢注意力。
@@ -11424,7 +12913,13 @@ async function renderConfig() {
     "显示为 <code>" + esc(REDACTED) + "</code> 表示保持磁盘上的原值；想清空就直接清空输入框。"));
   out.push(cfgText("cfgDataDir", "数据目录", c.data_dir, "data"));
   out.push(cfgText("cfgProxy", "上游代理", c.proxy, "http://127.0.0.1:8080"));
+  out.push('</div>');
+
+  // 出口中继是四字段一组、且默认关着。它原来是「基础」里的第 5–8 行，把监听地址
+  // 和订阅链接排在一起，读的人要一路扫过四个中继字段才看到下一组。默认收起。
   const eg = c.egress || {};
+  out.push('<details class="foldcfg" id="foldEgress"><summary>出口中继');
+  out.push('<span class="fnote">' + (eg.enabled ? "已启用" : "未启用") + '</span><span class="fchev"></span></summary><div class="foldbody">');
   out.push(cfgCheck("cfgEgressEnabled", "出口中继", !!eg.enabled,
     "开启后所有上游请求走下方出口；与「上游代理」同时配置时以出口中继为准。"));
   out.push(cfgText("cfgEgressMode", "出口模式", eg.mode || "subscription", "client 或 subscription",
@@ -11433,7 +12928,7 @@ async function renderConfig() {
     "订阅 URL 视为凭据，保存后页面只显示 <code>" + esc(REDACTED) + "</code>。"));
   out.push(cfgText("cfgEgressMihomoPath", "mihomo 路径", eg.mihomo_path, "留空自动查找",
     "仅订阅模式使用；留空时从 PATH、Clash Verge 常见安装目录查找。"));
-  out.push('</div>');
+  out.push('</div></details>');;
 
   // 会话粘性影响所有声明了 affinity 的模块，所以留在全局配置页。
   // prompt.* 与 features.sanitize_blacklist_fingerprints 只由 WorkBuddy 消费，
@@ -11773,6 +13268,19 @@ function parseSchedDuration(raw) {
   return Math.round(seconds);
 }
 
+// dayRailMode 判定一条规则该画成「几个时点」还是「一整段」。
+//
+// 关键是有没有时点：一个规则既给了 hours 又给了 every_seconds 时（checkin 就是
+// 这样，服务端会把批次自己的间隔一起带下来），真正决定行为的是 hours——
+// 有明确时点就是每天跑那几次，画成整段会谎报成「全天都在跑」。
+function dayRailMode(r, hoursText) {
+  if (String(r.cron || "").trim()) return "cron";
+  const hasHours = String(hoursText || "").trim() !== "";
+  if (hasHours) return "time";
+  if (Number(r.every_seconds) > 0 || Number(r.jitter_seconds) > 0) return "interval";
+  return "time";
+}
+
 function scRowMode(r) {
   if (String(r.cron || "").trim()) return "cron";
   if (Number(r.every_seconds) > 0 || Number(r.jitter_seconds) > 0) return "interval";
@@ -11803,6 +13311,40 @@ function scStateHTML(d) {
 
 // 一行 = 一个平台的一个 batch。时点输入框里是生效值（自定义优先，否则
 // 共享值），placeholder 回显共享值，所以“跟随全局”时也知道会跑到几点。
+// dayRailHTML 把一行定时任务的时点画成 24 小时轨道。
+//
+// 它只读，不改任何东西：编辑仍然用原来那个输入框（`9, 21` 这种写法操作员已经
+// 熟），轨道只是把同一份数据换个看得懂的样子——表格里是「9, 21」，轨道上是
+// 早上九点和晚上九点两个亮点。两者永远显示同一个值。
+//
+// hours 是逗号分隔的时点；mode 为 interval 时画成整段（按间隔跑 = 全天在跑）。
+function dayRailHTML(hoursText, mode) {
+  if (mode === "interval") {
+    return '<span class="dayrail"><span class="dayrail-track">' +
+      '<span class="dayrail-band" style="left:1%;right:1%"></span>' +
+      '</span><span class="dayrail-hint">全天</span></span>';
+  }
+  const parts = String(hoursText || "").split(/[,，\s]+/).filter(Boolean);
+  const hours = [];
+  for (const p of parts) {
+    const n = parseInt(p, 10);
+    if (Number.isFinite(n) && n >= 0 && n <= 23 && hours.indexOf(n) < 0) hours.push(n);
+  }
+  if (!hours.length) {
+    return '<span class="dayrail"><span class="dayrail-track">' +
+      '<span class="dayrail-none">不跑</span></span></span>';
+  }
+  hours.sort((a, b) => a - b);
+  const ticks = hours.map(h => {
+    // 每个刻度落在它那一小时的中点，视觉上比压在整点上更准。
+    const pct = ((h + 0.5) / 24) * 100;
+    return '<span class="dayrail-tick" style="left:' + pct.toFixed(2) + '%" data-h="' +
+      String(h).padStart(2, "0") + ':00"></span>';
+  }).join("");
+  return '<span class="dayrail"><span class="dayrail-track">' + ticks +
+    '</span><span class="dayrail-hint">' + hours.length + ' 次/天</span></span>';
+}
+
 function scRowHTML(r) {
   const shared = scShared(r.batch);
   // 未保存的编辑存在 SC.dirty 里，重画（搜索/过滤）时优先用它，否则打字一半
@@ -11839,7 +13381,9 @@ function scRowHTML(r) {
   }
   return '<tr class="scrow" data-client="' + esc(r.client) + '" data-batch="' + esc(r.batch) + '">' +
     '<td class="sc-c-task">' + esc(scLabel(r.batch)) + '<div class="hint">' + esc(r.batch) + (codes ? " · " + esc(codes) : "") + "</div></td>" +
-    '<td class="sc-c-hours">' + hoursControl + '</td>' +
+    // 输入框（可编辑的值）和日轨（同一份值的图形）并排，改一个另一个跟着变。
+    '<td class="sc-c-hours"><div class="scWhen">' + hoursControl +
+    '<span class="scRail" data-rail>' + dayRailHTML(hours, dayRailMode(r, hours)) + '</span></div></td>' +
     // 这颗开关只有 14px 见方，屏幕阅读器读不出它控制什么；aria-label 把它
     // 接回本行的任务名，否则整列在无障碍树里是五个一模一样的匿名复选框。
     '<td class="sc-c-on"><input type="checkbox" class="scOn" aria-label="' + esc("启用定时任务：" + scLabel(r.batch) + "（" + r.client + "）") + '"' + (on ? " checked" : "") + "></td>" +
@@ -11988,7 +13532,7 @@ function scRenderRows() {
   // colgroup 把列宽钉死：六列全靠内容撑宽时，「时点」和「下一跳」两列宽度随
   // 每行内容跳动，扫一列扫不到底。
   box.innerHTML = '<div class="tbl-wrap"><table class="acc sc">' +
-    '<colgroup><col style="width:26%"><col style="width:220px">' +
+    '<colgroup><col style="width:22%"><col style="width:250px">' +
     '<col style="width:54px"><col style="width:88px"><col style="width:70px"><col style="width:132px"></colgroup>' +
     "<thead><tr>" +
     "<th>任务</th><th>时点 / 间隔 / Cron</th><th>启用</th><th>下一跳</th><th>自定义</th>" +
@@ -12011,8 +13555,9 @@ function scRenderRuns(runs) {
   }
   const live = runs.filter(r => r.state === "running" || r.state === "queued").length;
   $("#scRunsNote").textContent = runs.length + " 条" + (live ? " · " + live + " 进行中" : "");
-  const rows = runs.map(r => {
+  const rows = runs.map((r, i) => {
     const t = r.at ? new Date(r.at).toLocaleString("zh-CN", { hour12: false }) : "-";
+    const hm = r.at ? new Date(r.at).toLocaleTimeString("zh-CN", { hour12: false, hour: "2-digit", minute: "2-digit" }) : "-";
     const src = r.trigger === "schedule" ? "定时" : "手动";
     const st = runStateChip(r);
     const refusals = Array.isArray(r.refusals) ? r.refusals.filter(Boolean) : [];
@@ -12023,15 +13568,31 @@ function scRenderRuns(runs) {
       reasonText = "旧版本记录未保存原因（升级后新记录会带上供应商返回）";
     }
     const ms = r.elapsed_ms ? (r.elapsed_ms / 1000).toFixed(1) + "s" : "-";
-    return "<tr><td data-th=\"时间\">" + esc(t) + "</td><td data-th=\"平台\">" + esc(r.client) + "</td><td data-th=\"任务\">" + esc(scLabel(r.batch)) + "</td>" +
-      "<td data-th=\"来源\">" + src + "</td><td data-th=\"账号\" class=\"acc-num\">" + (r.accounts || 0) + "</td><td data-th=\"执行\" class=\"acc-num\">" + (r.ran || 0) + "</td>" +
-      "<td data-th=\"拒绝\" class=\"acc-num\">" + (r.refused || 0) + "</td><td data-th=\"跳过\" class=\"acc-num\">" + (r.skipped || 0) + "</td><td data-th=\"失败\" class=\"acc-num\">" + (r.failed || 0) + "</td>" +
-      "<td data-th=\"耗时\" class=\"acc-num\">" + esc(ms) + "</td>" +
-      ((st || reasonText) ? "<td data-th=\"说明\">" + st + esc(reasonText) + "</td>" : "<td></td>") + "</tr>";
+    const state = r.state || "";
+    const bad = state === "failed" || state === "partial" || (r.failed || 0) > 0;
+    const live = state === "running" || state === "queued";
+    // 运行记录原来是一张 11 列的宽表：拒绝/跳过/失败各占一列，绝大多数格子是 0，
+    // 真正有信息的那格（失败原因）被挤在最后。改成一条时间线：左边时刻，右边一句话
+    // 摘要，只有非零的计数才画徽章，原因单独一行给足宽度。
+    const badges = [];
+    if (r.accounts) badges.push('<span class="rb">' + r.accounts + " 账号</span>");
+    if (r.ran) badges.push('<span class="rb ok">执行 ' + r.ran + "</span>");
+    if (r.refused) badges.push('<span class="rb warn">拒绝 ' + r.refused + "</span>");
+    if (r.skipped) badges.push('<span class="rb">跳过 ' + r.skipped + "</span>");
+    if (r.failed) badges.push('<span class="rb bad">失败 ' + r.failed + "</span>");
+    return '<li class="runitem' + (bad ? " bad" : "") + (live ? " live" : "") + '" title="' + esc(t) + '">' +
+      '<div class="runt">' + esc(hm) + '<i>' + esc(src) + '</i></div>' +
+      '<div class="runb">' +
+        '<div class="runline">' + st + '<b>' + esc(scLabel(r.batch)) + '</b>' +
+          '<span class="runwho">' + esc(r.client) + '</span>' +
+          '<span class="grow"></span>' +
+          '<span class="runms">' + esc(ms) + '</span>' +
+        '</div>' +
+        (badges.length ? '<div class="runbadges">' + badges.join("") + '</div>' : '') +
+        (reasonText ? '<div class="runwhy">' + esc(reasonText) + '</div>' : '') +
+      '</div></li>';
   }).join("");
-  box.innerHTML = '<div class="tbl-wrap"><table class="acc stk"><thead><tr>' +
-    "<th>时间</th><th>平台</th><th>任务</th><th>来源</th><th>账号</th><th>执行</th><th>拒绝</th><th>跳过</th><th>失败</th><th>耗时</th><th>说明</th>" +
-    "</tr></thead><tbody>" + rows + "</tbody></table></div>";
+  box.innerHTML = '<ol class="runline-list">' + rows + '</ol>';
   scScheduleRefresh();
 }
 
@@ -12800,10 +14361,25 @@ function pkDetailLimit(body) {
 /* 到期时间归一成毫秒：expires_at 是秒；end_time 是上游的 "2006-01-02 15:04:05"，
    北京时间且没有时区标记，所以补 +08:00 再解析。解析不出来一律当「无到期」，
    绝不因为格式不认识就把批次排到最前面。 */
+// pkEpochMs 把一个 CreditPackage.ExpiresAt 转成毫秒。
+//
+// 这个字段的单位在模块之间并不统一：zcode 转发厂商的 unix **秒**，minimaxcode
+// 存的是**毫秒**。面板原来一律 ×1000，于是毫秒值被再乘一千，算出来是五万年后
+// ——积分页那句「剩余天数 20754913 天」就是这么来的。
+//
+// 按数值判档而不是按模块白名单：1e11 秒约等于公元 5138 年，任何真实的秒级
+// 时间戳都远小于它，所以「小于 1e11 当秒」对两种单位都成立，将来加模块也不会
+// 再踩一次。
+function pkEpochMs(v) {
+  const n = Number(v);
+  if (!isFinite(n) || n <= 0) return 0;
+  return n < 1e11 ? n * 1000 : n;
+}
+
 function pkExpiryMs(p) {
   if (p.expires_at) {
-    const ms = Number(p.expires_at) * 1000;
-    if (isFinite(ms) && ms > 0) return ms;
+    const ms = pkEpochMs(p.expires_at);
+    if (ms > 0) return ms;
   }
   if (p.end_time) {
     const s = String(p.end_time).trim();
@@ -13096,8 +14672,9 @@ function crPick() {
 }
 function crExpiry(p) {
   if (p.end_time) return esc(String(p.end_time));
-  if (p.expires_at) {
-    const d = new Date(Number(p.expires_at) * 1000);
+  const ms = pkEpochMs(p.expires_at);
+  if (ms > 0) {
+    const d = new Date(ms);
     if (!isNaN(d.getTime())) return esc(d.toISOString().slice(0, 10));
   }
   return '<span class="hint">长期</span>';
@@ -15142,6 +16719,8 @@ function topVeil() {
   return on.length ? on[on.length - 1] : null;
 }
 $("#btnRefreshAll").addEventListener("click", () => bulk("refresh"));
+$("#btnRlRefresh").addEventListener("click", () => renderRouteLive(true));
+$("#rlAuto").addEventListener("change", () => { if ($("#rlAuto").checked) rlStartPolling(); else rlStopPolling(); });
 $("#btnBalanceAll").addEventListener("click", () => bulk("balance"));
 $("#btnInviteAll").addEventListener("click", () => bulk("invite"));
 $("#btnCheckinAll").addEventListener("click", () => bulk("checkin"));
@@ -15155,6 +16734,35 @@ $("#btnCkScan").addEventListener("click", ckScan);
 $("#btnCkRun").addEventListener("click", ckRun);
 $("#btnTbRunAll").addEventListener("click", runAllTasks);
 $("#btnTbRefreshTasks").addEventListener("click", tbRefreshTasks);
+
+// 统一动作栏：任务中心三个子页共用「扫描 / 执行待办」两个入口，按当前子页分派。
+// 原来每个子页各挂两三个重叠按钮，同名的事（读状态、跑待办）有三份。
+function tcCurrentSubtab() {
+  const api = SUBTABS.get("taskscenter");
+  return (api && api.active) || "schedule";
+}
+function tcScan() {
+  const sub = tcCurrentSubtab();
+  if (sub === "batch") { qcScan(); ckScan(); return; }
+  if (sub === "board") { tbRefreshTasks(); return; }
+  // 定时任务页的「扫描」= 重新读取排期
+  renderSchedule();
+  toast("已重新读取排期", "ok");
+}
+function tcRun() {
+  const sub = tcCurrentSubtab();
+  if (sub === "batch") { qcRun(); return; }
+  if (sub === "board") { runAllTasks(); return; }
+  // 定时任务页没有「待办」可执行：它的动作是保存排期
+  $("#scBody").scrollIntoView({ block: "start", behavior: "smooth" });
+  toast("定时任务请改完后按「保存并生效」", "ok");
+}
+$("#btnTcScan").addEventListener("click", tcScan);
+$("#btnTcRun").addEventListener("click", tcRun);
+// 「更多操作」选完就收起，别让菜单挡住下面的内容。
+$("#tcMore").addEventListener("click", e => {
+  if (e.target.closest("button")) e.currentTarget.removeAttribute("open");
+});
 // 两个 chips 行共用 TB.client：点任一处，两边一起跟着换。
 $("#qcChips").addEventListener("click", e => {
   const b = e.target.closest(".chip[data-c]");
@@ -15222,7 +16830,14 @@ $("#scOnlyOwn").addEventListener("change", scRenderRows);
 $("#scBody").addEventListener("input", e => {
   if (!e.target.classList.contains("scHours") && !e.target.classList.contains("scEvery") && !e.target.classList.contains("scJitter") && !e.target.classList.contains("scCron")) return;
   const tr = e.target.closest("tr.scrow");
-  if (tr) scMarkDirty(tr);
+  if (!tr) return;
+  scMarkDirty(tr);
+  // 改时点就同时重画日轨：输入框是值、轨道是它的样子，两者必须同步，
+  // 否则轨道会变成一份过期的快照。这里只重画那一个 span。
+  if (e.target.classList.contains("scHours")) {
+    const rail = tr.querySelector("[data-rail]");
+    if (rail) rail.innerHTML = dayRailHTML(e.target.value, "time");
+  }
 });
 $("#scBody").addEventListener("change", e => {
   if (!e.target.classList.contains("scOn") && !e.target.classList.contains("scMode")) return;
@@ -15268,6 +16883,26 @@ $("#mdBody").addEventListener("change", ev => {
   }
 });
 $("#mdBody").addEventListener("click", ev => {
+  // 主行的「详情」把同一模型的下一行（.mddetail）展开或收起。
+  // 展开状态记在 MD_OPEN 里，翻页/刷新后保持——操作员常常要连着改几个模型的
+  // 同一组字段，每次都收起再点开很烦。
+  const openBtn = ev.target.closest(".mdopen");
+  if (openBtn) {
+    const main = openBtn.closest("tr.mdmain");
+    const detail = main && main.nextElementSibling;
+    if (detail && detail.classList.contains("mddetail")) {
+      const open = detail.hidden;
+      detail.hidden = !open;
+      openBtn.setAttribute("aria-expanded", String(open));
+      openBtn.textContent = open ? "收起" : "详情";
+      MD_OPEN[mdRowKey(main)] = open;
+      if (open) {
+        const first = detail.querySelector("input:not([disabled])");
+        if (first) first.focus({ preventScroll: true });
+      }
+    }
+    return;
+  }
   const copyBtn = ev.target.closest(".mdCopy");
   if (copyBtn) {
     const full = copyBtn.dataset.copyModel || "";
@@ -16887,6 +18522,7 @@ window.addEventListener("error", ev => {
 window.addEventListener("unhandledrejection", ev => panelBootError(ev.reason));
 (async function boot() {
   try {
+    SHELL.init();
     go((location.hash || "#overview").slice(1));
     await refreshAll();
     refreshAlertBadge().catch(() => {});

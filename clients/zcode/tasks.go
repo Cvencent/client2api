@@ -78,6 +78,7 @@ type claimBoard struct {
 	plans         []claimPlan
 	active        *planBalances
 	activeChecked bool
+	current       *planBalances
 	account       string
 	at            time.Time
 }
@@ -87,6 +88,9 @@ type claimBoardSnapshot struct {
 	plans         []claimPlan
 	active        *planBalances
 	activeChecked bool
+	// current is the plan document read from billing/current.  It is what
+	// names a grant the account already holds, which a preview never lists.
+	current *planBalances
 }
 
 // boardFor returns the claimable plans and, when the preview is empty, the
@@ -101,6 +105,7 @@ func (c *Client) boardFor(ctx context.Context, acct *Account) (claimBoardSnapsho
 			plans:         append([]claimPlan(nil), c.board.plans...),
 			active:        c.board.active,
 			activeChecked: c.board.activeChecked,
+			current:       c.board.current,
 		}
 		c.board.mu.Unlock()
 		return snap, nil
@@ -124,11 +129,23 @@ func (c *Client) boardFor(ctx context.Context, acct *Account) (claimBoardSnapsho
 			snap.active = active
 			snap.activeChecked = true
 		}
+		if !snap.activeChecked || !hasActivePlanBalance(snap.active) {
+			// A daily grant reaches the account without a claim, so it can be
+			// live while both the preview and the balance endpoint answer with
+			// nothing the board knows how to render.  billing/current is the
+			// endpoint that names it, and without it the board would keep
+			// telling the operator there is nothing to claim while a grant is
+			// funding the account.
+			if current, currentErr := c.planCurrentOf(ctx, acct); currentErr == nil {
+				snap.current = current
+			}
+		}
 	}
 	c.board.mu.Lock()
 	c.board.plans = append([]claimPlan(nil), plans...)
 	c.board.active = snap.active
 	c.board.activeChecked = snap.activeChecked
+	c.board.current = snap.current
 	c.board.account = acct.ID
 	c.board.at = now
 	c.board.mu.Unlock()
@@ -139,7 +156,7 @@ func (c *Client) boardFor(ctx context.Context, acct *Account) (claimBoardSnapsho
 // landed instead of the preview that preceded it.
 func (c *Client) forgetBoard() {
 	c.board.mu.Lock()
-	c.board.plans, c.board.active, c.board.activeChecked = nil, nil, false
+	c.board.plans, c.board.active, c.board.activeChecked, c.board.current = nil, nil, false, nil
 	c.board.account, c.board.at = "", time.Time{}
 	c.board.mu.Unlock()
 }
@@ -202,10 +219,15 @@ func (c *Client) Tasks(ctx context.Context, accountID string) ([]core.TaskInfo, 
 	}
 	if !c.pool.captchaReady() {
 		// No local solver means the built-in browser is unavailable and
-		// captcha_command is empty, so RunTask cannot mint a token.  The claim
-		// is still possible from the accounts list, whose 领取 button runs the
-		// vendor's SDK in the operator's browser (see captcha.go), so the note
-		// points there and the row stays locked.
+		// captcha_command is empty, so RunTask cannot mint a token.  A grant the
+		// vendor already handed over needs no token, though, so report that
+		// first and only then fall back to the missing-solver note.  The claim
+		// itself is still possible from the accounts list, whose 领取 button
+		// runs the vendor's SDK in the operator's browser (see captcha.go), so
+		// the note points there and the row stays locked.
+		if held, err := c.heldGrantRow(ctx, acct); err != nil || held != nil {
+			return held, err
+		}
 		return []core.TaskInfo{claimRow(
 			"这个看板的领取按钮没有浏览器可用；请在账号列表里点「领取」，那一步会用你自己的浏览器过验证码")}, nil
 	}
@@ -219,6 +241,12 @@ func (c *Client) Tasks(ctx context.Context, accountID string) ([]core.TaskInfo, 
 	}
 	plans := snap.plans
 	if len(plans) == 0 {
+		// A held grant outranks the balance view: it is the same fact the
+		// Checkin leg now acts on, and it carries the expiry the operator
+		// actually needs (a daily window closes on its own).
+		if win, ok := activePlanWindow(snap.current, time.Now()); ok {
+			return []core.TaskInfo{heldPlanRow(win)}, nil
+		}
 		if snap.activeChecked && hasActivePlanBalance(snap.active) {
 			return []core.TaskInfo{activePlanRow(snap.active)}, nil
 		}
@@ -232,6 +260,27 @@ func (c *Client) Tasks(ctx context.Context, accountID string) ([]core.TaskInfo, 
 		plans = plans[:claimMaxPlans]
 	}
 	return []core.TaskInfo{claimBoardRow(plans)}, nil
+}
+
+// heldGrantRow renders the board's answer when the account already holds a
+// grant from the vendor, or nil when it holds none.
+//
+// It is a separate read from the claim board because it has to run even when no
+// captcha solver is available: a grant is handed over without one, so gating it
+// behind the solver would hide exactly the state an operator needs to see.  A
+// failed read returns nil so the caller falls back to its own note rather than
+// turning the board into an error.
+func (c *Client) heldGrantRow(ctx context.Context, acct *Account) ([]core.TaskInfo, error) {
+	if c == nil || c.pool == nil {
+		return nil, nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, claimBoardTimeout)
+	defer cancel()
+
+	if win, ok := c.heldPlanWindow(ctx, acct); ok {
+		return []core.TaskInfo{heldPlanRow(win)}, nil
+	}
+	return nil, nil
 }
 
 // claimRow is the row the board shows whenever the claim cannot run.  It is
@@ -287,6 +336,30 @@ func claimBoardRow(plans []claimPlan) core.TaskInfo {
 // offered".
 func hasActivePlanBalance(doc *planBalances) bool {
 	return doc != nil && (len(doc.Plans) > 0 || len(doc.Balances) > 0)
+}
+
+// heldPlanRow renders a plan the account already holds but did not have to
+// claim.  It is deliberately Claimed and Locked -- there is no button, because
+// the vendor granted it -- and it names the expiry, which is the one thing an
+// operator needs from a window that closes by itself.
+func heldPlanRow(win planWindow) core.TaskInfo {
+	name := firstNonEmpty(win.Name, win.PlanID, "活动套餐")
+	info := core.TaskInfo{
+		Code:    claimAction,
+		Title:   "活动套餐生效中",
+		Desc:    name,
+		Group:   "活动套餐",
+		Claimed: true,
+		Locked:  true,
+	}
+	until := win.EndsAt.Local().Format("01-02 15:04")
+	if !win.StartsAt.IsZero() {
+		info.Note = fmt.Sprintf("厂商按账号活跃度自动发放，%s 起生效，%s 到期，无需手动领取",
+			win.StartsAt.Local().Format("01-02 15:04"), until)
+	} else {
+		info.Note = fmt.Sprintf("厂商按账号活跃度自动发放，%s 到期，无需手动领取", until)
+	}
+	return info
 }
 
 // activePlanRow renders the steady state after a successful claim.  The row is

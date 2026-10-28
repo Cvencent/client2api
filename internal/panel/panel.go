@@ -287,6 +287,9 @@ func New(opts Options) http.Handler {
 	api("/panel/api/model_probes", p.handleModelProbes)
 	api("/panel/api/route_plan", p.handleRoutePlan)
 	api("/panel/api/route_speed", p.handleRouteSpeed)
+	// The routing view's live feed: the requests the store still remembers,
+	// each with the chain of candidates the router tried for it.
+	api("/panel/api/route_live", p.handleRouteLive)
 
 	// The captcha document.  It is a page, not JSON, and it is framed by the
 	// shell -- so it gets its own headers (captcha.go) rather than the shell's

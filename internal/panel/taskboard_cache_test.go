@@ -3,6 +3,7 @@ package panel
 import (
 	"net/http"
 	"testing"
+	"time"
 
 	"client2api/internal/core"
 )
@@ -112,5 +113,45 @@ func TestTaskListAllCacheSurvivesPanelRestart(t *testing.T) {
 	row, _ := accounts[0].(map[string]any)
 	if row["cached"] != true {
 		t.Fatalf("persisted row was not marked cached: %v", row)
+	}
+}
+
+// TestTaskBoardCacheExpires covers the bug that made a board render state from
+// weeks earlier: the cache had no expiry, so an entry written once was served
+// for ever.  A task row is vendor-derived and the module caches the billing
+// call behind it, so an old entry must be treated as a miss.
+func TestTaskBoardCacheExpires(t *testing.T) {
+	c := newSweepClient("loomy", core.TaskResult{OK: true}, liveAccount("a1"))
+	c.fakeTaskClient.tasks = []core.TaskInfo{{Code: "share_soul", Auto: true}}
+	p := taskPanel(t, c)
+	p.initTaskBoardCache()
+
+	rec, _ := doTask(t, p, http.MethodGet, "/panel/api/clients/loomy/tasks?all=1", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("first scan: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if n := len(c.accountsAsked()); n != 1 {
+		t.Fatalf("first scan asked %d accounts, want 1", n)
+	}
+
+	// Age the entry past the TTL without touching the other fields.
+	p.taskBoardCache.mu.Lock()
+	byID := p.taskBoardCache.clients["loomy"]
+	e := byID["a1"]
+	e.FetchedAt = time.Now().Add(-taskBoardCacheTTL - time.Minute).UnixMilli()
+	byID["a1"] = e
+	p.taskBoardCache.mu.Unlock()
+
+	rec, out := doTask(t, p, http.MethodGet, "/panel/api/clients/loomy/tasks?all=1", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expired scan: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if n := len(c.accountsAsked()); n != 2 {
+		t.Fatalf("a stale entry was served from cache: asked %d accounts, want 2", n)
+	}
+	accounts, _ := out["accounts"].([]any)
+	row, _ := accounts[0].(map[string]any)
+	if row["cached"] == true {
+		t.Fatalf("the refetched row was still marked cached: %v", row)
 	}
 }

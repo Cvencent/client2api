@@ -50,12 +50,15 @@ func (e *upstreamError) short() string {
 // failureKind maps the vendor's verdict onto the core vocabulary.
 //
 // The one decision worth spelling out is kindModel: a model the vendor will not
-// route is not fixed by trying another account, so it must NOT rotate.  Every
-// other kind here is retryable, which is what makes rotation useful.
+// route is not fixed by trying another account, so it must NOT rotate -- but it
+// IS fixed by trying the next platform, because the refusal is about this
+// platform's routing and not about the credential.  FailureModelRefused carries
+// exactly that pair.  It used to be FailureOther plus the gateway's
+// "unclassified + 404" inference; naming it here removes that second table.
 func (e *upstreamError) failureKind() core.FailureKind {
 	switch e.Kind {
 	case kindModel:
-		return core.FailureOther
+		return core.FailureModelRefused
 	case kindInvalid:
 		return core.FailureAuth
 	case kindRateLimit:

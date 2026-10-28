@@ -18,15 +18,16 @@ import (
 type failureKind string
 
 const (
-	kindNone       failureKind = ""
-	kindCredit     failureKind = "credit"
-	kindDailyQuota failureKind = "daily"
-	kindRateLimit  failureKind = "rate_limit"
-	kindAuth       failureKind = "auth"
-	kindNotFound   failureKind = "not_found"
-	kindBlocked    failureKind = "blocked"
-	kindServer     failureKind = "server"
-	kindClient     failureKind = "client"
+	kindNone            failureKind = ""
+	kindCredit          failureKind = "credit"
+	kindDailyQuota      failureKind = "daily"
+	kindRateLimit       failureKind = "rate_limit"
+	kindAuth            failureKind = "auth"
+	kindNotFound        failureKind = "not_found"
+	kindModelTurnedAway failureKind = "model_turned_away"
+	kindBlocked         failureKind = "blocked"
+	kindServer          failureKind = "server"
+	kindClient          failureKind = "client"
 )
 
 var (
@@ -49,6 +50,22 @@ var (
 	notFoundMarkers = []string{
 		"model not found", "not a valid model", "unknown model",
 		"invalid model", "does not exist", "no such model",
+	}
+	// turnedAwayMarkers name refusals about what the model can do on this
+	// relay, not about the credential or the content: the relay's upstream
+	// cannot serve tools (or this tool shape) for the model that was asked
+	// for.  The vendor wording is "当前模型或上游不支持工具调用", which reads
+	// like the model cannot call tools at all but only ever means "not on
+	// this relay".  Classifying them as a model-scoped refusal is what lets
+	// the gateway move a model-group request to a sibling that does serve
+	// tools instead of returning the 400 to the caller.
+	turnedAwayMarkers = []string{
+		"tool choice not supported", "tool_choice not supported",
+		"model_tool_choice_not_supported", "model_tool_not_supported",
+		"does not support tool", "doesn't support tool", "do not support tool",
+		"not support tool calling", "not support function call",
+		"tool use is not supported", "tools are not supported",
+		"不支持工具调用", "不支持工具", "不支持函数调用",
 	}
 	blockedMarkers = []string{
 		"flagged", "moderation", "moderated", "content policy",
@@ -86,6 +103,14 @@ func classifyFailure(status int, text string) failureKind {
 	if containsMarker(text, notFoundMarkers) {
 		return kindNotFound
 	}
+	// The tool-capability refusal must be tested before the auth/rate tables
+	// but after not-found: a message that names both ("model not found" and
+	// "tools") is still a missing model.  It lands before the status-only
+	// branches so a 400 carrying it stops reading as a generic client error
+	// that fails the request instead of failing the platform over.
+	if containsMarker(text, turnedAwayMarkers) {
+		return kindModelTurnedAway
+	}
 	if containsMarker(text, authMarkers) {
 		return kindAuth
 	}
@@ -113,6 +138,8 @@ func coreKindFor(k failureKind) core.FailureKind {
 		return core.FailureQuota
 	case kindRateLimit:
 		return core.FailureRateLimited
+	case kindModelTurnedAway:
+		return core.FailureModelRefused
 	case kindAuth:
 		return core.FailureAuth
 	case kindServer:

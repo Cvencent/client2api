@@ -38,6 +38,15 @@ import (
 // cannot serve the request right now, or nil when it must be tried.  It never
 // calls Chat and never touches the network.
 func (s *server) candidateUnavailable(ctx context.Context, c core.Candidate) error {
+	return s.candidateUnavailableFor(ctx, c, nil)
+}
+
+// candidateUnavailableFor is candidateUnavailable with the request's messages,
+// so a capability the request needs but the catalogue says the model lacks --
+// today the image-input flag -- is caught before Chat is entered.  A nil or
+// empty message list only means the caller could not say, and every check that
+// reads it is skipped rather than guessed.
+func (s *server) candidateUnavailableFor(ctx context.Context, c core.Candidate, msgs []core.Message) error {
 	if c.Client == nil {
 		return nil
 	}
@@ -49,6 +58,11 @@ func (s *server) candidateUnavailable(ctx context.Context, c core.Candidate) err
 	if !c.Free {
 		if _, unavailable := moduleUnavailable(c.Client); unavailable != nil {
 			return unavailable
+		}
+	}
+	if requestHasImage(msgs) {
+		if err := imageCapabilityRefusal(c); err != nil {
+			return err
 		}
 	}
 	if probe, ok := core.AsModelAvailability(c.Client); ok {
@@ -70,6 +84,29 @@ func (s *server) candidateUnavailable(ctx context.Context, c core.Candidate) err
 	if s.gatewayAccountsFull(ctx, c.Client) {
 		return fmt.Errorf("%w: every account of %s is already at its in-flight ceiling",
 			core.ErrBusy, c.Client.Name())
+	}
+	return nil
+}
+
+// imageCapabilityRefusal reports why this candidate cannot take an image the
+// request carries, or nil when the catalogue either promises image input or
+// says nothing.  The flag is the module's own claim (`supports_images` on the
+// catalogue entry), so a silent entry stays on the optimistic path: only a
+// stated false is treated as image-blind, because inventing a capability fact
+// is worse than paying one failed round trip.
+//
+// It reads the candidate's own Extra, which resolveModelGroup and the catalogue
+// paths fill from the matched entry -- no extra Models call on this path.
+func imageCapabilityRefusal(c core.Candidate) error {
+	if c.Client == nil {
+		return nil
+	}
+	stated, ok := c.Extra["supports_images"]
+	if !ok {
+		return nil
+	}
+	if supports, isBool := stated.(bool); isBool && !supports {
+		return fmt.Errorf("%w: %s does not support image input", core.ErrUnsupported, c.Client.Name())
 	}
 	return nil
 }

@@ -152,7 +152,10 @@ func TestTerminalErrorIsClassified(t *testing.T) {
 		// Request-level: deliberately FailureOther, i.e. never retried by the
 		// gateway, because trae's own rules never rotate them either.
 		{"4001 param", 400, `{"code":4001,"message":"cannot unmarshal"}`, core.FailureOther, ErrParam, 400, 4001},
-		{"404 not found", 404, `no such route`, core.FailureOther, ErrNotFound, 404, 0},
+		// A 404 means no endpoint on this platform serves the model.  It is
+		// FailureModelRefused: still NOT rotated (every account here would say
+		// the same) but DOES move the request to the next platform.
+		{"404 not found", 404, `no such route`, core.FailureModelRefused, ErrNotFound, 404, 0},
 		{"400 other client error", 400, `{"message":"bad request"}`, core.FailureOther, ErrClient, 400, 0},
 	}
 
@@ -258,7 +261,7 @@ func TestRetryableAgreesWithClassification(t *testing.T) {
 		{ErrServer, core.FailureUpstream},
 		{ErrTransport, core.FailureUpstream},
 		{ErrParam, core.FailureOther},
-		{ErrNotFound, core.FailureOther},
+		{ErrNotFound, core.FailureModelRefused},
 		{ErrClient, core.FailureOther},
 	}
 

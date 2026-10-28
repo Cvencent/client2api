@@ -21,7 +21,7 @@ package trae
 //	9074 checkin contention  ErrRetryLater       FailureRateLimited
 //	5xx / network            ErrServer/Transport FailureUpstream
 //	4001 / 4023 param        ErrParam            FailureOther
-//	404 not found            ErrNotFound         FailureOther
+//	404 not found            ErrNotFound         FailureModelRefused
 //	any other 4xx            ErrClient           FailureOther
 //
 // There is no WAF / risk-control code in trae's vocabulary (verified by grep),
@@ -35,12 +35,20 @@ import (
 
 // failureKindFor maps one trae ErrKind onto the shared vocabulary.
 //
-// ErrParam, ErrNotFound and ErrClient land on FailureOther even though they are
-// genuine upstream answers: they are request-level, trae's own retryableKind()
-// already refuses to rotate them, and core.Retryable excludes FailureOther.
-// Mapping them onto FailureUpstream instead would make the gateway start
-// rotating errors the module deliberately does not rotate on -- a new retry
-// path, which this task must not introduce.
+// ErrParam and ErrClient land on FailureOther even though they are genuine
+// upstream answers: they are request-level, trae's own retryableKind() already
+// refuses to rotate them, and core.Retryable excludes FailureOther.  Mapping
+// them onto FailureUpstream instead would make the gateway start rotating
+// errors the module deliberately does not rotate on -- a new retry path, which
+// this task must not introduce.
+//
+// ErrNotFound is FailureModelRefused rather than FailureOther.  Those are two
+// different questions: "try another account here" and "move to the next
+// platform".  A 404 means no endpoint on this platform serves the model, so
+// every account here would answer identically -- the request has to move on.
+// FailureModelRefused answers exactly that pair (no rotate, yes next
+// platform), so the gateway no longer infers it from a bare "other + 404" and
+// this module keeps its deliberate refusal to rotate.
 func failureKindFor(kind ErrKind) core.FailureKind {
 	switch kind {
 	case ErrPlanLimit, ErrQuota:
@@ -53,6 +61,8 @@ func failureKindFor(kind ErrKind) core.FailureKind {
 		return core.FailureSessionDead
 	case ErrServer, ErrTransport:
 		return core.FailureUpstream
+	case ErrNotFound:
+		return core.FailureModelRefused
 	default:
 		return core.FailureOther
 	}
