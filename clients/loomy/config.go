@@ -77,9 +77,13 @@ const (
 	// stream is declared dead.  The reference uses 120 s for the same knob.
 	defaultIdleTimeout = 2 * time.Minute
 	// defaultFirstByteTimeout bounds the wait for the response headers only.
-	// It exists so that a wedged connection fails in two minutes rather than
-	// in defaultChatTimeout.
-	defaultFirstByteTimeout = 2 * time.Minute
+	// The live vendor answers within a few seconds (measured 2-3 s for every
+	// chat model), so 30 s is generous even for a cold queue.  The value this
+	// module shipped first (2 min) let one wedged connection cost a whole
+	// chat attempt twice per account -- the stall is a connection-level
+	// refusal that another account on the same platform repeats, so the
+	// request has to reach the gateway's next-platform failover quickly.
+	defaultFirstByteTimeout = 30 * time.Second
 	// defaultModelsTTL is how long a fetched catalogue is trusted before a
 	// background refresh is kicked off.
 	defaultModelsTTL = 30 * time.Minute

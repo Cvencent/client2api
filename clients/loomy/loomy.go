@@ -467,6 +467,12 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 	// busy records that every candidate we reached was at its per-account
 	// in-flight ceiling.
 	busy := false
+	// stalled counts header stalls this request has already paid for.  The
+	// first one is still worth one same-account retry (a queue can drain);
+	// after that the platform is treated as wedged: remaining candidates are
+	// skipped and ErrPlatformExhausted tells the gateway to move to the next
+	// platform immediately instead of adding stall time to stall time.
+	stalled := 0
 	for _, acc := range candidates {
 		if issued >= attempts {
 			break
@@ -503,23 +509,53 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 			lastErr = err
 			break
 		}
-
-		// A single failed open is not enough evidence to take the account out
-		// of rotation.  Give the same credential one short follow-up attempt;
-		// only a second failure advances the cooldown ladder.
-		if err := waitForChatRetry(ctx, chatRetryDelay); err != nil {
+		if isHeaderStall(err) {
+			stalled++
 			lastErr = err
-			break
-		}
-		stream, err = c.up.openChatStream(ctx, acc.AccessToken, body)
-		if err == nil {
-			c.store.resetAfterProbe(acc.ID, time.Now().UTC())
-			// Tell the gateway which credential actually served this request.
-			// The slot is nil in most unit tests, and NoteServedBy is a no-op
-			// then, so this is safe to call unconditionally.
-			core.NoteServedBy(req, acc.ID)
-			c.inFlight.Add(1)
-			return core.TrackStream(stream, func() { c.inFlight.Add(-1) }), nil
+			// One stall gets the same-account retry below; a second one
+			// means the platform is not answering anybody.  The credential
+			// is not penalised (it did nothing wrong), but the request stops
+			// burning candidates here.
+			if stalled >= 2 {
+				break
+			}
+			if err := waitForChatRetry(ctx, chatRetryDelay); err != nil {
+				break
+			}
+			stream, err = c.up.openChatStream(ctx, acc.AccessToken, body)
+			if err == nil {
+				c.store.resetAfterProbe(acc.ID, time.Now().UTC())
+				core.NoteServedBy(req, acc.ID)
+				c.inFlight.Add(1)
+				return core.TrackStream(stream, func() { c.inFlight.Add(-1) }), nil
+			}
+			if callerGone(err) || ctx.Err() != nil {
+				break
+			}
+			if isHeaderStall(err) {
+				lastErr = err
+				break
+			}
+			// The retry failed differently; fall through to the ordinary
+			// classification below with the retry's error.
+		} else {
+			// A single failed open is not enough evidence to take the account
+			// out of rotation.  Give the same credential one short follow-up
+			// attempt; only a second failure advances the cooldown ladder.
+			if err := waitForChatRetry(ctx, chatRetryDelay); err != nil {
+				lastErr = err
+				break
+			}
+			stream, err = c.up.openChatStream(ctx, acc.AccessToken, body)
+			if err == nil {
+				c.store.resetAfterProbe(acc.ID, time.Now().UTC())
+				// Tell the gateway which credential actually served this request.
+				// The slot is nil in most unit tests, and NoteServedBy is a no-op
+				// then, so this is safe to call unconditionally.
+				core.NoteServedBy(req, acc.ID)
+				c.inFlight.Add(1)
+				return core.TrackStream(stream, func() { c.inFlight.Add(-1) }), nil
+			}
 		}
 		lastErr = err
 		// A cancelled caller is not evidence about the credential.  The
@@ -538,10 +574,20 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 		if callerGone(err) {
 			break
 		}
-		// The same-size refusal reached on the second attempt is still not a
-		// verdict about the credential; classify it and leave the account's
-		// cooldown ladder untouched.
+		// A prompt-size refusal is not evidence about the credential: the same
+		// oversized body would be refused by every other account too, so there
+		// is nothing to learn from a retry and nothing to penalise.  Return the
+		// classified refusal immediately, which is also what lets the gateway
+		// answer 400 + context_window_exceeded instead of a 502.
 		if failureKind(err) == core.FailureContextWindow {
+			lastErr = err
+			break
+		}
+		// A header stall that survived its same-account retry stops the
+		// rotation: the platform is wedged, and the next account would sit in
+		// the same silent queue.  Hand the gateway ErrPlatformExhausted so it
+		// moves to the next platform now.
+		if isHeaderStall(err) {
 			lastErr = err
 			break
 		}
@@ -570,6 +616,15 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 	}
 	if lastErr == nil {
 		lastErr = core.ErrNotConfigured
+	}
+	// A header stall means the vendor accepted connections and answered
+	// nothing, twice, from different credentials.  That is the platform, not
+	// the account: joining ErrPlatformExhausted makes the gateway skip its
+	// same-platform rotation (re-entering this module would only re-queue into
+	// the same silent upstream) and hand the request to the next platform in
+	// the candidate list, which is where a working model gets served.
+	if isHeaderStall(lastErr) {
+		lastErr = errors.Join(core.ErrPlatformExhausted, lastErr)
 	}
 	// Hand the gateway a classified failure when this module can name one, so
 	// it can preserve the upstream status and the machine-readable code.  A

@@ -122,6 +122,19 @@ func (u *upstream) probeCredential(ctx context.Context, token string) error {
 // Chat
 // ---------------------------------------------------------------------------
 
+// isHeaderStall reports whether this failure is the module's own
+// first-byte deadline, i.e. the vendor accepted the TCP connection but never
+// answered the HTTP request.  That is a connection-level wedge, not a verdict
+// about the credential: every other session on the same platform would sit in
+// the same queue, so burning the pool's remaining accounts on it only adds
+// stall time to one request.
+func isHeaderStall(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "no response within ")
+}
+
 // openChat opens a streaming completion.
 //
 // Both auth headers are sent on purpose.  /chat/completions is the only
