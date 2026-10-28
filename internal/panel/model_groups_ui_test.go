@@ -141,11 +141,25 @@ func TestModelGroupUIHasSearchAndCollapseForLargeLists(t *testing.T) {
 	}
 
 	group := poolStatsFuncBody(t, src, "pfModelGroupHTML")
+	// pfgMeta 换成了成员节点链（pfChainHTML 渲染）：同一份成员摘要，从一行字
+	// 升级成可读拓扑。钉的是「组头必须渲染成员摘要」这个契约，锚跟着形态更新。
 	for _, want := range []string{
-		`pfgToggle`, `aria-expanded`, `aria-controls`, `pfgBody`, `pfgTitle`, `pfgMeta`,
+		`pfgToggle`, `aria-expanded`, `aria-controls`, `pfgBody`, `pfgTitle`, `pfChainHTML(summaryMembers)`,
 	} {
 		if !strings.Contains(group, want) {
 			t.Errorf("pfModelGroupHTML does not render %q", want)
+		}
+	}
+
+	// 节点链本体：Auto 成员必须有区别于普通成员的样式锚（通配一站 vs 具体站点），
+	// 空组要有明确的「尚无成员」而不是一条空链。auto 标记是拼接出来的
+	// 'pfn ' + (auto ? "auto" : "")，这里钉拼接式而不是成品字符串。
+	chain := poolStatsFuncBody(t, src, "pfChainHTML")
+	for _, want := range []string{
+		`pfgchain`, `class="pfn ' + (auto ? "auto" : "")`, `尚无成员`, `pfnlink`,
+	} {
+		if !strings.Contains(chain, want) {
+			t.Errorf("pfChainHTML does not render %q", want)
 		}
 	}
 

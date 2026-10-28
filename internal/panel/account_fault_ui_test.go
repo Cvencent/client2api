@@ -42,14 +42,16 @@ func TestRiskAndAccountFaultHaveSeparateCounters(t *testing.T) {
 	}
 
 	body := poolStatsFuncBody(t, src, "renderStats")
+	// 磁贴数字现在经 tickNumber 滚动到新值（数字变化的方向感），但
+	// 「风控 / 账号异常 / 已停用各自有独立计数并写进各自的磁贴」这个契约不变。
 	for _, want := range []string{
 		`let total = 0, ready = 0, cool = 0, risk = 0, fault = 0, disabled = 0;`,
 		`else if (cls.key === "risk") risk++;`,
 		`else if (cls.key === "fault") fault++;`,
 		`else if (cls.key === "disabled") disabled++;`,
-		`$("#sRisk").textContent = risk;`,
-		`$("#sFault").textContent = fault;`,
-		`$("#sDisabled").textContent = disabled;`,
+		`tickNumber($("#sRisk"), risk);`,
+		`tickNumber($("#sFault"), fault);`,
+		`tickNumber($("#sDisabled"), disabled);`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("renderStats 没有分别统计风控和账号异常：%s", want)

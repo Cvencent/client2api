@@ -44,10 +44,13 @@ func checkinCapWiring(t *testing.T, src string) []string {
 	}
 
 	// 2. 能力矩阵必须读客户端级位：它问的是「这个模块有没有签到」。
-	if !strings.Contains(matrix, "yn(k.checkin)") {
+	//    矩阵现在是舱位条形态，能力清单来自 CAPS 数组（CAPS.map 里 bertheCap(!!k[key])），
+	//    所以钉的字符串从 yn(k.checkin) 变成数组项 ["checkin", "每日签到"]——
+	//    负控（TestCheckinCapWiringCatchesAMatrixOnTheRowLevelBit）跟着换同样的锚。
+	if !strings.Contains(matrix, `"checkin", "每日签到"`) {
 		miss = append(miss, "renderClients 的每日签到列没有读客户端级的 checkin")
 	}
-	if strings.Contains(matrix, "yn(k.checkin_ready)") {
+	if strings.Contains(matrix, `"checkin_ready"`) {
 		miss = append(miss, "renderClients 的每日签到列读了行级的 checkin_ready：没有账号的模块会显示成「-」")
 	}
 
@@ -89,11 +92,11 @@ func TestCheckinCapWiringCatchesARowButtonOnTheClientLevelBit(t *testing.T) {
 // 换成行级位，检查器必须报出来。
 func TestCheckinCapWiringCatchesAMatrixOnTheRowLevelBit(t *testing.T) {
 	src := poolStatsUISource(t)
-	const want = "yn(k.checkin)"
+	const want = `"checkin", "每日签到"`
 	if !strings.Contains(src, want) {
 		t.Fatalf("测试自己失效了：index.html 里找不到 %q", want)
 	}
-	if miss := checkinCapWiring(t, strings.Replace(src, want, "yn(k.checkin_ready)", 1)); len(miss) == 0 {
+	if miss := checkinCapWiring(t, strings.Replace(src, want, `"checkin_ready", "每日签到"`, 1)); len(miss) == 0 {
 		t.Fatal("把能力矩阵换成行级的 checkin_ready 之后，检查器还是绿的")
 	}
 }

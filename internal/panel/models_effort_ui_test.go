@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -100,7 +101,11 @@ func TestParseEffortMappingsNormalizesMultipleRules(t *testing.T) {
 		t.Skip("node unavailable")
 	}
 	program := fn + "\n}\nprocess.stdout.write(JSON.stringify(parseEffortMappings('high -> max, xhigh→highest')))"
-	out, err := exec.Command(node, "-e", program).CombinedOutput()
+	cmd := exec.Command(node, "-e", program)
+	// node 在带代理环境变量的机器上会往 stderr 打 UNDICI-EHPA 实验性警告，
+	// CombinedOutput 会把它和结果混在一起——直接关掉警告最干净。
+	cmd.Env = append(os.Environ(), "NODE_OPTIONS=--no-warnings")
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("node parse: %v\n%s", err, out)
 	}
