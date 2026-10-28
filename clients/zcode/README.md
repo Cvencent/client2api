@@ -383,7 +383,7 @@ merged on a guess.
 | `POST .../accounts/refresh` | with no `id`, refreshes every account. |
 | `GET .../discover` | `~/.zcode/v2/config.json#provider.<name>`, `~/.zcode/v2/credentials.json#zcodejwttoken`, and the `%APPDATA%\ZCode` profile directory. |
 | `POST .../import` | `paths` (or `all: true`); a bare file path imports every credential in that file, a `#fragment` path imports one. Already-present credentials are skipped, not errors. |
-| `POST .../accounts/<id>/checkin` | the single `claim` action: preview the claimable plans, then claim the highest-priority one. Needs a `jwt` account and a captcha token — from the built-in browser solver, the panel's browser, or `captcha_command`; see [Captcha paths](#captcha-paths). The scheduler's `checkin` batch calls the same action — see [Tasks and scheduling](#tasks-and-scheduling). |
+| `POST .../accounts/<id>/checkin` | the single `claim` action: preview the claimable plans, then claim the highest-priority one. Needs a `jwt` account. A captcha token is **optional** — see [Claiming](#claiming); it is attached when the panel's browser already minted one or a solver is configured, and the claim goes out without it otherwise. The scheduler's `checkin` batch calls the same action — see [Tasks and scheduling](#tasks-and-scheduling). |
 | `POST .../accounts/<id>/balance` | token balances per entitlement, from `zcode-plan/billing/balance`. A vendor refusal is a real error (the panel answers 502), because a balance with no number is worse than no balance. |
 | `GET .../packages` | the same buckets as package rows, named `<plan> · <entitlement>` and sorted by remaining tokens. |
 
@@ -805,13 +805,42 @@ unavailable instead of spending further device quota.
 * **The JWT has no `exp` claim.** Expiry is decided server-side and announced
   only as a failed request, so `ExpiresAt` stays empty on the account row;
   `AccountBalance`/`AccountPackages` are what report the real numbers.
-* **Claiming is captcha-gated before anything else.** A `claim` with a
-  deliberately non-existent plan id still answers `3007 captcha verify failed`,
-  which proves the vendor checks the Aliyun parameter *before* the plan, so
-  there is no dry-run and no pure-HTTP path. `claim` therefore needs a real
-  token: the built-in browser solver, the panel's browser, or `captcha_command`,
-  exactly like the JWT chat channel. What needs no token is the *preview* — a plain GET that
-  reports whether anything is claimable at all.
+* **The captcha is no longer required to claim.** This reverses what was
+  recorded here before. The earlier note said a `claim` with a deliberately
+  non-existent plan id still answered `3007 captcha verify failed`, proving the
+  vendor checked the Aliyun parameter *before* the plan. As of 2026-10-28 that
+  is no longer true: the same probe answers `1001 target not found`, and a claim
+  carrying no `X-Aliyun-Captcha-Verify-Param` header at all is accepted. The
+  flow this module used to require — mint a token, then claim — was refusing to
+  try a request that works, so an install with no solver could not take a grant
+  it was entitled to.
+
+  What that means for the code:
+
+  * `claim` always goes out. `captchaTokenIfCheap` attaches a token when one is
+    already available (the panel's browser minted it, or it is cached) or when a
+    solver is configured, and sends no header otherwise. Nothing is minted on a
+    install with no solver.
+  * If the vendor restores the check, an account with a solver keeps working
+    unchanged; an account without one starts answering `3007`, which the panel
+    already relays verbatim.
+  * The **preview** still needs no token, and still reports whether anything is
+    claimable at all.
+
+* **The device id is what the risk check reads.** A claim answers `3012`
+  ("unusual activity") when the vendor does not recognise the device it came
+  from — measured on this machine, where the module's own generated id was
+  refused and the desktop client's own id (`~/.zcode/v2/telemetry-state.json`,
+  the same identity the popup's 领取 button sends) succeeded on the same account
+  seconds later, with no change to the credential. So:
+
+  * `loadDeviceLocked` prefers the desktop client's id over the generated one,
+    when the client is installed on this machine.
+  * A `3012` on the claim path adopts that id and walks the plans once more. The
+    recovery costs one extra round trip once, not on every claim.
+  * `3012` stays a `kindRisk`/`FailureWAF` refusal for the chat path: there it
+    describes the egress IP, and the shared IP gate is what stops the rotation.
+
 * **No signature handshake.** The upstream can advertise an Ed25519
   `codingPlanSignature` requirement via `agent/configs`; if it does, requests on
   that channel will be refused and this module will report the failure verbatim.

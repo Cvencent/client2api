@@ -103,8 +103,12 @@ func TestAccountRowOwnButtonsAreChinese(t *testing.T) {
 	row := poolStatsFuncBody(t, poolStatsUISource(t), "accRowHTML")
 
 	// data-do -> 该行按钮上必须出现的中文标签（逐字出现在渲染代码里）。
+	//
+	// note 按钮从「账号标识」缩成「标识」：操作列只有 22.5% 宽，四字按钮在
+	// 1400px 视口下会被截成「账号…」（评审实测）。两个字的「标识」仍区分于
+	// 右边的「状态说明」列——那正是这条文案存在的原因，title 里也写明了。
 	wants := []struct{ do, label string }{
-		{`data-do="note"`, "账号标识"},
+		{`data-do="note"`, "标识"},
 		{`data-do="test"`, "测试"},
 		{`data-do="del"`, "删除"},
 		{`data-do="relogin"`, "重登"},

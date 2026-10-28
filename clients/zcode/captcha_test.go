@@ -331,11 +331,15 @@ func TestCheckinUsesTheBrowserTokenEndToEnd(t *testing.T) {
 	}
 }
 
-// TestCheckinWithoutASolverAndWithoutABrowserReportsNotConfigured is the state
-// the scheduler runs in when no browser is attached.  It has to be a refusal
-// (a nil error), not a failure, or an unattended sweep would report a storm of
-// transport failures for what is really a missing configuration.
-func TestCheckinWithoutASolverAndWithoutABrowserReportsNotConfigured(t *testing.T) {
+// TestCheckinWithoutASolverOrBrowserClaimsTokenless is the state the scheduler
+// runs in when no browser is attached.  The vendor no longer checks the Aliyun
+// parameter (measured 2026-10-28: a claim with no captcha header is accepted,
+// and a bogus plan id answers 1001 rather than 3007), so this install can
+// legitimately complete a claim.  Two properties still matter and are asserted
+// here: no Go error may escape (or an unattended sweep reports a storm of
+// transport failures for what is really a normal claim), and no captcha may be
+// minted to get there.
+func TestCheckinWithoutASolverOrBrowserClaimsTokenless(t *testing.T) {
 	env := newPanelEnv(t, `{"auto_discover":false}`)
 	ft := routeTransport(t, captchaRoutes(captchaConfigFixture, previewRoutes()))
 	c := env.client(t, ft)
@@ -345,16 +349,22 @@ func TestCheckinWithoutASolverAndWithoutABrowserReportsNotConfigured(t *testing.
 	if err != nil {
 		t.Fatalf("Checkin returned a Go error (%v); the scheduler would count this as a failure", err)
 	}
-	if res.OK {
-		t.Fatalf("res = %+v, want a refusal", res)
+	if !res.OK {
+		t.Fatalf("res = %+v, want the claim to succeed without a captcha", res)
 	}
-	if !strings.Contains(res.Error, "captcha_command") {
-		t.Errorf("error = %q, want the missing solver named", res.Error)
-	}
-	// And nothing was sent to the claim endpoint.
+	// The claim went out, and it carried no verification parameter: nothing was
+	// minted for it.
+	var sawClaim bool
 	for i := 0; i < ft.count(); i++ {
-		if strings.Contains(ft.requestAt(i).URL.Path, planClaimPath) {
-			t.Fatal("a claim request went out without a token")
+		if !strings.Contains(ft.requestAt(i).URL.Path, planClaimPath) {
+			continue
 		}
+		sawClaim = true
+		if got := ft.requestAt(i).Header.Get("X-Aliyun-Captcha-Verify-Param"); got != "" {
+			t.Errorf("claim carried a captcha param %q, want none to have been minted", got)
+		}
+	}
+	if !sawClaim {
+		t.Fatal("the claim request was never sent")
 	}
 }

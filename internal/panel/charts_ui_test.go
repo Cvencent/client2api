@@ -250,15 +250,17 @@ func TestExpiryDistributionClassesMatchTheStylesheet(t *testing.T) {
 			t.Errorf("样式表里没有定义 .%s", cls)
 		}
 	}
-	// 段的颜色 / 透明度 / 宽度都走内联自定义属性，CSS 只负责画。
-	for _, want := range []string{"--seg-color:", "opacity:", "flex:"} {
+	// 段的宽度走内联 flex；颜色改成按「紧急度」分档（data-urgent），
+	// 由 CSS 决定红/黄/中性——原来按剩余天数调 opacity，一屏七条蓝杠深浅不同，
+	// 读不出哪条要紧，而且透明度本身不是可读的紧急度信号。
+	for _, want := range []string{"--seg-color:", "data-urgent=", "flex:"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("renderExpiryDistribution 没有给段设置 %q", want)
 		}
 	}
 	// 每个函数都必须在（缺一个，图的某一段就是空的，而且不会有任何报错）。
 	for _, fn := range []string{
-		"pkColor", "pkAccountColorMap", "pkBySource", "pkCreditOpacity",
+		"pkColor", "pkAccountColorMap", "pkBySource", "pkUrgency",
 		"pkExpiryText", "pkExpiryDateTime", "pkAccountSegments",
 		"summarizeCreditDays", "renderExpiryDistribution",
 	} {

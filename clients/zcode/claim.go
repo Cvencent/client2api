@@ -899,48 +899,61 @@ func (c *Client) Checkin(ctx context.Context, id, action string) (core.CheckinRe
 	// Walk the plans in priority order.  The vendor has no idempotency key, so
 	// the guard is the vendor's own 1003: a plan that turns out to be claimed
 	// already is not a failure of the action, it is the next plan's turn.
-	var last *claimError
-	for _, plan := range plans {
-		verifyParam, verifyRegion, err := c.solveCaptcha(ctx)
-		if err != nil {
-			// No solver is a configuration fact, not a vendor refusal.
-			c.claimFailure(&res, err)
-			return done()
-		}
-		startsAt, endsAt, err := c.claimPlanOnce(ctx, acct, plan.id(), verifyParam, verifyRegion)
-		if err == nil {
-			res.OK = true
-			res.Code = 0
-			res.Message = fmt.Sprintf("claimed %s", firstNonEmpty(plan.Name, plan.id()))
-			res.Data = map[string]any{
-				"plan_id":   plan.id(),
-				"plan_name": plan.Name,
-				"grants":    grantSummary(plan.tokenGrants()),
-				"starts_at": time.Unix(startsAt, 0).UTC().Format(time.RFC3339),
-				"ends_at":   time.Unix(endsAt, 0).UTC().Format(time.RFC3339),
+	//
+	// The captcha is optional now.  It used to be mandatory -- the claim was
+	// documented as captcha-gated ahead of everything else, so a missing solver
+	// ended the action before it was tried.  Measured live on 2026-10-28, the
+	// vendor no longer checks it: a claim carrying no X-Aliyun-Captcha header
+	// at all is accepted, and a deliberately non-existent plan id answers 1001
+	// ("no such plan") rather than 3007 ("captcha verify failed").  Refusing to
+	// try without a solver therefore threw away a claim that would have worked
+	// -- which is exactly what happened while the popup sat unclaimed.
+	//
+	// A token is still sent when one is available, so if the vendor restores
+	// the check an account with a solver keeps working unchanged.
+	verifyParam, verifyRegion := c.captchaTokenIfCheap(ctx)
+	pass := c.runClaimPass(ctx, acct, plans, verifyParam, verifyRegion)
+	if pass.err != nil {
+		c.claimFailure(&res, pass.err)
+		return done()
+	}
+	// 3012 is risk control, and it answers "this device is unfamiliar" rather
+	// than "this plan is refused": another plan would be refused identically.
+	// It does have a fix -- the desktop client's own device id is accepted where
+	// a generated one is not (measured on this machine: refused with ours,
+	// accepted with the app's seconds later) -- so adopt that id and take the
+	// whole walk once more.
+	if pass.refusal != nil && pass.refusal.code == codeRiskControl {
+		if mid := c.pool.adoptDesktopDeviceMid(); mid != "" {
+			c.pool.log("zcode: claim on %s hit risk control (3012); retrying as the desktop device id", acct.ID)
+			pass = c.runClaimPass(ctx, acct, plans, verifyParam, verifyRegion)
+			if pass.err != nil {
+				c.claimFailure(&res, pass.err)
+				return done()
 			}
-			// The vendor just granted a plan, so any quota verdict recorded
-			// earlier (exhausted/cooling) is stale by definition.  Clear it here
-			// rather than waiting for an operator to press 恢复, or the account
-			// stays out of rotation while holding a freshly claimed quota.
-			c.pool.clearPenalty(acct.ID)
-			return done()
-		}
-
-		ce := asClaimError(err)
-		if ce == nil {
-			// A transport or decode failure says nothing about the next plan,
-			// so stop rather than spending another captcha.
-			c.claimFailure(&res, err)
-			return done()
-		}
-		last = ce
-		if ce.code != claimCodeAlreadyClaimed && ce.code != claimCodeNoPlan {
-			break
 		}
 	}
+	if pass.won != nil {
+		win := pass.won
+		res.OK = true
+		res.Code = 0
+		res.Message = fmt.Sprintf("claimed %s", firstNonEmpty(win.plan.Name, win.plan.id()))
+		res.Data = map[string]any{
+			"plan_id":   win.plan.id(),
+			"plan_name": win.plan.Name,
+			"grants":    grantSummary(win.plan.tokenGrants()),
+			"starts_at": time.Unix(win.startsAt, 0).UTC().Format(time.RFC3339),
+			"ends_at":   time.Unix(win.endsAt, 0).UTC().Format(time.RFC3339),
+		}
+		// The vendor just granted a plan, so any quota verdict recorded earlier
+		// (exhausted/cooling) is stale by definition.  Clear it here rather than
+		// waiting for an operator to press 恢复, or the account stays out of
+		// rotation while holding a freshly claimed quota.
+		c.pool.clearPenalty(acct.ID)
+		return done()
+	}
 
-	if last != nil {
+	if last := pass.refusal; last != nil {
 		res.Code = last.code
 		res.Message = last.Error()
 		// "Already claimed" is what a second sweep in the same period sees, so
@@ -965,6 +978,95 @@ func (c *Client) Checkin(ctx context.Context, id, action string) (core.CheckinRe
 	res.Code = claimCodeUnavailable
 	res.Message = "nothing is claimable right now"
 	return done()
+}
+
+// claimPass is one walk over the claimable plans.
+type claimPass struct {
+	// won names the plan the vendor granted, when one was granted.
+	won *claimWin
+	// refusal is the vendor's last business-code answer when nothing was
+	// granted.  A nil refusal with a nil error means the walk ended without a
+	// verdict, which the caller reports as "nothing is claimable".
+	refusal *claimError
+	// err is set only for a failure that says nothing about the next plan
+	// (transport, decode): the caller stops instead of spending another round.
+	err error
+}
+
+type claimWin struct {
+	plan             claimPlan
+	startsAt, endsAt int64
+}
+
+// runClaimPass tries each plan in order until one is granted.
+//
+// Kept separate from Checkin because the walk can legitimately run twice: once
+// as this machine, and once as the desktop client after a risk-control refusal.
+// Splitting it keeps that retry a two-line decision instead of a duplicated
+// loop.
+func (c *Client) runClaimPass(ctx context.Context, acct *Account, plans []claimPlan, verifyParam, verifyRegion string) claimPass {
+	var out claimPass
+	for _, plan := range plans {
+		startsAt, endsAt, err := c.claimPlanOnce(ctx, acct, plan.id(), verifyParam, verifyRegion)
+		if err == nil {
+			out.won = &claimWin{plan: plan, startsAt: startsAt, endsAt: endsAt}
+			return out
+		}
+		ce := asClaimError(err)
+		if ce == nil {
+			// A transport or decode failure says nothing about the next plan.
+			out.err = err
+			return out
+		}
+		out.refusal = ce
+		// Only "already claimed" and "no such plan" mean "try the next one";
+		// every other code is this account's answer for this attempt.
+		if ce.code != claimCodeAlreadyClaimed && ce.code != claimCodeNoPlan {
+			return out
+		}
+	}
+	return out
+}
+
+// captchaTokenIfCheap returns a verification token for the claim, or two empty
+// strings when there is none to be had.
+//
+// The claim no longer requires a token: the vendor stopped checking it (see
+// Checkin, and the measurement recorded there).  So the cost of obtaining one
+// now decides whether it is worth attaching:
+//
+//   - A token the panel's own browser already minted, or one still in the
+//     cache, is free -- use it.
+//   - A configured solver (captcha_command or the built-in browser) is the
+//     operator saying "mint when needed", so it is used.  This keeps an install
+//     that was set up for the captcha-era claim working unchanged, and it is
+//     what happens if the vendor restores the check.
+//   - With no solver at all, nothing is minted.  The claim goes out without the
+//     header, which the vendor accepts today and which is the whole point: an
+//     install that cannot solve a captcha is no longer locked out of a claim
+//     that needs none.
+func (c *Client) captchaTokenIfCheap(ctx context.Context) (param, region string) {
+	if sol, ok := core.CaptchaSolutionFrom(ctx); ok {
+		region = sol.Region
+		if region == "" {
+			region = c.pool.regionFor(ctx).Region
+		}
+		return sol.Param, region
+	}
+	if cached, ok := c.captcha.get(time.Now()); ok {
+		return cached.param, cached.region
+	}
+	if !c.pool.captchaReady() {
+		return "", ""
+	}
+	param, region, err := c.solveCaptcha(ctx)
+	if err != nil {
+		// A mint failure is not fatal any more: the claim is worth trying
+		// without the header rather than being abandoned over an optional one.
+		c.pool.log("zcode: claim continuing without a captcha token: %v", err)
+		return "", ""
+	}
+	return param, region
 }
 
 // heldPlanWindow reads billing/current and returns the live window it names,

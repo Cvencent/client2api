@@ -548,7 +548,12 @@ func TestCheckinMovesOnWhenAPlanIsAlreadyClaimed(t *testing.T) {
 	}
 }
 
-func TestCheckinWithoutASolverReportsNotConfigured(t *testing.T) {
+func TestCheckinWithoutASolverStillClaims(t *testing.T) {
+	// The vendor stopped checking the Aliyun parameter (measured 2026-10-28: a
+	// claim with no captcha header is accepted, and a bogus plan id answers
+	// 1001 rather than 3007).  Refusing to try without a solver therefore threw
+	// away a claim that would have worked -- which is what happened while the
+	// desktop popup sat unclaimed.  The action must now go out tokenless.
 	claimed := false
 	env := newPanelEnv(t, `{"auto_discover":false}`)
 	c := env.client(t, routeTransport(t, map[string]func(*http.Request) (*http.Response, error){
@@ -557,7 +562,7 @@ func TestCheckinWithoutASolverReportsNotConfigured(t *testing.T) {
 		},
 		planClaimPath: func(*http.Request) (*http.Response, error) {
 			claimed = true
-			return jsonResponse(http.StatusOK, `{"code":0}`), nil
+			return jsonResponse(http.StatusOK, `{"code":0,"data":{"plan":{"starts_at":1790692703,"ends_at":1790697600}}}`), nil
 		},
 	}))
 	c.cfg.CaptchaRegion = "cn"
@@ -567,14 +572,16 @@ func TestCheckinWithoutASolverReportsNotConfigured(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Checkin: %v", err)
 	}
-	if res.OK {
-		t.Fatal("a claim without a solver must not report success")
+	if !claimed {
+		t.Fatal("the claim must be attempted even with no captcha solver")
 	}
-	if !strings.Contains(res.Error, "captcha_command") {
-		t.Errorf("res.Error = %q, want it to name captcha_command", res.Error)
+	if !res.OK {
+		t.Fatalf("res = %+v, want a successful claim without a captcha", res)
 	}
-	if claimed {
-		t.Error("no claim request may be sent without a captcha")
+	// And nothing may have been minted to get there: the whole point is that
+	// the no-solver install does not pay for a token.
+	if len(res.Error) > 0 {
+		t.Errorf("res.Error = %q, want none", res.Error)
 	}
 }
 

@@ -3,6 +3,7 @@ package zcode
 import (
 	"encoding/base64"
 	"encoding/json"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -145,6 +146,34 @@ func discover(logf func(string, ...any)) []credentialSource {
 	return out
 }
 
+// readDesktopDeviceMid returns the device id the ZCode desktop client reports
+// itself as, or "" when the client is not installed here.
+//
+// The value lives in telemetry-state.json beside the client's credentials.  It
+// is worth reading because the vendor treats it as this machine's identity: the
+// popup's 领取 button sends it, and the claim endpoint's risk check reads the
+// history attached to it.  A claim sent from a device id the vendor has never
+// seen answers 3012 ("unusual activity") even when the credential is fine --
+// measured live on this machine, where the module's own generated id was
+// refused and the desktop id succeeded on the same account seconds later.
+//
+// An unreadable or absent file is not an error: the module then falls back to
+// the id it generates and persists, exactly as it did before this existed.
+func readDesktopDeviceMid() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	var state struct {
+		DeviceMid string `json:"deviceMid"`
+	}
+	path := filepath.Join(home, ".zcode", "v2", "telemetry-state.json")
+	if err := core.ReadJSON(path, &state); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(state.DeviceMid)
+}
+
 // providerSecrets is what the desktop client's credential store knows about the
 // API keys it holds, indexed by the id half of each "id.secret" value.
 //
@@ -277,6 +306,38 @@ type providerEntry struct {
 	} `json:"options"`
 }
 
+// vendorEndpointHosts are the hosts a ZCode credential can legitimately point
+// at.  Kept as suffixes so an api./open./chat. subdomain and any future one all
+// match, while a third-party relay does not.
+var vendorEndpointHosts = []string{"z.ai", "bigmodel.cn", "chatglm.cn", "chatglm.site"}
+
+// isVendorEndpoint reports whether a provider entry's baseURL is one of the
+// vendor's own endpoints.
+//
+// An empty baseURL counts as the vendor's: the client leaves it out when it
+// means "the default for this kind", and every default this module knows is a
+// vendor origin.  Anything else has to name a vendor host.
+func isVendorEndpoint(baseURL string) bool {
+	raw := strings.TrimSpace(baseURL)
+	if raw == "" {
+		return true
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
+	if host == "" {
+		return false
+	}
+	for _, want := range vendorEndpointHosts {
+		if host == want || strings.HasSuffix(host, "."+want) {
+			return true
+		}
+	}
+	return false
+}
+
 // discoverFromProviderConfig reads the desktop client's live provider config.
 // secrets carries the complete "id.secret" credentials, and is used to complete
 // entries the client wrote truncated — and to say which account an API-key entry
@@ -311,6 +372,23 @@ func discoverFromProviderConfig(path string, secrets providerSecrets, logf func(
 			continue
 		}
 		if entry.Kind != "" && !strings.EqualFold(entry.Kind, "anthropic") {
+			continue
+		}
+		// The entry has to actually be a Z.AI / BigModel endpoint.
+		//
+		// provider.* is not a list of vendor accounts: it is the client's list
+		// of places it can send a request, and anything that speaks Anthropic
+		// can register there.  A local gateway does exactly that -- magpie
+		// writes provider.magpie with baseURL http://127.0.0.1:3425 -- and
+		// without this check that entry became a ZCode account whose catalogue
+		// (43 models, names like "My client/…") then polluted this module's
+		// model list.  Measured on the maintainer's machine, where the panel
+		// showed zcode-config:magpie beside the two real plan accounts.
+		//
+		// The test is the host, not the name: a vendor rename or a second
+		// profile both keep pointing at the vendor's own origins, while a relay
+		// is localhost or a third-party host by definition.
+		if !isVendorEndpoint(entry.Options.BaseURL) {
 			continue
 		}
 		// The client stores the key id alone here and keeps the secret half in

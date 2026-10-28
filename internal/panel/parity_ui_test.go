@@ -83,7 +83,7 @@ func TestCreditCardCompositionUsesTheSharedHelpers(t *testing.T) {
 	src := poolStatsUISource(t)
 	body := poolStatsFuncBody(t, src, "pkSummaryCards")
 
-	for _, fn := range []string{"pkBySource(", "pkAccountSegments(", "pkColor(", "pkAccountColorMap(", "pkCreditOpacity("} {
+	for _, fn := range []string{"pkBySource(", "pkAccountSegments(", "pkColor(", "pkAccountColorMap(", "pkUrgency("} {
 		if !strings.Contains(body, fn) {
 			t.Errorf("pkSummaryCards 没有用 %s：卡片会和到期分布图两套口径", fn)
 		}

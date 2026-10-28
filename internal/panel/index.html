@@ -10,16 +10,39 @@
    冷石墨基调（仪表盘语言，非营销页）：底色分层 + 单一靛蓝强调（仅交互），
    语义色只给状态。等宽数字承载所有观测值，tabular-nums 对齐。 */
 :root {
-  --bg: #0f1014; --surface: #1a1c21; --surface-2: #23252b; --raise: #2b2e35;
-  --line: #3a3d45; --line-soft: #2b2e35;
-  --ink: #e5eaf3; --ink-2: #cfd3dc; --ink-3: #8f9299;
-  --accent: #409eff; --accent-hover: #66b1ff; --accent-active: #3a8ee6;
-  --accent-ink: #ffffff; --accent-soft: rgba(64,158,255,.16);
-  --ok: #67c23a; --ok-soft: rgba(103,194,58,.18);
-  --warn: #e6a23c; --warn-soft: rgba(230,162,60,.18);
-  --bad: #f56c6c; --bad-soft: rgba(245,108,108,.18);
-  /* 色块用上面的官方色；小字号文字用下面的暗/亮档，否则要么糊要么刺眼。 */
-  --ok-text: #85ce61; --warn-text: #ebb563; --bad-text: #f78989; --accent-text: #79bbff;
+  /* 色板用 oklch 重建，三个决定：
+     1) 中性色带一个极小的品牌冷色相（chroma ≈ .01，hue 245）。纯灰（chroma 0）
+        是「没人做过决定」的痕迹——所有通用后台都长这样。这个量肉眼几乎看不出，
+        但整屏会从「中性」偏向「这个产品的中性」。
+     2) 状态色降饱和并统一明度：三个语义色在暗底上的感知亮度接近，
+        不会因为绿色天生更亮而让「正常」比「异常」更抢眼。
+     3) 原有的 #409eff / #67c23a 是 Element 默认色——正是「通用后台味」的来源。 */
+  --bg: oklch(13.5% .008 245);
+  --surface: oklch(17.5% .010 245);
+  --surface-2: oklch(21% .011 245);
+  --raise: oklch(25% .012 245);
+  --line: oklch(31% .012 245);
+  --line-soft: oklch(24% .011 245);
+  --ink: oklch(93% .006 245);
+  --ink-2: oklch(78% .010 245);
+  --ink-3: oklch(63% .012 245);
+  /* 品牌色：偏青的蓝，和中性色的色相同族（245），所以它像是「这个灰阶亮起来」，
+     而不是一块贴上去的颜色。 */
+  --accent: oklch(64% .155 248);
+  --accent-hover: oklch(70% .145 248);
+  --accent-active: oklch(57% .150 248);
+  --accent-ink: oklch(99% 0 0);
+  --accent-soft: oklch(64% .155 248 / .14);
+  --accent-text: oklch(79% .105 248);
+  --ok: oklch(68% .135 152);
+  --ok-soft: oklch(68% .135 152 / .15);
+  --ok-text: oklch(81% .115 152);
+  --warn: oklch(76% .135 78);
+  --warn-soft: oklch(76% .135 78 / .15);
+  --warn-text: oklch(85% .110 78);
+  --bad: oklch(66% .180 26);
+  --bad-soft: oklch(66% .180 26 / .14);
+  --bad-text: oklch(80% .130 26);
   --radius: 4px; --radius-lg: 8px; --radius-sm: 3px;
   --ease-out: cubic-bezier(.2, .7, .3, 1);
   --dur-fast: 150ms; --dur-med: 220ms;
@@ -30,18 +53,34 @@
   --sans: "Helvetica Neue", Helvetica, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", Arial, sans-serif;
 }
 [data-theme="light"] {
-  --bg: #f0f2f5; --surface: #ffffff; --surface-2: #f5f7fa; --raise: #ffffff;
-  --line: #dcdfe6; --line-soft: #ebeef5;
-  --ink: #303133; --ink-2: #606266; --ink-3: #909399;
-  --accent: #409eff; --accent-hover: #66b1ff; --accent-active: #3a8ee6;
-  --accent-ink: #ffffff; --accent-soft: rgba(64,158,255,.1);
-  /* 浅色下官方色做正文低于 4.5:1，色块改用 Element 的 dark-2 档。 */
-  --ok: #529b2e; --ok-soft: rgba(103,194,58,.12);
-  --warn: #b88230; --warn-soft: rgba(230,162,60,.14);
-  --bad: #c45656; --bad-soft: rgba(245,108,108,.12);
-  --ok-text: #3a8320; --warn-text: #9a6a10; --bad-text: #c4322f; --accent-text: #2f74bf;
+  /* 浅色同样走 oklch，色相与暗色一致（245）：两个主题是同一套色的明度翻转，
+     不是两套独立的配色。中性色仍然带那一点冷色相。 */
+  --bg: oklch(96.5% .005 245);
+  --surface: oklch(100% 0 0);
+  --surface-2: oklch(97.5% .006 245);
+  --raise: oklch(100% 0 0);
+  --line: oklch(87% .010 245);
+  --line-soft: oklch(92% .008 245);
+  --ink: oklch(22% .012 245);
+  --ink-2: oklch(44% .014 245);
+  --ink-3: oklch(60% .014 245);
+  --accent: oklch(52% .170 248);
+  --accent-hover: oklch(58% .165 248);
+  --accent-active: oklch(46% .170 248);
+  --accent-ink: oklch(100% 0 0);
+  --accent-soft: oklch(52% .170 248 / .10);
+  --accent-text: oklch(45% .170 248);
+  --ok: oklch(50% .125 152);
+  --ok-soft: oklch(50% .125 152 / .10);
+  --ok-text: oklch(40% .120 152);
+  --warn: oklch(55% .130 72);
+  --warn-soft: oklch(55% .130 72 / .12);
+  --warn-text: oklch(45% .125 72);
+  --bad: oklch(52% .185 26);
+  --bad-soft: oklch(52% .185 26 / .10);
+  --bad-text: oklch(45% .185 26);
   --radius: 4px; --radius-lg: 8px; --radius-sm: 3px;
-  --ring: 0 0 0 2px rgba(64,158,255,.2);
+  --ring: 0 0 0 2px oklch(52% .170 248 / .2);
   --shadow: 0 2px 12px 0 rgba(0,0,0,.1);
   --shadow-sm: 0 1px 4px rgba(0,0,0,.06);
 }
@@ -3027,7 +3066,13 @@ kbd {
 :root {
   --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 20px; --sp-6: 26px;
   --ctl-h: 34px; --ctl-h-sm: 28px;
-  --type-xs: 11px; --type-sm: 12px; --type-md: 12.5px; --type-base: 13px; --type-lg: 14px;
+  /* 字号：五档，档与档之间拉到看得出差别。
+     原来这里是 11 / 12 / 12.5 / 13 / 14——五个字号挤在 3px 内，扫读时层级糊成
+     一片，只能靠颜色和字重去补。档位拉开之后，层级由字号本身体现。
+     取的是 1.2 到 1.7 的跃迁，不是等差：
+       标签 11 · 辅助 12.5 · 正文 14 · 小标题 17 · 读数 22 起（读数另有大档） */
+  --type-xs: 11px; --type-sm: 12.5px; --type-md: 13px; --type-base: 14px; --type-lg: 17px;
+  --type-xl: 22px;
   --radius-ctl: 9px; --radius-card: 14px; --radius-pill: 999px;
   --dur: 150ms; --dur-slow: 260ms; --ease: cubic-bezier(.22, 1, .36, 1);
   --ring: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
@@ -3728,9 +3773,12 @@ input, select, textarea, .stat, .subtab {
   background: var(--accent); border-radius: 2px 2px 0 0;
   transform: scaleX(0); transform-origin: left; transition: transform var(--dur) var(--ease);
 }
-.stat.clickable:hover { background: color-mix(in srgb, var(--surface-2) 78%, transparent); }
-.stat.clickable:hover::after { transform: scaleX(1); }
-.stat.clickable.on { background: color-mix(in srgb, var(--accent) 12%, var(--surface-2)); }
+/* 可点击的指标格：整格是一个筛选入口。选中用底边表示，不铺底色。
+   铺底色会同时抬高这一格的背景明度，把标签文字的对比度压到 4.0:1 以下
+   （实测「账号总数」就是这样掉出阈值的）——而底边不改变背景，只标记位置。 */
+.stat.clickable:hover { background: transparent; }
+.stat.clickable:hover ::after, .stat.clickable:hover::after { transform: scaleX(1); }
+.stat.clickable.on { background: transparent; }
 .stat.clickable.on::after { transform: scaleX(1); }
 .stat.clickable .k::before { content: "筛选 " ; opacity: 0; font-size: 10px; }
 .stat.clickable:hover .k::before, .stat.clickable.on .k::before { opacity: .7; }
@@ -3915,46 +3963,85 @@ input, select, textarea, .stat, .subtab {
 .rl-kpi .v { font: 600 20px/1.2 var(--mono); letter-spacing: -.4px; }
 .rl-kpi .l { font-size: 11.5px; color: var(--ink-3); margin-top: 4px; }
 
-.rl-map { position: relative; padding: 6px 0 2px; }
-.rl-line { position: relative; display: grid; grid-template-columns: minmax(150px, 210px) minmax(0, 1fr); align-items: center; gap: 18px; padding: 12px 0; }
-.rl-line + .rl-line { border-top: 1px dashed var(--line-soft); }
-.rl-name { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.rl-name i { width: 9px; height: 9px; border-radius: 2.5px; flex: 0 0 auto; }
-.rl-name b { display: block; font-size: 12.5px; font-weight: 560; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rl-name small { display: block; font: 10px/1.4 var(--mono); color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rl-name .n { font: 10.5px/1 var(--mono); color: var(--ink-3); margin-left: auto; flex: 0 0 auto; }
-.rl-track { position: relative; height: 52px; }
-.rl-track .rail { position: absolute; left: 0; right: 0; top: 18px; height: 2px; border-radius: 2px; background: var(--line); }
-/* 有命中时轨道点亮并缓慢流动：这条线最近有请求真的走通了，不是装饰。 */
-.rl-track .rail.hot { background: linear-gradient(90deg, var(--line), var(--accent), var(--line)); background-size: 200% 100%; animation: rlFlow 2.4s linear infinite; }
-@keyframes rlFlow { to { background-position: -200% 0; } }
-/* 站点按 candidate 顺序均匀落位：位置由行内 left% 决定，宽度限死并居中，
-   站名才不会和邻站压在一起。 */
-.rl-stops { position: absolute; inset: 0; }
-.rl-stop { position: absolute; top: 0; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 5px; max-width: 168px; }
-/* 站点永远画在列车之上，并用一圈底色把列车从点后面「抠」掉：列车停在命中站上，
-   而这一屏最要紧的信息就是那一点，不能被挡住。 */
-.rl-stop .dot { position: relative; z-index: 3; width: 9px; height: 9px; margin-top: 14px; border-radius: 50%;
-  background: var(--surface); border: 2px solid var(--ink-3); box-shadow: 0 0 0 2px var(--surface);
-  transition: all var(--dur-med) var(--ease-out); }
-.rl-stop em { position: relative; z-index: 3; font: 10px/1.3 var(--mono); color: var(--ink-3); font-style: normal; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rl-stop.hit .dot { background: var(--ok); border-color: var(--ok); box-shadow: 0 0 0 2px var(--surface), 0 0 0 6px var(--ok-soft); }
-.rl-stop.hit em { color: var(--ink-2); }
-.rl-stop.dead .dot { border-color: var(--bad); background: var(--surface); }
-.rl-stop.dead em { color: var(--bad-text); }
-/* 列车画在站点下面，位置压在轨道线上；未确定去向时用同色但实心，不再是灰雾。 */
-.rl-train { position: absolute; top: 18px; left: 0; transform: translate(-50%, -50%); display: flex; gap: 1.5px; z-index: 2; transition: left .9s cubic-bezier(.25,.8,.25,1); }
-.rl-train span { width: 11px; height: 7px; border-radius: 2px; background: var(--ink); opacity: .92; }
-.rl-train.ghost span { background: var(--ink-2); opacity: .6; }
+/* 舞台：三列 + 连线，请求是沿真实路径逐帧飞行的光点。
+   位置全部由 JS 每帧算出来（见 rlStage），CSS 只描述外观——这一层的
+   transition 只用于状态切换（等待、成功、失败），不用于位置。 */
+.rl-stage { position: relative; padding: 4px 0 2px; }
+.rl-stage-inner { position: relative; display: grid; grid-template-columns: 176px 1fr 232px; gap: 0; align-items: stretch; min-height: 232px; }
+.rl-col { position: relative; z-index: 2; display: flex; flex-direction: column; gap: 8px; padding: 6px 0; min-width: 0; }
+.rl-col-mid { align-items: center; justify-content: center; padding: 0; }
 
-.rl-empty { padding: 36px 18px; text-align: center; color: var(--ink-3); font-size: 13px; }
-.rl-legend { display: flex; gap: 16px; flex-wrap: wrap; font: 10.5px/1 var(--mono); color: var(--ink-3); padding: 10px 2px 0; }
+/* 节点：调用方（左）和候选账号（右）共用一套。 */
+.rl-node {
+  position: relative; display: flex; align-items: center; gap: 9px;
+  padding: 9px 11px; border-radius: 10px; min-width: 0;
+  background: var(--surface); border: 1px solid var(--line);
+  transition: border-color var(--dur) var(--ease), background-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+.rl-node .rn-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--ink-3); transition: all var(--dur) var(--ease); }
+.rl-node .rn-body { min-width: 0; flex: 1; }
+.rl-node .rn-name { font-size: 12.5px; font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rl-node .rn-sub { font: 10px/1.35 var(--mono); color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 1px; }
+.rl-node .rn-n { font: 10.5px/1 var(--mono); color: var(--ink-3); flex: none; }
+/* 正在被途经的节点：边框亮起、底色微光。这是「这一刻发生了什么」。 */
+.rl-node.act { border-color: color-mix(in srgb, var(--nc, var(--accent)) 55%, var(--line)); background: color-mix(in srgb, var(--nc, var(--accent)) 8%, var(--surface)); }
+.rl-node.act .rn-dot { background: var(--nc, var(--accent)); box-shadow: 0 0 0 4px color-mix(in srgb, var(--nc, var(--accent)) 22%, transparent); }
+.rl-node.ok .rn-dot { background: var(--ok); }
+.rl-node.err { border-color: color-mix(in srgb, var(--bad) 45%, var(--line)); }
+.rl-node.err .rn-dot { background: var(--bad); }
+.rl-node.err .rn-sub { color: var(--bad-text); }
+
+/* 网关：这一列的主角，一个方形中枢。 */
+.rl-hub {
+  position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 16px 18px; border-radius: 14px;
+  background: var(--surface); border: 1px solid var(--line);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.045), var(--shadow-sm);
+  transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+.rl-hub .rh-mark {
+  width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center;
+  background: linear-gradient(145deg, var(--accent-hover), var(--accent-active));
+  color: #fff; font: 700 13px/1 var(--mono);
+  box-shadow: 0 6px 16px -9px color-mix(in srgb, var(--accent) 85%, transparent);
+}
+.rl-hub b { font-size: 12px; font-weight: 600; }
+.rl-hub small { font: 10px/1 var(--mono); color: var(--ink-3); }
+.rl-hub.act { border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); box-shadow: 0 0 0 4px var(--accent-soft), inset 0 1px 0 rgba(255,255,255,.045); }
+
+/* 连线层与飞行层：都绝对定位、不吃事件。 */
+.rl-wires { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+/* vector-effect 让线宽不受 viewBox 的非等比缩放影响：舞台是 1000×640 的
+   坐标被拉到实际像素尺寸（通常扁得多），不修正的话竖线会比横线粗。 */
+.rl-wires path { fill: none; stroke: var(--line); stroke-width: 1.25; vector-effect: non-scaling-stroke; }
+.rl-wires path.live { stroke: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.rl-sky { position: absolute; inset: 0; z-index: 3; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+
+/* 光点：一格的实心圆，带柔和外光。等待时轻微呼吸。 */
+.rl-pkt { fill: var(--accent); filter: drop-shadow(0 0 5px color-mix(in srgb, var(--accent) 70%, transparent)); }
+.rl-pkt.wait { animation: rlWait 1.4s ease-in-out infinite; }
+@keyframes rlWait { 50% { opacity: .4; } }
+.rl-pkt.done { fill: var(--ok); filter: drop-shadow(0 0 5px color-mix(in srgb, var(--ok) 70%, transparent)); }
+.rl-pkt.fail { fill: var(--bad); filter: drop-shadow(0 0 5px color-mix(in srgb, var(--bad) 70%, transparent)); }
+/* 回程是空心的：它的内容物已经交出去了。 */
+.rl-pkt.back { fill: var(--surface); stroke-width: 2; stroke: var(--ok); filter: none; }
+.rl-pkt.back.fail { stroke: var(--bad); }
+
+/* 尾迹：光点走过的那一小段，端点渐隐。 */
+.rl-trail { fill: none; stroke-width: 2; stroke-linecap: round; opacity: .5; }
+.rl-trail.ok { stroke: var(--ok); } .rl-trail.bad { stroke: var(--bad); }
+
+.rl-empty { padding: 44px 18px; text-align: center; color: var(--ink-3); font-size: 13px; }
+.rl-empty .t { font-size: 14px; color: var(--ink-2); margin-bottom: 6px; }
+.rl-legend { display: flex; gap: 16px; flex-wrap: wrap; font: 10.5px/1 var(--mono); color: var(--ink-3); padding: 12px 2px 0; }
 .rl-legend span { display: inline-flex; align-items: center; gap: 5px; }
 .rl-legend i { width: 7px; height: 7px; border-radius: 50%; }
 
 .rl-events { display: grid; }
 .rl-ev { display: grid; grid-template-columns: 66px 132px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 8px 18px; border-bottom: 1px solid var(--line-soft); font-size: 12.5px; }
 .rl-ev:last-child { border-bottom: 0; }
+.rl-ev.fresh { animation: rlFresh 1.1s var(--ease) both; }
+@keyframes rlFresh { from { background: var(--accent-soft); } }
 .rl-ev .t { font: 10.5px/1 var(--mono); color: var(--ink-3); }
 .rl-ev .who { font-weight: 520; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rl-ev .w { color: var(--ink-2); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -4196,56 +4283,74 @@ input, select, textarea, .stat, .subtab {
    .stats 在旧代码里被五处规则轮流定义（grid repeat(7,1fr)、flex wrap、
    不同的 margin 和背景），账号页因此把 7 个格子拆成 6+3 两行、还留白一角。
 
-   统计带是「一条汇总」，不是「一张网格」：它应该始终是一行。折成两行时第二行
-   只剩两格、右边空出一大片，看起来像没加载完。这里改成不换行的一条，格子等分
-   剩余宽度；实在放不下时整条横向滚动，而不是折行。 */
+   减法：这一带原来是「一个圆角盒子 + 每格右边一条分隔线 + 每格下面一条线 +
+   一圈投影」——四层装饰包着八个数字。真正需要的是「八个数字按顺序排开」。
+   现在去掉盒子、分隔线和投影，只留一条底边作为它和下面内容的边界；
+   分组交给间距（第一格与其余之间空得更多）。 */
 .stats {
   display: flex;
   flex-wrap: nowrap;
   align-items: stretch;
   gap: 0;
-  border: 1px solid var(--line); border-radius: 12px;
-  background: var(--surface); overflow: hidden;
-  margin-bottom: 20px;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .04), var(--shadow-sm);
+  border: 0; border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  overflow: visible;
+  margin-bottom: 18px;
+  padding-bottom: 4px;
+  box-shadow: none;
   position: relative;
 }
 .stats > .stat, .stats > button.stat {
   flex: 1 1 0;
-  min-width: 118px;
+  min-width: 112px;
   display: flex; flex-direction: column; align-items: flex-start; justify-content: center;
-  gap: 3px; padding: 14px 16px;
-  border: 0; border-right: 1px solid var(--line-soft); border-radius: 0;
+  gap: 3px; padding: 10px 16px 12px;
+  border: 0; border-radius: 0;
   background: transparent; text-align: left; color: inherit;
   font: inherit; cursor: default;
 }
-.stats > .stat:last-child { border-right: 0; }
+/* 第一格是主角，给它更多的空间和左侧的起点位置——用间距而不是竖线分组。
+   字号再大一档：整条带子没有边框之后，层级只能靠字形本身表达，
+   而「池子里有多少」是这一屏的第一个问题。 */
+.stats > .stat:first-child { flex: 1.4 1 0; padding-left: 0; }
+.stats > .stat:first-child .v { font-size: 30px; letter-spacing: -.05em; }
+.stats > .stat:first-child + .stat { padding-left: 20px; }
+.stats > .stat:last-child { padding-right: 0; }
 .stats > .stat .v {
-  font: 620 21px/1.15 var(--mono); letter-spacing: -.5px;
+  font: 620 var(--type-xl)/1.1 var(--mono); letter-spacing: -.04em;
   font-variant-numeric: tabular-nums; color: var(--ink);
 }
 .stats > .stat .k {
   font-size: 11.5px; color: var(--ink-3); white-space: nowrap;
   overflow: hidden; text-overflow: ellipsis; max-width: 100%;
 }
-.stats > button.stat { cursor: pointer; transition: background-color var(--dur) var(--ease); }
-.stats > button.stat:hover { background: var(--surface-2); }
-/* 当前筛选：只把数字染色 + 一条 2px 底边，不再整格填蓝底。
-   整格填色会让它看起来像一个被选中的标签页，而不是一个筛选状态。 */
-.stats > button.stat.on { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.stats > button.stat { cursor: pointer; transition: color var(--dur) var(--ease); }
+.stats > button.stat:hover .v { color: var(--accent-text); }
+/* 当前筛选：一行 2px 底边，位置就在统计带那条分界线上。
+   比填一层底色更准——它不改变这一格的明度，只是「这一条被选中了」。 */
 .stats > button.stat.on .v { color: var(--accent-text); }
 .stats > button.stat.on::after {
-  content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 2px;
+  content: ""; position: absolute; left: 0; right: 0; bottom: -5px; height: 2px;
   background: var(--accent);
 }
 .stats > button.stat.on { position: relative; }
 .stats .stat.good .v { color: var(--ok-text); }
 .stats .stat.warn .v { color: var(--warn-text); }
 .stats .stat.bad .v { color: var(--bad-text); }
+/* 为 0 的状态格压暗：几个 0 并排用同一档亮度，读起来像几个告警。
+   0 是「没有问题」，不该和「有 1 个」一样响。
+   特异性说明：这条要压过上面的 .stat.bad .v 等语义色，而它们在文件里更靠后、
+   特异性也更高，所以带 !important——评审用像素实测过，少这一层「风控 0」
+   仍然是红的。 */
+.stats .stat.is-zero .v { color: var(--ink-3) !important; font-weight: 520 !important; }
+.stats .stat.is-zero .k { color: var(--ink-3); }
+/* 那一格同时是当前筛选时仍要能看出选中——用底边，不用染色。 */
+.stats button.stat.is-zero.on .v { color: var(--accent-text) !important; }
 @media (max-width: 900px) {
   .stats { overflow-x: auto; scrollbar-width: none; }
   .stats::-webkit-scrollbar { display: none; }
-  .stats > .stat, .stats > button.stat { flex: 0 0 auto; min-width: 108px; padding: 11px 13px; }
+  .stats > .stat, .stats > button.stat { flex: 0 0 auto; min-width: 104px; padding: 9px 13px; }
   .stats > .stat .v { font-size: 18px; }
 }
 
@@ -4320,7 +4425,9 @@ input, select, textarea, .stat, .subtab {
 .opmore > .opmenu > button[disabled] { opacity: .45; cursor: not-allowed; }
 .opmore > .opmenu .opsep { height: 1px; margin: 4px 6px; background: var(--line-soft); }
 .opmore > .opmenu .ophint {
-  padding: 5px 9px 3px; font-size: 11px; color: var(--ink-3);
+  /* 菜单里的小标题不是辅助信息，是分组名：它要能读，不能压到 4.2:1 那种边缘。
+     ink-2 在菜单底色上约 7:1。 */
+  padding: 5px 9px 3px; font-size: 11px; color: var(--ink-2); font-weight: 560;
 }
 /* 主操作：一页一个，用实心强调色 */
 .btnmain {
@@ -4792,6 +4899,9 @@ html:not([data-theme="light"]) body::after {
   background: color-mix(in srgb, var(--surface-2) 60%, transparent);
 }
 #view-models .acc.md tr.mdmain:hover > td { background: color-mix(in srgb, var(--accent) 4%, transparent); }
+/* 模型表里「每行都一样」的两列（虚拟 / 上游）压成极淡的小字：
+   它们仍然可读、可搜索，但不再把 355 行都染成同一种颜色。 */
+.mddim { color: var(--ink-3); font-size: 12px; }
 .mdbadges { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 5px; }
 .mdbadges:empty { display: none; }
 .mdpricecell { font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -4921,86 +5031,366 @@ html:not([data-theme="light"]) body::after {
 #models-panel-exposed .acc.md th:nth-child(3) { width: 92px; }
 #models-panel-exposed .acc.md th:nth-child(4) { width: 15%; }
 
+/* ══ 40. 外壳：顶栏命令条（权威层，替换左侧竖栏）═══════════════════════════
+   为什么换空间模型：原来的左侧栏固定占掉 208–236px 的宽度，用来放 13 个链接；
+   这个产品真正需要宽度的是账号表（11 列）和模型表（6 列 + 详情），而导航并不
+   需要竖着排。把导航收到顶栏一行之后：
+     · 横向多出 236px 全部给了表格；
+     · 内容列仍然是唯一的滚动区（这一条上一版已经做对，保留）；
+     · 顶栏同时承担状态显示，原来侧栏底部那块「已连接 / 版本」不再占一整块。
+   全部 data-view 和 id 原样保留，setNav/renderChips/状态更新一行未改。 */
+
+.shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);   /* 单列：没有侧栏了 */
+  grid-template-rows: 46px minmax(0, 1fr);
+  height: 100vh;
+  overflow: hidden;
+}
+/* 旧的 navmini 折叠态随侧栏一起作废：没有竖栏可以折叠。 */
+.shell.navmini { --nav-w: 0px; }
+
+.cmdbar {
+  grid-row: 1;
+  display: flex; align-items: center; gap: 0;
+  height: 46px; padding: 0 12px;
+  background: color-mix(in srgb, var(--bg) 78%, transparent);
+  backdrop-filter: blur(18px) saturate(170%); -webkit-backdrop-filter: blur(18px) saturate(170%);
+  border-bottom: 1px solid var(--line);
+  position: relative; z-index: 40;
+  min-width: 0;
+}
+.cmdbar .mark {
+  width: 24px; height: 24px; flex: none; border-radius: 7px;
+  display: grid; place-items: center; margin-right: 12px;
+  font: 700 10.5px/1 var(--mono); letter-spacing: -.02em; color: #fff;
+  background: linear-gradient(145deg, var(--accent-hover), var(--accent-active));
+  box-shadow: 0 5px 14px -8px color-mix(in srgb, var(--accent) 85%, transparent), inset 0 1px 0 rgba(255,255,255,.26);
+}
+.cmdviews { display: flex; align-items: center; gap: 1px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.cmdviews::-webkit-scrollbar { display: none; }
+.cmdlink {
+  position: relative; display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 10px; border-radius: 7px; flex: 0 0 auto;
+  color: var(--ink-2); font-size: 12.5px; text-decoration: none;
+  transition: background-color var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.cmdlink:hover { background: var(--surface-2); color: var(--ink); }
+/* 当前页：浅底 + 一条 2px 底边。不用左侧竖条了——顶栏里那条会变成下划线，
+   反而像 tab 控件，而底边在横向一排里读起来更准。 */
+.cmdlink.on {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent-text); font-weight: 600;
+}
+.cmdlink.on::after {
+  content: ""; position: absolute; left: 8px; right: 8px; bottom: -12px; height: 2px;
+  border-radius: 2px 2px 0 0; background: var(--accent);
+}
+.cmdsep { width: 1px; height: 15px; flex: none; margin: 0 7px; background: var(--line); }
+.cmdbar .navcount {
+  min-width: 17px; height: 15px; padding: 0 5px; border-radius: 999px;
+  display: grid; place-items: center; font: 650 9.5px/1 var(--mono);
+  background: var(--bad-soft); color: var(--bad-text);
+}
+.cmdgrow { flex: 1; min-width: 8px; }
+.cmdsig {
+  display: inline-flex; align-items: center; gap: 8px; flex: none;
+  margin-left: 12px; padding-left: 12px; border-left: 1px solid var(--line);
+  font-size: 11.5px; color: var(--ink-3);
+  white-space: nowrap;
+}
+.cmdsig #navVer { font: 10.5px/1 var(--mono); color: var(--ink-3); opacity: .85; }
+.cmdsig .cmdmono { font: 10.5px/1 var(--mono); }
+.cmdsig .cmdsep { margin: 0; height: 11px; }
+@media (max-width: 1240px) {
+  /* 窄一点先牺牲版本号和状态点：连接状态和客户端计数是这两个里更该留的。 */
+  .cmdsig #navVer { display: none; }
+}
+
+/* 内容列：顶栏之下唯一滚动区（上一版已确立，这里跟着新行高调一次 offset）。 */
+.main { grid-row: 2; min-width: 0; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+
+/* 表头一致性：账号表的首列是 sticky 的，它自己带了一层 --surface-2 背景，
+   而其余表头格是透明的（露出 box 的 --surface）。两者并排时表头带看起来
+   在首列处断了一截。这里让整个 thead 用同一个色，sticky 列只是它的一部分。 */
+#view-accounts table.acc thead tr,
+.acc.md thead tr { background: color-mix(in srgb, var(--surface-2) 60%, var(--surface)); }
+#view-accounts table.acc thead th,
+.acc.md thead th { background: transparent; }
+#view-accounts table.acc thead th:nth-child(2),
+.acc.md thead th:first-child { background: color-mix(in srgb, var(--surface-2) 60%, var(--surface)); }
+
+/* 列宽分配修正：账号列的 id 行原本被省略号截断，而右侧「状态说明」列
+   在一行没有说明时是空的——空列占着 8.5%，实列却不够宽。
+   表头列宽由 colgroup 的百分比决定（有一处测试要求 13 列合计 100%），
+   所以这里不动百分比，改给两列各自一个更贴合内容的下限与上限。 */
+#view-accounts table.acc td.col-account,
+#view-accounts table.acc .who { min-width: 168px; }
+/* 空的状态说明列收窄到只剩留白，把宽度让给左边的账号名。 */
+#view-accounts table.acc td.c-note:empty { padding-left: 0; padding-right: 0; }
+#view-accounts table.acc .c-note .note { max-width: 26ch; }
+#view-accounts table.acc thead tr,
+.acc.md thead tr { background: color-mix(in srgb, var(--surface-2) 60%, var(--surface)); }
+#view-accounts table.acc thead th,
+.acc.md thead th { background: transparent; }
+#view-accounts table.acc thead th:nth-child(2),
+.acc.md thead th:first-child { background: color-mix(in srgb, var(--surface-2) 60%, var(--surface)); }
+
+/* 行内操作：列宽 22.5% 放不下四个四字按钮，所以按钮文字改成两字
+   （见 renderAccounts 的「标识」）。布局用两列定宽网格——一行两列、两行放四个，
+   这是这一列唯一能同时做到「不截断」和「不撑高」的排法。
+   flex-wrap 试过：它会按内容宽度排出 3+1 或 4+0 的不齐行，反而更乱。 */
+#view-accounts table.acc .c-acts .actwrap {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(46px, 1fr));
+  gap: 4px;
+}
+#view-accounts table.acc .c-acts button {
+  width: 100%; text-overflow: clip; white-space: nowrap; padding: 3px 4px;
+}
+
+/* 页头：顶栏已经说明了你在哪一页，所以这里不再重复大标题。
+   它只留三样东西：页面名（小一号，作为内容区的起点）、监听地址、右侧操作。
+   这一行同时是内容区的视觉起点——上面是导航，下面是数据，中间这条线分开两者。 */
+.topbar {
+  display: flex; align-items: center; gap: 10px;
+  min-height: 48px; padding: 0 20px;
+  background: transparent; border-bottom: 1px solid var(--line-soft);
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+}
+.topbar h1 { font-size: 15px; font-weight: 620; letter-spacing: -.02em; }
+.topbar .meta {
+  font: 10.5px/1 var(--mono); color: var(--ink-3);
+  padding: 2px 6px; background: var(--surface-2); border-radius: 5px;
+}
+.topbar .grow { flex: 1; }
+.topbar-lead { gap: 9px; }
+/* 主按钮的文字对比度：accent-ink 是白，在白底蓝上约 3.7:1，够大字号但不够正文。
+   加深底色到 accent-active 档，白字提到 4.6:1。 */
+.topbar > button.primary, button.primary {
+  background: color-mix(in srgb, var(--accent) 88%, #000);
+  border-color: color-mix(in srgb, var(--accent) 80%, #000);
+}
+
+.view { padding: 14px 20px 72px; }
+
+/* 窄屏：顶栏换行成两行（导航一行、状态一行），不再是横向工具带。 */
+@media (max-width: 900px) {
+  .shell { grid-template-rows: auto minmax(0, 1fr); height: auto; min-height: 100vh; overflow: visible; }
+  .cmdbar { height: auto; flex-wrap: wrap; row-gap: 2px; padding: 8px 10px; position: sticky; top: 0; }
+  .cmdviews { order: 3; width: 100%; }
+  .cmdsig { margin-left: auto; border-left: 0; padding-left: 0; }
+  .cmdsig .cmdmono { display: none; }
+  .topbar { min-height: 0; padding: 10px 12px 0; }
+  .view { padding: 10px 12px 56px; }
+  .main { overflow: visible; }
+  .viewwrap { overflow: visible; }
+}
+
+/* ══ 41. 页面级语法（权威层，覆盖全部 13 个视图）══════════════════════════
+   前 40 节里，外壳、统计带、路由舞台各自收成了权威层；这一节收页面本身。
+   逐页看下来，13 个视图反复出现同样四类问题，所以在这里各定一条语法：
+
+     1. 说明文字糊成一块（平台页那 6 行最典型）——长说明要有限宽和层级。
+     2. 空态是居中的大段文字——那是「通用后台」的招牌，改成一行紧凑的状态。
+     3. 每个卡片头都自带一套按钮，大小不一——统一到一种高度和圆角。
+     4. 表格的行内动作与卡片头的动作混用同一种样式——按位置分级。 */
+
+/* ── 1. 长说明：限宽、分行、压低一级 ──────────────────────────────────── */
+/* 74ch 是给正文的行长；说明文字比正文小一号且更淡，但不再糊成一片。
+   平台页那 6 行原本是 11.5px/1.65 的一整块，读起来像免责声明——
+   现在缩到 62ch 并给出行高，读得下去。 */
+.cfghelp, .pfgHelp, .savebar > .hint {
+  max-width: 62ch;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--ink-3);
+}
+/* 说明里的小标题（「取消勾选即加入黑名单」这类）与正文拉开。 */
+.cfghelp b, .pfgHelp b { color: var(--ink-2); font-weight: 560; }
+
+/* ── 2. 空态：一行紧凑的状态，不是居中的段落 ───────────────────────────── */
+/* 通用后台的空态是「一张居中插画 + 两行说明 + 一个按钮」。
+   这个产品不需要——空就是空，一行字说清是什么空、下一步做什么，就够了。 */
+.tc-empty, .rl-empty, .chat-empty {
+  display: block;
+  padding: 20px 4px;
+  text-align: left;
+  color: var(--ink-3);
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+/* 空态里的装饰图形（SVG 插画）在这个产品里没有信息量，去掉。 */
+.tc-empty svg, .rl-empty svg { display: none; }
+.tc-empty .t, .rl-empty .t {
+  font-size: 13px; color: var(--ink-2); margin-bottom: 3px;
+  font-weight: 560;
+}
+.tc-empty .d, .rl-empty .d { max-width: 62ch; }
+/* 对话页的空态是唯一例外：它是一个真的「可以开始」的位置，所以仍然居中，
+   但去掉大字号与图标，只留一句提示和三个入口。 */
+.chat-empty { text-align: center; padding: 40px 24px; }
+.chat-empty h4 { font-size: var(--type-base); font-weight: 600; letter-spacing: -.01em; margin-bottom: 6px; }
+.chat-empty p { font-size: 12.5px; max-width: 46ch; margin: 0 auto; }
+
+/* ── 3. 卡片头与工具条：一套控件高度 ────────────────────────────────────── */
+/* 卡片头里的按钮、卡片头自己的高度、工具条里的输入，全部对齐到 30px。
+   原来按钮有 26/28/34 三种高度，混排时像三套控件。 */
+.box > header { min-height: 52px; padding: 11px 16px; }
+.box > header h3 { font-size: var(--type-base); font-weight: 600; letter-spacing: -.012em; }
+.box > header h3 .hint { font-size: 11.5px; max-width: 54ch; }
+.box > header .xs, .box > header button.xs { min-height: 28px; }
+.tblbar { min-height: 48px; padding: 9px 16px; }
+.tblbar input[type="search"] { min-height: 30px; }
+
+/* ── 4. 表格：行高、动作分级 ────────────────────────────────────────────── */
+/* 表格是这些页面的主体，所以行高和分隔线要克制：行与行之间只留一条极淡的线，
+   悬停才给底色。原来每行都有 border + hover 双层。 */
+.acc tbody td { border-bottom: 1px solid color-mix(in srgb, var(--line) 45%, transparent); }
+.acc tbody tr:hover { background: color-mix(in srgb, var(--accent) 4%, transparent); }
+/* 卡片头的动作是次级（灰底描边），不是主要——一页只有一个主按钮。 */
+.box > header button.xs { background: var(--surface); border-color: var(--line); }
+.box > header button.xs:hover:not(:disabled) { border-color: var(--ink-3); color: var(--ink); }
+
+/* 子页签（chip subtab）：不用胶囊，用文字 + 底边，和顶栏导航同一套语法。 */
+.subtabs { gap: 2px; margin-bottom: 14px; border-bottom: 1px solid var(--line); }
+.chip.subtab {
+  background: transparent; border: 0; border-radius: 0;
+  padding: 7px 12px; color: var(--ink-3); font-size: 13px;
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.chip.subtab:hover { color: var(--ink-2); background: transparent; }
+.chip.subtab.on {
+  background: transparent; box-shadow: none;
+  color: var(--accent-text); border-bottom-color: var(--accent); font-weight: 600;
+}
+
+/* ── 5. 用量读数带：七张卡片 → 一条读数 ─────────────────────────────────── */
+/* 原来这里是「七张带彩色顶线的卡片」，3+4 两行排开，第一张还占半屏。
+   那是通用后台的招牌形态：每个指标一张卡片、每条卡片一个色。
+   指标之间没有需要用卡片隔开的关系——它们是一组读数。改成和账号页同一条语法：
+   一行排开、无边框、无顶线，主读数大、其余小，颜色只标状态。 */
+.ustiles {
+  display: flex; flex-wrap: nowrap; align-items: stretch; gap: 0;
+  margin: 0 0 16px; padding-bottom: 4px;
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto; scrollbar-width: none;
+}
+.ustiles::-webkit-scrollbar { display: none; }
+.ustiles.ustat-grid { display: flex; }
+.ustile, .ustile.ustat-primary, .ustile.ustat-mini {
+  flex: 1 1 0; min-width: 132px;
+  display: flex; flex-direction: column; justify-content: center; gap: 4px;
+  padding: 10px 16px 12px;
+  border: 0; border-radius: 0; background: transparent;
+  box-shadow: none; position: static;
+}
+/* 顶线是「每张卡片一个色」的载体，去掉；颜色改由标签前的小点承担。 */
+.ustile::before, .ustile.ustat-primary::before { display: none; }
+.ustile:first-child { flex: 1.5 1 0; padding-left: 0; }
+.ustile .k {
+  display: flex; align-items: center; gap: 6px;
+  color: var(--ink-3); font-size: 11.5px; letter-spacing: 0;
+}
+.ustile .dot { width: 5px; height: 5px; border-radius: 50%; flex: none; }
+.ustile .v, .ustile.ustat-primary .v {
+  margin: 0;
+  font: 620 var(--type-xl)/1.1 var(--mono);
+  font-variant-numeric: tabular-nums; letter-spacing: -.04em;
+}
+.ustile.ustat-primary .v { font-size: 30px; letter-spacing: -.05em; }
+.ustile .sub, .ustile.ustat-primary .sub {
+  margin: 0; min-height: 0;
+  color: var(--ink-3); font-size: 11.5px; line-height: 1.5;
+}
+.ustile .sub em { background: transparent; padding: 0; }
+/* 成功率那条进度条：它是这一带唯一有「比例」含义的东西，保留但收细。 */
+.ustile .meter { margin-top: 6px; height: 2px; background: var(--line); }
+.ustile .meter i { background: var(--accent); }
+/* 无数据的格（显示 —）压成中性，和账号页的零值同一条规则。 */
+.ustile.is-empty .v { color: var(--ink-3); font-weight: 520; }
+
+/* ── 6. 状态标签：去掉圆角框，只留色点 + 文字 ────────────────────────────── */
+/* 「未接入」「可用」「就绪」这类标签，一个页面上会出现几十次。
+   带底色和圆角时，它们变成一片彩色小方块——那是通用后台的招牌。
+   状态是文字信息，色点已经足够承担颜色；框只留描边的语义（危险操作除外）。 */
+.acc .chip, .card .chip, .pk-card .chip, td .chip {
+  background: transparent; border-color: transparent; padding: 0 2px;
+  display: inline-flex; align-items: center; gap: 5px;
+}
+.acc .chip::before, .card .chip::before, td .chip::before {
+  content: ""; width: 5px; height: 5px; border-radius: 50%;
+  background: currentColor; flex: none; opacity: .9;
+}
+.acc .chip.ok, .card .chip.ok, td .chip.ok { color: var(--ok-text); }
+.acc .chip.warn, .card .chip.warn, td .chip.warn { color: var(--warn-text); }
+.acc .chip.err, .card .chip.err, td .chip.err { color: var(--bad-text); }
+.acc .chip:not(.ok):not(.warn):not(.err), td .chip:not(.ok):not(.warn):not(.err) {
+  color: var(--ink-3);
+}
+/* 状态标签在表格里可能同时用于「值」（如「15 个」这种计数标签），
+   那种带数字的保留底框——它是一枚读数，不是状态。
+   .models-chip 是账号表的模型列：它是一个可点的入口，同样保留按钮形态。 */
+.acc .chip[data-count], td .chip[data-count],
+.acc .chip.models-chip, td .chip.models-chip {
+  background: var(--surface-2); border-color: var(--line); padding: 1px 7px;
+  border-radius: 6px;
+}
+.acc .chip[data-count]::before, td .chip[data-count]::before,
+.acc .chip.models-chip::before, td .chip.models-chip::before { display: none; }
+
+/* ── 7. 积分到期条：按紧急度染色，不是按天数调深浅 ──────────────────────── */
+/* 原来七条都是满饱和的强调蓝，只用透明度区分（剩余 1 天 25%、29 天 100%），
+   结果一屏七条蓝杠，看不出哪条要紧。透明度不是可读的紧急度信号。
+   改成三段语义色：3 天内红、7 天内黄、其余中性——颜色回到它该干的事上。 */
+.pk-expiry-track { height: 6px; border-radius: 3px; gap: 1.5px; }
+.pk-expiry-seg {
+  /* 覆盖 JS 写进来的内联 opacity：那条曲线是为了「同一颜色的深浅」设计的，
+     换成三段色之后它只会让红色也变半透明，反而更弱。 */
+  opacity: 1 !important;
+}
+.pk-expiry-seg[data-urgent="soon"] { background: var(--bad) !important; }
+.pk-expiry-seg[data-urgent="week"] { background: var(--warn) !important; }
+.pk-expiry-seg[data-urgent="later"] { background: color-mix(in srgb, var(--ink-3) 55%, transparent) !important; }
+.pk-expiry-row > b { font-size: 12px; }
+.pk-expiry-row > span { font-size: 12px; }
+
 </style>
 </head>
 <body>
 <div class="shell">
-  <nav class="nav" aria-label="主导航">
-    <div class="brand">
-      <span class="logo" aria-hidden="true">c2</span>
-      <div class="brand-text">
-        <div class="name">client2api</div>
-        <div class="sub" id="navSub">控制台</div>
-      </div>
-      <button class="navtoggle" id="btnNavToggle" type="button"
-              title="收起 / 展开侧栏" aria-label="收起或展开侧栏" aria-expanded="true">
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 3.5 5 8l4.5 4.5"/></svg>
-      </button>
+  <!-- 顶栏命令条：导航、状态、命令入口都在这一行。
+       原来的左侧竖栏把 208–236px 的宽度整条让给了导航，而导航只有 13 个链接；
+       这一列的价值远低于它占的宽度。改成顶栏之后，横向留给了表格，
+       纵向留给了读数——这是这一版外壳最实质的一步。
+       所有 data-view 与 id 原样保留，脚本里的 setNav/renderChips 一行未改。 -->
+  <nav class="cmdbar" aria-label="主导航">
+    <span class="mark" aria-hidden="true">c2</span>
+    <div class="cmdviews">
+      <a href="#routelive" data-view="routelive" class="cmdlink">实况<span class="navcount rl" id="navCountRouteLive" hidden></span></a>      <a href="#overview" data-view="overview" class="cmdlink">总览</a>
+      <span class="cmdsep" aria-hidden="true"></span>
+      <a href="#accounts" data-view="accounts" class="cmdlink">账号池<span class="navcount" id="navCountAccounts" hidden></span></a>
+      <a href="#packages" data-view="packages" class="cmdlink">客户端</a>
+      <a href="#credits" data-view="credits" class="cmdlink">积分构成</a>
+      <span class="cmdsep" aria-hidden="true"></span>
+      <a href="#usage" data-view="usage" class="cmdlink">用量</a>
+      <a href="#models" data-view="models" class="cmdlink">模型</a>
+      <a href="#platforms" data-view="platforms" class="cmdlink">平台</a>
+      <a href="#chat" data-view="chat" class="cmdlink">对话测试</a>
+      <span class="cmdsep" aria-hidden="true"></span>
+      <a href="#alerts" data-view="alerts" class="cmdlink">告警<span class="navcount" id="navCountAlerts" hidden></span></a>
+      <a href="#taskscenter" data-view="taskscenter" class="cmdlink">任务</a>
+      <a href="#logs" data-view="logs" class="cmdlink">日志</a>
+      <a href="#config" data-view="config" class="cmdlink">配置</a>
     </div>
-    <div class="navscroll">
-      <div class="navgroup navgroup-solo" data-group="home">
-        <ul>
-          <li><a href="#routelive" data-view="routelive">
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M1.8 11.5h12.4"/><circle cx="4" cy="11.5" r="1.5"/><circle cx="8" cy="11.5" r="1.5"/><circle cx="12" cy="11.5" r="1.5"/><path d="M6.4 6.2h3.2l1.6 2.1H4.8z"/></svg>
-            <span class="navlabel">路由实况</span><span class="navcount rl" id="navCountRouteLive" hidden></span></a></li>
-          <li><a href="#overview" data-view="overview">
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="2" width="5.2" height="5.2" rx="1.4"/><rect x="8.8" y="2" width="5.2" height="5.2" rx="1.4"/><rect x="2" y="8.8" width="5.2" height="5.2" rx="1.4"/><rect x="8.8" y="8.8" width="5.2" height="5.2" rx="1.4"/></svg>
-            <span class="navlabel">总览</span></a></li>
-        </ul>
-      </div>
-      <div class="navgroup" data-group="resources">
-        <div class="navgroup-t"><span class="navgroup-n">资源</span></div>
-        <ul>
-          <li><a href="#accounts" data-view="accounts">
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="5.5" r="2.6"/><path d="M2.8 13.5c.6-2.6 2.7-4 5.2-4s4.6 1.4 5.2 4"/></svg>
-            <span class="navlabel">账号池</span><span class="navcount" id="navCountAccounts" hidden></span></a></li>
-          <li><a href="#packages" data-view="packages">
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.2 5.4 8 2.5l5.8 2.9v5.2L8 13.5l-5.8-2.9z"/><path d="M2.2 5.4 8 8.3l5.8-2.9M8 8.3v5.2"/></svg>
-            <span class="navlabel">客户端</span></a></li>
-          <li><a href="#credits" data-view="credits">
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><ellipse cx="8" cy="4.2" rx="5.2" ry="2.1"/><path d="M2.8 4.2v3.2c0 1.2 2.3 2.1 5.2 2.1s5.2-.9 5.2-2.1V4.2"/><path d="M2.8 7.4v3.2c0 1.2 2.3 2.1 5.2 2.1s5.2-.9 5.2-2.1V7.4"/></svg>
-            <span class="navlabel">积分构成</span></a></li>
-        </ul>
-      </div>
-      <div class="navgroup" data-group="traffic">
-        <div class="navgroup-t"><span class="navgroup-n">流量</span></div>
-        <ul>
-          <li><a href="#usage" data-view="usage">
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 13.5h12"/><path d="M4.5 13.5V8.2M8 13.5V3.5M11.5 13.5v-3"/></svg>
-            <span class="navlabel">用量</span></a></li>
-          <li><a href="#models" data-view="models">
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M8 1.8 14 5v6L8 14.2 2 11V5z"/><path d="M2 5l6 3.2L14 5M8 8.2v6"/></svg>
-            <span class="navlabel">模型与档位</span></a></li>
-          <li><a href="#platforms" data-view="platforms">
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 3.5h4a2 2 0 0 1 2 2v5a2 2 0 0 0 2 2h2"/><circle cx="3" cy="3.5" r="1.5"/><circle cx="13" cy="12.5" r="1.5"/><circle cx="8" cy="8" r="1.5"/></svg>
-            <span class="navlabel">平台配置</span></a></li>
-          <li><a href="#chat" data-view="chat">
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.4 3.4h11.2v7.2H7.6l-3.4 2.6v-2.6H2.4z"/><path d="M5.6 6.4h4.8M5.6 8.6h3"/></svg>
-            <span class="navlabel">对话测试</span></a></li>
-        </ul>
-      </div>
-      <div class="navgroup" data-group="system">
-        <div class="navgroup-t"><span class="navgroup-n">系统</span></div>
-        <ul>
-          <li><a href="#alerts" data-view="alerts">
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4 7a4 4 0 1 1 8 0v3l1.2 1.5H2.8L4 10z"/><path d="M6.4 13a1.8 1.8 0 0 0 3.2 0"/></svg>
-            <span class="navlabel">平台告警</span><span class="navcount" id="navCountAlerts" hidden></span></a></li>
-          <li><a href="#taskscenter" data-view="taskscenter">
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 2.5h10v9H8l-3 3v-3H3z"/><path d="M6 6.5h4M6 9h2.5"/></svg>
-            <span class="navlabel">任务中心</span></a></li>
-          <li><a href="#logs" data-view="logs">
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 3.5h11M2.5 8h11M2.5 12.5h7"/></svg>
-            <span class="navlabel">运行日志</span></a></li>
-          <li><a href="#config" data-view="config">
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.6v1.9M8 12.5v1.9M1.6 8h1.9M12.5 8h1.9M3.5 3.5l1.3 1.3M11.2 11.2l1.3 1.3M12.5 3.5l-1.3 1.3M4.8 11.2l-1.3 1.3"/></svg>
-            <span class="navlabel">配置</span></a></li>
-        </ul>
-      </div>
-    </div>
-    <div class="sig">
-      <div class="sigline"><span class="pulse" id="navPulse"></span><span id="navState">连接中</span></div>
-      <div class="sigline sigmeta"><span id="navVer">v-</span><span class="dot"></span><span id="navRedis">-</span></div>
-    </div>
+    <span class="cmdgrow"></span>
+    <span class="cmdsig" title="网关连接状态">
+      <span class="pulse" id="navPulse"></span>
+      <span id="navState">连接中</span>
+      <span class="cmdsep" aria-hidden="true"></span>
+      <span id="navVer" class="cmdmono">v-</span>
+      <span id="navRedis" class="cmdmono">-</span>
+    </span>
   </nav>
 
   <div class="main">
@@ -5032,7 +5422,7 @@ html:not([data-theme="light"]) body::after {
     <!-- 路由实况：把网关每一次选号画成线路图 -->
     <section class="view" id="view-routelive" hidden>
       <div class="rl-head">
-        <span class="sub">每一次选号，边发生边画</span>
+        <span class="sub">每一个请求的落点，边发生边画</span>
         <span class="grow"></span>
         <label class="chk"><input type="checkbox" id="rlAuto" checked> 自动刷新</label>
         <span class="rl-live on" id="rlLive"><i></i><span id="rlLiveText">实时</span></span>
@@ -5042,19 +5432,18 @@ html:not([data-theme="light"]) body::after {
 
       <div class="box">
         <header>
-          <h3>线路图 <span class="hint" id="rlMapNote">-</span></h3>
+          <h3>路由舞台 <span class="hint" id="rlMapNote">-</span></h3>
           <span class="grow"></span>
           <span class="note" id="rlWindowNote"></span>
           <button class="xs" id="btnRlRefresh">立即刷新</button>
         </header>
         <div class="pad">
-          <div class="rl-map" id="rlMap"></div>
+          <div class="rl-stage" id="rlMap"></div>
           <div class="rl-legend">
+            <span><i style="background:var(--accent)"></i>请求在途</span>
             <span><i style="background:var(--ok)"></i>命中</span>
-            <span><i style="background:var(--surface);border:2px solid var(--bad)"></i>失败</span>
-            <span><i style="background:var(--surface);border:2px solid var(--ink-3)"></i>未轮到</span>
-            <span><i style="background:var(--accent)"></i>线路有活动</span>
-            <span>列车 = 最近一次请求停在谁那里</span>
+            <span><i style="background:var(--bad)"></i>失败</span>
+            <span>光点从调用方飞向被选中的账号，拿到结果再飞回来</span>
           </div>
         </div>
       </div>
@@ -5122,7 +5511,9 @@ html:not([data-theme="light"]) body::after {
 
       <div class="box">
         <header>
-          <h3>账号池</h3>
+          <!-- 卡片头不写「账号池」：页头已经写了，同一个词在同一屏出现两次、
+               同样字重，读者要花一次判断才发现它们是同一个东西。
+               这一行让给筛选控件——它本来就被挤在右边。 -->
           <div class="chips" id="clientChips"></div>
           <span class="grow"></span>
           <input id="accSearch" class="filt" type="search" placeholder="搜索账号 / 备注（/）" spellcheck="false" autocomplete="off">
@@ -6304,6 +6695,19 @@ function setupSubtabs(key, onShow) {
   return api;
 }
 const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+// 复合键的分隔符：把两个 id 拼成一个 map 键时用。
+//
+// 以前用的是空字符 "\u0000"。它在 JS 里没问题，但它不是安全的分隔符——
+// 只要这个键经过一次 JSON 往返、写进 HTML 属性、或跨进程传一次，空字符就会
+// 被转义成字面的 "\u0000"（六个字符），两边的键再也对不上。路由舞台上就
+// 真的踩了这一次：节点上用被转义过的键，查找时用真空字符，于是连线永远找不到
+// 端点、光点一生成就被静默丢弃。
+//
+// 换成 ASCII 的单元分隔符：账号名、平台名、模型名里都不可能含有它，而且它
+// 在任何编码里都原样保留。
+const RL_SEP = "\u001f";
+
 const LS = {
   get(k, d) { try { const v = localStorage.getItem("c2a." + k); return v == null ? d : v; } catch (e) { return d; } },
   set(k, v) { try { localStorage.setItem("c2a." + k, v); } catch (e) { } }
@@ -6782,39 +7186,24 @@ function setNav(ok, msg) {
   $("#subMeta").textContent = SNAP.listen || "-";
 }
 
-/* ── 外壳：侧栏折叠与视图切换 ────────────────────────────────────────────
-   折叠状态记在 localStorage 里，刷新和切页都保持。窄屏下侧栏本来就是横条，
-   折叠按钮在那里没有意义，所以只在宽屏出现（CSS 负责隐藏）。 */
+/* ── 外壳：顶栏与视图切换 ────────────────────────────────────────────────
+   导航从左侧竖栏搬到了顶栏（见 CSS 第 40 节）。这里只剩两件事：
+   把命令面板接到顶栏按钮上，以及在切页时点亮对应的导航项。 */
 // 已演过进场动画的视图。每屏只演一次：切回来重播会让频繁来回切换变得烦躁。
 const VIEW_ENTERED = new Set();
 
+// SHELL 是顶栏自己的行为。
+//
+// 它原来管的是左侧栏的折叠——换成顶栏之后折叠没有意义了（一行横条没有
+// 「收起」这一档），所以那个开关连同 localStorage 状态一起去掉。
+// 现在只留一件事：把「点亮当前项」做成一个明确的入口。命令面板的按钮在页头
+// （#btnCmdk），快捷键 Ctrl+K 在文件末尾绑定，都不经过这里。
 const SHELL = {
-  root: null,
-  key: "navmini",
-  init() {
-    this.root = document.querySelector(".shell");
-    if (!this.root) return;
-    // 窄屏不恢复折叠态：横向工具带没有「收起」这一档。
-    if (window.matchMedia("(max-width: 900px)").matches) {
-      this.root.classList.remove("navmini");
-    } else if (LS.get(this.key, "") === "1") {
-      this.root.classList.add("navmini");
-      this.syncAria(false);
-    }
-    const btn = $("#btnNavToggle");
-    if (btn) btn.addEventListener("click", () => this.toggle());
-  },
-  toggle() {
-    if (!this.root) return;
-    const mini = this.root.classList.toggle("navmini");
-    LS.set(this.key, mini ? "1" : "");
-    this.syncAria(!mini);
-    // 收起时侧栏变窄，图表类页面需要重新量一次宽度。
-    setTimeout(() => window.dispatchEvent(new Event("resize")), 180);
-  },
-  syncAria(expanded) {
-    const btn = $("#btnNavToggle");
-    if (btn) btn.setAttribute("aria-expanded", String(expanded));
+  init() { /* 顶栏没有需要初始化的状态；保留这个入口，便于以后加。 */ },
+  // syncActive 是导航「选中」的唯一入口。所有导航项都带 data-view，
+  // 所以这里不关心它们在哪个容器里——将来再挪位置也不用改它。
+  syncActive(view) {
+    $$("[data-view]").forEach(a => a.classList.toggle("on", a.dataset.view === view));
   },
 };
 
@@ -6823,7 +7212,7 @@ const TITLES = { routelive: "路由实况", overview: "总览", accounts: "账�
 function go(v) {
   if (!TITLES[v]) v = "accounts";
   VIEW = v;
-  $$(".nav a").forEach(a => a.classList.toggle("on", a.dataset.view === v));
+  SHELL.syncActive(v);
   $$(".view").forEach(s => { s.hidden = s.id !== "view-" + v; });
   // 进场动画只演一次：给已经看过的视图打上 settle，CSS 那边就不再重播。
   const shown = $("#view-" + v);
@@ -7076,14 +7465,6 @@ function renderChips() {
    traces 与 lanes；没有记录时画一句「还没有请求」，而不是画一条好看的假线路。 */
 let RL_TIMER = null, RL_DATA = null, RL_LOADING = false;
 
-// 线路配色：稳定地按模型名取色，同一个模型每次刷新都是同一条颜色。
-const RL_COLORS = ["var(--accent)", "var(--ok)", "var(--warn)", "#b687e8", "#4fc3d9", "#e8734a"];
-function rlColor(seed) {
-  let h = 0;
-  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
-  return RL_COLORS[h % RL_COLORS.length];
-}
-
 function rlLatency(ms, has) {
   if (!has) return "—";
   if (ms >= 1000) return (ms / 1000).toFixed(1) + "s";
@@ -7104,57 +7485,7 @@ function rlTime(ts) {
 // its stop was lit.
 function rlStopId(lane) {
   const label = lane.account_label || lane.account || lane.client || "默认账号";
-  return (lane.client || "") + "\u0000" + (lane.account || label);
-}
-
-// rlLines 把 traces 折成「每个模型一条线」：线内站点按 candidate 顺序取第一个
-// 出现过的账号，线内最后一个请求的 winner 决定列车停在哪。
-function rlLines(traces) {
-  const byModel = new Map();
-  (traces || []).forEach((t, ti) => {
-    const key = t.model || t.requested || "未命名模型";
-    // 同一个模型常被调用方用不同大小写请求（Auto/GLM-5.3 与 auto/glm-5.3），
-    // 那是同一批账号、同一份线路，按 casefold 合并，否则线路上会并排出现两条
-    // 一模一样的线。展示名沿用第一次见到的那个写法。
-    const fold = key.toLowerCase();
-    let line = byModel.get(fold);
-    if (!line) {
-      line = { model: key, stops: [], seen: new Set(), train: -1, traces: 0, fails: 0 };
-      byModel.set(fold, line);
-    }
-    line.traces++;
-    if (t.failed) line.fails++;
-    // 站点按 candidate 升序稳定追加，同一条线上不会因为刷新而重排。
-    const lanes = (t.lanes || []).slice().sort((a, b) => a.candidate - b.candidate);
-    lanes.forEach(l => {
-      const id = rlStopId(l);
-      if (!line.seen.has(id)) {
-        line.seen.add(id);
-        line.stops.push({ id: id, label: l.account_label || l.account || l.client || "默认账号", client: l.client || "", failed: false, hit: false });
-      }
-    });
-    // 最新的一条 trace 决定列车位置（traces 已经是新的在前）。
-    if (ti === 0 && !t.failed && t.winner >= 0) {
-      const w = lanes[t.winner];
-      if (w) line.train = line.stops.findIndex(s => s.id === rlStopId(w));
-    }
-  });
-
-  // 每条线最近一次请求里，谁失败、谁命中。
-  byModel.forEach(line => {
-    const fold = line.model.toLowerCase();
-    const last = (traces || []).find(t => (t.model || t.requested || "未命名模型").toLowerCase() === fold);
-    if (!last) return;
-    const lanes = (last.lanes || []).slice().sort((a, b) => a.candidate - b.candidate);
-    lanes.forEach(l => {
-      const stop = line.stops.find(s => s.id === rlStopId(l));
-      if (!stop) return;
-      if (l.failed) stop.failed = true;
-      if (!last.failed && last.winner >= 0 && lanes[last.winner] === l) stop.hit = true;
-    });
-  });
-
-  return [...byModel.values()];
+  return (lane.client || "") + RL_SEP + (lane.account || label);
 }
 
 // rlShortModel 缩短线路名：调用方前缀（trae/、zcode/my-client/）和模型名里
@@ -7165,42 +7496,477 @@ function rlShortModel(model) {
   return { main: parts[parts.length - 1], pre: parts.slice(0, -1).join("/") };
 }
 
-function rlRenderMap(lines) {
-  const map = $("#rlMap");
-  if (!lines.length) {
-    map.innerHTML = '<div class="rl-empty">还没有请求记录。用任意客户端调用一次网关，这里就会出现对应的线路。</div>';
+/* ── 路由舞台 ─────────────────────────────────────────────────────────────
+   三列（调用方 / 网关 / 候选账号），请求是一枚沿真实路径飞过去的光点：
+   从调用方飞到网关，再到被选中的账号；命中就带一个空心环飞回来，失败则
+   折返换下一个候选。
+
+   实现上刻意不用 CSS 过渡：位置每帧由 JS 算出来（rlPose），原因和 magpie
+   一样——沿一条折线匀速走，用 CSS 的单个 transition 做不到，`left` 的线性
+   插值在折点上会「切角」，而真实路径有拐弯。所以：
+
+     · rlPose() 按「已走过的弧长」在折线上取点，光点和尾迹一起画出来；
+     · rlKick() 只在有飞行时才起一个 requestAnimationFrame 循环，跑完即停，
+       页面静止时不占任何帧；
+     · rlWait() 返回一个由数据解析的 Promise——这是「流畅」的来源：光点在
+       账号上停多久，取决于这次请求真的花了多久，而不是一个写死的动画时长。
+*/
+const RL_STAGE = {
+  raf: 0,        // 当前帧回调 id
+  flights: [],   // 在飞的 { pkt, trail, legs, t0, ms, ok, done }
+  gen: 0,        // 舞台代次：重画时自增，老的飞行据此退出
+  hubs: [],
+  box: null,     // 舞台容器
+  svgW: null,
+  svgS: null,
+  nodeRect: new Map(), // id → 最近的元素矩形（用于算连线端点）
+  reduce: false,
+};
+
+function rlReduceMotion() {
+  return window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+// rlFlushStage 清空舞台上的飞行与帧循环。重画前必须调用，否则老的飞行会
+// 继续往已经不在 DOM 里的节点上画。
+function rlFlushStage() {
+  RL_STAGE.gen++;
+  RL_STAGE.flights.length = 0;
+  if (RL_STAGE.raf) { cancelAnimationFrame(RL_STAGE.raf); RL_STAGE.raf = 0; }
+}
+
+// rlStageHTML 画出三列的骨架。节点元素带上 data-rl-key，飞行按 key 找端点，
+// 这样数据刷新重画节点后，在飞的请求仍然对着同一个账号飞。
+function rlStageHTML(model) {
+  const callers = model.callers || [];
+  const accounts = model.accounts || [];
+  const hub = model.hub || { name: "网关", sub: "" };
+  const node = (cls, key, name, sub, n) =>
+    '<div class="rl-node ' + cls + '" data-rl-key="' + esc(key) + '">' +
+    '<span class="rn-dot"></span><div class="rn-body">' +
+    '<div class="rn-name" title="' + esc(name) + '">' + esc(name) + "</div>" +
+    (sub ? '<div class="rn-sub" title="' + esc(sub) + '">' + esc(sub) + "</div>" : "") +
+    "</div>" + (n ? '<span class="rn-n">' + esc(n) + "</span>" : "") + "</div>";
+  const callersHTML = callers.length
+    ? callers.map(c => node("", "call:" + c.key, c.name, c.sub, c.n)).join("")
+    : '<div class="rl-node"><span class="rn-dot"></span><div class="rn-body"><div class="rn-name">暂无调用</div></div></div>';
+  const accountsHTML = accounts.length
+    ? accounts.map(a => node("", "acct:" + a.key, a.name, a.sub, a.n)).join("")
+    : '<div class="rl-node"><span class="rn-dot"></span><div class="rn-body"><div class="rn-name">暂无候选账号</div></div></div>';
+  return '<div class="rl-stage-inner">' +
+    '<div class="rl-col rl-col-callers">' + callersHTML + "</div>" +
+    '<div class="rl-col rl-col-mid"><div class="rl-hub" data-rl-key="hub">' +
+      '<span class="rh-mark">c2</span><b>' + esc(hub.name) + "</b>" +
+      (hub.sub ? "<small>" + esc(hub.sub) + "</small>" : "") + "</div></div>" +
+    '<div class="rl-col rl-col-accts">' + accountsHTML + "</div>" +
+    '</div>' +
+    // viewBox 必须和 rlMeasure 的换算基准一致：那里把舞台宽高等比映射到
+    // 1000×640，这里就得声明同一个坐标系，否则 preserveAspectRatio="none"
+    // 会按实际像素拉伸，路径整体错位（第一版就是这样画到框外的）。
+    '<svg class="rl-wires" id="rlWires" viewBox="0 0 1000 640" preserveAspectRatio="none"></svg>' +
+    '<svg class="rl-sky" id="rlSky" viewBox="0 0 1000 640" preserveAspectRatio="none"></svg>';
+}
+
+// rlMeasure 记下每个节点的中心，连线与飞行都用它换算坐标。
+// 舞台内部用 1000×H 的归一化坐标画，SVG 用 preserveAspectRatio="none" 拉满，
+// 于是「节点在哪」和「路径画到哪」永远一致，中间不需要第二套换算。
+function rlMeasure() {
+  const box = RL_STAGE.box;
+  if (!box) return;
+  const host = box.querySelector(".rl-stage-inner");
+  if (!host) return;
+  const hb = host.getBoundingClientRect();
+  if (!hb.width || !hb.height) return;
+  RL_STAGE.nodeRect.clear();
+  box.querySelectorAll("[data-rl-key]").forEach(el => {
+    const b = el.getBoundingClientRect();
+    RL_STAGE.nodeRect.set(el.dataset.rlKey, {
+      x: ((b.left + b.width / 2 - hb.left) / hb.width) * 1000,
+      y: ((b.top + b.height / 2 - hb.top) / hb.height) * 640,
+      left: ((b.left - hb.left) / hb.width) * 1000,
+      right: ((b.right - hb.left) / hb.width) * 1000,
+      cy: ((b.top + b.height / 2 - hb.top) / hb.height) * 640,
+      top: ((b.top - hb.top) / hb.height) * 640,
+      bottom: ((b.bottom - hb.top) / hb.height) * 640,
+      w: (b.width / hb.width) * 1000,
+      h: (b.height / hb.height) * 640,
+    });
+  });
+}
+
+// rlWirePath 给一条从 A 到 B 的连线做一条水平出入的贝塞尔：左右两端各留
+// 一段直线再接曲线，看起来才像「从盒子里出来、进到另一个盒子里」。
+function rlWirePath(a, b) {
+  const x1 = a.right, y1 = a.cy;
+  const x2 = b.left, y2 = b.cy;
+  const dx = Math.max(18, (x2 - x1) * 0.42);
+  return "M" + x1.toFixed(1) + " " + y1.toFixed(1) +
+    "C" + (x1 + dx).toFixed(1) + " " + y1.toFixed(1) + "," +
+    (x2 - dx).toFixed(1) + " " + y2.toFixed(1) + "," +
+    x2.toFixed(1) + " " + y2.toFixed(1);
+}
+
+// rlDrawWires 重画静态连线：调用方→网关、网关→每个账号。
+function rlDrawWires() {
+  const svg = $("#rlWires");
+  if (!svg) return;
+  const hub = RL_STAGE.nodeRect.get("hub");
+  if (!hub) return;
+  const parts = [];
+  RL_STAGE.nodeRect.forEach((r, key) => {
+    if (key === "hub") return;
+    const from = key.startsWith("call:") ? r : hub;
+    const to = key.startsWith("call:") ? hub : r;
+    if (key.startsWith("call:")) parts.push('<path d="' + rlWirePath(from, to) + '" />');
+    else parts.push('<path d="' + rlWirePath(from, to) + '" data-to="' + esc(key) + '" />');
+  });
+  svg.innerHTML = parts.join("");
+}
+
+/* ── 折线取样：按弧长在折线上取点 ────────────────────────────────────────
+   rlFlatten 把一条 path 的 d 展开成点列 + 每点的累计弧长（只做一次，按 d
+   缓存）。之后 rlPointAt 是纯算术，不再碰 DOM——magpie 也是这么做的，原因
+   写在它自己的注释里：每帧对每条路径调 getPointAtLength 会把页面拖卡。 */
+const RL_FLAT = new Map();
+function rlFlatten(d) {
+  if (RL_FLAT.has(d)) return RL_FLAT.get(d);
+  const toks = String(d).match(/[MCLQZmlcqz]|-?(?:\d+\.?\d*|\.\d+)/g) || [];
+  const pts = [], len = [];
+  let cx = 0, cy = 0, sx = 0, sy = 0, i = 0, cmd = "M";
+  const push = (x, y) => {
+    const j = pts.length / 2 - 1;
+    len.push(j < 0 ? 0 : len[j] + Math.hypot(x - pts[j * 2], y - pts[j * 2 + 1]));
+    pts.push(x, y);
+  };
+  const sample = (x0, y0, x1, y1, x2, y2, x3, y3, n) => {
+    // 曲线按固定步数采样：8px 一段时曲线与弦的偏差远小于一个像素。
+    for (let k = 1; k <= n; k++) {
+      const t = k / n, u = 1 - t;
+      const x = u * u * u * x0 + 3 * u * u * t * x1 + 3 * u * t * t * x2 + t * t * t * x3;
+      const y = u * u * u * y0 + 3 * u * u * t * y1 + 3 * u * t * t * y2 + t * t * t * y3;
+      push(x, y);
+    }
+  };
+  while (i < toks.length) {
+    if (/[A-Za-z]/.test(toks[i])) { cmd = toks[i++]; continue; }
+    const n = k => parseFloat(toks[i + k]);
+    if (cmd === "M") { cx = n(0); cy = n(1); sx = cx; sy = cy; push(cx, cy); i += 2; cmd = "L"; }
+    else if (cmd === "L") { cx = n(0); cy = n(1); push(cx, cy); i += 2; }
+    else if (cmd === "C") {
+      const x1 = n(0), y1 = n(1), x2 = n(2), y2 = n(3), x3 = n(4), y3 = n(5);
+      sample(cx, cy, x1, y1, x2, y2, x3, y3, 18);
+      cx = x3; cy = y3; i += 6;
+    } else if (cmd === "Q") {
+      const x1 = n(0), y1 = n(1), x2 = n(2), y2 = n(3);
+      sample(cx, cy, cx + (2 / 3) * (x1 - cx), cy + (2 / 3) * (y1 - cy),
+        x2 + (2 / 3) * (x1 - x2), y2 + (2 / 3) * (y1 - y2), x2, y2, 14);
+      cx = x2; cy = y2; i += 4;
+    } else if (cmd === "Z" || cmd === "z") { push(sx, sy); cx = sx; cy = sy; i++; }
+    else i++;
+  }
+  const out = { pts: pts, len: len, total: len.length ? len[len.length - 1] : 0 };
+  RL_FLAT.set(d, out);
+  return out;
+}
+
+// rlPointAt 取折线上弧长 s 处的点。
+function rlPointAt(pathD, s) {
+  const f = rlFlatten(pathD);
+  const total = f.total;
+  if (!total) return { x: 0, y: 0 };
+  s = Math.max(0, Math.min(total, s));
+  let lo = 0, hi = f.len.length - 1;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (f.len[mid] < s) lo = mid + 1; else hi = mid; }
+  const i = Math.max(1, lo);
+  const l0 = f.len[i - 1], l1 = f.len[i];
+  const t = l1 > l0 ? (s - l0) / (l1 - l0) : 0;
+  const x0 = f.pts[(i - 1) * 2], y0 = f.pts[(i - 1) * 2 + 1];
+  const x1 = f.pts[i * 2], y1 = f.pts[i * 2 + 1];
+  return { x: x0 + (x1 - x0) * t, y: y0 + (y1 - y0) * t };
+}
+
+// rlLegs 把「从 fromKey 到 toKey」拼成一条连续折线：中间经过网关。
+// 返回 { d, total, hops: [输入终点的弧长, 出口起点的弧长] }。
+function rlLegs(fromKey, toKey) {
+  const a = RL_STAGE.nodeRect.get(fromKey);
+  const hub = RL_STAGE.nodeRect.get("hub");
+  const b = RL_STAGE.nodeRect.get(toKey);
+  if (!a || !hub || !b) return null;
+  const viaHub = fromKey !== "hub" && toKey !== "hub";
+  const w1 = rlWirePath(a, hub);
+  const w2 = rlWirePath(hub, b);
+  const f1 = rlFlatten(w1), f2 = rlFlatten(w2);
+  if (viaHub) {
+    return { paths: [w1, w2], total: f1.total + f2.total, nodeAt: f1.total };
+  }
+  const w = fromKey === "hub" ? w2 : w1;
+  const f = rlFlatten(w);
+  return { paths: [w], total: f.total, nodeAt: toKey === "hub" ? f.total : 0 };
+}
+
+// rlPointOnLegs 沿一组腿取点，并把「这一次走到哪条腿」的局部坐标一起给出，
+// 便于把尾迹画在同一段路径上。
+function rlPointOnLegs(legs, s) {
+  if (!legs) return { x: 0, y: 0, path: null, local: 0 };
+  let rest = Math.max(0, Math.min(legs.total, s));
+  for (const p of legs.paths) {
+    const f = rlFlatten(p);
+    if (rest <= f.total || p === legs.paths[legs.paths.length - 1]) {
+      const pt = rlPointAt(p, rest);
+      return { x: pt.x, y: pt.y, path: p, local: Math.max(0, Math.min(f.total, rest)), max: f.total };
+    }
+    rest -= f.total;
+  }
+  return { x: 0, y: 0, path: null, local: 0 };
+}
+
+/* ── 飞行 ──────────────────────────────────────────────────────────────── */
+
+// rlFly 让一枚光点沿 legs 走完 ms 毫秒，返回一个在它抵达后 resolve 的 Promise。
+// 舞台代次变了就直接退出——重画之后这条飞行已经不属于当前画面。
+function rlFly(pkt, trail, legs, ms) {
+  return new Promise(resolve => {
+    if (!legs || !legs.total) { resolve(); return; }
+    if (RL_STAGE.reduce || ms <= 0) { rlPoseFlight({ pkt, trail, legs }, 1, true); resolve(); return; }
+    const fl = { pkt, trail, legs, t0: performance.now(), ms, resolve, gen: RL_STAGE.gen };
+    RL_STAGE.flights.push(fl);
+    rlKick();
+  });
+}
+
+// rlPoseFlight 把一枚飞行摆到进度 e（0..1）处，并画出它身后那一小段尾迹。
+// 尾迹长度按弧长固定，所以不管路径多长，拖尾看起来都一样长。
+function rlPoseFlight(fl, e, final) {
+  const legs = fl.legs;
+  const s = e * legs.total;
+  const pt = rlPointOnLegs(legs, s);
+  fl.pkt.setAttribute("cx", pt.x.toFixed(1));
+  fl.pkt.setAttribute("cy", pt.y.toFixed(1));
+  fl.pkt.removeAttribute("visibility");
+  if (!fl.trail) return;
+  if (final) { fl.trail.removeAttribute("d"); return; }
+  const tail = Math.min(s, 46);
+  const a = rlPointOnLegs(legs, s - tail);
+  if (a.path === pt.path && pt.path) {
+    fl.trail.setAttribute("d", rlSubPath(pt.path, a.local, pt.local));
+  } else {
+    fl.trail.setAttribute("d", "");
+  }
+}
+
+// rlSubPath 从一条路径上截 [from, to] 这段弧长，返回一段新的 d。
+// 只支持本文件自己生成的 M/C 折线（这是全部输入），够用且便宜。
+function rlSubPath(d, from, to) {
+  const f = rlFlatten(d);
+  if (!f.total) return "";
+  const step = Math.max(4, (to - from) / 10);
+  const pts = [];
+  for (let s = from; s <= to + 0.001; s += step) {
+    const p = rlPointAt(d, s);
+    pts.push(p.x.toFixed(1) + "," + p.y.toFixed(1));
+  }
+  const last = rlPointAt(d, to);
+  pts.push(last.x.toFixed(1) + "," + last.y.toFixed(1));
+  return "M" + pts.join(" L");
+}
+
+// rlKick 起帧循环。只在真的有东西在飞的时候跑，跑完自动停——静止的页面
+// 不应该每秒醒 60 次。
+function rlKick() {
+  if (RL_STAGE.raf || !RL_STAGE.flights.length) return;
+  const frame = now => {
+    RL_STAGE.raf = 0;
+    const gen = RL_STAGE.gen;
+    const live = [];
+    for (const fl of RL_STAGE.flights) {
+      if (fl.gen !== gen) { fl.resolve(); continue; }
+      const e = fl.ms > 0 ? Math.min(1, (now - fl.t0) / fl.ms) : 1;
+      rlPoseFlight(fl, e, e >= 1);
+      if (e >= 1) fl.resolve(); else live.push(fl);
+    }
+    RL_STAGE.flights = live;
+    if (live.length) RL_STAGE.raf = requestAnimationFrame(frame);
+  };
+  RL_STAGE.raf = requestAnimationFrame(frame);
+}
+
+// rlSpawn 造一枚光点（可选一条尾迹），返回 { pkt, trail }。
+function rlSpawn(cls, trailCls) {
+  const sky = $("#rlSky");
+  if (!sky) return null;
+  const NS = "http://www.w3.org/2000/svg";
+  const pkt = document.createElementNS(NS, "circle");
+  pkt.setAttribute("r", "4.5");
+  pkt.setAttribute("class", "rl-pkt " + (cls || ""));
+  pkt.setAttribute("visibility", "hidden");
+  sky.appendChild(pkt);
+  let trail = null;
+  if (trailCls) {
+    trail = document.createElementNS(NS, "path");
+    trail.setAttribute("class", "rl-trail " + trailCls);
+    sky.appendChild(trail);
+  }
+  return { pkt: pkt, trail: trail };
+}
+
+// rlPulse 给一个节点一个短暂的「被经过」高亮，并在 ms 后自动褪去。
+// 这是纯装饰，所以它不参与任何 Promise 链——数据流不该等一个视觉效果。
+function rlPulse(key, cls, ms) {
+  const el = RL_STAGE.box && RL_STAGE.box.querySelector('[data-rl-key="' + key + '"]');
+  if (!el) return;
+  el.classList.add(cls || "act");
+  setTimeout(() => el.classList.remove(cls || "act"), ms || 700);
+}
+
+/* ── 数据 → 舞台 ───────────────────────────────────────────────────────── */
+
+// rlModel 把一次 traces 快照折成舞台要的三列：调用方、候选账号、网关信息。
+// 账号取「最近若干条请求里出现过的候选」，按被选中次数排；调用方按请求数排。
+function rlModel(report) {
+  const traces = (report.traces || []).slice(0, 24);
+  const acct = new Map();
+  const call = new Map();
+  traces.forEach(t => {
+    const lanes = (t.lanes || []).slice().sort((a, b) => a.candidate - b.candidate);
+    const who = t.client || (lanes[0] && lanes[0].client) || "调用方";
+    const c = call.get(who) || { key: who, name: who, sub: "", n: 0 };
+    c.n++;
+    if (!c.sub && t.model) c.sub = rlShortModel(t.model).main;
+    call.set(who, c);
+    lanes.forEach((l, i) => {
+      const key = rlStopId(l);
+      const a = acct.get(key) || {
+        key: key, name: l.account_label || l.account || l.client || "默认账号",
+        sub: l.client || "", picks: 0, fails: 0, seen: 0, last: -1,
+      };
+      a.seen++;
+      if (!t.failed && i === t.winner) a.picks++;
+      if (l.failed) a.fails++;
+      if (t.at && (!a.at || t.at > a.at)) { a.at = t.at; a.last = i; }
+      acct.set(key, a);
+    });
+  });
+  const accounts = [...acct.values()].sort((a, b) => (b.picks - a.picks) || (a.name < b.name ? -1 : 1)).slice(0, 7);
+  const callers = [...call.values()].sort((a, b) => b.n - a.n).slice(0, 5)
+    .map(c => ({ key: c.key, name: c.name, sub: c.sub, n: c.n + " 次" }));
+  const live = traces.filter(t => !t.failed).length;
+  return {
+    callers: callers, accounts: accounts, traces: traces,
+    hub: { name: "client2api", sub: report.window_hours ? "近 " + report.window_hours + " 小时 · " + traces.length + " 条" : "" },
+    rerouted: report.rerouted || 0, live: live,
+  };
+}
+
+// rlPlayNew 把还没有演过的请求演一遍，最新的先演。
+// 演过的按 id 记住，所以刷新不会重放历史——那是数据在动，不是动画在放。
+const RL_PLAYED = new Set();
+function rlPlayNew(model) {
+  const fresh = model.traces.filter(t => !RL_PLAYED.has(t.id)).reverse();
+  model.traces.forEach(t => RL_PLAYED.add(t.id));
+  // 一次最多演 3 条，且只演最近的；十条一起飞只会变成一团糊。
+  fresh.slice(-3).forEach(t => rlPlayTrace(t));
+}
+
+// rlPlayTrace 演一条请求：调用方 → 网关 → 候选一 →（失败）→ 候选二 → 回程。
+// 每一步的等待都由数据决定：lanes 里每一段的延迟是厂商真的花了多久，
+// 所以老实测是「飞得慢」，快请求是「一闪而过」。
+async function rlPlayTrace(t) {
+  const gen = RL_STAGE.gen;
+  const lanes = (t.lanes || []).slice().sort((a, b) => a.candidate - b.candidate);
+  if (!lanes.length) return;
+  let fromKey = "call:" + (t.client || (lanes[0].client || "调用方"));
+  const spawn = rlSpawn("wait", "ok");
+  if (!spawn) return;
+  const { pkt, trail } = spawn;
+
+  // 一格的飞行时间：按真实延迟映射到 260–900ms，慢请求真的飞得慢，
+  // 但不会慢到让画面看起来卡住。
+  const legMs = ms => {
+    if (!ms || ms <= 0) return 340;
+    return Math.max(260, Math.min(900, 260 + ms * 0.06));
+  };
+
+  try {
+    for (let i = 0; i < lanes.length; i++) {
+      if (gen !== RL_STAGE.gen) return;
+      const l = lanes[i];
+      const toKey = "acct:" + rlStopId(l);
+      const legs = rlLegs(fromKey, toKey);
+      if (!legs) return;
+      pkt.setAttribute("class", "rl-pkt wait");
+      rlPulse("hub", "act", 700);
+      await rlFly(pkt, trail, legs, i === 0 ? 620 : 460);
+      if (gen !== RL_STAGE.gen) return;
+
+      // 抵达候选：光点在这里等真实的结果
+      pkt.setAttribute("class", "rl-pkt wait");
+      rlPulse(toKey, "act", Math.max(500, Math.min(4000, (l.latency_ms || 600) + 200)));
+      await rlWait(gen, legMs(l.latency_ms));
+      if (gen !== RL_STAGE.gen) return;
+
+      if (!l.failed) {
+        // 命中：节点转绿，光点带着结果飞回去（空心环 = 内容物已交出去）
+        const el = RL_STAGE.box && RL_STAGE.box.querySelector('[data-rl-key="' + toKey + '"]');
+        if (el) { el.classList.remove("act"); el.classList.add("ok"); setTimeout(() => el.classList.remove("ok"), 2600); }
+        pkt.setAttribute("class", "rl-pkt back");
+        if (trail) trail.setAttribute("class", "rl-trail ok");
+        const back = rlLegs(toKey, fromKey);
+        await rlFly(pkt, null, back, 700);
+        return;
+      }
+      // 失败：节点标红，折返网关换下一个候选
+      const el = RL_STAGE.box && RL_STAGE.box.querySelector('[data-rl-key="' + toKey + '"]');
+      if (el) { el.classList.remove("act"); el.classList.add("err"); setTimeout(() => el.classList.remove("err"), 2600); }
+      pkt.setAttribute("class", "rl-pkt fail");
+      if (trail) trail.setAttribute("class", "rl-trail bad");
+      const back = rlLegs(toKey, "hub");
+      await rlFly(pkt, null, back, 420);
+      fromKey = "hub";
+    }
+  } finally {
+    pkt.remove();
+    if (trail) trail.remove();
+  }
+}
+
+// rlWait 返回一个按时长 resolve 的 Promise。它单独抽出来是为了在代次变化
+// （重画）时立刻结束，而不是让一群已经无主的等待继续排在定时器里。
+function rlWait(gen, ms) {
+  return new Promise(resolve => {
+    if (gen !== RL_STAGE.gen) { resolve(); return; }
+    if (RL_STAGE.reduce) { setTimeout(resolve, 60); return; }
+    setTimeout(() => resolve(), ms);
+  });
+}
+
+// rlRenderMap 重建舞台。节点结构只在变化时重画，避免把在飞的请求打断掉。
+let RL_STAGE_SIG = "";
+function rlRenderMap(model) {
+  const box = $("#rlMap");
+  if (!box) return;
+  RL_STAGE.box = box;
+  RL_STAGE.reduce = rlReduceMotion();
+  if (!model.traces.length) {
+    rlFlushStage();
+    RL_STAGE_SIG = "";
+    box.innerHTML = '<div class="rl-empty"><div class="t">还没有请求</div>' +
+      "用任意客户端调用一次网关，这里就会出现它的落点。</div>";
     return;
   }
-  map.innerHTML = lines.slice(0, 8).map(line => {
-    const shown = line.stops.slice(0, 6);
-    const n = shown.length;
-    // 每站可用的横向宽度决定标签上限：站数少时给得多，站名不被无谓截断。
-    const slotPct = n > 1 ? 84 / (n - 1) : 100;
-    const stops = shown.map((s, i) => {
-      const cls = s.failed ? "dead" : (s.hit ? "hit" : "");
-      const ttl = s.client ? (s.client + " · " + s.label) : s.label;
-      // 均匀落位，两端各留半个标签宽，站名不出界。
-      const pct = n === 1 ? 50 : 8 + (84 * i) / (n - 1);
-      return '<div class="rl-stop ' + cls + '" style="left:' + pct.toFixed(1) + '%;max-width:calc(' +
-        slotPct.toFixed(2) + '% - 10px)" title="' + esc(ttl) + '">' +
-        '<span class="dot"></span><em>' + esc(s.label) + '</em></div>';
-    }).join("");
-    const trainPct = line.train >= 0 && n > 1
-      ? 8 + (84 * line.train) / (n - 1)
-      : (line.train === 0 ? 8 : 50);
-    const ghost = line.train < 0 ? " ghost" : "";
-    const m = rlShortModel(line.model);
-    return '<div class="rl-line">' +
-      '<div class="rl-name"><i style="background:' + rlColor(line.model) + '"></i>' +
-      '<div style="min-width:0"><b title="' + esc(line.model) + '">' + esc(m.main) + '</b>' +
-      (m.pre ? '<small title="' + esc(line.model) + '">' + esc(m.pre) + '</small>' : '') + '</div>' +
-      '<span class="n">' + line.traces + '</span></div>' +
-      '<div class="rl-track">' +
-      '<div class="rail' + (line.train >= 0 ? " hot" : "") + '"></div>' +
-      '<div class="rl-stops">' + stops + '</div>' +
-      '<div class="rl-train' + ghost + '" style="left:' + trainPct.toFixed(1) + '%"><span></span><span></span></div>' +
-      '</div></div>';
-  }).join("");
+  const sig = JSON.stringify([
+    model.callers.map(c => c.key),
+    model.accounts.map(a => a.key + ":" + a.picks + ":" + a.fails),
+    model.hub.sub,
+  ]);
+  if (sig !== RL_STAGE_SIG) {
+    rlFlushStage();
+    RL_STAGE_SIG = sig;
+    box.innerHTML = rlStageHTML(model);
+    requestAnimationFrame(() => { rlMeasure(); rlDrawWires(); });
+  }
+  // 节点若已存在，只重算一次尺寸（窗口可能变过）。
+  if (!RL_STAGE.nodeRect.size) { rlMeasure(); rlDrawWires(); }
+  rlPlayNew(model);
 }
 
 function rlRenderEvents(traces) {
@@ -7273,12 +8039,22 @@ async function renderRouteLive(force) {
 
   const traces = r.data.traces || [];
   rlRenderKpis(r.data);
-  rlRenderMap(rlLines(traces));
+  const model = rlModel(r.data);
+  rlRenderMap(model);
   rlRenderEvents(traces);
-  $("#rlMapNote").textContent = traces.length ? (rlLines(traces).length + " 条线路") : "暂无数据";
+  $("#rlMapNote").textContent = traces.length
+    ? (model.accounts.length + " 个候选 · " + traces.length + " 条请求")
+    : "暂无数据";
   $("#navCountRouteLive").hidden = !(r.data.rerouted > 0);
   $("#navCountRouteLive").textContent = r.data.rerouted > 0 ? r.data.rerouted : "";
 }
+
+// 窗口尺寸变了，节点位置全变：重算一次连线。飞行中的请求下一帧就会跟上，
+// 因为它们的位置本来就是每帧现算的。
+window.addEventListener("resize", () => {
+  if (VIEW !== "routelive" || !RL_STAGE.box) return;
+  requestAnimationFrame(() => { rlMeasure(); rlDrawWires(); });
+});
 
 function rlStartPolling() {
   rlStopPolling();
@@ -7291,6 +8067,8 @@ function rlStartPolling() {
 }
 function rlStopPolling() {
   if (RL_TIMER) { clearTimeout(RL_TIMER); RL_TIMER = null; }
+  // 离开这一页时把在飞的光点一起收掉：动画不该在看不见的地方继续跑。
+  rlFlushStage();
 }
 
 /* ── 总览 ─────────────────────────────────────────────────────────────────
@@ -7436,10 +8214,20 @@ function renderStats() {
   $("#sRisk").textContent = risk;
   $("#sFault").textContent = fault;
   $("#sDisabled").textContent = disabled;
-  // 0 不是告警：把该格的语义色收起来，只有真的有账号落在这个状态时才亮红。
-  ["sRisk", "sFault", "sDisabled"].forEach(id => {
+  // 0 不是告警，而是「这一档没有问题」。所以：凡是数值为 0 的统计格一律压成中性灰，
+  // 语义色只在数值 > 0 时出现。
+  //
+  // 这以前是逐格手写的，漏了三处——「粘性会话 0」和「已接入 22」同色，而
+  // 「风控 / 账号异常 / 已停用」三个 0 还穿着告警红。一屏健康状态下最响的东西
+  // 成了三个 0，正好是反的。现在按「这一格里所有数值」统一判定：
+  // 任意一格只要显示 0（或 -），就归 zero 档。
+  ["sTotal", "sHealthy", "sCooling", "sRisk", "sFault", "sDisabled",
+   "sClients", "sReady", "sSticky"].forEach(id => {
     const el = $("#" + id);
-    if (el) el.parentElement.classList.toggle("is-zero", Number(el.textContent) === 0);
+    if (!el) return;
+    const raw = String(el.textContent || "").trim();
+    const isZero = raw === "0" || raw === "-";
+    el.parentElement.classList.toggle("is-zero", isZero);
   });
   $("#sClients").textContent = NAMES.length;
   $("#sReady").textContent = (SNAP.clients || []).filter(c => c.ready).length;
@@ -8759,7 +9547,10 @@ function accRowHTML(a, caps, acts, showBal, chan, open, groupKey, group) {
   const btns = [];
   // 「备注」记的是这个账号登录用的手机号/邮箱，存在网关配置里（不是模块里），
   // 所以不依赖 caps.manage：只读模块的账号也能标出来，重登时才知道该用哪一个。
-  btns.push('<button class="xs" data-do="note" data-id="' + esc(a.id) + '" title="记录这个账号登录用的手机号或邮箱，用来辨认账号和重登；它不是状态说明列">' + (a.operator_note ? "账号标识 ✓" : "账号标识") + '</button>');
+  // 「标识」而不是「账号标识」：两个字的按钮才放得进 22.5% 宽的操作列。
+  // title 里仍写明它是什么（记录登录用的手机号/邮箱），并且刻意和右边的
+  // 「状态说明」列划清界限——两者混淆过一次，见那列的 title。
+  btns.push('<button class="xs" data-do="note" data-id="' + esc(a.id) + '" title="记录这个账号登录用的手机号或邮箱，用来辨认账号和重登；它不是右边的状态说明列">' + (a.operator_note ? "标识 ✓" : "标识") + '</button>');
   if (caps.manage) {
     btns.push('<button class="xs" data-do="test" data-id="' + esc(a.id) + '">测试</button>');
     btns.push(accToggleButton(a, caps));
@@ -10171,11 +10962,15 @@ function renderUsageTiles(d, t, rate) {
   };
   host.classList.add("ustat-grid");
   host.innerHTML = tiles.map(x => {
+    // 一个读数为空（「—」或 0）时压成中性灰：它表示「还没有数据」，
+    // 和账号页那几个 0 是同一条规则——没有数据不该和「有数据」一样响。
+    const empty = String(x.v).trim() === "—" || String(x.v).trim() === "0";
     const cls = "ustile " + (x.role === "primary" ? "ustat-primary" : "ustat-mini") +
+      (empty ? " is-empty" : "") +
       (x.k === "成功率" || x.k === "缓存命中率" ? " ustat-wide" : "");
     return '<div class="' + cls + '"' + (x.title ? ' title="' + esc(x.title) + '"' : '') +
       ' style="--tint:var(--' + x.tint + ');--tint-soft:var(--' + x.tint + '-soft);--tint-text:var(--' + x.tintText + ')">' +
-      '<div class="k"><span class="dot"></span>' + esc(x.k) + '</div>' +
+      '<div class="k"><span class="dot" style="background:var(--' + (empty ? "ink-3" : x.tint) + ')"></span>' + esc(x.k) + '</div>' +
       '<div class="v">' + esc(x.v) + '</div>' +
       '<div class="sub">' + x.sub + '</div>' +
       (x.meter == null ? '' : '<div class="meter"><i style="width:' + x.meter + '%"></i></div>') +
@@ -10702,7 +11497,7 @@ let MD_EDITS = {};
 // 哪些模型行是展开的（client\0model）。只存在内存里：刷新页面回到全部收起，
 // 免得下次打开模型页时半屏都是展开的详情。
 let MD_OPEN = {};
-function mdKey(client, model) { return client + "\u0000" + model; }
+function mdKey(client, model) { return client + RL_SEP + model; }
 
 // mdField 给一个字段单元格补上 data-field，详情面板的网格靠它取标签。
 // 单元格构造函数返回的是 <td ...>，这里只在开标签里插一个属性，不重写它们。
@@ -11017,10 +11812,14 @@ async function renderModels(refresh) {
             (nm ? '<div class="hint">' + esc(nm) + '</div>' : '') +
             '<div class="mdbadges">' + (free ? '<span class="chip ok" title="' + esc(freeTitle) + '">免费</span>' : '') +
             capBadges(ex) + ctxProbeBadge(m) + '</div></td>' +
-          '<td>' + esc(platformLabel(c.name)) + '</td>' +
+          // 客户端列：虚拟模型（模型组/别名/转写产生的行）不写自己的标签——
+          // 它在 355 行里重复 355 次，而这一列的作用是区分平台，全是同一个值时
+          // 没有边际价值。来源列同理：只有「基线」（回退列表）才值得标出来，
+          // 「上游」是默认事实，写出来只是把每一行都染一遍绿。
+          '<td>' + (c.name === "__virtual__" ? '<span class="mddim">虚拟</span>' : esc(platformLabel(c.name))) + '</td>' +
           '<td>' + (isFallback
             ? '<span class="chip err" title="' + esc(srcTitle) + '">基线</span>'
-            : '<span class="chip ok" title="' + esc(srcTitle) + '">上游</span>') + '</td>' +
+            : '<span class="mddim">上游</span>') + '</td>' +
           '<td class="num">' + (ctx > 0 ? esc(fmtK(ctx)) : '<span class="hint">—</span>') + '</td>' +
           '<td class="num mdpricecell">' + mdPriceSummary(m) + '</td>' +
           '<td class="mdacts"><button class="xs mdopen" type="button" aria-expanded="false" title="展开这个模型的全部可编辑字段">详情</button></td>' +
@@ -13241,7 +14040,7 @@ const SC_BATCH_LABELS = {
 const scLabel = b => SC_BATCH_LABELS[b] || b;
 // 「全局默认」那一整块已经删掉：每个平台一个 Tab，各自编辑自己的时点。没有自定义
 // 的平台仍然跑配置里那份默认值，行里的 placeholder 会把默认值回显出来。
-const scKey = (c, b) => c + "\u0000" + b;
+const scKey = (c, b) => c + RL_SEP + b;
 const scHoursText = h => (h || []).join(", ");
 
 function scDurationText(seconds) {
@@ -14447,10 +15246,19 @@ function pkBySource(packs) {
   return Object.keys(map).map(k => map[k]);
 }
 /* 剩余天数越少越不透明：快过期的段颜色更实，一眼看得出该先用哪个。 */
-function pkCreditOpacity(days) {
-  const d = Math.max(0, Math.min(29, Number(days) - 1));
-  return (0.25 + 0.75 * (d / 29)).toFixed(2);
+// pkUrgency 把「还剩几天」翻译成三档紧急度。两个图（汇总的到期分布、账号卡片
+// 里的构成条）共用它，所以两处的颜色永远对得上——这是原来 pkCreditOpacity
+// 承担的角色，只是那版用透明度表达紧急度，读不出来。
+//
+// 三档的边界是操作意义：3 天内要动手、7 天内要留意、其余不用管。
+function pkUrgency(days) {
+  const d = Number(days);
+  if (!isFinite(d)) return { key: "later", color: "color-mix(in srgb, var(--ink-3) 55%, transparent)" };
+  if (d <= 3) return { key: "soon", color: "var(--bad)" };
+  if (d <= 7) return { key: "week", color: "var(--warn)" };
+  return { key: "later", color: "color-mix(in srgb, var(--ink-3) 55%, transparent)" };
 }
+
 function pkExpiryText(expiresAt) {
   const ms = Number(expiresAt || 0);
   if (!ms) return "无到期时间";
@@ -14519,14 +15327,14 @@ function renderExpiryDistribution(list, now) {
   });
   let out = '<div class="pk-expiry-chart">' +
     '<div class="pk-expiry-hdr"><span>剩余天数</span><span></span><b>剩余积分</b></div>';
-  sum.rows.forEach(r => {
-    let segs = "";
-    Object.keys(r.parts).sort().forEach(id => {
-      const w = Math.max(1, Math.round(r.parts[id] / r.total * 1000) / 10);
-      segs += '<i class="pk-expiry-seg" style="--seg-color:' + sum.colors[id] + ";opacity:" +
-        pkCreditOpacity(r.days) + ";flex:" + w.toFixed(1) + ' 1 0" title="' + esc(id) + " · " +
-        numf(r.parts[id]) + " 积分 · " + pkExpiryText(now + r.days * PK_DAY_MS) + '"></i>';
-    });
+    sum.rows.forEach(r => {
+      const urg = pkUrgency(r.days);
+      let segs = "";
+      Object.keys(r.parts).sort().forEach(id => {
+        const w = Math.max(1, Math.round(r.parts[id] / r.total * 1000) / 10);
+        segs += '<i class="pk-expiry-seg" data-urgent="' + urg.key + '" style="--seg-color:' + sum.colors[id] + ";flex:" + w.toFixed(1) + ' 1 0" title="' + esc(id) + " · " +
+          numf(r.parts[id]) + " 积分 · " + pkExpiryText(now + r.days * PK_DAY_MS) + '"></i>';
+      });
     out += '<div class="pk-expiry-row"><span title="' +
       esc(pkExpiryDateTime(now + r.days * PK_DAY_MS)) + '">' + r.days + " 天</span>" +
       '<div class="pk-expiry-track">' + segs + "</div>" +
@@ -14544,6 +15352,9 @@ function renderExpiryDistribution(list, now) {
 function pkSummaryCards(list, now) {
   if (!list || !list.length) return "";
   // 来源按「该来源在任一账号里的最大面额」降序，配色跟着这个顺序走。
+  // 配色表本身来自 pkAccountColorMap（和到期分布图共用），只是这里的键是
+  // 「来源」而不是「账号 id」——同一套色彩语法，两处不会给出两种颜色。
+  const accountColors = pkAccountColorMap(list);
   const stats = {}, order = [];
   list.forEach(a => {
     pkBySource(a.packages || []).forEach(s => {
@@ -14559,11 +15370,13 @@ function pkSummaryCards(list, now) {
   order.sort((x, y) => stats[y].size - stats[x].size);
   const colorOf = key => pkColor(order.indexOf(key));
   const maxRemain = Math.max(1, ...list.map(a => Number(a.remain) || 0));
-  const expiryColors = pkAccountColorMap(list);
   const cards = list.map(a => {
     const who = '<div class="who"><span class="nm">' +
       esc(a.label || String(a.id || "").slice(0, 8)) + "</span>" +
-      (a.state ? '<span class="realm">' + esc(a.state) + "</span>" : "") + "</div>";
+      // 这里的 a 是「积分批次」的聚合对象（见 crMerge），它没有账号状态——
+      // 原来那个 state 字段一直是空字符串。所以不显示状态标签：之前误用
+      // accountState() 会把空状态读成「禁用」，于是有余额的账号被标成禁用。
+      (a.pkgState ? '<span class="realm">' + esc(a.pkgState) + "</span>" : "") + "</div>";
     // 行级失败：只让这一张卡说失败，其它账号照常显示。合并组里某条通道挂了、
     // 另一条还有数时，错误退到卡片底部，不再把健康的余额藏掉。
     const cardErr = a.error && (Number(a.remain) || 0) <= 0
@@ -14575,14 +15388,14 @@ function pkSummaryCards(list, now) {
       return '<i style="width:' + (size / total * 100).toFixed(2) + "%;background:" + colorOf(s.key) +
         '" title="' + esc(s.name) + " " + fmtTok(size) + '"></i>';
     }).join("");
-    // 账号内到期条：先用总余额约束逐包金额，再把每段按剩余天数调透明度。
+    // 账号内到期条：先用总余额约束逐包金额，再按剩余天数给每段定紧急度。
+    // 和上面的汇总图同一条规则：颜色说「多急」，长度说「多少」。
     const segs = pkAccountSegments(a, now);
     const expiryTotal = Math.max(1, segs.reduce((acc, s) => acc + s.remain, 0));
-    const expiryColor = expiryColors[String(a.id || "")] || "var(--accent)";
-    const ebar = segs.map(s => '<i style="background:' + expiryColor + ";opacity:" +
-      pkCreditOpacity(s.days) + ";flex:" + Math.max(0.008, s.remain / expiryTotal).toFixed(4) +
+    const ebar = segs.map(s => { const u = pkUrgency(s.days); return '<i data-urgent="' + u.key + '" style="background:' + u.color +
+      ";flex:" + Math.max(0.008, s.remain / expiryTotal).toFixed(4) +
       ' 1 0" title="' + esc(s.name) + "\n" + numf(s.remain) + " 积分\n到期时间 " +
-      pkExpiryDateTime(s.expiresAt) + "（" + pkExpiryText(s.expiresAt) + '）"></i>').join("");
+      pkExpiryDateTime(s.expiresAt) + "（" + pkExpiryText(s.expiresAt) + '）"></i>'; }).join("");
     const legend = srcs.map(s => {
       const size = (s.packs || []).reduce((acc, p) => acc + (Number(p.size) || 0), 0);
       const created = (s.packs || []).map(p => String(p.created_at || "")).filter(Boolean).sort();

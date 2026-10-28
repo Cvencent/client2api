@@ -263,6 +263,25 @@ func (p *pool) loadDeviceLocked() {
 		p.deviceID = p.cfg.Identity.DeviceMid
 		return
 	}
+	// The desktop client's own device id wins over our generated one.
+	//
+	// It is the identity the vendor has already seen doing ordinary work:
+	// logins, model-list fetches, the daily launch report.  A fresh uuid has no
+	// history, and the claim endpoint reads that history -- measured live, a
+	// claim from our generated id answered 3012 ("unusual activity") while the
+	// identical request from the app's own id succeeded.  The desktop id is
+	// also what the client itself sends in its own claim, so matching it is
+	// what makes our request look like the one the popup button makes.
+	//
+	// Reading it is not a new secret surface: telemetry-state.json holds a
+	// device id and nothing else, and ~/.zcode/v2 is already a directory this
+	// module reads for credentials (auth.go).  A machine without the client
+	// keeps the generated id, which is the previous behaviour.
+	if mid := readDesktopDeviceMid(); mid != "" {
+		p.deviceID = mid
+		p.saveDeviceLocked()
+		return
+	}
 	if p.dir != "" {
 		var d struct {
 			DeviceMid string `json:"device_mid"`
@@ -319,6 +338,36 @@ func (p *pool) deviceMid() string {
 	defer p.mu.Unlock()
 	p.ensureLocked()
 	return p.deviceID
+}
+
+// adoptDesktopDeviceMid switches this process to the desktop client's own
+// device id and returns it, or "" when the client is not installed (or the id
+// is already in use).
+//
+// It is the recovery step for a 3012 risk-control refusal on the claim path.
+// The vendor reads the claim's device id, and an id it has never seen is what
+// the refusal is about: measured on this machine, the generated id was refused
+// while the app's own id was accepted seconds later on the same account, with no
+// change to the credential.  Adopting the desktop id is therefore the fix, not
+// a workaround -- it is the identity this machine actually uses with the
+// vendor.
+//
+// The new id is persisted, so the recovery costs one round trip once rather
+// than on every claim.
+func (p *pool) adoptDesktopDeviceMid() string {
+	mid := readDesktopDeviceMid()
+	if mid == "" {
+		return ""
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.ensureLocked()
+	if p.deviceID == mid {
+		return ""
+	}
+	p.deviceID = mid
+	p.saveDeviceLocked()
+	return mid
 }
 
 // captchaReady reports whether the JWT channel can be used at all.
