@@ -1422,6 +1422,11 @@ details.cfg summary { cursor: pointer; color: var(--ink-3); font-size: 12.5px; }
   transition: opacity 120ms var(--ease), transform 120ms var(--ease);
 }
 .cfgrow:hover::before { opacity: .55; transform: scaleY(1); }
+/* 配置页整体限宽并居中：输入框最多 620px，不限宽的话 1600px 窗口里右半屏
+   是空的，读起来像「左边有东西、右边什么都没有」。限宽之后两侧留白对称。 */
+#cfgForm { max-width: 860px; margin-left: auto; margin-right: auto; }
+#cfgForm .cfgrow { max-width: 100%; }
+
 /* 配置页的行：标签 / 输入 / 说明 三件竖着排，说明紧贴输入框。
    原来是 flex-wrap 让说明被推到行尾很远处（实测要横跨 1000px 才读到解释），
    读完字段名再去右边找说明，视线来回跳。 */
@@ -1971,7 +1976,7 @@ button.pfgToggle:hover:not(:disabled) { background: color-mix(in srgb, var(--acc
    （桌面应用的内嵌浏览器侧栏常见 500px 上下）折叠成一张张卡片，免得“操作”列
    要横向拖动才看得到。规则限定在 .acc.sc / .acc.stk，账号表和模型表不受影响。 */
 #view-taskscenter .box > header { flex-wrap: wrap; row-gap: 8px; }
-.acc.sc { min-width: 960px; }
+.acc.sc { min-width: 780px; }
 .acc.sc th, .acc.sc td { padding: 9px 12px; }
 /* 定时任务表头走机架轨道语言（同账号池/模型页），行悬停亮左缘刻度轨。 */
 .acc.sc thead th {
@@ -8558,13 +8563,14 @@ function go(v) {
 function fitChatHeight() {
   const view = document.getElementById("view-chat");
   if (!view || view.hidden) return;
-  const wrap = document.getElementById("viewWrap");
-  const base = document.querySelector(".cmdbar");
-  const mh = view.querySelector(":scope > .masthead");
-  if (!wrap) return;
-  const top = (base ? base.getBoundingClientRect().height : 52) +
-    (mh ? mh.getBoundingClientRect().height : 0);
-  const avail = Math.max(320, window.innerHeight - top - 8);
+  const ws = view.querySelector(".chat-workspace");
+  if (!ws) return;
+  // 按「工作区自己现在离视口底还有多远」算，而不是去猜顶栏和页头各占多少：
+  // 上一版用「视口 − 顶栏 − 页头」，漏掉了滚动容器的内边距和页面其他兄弟元素，
+  // 结果仍然溢出 54px（实测输入框 bottom 1004 > 视口 950）。直接量工作区的
+  // 上沿到视口底的距离最稳，容器怎么变都对得上。
+  const top = ws.getBoundingClientRect().top;
+  const avail = Math.max(260, Math.floor(window.innerHeight - top - 10));
   view.style.setProperty("--chat-h", avail + "px");
 }
 window.addEventListener("resize", () => { fitChatHeight(); }, { passive: true });
@@ -16922,7 +16928,7 @@ function scRenderRows() {
   // colgroup 把列宽钉死：六列全靠内容撑宽时，「时点」和「下一跳」两列宽度随
   // 每行内容跳动，扫一列扫不到底。
   box.innerHTML = '<div class="tbl-wrap"><table class="acc sc">' +
-    '<colgroup><col style="width:22%"><col style="width:250px">' +
+    '<colgroup><col style="width:26%"><col style="width:210px">' +
     '<col style="width:54px"><col style="width:88px"><col style="width:70px"><col style="width:132px"></colgroup>' +
     "<thead><tr>" +
     "<th>任务</th><th>时点 / 间隔 / Cron</th><th>启用</th><th>下一跳</th><th>自定义</th>" +
