@@ -20,7 +20,7 @@
 ### Installer
 
 - `client2api-setup-0.5.7.exe`（空包，不含账号凭据或本机配置）
-- SHA256：`__SHA256__`
+- SHA256：`36C10340CE0937C914A07B956DB310EB3D0C6F9C655A22F987F9FEAB9AE76C3A`
 
 ## [0.5.6] - 2026-10-29
 
