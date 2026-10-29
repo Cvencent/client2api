@@ -7589,6 +7589,22 @@ function toast(msg, kind) {
 }
 
 /* ── 请求 ─────────────────────────────────────────────────────────────── */
+// errText 把任意错误体折成一句人话。面板里 90 处提示都在拼 r.err，
+// 所以归一化放在 api() 一处，而不是逐处判断。
+function errText(v) {
+  if (v == null) return "";
+  if (typeof v === "string") return v;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  if (v instanceof Error) return String(v.message || v);
+  if (typeof v === "object") {
+    // 常见的三种形状：{message,type}、{error:{...}}、{code,detail}
+    const pick = v.message || v.msg || v.detail || v.error || v.code;
+    if (pick !== undefined && pick !== v) return errText(pick);
+    try { const j = JSON.stringify(v); return j && j !== "{}" ? j : "未知错误"; } catch (e) { return "未知错误"; }
+  }
+  return String(v);
+}
+
 async function api(path, opt) {
   opt = opt || {};
   const h = Object.assign({ "Accept": "application/json" }, opt.headers || {});
@@ -7609,7 +7625,11 @@ async function api(path, opt) {
   let data = null;
   if (text) { try { data = JSON.parse(text); } catch (e) { data = { raw: text }; } }
   if (res.status === 401 || res.status === 403) { showKey(); }
-  const err = data && (data.error || data.message) || (res.ok ? "" : ("HTTP " + res.status));
+  const rawErr = data && (data.error || data.message) || (res.ok ? "" : ("HTTP " + res.status));
+  // 错误归一化成**字符串**。OpenAI 风格的错误体是对象
+  // （{"error":{"message":"…","type":"…"}}），原来直接把对象赋给 err，
+  // 拼进提示就成了「读取模型失败：[object Object]」——90 处调用方全都这样。
+  const err = errText(rawErr);
   return { status: res.status, ok: res.ok, data: data, err: err };
 }
 const cbase = n => "/panel/api/clients/" + encodeURIComponent(n);
