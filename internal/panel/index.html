@@ -11103,6 +11103,12 @@ function b3dAcctItems(n) {
       sub: accountState(accGroupStat(g)).label,
       // 带上原始对象：3D 里选中一块板卡时，下方的检视面板要用它渲染可操作面。
       ref: { group: g, acct: a, client: n },
+      // 也给一份事实：总览 / 用量 / 积分这几页复用同一批账号条目，它们没有
+      // 专门的检视（没有可操作面），靠这组键值行回答「我选中的是什么」。
+      facts: [["平台", platformLabel(n)], ["状态", accountState(accGroupStat(g)).label],
+        ["调用", st ? numf(Number(st.requests) || 0) : "—"],
+        ["到期", (function () { const t = Date.parse(a.expires_at || ""); if (!isFinite(t)) return "—";
+          const d = Math.round((t - Date.now()) / 86400000); return d <= 0 ? "已过期" : ("还有 " + d + " 天"); })()]],
     });
   });
   return out;
@@ -11181,8 +11187,10 @@ function b3dSpec(view) {
     case "chat": return { shape: "ring", hint: "SANDBOX · DRAG", items: (MODELS || []).slice(0, 24).map(c => ({ label: c.name, value: (c.models || []).length, tone: "", sub: "模型", raw: (c.models || []).length,
           facts: [["客户端", c.name], ["模型", (c.models || []).length]] })) };
     case "config": return { shape: "tunnel", hint: "CONFIG · DRAG", items: [
-      { label: "监听地址", value: null, tone: "", sub: SNAP.listen || "", raw: 0 },
-      { label: "客户端", value: NAMES.length, tone: "", sub: "已启用", raw: NAMES.length },
+      { label: "监听地址", value: null, tone: "", sub: SNAP.listen || "", raw: 0,
+        facts: [["监听", SNAP.listen || "—"], ["鉴权", "见配置页"], ["数据目录", "见配置页"]] },
+      { label: "客户端", value: NAMES.length, tone: "", sub: "已启用", raw: NAMES.length,
+        facts: [["已启用", NAMES.length], ["就绪", (SNAP.clients || []).filter(c => c.ready).length]] },
       { label: "版本", value: null, tone: "", sub: "v" + (SNAP.version || "-"), raw: 0,
         facts: [["版本", "v" + (SNAP.version || "-")], ["客户端", NAMES.length], ["监听", SNAP.listen || "—"]] },
     ] };
