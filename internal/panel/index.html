@@ -186,6 +186,154 @@ button:not(.primary):not(.danger):hover:not(:disabled) {
   .box::after, button.primary::after { transition: none !important; }
 }
 
+/* ══ 特效层 2：骨架级改造（每页巨型页头 + 活动滚条 + 卡片 3D 倾斜 / 眩光）══
+   上一版只在既有布局里换皮，页面骨架仍是「顶栏 + KPI 一行 + 卡片网格」，
+   所以读起来还是普通后台。这一层动骨架：每个视图顶部加一个 masthead——
+   加大字号的主标题、等宽 kicker、一枚活的心跳、一个主读数，下面压一条
+   滚动活动条；顶栏瘦成一条状态带。 */
+
+/* ① 顶栏瘦身：它不再承担「页面标题」，只留面包屑、连接、动作。
+   标题交给下面每页的 masthead。 */
+.topbar { min-height: 42px; padding: 0 20px; border-bottom: 1px solid var(--line-soft); }
+.topbar h1 { font-size: 12.5px; font-weight: 560; color: var(--ink-3); letter-spacing: .02em; }
+.topbar .meta { font-size: 10px; }
+
+/* ② masthead：每页的巨型页头。 */
+.masthead {
+  position: relative;
+  padding: 30px 20px 0;
+  margin-bottom: 6px;
+  overflow: hidden;
+}
+.mh-top { display: flex; align-items: flex-end; gap: 18px; flex-wrap: wrap; }
+.mh-left { min-width: 0; flex: 1 1 320px; }
+.mh-kicker {
+  display: inline-flex; align-items: center; gap: 7px;
+  font: 600 10px/1 var(--mono); letter-spacing: .22em; text-transform: uppercase;
+  color: var(--accent-text);
+  margin-bottom: 10px;
+}
+.mh-kicker i {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--accent);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 75%, transparent);
+  animation: mhBeat 2.2s var(--ease) infinite;
+}
+@keyframes mhBeat { 0%,100% { opacity: .35; transform: scale(.85); } 50% { opacity: 1; transform: scale(1.15); } }
+.mh-title {
+  /* 巨型字号是「高级感」最便宜的一半：34 -> clamp 到 56px，字距收紧。 */
+  font-size: clamp(30px, 4.2vw, 52px);
+  font-weight: 680; letter-spacing: -.035em; line-height: .98;
+  color: var(--ink);
+  margin: 0;
+}
+.mh-sub {
+  margin-top: 11px; max-width: 64ch;
+  font-size: 13px; line-height: 1.6; color: var(--ink-3);
+}
+.mh-right { flex: 0 0 auto; display: flex; align-items: flex-end; gap: 26px; padding-bottom: 4px; }
+.mh-stat { text-align: right; }
+.mh-stat .k {
+  font: 600 9.5px/1 var(--mono); letter-spacing: .16em; text-transform: uppercase;
+  color: var(--ink-3); margin-bottom: 7px;
+}
+.mh-stat .v {
+  font: 700 clamp(24px, 3vw, 38px)/1 var(--mono);
+  letter-spacing: -.035em; color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.mh-stat .v em { font-style: normal; font-size: .5em; color: var(--ink-3); margin-left: 3px; letter-spacing: 0; }
+.mh-stat .s { margin-top: 6px; font-size: 11px; color: var(--ink-3); }
+.mh-stat.warn .v { color: var(--warn); }
+.mh-stat.bad .v { color: var(--bad); }
+
+/* ③ masthead 底部：滚动活动条。一条无限左移的信号带，读起来像机场的
+   航班信息牌——它让「这个系统在动」持续可见，而不是靠一次进场动画。 */
+.mh-ticker {
+  margin-top: 22px; position: relative;
+  border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+  padding: 9px 0; overflow: hidden;
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 6%, #000 94%, transparent);
+  mask-image: linear-gradient(to right, transparent, #000 6%, #000 94%, transparent);
+}
+.mh-ticker-track { display: inline-flex; align-items: center; gap: 0; white-space: nowrap; animation: mhScroll 46s linear infinite; }
+.mh-ticker:hover .mh-ticker-track { animation-play-state: paused; }
+@keyframes mhScroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+.mh-tick {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 0 18px; font: 11.5px/1 var(--mono); color: var(--ink-2);
+  border-right: 1px solid var(--line-soft);
+}
+.mh-tick b { color: var(--ink); font-weight: 620; }
+.mh-tick .dot { width: 5px; height: 5px; border-radius: 50%; flex: none; background: var(--ink-3); }
+.mh-tick.ok .dot { background: var(--ok); }
+.mh-tick.warn .dot { background: var(--warn); }
+.mh-tick.bad .dot { background: var(--bad); }
+.mh-tick .lat { color: var(--ink-3); }
+
+/* ④ 卡片 3D 倾斜 + 眩光（React Bits Tilt/Glare 手法）：鼠标在卡片上时，
+   卡片朝光标方向轻微倾斜，同时一道高光扫过。用 JS 写 --tx/--ty/--gx 三个
+   自定义属性，CSS 负责变换。reduced-motion 下整段关掉。 */
+.tilt { transform-style: preserve-3d; }
+.tilt-glare {
+  position: absolute; inset: 0; z-index: 3; pointer-events: none; border-radius: inherit;
+  background: radial-gradient(420px circle at var(--gx, 50%) var(--gy, 0%),
+    color-mix(in srgb, #fff 13%, transparent), transparent 55%);
+  opacity: 0; transition: opacity .25s var(--ease);
+}
+.box.tilting .tilt-glare, .acct-card.tilting .tilt-glare { opacity: 1; }
+
+/* ⑤ Click Spark：点击处迸射一圈粒子（React Bits Click Spark）。画布铺满视口、
+   不吃事件，每次点击生成 8 枚短命火花，rAF 衰减到零即停。 */
+#sparkField {
+  position: fixed; inset: 0; z-index: 2147483000; pointer-events: none;
+}
+
+/* ⑥ 账号池卡片墙：默认视图。表格退成可选（.acc-table 模式）。 */
+.acct-board { display: grid; grid-template-columns: repeat(auto-fill, minmax(268px, 1fr)); gap: 12px; padding: 4px 18px 18px; }
+.acct-card {
+  position: relative; overflow: hidden;
+  border: 1px solid var(--line-soft); border-radius: 13px;
+  background: color-mix(in srgb, var(--surface-2) 55%, transparent);
+  padding: 15px 16px 14px;
+  transition: transform .18s var(--ease-out), border-color .18s var(--ease-out), box-shadow .18s var(--ease-out);
+}
+.acct-card:hover { border-color: color-mix(in srgb, var(--accent) 30%, var(--line)); box-shadow: var(--shadow-sm); }
+.acct-card .ac-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.acct-card .ac-lamp { width: 9px; height: 9px; border-radius: 50%; flex: none; background: var(--ink-3); }
+.acct-card.ok .ac-lamp { background: var(--ok); box-shadow: 0 0 9px color-mix(in srgb, var(--ok) 75%, transparent); }
+.acct-card.warn .ac-lamp { background: var(--warn); box-shadow: 0 0 9px color-mix(in srgb, var(--warn) 75%, transparent); }
+.acct-card.bad .ac-lamp { background: var(--bad); box-shadow: 0 0 9px color-mix(in srgb, var(--bad) 75%, transparent); }
+.acct-card .ac-name { min-width: 0; flex: 1; font-size: 13.5px; font-weight: 640; letter-spacing: -.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acct-card .ac-state { font: 600 10px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); flex: none; }
+.acct-card.ok .ac-state { color: var(--ok); }
+.acct-card.warn .ac-state { color: var(--warn); }
+.acct-card.bad .ac-state { color: var(--bad); }
+.acct-card .ac-metric { display: flex; align-items: baseline; gap: 7px; }
+.acct-card .ac-metric b { font: 700 27px/1 var(--mono); letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
+.acct-card .ac-metric span { font-size: 11px; color: var(--ink-3); }
+.acct-card .ac-spark { height: 26px; margin: 9px 0 3px; }
+.acct-card .ac-rows { display: grid; gap: 5px; margin-top: 10px; }
+.acct-card .ac-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 11.5px; }
+.acct-card .ac-row .k { color: var(--ink-3); }
+.acct-card .ac-row b { font: 600 12px var(--mono); font-variant-numeric: tabular-nums; }
+.acct-card .ac-foot { display: flex; gap: 6px; margin-top: 12px; flex-wrap: wrap; }
+.acct-board-toggle { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+.acct-board-toggle button { border: 0; border-radius: 0; background: transparent; padding: 4px 11px; font-size: 11.5px; color: var(--ink-3); }
+.acct-board-toggle button.on { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent-text); font-weight: 600; }
+body.acct-mode-board .acc-table-wrap { display: none; }
+body.acct-mode-table .acct-board { display: none; }
+
+@media (max-width: 760px) {
+  .masthead { padding: 20px 12px 0; }
+  .mh-right { flex-basis: 100%; justify-content: flex-start; gap: 20px; }
+  .acct-board { grid-template-columns: repeat(auto-fill, minmax(74vw, 1fr)); padding: 4px 12px 14px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mh-kicker i, .mh-ticker-track, .masthead * { animation: none !important; }
+  .tilt, .acct-card { transform: none !important; }
+  .tilt-glare { display: none; }
+}
+
 
 /* ── 壳层：左侧导航 + 主区 ─────────────────────────────────────────── */
 .shell { display: grid; grid-template-columns: 208px 1fr; min-height: 100vh; }
@@ -6074,6 +6222,12 @@ html:not([data-theme="light"]) body::after {
             <option value="disabled">已停用</option>
             <option value="unknown">未知</option>
           </select></label>
+          <!-- 两种读法：卡片墙（默认，看状态）与表格（改东西）。数据同一个源，
+               切换只换呈现，不重新请求。 -->
+          <span class="acct-board-toggle" id="acctModeToggle" role="group" aria-label="账号池呈现方式">
+            <button type="button" data-acct-mode="board" class="on">卡片</button>
+            <button type="button" data-acct-mode="table">表格</button>
+          </span>
           <span class="note" id="accNote"></span>
           <button class="xs" id="btnRefreshAll" title="重新向上游续期/刷新已启用账号的登录凭据（续期 access token）；平台不提供续期时会如实提示">刷新凭据</button>
           <!-- 号池的批量动作原来五个平铺在表头，读的人要先分清哪个是「刷新」哪个是
@@ -6091,7 +6245,8 @@ html:not([data-theme="light"]) body::after {
             </div>
           </details>
         </header>
-        <div class="tbl-wrap">
+        <div class="acct-board" id="acctBoard"></div>
+        <div class="tbl-wrap acc-table-wrap">
         <table class="acc">
           <colgroup>
             <col class="col-mark"><col class="col-account"><col class="col-state"><col class="col-models"><col class="col-prio">
@@ -7743,7 +7898,7 @@ const VIEW_ENTERED = new Set();
       （每项 24ms，上限 12 项），像 React Bits 的 list reveal。
 
    全部尊重 prefers-reduced-motion：命中时一律跳过，直接落位。 */
-const MOTION_FX = { reduce: false, pressInit: false, spotInit: false };
+const MOTION_FX = { reduce: false, pressInit: false, spotInit: false, tiltInit: false };
 function motionReduce() { return MOTION_FX.reduce || (RL_STAGE && RL_STAGE.reduce); }
 
 // pressFx 装一次：按下时给元素一个压缩弹簧，松开时弹回。
@@ -7936,6 +8091,294 @@ function fxStaggerRows(tbody, max) {
   });
 }
 
+/* ── masthead：每个视图的巨型页头 ──────────────────────────────────────
+   13 个视图共用一套组件：等宽 kicker + 大标题 + 一行说明 + 右侧两枚
+   主读数，下面压一条滚动活动条。它替代了原来「顶栏一行小标题」的页头，
+   目的不是装饰，是把每一页的起点从「一条灰色横杠」变成一个有重量的
+   招牌——这是这一版和上一版最直观的区别。 */
+const MASTHEADS = {
+  routelive:  { kicker: "LIVE",       title: "路由实况", sub: "每个请求的落点，边发生边画。" },
+  overview:   { kicker: "STATUS",     title: "总览",     sub: "一屏回答「现在有没有事」。" },
+  accounts:   { kicker: "POOL",       title: "账号池",   sub: "机架上的每一块板卡都是一个账号；颜色只在有事时出现。" },
+  packages:   { kicker: "MODULES",    title: "客户端",   sub: "每个模块自己声明能力，这里照实呈现。" },
+  credits:    { kicker: "CREDITS",    title: "积分构成", sub: "按账期批次拆开的剩余与到期分布。" },
+  usage:      { kicker: "TRAFFIC",    title: "用量",     sub: "请求、token 与延迟都来自真实调用。" },
+  models:     { kicker: "CATALOG",    title: "模型与档位", sub: "目录从上游客户端实时拉取，价格与窗口可逐个覆盖。" },
+  platforms:  { kicker: "ROUTING",    title: "平台配置", sub: "路由组决定同一模型名在平台之间的偏好顺序。" },
+  chat:       { kicker: "SANDBOX",    title: "对话测试", sub: "先在这里验证一条链路，再交给真实调用方。" },
+  alerts:     { kicker: "ALERTS",     title: "平台告警", sub: "连续失败、WAF 拦截这类事件按时间成流。" },
+  taskscenter:{ kicker: "AUTOMATION", title: "任务中心", sub: "定时、批量、看板——该跑的自动跑。" },
+  logs:       { kicker: "STREAM",     title: "运行日志", sub: "网关自己说的话，按通道分开。" },
+  config:     { kicker: "CONFIG",     title: "配置",     sub: "改这里就是改这台机器的行为。" },
+};
+
+// addrTotal 把当前所有客户端的账号按状态聚合一次（masthead 的读数用它）。
+function acctTotals() {
+  const t = { total: 0, ready: 0, cooling: 0, risk: 0, fault: 0, disabled: 0 };
+  NAMES.forEach(n => accGroups((ACCTS[n] || {}).accounts).forEach(g => {
+    t.total++;
+    const k = accountState(accGroupStat(g)).key;
+    if (k === "ready") t.ready++;
+    else if (k === "cooling") t.cooling++;
+    else if (k === "risk") t.risk++;
+    else if (k === "fault") t.fault++;
+    else if (k === "disabled") t.disabled++;
+  }));
+  return t;
+}
+
+// acctStatTotals 把所有账号的流量切片求和（ACCTS[].stats），用量页的读数
+// 从这里来——它和账号池上那一列是同一份数据，不需要额外请求。
+function acctStatTotals() {
+  let requests = 0, tokens = 0, any = false;
+  NAMES.forEach(n => {
+    const st = (ACCTS[n] || {}).stats;
+    if (!st) return;
+    Object.keys(st).forEach(id => {
+      const s = st[id];
+      if (!s || typeof s !== "object") return;
+      any = true;
+      requests += Number(s.requests) || 0;
+      tokens += Number(s.total_tokens) || 0;
+    });
+  });
+  return any ? { requests: requests, tokens: tokens } : null;
+}
+
+// mastStats 给一个视图算出右侧两枚主读数。读不出来就返回空数组——宁可少
+// 一枚读数，也不编一个数字出来（这条原则来自 .impeccable.md）。
+// 只用已经确认存在的全局：NAMES / ACCTS / SNAP / MODELS / POOL / SC / 告警徽标。
+function mastStats(view) {
+  const t = acctTotals();
+  const readyClients = (SNAP.clients || []).filter(c => c.ready).length;
+  const pool = poolSum("in_flight");
+  switch (view) {
+    case "accounts":
+      return [
+        { k: "账号", v: String(t.total), s: t.ready + " 可用" },
+        { k: "需处理", v: String(t.risk + t.fault + t.disabled), s: t.cooling + " 冷却中", tone: (t.risk + t.fault + t.disabled) ? "bad" : "" },
+      ];
+    case "overview":
+      return [
+        { k: "可用率", v: t.total ? Math.round(t.ready / t.total * 100) + "%" : "—", s: t.ready + " / " + t.total },
+        { k: "在途", v: pool == null ? "—" : String(pool), s: "跨平台合计" },
+      ];
+    case "packages":
+      return [
+        { k: "模块", v: String(NAMES.length), s: readyClients + " 就绪" },
+        { k: "账号", v: String(t.total), s: t.ready + " 可用" },
+      ];
+    case "models":
+      return [
+        { k: "模型", v: String((MODELS || []).reduce((a, c) => a + ((c.models || []).length), 0)), s: (MODELS || []).length + " 个客户端" },
+      ];
+    case "platforms":
+      return [
+        { k: "平台", v: String((SNAP.clients || []).length), s: "已接入" },
+        { k: "就绪", v: String(readyClients), s: "能立刻接请求" },
+      ];
+    case "usage": {
+      const u = acctStatTotals();
+      return u
+        ? [
+            { k: "请求", v: numf(u.requests), s: "本进程累计" },
+            { k: "Token", v: fmtK(u.tokens), s: "输入 + 输出" },
+          ]
+        : [];
+    }
+    case "taskscenter": {
+      const rows = (SC.data && SC.data.rows) || [];
+      return [
+        { k: "定时任务", v: String(rows.length), s: rows.filter(r => r.group_enabled).length + " 已启用" },
+        { k: "平台", v: String((SNAP.clients || []).length), s: "参与调度" },
+      ];
+    }
+    case "alerts": {
+      const badge = $("#alertBadge");
+      const n = (badge && !badge.hidden) ? (Number(badge.textContent) || 0) : 0;
+      return [
+        { k: "未读", v: String(n), s: n ? "需要看一眼" : "干净", tone: n ? "bad" : "" },
+        { k: "平台", v: String((SNAP.clients || []).length), s: "在监控" },
+      ];
+    }
+  }
+  return [];
+}
+
+// mastTicker 造活动条的内容。优先用真实请求流水（route live 的记录），
+// 没有就用各平台的账号状态拼一条——总之让「系统在动」这件事有东西可看。
+function mastTicker() {
+  const items = [];
+  const tr = (RL_DATA && RL_DATA.traces) || [];
+  tr.slice(0, 10).forEach(t => {
+    const lanes = (t.lanes || []);
+    const win = lanes.find((_, i) => i === t.winner) || lanes[0] || {};
+    const who = t.client || win.client || "调用方";
+    const acct = win.account_label || win.account || win.client || "默认账号";
+    const lat = (win.latency_ms || 0) >= 1000 ? (win.latency_ms / 1000).toFixed(1) + "s" : (win.latency_ms ? win.latency_ms + "ms" : "—");
+    items.push({
+      cls: t.failed ? "bad" : (lanes.length > 1 ? "warn" : "ok"),
+      html: '<b>' + esc(who) + '</b> → ' + esc(acct) +
+        ' <span class="lat">' + esc(lat) + (t.failed ? " ✕" : (lanes.length > 1 ? " 改道" : " ✓")) + "</span>",
+    });
+  });
+  if (!items.length) {
+    NAMES.forEach(n => {
+      const a = (ACCTS[n] || {});
+      const groups = accGroups(a.accounts);
+      if (!groups.length) return;
+      const cls = a.unsupported ? "" : (readyGroups(n) ? "ok" : "warn");
+      items.push({
+        cls: cls,
+        html: '<b>' + esc(platformLabel(n)) + '</b> ' + groups.length + ' 个账号' +
+          ' <span class="lat">' + (a.unsupported ? "不支持账号管理" : (readyGroups(n) ? "就绪" : "待确认")) + "</span>",
+      });
+    });
+  }
+  // 兜底：加上几条系统事实，保证条子永远不是空的。
+  items.push({ cls: "ok", html: '<b>client2api</b> v' + esc(SNAP.version || "—") + ' <span class="lat">' + esc(SNAP.listen || "") + "</span>" });
+  items.push({ cls: "", html: '<b>存储</b> ' + esc(redisLabel()) + ' <span class="lat">' + NAMES.length + " 客户端</span>" });
+  return items;
+}
+
+// readyGroups 是一个客户端当前可用账号组的数量。
+function readyGroups(n) {
+  return accGroups((ACCTS[n] || {}).accounts).filter(g => accountState(accGroupStat(g)).key === "ready").length;
+}
+
+// mountMasthead 在视图顶部放好页头（只放一次），每次进页刷新读数与活动条。
+function mountMasthead(view) {
+  const host = document.getElementById("view-" + view);
+  const spec = MASTHEADS[view];
+  if (!host || !spec) return;
+  let mh = host.querySelector(":scope > .masthead");
+  if (!mh) {
+    mh = document.createElement("div");
+    mh.className = "masthead";
+    mh.innerHTML =
+      '<div class="mh-top">' +
+        '<div class="mh-left">' +
+          '<span class="mh-kicker"><i></i>' + esc(spec.kicker) + '</span>' +
+          '<h2 class="mh-title"></h2>' +
+          '<p class="mh-sub"></p>' +
+        '</div>' +
+        '<div class="mh-right"></div>' +
+      '</div>' +
+      '<div class="mh-ticker"><div class="mh-ticker-track"></div></div>';
+    host.insertBefore(mh, host.firstChild);
+  }
+  const titleEl = mh.querySelector(".mh-title");
+  const subEl = mh.querySelector(".mh-sub");
+  const rightEl = mh.querySelector(".mh-right");
+  titleEl.textContent = spec.title;         // 最终文本先落位（无动画时也对）
+  subEl.textContent = spec.sub;
+  if (!motionReduce()) {
+    const chars = Array.from(spec.title);
+    titleEl.innerHTML = chars.map((ch, i) =>
+      '<span style="display:inline-block;animation:ttlChar 420ms cubic-bezier(.16,1,.3,1) both;animation-delay:' + (i * 26) + 'ms">' +
+      esc(ch === " " ? "\u00a0" : ch) + "</span>").join("");
+  }
+  const stats = mastStats(view);
+  rightEl.innerHTML = stats.map(s =>
+    '<div class="mh-stat ' + (s.tone || "") + '"><div class="k">' + esc(s.k) + '</div>' +
+    '<div class="v">' + esc(s.v) + '</div><div class="s">' + esc(s.s) + '</div></div>').join("");
+  // 活动条：内容复制一份，让 -50% 的位移无缝循环。
+  const track = mh.querySelector(".mh-ticker-track");
+  const items = mastTicker();
+  const one = items.map(it => '<span class="mh-tick ' + (it.cls || "") + '"><i class="dot"></i>' + it.html + "</span>").join("");
+  track.innerHTML = one + one;
+}
+
+/* ── Click Spark（React Bits 手法）：点击处迸射火花 ─────────────────────
+   一个铺满视口的 canvas，pointerdown 时在该点生成 9 枚粒子，带初速与重力，
+   ~520ms 内衰减到零；没有粒子时循环停掉。它是纯反馈，不参与任何逻辑。 */
+const SPARK = { canvas: null, ctx: null, pts: [], raf: 0, dpr: 1 };
+function initSpark() {
+  if (SPARK.canvas || motionReduce()) return;
+  const c = document.createElement("canvas");
+  c.id = "sparkField";
+  c.setAttribute("aria-hidden", "true");
+  document.body.appendChild(c);
+  SPARK.canvas = c;
+  SPARK.ctx = c.getContext("2d");
+  if (!SPARK.ctx) return;
+  const size = () => {
+    SPARK.dpr = Math.min(2, window.devicePixelRatio || 1);
+    c.width = Math.round(window.innerWidth * SPARK.dpr);
+    c.height = Math.round(window.innerHeight * SPARK.dpr);
+  };
+  size();
+  window.addEventListener("resize", size, { passive: true });
+  window.addEventListener("pointerdown", ev => {
+    // 只对左键/主触点迸射；拖动和右键不打扰。
+    if (ev.button !== undefined && ev.button !== 0) return;
+    const n = 9;
+    for (let i = 0; i < n; i++) {
+      const a = (Math.PI * 2 * i) / n + Math.random() * 0.4;
+      const sp = 1.6 + Math.random() * 2.6;
+      SPARK.pts.push({ x: ev.clientX, y: ev.clientY, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 1.1, life: 1, r: 1.4 + Math.random() * 1.6 });
+    }
+    if (!SPARK.raf) SPARK.raf = requestAnimationFrame(sparkFrame);
+  }, { passive: true });
+}
+function sparkFrame() {
+  SPARK.raf = 0;
+  const ctx = SPARK.ctx, d = SPARK.dpr;
+  ctx.setTransform(d, 0, 0, d, 0, 0);
+  ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+  const live = [];
+  for (const p of SPARK.pts) {
+    p.life -= 0.045;
+    if (p.life <= 0) continue;
+    p.x += p.vx; p.y += p.vy; p.vy += 0.11;
+    ctx.globalAlpha = Math.max(0, p.life);
+    ctx.fillStyle = "rgba(150,175,255,1)";
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.r * p.life, 0, Math.PI * 2); ctx.fill();
+    live.push(p);
+  }
+  ctx.globalAlpha = 1;
+  SPARK.pts = live;
+  if (live.length) SPARK.raf = requestAnimationFrame(sparkFrame);
+  else ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+}
+
+/* ── 卡片 3D 倾斜 + 眩光（React Bits Tilt / Glare）────────────────────
+   鼠标在卡片上时按光标位置给一点透视旋转，同时把高光位置写进 --gx/--gy。
+   只挂 .acct-card（新建元素，安全），不碰含表格的 .box——transform 会改变
+   包含块，可能牵动表头的 sticky 行为，不值得为一点倾斜去冒险。 */
+function initTilt() {
+  if (MOTION_FX.tiltInit) return;
+  MOTION_FX.tiltInit = true;
+  let raf = 0, target = null, gx = 0, gy = 0;
+  window.addEventListener("pointermove", ev => {
+    const card = ev.target && ev.target.closest ? ev.target.closest(".acct-card") : null;
+    target = card;
+    if (!card) return;
+    const r = card.getBoundingClientRect();
+    gx = (ev.clientX - r.left) / r.width;
+    gy = (ev.clientY - r.top) / r.height;
+    card.style.setProperty("--gx", (gx * 100).toFixed(1) + "%");
+    card.style.setProperty("--gy", (gy * 100).toFixed(1) + "%");
+    card.classList.add("tilting");
+    if (raf || motionReduce()) return;
+    raf = requestAnimationFrame(() => {
+      raf = 0;
+      const c = target;
+      if (!c) return;
+      const rx = (0.5 - gy) * 7, ry = (gx - 0.5) * 7;
+      c.style.transform = "perspective(900px) rotateX(" + rx.toFixed(2) + "deg) rotateY(" + ry.toFixed(2) + "deg)";
+    });
+  }, { passive: true });
+  window.addEventListener("pointerleave", () => {
+    document.querySelectorAll(".acct-card.tilting").forEach(c => { c.classList.remove("tilting"); c.style.transform = ""; });
+  }, { passive: true });
+  // 离开卡片时复位（pointermove 的目标已不是卡片）。
+  window.addEventListener("pointermove", () => {
+    if (target) return;
+    document.querySelectorAll(".acct-card.tilting").forEach(c => { c.classList.remove("tilting"); c.style.transform = ""; });
+  }, { passive: true });
+}
+
 // SHELL 是顶栏自己的行为。
 //
 // 它原来管的是左侧栏的折叠——换成顶栏之后折叠没有意义了（一行横条没有
@@ -7943,7 +8386,7 @@ function fxStaggerRows(tbody, max) {
 // 现在只留一件事：把「点亮当前项」做成一个明确的入口。命令面板的按钮在页头
 // （#btnCmdk），快捷键 Ctrl+K 在文件末尾绑定，都不经过这里。
 const SHELL = {
-  init() { initPressFx(); initSpotlight(); },
+  init() { initPressFx(); initSpotlight(); initSpark(); initTilt(); },
   // syncActive 是导航「选中」的唯一入口。所有导航项都带 data-view，
   // 所以这里不关心它们在哪个容器里——将来再挪位置也不用改它。
   syncActive(view) {
@@ -7965,6 +8408,7 @@ function go(v) {
     else { VIEW_ENTERED.add(v); shown.classList.remove("settle"); }
     // 进场 stagger：每次切页都给该页一次轻量的编排（24ms/项，上限 12 项）。
     revealView(v);
+    mountMasthead(v);
   }
   fxTitle(TITLES[v]);
   document.title = TITLES[v] + " · client2api";
@@ -10086,6 +10530,81 @@ function renderTranscriptionCallInfo() {
   return routes;
 }
 
+/* ── 账号池卡片墙（默认呈现）───────────────────────────────────────────
+   一屏摆开所有账号：每块板卡是「一个账号」，状态灯 + 名字 + 状态词，主读数
+   是调用次数，下面几行是成败、在途、到期、状态说明，页脚是同一条动作链。
+   它和表格读同一份数据（accShownGroups 分页后的同一批组）和同一套 data-do
+   委托，所以两种呈现的功能完全等价，切换只换摆法。 */
+const ACC_MODE_KEY = "c2a.acctMode";
+function accMode() {
+  try { return localStorage.getItem(ACC_MODE_KEY) === "table" ? "table" : "board"; } catch (e) { return "board"; }
+}
+function setAccMode(m) {
+  const mode = m === "table" ? "table" : "board";
+  try { localStorage.setItem(ACC_MODE_KEY, mode); } catch (e) {}
+  document.body.classList.toggle("acct-mode-board", mode === "board");
+  document.body.classList.toggle("acct-mode-table", mode === "table");
+  $$("#acctModeToggle button").forEach(b => b.classList.toggle("on", b.dataset.acctMode === mode));
+}
+
+// acctCardActs 是板卡页脚的动作链。它和表格行共用 data-do，所以点击委托
+// （accPaneClick）一份逻辑两边都认；按钮文案也和表格那一行一致。
+function acctCardActs(a, caps, acts) {
+  const out = [];
+  out.push('<button class="xs" data-do="note" data-id="' + esc(a.id) + '" title="记录这个账号登录用的手机号或邮箱，用来辨认账号和重登">' + (a.operator_note ? "标识 ✓" : "标识") + "</button>");
+  if (caps.manage) {
+    out.push('<button class="xs" data-do="test" data-id="' + esc(a.id) + '">测试</button>');
+    out.push(accToggleButton(a, caps));
+    out.push('<button class="xs danger" data-do="del" data-id="' + esc(a.id) + '">删除</button>');
+  }
+  return out.join("");
+}
+
+function renderAcctBoard(pageRows, caps, acts, showBal) {
+  const host = $("#acctBoard");
+  if (!host) return;
+  if (!pageRows || !pageRows.length) {
+    host.innerHTML = '<div class="quietline"><i></i>当前筛选下没有账号。</div>';
+    return;
+  }
+  host.innerHTML = pageRows.map((g, i) => {
+    const st = accGroupStat(g);
+    const key = accountState(st).key;
+    const tone = key === "ready" ? "ok" : (key === "cooling" ? "warn" : "bad");
+    const a = g.rows[0];
+    const stat = accStatOf(a.id);
+    const req = stat ? (Number(stat.requests) || 0) : null;
+    const fail = stat ? (Number(stat.failures) || 0) : null;
+    const okN = req == null ? null : Math.max(0, req - (fail || 0));
+    const nm = g.identity || accountIdentity(a) || "账号";
+    const multi = g.rows.length > 1;
+    // 主读数优先给「调用次数」；一次都没调用过就退到余额（有余额模块时），
+    // 两者都没有才留白——不编数字。
+    let big = req == null ? "—" : numf(req);
+    let bigLab = "调用";
+    if (req == null && showBal) { big = ""; bigLab = "余额"; }
+    return '<article class="acct-card ' + tone + '" data-grp="' + esc(g.key) + '"' +
+        (multi ? ' tabindex="0"' : "") + '>' +
+      '<div class="tilt-glare"></div>' +
+      '<div class="ac-head"><span class="ac-lamp" aria-hidden="true"></span>' +
+        '<span class="ac-name" title="' + esc(nm) + '">' + esc(nm) + "</span>" +
+        '<span class="ac-state">' + esc(accountState(st).label) + "</span></div>" +
+      (big ? '<div class="ac-metric"><b>' + esc(big) + '</b><span>' + esc(bigLab) + "</span>" +
+        (multi ? "<span>· " + g.rows.length + " 个通道</span>" : "") + "</div>"
+        : '<div class="ac-metric">' + (showBal ? accBalanceCell(a) : "") + "</div>") +
+      '<div class="ac-rows">' +
+        '<div class="ac-row"><span class="k">成功 / 失败</span>' +
+          (okN == null ? '<b class="hint">—</b>' : "<b>" + okN + " / " + (fail ? "<span style=\"color:var(--bad)\">" + fail + "</span>" : "0") + "</b>") + "</div>" +
+        '<div class="ac-row"><span class="k">在途</span><b>' + inflightCell(CUR, a) + "</b></div>" +
+        '<div class="ac-row"><span class="k">到期</span><b>' + accExpiryCell(a) + "</b></div>" +
+        '<div class="ac-row"><span class="k">模型</span><b>' + accModelsCell(CUR, a) + "</b></div>" +
+        '<div class="ac-row"><span class="k">状态说明</span><b>' + noteCell(a) + "</b></div>" +
+      "</div>" +
+      '<div class="ac-foot">' + acctCardActs(a, caps, acts) + "</div>" +
+      "</article>";
+  }).join("");
+}
+
 function renderAccounts() {
   renderChips(); renderStats();
   renderTranscriptionCallInfo();
@@ -10177,6 +10696,7 @@ function renderAccounts() {
       ? "该平台不需要账号，可直接用上方地址调用转写"
       : (rec.unsupported ? "该模块不支持账号管理" : "还没有账号，点右上角「添加账号」");
     tb.innerHTML = '<tr><td colspan="' + cols + '" class="hint">' + (rec.unsupported ? empty : (BOOTING ? "正在加载账号…" : empty)) + '</td></tr>';
+    if ($("#acctBoard")) $("#acctBoard").innerHTML = '<div class="quietline"><i></i>' + esc(BOOTING ? "正在加载账号…" : empty) + '</div>';
     hideAccPager();
     return;
   }
@@ -10191,6 +10711,7 @@ function renderAccounts() {
       ? "没有「" + accStateFilterLabel(stateFilter) + "」状态的账号" + (qRaw ? "，关键词「" + qRaw + "」" : "")
       : "没有账号匹配「" + qRaw + "」";
     tb.innerHTML = '<tr class="filtered"><td colspan="' + cols + '" class="hint">' + esc(emptyText) + " · " + tail + '</td></tr>';
+    if ($("#acctBoard")) $("#acctBoard").innerHTML = '<div class="quietline"><i></i>' + esc(emptyText) + " · " + tail + '</div>';
     hideAccPager();
     return;
   }
@@ -10221,6 +10742,9 @@ function renderAccounts() {
   // 账号列的 hint 在 168px 列宽下会被省略号截断（id 又先截到 40 字符）。把截断后
   // 的全文回填进 title，鼠标停一下就能看全；这里统一补一次，不在行模板里再拼一遍。
   tb.querySelectorAll("td:nth-child(2) .hint").forEach(el => { el.title = el.textContent; });
+  // 同一批数据再画一遍卡片墙，并按记住的模式决定谁可见（CSS 用 body 类切换）。
+  renderAcctBoard(pageRows, caps, acts, showBal);
+  setAccMode(accMode());
 }
 
 // hideAccPager 把分页条收起来。池子小到一页放得下时它不该出现——一个永远点不
@@ -18324,12 +18848,14 @@ $("#clientChips").addEventListener("click", ev => {
   // 换池子就回到第 1 页：上一页的页码在另一个池子里通常没有意义。
   CUR = b.dataset.client; ACC_PAGE = 1; renderAccounts();
 });
-$("#accBody").addEventListener("change", ev => {
+// 账号池现在有两种呈现（卡片墙 / 表格），但动作是同一套——所以三个委托
+// 抽成具名函数，同时挂在两个容器上。data-do 由两侧共用，逻辑一份。
+function accPaneChange(ev) {
   const el = ev.target && ev.target.closest ? ev.target.closest(".accPrio") : null;
   if (!el) return;
   saveAccountPriority(el.dataset.id, el.value);
-});
-$("#accBody").addEventListener("click", ev => {
+}
+function accPaneClick(ev) {
   // 空态里那些「别的客户端有 N 个匹配」的徽章：切过去，搜索框里的关键词留着。
   const go = ev.target.closest && ev.target.closest("button[data-goto]");
   if (go) { CUR = go.dataset.goto; ACC_PAGE = 1; renderAccounts(); return; }
@@ -18345,18 +18871,34 @@ $("#accBody").addEventListener("click", ev => {
   if (b) { act(b); return; }
   // 多通道账号的分组行整行可点，展开/收起它下面的通道行。只重画这张表，不重新
   // 请求上游——展开一个账号不该产生任何网络流量，也不该动任何账号的状态。
-  const g = ev.target.closest && ev.target.closest("tr[data-grp]");
+  const g = accGrpFrom(ev);
   if (g) { accToggleOpen(CUR, g.dataset.grp); renderAccounts(); }
-});
+}
 // 分组行带 tabindex="0"，所以键盘也得能开合：Enter / 空格和点一下等价。
-$("#accBody").addEventListener("keydown", ev => {
+// accGrpFrom 找出这一下点/按到的是哪个「账号组」：表格里是组头行，卡片墙
+// 里是那块板卡。两种呈现共用一个键（data-grp），所以展开/收起的逻辑一份。
+function accGrpFrom(ev) {
+  const row = ev.target.closest && ev.target.closest("tr[data-grp]");
+  return row || (ev.target.closest ? ev.target.closest(".acct-card[data-grp]") : null);
+}
+function accPaneKey(ev) {
   if (ev.key !== "Enter" && ev.key !== " ") return;
-  const g = ev.target.closest && ev.target.closest("tr[data-grp]");
+  const g = accGrpFrom(ev);
   if (!g) return;
   ev.preventDefault();
   accToggleOpen(CUR, g.dataset.grp);
   renderAccounts();
-});
+}
+$("#accBody").addEventListener("change", accPaneChange);
+$("#accBody").addEventListener("click", accPaneClick);
+$("#accBody").addEventListener("keydown", accPaneKey);
+// 卡片墙用同一批委托：一块板卡上的按钮和表格里那一行是同一个 data-do。
+const acctBoardHost = $("#acctBoard");
+if (acctBoardHost) {
+  acctBoardHost.addEventListener("change", accPaneChange);
+  acctBoardHost.addEventListener("click", accPaneClick);
+  acctBoardHost.addEventListener("keydown", accPaneKey);
+}
 // 账号池搜索：只重排已经拿到的行，不重新请求上游。输入用 requestAnimationFrame 合并
 // 同一帧里的多次事件（中文输入法一次上屏会连发好几个 input），避免每敲一个字都重建
 // 整张表。#accSearch 在 box header 里，renderAccounts 只动 tbody，所以焦点不会丢。
@@ -18412,6 +18954,10 @@ if (accSortTable) accSortTable.addEventListener("keydown", ev => {
   ev.preventDefault();
   accSortBy(th.dataset.sort);
 });
+// 卡片 / 表格切换：只换呈现，数据与筛选一个字不动。
+$$("#acctModeToggle button").forEach(b => b.addEventListener("click", () => {
+  setAccMode(b.dataset.acctMode);
+}));
 $("#accStateFilter").addEventListener("change", () => {
   ACC_PAGE = 1;
   ACC_EXPANDED_FOR = "";
@@ -20271,6 +20817,8 @@ async function refreshAll(loud) {
   if (VIEW === "models") renderModels(false);
   if (VIEW === "config") renderConfig();
   if (VIEW === "logs") renderLogs();
+  // 数据到位后把当前页的 masthead 读数与活动条重算一遍（它读的就是上面这些）。
+  mountMasthead(VIEW);
   if (loud) toast("已刷新");
   return true;
 }
@@ -20317,6 +20865,8 @@ window.addEventListener("unhandledrejection", ev => panelBootError(ev.reason));
 (async function boot() {
   try {
     MOTION_FX.reduce = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+    // 首帧就把账号池的呈现模式定下来（卡片墙是默认），避免先闪一下表格。
+    setAccMode(accMode());
     SHELL.init();
     bgfStart();
     go((location.hash || "#overview").slice(1));
