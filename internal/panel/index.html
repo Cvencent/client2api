@@ -248,6 +248,52 @@ button:not(.primary):not(.danger):hover:not(:disabled) {
 
 /* ③（活动滚条已按用户要求移除：它晃眼，且不承载信息） */
 
+/* 板卡就地展开：点卡片本体，它长成整行，露出通道、优先级滑杆与完整动作链。
+   这样「看一个账号」不需要跳到表格——展开是就地发生的，位置感不丢。 */
+.acct-card { cursor: pointer; }
+.acct-card.open { grid-column: 1 / -1; cursor: default; }
+.ac-detail { margin-top: 13px; padding-top: 13px; border-top: 1px solid var(--line-soft); }
+.ac-detail .ac-rows { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); display: grid; gap: 5px 18px; }
+.ac-chans { display: grid; gap: 4px; margin: 11px 0 4px; }
+.ac-chan { display: flex; align-items: center; gap: 9px; padding: 6px 9px; border-radius: 8px; background: color-mix(in srgb, var(--surface-2) 45%, transparent); }
+.ac-chan .ac-chan-name { flex: 1; min-width: 0; font: 11.5px/1.4 var(--mono); color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ac-chan .ac-chan-state { font: 600 10px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); }
+.ac-chan.ok .ac-lamp { background: var(--ok); }
+.ac-chan.warn .ac-lamp { background: var(--warn); }
+.ac-chan.bad .ac-lamp { background: var(--bad); }
+.ac-prio { display: flex; align-items: center; gap: 12px; margin: 12px 0 4px; }
+.ac-prio .k { font-size: 11.5px; color: var(--ink-3); flex: none; }
+.ac-prio input[type="range"] {
+  flex: 1; min-width: 0; height: 22px; margin: 0; padding: 0; border: 0; background: none;
+  -webkit-appearance: none; appearance: none;
+}
+.ac-prio input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px; border-radius: 2px; background: var(--surface-2); border: 1px solid var(--line-soft);
+}
+.ac-prio input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none; width: 15px; height: 15px; margin-top: -6px;
+  border-radius: 50%; background: var(--accent); border: 2px solid var(--bg);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 55%, transparent); cursor: grab;
+}
+.ac-prio input[type="range"]::-moz-range-track { height: 4px; border-radius: 2px; background: var(--surface-2); }
+.ac-prio input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border: 2px solid var(--bg); border-radius: 50%; background: var(--accent); }
+.ac-prio output { flex: none; min-width: 2.5ch; text-align: right; font: 650 13px/1 var(--mono); font-variant-numeric: tabular-nums; }
+.ac-foot.wide { justify-content: flex-start; }
+
+/* 3D 舞台的检视面板：选中一块板卡后从舞台下沿展开，给出该对象可操作的面。 */
+.b3d-inspect {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 4;
+  max-height: 52%; overflow: auto;
+  padding: 12px 16px 14px;
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  border-top: 1px solid var(--line);
+  animation: inspectIn .34s cubic-bezier(.16,1,.3,1);
+}
+@keyframes inspectIn { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+.b3d-inspect-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; font-weight: 640; font-size: 13.5px; }
+.b3d-inspect-head .hint { font: 11px/1 var(--mono); color: var(--ink-3); }
+@media (prefers-reduced-motion: reduce) { .b3d-inspect { animation: none; } }
+
 /* ④ 网关星图：默认的导航面。地图铺满窗口，领域是空间里的区域；
    点一个区域，该领域的真实内容从右侧滑出成抽屉盖在地图上。顶栏那排
    Tab 在星图模式下直接不出现——地图就是导航。 */
@@ -295,6 +341,12 @@ body.atlas-on .shell { visibility: hidden; }
   transition: transform .42s cubic-bezier(.16,1,.3,1);
 }
 body.atlas-drawer .atlas-panel { transform: none; }
+@keyframes drawerGrow {
+  from { opacity: .35; transform: translateX(26%) scale(.95); }
+  to   { opacity: 1; transform: none; }
+}
+.atlas-panel.opening { animation: drawerGrow .44s cubic-bezier(.16, 1, .3, 1); }
+@media (prefers-reduced-motion: reduce) { .atlas-panel.opening { animation: none; } }
 .atlas-panel > header {
   display: flex; align-items: center; gap: 10px;
   padding: 12px 20px; border-bottom: 1px solid var(--line-soft);
@@ -10736,7 +10788,7 @@ function atlasBuild() {
 }
 
 /* ── 抽屉：把一个领域「真实的」section 搬进来 ─────────────────────────── */
-function atlasOpen(view) {
+function atlasOpen(view, ox, oy) {
   const host = ATLAS.panel;
   if (!host) return;
   const sec = document.getElementById("view-" + view);
@@ -10750,6 +10802,14 @@ function atlasOpen(view) {
   host.appendChild(sec);
   ATLAS.open = view;
   VIEW = view;
+  // 抽屉从被点的那块区域「长出来」：以点击点为变形原点，滑入 + 轻微放大。
+  // 这是共享元素过渡的手感——比无条件从右边滑进来更解释「我刚点了什么」。
+  if (typeof ox === "number" && typeof oy === "number") {
+    host.style.transformOrigin = Math.round(ox) + "px " + Math.round(oy) + "px";
+    host.classList.remove("opening");
+    void host.offsetWidth;
+    host.classList.add("opening");
+  }
   document.body.classList.add("atlas-drawer");
   const hint = ATLAS.host.querySelector(".atlas-hint");
   if (hint) hint.hidden = true;
@@ -10806,7 +10866,7 @@ function atlasMountControls() {
   cv.addEventListener("click", ev => {
     if (ATLAS.drag && ATLAS.drag.moved > 6) return;
     const i = atlasPickIndex(ev);
-    if (i >= 0 && ATLAS.zones[i]) atlasOpen(ATLAS.zones[i].view);
+    if (i >= 0 && ATLAS.zones[i]) atlasOpen(ATLAS.zones[i].view, ev.clientX, ev.clientY);
   });
 }
 function atlasRay(ev) {
@@ -11026,6 +11086,8 @@ function b3dAcctItems(n) {
       raw: st ? (Number(st.requests) || 0) : 0,
       tone: k === "ready" ? "ok" : (k === "cooling" ? "warn" : "bad"),
       sub: accountState(accGroupStat(g)).label,
+      // 带上原始对象：3D 里选中一块板卡时，下方的检视面板要用它渲染可操作面。
+      ref: { group: g, acct: a, client: n },
     });
   });
   return out;
@@ -11248,6 +11310,29 @@ function b3dReadout() {
   el.innerHTML = it
     ? "<b>" + esc(it.label) + "</b><span>" + esc(it.sub || "") + (it.value != null ? " · " + esc(String(it.value)) : "") + "</span>"
     : "<span>点击一块板卡看详情</span>";
+  b3dInspect();
+}
+
+// b3dInspect 把「选中」变成「可操作」：3D 里选中的那块板卡，若是账号，就在舞台
+// 下方铺开它的可操作面——通道、优先级滑杆、动作链。这样 3D 视图本身是可用的，
+// 不再只是「看一眼然后切回列表去改」。没有可操作内容时整块收起。
+function b3dInspect() {
+  const host = B3D.host;
+  if (!host) return;
+  const box = host.querySelector(".b3d-inspect");
+  if (!box) return;
+  const it = B3D.sel >= 0 ? B3D.items[B3D.sel] : null;
+  if (!it || !it.ref || B3D.view !== "accounts") { box.hidden = true; box.innerHTML = ""; return; }
+  const rec = ACCTS[(it.ref && it.ref.client) || CUR] || {};
+  const caps = rec.capabilities || {};
+  const acts = caps.actions || [];
+  const showBal = !!caps.balance;
+  const a = it.ref.acct, g = it.ref.group;
+  const prio = a.priority == null ? 0 : Number(a.priority) || 0;
+  box.hidden = false;
+  box.innerHTML = '<div class="b3d-inspect-head">' + esc(it.label) +
+    '<span class="hint">' + esc(accountHint(a)) + "</span></div>" +
+    acctDetailHTML(g, a, caps, acts, showBal, prio);
 }
 
 /* ── 帧循环 ────────────────────────────────────────────────────────────── */
@@ -11319,7 +11404,7 @@ function mountBoard3d(view) {
     board = document.createElement("div");
     board.className = "board3d";
     board.style.height = "clamp(320px, 44vh, 500px)";
-    board.innerHTML = '<span class="b3d-hint"></span><div class="b3d-read"></div><div class="b3d-none" hidden></div>';
+    board.innerHTML = '<span class="b3d-hint"></span><div class="b3d-read"></div><div class="b3d-none" hidden></div><div class="b3d-inspect" hidden></div>';
     const mh = host.querySelector(":scope > .masthead");
     if (mh) host.insertBefore(board, mh.nextSibling);
     else host.insertBefore(board, host.firstChild);
@@ -11342,6 +11427,17 @@ function mountBoard3d(view) {
     return;
   }
   if (B3D.canvas.parentNode !== board) board.insertBefore(B3D.canvas, board.firstChild);
+  if (board.dataset.fx !== "1") {
+    board.dataset.fx = "1";
+    board.addEventListener("input", ev => {
+      const el = ev.target;
+      if (!el || !el.classList || !el.classList.contains("accPrio")) return;
+      const out = el.parentElement && el.parentElement.querySelector(".pv");
+      if (out) out.textContent = el.value;
+    });
+    board.addEventListener("change", accPaneChange);
+    board.addEventListener("click", accPaneClick);
+  }
   b3dMountControls();
   const spec = b3dSpec(view);
   B3D.view = view;
@@ -11387,6 +11483,38 @@ function acctCardActs(a, caps, acts) {
   return out.join("");
 }
 
+// acctDetailHTML 是板卡「就地展开」后的详情：不再跳去表格，就地给出这个账号
+// 的可操作面——通道逐个列出、优先级用滑杆拖、动作链铺开。用 slider 而不是数字
+// 输入框，是因为「调优先级」本质是排序位置，拖比输更直接。
+function acctDetailHTML(g, a, caps, acts, showBal, prio) {
+  const chans = g.rows.map(r => {
+    const rs = accountState(r);
+    const tone = rs.key === "ready" ? "ok" : (rs.key === "cooling" ? "warn" : "bad");
+    return '<div class="ac-chan ' + tone + '"><span class="ac-lamp" aria-hidden="true"></span>' +
+      '<span class="ac-chan-name" title="' + esc(accountHint(r)) + '">' + esc(r.fields && r.fields.realm ? realmName(CUR, r.fields.realm) : (accountHint(r) || "通道")) + "</span>" +
+      '<span class="ac-chan-state">' + esc(rs.label) + "</span>" +
+      (caps.manage ? accToggleButton(r, caps) : "") + "</div>";
+  }).join("");
+  const bal = showBal && a ? accBalanceCell(a) : "";
+  const slider = caps && caps.manage
+    ? '<div class="ac-prio"><span class="k">优先级</span>' +
+        '<input type="range" class="accPrio" data-id="' + esc(a.id) + '" min="-20" max="20" step="1" value="' + esc(String(prio)) + '" ' +
+        'title="拖动调整：数字越小越优先（同优先级按轮询）。松手即保存" aria-label="账号优先级">' +
+        '<output class="pv">' + esc(String(prio)) + "</output></div>"
+    : "";
+  const balRow = bal ? '<div class="ac-row"><span class="k">余额</span><b>' + bal + "</b></div>" : "";
+  return '<div class="ac-detail">' +
+    '<div class="ac-rows">' +
+      '<div class="ac-row"><span class="k">账号</span><b title="' + esc(accountHint(a)) + '">' + esc(String(a.id || "")) + "</b></div>" +
+      balRow +
+      '<div class="ac-row"><span class="k">通道</span><b>' + g.rows.length + " 个</b></div>" +
+    "</div>" +
+    (chans ? '<div class="ac-chans">' + chans + "</div>" : "") +
+    slider +
+    '<div class="ac-foot wide">' + acctCardActs(a, caps, acts) + "</div>" +
+    "</div>";
+}
+
 function renderAcctBoard(pageRows, caps, acts, showBal) {
   const host = $("#acctBoard");
   if (!host) return;
@@ -11410,8 +11538,10 @@ function renderAcctBoard(pageRows, caps, acts, showBal) {
     let big = req == null ? "—" : numf(req);
     let bigLab = "调用";
     if (req == null && showBal) { big = ""; bigLab = "余额"; }
-    return '<article class="acct-card ' + tone + '" data-grp="' + esc(g.key) + '"' +
-        (multi ? ' tabindex="0"' : "") + '>' +
+    const open = accIsOpen(CUR, g.key);
+    const prio = a.priority == null ? 0 : Number(a.priority) || 0;
+    return '<article class="acct-card ' + tone + (open ? " open" : "") + '" data-grp="' + esc(g.key) + '"' +
+        ' tabindex="0" aria-expanded="' + (open ? "true" : "false") + '">' +
       '<div class="tilt-glare"></div>' +
       '<div class="ac-head"><span class="ac-lamp" aria-hidden="true"></span>' +
         '<span class="ac-name" title="' + esc(nm) + '">' + esc(nm) + "</span>" +
@@ -11427,6 +11557,7 @@ function renderAcctBoard(pageRows, caps, acts, showBal) {
         '<div class="ac-row"><span class="k">模型</span><b>' + accModelsCell(CUR, a) + "</b></div>" +
         '<div class="ac-row"><span class="k">状态说明</span><b>' + noteCell(a) + "</b></div>" +
       "</div>" +
+      (open ? acctDetailHTML(g, a, caps, acts, showBal, prio) : "") +
       '<div class="ac-foot">' + acctCardActs(a, caps, acts) + "</div>" +
       "</article>";
   }).join("");
@@ -19698,6 +19829,9 @@ function accPaneClick(ev) {
   if (b) { act(b); return; }
   // 多通道账号的分组行整行可点，展开/收起它下面的通道行。只重画这张表，不重新
   // 请求上游——展开一个账号不该产生任何网络流量，也不该动任何账号的状态。
+  // 表单控件自己的事：拖滑杆时点/松开不能触发「展开/收起」，否则一次重画就把
+  // 手柄从指针底下抽走，拖不动。
+  if (ev.target.closest && ev.target.closest("input, select, textarea, label, output")) return;
   const g = accGrpFrom(ev);
   if (g) { accToggleOpen(CUR, g.dataset.grp); renderAccounts(); }
 }
@@ -19725,6 +19859,13 @@ if (acctBoardHost) {
   acctBoardHost.addEventListener("change", accPaneChange);
   acctBoardHost.addEventListener("click", accPaneClick);
   acctBoardHost.addEventListener("keydown", accPaneKey);
+  // 滑杆拖动时先把读数跟上（真正写回走 change，松手一次）。
+  acctBoardHost.addEventListener("input", ev => {
+    const el = ev.target;
+    if (!el || !el.classList || !el.classList.contains("accPrio")) return;
+    const out = el.parentElement && el.parentElement.querySelector(".pv");
+    if (out) out.textContent = el.value;
+  });
 }
 // 账号池搜索：只重排已经拿到的行，不重新请求上游。输入用 requestAnimationFrame 合并
 // 同一帧里的多次事件（中文输入法一次上屏会连发好几个 input），避免每敲一个字都重建
