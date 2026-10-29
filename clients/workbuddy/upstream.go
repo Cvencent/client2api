@@ -190,6 +190,18 @@ const (
 	ErrPromptTooLong
 	ErrImageInvalid
 	ErrClient
+	// ErrFunctionParams is the vendor's 11129 "invalid function call
+	// parameters".  It is deliberately NOT folded into ErrBadParams: that one
+	// means the request body we assembled could not even be unmarshalled
+	// (11101), a defect of ours that every platform would repeat.  11129 is
+	// narrower and model-specific: the body parsed, but this platform's tool
+	// validator refuses a construct in `tools[].function.parameters` (an empty
+	// schema, draft-4 tuple-form `items`, a root without `type`, ...).  body.go
+	// rewrites those constructs into the shape the validator accepts; whatever
+	// still trips it is model-specific, so a sibling platform running a
+	// different model can serve the same conversation and this kind must fail
+	// over instead of answering 400.
+	ErrFunctionParams
 )
 
 func (k ErrKind) String() string {
@@ -208,6 +220,8 @@ func (k ErrKind) String() string {
 		return "content_blocked"
 	case ErrBadParams:
 		return "bad_params"
+	case ErrFunctionParams:
+		return "function_params"
 	case ErrAccountFault:
 		return "account_fault"
 	case ErrModelBlocked:
@@ -576,7 +590,16 @@ func Classify(status int, body string) ErrKind {
 	// The marker check is deliberately NOT status-gated: upstream reports
 	// parameter problems as HTTP 200 carrying a business envelope, and doJSON
 	// classifies those by re-running Classify over the envelope message.
-	if strings.Contains(body, badParamsMarkerMsg) || hasBusinessCode(body, badParamsCode) || hasBusinessCode(body, functionParamsCode) {
+	//
+	// 11129 is checked FIRST and given its own kind.  It means the platform's
+	// tool validator refused the schema in `tools[].function.parameters`, which
+	// is model-specific and worth failing over; 11101 ("Unmarshal chat params
+	// failed") means the body we built is unparseable, which no sibling would
+	// serve.
+	if hasBusinessCode(body, functionParamsCode) {
+		return ErrFunctionParams
+	}
+	if strings.Contains(body, badParamsMarkerMsg) || hasBusinessCode(body, badParamsCode) {
 		return ErrBadParams
 	}
 	if status == http.StatusUnauthorized {

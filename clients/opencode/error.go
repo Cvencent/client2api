@@ -131,7 +131,14 @@ var (
 	freeTierMarkers = []string{"free tier", "free-tier", "freetier"}
 	rateMarkers     = []string{"rate limit", "ratelimit", "too many requests", "slow down"}
 	quotaMarkers    = []string{"insufficient credit", "out of credit", "no credit", "credit balance",
-		"insufficient balance", "insufficient funds", "payment required", "billing", "quota"}
+		"insufficient balance", "insufficient funds", "payment required", "billing", "quota",
+		// FreeUsageLimitError is the vendor's free-tier gate refusal: the message
+		// carries neither "rate limit" nor "quota" nor "free tier", so without
+		// this marker it fell to the 429 status fallback and parked the account
+		// for one minute, forever.  The gate refuses whatever the transport
+		// looks like, so the account parks for quota_cooldown instead of
+		// retrying every minute against a wall that does not move.
+		"freeusagelimit", "free usage limit", "usage limit reached"}
 	authMarkers = []string{"missing api key", "invalid api key", "unauthorized", "unauthenticated",
 		"not authenticated", "authentication", "api key"}
 	// contextMarkers are the wordings a prompt-size refusal actually uses.  They
@@ -190,6 +197,10 @@ func classifyType(typ string) failureKind {
 		// Must precede the generic "auth" arm below: the vendor's free-tier
 		// refusal is not a bad key.
 		return kindFreeTier
+	case strings.Contains(lower, "usagelimit") || strings.Contains(lower, "usage limit"):
+		// FreeUsageLimitError: the free-tier gate refusal.  Quota, not rate —
+		// see the quotaMarkers note.
+		return kindQuota
 	case strings.Contains(lower, "ratelimit") || strings.Contains(lower, "toomanyrequest"):
 		return kindRate
 	case strings.Contains(lower, "credit") || strings.Contains(lower, "quota") ||

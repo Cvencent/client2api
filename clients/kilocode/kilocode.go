@@ -39,7 +39,7 @@ const maxErrorBytes = 64 << 10
 
 var defaultHTTPClient = &http.Client{
 	Transport: &http.Transport{
-		Proxy:               http.ProxyFromEnvironment,
+		Proxy:               nil,
 		ForceAttemptHTTP2:   true,
 		MaxIdleConns:        32,
 		MaxIdleConnsPerHost: 8,

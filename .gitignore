@@ -115,3 +115,4 @@ client2api.pid
 # 和 .omo/ / .codegraph/ / .oil-ui/ 同一类。agent 会顺手往里写 markdown，而仓库是
 # public 的，漏挡一次就可能把本地笔记连同别的痕迹一起推上去。
 .workbuddy/
+.zcode/

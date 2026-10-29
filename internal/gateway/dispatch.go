@@ -373,6 +373,16 @@ func (s *server) routeAndServeMessages(w http.ResponseWriter, r *http.Request, i
 		}
 		in.stat.uid = in.rec.Account
 
+		// A bare transport error carries no kind, so the failover predicates
+		// below would read it as "unclassified, do not retry" and the caller
+		// would get a 502 while a healthy sibling platform sat next in the
+		// chain.  Promote only provable transport faults; a request-shape
+		// refusal keeps its answer.  See normalizeUnclassifiedFailure.
+		err = normalizeUnclassifiedFailure(err)
+		if in.rec.Account == "" {
+			in.rec.Account = core.ErrorAccountID(err)
+		}
+
 		f, classified := core.AsFailure(err)
 		retryable := classified && core.Retryable(f.Kind)
 		if retryable {
@@ -422,8 +432,10 @@ func (s *server) routeAndServeMessages(w http.ResponseWriter, r *http.Request, i
 	// grouping and the console row are wrong without it.
 	// A vendor may answer an exhausted account with HTTP 200 and the refusal
 	// inside the stream.  Nothing has reached the caller yet, so reading the
-	// first frame here is free: a classified retryable verdict closes that
+	// leading frames here is free: a classified retryable verdict closes that
 	// stream and hands the request to the next platform instead of the caller.
+	// The probe stops at the first user-visible byte, so this covers a refusal
+	// that arrives behind a run of empty or reasoning-only frames.
 	probe, probeErr := probeFirstFrame(stream)
 	if probeErr != nil {
 		stream.Close()

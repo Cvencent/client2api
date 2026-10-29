@@ -59,6 +59,12 @@ func newTestClient(t *testing.T, cfg Config) *Client {
 
 func newFakeClient(t *testing.T, cfg Config, fn roundTripFunc) *Client {
 	t.Helper()
+	// The fake transport replaces the whole HTTP path, so the TLS profile must
+	// be off: a hermetic test must never reach the network because a default
+	// fingerprint was configured.
+	if cfg.TLSProfile == "" {
+		cfg.TLSProfile = "none"
+	}
 	c := newTestClient(t, cfg)
 	c.deps.HTTPClient = &http.Client{Transport: fn}
 	return c

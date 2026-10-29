@@ -207,6 +207,31 @@ func (e *apiError) promptTooLong() bool {
 	return false
 }
 
+// isTransportFailure reports whether err describes the connection rather than
+// the vendor's answer about this credential.
+//
+// The distinction matters because this module's cooldown ladder ends in a
+// PERMANENT "abnormal" park: four failed rounds and the account leaves rotation
+// until an operator revives it.  That is the right response to a credential the
+// vendor keeps rejecting, and the wrong response to a platform outage -- during
+// the 2026-10-29 wedge, 24 healthy sessions were parked this way by connection
+// EOFs that said nothing about any of them.
+//
+// A transport failure carries no HTTP status and no business code, by
+// definition: the vendor never answered.
+func isTransportFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	var api *apiError
+	if errors.As(err, &api) {
+		return api.Status == 0 && api.Code == ""
+	}
+	// Anything that is not the module's own typed refusal came from the
+	// transport stack (a *url.Error, a TLS error, a context deadline).
+	return true
+}
+
 // failureKind maps an error onto the contract's failure vocabulary.
 func failureKind(err error) core.FailureKind {
 	var api *apiError

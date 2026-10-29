@@ -9,6 +9,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"client2api/internal/core"
@@ -191,6 +192,14 @@ type chatStream struct {
 	// respCalls buffers the function_call items announced on a Responses
 	// stream, keyed by output_index.
 	respCalls map[int]*respCall
+
+	// firstTimer bounds the wait for the first visible frame, firstSeen records
+	// that one arrived, and firstTimedOut says this timer -- not the vendor --
+	// ended the stream.  See defaultFirstToken for why an SSE keep-alive must
+	// not be allowed to hold this deadline open.
+	firstTimer    *time.Timer
+	firstSeen     atomic.Bool
+	firstTimedOut atomic.Bool
 }
 
 // httpResponse is the stream's handle on the underlying HTTP response; it is
@@ -205,7 +214,7 @@ func newChatStream(c *Client, resp *httpResponseAlias, prov ProviderConfig, acco
 	if c != nil && c.pool != nil && accountID != "" {
 		c.pool.noteInFlight(accountID, 1)
 	}
-	return &chatStream{
+	s := &chatStream{
 		client:    c,
 		resp:      resp,
 		body:      body,
@@ -218,6 +227,29 @@ func newChatStream(c *Client, resp *httpResponseAlias, prov ProviderConfig, acco
 		wire:      c.wireFormat(),
 		respCalls: make(map[int]*respCall),
 	}
+	// A relay that queues a request keeps the TCP stream alive with SSE
+	// comments, so the byte-idle deadline never fires and the caller waits
+	// minutes for what turns out to be an error.  This deadline is measured
+	// from the first visible frame instead, and closing the body is what makes
+	// that wait visible to Recv as a stall.
+	if d := c.cfg.firstToken(); d > 0 {
+		s.firstTimer = time.AfterFunc(d, func() {
+			if s.firstSeen.Load() {
+				return
+			}
+			s.firstTimedOut.Store(true)
+			_ = body.Close()
+		})
+	}
+	return s
+}
+
+// noteFirstVisible stops the first-token deadline once a frame the caller can
+// see (or the end of the stream) has arrived.
+func (s *chatStream) noteFirstVisible() {
+	if s.firstTimer != nil && s.firstSeen.CompareAndSwap(false, true) {
+		s.firstTimer.Stop()
+	}
 }
 
 func (s *chatStream) Recv() (core.Event, error) {
@@ -228,15 +260,26 @@ func (s *chatStream) Recv() (core.Event, error) {
 		if len(s.pending) > 0 {
 			ev := s.pending[0]
 			s.pending = s.pending[1:]
+			if eventIsVisible(ev) {
+				s.noteFirstVisible()
+			}
 			return ev, nil
 		}
 		if s.done {
+			s.noteFirstVisible()
 			s.release()
 			return core.Event{}, io.EOF
 		}
 		frame, err := s.reader.next()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
+				// A deadline this module imposed ends the body itself, and a
+				// closed body reads as EOF.  Treating that as a normal end would
+				// hand the caller a completed-looking turn that never produced a
+				// byte, so the stall is reported instead.
+				if s.firstTimedOut.Load() || s.body.timedOut() {
+					return s.readFailure(err)
+				}
 				s.endStream()
 				continue
 			}
@@ -246,12 +289,32 @@ func (s *chatStream) Recv() (core.Event, error) {
 	}
 }
 
+// eventIsVisible reports whether the caller can already see this event.  Usage
+// frames and empty deltas are bookkeeping and must not stop the first-token
+// deadline; everything else is an answer in progress.
+func eventIsVisible(ev core.Event) bool {
+	switch ev.Type {
+	case core.EventDelta:
+		return ev.Delta != "" || ev.Reasoning != ""
+	case core.EventToolCall, core.EventError, core.EventDone:
+		return true
+	}
+	return false
+}
+
 func (s *chatStream) readFailure(err error) (core.Event, error) {
 	s.done = true
 	ctxErr := s.ctxErr()
 	s.release()
 	if ctxErr != nil {
 		return core.Event{}, ctxErr
+	}
+	// The first-token deadline closed the body.  Report it as the stall it is,
+	// with a kind the gateway can act on: nothing visible was produced, so a
+	// sibling platform can still serve the turn.
+	if s.firstTimedOut.Load() {
+		msg := fmt.Sprintf("no visible frame within %s (the provider kept the connection alive without answering)", s.client.cfg.firstToken())
+		return core.Event{}, core.Fail(s.client.Name(), s.accountID, core.FailureUpstream, 0, fmt.Errorf("openai-compat: %s", msg))
 	}
 	if s.body.timedOut() {
 		msg := fmt.Sprintf("the stream stalled for %s", s.client.cfg.streamIdle())
@@ -408,6 +471,9 @@ func (s *chatStream) finishReason() string {
 func (s *chatStream) release() {
 	s.closeOnce.Do(func() {
 		s.released = true
+		if s.firstTimer != nil {
+			s.firstTimer.Stop()
+		}
 		if s.client != nil && s.client.pool != nil && s.accountID != "" {
 			s.client.pool.noteInFlight(s.accountID, -1)
 		}

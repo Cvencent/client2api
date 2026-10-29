@@ -2,6 +2,7 @@ package loomy
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"testing"
 	"time"
@@ -90,29 +91,36 @@ func TestACancelledCallerDoesNotBurnTheOtherCandidates(t *testing.T) {
 }
 
 // A deadline is the other half of the same question.  Loomy's own chat timeout
-// arrives as context.DeadlineExceeded, and that one IS evidence: the vendor
-// stopped answering, so the account should cool down.  Only a plain
-// cancellation from the caller is exempt.
-func TestOurOwnTimeoutStillCoolsTheAccountDown(t *testing.T) {
+// arrives as context.DeadlineExceeded, which does mean the vendor stopped
+// answering -- but "no answer within OUR deadline" describes the connection,
+// not the credential.  It must not climb the ladder to its permanent abnormal
+// rung; the platform is reported to the gateway, which keeps its own cooling
+// window for exactly this.
+func TestOurOwnTimeoutDoesNotCondemnTheAccount(t *testing.T) {
 	// chat_timeout fires first and first_byte_timeout is out of the way, so the
 	// failure reported here is the chat deadline rather than our no-response
 	// watchdog.
 	c := newTestClient(t, `{"chat_timeout":"20ms","first_byte_timeout":"30s"}`, deadlineTransport{})
 	seedAccount(t, c, "loomy-1", testToken, 0)
 
-	if _, err := c.Chat(context.Background(), &core.ChatRequest{
+	_, err := c.Chat(context.Background(), &core.ChatRequest{
 		Model:    "deepseek-v4-flash-0731",
 		Messages: []core.Message{{Role: "user", Content: "hi"}},
-	}); err == nil {
+	})
+	if err == nil {
 		t.Fatal("Chat succeeded although the transport never answered")
+	}
+	if !errors.Is(err, core.ErrPlatformExhausted) {
+		t.Fatalf("err = %v, want ErrPlatformExhausted so the gateway moves on", err)
 	}
 
 	acc, _ := c.store.lookup("loomy-1")
 	if acc.dead {
 		t.Error("a timeout parked the account as dead")
 	}
-	if acc.selectable(time.Now()) {
-		t.Error("our own chat timeout did not cool the account down")
+	if acc.failures != 0 || acc.cooldownStage != 0 || acc.abnormal {
+		t.Errorf("a timeout was charged to the credential: failures=%d stage=%d abnormal=%v",
+			acc.failures, acc.cooldownStage, acc.abnormal)
 	}
 }
 

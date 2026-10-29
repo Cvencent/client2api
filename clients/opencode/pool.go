@@ -538,8 +538,14 @@ func (p *pool) setCooldown(id string, until time.Time, reason string) bool {
 	}
 	a.CooldownUntil = until.UTC().Format(time.RFC3339)
 	a.LastError = reason
-	if strings.Contains(strings.ToLower(reason), "credit") ||
-		strings.Contains(strings.ToLower(reason), "quota") {
+	// The kind is read off the reason text because the panel shows it next to
+	// the message: a long park whose reason names no quota wording would read
+	// as "rate limited", which is the one label that contradicts the duration.
+	// "usage limit" is the vendor's free-tier gate refusal (FreeUsageLimitError)
+	// — a long park, not a throttle.
+	lower := strings.ToLower(reason)
+	if strings.Contains(lower, "credit") || strings.Contains(lower, "quota") ||
+		strings.Contains(lower, "usage limit") {
 		a.CooldownKind = "quota"
 	} else {
 		a.CooldownKind = "rate"

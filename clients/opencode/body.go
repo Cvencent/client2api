@@ -3,6 +3,7 @@ package opencode
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"client2api/internal/core"
 )
@@ -140,6 +141,40 @@ func ensureFreeTierTools(tools []oaiTool) []oaiTool {
 	return tools
 }
 
+// freeTierEnvBlock is the environment block the vendor CLI injects into its
+// system message.  The free-tier gate inspects the system message for it: a
+// request whose system message carries an `<env>` block naming a working
+// directory passes, and one without is refused with FreeUsageLimitError no
+// matter what the rest of the handshake carries.  The shape is what matters —
+// the `<env>` wrapper, the `Working directory:` line, two-space indent — not
+// the path, so a neutral placeholder stands in for the gateway's own cwd.
+const freeTierEnvBlock = "<env>\n  Working directory: /workspace\n</env>"
+
+// joinSystemBlock appends the gate's block to the caller's system content.
+// The content may be a plain string or an array of text parts; anything else
+// is replaced by the block alone, because a malformed system message is the
+// caller's to fix and the gate only needs the block to be present.
+func joinSystemBlock(content any, block string) any {
+	switch v := content.(type) {
+	case string:
+		if strings.TrimSpace(v) == "" {
+			return block
+		}
+		return v + "\n\n" + block
+	case []any:
+		for _, part := range v {
+			if m, ok := part.(map[string]any); ok {
+				if text, ok := m["text"].(string); ok && strings.TrimSpace(text) != "" {
+					return append(v, map[string]any{"type": "text", "text": block})
+				}
+			}
+		}
+		return block
+	default:
+		return block
+	}
+}
+
 // buildChatBody renders a core.ChatRequest as the JSON Zen expects.
 //
 // It validates and fails before any account is taken, so a request this module
@@ -166,13 +201,36 @@ func buildChatBodyWith(cfg Config, req *core.ChatRequest, free bool) ([]byte, er
 		return nil, fmt.Errorf("%w: messages are required", core.ErrUnsupported)
 	}
 
-	msgs := make([]oaiMessage, 0, len(req.Messages))
-	for i, m := range req.Messages {
-		wire, err := wireMessage(m, i)
-		if err != nil {
-			return nil, err
+	msgs := make([]oaiMessage, 0, len(req.Messages)+1)
+	if free {
+		// The vendor's free-tier gate inspects the system message for the
+		// environment block the CLI injects; a request without one is refused
+		// with FreeUsageLimitError however valid the rest of the handshake is.
+		// The first system message, when the caller supplied one, keeps its
+		// place and gains the block; otherwise the block opens the conversation.
+		injected := false
+		for i, m := range req.Messages {
+			wire, err := wireMessage(m, i)
+			if err != nil {
+				return nil, err
+			}
+			if !injected && m.Role == "system" {
+				wire.Content = joinSystemBlock(m.Content, freeTierEnvBlock)
+				injected = true
+			}
+			msgs = append(msgs, wire)
 		}
-		msgs = append(msgs, wire)
+		if !injected {
+			msgs = append([]oaiMessage{{Role: "system", Content: freeTierEnvBlock}}, msgs...)
+		}
+	} else {
+		for i, m := range req.Messages {
+			wire, err := wireMessage(m, i)
+			if err != nil {
+				return nil, err
+			}
+			msgs = append(msgs, wire)
+		}
 	}
 
 	tools := make([]oaiTool, 0, len(req.Tools))

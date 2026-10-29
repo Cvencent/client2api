@@ -931,10 +931,11 @@ func (s *server) serveRemainingCandidates(w http.ResponseWriter, r *http.Request
 		if err == nil {
 			// Some vendors answer an exhausted account with HTTP 200 and put the
 			// refusal inside the stream.  Nothing has been written to the caller
-			// yet at this point, so the first frame is still free to read: when
-			// it is a classified retryable refusal the stream is closed and the
-			// next platform gets the request instead of the caller being handed
-			// a failure a healthy sibling could have avoided.
+			// yet at this point, so the leading frames are still free to read:
+			// when the platform refuses before producing any visible content the
+			// stream is closed and the next platform gets the request instead of
+			// the caller being handed a failure a healthy sibling could have
+			// avoided.  See probeFirstFrame for the exact bound.
 			probe, probeErr := probeFirstFrame(stream)
 			if probeErr != nil {
 				stream.Close()
@@ -1002,6 +1003,12 @@ func (s *server) serveRemainingCandidates(w http.ResponseWriter, r *http.Request
 		})
 		lastClient, lastHint, lastErr = client, hintCtx, err
 
+		// Same safety net as the first candidate: a bare transport error must
+		// not stop the chain at this platform.  See
+		// normalizeUnclassifiedFailure.
+		err = normalizeUnclassifiedFailure(err)
+		lastErr = err
+
 		f, classified := core.AsFailure(err)
 		retryable := classified && core.Retryable(f.Kind)
 		if retryable {
@@ -1017,54 +1024,90 @@ func (s *server) serveRemainingCandidates(w http.ResponseWriter, r *http.Request
 	return lastClient, lastHint, lastErr, false
 }
 
-// probeFirstFrame reads the first frame of an opened stream to learn whether the
-// platform answered with a refusal it dressed up as a 200.
+// probeFirstFrame reads frames from an opened stream until either the answer
+// becomes visible to the caller or the platform refuses.
 //
-// It only ever consumes one frame, and only when that frame is a classified
-// retryable failure: a delta, a tool call or an unclassified error is left for
-// the emitter, which knows how to render it.  The frame is handed back to the
-// caller so it can be put back in front of the stream -- a probe that eats a
-// real answer would silently truncate it.
-func probeFirstFrame(stream core.Stream) (core.Event, error) {
-	ev, err := stream.Recv()
-	if err != nil {
-		// A transport error before any byte is the same verdict as one from
-		// Chat: nothing was rendered, so the request may still be served by a
-		// sibling platform.
-		return core.Event{}, err
+// It exists because a vendor can dress a refusal up as HTTP 200 and only put it
+// inside the stream, sometimes after a run of empty or reasoning-only frames.
+// Everything read here is handed back so the emitter renders the stream exactly
+// as the module produced it.
+//
+// THE BOUND IS THE FIRST VISIBLE BYTE, not the first frame.  A frame that
+// carries no user-visible text (a role preamble, an empty delta, a reasoning
+// delta, a usage frame) cannot have been shown to anybody yet, so a refusal
+// arriving behind it is still recoverable: the caller has seen nothing, and a
+// sibling platform can still serve the turn.  Once real content or a tool call
+// has been read the answer is on the wire and failover would truncate it, so
+// the probe stops there and lets the emitter handle whatever follows.
+//
+// That is exactly the difference between a recoverable in-stream refusal and a
+// genuine mid-stream break: the latter can only be reported, never re-routed.
+func probeFirstFrame(stream core.Stream) ([]core.Event, error) {
+	var head []core.Event
+	for {
+		ev, err := stream.Recv()
+		if err != nil {
+			if len(head) == 0 {
+				// A transport error before any byte is the same verdict as one
+				// from Chat: nothing was rendered, so a sibling may still serve
+				// the request.
+				return nil, err
+			}
+			// The stream broke after frames we already hold.  Those frames carry
+			// no user-visible content (or the loop would have stopped), so the
+			// turn is still recoverable.
+			return nil, err
+		}
+		switch ev.Type {
+		case core.EventError:
+			if ev.Err == nil {
+				head = append(head, ev)
+				continue
+			}
+			f, ok := core.AsFailure(ev.Err)
+			if !ok || !core.Retryable(f.Kind) {
+				// A content-policy or unclassified refusal is the platform's
+				// answer and must be shown as such, not retried behind the
+				// caller's back.
+				return append(head, ev), nil
+			}
+			return nil, ev.Err
+		case core.EventDelta:
+			if ev.Delta != "" || ev.Reasoning != "" {
+				// Real content (or an answer the caller can already watch
+				// stream) — from here on the response is committed.
+				return append(head, ev), nil
+			}
+			head = append(head, ev)
+		case core.EventToolCall, core.EventDone:
+			return append(head, ev), nil
+		default:
+			// Usage and any future bookkeeping frame: not visible, keep probing.
+			head = append(head, ev)
+		}
 	}
-	if ev.Type != core.EventError || ev.Err == nil {
-		return ev, nil
-	}
-	f, ok := core.AsFailure(ev.Err)
-	if !ok || !core.Retryable(f.Kind) {
-		// A content-policy or unclassified refusal is the platform's answer and
-		// must be shown as such, not retried behind the caller's back.
-		return ev, nil
-	}
-	return core.Event{}, ev.Err
 }
 
-// withProbedFrame puts a frame the probe already read back in front of the
+// withProbedFrame puts the frames the probe already read back in front of the
 // stream, so the emitter sees the stream exactly as the module produced it.
-func withProbedFrame(stream core.Stream, probe core.Event) core.Stream {
-	if probe == (core.Event{}) {
+func withProbedFrame(stream core.Stream, head []core.Event) core.Stream {
+	if len(head) == 0 {
 		return stream
 	}
-	return &probedStream{Stream: stream, head: probe}
+	return &probedStream{Stream: stream, head: head}
 }
 
-// probedStream is a stream with one already-read frame in front.
+// probedStream is a stream with already-read frames in front.
 type probedStream struct {
 	core.Stream
-	head    core.Event
-	emitted bool
+	head []core.Event
 }
 
 func (s *probedStream) Recv() (core.Event, error) {
-	if !s.emitted {
-		s.emitted = true
-		return s.head, nil
+	if len(s.head) > 0 {
+		ev := s.head[0]
+		s.head = s.head[1:]
+		return ev, nil
 	}
 	return s.Stream.Recv()
 }
@@ -1373,6 +1416,12 @@ func (s *server) openStreamRecorded(ctx context.Context, client core.Client, req
 		if errors.Is(err, core.ErrPlatformExhausted) {
 			return nil, err
 		}
+
+		// A module that returned a bare transport error leaves the routing loop
+		// nothing to act on.  Promote it to a classified upstream failure so the
+		// decision table can rotate (and, in routeAndServe, reach a healthy
+		// sibling platform) instead of answering 502 for the whole chain.
+		err = normalizeUnclassifiedFailure(err)
 
 		f, classified := core.AsFailure(err)
 		if !classified {

@@ -770,8 +770,8 @@ func TestClassify(t *testing.T) {
 		{"server", 503, "upstream exploded", ErrServer},
 		{"bad params", 400, "Unmarshal chat params failed", ErrBadParams},
 		{"bad params code", 400, `{"code":11101,"msg":"bad"}`, ErrBadParams},
-		{"function params code", 400, `{"code":11129,"msg":"invalid function call parameters"}`, ErrBadParams},
-		{"nested function params code", 400, `{"code":1,"extError":{"code":"invalid_function_parameters","message":"invalid function call parameters","ext":{"code":11129}}}`, ErrBadParams},
+		{"function params code", 400, `{"code":11129,"msg":"invalid function call parameters"}`, ErrFunctionParams},
+		{"nested function params code", 400, `{"code":1,"extError":{"code":"invalid_function_parameters","message":"invalid function call parameters","ext":{"code":11129}}}`, ErrFunctionParams},
 		{"content blocked", 400, "blocked by security policy", ErrContentBlocked},
 		{"account fault", 400, "request illegal", ErrAccountFault},
 		{"channel verification", 400, `{"code":11-128,"msg":"request illegal"}`, ErrContentBlocked},
@@ -956,8 +956,10 @@ func TestRetryableKind(t *testing.T) {
 }
 
 // TestBadParamsDoesNotDegradePoolAccount pins the distinction that matters for
-// an upstream function-parameter rejection: it is scoped to the request, not
-// the credential, so every WorkBuddy account must stay in rotation.
+// an upstream function-parameter rejection: it is scoped to the model, not the
+// credential, so every WorkBuddy account must stay in rotation.  The kind is
+// ErrFunctionParams (not ErrBadParams) precisely so the gateway can carry the
+// request to a sibling platform with a more permissive model.
 func TestBadParamsDoesNotDegradePoolAccount(t *testing.T) {
 	a := &Auth{AccessToken: "at-111111111111", UID: "u-bad-params"}
 	p := NewPool([]*Auth{a}, 0)
@@ -972,8 +974,8 @@ func TestBadParamsDoesNotDegradePoolAccount(t *testing.T) {
 		Status: http.StatusBadRequest,
 		Msg:    "invalid function call parameters",
 	})
-	if kind != ErrBadParams || d != 0 {
-		t.Fatalf("bad params = (%v, %v), want (%v, 0)", kind, d, ErrBadParams)
+	if kind != ErrFunctionParams || d != 0 {
+		t.Fatalf("bad params = (%v, %v), want (%v, 0)", kind, d, ErrFunctionParams)
 	}
 
 	got := p.Snapshot()[0]
@@ -2336,5 +2338,46 @@ func TestMaskedSecretsNeverLeak(t *testing.T) {
 	blob, _ := json.Marshal(st)
 	if bytes.Contains(blob, []byte(token)) {
 		t.Fatal("status must never contain a raw token")
+	}
+}
+
+// The 11129 refusal must reach the gateway as a kind that fails over.  It used
+// to land on FailureOther (via ErrBadParams), which the decision table treats as
+// terminal, so a turn that only DeepSeek-V4.1-Flash's stricter tool schema
+// rejected was answered with 400 instead of being carried to a sibling model.
+func TestFunctionParamsRefusalFailsOverInsteadOfAnswering400(t *testing.T) {
+	classified := Classify(http.StatusBadRequest, `{"code":11129,"msg":"invalid function call parameters"}`)
+	if classified != ErrFunctionParams {
+		t.Fatalf("Classify = %v, want %v", classified, ErrFunctionParams)
+	}
+	got := classifyFailure(&Error{Kind: classified, Status: http.StatusBadRequest, Msg: "invalid function call parameters"}, "acct-1")
+	f, ok := core.AsFailure(got)
+	if !ok {
+		t.Fatalf("classifyFailure = %v, want a classified *core.Failure", got)
+	}
+	if f.Kind != core.FailureModelRefused {
+		t.Fatalf("kind = %q, want %q", f.Kind, core.FailureModelRefused)
+	}
+	if !core.NextPlatformOn(f.Kind) {
+		t.Fatal("a 11129 refusal does not move to the next platform, so the caller gets a 400")
+	}
+	if core.Retryable(f.Kind) {
+		t.Fatal("a 11129 refusal rotates accounts, but every account here runs the same model")
+	}
+}
+
+// The 11101 shape IS our own bug -- the body could not be unmarshalled -- and
+// must keep answering the caller rather than being replayed on every platform.
+func TestUnmarshalFailureStaysTerminal(t *testing.T) {
+	if got := Classify(http.StatusBadRequest, `{"code":11101,"msg":"Unmarshal chat params failed"}`); got != ErrBadParams {
+		t.Fatalf("Classify = %v, want %v", got, ErrBadParams)
+	}
+	err := classifyFailure(&Error{Kind: ErrBadParams, Status: http.StatusBadRequest, Msg: "Unmarshal chat params failed"}, "acct-1")
+	f, ok := core.AsFailure(err)
+	if !ok {
+		t.Fatalf("classifyFailure = %v, want a classified *core.Failure", err)
+	}
+	if core.Retryable(f.Kind) || core.NextPlatformOn(f.Kind) {
+		t.Fatalf("kind %q retries a request no platform can parse", f.Kind)
 	}
 }

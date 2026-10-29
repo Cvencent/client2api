@@ -31,7 +31,7 @@
       "models_timeout": "20s",
       "chat_timeout": "10m",
       "idle_timeout": "2m",
-      "first_byte_timeout": "2m",
+      "first_byte_timeout": "1m",
       "models_ttl": "30m",
       "probe_timeout": "30s",
       "cooldown": "300s",

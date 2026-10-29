@@ -156,7 +156,14 @@ func wireMessage(msg core.Message, index int) (oaiMessage, error) {
 	}
 	for _, part := range msg.Parts {
 		if part.Type == "image_url" || part.ImageURL != "" {
-			return oaiMessage{}, fmt.Errorf("%w: lobsterai accepts text only (message %d carries an image)", core.ErrUnsupported, index)
+			// A platform capability, not a request defect: the same message is
+			// perfectly serviceable on a vision-capable sibling platform.  That
+			// makes this FailureModelRefused (no rotation, move to the next
+			// platform) rather than ErrUnsupported, which the routing loop
+			// treats as terminal and would answer 400 for a turn another
+			// platform could have served.
+			return oaiMessage{}, core.Fail("lobsterai", "", core.FailureModelRefused, 0,
+				fmt.Errorf("lobsterai accepts text only (message %d carries an image)", index))
 		}
 	}
 	if len(msg.Parts) > 0 {

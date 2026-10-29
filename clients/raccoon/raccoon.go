@@ -153,7 +153,7 @@ func (c *Client) httpClient() *http.Client {
 			return
 		}
 		tr := &http.Transport{
-			Proxy:                 http.ProxyFromEnvironment,
+			Proxy:                 nil,
 			MaxIdleConns:          32,
 			MaxIdleConnsPerHost:   8,
 			IdleConnTimeout:       90 * time.Second,
@@ -400,6 +400,20 @@ func (c *Client) openChat(ctx context.Context, cancel context.CancelFunc, req *c
 	// the picker steps over the wallet park for this request.
 	freeModel := req.FreeModel
 	var lastErr error
+	// lastAccount remembers the credential the terminal error came from, so the
+	// classified failure can be attributed to it.  Only a completed attempt
+	// sets it; a skipped account never does.
+	var lastAccount string
+	// tried counts the accounts actually called, not the ones the picker
+	// skipped.  The terminal error quotes it: "the pool was walked" and "the
+	// first account was refused for a reason that repeats everywhere" are
+	// different facts about the platform, and the operator needs to know which
+	// one happened.
+	tried := 0
+	// siblingFutile records that the walk stopped on a refusal about the
+	// request rather than about the account.  With a bare count the reader is
+	// left asking why the other accounts were never tried.
+	siblingFutile := false
 	// busy records that every account we reached was at its per-account
 	// in-flight ceiling.
 	busy := false
@@ -424,6 +438,7 @@ func (c *Client) openChat(ctx context.Context, cancel context.CancelFunc, req *c
 		c.bindServedConversation(req, e.acct.id())
 		c.ensureFresh(ctx, e)
 		stream, err := c.chatWith(ctx, cancel, e, req, model)
+		tried++
 		if err == nil {
 			c.pool.markUsedFor(e, freeModel)
 			c.noteUpstreamOK()
@@ -431,6 +446,7 @@ func (c *Client) openChat(ctx context.Context, cancel context.CancelFunc, req *c
 			return core.TrackStream(stream, func() { c.inFlight.Add(-1) }), nil
 		}
 		lastErr = err
+		lastAccount = e.acct.id()
 		kind := classifyErr(err)
 		msg := truncate(c.scrub(err.Error()), 240)
 		if kind == kindAuth {
@@ -444,7 +460,11 @@ func (c *Client) openChat(ctx context.Context, cancel context.CancelFunc, req *c
 		} else {
 			c.pool.markFailure(e, kind, msg)
 		}
-		if !retryable(kind) || ctx.Err() != nil {
+		if !retryable(kind) {
+			siblingFutile = true
+			break
+		}
+		if ctx.Err() != nil {
 			break
 		}
 	}
@@ -455,7 +475,16 @@ func (c *Client) openChat(ctx context.Context, cancel context.CancelFunc, req *c
 		lastErr = core.ErrNotConfigured
 	}
 	c.noteFailure(lastErr)
-	return nil, lastErr
+	// The walk is over, so the gateway must not re-enter this module:
+	// ErrPlatformExhausted is what moves the request to the next platform in the
+	// candidate chain.  The classified failure rides along so the shared
+	// decision table still sees WHY this pool stopped (a network fault, a 402, a
+	// dead session) and can keep the vendor's status.
+	//
+	// Returning the bare error here used to end the whole route: a `*url.Error`
+	// carries no FailureKind, the gateway cannot classify it, so it answered 502
+	// while every sibling platform was healthy.  See failure.go.
+	return nil, errors.Join(poolExhausted(tried, siblingFutile), classifyFailure(lastErr, lastAccount))
 }
 
 // chatWith performs one attempt, refreshing once and retrying exactly once

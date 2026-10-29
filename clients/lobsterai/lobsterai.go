@@ -44,7 +44,7 @@ func init() {
 // warm rather than relying on the default pool.
 var defaultHTTPClient = &http.Client{
 	Transport: &http.Transport{
-		Proxy:               http.ProxyFromEnvironment,
+		Proxy:               nil,
 		ForceAttemptHTTP2:   true,
 		MaxIdleConns:        32,
 		MaxIdleConnsPerHost: 8,

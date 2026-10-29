@@ -16,6 +16,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"client2api/internal/fingerprint"
 )
 
 // clientName is the registered name, the routing prefix, and the value
@@ -181,6 +183,11 @@ type Config struct {
 	// vendor free quota, so a paid model must be opted into with
 	// `"free_only": false` rather than reached by accident.
 	FreeOnly *bool `json:"free_only"`
+	// TLSProfile selects the TLS ClientHello the module impersonates.  Empty
+	// means "bun": Zen's anonymous free-tier gate inspects the hello and
+	// refuses Go's own (see internal/fingerprint, ProfileBun).  "none" keeps
+	// the stock handshake.
+	TLSProfile string `json:"tls_profile"`
 }
 
 // parseConfig decodes the raw JSON of `clients.opencode`.
@@ -237,6 +244,22 @@ func (cfg Config) normalize() Config {
 	}
 	out.DefaultRealm = normalizeLoginRealm(out.DefaultRealm)
 	out.FreeModels = dedupeStrings(out.FreeModels)
+
+	// TLSProfile: empty means the bun profile, "none" means the stock
+	// handshake, anything else must name a known profile or fall back to bun.
+	name := strings.ToLower(strings.TrimSpace(out.TLSProfile))
+	switch name {
+	case "":
+		out.TLSProfile = string(fingerprint.ProfileBun)
+	case "none":
+		out.TLSProfile = ""
+	default:
+		if !fingerprint.Known(fingerprint.Profile(name)) {
+			out.TLSProfile = string(fingerprint.ProfileBun)
+		} else {
+			out.TLSProfile = name
+		}
+	}
 
 	accts := make([]AccountConfig, 0, len(out.Accounts))
 	for _, a := range out.Accounts {
@@ -311,6 +334,9 @@ func (cfg Config) modelsTimeout() time.Duration { return cfg.ModelsTimeout.or(de
 func (cfg Config) modelsTTL() time.Duration     { return cfg.ModelsTTL.or(defaultModelsTTL) }
 func (cfg Config) idleTimeout() time.Duration   { return cfg.IdleTimeout.or(defaultIdleTimeout) }
 func (cfg Config) cooldown() time.Duration      { return cfg.Cooldown.or(defaultCooldown) }
+
+// tlsProfile is the normalized profile name: "" (stock), or a known profile.
+func (cfg Config) tlsProfile() string { return cfg.TLSProfile }
 
 func (cfg Config) quotaCooldown() time.Duration {
 	return cfg.QuotaCooldown.or(defaultQuotaCooldown)

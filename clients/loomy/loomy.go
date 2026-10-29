@@ -216,7 +216,7 @@ func newUpstream(cfg config, proxy string, logf func(string, ...any)) *upstream 
 
 func transportFor(proxy string) *http.Transport {
 	tr := &http.Transport{
-		Proxy:               http.ProxyFromEnvironment,
+		Proxy:               nil,
 		MaxIdleConns:        32,
 		MaxIdleConnsPerHost: 8,
 		IdleConnTimeout:     90 * time.Second,
@@ -591,6 +591,15 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 			lastErr = err
 			break
 		}
+		// A connection-level failure says nothing about this credential, and
+		// this module's ladder ends in a PERMANENT abnormal park.  Charging a
+		// platform outage to 37 accounts is how a bad hour takes the whole pool
+		// offline until somebody revives them by hand.  Stop the rotation and let
+		// the gateway try another platform.
+		if isTransportFailure(err) {
+			lastErr = err
+			break
+		}
 		// A 402 from the chat endpoint is the vendor's authoritative
 		// insufficient-credit verdict. The first call already got one retry
 		// above, so the second refusal is enough to park the account as
@@ -618,12 +627,13 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 		lastErr = core.ErrNotConfigured
 	}
 	// A header stall means the vendor accepted connections and answered
-	// nothing, twice, from different credentials.  That is the platform, not
-	// the account: joining ErrPlatformExhausted makes the gateway skip its
-	// same-platform rotation (re-entering this module would only re-queue into
-	// the same silent upstream) and hand the request to the next platform in
-	// the candidate list, which is where a working model gets served.
-	if isHeaderStall(lastErr) {
+	// nothing, twice, from different credentials.  A transport failure means the
+	// connection died.  Both describe the PLATFORM, not the account: joining
+	// ErrPlatformExhausted makes the gateway skip its same-platform rotation
+	// (re-entering this module would only re-queue into the same silent
+	// upstream) and hand the request to the next platform in the candidate
+	// list, which is where a working model gets served.
+	if isHeaderStall(lastErr) || isTransportFailure(lastErr) {
 		lastErr = errors.Join(core.ErrPlatformExhausted, lastErr)
 	}
 	// Hand the gateway a classified failure when this module can name one, so

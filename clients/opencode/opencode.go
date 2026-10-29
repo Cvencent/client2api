@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"client2api/internal/core"
+	"client2api/internal/fingerprint"
 )
 
 // ---------------------------------------------------------------------------
@@ -116,13 +117,29 @@ func (c *Client) Name() string { return clientName }
 
 // httpClient is the deps-supplied client when there is one, else a private
 // client with a connection pool sized for a gateway.
+//
+// The TLS fingerprint comes first: Zen's anonymous free-tier gate inspects the
+// ClientHello and refuses Go's own, so the default profile is "bun" (see
+// internal/fingerprint, ProfileBun).  A failed build is logged and the stock
+// path takes over, because a broken uTLS must not take the module down.
 func (c *Client) httpClient() *http.Client {
-	if c.deps.HTTPClient != nil {
+	// A configured TLS profile wins over the shared client: the gateway's shared
+	// client speaks Go's own TLS, and a hello the gate refuses is the one thing
+	// this module cannot send.  Only an empty profile ("none") keeps it.
+	if c.deps.HTTPClient != nil && c.cfg.tlsProfile() == "" {
 		return c.deps.HTTPClient
 	}
 	c.httpOnce.Do(func() {
+		if fp := c.cfg.tlsProfile(); fp != "" {
+			if fhc, ferr := fingerprint.New(fingerprint.Options{Profile: fingerprint.Profile(fp), Protocol: fingerprint.ProtocolH1, Proxy: c.deps.Proxy, Timeout: c.cfg.chatTimeout(), ResponseHeaderTimeout: c.cfg.chatTimeout(), Logf: c.deps.Logf}); ferr == nil {
+				c.http = fhc
+				return
+			} else {
+				c.deps.Log("clients.%s: tls fingerprint %q ignored: %v", clientName, fp, ferr)
+			}
+		}
 		tr := &http.Transport{
-			Proxy:                 http.ProxyFromEnvironment,
+			Proxy:                 nil,
 			ForceAttemptHTTP2:     true,
 			MaxIdleConns:          32,
 			MaxIdleConnsPerHost:   8,

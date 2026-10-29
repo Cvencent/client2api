@@ -21,6 +21,17 @@ const (
 	defaultChatTimeout   = 10 * time.Minute
 	defaultModelsTimeout = 30 * time.Second
 	defaultStreamIdle    = 90 * time.Second
+	// defaultFirstToken bounds the wait for the first frame that carries
+	// something the caller can see.  It exists because many relays send SSE
+	// keep-alive comments while a request sits in their queue: those comments
+	// reset the byte-idle deadline, so a provider that holds a request for five
+	// minutes and then answers with an error used to spend all five before the
+	// gateway could try a sibling.  Measured live: one provider's first event
+	// arrived 5m17s in, and it was an error.
+	//
+	// Two minutes is deliberately generous -- a cold queue and a slow
+	// first-token model both fit inside it -- and an operator can raise it.
+	defaultFirstToken    = 2 * time.Minute
 	defaultModelsTTL     = 10 * time.Minute
 	defaultCooldown      = 60 * time.Second
 	defaultRateCooldown  = 2 * time.Minute
@@ -95,6 +106,9 @@ type Config struct {
 	ChatTimeout       string `json:"chat_timeout"`
 	ModelsTimeout     string `json:"models_timeout"`
 	StreamIdleTimeout string `json:"stream_idle_timeout"`
+	// FirstTokenTimeout bounds the wait for the first frame the caller can see.
+	// Keep-alive comments do not reset it; see defaultFirstToken.
+	FirstTokenTimeout string `json:"first_token_timeout"`
 	ModelsTTL         string `json:"models_ttl"`
 	Cooldown          string `json:"cooldown"`
 	RateCooldown      string `json:"rate_cooldown"`
@@ -530,6 +544,11 @@ func (cfg Config) modelsTimeout() time.Duration {
 
 func (cfg Config) streamIdle() time.Duration {
 	return durationOr(cfg.StreamIdleTimeout, defaultStreamIdle)
+}
+
+// firstToken bounds the wait for the first visible frame of a stream.
+func (cfg Config) firstToken() time.Duration {
+	return durationOr(cfg.FirstTokenTimeout, defaultFirstToken)
 }
 
 func (cfg Config) modelsTTL() time.Duration {

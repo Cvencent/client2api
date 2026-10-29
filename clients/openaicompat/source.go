@@ -150,7 +150,7 @@ func cloneTransport(rt http.RoundTripper) *http.Transport {
 	}
 	base, ok := http.DefaultTransport.(*http.Transport)
 	if !ok {
-		return &http.Transport{Proxy: http.ProxyFromEnvironment, ForceAttemptHTTP2: true}
+		return &http.Transport{Proxy: nil, ForceAttemptHTTP2: true}
 	}
 	return base.Clone()
 }

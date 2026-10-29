@@ -99,6 +99,12 @@ const (
 	// order of the capture. See the package comment.
 	ProfileNode Profile = "node"
 
+	// ProfileBun is the hand-built hello of the Bun runtime the OpenCode CLI is
+	// packaged with: no GREASE, http/1.1-only ALPN, 17 cipher suites in the
+	// captured order. OpenCode Zen gates its anonymous free tier on this hello
+	// being the one on the wire. See the package comment.
+	ProfileBun Profile = "bun"
+
 	// ProfileTrae is the hand-built hello of the Trae desktop applications.
 	// Unlike every parrot in the table it is TLS 1.2 only: the capture of
 	// api.trae.com.cn carries no supported_versions extension and no ALPN, and
@@ -126,6 +132,7 @@ var hellos = map[Profile]utls.ClientHelloID{
 	// from the capture. They are in this table so Profiles() lists them and New
 	// accepts them like any other name.
 	ProfileNode:       utls.HelloCustom,
+	ProfileBun:        utls.HelloCustom,
 	ProfileTrae:       utls.HelloCustom,
 	ProfileChrome:     utls.HelloChrome_Auto,
 	ProfileChrome133:  utls.HelloChrome_133,
@@ -152,6 +159,18 @@ func Profiles() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// Known reports whether the name names a profile New would accept. ProfileNone
+// is known: it means the stock handshake.
+func Known(p Profile) bool {
+	switch p {
+	case ProfileNone:
+		return true
+	default:
+		_, ok := hellos[p]
+		return ok
+	}
 }
 
 // Protocol names the application-layer protocol to negotiate.
@@ -327,6 +346,8 @@ func specForDial(p Profile, hello utls.ClientHelloID, http1Only bool) (*utls.Cli
 	switch p {
 	case ProfileNode:
 		return nodeSpec(http1Only), nil
+	case ProfileBun:
+		return bunSpec(http1Only), nil
 	case ProfileTrae:
 		return traeSpec(http1Only), nil
 	}
@@ -441,7 +462,7 @@ func nodeSpec(http1Only bool) *utls.ClientHelloSpec {
 			// capture keeps it as a bare type with nothing in it.
 			&utls.GenericExtension{Id: 22},
 			&utls.ExtendedMasterSecretExtension{},
-			&utls.SignatureAlgorithmsExtension{SupportedSignatureAlgorithms: nodeSignatureAlgorithms},
+			&utls.SignatureAlgorithmsExtension{SupportedSignatureAlgorithms: bunSignatureAlgorithms}, // EXPERIMENT: bun sigalgs
 			&utls.SupportedVersionsExtension{Versions: []uint16{utls.VersionTLS13, utls.VersionTLS12}},
 			&utls.PSKKeyExchangeModesExtension{Modes: []uint8{utls.PskModeDHE}},
 			// The key share body is not part of JA3, so only groups uTLS can
@@ -455,11 +476,98 @@ func nodeSpec(http1Only bool) *utls.ClientHelloSpec {
 	}
 }
 
+// bunCipherSuites is the 17-suite list from the captured Bun runtime (the
+// OpenCode CLI's own), in order: the three TLS 1.3 suites first, then the
+// ECDHE GCM/CHACHA20 pairs, then the RSA fallbacks.
+var bunCipherSuites = []uint16{
+	0x1301, 0x1302, 0x1303, // TLS 1.3: AES-128-GCM, AES-256-GCM, CHACHA20
+	0xc02b, 0xc02f, 0xc02c, 0xc030, // ECDHE-ECDSA/RSA AES-CBC and GCM pairs
+	0xcca9, 0xcca8, // ECDHE-ECDSA/RSA CHACHA20-POLY1305
+	0xc009, 0xc013, 0xc00a, 0xc014, // ECDHE-ECDSA/RSA CBC SHA1 and SHA256
+	0x009c, 0x009d, // RSA AES-128/256-GCM-SHA256
+	0x002f, 0x0035, // RSA AES-128/256-CBC-SHA
+}
+
+// bunCurves is supported_groups: the captured three curves plus X25519MLKEM768
+// first, because opencode.ai's edge refuses an X25519-only key share. See the
+// bunSpec comment.
+var bunCurves = []utls.CurveID{
+	utls.X25519MLKEM768,
+	utls.X25519,
+	utls.CurveP256,
+	utls.CurveP384,
+}
+
+// bunPointFormats is ec_point_formats from the capture: uncompressed alone.
+var bunPointFormats = []uint8{0}
+
+// bunSignatureAlgorithms is the full body of extension 13 from the capture:
+// ecdsa_secp256r1_sha256, rsa_pss_rsae_sha256, rsa_pkcs1_sha256,
+// ecdsa_secp384r1_sha384, rsa_pss_rsae_sha384, rsa_pkcs1_sha384,
+// rsa_pss_rsae_sha512, rsa_pkcs1_sha512, rsa_pkcs1_sha1 — nine schemes.
+var bunSignatureAlgorithms = []utls.SignatureScheme{
+	utls.ECDSAWithP256AndSHA256,
+	utls.PSSWithSHA256,
+	utls.PKCS1WithSHA256,
+	utls.ECDSAWithP384AndSHA384,
+	utls.PSSWithSHA384,
+	utls.PKCS1WithSHA384,
+	utls.PSSWithSHA512,
+	utls.PKCS1WithSHA512,
+	utls.PKCS1WithSHA1,
+}
+
+// bunSpec builds the ClientHello that passes Zen's anonymous free-tier gate.
+// The cipher suites are Bun's 17-suite capture; the extension order is the
+// captured Bun order MINUS the adjustments the gate's edge requires. Two notes
+// on where the spec deliberately departs from the capture:
+//
+//   - The key share offers X25519MLKEM768 before X25519, though the captured
+//     hello carried X25519 alone. opencode.ai's edge refuses a hello whose
+//     key share is X25519-only with a TLS handshake_failure — the post-quantum
+//     share is what the gate's edge expects to see. Bun itself is not refused,
+//     so its hello differs from the capture somewhere below JA3; offering
+//     MLKEM768 (which the older Node capture carries) is the move that opens
+//     the gate, and it is also what every current Bun build offers.
+//   - StatusRequest and SCT keep the captured hello's extensions; GenericExtension
+//     22 (encrypt_then_mac) stays because the captured Bun hello carries it.
+//
+// ProtocolH1 keeps the captured ALPN list of http/1.1 alone; every other
+// protocol choice adds h2 to it.
+func bunSpec(http1Only bool) *utls.ClientHelloSpec {
+	alpn := []string{"http/1.1"}
+	if !http1Only {
+		alpn = []string{"h2", "http/1.1"}
+	}
+	return &utls.ClientHelloSpec{
+		CipherSuites:       bunCipherSuites,
+		CompressionMethods: []uint8{0}, // null, the only method that exists
+		Extensions: []utls.TLSExtension{
+			&utls.RenegotiationInfoExtension{Renegotiation: utls.RenegotiateOnceAsClient},
+			&utls.SNIExtension{},
+			&utls.SupportedPointsExtension{SupportedPoints: nodePointFormats},
+			&utls.SupportedCurvesExtension{Curves: bunCurves},
+			&utls.SessionTicketExtension{},
+			&utls.ALPNExtension{AlpnProtocols: alpn},
+			&utls.GenericExtension{Id: 22},
+			&utls.ExtendedMasterSecretExtension{},
+			&utls.SignatureAlgorithmsExtension{SupportedSignatureAlgorithms: bunSignatureAlgorithms},
+			&utls.SupportedVersionsExtension{Versions: []uint16{utls.VersionTLS13, utls.VersionTLS12}},
+			&utls.PSKKeyExchangeModesExtension{Modes: []uint8{utls.PskModeDHE}},
+			&utls.KeyShareExtension{KeyShares: []utls.KeyShare{
+				{Group: utls.X25519MLKEM768},
+				{Group: utls.X25519},
+			}},
+			&utls.StatusRequestExtension{},
+			&utls.SCTExtension{},
+		},
+	}
+}
+
 // traeCipherSuites is the 18-suite list from the api.trae.com.cn capture, in
 // order. There is no TLS 1.3 suite in it, because the captured client offers
 // none: it is a TLS 1.2 handshake from the first byte to the last.
-var traeCipherSuites = []uint16{
-	49196, 49195, 49200, 49199, // ECDHE ECDSA/RSA AES-256/128-GCM
+var traeCipherSuites = []uint16{49196, 49195, 49200, 49199, // ECDHE ECDSA/RSA AES-256/128-GCM
 	49188, 49187, 49192, 49191, // ECDHE ECDSA/RSA AES-256/128-CBC-SHA384 and SHA256
 	49162, 49161, 49172, 49171, // ECDHE ECDSA/RSA AES-256/128-CBC-SHA
 	157, 156, 61, 60, 53, 47, // RSA AES-GCM, AES-CBC-SHA, AES-CBC-SHA256

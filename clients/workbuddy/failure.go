@@ -34,6 +34,13 @@ func coreFailureKind(kind ErrKind) core.FailureKind {
 		return core.FailureUpstream
 	case ErrModelBlocked:
 		return core.FailureModelRefused
+	case ErrFunctionParams:
+		// The request's tool schema did not fit THIS platform's validator.  The
+		// account is healthy and another account here would run the same model,
+		// so rotate nothing -- but a sibling platform with a more permissive
+		// validator is a real chance to serve the turn.  FailureModelRefused is
+		// exactly that shape: no rotation, yes next platform.
+		return core.FailureModelRefused
 	default:
 		return core.FailureOther
 	}

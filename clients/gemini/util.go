@@ -76,7 +76,7 @@ func maskSecret(s string) string {
 // kept warm rather than relying on the default.
 func newTransport(proxy string) *http.Transport {
 	tr := &http.Transport{
-		Proxy:               http.ProxyFromEnvironment,
+		Proxy:               nil,
 		ForceAttemptHTTP2:   true,
 		MaxIdleConns:        32,
 		MaxIdleConnsPerHost: 8,

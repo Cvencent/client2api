@@ -28,6 +28,13 @@ const (
 	kindBlocked         failureKind = "blocked"
 	kindServer          failureKind = "server"
 	kindClient          failureKind = "client"
+	// kindPayloadTooLarge is HTTP 413.  It is deliberately its own kind rather
+	// than part of kindClient: the body was too large for THIS provider's own
+	// limit, and providers differ by orders of magnitude (a 32 KiB edge limit
+	// next to a 10 MiB one).  Sending the same request to a sibling with a
+	// bigger ceiling is a genuine chance of serving the caller, so it must not
+	// be lumped in with the "every provider refuses this shape" 400/422 class.
+	kindPayloadTooLarge failureKind = "payload_too_large"
 )
 
 var (
@@ -120,6 +127,8 @@ func classifyFailure(status int, text string) failureKind {
 	switch {
 	case status == 401 || status == 403:
 		return kindAuth
+	case status == 413:
+		return kindPayloadTooLarge
 	case status == 429:
 		return kindRateLimit
 	case status == 404:
@@ -146,6 +155,14 @@ func coreKindFor(k failureKind) core.FailureKind {
 		return core.FailureUpstream
 	case kindBlocked:
 		return core.FailureContentBlocked
+	case kindPayloadTooLarge:
+		// This provider's own request-size ceiling refused the body.  A sibling
+		// account may have a larger one, and a sibling platform almost certainly
+		// does, so this has to rotate and fail over.  FailureUpstream is the
+		// kind that does both; the vendor's 413 is preserved on the Failure, so
+		// a caller that exhausts every candidate still sees 413 rather than a
+		// generic 502.
+		return core.FailureUpstream
 	default:
 		return core.FailureOther
 	}

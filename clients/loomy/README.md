@@ -311,7 +311,7 @@ See `config.example.json` for a copy-paste starting point.
       "models_timeout": "20s",
       "chat_timeout": "10m",
       "idle_timeout": "2m",
-      "first_byte_timeout": "2m",
+      "first_byte_timeout": "1m",
       "models_ttl": "30m",
       "probe_timeout": "30s",
       "cooldown": "300s",
@@ -446,8 +446,8 @@ and terminating cleanly on `io.EOF`. It carries
 
 * an **idle timeout** (`idle_timeout`, default 2 min) that aborts a stream which
   has stopped producing frames, and
-* a **first-byte timeout** (`first_byte_timeout`, default 2 min) around the
-  initial response, reported as `"loomy: chat: no response within 2m0s"`.
+* a **first-byte timeout** (`first_byte_timeout`, default 1 min) around the
+  initial response, reported as `"loomy: chat: no response within 1m0s"`.
 
 `Close()` is idempotent: it stops the timers, cancels the request context and
 closes the body exactly once, so a gateway that closes a stream twice cannot

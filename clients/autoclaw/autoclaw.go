@@ -113,7 +113,7 @@ func (c *Client) httpClient() *http.Client {
 			return
 		}
 		tr := &http.Transport{
-			Proxy: http.ProxyFromEnvironment, MaxIdleConns: 32, MaxIdleConnsPerHost: 8,
+			Proxy: nil, MaxIdleConns: 32, MaxIdleConnsPerHost: 8,
 			IdleConnTimeout: 90 * time.Second, TLSHandshakeTimeout: 15 * time.Second,
 			ExpectContinueTimeout: 1 * time.Second, ForceAttemptHTTP2: true,
 		}

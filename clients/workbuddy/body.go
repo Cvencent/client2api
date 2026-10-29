@@ -1,6 +1,7 @@
 package workbuddy
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -165,24 +166,27 @@ func wireTools(tools []core.Tool) []any {
 		if t.Description != "" {
 			fn["description"] = t.Description
 		}
-		if len(t.Parameters) > 0 {
-			var params any
-			if err := json.Unmarshal(t.Parameters, &params); err == nil {
-				// DeepSeek V4.1 Flash rejects an empty tool schema with
-				// "invalid function call parameters" (code 11129) while other
-				// models tolerate it, so "{}" is normalized to the explicit
-				// empty-object schema the upstream already accepts.
-				if obj, ok := params.(map[string]any); ok && len(obj) == 0 {
-					params = emptyToolParameters()
-				}
-				fn["parameters"] = params
-			}
-		} else {
-			fn["parameters"] = emptyToolParameters()
-		}
+		fn["parameters"] = wireToolParameters(t.Parameters)
 		out = append(out, map[string]any{"type": typ, "function": fn})
 	}
 	return out
+}
+
+// wireToolParameters decodes a caller-supplied schema, rewrites the constructs
+// WorkBuddy's parser refuses with 11129 (see toolschema.go) and falls back to
+// the canonical empty schema when there is nothing to send.  Numbers decode as
+// json.Number so bounds and defaults survive the round trip unchanged.
+func wireToolParameters(raw json.RawMessage) any {
+	if len(raw) == 0 {
+		return emptyToolParameters()
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var params any
+	if err := dec.Decode(&params); err != nil {
+		return emptyToolParameters()
+	}
+	return normalizeToolSchema(params)
 }
 
 // emptyToolParameters is the canonical schema for a tool that takes no arguments.

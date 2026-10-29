@@ -3,6 +3,7 @@ package openaicompat
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -257,6 +258,14 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 	if !ok {
 		return nil, fmt.Errorf("%w: provider %q is not configured", core.ErrNotConfigured, prov.ID)
 	}
+	// A provider that has failed its budget is skipped like a disabled one.
+	// ErrPlatformExhausted is the honest answer: this module has nothing else
+	// to offer for that qualified id, and the gateway is entitled to move the
+	// request to a sibling platform instead of retrying into the same wall.
+	if c.pool.isParked(time.Now(), rec.ID) {
+		return nil, errors.Join(core.ErrPlatformExhausted,
+			fmt.Errorf("provider %q: %s", rec.ID, firstNonEmpty(rec.lastError, "parked after repeated failures")))
+	}
 	if err := req.AcquireAccountSlot(rec.ID); err != nil {
 		return nil, err
 	}
@@ -267,9 +276,45 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 	stream, err := c.doChat(ctx, prov, rec.ID, body)
 	if err != nil {
 		req.ReleaseAccountSlot()
+		c.noteProviderFailure(rec.ID, err)
 		return nil, err
 	}
+	c.pool.noteSuccess(rec.ID)
 	return stream, nil
+}
+
+// providerFailureThreshold is how many consecutive failures park a provider.
+// One failure is not evidence -- an edge can drop a single connection, a
+// provider can 502 once mid-deploy -- but after three rounds in a row with
+// nothing served, sending it more traffic stops being a reasonable bet.
+const providerFailureThreshold = 3
+
+// noteProviderFailure records one failed round and parks the provider once its
+// budget is spent.  The window follows the failure kind: a rejected key needs
+// the operator, so it rests for the long auth cooldown, while a transient
+// fault gets the ordinary one.
+func (c *Client) noteProviderFailure(id string, err error) {
+	if err == nil {
+		return
+	}
+	kind := core.FailureKindOf(err)
+	// A request-shape refusal says nothing about the provider, and parking a
+	// healthy endpoint over a caller mistake would remove capacity that is
+	// perfectly usable for every other request.
+	switch kind {
+	case core.FailureOther, core.FailureContextWindow, core.FailureContentBlocked, core.FailureModelRefused:
+		return
+	}
+	window := c.cfg.cooldown()
+	switch kind {
+	case core.FailureAuth, core.FailureSessionDead:
+		window = c.cfg.authCooldown()
+	case core.FailureRateLimited:
+		window = c.cfg.rateCooldown()
+	case core.FailureQuota:
+		window = c.cfg.quotaCooldown()
+	}
+	c.pool.noteFailure(id, providerFailureThreshold, time.Now().Add(window), truncate(core.Redact(err.Error()), 240))
 }
 
 // wireFormat reports the SSE dialect the configured api_format selects.
@@ -421,7 +466,7 @@ func ctxOrBackground(ctx context.Context) context.Context {
 
 var defaultHTTPClient = &http.Client{
 	Transport: &http.Transport{
-		Proxy:               http.ProxyFromEnvironment,
+		Proxy:               nil,
 		ForceAttemptHTTP2:   true,
 		MaxIdleConns:        32,
 		MaxIdleConnsPerHost: 8,

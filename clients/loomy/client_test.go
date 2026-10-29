@@ -494,9 +494,13 @@ func TestChatWithEveryAccountParkedSaysToRetry(t *testing.T) {
 	}
 }
 
-// A transport failure is not a business failure; the account should cool down,
-// not be condemned.
-func TestChatCoolsDownOnATransportFailure(t *testing.T) {
+// A transport failure is not a verdict about the credential, and this module's
+// cooldown ladder ends in a PERMANENT abnormal park, so the account must come
+// out of it untouched.  The 2026-10-29 outage is the case that proves it: 24
+// healthy sessions were parked for connection EOFs that said nothing about any
+// of them.  The platform is handled by the gateway's own health window instead.
+func TestChatDoesNotCoolDownOnATransportFailure(t *testing.T) {
+	withChatRetryDelay(t, time.Millisecond)
 	c := newTestClient(t, "{}", failingTransport{err: errors.New("connection reset by peer")})
 	seedAccount(t, c, "loomy-1", testToken, 0)
 
@@ -507,12 +511,19 @@ func TestChatCoolsDownOnATransportFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("Chat succeeded although the transport failed")
 	}
+	if !errors.Is(err, core.ErrPlatformExhausted) {
+		t.Fatalf("err = %v, want ErrPlatformExhausted so the gateway tries another platform", err)
+	}
 	acc, _ := c.store.lookup("loomy-1")
 	if acc.dead {
 		t.Error("a transport failure parked the account as dead")
 	}
-	if acc.selectable(time.Now()) {
-		t.Error("the account ignored its cooldown")
+	if acc.failures != 0 || acc.cooldownStage != 0 || acc.abnormal {
+		t.Errorf("the account was charged for a connection fault: failures=%d stage=%d abnormal=%v",
+			acc.failures, acc.cooldownStage, acc.abnormal)
+	}
+	if !acc.selectable(time.Now()) {
+		t.Error("a healthy account was taken out of rotation by a platform fault")
 	}
 }
 
