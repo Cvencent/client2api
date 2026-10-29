@@ -102,6 +102,90 @@ body {
   to   { opacity: 1; transform: none; }
 }
 
+/* ══ 特效层（React Bits / Uiverse / Anime.js 手法）═══════════════════════
+   这一节的动效都只解释「发生了什么」，不改变任何布局或数据。全部在
+   prefers-reduced-motion 下被最上面那条全局规则关掉。 */
+
+/* ① 极光：一层缓慢旋转的锥形渐变，压在网格之下、内容之上，透明度极低。
+   它是「这个界面在工作」的最底层氛围，不抢任何读数。 */
+.main::after {
+  content: ""; position: absolute; inset: -30%; z-index: 0; pointer-events: none;
+  background:
+    conic-gradient(from 0deg at 30% 20%,
+      color-mix(in srgb, var(--accent) 16%, transparent),
+      transparent 28%,
+      color-mix(in srgb, var(--accent) 9%, transparent) 52%,
+      transparent 74%,
+      color-mix(in srgb, var(--accent) 13%, transparent));
+  filter: blur(70px);
+  opacity: .5;
+  animation: auroraSpin 46s linear infinite;
+  will-change: transform;
+}
+@keyframes auroraSpin { to { transform: rotate(360deg); } }
+
+/* ② 聚光灯卡片：鼠标在卡片上移动时，一枚柔光跟着走（React Bits Spotlight）。
+   位置由 JS 写进 --mx/--my，这里只负责画。 */
+.box::after {
+  content: ""; position: absolute; inset: 0; z-index: 0; pointer-events: none;
+  border-radius: inherit;
+  background: radial-gradient(340px circle at var(--mx, 50%) var(--my, 0%),
+    color-mix(in srgb, var(--accent) 11%, transparent), transparent 62%);
+  opacity: 0;
+  transition: opacity .32s var(--ease);
+}
+.box:hover::after { opacity: 1; }
+/* 卡片内容是 z-index 1，确保柔光在内容之下。 */
+.box > * { position: relative; z-index: 1; }
+
+/* ③ 主按钮扫光（Uiverse）：一条斜向高光在悬停时从左扫到右。 */
+button.primary { position: relative; overflow: hidden; isolation: isolate; }
+button.primary::after {
+  content: ""; position: absolute; inset: 0; z-index: -1;
+  background: linear-gradient(115deg, transparent 34%, rgba(255,255,255,.22) 50%, transparent 66%);
+  transform: translateX(-130%);
+  transition: transform .62s var(--ease-out);
+}
+button.primary:hover:not(:disabled)::after { transform: translateX(130%); }
+
+/* ④ 次级按钮：悬停时底沿亮起一条细光（Origin UI 的 quiet hover）。 */
+button:not(.primary):not(.danger):hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  box-shadow: 0 1px 0 0 color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+/* ⑤ 模态框：从下方 8px 处带轻微过冲弹入（Anime.js 的 spring 手感）。 */
+.dlg { animation: dlgSpring 260ms cubic-bezier(.2, 1.1, .35, 1) both; }
+@keyframes dlgSpring {
+  from { opacity: 0; transform: scale(.972) translateY(8px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+/* ⑥ 页标题：字母逐个滑入（React Bits Split Text 的轻量版）。 */
+.ttl-fx { display: inline-flex; }
+.ttl-fx > span {
+  display: inline-block;
+  animation: ttlChar 340ms cubic-bezier(.16, 1, .3, 1) both;
+}
+@keyframes ttlChar {
+  from { opacity: 0; transform: translateY(7px) rotate(1.5deg); filter: blur(2px); }
+  to   { opacity: 1; transform: none; filter: none; }
+}
+
+/* ⑦ 排序/筛选后的列表：行以 16ms 级联滑入，读起来像「重新排好了」。 */
+.acc tbody tr.fx-sort {
+  animation: fxSort 260ms cubic-bezier(.16, 1, .3, 1) both;
+}
+@keyframes fxSort {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .main::after, .dlg, .ttl-fx > span, .acc tbody tr.fx-sort { animation: none !important; }
+  .box::after, button.primary::after { transition: none !important; }
+}
+
 
 /* ── 壳层：左侧导航 + 主区 ─────────────────────────────────────────── */
 .shell { display: grid; grid-template-columns: 208px 1fr; min-height: 100vh; }
@@ -294,7 +378,7 @@ label.fld > .hint { display: block; font-size: 11.5px; color: var(--ink-3); marg
    正数才用语义色，0 回落到普通正文色。 */
 
 /* ── 面板块 ───────────────────────────────────────────────────────── */
-.box { background: var(--surface); border: 1px solid var(--line); border-radius: 11px; box-shadow: var(--shadow); margin-bottom: 20px; overflow: clip; }
+.box { position: relative; background: var(--surface); border: 1px solid var(--line); border-radius: 11px; box-shadow: var(--shadow); margin-bottom: 20px; overflow: clip; }
 .box { transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out); }
 .box:hover { border-color: var(--line); box-shadow: 0 4px 20px -8px rgba(0,0,0,.24); }
 /* overflow:clip 而不是 hidden：两者一样会裁圆角，但 clip 不会把自己变成滚动容器。
@@ -7659,7 +7743,7 @@ const VIEW_ENTERED = new Set();
       （每项 24ms，上限 12 项），像 React Bits 的 list reveal。
 
    全部尊重 prefers-reduced-motion：命中时一律跳过，直接落位。 */
-const MOTION_FX = { reduce: false, pressInit: false };
+const MOTION_FX = { reduce: false, pressInit: false, spotInit: false };
 function motionReduce() { return MOTION_FX.reduce || (RL_STAGE && RL_STAGE.reduce); }
 
 // pressFx 装一次：按下时给元素一个压缩弹簧，松开时弹回。
@@ -7793,6 +7877,65 @@ function bgfStart() {
 }
 function bgfStop() { if (BGF.raf) { cancelAnimationFrame(BGF.raf); BGF.raf = 0; } }
 
+/* ── 聚光灯跟踪（React Bits Spotlight）────────────────────────────────
+   在一个视口级监听里把鼠标位置写进最近的 .box 的 --mx/--my，CSS 那边
+   画柔光。用 pointermove + rAF 合并，避免每次移动都写样式；指针离开
+   卡片就不再更新（柔光随 hover 的 opacity 一起消失）。 */
+const SPOT = { raf: 0, x: 0, y: 0, box: null };
+function initSpotlight() {
+  if (MOTION_FX.spotInit) return;
+  MOTION_FX.spotInit = true;
+  window.addEventListener("pointermove", ev => {
+    const box = ev.target && ev.target.closest ? ev.target.closest(".box") : null;
+    if (!box) return;
+    SPOT.box = box; SPOT.x = ev.clientX; SPOT.y = ev.clientY;
+    if (SPOT.raf) return;
+    SPOT.raf = requestAnimationFrame(() => {
+      SPOT.raf = 0;
+      const b = SPOT.box;
+      if (!b) return;
+      const r = b.getBoundingClientRect();
+      b.style.setProperty("--mx", ((SPOT.x - r.left) / r.width * 100).toFixed(1) + "%");
+      b.style.setProperty("--my", ((SPOT.y - r.top) / r.height * 100).toFixed(1) + "%");
+    });
+  }, { passive: true });
+}
+
+/* ── 页标题逐字入场（React Bits Split Text 轻量版）────────────────────
+   把 #ttl 的纯文本拆成逐字 span，各字 22ms 级联。文字内容不变，只是
+   换了一种呈现；读屏读到的仍是完整标题（span 之间没有额外可读字符）。 */
+function fxTitle(text) {
+  const el = $("#ttl");
+  if (!el) return;
+  el.textContent = text;                       // 无动画时的最终状态
+  if (motionReduce()) return;
+  const chars = Array.from(String(text || ""));
+  if (!chars.length) return;
+  el.innerHTML = '<span class="ttl-fx" aria-hidden="false">' + chars.map((ch, i) =>
+    '<span style="animation-delay:' + (i * 22) + 'ms">' + esc(ch === " " ? "\u00a0" : ch) + "</span>"
+  ).join("") + "</span>";
+}
+
+/* ── 列表级联（React Bits list reveal 的表格版）──────────────────────
+   排序 / 筛选之后给行打一次 fx-sort，配合内联 animation-delay 形成级联。
+   只在用户主动排序时触发；被动轮询重画不触发（那会每 5 秒闪一次）。 */
+function fxStaggerRows(tbody, max) {
+  if (!tbody || motionReduce()) return;
+  const rows = [...tbody.children].slice(0, max || 24);
+  let n = 0;
+  rows.forEach(tr => {
+    if (tr.tagName !== "TR" || tr.hidden) return;
+    tr.classList.remove("fx-sort");
+    void tr.offsetWidth;
+    tr.style.animationDelay = (n++ * 16) + "ms";
+    tr.classList.add("fx-sort");
+    tr.addEventListener("animationend", () => {
+      tr.classList.remove("fx-sort");
+      tr.style.animationDelay = "";
+    }, { once: true });
+  });
+}
+
 // SHELL 是顶栏自己的行为。
 //
 // 它原来管的是左侧栏的折叠——换成顶栏之后折叠没有意义了（一行横条没有
@@ -7800,7 +7943,7 @@ function bgfStop() { if (BGF.raf) { cancelAnimationFrame(BGF.raf); BGF.raf = 0; 
 // 现在只留一件事：把「点亮当前项」做成一个明确的入口。命令面板的按钮在页头
 // （#btnCmdk），快捷键 Ctrl+K 在文件末尾绑定，都不经过这里。
 const SHELL = {
-  init() { initPressFx(); },
+  init() { initPressFx(); initSpotlight(); },
   // syncActive 是导航「选中」的唯一入口。所有导航项都带 data-view，
   // 所以这里不关心它们在哪个容器里——将来再挪位置也不用改它。
   syncActive(view) {
@@ -7823,7 +7966,7 @@ function go(v) {
     // 进场 stagger：每次切页都给该页一次轻量的编排（24ms/项，上限 12 项）。
     revealView(v);
   }
-  $("#ttl").textContent = TITLES[v];
+  fxTitle(TITLES[v]);
   document.title = TITLES[v] + " · client2api";
   // 换页回到这一列的顶部：视图容器自己滚，浏览器不会替它复位。
   const wrap = $("#viewWrap");
@@ -9904,6 +10047,8 @@ function accSortBy(col) {
   if (next.dir) ACC_SORT[CUR] = next; else delete ACC_SORT[CUR];
   ACC_PAGE = 1;
   renderAccounts();
+  // 用户主动排序后，行级联滑入——「重新排好了」这件事值得一帧解释。
+  fxStaggerRows($("#accBody"));
   const wrap = $("#accBody").closest(".tbl-wrap");
   if (wrap) wrap.scrollTop = 0;
 }
@@ -12709,6 +12854,8 @@ function mdContextSortToggle() {
   }
   MD_KEEP_PAGE = true; // 排序不是筛选：留在当前页重排
   mdApply();
+  // 排序后主行级联滑入（只挑主行，详情行跟着它自己的父行走）。
+  fxStaggerRows($("#mdBody"), 20);
 }
 function mdContextSorted(rows) {
   return rows.slice().sort((a, b) => {
