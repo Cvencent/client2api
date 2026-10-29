@@ -132,8 +132,11 @@ func (c *Client) openStream(ctx context.Context, req *core.ChatRequest, release 
 			if kind == kindQueue {
 				// A queue rejection is expected under load, not a broken
 				// credential: poll instead of failing, and do not cool the
-				// account down.
-				started, qerr := c.awaitQueue(ctx, e.account(), req.Model)
+				// account down.  The status endpoint is queried for OUR
+				// session id: a random task id asks about a task that does not
+				// exist and can only report the model's global queue depth,
+				// which is what the old code did.
+				started, qerr := c.awaitQueue(ctx, e.account(), req.Model, sessionIDFor(req))
 				if qerr != nil {
 					lastErr, lastAcct = qerr, acctID
 					c.pool.markFailure(e, kindQueue, qerr.Error())
@@ -294,17 +297,34 @@ func (c *Client) sendChat(ctx context.Context, acct account, req *core.ChatReque
 	return resp, nil
 }
 
-// sessionIDFor picks the identifier the backend uses to reuse a prefix cache.
+// sessionIDFor picks the identifier the backend counts as one conversation.
 //
-// It prefers the caller's conversation id, so every turn of one conversation
-// shares a cache; a request with no conversation gets a fresh id, because
-// reusing one across unrelated requests would make the cache useless.
+// It is not only a prefix-cache hint: the vendor caps an account at three
+// concurrent *sessions* (TM.00001041, "并发会话数已达上限(3个)"), so a module
+// that minted a fresh id per turn would fill that budget from a single
+// multi-turn chat and then be refused by an account that is perfectly healthy.
+// The reference implementation holds one id for the life of its adapter, which
+// is the behaviour replicated here.
+//
+// The fallbacks mirror the gateway's own session id (internal/gateway/usage.go
+// sessionIDFor) minus the per-turn ConversationRequestID: a request id names one
+// turn, and using it here would reopen the exhaustion this function exists to
+// prevent.  `user` is deliberately skipped for the same reason the gateway
+// skips it -- an end-user id would fold unrelated chats into one session.
 func sessionIDFor(req *core.ChatRequest) string {
-	if req != nil {
-		if v := strings.TrimSpace(req.ConversationID); v != "" {
-			return v
-		}
+	if req == nil {
+		return newUUID()
 	}
+	if v := strings.TrimSpace(req.ConversationID); v != "" {
+		return v
+	}
+	if v := core.ConversationKey(req.Options, ""); v != "" {
+		return v
+	}
+	if v := core.DeriveConversationKey(req.Messages); v != "" {
+		return v
+	}
+	// Nothing stable to key on: one id for this request only.
 	return newUUID()
 }
 
@@ -317,7 +337,12 @@ func sessionIDFor(req *core.ChatRequest) string {
 // It returns true when the task is no longer queued, so the caller should
 // retry the chat request.  A `false` return means the wait ran out; the error
 // explains which of the two happened.
-func (c *Client) awaitQueue(ctx context.Context, acct account, model string) (bool, error) {
+//
+// sessionID is the same id the chat request carried as `Session-Id` (and
+// `prompt_cache_key`): the endpoint answers "where is THIS session in the
+// queue", so a random id can never describe our request.  The reference
+// implementation passes its adapter's session id here for exactly that reason.
+func (c *Client) awaitQueue(ctx context.Context, acct account, model, sessionID string) (bool, error) {
 	deadline := time.Now().Add(c.cfg.queueMaxWait())
 	every := c.cfg.queuePollEvery()
 	if every <= 0 {
@@ -333,7 +358,7 @@ func (c *Client) awaitQueue(ctx context.Context, acct account, model string) (bo
 
 		q := url.Values{}
 		q.Set("model", model)
-		q.Set("task_id", newUUID())
+		q.Set("task_id", sessionID)
 		rawURL := c.cfg.queueStatusURL() + "?" + q.Encode()
 
 		var out queueStatus

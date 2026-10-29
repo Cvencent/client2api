@@ -246,29 +246,44 @@ button:not(.primary):not(.danger):hover:not(:disabled) {
 .mh-stat.warn .v { color: var(--warn); }
 .mh-stat.bad .v { color: var(--bad); }
 
-/* ③ masthead 底部：滚动活动条。一条无限左移的信号带，读起来像机场的
-   航班信息牌——它让「这个系统在动」持续可见，而不是靠一次进场动画。 */
-.mh-ticker {
-  margin-top: 22px; position: relative;
-  border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
-  padding: 9px 0; overflow: hidden;
-  -webkit-mask-image: linear-gradient(to right, transparent, #000 6%, #000 94%, transparent);
-  mask-image: linear-gradient(to right, transparent, #000 6%, #000 94%, transparent);
+/* ③（活动滚条已按用户要求移除：它晃眼，且不承载信息） */
+
+/* ④ 3D 展示层：每个页面的内容都能立起来看。
+   舞台是一个 WebGL 画布 + 一条读数带；同一份数据在「3D」和「列表」两种
+   呈现之间切换，交互是拖拽旋转、滚轮缩放、点击选中。 */
+.board3d {
+  position: relative;
+  margin: 0 18px 14px;
+  border: 1px solid var(--line-soft); border-radius: 14px;
+  background:
+    radial-gradient(120% 90% at 50% 0%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 62%),
+    color-mix(in srgb, var(--surface-2) 42%, transparent);
+  overflow: hidden;
 }
-.mh-ticker-track { display: inline-flex; align-items: center; gap: 0; white-space: nowrap; animation: mhScroll 46s linear infinite; }
-.mh-ticker:hover .mh-ticker-track { animation-play-state: paused; }
-@keyframes mhScroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
-.mh-tick {
-  display: inline-flex; align-items: center; gap: 8px;
-  padding: 0 18px; font: 11.5px/1 var(--mono); color: var(--ink-2);
-  border-right: 1px solid var(--line-soft);
+.board3d canvas { display: block; width: 100%; height: 100%; cursor: grab; }
+.board3d.dragging canvas { cursor: grabbing; }
+.board3d .b3d-hint {
+  position: absolute; left: 12px; top: 10px; z-index: 2;
+  font: 600 9.5px/1 var(--mono); letter-spacing: .16em; text-transform: uppercase;
+  color: var(--ink-3); pointer-events: none;
 }
-.mh-tick b { color: var(--ink); font-weight: 620; }
-.mh-tick .dot { width: 5px; height: 5px; border-radius: 50%; flex: none; background: var(--ink-3); }
-.mh-tick.ok .dot { background: var(--ok); }
-.mh-tick.warn .dot { background: var(--warn); }
-.mh-tick.bad .dot { background: var(--bad); }
-.mh-tick .lat { color: var(--ink-3); }
+.board3d .b3d-read {
+  position: absolute; right: 12px; top: 10px; z-index: 2;
+  max-width: 46%; text-align: right; pointer-events: none;
+}
+.board3d .b3d-read b { display: block; font-size: 13px; font-weight: 640; letter-spacing: -.01em; }
+.board3d .b3d-read span { display: block; margin-top: 3px; font: 11px/1.4 var(--mono); color: var(--ink-3); }
+.board3d .b3d-none {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  font-size: 12px; color: var(--ink-3);
+}
+/* 两种呈现的切换开关（和账号池那对同一套语法） */
+.view3d-toggle { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+.view3d-toggle button { border: 0; border-radius: 0; background: transparent; padding: 4px 11px; font-size: 11.5px; color: var(--ink-3); }
+.view3d-toggle button.on { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent-text); font-weight: 600; }
+body.mode-lists .board3d { display: none; }
+body.mode-3d .view-3d-hidden { display: none; }
+@media (max-width: 760px) { .board3d { margin: 0 12px 12px; } }
 
 /* ④ 卡片 3D 倾斜 + 眩光（React Bits Tilt/Glare 手法）：鼠标在卡片上时，
    卡片朝光标方向轻微倾斜，同时一道高光扫过。用 JS 写 --tx/--ty/--gx 三个
@@ -329,7 +344,7 @@ body.acct-mode-table .acct-board { display: none; }
   .acct-board { grid-template-columns: repeat(auto-fill, minmax(74vw, 1fr)); padding: 4px 12px 14px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .mh-kicker i, .mh-ticker-track, .masthead * { animation: none !important; }
+  .mh-kicker i, .masthead * { animation: none !important; }
   .tilt, .acct-card { transform: none !important; }
   .tilt-glare { display: none; }
 }
@@ -6108,6 +6123,10 @@ html:not([data-theme="light"]) body::after {
         <svg id="icoTheme" viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M13.2 9.6A5.6 5.6 0 0 1 6.4 2.8a5.6 5.6 0 1 0 6.8 6.8z"/></svg>
       </button>
       <!-- 统一的刷新入口：任何视图都在这个位置，按当前视图分派到真正干活的函数。 -->
+      <span class="view3d-toggle" id="view3dToggle" role="group" aria-label="页面呈现方式">
+        <button type="button" data-view3d="3d" class="on" title="把这个页面的数据立起来看">3D</button>
+        <button type="button" data-view3d="lists" title="回到密集的列表视图">列表</button>
+      </span>
       <button id="btnRefresh" title="重新读取当前页面的数据">刷新</button>
       <button class="primary" id="btnAdd" hidden>添加账号</button>
     </div>
@@ -8205,48 +8224,7 @@ function mastStats(view) {
   return [];
 }
 
-// mastTicker 造活动条的内容。优先用真实请求流水（route live 的记录），
-// 没有就用各平台的账号状态拼一条——总之让「系统在动」这件事有东西可看。
-function mastTicker() {
-  const items = [];
-  const tr = (RL_DATA && RL_DATA.traces) || [];
-  tr.slice(0, 10).forEach(t => {
-    const lanes = (t.lanes || []);
-    const win = lanes.find((_, i) => i === t.winner) || lanes[0] || {};
-    const who = t.client || win.client || "调用方";
-    const acct = win.account_label || win.account || win.client || "默认账号";
-    const lat = (win.latency_ms || 0) >= 1000 ? (win.latency_ms / 1000).toFixed(1) + "s" : (win.latency_ms ? win.latency_ms + "ms" : "—");
-    items.push({
-      cls: t.failed ? "bad" : (lanes.length > 1 ? "warn" : "ok"),
-      html: '<b>' + esc(who) + '</b> → ' + esc(acct) +
-        ' <span class="lat">' + esc(lat) + (t.failed ? " ✕" : (lanes.length > 1 ? " 改道" : " ✓")) + "</span>",
-    });
-  });
-  if (!items.length) {
-    NAMES.forEach(n => {
-      const a = (ACCTS[n] || {});
-      const groups = accGroups(a.accounts);
-      if (!groups.length) return;
-      const cls = a.unsupported ? "" : (readyGroups(n) ? "ok" : "warn");
-      items.push({
-        cls: cls,
-        html: '<b>' + esc(platformLabel(n)) + '</b> ' + groups.length + ' 个账号' +
-          ' <span class="lat">' + (a.unsupported ? "不支持账号管理" : (readyGroups(n) ? "就绪" : "待确认")) + "</span>",
-      });
-    });
-  }
-  // 兜底：加上几条系统事实，保证条子永远不是空的。
-  items.push({ cls: "ok", html: '<b>client2api</b> v' + esc(SNAP.version || "—") + ' <span class="lat">' + esc(SNAP.listen || "") + "</span>" });
-  items.push({ cls: "", html: '<b>存储</b> ' + esc(redisLabel()) + ' <span class="lat">' + NAMES.length + " 客户端</span>" });
-  return items;
-}
-
-// readyGroups 是一个客户端当前可用账号组的数量。
-function readyGroups(n) {
-  return accGroups((ACCTS[n] || {}).accounts).filter(g => accountState(accGroupStat(g)).key === "ready").length;
-}
-
-// mountMasthead 在视图顶部放好页头（只放一次），每次进页刷新读数与活动条。
+// mountMasthead 在视图顶部放好页头（只放一次），每次进页刷新读数。
 function mountMasthead(view) {
   const host = document.getElementById("view-" + view);
   const spec = MASTHEADS[view];
@@ -8264,7 +8242,6 @@ function mountMasthead(view) {
         '</div>' +
         '<div class="mh-right"></div>' +
       '</div>' +
-      '<div class="mh-ticker"><div class="mh-ticker-track"></div></div>';
     host.insertBefore(mh, host.firstChild);
   }
   const titleEl = mh.querySelector(".mh-title");
@@ -8282,11 +8259,6 @@ function mountMasthead(view) {
   rightEl.innerHTML = stats.map(s =>
     '<div class="mh-stat ' + (s.tone || "") + '"><div class="k">' + esc(s.k) + '</div>' +
     '<div class="v">' + esc(s.v) + '</div><div class="s">' + esc(s.s) + '</div></div>').join("");
-  // 活动条：内容复制一份，让 -50% 的位移无缝循环。
-  const track = mh.querySelector(".mh-ticker-track");
-  const items = mastTicker();
-  const one = items.map(it => '<span class="mh-tick ' + (it.cls || "") + '"><i class="dot"></i>' + it.html + "</span>").join("");
-  track.innerHTML = one + one;
 }
 
 /* ── Click Spark（React Bits 手法）：点击处迸射火花 ─────────────────────
@@ -8312,11 +8284,18 @@ function initSpark() {
   window.addEventListener("pointerdown", ev => {
     // 只对左键/主触点迸射；拖动和右键不打扰。
     if (ev.button !== undefined && ev.button !== 0) return;
+    if (typeof ev.clientX !== "number") return;
+    // 坐标必须按 canvas 自己的矩形换算：clientX 是视口坐标，只要 canvas 的某个
+    // 祖先带了 transform / 缩放（面板在外壳里就可能是这样），两者就对不上，
+    // 火花会画偏——这就是上一版「爆炸位置和我点的地方不对应」的原因。
+    const r = c.getBoundingClientRect();
+    const sx = (ev.clientX - r.left) * (c.clientWidth / Math.max(1, r.width));
+    const sy = (ev.clientY - r.top) * (c.clientHeight / Math.max(1, r.height));
     const n = 9;
     for (let i = 0; i < n; i++) {
       const a = (Math.PI * 2 * i) / n + Math.random() * 0.4;
       const sp = 1.6 + Math.random() * 2.6;
-      SPARK.pts.push({ x: ev.clientX, y: ev.clientY, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 1.1, life: 1, r: 1.4 + Math.random() * 1.6 });
+      SPARK.pts.push({ x: sx, y: sy, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 1.1, life: 1, r: 1.4 + Math.random() * 1.6 });
     }
     if (!SPARK.raf) SPARK.raf = requestAnimationFrame(sparkFrame);
   }, { passive: true });
@@ -8324,8 +8303,9 @@ function initSpark() {
 function sparkFrame() {
   SPARK.raf = 0;
   const ctx = SPARK.ctx, d = SPARK.dpr;
+  const cw = SPARK.canvas.clientWidth, ch = SPARK.canvas.clientHeight;
   ctx.setTransform(d, 0, 0, d, 0, 0);
-  ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+  ctx.clearRect(0, 0, cw, ch);
   const live = [];
   for (const p of SPARK.pts) {
     p.life -= 0.045;
@@ -8339,7 +8319,7 @@ function sparkFrame() {
   ctx.globalAlpha = 1;
   SPARK.pts = live;
   if (live.length) SPARK.raf = requestAnimationFrame(sparkFrame);
-  else ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+  else ctx.clearRect(0, 0, cw, ch);
 }
 
 /* ── 卡片 3D 倾斜 + 眩光（React Bits Tilt / Glare）────────────────────
@@ -8409,6 +8389,9 @@ function go(v) {
     // 进场 stagger：每次切页都给该页一次轻量的编排（24ms/项，上限 12 项）。
     revealView(v);
     mountMasthead(v);
+    // 3D 是默认呈现：进页就把这一页的数据立起来。
+    if (document.body.classList.contains("mode-3d")) mountBoard3d(v);
+    else b3dStop();
   }
   fxTitle(TITLES[v]);
   document.title = TITLES[v] + " · client2api";
@@ -10530,6 +10513,449 @@ function renderTranscriptionCallInfo() {
   return routes;
 }
 
+/* ══ 3D 展示层 ═══════════════════════════════════════════════════════════
+   每个页面的内容都能「立起来」看：同一份数据，一种是列表（原来的密集视图），
+   一种是 3D 舞台（拖拽旋转、滚轮缩放、点击选中）。四种形态覆盖全部页面：
+
+     ring   一圈信息板（账号 / 模型 / 客户端 / 积分 / 平台 / 任务 / 告警 / 实况）
+     globe  节点球 + 中心枢纽（总览）
+     bars   柱阵（用量）
+     tunnel 向纵深延伸的环（日志 / 对话 / 配置）
+
+   一台渲染器、一个场景，切页时重建内容并把画布搬进当前页的舞台里——
+   13 个页面各造一个 WebGL 上下文既浪费又会撞浏览器的上下文上限。 */
+const B3D = {
+  canvas: null, renderer: null, scene: null, cam: null, root: null,
+  pickables: [], items: [], host: null, readEl: null, hintEl: null,
+  raf: 0, drag: null, yaw: 0.4, pitch: 0.22, dist: 6.6,
+  sel: -1, spec: null, view: "", t: 0, texCache: {},
+};
+
+function b3dSupported() { return typeof THREE !== "undefined"; }
+
+// b3dTexture 把一块「信息板」画进 canvas 并做成纹理：边框按状态染色，
+// 上面是名字，中间是大读数，底部一条按值缩放的横条。比纯色方块读得懂。
+function b3dTexture(item, maxV) {
+  const frac = Math.max(0, Math.min(1, (Number(item.raw) || 0) / Math.max(1, maxV)));
+  const key = String(item.label) + "|" + item.value + "|" + item.tone + "|" + Math.round(frac * 20) + "|" + item.sub;
+  if (B3D.texCache[key]) return B3D.texCache[key];
+  const W = 320, H = 400, c = document.createElement("canvas");
+  c.width = W; c.height = H;
+  const g = c.getContext("2d");
+  if (!g) return null;
+  const accent = item.tone === "ok" ? "#4ec98a" : item.tone === "warn" ? "#e0a94a" : item.tone === "bad" ? "#e2686e" : "#7f8dff";
+  g.fillStyle = "rgba(18,20,30,0.94)";
+  g.strokeStyle = accent; g.lineWidth = 7;
+  const r = 26;
+  g.beginPath();
+  g.moveTo(r, 4); g.lineTo(W - r, 4); g.quadraticCurveTo(W - 4, 4, W - 4, r);
+  g.lineTo(W - 4, H - r); g.quadraticCurveTo(W - 4, H - 4, W - r, H - 4);
+  g.lineTo(r, H - 4); g.quadraticCurveTo(4, H - 4, 4, H - r);
+  g.lineTo(4, r); g.quadraticCurveTo(4, 4, r, 4);
+  g.closePath(); g.fill(); g.stroke();
+  g.fillStyle = "rgba(232,236,248,0.96)";
+  g.font = "600 32px ui-monospace, Consolas, monospace";
+  const chunks = String(item.label || "").split(/([/_.\-:])/);
+  let line = "", y = 74;
+  for (const w of chunks) {
+    if (g.measureText(line + w).width > W - 54) { if (line) { g.fillText(line, 26, y); y += 38; } line = ""; }
+    line += w;
+    if (y > 190) break;
+  }
+  if (line) g.fillText(line, 26, y);
+  g.fillStyle = accent;
+  g.font = "700 64px ui-monospace, Consolas, monospace";
+  g.fillText(String(item.value == null ? "-" : item.value), 26, 300);
+  g.fillStyle = "rgba(255,255,255,0.13)";
+  g.fillRect(26, 336, W - 52, 18);
+  g.fillStyle = accent;
+  g.fillRect(26, 336, (W - 52) * Math.max(0.02, frac), 18);
+  if (item.sub) {
+    g.fillStyle = "rgba(150,158,182,0.95)";
+    g.font = "500 25px ui-monospace, Consolas, monospace";
+    g.fillText(String(item.sub).slice(0, 20), 26, 382);
+  }
+  const tex = new THREE.CanvasTexture(c);
+  B3D.texCache[key] = tex;
+  return tex;
+}
+
+function b3dEnsure() {
+  if (B3D.renderer) return true;
+  if (!b3dSupported()) return false;
+  const canvas = document.createElement("canvas");
+  canvas.setAttribute("aria-hidden", "true");
+  try {
+    B3D.renderer = new THREE.WebGLRenderer({ canvas: canvas, alpha: true, antialias: true });
+  } catch (e) { B3D.renderer = null; return false; }
+  B3D.canvas = canvas;
+  B3D.scene = new THREE.Scene();
+  B3D.cam = new THREE.PerspectiveCamera(46, 1.6, 0.1, 100);
+  B3D.root = new THREE.Group();
+  B3D.scene.add(B3D.root);
+  return true;
+}
+
+// b3dClear 拆掉上一页的物体并释放几何体（纹理缓存在 B3D.texCache 里复用）。
+function b3dClear() {
+  if (!B3D.root) return;
+  const kill = o => {
+    if (o.geometry) o.geometry.dispose();
+    if (o.material) { const ms = Array.isArray(o.material) ? o.material : [o.material]; ms.forEach(m => m.dispose()); }
+  };
+  while (B3D.root.children.length) {
+    const c = B3D.root.children.pop();
+    if (c.traverse) c.traverse(kill); else kill(c);
+  }
+  B3D.pickables = []; B3D.sel = -1; B3D.items = [];
+}
+
+/* ── 页面 → 3D 形态与数据 ────────────────────────────────────────────────
+   每页给出一组 {label, value, tone, sub, raw}，形态由 shape 决定。数据都来自
+   已经加载好的全局；没有数据时返回空数组，舞台显示一句安静的状态。 */
+function b3dAcctItems(n) {
+  const out = [];
+  accGroups((ACCTS[n] || {}).accounts).forEach(g => {
+    const a = g.rows[0];
+    const st = accStatOf(a.id);
+    const k = accountState(accGroupStat(g)).key;
+    out.push({
+      label: g.identity || accountIdentity(a) || "账号",
+      value: st ? numf(Number(st.requests) || 0) : null,
+      raw: st ? (Number(st.requests) || 0) : 0,
+      tone: k === "ready" ? "ok" : (k === "cooling" ? "warn" : "bad"),
+      sub: accountState(accGroupStat(g)).label,
+    });
+  });
+  return out;
+}
+function b3dSpec(view) {
+  switch (view) {
+    case "accounts": return { shape: "ring", hint: "ACCOUNTS · DRAG", items: b3dAcctItems(CUR) };
+    case "overview": {
+      const items = [];
+      NAMES.forEach(n => b3dAcctItems(n).forEach(x => items.push(x)));
+      return { shape: "globe", hint: "POOL · DRAG", items: items };
+    }
+    case "packages": return { shape: "ring", hint: "MODULES · DRAG", items: NAMES.map(n => {
+      const groups = accGroups((ACCTS[n] || {}).accounts);
+      const ready = groups.filter(g => accountState(accGroupStat(g)).key === "ready").length;
+      return { label: platformLabel(n), value: groups.length, tone: groups.length ? (ready ? "ok" : "warn") : "", sub: ready + " 就绪", raw: groups.length };
+    }) };
+    case "models": {
+      const out = [];
+      (MODELS || []).forEach(c => (c.models || []).forEach(m => out.push({
+        label: m.id, value: m.context_length ? fmtK(m.context_length) : null,
+        tone: m.extra && m.extra.free ? "ok" : "", sub: c.name, raw: Number(m.context_length) || 0,
+      })));
+      return { shape: "ring", hint: "CATALOG · DRAG", items: out.slice(0, 60) };
+    }
+    case "usage": {
+      const out = [];
+      NAMES.forEach(n => b3dAcctItems(n).forEach(x => out.push(x)));
+      return { shape: "bars", hint: "TRAFFIC · DRAG", items: out };
+    }
+    case "credits": {
+      const out = [];
+      NAMES.forEach(n => accGroups((ACCTS[n] || {}).accounts).forEach(g => {
+        const b = ((BALS[n] || {}).byID || {})[g.rows[0].id];
+        out.push({
+          label: g.identity || accountIdentity(g.rows[0]) || "账号",
+          value: b && b.credits != null ? numf(Number(b.credits)) : null,
+          tone: b && b.error ? "bad" : "", sub: platformLabel(n),
+          raw: b && b.credits != null ? Number(b.credits) : 0,
+        });
+      }));
+      return { shape: "ring", hint: "CREDITS · DRAG", items: out };
+    }
+    case "platforms": {
+      const out = (SNAP.clients || []).map(c => ({
+        label: platformLabel(c.name), value: (c.models || []).length || 0,
+        tone: c.ready ? "ok" : "", sub: c.ready ? "就绪" : "未就绪", raw: (c.models || []).length || 0,
+      }));
+      if (!out.length) NAMES.forEach(n => out.push({ label: platformLabel(n), value: null, tone: "", sub: "未加载", raw: 0 }));
+      return { shape: "tunnel", hint: "ROUTING · DRAG", items: out };
+    }
+    case "taskscenter": {
+      const rows = (SC.data && SC.data.rows) || [];
+      const out = rows.map(r => ({ label: scLabel(r.batch), value: r.group_enabled ? 1 : 0, tone: r.group_enabled ? "ok" : "", sub: r.client, raw: 1 }));
+      if (!out.length) NAMES.forEach(n => out.push({ label: platformLabel(n), value: null, tone: "", sub: "未扫描", raw: 0 }));
+      return { shape: "ring", hint: "AUTOMATION · DRAG", items: out.slice(0, 40) };
+    }
+    case "alerts": {
+      const out = NAMES.map(n => ({
+        label: platformLabel(n), value: ((ACCTS[n] || {}).accounts || []).length,
+        tone: "", sub: "在监控", raw: ((ACCTS[n] || {}).accounts || []).length,
+      }));
+      return { shape: "bars", hint: "ALERTS · DRAG", items: out };
+    }
+    case "logs": return { shape: "tunnel", hint: "STREAM · DRAG", items: NAMES.map(n => ({ label: platformLabel(n), value: null, tone: "", sub: "通道", raw: 0 })) };
+    case "chat": return { shape: "ring", hint: "SANDBOX · DRAG", items: (MODELS || []).slice(0, 24).map(c => ({ label: c.name, value: (c.models || []).length, tone: "", sub: "模型", raw: (c.models || []).length })) };
+    case "config": return { shape: "tunnel", hint: "CONFIG · DRAG", items: [
+      { label: "监听地址", value: null, tone: "", sub: SNAP.listen || "", raw: 0 },
+      { label: "客户端", value: NAMES.length, tone: "", sub: "已启用", raw: NAMES.length },
+      { label: "版本", value: null, tone: "", sub: "v" + (SNAP.version || "-"), raw: 0 },
+    ] };
+    case "routelive": {
+      const out = ((RL_DATA && RL_DATA.traces) || []).slice(0, 24).map(x => {
+        const lanes = x.lanes || [];
+        const win = lanes.find((_, i) => i === x.winner) || lanes[0] || {};
+        return {
+          label: win.account_label || win.account || x.client || "调用方", value: null,
+          tone: x.failed ? "bad" : (lanes.length > 1 ? "warn" : "ok"),
+          sub: win.latency_ms ? win.latency_ms + "ms" : "-", raw: 0,
+        };
+      });
+      if (!out.length) out.push({ label: "还没有请求", value: null, tone: "", sub: "等待流量", raw: 0 });
+      return { shape: "ring", hint: "LIVE · DRAG", items: out };
+    }
+  }
+  return { shape: "ring", hint: "DRAG", items: [] };
+}
+
+/* ── 把 spec 立起来 ────────────────────────────────────────────────────── */
+function b3dToneColor(t) {
+  return t === "ok" ? 0x4ec98a : t === "warn" ? 0xe0a94a : t === "bad" ? 0xe2686e : 0x7f8dff;
+}
+function b3dBuild(spec) {
+  b3dClear();
+  B3D.spec = spec;
+  const items = spec.items || [];
+  B3D.items = items;
+  if (!B3D.root || !items.length) return;
+  const maxV = Math.max(1, ...items.map(i => Number(i.raw) || 0));
+
+  if (spec.shape === "ring") {
+    const R = Math.max(2.2, Math.min(4.6, 1.6 + items.length * 0.11));
+    const step = (Math.PI * 2) / Math.max(1, items.length);
+    items.forEach((it, i) => {
+      const tex = b3dTexture(it, maxV);
+      if (!tex) return;
+      const a = i * step;
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 1.85), new THREE.MeshBasicMaterial({ map: tex, transparent: true }));
+      m.position.set(Math.cos(a) * R, 0, Math.sin(a) * R);
+      m.lookAt(0, 0, 0);
+      m.userData.index = i;
+      B3D.root.add(m);
+      B3D.pickables.push(m);
+      const ped = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.46, 8),
+        new THREE.MeshBasicMaterial({ color: b3dToneColor(it.tone), transparent: true, opacity: 0.6 }));
+      ped.position.set(Math.cos(a) * R, -1.22, Math.sin(a) * R);
+      B3D.root.add(ped);
+    });
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(R + 0.35, 0.012, 6, 96),
+      new THREE.MeshBasicMaterial({ color: 0x5a6b9e, transparent: true, opacity: 0.5 }));
+    ring.rotation.x = Math.PI / 2; ring.position.y = -1.46;
+    B3D.root.add(ring);
+  } else if (spec.shape === "globe") {
+    const N = Math.max(1, items.length);
+    items.forEach((it, i) => {
+      const phi = Math.acos(1 - 2 * (i + 0.5) / N);
+      const theta = Math.PI * (1 + Math.sqrt(5)) * (i + 0.5);
+      const R = 2.5;
+      const size = 0.09 + 0.16 * Math.min(1, (Number(it.raw) || 0) / maxV + 0.3);
+      const dot = new THREE.Mesh(new THREE.SphereGeometry(size, 12, 12), new THREE.MeshBasicMaterial({ color: b3dToneColor(it.tone) }));
+      dot.position.set(Math.sin(phi) * Math.cos(theta) * R, Math.cos(phi) * R, Math.sin(phi) * Math.sin(theta) * R);
+      dot.userData.index = i;
+      B3D.root.add(dot);
+      B3D.pickables.push(dot);
+      const g = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), dot.position.clone()]);
+      B3D.root.add(new THREE.Line(g, new THREE.LineBasicMaterial({ color: 0x3f4a6b, transparent: true, opacity: 0.26 })));
+    });
+    B3D.root.add(new THREE.Mesh(new THREE.SphereGeometry(0.55, 24, 24), new THREE.MeshBasicMaterial({ color: 0x8fa8ff, transparent: true, opacity: 0.9 })));
+    B3D.root.add(new THREE.Mesh(new THREE.SphereGeometry(0.64, 20, 20), new THREE.MeshBasicMaterial({ color: 0x6f8cff, wireframe: true, transparent: true, opacity: 0.5 })));
+  } else if (spec.shape === "bars") {
+    const W = 0.34, gap = 0.17;
+    const total = Math.max(1, items.length);
+    items.forEach((it, i) => {
+      const h = 0.35 + 2.7 * ((Number(it.raw) || 0) / maxV);
+      const b = new THREE.Mesh(new THREE.BoxGeometry(W, h, W), new THREE.MeshBasicMaterial({ color: b3dToneColor(it.tone), transparent: true, opacity: 0.92 }));
+      b.position.set((i - total / 2) * (W + gap), h / 2 - 1.5, (i % 2) ? gap : 0);
+      b.userData.index = i;
+      B3D.root.add(b);
+      B3D.pickables.push(b);
+    });
+  } else {
+    const N = Math.max(4, items.length);
+    for (let i = 0; i < N; i++) {
+      const it = items[i];
+      const z = -i * 1.15;
+      const rad = Math.max(0.7, 1.9 - i * 0.09);
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(rad, 0.02, 6, 64),
+        new THREE.MeshBasicMaterial({ color: it ? b3dToneColor(it.tone) : 0x3f4a6b, transparent: true, opacity: Math.max(0.2, 0.7 - i * 0.03) }));
+      ring.position.z = z;
+      if (it) { ring.userData.index = i; B3D.root.add(ring); B3D.pickables.push(ring); } else B3D.root.add(ring);
+      if (it) {
+        const tex = b3dTexture(it, maxV);
+        if (tex) {
+          const pl = new THREE.Mesh(new THREE.PlaneGeometry(1.15, 1.44), new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: 0.96 }));
+          pl.position.set(0, 0, z + 0.02);
+          pl.userData.index = i;
+          B3D.root.add(pl);
+          B3D.pickables.push(pl);
+        }
+      }
+    }
+  }
+}
+
+/* ── 交互：拖拽旋转 / 滚轮缩放 / 点击选中 ────────────────────────────── */
+function b3dMountControls() {
+  const cv = B3D.canvas;
+  if (!cv || cv.dataset.ctl === "1") return;
+  cv.dataset.ctl = "1";
+  cv.addEventListener("pointerdown", ev => {
+    if (ev.button !== 0) return;
+    B3D.drag = { x: ev.clientX, y: ev.clientY, yaw: B3D.yaw, pitch: B3D.pitch, moved: 0 };
+    if (B3D.host) B3D.host.classList.add("dragging");
+    try { cv.setPointerCapture(ev.pointerId); } catch (e) {}
+  });
+  cv.addEventListener("pointermove", ev => {
+    if (!B3D.drag) return;
+    const dx = ev.clientX - B3D.drag.x, dy = ev.clientY - B3D.drag.y;
+    B3D.drag.moved = Math.max(B3D.drag.moved, Math.abs(dx) + Math.abs(dy));
+    B3D.yaw = B3D.drag.yaw + dx * 0.006;
+    B3D.pitch = Math.max(-1.1, Math.min(1.1, B3D.drag.pitch + dy * 0.005));
+  });
+  const endDrag = () => { if (B3D.drag) { B3D.drag = null; if (B3D.host) B3D.host.classList.remove("dragging"); } };
+  cv.addEventListener("pointerup", endDrag);
+  cv.addEventListener("pointercancel", endDrag);
+  cv.addEventListener("wheel", ev => {
+    ev.preventDefault();
+    B3D.dist = Math.max(3.2, Math.min(13, B3D.dist + (ev.deltaY > 0 ? 0.5 : -0.5)));
+  }, { passive: false });
+  cv.addEventListener("click", b3dPickAt);
+}
+function b3dPickAt(ev) {
+  if (!B3D.cam || !B3D.pickables.length || !B3D.canvas) return;
+  if (B3D.drag && B3D.drag.moved > 6) return;
+  const r = B3D.canvas.getBoundingClientRect();
+  if (!r.width || !r.height) return;
+  const p = new THREE.Vector2(
+    ((ev.clientX - r.left) / r.width) * 2 - 1,
+    -((ev.clientY - r.top) / r.height) * 2 + 1);
+  const rc = new THREE.Raycaster();
+  rc.setFromCamera(p, B3D.cam);
+  const hits = rc.intersectObjects(B3D.pickables, false);
+  B3D.sel = (hits[0] && hits[0].object.userData.index >= 0) ? hits[0].object.userData.index : -1;
+  b3dReadout();
+}
+function b3dReadout() {
+  const el = B3D.readEl;
+  if (!el) return;
+  const it = B3D.sel >= 0 ? B3D.items[B3D.sel] : null;
+  el.innerHTML = it
+    ? "<b>" + esc(it.label) + "</b><span>" + esc(it.sub || "") + (it.value != null ? " · " + esc(String(it.value)) : "") + "</span>"
+    : "<span>点击一块板卡看详情</span>";
+}
+
+/* ── 帧循环 ────────────────────────────────────────────────────────────── */
+function b3dFrame() {
+  B3D.raf = 0;
+  if (!B3D.renderer || document.body.classList.contains("mode-lists")) return;
+  const host = B3D.host;
+  if (!host || !host.isConnected) return;
+  const w = host.clientWidth, h = host.clientHeight;
+  if (!w || !h) return;
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  if (B3D.canvas.width !== Math.round(w * dpr) || B3D.canvas.height !== Math.round(h * dpr)) {
+    B3D.renderer.setPixelRatio(dpr);
+    B3D.renderer.setSize(w, h, false);
+    B3D.cam.aspect = w / h;
+    B3D.cam.updateProjectionMatrix();
+  }
+  B3D.t += 0.016;
+  if (!B3D.drag) B3D.yaw += 0.0016;               // 静止时极慢自转
+  B3D.root.rotation.y = B3D.yaw;
+  B3D.root.rotation.x = B3D.pitch * 0.6;
+  B3D.cam.position.set(0, 1.1, B3D.dist);
+  B3D.cam.lookAt(0, 0, 0);
+  B3D.pickables.forEach((m, i) => {
+    const s = i === B3D.sel ? 1.12 : 1;
+    if (m.scale.x !== s) m.scale.setScalar(s);
+  });
+  B3D.renderer.render(B3D.scene, B3D.cam);
+  B3D.raf = requestAnimationFrame(b3dFrame);
+}
+function b3dStart() { if (!B3D.raf && B3D.renderer) B3D.raf = requestAnimationFrame(b3dFrame); }
+function b3dStop() { if (B3D.raf) { cancelAnimationFrame(B3D.raf); B3D.raf = 0; } }
+
+/* ── 挂载：每个视图一个舞台 + 一个「3D / 列表」开关 ───────────────────── */
+// b3dWhenReady 等 vendored 的 Three.js 到位再回调。它是 defer 加载的，一定
+// 晚于这段内联脚本执行，所以首帧不能假定 THREE 已经存在（上一版就是这里
+// 静默失败：typeof THREE === "undefined"，3D 一次都没挂上）。
+function b3dWhenReady(cb) {
+  if (b3dSupported()) { cb(); return; }
+  let tries = 0;
+  const timer = setInterval(() => {
+    tries++;
+    if (b3dSupported()) { clearInterval(timer); cb(); }
+    else if (tries > 50) clearInterval(timer);   // 约 10s 后放弃，保持列表视图
+  }, 200);
+  window.addEventListener("load", () => {
+    if (b3dSupported()) { clearInterval(timer); cb(); }
+  }, { once: true });
+}
+const VIEW3D_KEY = "c2a.view3d";
+function view3dMode() {
+  try { return localStorage.getItem(VIEW3D_KEY) === "lists" ? "lists" : "3d"; } catch (e) { return "3d"; }
+}
+function setView3dMode(m) {
+  const mode = m === "lists" ? "lists" : "3d";
+  try { localStorage.setItem(VIEW3D_KEY, mode); } catch (e) {}
+  document.body.classList.toggle("mode-3d", mode === "3d");
+  document.body.classList.toggle("mode-lists", mode === "lists");
+  $$(".view3d-toggle button").forEach(b => b.classList.toggle("on", b.dataset.view3d === mode));
+  if (mode === "3d") { mountBoard3d(VIEW); b3dStart(); } else b3dStop();
+}
+// mountBoard3d 保证当前视图有舞台并把画布搬进去、按该页数据重建场景。
+function mountBoard3d(view) {
+  if (!b3dSupported()) return;
+  const host = document.getElementById("view-" + view);
+  if (!host) return;
+  let board = host.querySelector(":scope > .board3d");
+  if (!board) {
+    board = document.createElement("div");
+    board.className = "board3d";
+    board.style.height = "clamp(320px, 44vh, 500px)";
+    board.innerHTML = '<span class="b3d-hint"></span><div class="b3d-read"></div><div class="b3d-none" hidden></div>';
+    const mh = host.querySelector(":scope > .masthead");
+    if (mh) host.insertBefore(board, mh.nextSibling);
+    else host.insertBefore(board, host.firstChild);
+  }
+  // 3D 模式下把这一页除页头和舞台之外的内容收起来（列表模式由 CSS 反向隐藏
+  // 舞台）。自动打标，所以 13 个视图不必各自改标记。
+  Array.prototype.forEach.call(host.children, ch => {
+    if (ch === board || ch.classList.contains("masthead")) return;
+    ch.classList.add("view-3d-hidden");
+  });
+  B3D.host = board;
+  B3D.readEl = board.querySelector(".b3d-read");
+  B3D.hintEl = board.querySelector(".b3d-hint");
+  const none = board.querySelector(".b3d-none");
+  if (!b3dEnsure()) {
+    none.hidden = false;
+    none.textContent = "这个环境不支持 WebGL，已回退到列表视图。";
+    document.body.classList.add("mode-lists");
+    document.body.classList.remove("mode-3d");
+    return;
+  }
+  if (B3D.canvas.parentNode !== board) board.insertBefore(B3D.canvas, board.firstChild);
+  b3dMountControls();
+  const spec = b3dSpec(view);
+  B3D.view = view;
+  if (!spec.items.length) {
+    none.hidden = false;
+    none.textContent = "这一页还没有可展示的数据。";
+    b3dClear();
+  } else {
+    none.hidden = true;
+    b3dBuild(spec);
+  }
+  if (B3D.hintEl) B3D.hintEl.textContent = spec.hint || "DRAG";
+  b3dReadout();
+  b3dStart();
+}
 /* ── 账号池卡片墙（默认呈现）───────────────────────────────────────────
    一屏摆开所有账号：每块板卡是「一个账号」，状态灯 + 名字 + 状态词，主读数
    是调用次数，下面几行是成败、在途、到期、状态说明，页脚是同一条动作链。
@@ -18954,6 +19380,8 @@ if (accSortTable) accSortTable.addEventListener("keydown", ev => {
   ev.preventDefault();
   accSortBy(th.dataset.sort);
 });
+// 3D / 列表总开关：换的是呈现，数据与筛选一个字不动。
+$$("#view3dToggle button").forEach(b => b.addEventListener("click", () => setView3dMode(b.dataset.view3d)));
 // 卡片 / 表格切换：只换呈现，数据与筛选一个字不动。
 $$("#acctModeToggle button").forEach(b => b.addEventListener("click", () => {
   setAccMode(b.dataset.acctMode);
@@ -20817,8 +21245,9 @@ async function refreshAll(loud) {
   if (VIEW === "models") renderModels(false);
   if (VIEW === "config") renderConfig();
   if (VIEW === "logs") renderLogs();
-  // 数据到位后把当前页的 masthead 读数与活动条重算一遍（它读的就是上面这些）。
+  // 数据到位后把当前页的 masthead 读数重算一遍（它读的就是上面这些）。
   mountMasthead(VIEW);
+  if (document.body.classList.contains("mode-3d")) mountBoard3d(VIEW);
   if (loud) toast("已刷新");
   return true;
 }
@@ -20867,6 +21296,20 @@ window.addEventListener("unhandledrejection", ev => panelBootError(ev.reason));
     MOTION_FX.reduce = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
     // 首帧就把账号池的呈现模式定下来（卡片墙是默认），避免先闪一下表格。
     setAccMode(accMode());
+    // 3D 是默认呈现方式（用户明确要求），列表视图一键切回并记住。
+    // 库是 defer 加载的，所以先定模式、等它到位再真正把舞台搭起来。
+    setView3dMode(view3dMode());
+    b3dWhenReady(() => {
+      if (document.body.classList.contains("mode-3d")) mountBoard3d(VIEW);
+      // 页面的数据是各自懒加载的（模型目录 / 日志 / 配置…），挂舞台时可能还
+      // 是空的。这里轻量地对账：当前页的条目数变了就重建一次，让舞台跟上数据。
+      setInterval(() => {
+        if (!B3D.renderer || B3D.view !== VIEW) return;
+        if (!document.body.classList.contains("mode-3d")) return;
+        const spec = b3dSpec(VIEW);
+        if (spec.items.length !== B3D.items.length) mountBoard3d(VIEW);
+      }, 1500);
+    });
     SHELL.init();
     bgfStart();
     go((location.hash || "#overview").slice(1));
