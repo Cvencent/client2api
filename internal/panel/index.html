@@ -395,8 +395,10 @@ body.atlas-drawer .atlas-panel { transform: none; }
 .view3d-toggle { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
 .view3d-toggle button { border: 0; border-radius: 0; background: transparent; padding: 4px 11px; font-size: 11.5px; color: var(--ink-3); }
 .view3d-toggle button.on { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent-text); font-weight: 600; }
+/* 列表模式：只藏舞台。3D 模式：舞台作为一条带加在内容上方，**什么也不藏**——
+   能操作的东西永远在屏幕上，3D 是附加的呈现，不是替代品。 */
 body.mode-lists .board3d { display: none; }
-body.mode-3d .view-3d-hidden { display: none; }
+body.mode-3d .board3d { display: block; }
 @media (max-width: 760px) { .board3d { margin: 0 12px 12px; } }
 
 /* ④ 卡片 3D 倾斜 + 眩光（React Bits Tilt/Glare 手法）：鼠标在卡片上时，
@@ -8359,7 +8361,7 @@ function mountMasthead(view) {
           '<p class="mh-sub"></p>' +
         '</div>' +
         '<div class="mh-right"></div>' +
-      '</div>' +
+      '</div>';
     host.insertBefore(mh, host.firstChild);
   }
   const titleEl = mh.querySelector(".mh-title");
@@ -10655,7 +10657,7 @@ function renderTranscriptionCallInfo() {
 const ATLAS = {
   canvas: null, renderer: null, scene: null, cam: null, root: null,
   zones: [], pick: [], raf: 0, t: 0, hover: -1, drag: null, yaw: 0, pitch: 0, sig: "",
-  dist: 15, open: "", home: null, panel: null, host: null, texCache: {},
+  dist: 22, open: "", home: null, panel: null, host: null, texCache: {},
 };
 
 // atlasZones 把「一个领域」定义成地图上的一块区域。数据全部读现成的全局，
@@ -10700,11 +10702,11 @@ function atlasLabelTexture(z) {
   g.fillStyle = "rgba(14,16,24,0.0)";
   g.fillRect(0, 0, W, H);
   g.fillStyle = "#eef1fa";
-  g.font = "700 76px ui-monospace, Consolas, monospace";
-  g.fillText(z.label, 8, 96);
+  g.font = "700 96px ui-monospace, Consolas, monospace";
+  g.fillText(z.label, 10, 116);
   g.fillStyle = accent;
-  g.font = "600 34px ui-monospace, Consolas, monospace";
-  g.fillText(String(z.sub || "").slice(0, 26), 8, 152);
+  g.font = "600 42px ui-monospace, Consolas, monospace";
+  g.fillText(String(z.sub || "").slice(0, 22), 10, 178);
   g.strokeStyle = accent; g.lineWidth = 4; g.globalAlpha = 0.9;
   g.beginPath(); g.moveTo(8, 176); g.lineTo(8 + Math.min(300, 60 + z.count * 8), 176); g.stroke();
   const tex = new THREE.CanvasTexture(c);
@@ -10753,14 +10755,18 @@ function atlasBuild() {
   ATLAS.sig = JSON.stringify(zones.map(z => [z.view, z.sub, z.tone, z.count]));
   const n = zones.length;
   zones.forEach((z, i) => {
-    const a = (i / n) * Math.PI * 2;
-    const R = 7.6 + (i % 3) * 0.9;
+    const a = (i / n) * Math.PI * 2 - Math.PI / 2;
+    // 半径固定（不再 ±0.9 波动）：上一版波动的半径让相邻板子在屏幕投影上
+    // 互相压住，字被挡住。等距环 + 更大的半径才读得开。
+    const R = 11.5;
     const x = Math.cos(a) * R, zz = Math.sin(a) * R;
     const g = new THREE.Group();
     g.position.set(x, 0, zz);
+    // 板子朝圆心，但略微仰起，保证俯视时文字是正的而不是斜的。
     g.lookAt(0, 0, 0);
+    g.rotateX(-0.55);
     // 平台：一块薄板，颜色随状态
-    const slab = new THREE.Mesh(new THREE.BoxGeometry(4.4, 0.28, 2.2),
+    const slab = new THREE.Mesh(new THREE.BoxGeometry(5.6, 0.28, 2.8),
       new THREE.MeshBasicMaterial({ color: new THREE.Color(atlasTone(z.tone)).multiplyScalar(0.55), transparent: true, opacity: 0.95 }));
     slab.position.y = -1.4;
     slab.userData.zone = i;
@@ -10769,20 +10775,20 @@ function atlasBuild() {
     // 铭牌
     const tex = atlasLabelTexture(z);
     if (tex) {
-      const pl = new THREE.Mesh(new THREE.PlaneGeometry(3.6, 1.4), new THREE.MeshBasicMaterial({ map: tex, transparent: true }));
-      pl.position.set(-0.1, -0.5, 1.02);
+      const pl = new THREE.Mesh(new THREE.PlaneGeometry(4.8, 1.875), new THREE.MeshBasicMaterial({ map: tex, transparent: true }));
+      pl.position.set(0, 0.1, 1.35);
       pl.userData.zone = i;
       g.add(pl);
       ATLAS.pick.push(pl);
     }
     // 节点簇：数量决定点数（封顶 14），按状态上色，高低错落
-    const dots = Math.min(14, Math.max(1, z.count || 0));
+    const dots = Math.min(10, Math.max(1, z.count || 0));
     for (let k = 0; k < dots; k++) {
       const ang = (k / dots) * Math.PI * 2;
-      const rr = 0.7 + (k % 3) * 0.34;
-      const dot = new THREE.Mesh(new THREE.SphereGeometry(0.13, 10, 10),
+      const rr = 0.6 + (k % 3) * 0.3;
+      const dot = new THREE.Mesh(new THREE.SphereGeometry(0.11, 10, 10),
         new THREE.MeshBasicMaterial({ color: atlasTone(z.tone) }));
-      dot.position.set(Math.cos(ang) * rr + 0.6, -1.05 + ((k % 4) * 0.22), Math.sin(ang) * rr * 0.5);
+      dot.position.set(Math.cos(ang) * rr, -0.25, Math.sin(ang) * rr * 0.5 - 0.55);
       dot.userData.zone = i;
       g.add(dot);
       ATLAS.pick.push(dot);
@@ -10874,7 +10880,7 @@ function atlasMountControls() {
   cv.addEventListener("pointercancel", end);
   cv.addEventListener("wheel", ev => {
     ev.preventDefault();
-    ATLAS.dist = Math.max(8, Math.min(30, ATLAS.dist + (ev.deltaY > 0 ? 1.1 : -1.1)));
+    ATLAS.dist = Math.max(14, Math.min(42, ATLAS.dist + (ev.deltaY > 0 ? 1.4 : -1.4)));
   }, { passive: false });
   cv.addEventListener("click", ev => {
     if (ATLAS.drag && ATLAS.drag.moved > 6) return;
@@ -10920,8 +10926,8 @@ function atlasFrame() {
   if (!ATLAS.drag) ATLAS.yaw += 0.0009;
   ATLAS.root.rotation.y = ATLAS.yaw;
   ATLAS.root.rotation.x = ATLAS.pitch;
-  ATLAS.cam.position.set(0, 4.2, ATLAS.dist);
-  ATLAS.cam.lookAt(0, -0.6, 0);
+  ATLAS.cam.position.set(0, ATLAS.dist * 0.82, ATLAS.dist);
+  ATLAS.cam.lookAt(0, -0.2, 0);
   ATLAS.pick.forEach(o => {
     const on = o.userData.zone === ATLAS.hover;
     const s = on ? 1.06 : 1;
@@ -10979,6 +10985,8 @@ function atlasEnter(explicit) {
     const hint = ATLAS.host.querySelector(".atlas-hint");
     if (hint) hint.hidden = false;
   }
+  // 星图里进领域时强制列表呈现：抽屉里的内容要是可读可操作的实内容。
+  if (document.body.classList.contains("mode-3d")) setView3dMode("lists");
 }
 // atlasLeave 退出星图，回到常规的列表视图（主区里的 section 已经搬回来了）。
 function atlasLeave() {
@@ -11464,7 +11472,10 @@ function b3dWhenReady(cb) {
 }
 const VIEW3D_KEY = "c2a.view3d";
 function view3dMode() {
-  try { return localStorage.getItem(VIEW3D_KEY) === "lists" ? "lists" : "3d"; } catch (e) { return "3d"; }
+  // 默认「列表」：真实内容立刻可见、可操作。3D 是一条可选的可视化带，
+  // 打开时加在内容**上方**，不替换任何东西——上一版把 3D 当默认并且藏掉
+  // 真实内容，等于把页面变成了一张看不懂的图，这是设计错误。
+  try { return localStorage.getItem(VIEW3D_KEY) === "3d" ? "3d" : "lists"; } catch (e) { return "lists"; }
 }
 function setView3dMode(m) {
   const mode = m === "lists" ? "lists" : "3d";
@@ -11483,18 +11494,12 @@ function mountBoard3d(view) {
   if (!board) {
     board = document.createElement("div");
     board.className = "board3d";
-    board.style.height = "clamp(320px, 44vh, 500px)";
+    board.style.height = "clamp(220px, 26vh, 320px)";
     board.innerHTML = '<span class="b3d-hint"></span><div class="b3d-read"></div><div class="b3d-none" hidden></div><div class="b3d-inspect" hidden></div>';
     const mh = host.querySelector(":scope > .masthead");
     if (mh) host.insertBefore(board, mh.nextSibling);
     else host.insertBefore(board, host.firstChild);
   }
-  // 3D 模式下把这一页除页头和舞台之外的内容收起来（列表模式由 CSS 反向隐藏
-  // 舞台）。自动打标，所以 13 个视图不必各自改标记。
-  Array.prototype.forEach.call(host.children, ch => {
-    if (ch === board || ch.classList.contains("masthead")) return;
-    ch.classList.add("view-3d-hidden");
-  });
   B3D.host = board;
   B3D.readEl = board.querySelector(".b3d-read");
   B3D.hintEl = board.querySelector(".b3d-hint");
@@ -21930,8 +21935,11 @@ window.addEventListener("unhandledrejection", ev => panelBootError(ev.reason));
     b3dWhenReady(() => {
       // 星图是默认入口：导航不再是顶栏那排 Tab，而是一张空间地图。
       // 用户点过「列表视图」退出后就不再自动进入（localStorage 记住）。
-      let atlasPref = "on";
-      try { atlasPref = localStorage.getItem("c2a.atlas") || "on"; } catch (e) {}
+      // 星图默认关闭：上一版拿它当入口，结果是「文字看不清、板子互相压、
+      // 到处被裁」的空间图，比常规导航更难用。现在它是可选项（顶栏「星图」），
+      // 默认直接进可用的列表界面。
+      let atlasPref = "off";
+      try { atlasPref = localStorage.getItem("c2a.atlas") || "off"; } catch (e) {}
       if (atlasPref !== "off") atlasEnter();
       else if (document.body.classList.contains("mode-3d")) mountBoard3d(VIEW);
       // 页面的数据是各自懒加载的（模型目录 / 日志 / 配置…），挂舞台时可能还
