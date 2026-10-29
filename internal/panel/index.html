@@ -1021,22 +1021,48 @@ details.cfg summary { cursor: pointer; color: var(--ink-3); font-size: 12.5px; }
 .logbox .l { font-variant-numeric: tabular-nums; }
 
 /* ── 配置编辑表单 ─────────────────────────────────────────────────────── */
-.cfgsec { margin-top: 15px; }
+/* ── 设置页：配置区段做成面板，输入框跟随全局槽位样式 ──────────────────
+   原来是「一条分割线 + 一行小字标题 + 一列灰色输入框」的经典表单。
+   现在：区段自动编号（等宽小字 01/02/…，像仪器的分区标号），区段头
+   是一条细刻度线；每行悬停亮起并现出左缘刻度；输入框统一成槽位样式。 */
+.cfgsec { margin-top: 15px; counter-increment: cfgsec; }
+#cfgForm { counter-reset: cfgsec; }
 .cfgsec:first-child { margin-top: 0; }
 .cfghd {
   display: flex; align-items: center; gap: 9px; margin-bottom: 7px;
-  color: var(--ink-3); font-size: 12px; font-weight: 550; letter-spacing: .02em;
+  color: var(--ink-2); font: 560 11px/1 var(--mono); letter-spacing: .1em;
+}
+.cfghd::before {
+  content: counter(cfgsec, decimal-leading-zero);
+  font: 500 10px/1 var(--mono); letter-spacing: .1em;
+  color: var(--accent-text); opacity: .8;
+  padding-right: 2px;
 }
 .cfghd::after { content: ""; flex: 1; height: 1px; background: var(--line-soft); order: 1; }
 .cfghd > button { order: 2; }
 
-.cfgrow { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 5px 0; }
-.cfgrow > .k { color: var(--ink-3); font-size: 12.5px; flex: 0 0 108px; }
-.cfgtext {
-  font: inherit; font-size: 13px; color: var(--ink); background: var(--surface-2);
-  border: 1px solid var(--line); border-radius: 7px; padding: 7px 11px; width: 100%; min-width: 0;
+.cfgrow { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 5px 0; position: relative; }
+.cfgrow > .k { color: var(--ink-3); font-size: 12.5px; flex: 0 0 108px; transition: color 120ms var(--ease); }
+.cfgrow:hover > .k { color: var(--ink-2); }
+.cfgrow::before {
+  content: ""; position: absolute; left: -10px; top: 5px; bottom: 5px; width: 2px;
+  border-radius: 2px; background: var(--accent);
+  opacity: 0; transform: scaleY(.4);
+  transition: opacity 120ms var(--ease), transform 120ms var(--ease);
 }
-.cfgtext:focus { outline: none; border-color: var(--accent); }
+.cfgrow:hover::before { opacity: .55; transform: scaleY(1); }
+/* 配置页的输入框跟随全局的「仪器槽位」样式（见 input/select 那条规则）：
+   默认无框只有底基准线、focus 才亮整框。之前 .cfgtext 自己写死了灰底方框，
+   把新样式盖掉了。 */
+.cfgtext {
+  font: inherit; font-size: 13px; color: var(--ink);
+  background: color-mix(in srgb, var(--surface-2) 72%, transparent);
+  border: 1px solid transparent; border-bottom-color: var(--line);
+  border-radius: 7px 7px 3px 3px; padding: 7px 11px; width: 100%; min-width: 0;
+  transition: border-color .18s var(--ease), background-color .18s var(--ease), box-shadow .18s var(--ease);
+}
+.cfgtext:hover:not(:focus) { border-bottom-color: var(--ink-3); }
+.cfgtext:focus { outline: none; border-color: var(--accent); background: var(--surface-2); box-shadow: 0 2px 0 -1px color-mix(in srgb, var(--accent) 45%, transparent); }
 .cfgtext:disabled { opacity: .55; cursor: not-allowed; }
 .cfgrow > .cfgtext { flex: 1 1 200px; }
 .cfghelp { flex-basis: 100%; color: var(--ink-3); font-size: 11.5px; line-height: 1.65; }
@@ -3466,7 +3492,25 @@ input:focus, select:focus, textarea:focus, button:focus-visible, a:focus-visible
 .tbl-wrap > table > thead th { position: sticky; top: 0; z-index: 3; box-shadow: inset 0 -1px 0 var(--line); }
 .acc { color: var(--ink-2); }
 .acc th, .acc td { padding: 9px 12px; border-bottom: 1px solid var(--hairline); }
-.acc thead th { color: var(--ink-3); background: color-mix(in srgb, var(--surface-2) 88%, transparent); font-size: var(--type-xs); font-weight: 620; }
+.acc thead th {
+  color: var(--ink-3);
+  /* 表头是 sticky 的：底色必须不透明，否则滚动时行会从它下面透出来。
+     用面板自身的 surface，于是静止时看起来就是「无底色」，只是文字更小更淡。 */
+  background: var(--surface);
+  font: 500 10px/1 var(--mono);
+  letter-spacing: .09em;
+  padding: 9px 12px 8px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+/* sortable 列头下缘一条刻度线，悬停变亮——轨道头语言，全站统一。 */
+.acc thead th.sortable { position: relative; cursor: pointer; user-select: none; }
+.acc thead th.sortable::after {
+  content: ""; position: absolute; left: 12px; right: 12px; bottom: -1px; height: 1px;
+  background: color-mix(in srgb, var(--line) 85%, transparent);
+  transition: background-color 120ms var(--ease);
+}
+.acc thead th.sortable:hover::after { background: var(--accent); }
 .acc tbody tr { transition: background-color var(--dur) var(--ease); }
 .acc tbody tr:hover { background: color-mix(in srgb, var(--accent) 5%, var(--surface-2)); }
 .acc tbody tr.acc-grp { background: color-mix(in srgb, var(--surface-2) 92%, transparent); font-weight: 600; }
