@@ -391,6 +391,23 @@ body.atlas-drawer .atlas-panel { transform: none; }
   position: absolute; inset: 0; display: grid; place-items: center;
   font-size: 12px; color: var(--ink-3);
 }
+/* 主题开关：两段式，当前态实心高亮。比一个循环图标更明确——用户能直接
+   看到「深色 / 浅色」两档，也一眼知道现在是哪一档。 */
+.theme-toggle { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; flex: none; }
+.theme-toggle button {
+  display: inline-flex; align-items: center; gap: 5px;
+  border: 0; border-radius: 0; background: transparent;
+  padding: 4px 9px; font-size: 11.5px; color: var(--ink-3); cursor: pointer;
+  transition: color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+}
+.theme-toggle button + button { border-left: 1px solid var(--line); }
+.theme-toggle button svg { flex: none; transition: transform var(--dur-med) var(--ease); }
+.theme-toggle button:hover { color: var(--ink); }
+.theme-toggle button:hover svg { transform: rotate(-18deg) scale(1.08); }
+.theme-toggle button.on { background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent-text); font-weight: 600; }
+.theme-toggle button.on svg { transform: none; }
+@media (max-width: 900px) { .theme-toggle button span { display: none; } .theme-toggle button { padding: 4px 7px; } }
+
 /* 两种呈现的切换开关（和账号池那对同一套语法） */
 .view3d-toggle { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
 .view3d-toggle button { border: 0; border-radius: 0; background: transparent; padding: 4px 11px; font-size: 11.5px; color: var(--ink-3); }
@@ -6263,9 +6280,16 @@ html:not([data-theme="light"]) body::after {
         <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4 7a4 4 0 1 1 8 0v3l1.2 1.5H2.8L4 10z"/><path d="M6.4 13a1.8 1.8 0 0 0 3.2 0"/></svg>
         <span class="alert-badge" id="alertBadge" hidden>0</span>
       </button>
-      <button class="icon ghost" id="btnTheme" title="切换明暗（深色 → 浅色 → 跟随系统）" aria-label="切换主题">
-        <svg id="icoTheme" viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M13.2 9.6A5.6 5.6 0 0 1 6.4 2.8a5.6 5.6 0 1 0 6.8 6.8z"/></svg>
-      </button>
+      <!-- 主题：两段式显式开关。之前是一个「深→浅→跟随系统」的三态图标按钮，
+           用户看不出来现在是什么、也不想要坐着等的第三态，改成深/浅两个可见段落。 -->
+      <span class="theme-toggle" id="themeToggle" role="group" aria-label="界面主题">
+        <button type="button" data-th="dark" title="深色主题">
+          <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M13.2 9.6A5.6 5.6 0 0 1 6.4 2.8a5.6 5.6 0 1 0 6.8 6.8z"/></svg><span>深色</span>
+        </button>
+        <button type="button" data-th="light" title="浅色主题">
+          <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="8" cy="8" r="3.1"/><path d="M8 1.4v1.6M8 13v1.6M1.4 8h1.6M13 8h1.6M3.3 3.3l1.1 1.1M11.6 11.6l1.1 1.1M12.7 3.3l-1.1 1.1M4.4 11.6l-1.1 1.1"/></svg><span>浅色</span>
+        </button>
+      </span>
       <!-- 统一的刷新入口：任何视图都在这个位置，按当前视图分派到真正干活的函数。 -->
       <button class="kbtn" id="btnAtlas" title="回到网关星图（空间导航）" aria-label="打开网关星图">
         <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="8" cy="8" r="2.1"/><circle cx="8" cy="2.6" r="1.3"/><circle cx="8" cy="13.4" r="1.3"/><circle cx="2.6" cy="8" r="1.3"/><circle cx="13.4" cy="8" r="1.3"/></svg>
@@ -10725,8 +10749,9 @@ function renderTranscriptionCallInfo() {
    所有既有 id、样式作用域、事件委托、测试契约全部成立。 */
 const ATLAS = {
   canvas: null, renderer: null, scene: null, cam: null, root: null,
-  zones: [], pick: [], raf: 0, t: 0, hover: -1, drag: null, yaw: 0, pitch: 0, sig: "",
+  zones: [], pick: [], raf: 0, t: 0, hover: -1, drag: null, yaw: 0, pitch: 0.30, sig: "",
   dist: 22, open: "", home: null, panel: null, host: null, texCache: {},
+  billboards: [], floaters: [], zoneGroups: [], hub: null, env: null, r: 12, zoom: 1, viewH: 14,
 };
 
 // atlasZones 把「一个领域」定义成地图上的一块区域。数据全部读现成的全局，
@@ -10759,25 +10784,67 @@ function atlasTone(t) {
   return t === "ok" ? "#4ec98a" : t === "warn" ? "#e0a94a" : t === "bad" ? "#e2686e" : "#7f8dff";
 }
 
-// atlasLabelTexture 画一块区域铭牌：大字领域名 + 一行读数。
+// atlasLabelTexture 画一块区域铭牌。上一版只在左边写了三行字，板面右半是空的，
+// 整块牌子看着像「没画完」。这一版把板面当仪表盘排版：左边领域名 + 读数，
+// 右边一个大计数（该领域有多少实体），底部一条状态色带。
 function atlasLabelTexture(z) {
-  const key = z.view + "|" + z.sub + "|" + z.tone;
+  const themeKey = document.documentElement.getAttribute("data-theme") || "dark";
+  const key = themeKey + "|" + z.view + "|" + z.sub + "|" + z.tone + "|" + z.count;
   if (ATLAS.texCache[key]) return ATLAS.texCache[key];
-  const W = 512, H = 200, c = document.createElement("canvas");
+  const W = 560, H = 240, c = document.createElement("canvas");
   c.width = W; c.height = H;
   const g = c.getContext("2d");
   if (!g) return null;
+  const P = fxPalette();
   const accent = atlasTone(z.tone);
-  g.fillStyle = "rgba(14,16,24,0.0)";
-  g.fillRect(0, 0, W, H);
-  g.fillStyle = "#eef1fa";
-  g.font = "700 96px ui-monospace, Consolas, monospace";
-  g.fillText(z.label, 10, 116);
+  const r = 20;
+  const rr = () => {
+    g.beginPath();
+    g.moveTo(r, 0); g.lineTo(W - r, 0); g.quadraticCurveTo(W, 0, W, r);
+    g.lineTo(W, H - r); g.quadraticCurveTo(W, H, W - r, H);
+    g.lineTo(r, H); g.quadraticCurveTo(0, H, 0, H - r);
+    g.lineTo(0, r); g.quadraticCurveTo(0, 0, r, 0);
+    g.closePath();
+  };
+  // 底板 + 描边（白底上纯白板子没有边界）
+  g.fillStyle = P.plate;
+  rr(); g.fill();
+  g.strokeStyle = P.plateEdge; g.lineWidth = 3; rr(); g.stroke();
+  // 左侧状态色条
+  g.save(); rr(); g.clip();
+  g.fillStyle = accent; g.fillRect(0, 0, 10, H);
+  // 右侧大计数区：淡色块，把右半填满
+  g.fillStyle = accent; g.globalAlpha = 0.10;
+  g.fillRect(W - 170, 0, 170, H);
+  g.globalAlpha = 1;
+  g.restore();
+  // 领域名
+  g.fillStyle = P.ink;
+  g.font = "700 84px ui-monospace, Consolas, monospace";
+  g.textBaseline = "alphabetic";
+  let label = String(z.label || "");
+  if (g.measureText(label).width > W - 210) {
+    g.font = "700 66px ui-monospace, Consolas, monospace";
+  }
+  g.fillText(label, 32, 100);
+  // 读数
   g.fillStyle = accent;
-  g.font = "600 42px ui-monospace, Consolas, monospace";
-  g.fillText(String(z.sub || "").slice(0, 22), 10, 178);
-  g.strokeStyle = accent; g.lineWidth = 4; g.globalAlpha = 0.9;
-  g.beginPath(); g.moveTo(8, 176); g.lineTo(8 + Math.min(300, 60 + z.count * 8), 176); g.stroke();
+  g.font = "600 34px ui-monospace, Consolas, monospace";
+  g.fillText(String(z.sub || "").slice(0, 16), 32, 152);
+  // 提示
+  g.fillStyle = P.ink2;
+  g.font = "500 27px ui-monospace, Consolas, monospace";
+  g.fillText("点击进入", 32, 202);
+  // 大计数（右侧）
+  g.fillStyle = accent;
+  g.font = "700 76px ui-monospace, Consolas, monospace";
+  g.textAlign = "right";
+  const cnt = String(Math.max(0, Number(z.count) || 0));
+  g.fillText(cnt.length > 4 ? cnt.slice(0, 4) : cnt, W - 30, 128);
+  g.fillStyle = P.ink2;
+  g.font = "500 24px ui-monospace, Consolas, monospace";
+  g.fillText("个条目", W - 30, 166);
+  g.textAlign = "left";
   const tex = new THREE.CanvasTexture(c);
   ATLAS.texCache[key] = tex;
   return tex;
@@ -10793,13 +10860,15 @@ function atlasEnsure() {
   catch (e) { ATLAS.renderer = null; return false; }
   ATLAS.canvas = canvas;
   ATLAS.scene = new THREE.Scene();
-  ATLAS.cam = new THREE.PerspectiveCamera(50, 1.7, 0.1, 200);
+  // 正交相机：环形平铺 + 从外面看时，透视必然让「靠近相机那块大一倍」，
+  // 后果就是前后牌子互相压、字大小不一。正交投影让所有铭牌等大，读起来像
+  // 一张全息图纸——深度感交给立柱、地面网格与自转，不靠透视。
+  ATLAS.cam = new THREE.OrthographicCamera(-12, 12, 7, -7, 0.1, 600);
+  ATLAS.viewH = 14;
   ATLAS.root = new THREE.Group();
   ATLAS.scene.add(ATLAS.root);
-  // 地面网格：让「空间」有地平线，而不是悬空的一堆方块。
-  const grid = new THREE.GridHelper(60, 30, 0x2a3350, 0x1b2236);
-  grid.position.y = -1.6;
-  ATLAS.root.add(grid);
+  // 地面网格与天穹由 envAttach 每次构建时装（跟着主题与领域半径走），
+  // 这里不再放一个固定的 GridHelper——它会在浅色主题下变成一片深色噪声。
   return true;
 }
 
@@ -10807,73 +10876,162 @@ function atlasClear() {
   if (!ATLAS.root) return;
   while (ATLAS.root.children.length) {
     const c = ATLAS.root.children.pop();
-    if (c.type === "GridHelper") continue;
     if (c.traverse) c.traverse(o => {
       if (o.geometry) o.geometry.dispose();
       if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => m.dispose());
     });
   }
   ATLAS.pick = []; ATLAS.zones = [];
+  ATLAS.billboards = []; ATLAS.floaters = []; ATLAS.zoneGroups = []; ATLAS.hub = null;
+  if (ATLAS.env && ATLAS.env.grp) {
+    const g = ATLAS.env.grp;
+    if (g.parent) g.parent.remove(g);
+    g.traverse(o => {
+      if (o.geometry) o.geometry.dispose();
+      if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => m.dispose());
+    });
+  }
+  ATLAS.env = null;
 }
 
-// atlasBuild 排布区域：一圈不规则半径的环，避免「所有东西等距排队」的呆板。
+// atlasBuild 把 13 个领域摆成上下两层全息立柱环。单层满圈时每块铭牌只分到
+// 约 120px 宽，字必然读不清；拆成两层后每层 7 块，铭牌能大一倍多。
 function atlasBuild() {
   atlasClear();
   const zones = atlasZones();
   ATLAS.zones = zones;
   ATLAS.sig = JSON.stringify(zones.map(z => [z.view, z.sub, z.tone, z.count]));
-  const n = zones.length;
+  const P = fxPalette();
+  const n = Math.max(1, zones.length);
+  // 单层环 + 高空俯视：正交投影下相邻铭牌的屏幕间距 = 弦长 2R·sin(π/n)，
+  // 只要弦长大于铭牌宽度就永不重叠。这也是唯一能同时满足「都读得清」且
+  // 「大小一致、不互相压」的摆法——之前试过两层环，两层在投影里照样压住。
+  const plateW = 6.2;
+  // 【取景自洽】铭牌在屏幕上的宽度 = plateW / 视锥宽度 × 画布宽。要让铭牌占屏
+  // 约 20%，就得让视锥宽度 ≈ 5 × plateW；视锥半宽又必须装下「环半径 + 半块铭牌」。
+  // 于是：3R ≈ plateW × (2.5 − 0.5) ⇒ 由 n 决定弦长约束，两者取大者。
+  // 上一版把 plateW 调大、却没同步缩视锥，铭牌反而显得更小。
+  const chordNeed = plateW * 1.16;
+  const Rchord = chordNeed / (2 * Math.sin(Math.PI / Math.max(2, n)));
+  const Rframe = plateW * 2.0;
+  const R = Math.max(7.5, Rchord, Rframe);
+  ATLAS.r = R; ATLAS.plateW = plateW;
+  ATLAS.needW = R + plateW * 0.62;
+  // 纵向：环半径 + 铭牌半高 + 立柱往下探的那一段（铭牌在 y≈1.25，地面在 -2.4）
+  ATLAS.needH = R * 0.95 + plateW * 0.42 + 1.5;
+  ATLAS.billboards = [];
+  ATLAS.floaters = [];
+  ATLAS.zoneGroups = [];
+  const baseY = 1.25;
+
   zones.forEach((z, i) => {
     const a = (i / n) * Math.PI * 2 - Math.PI / 2;
-    // 半径固定（不再 ±0.9 波动）：上一版波动的半径让相邻板子在屏幕投影上
-    // 互相压住，字被挡住。等距环 + 更大的半径才读得开。
-    const R = 11.5;
     const x = Math.cos(a) * R, zz = Math.sin(a) * R;
+    const tone = atlasTone(z.tone);
     const g = new THREE.Group();
     g.position.set(x, 0, zz);
-    // 板子朝圆心，但略微仰起，保证俯视时文字是正的而不是斜的。
-    g.lookAt(0, 0, 0);
-    g.rotateX(-0.55);
-    // 平台：一块薄板，颜色随状态
-    const slab = new THREE.Mesh(new THREE.BoxGeometry(5.6, 0.28, 2.8),
-      new THREE.MeshBasicMaterial({ color: new THREE.Color(atlasTone(z.tone)).multiplyScalar(0.55), transparent: true, opacity: 0.95 }));
-    slab.position.y = -1.4;
-    slab.userData.zone = i;
-    g.add(slab);
-    ATLAS.pick.push(slab);
-    // 铭牌
+    ATLAS.root.add(g);
+    ATLAS.zoneGroups[i] = g;
+
+    // 立柱：从地面立到铭牌下沿
+    const groundY = -2.4;
+    const h = Math.max(1.1, baseY - 1.05 - groundY);
+    const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.44, h, 12, 1, true),
+      new THREE.MeshBasicMaterial({ color: tone, transparent: true, opacity: 0.11,
+        side: THREE.DoubleSide, depthWrite: false }));
+    pillar.position.y = groundY + h / 2;
+    pillar.userData.zone = i;
+    g.add(pillar);
+    ATLAS.pick.push(pillar);
+    const lip = new THREE.Mesh(new THREE.TorusGeometry(0.40, 0.016, 6, 40),
+      new THREE.MeshBasicMaterial({ color: tone, transparent: true, opacity: 0.8 }));
+    lip.rotation.x = Math.PI / 2;
+    lip.position.y = groundY + h;
+    g.add(lip);
+    const foot = envHalo(tone, 2.1, P.plateGlow * 1.2);
+    foot.position.y = groundY + 0.03;
+    g.add(foot);
+
+    // 铭牌：悬浮在柱顶，永远朝向相机
     const tex = atlasLabelTexture(z);
     if (tex) {
-      const pl = new THREE.Mesh(new THREE.PlaneGeometry(4.8, 1.875), new THREE.MeshBasicMaterial({ map: tex, transparent: true }));
-      pl.position.set(0, 0.1, 1.35);
+      const board = new THREE.Group();
+      board.position.set(0, baseY, 0);
+      const halo = envHalo(tone, plateW * 1.08, P.plateGlow);
+      halo.position.z = -0.12;
+      board.add(halo);
+      const pl = new THREE.Mesh(new THREE.PlaneGeometry(plateW, plateW * 0.43),
+        new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }));
       pl.userData.zone = i;
-      g.add(pl);
+      board.add(pl);
       ATLAS.pick.push(pl);
+      g.add(board);
+      ATLAS.billboards.push(board);
+      ATLAS.floaters.push({ obj: board, base: baseY, ph: i * 0.8 });
     }
-    // 节点簇：数量决定点数（封顶 14），按状态上色，高低错落
+
+    // 柱口一圈信号点：数量代表该领域实体多少。放在立柱顶端（lip）周围，
+    // 不能放到铭牌那一层——那样会变成铭牌上的噪点。
     const dots = Math.min(10, Math.max(1, z.count || 0));
     for (let k = 0; k < dots; k++) {
       const ang = (k / dots) * Math.PI * 2;
-      const rr = 0.6 + (k % 3) * 0.3;
-      const dot = new THREE.Mesh(new THREE.SphereGeometry(0.11, 10, 10),
-        new THREE.MeshBasicMaterial({ color: atlasTone(z.tone) }));
-      dot.position.set(Math.cos(ang) * rr, -0.25, Math.sin(ang) * rr * 0.5 - 0.55);
+      const dot = new THREE.Mesh(new THREE.SphereGeometry(0.055, 8, 8),
+        new THREE.MeshBasicMaterial({ color: tone, transparent: true, opacity: 0.85 }));
+      dot.position.set(Math.cos(ang) * 0.46, groundY + h + 0.04, Math.sin(ang) * 0.46);
       dot.userData.zone = i;
       g.add(dot);
       ATLAS.pick.push(dot);
     }
-    // 指向中心的细线：所有领域都往同一个网关收束。
-    const line = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, -1.5, 0), new THREE.Vector3(x, -1.5, zz)]);
-    ATLAS.root.add(new THREE.Line(line, new THREE.LineBasicMaterial({ color: 0x2f3a58, transparent: true, opacity: 0.5 })));
-    // 中心枢纽
-    ATLAS.root.add(g);
-  });
-  const hub = new THREE.Mesh(new THREE.SphereGeometry(0.75, 24, 24), new THREE.MeshBasicMaterial({ color: 0x8fa8ff, transparent: true, opacity: 0.92 }));
-  hub.position.y = -1.1;
-  ATLAS.root.add(hub);
-  ATLAS.root.add(new THREE.Mesh(new THREE.SphereGeometry(0.9, 18, 18), new THREE.MeshBasicMaterial({ color: 0x6f8cff, wireframe: true, transparent: true, opacity: 0.45 })).translateY(-1.1));
-}
 
+    // 指向中心的光束：所有领域往同一个网关收束
+    const line = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(0, groundY + 0.02, 0), new THREE.Vector3(x, groundY + 0.02, zz)]);
+    ATLAS.root.add(new THREE.Line(line, new THREE.LineBasicMaterial({
+      color: P.gridA, transparent: true, opacity: 0.38 })));
+  });
+
+  // 中央枢纽：这台网关卡本身
+  const hub = new THREE.Group();
+  hub.position.y = -0.35;
+  ATLAS.root.add(hub);
+  ATLAS.hub = hub;
+  // 竖直光柱：细而高，只做「有光」的暗示，不做主体（上一版的喇叭口太抢眼）
+  const beamMat = new THREE.MeshBasicMaterial({
+    color: P.hub, transparent: true, opacity: 0.10, side: THREE.DoubleSide,
+    depthWrite: false, blending: envBlend(P) });
+  const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 7.0, 12, 1, true), beamMat);
+  beam.position.y = -2.0;
+  hub.add(beam);
+  // 能量核：三层球（外辉光 / 主球 / 内亮心），比单个球有体积
+  const lightHub = document.documentElement.getAttribute("data-theme") === "light";
+  if (!lightHub) {
+    hub.add(new THREE.Mesh(new THREE.SphereGeometry(2.30, 28, 22),
+      new THREE.MeshBasicMaterial({ color: P.hubWire, transparent: true, opacity: 0.07,
+        depthWrite: false, blending: envBlend(P) })));
+  }
+  hub.add(new THREE.Mesh(new THREE.SphereGeometry(1.60, 28, 22),
+    new THREE.MeshBasicMaterial({ color: P.hub, transparent: true, opacity: lightHub ? 0.55 : 0.95 })));
+  hub.add(new THREE.Mesh(new THREE.SphereGeometry(0.98, 20, 16),
+    new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.28,
+      depthWrite: false, blending: envBlend(P) })));
+  hub.add(new THREE.Mesh(new THREE.SphereGeometry(2.02, lightHub ? 12 : 22, lightHub ? 9 : 18),
+    new THREE.MeshBasicMaterial({ color: P.hubWire, wireframe: true, transparent: true,
+      opacity: lightHub ? 0.16 : 0.28 })));
+  // 三条轨道环，直径刻意不同（2.8 / 3.6 / 4.5），把圆心周围撑开
+  for (let k = 0; k < 3; k++) {
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(2.8 + k * 0.85, 0.016, 4, 96),
+      new THREE.MeshBasicMaterial({ color: P.hubWire, transparent: true, opacity: 0.30 - k * 0.07 }));
+    ring.rotation.x = Math.PI / 2 + k * 0.38;
+    ring.rotation.y = k * 0.6;
+    hub.add(ring);
+    ATLAS.floaters.push({ spin: true, obj: ring, ringed: true });
+  }
+  hub.add(envHalo(P.hub, 9.0, P.plateGlow * 1.15));
+
+  ATLAS.env = envAttach(ATLAS.scene, { radius: R * 0.68, floorY: groundGridY(), stars: 620 });
+}
+// groundGridY 与立柱底部对齐（立柱从 -2.4 起立）。
+function groundGridY() { return -2.4; }
 /* ── 抽屉：把一个领域「真实的」section 搬进来 ─────────────────────────── */
 function atlasOpen(view, ox, oy) {
   const host = ATLAS.panel;
@@ -10949,7 +11107,7 @@ function atlasMountControls() {
   cv.addEventListener("pointercancel", end);
   cv.addEventListener("wheel", ev => {
     ev.preventDefault();
-    ATLAS.dist = Math.max(14, Math.min(42, ATLAS.dist + (ev.deltaY > 0 ? 1.4 : -1.4)));
+    ATLAS.zoom = Math.max(0.6, Math.min(2.6, (ATLAS.zoom || 1) * (ev.deltaY > 0 ? 0.92 : 1.08)));
   }, { passive: false });
   cv.addEventListener("click", ev => {
     if (ATLAS.drag && ATLAS.drag.moved > 6) return;
@@ -10992,14 +11150,49 @@ function atlasFrame() {
     ATLAS.cam.updateProjectionMatrix();
   }
   ATLAS.t += 0.016;
-  if (!ATLAS.drag) ATLAS.yaw += 0.0009;
+  const t = ATLAS.t;
+  // 地图缓慢自转：这是一张会呼吸的空间图，不是一张静止的平面图。
+  if (!ATLAS.drag) ATLAS.yaw += 0.0011;
   ATLAS.root.rotation.y = ATLAS.yaw;
-  ATLAS.root.rotation.x = ATLAS.pitch;
-  ATLAS.cam.position.set(0, ATLAS.dist * 0.82, ATLAS.dist);
-  ATLAS.cam.lookAt(0, -0.2, 0);
+  // 相机绕场：仰角决定环被投影成多扁的椭圆。仰角太低，环正面会挤成一条线、
+  // 铭牌互相压；太高就变成一张平面图、失去空间感。58° 起、可往上拖。
+  // 仰角与纵向占位是**反比**：仰角越高，环在屏幕上越"立"，纵向越吃空间、
+  // 越容易顶到画框。30° 左右把它压成一条宽椭圆，正好铺满 16:9，也最有轨道感。
+  const elev = 0.50 + ATLAS.pitch * 0.36;
+  const D = 90;
+  ATLAS.cam.position.set(Math.sin(t * 0.05) * 2.2, Math.sin(elev) * D, Math.cos(elev) * D);
+  ATLAS.cam.lookAt(0, 0.55, 0);
+  // 正交视锥：环在这个仰角下投影成「宽 2R、高 2R·sin(elev)」的椭圆，再加上
+  // 铭牌的占位，两者取大者并留 8% 边距。上一版把手算的半宽半高当成了高度，
+  // 结果整个环被裁掉一半。
+  // 半宽 = 环半径 + 铭牌半宽（铭牌朝相机，投影宽度就是它的半宽）
+  const hw = ATLAS.r + ATLAS.plateW * 0.52;
+  // 半高 = 环被仰角压扁后的半高 + 铭牌半高的垂直投影。这里只能各加一次：
+  // 上一版把 needH（已含铭牌）又乘了一次 sin 再加一次，纵向需求被算成两倍，
+  // 整张图被迫缩到一半大、四周全是空的。
+  const hh = ATLAS.r * Math.sin(elev) + ATLAS.plateW * 0.215;
+  const vh = Math.max(hh, hw / Math.max(0.4, w / h)) * 2 * 1.04 / (ATLAS.zoom || 1);
+  const vw = vh * (w / h);
+  const c = ATLAS.cam;
+  if (Math.abs(c.right - vw / 2) > 0.01 || Math.abs(c.top - vh / 2) > 0.01) {
+    c.left = -vw / 2; c.right = vw / 2; c.top = vh / 2; c.bottom = -vh / 2;
+    c.updateProjectionMatrix();
+  }
+  ATLAS.billboards.forEach(b => fxFace(b, ATLAS.root, ATLAS.cam));
+  // 铭牌上下漂浮，相位错开
+  ATLAS.floaters.forEach(f => {
+    if (f.spin) {
+      if (f.ringed) { f.obj.rotation.z = t * 0.20; }
+      else f.obj.rotation.z = -t * 0.16;
+      return;
+    }
+    f.obj.position.y = f.base + Math.sin(t * 0.7 + f.ph) * 0.10;
+  });
+  if (ATLAS.hub) ATLAS.hub.rotation.y = -t * 0.22;
+  envTick(ATLAS.env, t);
   ATLAS.pick.forEach(o => {
     const on = o.userData.zone === ATLAS.hover;
-    const s = on ? 1.06 : 1;
+    const s = on ? 1.07 : 1;
     if (o.scale.x !== s) o.scale.setScalar(s);
   });
   ATLAS.renderer.render(ATLAS.scene, ATLAS.cam);
@@ -11080,54 +11273,382 @@ function atlasLeave() {
 const B3D = {
   canvas: null, renderer: null, scene: null, cam: null, root: null,
   pickables: [], items: [], host: null, readEl: null, hintEl: null,
-  raf: 0, drag: null, yaw: 0.4, pitch: 0.22, dist: 6.6,
+  raf: 0, drag: null, yaw: 0.4, pitch: 0.20, dist: 6.6,
   sel: -1, spec: null, view: "", t: 0, texCache: {},
+  // 场景态：环境组（天穹/星场/扫描环）、需要始终朝向相机的板卡、浮动项。
+  env: null, billboards: [], floaters: [], camY: 0.55, envR: 6, zoom: 1,
+  dragYaw: 0, fitW: 4, fitH: 2.4, floorY: -1.6,
 };
 
+/* ── 环境：让 3D 有「地方」，而不是一堆悬空的方块 ────────────────────────
+   上一版每页只有一组漂浮的板子/环，没有天、没有地、没有光——看起来像没做完
+   的建模，用户原话「非常的粗糙的建模」。这里补一套可复用的全息舱环境：
+   渐变天穹 + 星场 + 地平线辉光 + 两级网格地面 + 周期扩散的扫描环。
+   颜色全部走 fxPalette()，深浅两套主题都成立（深色用加法混合发光，浅色换成
+   普通混合的低透明度——白底上加法混合等于什么也不画）。 */
+const ENVKIT = { dome: {}, glow: null };
+// fxFitDist 按当前视角与画布比例算「刚好装下」的相机距离。窄视角省畸变，
+// 但距离必须跟着算——上一版把距离写死，13 个领域时整圈都在屏幕外。
+// zoom 是用户滚轮给的倍率（1 = 自适应），乘在结果上。
+function fxFitDist(halfW, halfH, cam, zoom) {
+  const tv = Math.tan((cam.fov * Math.PI / 180) / 2);
+  const th = tv * Math.max(0.35, cam.aspect || 1);
+  const dv = halfH / tv;
+  const dh = halfW / th;
+  return Math.max(dv, dh) * 1.08 * (zoom || 1);
+}
+
+// fxFace 把 obj 摆成「正对相机」的公告板。用 lookAt 不行：它的朝向依赖父级
+// 上一帧的世界矩阵，而父级每帧都在自转，结果铭牌永远慢半拍、被拉成梯形。
+// 这里直接取相机当前四元数，再换算到父级局部空间，逐帧都是精确的。
+const FXQ = { a: null, b: null };
+function fxFace(obj, parent, cam) {
+  if (!FXQ.a) { FXQ.a = new THREE.Quaternion(); FXQ.b = new THREE.Quaternion(); }
+  parent.getWorldQuaternion(FXQ.a);
+  obj.quaternion.copy(cam.quaternion).premultiply(FXQ.a.invert());
+}
+
+function envDomeTex(P) {
+  const key = P.domeTop + P.domeMid + P.domeBot;
+  if (ENVKIT.dome[key]) return ENVKIT.dome[key];
+  const c = document.createElement("canvas");
+  c.width = 16; c.height = 256;
+  const g = c.getContext("2d");
+  if (!g) return null;
+  const grd = g.createLinearGradient(0, 0, 0, 256);
+  grd.addColorStop(0, P.domeTop);
+  grd.addColorStop(0.55, P.domeMid);
+  grd.addColorStop(1, P.domeBot);
+  g.fillStyle = grd; g.fillRect(0, 0, 16, 256);
+  const tex = new THREE.CanvasTexture(c);
+  ENVKIT.dome[key] = tex;
+  return tex;
+}
+function envGlowTex() {
+  if (ENVKIT.glow) return ENVKIT.glow;
+  const S = 256, c = document.createElement("canvas");
+  c.width = S; c.height = S;
+  const g = c.getContext("2d");
+  if (!g) return null;
+  const grd = g.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+  grd.addColorStop(0, "rgba(255,255,255,0.85)");
+  grd.addColorStop(0.32, "rgba(255,255,255,0.30)");
+  grd.addColorStop(0.68, "rgba(255,255,255,0.07)");
+  grd.addColorStop(1, "rgba(255,255,255,0)");
+  g.fillStyle = grd; g.fillRect(0, 0, S, S);
+  const tex = new THREE.CanvasTexture(c);
+  ENVKIT.glow = tex;
+  return tex;
+}
+function envBlend(P) { return P.starAdd ? THREE.AdditiveBlending : THREE.NormalBlending; }
+
+// envAttach 把一整套环境装进 root，返回一个可被帧循环推进的句柄。
+function envAttach(root, opt) {
+  const P = fxPalette();
+  const R = Math.max(2.4, opt.radius || 8);
+  const fy = opt.floorY == null ? -1.4 : opt.floorY;
+  const grp = new THREE.Group();
+  const env = { R, fy, grp, scan: [], stars: null, glow: null, dome: null };
+
+  // 天穹：大号内向球 + 竖直渐变，给画面一个「室内」而不是「虚空」
+  const dome = new THREE.Mesh(
+    new THREE.SphereGeometry(R * 3.1, 40, 26),
+    new THREE.MeshBasicMaterial({ map: envDomeTex(P), side: THREE.BackSide, depthWrite: false }));
+  dome.position.y = fy + R * 0.3;
+  grp.add(dome);
+  env.dome = dome;
+
+  // 星场：只放在地平线以上，避免星点穿到地板下面
+  const N = opt.stars == null ? 520 : opt.stars;
+  const arr = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) {
+    const u = Math.random() * Math.PI * 2;
+    const v = Math.acos(Math.random() * 0.94);           // 上半球，越靠地平线越密
+    const rr = R * (1.55 + Math.random() * 1.45);
+    arr[i * 3] = Math.sin(v) * Math.cos(u) * rr;
+    arr[i * 3 + 1] = Math.cos(v) * rr + fy + R * 0.04;
+    arr[i * 3 + 2] = Math.sin(v) * Math.sin(u) * rr;
+  }
+  const sg = new THREE.BufferGeometry();
+  sg.setAttribute("position", new THREE.BufferAttribute(arr, 3));
+  const stars = new THREE.Points(sg, new THREE.PointsMaterial({
+    color: P.star, size: P.starSize, sizeAttenuation: true, transparent: true,
+    map: envGlowTex(), alphaTest: 0.02,
+    opacity: P.starOpacity, depthWrite: false, blending: envBlend(P) }));
+  grp.add(stars);
+  env.stars = stars;
+
+  // 地平线辉光：一张径向渐变贴片贴地铺开，制造「远处有光」的纵深
+  const glow = new THREE.Mesh(
+    new THREE.PlaneGeometry(R * 5.0, R * 5.0),
+    new THREE.MeshBasicMaterial({
+      map: envGlowTex(), color: P.halo, transparent: true, opacity: P.haloOpacity,
+      depthWrite: false, blending: envBlend(P) }));
+  glow.rotation.x = -Math.PI / 2;
+  glow.position.y = fy + 0.02;
+  grp.add(glow);
+  env.glow = glow;
+
+  // 地面网格：两级色，远近不同亮，地平线才有距离感
+  const grid = new THREE.GridHelper(R * 4.4, 26, P.gridA, P.gridB);
+  if (grid.material) { grid.material.transparent = true; grid.material.opacity = P.gridOpacity; }
+  grid.position.y = fy;
+  grp.add(grid);
+  env.grid = grid;
+
+  // 扫描环：两圈错相向外扩散，一个「这台机器在跑」的持续信号
+  for (let k = 0; k < 2; k++) {
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(1, 0.011, 5, 96),
+      new THREE.MeshBasicMaterial({ color: P.beam, transparent: true, opacity: 0,
+        blending: envBlend(P), depthWrite: false }));
+    ring.rotation.x = Math.PI / 2;
+    ring.position.y = fy + 0.035;
+    ring.userData.phase = k * 0.5;
+    grp.add(ring);
+    env.scan.push(ring);
+  }
+  grp.renderOrder = -2;
+  root.add(grp);
+  return env;
+}
+
+function envTick(env, t) {
+  if (!env) return;
+  if (env.stars) env.stars.rotation.y = t * 0.013;
+  if (env.glow) {
+    const s = 1 + Math.sin(t * 0.55) * 0.04;
+    env.glow.scale.set(s, s, 1);
+  }
+  const span = env.R * 1.85;
+  for (const r of env.scan) {
+    const ph = ((t * 0.34 + r.userData.phase) % 1);
+    const rad = 0.5 + ph * span;
+    r.scale.set(rad, rad, 1);
+    r.material.opacity = (1 - ph) * 0.5;
+  }
+}
+
+// envHalo 是一枚始终朝向相机的光斑（Sprite），用来给枢纽/选中项加「光」。
+function envHalo(color, size, opacity) {
+  const P = fxPalette();
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: envGlowTex(), color: color, transparent: true, opacity: opacity,
+    depthWrite: false, blending: envBlend(P) }));
+  sp.scale.set(size, size, 1);
+  return sp;
+}
 function b3dSupported() { return typeof THREE !== "undefined"; }
 
 // b3dTexture 把一块「信息板」画进 canvas 并做成纹理：边框按状态染色，
 // 上面是名字，中间是大读数，底部一条按值缩放的横条。比纯色方块读得懂。
+// fxPalette 给 3D / 星图的画布提供当前主题的颜色。canvas 不认识 oklch()，
+// 所以这里用一套与 CSS 变量等价的显式色值，按 data-theme 二选一——3D 以前
+// 把「深色底白字」写死在贴图里，浅色主题下就是白底白字、黑牌子乱飘。
+function fxPalette() {
+  const dark = document.documentElement.getAttribute("data-theme") !== "light";
+  return dark
+    ? { plate: "rgba(15,17,25,0.96)", plateEdge: "rgba(255,255,255,0.10)",
+        ink: "#e9edf8", ink2: "#9aa3ba", bar: "rgba(255,255,255,0.14)",
+        floor: 0x2b3552, grid: 0x1b2236, hub: 0x8fa8ff, hubWire: 0x6f8cff, plateBlur: "rgba(0,0,0,0.55)",
+        // 环境：深空底 + 冷色星点 + 网格两级色。浅色主题这些必须整体翻过来，
+        // 否则「加亮的星」在白底上等于不存在（加法混合在白上不产生任何变化）。
+        domeTop: "#05060b", domeMid: "#0a0e1a", domeBot: "#131b2f",
+        star: 0xbfd0ff, starOpacity: 0.72, starSize: 0.26, starAdd: true,
+        gridA: 0x2f3a58, gridB: 0x1b2236, gridOpacity: 0.55,
+        beam: 0x4a63c8, beamOpacity: 0.34, halo: 0x5f6cd8, haloOpacity: 0.16,
+        plateGlow: 0.30 }
+    : { plate: "rgba(255,255,255,0.97)", plateEdge: "rgba(18,22,38,0.14)",
+        ink: "#1a1f2e", ink2: "#5c6478", bar: "rgba(18,22,38,0.10)",
+        floor: 0xb7c0d4, grid: 0xd5dbe7, hub: 0x4a63c8, hubWire: 0x3d55b0, plateBlur: "rgba(30,38,60,0.22)",
+        domeTop: "#f7f9fd", domeMid: "#e9eef8", domeBot: "#dde4f1",
+        star: 0x5a6f9e, starOpacity: 0.40, starSize: 0.22, starAdd: false,
+        gridA: 0x9aa6bf, gridB: 0xc6cddd, gridOpacity: 0.7,
+        beam: 0x7b8ab8, beamOpacity: 0.30, halo: 0x6f7fd0, haloOpacity: 0.10,
+        plateGlow: 0.14 };
+}
+
+// wrapLines 按像素宽度把文本折成最多 maxLines 行（超出用省略号）。
+function wrapLines(g, text, maxW, maxLines) {
+  const out = [];
+  const words = String(text || "").split(/([/_.\-:]|\s+)/).filter(Boolean);
+  let line = "";
+  for (const w of words) {
+    const next = line + w;
+    if (g.measureText(next).width > maxW && line) {
+      out.push(line.trim());
+      if (out.length >= maxLines) { out[maxLines - 1] = out[maxLines - 1] + "…"; return out; }
+      line = w.trim() ? w : "";
+    } else line = next;
+  }
+  if (line.trim()) out.push(line.trim());
+  return out;
+}
+
 function b3dTexture(item, maxV) {
   const frac = Math.max(0, Math.min(1, (Number(item.raw) || 0) / Math.max(1, maxV)));
-  const key = String(item.label) + "|" + item.value + "|" + item.tone + "|" + Math.round(frac * 20) + "|" + item.sub;
+  const themeKey = document.documentElement.getAttribute("data-theme") || "dark";
+  const key = themeKey + "|" + String(item.label) + "|" + item.value + "|" + item.tone +
+    "|" + Math.round(frac * 20) + "|" + item.sub;
   if (B3D.texCache[key]) return B3D.texCache[key];
-  const W = 320, H = 400, c = document.createElement("canvas");
+  // 板面比例 3:4，和 3D 里的 PlaneGeometry(1.38, 1.72) 一致。像素密度给足，
+  // 舞台变高时板卡被放大也不会糊。
+  // 画布比例必须与 3D 里的 PlaneGeometry(cardW, cardH) 一致（0.92），
+  // 否则贴图会被拉伸，字变形。
+  const W = 520, H = 560, c = document.createElement("canvas");
   c.width = W; c.height = H;
   const g = c.getContext("2d");
   if (!g) return null;
-  const accent = item.tone === "ok" ? "#4ec98a" : item.tone === "warn" ? "#e0a94a" : item.tone === "bad" ? "#e2686e" : "#7f8dff";
-  g.fillStyle = "rgba(18,20,30,0.94)";
-  g.strokeStyle = accent; g.lineWidth = 7;
-  const r = 26;
+  const P = fxPalette();
+  const accent = item.tone === "ok" ? "#3fae74" : item.tone === "warn" ? "#c98a2a" : item.tone === "bad" ? "#cf5560" : "#5f6cd8";
+  const pad = 26, r = 22;
+  // 底板 + 状态色描边 + 顶部状态色带（色带比整框描边更容易「一眼看状态」）
+  g.fillStyle = P.plate;
+  g.strokeStyle = accent; g.lineWidth = 5;
   g.beginPath();
   g.moveTo(r, 4); g.lineTo(W - r, 4); g.quadraticCurveTo(W - 4, 4, W - 4, r);
   g.lineTo(W - 4, H - r); g.quadraticCurveTo(W - 4, H - 4, W - r, H - 4);
   g.lineTo(r, H - 4); g.quadraticCurveTo(4, H - 4, 4, H - r);
   g.lineTo(4, r); g.quadraticCurveTo(4, 4, r, 4);
   g.closePath(); g.fill(); g.stroke();
-  g.fillStyle = "rgba(232,236,248,0.96)";
-  g.font = "600 32px ui-monospace, Consolas, monospace";
-  const chunks = String(item.label || "").split(/([/_.\-:])/);
-  let line = "", y = 74;
-  for (const w of chunks) {
-    if (g.measureText(line + w).width > W - 54) { if (line) { g.fillText(line, 26, y); y += 38; } line = ""; }
-    line += w;
-    if (y > 190) break;
-  }
-  if (line) g.fillText(line, 26, y);
+  g.save();
+  g.beginPath();
+  g.moveTo(r, 4); g.lineTo(W - r, 4); g.quadraticCurveTo(W - 4, 4, W - 4, r);
+  g.lineTo(W - 4, H - r); g.quadraticCurveTo(W - 4, H - 4, W - r, H - 4);
+  g.lineTo(r, H - 4); g.quadraticCurveTo(4, H - 4, 4, H - r);
+  g.lineTo(4, r); g.quadraticCurveTo(4, 4, r, 4);
+  g.closePath(); g.clip();
   g.fillStyle = accent;
-  g.font = "700 64px ui-monospace, Consolas, monospace";
-  g.fillText(String(item.value == null ? "-" : item.value), 26, 300);
-  g.fillStyle = "rgba(255,255,255,0.13)";
-  g.fillRect(26, 336, W - 52, 18);
-  g.fillStyle = accent;
-  g.fillRect(26, 336, (W - 52) * Math.max(0.02, frac), 18);
-  if (item.sub) {
-    g.fillStyle = "rgba(150,158,182,0.95)";
-    g.font = "500 25px ui-monospace, Consolas, monospace";
-    g.fillText(String(item.sub).slice(0, 20), 26, 382);
+  g.fillRect(0, 0, W, 9);
+  g.restore();
+
+  /* 版式：自适应铺满。之前几版用写死的 y 坐标逐段摆放，只要某一段为空
+     （例如没有数值、没有副标题），下面就留出一大片空白，卡片像没画完。
+     这一版先算每段实际占多少行，再按剩余空间把它们分配到整张卡上。 */
+  const inner = W - pad * 2;
+  const CAP = 84;                        // 底部状态带高度
+  const bodyTop = 52;
+  const bodyBot = H - CAP - 26;          // 正文可用下界
+
+  // —— 先量尺寸 ——
+  const hasVal = item.value != null && String(item.value) !== "";
+  const big = hasVal ? String(item.value) : String(item.sub || "—");
+  let vs = hasVal ? 150 : 78;
+  g.font = "700 " + vs + "px ui-monospace, Consolas, monospace";
+  while (g.measureText(big).width > inner && vs > 36) {
+    vs -= 6;
+    g.font = "700 " + vs + "px ui-monospace, Consolas, monospace";
   }
+  // 名称：最多两行
+  g.font = "600 30px ui-monospace, Consolas, monospace";
+  const nameLines = wrapLines(g, String(item.label || ""), inner, 2);
+  // 说明：一行（有数值时是状态词；无值时是状态含义）
+  const noteText = hasVal ? String(item.sub || "") : String(item.why || "");
+  g.font = "500 27px ui-monospace, Consolas, monospace";
+  const noteLines = noteText ? wrapLines(g, noteText, inner, 1) : [];
+  const unitText = hasVal ? String(item.unit || "调用") : "";
+  g.font = "500 26px ui-monospace, Consolas, monospace";
+  const unitW = unitText ? g.measureText(unitText).width : 0;
+
+  // —— 再分配纵向空间：名称 / 主读数(+单位) / 说明 / 比例条 / 余量 ——
+  const nameH = nameLines.length * 36;
+  const bigH = vs * 0.86;
+  const noteH = noteLines.length * 34;
+  const barH = 26;
+  const blocks = [nameH, bigH, noteH, barH].filter(x => x > 0);
+  const used = blocks.reduce((a, b) => a + b, 0);
+  // 段间均分剩余空间（而不是全部堆到末尾），保证上下都贴边
+  const gaps = Math.max(1, blocks.length);
+  const slack = Math.max(0, (bodyBot - bodyTop) - used);
+  const gap = slack / gaps;
+
+  let y = bodyTop + gap * 0.5;
+  // ① 名称
+  g.fillStyle = P.ink2;
+  g.font = "600 30px ui-monospace, Consolas, monospace";
+  nameLines.forEach(l => { y += 28; g.fillText(l, pad, y); y += 8; });
+  // ② 主读数（+单位）
+  y += gap;
+  g.fillStyle = accent;
+  g.font = "700 " + vs + "px ui-monospace, Consolas, monospace";
+  y += vs * 0.78;
+  g.fillText(big, pad, y);
+  if (unitW) {
+    g.fillStyle = P.ink2;
+    g.font = "500 26px ui-monospace, Consolas, monospace";
+    g.fillText(unitText, pad + g.measureText(big).width + 12, y);
+  }
+  y += vs * 0.22;
+  // ③ 说明
+  if (noteLines.length) {
+    y += gap;
+    g.fillStyle = P.ink2;
+    g.font = "500 27px ui-monospace, Consolas, monospace";
+    noteLines.forEach(l => { y += 26; g.fillText(l, pad, y); y += 8; });
+  }
+  // ④ 比例条
+  y += gap;
+  g.fillStyle = P.bar;
+  g.fillRect(pad, y, inner, barH);
+  g.fillStyle = accent;
+  g.fillRect(pad, y, inner * Math.max(0.015, frac), barH);
+
+  // ⑤ 底部状态带：一整条色块，把卡底填满
+  g.save();
+  g.beginPath();
+  g.moveTo(r, 4); g.lineTo(W - r, 4); g.quadraticCurveTo(W - 4, 4, W - 4, r);
+  g.lineTo(W - 4, H - r); g.quadraticCurveTo(W - 4, H - 4, W - r, H - 4);
+  g.lineTo(r, H - 4); g.quadraticCurveTo(4, H - 4, 4, H - r);
+  g.lineTo(4, r); g.quadraticCurveTo(4, 4, r, 4);
+  g.closePath(); g.clip();
+  g.globalAlpha = 0.16;
+  g.fillStyle = accent;
+  g.fillRect(0, H - CAP, W, CAP);
+  g.globalAlpha = 1;
+  g.restore();
+  g.fillStyle = accent;
+  g.font = "600 28px ui-monospace, Consolas, monospace";
+  const tail = (item.tone === "ok" ? "状态正常" : item.tone === "warn" ? "需要关注" : item.tone === "bad" ? "不可用" : "常规");
+  g.fillText(tail, pad, H - CAP / 2 + 10);
+  if (item.tag) {
+    g.textAlign = "right";
+    g.fillStyle = P.ink2;
+    g.font = "500 24px ui-monospace, Consolas, monospace";
+    g.fillText(String(item.tag), W - pad, H - CAP / 2 + 10);
+    g.textAlign = "left";
+  }
+  const tex = new THREE.CanvasTexture(c);
+  B3D.texCache[key] = tex;
+  return tex;
+}
+
+// b3dBarLabel 画柱阵底部的名称牌：平台名 + 主读数。柱子没有名字等于没有信息。
+function b3dBarLabel(item, col) {
+  const P = fxPalette();
+  const themeKey = document.documentElement.getAttribute("data-theme") || "dark";
+  const key = "bar|" + themeKey + "|" + item.label + "|" + item.value;
+  if (B3D.texCache[key]) return B3D.texCache[key];
+  const W = 320, H = 96, c = document.createElement("canvas");
+  c.width = W; c.height = H;
+  const g = c.getContext("2d");
+  if (!g) return null;
+  g.fillStyle = P.plate;
+  g.globalAlpha = 0.9;
+  const r = 12;
+  g.beginPath();
+  g.moveTo(r, 0); g.lineTo(W - r, 0); g.quadraticCurveTo(W, 0, W, r);
+  g.lineTo(W, H - r); g.quadraticCurveTo(W, H, W - r, H);
+  g.lineTo(r, H); g.quadraticCurveTo(0, H, 0, H - r);
+  g.lineTo(0, r); g.quadraticCurveTo(0, 0, r, 0);
+  g.closePath(); g.fill();
+  g.globalAlpha = 1;
+  g.fillStyle = P.ink;
+  g.font = "600 30px ui-monospace, Consolas, monospace";
+  let nm = String(item.label || "");
+  while (g.measureText(nm).width > W - 24 && nm.length > 3) nm = nm.slice(0, -2);
+  g.fillText(nm, 12, 40);
+  g.fillStyle = col;
+  g.font = "700 32px ui-monospace, Consolas, monospace";
+  g.fillText(String(item.value == null ? "—" : item.value), 12, 78);
   const tex = new THREE.CanvasTexture(c);
   B3D.texCache[key] = tex;
   return tex;
@@ -11143,7 +11664,7 @@ function b3dEnsure() {
   } catch (e) { B3D.renderer = null; return false; }
   B3D.canvas = canvas;
   B3D.scene = new THREE.Scene();
-  B3D.cam = new THREE.PerspectiveCamera(46, 1.6, 0.1, 100);
+  B3D.cam = new THREE.PerspectiveCamera(30, 1.6, 0.1, 200);
   B3D.root = new THREE.Group();
   B3D.scene.add(B3D.root);
   return true;
@@ -11161,6 +11682,14 @@ function b3dClear() {
     if (c.traverse) c.traverse(kill); else kill(c);
   }
   B3D.pickables = []; B3D.sel = -1; B3D.items = [];
+  B3D.billboards = []; B3D.floaters = [];
+  // 环境组挂在 scene 上（不跟着 root 转，天穹不能跟着转），所以单独拆。
+  if (B3D.env && B3D.env.grp) {
+    const g = B3D.env.grp;
+    if (g.parent) g.parent.remove(g);
+    g.traverse(kill);
+  }
+  B3D.env = null;
 }
 
 /* ── 页面 → 3D 形态与数据 ────────────────────────────────────────────────
@@ -11178,6 +11707,12 @@ function b3dAcctItems(n) {
       raw: st ? (Number(st.requests) || 0) : 0,
       tone: k === "ready" ? "ok" : (k === "cooling" ? "warn" : "bad"),
       sub: accountState(accGroupStat(g)).label,
+      // 3D 卡片上「状态词当主角」时，下面那行要解释这个状态意味着什么。
+      why: (function (k, a) {
+        if (k === "ready") return "可以接单 · 优先级 " + (a.priority == null ? 0 : a.priority);
+        if (k === "cooling") return "冷却中 · 稍后自动恢复";
+        return "需要处理";
+      })(k, a),
       // 带上原始对象：3D 里选中一块板卡时，下方的检视面板要用它渲染可操作面。
       ref: { group: g, acct: a, client: n },
       // 也给一份事实：总览 / 用量 / 积分这几页复用同一批账号条目，它们没有
@@ -11192,7 +11727,21 @@ function b3dAcctItems(n) {
 }
 function b3dSpec(view) {
   switch (view) {
-    case "accounts": return { shape: "ring", hint: "ACCOUNTS · DRAG", items: b3dAcctItems(CUR) };
+    case "accounts": {
+      const all = b3dAcctItems(CUR);
+      // 墙上最多摆 24 块：再多样式上就退化成「一堆小方块」，读不出任何东西。
+      // 超出的部分汇总成一张卡，并指路到列表。
+      if (all.length <= 24) return { shape: "ring", hint: "ACCOUNTS · DRAG", items: all };
+      const sorted = all.slice().sort((a, b) => (Number(b.raw) || 0) - (Number(a.raw) || 0));
+      const head = sorted.slice(0, 23);
+      const rest = all.length - head.length;
+      head.push({
+        label: "另外 " + rest + " 个账号", value: rest, tone: "", sub: "在列表里查看",
+        raw: 0, facts: [["未显示", rest + " 个"], ["显示规则", "按调用量取前 23"],
+          ["全部账号", all.length + " 个"], ["去哪里看", "切到列表模式"]],
+      });
+      return { shape: "ring", hint: "ACCOUNTS · DRAG", items: head };
+    }
     case "overview": {
       const items = [];
       NAMES.forEach(n => b3dAcctItems(n).forEach(x => items.push(x)));
@@ -11207,17 +11756,67 @@ function b3dSpec(view) {
         facts: [["模块", n], ["账号", groups.length], ["可用", ready], ["能力", caps]] };
     }) };
     case "models": {
-      const out = [];
-      (MODELS || []).forEach(c => (c.models || []).forEach(m => out.push({
-        label: m.id, value: m.context_length ? fmtK(m.context_length) : null,
-        tone: m.extra && m.extra.free ? "ok" : "", sub: c.name, raw: Number(m.context_length) || 0,
-        ref: { model: m, client: c },
-      })));
-      return { shape: "ring", hint: "CATALOG · DRAG", items: out.slice(0, 60) };
+      // 按客户端聚合，不逐模型摆：355 个模型逐条摆出来，每张卡只看得见数字，
+      // 名字全被挤没了，那个画面不如列表。这里做「分布」——每个客户端一张卡，
+      // 主读数是模型数，副标题是免费档数量。要看具体模型，点卡片进列表。
+      const out = (MODELS || []).map(c => {
+        const ms = c.models || [];
+        const free = ms.filter(m => m.extra && m.extra.free).length;
+        const maxCtx = ms.reduce((a, m) => Math.max(a, Number(m.context_length) || 0), 0);
+        return {
+          label: platformLabel(c.name), value: ms.length,
+          tone: ms.length ? (free ? "ok" : "") : "warn",
+          sub: free ? free + " 个免费档" : (ms.length ? "全部计费" : "无模型"),
+          raw: ms.length,
+          facts: [["客户端", platformLabel(c.name)], ["模型", ms.length + " 个"],
+            ["免费档", free + " 个"], ["最大上下文", maxCtx ? fmtK(maxCtx) : "—"]],
+          go: "models",
+        };
+      });
+      return { shape: "ring", hint: "CATALOG · DRAG", items: out };
     }
     case "usage": {
-      const out = [];
-      NAMES.forEach(n => b3dAcctItems(n).forEach(x => out.push(x)));
+      // 用「时间桶序列」画柱阵，和页面下方的网格图同源：每根柱是一个时间段。
+      // 按客户端分桶时只有一两个平台有流量，柱阵就只剩一两根柱子，读不出趋势；
+      // 时间序列天然有 6~12 根柱子，高低起伏才是这张图要表达的东西。
+      const series = (US_DATA && US_DATA.series) || [];
+      const out = series.map((p, i) => {
+        const req = Number(p.requests != null ? p.requests : p.v) || 0;
+        const fail = Number(p.failures) || 0;
+        // series 的键是 t（ISO 时间）与 scope（hour/day）。柱阵上只要「时:分」，
+        // 完整时间放 facts 里。
+        const when = p.t ? new Date(p.t) : null;
+        const label = p.label || (when && !isNaN(when.getTime())
+          ? (p.scope === "day"
+            ? (when.getMonth() + 1) + "/" + when.getDate()
+            : String(when.getHours()).padStart(2, "0") + ":" + String(when.getMinutes()).padStart(2, "0"))
+          : ("T" + (i + 1)));
+        const whenText = when && !isNaN(when.getTime()) ? when.toLocaleString("zh-CN", { hour12: false }) : "—";
+        return {
+          label: String(label), value: numf(req), tone: fail ? "warn" : "ok",
+          sub: req ? numf(req) + " 次" : "无流量", raw: req,
+          facts: [["时段", whenText], ["请求", numf(req)], ["失败", numf(fail)],
+            ["占比", (US_DATA && US_DATA.totals && US_DATA.totals.requests)
+              ? Math.round(req / US_DATA.totals.requests * 100) + "%" : "—"]],
+        };
+      });
+      if (!out.length) return { shape: "bars", hint: "TRAFFIC · DRAG", items: [] };
+      // 太多桶时合并成 12 组，保证柱阵读得清
+      if (out.length > 12) {
+        const step = Math.ceil(out.length / 12);
+        const merged = [];
+        for (let i = 0; i < out.length; i += step) {
+          const chunk = out.slice(i, i + step);
+          const req = chunk.reduce((a, c) => a + (Number(c.raw) || 0), 0);
+          merged.push({
+            ...chunk[0], raw: req, value: numf(req),
+            sub: numf(req) + " 次",
+            facts: [["起点", chunk[0].facts[0][1]], ["终点", chunk[chunk.length - 1].facts[0][1]],
+              ["请求", numf(req)], ["分桶", chunk.length + " 个"]],
+          });
+        }
+        return { shape: "bars", hint: "TRAFFIC · DRAG", items: merged };
+      }
       return { shape: "bars", hint: "TRAFFIC · DRAG", items: out };
     }
     case "credits": {
@@ -11301,81 +11900,241 @@ function b3dBuild(spec) {
   B3D.items = items;
   if (!B3D.root || !items.length) return;
   const maxV = Math.max(1, ...items.map(i => Number(i.raw) || 0));
+  const P = fxPalette();
+  B3D.billboards = []; B3D.floaters = [];
 
   if (spec.shape === "ring") {
-    const R = Math.max(2.2, Math.min(4.6, 1.6 + items.length * 0.11));
-    const step = (Math.PI * 2) / Math.max(1, items.length);
+    /* 全息控制墙：板卡排成几排贴在同一张微微内凹的墙上，正对相机。
+       上一版是「一圈环」——只有 1~3 个条目时环半径照样把板卡推到很远，
+       屏幕上只剩几个看不清的小方块；40 个条目时又挤成一圈重叠的纸片。
+       排墙对任何数量都成立：少则一排三列，多则自动分行，越靠后越小越淡，
+       纵深靠「后面的排」而不是靠旋转整圈来做。 */
+    // 板卡尺寸跟着数量走：条目少时给大板（信息密度低就放大），条目多时收小
+    // 把整面墙装进舞台。这是「同一份数据、不同规模」的同一套排版。
+    const N0 = items.length;
+    // 卡片高度：少量时给得很高（1~2 张要让它们像「主屏」），多量时收到 1.4
+    // 以保证整墙入画。舞台取景会自动跟着 fitW/fitH 缩放，所以这里是相对值。
+    const cardH = N0 <= 2 ? 3.4 : N0 <= 5 ? 2.6 : N0 <= 9 ? 2.2 : N0 <= 18 ? 1.9 : 1.62;
+    // 板卡比例 0.92（接近方形而不是竖条）：舞台是宽扁的，竖条卡片在横向上
+    // 永远铺不满，卡片只能越缩越小、字越来越读不出来。
+    const cardW = cardH * 0.92;
+    const gap = cardW * 1.06, rowGap = cardH * 1.06;
+    // 每排最多 8 列：再多人眼就扫不过来了，而且卡片会被压到读不出字。
+    const perRow = Math.min(items.length, Math.min(8, Math.max(3, Math.ceil(Math.sqrt(items.length * 2.2)))));
+    const rows = Math.ceil(items.length / perRow);
+    const wallW = perRow * gap;
+    B3D.cardH = cardH;
+    const floorY = -((rows - 1) / 2) * rowGap - cardH * 0.5 - 0.5;
     items.forEach((it, i) => {
+      const r = Math.floor(i / perRow);
+      const c = i % perRow;
+      const cols = Math.min(perRow, items.length - r * perRow);
       const tex = b3dTexture(it, maxV);
       if (!tex) return;
-      const a = i * step;
-      const m = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 1.85), new THREE.MeshBasicMaterial({ map: tex, transparent: true }));
-      m.position.set(Math.cos(a) * R, 0, Math.sin(a) * R);
-      m.lookAt(0, 0, 0);
+      const g = new THREE.Group();
+      const x = (c - (cols - 1) / 2) * gap;
+      const y = ((rows - 1) / 2 - r) * rowGap;
+      // 每排等大：上一版让后排缩小，结果三排卡片大小不一，读起来像三种东西。
+      // 纵深交给位置（后排更靠里）和光照（后排更暗），不交给尺寸。
+      const depth = rows > 1 ? r / (rows - 1) : 0;
+      const scale = 1;
+      g.position.set(x, y, -depth * 1.5);
+      // 光晕：贴纸背面的软光斑，给板卡「自发光」的错觉
+      const halo = envHalo(b3dToneColor(it.tone), cardW * 1.5 * scale, P.plateGlow * (1 - depth * 0.5));
+      halo.position.z = -0.08;
+      g.add(halo);
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(cardW, cardH),
+        new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false,
+          opacity: 1 - depth * 0.22 }));
       m.userData.index = i;
-      B3D.root.add(m);
+      g.add(m);
       B3D.pickables.push(m);
-      const ped = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.46, 8),
-        new THREE.MeshBasicMaterial({ color: b3dToneColor(it.tone), transparent: true, opacity: 0.6 }));
-      ped.position.set(Math.cos(a) * R, -1.22, Math.sin(a) * R);
-      B3D.root.add(ped);
+      B3D.billboards.push(g);
+      B3D.root.add(g);
+      B3D.floaters.push({ obj: g, base: y, ph: i * 0.7 });
+      // 托架：板卡下沿两枚发光卡扣 + 底座光斑 + 一根落到地面的光缆。
+      // 少条目时（1~3 个）这一层是构图的主要填充，否则整幅舞台只有一张卡。
+      const tone = b3dToneColor(it.tone);
+      const bottomY = y - cardH * 0.5;
+      for (const sx of [-0.16, 0.16]) {
+        const pin = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.16, 0.055),
+          new THREE.MeshBasicMaterial({ color: tone, transparent: true, opacity: 0.85 }));
+        pin.position.set(x + sx * cardW, bottomY - 0.06, -depth * 1.5);
+        B3D.root.add(pin);
+      }
+      const pad = envHalo(tone, cardW * 1.5, P.plateGlow * 0.9);
+      pad.position.set(x, bottomY - 0.30, -depth * 1.5);
+      B3D.root.add(pad);
+      if (r === rows - 1 || rows === 1) {
+        const stalk = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, Math.max(0.25, bottomY - floorY), 6),
+          new THREE.MeshBasicMaterial({ color: tone, transparent: true, opacity: 0.24 }));
+        stalk.position.set(x, (bottomY + floorY) / 2, -depth * 1.5);
+        B3D.root.add(stalk);
+      }
     });
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(R + 0.35, 0.012, 6, 96),
-      new THREE.MeshBasicMaterial({ color: 0x5a6b9e, transparent: true, opacity: 0.5 }));
-    ring.rotation.x = Math.PI / 2; ring.position.y = -1.46;
-    B3D.root.add(ring);
+    B3D.envR = Math.max(4.0, wallW * 0.55 + 1.5);
+    B3D.fitW = wallW / 2 + cardW * 0.5;
+    B3D.fitH = (rows > 1 ? ((rows - 1) / 2) * rowGap : 0) + cardH * 0.5;
+    B3D.floorY = floorY;
+    B3D.camY = 0.0;
+    // 墙形态不再放中心枢纽：它正好落在第一排卡片背后，透出一团暗球。
+    // 「汇聚」这件事由地面网格、扫描环和卡片的托架光缆表达，够了。
   } else if (spec.shape === "globe") {
     const N = Math.max(1, items.length);
+    // 球体放大到 3.2：上一版 2.6 在 460px 高的舞台里只占中间一小块，
+    // 四周全是空的，整个页面像「什么都没显示」。
+    const R = 3.2;
     items.forEach((it, i) => {
       const phi = Math.acos(1 - 2 * (i + 0.5) / N);
       const theta = Math.PI * (1 + Math.sqrt(5)) * (i + 0.5);
-      const R = 2.5;
-      const size = 0.09 + 0.16 * Math.min(1, (Number(it.raw) || 0) / maxV + 0.3);
+      const size = 0.10 + 0.20 * Math.min(1, (Number(it.raw) || 0) / maxV + 0.3);
       const dot = new THREE.Mesh(new THREE.SphereGeometry(size, 12, 12), new THREE.MeshBasicMaterial({ color: b3dToneColor(it.tone) }));
       dot.position.set(Math.sin(phi) * Math.cos(theta) * R, Math.cos(phi) * R, Math.sin(phi) * Math.sin(theta) * R);
       dot.userData.index = i;
       B3D.root.add(dot);
       B3D.pickables.push(dot);
       const g = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), dot.position.clone()]);
-      B3D.root.add(new THREE.Line(g, new THREE.LineBasicMaterial({ color: 0x3f4a6b, transparent: true, opacity: 0.26 })));
+      B3D.root.add(new THREE.Line(g, new THREE.LineBasicMaterial({ color: P.gridA, transparent: true, opacity: 0.22 })));
     });
-    B3D.root.add(new THREE.Mesh(new THREE.SphereGeometry(0.55, 24, 24), new THREE.MeshBasicMaterial({ color: 0x8fa8ff, transparent: true, opacity: 0.9 })));
-    B3D.root.add(new THREE.Mesh(new THREE.SphereGeometry(0.64, 20, 20), new THREE.MeshBasicMaterial({ color: 0x6f8cff, wireframe: true, transparent: true, opacity: 0.5 })));
+    // 三条纬线：让它读成「球」而不是「一团点」
+    for (let k = -1; k <= 1; k++) {
+      const lat = k * 0.62;
+      const rr = Math.cos(lat) * R * 1.02;
+      const latRing = new THREE.Mesh(new THREE.TorusGeometry(rr, 0.008, 4, 80),
+        new THREE.MeshBasicMaterial({ color: P.hubWire, transparent: true, opacity: 0.28 }));
+      latRing.rotation.x = Math.PI / 2;
+      latRing.position.y = Math.sin(lat) * R * 1.02;
+      B3D.root.add(latRing);
+    }
+    b3dHub(0, 0, 0, 1.3);
+    B3D.envR = 4.6;
+    B3D.fitW = 3.9; B3D.fitH = 3.5;
+    B3D.floorY = -2.6;
+    B3D.camY = 0.1;
   } else if (spec.shape === "bars") {
-    const W = 0.34, gap = 0.17;
+    // 柱宽随数量自适应：1~3 根时给得很宽（占满舞台宽度），20 根时收到 0.3。
     const total = Math.max(1, items.length);
+    const W = total <= 2 ? 1.05 : total <= 4 ? 0.78 : total <= 8 ? 0.6 : 0.46;
+    const gap = W * 0.9;
+    const spanW = total * (W + gap);
+    const base = new THREE.Mesh(new THREE.BoxGeometry(spanW + 0.8, 0.03, W * 4),
+      new THREE.MeshBasicMaterial({ color: P.beam, transparent: true, opacity: 0.22 }));
+    base.position.y = -1.56;
+    B3D.root.add(base);
+    // 刻度环：25/50/75/100% 四条横向参考线（在柱阵背后）。只有一两根柱子时，
+    // 它们是「这是一张图」的唯一线索，否则一根立柱读不出量级。
+    for (let k = 1; k <= 4; k++) {
+      const yy = -1.56 + 3.0 * (k / 4) + 0.32 * (k / 4);
+      const tick = new THREE.Mesh(new THREE.TorusGeometry(Math.max(1.8, spanW * 0.62), 0.005, 4, 64),
+        new THREE.MeshBasicMaterial({ color: P.gridA, transparent: true, opacity: 0.16 }));
+      tick.rotation.x = Math.PI / 2;
+      tick.position.y = yy;
+      tick.position.z = -1.1;
+      B3D.root.add(tick);
+    }
     items.forEach((it, i) => {
-      const h = 0.35 + 2.7 * ((Number(it.raw) || 0) / maxV);
-      const b = new THREE.Mesh(new THREE.BoxGeometry(W, h, W), new THREE.MeshBasicMaterial({ color: b3dToneColor(it.tone), transparent: true, opacity: 0.92 }));
-      b.position.set((i - total / 2) * (W + gap), h / 2 - 1.5, (i % 2) ? gap : 0);
+      // 柱高用平方根压缩：一条爆炸性的流量把其他柱子全压成地板线上的小块，
+      // 那样「分布」就看不出来了。sqrt 保序、但留出对比空间。
+      const h = 0.32 + 3.0 * Math.sqrt((Number(it.raw) || 0) / maxV);
+      const col = b3dToneColor(it.tone);
+      const b = new THREE.Mesh(new THREE.BoxGeometry(W, h, W),
+        new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.72 }));
+      const x = (i - total / 2) * (W + gap) + (W + gap) / 2;
+      b.position.set(x, h / 2 - 1.50, 0);
       b.userData.index = i;
       B3D.root.add(b);
       B3D.pickables.push(b);
+      const cap = envHalo(col, Math.max(0.5, W * 1.6), P.plateGlow * 2.2);
+      cap.position.set(x, h - 1.50, 0);
+      B3D.root.add(cap);
+      // 底部铭牌：柱子没有名字等于没有信息。用 canvas 贴图写平台名 + 数值。
+      // 名称牌不再画：宽扁舞台 + 强透视下，一排小牌子必然被压成一条黑带。
+      // 每根柱子的时段与数值由右上角 readout（点选）和下方网格图承担，
+      // 柱阵本身只表达「形状」——这才是它比网格图多出来的东西。
+      void b3dBarLabel;
     });
+    B3D.envR = Math.max(4.6, Math.min(8.5, spanW * 0.62 + 2.4));
+    B3D.fitW = Math.max(2.6, spanW / 2 + 0.9);
+    B3D.fitH = 2.25;
+    B3D.floorY = -1.6;
+    B3D.camY = 0.02;
   } else {
+    /* 隧道 + 边栏：环一环往里收做纵深，最新几条数据在右侧排成一列。
+       卡片塞进隧道里必然互相遮挡（试过右缘、试过螺旋，都压），所以分工：
+       隧道只负责「这是一条持续流动的流」，卡片负责真的读得出内容。 */
     const N = Math.max(4, items.length);
+    const TX = -1.15;                       // 隧道中心偏左，给右侧卡片让位
     for (let i = 0; i < N; i++) {
       const it = items[i];
       const z = -i * 1.15;
-      const rad = Math.max(0.7, 1.9 - i * 0.09);
-      const ring = new THREE.Mesh(new THREE.TorusGeometry(rad, 0.02, 6, 64),
-        new THREE.MeshBasicMaterial({ color: it ? b3dToneColor(it.tone) : 0x3f4a6b, transparent: true, opacity: Math.max(0.2, 0.7 - i * 0.03) }));
-      ring.position.z = z;
-      if (it) { ring.userData.index = i; B3D.root.add(ring); B3D.pickables.push(ring); } else B3D.root.add(ring);
-      if (it) {
-        const tex = b3dTexture(it, maxV);
-        if (tex) {
-          const pl = new THREE.Mesh(new THREE.PlaneGeometry(1.15, 1.44), new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: 0.96 }));
-          pl.position.set(0, 0, z + 0.02);
-          pl.userData.index = i;
-          B3D.root.add(pl);
-          B3D.pickables.push(pl);
-        }
-      }
+      const rad = Math.max(0.78, 2.0 - i * 0.085);
+      const tone = it ? b3dToneColor(it.tone) : P.gridA;
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(rad, 0.018, 6, 64),
+        new THREE.MeshBasicMaterial({ color: tone, transparent: true,
+          opacity: Math.max(0.12, 0.62 - i * 0.030), blending: envBlend(P), depthWrite: false }));
+      ring.position.set(TX, 0, z);
+      if (it) { ring.userData.index = i; B3D.root.add(ring); B3D.pickables.push(ring); }
+      else B3D.root.add(ring);
     }
+    // 右侧一列卡片：最多 5 张，从上往下排，越往下越靠后（z 递减）
+    // 4 张就够读：再多一列就超出舞台高度，上下被裁掉反而更差。
+    const shown = Math.min(4, items.length);
+    for (let i = 0; i < shown; i++) {
+      const it = items[i];
+      const cw = 0.86, chh = cw * 1.09;
+      const y = 0.92 - i * 0.80;
+      const tex = b3dTexture(it, maxV);
+      if (!tex) continue;
+      const g = new THREE.Group();
+      g.position.set(1.72, y, -0.30 - i * 0.16);
+      const halo = envHalo(b3dToneColor(it.tone), cw * 1.7, B3D.texCache ? fxPalette().plateGlow : 0.2);
+      halo.position.z = -0.08;
+      g.add(halo);
+      const pl = new THREE.Mesh(new THREE.PlaneGeometry(cw, chh),
+        new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }));
+      pl.userData.index = i;
+      g.add(pl);
+      B3D.root.add(g);
+      B3D.billboards.push(g);
+      B3D.pickables.push(pl);
+      B3D.floaters.push({ obj: g, base: y, ph: i * 0.8 });
+    }
+    B3D.envR = 3.6;
+    B3D.fitW = 3.05; B3D.fitH = 2.15;
+    B3D.floorY = -2.3;
+    B3D.camY = 0.05;
   }
+  // 环境最后挂：它决定「这个场景在哪儿」，尺寸依赖上面算出的布局。
+  B3D.env = envAttach(B3D.scene, { radius: B3D.envR, floorY: B3D.floorY, stars: 520 });
+  B3D.dist = 12;
 }
 
+// b3dHub 是场景里的「汇聚记号」：实心核 + 线框壳 + 一圈慢慢转的轨道 + 光晕。
+// 尺寸压得很小——舞台的主角是数据板卡，这台核只说明「数据汇聚于此」。
+function b3dHub(x, y, z, size) {
+  const P = fxPalette();
+  const s = (size || 1.4) * 0.34;
+  const core = new THREE.Mesh(new THREE.SphereGeometry(s * 0.62, 20, 16),
+    new THREE.MeshBasicMaterial({ color: P.hub, transparent: true, opacity: 0.92 }));
+  core.position.set(x, y, z);
+  B3D.root.add(core);
+  const shell = new THREE.Mesh(new THREE.SphereGeometry(s * 0.86, 16, 12),
+    new THREE.MeshBasicMaterial({ color: P.hubWire, wireframe: true, transparent: true, opacity: 0.36 }));
+  shell.position.set(x, y, z);
+  B3D.root.add(shell);
+  for (let k = 0; k < 2; k++) {
+    const t = new THREE.Mesh(new THREE.TorusGeometry(s * (1.15 + k * 0.34), 0.006, 4, 60),
+      new THREE.MeshBasicMaterial({ color: P.hubWire, transparent: true, opacity: 0.30 - k * 0.1 }));
+    t.position.set(x, y, z);
+    t.rotation.x = Math.PI / 2 + k * 0.5;
+    t.rotation.y = k * 0.7;
+    B3D.root.add(t);
+    B3D.floaters.push({ spin: true, obj: t, base: y, ph: 0, amp: 0 });
+  }
+  const halo = envHalo(P.hub, s * 5.2, P.plateGlow * 1.1);
+  halo.position.set(x, y, z);
+  B3D.root.add(halo);
+}
 /* ── 交互：拖拽旋转 / 滚轮缩放 / 点击选中 ────────────────────────────── */
 function b3dMountControls() {
   const cv = B3D.canvas;
@@ -11383,7 +12142,7 @@ function b3dMountControls() {
   cv.dataset.ctl = "1";
   cv.addEventListener("pointerdown", ev => {
     if (ev.button !== 0) return;
-    B3D.drag = { x: ev.clientX, y: ev.clientY, yaw: B3D.yaw, pitch: B3D.pitch, moved: 0 };
+    B3D.drag = { x: ev.clientX, y: ev.clientY, yaw: B3D.dragYaw, pitch: B3D.pitch, moved: 0 };
     if (B3D.host) B3D.host.classList.add("dragging");
     try { cv.setPointerCapture(ev.pointerId); } catch (e) {}
   });
@@ -11391,15 +12150,16 @@ function b3dMountControls() {
     if (!B3D.drag) return;
     const dx = ev.clientX - B3D.drag.x, dy = ev.clientY - B3D.drag.y;
     B3D.drag.moved = Math.max(B3D.drag.moved, Math.abs(dx) + Math.abs(dy));
-    B3D.yaw = B3D.drag.yaw + dx * 0.006;
-    B3D.pitch = Math.max(-1.1, Math.min(1.1, B3D.drag.pitch + dy * 0.005));
+    // 水平拖拽 = 绕墙环视，限在 ±32°：再大板卡就侧过去、字看不清了。
+    B3D.dragYaw = Math.max(-0.56, Math.min(0.56, B3D.drag.yaw + dx * 0.0035));
+    B3D.pitch = Math.max(-0.6, Math.min(0.6, B3D.drag.pitch + dy * 0.004));
   });
   const endDrag = () => { if (B3D.drag) { B3D.drag = null; if (B3D.host) B3D.host.classList.remove("dragging"); } };
   cv.addEventListener("pointerup", endDrag);
   cv.addEventListener("pointercancel", endDrag);
   cv.addEventListener("wheel", ev => {
     ev.preventDefault();
-    B3D.dist = Math.max(3.2, Math.min(13, B3D.dist + (ev.deltaY > 0 ? 0.5 : -0.5)));
+    B3D.zoom = Math.max(0.55, Math.min(2.0, (B3D.zoom || 1) + (ev.deltaY > 0 ? 0.09 : -0.09)));
   }, { passive: false });
   cv.addEventListener("click", b3dPickAt);
 }
@@ -11508,13 +12268,32 @@ function b3dFrame() {
     B3D.cam.updateProjectionMatrix();
   }
   B3D.t += 0.016;
-  if (!B3D.drag) B3D.yaw += 0.0016;               // 静止时极慢自转
-  B3D.root.rotation.y = B3D.yaw;
-  B3D.root.rotation.x = B3D.pitch * 0.6;
-  B3D.cam.position.set(0, 1.1, B3D.dist);
-  B3D.cam.lookAt(0, 0, 0);
+  const t = B3D.t;
+  // 相机缓慢环绕几度（±4°），只是给静止画面一点「在场」的呼吸，不是把整墙
+  // 转走——转得多字就读不了。用户拖拽时直接接管这个角度。
+  if (!B3D.drag) B3D.yaw += 0.0009;
+  const yaw = Math.sin(B3D.yaw) * 0.075 + B3D.dragYaw;
+  B3D.root.rotation.y = yaw;
+  const pitch = B3D.pitch;
+  const fit = B3D.spec && B3D.spec.shape === "tunnel"
+    ? 7.4 * (B3D.zoom || 1)
+    : fxFitDist((B3D.fitW || 3) + 0.22, (B3D.fitH || 2) + 0.20, B3D.cam, B3D.zoom);
+  B3D.dist = fit;
+  const camY = (B3D.camY || 0) + pitch * fit * 0.55;
+  B3D.cam.position.set(0, camY, fit);
+  B3D.cam.lookAt(0, (B3D.camY || 0) * 0.6, 0);
+  // 板卡始终朝向相机（billboard）：只有这样才能保证任何角度文字都正着。
+  B3D.billboards.forEach(g => fxFace(g, B3D.root, B3D.cam));
+  // 悬停呼吸：每块板子在自己的高度上轻微起伏，相位错开——静止画面也在呼吸。
+  B3D.floaters.forEach((f, i) => {
+    if (f.spin) { f.obj.rotation.z = t * 0.24 + i; return; }
+    if (!f.obj) return;
+    const lift = (i === B3D.sel ? 0.13 : 0) + Math.sin(t * 0.8 + f.ph) * 0.05;
+    f.obj.position.y = f.base + lift;
+  });
+  envTick(B3D.env, t);
   B3D.pickables.forEach((m, i) => {
-    const s = i === B3D.sel ? 1.12 : 1;
+    const s = i === B3D.sel ? 1.1 : 1;
     if (m.scale.x !== s) m.scale.setScalar(s);
   });
   B3D.renderer.render(B3D.scene, B3D.cam);
@@ -11563,7 +12342,7 @@ function mountBoard3d(view) {
   if (!board) {
     board = document.createElement("div");
     board.className = "board3d";
-    board.style.height = "clamp(220px, 26vh, 320px)";
+    board.style.height = "clamp(300px, 40vh, 460px)";
     board.innerHTML = '<span class="b3d-hint"></span><div class="b3d-read"></div><div class="b3d-none" hidden></div><div class="b3d-inspect" hidden></div>';
     const mh = host.querySelector(":scope > .masthead");
     if (mh) host.insertBefore(board, mh.nextSibling);
@@ -13619,10 +14398,13 @@ async function renderUsage() {
   $("#usModelNote").textContent = (d.by_model || []).length + " 个模型";
   $("#usRealmNote").textContent = (d.by_realm || []).length + " 个域";
   US_RECENT = d.recent || [];
+  // 3D 柱阵用同一个时间序列：网格图与 3D 读同一份数据，形状才对得上。
+  US_DATA = d;
   renderRecentRows();
 }
 
 let US_RECENT = [];
+let US_DATA = null;
 
 function fmtCallTime(s) {
   if (!s) return "-";
@@ -18688,15 +19470,35 @@ $("#taskBody").addEventListener("click", async ev => {
 });
 
 /* ── 主题 ─────────────────────────────────────────────────────────────── */
-const THEMES = ["dark", "light", "auto"];
+/* 两档：深色 / 浅色。applyTheme 只做三件事：写 data-theme、记住选择、同步开关
+   的选中态。3D 与星图的贴图和场景颜色都在构建时按主题取色（fxPalette），所以
+   换主题必须重建一次，否则画布上留着上一套颜色的铭牌——浅色下就是白底白字。 */
+function themeNow() { return document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark"; }
 function applyTheme(t) {
-  const dark = t === "dark" || (t === "auto" && !window.matchMedia("(prefers-color-scheme: light)").matches);
-  document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
-  LS.set("theme", t);
+  const theme = t === "light" ? "light" : "dark";
+  const prev = themeNow();
+  document.documentElement.setAttribute("data-theme", theme);
+  LS.set("theme", theme);
+  // 先同步开关选中态再判断「是否真的变了」——首次加载时 data-theme 已经是
+  // 深色，如果提前 return，开关会一个都不亮。
+  $$("#themeToggle button").forEach(b => b.classList.toggle("on", b.dataset.th === theme));
+  if (prev === theme) return;
+  // 主题变了：贴图缓存按主题分键，清掉旧的一套免得越积越多。
+  if (typeof B3D !== "undefined") B3D.texCache = {};
+  if (typeof ATLAS !== "undefined") ATLAS.texCache = {};
+  if (typeof ENVKIT !== "undefined") { ENVKIT.dome = {}; ENVKIT.glow = null; }
+  // 重建正在显示的两块画布（都只在它们真的存在时才动）。
+  try {
+    if (typeof B3D !== "undefined" && B3D.renderer && document.body.classList.contains("mode-3d") && VIEW) {
+      mountBoard3d(VIEW);
+    }
+    if (typeof ATLAS !== "undefined" && document.body.classList.contains("atlas-on")) atlasBuild();
+  } catch (e) { /* 主题切换绝不能把页面搞崩：重建失败就保持原样 */ }
 }
-$("#btnTheme").addEventListener("click", () => {
-  const cur = LS.get("theme", "dark");
-  applyTheme(THEMES[(THEMES.indexOf(cur) + 1) % THEMES.length]);
+function setTheme(t) { applyTheme(t); }
+$("#themeToggle").addEventListener("click", ev => {
+  const b = ev.target.closest("button[data-th]");
+  if (b) applyTheme(b.dataset.th);
 });
 applyTheme(LS.get("theme", "dark"));
 
@@ -21026,7 +21828,8 @@ function cmdkCommands() {
     });
   });
   out.push({ kind: "动作", label: "刷新当前页面", hint: TITLES[VIEW] || "", icon: "⟳", run: () => refreshCurrentView() });
-  out.push({ kind: "动作", label: "切换明暗主题", hint: "深 → 浅 → 跟随系统", icon: "◐", run: () => $("#btnTheme").click() });
+  out.push({ kind: "动作", label: "切到" + (themeNow() === "dark" ? "浅色" : "深色") + "主题", hint: "当前：" + (themeNow() === "dark" ? "深色" : "浅色"), icon: "◐",
+    run: () => applyTheme(themeNow() === "dark" ? "light" : "dark") });
   if (VIEW === "accounts" || true) out.push({ kind: "动作", label: "添加账号", hint: "打开添加弹窗", icon: "+", run: () => { location.hash = "#accounts"; go("accounts"); $("#btnAdd").click(); } });
   return out;
 }
