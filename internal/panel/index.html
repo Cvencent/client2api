@@ -6237,6 +6237,10 @@ html:not([data-theme="light"]) body::after {
         <svg id="icoTheme" viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M13.2 9.6A5.6 5.6 0 0 1 6.4 2.8a5.6 5.6 0 1 0 6.8 6.8z"/></svg>
       </button>
       <!-- 统一的刷新入口：任何视图都在这个位置，按当前视图分派到真正干活的函数。 -->
+      <button class="kbtn" id="btnAtlas" title="回到网关星图（空间导航）" aria-label="打开网关星图">
+        <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="8" cy="8" r="2.1"/><circle cx="8" cy="2.6" r="1.3"/><circle cx="8" cy="13.4" r="1.3"/><circle cx="2.6" cy="8" r="1.3"/><circle cx="13.4" cy="8" r="1.3"/></svg>
+        <span>星图</span>
+      </button>
       <span class="view3d-toggle" id="view3dToggle" role="group" aria-label="页面呈现方式">
         <button type="button" data-view3d="3d" class="on" title="把这个页面的数据立起来看">3D</button>
         <button type="button" data-view3d="lists" title="回到密集的列表视图">列表</button>
@@ -10643,7 +10647,7 @@ function renderTranscriptionCallInfo() {
    所有既有 id、样式作用域、事件委托、测试契约全部成立。 */
 const ATLAS = {
   canvas: null, renderer: null, scene: null, cam: null, root: null,
-  zones: [], pick: [], raf: 0, t: 0, hover: -1, drag: null, yaw: 0, pitch: 0,
+  zones: [], pick: [], raf: 0, t: 0, hover: -1, drag: null, yaw: 0, pitch: 0, sig: "",
   dist: 15, open: "", home: null, panel: null, host: null, texCache: {},
 };
 
@@ -10739,6 +10743,7 @@ function atlasBuild() {
   atlasClear();
   const zones = atlasZones();
   ATLAS.zones = zones;
+  ATLAS.sig = JSON.stringify(zones.map(z => [z.view, z.sub, z.tone, z.count]));
   const n = zones.length;
   zones.forEach((z, i) => {
     const a = (i / n) * Math.PI * 2;
@@ -10953,8 +10958,10 @@ function atlasMount() {
   return true;
 }
 // atlasEnter 进入星图：把 3D/列表的模式关掉（地图自己有渲染），清空主区。
-function atlasEnter() {
+function atlasEnter(explicit) {
   if (!atlasMount()) return;
+  // 用户主动点「星图」进来时，把上次「退出到列表」的偏好清掉，否则下次刷新又不进。
+  if (explicit) { try { localStorage.setItem("c2a.atlas", "on"); } catch (e) {} }
   document.body.classList.add("atlas-on");
   atlasBuild();
   atlasStart();
@@ -11110,6 +11117,7 @@ function b3dSpec(view) {
       (MODELS || []).forEach(c => (c.models || []).forEach(m => out.push({
         label: m.id, value: m.context_length ? fmtK(m.context_length) : null,
         tone: m.extra && m.extra.free ? "ok" : "", sub: c.name, raw: Number(m.context_length) || 0,
+        ref: { model: m, client: c },
       })));
       return { shape: "ring", hint: "CATALOG · DRAG", items: out.slice(0, 60) };
     }
@@ -11322,7 +11330,9 @@ function b3dInspect() {
   const box = host.querySelector(".b3d-inspect");
   if (!box) return;
   const it = B3D.sel >= 0 ? B3D.items[B3D.sel] : null;
-  if (!it || !it.ref || B3D.view !== "accounts") { box.hidden = true; box.innerHTML = ""; return; }
+  if (!it || !it.ref) { box.hidden = true; box.innerHTML = ""; return; }
+  if (B3D.view === "models") { box.hidden = false; box.innerHTML = b3dModelInspectHTML(it); return; }
+  if (B3D.view !== "accounts") { box.hidden = true; box.innerHTML = ""; return; }
   const rec = ACCTS[(it.ref && it.ref.client) || CUR] || {};
   const caps = rec.capabilities || {};
   const acts = caps.actions || [];
@@ -11333,6 +11343,29 @@ function b3dInspect() {
   box.innerHTML = '<div class="b3d-inspect-head">' + esc(it.label) +
     '<span class="hint">' + esc(accountHint(a)) + "</span></div>" +
     acctDetailHTML(g, a, caps, acts, showBal, prio);
+}
+
+// b3dModelInspectHTML 是模型板卡被选中时的检视块：只读地摊开这个模型的关键
+// 事实（客户端、来源、上下文、价格、免费），并指路到列表模式去改——那里有完整
+// 的输入与校验，不在 3D 里重复一套编辑路径。
+function b3dModelInspectHTML(it) {
+  const m = (it.ref && it.ref.model) || {};
+  const c = (it.ref && it.ref.client) || {};
+  const ex = m.extra || {};
+  const rows = [
+    ["客户端", c.name === "__virtual__" ? "虚拟" : (platformLabel ? platformLabel(c.name) : c.name)],
+    ["上下文", m.context_length ? fmtK(m.context_length) : "—"],
+    ["最大输出", m.max_output_tokens ? fmtK(m.max_output_tokens) : "—"],
+    ["价格", (function () { try { return mdPriceSummary ? String(mdPriceSummary(m) || "").replace(/<[^>]*>/g, "") : "—"; } catch (e) { return "—"; } })()],
+    ["计费", ex.free ? "免费" : (ex.credits != null ? String(ex.credits) : "—")],
+    ["所属", m.owned_by || "—"],
+  ];
+  return '<div class="b3d-inspect-head">' + esc(m.id || it.label) +
+    '<span class="hint">模型</span></div>' +
+    '<div class="ac-rows" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));display:grid;gap:5px 18px">' +
+    rows.map(r => '<div class="ac-row"><span class="k">' + esc(r[0]) + "</span><b>" + esc(String(r[1] == null ? "—" : r[1])) + "</b></div>").join("") +
+    "</div>" +
+    '<div class="ac-foot wide"><button class="xs" id="b3dToLists">到列表里编辑</button></div>';
 }
 
 /* ── 帧循环 ────────────────────────────────────────────────────────────── */
@@ -19922,6 +19955,12 @@ if (accSortTable) accSortTable.addEventListener("keydown", ev => {
   ev.preventDefault();
   accSortBy(th.dataset.sort);
 });
+// 检视面板里「到列表里编辑」：切回列表模式，编辑的完整入口在那里。
+document.addEventListener("click", ev => {
+  if (ev.target && ev.target.id === "b3dToLists") setView3dMode("lists");
+});
+// 星图入口：列表模式下点它回到空间地图。
+$("#btnAtlas").addEventListener("click", () => atlasEnter(true));
 // 3D / 列表总开关：换的是呈现，数据与筛选一个字不动。
 $$("#view3dToggle button").forEach(b => b.addEventListener("click", () => setView3dMode(b.dataset.view3d)));
 // 卡片 / 表格切换：只换呈现，数据与筛选一个字不动。
@@ -21851,10 +21890,17 @@ window.addEventListener("unhandledrejection", ev => panelBootError(ev.reason));
       // 页面的数据是各自懒加载的（模型目录 / 日志 / 配置…），挂舞台时可能还
       // 是空的。这里轻量地对账：当前页的条目数变了就重建一次，让舞台跟上数据。
       setInterval(() => {
-        if (!B3D.renderer || B3D.view !== VIEW) return;
-        if (!document.body.classList.contains("mode-3d")) return;
-        const spec = b3dSpec(VIEW);
-        if (spec.items.length !== B3D.items.length) mountBoard3d(VIEW);
+        // 3D 舞台：数据晚到或变了就重建（不重建正在被拖的视图）。
+        if (B3D.renderer && B3D.view === VIEW && document.body.classList.contains("mode-3d")) {
+          const spec = b3dSpec(VIEW);
+          if (spec.items.length !== B3D.items.length) mountBoard3d(VIEW);
+        }
+        // 星图：区域上的读数来自活数据，它自己也得跟着更新。用签名比对，
+        // 只有真的变了才重建——否则会把正在看的自转动画每秒打断一次。
+        if (document.body.classList.contains("atlas-on") && ATLAS.renderer && !ATLAS.drag) {
+          const sig = JSON.stringify(atlasZones().map(z => [z.view, z.sub, z.tone, z.count]));
+          if (sig !== ATLAS.sig) { ATLAS.sig = sig; atlasBuild(); }
+        }
       }, 1500);
     });
     SHELL.init();
