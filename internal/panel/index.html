@@ -95,6 +95,13 @@ body {
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 
+/* 全局进场编排：每页切进来时 .box / 卡片 / 行以 320ms 指数减速淡入上浮，
+   由 revealView() 逐项加 24ms 延迟。reduced-motion 下被上面那条全局规则关掉。 */
+@keyframes fxIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+
 
 /* ── 壳层：左侧导航 + 主区 ─────────────────────────────────────────── */
 .shell { display: grid; grid-template-columns: 208px 1fr; min-height: 100vh; }
@@ -892,6 +899,26 @@ button.chip.on { background: var(--accent-soft); color: var(--accent); border-co
 /* 表格单元格：8px/12px 在 1180px 封顶时是必要的，去掉封顶后可以给回呼吸感。 */
 .acc th, .acc td { padding: 10px 14px; border-bottom: 1px solid var(--line-soft); text-align: left; vertical-align: middle; }
 .acc thead th { color: var(--ink-3); font-weight: 500; font-size: 12px; background: var(--surface-2); white-space: nowrap; }
+/* 机架轨道头：账号池的表头不再是「表格的灰色头带」，而是一条刻度轨道——
+   无底色、细等宽小字、字距拉开，像机架顶部的通道标签条。
+   列名下面带 1px 刻度线（sortable 列的刻度更亮，暗示可点）。 */
+#view-accounts table.acc thead th {
+  background: transparent;
+  color: var(--ink-3);
+  font: 500 10px/1 var(--mono);
+  letter-spacing: .09em;
+  padding: 9px 7px 8px;
+  border-bottom: 1px solid var(--line);
+  position: relative;
+}
+#view-accounts table.acc thead th::after {
+  content: ""; position: absolute; left: 7px; right: 7px; bottom: -1px; height: 1px;
+  background: transparent;
+}
+#view-accounts table.acc thead th.sortable::after { background: color-mix(in srgb, var(--line) 85%, transparent); }
+#view-accounts table.acc thead th.sortable:hover::after { background: var(--accent); }
+/* sticky 首列（账号名）必须自带不透明底，否则滚动时行会从它下面穿过去。 */
+#view-accounts table.acc thead th:nth-child(2) { background: var(--surface); }
 .acc tbody tr:hover { background: var(--surface-2); }
 .acc .mark { width: 28px; }
 .acc .c-acts { text-align: right; white-space: nowrap; }
@@ -1541,6 +1568,22 @@ button.pfgToggle:hover:not(:disabled) { background: color-mix(in srgb, var(--acc
 #view-taskscenter .box > header { flex-wrap: wrap; row-gap: 8px; }
 .acc.sc { min-width: 960px; }
 .acc.sc th, .acc.sc td { padding: 9px 12px; }
+/* 定时任务表头走机架轨道语言（同账号池/模型页），行悬停亮左缘刻度轨。 */
+.acc.sc thead th {
+  background: transparent;
+  color: var(--ink-3);
+  font: 500 10px/1 var(--mono);
+  letter-spacing: .09em;
+  border-bottom: 1px solid var(--line);
+}
+.acc.sc tr.scrow > td:first-child { position: relative; }
+.acc.sc tr.scrow > td:first-child::before {
+  content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 2px;
+  border-radius: 2px; background: var(--accent);
+  opacity: 0; transform: scaleY(.4);
+  transition: opacity 120ms var(--ease), transform 120ms var(--ease);
+}
+.acc.sc tr.scrow:hover > td:first-child::before { opacity: .9; transform: scaleY(1); }
 .acc.sc .hint { display: block; margin-top: 2px; font-size: 11px; color: var(--ink-3);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 240px; }
 .acc.sc .scHours { width: 104px; }
@@ -2263,16 +2306,59 @@ details.cfg summary:hover, details.adv summary:hover { color: var(--accent-text)
 }
 
 /* -- 10. Platform alerts -------------------------------------------------
-   A quiet status table: time recedes, platform leads, empty state centers. */
-#view-alerts .acc thead th { letter-spacing: .02em; }
-#view-alerts .acc tbody td:first-child { white-space: nowrap; font-variant-numeric: tabular-nums; }
-#view-alerts .acc tbody td:nth-child(2) { font-weight: 620; }
-#view-alerts .acc tbody td:nth-child(3) { font-family: var(--mono); font-size: 12.5px; }
-#view-alerts .acc tbody td:last-child { font-variant-numeric: tabular-nums; color: var(--ink-2); }
-#view-alerts .acc tbody td[colspan] { padding: 44px 20px; text-align: center; color: var(--ink-3); }
-#view-alerts .acc tbody tr:hover td[colspan] { background: transparent; box-shadow: none; }
-/* 空告警：表格整体退场，卡片塌成一行安静状态。quiet 由 renderAlerts 挂上去。 */
-#alertsBox.quiet .tbl-wrap { display: none; }
+   告警 = 事件流水。左缘一条时间竖轴（刻度点 + 等宽时间），徽章、正文、
+   右端失败读数。悬停整行亮起，像日志查看器的一条记录。 */
+.evs { padding: 4px 0; }
+.ev {
+  position: relative;
+  display: flex; align-items: baseline; gap: 10px;
+  padding: 11px 18px 11px 0;
+  border-bottom: 1px solid var(--line-soft);
+  transition: background-color 120ms var(--ease);
+}
+.ev:last-child { border-bottom: 0; }
+.ev:hover { background: color-mix(in srgb, var(--surface-2) 55%, transparent); }
+/* 时间轴：每条记录左缘一枚刻度点，竖向用 ::before 连成轴。 */
+.ev::before {
+  content: ""; position: absolute; left: 18px; top: 0; bottom: 0; width: 1px;
+  background: var(--line-soft);
+}
+.ev::after {
+  content: ""; position: absolute; left: 15.5px; top: 50%; margin-top: -2.5px;
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--bad); box-shadow: 0 0 6px color-mix(in srgb, var(--bad) 60%, transparent);
+}
+.ev { padding-left: 34px; }
+.ev-t {
+  flex: none; width: 78px;
+  font: 500 11px/1.4 var(--mono); color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+.ev-badge {
+  flex: none; padding: 2px 8px; border-radius: 5px;
+  border: 1px solid color-mix(in srgb, var(--bad) 35%, var(--line));
+  color: var(--bad-text); font: 600 11px/1.5 var(--mono);
+  background: color-mix(in srgb, var(--bad) 7%, transparent);
+}
+.ev-badge.dim {
+  border-color: var(--line); color: var(--ink-3); font-weight: 500;
+  background: none;
+}
+.ev-what {
+  flex: 1 1 auto; min-width: 0;
+  font-size: 12.5px; color: var(--ink-2); line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+.ev-acc { display: inline-block; margin-left: 8px; font: 11px/1 var(--mono); color: var(--ink-3); }
+.ev-n {
+  flex: none; align-self: center;
+  font: 700 13px/1 var(--mono); color: var(--bad);
+  font-variant-numeric: tabular-nums;
+  padding: 4px 8px; border-radius: 6px;
+  background: var(--bad-soft);
+}
+/* 空告警：整卡塌成一行安静状态。quiet 由 renderAlerts 挂上去。 */
+#alertsBox.quiet .evs { display: none; }
 #alertsBox.quiet header .xs.danger { display: none; }
 #alertsBox.quiet header h3::after {
   content: "没有待处理的告警。上游连续失败、WAF 拦截这类事件会记在这里。";
@@ -4146,7 +4232,18 @@ input, select, textarea, .stat, .subtab {
   background: linear-gradient(145deg, var(--accent-hover), var(--accent-active));
   color: #fff; font: 700 13px/1 var(--mono);
   box-shadow: 0 6px 16px -9px color-mix(in srgb, var(--accent) 85%, transparent);
+  position: relative; z-index: 2;
 }
+/* 3D 核心：120×120 的画布贴在徽章位置，徽章本身退成画布中央的一枚小字标。
+   WebGL 起不来时画布是透明的，徽章照旧可见——3D 是增强层。 */
+.rl-hub .rh-3d {
+  position: absolute; left: 50%; top: -36px; width: 108px; height: 108px;
+  transform: translateX(-50%);
+  pointer-events: none; z-index: 1;
+}
+.rl-hub { overflow: visible; padding-top: 34px; }
+.rl-hub .rh-mark { background: none; box-shadow: none; color: var(--ink-3); font-size: 9px; letter-spacing: .12em; opacity: .45; }
+.rl-hub b, .rl-hub small { position: relative; z-index: 2; }
 .rl-hub b { font-size: 12px; font-weight: 600; }
 .rl-hub small { font: 10px/1 var(--mono); color: var(--ink-3); }
 .rl-hub.act { border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); box-shadow: 0 0 0 4px var(--accent-soft), inset 0 1px 0 rgba(255,255,255,.045); }
@@ -5056,13 +5153,37 @@ html:not([data-theme="light"]) body::after {
 /* 模型表：主行 + 可展开的详情行。
    主行六列（模型 / 客户端 / 来源 / 上下文 / 价格 / 详情），详情行里是十一个
    可编辑字段。详情行的 <td> 被 display:contents 拉平成一个网格，所以字段
-   仍然是原来的单元格（编辑逻辑一行没改），只是摆成了两列三列的卡片。 */
+   仍然是原来的单元格（编辑逻辑一行没改），只是摆成了两列三列的卡片。
+   表头走机架轨道头（同账号池）：无底色、等宽小字、字距拉开、下缘刻度线。 */
+#view-models .acc.md thead th {
+  background: transparent;
+  color: var(--ink-3);
+  font: 500 10px/1 var(--mono);
+  letter-spacing: .09em;
+  border-bottom: 1px solid var(--line);
+}
+#view-models .acc.md thead th.sortable { position: relative; }
+#view-models .acc.md thead th.sortable::after {
+  content: ""; position: absolute; left: 0; right: 12px; bottom: -1px; height: 1px;
+  background: color-mix(in srgb, var(--line) 85%, transparent);
+}
+#view-models .acc.md thead th.sortable:hover::after { background: var(--accent); }
+/* 主行是仪表行：模型名那一格是铭牌（大字重等宽），数字列对齐，
+   悬停时左缘亮起一道 2px 刻度轨。 */
 #view-models .acc.md tr.mdmain > td { border-bottom: 1px solid var(--line-soft); transition: background-color 120ms var(--ease); }
+#view-models .acc.md tr.mdmain > td:first-child { position: relative; }
+#view-models .acc.md tr.mdmain > td:first-child::before {
+  content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 2px;
+  border-radius: 2px; background: var(--accent);
+  opacity: 0; transform: scaleY(.4);
+  transition: opacity 120ms var(--ease), transform 120ms var(--ease);
+}
+#view-models .acc.md tr.mdmain:hover > td:first-child::before { opacity: .9; transform: scaleY(1); }
+#view-models .acc.md td.mdnamecell b { font: 600 12.5px/1.4 var(--mono); letter-spacing: -.01em; }
 #view-models .acc.md tr.mddetail > td {
   padding: 0; border-bottom: 1px solid var(--line);
   background: color-mix(in srgb, var(--surface-2) 60%, transparent);
 }
-#view-models .acc.md tr.mdmain:hover > td { background: color-mix(in srgb, var(--accent) 4%, transparent); }
 /* 详情行展开动效：mddgrid 从 4px 顶距 + 轻微下滑进场（120ms）。
    hidden 翻转没有过渡可挂，动效挂在 .open 状态：mdApply 展开/收起时
    详情 tr 带不带 .open 由现有 toggle 逻辑顺手维护。reduced-motion 直接落位。 */
@@ -5320,17 +5441,24 @@ html:not([data-theme="light"]) body::after {
 }
 
 /* 内容列：顶栏之下唯一滚动区（上一版已确立，这里跟着新行高调一次 offset）。 */
-.main { grid-row: 2; min-width: 0; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
-
-/* 表头一致性：账号表的首列是 sticky 的，它自己带了一层 --surface-2 背景，
-   而其余表头格是透明的（露出 box 的 --surface）。两者并排时表头带看起来
-   在首列处断了一截。这里让整个 thead 用同一个色，sticky 列只是它的一部分。 */
-#view-accounts table.acc thead tr,
-.acc.md thead tr { background: color-mix(in srgb, var(--surface-2) 60%, var(--surface)); }
-#view-accounts table.acc thead th,
-.acc.md thead th { background: transparent; }
-#view-accounts table.acc thead th:nth-child(2),
-.acc.md thead th:first-child { background: color-mix(in srgb, var(--surface-2) 60%, var(--surface)); }
+.main { grid-row: 2; min-width: 0; display: flex; flex-direction: column; min-height: 0; overflow: hidden; position: relative; }
+/* 动态背景：铺满 .main，压在内容之下（topbar/viewwrap 自己带背景或不透明）。
+   网格用 CSS 画（静态、零成本），漂移粒子用 canvas（bgField）画。 */
+.bgfield {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  pointer-events: none; z-index: 0; opacity: .55;
+}
+.main::before {
+  content: ""; position: absolute; inset: 0; z-index: 0; pointer-events: none;
+  background-image:
+    linear-gradient(to right, color-mix(in srgb, var(--line-soft) 55%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in srgb, var(--line-soft) 55%, transparent) 1px, transparent 1px);
+  background-size: 68px 68px;
+  -webkit-mask-image: radial-gradient(ellipse 120% 90% at 50% 0%, #000 0%, transparent 78%);
+  mask-image: radial-gradient(ellipse 120% 90% at 50% 0%, #000 0%, transparent 78%);
+  opacity: .6;
+}
+.topbar, .viewwrap { position: relative; z-index: 1; }
 
 /* 列宽分配修正：账号列的 id 行原本被省略号截断，而右侧「状态说明」列
    在一行没有说明时是空的——空列占着 8.5%，实列却不够宽。
@@ -5341,13 +5469,6 @@ html:not([data-theme="light"]) body::after {
 /* 空的状态说明列收窄到只剩留白，把宽度让给左边的账号名。 */
 #view-accounts table.acc td.c-note:empty { padding-left: 0; padding-right: 0; }
 #view-accounts table.acc .c-note .note { max-width: 26ch; }
-#view-accounts table.acc thead tr,
-.acc.md thead tr { background: color-mix(in srgb, var(--surface-2) 60%, var(--surface)); }
-#view-accounts table.acc thead th,
-.acc.md thead th { background: transparent; }
-#view-accounts table.acc thead th:nth-child(2),
-.acc.md thead th:first-child { background: color-mix(in srgb, var(--surface-2) 60%, var(--surface)); }
-
 /* 行内操作：列宽 22.5% 放不下四个四字按钮，所以按钮文字改成两字
    （见 renderAccounts 的「标识」）。布局用两列定宽网格——一行两列、两行放四个，
    这是这一列唯一能同时做到「不截断」和「不撑高」的排法。
@@ -5453,6 +5574,7 @@ html:not([data-theme="light"]) body::after {
 .berth.ok .b-badge::after { background: var(--ok); opacity: 1; box-shadow: 0 0 0 2.5px var(--surface), 0 0 8px color-mix(in srgb, var(--ok) 70%, transparent); }
 .berth.err .b-badge::after { background: var(--bad); opacity: 1; box-shadow: 0 0 0 2.5px var(--surface), 0 0 8px color-mix(in srgb, var(--bad) 70%, transparent); }
 .berth.idle .b-badge::after { background: var(--ink-3); opacity: .5; }
+.berth.warn .b-badge::after { background: var(--warn); opacity: 1; box-shadow: 0 0 0 2.5px var(--surface), 0 0 8px color-mix(in srgb, var(--warn) 70%, transparent); }
 .b-id { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .b-id b { font-size: 13.5px; font-weight: 640; letter-spacing: -.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .b-state { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--ink-3); }
@@ -5460,6 +5582,15 @@ html:not([data-theme="light"]) body::after {
 .berth.ok .b-state { color: color-mix(in srgb, var(--ok) 80%, var(--ink-2)); }
 .berth.ok .b-state .b-lamp { background: var(--ok); opacity: 1; }
 .berth.err .b-state { color: var(--bad-text); }
+.berth.warn .b-state { color: color-mix(in srgb, var(--warn) 85%, var(--ink-2)); }
+.berth.warn .b-state .b-lamp { background: var(--warn); opacity: 1; }
+/* 看板板卡的尾列动作区：四列网格（徽章/身份/读数/动作），没有能力带。 */
+.tb-berths .berth { grid-template-columns: 34px minmax(140px, 1fr) 76px auto; }
+.tb-berths .tb-act { flex: none; }
+@media (max-width: 900px) {
+  .tb-berths .berth { grid-template-columns: 34px minmax(0, 1fr) auto; }
+  .tb-berths .b-count { display: none; }
+}
 .berth.err .b-state .b-lamp { background: var(--bad); opacity: 1; }
 .b-caps { display: flex; gap: 3px; flex-wrap: nowrap; }
 /* 能力符号：有 = 带细框的亮勾，无 = 一枚静默的圆点。7 个符号等宽排开，
@@ -5679,6 +5810,10 @@ html:not([data-theme="light"]) body::after {
   </nav>
 
   <div class="main">
+    <!-- 动态背景层：一层极淡的网格 + 缓慢漂移的节点粒子（2D canvas，不是
+         WebGL——它要铺满整屏且永远在动，canvas 2D 在这里更省电）。它只负责
+         氛围，不承载信息，所以透明度压得很低、鼠标不穿透、reduced-motion 停画。 -->
+    <canvas class="bgfield" id="bgField" aria-hidden="true"></canvas>
     <div class="topbar">
       <div class="topbar-lead">
         <h1 id="ttl">总览</h1>
@@ -6073,17 +6208,13 @@ html:not([data-theme="light"]) body::after {
 
     <!-- 平台告警 -->
     <section class="view" id="view-alerts" hidden>
-      <!-- 告警页不再是「一张永远摆在那里的空表」：空态是一条内联的安静状态行
-           （告警本来就是「没有才是好」的页面，空态不该占一屏）；有告警时才
-           展开表格，且表头不再重复页面标题已经说过的「平台告警」三个字。 -->
+      <!-- 告警 = 事件流水，不是 6 列表格。一条告警是「什么平台、什么模型、
+           连坏了几次、什么原因」，这些信息天然是一条带时间刻度的流水：
+           左缘时间刻度等宽对齐，平台和模型是徽章，说明是正文，连续失败数
+           是右端的读数。空态整卡塌成一行安静状态。 -->
       <div class="box" id="alertsBox">
-        <header><h3>告警记录</h3><span class="grow"></span><span class="note" id="alertNote"></span><button class="xs danger" id="btnAlertsClear">清空</button></header>
-        <div class="tbl-wrap">
-        <table class="acc md">
-          <thead><tr><th>时间</th><th>平台</th><th>模型</th><th>账号</th><th>说明</th><th>连续失败</th></tr></thead>
-          <tbody id="alertBody"></tbody>
-        </table>
-        </div>
+        <header><h3>告警流水</h3><span class="grow"></span><span class="note" id="alertNote"></span><button class="xs danger" id="btnAlertsClear">清空</button></header>
+        <div class="evs" id="alertBody"></div>
       </div>
     </section>
 
@@ -7473,6 +7604,151 @@ function setNav(ok, msg) {
 // 已演过进场动画的视图。每屏只演一次：切回来重播会让频繁来回切换变得烦躁。
 const VIEW_ENTERED = new Set();
 
+/* ── 全局弹簧动效层（Motion / Anime.js 手法，纯原生）────────────────────
+   三件事，覆盖「所有页面的所有按钮都有动效」这条要求：
+
+   1. pressFx：任何 button 按下时走弹簧回弹。用 pointer 事件委托挂在
+      document 上一次（不用给几百个按钮逐个加），按下瞬间压缩、松开弹回，
+      弹簧用 springValue 采样。这是 Anime.js 的 press 交互在原生下的等价物。
+   2. hoverFx：按钮/卡片悬停时轻微抬起（CSS 已有一部分，这里补 3D 类元素）。
+   3. revealView：每次切进视图，把该页可见的 .box / 行做一次 stagger 淡入
+      （每项 24ms，上限 12 项），像 React Bits 的 list reveal。
+
+   全部尊重 prefers-reduced-motion：命中时一律跳过，直接落位。 */
+const MOTION_FX = { reduce: false, pressInit: false };
+function motionReduce() { return MOTION_FX.reduce || (RL_STAGE && RL_STAGE.reduce); }
+
+// pressFx 装一次：按下时给元素一个压缩弹簧，松开时弹回。
+function initPressFx() {
+  if (MOTION_FX.pressInit) return;
+  MOTION_FX.pressInit = true;
+  const active = new WeakMap();
+  const press = el => {
+    if (motionReduce() || !el || el.disabled) return;
+    const prev = active.get(el);
+    if (prev) cancelAnimationFrame(prev);
+    // 压缩到 0.96 并轻微下沉，用弹簧解在 ~120ms 内到位。
+    const start = performance.now();
+    const loop = now => {
+      const e = Math.min(1, (now - start) / 120);
+      const eased = 1 - Math.pow(1 - e, 3);
+      el.style.transform = "scale(" + (1 - 0.04 * eased) + ") translateY(" + (1 * eased) + "px)";
+      if (e < 1) active.set(el, requestAnimationFrame(loop));
+      else { active.delete(el); el.style.transform = ""; }
+    };
+    active.set(el, requestAnimationFrame(loop));
+  };
+  const release = el => {
+    if (!el || motionReduce()) return;
+    const prev = active.get(el);
+    if (prev) { cancelAnimationFrame(prev); active.delete(el); }
+    // 弹回：轻微过冲到 1.02 再落位（弹簧）。
+    const sample = springValue(0.96, 1, { stiffness: 420, damping: 16 });
+    const t0 = performance.now();
+    const loop = now => {
+      const s = sample(now);
+      el.style.transform = s.done ? "" : "scale(" + s.value + ")";
+      if (!s.done) requestAnimationFrame(loop);
+    };
+    requestAnimationFrame(loop);
+  };
+  // 事件委托：pointerdown 时记下目标按钮，pointerup/cancel 时弹回。
+  document.addEventListener("pointerdown", ev => {
+    const b = ev.target.closest && ev.target.closest("button, .cmdlink, .ov-jump-item, .stat.clickable, .chip");
+    if (b) press(b);
+  }, { passive: true });
+  document.addEventListener("pointerup", () => {
+    document.querySelectorAll("button,.cmdlink,.ov-jump-item,.stat.clickable,.chip").forEach(el => {
+      if (el.style.transform) release(el);
+    });
+  }, { passive: true });
+  document.addEventListener("pointercancel", () => {
+    document.querySelectorAll("button[style*=transform]").forEach(el => { el.style.transform = ""; });
+  }, { passive: true });
+}
+
+// revealView 给新显示的视图做一次 stagger 淡入。只对 .box 与可见行做，
+// 上限 12 项避免长表把总时长拖到 1 秒以上。
+function revealView(view) {
+  if (motionReduce()) return;
+  const host = document.getElementById("view-" + view);
+  if (!host) return;
+  const items = [...host.querySelectorAll(".box, .ov-kpi, .ov-jump-item, .pk-card, .berth, .rl-node")].slice(0, 12);
+  items.forEach((el, i) => {
+    el.style.animation = "none";
+    void el.offsetWidth;  // 强制 reflow 让动画重播
+    el.style.animation = "fxIn 320ms cubic-bezier(.16,1,.3,1) both";
+    el.style.animationDelay = (i * 24) + "ms";
+  });
+}
+
+/* ── 动态背景粒子场（2D canvas）─────────────────────────────────────────
+   一层缓慢漂移的节点粒子：每个点是一个「账号」的隐喻，近邻之间连细线，
+   像一张正在呼吸的网络。它铺满内容区、压在一切之下、鼠标穿透，只提供
+   氛围。reduced-motion 时不画（保持静态网格）。粒子数按面积自适应，
+   上限 46 个，保证小屏也不卡。 */
+const BGF = { raf: 0, canvas: null, ctx: null, pts: [], w: 0, h: 0, dpr: 1 };
+function bgfResize() {
+  const c = BGF.canvas;
+  if (!c) return;
+  const r = c.getBoundingClientRect();
+  BGF.dpr = Math.min(2, window.devicePixelRatio || 1);
+  BGF.w = r.width; BGF.h = r.height;
+  c.width = Math.round(r.width * BGF.dpr);
+  c.height = Math.round(r.height * BGF.dpr);
+  const want = Math.min(46, Math.round(r.width * r.height / 26000));
+  BGF.pts = [];
+  for (let i = 0; i < want; i++) {
+    BGF.pts.push({
+      x: Math.random() * r.width, y: Math.random() * r.height,
+      vx: (Math.random() - 0.5) * 0.16, vy: (Math.random() - 0.5) * 0.16,
+      r: 0.6 + Math.random() * 1.1,
+    });
+  }
+}
+function bgfStart() {
+  BGF.canvas = document.getElementById("bgField");
+  if (!BGF.canvas || motionReduce()) return;
+  BGF.ctx = BGF.canvas.getContext("2d");
+  if (!BGF.ctx) return;
+  bgfResize();
+  window.addEventListener("resize", bgfResize, { passive: true });
+  const LINK = 118;
+  const loop = () => {
+    BGF.raf = requestAnimationFrame(loop);
+    const ctx = BGF.ctx, w = BGF.w, h = BGF.h;
+    ctx.setTransform(BGF.dpr, 0, 0, BGF.dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    const pts = BGF.pts;
+    for (const p of pts) {
+      p.x += p.vx; p.y += p.vy;
+      if (p.x < 0 || p.x > w) p.vx *= -1;
+      if (p.y < 0 || p.y > h) p.vy *= -1;
+    }
+    // 连边：距离近的连一条极淡的线。
+    ctx.lineWidth = 1;
+    for (let i = 0; i < pts.length; i++) {
+      for (let j = i + 1; j < pts.length; j++) {
+        const a = pts[i], b = pts[j];
+        const dx = a.x - b.x, dy = a.y - b.y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < LINK * LINK) {
+          const o = (1 - Math.sqrt(d2) / LINK) * 0.14;
+          ctx.strokeStyle = "rgba(120,145,255," + o.toFixed(3) + ")";
+          ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+        }
+      }
+    }
+    // 节点：小亮点。
+    for (const p of pts) {
+      ctx.fillStyle = "rgba(150,170,255,0.32)";
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill();
+    }
+  };
+  BGF.raf = requestAnimationFrame(loop);
+}
+function bgfStop() { if (BGF.raf) { cancelAnimationFrame(BGF.raf); BGF.raf = 0; } }
+
 // SHELL 是顶栏自己的行为。
 //
 // 它原来管的是左侧栏的折叠——换成顶栏之后折叠没有意义了（一行横条没有
@@ -7480,7 +7756,7 @@ const VIEW_ENTERED = new Set();
 // 现在只留一件事：把「点亮当前项」做成一个明确的入口。命令面板的按钮在页头
 // （#btnCmdk），快捷键 Ctrl+K 在文件末尾绑定，都不经过这里。
 const SHELL = {
-  init() { /* 顶栏没有需要初始化的状态；保留这个入口，便于以后加。 */ },
+  init() { initPressFx(); },
   // syncActive 是导航「选中」的唯一入口。所有导航项都带 data-view，
   // 所以这里不关心它们在哪个容器里——将来再挪位置也不用改它。
   syncActive(view) {
@@ -7500,6 +7776,8 @@ function go(v) {
   if (shown) {
     if (VIEW_ENTERED.has(v)) shown.classList.add("settle");
     else { VIEW_ENTERED.add(v); shown.classList.remove("settle"); }
+    // 进场 stagger：每次切页都给该页一次轻量的编排（24ms/项，上限 12 项）。
+    revealView(v);
   }
   $("#ttl").textContent = TITLES[v];
   document.title = TITLES[v] + " · client2api";
@@ -7837,7 +8115,8 @@ function rlStageHTML(model) {
   return '<div class="rl-stage-inner">' +
     '<div class="rl-col rl-col-callers">' + callersHTML + "</div>" +
     '<div class="rl-col rl-col-mid"><div class="rl-hub" data-rl-key="hub">' +
-      '<span class="rh-mark">c2</span><b>' + esc(hub.name) + "</b>" +
+      '<canvas class="rh-3d" id="rlHub3d" width="120" height="120" aria-hidden="true"></canvas>' +
+      '<span class="rh-mark rh-mark-text">c2</span><b>' + esc(hub.name) + "</b>" +
       (hub.sub ? "<small>" + esc(hub.sub) + "</small>" : "") + "</div></div>" +
     '<div class="rl-col rl-col-accts">' + accountsHTML + "</div>" +
     '</div>' +
@@ -7846,6 +8125,82 @@ function rlStageHTML(model) {
     // 会按实际像素拉伸，路径整体错位（第一版就是这样画到框外的）。
     '<svg class="rl-wires" id="rlWires" viewBox="0 0 1000 640" preserveAspectRatio="none"></svg>' +
     '<svg class="rl-sky" id="rlSky" viewBox="0 0 1000 640" preserveAspectRatio="none"></svg>';
+}
+
+/* ── 3D 网关核心（Three.js r128，本地 vendored）──────────────────────────
+   中枢的 c2 徽章后面是一枚真的 3D 球：线框二十面体自转 + 内芯光点，
+   请求穿过网关时脉冲放大一圈光晕（rlPulseHub3d），失败时红闪一下。
+   场景是懒创建的：视图第一次进 route-live 且 Three 加载成功才起，
+   失败（无 WebGL / 脚本没到）就静默保持 2D 徽章——3D 是增强，不是依赖。 */
+const RL3D = { renderer: null, scene: null, camera: null, wire: null, core: null, glow: null, raf: 0, pulse: 0, errPulse: 0, t0: 0 };
+function rlInitHub3d() {
+  const canvas = document.getElementById("rlHub3d");
+  if (!canvas || RL3D.renderer || typeof THREE === "undefined") return;
+  try {
+    RL3D.renderer = new THREE.WebGLRenderer({ canvas: canvas, alpha: true, antialias: true });
+    RL3D.renderer.setSize(120, 120, false);
+    RL3D.scene = new THREE.Scene();
+    RL3D.camera = new THREE.PerspectiveCamera(42, 1, 0.1, 10);
+    RL3D.camera.position.z = 3.1;
+    // 线框外壳：二十面体两阶细分，半径 1。
+    const wireGeo = new THREE.IcosahedronGeometry(1, 1);
+    RL3D.wire = new THREE.LineSegments(
+      new THREE.WireframeGeometry(wireGeo),
+      new THREE.LineBasicMaterial({ color: 0x6f8cff, transparent: true, opacity: 0.5 })
+    );
+    RL3D.scene.add(RL3D.wire);
+    // 内芯：小实心球，呼吸。
+    RL3D.core = new THREE.Mesh(
+      new THREE.SphereGeometry(0.42, 24, 24),
+      new THREE.MeshBasicMaterial({ color: 0x8fa8ff, transparent: true, opacity: 0.9 })
+    );
+    RL3D.scene.add(RL3D.core);
+    // 光晕：面向相机的平面 sprite，请求脉冲时放大。
+    RL3D.glow = new THREE.Mesh(
+      new THREE.PlaneGeometry(2.6, 2.6),
+      new THREE.MeshBasicMaterial({ color: 0x5f7fff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false })
+    );
+    RL3D.scene.add(RL3D.glow);
+    RL3D.t0 = performance.now();
+    const frame = now => {
+      RL3D.raf = requestAnimationFrame(frame);
+      const t = (now - RL3D.t0) / 1000;
+      // 自转：外壳慢转，内芯反向微转。
+      RL3D.wire.rotation.y = t * 0.45;
+      RL3D.wire.rotation.x = Math.sin(t * 0.23) * 0.18;
+      RL3D.core.rotation.y = -t * 0.3;
+      // 内芯呼吸。
+      const breathe = 1 + Math.sin(t * 1.6) * 0.05;
+      RL3D.core.scale.setScalar(breathe);
+      // 脉冲：请求过路时光晕放大衰减。
+      if (RL3D.pulse > 0) {
+        RL3D.pulse = Math.max(0, RL3D.pulse - 0.032);
+        RL3D.glow.material.opacity = RL3D.pulse * 0.55;
+        RL3D.glow.scale.setScalar(1 + (1 - RL3D.pulse) * 0.9);
+        RL3D.wire.material.opacity = 0.5 + RL3D.pulse * 0.5;
+      } else if (RL3D.glow.material.opacity > 0) {
+        RL3D.glow.material.opacity = 0;
+        RL3D.wire.material.opacity = 0.5;
+      }
+      // 失败脉冲：外壳染红一瞬。
+      if (RL3D.errPulse > 0) {
+        RL3D.errPulse = Math.max(0, RL3D.errPulse - 0.04);
+        RL3D.wire.material.color.setHex(RL3D.errPulse > 0.01 ? 0xff5f6f : 0x6f8cff);
+      }
+      RL3D.renderer.render(RL3D.scene, RL3D.camera);
+    };
+    RL3D.raf = requestAnimationFrame(frame);
+  } catch (e) { /* WebGL 不可用：保持 2D 徽章，不报错。 */ }
+}
+// rlPulseHub3d 给 3D 核心一次请求脉冲。err=true 是失败路径（外壳染红）。
+function rlPulseHub3d(err) {
+  if (!RL3D.renderer) return;
+  if (err) RL3D.errPulse = 1;
+  else RL3D.pulse = 1;
+}
+// rlStopHub3d 离开 route-live 时停掉帧循环（省电；场景保留，回来继续）。
+function rlStopHub3d() {
+  if (RL3D.raf) { cancelAnimationFrame(RL3D.raf); RL3D.raf = 0; }
 }
 
 // rlMeasure 记下每个节点的中心，连线与飞行都用它换算坐标。
@@ -8193,6 +8548,7 @@ async function rlPlayTrace(t) {
       if (!legs) return;
       pkt.setAttribute("class", "rl-pkt wait");
       rlPulse("hub", "act", 700);
+      rlPulseHub3d(false);
       await rlFly(spawn, legs, i === 0 ? 620 : 460);
       if (gen !== RL_STAGE.gen) return;
 
@@ -8216,6 +8572,7 @@ async function rlPlayTrace(t) {
       const el = RL_STAGE.box && RL_STAGE.box.querySelector('[data-rl-key="' + toKey + '"]');
       if (el) { el.classList.remove("act"); el.classList.add("err"); setTimeout(() => el.classList.remove("err"), 2600); }
       pkt.setAttribute("class", "rl-pkt fail");
+      rlPulseHub3d(true);
       if (tails) tails.forEach(tl => tl.setAttribute("class", "rl-tail bad t" + tails.indexOf(tl)));
       const back = rlLegs(toKey, "hub");
       await rlFly(spawn, back, 420);
@@ -8260,10 +8617,16 @@ function rlRenderMap(model) {
     rlFlushStage();
     RL_STAGE_SIG = sig;
     box.innerHTML = rlStageHTML(model);
-    requestAnimationFrame(() => { rlMeasure(); rlDrawWires(); });
+    requestAnimationFrame(() => { rlMeasure(); rlDrawWires(); rlInitHub3d(); });
   }
   // 节点若已存在，只重算一次尺寸（窗口可能变过）。
   if (!RL_STAGE.nodeRect.size) { rlMeasure(); rlDrawWires(); }
+  // 舞台重建后 3D canvas 是新的：老场景的 renderer 指向旧的 canvas，重建一次。
+  if (RL3D.renderer && RL3D.renderer.domElement !== document.getElementById("rlHub3d")) {
+    rlStopHub3d();
+    RL3D.renderer = null; RL3D.scene = null;
+    rlInitHub3d();
+  }
   rlPlayNew(model);
 }
 
@@ -8367,6 +8730,7 @@ function rlStopPolling() {
   if (RL_TIMER) { clearTimeout(RL_TIMER); RL_TIMER = null; }
   // 离开这一页时把在飞的光点一起收掉：动画不该在看不见的地方继续跑。
   rlFlushStage();
+  rlStopHub3d();
 }
 
 /* ── 总览 ─────────────────────────────────────────────────────────────────
@@ -8497,24 +8861,70 @@ async function renderOverview() {
     '<button class="ov-jump-item" type="button" data-view-jump="' + j.v + '"><b>' + esc(j.t) + '</b><span>' + esc(j.d) + '</span></button>').join("");
 }
 
-// tickNumber 把一个数字从旧值滚到新值（300ms，ease-out）。只服务统计磁贴：
-// 数字变化的「方向感」是免费的理解辅助——7→6 和 6→7 看起来不一样，而瞬间
-// 替换看不出是谁涨了谁掉了。reduced-motion 或数值相同则直接落位。
-const TICK_TIMERS = new Map();
+/* ── 弹簧微内核（Motion 手法的原生实现）────────────────────────────────
+   离线单文件不能带 Motion 库（motion.dev），但它最值钱的东西——弹簧物理
+   每帧采样——用解析解 ~40 行就有了。springValue 返回采样函数：每帧问它
+   「现在该是多少」，它按刚体弹簧（stiffness/damping/mass）给出。
+   数字滚动用它替换三次贝塞尔：数字不再「匀减速到站」，而是带一点点过冲
+   再回弹落位——磁贴像真的指针一样有重量。 */
+// springValue 造一个从 from 到 to 的弹簧采样器。
+// stiffness 越大越突然，damping 越小越弹。默认参数调过：数字滚动的手感是
+// 「快出去、轻过冲、稳落位」，不会像果冻。
+function springValue(from, to, opts) {
+  const o = opts || {};
+  const stiffness = o.stiffness || 170;
+  const damping = o.damping || 22;
+  const mass = o.mass || 1;
+  const v0 = o.velocity || 0;
+  const t0 = performance.now();
+  // x(t) = target + e^(-ζω t) * (A cos(ωd t) + B sin(ωd t))
+  const omega = Math.sqrt(stiffness / mass);
+  const zeta = damping / (2 * Math.sqrt(stiffness * mass));
+  const delta = from - to;
+  let A, B, omegad;
+  if (zeta < 1) {
+    omegad = omega * Math.sqrt(1 - zeta * zeta);
+    A = delta;
+    B = (v0 + zeta * omega * delta) / omegad;
+  } else {
+    // 过阻尼/临界：直接用指数收敛，无振荡。
+    omegad = 0;
+    A = delta;
+    B = (v0 + omega * delta) / omega;
+  }
+  return function sample(now) {
+    const t = (now - t0) / 1000;
+    let x;
+    if (zeta < 1) x = to + Math.exp(-zeta * omega * t) * (A * Math.cos(omegad * t) + B * Math.sin(omegad * t));
+    else x = to + Math.exp(-omega * t) * (A + B * t);
+    // 速度足够小且贴住目标才算落位，防止理论解无限拖延。
+    const speed = Math.abs(Math.exp(-zeta * omega * t)) * (Math.abs(A) + Math.abs(B)) * omega;
+    if (Math.abs(x - to) < 0.01 && (omegad === 0 || speed < 0.05)) return { value: to, done: true };
+    return { value: x, done: false };
+  };
+}
+
+// tickNumber 把一个数字从旧值滚到新值（弹簧物理：快出去、轻过冲、稳落位）。
+// 只服务统计磁贴：数字变化的「方向感」是免费的理解辅助——7→6 和 6→7 看起来
+// 不一样，而瞬间替换看不出是谁涨了谁掉了。reduced-motion 或数值相同则直接落位。
+const TICK_RAF = new Map();
 function tickNumber(el, to) {
   const from = Number(String(el.textContent).replace(/[^0-9.-]/g, "")) || 0;
   const target = Number(to) || 0;
   const key = el.id || "";
-  if (TICK_TIMERS.has(key)) { clearInterval(TICK_TIMERS.get(key)); TICK_TIMERS.delete(key); }
+  if (TICK_RAF.has(key)) { cancelAnimationFrame(TICK_RAF.get(key)); TICK_RAF.delete(key); }
   if (from === target || RL_STAGE.reduce) { el.textContent = String(target); return; }
-  const t0 = performance.now(), dur = 300;
-  const timer = setInterval(() => {
-    const e = Math.min(1, (performance.now() - t0) / dur);
-    const eased = 1 - Math.pow(1 - e, 3);
-    el.textContent = String(Math.round(from + (target - from) * eased));
-    if (e >= 1) { clearInterval(timer); TICK_TIMERS.delete(key); }
-  }, 16);
-  TICK_TIMERS.set(key, timer);
+  const sample = springValue(from, target, { stiffness: 180, damping: 20 });
+  let last = Math.round(from);
+  el.textContent = String(last);
+  const loop = () => {
+    const s = sample(performance.now());
+    const v = Math.round(s.value);
+    if (v !== last) { el.textContent = String(v); last = v; }
+    if (s.done) { TICK_RAF.delete(key); return; }
+    TICK_RAF.set(key, requestAnimationFrame(loop));
+  };
+  TICK_RAF.set(key, requestAnimationFrame(loop));
 }
 
 function renderStats() {
@@ -11490,7 +11900,7 @@ async function renderAlerts() {
   const r = await api("/panel/api/alerts");
   if (!r.ok) {
     $("#alertNote").textContent = "获取失败：" + r.err;
-    $("#alertBody").innerHTML = '<tr><td colspan="6" class="hint">' + esc(r.err) + '</td></tr>';
+    $("#alertBody").innerHTML = '<div class="quietline"><i></i>' + esc(r.err) + '</div>';
     $("#alertsBox").classList.remove("quiet");
     return;
   }
@@ -11500,15 +11910,20 @@ async function renderAlerts() {
   api("/panel/api/alerts", { method: "POST" }).then(function (ack) {
     if (ack && ack.ok) updateAlertBadge(0);
   }).catch(function () {});
-  // 没有告警时整张表退场，只留一行安静的状态——空态大表是「通用后台」
-  // 最重的一块残留，而告警页的常态就是空的。
+  // 没有告警时整卡退场成一行安静状态——告警页的常态就是空的。
   $("#alertsBox").classList.toggle("quiet", !rows.length);
+  // 事件流水条：时间刻度在左缘一条竖轴上，平台/模型是徽章，说明是正文，
+  // 连续失败数在右端。比 6 列表快读得多——眼睛从上往下扫一条轴。
   $("#alertBody").innerHTML = rows.map(function (x) {
-    return '<tr><td class="hint">' + esc(fmtCallTime(x.at)) + '</td>' +
-      '<td>' + esc(platformLabel(x.client || "-")) + '</td><td>' + esc(x.model || "-") + '</td>' +
-      '<td>' + esc(x.account || "-") + '</td><td>' + esc(x.detail || x.kind || "-") + '</td>' +
-      '<td class="num">' + numf(x.count || 0) + '</td></tr>';
-  }).join("") || '<tr><td colspan="6" class="hint">暂无平台告警</td></tr>';
+    return '<div class="ev">' +
+      '<span class="ev-t" title="' + esc(fmtCallTime(x.at)) + '">' + esc(fmtCallTime(x.at)) + '</span>' +
+      '<span class="ev-badge">' + esc(platformLabel(x.client || "-")) + '</span>' +
+      (x.model ? '<span class="ev-badge dim">' + esc(x.model) + '</span>' : '') +
+      '<span class="ev-what">' + esc(x.detail || x.kind || "-") +
+      (x.account ? '<span class="ev-acc">' + esc(x.account) + '</span>' : "") + '</span>' +
+      '<span class="ev-n" title="连续失败次数">×' + numf(x.count || 0) + '</span>' +
+      "</div>";
+  }).join("") || '<div class="quietline"><i></i>暂无告警</div>';
 }
 
 async function clearAlerts() {
@@ -15305,32 +15720,32 @@ function tbAccountChips(accts) {
 // 账号后的那张表。以前把每个账号的每条任务都铺在这里，几十个号就是几百行。
 function tbAccountTable(accounts) {
   if (!accounts.length) return '<div class="pad hint">这个客户端没有可用的账号。</div>';
-  const rows = accounts.map(g => {
+  // 看板的账号列表 = 机架板卡（同客户端舱位语言）：徽章 + 状态灯 + 完成读数，
+  // 「查看并执行」是行内主操作。不再有 5 列表头——每行的答案三个字就能读完。
+  const rows = accounts.map((g, i) => {
     const tasks = g.tasks || [];
     const done = tasks.filter(t => t.claimed).length;
     const pending = tasks.filter(t => t.auto && !t.claimed && !t.locked).length;
     const allDone = pending === 0 && !g.error && tasks.length > 0;
-    let state;
-    if (g.error) state = '<span class="chip err">读取失败</span>';
-    else if (!tasks.length) state = '<span class="chip">无任务</span>';
-    else if (allDone) state = '<span class="chip ok">已完成</span>';
-    else state = '<span class="chip warn">' + pending + " 项待办</span>";
+    let lamp, stateTxt;
+    if (g.error) { lamp = "err"; stateTxt = "读取失败"; }
+    else if (!tasks.length) { lamp = "idle"; stateTxt = "无任务"; }
+    else if (allDone) { lamp = "ok"; stateTxt = "已完成"; }
+    else { lamp = "warn"; stateTxt = pending + " 项待办"; }
     const stamp = tbFetchedAt(g.fetched_at);
-    const fresh = g.error ? "" : (g.cached ? "缓存 " + esc(stamp) : "刚刷新 " + esc(stamp));
+    const fresh = g.error ? esc(g.error) : (g.cached ? "缓存 " + esc(stamp) : "刚刷新 " + esc(stamp));
     const who = String(g.account || "");
-    return "<tr>" +
-      '<td class="acc-name"><div class="name">' + esc(g.label || who || "默认账号") + "</div>" +
-        '<div class="hint" title="' + esc(who) + '">' + esc(who || "-") + "</div></td>" +
-      "<td>" + state + "</td>" +
-      '<td class="acc-num">' + done + "/" + tasks.length + "</td>" +
-      "<td>" + fresh + (g.error ? ' <span class="hint">' + esc(g.error) + "</span>" : "") + "</td>" +
-      '<td class="acc-acts">' +
-        (g.account ? '<button class="xs" data-ta-open="' + esc(g.account) + '">查看并执行</button>' : '<span class="hint">-</span>') +
-      "</td></tr>";
+    const name = g.label || who || "默认账号";
+    return '<div class="berth ' + lamp + '" style="--i:' + i + '">' +
+      '<span class="b-badge" aria-hidden="true">' + berthBadge(name) + "</span>" +
+      '<div class="b-id"><b title="' + esc(who) + '">' + esc(name) + "</b>" +
+      '<span class="b-state"><i class="b-lamp"></i>' + esc(stateTxt) + " · " + fresh + "</span></div>" +
+      '<div class="b-count"><b class="num">' + done + "/" + tasks.length + '</b><span>完成</span></div>' +
+      '<div class="tb-act">' +
+        (g.account ? '<button class="xs primary" data-ta-open="' + esc(g.account) + '">查看并执行</button>' : '<span class="hint">-</span>') +
+      "</div></div>";
   }).join("");
-  return '<div class="tbl-wrap"><table class="acc"><thead><tr>' +
-    "<th>账号</th><th>状态</th><th>已完成</th><th>数据</th><th>操作</th>" +
-    "</tr></thead><tbody>" + rows + "</tbody></table></div>";
+  return '<div class="pk-berths tb-berths">' + rows + "</div>";
 }
 async function renderTaskBoard(force) {
   const list = tbClients();
@@ -19710,7 +20125,9 @@ window.addEventListener("error", ev => {
 window.addEventListener("unhandledrejection", ev => panelBootError(ev.reason));
 (async function boot() {
   try {
+    MOTION_FX.reduce = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
     SHELL.init();
+    bgfStart();
     go((location.hash || "#overview").slice(1));
     await refreshAll();
     refreshAlertBadge().catch(() => {});
@@ -19722,8 +20139,10 @@ window.addEventListener("unhandledrejection", ev => panelBootError(ev.reason));
   }
 })();
 </script>
+<!-- 本地 vendored 第三方库（不走 CDN，网关离线也能跑）：Three.js 给路由舞台的
+     3D 网关核心，Motion 给全站的弹簧进场编排。两者都在 defer 加载，面板自己的
+     脚本先跑，增强层在它们到位后自检启用（typeof THREE === "undefined" 就跳过）。 -->
+<script src="/panel/vendors/three.min.js" defer></script>
+<script src="/panel/vendors/motion.min.js" defer></script>
 </body>
 </html>
-
-
-

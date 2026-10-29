@@ -72,6 +72,12 @@ type SessionPlatformStore interface {
 //go:embed index.html
 var indexHTML []byte
 
+//go:embed vendors/three.min.js
+var threeJS []byte
+
+//go:embed vendors/motion.min.js
+var motionJS []byte
+
 // Options configures the panel.
 type Options struct {
 	Registry *core.Registry
@@ -296,6 +302,27 @@ func New(opts Options) http.Handler {
 	// DENY/frame-ancestors 'none' pair.  Registered as an exact path so the
 	// "/panel/" catch-all below keeps owning everything else.
 	mux.HandleFunc("/panel/captcha", p.captchaPage)
+
+	// Vendored third-party JS (Three.js, Motion), served from the binary so the
+	// panel keeps working fully offline.  Exact allowlist -- the catch-all below
+	// must stay the only thing that answers for anything else under /panel/.
+	mux.HandleFunc("/panel/vendors/", func(w http.ResponseWriter, r *http.Request) {
+		name := strings.TrimPrefix(r.URL.Path, "/panel/vendors/")
+		var body []byte
+		switch name {
+		case "three.min.js":
+			body = threeJS
+		case "motion.min.js":
+			body = motionJS
+		default:
+			http.NotFound(w, r)
+			return
+		}
+		setSecurityHeaders(w)
+		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write(body)
+	})
 
 	mux.HandleFunc("/panel/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/panel/api/") {

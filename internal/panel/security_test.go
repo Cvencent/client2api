@@ -86,16 +86,21 @@ func TestCSPNamesTheInlineScriptByHash(t *testing.T) {
 	doc := string(indexHTML)
 
 	const open, close = "<script>", "</script>"
-	if strings.Count(doc, open) != 1 || strings.Count(doc, close) != 1 {
-		t.Fatalf("shell has %d <%s> and %d <%s>; this test assumes exactly one of each",
-			strings.Count(doc, open), open, strings.Count(doc, close), close)
+	// The shell may load same-origin vendor bundles via `<script src=...>`; only
+	// the attribute-free tag is the inline block the policy hashes.
+	if got := strings.Count(doc, open); got != 1 {
+		t.Fatalf("shell has %d <%s>; this test assumes exactly one inline block", got, open)
 	}
 	i := strings.Index(doc, open)
-	j := strings.Index(doc, close)
-	if i < 0 || j < i+len(open) {
+	if i < 0 {
 		t.Fatal("could not locate the inline script block")
 	}
-	body := doc[i+len(open) : j]
+	rest := doc[i+len(open):]
+	j := strings.Index(rest, close)
+	if j < 0 {
+		t.Fatal("could not locate the inline block's closing tag")
+	}
+	body := rest[:j]
 	// Browsers normalize CRLF and CR to LF before hashing inline script text.
 	// Mirror that here so the test checks the browser rule on every checkout.
 	body = strings.ReplaceAll(body, "\r\n", "\n")

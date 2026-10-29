@@ -88,19 +88,24 @@ func csp(doc []byte) string {
 // in that case there is no single hash that describes the page.
 func scriptBody(doc []byte) ([]byte, bool) {
 	const open, close = "<script>", "</script>"
-	if bytes.Count(doc, []byte(open)) != 1 || bytes.Count(doc, []byte(close)) != 1 {
+	// The shell also loads same-origin vendor bundles through `<script src=...>`
+	// tags.  Those are a different CSP mechanism -- `script-src 'self'` covers
+	// them, a hash does not -- so counting closing tags says nothing here.  Only
+	// a tag spelled exactly `<script>` with no attributes is the inline block,
+	// and its own closing tag ends it.
+	if bytes.Count(doc, []byte(open)) != 1 {
 		return nil, false
 	}
 	i := bytes.Index(doc, []byte(open))
-	j := bytes.Index(doc, []byte(close))
-	if i < 0 || j < 0 || j < i+len(open) {
+	if i < 0 {
 		return nil, false
 	}
-	body := doc[i+len(open) : j]
-	if len(body) == 0 {
+	rest := doc[i+len(open):]
+	j := bytes.Index(rest, []byte(close))
+	if j <= 0 {
 		return nil, false
 	}
-	return body, true
+	return rest[:j], true
 }
 
 // normalizeScriptLineEndings matches the HTML parser's newline normalization

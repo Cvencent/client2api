@@ -53,9 +53,11 @@ func TestTaskBoardMarksFullyDoneAccountsGreen(t *testing.T) {
 		t.Fatal("index.html 没有 .chip.ok 的绿色样式")
 	}
 
-	// 全部账号下面必须是「一账号一行」的表，而不是把每条任务都铺出来。
+	// 全部账号下面必须是「一账号一行」的可点列表（现在是机架板卡形态，
+	// pk-berths），而不是把每条任务都铺出来。钉的是「每行带 data-ta-open
+	// 可点进账号」这个契约。
 	table := poolStatsFuncBody(t, src, "tbAccountTable")
-	if !strings.Contains(table, "<tbody>") || !strings.Contains(table, "data-ta-open") {
+	if !strings.Contains(table, "pk-berths") || !strings.Contains(table, "data-ta-open") {
 		t.Fatalf("tbAccountTable 不是一张可点进账号的表：\n%s", table)
 	}
 	if strings.Contains(src, "tbAccountMatrix") {
