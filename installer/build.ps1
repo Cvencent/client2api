@@ -151,6 +151,14 @@ Get-ChildItem -Force -Path $PayloadDirectory |
 New-Item -ItemType Directory -Force -Path (Join-Path $PayloadDirectory 'configs') | Out-Null
 
 if (-not $env:GOFLAGS) { $env:GOFLAGS = '-mod=mod' }
+# -buildvcs=false: Go embeds VCS metadata by default, including the vcs.modified
+# flag, so the same source built from a dirty working tree produced a different
+# client2api.exe -- and therefore a different installer SHA256 -- than a clean
+# checkout.  That is how v0.5.5 first recorded a hash no clean build reproduced.
+# The recorded hash must be a property of the source, not of whatever unrelated
+# edits happened to be lying around, so it goes into GOFLAGS (which covers every
+# build below without repeating the flag on each line).
+if ($env:GOFLAGS -notmatch 'buildvcs') { $env:GOFLAGS = ($env:GOFLAGS.Trim() + ' -buildvcs=false').Trim() }
 $env:CGO_ENABLED = '0'
 
 $ldflags = "-s -w -X main.version=$version"
