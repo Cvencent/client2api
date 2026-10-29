@@ -420,7 +420,14 @@ body.mode-3d .board3d { display: block; }
 }
 
 /* ⑥ 账号池卡片墙：默认视图。表格退成可选（.acc-table 模式）。 */
-.acct-board { display: grid; grid-template-columns: repeat(auto-fill, minmax(268px, 1fr)); gap: 12px; padding: 4px 18px 18px; }
+.acct-board {
+  display: grid; gap: 12px; padding: 4px 18px 18px;
+  grid-template-columns: repeat(auto-fill, minmax(268px, 1fr));
+}
+/* 卡片少的时候不要只剩左边一列、右边一整片黑：单张卡最多占半行宽，
+   再多就按列铺。 */
+.acct-board:has(> .acct-card:only-child) { grid-template-columns: minmax(0, 520px); }
+@media (max-width: 760px) { .acct-board:has(> .acct-card:only-child) { grid-template-columns: minmax(0, 1fr); } }
 .acct-card {
   position: relative; overflow: hidden;
   border: 1px solid var(--line-soft); border-radius: 13px;
@@ -444,6 +451,7 @@ body.mode-3d .board3d { display: block; }
 .acct-card .ac-metric span { font-size: 11px; color: var(--ink-3); }
 .acct-card .ac-spark { height: 26px; margin: 9px 0 3px; }
 .acct-card .ac-rows { display: grid; gap: 5px; margin-top: 10px; }
+.acct-card .ac-metric b { font-size: 30px; }
 .acct-card .ac-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 11.5px; }
 .acct-card .ac-row .k { color: var(--ink-3); }
 .acct-card .ac-row b { font: 600 12px var(--mono); font-variant-numeric: tabular-nums; }
