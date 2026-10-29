@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -507,17 +508,21 @@ func TestStreamFailsOnANonJSONFrame(t *testing.T) {
 }
 
 // Close releases the body and the request context, and is safe to call twice.
+//
+// The release callback can run from the reader goroutine rather than the caller,
+// so the counter is atomic: a plain int here is a test-side data race, and -race
+// reports it as a failure of the package under test.
 func TestStreamCloseIsIdempotentAndReleases(t *testing.T) {
-	var releases int
-	s := bodyStream(t, "data: [DONE]\n\n", func() { releases++ })
+	var releases atomic.Int32
+	s := bodyStream(t, "data: [DONE]\n\n", func() { releases.Add(1) })
 	if err := s.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
 	if err := s.Close(); err != nil {
 		t.Fatalf("second Close: %v", err)
 	}
-	if releases != 1 {
-		t.Errorf("release ran %d times, want exactly 1", releases)
+	if got := releases.Load(); got != 1 {
+		t.Errorf("release ran %d times, want exactly 1", got)
 	}
 }
 
