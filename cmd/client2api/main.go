@@ -44,7 +44,7 @@ import (
 )
 
 // version is overridable with -ldflags "-X main.version=...".
-var version = "0.5.1"
+var version = "0.5.5"
 
 // restartHandoffEnv marks the replacement half of a panel restart.  It tells a
 // starting process to keep retrying the listen address instead of failing fast,
@@ -1930,7 +1930,10 @@ func newAPIKey() string {
 // their own per-request contexts.
 func newHTTPClient(proxy string) (*http.Client, error) {
 	tr := &http.Transport{
-		Proxy:               http.ProxyFromEnvironment,
+		// An empty gateway proxy means direct egress.  Do not silently inherit
+		// HTTP_PROXY/HTTPS_PROXY from the desktop environment; modules with an
+		// explicit proxy still get one below.
+		Proxy:               nil,
 		MaxIdleConns:        100,
 		MaxIdleConnsPerHost: 16,
 		IdleConnTimeout:     90 * time.Second,

@@ -42,11 +42,19 @@ var ErrUnsupported = errors.New("unsupported by this client")
 // in_flight_full.
 var ErrBusy = errors.New("client is at its in-flight limit")
 
-// ErrPlatformExhausted reports that a module has already tried every usable
-// account on its platform for this request.  The gateway must then move to the
-// next platform instead of re-running the same platform's account rotation.
-// Modules that do not return it keep the previous retry behaviour.
-var ErrPlatformExhausted = errors.New("every usable account on this platform failed")
+// ErrPlatformExhausted reports that a module has given up on its platform for
+// this request.  The gateway must then move to the next platform instead of
+// re-running the same platform's account rotation.  Modules that do not return
+// it keep the previous retry behaviour.
+//
+// The headline deliberately makes no claim about how many accounts were asked.
+// Most modules stop the walk early when the refusal is not about the account --
+// an oversized body, an unsupported model, a malformed tool schema -- because a
+// sibling account would be refused identically.  The text used to read "every
+// usable account on this platform failed", which sent the operator looking for
+// a health problem after a single account had been tried; the accurate count is
+// the module's to add, because only the module knows how far it walked.
+var ErrPlatformExhausted = errors.New("platform exhausted")
 
 // ---------------------------------------------------------------------------
 // Canonical request types.  These are deliberately vendor-neutral: the gateway

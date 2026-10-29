@@ -5,7 +5,7 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-当前版本：**0.5.1**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：**0.5.5**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 流式断流排查：升级后系统日志新增 `stream: id=...` 终止诊断，包含协议、平台/模型、
 上游事件数、`finish_reason`、正文/推理字节数、工具调用数、completion token、
@@ -114,6 +114,27 @@ client2api 是一个**个人自用**的 OpenAI 兼容网关。它把你自己在
 表里是厂商模型 ID；调用网关时要在前面补平台路由，例如 `kilocode/kilo-auto/free`、`cline/cline-free/gemini-3.8-flash`、`opencode/space-bunny-free`、`openrouter/openrouter/free`。
 
 ## 功能总览
+
+### OpenCode：免费层门禁会检查传输层和系统消息
+
+大约从 2026-10-22 起，Zen 的匿名免费域会拒绝任何未通过三重检查的请求，且一律回答误导性的
+`FreeUsageLimitError: Free usage limit reached`（8 token 的探针不消耗任何额度也会被拒，
+所以是门禁在拒绝，不是钱包空了）：
+
+1. **TLS ClientHello。** Go 自带的握手会被拒，Bun 形状的握手能过。`clients/opencode`
+   因此默认使用 `internal/fingerprint` 的 `bun` 档（uTLS、Bun 的 cipher 列表、
+   X25519MLKEM768 key share——X25519-only 的 share 会被 `handshake_failure` 拒掉）。
+   配 `clients.opencode.tls_profile` 为其他档名或 `"none"` 可退出伪装。
+2. **系统消息的环境块。** 厂商 CLI 会在系统提示词里注入一个标注工作目录的 `<env>` 块，
+   没有这个块的请求会被门禁拒绝。免费请求体现在会带上
+   `<env>\n  Working directory: /workspace\n</env>`——调用方自带 system 时追加在其后，
+   没有时作为第一条插入。
+3. **CLI 形状的握手。** `bash`/`read` 工具声明、`x-opencode-session` 头、
+   `opencode/<version>` User-Agent——本模块一直都有。
+
+如果门禁仍然拒绝（厂商随时可能再收紧），账号会按 `quota_cooldown`（默认 12 小时）
+进入长冷却而不是 60 秒的限流冷却：`FreeUsageLimitError` 现在按 quota 类判定，
+因为对着不动墙每分钟重试一次的循环永远不会结束。
 
 ### 网关与路由
 

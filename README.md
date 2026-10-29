@@ -5,7 +5,7 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-Current version: **0.5.1**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
+Current version: **0.5.5**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
 
 client2api is a personal, local-only OpenAI-compatible gateway. It aggregates
 the accounts and API Keys **you own** on different AI coding clients and
@@ -147,6 +147,34 @@ while a declared object schema is passed through byte-for-byte. This prevents
 OpenAI's `schema must be a JSON Schema of 'type: "object"', got 'type: null'`
 400 when an MCP client omits a schema type.
 
+### OpenCode: the free-tier gate inspects the transport and the system message
+
+Since around 2026-10-22, Zen's anonymous free realm refuses a request that fails
+any of three checks, all answered with the misleading
+`FreeUsageLimitError: Free usage limit reached` (an 8-token probe burns no quota
+and still gets refused, so it is the gate, not the wallet):
+
+1. **The TLS ClientHello.** Go's own handshake is refused; a Bun-shaped hello
+   passes. `clients/opencode` therefore defaults to the `bun` profile of
+   `internal/fingerprint` (uTLS, Bun's cipher list, an X25519MLKEM768 key share
+   — an X25519-only share is itself refused with `handshake_failure`). Set
+   `clients.opencode.tls_profile` to another profile name or `"none"` to opt out.
+2. **The system message's environment block.** The vendor CLI injects an
+   `<env>` block naming a working directory into its system prompt; the gate
+   refuses a request whose system message carries none. The free body therefore
+   gains `<env>\n  Working directory: /workspace\n</env>` — appended to the
+   caller's own system turn when there is one, prepended as its own turn when
+   there is not.
+3. **The CLI-shaped handshake.** The `bash` and `read` tool declarations, the
+   `x-opencode-session` header and the `opencode/<version>` User-Agent — this
+   module has carried these all along.
+
+A refusal that still lands (the vendor can tighten the checks again without
+notice) parks the account for `quota_cooldown` (12 hours by default) instead of
+the one-minute rate cooldown: `FreeUsageLimitError` is classified as a quota
+verdict, because retrying every minute against a gate that does not move was a
+loop that never ended.
+
 ## Features
 
 ### Gateway and routing
@@ -239,12 +267,21 @@ OpenAI's `schema must be a JSON Schema of 'type: "object"', got 'type: null'`
   已耗尽, and the next balance refresh that reports a positive credit clears the park
   automatically. A platform that still has a usable account is therefore preferred
   over one that has none, whatever the configured priority says.
-- WorkBuddy tool schemas: a tool declared with empty `parameters` (`{}`) is
-  normalized to `{"type":"object","properties":{}}` before it goes upstream.
-  DeepSeek V4.1 Flash rejects the empty object with HTTP 400 / business code
-  `11129` ("invalid function call parameters"); the other WorkBuddy models
-  tolerate it, which is why the failure looked model-specific. A tool with no
-  real arguments and a tool with real properties are both unaffected.
+- WorkBuddy tool schemas are rewritten into the subset its validator accepts.
+  It parses `tools[].function.parameters` into a strict typed model and answers
+  HTTP 400 / business code `11129` ("invalid function call parameters") for
+  valid JSON Schema it cannot represent: draft-4 tuple-form `items`
+  (`"items": [{...},{...}]`, an empty array too), `items: null`, an `items`
+  object with no `type`, a root schema without `type` (even one that only
+  declares `properties`), a root that is only a `$ref` or an `anyOf`/`oneOf`,
+  boolean `exclusiveMinimum`/`exclusiveMaximum`, and `required` as a bare
+  string. `clients/workbuddy/toolschema.go` rewrites each into the equivalent
+  accepted shape — tuple `items` become `items: {anyOf: [...]}`, a root union
+  keeps its first object branch, `allOf` is merged, a local root `$ref` is
+  inlined — and an empty or non-object schema becomes
+  `{"type":"object","properties":{}}`. Nested schemas are rewritten the same
+  way. A rejection that survives the rewrite is still `11129` and fails over to
+  the next platform.
 - WorkBuddy's international realm follows the official WorkBuddy AI 5.8.4 VLM
   client: `WorkBuddy/5.8.4 WorkBuddy/5.8.4 CLI/2.161.0`,
   `X-IDE-Version: 5.8.4`, `X-Product: SaaS`, `X-Agent-Purpose: conversation`,
