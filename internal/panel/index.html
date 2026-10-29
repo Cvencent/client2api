@@ -11118,7 +11118,10 @@ function b3dSpec(view) {
     case "packages": return { shape: "ring", hint: "MODULES · DRAG", items: NAMES.map(n => {
       const groups = accGroups((ACCTS[n] || {}).accounts);
       const ready = groups.filter(g => accountState(accGroupStat(g)).key === "ready").length;
-      return { label: platformLabel(n), value: groups.length, tone: groups.length ? (ready ? "ok" : "warn") : "", sub: ready + " 就绪", raw: groups.length };
+      const k = capsOf(n);
+      const caps = [k.manage && "管理", k.import && "导入", k.login && "登录", k.checkin && "签到"].filter(Boolean).join(" · ") || "—";
+      return { label: platformLabel(n), value: groups.length, tone: groups.length ? (ready ? "ok" : "warn") : "", sub: ready + " 就绪", raw: groups.length,
+        facts: [["模块", n], ["账号", groups.length], ["可用", ready], ["能力", caps]] };
     }) };
     case "models": {
       const out = [];
@@ -11143,6 +11146,8 @@ function b3dSpec(view) {
           value: b && b.credits != null ? numf(Number(b.credits)) : null,
           tone: b && b.error ? "bad" : "", sub: platformLabel(n),
           raw: b && b.credits != null ? Number(b.credits) : 0,
+          facts: [["账号", g.identity || accountIdentity(g.rows[0]) || "账号"], ["平台", platformLabel(n)],
+            ["剩余", b && b.credits != null ? numf(Number(b.credits)) : "—"], ["单位", (BALS[n] || {}).unit || "—"]],
         });
       }));
       return { shape: "ring", hint: "CREDITS · DRAG", items: out };
@@ -11151,13 +11156,15 @@ function b3dSpec(view) {
       const out = (SNAP.clients || []).map(c => ({
         label: platformLabel(c.name), value: (c.models || []).length || 0,
         tone: c.ready ? "ok" : "", sub: c.ready ? "就绪" : "未就绪", raw: (c.models || []).length || 0,
+        facts: [["平台", c.name], ["模型", (c.models || []).length], ["状态", c.ready ? "就绪" : "未就绪"], ["账号", (ACCTS[c.name] || {}).accounts ? (ACCTS[c.name].accounts || []).length : "—"]],
       }));
       if (!out.length) NAMES.forEach(n => out.push({ label: platformLabel(n), value: null, tone: "", sub: "未加载", raw: 0 }));
       return { shape: "tunnel", hint: "ROUTING · DRAG", items: out };
     }
     case "taskscenter": {
       const rows = (SC.data && SC.data.rows) || [];
-      const out = rows.map(r => ({ label: scLabel(r.batch), value: r.group_enabled ? 1 : 0, tone: r.group_enabled ? "ok" : "", sub: r.client, raw: 1 }));
+      const out = rows.map(r => ({ label: scLabel(r.batch), value: r.group_enabled ? 1 : 0, tone: r.group_enabled ? "ok" : "", sub: r.client, raw: 1,
+        facts: [["任务", r.batch], ["平台", r.client], ["启用", r.group_enabled ? "是" : "否"], ["时点", r.hours || "—"]] }));
       if (!out.length) NAMES.forEach(n => out.push({ label: platformLabel(n), value: null, tone: "", sub: "未扫描", raw: 0 }));
       return { shape: "ring", hint: "AUTOMATION · DRAG", items: out.slice(0, 40) };
     }
@@ -11165,15 +11172,19 @@ function b3dSpec(view) {
       const out = NAMES.map(n => ({
         label: platformLabel(n), value: ((ACCTS[n] || {}).accounts || []).length,
         tone: "", sub: "在监控", raw: ((ACCTS[n] || {}).accounts || []).length,
+        facts: [["平台", n], ["账号", ((ACCTS[n] || {}).accounts || []).length], ["监控", "是"]],
       }));
       return { shape: "bars", hint: "ALERTS · DRAG", items: out };
     }
-    case "logs": return { shape: "tunnel", hint: "STREAM · DRAG", items: NAMES.map(n => ({ label: platformLabel(n), value: null, tone: "", sub: "通道", raw: 0 })) };
-    case "chat": return { shape: "ring", hint: "SANDBOX · DRAG", items: (MODELS || []).slice(0, 24).map(c => ({ label: c.name, value: (c.models || []).length, tone: "", sub: "模型", raw: (c.models || []).length })) };
+    case "logs": return { shape: "tunnel", hint: "STREAM · DRAG", items: NAMES.map(n => ({ label: platformLabel(n), value: null, tone: "", sub: "通道", raw: 0,
+          facts: [["平台", n], ["通道", "日志"], ["来源", "网关自身"]] })) };
+    case "chat": return { shape: "ring", hint: "SANDBOX · DRAG", items: (MODELS || []).slice(0, 24).map(c => ({ label: c.name, value: (c.models || []).length, tone: "", sub: "模型", raw: (c.models || []).length,
+          facts: [["客户端", c.name], ["模型", (c.models || []).length]] })) };
     case "config": return { shape: "tunnel", hint: "CONFIG · DRAG", items: [
       { label: "监听地址", value: null, tone: "", sub: SNAP.listen || "", raw: 0 },
       { label: "客户端", value: NAMES.length, tone: "", sub: "已启用", raw: NAMES.length },
-      { label: "版本", value: null, tone: "", sub: "v" + (SNAP.version || "-"), raw: 0 },
+      { label: "版本", value: null, tone: "", sub: "v" + (SNAP.version || "-"), raw: 0,
+        facts: [["版本", "v" + (SNAP.version || "-")], ["客户端", NAMES.length], ["监听", SNAP.listen || "—"]] },
     ] };
     case "routelive": {
       const out = ((RL_DATA && RL_DATA.traces) || []).slice(0, 24).map(x => {
@@ -11183,6 +11194,8 @@ function b3dSpec(view) {
           label: win.account_label || win.account || x.client || "调用方", value: null,
           tone: x.failed ? "bad" : (lanes.length > 1 ? "warn" : "ok"),
           sub: win.latency_ms ? win.latency_ms + "ms" : "-", raw: 0,
+          facts: [["落点", win.account_label || win.account || "—"], ["结果", x.failed ? "全部失败" : (lanes.length > 1 ? "改道" : "命中")],
+            ["延迟", win.latency_ms ? win.latency_ms + "ms" : "—"], ["候选", lanes.length + " 个"]],
         };
       });
       if (!out.length) out.push({ label: "还没有请求", value: null, tone: "", sub: "等待流量", raw: 0 });
@@ -11340,7 +11353,12 @@ function b3dInspect() {
   const it = B3D.sel >= 0 ? B3D.items[B3D.sel] : null;
   if (!it || !it.ref) { box.hidden = true; box.innerHTML = ""; return; }
   if (B3D.view === "models") { box.hidden = false; box.innerHTML = b3dModelInspectHTML(it); return; }
-  if (B3D.view !== "accounts") { box.hidden = true; box.innerHTML = ""; return; }
+  if (B3D.view !== "accounts") {
+    // 其余页面：有 facts 就摊开事实，没有就把面板收起（不留空壳）。
+    if (it.facts && it.facts.length) { box.hidden = false; box.innerHTML = b3dFactsHTML(it); return; }
+    box.hidden = true; box.innerHTML = "";
+    return;
+  }
   const rec = ACCTS[(it.ref && it.ref.client) || CUR] || {};
   const caps = rec.capabilities || {};
   const acts = caps.actions || [];
@@ -11374,6 +11392,15 @@ function b3dModelInspectHTML(it) {
     rows.map(r => '<div class="ac-row"><span class="k">' + esc(r[0]) + "</span><b>" + esc(String(r[1] == null ? "—" : r[1])) + "</b></div>").join("") +
     "</div>" +
     '<div class="ac-foot wide"><button class="xs" id="b3dToLists">到列表里编辑</button></div>';
+}
+
+// b3dFactsHTML 是通用的检视块：把条目自带的 facts 摊成键值行。每页的 3D 舞台
+// 选中任何东西都有回应，而不只是「换个高亮但什么也不说」。
+function b3dFactsHTML(it) {
+  return '<div class="b3d-inspect-head">' + esc(it.label) + '<span class="hint">' + esc(it.sub || "") + "</span></div>" +
+    '<div class="ac-rows" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));display:grid;gap:5px 18px">' +
+    it.facts.map(r => '<div class="ac-row"><span class="k">' + esc(r[0]) + "</span><b>" + esc(String(r[1] == null ? "—" : r[1])) + "</b></div>").join("") +
+    "</div>";
 }
 
 /* ── 帧循环 ────────────────────────────────────────────────────────────── */
