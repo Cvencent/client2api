@@ -730,6 +730,100 @@ func TestChatQueueRejectionIsPolledThenRetried(t *testing.T) {
 	if !strings.Contains(q.Query, "task_id=") || !strings.Contains(q.Query, "model=") {
 		t.Errorf("queue query = %q, want model and task_id", q.Query)
 	}
+	// The endpoint is asked about OUR session, not a random one: it is the
+	// only id that can describe where this request sits in the queue.
+	sessionID := f.chatRequests()[1].Header.Get("Session-Id")
+	if sessionID == "" {
+		t.Fatal("the chat request carried no Session-Id")
+	}
+	if !strings.Contains(q.Query, "task_id="+sessionID) {
+		t.Errorf("queue query = %q, want task_id=%s (the chat's Session-Id)", q.Query, sessionID)
+	}
+}
+
+// A caller that sends no conversation id still gets ONE session for the whole
+// chat: the vendor caps an account at three concurrent sessions, so a fresh id
+// per turn would exhaust a healthy account from a single conversation.
+func TestChatSessionIDStaysStableWithoutAConversationID(t *testing.T) {
+	f := newChatFixture(t)
+	c := f.client(t, "")
+
+	history := []core.Message{
+		{Role: "system", Content: "you are a coding agent"},
+		{Role: "user", Content: "find the bug in main.go"},
+	}
+	for turn := 0; turn < 3; turn++ {
+		msgs := append(append([]core.Message(nil), history...), core.Message{Role: "user", Content: "and then?"})
+		st, err := c.Chat(context.Background(), &core.ChatRequest{Model: "deepseek-v4-pro", Messages: msgs})
+		if err != nil {
+			t.Fatalf("turn %d: Chat: %v", turn, err)
+		}
+		_ = st.Close()
+	}
+
+	got := f.chatRequests()
+	if len(got) != 3 {
+		t.Fatalf("the fixture saw %d chat calls, want 3", len(got))
+	}
+	first := got[0].Header.Get("Session-Id")
+	if first == "" {
+		t.Fatal("the first turn carried no Session-Id")
+	}
+	for i, r := range got {
+		if sid := r.Header.Get("Session-Id"); sid != first {
+			t.Errorf("turn %d Session-Id = %q, want %q: one conversation must be one vendor session", i, sid, first)
+		}
+		// The body's cache key must agree with the header, or the vendor caches
+		// a prefix under one id and reuses a session under another.
+		if key, _ := r.Body["prompt_cache_key"].(string); key != first {
+			t.Errorf("turn %d prompt_cache_key = %v, want %q", i, r.Body["prompt_cache_key"], first)
+		}
+	}
+	// Different conversations must not share a session, or unrelated chats
+	// would contend for one vendor slot.
+	st, err := c.Chat(context.Background(), &core.ChatRequest{
+		Model:    "deepseek-v4-pro",
+		Messages: []core.Message{{Role: "user", Content: "a different subject entirely"}},
+	})
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	_ = st.Close()
+	other := f.chatRequests()
+	if len(other) != 4 {
+		t.Fatalf("the fixture saw %d chat calls, want 4", len(other))
+	}
+	if sid := other[3].Header.Get("Session-Id"); sid == first {
+		t.Errorf("an unrelated conversation reused session %q", sid)
+	}
+}
+
+// An explicit conversation id still wins: the caller is the authority on which
+// turns belong together.
+func TestChatConversationIDWinsOverTheDerivedSession(t *testing.T) {
+	if got := sessionIDFor(&core.ChatRequest{
+		ConversationID: "conv-explicit",
+		Messages:       []core.Message{{Role: "user", Content: "hi"}},
+	}); got != "conv-explicit" {
+		t.Fatalf("sessionIDFor = %q, want the caller's conversation id", got)
+	}
+	// Two requests with the same opening turn but no id must agree, and a
+	// request whose opening turn differs must not.
+	a := sessionIDFor(&core.ChatRequest{Messages: []core.Message{
+		{Role: "system", Content: "sys"}, {Role: "user", Content: "hello"},
+	}})
+	b := sessionIDFor(&core.ChatRequest{Messages: []core.Message{
+		{Role: "system", Content: "sys"}, {Role: "user", Content: "hello"},
+		{Role: "assistant", Content: "hi"}, {Role: "user", Content: "again"},
+	}})
+	if a == "" || a != b {
+		t.Fatalf("session ids %q / %q, want the same derived id for one conversation", a, b)
+	}
+	if c := sessionIDFor(&core.ChatRequest{Messages: []core.Message{
+		{Role: "system", Content: "sys"}, {Role: "user", Content: "something else"},
+	}}); c == a {
+		t.Fatalf("a different opening turn derived the same session id %q", c)
+	}
 }
 
 // makeRefreshable attaches the refresh material a credential only ever gets

@@ -248,6 +248,68 @@ button:not(.primary):not(.danger):hover:not(:disabled) {
 
 /* ③（活动滚条已按用户要求移除：它晃眼，且不承载信息） */
 
+/* ④ 网关星图：默认的导航面。地图铺满窗口，领域是空间里的区域；
+   点一个区域，该领域的真实内容从右侧滑出成抽屉盖在地图上。顶栏那排
+   Tab 在星图模式下直接不出现——地图就是导航。 */
+.atlas { position: fixed; inset: 0; z-index: 50; display: none; }
+body.atlas-on .atlas { display: block; }
+/* 星图模式下常规外壳整体让位（section 已经被搬进抽屉，主区本来就是空的）。 */
+body.atlas-on .shell { visibility: hidden; }
+.atlas-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; }
+.atlas-head {
+  position: absolute; left: 0; right: 0; top: 0; z-index: 3;
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 18px; pointer-events: none;
+  background: linear-gradient(to bottom, color-mix(in srgb, var(--bg) 88%, transparent), transparent);
+}
+.atlas-head > * { pointer-events: auto; }
+.atlas-kicker {
+  display: inline-flex; align-items: center; gap: 7px;
+  font: 600 10px/1 var(--mono); letter-spacing: .22em; color: var(--accent-text);
+}
+.atlas-kicker i {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--accent);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 75%, transparent);
+  animation: mhBeat 2.2s var(--ease) infinite;
+}
+.atlas-head b { font-size: 15px; font-weight: 660; letter-spacing: -.01em; }
+.atlas-sub { font-size: 11.5px; color: var(--ink-3); }
+.atlas-head .grow { flex: 1; }
+.atlas-hint {
+  position: absolute; left: 50%; bottom: 26px; transform: translateX(-50%); z-index: 3;
+  font: 500 11.5px/1 var(--mono); color: var(--ink-3); letter-spacing: .04em;
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+  border: 1px solid var(--line-soft); border-radius: 999px; padding: 7px 14px;
+  pointer-events: none;
+}
+
+/* 抽屉：右侧滑出，宽到能放原有内容，左侧留一条地图可见。 */
+.atlas-panel {
+  position: absolute; right: 0; top: 0; bottom: 0; z-index: 2;
+  width: min(1080px, 78vw);
+  display: flex; flex-direction: column;
+  background: var(--bg);
+  border-left: 1px solid var(--line);
+  box-shadow: -30px 0 60px -30px rgba(0,0,0,.6);
+  transform: translateX(100%);
+  transition: transform .42s cubic-bezier(.16,1,.3,1);
+}
+body.atlas-drawer .atlas-panel { transform: none; }
+.atlas-panel > header {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 20px; border-bottom: 1px solid var(--line-soft);
+}
+.atlas-panel > header h2 { font-size: 15px; font-weight: 640; letter-spacing: -.02em; }
+.atlas-panel-body { flex: 1; min-height: 0; overflow: auto; padding: 0; }
+/* 抽屉里的 section 去掉它作为「整页」时的外边距与最小高度。 */
+.atlas-panel-body > .view { padding: 14px 18px 40px; }
+.atlas-panel-body .masthead { padding: 18px 0 0; }
+.atlas-panel-body .mh-title { font-size: clamp(24px, 2.6vw, 36px); }
+@media (max-width: 760px) {
+  .atlas-panel { width: 100vw; }
+  .atlas-sub { display: none; }
+}
+
 /* ④ 3D 展示层：每个页面的内容都能立起来看。
    舞台是一个 WebGL 画布 + 一条读数带；同一份数据在「3D」和「列表」两种
    呈现之间切换，交互是拖拽旋转、滚轮缩放、点击选中。 */
@@ -10513,6 +10575,345 @@ function renderTranscriptionCallInfo() {
   return routes;
 }
 
+/* ══ 网关星图（Atlas）：导航不再是 Tab ═══════════════════════════════════
+   这一层改的是「怎么进一个页面」，不是页面长什么样。
+
+   原来：顶栏一排 Tab → 点一个 → 下面铺出这个领域的列表/框。13 个领域是
+   13 个平行页面，用户永远在「离开一张单据去看另一张」。
+
+   现在：一张全屏的空间地图。整个网关的每个领域是空间里的一个**区域**，
+   区域里是按状态染色的活节点（账号/模型/平台…的数量决定节点数）。点击
+   一个区域，该领域**真实的** DOM 节点被搬进右侧抽屉滑出——页面内容一个字
+   没改，改的是它出现的方式与地方；地图始终留在背后。ESC 退回地图。
+
+   实现上最要紧的一点：抽屉里放的是**同一个** <section id="view-x"> 元素
+   （运行时重新挂载），不是重画一遍。于是在地图上打开的页面和原来完全一样，
+   所有既有 id、样式作用域、事件委托、测试契约全部成立。 */
+const ATLAS = {
+  canvas: null, renderer: null, scene: null, cam: null, root: null,
+  zones: [], pick: [], raf: 0, t: 0, hover: -1, drag: null, yaw: 0, pitch: 0,
+  dist: 15, open: "", home: null, panel: null, host: null, texCache: {},
+};
+
+// atlasZones 把「一个领域」定义成地图上的一块区域。数据全部读现成的全局，
+// count 决定节点簇的大小，tone 决定颜色——所以地图本身就是一张状态图。
+function atlasZones() {
+  const t = acctTotals();
+  const unread = (() => { const b = $("#alertBadge"); return (b && !b.hidden) ? (Number(b.textContent) || 0) : 0; })();
+  const hard = t.risk + t.fault + t.disabled;
+  const u = acctStatTotals();
+  const models = (MODELS || []).reduce((a, c) => a + ((c.models || []).length), 0);
+  const z = [
+    { view: "overview",   label: "总览",   sub: t.total ? Math.round(t.ready / t.total * 100) + "% 可用" : "无账号", count: t.total, tone: hard ? "bad" : (t.cooling ? "warn" : "ok") },
+    { view: "accounts",   label: "账号池", sub: t.ready + " / " + t.total + " 可用", count: t.total, tone: hard ? "bad" : (t.cooling ? "warn" : "ok") },
+    { view: "routelive",  label: "实况",   sub: ((RL_DATA && RL_DATA.traces) || []).length + " 条在窗口内", count: ((RL_DATA && RL_DATA.traces) || []).length, tone: "ok" },
+    { view: "models",     label: "模型",   sub: models + " 个", count: models, tone: "" },
+    { view: "platforms",  label: "平台",   sub: (SNAP.clients || []).length + " 个已接入", count: (SNAP.clients || []).length, tone: "" },
+    { view: "packages",   label: "客户端", sub: NAMES.length + " 个模块", count: NAMES.length, tone: "" },
+    { view: "usage",      label: "用量",   sub: u ? numf(u.requests) + " 次调用" : "暂无", count: u ? Math.min(40, u.requests) : 0, tone: "" },
+    { view: "credits",    label: "积分",   sub: "批次与到期", count: t.total, tone: "" },
+    { view: "taskscenter",label: "任务",   sub: ((SC.data && SC.data.rows) || []).length + " 条定时", count: ((SC.data && SC.data.rows) || []).length, tone: "" },
+    { view: "alerts",     label: "告警",   sub: unread ? unread + " 条未读" : "干净", count: unread, tone: unread ? "bad" : "ok" },
+    { view: "logs",       label: "日志",   sub: "网关自己的话", count: 0, tone: "" },
+    { view: "chat",       label: "对话",   sub: "链路验证", count: 0, tone: "" },
+    { view: "config",     label: "配置",   sub: SNAP.listen || "本机", count: 0, tone: "" },
+  ];
+  return z;
+}
+
+function atlasTone(t) {
+  return t === "ok" ? "#4ec98a" : t === "warn" ? "#e0a94a" : t === "bad" ? "#e2686e" : "#7f8dff";
+}
+
+// atlasLabelTexture 画一块区域铭牌：大字领域名 + 一行读数。
+function atlasLabelTexture(z) {
+  const key = z.view + "|" + z.sub + "|" + z.tone;
+  if (ATLAS.texCache[key]) return ATLAS.texCache[key];
+  const W = 512, H = 200, c = document.createElement("canvas");
+  c.width = W; c.height = H;
+  const g = c.getContext("2d");
+  if (!g) return null;
+  const accent = atlasTone(z.tone);
+  g.fillStyle = "rgba(14,16,24,0.0)";
+  g.fillRect(0, 0, W, H);
+  g.fillStyle = "#eef1fa";
+  g.font = "700 76px ui-monospace, Consolas, monospace";
+  g.fillText(z.label, 8, 96);
+  g.fillStyle = accent;
+  g.font = "600 34px ui-monospace, Consolas, monospace";
+  g.fillText(String(z.sub || "").slice(0, 26), 8, 152);
+  g.strokeStyle = accent; g.lineWidth = 4; g.globalAlpha = 0.9;
+  g.beginPath(); g.moveTo(8, 176); g.lineTo(8 + Math.min(300, 60 + z.count * 8), 176); g.stroke();
+  const tex = new THREE.CanvasTexture(c);
+  ATLAS.texCache[key] = tex;
+  return tex;
+}
+
+function atlasEnsure() {
+  if (ATLAS.renderer) return true;
+  if (!b3dSupported()) return false;
+  const canvas = document.createElement("canvas");
+  canvas.className = "atlas-canvas";
+  canvas.setAttribute("aria-hidden", "true");
+  try { ATLAS.renderer = new THREE.WebGLRenderer({ canvas: canvas, alpha: true, antialias: true }); }
+  catch (e) { ATLAS.renderer = null; return false; }
+  ATLAS.canvas = canvas;
+  ATLAS.scene = new THREE.Scene();
+  ATLAS.cam = new THREE.PerspectiveCamera(50, 1.7, 0.1, 200);
+  ATLAS.root = new THREE.Group();
+  ATLAS.scene.add(ATLAS.root);
+  // 地面网格：让「空间」有地平线，而不是悬空的一堆方块。
+  const grid = new THREE.GridHelper(60, 30, 0x2a3350, 0x1b2236);
+  grid.position.y = -1.6;
+  ATLAS.root.add(grid);
+  return true;
+}
+
+function atlasClear() {
+  if (!ATLAS.root) return;
+  while (ATLAS.root.children.length) {
+    const c = ATLAS.root.children.pop();
+    if (c.type === "GridHelper") continue;
+    if (c.traverse) c.traverse(o => {
+      if (o.geometry) o.geometry.dispose();
+      if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => m.dispose());
+    });
+  }
+  ATLAS.pick = []; ATLAS.zones = [];
+}
+
+// atlasBuild 排布区域：一圈不规则半径的环，避免「所有东西等距排队」的呆板。
+function atlasBuild() {
+  atlasClear();
+  const zones = atlasZones();
+  ATLAS.zones = zones;
+  const n = zones.length;
+  zones.forEach((z, i) => {
+    const a = (i / n) * Math.PI * 2;
+    const R = 7.6 + (i % 3) * 0.9;
+    const x = Math.cos(a) * R, zz = Math.sin(a) * R;
+    const g = new THREE.Group();
+    g.position.set(x, 0, zz);
+    g.lookAt(0, 0, 0);
+    // 平台：一块薄板，颜色随状态
+    const slab = new THREE.Mesh(new THREE.BoxGeometry(4.4, 0.28, 2.2),
+      new THREE.MeshBasicMaterial({ color: new THREE.Color(atlasTone(z.tone)).multiplyScalar(0.55), transparent: true, opacity: 0.95 }));
+    slab.position.y = -1.4;
+    slab.userData.zone = i;
+    g.add(slab);
+    ATLAS.pick.push(slab);
+    // 铭牌
+    const tex = atlasLabelTexture(z);
+    if (tex) {
+      const pl = new THREE.Mesh(new THREE.PlaneGeometry(3.6, 1.4), new THREE.MeshBasicMaterial({ map: tex, transparent: true }));
+      pl.position.set(-0.1, -0.5, 1.02);
+      pl.userData.zone = i;
+      g.add(pl);
+      ATLAS.pick.push(pl);
+    }
+    // 节点簇：数量决定点数（封顶 14），按状态上色，高低错落
+    const dots = Math.min(14, Math.max(1, z.count || 0));
+    for (let k = 0; k < dots; k++) {
+      const ang = (k / dots) * Math.PI * 2;
+      const rr = 0.7 + (k % 3) * 0.34;
+      const dot = new THREE.Mesh(new THREE.SphereGeometry(0.13, 10, 10),
+        new THREE.MeshBasicMaterial({ color: atlasTone(z.tone) }));
+      dot.position.set(Math.cos(ang) * rr + 0.6, -1.05 + ((k % 4) * 0.22), Math.sin(ang) * rr * 0.5);
+      dot.userData.zone = i;
+      g.add(dot);
+      ATLAS.pick.push(dot);
+    }
+    // 指向中心的细线：所有领域都往同一个网关收束。
+    const line = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, -1.5, 0), new THREE.Vector3(x, -1.5, zz)]);
+    ATLAS.root.add(new THREE.Line(line, new THREE.LineBasicMaterial({ color: 0x2f3a58, transparent: true, opacity: 0.5 })));
+    // 中心枢纽
+    ATLAS.root.add(g);
+  });
+  const hub = new THREE.Mesh(new THREE.SphereGeometry(0.75, 24, 24), new THREE.MeshBasicMaterial({ color: 0x8fa8ff, transparent: true, opacity: 0.92 }));
+  hub.position.y = -1.1;
+  ATLAS.root.add(hub);
+  ATLAS.root.add(new THREE.Mesh(new THREE.SphereGeometry(0.9, 18, 18), new THREE.MeshBasicMaterial({ color: 0x6f8cff, wireframe: true, transparent: true, opacity: 0.45 })).translateY(-1.1));
+}
+
+/* ── 抽屉：把一个领域「真实的」section 搬进来 ─────────────────────────── */
+function atlasOpen(view) {
+  const host = ATLAS.panel;
+  if (!host) return;
+  const sec = document.getElementById("view-" + view);
+  if (!sec) return;
+  if (ATLAS.open && ATLAS.open !== view) {
+    const prev = document.getElementById("view-" + ATLAS.open);
+    if (prev && ATLAS.home && prev.parentNode === host) ATLAS.home.appendChild(prev);
+  }
+  sec.hidden = false;
+  sec.classList.add("in-atlas");
+  host.appendChild(sec);
+  ATLAS.open = view;
+  VIEW = view;
+  document.body.classList.add("atlas-drawer");
+  const hint = ATLAS.host.querySelector(".atlas-hint");
+  if (hint) hint.hidden = true;
+  SHELL.syncActive(view);
+  host.querySelector(".atlas-panel-title").textContent = (TITLES[view] || view);
+  // 3D 舞台与进度条之类都按当前视图重算一次
+  mountMasthead(view);
+  if (document.body.classList.contains("mode-3d")) mountBoard3d(view);
+  revealView(view);
+}
+
+function atlasClose(keepView) {
+  if (!ATLAS.open) return;
+  const sec = document.getElementById("view-" + ATLAS.open);
+  if (sec && ATLAS.home) {
+    sec.classList.remove("in-atlas");
+    ATLAS.home.appendChild(sec);
+  }
+  ATLAS.open = "";
+  document.body.classList.remove("atlas-drawer");
+  const hint = ATLAS.host.querySelector(".atlas-hint");
+  if (hint) hint.hidden = false;
+  if (!keepView) { VIEW = ""; SHELL.syncActive(""); }
+  b3dStop();
+}
+
+/* ── 交互：环绕 / 缩放 / 点区域 ───────────────────────────────────────── */
+function atlasMountControls() {
+  const cv = ATLAS.canvas;
+  if (!cv || cv.dataset.ctl === "1") return;
+  cv.dataset.ctl = "1";
+  cv.addEventListener("pointerdown", ev => {
+    if (ev.button !== 0) return;
+    ATLAS.drag = { x: ev.clientX, y: ev.clientY, yaw: ATLAS.yaw, pitch: ATLAS.pitch, moved: 0 };
+    try { cv.setPointerCapture(ev.pointerId); } catch (e) {}
+  });
+  cv.addEventListener("pointermove", ev => {
+    if (ATLAS.drag) {
+      const dx = ev.clientX - ATLAS.drag.x, dy = ev.clientY - ATLAS.drag.y;
+      ATLAS.drag.moved = Math.max(ATLAS.drag.moved, Math.abs(dx) + Math.abs(dy));
+      ATLAS.yaw = ATLAS.drag.yaw + dx * 0.005;
+      ATLAS.pitch = Math.max(-0.5, Math.min(0.5, ATLAS.drag.pitch + dy * 0.003));
+      return;
+    }
+    atlasHoverAt(ev);
+  });
+  const end = () => { ATLAS.drag = null; };
+  cv.addEventListener("pointerup", end);
+  cv.addEventListener("pointercancel", end);
+  cv.addEventListener("wheel", ev => {
+    ev.preventDefault();
+    ATLAS.dist = Math.max(8, Math.min(30, ATLAS.dist + (ev.deltaY > 0 ? 1.1 : -1.1)));
+  }, { passive: false });
+  cv.addEventListener("click", ev => {
+    if (ATLAS.drag && ATLAS.drag.moved > 6) return;
+    const i = atlasPickIndex(ev);
+    if (i >= 0 && ATLAS.zones[i]) atlasOpen(ATLAS.zones[i].view);
+  });
+}
+function atlasRay(ev) {
+  const r = ATLAS.canvas.getBoundingClientRect();
+  if (!r.width || !r.height) return null;
+  const p = new THREE.Vector2(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
+  const rc = new THREE.Raycaster();
+  rc.setFromCamera(p, ATLAS.cam);
+  return rc;
+}
+function atlasPickIndex(ev) {
+  const rc = atlasRay(ev);
+  if (!rc) return -1;
+  const hit = rc.intersectObjects(ATLAS.pick, false)[0];
+  return hit && hit.object.userData.zone >= 0 ? hit.object.userData.zone : -1;
+}
+function atlasHoverAt(ev) {
+  const i = atlasPickIndex(ev);
+  if (i !== ATLAS.hover) {
+    ATLAS.hover = i;
+    if (ATLAS.canvas) ATLAS.canvas.style.cursor = i >= 0 ? "pointer" : "grab";
+  }
+}
+
+function atlasFrame() {
+  ATLAS.raf = 0;
+  if (!ATLAS.renderer || !ATLAS.host || !ATLAS.host.isConnected) return;
+  const w = ATLAS.host.clientWidth, h = ATLAS.host.clientHeight;
+  if (!w || !h) return;
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  if (ATLAS.canvas.width !== Math.round(w * dpr) || ATLAS.canvas.height !== Math.round(h * dpr)) {
+    ATLAS.renderer.setPixelRatio(dpr);
+    ATLAS.renderer.setSize(w, h, false);
+    ATLAS.cam.aspect = w / h;
+    ATLAS.cam.updateProjectionMatrix();
+  }
+  ATLAS.t += 0.016;
+  if (!ATLAS.drag) ATLAS.yaw += 0.0009;
+  ATLAS.root.rotation.y = ATLAS.yaw;
+  ATLAS.root.rotation.x = ATLAS.pitch;
+  ATLAS.cam.position.set(0, 4.2, ATLAS.dist);
+  ATLAS.cam.lookAt(0, -0.6, 0);
+  ATLAS.pick.forEach(o => {
+    const on = o.userData.zone === ATLAS.hover;
+    const s = on ? 1.06 : 1;
+    if (o.scale.x !== s) o.scale.setScalar(s);
+  });
+  ATLAS.renderer.render(ATLAS.scene, ATLAS.cam);
+  ATLAS.raf = requestAnimationFrame(atlasFrame);
+}
+function atlasStart() { if (!ATLAS.raf && ATLAS.renderer) ATLAS.raf = requestAnimationFrame(atlasFrame); }
+function atlasStop() { if (ATLAS.raf) { cancelAnimationFrame(ATLAS.raf); ATLAS.raf = 0; } }
+
+/* ── 外壳：地图铺满窗口，抽屉从右侧滑出 ───────────────────────────────── */
+function atlasMount() {
+  // 渲染器建在进入星图这一刻（不是脚本解析时），所以这里先 ensure 再判断。
+  if (!atlasEnsure()) return false;
+  if (ATLAS.host) { ATLAS.host.hidden = false; atlasStart(); return true; }
+  const host = document.createElement("div");
+  host.className = "atlas";
+  host.innerHTML =
+    '<div class="atlas-head">' +
+      '<span class="atlas-kicker"><i></i>ATLAS</span>' +
+      '<b>网关星图</b>' +
+      '<span class="atlas-sub">每个领域是一个区域，点进去看详情</span>' +
+      '<span class="grow"></span>' +
+      '<button class="xs" id="atlasExit" title="回到常规列表视图">列表视图</button>' +
+    '</div>' +
+    '<div class="atlas-hint">拖动环绕 · 滚轮缩放 · 点一个区域进入</div>' +
+    '<aside class="atlas-panel" id="atlasPanel">' +
+      '<header><h2 class="atlas-panel-title"></h2><span class="grow"></span>' +
+      '<button class="xs" id="atlasBack" title="返回星图（Esc）">返回星图</button></header>' +
+      '<div class="atlas-panel-body" id="atlasPanelBody"></div>' +
+    '</aside>';
+  document.body.appendChild(host);
+  ATLAS.host = host;
+  ATLAS.panel = host.querySelector(".atlas-panel");
+  host.insertBefore(ATLAS.canvas, host.querySelector(".atlas-panel"));
+  ATLAS.home = document.getElementById("viewWrap");
+  atlasMountControls();
+  host.querySelector("#atlasBack").addEventListener("click", () => atlasClose(false));
+  host.querySelector("#atlasExit").addEventListener("click", () => atlasLeave());
+  document.addEventListener("keydown", ev => { if (ev.key === "Escape" && ATLAS.open) atlasClose(false); });
+  return true;
+}
+// atlasEnter 进入星图：把 3D/列表的模式关掉（地图自己有渲染），清空主区。
+function atlasEnter() {
+  if (!atlasMount()) return;
+  document.body.classList.add("atlas-on");
+  atlasBuild();
+  atlasStart();
+  // 默认只给地图：第一印象是这张空间面，而不是又落在某个列表页上。
+  // 用户点区域才把抽屉滑出来；没有抽屉时右下方给一句提示。
+  if (!ATLAS.open) {
+    const hint = ATLAS.host.querySelector(".atlas-hint");
+    if (hint) hint.hidden = false;
+  }
+}
+// atlasLeave 退出星图，回到常规的列表视图（主区里的 section 已经搬回来了）。
+function atlasLeave() {
+  atlasClose(true);
+  if (ATLAS.host) ATLAS.host.hidden = true;
+  atlasStop();
+  document.body.classList.remove("atlas-on");
+  try { localStorage.setItem("c2a.atlas", "off"); } catch (e) {}
+  go(VIEW || "overview");
+}
 /* ══ 3D 展示层 ═══════════════════════════════════════════════════════════
    每个页面的内容都能「立起来」看：同一份数据，一种是列表（原来的密集视图），
    一种是 3D 舞台（拖拽旋转、滚轮缩放、点击选中）。四种形态覆盖全部页面：
@@ -21300,7 +21701,12 @@ window.addEventListener("unhandledrejection", ev => panelBootError(ev.reason));
     // 库是 defer 加载的，所以先定模式、等它到位再真正把舞台搭起来。
     setView3dMode(view3dMode());
     b3dWhenReady(() => {
-      if (document.body.classList.contains("mode-3d")) mountBoard3d(VIEW);
+      // 星图是默认入口：导航不再是顶栏那排 Tab，而是一张空间地图。
+      // 用户点过「列表视图」退出后就不再自动进入（localStorage 记住）。
+      let atlasPref = "on";
+      try { atlasPref = localStorage.getItem("c2a.atlas") || "on"; } catch (e) {}
+      if (atlasPref !== "off") atlasEnter();
+      else if (document.body.classList.contains("mode-3d")) mountBoard3d(VIEW);
       // 页面的数据是各自懒加载的（模型目录 / 日志 / 配置…），挂舞台时可能还
       // 是空的。这里轻量地对账：当前页的条目数变了就重建一次，让舞台跟上数据。
       setInterval(() => {

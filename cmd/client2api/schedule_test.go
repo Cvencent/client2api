@@ -139,6 +139,41 @@ func TestScheduleWithoutClientsKeepsTheSharedTimetable(t *testing.T) {
 	}
 }
 
+// TestScheduleProjectsCronForNamedBatches pins the minute-level timetable.  An
+// hours list can only fire at :00, so a batch that has to run at :05 is
+// expressed as a cron expression on the same per-client override -- and the
+// scheduler's plan() already honours Group.Cron for every batch, so the only
+// thing that used to drop it was this projection.
+func TestScheduleProjectsCronForNamedBatches(t *testing.T) {
+	expr := "5 19,20,21 * * *"
+	blank := ""
+	cfg := fileConfig{Schedule: scheduleConfig{
+		Enabled:      true,
+		CheckinHours: []int{9},
+		Clients: map[string]map[string]scheduleOverride{
+			"zcode": {"checkin": {Hours: []int{19, 20, 21}, Cron: &expr}},
+			"off":   {"checkin": {Cron: &blank}},
+		},
+	}}
+
+	sc := cfg.schedule()
+	if err := sc.Validate(); err != nil {
+		t.Fatalf("a cron timetable was rejected: %v", err)
+	}
+	g := sc.Clients["zcode"]["checkin"]
+	if !g.Enabled || g.Cron != expr || len(g.Hours) != 0 {
+		t.Fatalf("zcode checkin = %+v, want enabled cron %q with no hours", g, expr)
+	}
+	if g, ok := sc.Clients["off"]["checkin"]; !ok || g.Enabled || g.Cron != "" || len(g.Hours) != 0 {
+		t.Fatalf("an explicit empty cron = %+v/%v, want a present, disabled entry", g, ok)
+	}
+	now := time.Date(2026, 10, 29, 19, 0, 30, 0, scheduler.CST)
+	want := time.Date(2026, 10, 29, 19, 5, 0, 0, scheduler.CST)
+	if at, err := scheduler.NextCron(now, g.Cron, scheduler.CST); err != nil || !at.Equal(want) {
+		t.Fatalf("NextCron = %v/%v, want %v", at, err, want)
+	}
+}
+
 func TestScheduleProjectsAccountScope(t *testing.T) {
 	cfg := fileConfig{Schedule: scheduleConfig{
 		Enabled: true,

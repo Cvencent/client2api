@@ -431,9 +431,9 @@ func (s scheduleConfig) dailyBalanceGroup() scheduler.Group {
 }
 
 // schedClients projects the per-platform overrides onto the scheduler's own
-// config.  A pair with neither an explicit switch nor an explicit hours list
-// is not an override at all, so it is dropped instead of being materialised
-// as a group nobody asked for.
+// config.  A pair with neither an explicit switch, an hours list nor a cron
+// expression is not an override at all, so it is dropped instead of being
+// materialised as a group nobody asked for.
 func (s scheduleConfig) schedClients() map[string]map[string]scheduler.Group {
 	if len(s.Clients) == 0 {
 		return nil
@@ -454,7 +454,7 @@ func (s scheduleConfig) schedClients() map[string]map[string]scheduler.Group {
 				if ov.Enabled == nil && ov.Hours == nil && ov.EveryMinutes == nil && ov.JitterMinutes == nil && ov.EverySeconds == nil && ov.JitterSeconds == nil && ov.Cron == nil && ov.Accounts == nil {
 					continue
 				}
-			} else if ov.Enabled == nil && ov.Hours == nil && ov.Accounts == nil {
+			} else if ov.Enabled == nil && ov.Hours == nil && ov.Cron == nil && ov.Accounts == nil {
 				continue
 			}
 			if out[client] == nil {
@@ -490,6 +490,14 @@ func (s scheduleConfig) schedClients() map[string]map[string]scheduler.Group {
 				default:
 					group.Enabled = *ov.Enabled
 				}
+			} else if ov.Cron != nil {
+				// A calendar expression is the only way to land a batch on a
+				// minute; an hour list always fires at :00.  It replaces the
+				// hours list when present, and an explicit empty string keeps
+				// the batch off for this platform rather than falling back to
+				// the shared hours -- the rule daily_balance already follows.
+				group = scheduler.Group{Cron: strings.TrimSpace(*ov.Cron)}
+				group.Enabled = boolOr(ov.Enabled, true) && group.Cron != ""
 			}
 			group.Accounts = schedAccountScope(ov.Accounts)
 			out[client][batch] = group
