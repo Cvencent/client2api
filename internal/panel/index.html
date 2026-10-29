@@ -8521,20 +8521,27 @@ function go(v) {
   $("#btnAdd").hidden = v !== "accounts";
   // 路由实况是唯一会自己关掉轮询的视图：离开就停，回来再开。
   if (v !== "routelive") rlStopPolling();
-  if (v === "routelive") { renderRouteLive(); rlStartPolling(); }
-  if (v === "overview") renderOverview();
+  loadViewData(v);
   if (v) setTimeout(markScrollableTables, 0);
-  if (v === "accounts") renderAccounts();
-  if (v === "chat") renderChat();
-  if (v === "usage") renderUsage();
-  if (v === "alerts") renderAlerts();
-  if (v === "credits") renderCredits();
-  if (v === "packages") renderClients();
-  if (v === "models") renderModels();
-  if (v === "platforms") renderPlatforms();
-  if (v === "config") renderConfig();
-  if (v === "logs") renderLogs();
-  if (v === "taskscenter") { renderSchedule(); renderQC(); renderTaskBoard(); reattachQueueView(); }
+}
+
+// loadViewData 是「这一页的数据怎么来」的唯一入口。go()（正常切页）和
+// atlasOpen()（从星图进页）都必须经过它——否则从地图点进一个懒加载的领域
+// （模型 / 日志 / 配置…）只会看到一张空页：舞台挂上了，数据从没请求过。
+function loadViewData(v) {
+  if (v === "routelive") { renderRouteLive(); rlStartPolling(); }
+  else if (v === "overview") renderOverview();
+  else if (v === "accounts") renderAccounts();
+  else if (v === "chat") renderChat();
+  else if (v === "usage") renderUsage();
+  else if (v === "alerts") renderAlerts();
+  else if (v === "credits") renderCredits();
+  else if (v === "packages") renderClients();
+  else if (v === "models") renderModels();
+  else if (v === "platforms") renderPlatforms();
+  else if (v === "config") renderConfig();
+  else if (v === "logs") renderLogs();
+  else if (v === "taskscenter") { renderSchedule(); renderQC(); renderTaskBoard(); reattachQueueView(); }
 }
 window.addEventListener("hashchange", () => go((location.hash || "#overview").slice(1)));
 
@@ -10820,7 +10827,8 @@ function atlasOpen(view, ox, oy) {
   if (hint) hint.hidden = true;
   SHELL.syncActive(view);
   host.querySelector(".atlas-panel-title").textContent = (TITLES[view] || view);
-  // 3D 舞台与进度条之类都按当前视图重算一次
+  // 先把这一页的数据装上（懒加载的领域必须经过这里），再挂页头与舞台。
+  loadViewData(view);
   mountMasthead(view);
   if (document.body.classList.contains("mode-3d")) mountBoard3d(view);
   revealView(view);
