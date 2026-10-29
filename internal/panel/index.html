@@ -11351,10 +11351,14 @@ function b3dInspect() {
   const box = host.querySelector(".b3d-inspect");
   if (!box) return;
   const it = B3D.sel >= 0 ? B3D.items[B3D.sel] : null;
-  if (!it || !it.ref) { box.hidden = true; box.innerHTML = ""; return; }
-  if (B3D.view === "models") { box.hidden = false; box.innerHTML = b3dModelInspectHTML(it); return; }
-  if (B3D.view !== "accounts") {
-    // 其余页面：有 facts 就摊开事实，没有就把面板收起（不留空壳）。
+  if (!it) { box.hidden = true; box.innerHTML = ""; return; }
+  // 判定顺序：先看这一页有没有专门的检视（账号 / 模型，需要原始对象），
+  // 再退到通用的事实面板。之前先要求 it.ref，让「只有 facts 没有 ref」的
+  // 页面在到达事实分支前就退出了——检视面板因此只在两页出现。
+  if (B3D.view === "models" && it.ref) { box.hidden = false; box.innerHTML = b3dModelInspectHTML(it); return; }
+  if (B3D.view === "accounts" && it.ref) {
+    // 账号的专门检视在下面（需要 caps / acts 等）。
+  } else {
     if (it.facts && it.facts.length) { box.hidden = false; box.innerHTML = b3dFactsHTML(it); return; }
     box.hidden = true; box.innerHTML = "";
     return;
