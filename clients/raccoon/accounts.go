@@ -140,7 +140,7 @@ func (c *Client) ReviveAccount(ctx context.Context, id string) error {
 // TestAccount sends ONE minimum-size real completion to prove the credential
 // works, which is stronger than the old user-info read: it also proves the
 // account can actually answer.  A refusal is a RESULT, not an error.
-func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, error) {
+func (c *Client) TestAccountModel(ctx context.Context, id, wantModel string) (core.TestResult, error) {
 	e := c.pool.find(id)
 	if e == nil {
 		return core.TestResult{}, fmt.Errorf("raccoon: unknown account %q", id)
@@ -148,7 +148,10 @@ func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, e
 	ctx, cancel := withTimeout(ctx, probeTimeout)
 	defer cancel()
 	start := time.Now()
-	model := c.probeModelID()
+	model := strings.TrimSpace(wantModel)
+	if model == "" {
+		model = c.probeModelID()
+	}
 	reply, err := c.probeChat(ctx, e, model)
 	elapsed := time.Since(start).Milliseconds()
 	res := core.TestResult{AccountID: id, Model: model, ElapsedMS: elapsed}
@@ -161,6 +164,12 @@ func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, e
 	res.Reply = reply
 	c.pool.markProbeSuccess(e)
 	return res, nil
+}
+
+// TestAccount keeps the pre-model signature: it probes with the module's own
+// default model, which is what every caller before the model picker meant.
+func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, error) {
+	return c.TestAccountModel(ctx, id, "")
 }
 
 // probeModelID names the first catalogue model, which is the cheapest probe

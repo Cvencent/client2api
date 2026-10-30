@@ -171,7 +171,7 @@ func (c *Client) SetAccountEnabled(ctx context.Context, id string, enabled bool)
 //
 // An upstream refusal is a RESULT, not an error: TestResult.OK is false and
 // TestResult.Error carries the reason.  Only an unknown account id is an error.
-func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, error) {
+func (c *Client) TestAccountModel(ctx context.Context, id, wantModel string) (core.TestResult, error) {
 	started := time.Now()
 	res := core.TestResult{AccountID: id}
 	e := c.findEntry(id)
@@ -179,7 +179,10 @@ func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, e
 		return res, fmt.Errorf("codearts: no such account %q", id)
 	}
 	res.AccountID = e.id()
-	model := c.firstModel()
+	model := strings.TrimSpace(wantModel)
+	if model == "" {
+		model = c.firstModel()
+	}
 	if model == "" {
 		res.Error = "no model is known yet, so the credential could not be exercised"
 		res.ElapsedMS = time.Since(started).Milliseconds()
@@ -249,6 +252,12 @@ func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, e
 		res.Error = "the model accepted the credential but produced no output"
 	}
 	return res, nil
+}
+
+// TestAccount keeps the pre-model signature: it probes with the module's own
+// default model, which is what every caller before the model picker meant.
+func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, error) {
+	return c.TestAccountModel(ctx, id, "")
 }
 
 // truncateReply caps what the panel shows.

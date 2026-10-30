@@ -222,7 +222,7 @@ func (c *Client) ReviveAccount(ctx context.Context, id string) error {
 // answer is reported as failed.  A refusal is a result, not an error: the panel
 // needs to show *why* a credential is no good, and only an unknown id is a
 // programming mistake.
-func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, error) {
+func (c *Client) TestAccountModel(ctx context.Context, id, wantModel string) (core.TestResult, error) {
 	e := c.pool.find(id)
 	if e == nil {
 		return core.TestResult{}, fmt.Errorf("account %q not found", id)
@@ -237,7 +237,10 @@ func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, e
 	acct := c.pool.accountOf(e)
 	res := core.TestResult{AccountID: acct.id()}
 
-	model := c.firstModelID()
+	model := strings.TrimSpace(wantModel)
+	if model == "" {
+		model = c.firstModelID()
+	}
 	reply, err := c.probeChat(ctx, acct, model)
 	res.ElapsedMS = time.Since(started).Milliseconds()
 	if err != nil {
@@ -253,6 +256,12 @@ func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, e
 	res.Model = model
 	res.Reply = reply
 	return res, nil
+}
+
+// TestAccount keeps the pre-model signature: it probes with the module's own
+// default model, which is what every caller before the model picker meant.
+func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, error) {
+	return c.TestAccountModel(ctx, id, "")
 }
 
 // probeChat sends one minimum-size real completion through the given account

@@ -659,7 +659,7 @@ func (c *Client) SetAccountEnabled(ctx context.Context, id string, enabled bool)
 // A dead sidecar is a RESULT, not a Go error: the panel is asking "is this
 // endpoint usable", and "no, nothing is listening" is a valid answer.  Only an
 // unknown id is a Go error.
-func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, error) {
+func (c *Client) TestAccountModel(ctx context.Context, id, wantModel string) (core.TestResult, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -681,7 +681,10 @@ func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, e
 		return res, nil
 	}
 
-	model := c.testModel()
+	model := strings.TrimSpace(wantModel)
+	if model == "" {
+		model = c.testModel()
+	}
 	if model == "" {
 		res.Error = "no model id is known, so the endpoint could not be exercised"
 		res.ElapsedMS = time.Since(start).Milliseconds()
@@ -724,6 +727,12 @@ func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, e
 	}
 	res.ElapsedMS = time.Since(start).Milliseconds()
 	return res, nil
+}
+
+// TestAccount keeps the pre-model signature: it probes with the module's own
+// default model, which is what every caller before the model picker meant.
+func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, error) {
+	return c.TestAccountModel(ctx, id, "")
 }
 
 // RefreshAccount re-probes.  tabbit has no renewable credential, so "refresh"

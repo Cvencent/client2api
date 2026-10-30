@@ -278,7 +278,7 @@ func (c *Client) SetAccountEnabled(ctx context.Context, id string, enabled bool)
 //
 // Every outcome other than "no such account" is the answer the operator asked
 // for, so it goes into the result rather than into a Go error.
-func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, error) {
+func (c *Client) TestAccountModel(ctx context.Context, id, wantModel string) (core.TestResult, error) {
 	c.ensure()
 	start := c.now()
 	finish := func(r core.TestResult) core.TestResult {
@@ -308,7 +308,10 @@ func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, e
 		return finish(core.TestResult{OK: false, Error: firstNonEmpty(acct.InferenceError, "no Zen inference credential")}), nil
 	}
 
-	model := c.probeModel(acct)
+	model := strings.TrimSpace(wantModel)
+	if model == "" {
+		model = c.probeModel(acct)
+	}
 	if acct.authMode() == "oauth" && len(acct.AllowedModels) > 0 &&
 		!containsString(acct.AllowedModels, model) {
 		model = acct.AllowedModels[0]
@@ -378,6 +381,12 @@ func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, e
 		Model: model,
 		Reply: truncate(reply, 200),
 	}), nil
+}
+
+// TestAccount keeps the pre-model signature: it probes with the module's own
+// default model, which is what every caller before the model picker meant.
+func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, error) {
+	return c.TestAccountModel(ctx, id, "")
 }
 
 // RefreshAccount re-imports the credential sources.

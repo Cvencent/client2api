@@ -977,7 +977,17 @@ func (p *panel) testAccount(w http.ResponseWriter, r *http.Request, c core.Clien
 
 	ctx, cancel := p.ctx(r, 120*time.Second)
 	defer cancel()
-	res, err := am.TestAccount(ctx, id)
+	// body.Model 是操作员在面板上选的模型。只有实现了 ModelTester 的模块才
+	// 认这个参数；其余模块（探测固定模型、或根本不发对话）退回原来的行为，
+	// 而不是把「你选的模型」悄悄换成它自己的默认模型后仍然报成功。
+	want := strings.TrimSpace(body.Model)
+	var res core.TestResult
+	var err error
+	if mt, ok := c.(core.ModelTester); ok && want != "" {
+		res, err = mt.TestAccountModel(ctx, id, want)
+	} else {
+		res, err = am.TestAccount(ctx, id)
+	}
 	if err != nil {
 		// A probe that could not even be attempted (no such account, no
 		// model to try) is an error; a probe that ran and failed is a 200

@@ -143,7 +143,7 @@ func (c *Client) SetAccountEnabled(ctx context.Context, id string, enabled bool)
 //
 // A refusal is a RESULT, not an error: the panel has to show *why* a key is no
 // good, and only an unknown id is a programming mistake.
-func (c *Client) TestAccount(ctx context.Context, id string) (res core.TestResult, err error) {
+func (c *Client) TestAccountModel(ctx context.Context, id, wantModel string) (res core.TestResult, err error) {
 	c.ensure()
 	rec, ok := c.pool.byID(id)
 	if !ok {
@@ -157,7 +157,10 @@ func (c *Client) TestAccount(ctx context.Context, id string) (res core.TestResul
 		res.Error = "this account has no API key"
 		return res, nil
 	}
-	model := c.probeModel()
+	model := strings.TrimSpace(wantModel)
+	if model == "" {
+		model = c.probeModel()
+	}
 	res.Model = model
 	body, err := json.Marshal(oaiChatRequest{
 		Model:  model,
@@ -190,6 +193,12 @@ func (c *Client) TestAccount(ctx context.Context, id string) (res core.TestResul
 	}
 	res.OK = true
 	return res, nil
+}
+
+// TestAccount keeps the pre-model signature: it probes with the module's own
+// default model, which is what every caller before the model picker meant.
+func (c *Client) TestAccount(ctx context.Context, id string) (res core.TestResult, err error) {
+	return c.TestAccountModel(ctx, id, "")
 }
 
 // RefreshAccount re-validates a credential against `GET /key`.

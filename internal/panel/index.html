@@ -575,6 +575,27 @@ body.mode-3d .board3d { display: block; }
 .acct-card .ac-row .k { color: var(--ink-3); }
 .acct-card .ac-row b { font: 600 12px var(--mono); font-variant-numeric: tabular-nums; }
 .acct-card .ac-foot { display: flex; gap: 6px; margin-top: 12px; flex-wrap: wrap; }
+/* 「测试」+ 模型下拉：两个控件拼成一个整体，中间一条竖分隔线。
+   表格的操作列只有 22.5% 宽，所以下拉本身很窄（只显示模型名的后半段），
+   title 里有完整名字。 */
+.test-split { display: inline-flex; align-items: stretch; min-width: 0; }
+.test-split > button { border-top-right-radius: 0; border-bottom-right-radius: 0; border-right: 0; }
+.test-split > select {
+  max-width: 104px; min-width: 54px; padding: 0 4px;
+  border-top-left-radius: 0; border-bottom-left-radius: 0;
+  font-size: 10.5px; color: var(--ink-2); background: var(--surface-2);
+  text-overflow: ellipsis;
+}
+.test-split > select:hover { color: var(--ink); border-color: color-mix(in srgb, var(--accent) 36%, var(--line)); }
+/* 表格的操作列只有 ~22.5% 宽，横排「按钮+下拉」两个控件都放不下（下拉只剩
+   一个「默」字）。竖排：上面是模型下拉（撑满整行、能看清模型名），下面是
+   「测试」按钮。视觉上仍是一个整体，读起来也是「选模型 → 测」。 */
+#view-accounts table.acc .test-split { display: flex; flex-direction: column; width: 100%; gap: 3px; }
+#view-accounts table.acc .test-split > button { width: 100%; padding: 3px 4px; border-radius: 7px; border-right: 1px solid var(--line); order: 2; }
+#view-accounts table.acc .test-split > select {
+  width: 100%; max-width: none; min-width: 0; padding: 2px 3px; font-size: 10px;
+  border-radius: 7px; order: 1;
+}
 /* 就地展开的详情：从 0 高度展开到自适应高度。grid-template-rows 0fr→1fr 是
    现在唯一不需要固定高度、也不需要 JS 量高度的展开动画。 */
 .acct-card .ac-detail { overflow: hidden; }
@@ -6047,6 +6068,8 @@ html:not([data-theme="light"]) body::after {
   grid-template-columns: repeat(2, minmax(46px, 1fr));
   gap: 4px;
 }
+/* 「测试 + 模型」占满整行两列：塞进 46px 一格里，下拉会窄到看不清模型名。 */
+#view-accounts table.acc .c-acts .actwrap > .test-split { grid-column: 1 / -1; }
 #view-accounts table.acc .c-acts button {
   width: 100%; text-overflow: clip; white-space: nowrap; padding: 3px 4px;
 }
@@ -12885,13 +12908,29 @@ function setAccMode(m) {
   $$("#acctModeToggle button").forEach(b => b.classList.toggle("on", b.dataset.acctMode === mode));
 }
 
+// testButton 渲染账号行的「测试」动作。实现了 ModelTester 的模块（caps.test_model）
+// 给一个可选模型的下拉：默认档是「默认模型」，选了具体模型就按那个模型探测——
+// 「这个账号能不能跑这个模型」和「这个账号还活着吗」是两个问题，以前只能问后者。
+// 其余模块保持一个普通按钮，因为它们的探测模型是写死的，给个选择框只会骗人。
+function testButton(a, caps) {
+  const base = '<button class="xs" data-do="test" data-id="' + esc(a.id) + '"';
+  if (!caps || !caps.test_model) return base + ' title="用该客户端自己的默认模型发一次最小请求">测试</button>';
+  const list = (MODEL_CATALOG[CUR] || []).slice(0, 400);
+  if (!list.length) return base + ' title="用该客户端自己的默认模型发一次真实请求">测试</button>';
+  const opts = ['<option value="">默认模型</option>'].concat(
+    list.map(m => '<option value="' + esc(m) + '">' + esc(modelDisplayName(CUR, m)) + "</option>"));
+  return '<span class="test-split">' + base + ' title="按选中的模型发一次最小请求">测试</button>' +
+    '<select class="test-model" data-test-for="' + esc(a.id) + '" title="选择用哪个模型验证这个账号；选「默认模型」等于以前的行为" aria-label="测试使用的模型">' +
+    opts.join("") + "</select></span>";
+}
+
 // acctCardActs 是板卡页脚的动作链。它和表格行共用 data-do，所以点击委托
 // （accPaneClick）一份逻辑两边都认；按钮文案也和表格那一行一致。
 function acctCardActs(a, caps, acts) {
   const out = [];
   out.push('<button class="xs" data-do="note" data-id="' + esc(a.id) + '" title="记录这个账号登录用的手机号或邮箱，用来辨认账号和重登">' + (a.operator_note ? "标识 ✓" : "标识") + "</button>");
   if (caps.manage) {
-    out.push('<button class="xs" data-do="test" data-id="' + esc(a.id) + '">测试</button>');
+    out.push(testButton(a, caps));
     out.push(accToggleButton(a, caps));
     out.push('<button class="xs danger" data-do="del" data-id="' + esc(a.id) + '">删除</button>');
   }
@@ -12928,6 +12967,21 @@ function acctDetailHTML(g, a, caps, acts, showBal, prio) {
     slider +
     '<div class="ac-foot wide">' + acctCardActs(a, caps, acts) + "</div>" +
     "</div>";
+}
+
+// ensureTestModels 保证「当前客户端的模型目录」已经拿到（供测试下拉使用）。
+// 只在缺少目录、且这个模块确实支持选模型时才发请求；失败静默，下次渲染再试。
+let TEST_MODELS_ASKED = {};
+function ensureTestModels() {
+  const caps = capsOf(CUR) || {};
+  if (!caps.test_model) return;
+  if ((MODEL_CATALOG[CUR] || []).length) return;
+  if (TEST_MODELS_ASKED[CUR]) return;
+  TEST_MODELS_ASKED[CUR] = true;
+  refreshModelCatalog(true).then(ok => {
+    if (!ok) { TEST_MODELS_ASKED[CUR] = false; return; }
+    if (VIEW === "accounts" && CUR) renderAccounts();
+  }).catch(() => { TEST_MODELS_ASKED[CUR] = false; });
 }
 
 function renderAcctBoard(pageRows, caps, acts, showBal) {
@@ -13042,6 +13096,10 @@ function statusWord(k) {
 }
 
 function renderAccounts() {
+  // 支持「选模型测试」的模块需要一个模型清单来填下拉。目录是异步的，第一次
+  // 进账号页时它通常还没到——这里拉一次，到了再重绘。「还没到」时按钮退回普通
+  // 的「测试」，所以即使模型接口挂了，这一页也照常可用。
+  ensureTestModels();
   renderChips(); renderStats();
   renderTranscriptionCallInfo();
   const tb = $("#accBody");
@@ -13442,7 +13500,7 @@ function accRowHTML(a, caps, acts, showBal, chan, open, groupKey, group) {
   // 「状态说明」列划清界限——两者混淆过一次，见那列的 title。
   btns.push('<button class="xs" data-do="note" data-id="' + esc(a.id) + '" title="记录这个账号登录用的手机号或邮箱，用来辨认账号和重登；它不是右边的状态说明列">' + (a.operator_note ? "标识 ✓" : "标识") + '</button>');
   if (caps.manage) {
-    btns.push('<button class="xs" data-do="test" data-id="' + esc(a.id) + '">测试</button>');
+    btns.push(testButton(a, caps));
     btns.push(accToggleButton(a, caps));
     if (caps.invite_codes) btns.push('<button class="xs" data-do="invite" data-id="' + esc(a.id) + '" title="绑定邀请码，或输入兑换码领取积分">邀请码</button>');
     // 删除是这一行唯一不可逆的动作，给它 danger 色：不用仔细读字就知道它和
@@ -14225,9 +14283,19 @@ async function act(btn) {
     let r;
     if (doIt === "test") {
       btn.textContent = "测试中…";
-      r = await api(cbase(n) + "/accounts/" + aid(id) + "/test", { method: "POST" });
-      if (r.ok) toast(n + "/" + id + (r.data.result.ok ? " 测试通过" : " 测试失败：" + (r.data.result.error || "")), r.data.result.ok ? "" : "err");
-      else toast("测试失败：" + r.err, "err");
+      // 同一行旁边的下拉（如果这个模块支持选模型）决定用哪个模型探测。
+      // 空值 = 模块自己的默认模型，等于这个功能出现之前的行为。
+      const sel = btn.parentElement && btn.parentElement.querySelector("select.test-model");
+      const model = sel ? String(sel.value || "") : "";
+      const body = model ? { model } : undefined;
+      r = await api(cbase(n) + "/accounts/" + aid(id) + "/test", { method: "POST", body });
+      if (r.ok) {
+        const res = r.data.result || {};
+        // 报出「用哪个模型测的」：操作员是选了模型才点这一下的，结果里必须
+        // 回显那个模型，否则无法判断测的是不是他问的那件事。
+        const used = res.model ? "（" + res.model + "）" : "";
+        toast(n + "/" + id + used + (res.ok ? " 测试通过" : " 测试失败：" + (res.error || "")), res.ok ? "" : "err");
+      } else toast("测试失败：" + r.err, "err");
     } else if (doIt === "toggle") {
       r = await api(cbase(n) + "/accounts/" + aid(id) + "/enabled", { method: "POST", body: { enabled: btn.dataset.on !== "1" } });
       if (!r.ok) toast("切换失败：" + r.err, "err");

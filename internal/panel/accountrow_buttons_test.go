@@ -100,16 +100,23 @@ func TestAccRowWiringCatchesTheOldTwoButtonLayout(t *testing.T) {
 // TestAccountRowOwnButtonsAreChinese 钉住面板自己写的行内按钮文案。签到按钮走
 // 翻译层，由 TestAccountRowButtonsWiring 验。
 func TestAccountRowOwnButtonsAreChinese(t *testing.T) {
-	row := poolStatsFuncBody(t, poolStatsUISource(t), "accRowHTML")
+	src := poolStatsUISource(t)
+	row := poolStatsFuncBody(t, src, "accRowHTML")
 
 	// data-do -> 该行按钮上必须出现的中文标签（逐字出现在渲染代码里）。
 	//
 	// note 按钮从「账号标识」缩成「标识」：操作列只有 22.5% 宽，四字按钮在
 	// 1400px 视口下会被截成「账号…」（评审实测）。两个字的「标识」仍区分于
 	// 右边的「状态说明」列——那正是这条文案存在的原因，title 里也写明了。
+	// 「测试」按钮自 v0.5.15 起由 testButton() 渲染：模块支持选模型时它还会
+	// 带一个模型下拉，所以按钮本身的标记搬到了那个函数里。行内仍然必须是
+	// 这一处调用——把这两个断言分开，才既钉住「行里有测试按钮」又钉住
+	// 「按钮上有中文」。
+	if !strings.Contains(row, "testButton(a, caps)") {
+		t.Errorf("accRowHTML 没有调用 testButton 渲染测试按钮")
+	}
 	wants := []struct{ do, label string }{
 		{`data-do="note"`, "标识"},
-		{`data-do="test"`, "测试"},
 		{`data-do="del"`, "删除"},
 		{`data-do="relogin"`, "重登"},
 		{`data-do="balance"`, "余额"},
@@ -131,6 +138,15 @@ func TestAccountRowOwnButtonsAreChinese(t *testing.T) {
 		if !strings.Contains(rest[:end], `"`+w.label+`"`) && !strings.Contains(rest[:end], w.label) {
 			t.Errorf("%s 按钮上没有中文标签 %q，渲染代码：%s", w.do, w.label, rest[:end])
 		}
+	}
+	// testButton 本体：两种形态都得是中文「测试」，且支持选模型时要渲染
+	// select.test-model（否则操作员会以为能选、其实没有控件）。
+	tb := poolStatsFuncBody(t, src, "testButton")
+	if !strings.Contains(tb, ">测试</button>") {
+		t.Errorf("testButton 渲染的按钮上没有中文「测试」")
+	}
+	if !strings.Contains(tb, "test-model") {
+		t.Errorf("testButton 没有渲染模型下拉（select.test-model）")
 	}
 }
 

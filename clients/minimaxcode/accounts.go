@@ -519,14 +519,17 @@ func (c *Client) SetAccountEnabled(ctx context.Context, id string, enabled bool)
 }
 
 // TestAccount probes one credential against the live upstream.
-func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, error) {
+func (c *Client) TestAccountModel(ctx context.Context, id, wantModel string) (core.TestResult, error) {
 	id = strings.TrimSpace(id)
 	acct := c.pool.find(id)
 	if acct == nil {
 		return core.TestResult{}, fmt.Errorf("account %q is not held by this client", id)
 	}
 
-	model := c.firstModel()
+	model := strings.TrimSpace(wantModel)
+	if model == "" {
+		model = c.firstModel()
+	}
 	if model == "" {
 		return core.TestResult{}, errors.New("minimaxcode: no model is known, so there is nothing to probe with")
 	}
@@ -547,6 +550,12 @@ func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, e
 	}
 	c.pool.noteSuccess(acct.ID)
 	return result, nil
+}
+
+// TestAccount keeps the pre-model signature: it probes with the module's own
+// default model, which is what every caller before the model picker meant.
+func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, error) {
+	return c.TestAccountModel(ctx, id, "")
 }
 
 // RefreshAccount renews one credential, or every refreshable credential when id

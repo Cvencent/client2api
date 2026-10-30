@@ -1021,7 +1021,7 @@ func (c *Client) BackgroundProbeDue(_ context.Context, id string) bool {
 
 // TestAccount sends one minimum-size real chat completion through the account
 // under test, so only an account that can actually answer is reported as OK.
-func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, error) {
+func (c *Client) TestAccountModel(ctx context.Context, id, wantModel string) (core.TestResult, error) {
 	acc, ok := c.store.lookup(id)
 	if !ok {
 		return core.TestResult{}, fmt.Errorf("loomy: no account %q", id)
@@ -1031,7 +1031,10 @@ func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, e
 	defer cancel()
 
 	start := time.Now()
-	model := probeModel(c.cachedOrFallback())
+	model := strings.TrimSpace(wantModel)
+	if model == "" {
+		model = probeModel(c.cachedOrFallback())
+	}
 	reply, err := c.probeChat(probeCtx, acc, model)
 	elapsed := time.Since(start).Milliseconds()
 
@@ -1050,6 +1053,12 @@ func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, e
 	result.Reply = reply
 	c.store.resetAfterProbe(id, time.Now().UTC())
 	return result, nil
+}
+
+// TestAccount keeps the pre-model signature: it probes with the module's own
+// default model, which is what every caller before the model picker meant.
+func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, error) {
+	return c.TestAccountModel(ctx, id, "")
 }
 
 // probeModel names the first catalogue model, which is the cheapest probe

@@ -238,17 +238,23 @@ const (
 // Capabilities tells the panel what a module can be asked to do.  It is built
 // by CapabilitiesOf, so the panel never inspects concrete types.
 type Capabilities struct {
-	CustomSource bool            `json:"custom_source,omitempty"`
-	Manage       bool            `json:"manage"`         // AccountManager
-	ModelPolicy  bool            `json:"model_policy"`   // AccountModelPolicyManager
-	Import       bool            `json:"import"`         // CredentialImporter
-	Login        bool            `json:"login"`          // LoginProvider
-	LoginProxy   bool            `json:"login_proxy"`    // ProxyLoginProvider
-	Checkin      bool            `json:"checkin"`        // CheckinProvider
-	Refresh      bool            `json:"refresh_models"` // ModelRefresher
-	Tasks        bool            `json:"tasks"`          // TaskProvider
-	Fields       []FieldSpec     `json:"fields,omitempty"`
-	Actions      []CheckinAction `json:"actions,omitempty"`
+	CustomSource bool `json:"custom_source,omitempty"`
+	Manage       bool `json:"manage"` // AccountManager
+	// TestModel says the module implements ModelTester, so a probe can be run
+	// against a model the operator picks.  The panel turns the 「测试」 button
+	// into a picker only when this is set — for every other module the model
+	// is whatever the module itself chose, and offering a picker there would
+	// promise a choice it cannot honour.
+	TestModel   bool            `json:"test_model,omitempty"`
+	ModelPolicy bool            `json:"model_policy"`   // AccountModelPolicyManager
+	Import      bool            `json:"import"`         // CredentialImporter
+	Login       bool            `json:"login"`          // LoginProvider
+	LoginProxy  bool            `json:"login_proxy"`    // ProxyLoginProvider
+	Checkin     bool            `json:"checkin"`        // CheckinProvider
+	Refresh     bool            `json:"refresh_models"` // ModelRefresher
+	Tasks       bool            `json:"tasks"`          // TaskProvider
+	Fields      []FieldSpec     `json:"fields,omitempty"`
+	Actions     []CheckinAction `json:"actions,omitempty"`
 
 	// CheckinReady is the narrow half of Checkin: at least one action is on
 	// offer for an account row right now.  Every other flag in this block is a
@@ -395,12 +401,36 @@ type AccountManager interface {
 	RemoveAccount(ctx context.Context, id string) error
 	// SetAccountEnabled toggles one credential without deleting it.
 	SetAccountEnabled(ctx context.Context, id string, enabled bool) error
-	// TestAccount probes one credential against the live upstream.
+	// TestAccount probes one credential against the live upstream with the
+	// module's own default probe model.  Kept as the plain form so nothing that
+	// already calls it has to change; see ModelTester for the operator-chosen
+	// variant.
 	TestAccount(ctx context.Context, id string) (TestResult, error)
 	// RefreshAccount renews one credential, or every credential when id is
 	// empty.  It reports per-account outcomes and only fails wholesale when
 	// the request itself is malformed.
 	RefreshAccount(ctx context.Context, id string) ([]RefreshResult, error)
+}
+
+// ModelTester is the optional half of AccountManager that can probe with a
+// model the operator picked in the panel, instead of the module's own default.
+//
+// It is a separate interface on purpose.  A module that probes with a fixed
+// model (a browser-session vendor whose only endpoint is "chat with whatever
+// the plan allows") cannot honour a caller-chosen model, and forcing the
+// parameter into AccountManager would either break it or invite it to pretend
+// it tried something it did not.  A module that CAN honour it implements this
+// interface and gets the model picker in the panel; one that cannot simply
+// does not, and the panel keeps the single 「测试」 button.
+type ModelTester interface {
+	Client
+	// TestAccountModel probes one credential against the named model.  An empty
+	// model means "the module's default", so this is safe to call with "".
+	//
+	// A model the account cannot serve is a normal failed TestResult, not an
+	// error: the operator asked a concrete question and "no, not for that one"
+	// is the answer.  Only "there is no such account" deserves an error.
+	TestAccountModel(ctx context.Context, id, model string) (TestResult, error)
 }
 
 // AccountModelPolicyManager lets a module apply an operator's per-account model
@@ -680,6 +710,9 @@ func CapabilitiesOf(ctx context.Context, c Client) Capabilities {
 	}
 	if _, ok := c.(AccountModelPolicyManager); ok {
 		caps.ModelPolicy = true
+	}
+	if _, ok := c.(ModelTester); ok {
+		caps.TestModel = true
 	}
 	if _, ok := c.(CredentialImporter); ok {
 		caps.Import = true

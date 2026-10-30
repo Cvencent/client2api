@@ -869,7 +869,7 @@ func (c *Client) ReviveAccount(ctx context.Context, id string) error {
 // TestResult{OK:false, Error:...} with a nil error.  Only an unknown account id
 // is a real error.  Note that a probe which the upstream rejects as invalid
 // moves the account into the invalid state, exactly as a real request would.
-func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, error) {
+func (c *Client) TestAccountModel(ctx context.Context, id, wantModel string) (core.TestResult, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return core.TestResult{}, errors.New("account id is required")
@@ -878,7 +878,10 @@ func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, e
 	if acct == nil {
 		return core.TestResult{}, fmt.Errorf("no account with id %q", id)
 	}
-	model := c.testModel()
+	model := strings.TrimSpace(wantModel)
+	if model == "" {
+		model = c.testModel()
+	}
 	if model == "" {
 		return core.TestResult{}, errors.New("no model is configured to test with")
 	}
@@ -911,6 +914,12 @@ func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, e
 		a.CooldownUntil = time.Time{}
 	})
 	return res, nil
+}
+
+// TestAccount keeps the pre-model signature: it probes with the module's own
+// default model, which is what every caller before the model picker meant.
+func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, error) {
+	return c.TestAccountModel(ctx, id, "")
 }
 
 func (c *Client) testModel() string {

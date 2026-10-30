@@ -666,13 +666,16 @@ func (c *Client) ReviveAccount(ctx context.Context, id string) error {
 // An upstream rejection is a RESULT (OK false plus the vendor's message), not a
 // Go error: the panel is asking "does this credential work", and "no, because
 // the plan expired" is a valid answer.  Only an unknown id is a Go error.
-func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, error) {
+func (c *Client) TestAccountModel(ctx context.Context, id, wantModel string) (core.TestResult, error) {
 	a := c.findAuth(id)
 	if a == nil {
 		return core.TestResult{}, fmt.Errorf("account %q not found or not enabled", id)
 	}
 
-	model := c.cfg.defaultModel()
+	model := strings.TrimSpace(wantModel)
+	if model == "" {
+		model = c.cfg.defaultModel()
+	}
 	maxTok := 16
 	req := &core.ChatRequest{
 		Model:     model,
@@ -713,6 +716,12 @@ func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, e
 
 	res.ElapsedMS = time.Since(start).Milliseconds()
 	return res, nil
+}
+
+// TestAccount keeps the pre-model signature: it probes with the module's own
+// default model, which is what every caller before the model picker meant.
+func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, error) {
+	return c.TestAccountModel(ctx, id, "")
 }
 
 // RefreshAccount renews one credential, or every credential when id is empty.
