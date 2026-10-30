@@ -418,6 +418,72 @@ body.mode-lists .board3d { display: none; }
 body.mode-3d .board3d { display: block; }
 @media (max-width: 760px) { .board3d { margin: 0 12px 12px; } }
 
+/* ══ 动效增强层 CSS（v0.5.13）══════════════════════════════════════════
+   与 _fx_motion.js 配套。全部只做变换/透明度，不动布局尺寸；prefers-reduced-motion
+   下由最上层的全局规则统一关掉。 */
+
+/* ① 级联进场：卡片/面板按 --i 次序上浮 + 轻微放大 + 稍微解糊。
+   比原来「统一 6px 淡入」更有层次：眼睛会顺着次序扫过去。 */
+.fx-in { animation: fxInUp 480ms cubic-bezier(.16, 1, .3, 1) both; animation-delay: calc(min(var(--i, 0), 20) * 42ms); }
+@keyframes fxInUp {
+  from { opacity: 0; transform: translateY(14px) scale(.988); filter: blur(3px); }
+  60%  { filter: blur(0); }
+  to   { opacity: 1; transform: none; filter: none; }
+}
+
+/* ② 滚动显现：只在进入视口时演一次（.fx-in 由 IntersectionObserver 加上） */
+.fx-lazy { opacity: 0; transform: translateY(16px); }
+.fx-lazy.fx-in { opacity: 1; transform: none; }
+@media (prefers-reduced-motion: reduce) { .fx-lazy { opacity: 1; transform: none; } }
+
+/* ③ 进度条/占比条生长 */
+@keyframes fxGrow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+
+/* ④ 点击波纹：从指针处扩散的一圈柔光，20 次/秒也不会掉帧 */
+.fx-ripple {
+  position: absolute; border-radius: 50%; pointer-events: none; z-index: 5;
+  background: radial-gradient(circle, color-mix(in srgb, var(--accent) 46%, transparent), transparent 68%);
+  opacity: .55; transform: scale(.12);
+  animation: fxRipple 580ms cubic-bezier(.16, 1, .3, 1) forwards;
+}
+@keyframes fxRipple {
+  to { opacity: 0; transform: scale(1); }
+}
+
+/* ⑤ 「刚变了」脉冲：读数/状态更新时闪一下边框 */
+.fx-pulse { animation: fxPulse 860ms cubic-bezier(.16, 1, .3, 1); }
+@keyframes fxPulse {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent); }
+  40%  { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+/* ⑥ 卡片悬停：抬升 + 边框点亮 + 背后柔光。只对可点击的卡片生效，
+   表格行不参与（transform 会破坏 sticky 表头）。 */
+.acct-card, .pk-card, .ov-kpi, .berth, .uscard, .rl-node { position: relative; }
+.acct-card::after, .pk-card::after, .ov-kpi::after, .berth::after, .uscard::after, .rl-node::after {
+  content: ""; position: absolute; inset: -1px; border-radius: inherit; pointer-events: none;
+  background: radial-gradient(320px circle at var(--mx, 50%) var(--my, 0%),
+    color-mix(in srgb, var(--accent) 16%, transparent), transparent 62%);
+  opacity: 0; transition: opacity .22s var(--ease-out);
+}
+.acct-card:hover::after, .pk-card:hover::after, .ov-kpi:hover::after,
+.berth:hover::after, .uscard:hover::after, .rl-node:hover::after { opacity: 1; }
+
+/* ⑦ 读数变化：数字本身用 font-variant 保证不跳宽，滚动时不会左右抖 */
+.acct-card .ac-metric b, .ov-kpi b, .pk-card .big, .uscard b { font-variant-numeric: tabular-nums; }
+
+/* ⑧ 表头/分区标题的下划线从左扫入 */
+.sect > h2::after, .box > header h3::after { transform-origin: left; animation: fxRule 560ms cubic-bezier(.16,1,.3,1) both; }
+@keyframes fxRule { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+
+/* ⑨ 骨架屏（数据还没到时）轻微流光 */
+@keyframes fxShimmer { from { background-position: -180% 0; } to { background-position: 180% 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .fx-in, .fx-ripple, .fx-pulse, .sect > h2::after, .box > header h3::after { animation: none !important; }
+  .acct-card::after, .pk-card::after, .ov-kpi::after, .berth::after, .uscard::after, .rl-node::after { display: none; }
+}
 /* ④ 卡片 3D 倾斜 + 眩光（React Bits Tilt/Glare 手法）：鼠标在卡片上时，
    卡片朝光标方向轻微倾斜，同时一道高光扫过。用 JS 写 --tx/--ty/--gx 三个
    自定义属性，CSS 负责变换。reduced-motion 下整段关掉。 */
@@ -437,10 +503,46 @@ body.mode-3d .board3d { display: block; }
 }
 
 /* ⑥ 账号池卡片墙：默认视图。表格退成可选（.acc-table 模式）。 */
+/* 卡片墙 + 常驻概况栏。筛选到只剩一两张卡时，右栏仍然是有内容的——
+   上一版这种情况下右边是一整片黑。 */
+.acct-split { display: grid; grid-template-columns: minmax(0, 1fr) 268px; align-items: start; }
+@media (max-width: 1180px) { .acct-split { grid-template-columns: minmax(0, 1fr); } .acct-side { display: none; } }
 .acct-board {
   display: grid; gap: 12px; padding: 4px 18px 18px;
   grid-template-columns: repeat(auto-fill, minmax(268px, 1fr));
 }
+/* 概况栏：一组紧凑读数 + 一条按状态堆叠的比例带 + 每个平台的可用/总数。
+   它读的是「全池」而不是当前筛选——筛选只影响左栏的卡片。 */
+.acct-side {
+  position: sticky; top: 12px;
+  margin: 4px 18px 18px 0;
+  border: 1px solid var(--line-soft); border-radius: 13px;
+  padding: 14px 15px 12px;
+  background: color-mix(in srgb, var(--surface-2) 40%, transparent);
+}
+.as-h { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; }
+.as-h b { font-size: 12.5px; font-weight: 640; letter-spacing: -.01em; }
+.as-h span { font: 500 10.5px/1 var(--mono); color: var(--ink-3); margin-left: auto; }
+.as-big { display: flex; align-items: baseline; gap: 6px; margin-bottom: 8px; }
+.as-big b { font: 700 30px/1 var(--mono); letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
+.as-big span { font-size: 11.5px; color: var(--ink-3); }
+.as-strip { display: flex; height: 8px; border-radius: 4px; overflow: hidden; gap: 2px; margin-bottom: 10px; }
+.as-strip i { display: block; height: 100%; border-radius: 2px; transform-origin: left center; }
+.as-strip i.ok { background: var(--ok); }
+.as-strip i.warn { background: var(--warn); }
+.as-strip i.bad { background: var(--bad); }
+.as-strip i.idle { background: color-mix(in srgb, var(--ink-3) 45%, transparent); }
+.as-rows { display: grid; gap: 6px; }
+.as-row { display: grid; grid-template-columns: 74px minmax(0, 1fr) 34px; align-items: center; gap: 8px; font-size: 11.5px; }
+.as-row .nm { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.as-row .track { height: 4px; border-radius: 2px; background: var(--surface); overflow: hidden; }
+.as-row .track i { display: block; height: 100%; border-radius: 2px; background: var(--ok); transform-origin: left center; }
+.as-row .track i.warn { background: var(--warn); }
+.as-row .track i.bad { background: var(--bad); }
+.as-row .track i.idle { background: color-mix(in srgb, var(--ink-3) 45%, transparent); }
+.as-row .n { text-align: right; font: 600 11.5px/1 var(--mono); color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.as-foot { margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--line-soft);
+  font-size: 11px; color: var(--ink-3); }
 /* 卡片少的时候不要只剩左边一列、右边一整片黑：单张卡最多占半行宽，
    再多就按列铺。 */
 .acct-board:has(> .acct-card:only-child) { grid-template-columns: minmax(0, 520px); }
@@ -473,6 +575,15 @@ body.mode-3d .board3d { display: block; }
 .acct-card .ac-row .k { color: var(--ink-3); }
 .acct-card .ac-row b { font: 600 12px var(--mono); font-variant-numeric: tabular-nums; }
 .acct-card .ac-foot { display: flex; gap: 6px; margin-top: 12px; flex-wrap: wrap; }
+/* 就地展开的详情：从 0 高度展开到自适应高度。grid-template-rows 0fr→1fr 是
+   现在唯一不需要固定高度、也不需要 JS 量高度的展开动画。 */
+.acct-card .ac-detail { overflow: hidden; }
+.acct-card.open .ac-detail { animation: acDetail 320ms cubic-bezier(.16,1,.3,1) both; }
+@keyframes acDetail {
+  from { opacity: 0; transform: translateY(-6px); clip-path: inset(0 0 100% 0); }
+  to   { opacity: 1; transform: none; clip-path: inset(0 0 0 0); }
+}
+@media (prefers-reduced-motion: reduce) { .acct-card.open .ac-detail { animation: none; } }
 .acct-board-toggle { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
 .acct-board-toggle button { border: 0; border-radius: 0; background: transparent; padding: 4px 11px; font-size: 11.5px; color: var(--ink-3); }
 .acct-board-toggle button.on { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent-text); font-weight: 600; }
@@ -1170,6 +1281,12 @@ legend { font-size: 12px; color: var(--ink-3); font-weight: 600; padding-bottom:
      不依赖 transform-box，各家浏览器行为一致。144 根柱子逐根数其实没人看，
      扫光一次给的是「这张图刚画出来」的观感。 */
   .uschart-body .usreveal { display: block; animation: usbar .5s cubic-bezier(.2,.7,.3,1) both; }
+  /* 每根柱从底部错开长出来。用 clip-path 而不是 scaleY：SVG 里 scaleY 会连
+     <title>/命中区一起压，之前踩过。这里对单个 rect 用 y 位移 + 高度裁切。 */
+  .uschart-body .uscol rect.usbar { transform-origin: center bottom; animation: uscolIn 460ms cubic-bezier(.16,1,.3,1) both;
+    animation-delay: calc(min(var(--ci, 0), 24) * 22ms); }
+  @keyframes uscolIn { from { opacity: 0; transform: translateY(10px); } to { opacity: .82; transform: none; } }
+  @media (prefers-reduced-motion: reduce) { .uschart-body .uscol rect.usbar { animation: none; } }
   .uschart-body .usreveal > svg { display: block; width: 100%; height: auto; }
   @keyframes usbar { from { clip-path: inset(100% 0 0 0); } to { clip-path: inset(0 0 0 0); } }
   @media (prefers-reduced-motion: reduce) {
@@ -1227,8 +1344,9 @@ legend { font-size: 12px; color: var(--ink-3); font-weight: 600; padding-bottom:
     font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
   .pk-expiry-track { display: flex; align-items: stretch; gap: 2px; height: 9px;
     border-radius: 5px; background: var(--surface-2); overflow: hidden; }
-  .pk-expiry-seg { display: block; min-width: 3px; height: 100%; cursor: default;
+  .pk-expiry-seg { display: block; min-width: 2px; height: 100%; cursor: default;
     background: var(--seg-color, var(--accent)); transition: filter .15s, transform .15s; }
+  .pk-expiry-seg:hover { filter: brightness(1.18); }
   .pk-expiry-seg:hover { filter: brightness(1.12); transform: scaleY(1.35); }
   .pk-expiry-legend { display: flex; flex-wrap: wrap; gap: 5px 12px; margin-top: 8px;
     color: var(--ink-3); font-size: 11px; }
@@ -2804,7 +2922,8 @@ details.cfg summary:hover, details.adv summary:hover { color: var(--accent-text)
 }
 #pkExpiry .pk-expiry-hdr { padding: 0 8px; margin-bottom: 6px; font-weight: 600; letter-spacing: .01em; }
 #pkExpiry .pk-expiry-row {
-  min-height: 32px; padding: 0 8px; border-radius: 8px;
+  /* 左侧多留 8px 给紧迫度竖条（::before 落在 3px 处），右边仍是 8px。 */
+  min-height: 32px; padding: 0 8px 0 16px; border-radius: 8px;
   transition: background-color var(--dur-quick) var(--ease-smooth);
 }
 #pkExpiry .pk-expiry-row:hover { background: color-mix(in srgb, var(--surface) 72%, transparent); }
@@ -6053,6 +6172,22 @@ html:not([data-theme="light"]) body::after {
 .pc.on { color: var(--ink); background: var(--surface-2); }
 .pc.off { color: transparent; }
 .pc.off::before { content: ""; width: 3px; height: 3px; border-radius: 50%; background: var(--ink-3); opacity: .4; }
+/* 能力带的表头行：一次说明这 7 格是什么，之后每行只写单字缩写。
+   之前整页没有任何地方解释「第 4 个符号是接码还是签到」。 */
+.berth.b-head {
+  padding-top: 4px; padding-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+  background: transparent; pointer-events: none;
+}
+.berth.b-head:hover { background: transparent; }
+.berth.b-head .b-id b { font-size: 10.5px; font-weight: 600; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--ink-3); }
+/* 表头格子与数据行同一套尺寸（22×20），否则 7 个字和 7 个格子的位置对不上，
+   整列看着像错位的两排。 */
+.berth.b-head .pc { color: var(--ink-3); font: 600 10.5px/1 var(--mono); background: transparent; width: 22px; height: 20px; }
+.berth.b-head .b-count span, .berth.b-head .b-fields span { font-size: 10.5px; letter-spacing: .1em; }
+/* 开着的格子写单字，关着的一格仍是一枚静默的点——所以整行的「有几项」依然可数。 */
+.pc.on { font-size: 10.5px; letter-spacing: 0; }
 .b-count, .b-fields { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; }
 .b-count b { font: 650 17px/1 var(--mono); font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
 .b-count span, .b-fields span { font-size: 10px; color: var(--ink-3); letter-spacing: .08em; }
@@ -6211,15 +6346,38 @@ html:not([data-theme="light"]) body::after {
 /* 原来七条都是满饱和的强调蓝，只用透明度区分（剩余 1 天 25%、29 天 100%），
    结果一屏七条蓝杠，看不出哪条要紧。透明度不是可读的紧急度信号。
    改成三段语义色：3 天内红、7 天内黄、其余中性——颜色回到它该干的事上。 */
-.pk-expiry-track { height: 6px; border-radius: 3px; gap: 1.5px; }
+.pk-expiry-track { height: 6px; border-radius: 3px; gap: 1.5px; display: flex; }
+/* 槽 + 填充：槽是固定的整条背景，填充按「本档 / 最大档」的宽度画在里面，
+   再叠一条生长动画。上一版每行都填满，7 行看不出哪一档的积分更多。 */
+.pk-expiry-fill { display: flex; gap: 1.5px; min-width: 3px; height: 100%; border-radius: 3px;
+  overflow: hidden; transform-origin: left center;
+  animation: fxGrow 640ms cubic-bezier(.16,1,.3,1) both; }
+.pk-expiry-row:nth-child(2) .pk-expiry-fill { animation-delay: 60ms; }
+.pk-expiry-row:nth-child(3) .pk-expiry-fill { animation-delay: 110ms; }
+.pk-expiry-row:nth-child(4) .pk-expiry-fill { animation-delay: 160ms; }
+.pk-expiry-row:nth-child(5) .pk-expiry-fill { animation-delay: 210ms; }
+.pk-expiry-row:nth-child(6) .pk-expiry-fill { animation-delay: 260ms; }
+.pk-expiry-row:nth-child(7) .pk-expiry-fill { animation-delay: 310ms; }
+.pk-expiry-row:nth-child(n+8) .pk-expiry-fill { animation-delay: 360ms; }
 .pk-expiry-seg {
   /* 覆盖 JS 写进来的内联 opacity：那条曲线是为了「同一颜色的深浅」设计的，
      换成三段色之后它只会让红色也变半透明，反而更弱。 */
   opacity: 1 !important;
 }
-.pk-expiry-seg[data-urgent="soon"] { background: var(--bad) !important; }
-.pk-expiry-seg[data-urgent="week"] { background: var(--warn) !important; }
-.pk-expiry-seg[data-urgent="later"] { background: color-mix(in srgb, var(--ink-3) 55%, transparent) !important; }
+/* （段的底色由 --seg-color 决定，见下方注释） */
+/* 段颜色回到它该干的事上：一段 = 一个账号/来源，所以用账号色（--seg-color）。
+   紧迫度不再刷每段的底色——那会把「哪一档里有谁」这条信息整个抹掉——改成
+   行左侧一根竖条 + 数字着色。 */
+.pk-expiry-row { position: relative; }
+.pk-expiry-row::before {
+  content: ""; position: absolute; left: 3px; top: 6px; bottom: 6px; width: 3px;
+  border-radius: 2px; background: transparent;
+}
+.pk-expiry-row[data-urgent="soon"]::before { background: var(--bad); }
+.pk-expiry-row[data-urgent="week"]::before { background: var(--warn); }
+.pk-expiry-row[data-urgent="later"]::before { background: color-mix(in srgb, var(--ink-3) 40%, transparent); }
+.pk-expiry-row[data-urgent="soon"] > b { color: var(--bad); }
+.pk-expiry-row[data-urgent="week"] > b { color: var(--warn); }
 .pk-expiry-row > b { font-size: 12px; }
 .pk-expiry-row > span { font-size: 12px; }
 
@@ -6436,7 +6594,10 @@ html:not([data-theme="light"]) body::after {
             </div>
           </details>
         </header>
-        <div class="acct-board" id="acctBoard"></div>
+        <div class="acct-split">
+          <div class="acct-board" id="acctBoard"></div>
+          <aside class="acct-side" id="acctSide" aria-label="全池概况"></aside>
+        </div>
         <div class="tbl-wrap acc-table-wrap">
         <table class="acc">
           <colgroup>
@@ -8164,16 +8325,27 @@ function initPressFx() {
 // revealView 给新显示的视图做一次 stagger 淡入。只对 .box 与可见行做，
 // 上限 12 项避免长表把总时长拖到 1 秒以上。
 function revealView(view) {
+  // 保留给星图抽屉与直接调用方；级联编排本身由 fxCascade 负责（带 --i 变量，
+  // 数量上限更高、并且会在数据到位后再补一次）。
   if (motionReduce()) return;
   const host = document.getElementById("view-" + view);
   if (!host) return;
-  const items = [...host.querySelectorAll(".box, .ov-kpi, .ov-jump-item, .pk-card, .berth, .rl-node")].slice(0, 12);
-  items.forEach((el, i) => {
-    el.style.animation = "none";
-    void el.offsetWidth;  // 强制 reflow 让动画重播
-    el.style.animation = "fxIn 320ms cubic-bezier(.16,1,.3,1) both";
-    el.style.animationDelay = (i * 24) + "ms";
-  });
+  fxCascade(host);
+}
+
+// fxAfterData 在数据加载完后再编排一次：卡片是数据到了才生成的，切页那一刻
+// 容器还是空的——只编排一次的话，用户永远看不到卡片级联，只看到空壳淡入。
+function fxAfterData(view) {
+  const run = () => {
+    const host = document.getElementById("view-" + view);
+    if (!host || VIEW !== view) return;
+    fxCascade(host);
+    fxGrow(host);
+    fxScrollIn(host);
+  };
+  requestAnimationFrame(() => requestAnimationFrame(run));
+  setTimeout(run, 420);
+  setTimeout(run, 1100);
 }
 
 /* ── 动态背景粒子场（2D canvas）─────────────────────────────────────────
@@ -8520,6 +8692,29 @@ function sparkFrame() {
    鼠标在卡片上时按光标位置给一点透视旋转，同时把高光位置写进 --gx/--gy。
    只挂 .acct-card（新建元素，安全），不碰含表格的 .box——transform 会改变
    包含块，可能牵动表头的 sticky 行为，不值得为一点倾斜去冒险。 */
+// fxMagnet 把指针在卡片内的位置写进 --mx/--my，CSS 用它在卡片背后画一团
+// 跟随光标的柔光。只写自定义属性、不改 transform —— 表格里的卡片也能用，
+// 不会像 tilt 那样扰动 sticky 表头。
+function initMagnet() {
+  if (FXX.mag) return;
+  FXX.mag = true;
+  let raf = 0, last = null;
+  document.addEventListener("pointermove", ev => {
+    const card = ev.target && ev.target.closest
+      ? ev.target.closest(".acct-card, .pk-card, .ov-kpi, .berth, .uscard, .rl-node") : null;
+    last = card ? { card: card, x: ev.clientX, y: ev.clientY } : null;
+    if (!last || raf || motionReduce()) return;
+    raf = requestAnimationFrame(() => {
+      raf = 0;
+      if (!last) return;
+      const r = last.card.getBoundingClientRect();
+      if (!r.width || !r.height) return;
+      last.card.style.setProperty("--mx", ((last.x - r.left) / r.width * 100).toFixed(1) + "%");
+      last.card.style.setProperty("--my", ((last.y - r.top) / r.height * 100).toFixed(1) + "%");
+    });
+  }, { passive: true });
+}
+
 function initTilt() {
   if (MOTION_FX.tiltInit) return;
   MOTION_FX.tiltInit = true;
@@ -8560,7 +8755,7 @@ function initTilt() {
 // 现在只留一件事：把「点亮当前项」做成一个明确的入口。命令面板的按钮在页头
 // （#btnCmdk），快捷键 Ctrl+K 在文件末尾绑定，都不经过这里。
 const SHELL = {
-  init() { initPressFx(); initSpotlight(); initSpark(); initTilt(); },
+  init() { initPressFx(); initSpotlight(); initSpark(); initTilt(); initRipple(); initMagnet(); },
   // syncActive 是导航「选中」的唯一入口。所有导航项都带 data-view，
   // 所以这里不关心它们在哪个容器里——将来再挪位置也不用改它。
   syncActive(view) {
@@ -8580,8 +8775,11 @@ function go(v) {
   if (shown) {
     if (VIEW_ENTERED.has(v)) shown.classList.add("settle");
     else { VIEW_ENTERED.add(v); shown.classList.remove("settle"); }
-    // 进场 stagger：每次切页都给该页一次轻量的编排（24ms/项，上限 12 项）。
+    // 进场编排：级联上浮（42ms/项）+ 视口内生长条。上一版是统一 6px 淡入，
+    // 整页像「一起亮了一下」，读不出层次；现在眼睛会顺着次序扫过去。
     revealView(v);
+    fxCascade(shown);
+    fxAfterData(v);
     mountMasthead(v);
     // 3D 是默认呈现：进页就把这一页的数据立起来。
     if (document.body.classList.contains("mode-3d")) mountBoard3d(v);
@@ -8598,6 +8796,10 @@ function go(v) {
   // 路由实况是唯一会自己关掉轮询的视图：离开就停，回来再开。
   if (v !== "routelive") rlStopPolling();
   loadViewData(v);
+  // 数据是异步的：先给两个 tick，再给一次 500ms 的兜底（懒加载页还要等接口）。
+  Promise.resolve().then(() => afterViewData(v)).catch(() => {});
+  setTimeout(() => { if (VIEW === v) afterViewData(v); }, 520);
+  setTimeout(() => { if (VIEW === v) afterViewData(v); }, 1400);
   if (v) setTimeout(markScrollableTables, 0);
 }
 
@@ -8622,6 +8824,18 @@ window.addEventListener("resize", () => { fitChatHeight(); }, { passive: true })
 // loadViewData 是「这一页的数据怎么来」的唯一入口。go()（正常切页）和
 // atlasOpen()（从星图进页）都必须经过它——否则从地图点进一个懒加载的领域
 // （模型 / 日志 / 配置…）只会看到一张空页：舞台挂上了，数据从没请求过。
+// loadViewData 之后补一次「数据变了就重建 3D 舞台」。go() 是先挂舞台、再拉数据的，
+// 所以舞台建起来那一刻，logs / models / config 这些懒加载页的数据还是空的——
+// 卡片于是写着「本轮无日志」「0 个」。这里在数据到位后重建一次。
+function afterViewData(v) {
+  if (!document.body.classList.contains("mode-3d")) return;
+  const spec = b3dSpec(v);
+  const sig = spec.items.map(x => x.label + "|" + x.value + "|" + x.raw).join("~");
+  // 只在数据签名真的变了（或换了页）时重建。轮询每 5 秒拿回同样的数据，
+  // 无条件重建会让入场展开动画每 5 秒重播一次——那是噪音。
+  if (sig !== B3D.sig || B3D.view !== v) mountBoard3d(v);
+  B3D.sig = sig;
+}
 function loadViewData(v) {
   if (v === "chat") requestAnimationFrame(fitChatHeight);
   if (v === "routelive") { renderRouteLive(); rlStartPolling(); }
@@ -9704,6 +9918,126 @@ async function renderOverview() {
 // springValue 造一个从 from 到 to 的弹簧采样器。
 // stiffness 越大越突然，damping 越小越弹。默认参数调过：数字滚动的手感是
 // 「快出去、轻过冲、稳落位」，不会像果冻。
+/* ── 动效增强层（v0.5.13）───────────────────────────────────────────────
+   这一层只解释「发生了什么」，不改任何布局、不藏任何内容：
+     fxCascade    视图进场：按视觉顺序级联上浮，替代原来「统一 6px 淡入」
+     fxScrollIn   滚动到视口才演一遍（长页面不会一进来就全演完）
+     fxCount      数字从旧值滚到新值（读数变化本身就是动效）
+     fxRipple     按钮/卡片点击的波纹，颜色跟随主题
+     fxMagnet     指针靠近时卡片轻微被「吸」向光标（比 tilt 更轻）
+     fxGrow       任何带 data-fx-grow 的进度条/柱改成 scaleX 生长
+   全部在 prefers-reduced-motion 下直接返回。 */
+const FXX = { io: null, seen: new WeakSet() };
+
+// fxCascade 给一个容器里的「视觉单元」分级联：卡片优先、其次面板、最后行。
+// 用 CSS 变量 --i 驱动 delay，避免为每个元素写内联 animationDelay。
+function fxCascade(host, sel) {
+  if (!host || motionReduce()) return;
+  // 选择器覆盖「视觉单元」：面板、卡片、舱位条、表格行。上限 40：再多就
+  // 每项延迟 42ms，最后一项要等 1.7 秒，反而显得慢。
+  const items = [...host.querySelectorAll(sel ||
+      ".box, .ov-kpi, .pk-card, .acct-card, .berth, .rl-node, .uscard, .acc tbody tr, .ev, .cfgrow")]
+    .filter(el => el.offsetParent !== null)
+    .slice(0, 40);
+  items.forEach((el, i) => {
+    el.classList.remove("fx-in");
+    el.style.setProperty("--i", String(i));
+    void el.offsetWidth;
+    el.classList.add("fx-in");
+  });
+}
+
+// fxScrollIn 让长页面里靠下的模块「滚到才演」。用 IntersectionObserver 一次
+// 性触发，演完就断开——滚动来回不会反复闪。
+function fxScrollIn(root) {
+  if (motionReduce()) return;
+  if (!("IntersectionObserver" in window)) return;
+  if (!FXX.io) {
+    FXX.io = new IntersectionObserver(entries => {
+      entries.forEach(en => {
+        if (!en.isIntersecting) return;
+        const el = en.target;
+        FXX.io.unobserve(el);
+        el.classList.add("fx-in");
+      });
+    }, { root: null, rootMargin: "0px 0px -8% 0px", threshold: 0.06 });
+  }
+  (root || document).querySelectorAll(".fx-lazy").forEach(el => {
+    if (FXX.seen.has(el)) return;
+    FXX.seen.add(el);
+    el.style.setProperty("--i", el.dataset.fxOrder || "0");
+    FXX.io.observe(el);
+  });
+}
+
+// fxCount 把元素里的数字滚过去。只处理「纯数字 + 可选千分位/单位后缀」，
+// 遇到别的内容原样保留——不去猜格式，也不改文案。
+const FXCOUNT = new WeakMap();
+function fxCount(el, to, opts) {
+  if (!el) return;
+  const target = Number(to);
+  if (!isFinite(target)) return;
+  const prev = FXCOUNT.has(el) ? FXCOUNT.get(el) : null;
+  FXCOUNT.set(el, target);
+  if (motionReduce() || prev === null || prev === target) {
+    el.textContent = (opts && opts.fmt ? opts.fmt(target) : String(to));
+    return;
+  }
+  const t0 = performance.now();
+  const dur = opts && opts.dur ? opts.dur : 620;
+  const fmt = (opts && opts.fmt) || (v => String(v));
+  const tick = now => {
+    const k = Math.min(1, (now - t0) / dur);
+    const e = 1 - Math.pow(1 - k, 3);
+    el.textContent = fmt(prev + (target - prev) * e);
+    if (k < 1) requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+
+// fxRipple 是点击处的扩散圆。挂在 document 上一次性委托，只在 .fx-rip 元素上触发。
+function initRipple() {
+  if (FXX.rip) return;
+  FXX.rip = true;
+  document.addEventListener("pointerdown", ev => {
+    if (motionReduce()) return;
+    const host = ev.target && ev.target.closest ? ev.target.closest(".fx-rip, button, .acct-card, .pk-card") : null;
+    if (!host) return;
+    const r = host.getBoundingClientRect();
+    if (!r.width || !r.height) return;
+    const d = Math.max(r.width, r.height) * 1.6;
+    const s = document.createElement("span");
+    s.className = "fx-ripple";
+    s.style.width = s.style.height = d + "px";
+    s.style.left = (ev.clientX - r.left - d / 2) + "px";
+    s.style.top = (ev.clientY - r.top - d / 2) + "px";
+    host.appendChild(s);
+    setTimeout(() => s.remove(), 620);
+  }, { passive: true });
+}
+
+// fxGrow 把带 data-fx-grow 的元素从 0 长到它原本的宽度。读的是 CSS 里已经
+// 算好的宽度（scaleX 不改布局），所以不会引起回流或跳行。
+function fxGrow(root) {
+  if (motionReduce()) return;
+  (root || document).querySelectorAll("[data-fx-grow]").forEach((el, i) => {
+    el.style.transformOrigin = "left center";
+    el.style.animation = "none";
+    void el.offsetWidth;
+    el.style.animation = "fxGrow 620ms cubic-bezier(.16,1,.3,1) both";
+    el.style.animationDelay = (120 + Math.min(i, 10) * 45) + "ms";
+  });
+}
+
+// fxPulse 给某个元素一次「这里刚变了」的脉冲（边框 + 微缩放）。
+function fxPulse(el, cls) {
+  if (!el || motionReduce()) return;
+  const c = cls || "fx-pulse";
+  el.classList.remove(c);
+  void el.offsetWidth;
+  el.classList.add(c);
+  setTimeout(() => el.classList.remove(c), 900);
+}
 function springValue(from, to, opts) {
   const o = opts || {};
   const stiffness = o.stiffness || 170;
@@ -10751,7 +11085,7 @@ const ATLAS = {
   canvas: null, renderer: null, scene: null, cam: null, root: null,
   zones: [], pick: [], raf: 0, t: 0, hover: -1, drag: null, yaw: 0, pitch: 0.30, sig: "",
   dist: 22, open: "", home: null, panel: null, host: null, texCache: {},
-  billboards: [], floaters: [], zoneGroups: [], hub: null, env: null, r: 12, zoom: 1, viewH: 14,
+  billboards: [], floaters: [], zoneGroups: [], hub: null, env: null, r: 12, zoom: 1, viewH: 14, lastMs: 0,
 };
 
 // atlasZones 把「一个领域」定义成地图上的一块区域。数据全部读现成的全局，
@@ -11149,7 +11483,11 @@ function atlasFrame() {
     ATLAS.cam.aspect = w / h;
     ATLAS.cam.updateProjectionMatrix();
   }
-  ATLAS.t += 0.016;
+  // 同 B3D：用真实间隔，动画时长不随帧率漂移。
+  const nowMs = performance.now();
+  const dt = Math.min(0.05, Math.max(0.001, (nowMs - (ATLAS.lastMs || nowMs)) / 1000));
+  ATLAS.lastMs = nowMs;
+  ATLAS.t += dt;
   const t = ATLAS.t;
   // 地图缓慢自转：这是一张会呼吸的空间图，不是一张静止的平面图。
   if (!ATLAS.drag) ATLAS.yaw += 0.0011;
@@ -11277,7 +11615,7 @@ const B3D = {
   sel: -1, spec: null, view: "", t: 0, texCache: {},
   // 场景态：环境组（天穹/星场/扫描环）、需要始终朝向相机的板卡、浮动项。
   env: null, billboards: [], floaters: [], camY: 0.55, envR: 6, zoom: 1,
-  dragYaw: 0, fitW: 4, fitH: 2.4, floorY: -1.6,
+  dragYaw: 0, fitW: 4, fitH: 2.4, floorY: -1.6, born: 0, keepBorn: null, hover: -1, camX: 0, lastMs: 0,
 };
 
 /* ── 环境：让 3D 有「地方」，而不是一堆悬空的方块 ────────────────────────
@@ -11851,17 +12189,90 @@ function b3dSpec(view) {
       return { shape: "ring", hint: "AUTOMATION · DRAG", items: out.slice(0, 40) };
     }
     case "alerts": {
-      const out = NAMES.map(n => ({
-        label: platformLabel(n), value: ((ACCTS[n] || {}).accounts || []).length,
-        tone: "", sub: "在监控", raw: ((ACCTS[n] || {}).accounts || []).length,
-        facts: [["平台", n], ["账号", ((ACCTS[n] || {}).accounts || []).length], ["监控", "是"]],
-      }));
+      // 按平台汇总真实的告警流水：条数 + 最大连续失败数。上一版摆的是
+      // 「每个平台有多少账号」——那是账号池的数，放在告警页没有任何意义。
+      const agg = {};
+      (ALERT_ROWS || []).forEach(x => {
+        const k = String(x.client || "-");
+        if (!agg[k]) agg[k] = { n: 0, maxCount: 0, model: "", detail: "", at: "" };
+        const a = agg[k];
+        a.n++;
+        a.maxCount = Math.max(a.maxCount, Number(x.count) || 0);
+        if (!a.at || String(x.at) > a.at) { a.at = String(x.at || ""); a.model = x.model || a.model; a.detail = x.detail || a.detail; }
+      });
+      const order = Object.keys(agg).sort((a, b) => agg[b].n - agg[a].n);
+      if (!order.length) {
+        // 没有告警时不留空舞台：把「正在监控什么」摆出来，说明为什么是空的。
+        const out = NAMES.slice(0, 12).map(n => ({
+          label: platformLabel(n), value: ((ACCTS[n] || {}).accounts || []).length,
+          tone: "ok", sub: "无告警", raw: ((ACCTS[n] || {}).accounts || []).length,
+          why: "这一平台当前是干净的",
+          facts: [["平台", platformLabel(n)], ["告警", "0 条"],
+            ["账号", ((ACCTS[n] || {}).accounts || []).length + " 个"], ["监控", "是"]],
+        }));
+        return { shape: "bars", hint: "ALERTS · DRAG", items: out, empty: true };
+      }
+      const out = order.slice(0, 12).map(k => {
+        const a = agg[k];
+        return {
+          label: platformLabel(k), value: a.n, tone: a.n >= 3 ? "bad" : "warn",
+          sub: a.maxCount ? "连坏 " + a.maxCount + " 次" : a.detail || "已告警",
+          raw: a.n, why: a.detail || "",
+          facts: [["平台", platformLabel(k)], ["告警", a.n + " 条"],
+            ["最大连续失败", a.maxCount ? a.maxCount + " 次" : "—"],
+            ["最近", a.at ? fmtCallTime(a.at) : "—"], ["模型", a.model || "—"]],
+        };
+      });
       return { shape: "bars", hint: "ALERTS · DRAG", items: out };
     }
-    case "logs": return { shape: "tunnel", hint: "STREAM · DRAG", items: NAMES.map(n => ({ label: platformLabel(n), value: null, tone: "", sub: "通道", raw: 0,
-          facts: [["平台", n], ["通道", "日志"], ["来源", "网关自身"]] })) };
-    case "chat": return { shape: "ring", hint: "SANDBOX · DRAG", items: (MODELS || []).slice(0, 24).map(c => ({ label: c.name, value: (c.models || []).length, tone: "", sub: "模型", raw: (c.models || []).length,
-          facts: [["客户端", c.name], ["模型", (c.models || []).length]] })) };
+    case "logs": {
+      // 日志页的 3D 原来 4 张卡都写着「通道」，一模一样，什么也读不出。
+      // 日志条目没有跨平台字段（只有 ch + text），所以按频道分：
+      // 任务 / 对话 / 系统各一张，读数就是这个频道本轮的条数与报错数。
+      // 频道是这条数据自己的结构，不是我编出来的维度。
+      const lines = LOG_LINES || [];
+      const chans = [["task", "任务"], ["chat", "对话"], ["sys", "系统"]];
+      const agg = {};
+      lines.forEach(e => {
+        const ch = e.ch || "sys";
+        if (!agg[ch]) agg[ch] = { n: 0, err: 0 };
+        agg[ch].n++;
+        if (/error|failed|refus|exception|拒绝|失败/i.test(String(e.text || ""))) agg[ch].err++;
+      });
+      const items = chans.map(([k, name]) => {
+        const a = agg[k] || { n: 0, err: 0 };
+        return {
+          label: name, value: a.n, tone: a.err ? "warn" : (a.n ? "ok" : ""),
+          sub: a.n ? (a.err ? a.err + " 条含错误" : "全部正常") : "本轮无日志",
+          raw: a.n, unit: "行",
+          facts: [["频道", name], ["日志", a.n + " 行"], ["其中报错", a.err + " 行"],
+            ["总计", lines.length + " 行"]],
+        };
+      });
+      // 有第三方平台名出现在文本里时，再补一张「提到最多的平台」——但那属于
+      // 文本内容分析，不放进卡片；保持三张频道卡，读者一眼看清哪一路在报错。
+      return { shape: "tunnel", hint: "STREAM · DRAG", items };
+    }
+    case "chat": {
+      // 对话页 3D 说明「这台机器现在能拿哪些客户端 / 档位做链路验证」：
+      // 每个客户端一张卡，读数是可用的模型档数，并标出它是否已就绪。
+      const items = (MODELS || []).slice(0, 12).map(c => {
+        const ms = c.models || [];
+        const ci = clientInfo(c.name) || {};
+        return {
+          label: platformLabel(c.name), value: ms.length,
+          tone: ms.length ? (ci.ready ? "ok" : "warn") : "bad",
+          sub: ci.ready ? "已就绪" : "未就绪", raw: ms.length, unit: "档",
+          facts: [["客户端", platformLabel(c.name)], ["模型档", ms.length + " 个"],
+            ["状态", ci.ready ? "就绪" : "未就绪"], ["用途", "对话链路验证"]],
+        };
+      });
+      if (!items.length) return { shape: "tunnel", hint: "SANDBOX · DRAG", items: [
+        { label: "还没有模型目录", value: null, tone: "warn", sub: "先刷新模型",
+          raw: 0, facts: [["下一步", "点右上角刷新"], ["位置", "模型与档位页"]] },
+      ] };
+      return { shape: "ring", hint: "SANDBOX · DRAG", items };
+    }
     case "config": return { shape: "tunnel", hint: "CONFIG · DRAG", items: [
       { label: "监听地址", value: null, tone: "", sub: SNAP.listen || "", raw: 0,
         facts: [["监听", SNAP.listen || "—"], ["鉴权", "见配置页"], ["数据目录", "见配置页"]] },
@@ -11871,7 +12282,9 @@ function b3dSpec(view) {
         facts: [["版本", "v" + (SNAP.version || "-")], ["客户端", NAMES.length], ["监听", SNAP.listen || "—"]] },
     ] };
     case "routelive": {
-      const out = ((RL_DATA && RL_DATA.traces) || []).slice(0, 24).map(x => {
+      // 舞台上一层最多摆 4 排 × 8 列；超过 12 条时卡片会被压到读不出字。
+      // 实时页看的是「最近几次落点」，取 12 条正好一屏。
+      const out = ((RL_DATA && RL_DATA.traces) || []).slice(0, 12).map(x => {
         const lanes = x.lanes || [];
         const win = lanes.find((_, i) => i === x.winner) || lanes[0] || {};
         return {
@@ -11974,7 +12387,9 @@ function b3dBuild(spec) {
     });
     B3D.envR = Math.max(4.0, wallW * 0.55 + 1.5);
     B3D.fitW = wallW / 2 + cardW * 0.5;
-    B3D.fitH = (rows > 1 ? ((rows - 1) / 2) * rowGap : 0) + cardH * 0.5;
+    // 纵向半高 = 排间距的一半×(行数-1) + 一整张卡的高度（不是半张）。
+    // 只加半张时，第一排的顶部和最后一排的底部各自会被裁掉 cardH/4。
+    B3D.fitH = (rows > 1 ? ((rows - 1) / 2) * rowGap : 0) + cardH;
     B3D.floorY = floorY;
     B3D.camY = 0.0;
     // 墙形态不再放中心枢纽：它正好落在第一排卡片背后，透出一团暗球。
@@ -12008,7 +12423,10 @@ function b3dBuild(spec) {
     }
     b3dHub(0, 0, 0, 1.3);
     B3D.envR = 4.6;
-    B3D.fitW = 3.9; B3D.fitH = 3.5;
+    // globe 的取景按球体本身来：直径 6.4，半高 3.2。上一版 fitH 3.5 但 fitW 3.9
+    // 让 fxFitDist 按宽度算距离（宽画布下 halfW/aspect 更松），于是相机退到 15，
+    // 球只占画面中间一小块。这里把半宽压到球的半径，距离就由高度决定。
+    B3D.fitW = 3.35; B3D.fitH = 3.30;
     B3D.floorY = -2.6;
     B3D.camY = 0.1;
   } else if (spec.shape === "bars") {
@@ -12063,11 +12481,11 @@ function b3dBuild(spec) {
        卡片塞进隧道里必然互相遮挡（试过右缘、试过螺旋，都压），所以分工：
        隧道只负责「这是一条持续流动的流」，卡片负责真的读得出内容。 */
     const N = Math.max(4, items.length);
-    const TX = -1.15;                       // 隧道中心偏左，给右侧卡片让位
+    const TX = -1.62;                       // 隧道中心偏左，给右侧卡片让位
     for (let i = 0; i < N; i++) {
       const it = items[i];
       const z = -i * 1.15;
-      const rad = Math.max(0.78, 2.0 - i * 0.085);
+      const rad = Math.max(0.72, 1.86 - i * 0.082);
       const tone = it ? b3dToneColor(it.tone) : P.gridA;
       const ring = new THREE.Mesh(new THREE.TorusGeometry(rad, 0.018, 6, 64),
         new THREE.MeshBasicMaterial({ color: tone, transparent: true,
@@ -12079,14 +12497,20 @@ function b3dBuild(spec) {
     // 右侧一列卡片：最多 5 张，从上往下排，越往下越靠后（z 递减）
     // 4 张就够读：再多一列就超出舞台高度，上下被裁掉反而更差。
     const shown = Math.min(4, items.length);
+    // 卡片尺寸随条目数走：3 条时给得更大（纵向富余），4 条时按上面算好的预算。
+    const cw = shown <= 2 ? 1.40 : shown === 3 ? 1.14 : 1.05;
     for (let i = 0; i < shown; i++) {
       const it = items[i];
-      const cw = 0.86, chh = cw * 1.09;
-      const y = 0.92 - i * 0.80;
+      const chh = cw * 1.09;
+      // 上抬 0.1 并收紧行距：4 张卡在 fitH 2.3 里刚好排满，最后一张不被底座切。
+      // 起始高度与行距都跟着卡高走：4 张时总高必须落在 fitH 之内，3 张时
+      // 可以更大更松。舞台是宽扁带（4:1），纵向预算很紧。
+      const step = chh * 0.92;
+      const y = ((shown - 1) / 2) * step - i * step;
       const tex = b3dTexture(it, maxV);
       if (!tex) continue;
       const g = new THREE.Group();
-      g.position.set(1.72, y, -0.30 - i * 0.16);
+      g.position.set(2.00, y, -0.30 - i * 0.16);
       const halo = envHalo(b3dToneColor(it.tone), cw * 1.7, B3D.texCache ? fxPalette().plateGlow : 0.2);
       halo.position.z = -0.08;
       g.add(halo);
@@ -12100,13 +12524,20 @@ function b3dBuild(spec) {
       B3D.floaters.push({ obj: g, base: y, ph: i * 0.8 });
     }
     B3D.envR = 3.6;
-    B3D.fitW = 3.05; B3D.fitH = 2.15;
+    // 这个形态左右不对称：隧道中心在 x=-1.15（半径 2.0，左边界 -3.15），
+    // 卡片列在 x=1.72（右边界约 2.25）。单一 fitW 按最大一侧算会裁掉另一侧，
+    // 所以用 camX 把视锥中心挪到两者中间。
+    B3D.fitW = 3.55; B3D.fitH = 2.55; B3D.camX = -0.30;
     B3D.floorY = -2.3;
     B3D.camY = 0.05;
   }
   // 环境最后挂：它决定「这个场景在哪儿」，尺寸依赖上面算出的布局。
   B3D.env = envAttach(B3D.scene, { radius: B3D.envR, floorY: B3D.floorY, stars: 520 });
   B3D.dist = 12;
+  B3D.born = B3D.keepBorn != null ? B3D.keepBorn : B3D.t;   // 入场展开的起点
+  B3D.keepBorn = null;
+  B3D.hover = -1;
+  if (spec.shape !== "tunnel") B3D.camX = 0;
 }
 
 // b3dHub 是场景里的「汇聚记号」：实心核 + 线框壳 + 一圈慢慢转的轨道 + 光晕。
@@ -12147,7 +12578,7 @@ function b3dMountControls() {
     try { cv.setPointerCapture(ev.pointerId); } catch (e) {}
   });
   cv.addEventListener("pointermove", ev => {
-    if (!B3D.drag) return;
+    if (!B3D.drag) { b3dHoverAt(ev); return; }
     const dx = ev.clientX - B3D.drag.x, dy = ev.clientY - B3D.drag.y;
     B3D.drag.moved = Math.max(B3D.drag.moved, Math.abs(dx) + Math.abs(dy));
     // 水平拖拽 = 绕墙环视，限在 ±32°：再大板卡就侧过去、字看不清了。
@@ -12163,6 +12594,30 @@ function b3dMountControls() {
   }, { passive: false });
   cv.addEventListener("click", b3dPickAt);
 }
+// b3dHoverAt 让指针停在某块板卡上时，它抬起一点、光标变成手型——和列表里
+// hover 一行是同一个反馈。射线检测每帧最多跑一次（pointermove 合并到 rAF）。
+function b3dHoverAt(ev) {
+  if (!B3D.cam || !B3D.canvas || !B3D.pickables.length) return;
+  if (B3D.hoverRaf) { B3D.hoverEv = ev; return; }
+  B3D.hoverEv = ev;
+  B3D.hoverRaf = requestAnimationFrame(() => {
+    B3D.hoverRaf = 0;
+    const e = B3D.hoverEv;
+    if (!e || B3D.drag) return;
+    const r = B3D.canvas.getBoundingClientRect();
+    if (!r.width || !r.height) return;
+    const p = new THREE.Vector2(
+      ((e.clientX - r.left) / r.width) * 2 - 1,
+      -((e.clientY - r.top) / r.height) * 2 + 1);
+    const rc = new THREE.Raycaster();
+    rc.setFromCamera(p, B3D.cam);
+    const hit = rc.intersectObjects(B3D.pickables, false)[0];
+    const next = hit && hit.object.userData.index >= 0 ? hit.object.userData.index : -1;
+    B3D.canvas.style.cursor = next >= 0 ? "pointer" : "grab";
+    B3D.hover = next;
+  });
+}
+
 function b3dPickAt(ev) {
   if (!B3D.cam || !B3D.pickables.length || !B3D.canvas) return;
   if (B3D.drag && B3D.drag.moved > 6) return;
@@ -12267,7 +12722,13 @@ function b3dFrame() {
     B3D.cam.aspect = w / h;
     B3D.cam.updateProjectionMatrix();
   }
-  B3D.t += 0.016;
+  // 时间推进用真实间隔（上限 1/20 秒，切标签页回来不会跳一大步）。
+  // 之前每帧固定 +0.016，于是「动画演多久」取决于帧率：60fps 是 1 秒，
+  // 掉到 20fps 就变成 3 秒，入场展开在弱机上永远演不完。
+  const nowMs = performance.now();
+  const dt = Math.min(0.05, Math.max(0.001, (nowMs - (B3D.lastMs || nowMs)) / 1000));
+  B3D.lastMs = nowMs;
+  B3D.t += dt;
   const t = B3D.t;
   // 相机缓慢环绕几度（±4°），只是给静止画面一点「在场」的呼吸，不是把整墙
   // 转走——转得多字就读不了。用户拖拽时直接接管这个角度。
@@ -12280,22 +12741,39 @@ function b3dFrame() {
     : fxFitDist((B3D.fitW || 3) + 0.22, (B3D.fitH || 2) + 0.20, B3D.cam, B3D.zoom);
   B3D.dist = fit;
   const camY = (B3D.camY || 0) + pitch * fit * 0.55;
-  B3D.cam.position.set(0, camY, fit);
-  B3D.cam.lookAt(0, (B3D.camY || 0) * 0.6, 0);
+  const camX = B3D.camX || 0;
+  B3D.cam.position.set(camX, camY, fit);
+  B3D.cam.lookAt(camX, (B3D.camY || 0) * 0.6, 0);
   // 板卡始终朝向相机（billboard）：只有这样才能保证任何角度文字都正着。
   B3D.billboards.forEach(g => fxFace(g, B3D.root, B3D.cam));
   // 悬停呼吸：每块板子在自己的高度上轻微起伏，相位错开——静止画面也在呼吸。
   B3D.floaters.forEach((f, i) => {
     if (f.spin) { f.obj.rotation.z = t * 0.24 + i; return; }
     if (!f.obj) return;
-    const lift = (i === B3D.sel ? 0.13 : 0) + Math.sin(t * 0.8 + f.ph) * 0.05;
+    const lift = (i === B3D.sel ? 0.13 : 0) + (i === B3D.hover ? 0.07 : 0) + Math.sin(t * 0.8 + f.ph) * 0.05;
     f.obj.position.y = f.base + lift;
   });
   envTick(B3D.env, t);
+  // 入场展开：构建后的 0.9 秒里，卡片从「压平、贴地」长到原位。用一条统一的
+  // 缓动而不是 per-object 动画队列——3D 里没有 CSS，这条曲线就是全部的编排。
+  const age = t - (B3D.born || 0);
+  const k = Math.min(1, Math.max(0, age / 0.9));
+  const enter = 1 - Math.pow(1 - k, 3);
   B3D.pickables.forEach((m, i) => {
-    const s = i === B3D.sel ? 1.1 : 1;
-    if (m.scale.x !== s) m.scale.setScalar(s);
+    let sc = 1;
+    if (i === B3D.sel) sc = 1.1;
+    else if (i === B3D.hover) sc = 1.045;
+    // 逐张错开的入场（每张 18ms），最后一批在 0.9s 内收齐。
+    const d = Math.min(1, Math.max(0, (age - i * 0.018) / 0.55));
+    const grow = 1 - Math.pow(1 - d, 3);
+    sc *= 0.55 + 0.45 * grow;
+    const target = sc;
+    if (Math.abs(m.scale.x - target) > 0.0015) m.scale.setScalar(target);
+    // 透明度同样随入场推进；选中/悬停不再额外改透明度（会跟 pulse 打架）。
+    const mats = Array.isArray(m.material) ? m.material : [m.material];
+    mats.forEach(mt => { if (mt && mt.transparent) mt.opacity = Math.min(1, 0.55 + 0.45 * grow); });
   });
+  void enter;
   B3D.renderer.render(B3D.scene, B3D.cam);
   B3D.raf = requestAnimationFrame(b3dFrame);
 }
@@ -12373,7 +12851,11 @@ function mountBoard3d(view) {
   }
   b3dMountControls();
   const spec = b3dSpec(view);
+  const samePage = B3D.view === view;
   B3D.view = view;
+  B3D.sig = spec.items.map(x => x.label + "|" + x.value + "|" + x.raw).join("~");
+  // 同一页内的数据刷新（轮询）不应该重播入场展开——那是「换页」的编排。
+  if (samePage && B3D.born) B3D.keepBorn = B3D.born;
   if (!spec.items.length) {
     none.hidden = false;
     none.textContent = "这一页还没有可展示的数据。";
@@ -12479,7 +12961,7 @@ function renderAcctBoard(pageRows, caps, acts, showBal) {
       '<div class="ac-head"><span class="ac-lamp" aria-hidden="true"></span>' +
         '<span class="ac-name" title="' + esc(nm) + '">' + esc(nm) + "</span>" +
         '<span class="ac-state">' + esc(accountState(st).label) + "</span></div>" +
-      (big ? '<div class="ac-metric"><b>' + esc(big) + '</b><span>' + esc(bigLab) + "</span>" +
+      (big ? '<div class="ac-metric"><b data-fx-count="' + esc(String(req == null ? "" : req)) + '">' + esc(big) + '</b><span>' + esc(bigLab) + "</span>" +
         (multi ? "<span>· " + g.rows.length + " 个通道</span>" : "") + "</div>"
         : '<div class="ac-metric">' + (showBal ? accBalanceCell(a) : "") + "</div>") +
       '<div class="ac-rows">' +
@@ -12494,6 +12976,69 @@ function renderAcctBoard(pageRows, caps, acts, showBal) {
       '<div class="ac-foot">' + acctCardActs(a, caps, acts) + "</div>" +
       "</article>";
   }).join("");
+  // 主读数的数字滚动：只在「同一个元素」上从旧值滚到新值。卡片是每次重绘
+  // 重新生成的，所以按「账号 id」而不是按元素记住上一个值，否则每 5 秒轮询
+  // 都会从 0 重新滚一遍，看着像在乱跳。
+  host.querySelectorAll("[data-fx-count]").forEach((el, i) => {
+    const card = el.closest(".acct-card");
+    const key = card ? card.dataset.grp : ("i" + i);
+    const want = Number(el.dataset.fxCount);
+    if (!isFinite(want)) return;
+    const prev = ACCT_COUNT_PREV.get(key);
+    ACCT_COUNT_PREV.set(key, want);
+    if (prev != null && prev !== want) {
+      fxCount(el, want, { fmt: numf });
+      fxPulse(card);
+    }
+  });
+}
+const ACCT_COUNT_PREV = new Map();
+
+// renderAcctSide 画「全池概况」。它统计的是**未筛选**的全部账号，所以左边
+// 筛到只剩一张卡时，右边仍然告诉你这个池子有多大、卡在哪个平台。
+function renderAcctSide() {
+  const host = $("#acctSide");
+  if (!host) return;
+  const t = acctTotals();
+  const pct = t.total ? Math.round(t.ready / t.total * 100) : 0;
+  const segs = [
+    ["ok", t.ready], ["warn", t.cooling], ["bad", t.risk + t.fault], ["idle", t.disabled],
+  ].filter(x => x[1] > 0);
+  const strip = segs.map(([k, v]) =>
+    '<i class="' + k + '" style="flex:' + v + ' 1 0" title="' + statusWord(k) + " " + v + ' 个"></i>').join("");
+  // 每个平台一行：可用 / 总数，条长按该平台规模
+  const per = NAMES.map(n => {
+    const groups = accGroups((ACCTS[n] || {}).accounts);
+    const ready = groups.filter(g => accountState(accGroupStat(g)).key === "ready").length;
+    const cooling = groups.filter(g => accountState(accGroupStat(g)).key === "cooling").length;
+    return { n: n, total: groups.length, ready: ready, cooling: cooling };
+  }).filter(x => x.total > 0).sort((a, b) => b.total - a.total);
+  const maxTot = Math.max(1, ...per.map(x => x.total));
+  const rows = per.slice(0, 8).map(x => {
+    const tone = x.ready === x.total ? "ok" : (x.ready ? "warn" : (x.cooling ? "warn" : "bad"));
+    const w = Math.max(3, x.total / maxTot * 100);
+    return '<div class="as-row"><span class="nm" title="' + esc(platformLabel(x.n)) + '">' + esc(platformLabel(x.n)) + "</span>" +
+      '<span class="track"><i class="' + tone + '" style="width:' + w.toFixed(1) + '%"></i></span>' +
+      '<span class="n">' + x.ready + "/" + x.total + "</span></div>";
+  }).join("");
+  host.innerHTML =
+    '<div class="as-h"><b>全池概况</b><span>不随筛选变化</span></div>' +
+    '<div class="as-big"><b>' + pct + '%</b><span>可用 · ' + t.ready + "/" + t.total + " 个账号</span></div>" +
+    (strip ? '<div class="as-strip">' + strip + "</div>" : "") +
+    (rows ? '<div class="as-rows">' + rows + "</div>" : '<div class="quietline"><i></i>还没有任何账号。</div>') +
+    '<div class="as-foot">' + per.length + " 个平台 · 冷却 " + t.cooling + " · 风控 " + t.risk +
+      " · 异常 " + t.fault + " · 停用 " + t.disabled + "</div>";
+  // 数字滚动：池规模的百分比变化时滚一下（只在同一个元素上，重绘后依然连得上）
+  const big = host.querySelector(".as-big b");
+  if (big) fxCount(big, pct, { fmt: v => Math.round(v) + "%", dur: 520 });
+  // 生长动画只在「池子真的变了」时演一次。renderAccounts 每 5 秒轮询一次，
+  // 每次都重播的话这一栏的条会一直抖——那是噪音，不是信息。
+  const sig = t.total + "/" + t.ready + "/" + t.cooling + "/" + per.length;
+  if (sig !== SIDE_SIG) { SIDE_SIG = sig; fxGrow(host); }
+}
+let SIDE_SIG = "";
+function statusWord(k) {
+  return k === "ok" ? "可用" : k === "warn" ? "冷却" : k === "bad" ? "异常" : "停用";
 }
 
 function renderAccounts() {
@@ -12635,6 +13180,7 @@ function renderAccounts() {
   tb.querySelectorAll("td:nth-child(2) .hint").forEach(el => { el.title = el.textContent; });
   // 同一批数据再画一遍卡片墙，并按记住的模式决定谁可见（CSS 用 body 类切换）。
   renderAcctBoard(pageRows, caps, acts, showBal);
+  renderAcctSide();
   setAccMode(accMode());
 }
 
@@ -14013,7 +14559,7 @@ function usageChartSVG(series) {
     const label = p.scope === "day"
       ? new Date(p.t).toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" })
       : new Date(p.t).toLocaleString("zh-CN", { hour12: false, month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
-    out += '<g class="uscol" data-us-i="' + i + '" data-us-t="' + esc(label) +
+    out += '<g class="uscol" style="--ci:' + i + '" data-us-i="' + i + '" data-us-t="' + esc(label) +
       '" data-us-p="' + fmtTok(p.pt) + '" data-us-c="' + fmtTok(p.ct) +
       '" data-us-a="' + fmtTok(p.tt) + '" data-us-q="' + p.req + '" data-us-v="' + esc(stamp) + '">' +
       '<title>' + esc(p.raw) + '  ' + fmtTok(p.pt) + ' prompt / ' + fmtTok(p.ct) +
@@ -14503,6 +15049,7 @@ function updateAlertBadge(n) {
   if (nav) { nav.textContent = n > 99 ? "99+" : String(n || 0); nav.hidden = !n; nav.title = (n || 0) + " 条未读告警"; }
 }
 
+let ALERT_ROWS = [];
 async function renderAlerts() {
   const r = await api("/panel/api/alerts");
   if (!r.ok) {
@@ -14512,6 +15059,7 @@ async function renderAlerts() {
     return;
   }
   const rows = (r.data && r.data.alerts) || [];
+  ALERT_ROWS = rows;   // 3D 舞台按平台汇总这些行
   updateAlertBadge(0);
   $("#alertNote").textContent = rows.length + " 条" + (r.data && r.data.last_error ? " · 写入异常：" + r.data.last_error : "");
   api("/panel/api/alerts", { method: "POST" }).then(function (ack) {
@@ -14566,19 +15114,26 @@ function berthBadge(name) {
   return esc(ch);
 }
 // 一项能力的符号格：有 = 实心勾（略亮），没有 = 细横线。悬停显示全名。
-function berthCap(on, label) {
-  return '<span class="pc ' + (on ? "on" : "off") + '" title="' + esc(label) + '">' +
-    (on ? "✓" : "·") + "</span>";
+// berthCap 的第三参是单字缩写。原来只画一个勾/点，7 列并排时没有任何锚点
+// 说明「第 4 个符号是接码还是签到」——页面上也没有列头。现在开启的那一格
+// 写「管 / 导 / 登 / 码 / 添 / 签 / 刷」，配上 title 的完整名称，能自我解释。
+function berthCap(on, label, abbr) {
+  return '<span class="pc ' + (on ? "on" : "off") + '" title="' + esc(label || "") + '">' +
+    (on ? (abbr || "✓") : "·") + "</span>";
 }
 async function renderClients() {
   await loadAllAccounts();
   // 能力清单的列序和旧表头一致：管理 → 导入 → 登录 → 接码 → 自动添加 → 签到 → 刷新。
   const CAPS = [
-    ["manage", "账号管理"], ["import", "导入凭据"], ["login", "浏览器登录"],
-    ["sms", "接码"], ["auto_login", "自动添加"], ["checkin", "每日签到"],
-    ["refresh_models", "上游刷新"],
+    ["manage", "账号管理", "管"], ["import", "导入凭据", "导"], ["login", "浏览器登录", "登"],
+    ["sms", "接码", "码"], ["auto_login", "自动添加", "添"], ["checkin", "每日签到", "签"],
+    ["refresh_models", "上游刷新", "刷"],
   ];
-  $("#pkBody").innerHTML = NAMES.map(n => {
+  const capHdr = '<div class="berth b-head" aria-hidden="true">' +
+    '<span></span><span class="b-id"><b>客户端</b></span>' +
+    '<span class="b-caps">' + CAPS.map(([, cap, ab]) => '<span class="pc hd" title="' + esc(cap) + '">' + esc(ab) + "</span>").join("") + "</span>" +
+    '<span class="b-count"><span>账号</span></span><span class="b-fields"><span>字段</span></span></div>';
+  $("#pkBody").innerHTML = capHdr + NAMES.map(n => {
     const c = clientInfo(n) || {}, k = capsOf(n), a = ACCTS[n] || { accounts: [] };
     const count = (a.accounts || []).length;
     const label = platformLabel(n);
@@ -14593,7 +15148,7 @@ async function renderClients() {
       '<span class="b-badge" aria-hidden="true">' + berthBadge(label) + "</span>" +
       '<div class="b-id"><b title="' + esc(label) + '">' + esc(label) + "</b>" +
       '<span class="b-state"><i class="b-lamp"></i>' + esc(stateTxt) + "</span></div>" +
-      '<div class="b-caps">' + CAPS.map(([key, cap]) => berthCap(!!k[key], cap)).join("") + "</div>" +
+      '<div class="b-caps">' + CAPS.map(([key, cap, ab]) => berthCap(!!k[key], cap, ab)).join("") + "</div>" +
       '<div class="b-count"><b class="num">' + numf(count) + '</b><span>账号</span></div>' +
       '<div class="b-fields"><span class="num">' + ((k.fields || []).length) + '</span><span>字段</span></div>' +
       "</div>";
@@ -17385,6 +17940,7 @@ function logLevelClass(text) {
   if (/warn|冷却|熔断/.test(text)) return " w";
   return "";
 }
+let LOG_LINES = [];
 async function renderLogs() {
   const r = await api("/panel/api/logs?lines=500");
   if (!r.ok) { $("#logNote").textContent = "读取失败"; $("#logBox").innerHTML = '<div class="state err">' + esc(r.err) + '</div>'; return; }
@@ -17394,6 +17950,7 @@ async function renderLogs() {
   const stamp = String(d.total || 0) + "|" + LOGCH;
   if (stamp === LOGSEEN) return;
   LOGSEEN = stamp;
+  LOG_LINES = all;
   const box = $("#logBox");
   /* 先看用户是不是本来就在底部：翻上去读历史时不该被新一轮日志拽回来。 */
   const atEnd = box.scrollTop + box.clientHeight >= box.scrollHeight - 24;
@@ -18724,19 +19281,23 @@ function renderExpiryDistribution(list, now) {
   Object.keys(sum.colors).sort().forEach(id => {
     legend += '<span><i style="background:' + sum.colors[id] + '"></i>' + esc(id) + "</span>";
   });
+  const maxDayTotal = Math.max(1, ...sum.rows.map(r => r.total));
   let out = '<div class="pk-expiry-chart">' +
     '<div class="pk-expiry-hdr"><span>剩余天数</span><span></span><b>剩余积分</b></div>';
     sum.rows.forEach(r => {
       const urg = pkUrgency(r.days);
       let segs = "";
       Object.keys(r.parts).sort().forEach(id => {
-        const w = Math.max(1, Math.round(r.parts[id] / r.total * 1000) / 10);
+          // 段宽按「本档剩余 / 全部档位里最大的一档」算，而不是在本档内部归一化。
+        // 原来每档内部都归一化，于是每一行都是满条，7 行看着是 7 条一样长的杠。
+        const w = Math.max(1, Math.round(r.parts[id] / maxDayTotal * 1000) / 10);
         segs += '<i class="pk-expiry-seg" data-urgent="' + urg.key + '" style="--seg-color:' + sum.colors[id] + ";flex:" + w.toFixed(1) + ' 1 0" title="' + esc(id) + " · " +
           numf(r.parts[id]) + " 积分 · " + pkExpiryText(now + r.days * PK_DAY_MS) + '"></i>';
       });
-    out += '<div class="pk-expiry-row"><span title="' +
+    out += '<div class="pk-expiry-row" data-urgent="' + urg.key + '"><span title="' +
       esc(pkExpiryDateTime(now + r.days * PK_DAY_MS)) + '">' + r.days + " 天</span>" +
-      '<div class="pk-expiry-track">' + segs + "</div>" +
+      '<div class="pk-expiry-track"><div class="pk-expiry-fill" style="width:' +
+        (Math.max(1, r.total / maxDayTotal * 100)).toFixed(1) + '%">' + segs + "</div></div>" +
       "<b>" + numf(r.total) + "</b></div>";
   });
   out += '</div><div class="pk-expiry-legend">' + legend + "</div>" +
@@ -22818,9 +23379,13 @@ window.addEventListener("unhandledrejection", ev => panelBootError(ev.reason));
       // 是空的。这里轻量地对账：当前页的条目数变了就重建一次，让舞台跟上数据。
       setInterval(() => {
         // 3D 舞台：数据晚到或变了就重建（不重建正在被拖的视图）。
-        if (B3D.renderer && B3D.view === VIEW && document.body.classList.contains("mode-3d")) {
+        // 判据用「签名」而不是「条目数」：条目数不变时读数仍可能变（调用次数、
+        // 告警条数…），只看数量会让舞台一直显示旧值；而随口重建又会让入场
+        // 展开动画每 1.5 秒重播一次。签名对比两者都对。
+        if (B3D.renderer && B3D.view === VIEW && document.body.classList.contains("mode-3d") && !B3D.drag) {
           const spec = b3dSpec(VIEW);
-          if (spec.items.length !== B3D.items.length) mountBoard3d(VIEW);
+          const sig = spec.items.map(x => x.label + "|" + x.value + "|" + x.raw).join("~");
+          if (sig !== B3D.sig) mountBoard3d(VIEW);
         }
         // 星图：区域上的读数来自活数据，它自己也得跟着更新。用签名比对，
         // 只有真的变了才重建——否则会把正在看的自转动画每秒打断一次。
