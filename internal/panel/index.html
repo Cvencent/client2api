@@ -8959,8 +8959,20 @@ async function loadAccounts(n, quiet) {
 async function loadAllAccounts(quiet) {
   // A module that can neither manage nor import accounts answers 501 from
   // GET /accounts; loadAccounts records that instead of erroring, so the
-  // client matrix can still show the row.
-  await Promise.all(NAMES.map(n => loadAccounts(n, quiet)));
+  // client matrix can still show the row.  Since we already know from
+  // /overview which modules those are, skip the doomed request entirely: a
+  // non-2xx fetch always logs a red network error in the console that JS
+  // cannot suppress, and a designed-in response should not read as one.
+  // Only an explicit manage:false skips -- an unknown capability block
+  // (fallback path on an old gateway) still asks, so nothing is hidden.
+  await Promise.all(NAMES.map(n => {
+    const caps = capsOf(n);
+    if (caps.manage === false) {
+      ACCTS[n] = { accounts: [], capabilities: caps, unsupported: true };
+      return Promise.resolve();
+    }
+    return loadAccounts(n, quiet);
+  }));
   (SNAP.clients || []).forEach(c => { if (!ACCTS[c.name]) ACCTS[c.name] = { accounts: [], capabilities: c.capabilities || {} }; });
 }
 
@@ -9737,7 +9749,7 @@ function rlRenderMap(model) {
   rlPlayNew(model);
 }
 
-function rlRenderEvents(traces) {
+function rlRenderEvents(report, traces) {
   const box = $("#rlEvents");
   if (!traces || !traces.length) {
     box.innerHTML = '<div class="rl-empty">暂无请求流水。</div>';
@@ -9816,7 +9828,7 @@ async function renderRouteLive(force) {
   rlRenderKpis(r.data);
   const model = rlModel(r.data);
   rlRenderMap(model);
-  rlRenderEvents(traces);
+  rlRenderEvents(r.data, traces);
   $("#rlMapNote").textContent = traces.length
     ? (model.accounts.length + " 个候选 · " + traces.length + " 条请求")
     : "暂无数据";

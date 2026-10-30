@@ -6,6 +6,27 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.5.20] - 2026-10-31
+
+### Fixed
+
+- **实况页请求流水渲染必抛 `report is not defined`（0.5.19 回归，[#1](https://github.com/Cvencent/client2api/issues/1)）。**
+  edb3194 给流水区补「窗口内共 M」文案时，函数体引用了 `report.total_traces`
+  却没把 `report` 传进 `rlRenderEvents`，窗口内有请求时每次刷新渲染必抛
+  `ReferenceError`，流水列表画不出来，底注和导航徽标也不再更新。签名改为
+  `rlRenderEvents(report, traces)`，调用点同步传入（与 `rlRenderKpis` 同款）。
+- **客户端矩阵不再对不管理账号的模块发注定 501 的请求（[#2](https://github.com/Cvencent/client2api/issues/2)）。**
+  `loadAllAccounts` 对全量模块 fan-out `/accounts`，非 AccountManager 模块每次
+  loud 刷新必吃一个设计内的 501，Chromium 对非 2xx fetch 的固有网络报红在 JS
+  层压不住。现在 `/overview` 能力块里明确 `manage:false` 的模块直接记
+  unsupported、跳过请求；能力未知（老网关回退路径）的模块行为不变。501 语义
+  在服务端保持不变。
+
+### Installer
+
+- `client2api-setup-0.5.20.exe`（空包，不含账号凭据或本机配置）
+- SHA256：`6AF5D978583ADDC8E4E4425CC2DBE9ED4785444433392F59FB467BDAEE39D59D`
+
 ## [0.5.19] - 2026-10-30
 
 ### Added

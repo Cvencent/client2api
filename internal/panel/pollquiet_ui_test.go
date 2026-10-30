@@ -54,9 +54,15 @@ func TestQuietPollRecordsReadFailureInsteadOfToasting(t *testing.T) {
 	if !strings.Contains(src, `if (rec.error) accText += " · 读取失败：" + rec.error;`) {
 		t.Error("renderAccounts 没有把静默轮询记下的 error 画出来：静默变成了消失")
 	}
-	// 轮询入口要把 quiet 一路传下去。
-	if !strings.Contains(src, "await Promise.all(NAMES.map(n => loadAccounts(n, quiet)));") {
+	// 轮询入口要把 quiet 一路传下去：不认识能力的模块仍然照发（并带 quiet）。
+	if !strings.Contains(src, "return loadAccounts(n, quiet);") {
 		t.Error("loadAllAccounts 没有把 quiet 传给 loadAccounts")
+	}
+	// 明确 manage:false 的模块直接记 unsupported，不再发注定 501 的请求——
+	// Chromium 对非 2xx fetch 的网络报红在 JS 层压不住（issue #2）。
+	body = poolStatsFuncBody(t, src, "loadAllAccounts")
+	if !strings.Contains(body, "if (caps.manage === false)") {
+		t.Error("loadAllAccounts 没有对 manage:false 的模块跳过 /accounts 请求：每次 loud 刷新仍会吃一个设计内的 501")
 	}
 }
 
