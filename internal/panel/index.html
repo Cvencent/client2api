@@ -375,6 +375,21 @@ body.atlas-drawer .atlas-panel { transform: none; }
   overflow: hidden;
 }
 .board3d canvas { display: block; width: 100%; height: 100%; cursor: grab; }
+/* 切到 3D 时画布淡入（220ms），列表内容同时淡出：两者交叠，不是硬切。
+   构建期间给一层极淡的流光占位，让那一两秒有「正在装配」的暗示。 */
+.board3d canvas.fx-canvas-in { animation: fxCanvasIn 260ms var(--ease-out) both; }
+@keyframes fxCanvasIn { from { opacity: 0; transform: scale(.985); } to { opacity: 1; transform: none; } }
+.board3d.building::before {
+  content: ""; position: absolute; inset: 0; z-index: 1; pointer-events: none;
+  background: linear-gradient(100deg, transparent 20%,
+    color-mix(in srgb, var(--accent) 9%, transparent) 48%, transparent 76%);
+  background-size: 220% 100%;
+  animation: fxShimmer 1.1s linear infinite;
+}
+/* 列表侧：切到 3D 时淡出一点，让画布进来时有「换了一层」的连续感。 */
+body.mode-3d .view:not([hidden]) > .acct-board,
+body.mode-3d .view:not([hidden]) > .tbl-wrap { animation: fxListOut 240ms var(--ease-out) both; }
+@keyframes fxListOut { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 .board3d.dragging canvas { cursor: grabbing; }
 .board3d .b3d-hint {
   position: absolute; left: 12px; top: 10px; z-index: 2;
@@ -388,9 +403,12 @@ body.atlas-drawer .atlas-panel { transform: none; }
 .board3d .b3d-read b { display: block; font-size: 13px; font-weight: 640; letter-spacing: -.01em; }
 .board3d .b3d-read span { display: block; margin-top: 3px; font: 11px/1.4 var(--mono); color: var(--ink-3); }
 .board3d .b3d-none {
-  position: absolute; inset: 0; display: grid; place-items: center;
-  font-size: 12px; color: var(--ink-3);
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 7px; text-align: center;
+  padding: 0 24px; font-size: 12px; color: var(--ink-3);
 }
+.board3d .b3d-none b { font-size: 13px; font-weight: 600; color: var(--ink-2); }
+.board3d .b3d-none span { font: 11px/1.6 var(--mono); color: var(--ink-3); max-width: 46ch; }
 /* 主题开关：两段式，当前态实心高亮。比一个循环图标更明确——用户能直接
    看到「深色 / 浅色」两档，也一眼知道现在是哪一档。 */
 .theme-toggle { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; flex: none; }
@@ -10741,6 +10759,11 @@ function applyBalances(n, data) {
   };
   syncBalanceButton(n);
   if (CUR === n) renderAccounts();
+  // 余额是异步到的：3D 舞台建起来时 BALS 往往还是空的（前一版积分页的柱阵
+  // 因此全是零高）。数据变了就让当前页的舞台按签名重建一次。
+  if (VIEW === "credits" || VIEW === "accounts") {
+    Promise.resolve().then(() => afterViewData(VIEW)).catch(() => {});
+  }
 }
 
 // readBalances 只读服务端的余额缓存，不打厂商：服务端已经把「慢慢刷新」接过去了。
@@ -11424,6 +11447,13 @@ function groundGridY() { return -2.4; }
 function atlasOpen(view, ox, oy) {
   const host = ATLAS.panel;
   if (!host) return;
+  // 记住当前缩放与朝向：从抽屉返回时相机要回到用户离开时的位置，而不是
+  // 被重置成初始全景（那样等于把用户自己转到的角度丢了）。
+  ATLAS.keepZoom = ATLAS.zoom;
+  ATLAS.keepYaw = ATLAS.yaw;
+  // 运镜：镜头往被点的区域推近，再滑出抽屉。这种大空间跳转如果没有过渡，
+  // 就是「啪」一下换了内容，完全没有「走进一个区域」的感觉。
+  atlasFlyTo(ATLAS.zones.find(z => z.view === view));
   const sec = document.getElementById("view-" + view);
   if (!sec) return;
   if (ATLAS.open && ATLAS.open !== view) {
@@ -11455,8 +11485,21 @@ function atlasOpen(view, ox, oy) {
   revealView(view);
 }
 
+// atlasFlyTo 把镜头往某个区域推近一点，作为「进入」的起手式。
+// 只动 zoom 与朝向的插值目标，帧循环照常渲染，所以不会有跳帧。
+function atlasFlyTo(zone) {
+  if (!zone || motionReduce()) return;
+  ATLAS.flyZoom = Math.min(2.4, (ATLAS.zoom || 1) * 1.35);
+  ATLAS.flyTo = 1;
+  clearTimeout(ATLAS.flyTimer);
+  ATLAS.flyTimer = setTimeout(() => { ATLAS.flyTo = 0; }, 420);
+}
+
 function atlasClose(keepView) {
   if (!ATLAS.open) return;
+  // 返回星图：恢复进入前的缩放与朝向（而不是重置成初始全景）。
+  if (ATLAS.keepZoom != null) { ATLAS.zoom = ATLAS.keepZoom; ATLAS.keepZoom = null; }
+  if (ATLAS.keepYaw != null) { ATLAS.yaw = ATLAS.keepYaw; ATLAS.keepYaw = null; }
   const sec = document.getElementById("view-" + ATLAS.open);
   if (sec && ATLAS.home) {
     sec.classList.remove("in-atlas");
@@ -11551,6 +11594,10 @@ function atlasFrame() {
   // 仰角与纵向占位是**反比**：仰角越高，环在屏幕上越"立"，纵向越吃空间、
   // 越容易顶到画框。30° 左右把它压成一条宽椭圆，正好铺满 16:9，也最有轨道感。
   const elev = 0.50 + ATLAS.pitch * 0.36;
+  // 「进入一个区域」的运镜：短暂把 zoom 推近，再回落到用户自己的倍率。
+  if (ATLAS.flyTo) {
+    ATLAS.zoom += ((ATLAS.flyZoom || ATLAS.zoom) - ATLAS.zoom) * 0.18;
+  }
   const D = 90;
   ATLAS.cam.position.set(Math.sin(t * 0.05) * 2.2, Math.sin(elev) * D, Math.cos(elev) * D);
   ATLAS.cam.lookAt(0, 0.55, 0);
@@ -11563,16 +11610,16 @@ function atlasFrame() {
     if (Math.abs(d.geometry.parameters.width - vw) > 0.5) {
       d.geometry.dispose();
       d.geometry = new THREE.PlaneGeometry(vw, vh);
-      /* 正交相机把一张贴图拉满整个视锥，云团会被放大成一片平涂。
-         用 clamp 模式 + 放大的 repeat 取贴图的一小块：等效于「这块天只是整片
-         天空的一角」，既有细节又不会出现平铺接缝（clamp 到边缘像素）。
-         之前用 RepeatWrapping + repeat>1，接缝正好落在画面中央，浅色下是一道
-         竖直亮带。 */
+      /* 正交相机的视锥很大，一张贴图铺满会让云团放大成平涂。
+         拉近距离采样（repeat > 1）能保住细节，但必须让 **offset + repeat ≤ 1**：
+         clamp 模式下，采样坐标超过 1 的部分会全部取到同一个边缘像素——那就是
+         画面正中那道竖直硬边加半边死白（浅色主题下最明显）。
+         这里 repeat 1.25、offset 居中 0：右侧正好停在 1.0 的内侧，四边都不触边。 */
       if (d.material && d.material.map) {
         const m = d.material.map;
         m.wrapS = m.wrapT = THREE.ClampToEdgeWrapping;
-        m.repeat.set(1.6, 1.0);
-        m.offset.set(0.18, 0.06);
+        m.repeat.set(1.25, 1.0);
+        m.offset.set(0.0, 0.0);
         m.needsUpdate = true;
       }
     }
@@ -11705,15 +11752,17 @@ const B3D = {
    颜色全部走 fxPalette()，深浅两套主题都成立（深色用加法混合发光，浅色换成
    普通混合的低透明度——白底上加法混合等于什么也不画）。 */
 const ENVKIT = { dome: {}, glow: null };
-// fxFitDist 按当前视角与画布比例算「刚好装下」的相机距离。窄视角省畸变，
-// 但距离必须跟着算——上一版把距离写死，13 个领域时整圈都在屏幕外。
-// zoom 是用户滚轮给的倍率（1 = 自适应），乘在结果上。
+// fxFitDist 按当前视角与画布比例算「装下这些内容」的相机距离。
+// 取两个方向的较严者，但**优先铺满宽度**：舞台是 4:1 的宽扁带，纵向需求
+// 常常独自决定距离，于是内容永远只占中间一条、两侧大片空白。这里先按宽度
+// 算出距离，若纵向余量够（不超过 1.35 倍），就用宽度那一个。
 function fxFitDist(halfW, halfH, cam, zoom) {
   const tv = Math.tan((cam.fov * Math.PI / 180) / 2);
   const th = tv * Math.max(0.35, cam.aspect || 1);
-  const dv = halfH / tv;
-  const dh = halfW / th;
-  return Math.max(dv, dh) * 1.08 * (zoom || 1);
+  const dv = (halfH / tv);
+  const dh = (halfW / th);
+  const pick = dh * 1.06 >= dv && dh * 1.06 <= dv * 1.35 ? dh * 1.06 : Math.max(dv, dh) * 1.04;
+  return pick * (zoom || 1);
 }
 
 // fxFace 把 obj 摆成「正对相机」的公告板。用 lookAt 不行：它的朝向依赖父级
@@ -12178,7 +12227,7 @@ function b3dTexture(item, maxV) {
     g.font = "700 " + vs + "px ui-monospace, Consolas, monospace";
   }
   // 名称：最多两行
-  g.font = "600 30px ui-monospace, Consolas, monospace";
+  g.font = "600 36px ui-monospace, Consolas, monospace";
   const nameLines = wrapLines(g, String(item.label || ""), inner, 2);
   // 说明：一行（有数值时是状态词；无值时是状态含义）
   const noteText = hasVal ? String(item.sub || "") : String(item.why || "");
@@ -12201,10 +12250,12 @@ function b3dTexture(item, maxV) {
   const gap = slack / gaps;
 
   let y = bodyTop + gap * 0.5;
-  // ① 名称
-  g.fillStyle = P.ink2;
-  g.font = "600 30px ui-monospace, Consolas, monospace";
-  nameLines.forEach(l => { y += 28; g.fillText(l, pad, y); y += 8; });
+  /* ① 名称。原来 30px / ink2：卡片缩到 1.42 高时（22 个平台那种规模）最先
+     消失的就是这行小字，屏幕上只剩数字。提到 36px 并改用主墨色——它仍然小于
+     读数，但缩到最小时还读得出来。 */
+  g.fillStyle = P.ink;
+  g.font = "600 36px ui-monospace, Consolas, monospace";
+  nameLines.forEach(l => { y += 32; g.fillText(l, pad, y); y += 8; });
   // ② 主读数（+单位）
   y += gap;
   g.fillStyle = accent;
@@ -12245,7 +12296,7 @@ function b3dTexture(item, maxV) {
   g.globalAlpha = 1;
   g.restore();
   g.fillStyle = accent;
-  g.font = "600 28px ui-monospace, Consolas, monospace";
+  g.font = "600 31px ui-monospace, Consolas, monospace";
   const tail = (item.tone === "ok" ? "状态正常" : item.tone === "warn" ? "需要关注" : item.tone === "bad" ? "不可用" : "常规");
   g.fillText(tail, pad, H - CAP / 2 + 10);
   if (item.tag) {
@@ -12469,9 +12520,27 @@ function b3dSpec(view) {
           raw: b && b.credits != null ? Number(b.credits) : 0,
           facts: [["账号", g.identity || accountIdentity(g.rows[0]) || "账号"], ["平台", platformLabel(n)],
             ["剩余", b && b.credits != null ? numf(Number(b.credits)) : "—"], ["单位", (BALS[n] || {}).unit || "—"]],
+          // 到期远近映射成颜色：3 天内红、7 天内黄、其余蓝。柱阵靠这两条
+          // （高度 = 剩余、颜色 = 紧迫度）就能一眼读出「哪笔积分快到期」。
+          urgency: b && b.expiring ? "bad" : (b && b.earliest_remaining != null && Number(b.earliest_remaining) <= 7 ? "warn" : ""),
         });
       }));
-      return { shape: "ring", hint: "CREDITS · DRAG", items: out };
+      /* 柱阵而不是环：积分这一页真正要读的是「谁多、谁快到期」这两个量，
+         环上的卡片只显示得下名字（数字被挤掉了，信息量接近零）。柱高即余量、
+         颜色即到期紧迫度，和用量页同一套形态语言。
+
+         只摆**已经读到余额**的账号：没读到的 raw 是 0，画出来是一排压在地板
+         上的方块——那不是「零积分」，是「还不知道」。两者必须分开，所以空白
+         账号不进柱阵，改在空态里说明怎么让它们读出来。 */
+      const known = out.filter(x => x.raw > 0)
+        .sort((a, b) => b.raw - a.raw);
+      if (!known.length) {
+        return { shape: "bars", hint: "CREDITS · DRAG", items: [], empty: {
+          text: "还没有读到任何账号的积分余额。",
+          hint: "点「刷新余额」让服务端分批去问厂商；这一页只展示已经读到的数字。",
+        } };
+      }
+      return { shape: "bars", hint: "CREDITS · DRAG", items: known.slice(0, 14) };
     }
     case "platforms": {
       const out = (SNAP.clients || []).map(c => ({
@@ -12480,7 +12549,10 @@ function b3dSpec(view) {
         facts: [["平台", c.name], ["模型", (c.models || []).length], ["状态", c.ready ? "就绪" : "未就绪"], ["账号", (ACCTS[c.name] || {}).accounts ? (ACCTS[c.name].accounts || []).length : "—"]],
       }));
       if (!out.length) NAMES.forEach(n => out.push({ label: platformLabel(n), value: null, tone: "", sub: "未加载", raw: 0 }));
-      return { shape: "tunnel", hint: "ROUTING · DRAG", items: out };
+      // 平台页改用环：路由是「一个入口、多个平台」的星形结构，环 + 中心枢纽
+      // 正好表达这件事。之前的隧道形态里卡片挤在右边缘、一半出画，而中间那条
+      // 螺旋和卡片毫无视觉联系——看不懂它在说什么。
+      return { shape: "ring", hint: "ROUTING · DRAG", items: out };
     }
     case "taskscenter": {
       const rows = (SC.data && SC.data.rows) || [];
@@ -12628,13 +12700,18 @@ function b3dBuild(spec) {
     const N0 = items.length;
     // 卡片高度：少量时给得很高（1~2 张要让它们像「主屏」），多量时收到 1.4
     // 以保证整墙入画。舞台取景会自动跟着 fitW/fitH 缩放，所以这里是相对值。
-    const cardH = N0 <= 2 ? 3.4 : N0 <= 5 ? 2.6 : N0 <= 9 ? 2.2 : N0 <= 18 ? 1.9 : 1.62;
+    // 20 张以上进一步收：22 个平台时 1.62 会排成 3 排、最下一排被舞台底边裁掉。
+    // 1~2 张时把卡片放到 4.2：舞台是固定的 4:1 带子，两张 3.4 的卡仍然只占
+    // 中间一小块，四周全是空的（用户原话：「两块卡孤零零悬在舞台上」）。
+    const cardH = N0 <= 1 ? 4.2 : N0 <= 2 ? 3.9 : N0 <= 5 ? 2.6 : N0 <= 9 ? 2.2 : N0 <= 18 ? 1.9 : 1.42;
     // 板卡比例 0.92（接近方形而不是竖条）：舞台是宽扁的，竖条卡片在横向上
     // 永远铺不满，卡片只能越缩越小、字越来越读不出来。
     const cardW = cardH * 0.92;
     const gap = cardW * 1.06, rowGap = cardH * 1.06;
-    // 每排最多 8 列：再多人眼就扫不过来了，而且卡片会被压到读不出字。
-    const perRow = Math.min(items.length, Math.min(8, Math.max(3, Math.ceil(Math.sqrt(items.length * 2.2)))));
+    /* 每排列数：舞台是 4:1 的宽扁带，排数越多卡片越矮（纵向预算被摊薄），
+       而宽度永远用不满。所以宁可少排、多列——11 列 2 排比 8 列 3 排的卡片
+       大得多，也更容易一眼扫完。上限 12 列，再多就压到读不出字了。 */
+    const perRow = Math.min(items.length, Math.min(12, Math.max(3, Math.ceil(Math.sqrt(items.length * 4.2)))));
     const rows = Math.ceil(items.length / perRow);
     const wallW = perRow * gap;
     B3D.cardH = cardH;
@@ -12656,6 +12733,7 @@ function b3dBuild(spec) {
       // 光晕：贴纸背面的软光斑，给板卡「自发光」的错觉
       const halo = envHalo(b3dToneColor(it.tone), cardW * 1.5 * scale, P.plateGlow * (1 - depth * 0.5));
       halo.position.z = -0.08;
+      halo.userData.baseGlow = halo.material.opacity;
       g.add(halo);
       const m = new THREE.Mesh(new THREE.PlaneGeometry(cardW, cardH),
         new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false,
@@ -12687,10 +12765,10 @@ function b3dBuild(spec) {
       }
     });
     B3D.envR = Math.max(4.0, wallW * 0.55 + 1.5);
-    B3D.fitW = wallW / 2 + cardW * 0.5;
-    // 纵向半高 = 排间距的一半×(行数-1) + 一整张卡的高度（不是半张）。
-    // 只加半张时，第一排的顶部和最后一排的底部各自会被裁掉 cardH/4。
-    B3D.fitH = (rows > 1 ? ((rows - 1) / 2) * rowGap : 0) + cardH;
+    B3D.fitW = wallW / 2 + cardW * 0.35;
+    // 纵向半高 = 排间距的一半×(行数-1) + 一整张卡的高度（不是半张），
+    // 再留 8% 余量：3 排时算出来的值正好贴住舞台上下沿，卡片倒影/光晕会溢出。
+    B3D.fitH = ((rows > 1 ? ((rows - 1) / 2) * rowGap : 0) + cardH) * 1.08;
     B3D.floorY = floorY;
     B3D.camY = 0.0;
     // 墙形态不再放中心枢纽：它正好落在第一排卡片背后，透出一团暗球。
@@ -12755,7 +12833,8 @@ function b3dBuild(spec) {
       // 柱高用平方根压缩：一条爆炸性的流量把其他柱子全压成地板线上的小块，
       // 那样「分布」就看不出来了。sqrt 保序、但留出对比空间。
       const h = 0.32 + 3.0 * Math.sqrt((Number(it.raw) || 0) / maxV);
-      const col = b3dToneColor(it.tone);
+      // urgency 优先于 tone：这一页的「颜色」应该说明到期紧迫度。
+      const col = b3dToneColor(it.urgency || it.tone);
       const b = new THREE.Mesh(new THREE.BoxGeometry(W, h, W),
         new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.72 }));
       const x = (i - total / 2) * (W + gap) + (W + gap) / 2;
@@ -13067,8 +13146,19 @@ function b3dFrame() {
   B3D.floaters.forEach((f, i) => {
     if (f.spin) { f.obj.rotation.z = t * 0.24 + i; return; }
     if (!f.obj) return;
+    const on = i === B3D.sel || i === B3D.hover;
     const lift = (i === B3D.sel ? 0.13 : 0) + (i === B3D.hover ? 0.07 : 0) + Math.sin(t * 0.8 + f.ph) * 0.05;
     f.obj.position.y = f.base + lift;
+    // 悬停/选中时背后的光晕变亮：3D 里没有 CSS 的 :hover，这就是「这块能点」
+    // 的唯一可见暗示。之前只有 4.5% 的缩放，几乎看不出来。
+    if (f.obj.children) {
+      for (const c of f.obj.children) {
+        const baseGlow = c.userData && c.userData.baseGlow;
+        if (baseGlow == null || !c.material) continue;
+        const want = on ? baseGlow * 2.1 : baseGlow;
+        if (Math.abs(c.material.opacity - want) > 0.004) c.material.opacity = want;
+      }
+    }
   });
   envTick(B3D.env, t);
   // 入场展开：构建后的 0.9 秒里，卡片从「压平、贴地」长到原位。用一条统一的
@@ -13079,7 +13169,7 @@ function b3dFrame() {
   B3D.pickables.forEach((m, i) => {
     let sc = 1;
     if (i === B3D.sel) sc = 1.1;
-    else if (i === B3D.hover) sc = 1.045;
+    else if (i === B3D.hover) sc = 1.07;
     // 逐张错开的入场（每张 18ms），最后一批在 0.9s 内收齐。
     const d = Math.min(1, Math.max(0, (age - i * 0.018) / 0.55));
     const grow = 1 - Math.pow(1 - d, 3);
@@ -13123,10 +13213,37 @@ function view3dMode() {
 function setView3dMode(m) {
   const mode = m === "lists" ? "lists" : "3d";
   try { localStorage.setItem(VIEW3D_KEY, mode); } catch (e) {}
+  const was3d = document.body.classList.contains("mode-3d");
   document.body.classList.toggle("mode-3d", mode === "3d");
   document.body.classList.toggle("mode-lists", mode === "lists");
   $$(".view3d-toggle button").forEach(b => b.classList.toggle("on", b.dataset.view3d === mode));
-  if (mode === "3d") { mountBoard3d(VIEW); b3dStart(); } else b3dStop();
+  if (mode === "3d") {
+    /* 切到 3D 的过渡。
+       注意顺序：列表模式下页里**还没有** .board3d（mountBoard3d 才创建它），
+       所以必须先挂载、再取 board 加类。先前把取值放在挂载之前，board 恒为
+       null，过渡一次都没生效过。
+       构建期间给一层流光占位，画布挂上后淡入——避免「按钮已高亮、场景却要
+       等两三秒」那种点了没反应的错觉。 */
+    mountBoard3d(VIEW);
+    b3dStart();
+    const host = document.getElementById("view-" + VIEW);
+    const board = host && host.querySelector(":scope > .board3d");
+    if (board) {
+      board.classList.add("building");
+      const cv = board.querySelector("canvas");
+      if (cv) { cv.classList.remove("fx-canvas-in"); void cv.offsetWidth; cv.classList.add("fx-canvas-in"); }
+      // 闪光照到「第一帧真的画出来了」为止：b3dFrame 已经把画布画过一遍就撤。
+      let tries = 0;
+      const stop = () => {
+        if (++tries > 30) { board.classList.remove("building"); return; }
+        if (B3D.t > 0.02) { board.classList.remove("building"); return; }
+        requestAnimationFrame(stop);
+      };
+      requestAnimationFrame(stop);
+    }
+  } else {
+    if (was3d) b3dStop();
+  }
 }
 // mountBoard3d 保证当前视图有舞台并把画布搬进去、按该页数据重建场景。
 function mountBoard3d(view) {
@@ -13175,7 +13292,17 @@ function mountBoard3d(view) {
   if (samePage && B3D.born) B3D.keepBorn = B3D.born;
   if (!spec.items.length) {
     none.hidden = false;
-    none.textContent = "这一页还没有可展示的数据。";
+    // 页面可以给出**具体的**空态文案（为什么空、下一步做什么）；没有就退回
+    // 通用那一句。泛泛的「还没有数据」对积分页那种「数据存在但还没读回来」
+    // 的情况等于什么也没说。
+    const em = spec.empty && typeof spec.empty === "object" ? spec.empty : null;
+    if (em) {
+      none.innerHTML = '<b>' + esc(em.text || "还没有可展示的数据。") + "</b>" +
+        (em.hint ? '<span>' + esc(em.hint) + "</span>" : "");
+    } else {
+      none.textContent = (spec.empty && typeof spec.empty === "string")
+        ? spec.empty : "这一页还没有可展示的数据。";
+    }
     b3dClear();
   } else {
     none.hidden = true;
