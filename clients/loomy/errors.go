@@ -227,7 +227,15 @@ func isTransportFailure(err error) bool {
 	if errors.As(err, &api) {
 		return api.Status == 0 && api.Code == ""
 	}
-	// Anything that is not the module's own typed refusal came from the
+	// The contract's sentinels and a cancellation are not the transport stack.
+	// Reading them as one is how "no account" was reported as an exhausted
+	// platform: the catch-all joined ErrPlatformExhausted onto a verdict that
+	// says nothing about the connection.
+	if errors.Is(err, core.ErrNotConfigured) || errors.Is(err, core.ErrBusy) ||
+		errors.Is(err, core.ErrUnsupported) || errors.Is(err, context.Canceled) {
+		return false
+	}
+	// Anything else that is not the module's own typed refusal came from the
 	// transport stack (a *url.Error, a TLS error, a context deadline).
 	return true
 }

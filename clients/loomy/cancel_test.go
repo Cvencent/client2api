@@ -90,6 +90,38 @@ func TestACancelledCallerDoesNotBurnTheOtherCandidates(t *testing.T) {
 	}
 }
 
+// The refusal handed back for a cancelled caller must name the cancellation.
+//
+// The guard above keeps the account healthy, but for a long time it also threw
+// the error away: the break on the first open left lastErr nil, the no-account
+// fallback filled it in, and the transport catch-all joined "platform exhausted"
+// onto it.  The operator's row then read "没有可用账号：platform exhausted client
+// is not configured (no account)" while every credential sat ready in the pool.
+func TestACancelledCallerIsReportedAsACancellation(t *testing.T) {
+	c := newTestClient(t, "{}", failingTransport{err: context.Canceled})
+	seedAccount(t, c, "loomy-1", testToken, 0)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // the operator pressed Stop before the first byte came back
+
+	_, err := c.Chat(ctx, &core.ChatRequest{
+		Model:    "deepseek-v4-flash-0731",
+		Messages: []core.Message{{Role: "user", Content: "hi"}},
+	})
+	if err == nil {
+		t.Fatal("Chat returned a stream for an already-cancelled context")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("err = %v, want the cancellation preserved", err)
+	}
+	if errors.Is(err, core.ErrNotConfigured) {
+		t.Errorf("err = %v, a cancellation is not a missing credential", err)
+	}
+	if errors.Is(err, core.ErrPlatformExhausted) {
+		t.Errorf("err = %v, a cancellation is not an exhausted platform", err)
+	}
+}
+
 // A deadline is the other half of the same question.  Loomy's own chat timeout
 // arrives as context.DeadlineExceeded, which does mean the vendor stopped
 // answering -- but "no answer within OUR deadline" describes the connection,

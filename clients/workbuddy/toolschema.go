@@ -23,6 +23,19 @@ import (
 //   - a union `type` array (`["string","null"]`, the pydantic/MCP nullable
 //     spelling) is rejected; a single non-null entry becomes `type`, and a
 //     genuinely multi-typed node keeps its widest object branch;
+//   - the root `type` must be `object`: a root that says `array`, `string` or
+//     anything else is refused even when the rest of the schema is fine, so the
+//     root is rewritten to object and its members kept;
+//   - a `type` word is matched exactly, so `"OBJECT"`, `" string "` and the
+//     OpenAPI aliases (`str`, `int`, `any`) are all refused; each is
+//     canonicalised to its lowercase accepted spelling, or dropped when it is
+//     not a type at all;
+//   - `examples` must be an array; a bare value is wrapped, because the
+//     validator reads this keyword as a list and refuses anything else;
+//   - every other keyword it keeps is also type-checked, so a `minimum` that is
+//     a string or a `description` that is a number refuses the whole tool.  A
+//     keyword whose value has the wrong shape is dropped, exactly like an
+//     unknown one;
 //   - `const` is rejected; `enum` with one value is the accepted equivalent;
 //   - keywords outside the validator's vocabulary are rejected outright rather
 //     than ignored, so every node is pruned to the accepted set.
@@ -352,6 +365,8 @@ func normalizeSchemaNode(node map[string]any, depth int) {
 	}
 
 	normalizeTypeArray(node)
+	normalizeTypeWord(node)
+	normalizeExamples(node)
 
 	if raw, ok := node["properties"]; ok {
 		if normalized, keep := normalizeProperties(raw, depth); keep {
@@ -381,6 +396,7 @@ func normalizeSchemaNode(node map[string]any, depth int) {
 	normalizeExclusiveBound(node, "exclusiveMinimum", "minimum")
 	normalizeExclusiveBound(node, "exclusiveMaximum", "maximum")
 	dropUnsupportedKeywords(node)
+	dropWrongShapedKeywords(node)
 
 	for _, key := range []string{"anyOf", "oneOf", "allOf", "prefixItems"} {
 		if branches, ok := node[key].([]any); ok {
@@ -473,6 +489,75 @@ func normalizeConst(node map[string]any) {
 	}
 }
 
+// schemaTypes is the exact `type` vocabulary the validator accepts.  It is
+// matched byte for byte: `OBJECT`, `" object "` and the OpenAPI aliases (`str`,
+// `int`, `any`, `bool`, `float`, `list`, `map`, `file`, `date`) are all refused
+// with 11129.  The live probe behind this table is noted in toolschema_test.go.
+var schemaTypes = map[string]bool{
+	"string": true, "number": true, "integer": true,
+	"boolean": true, "object": true, "array": true, "null": true,
+}
+
+// typeAliases maps the non-standard spellings that do mean a type onto the one
+// the validator accepts.  Only exact equivalents are listed: `int` is an
+// integer, but `any` has no single accepted type and is therefore absent -- a
+// keyword that means "anything" is dropped rather than guessed at.
+var typeAliases = map[string]string{
+	"str": "string", "text": "string",
+	"int": "integer", "int32": "integer", "int64": "integer",
+	"bool":  "boolean",
+	"float": "number", "double": "number", "number": "number",
+	"list": "array",
+	"map":  "object", "dict": "object",
+	"file": "string",
+}
+
+// normalizeTypeWord canonicalises a single string `type`.
+//
+// normalizeTypeArray handles the union spelling; this is the scalar one.  The
+// validator compares the word exactly, so a capitalised or padded value is a
+// hard refusal rather than a tolerated variant -- and "Object" is what C#-style
+// and hand-written schemas actually say.  An alias with an exact equivalent is
+// mapped; anything else (a type this validator has no name for) is dropped,
+// which leaves the node untyped but still structurally valid.
+func normalizeTypeWord(node map[string]any) {
+	raw, ok := node["type"]
+	if !ok {
+		return
+	}
+	s, ok := raw.(string)
+	if !ok {
+		// A non-string `type` (a decoded object, a number, a bool) is not a
+		// type; normalizeTypeArray has already taken the array form.
+		return
+	}
+	word := strings.ToLower(strings.TrimSpace(s))
+	if schemaTypes[word] {
+		node["type"] = word
+		return
+	}
+	if canonical, ok := typeAliases[word]; ok {
+		node["type"] = canonical
+		return
+	}
+	delete(node, "type")
+}
+
+// normalizeExamples coerces `examples` into the array the validator requires.
+// It reads this keyword as a list and refuses the whole tool when it is a bare
+// value; wrapping the value keeps the documentation the caller wrote.  An empty
+// array and a mixed array are both accepted upstream.
+func normalizeExamples(node map[string]any) {
+	raw, ok := node["examples"]
+	if !ok {
+		return
+	}
+	if _, isArray := raw.([]any); isArray {
+		return
+	}
+	node["examples"] = []any{raw}
+}
+
 // unsupportedKeywords is the vocabulary the validator has shown it will not
 // accept, or that no tool schema needs.  `nullable` and `const` are OpenAPI /
 // draft-6 spellings with exact JSON Schema equivalents; the rest are document
@@ -495,15 +580,107 @@ func dropUnsupportedKeywords(node map[string]any) {
 	}
 }
 
+// keywordShapes is the value shape every kept keyword is checked against.  The
+// validator decodes the schema into a typed struct, so a known keyword holding
+// the wrong kind of value is not ignored -- it refuses the whole tool with
+// 11129, exactly as an unknown keyword would.  `{"minimum": "0"}`,
+// `{"maxLength": true}` and `{"description": 5}` were each confirmed to fail
+// this way, while the same keyword with its declared shape passes.
+//
+// `type`, `properties`, `items`, `required`, `enum`, `examples` and the
+// exclusive bounds are deliberately absent: each has its own rewrite above that
+// may legitimately change the shape, and a blanket check here would fight it.
+var keywordShapes = map[string]string{
+	"multipleOf":           "number",
+	"minimum":              "number",
+	"maximum":              "number",
+	"minLength":            "number",
+	"maxLength":            "number",
+	"minItems":             "number",
+	"maxItems":             "number",
+	"minProperties":        "number",
+	"maxProperties":        "number",
+	"uniqueItems":          "bool",
+	"pattern":              "string",
+	"format":               "string",
+	"title":                "string",
+	"description":          "string",
+	"$ref":                 "string",
+	"readOnly":             "bool",
+	"writeOnly":            "bool",
+	"deprecated":           "bool",
+	"additionalProperties": "schema-or-bool",
+	"propertyNames":        "schema",
+	"not":                  "schema",
+	"if":                   "schema",
+	"then":                 "schema",
+	"else":                 "schema",
+	"contains":             "schema",
+	"anyOf":                "array",
+	"oneOf":                "array",
+	"allOf":                "array",
+	"prefixItems":          "array",
+	"patternProperties":    "object",
+	"dependentSchemas":     "object",
+}
+
+// dropWrongShapedKeywords deletes any kept keyword whose value is not the shape
+// the validator can decode.  Dropping is the deliberate choice over coercing: a
+// constraint expressed in a spelling the caller did not mean is worse than no
+// constraint, and the tool stays callable either way.
+func dropWrongShapedKeywords(node map[string]any) {
+	for key, want := range keywordShapes {
+		raw, ok := node[key]
+		if !ok {
+			continue
+		}
+		if !matchesKeywordShape(raw, want) {
+			delete(node, key)
+		}
+	}
+}
+
+// matchesKeywordShape reports whether a value decodes into the declared shape.
+func matchesKeywordShape(raw any, want string) bool {
+	switch want {
+	case "number":
+		return isNumber(raw)
+	case "bool":
+		_, ok := raw.(bool)
+		return ok
+	case "string":
+		_, ok := raw.(string)
+		return ok
+	case "array":
+		_, ok := raw.([]any)
+		return ok
+	case "object":
+		_, ok := raw.(map[string]any)
+		return ok
+	case "schema":
+		_, ok := raw.(map[string]any)
+		return ok
+	case "schema-or-bool":
+		if _, ok := raw.(bool); ok {
+			return true
+		}
+		_, ok := raw.(map[string]any)
+		return ok
+	}
+	return true
+}
+
 // normalizeProperties returns the map with null and non-schema entries removed
 // and every remaining subschema normalized.  A `properties` value that is not
 // an object has no meaning on the wire and is dropped by the caller.
 //
-// A subschema that ends up empty is dropped too.  `{}` is valid JSON Schema for
-// "any value", but a validator that requires `type` on the root applies the same
-// rule to every nested node, so an empty one is refused rather than read as a
-// wildcard.  Dropping the property is the only rewrite that keeps the schema
-// acceptable; it is also what a cycle-cut reference reduces to.
+// A subschema that ends up empty is KEPT.  `{}` is valid JSON Schema for "any
+// value", and the validator accepts it at every depth -- as a property, an
+// `items` target, a union branch and a `$defs` entry (each confirmed live).
+// Dropping it used to be justified by "the root rule applies to every nested
+// node", which the validator does not do: only the root needs a `type`.  Since
+// dropping the property would delete an argument the caller declared and the
+// model can still fill, an emptied node stays as the wildcard it now is.
 func normalizeProperties(raw any, depth int) (map[string]any, bool) {
 	props, ok := raw.(map[string]any)
 	if !ok {
@@ -525,9 +702,6 @@ func normalizeProperties(raw any, depth int) (map[string]any, bool) {
 			}
 		case map[string]any:
 			normalizeSchemaNode(v, depth+1)
-			if len(v) == 0 {
-				continue
-			}
 			out[name] = v
 		}
 	}
@@ -673,21 +847,27 @@ func normalizeExclusiveBound(node map[string]any, key, boundKey string) {
 	}
 }
 
-// ensureRootType gives the root a `type`, which the vendor's parser requires
-// even when the schema only declares properties.
+// ensureRootType gives the root the `type` the vendor's parser requires, and
+// forces it to be `object`.
+//
+// A function's parameters are an object by definition, and the validator holds
+// the root to that: a root that says `array`, `string`, `integer`, `boolean`,
+// `null`, or a non-string `type` is refused with 11129 even when everything
+// below it is fine.  A root that declares `items` is the one case worth keeping
+// rather than dropping: `{"type":"object","items":{...}}` is accepted, so the
+// members are preserved instead of discarded.
 func ensureRootType(root map[string]any) {
-	if hasTypeField(root) {
-		return
+	if t, ok := root["type"].(string); ok {
+		if strings.EqualFold(strings.TrimSpace(t), "object") {
+			root["type"] = "object"
+			return
+		}
 	}
-	switch {
-	case hasKey(root, "properties"), hasKey(root, "required"),
-		hasKey(root, "additionalProperties"), hasKey(root, "patternProperties"):
-		root["type"] = "object"
-	case hasKey(root, "items"):
-		root["type"] = "array"
-	default:
-		root["type"] = "object"
-	}
+	// Whatever it said, the root has to be an object.  `properties` and the
+	// other member maps stay where they are; a stray `items` on an object node
+	// is accepted upstream, so only a root that would otherwise say nothing is
+	// given the object type.
+	root["type"] = "object"
 }
 
 func hasKey(node map[string]any, key string) bool {

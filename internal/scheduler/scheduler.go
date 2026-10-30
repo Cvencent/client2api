@@ -522,6 +522,21 @@ type Deps struct {
 	// host persists definitive outcomes so the panel can disable an account's
 	// button for the rest of the day.
 	OnCheckinResult func(client, account, action string, res core.CheckinResult)
+	// CheckinStateOf returns today's settled check-in state for one
+	// platform/account/action.  The host keeps that state in a store shared
+	// with the panel; the scheduler only reads it, to skip the rest of a
+	// repeated window once an account is done for the day.  ok=false -- no
+	// entry today, or the state is not a settled one -- always means "run".
+	// It is a nil-safe interface: a host that never wires it keeps the
+	// timetable firing every window exactly as before.
+	CheckinStateOf CheckinStateReader
+}
+
+// CheckinStateReader is the read half of the host's daily check-in state.
+// Lookup mirrors the panel's store; an implementation may return
+// ok=false for anything it cannot answer for today.
+type CheckinStateReader interface {
+	Lookup(platform, account, action string) (status core.CheckinStatus, ok bool)
 }
 
 // Runner fires batches at their scheduled hours.
@@ -550,6 +565,11 @@ type Runner struct {
 	onRecovery func(ctx context.Context, client string)
 	onDailyBal func(ctx context.Context, client string)
 	onCheckin  func(client, account, action string, res core.CheckinResult)
+	// checkinState is the host's daily check-in store, read-only.  A repeated
+	// check-in window (a cron that fires every ten minutes during the vendor's
+	// grant window) uses it to stop re-running accounts that already settled
+	// today, instead of clicking the vendor once every window for nothing.
+	checkinState CheckinStateReader
 
 	// wake lets Reconfigure disturb a Run that is blocked because nothing is
 	// scheduled at all.
@@ -584,16 +604,17 @@ type batchLane struct {
 // process that never configures a schedule never touches a vendor.
 func New(deps Deps) *Runner {
 	r := &Runner{
-		last:       map[string]Report{},
-		reg:        deps.Registry,
-		logf:       deps.Logf,
-		now:        deps.Now,
-		sleep:      deps.Sleep,
-		onBal:      deps.OnBalanceRefresh,
-		onRecovery: deps.OnRecoveryProbe,
-		onDailyBal: deps.OnDailyBalanceProbe,
-		onCheckin:  deps.OnCheckinResult,
-		wake:       make(chan struct{}, 1),
+		last:         map[string]Report{},
+		reg:          deps.Registry,
+		logf:         deps.Logf,
+		now:          deps.Now,
+		sleep:        deps.Sleep,
+		onBal:        deps.OnBalanceRefresh,
+		onRecovery:   deps.OnRecoveryProbe,
+		onDailyBal:   deps.OnDailyBalanceProbe,
+		onCheckin:    deps.OnCheckinResult,
+		checkinState: deps.CheckinStateOf,
+		wake:         make(chan struct{}, 1),
 	}
 	r.historyPath = deps.HistoryPath
 	if r.historyPath != "" {
@@ -1317,6 +1338,13 @@ func (r *Runner) runBatchAs(ctx context.Context, clientName, batchName, trigger 
 				}
 			}
 			ranACode = true
+			if strings.EqualFold(batchName, core.CheckinBatchName) &&
+				r.checkinDoneForToday(clientName, acc, code) {
+				rep.Skipped++
+				rep.SkipReasons = appendReason(rep.SkipReasons, "already settled today")
+				r.log("[scheduler] %s/%s account %q code %q skipped: already settled today", clientName, batchName, acc, code)
+				continue
+			}
 			if !core.CheckinActionAllowsAccount(checkinActions, code, rec) {
 				rep.Skipped++
 				rep.SkipReasons = appendReason(rep.SkipReasons, "action is not scoped to this account channel")
@@ -1444,6 +1472,30 @@ func resultReason(res core.TaskResult) string {
 		return "the vendor skipped the action"
 	}
 	return "the vendor refused the action"
+}
+
+// checkinDoneForToday reports whether the host already recorded a settled
+// check-in for this account today.  Only "done" counts: "unavailable" is the
+// vendor saying "nothing to claim yet", which is exactly why a repeated window
+// keeps asking -- a 19:05 window that fires into an empty preview must still
+// fire at 19:15 when the grant lands.  A read that comes back with nothing for
+// today also means run, so a store that only remembers yesterday cannot pin
+// today's sweep.
+func (r *Runner) checkinDoneForToday(client, account, action string) bool {
+	if r.checkinState == nil {
+		return false
+	}
+	st, ok := r.checkinState.Lookup(client, account, action)
+	return ok && st.State == core.CheckinStateDone
+}
+
+// firstCheckinAction names the action a check-in batch would run, or "" when
+// the module declares none -- the same key the result callback derives.
+func firstCheckinAction(actions []core.CheckinAction) string {
+	if len(actions) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(actions[0].ID)
 }
 
 func checkinReason(res core.CheckinResult) string {
@@ -1771,6 +1823,12 @@ func (r *Runner) runCheckinBatchAs(ctx context.Context, c core.Client, b core.Ba
 			r.log("[scheduler] %s/%s account %q checkin skipped: action is not scoped to this account channel", rep.Client, rep.Batch, acc)
 			continue
 		}
+		if r.checkinDoneForToday(rep.Client, acc, firstCheckinAction(checkinActions)) {
+			rep.Skipped++
+			rep.SkipReasons = appendReason(rep.SkipReasons, "already settled today")
+			r.log("[scheduler] %s/%s account %q checkin skipped: already settled today", rep.Client, rep.Batch, acc)
+			continue
+		}
 		res, cerr := cp.Checkin(ctx, acc, "")
 		rep.Ran++
 		if cerr != nil {
@@ -1781,8 +1839,8 @@ func (r *Runner) runCheckinBatchAs(ctx context.Context, c core.Client, b core.Ba
 		}
 		if r.onCheckin != nil {
 			action := strings.TrimSpace(res.Action)
-			if action == "" && len(checkinActions) > 0 {
-				action = checkinActions[0].ID
+			if action == "" {
+				action = firstCheckinAction(checkinActions)
 			}
 			r.onCheckin(rep.Client, acc, action, res)
 		}

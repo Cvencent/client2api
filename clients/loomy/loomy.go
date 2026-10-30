@@ -498,6 +498,11 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 			return core.TrackStream(stream, func() { c.inFlight.Add(-1) }), nil
 		}
 		if callerGone(err) {
+			// Keep the cancellation.  Leaving lastErr nil here used to fall
+			// through to the no-account sentinel, so an operator who pressed
+			// Stop was told the platform had no accounts while thirty healthy
+			// credentials sat in the pool.
+			lastErr = err
 			break
 		}
 		// A prompt-size refusal is not evidence about the credential: the same
@@ -625,6 +630,13 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 	}
 	if lastErr == nil {
 		lastErr = core.ErrNotConfigured
+	}
+	// A caller that walked away says nothing about the pool or the platform.
+	// Hand the cancellation itself back: dressing it up as ErrPlatformExhausted
+	// would tell the next platform to take a request nobody is waiting for, and
+	// the caller's own log would read as a pool failure.
+	if errors.Is(lastErr, context.Canceled) {
+		return nil, lastErr
 	}
 	// A header stall means the vendor accepted connections and answered
 	// nothing, twice, from different credentials.  A transport failure means the

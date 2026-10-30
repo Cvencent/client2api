@@ -44,7 +44,7 @@ import (
 )
 
 // version is overridable with -ldflags "-X main.version=...".
-var version = "0.5.18"
+var version = "0.5.19"
 
 // restartHandoffEnv marks the replacement half of a panel restart.  It tells a
 // starting process to keep retrying the listen address instead of failing fast,
@@ -1416,6 +1416,10 @@ func run() error {
 		OnRecoveryProbe:     platformSweep,
 		OnDailyBalanceProbe: platformSweep,
 		OnCheckinResult:     checkins.Record,
+		// The same store the panel writes, read back here so a repeated
+		// check-in window stops re-running accounts that already settled
+		// today.  An account with nothing to claim yet stays on the timetable.
+		CheckinStateOf: checkins,
 	})
 	sched.Reconfigure(cfg.schedule())
 	logger.Printf("schedule: enabled=%v checkin=%v travel=%v activity=%v keepalive=%v blackcat=%v growth=%v",

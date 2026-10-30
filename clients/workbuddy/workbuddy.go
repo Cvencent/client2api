@@ -1002,9 +1002,10 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 		kind := c.noteAttemptFailure(a, route.bare, err, freeModel)
 		if kind == ErrFunctionParams {
 			// The normalized schema was refused anyway, so the vendor's rule
-			// this one broke is not in toolschema.go yet.  Leave the tools array
-			// behind: the response names no field, so the rewritten body is the
-			// only evidence of what the validator objected to.
+			// this one broke is not in toolschema.go yet -- or it is the tool
+			// name rather than the schema (11152).  Either way the response
+			// names no field, so the tools array is the only evidence of what
+			// the validator objected to.
 			c.dumpRejectedSchema(body, err.Error())
 		}
 		lastErr = err

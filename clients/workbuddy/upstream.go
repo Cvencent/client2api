@@ -300,9 +300,14 @@ var (
 )
 
 const (
-	badParamsMarkerMsg  = "Unmarshal chat params failed"
-	badParamsCode       = "11101"
-	functionParamsCode  = "11129"
+	badParamsMarkerMsg = "Unmarshal chat params failed"
+	badParamsCode      = "11101"
+	functionParamsCode = "11129"
+	// toolNameCode is the vendor's complaint about `tools[].function.name`
+	// itself: it must match ^[A-Za-z0-9_-]{1,128}$, and it must not repeat an
+	// earlier tool in the same request.  The body is otherwise fine, so this is
+	// the same shape of refusal as 11129 and gets the same treatment.
+	toolNameCode        = "11152"
 	modelBlockCode      = "11102"
 	modelBlockMsgMarker = "service info not found"
 
@@ -596,7 +601,17 @@ func Classify(status int, body string) ErrKind {
 	// is model-specific and worth failing over; 11101 ("Unmarshal chat params
 	// failed") means the body we built is unparseable, which no sibling would
 	// serve.
-	if hasBusinessCode(body, functionParamsCode) {
+	//
+	// 11152 ("the tool name is invalid or duplicated") shares that kind rather
+	// than falling through to ErrClient.  Its cause is equally caller-specific
+	// and equally survivable elsewhere: the vendor accepts only
+	// ^[A-Za-z0-9_-]{1,128}$ and case-insensitively unique names, so a tool
+	// called `fs.read` or `中文` is refused here while a sibling platform may
+	// serve it.  Mapping it to ErrClient would end the whole chain with a 400
+	// (which is what happened on 15 turns in the 10-29/10-30 logs).  The name
+	// is deliberately NOT rewritten: the caller declared it and the model will
+	// call it back, so renaming it would silently break the tool contract.
+	if hasBusinessCode(body, functionParamsCode) || hasBusinessCode(body, toolNameCode) {
 		return ErrFunctionParams
 	}
 	if strings.Contains(body, badParamsMarkerMsg) || hasBusinessCode(body, badParamsCode) {

@@ -64,9 +64,13 @@ func TestNormalizeToolSchema(t *testing.T) {
 			want: `{"type":"object","properties":{"a":{"type":"string"}},"required":["a"]}`,
 		},
 		{
-			name: "root array without type gains one",
+			// The root of a function's parameters is always an object, and the
+			// validator holds it to that: a root typed `array` is refused with
+			// 11129.  An object root that also carries `items` is accepted, so
+			// the caller's members survive instead of being dropped.
+			name: "root that only declares items keeps them under an object root",
 			in:   `{"items":{"type":"string"}}`,
-			want: `{"type":"array","items":{"type":"string"}}`,
+			want: `{"type":"object","items":{"type":"string"}}`,
 		},
 		{
 			name: "tuple items with two branches become anyOf",
@@ -124,9 +128,11 @@ func TestNormalizeToolSchema(t *testing.T) {
 			want: `{"type":"object","properties":{"a":{"type":"object","properties":{"x":{"type":"string"}}},"b":{"type":"object","properties":{"x":{"type":"string"}}}}}`,
 		},
 		{
+			// The recursive edge is cut, which leaves that member a wildcard
+			// rather than deleting the property the caller declared.
 			name: "a self-referential def is cut rather than expanded forever",
 			in:   `{"type":"object","properties":{"n":{"$ref":"#/$defs/Node"}},"$defs":{"Node":{"type":"object","properties":{"next":{"$ref":"#/$defs/Node"}}}}}`,
-			want: `{"type":"object","properties":{"n":{"type":"object","properties":{}}}}`,
+			want: `{"type":"object","properties":{"n":{"type":"object","properties":{"next":{}}}}}`,
 		},
 		{
 			name: "nullable type array collapses to the non-null type",
@@ -134,9 +140,11 @@ func TestNormalizeToolSchema(t *testing.T) {
 			want: `{"type":"object","properties":{"a":{"type":"string"}}}`,
 		},
 		{
-			name: "an all-null type array is dropped with its now-empty property",
+			// Losing the type leaves a wildcard node, which the validator
+			// accepts at any depth, so the declared property survives.
+			name: "an all-null type array leaves the property as a wildcard",
 			in:   `{"type":"object","properties":{"a":{"type":["null"]}}}`,
-			want: `{"type":"object","properties":{}}`,
+			want: `{"type":"object","properties":{"a":{}}}`,
 		},
 		{
 			name: "a union type becomes anyOf",
@@ -197,6 +205,101 @@ func TestNormalizeToolSchema(t *testing.T) {
 			name: "string required becomes an array",
 			in:   `{"type":"object","properties":{"a":{"type":"string"}},"required":"a"}`,
 			want: `{"type":"object","properties":{"a":{"type":"string"}},"required":["a"]}`,
+		},
+		{
+			// A root that says anything but object is refused with 11129 even
+			// when everything below it is valid.
+			name: "root typed array is forced to object",
+			in:   `{"type":"array","items":{"type":"string"}}`,
+			want: `{"type":"object","items":{"type":"string"}}`,
+		},
+		{
+			// Forcing the root to object leaves nothing else behind, so it
+			// collapses to the canonical empty parameters.
+			name: "root typed string is forced to object",
+			in:   `{"type":"string"}`,
+			want: `{"type":"object","properties":{}}`,
+		},
+		{
+			name: "root typed integer is forced to object",
+			in:   `{"type":"integer"}`,
+			want: `{"type":"object","properties":{}}`,
+		},
+		{
+			name: "root with a non-string type is forced to object",
+			in:   `{"type":5,"properties":{"a":{"type":"string"}}}`,
+			want: `{"type":"object","properties":{"a":{"type":"string"}}}`,
+		},
+		{
+			// The validator compares the word exactly, so a capitalised or
+			// padded spelling is a hard refusal rather than a tolerated one.
+			name: "capitalised type is lowercased",
+			in:   `{"type":"OBJECT","properties":{"a":{"type":"STRING"}}}`,
+			want: `{"type":"object","properties":{"a":{"type":"string"}}}`,
+		},
+		{
+			name: "padded type is trimmed",
+			in:   `{"type":"object","properties":{"a":{"type":" string "}}}`,
+			want: `{"type":"object","properties":{"a":{"type":"string"}}}`,
+		},
+		{
+			name: "type alias is mapped to the accepted word",
+			in:   `{"type":"object","properties":{"a":{"type":"int"},"b":{"type":"bool"},"c":{"type":"list"}}}`,
+			want: `{"type":"object","properties":{"a":{"type":"integer"},"b":{"type":"boolean"},"c":{"type":"array"}}}`,
+		},
+		{
+			// `any` has no exact single type, so it is dropped rather than
+			// guessed at; the node stays structurally valid.
+			name: "a type word with no equivalent is dropped",
+			in:   `{"type":"object","properties":{"a":{"type":"any"}}}`,
+			want: `{"type":"object","properties":{"a":{}}}`,
+		},
+		{
+			name: "examples holding a bare value is wrapped",
+			in:   `{"type":"object","properties":{"a":{"type":"string","examples":"x"}}}`,
+			want: `{"type":"object","properties":{"a":{"type":"string","examples":["x"]}}}`,
+		},
+		{
+			name: "examples already an array is untouched",
+			in:   `{"type":"object","properties":{"a":{"type":"string","examples":["x"]}}}`,
+			want: `{"type":"object","properties":{"a":{"type":"string","examples":["x"]}}}`,
+		},
+		{
+			// A kept keyword holding the wrong kind of value refuses the whole
+			// tool, exactly as an unknown keyword does, so it is dropped.
+			name: "a bound expressed as a string is dropped",
+			in:   `{"type":"object","properties":{"a":{"type":"number","minimum":"0"}}}`,
+			want: `{"type":"object","properties":{"a":{"type":"number"}}}`,
+		},
+		{
+			name: "a boolean where a number belongs is dropped",
+			in:   `{"type":"object","properties":{"a":{"type":"string","maxLength":true}}}`,
+			want: `{"type":"object","properties":{"a":{"type":"string"}}}`,
+		},
+		{
+			name: "a number where a string belongs is dropped",
+			in:   `{"type":"object","properties":{"a":{"type":"string","description":5,"title":true,"format":{"k":1}}}}`,
+			want: `{"type":"object","properties":{"a":{"type":"string"}}}`,
+		},
+		{
+			name: "a non-object subschema keyword is dropped",
+			in:   `{"type":"object","properties":{"a":{"type":"string","not":"x","contains":"y"}}}`,
+			want: `{"type":"object","properties":{"a":{"type":"string"}}}`,
+		},
+		{
+			name: "a non-array union is dropped",
+			in:   `{"type":"object","properties":{"a":{"type":"string","anyOf":{"type":"string"}}}}`,
+			want: `{"type":"object","properties":{"a":{"type":"string"}}}`,
+		},
+		{
+			name: "correctly shaped keywords all survive",
+			in:   `{"type":"object","properties":{"a":{"type":"string","minLength":1,"maxLength":9,"pattern":"^a","description":"d","title":"t","readOnly":true}},"additionalProperties":false}`,
+			want: `{"type":"object","properties":{"a":{"type":"string","minLength":1,"maxLength":9,"pattern":"^a","description":"d","title":"t","readOnly":true}},"additionalProperties":false}`,
+		},
+		{
+			name: "a property that normalizes to a wildcard is kept",
+			in:   `{"type":"object","properties":{"a":{}},"required":["a"]}`,
+			want: `{"type":"object","properties":{"a":{}},"required":["a"]}`,
 		},
 		{
 			name: "null property schema is dropped",

@@ -772,6 +772,11 @@ func TestClassify(t *testing.T) {
 		{"bad params code", 400, `{"code":11101,"msg":"bad"}`, ErrBadParams},
 		{"function params code", 400, `{"code":11129,"msg":"invalid function call parameters"}`, ErrFunctionParams},
 		{"nested function params code", 400, `{"code":1,"extError":{"code":"invalid_function_parameters","message":"invalid function call parameters","ext":{"code":11129}}}`, ErrFunctionParams},
+		// A refused tool NAME is the same kind of refusal as a refused tool
+		// schema: the vendor's rule is caller-specific, so the chain must be
+		// allowed to try a sibling platform instead of ending on a 400.
+		{"invalid tool name", 400, `{"code":11152,"msg":"the tool name is invalid or duplicated"}`, ErrFunctionParams},
+		{"duplicated tool name", 400, `{"code":1,"extError":{"code":"invalid_request_error","message":"the tool name is invalid or duplicated","ext":{"code":11152}}}`, ErrFunctionParams},
 		{"content blocked", 400, "blocked by security policy", ErrContentBlocked},
 		{"account fault", 400, "request illegal", ErrAccountFault},
 		{"channel verification", 400, `{"code":11-128,"msg":"request illegal"}`, ErrContentBlocked},

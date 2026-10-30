@@ -2292,6 +2292,139 @@ func TestDeclaredCheckinTaskPublishesDefinitiveResult(t *testing.T) {
 	}
 }
 
+// stateStore is a minimal CheckinStateReader standing in for the panel's
+// daily check-in store.
+type stateStore map[string]core.CheckinStatus
+
+func (s stateStore) Lookup(platform, account, action string) (core.CheckinStatus, bool) {
+	st, ok := s[platform+"/"+account+"/"+action]
+	return st, ok
+}
+
+// taskCalls filters the recorder down to the events the clients themselves
+// log, leaving out the fake clock's "sleep" ticks.
+func taskCalls(r *recorder) []string {
+	var out []string
+	for _, ev := range r.all() {
+		if ev == "sleep" {
+			continue
+		}
+		out = append(out, ev)
+	}
+	return out
+}
+
+// A repeated check-in window -- one cron firing every ten minutes through the
+// vendor's grant window -- must stop re-running an account the store already
+// recorded as done today, in both the task-code and the CheckinProvider path.
+// The zcode claim is the concrete case: after a successful (or already-held)
+// claim, every later window would only click the vendor for another 1003.
+func TestRepeatedCheckinWindowSkipsAccountsDoneToday(t *testing.T) {
+	t.Run("task-code path", func(t *testing.T) {
+		logs := &recorder{}
+		clk := newFakeClock(cstMidnight, logs)
+		c := &fakeClient{
+			name:     "zcode",
+			batches:  []core.Batch{oneBatch(batchCheckin, "claim")},
+			accounts: []core.AccountRecord{{ID: "a", Enabled: true}, {ID: "b", Enabled: true}},
+			run: func(_ context.Context, accountID, code string) (core.TaskResult, error) {
+				return core.TaskResult{OK: true, Code: code, AccountID: accountID}, nil
+			},
+			rec: logs,
+		}
+		scoped := &actionScopedClient{fakeClient: c, actions: []core.CheckinAction{{ID: "claim"}}}
+		store := stateStore{"zcode/a/claim": {State: core.CheckinStateDone, Message: "claimed"}}
+		d := deps(registryOf(scoped), clk, logs)
+		d.CheckinStateOf = store
+		r := New(d)
+		r.Reconfigure(Config{})
+
+		rep, ok := r.RunBatchNow(context.Background(), "zcode", batchCheckin)
+		if !ok {
+			t.Fatal("RunBatchNow: ok = false")
+		}
+		if rep.Ran != 1 || rep.Skipped != 1 || rep.Failed != 0 {
+			t.Fatalf("report = %+v, want one run (b) and one skip (a)", rep)
+		}
+		if got := taskCalls(logs); !reflect.DeepEqual(got, []string{"b/claim"}) {
+			t.Fatalf("events = %v, want b/claim as the only task call", got)
+		}
+	})
+
+	t.Run("checkin-provider path", func(t *testing.T) {
+		logs := &recorder{}
+		clk := newFakeClock(cstMidnight, logs)
+		c := &checkinOnly{
+			name:     "ci",
+			accounts: []core.AccountRecord{{ID: "a", Enabled: true}, {ID: "b", Enabled: true}},
+			rec:      logs,
+		}
+		store := stateStore{
+			"ci/a/daily": {State: core.CheckinStateDone},
+			// "unavailable" is not settled: nothing to claim yet is exactly why
+			// the window keeps asking.
+			"ci/b/daily": {State: core.CheckinStateUnavailable},
+		}
+		d := deps(registryOf(c), clk, logs)
+		d.CheckinStateOf = store
+		r := New(d)
+		r.Reconfigure(Config{})
+
+		rep, ok := r.RunBatchNow(context.Background(), "ci", core.CheckinBatchName)
+		if !ok {
+			t.Fatal("RunBatchNow: ok = false")
+		}
+		// a is skipped by the done entry; b's store entry says unavailable, so
+		// the window still asks and the vendor's answer (a plain OK here) runs.
+		if rep.Ran != 1 || rep.Skipped != 1 {
+			t.Fatalf("report = %+v, want a skipped (done) and b run (unavailable)", rep)
+		}
+		if got := taskCalls(logs); !reflect.DeepEqual(got, []string{"checkin:b/"}) {
+			t.Fatalf("events = %v, want only b's checkin call", got)
+		}
+	})
+
+	t.Run("no state wired keeps firing", func(t *testing.T) {
+		logs := &recorder{}
+		clk := newFakeClock(cstMidnight, logs)
+		c := &checkinOnly{
+			name:     "ci",
+			accounts: []core.AccountRecord{{ID: "a", Enabled: true}},
+			rec:      logs,
+		}
+		r := New(deps(registryOf(c), clk, logs))
+		r.Reconfigure(Config{})
+
+		rep, ok := r.RunBatchNow(context.Background(), "ci", core.CheckinBatchName)
+		if !ok || rep.Ran != 1 || rep.Skipped != 0 {
+			t.Fatalf("report = %+v, ok=%v; want one run and no skip", rep, ok)
+		}
+	})
+
+	t.Run("yesterday's done does not pin today", func(t *testing.T) {
+		// The store itself keys entries by Shanghai calendar day, so the
+		// scheduler's job is only to ask for today; this case pins that a
+		// missing today entry reads as "run", which is what a day rollover
+		// produces.
+		logs := &recorder{}
+		clk := newFakeClock(cstMidnight, logs)
+		c := &checkinOnly{
+			name:     "ci",
+			accounts: []core.AccountRecord{{ID: "a", Enabled: true}},
+			rec:      logs,
+		}
+		d := deps(registryOf(c), clk, logs)
+		d.CheckinStateOf = stateStore{} // empty: nothing recorded today
+		r := New(d)
+		r.Reconfigure(Config{})
+
+		rep, ok := r.RunBatchNow(context.Background(), "ci", core.CheckinBatchName)
+		if !ok || rep.Ran != 1 || rep.Skipped != 0 {
+			t.Fatalf("report = %+v, ok=%v; want one run and no skip", rep, ok)
+		}
+	})
+}
+
 func TestDeclaredCheckinTaskPublishesExplicitActionMapping(t *testing.T) {
 	logs := &recorder{}
 	clk := newFakeClock(cstMidnight, logs)
