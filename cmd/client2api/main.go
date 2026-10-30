@@ -44,7 +44,7 @@ import (
 )
 
 // version is overridable with -ldflags "-X main.version=...".
-var version = "0.5.13"
+var version = "0.5.14"
 
 // restartHandoffEnv marks the replacement half of a panel restart.  It tells a
 // starting process to keep retrying the listen address instead of failing fast,
@@ -1005,6 +1005,13 @@ func refreshBalancesForClient(ctx context.Context, reg *core.Registry, client st
 
 func refreshBalancesMatching(ctx context.Context, reg *core.Registry, client string, soon time.Duration, logger *log.Logger, includeRecoverable, ignoreGate bool, publish balancePublish) {
 	client = strings.TrimSpace(client)
+	// The sweep runs every five minutes, so a relay that answers 404 or a key
+	// the vendor banned produces the same line a hundred times a day.  That is
+	// what makes the log unreadable: the one failure an operator can act on is
+	// buried in ninety-nine they cannot.  One line per (platform, account,
+	// error) per window, with the suppressed count attached when it returns,
+	// keeps the signal and drops the drumbeat.
+	dedupe := newProbeLogDeduper(probeLogWindow)
 	for _, c := range reg.All() {
 		if client != "" && !strings.EqualFold(c.Name(), client) {
 			continue
@@ -1021,7 +1028,9 @@ func refreshBalancesMatching(ctx context.Context, reg *core.Registry, client str
 		accounts, err := am.Accounts(lctx)
 		cancel()
 		if err != nil {
-			logf(logger, "[%s] balance sweep: %v", c.Name(), err)
+			if msg, log := dedupe.shouldLog(c.Name(), "", err); log {
+				logf(logger, "[%s] balance sweep: %s", c.Name(), msg)
+			}
 			continue
 		}
 		for _, acct := range accounts {
@@ -1045,7 +1054,9 @@ func refreshBalancesMatching(ctx context.Context, reg *core.Registry, client str
 			bal, err := bp.AccountBalance(bctx, acct.ID, soon)
 			cancel()
 			if err != nil {
-				logf(logger, "[%s] balance sweep %s: %v", c.Name(), core.MaskSecret(acct.ID), err)
+				if msg, log := dedupe.shouldLog(c.Name(), acct.ID, err); log {
+					logf(logger, "[%s] balance sweep %s: %s", c.Name(), core.MaskSecret(acct.ID), msg)
+				}
 				continue
 			}
 			// A successful sweep read is as real as a page visit: publish the
@@ -1056,6 +1067,7 @@ func refreshBalancesMatching(ctx context.Context, reg *core.Registry, client str
 			}
 		}
 	}
+	dedupe.reportOnReturn(logger)
 }
 
 // balanceProbeEligible separates the global soft sweep from the scheduled

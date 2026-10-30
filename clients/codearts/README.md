@@ -271,9 +271,36 @@ Two details are load-bearing:
   not. This is implemented with a `*string` so that `omitempty` omits `nil` but
   still emits an explicit `""`.
 
-`ConversationID` is projected upstream as the vendor's own `prompt_cache_key`.
-`ServedBy` is never sent. No key is invented on this side and sent to the
-vendor: everything in the body is a field the vendor documents.
+`ConversationID` is projected upstream as the vendor's own `prompt_cache_key`
+and is also the `Session-Id` header. `ServedBy` is never sent. No key is
+invented on this side and sent to the vendor: everything in the body is a field
+the vendor documents.
+
+### The session id, and the three-session cap
+
+The vendor caps **concurrent sessions per account at three**; the fourth
+concurrent chat is refused with `TM.00001041` and the message *"并发会话数已达
+上限(3个)，请关闭部分会话后重试"*. A session is identified by `Session-Id`
+(which is also `prompt_cache_key`), so that id has to be stable for the whole
+conversation:
+
+`sessionIDFor` resolves it from, in order: the caller's `ConversationID`, the
+`conversation_id` / `conversationId` / `prompt_cache_key` option spellings, and
+finally a key **derived from the system prompt plus the first user turn**
+(`core.DeriveConversationKey`) — the same key the affinity table pins on. Only a
+request with no stable opening at all gets a random UUID.
+
+That last fallback is the part that used to be missing: without it, every turn
+of a conversation whose client never sent a conversation id minted a **new**
+vendor session, so one multi-turn chat filled all three slots and the account
+then refused everything with `TM.00001041` while looking perfectly healthy. The
+reference implementation avoids this by holding one id for the life of its
+adapter; this module now does the same per conversation.
+
+There is **no close-session endpoint**. The vendor's own client tells the human
+to "close some sessions", which in the IDE means closing chat tabs; the protocol
+exposes only chat completions and the queue-status endpoint. Reusing the id is
+the only lever the API has, and it is the one that matters.
 
 ### Queueing
 
@@ -282,6 +309,12 @@ wording about peak usage, and the request is queued rather than refused. The
 module then polls `/api/v1/queue/status?model=…&task_id=…` every
 `queue_poll_interval` for up to `queue_max_wait`, and resends once when the
 queue reports `working`. A `queue_full` or `error` status ends the attempt.
+
+`task_id` is the **same session id the chat request carried**. The endpoint
+reports where that one session sits in the queue; a random id asks about a task
+that does not exist, and the answer then describes the model's global queue
+depth — which is what the module used to log (positions climbing to 130 while
+the request's own queue never moved).
 
 ### The in-stream refusal
 

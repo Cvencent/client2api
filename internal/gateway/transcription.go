@@ -87,7 +87,7 @@ func (s *server) handleTranscriptions(w http.ResponseWriter, r *http.Request) {
 	}
 	if !s.exposedModelAllowed(r, model) {
 		writeError(w, http.StatusNotFound, "invalid_request_error",
-			fmt.Sprintf("model %q is not exposed by this gateway", model))
+			s.unexposedModelError(r.Context(), model).Error())
 		return
 	}
 	responseFormat := strings.ToLower(strings.TrimSpace(r.FormValue("response_format")))

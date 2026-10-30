@@ -173,7 +173,13 @@ func (s *server) routeAndServe(w http.ResponseWriter, r *http.Request, in routeI
 func (s *server) routeAndServeMessages(w http.ResponseWriter, r *http.Request, in routeInput, writeErr func(http.ResponseWriter, int, string, string)) {
 	in.writeProtocolError = writeErr
 	if !s.exposedModelAllowed(r, in.requested) {
-		err := fmt.Errorf("model %q is not exposed by this gateway", in.requested)
+		// A whitelist refusal used to say only "not exposed by this gateway",
+		// which reads like a broken gateway rather than a policy choice, and
+		// the row carried no reason at all.  A caller who asks for a name that
+		// some platform CAN serve needs to hear that it is merely unpublished;
+		// a caller who asks for a name nothing serves needs to hear that the
+		// id is wrong.  Both are 404, but they are different errands.
+		err := s.unexposedModelError(r.Context(), in.requested)
 		in.stat.status = http.StatusNotFound
 		s.fail(in.rec, err)
 		in.protocolError(w, http.StatusNotFound, "invalid_request_error", err.Error())

@@ -1437,7 +1437,7 @@ func (s *server) handleResponsesCompact(w http.ResponseWriter, r *http.Request) 
 	rec.SessionID = sessionIDFor(req)
 
 	if !s.exposedModelAllowed(r, wire.Model) {
-		err := fmt.Errorf("model %q is not exposed by this gateway", wire.Model)
+		err := s.unexposedModelError(r.Context(), wire.Model)
 		rec.Failed = true
 		s.fail(&rec, err)
 		writeError(w, http.StatusNotFound, "invalid_request_error", err.Error())

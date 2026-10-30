@@ -225,10 +225,13 @@ func TestTheLivenessReportNamesTheDeviceAndTheEndpoint(t *testing.T) {
 		if got := req.Header.Get("X-Device-Mid"); got == "" {
 			t.Errorf("event %d carried no X-Device-Mid header", i)
 		}
-		// And the route is unauthenticated: a bearer token here would be a
-		// credential sent somewhere it is not needed.
-		if got := req.Header.Get("Authorization"); got != "" {
-			t.Errorf("event %d sent Authorization %q, but the endpoint takes none", i, got)
+		// And the report names the account.  The endpoint does accept an
+		// anonymous report, which is why this used to assert the opposite -- but
+		// a device-only signal is what left a second pooled account unclaimable
+		// while the first was granted the daily plan (see reportActivation), so
+		// the credential is now the point of the call.
+		if got := req.Header.Get("Authorization"); got == "" {
+			t.Errorf("event %d carried no Authorization; the liveness report must name the account", i)
 		}
 	}
 	if seen != len(activationEvents) {

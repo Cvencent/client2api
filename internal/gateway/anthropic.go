@@ -1089,7 +1089,7 @@ func (s *server) handleCountTokens(w http.ResponseWriter, r *http.Request) {
 	}
 	if !s.exposedModelAllowed(r, wire.Model) {
 		writeError(w, http.StatusNotFound, "invalid_request_error",
-			fmt.Sprintf("model %q is not exposed by this gateway", wire.Model))
+			s.unexposedModelError(r.Context(), wire.Model).Error())
 		return
 	}
 	req, err := toCoreRequestFromAnthropic(&wire)

@@ -1532,6 +1532,11 @@ func failureReason(err error) string {
 		return ""
 	}
 	switch {
+	case IsUnexposedModelError(err):
+		// The gateway refused before touching a platform.  Saying so is what
+		// keeps this row from looking like a transport drop: the request never
+		// had an account and never spent any time upstream.
+		return "模型不在对外白名单：" + core.Redact(err.Error())
 	case IsModelPolicyRefusal(err):
 		return "模型已被账号策略关闭：" + core.Redact(err.Error())
 	case IsModelParkRefusal(err):

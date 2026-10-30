@@ -383,19 +383,45 @@ func planEnvelopeData(raw json.RawMessage, path string) (json.RawMessage, error)
 	return env.Data, nil
 }
 
-// reportActivation tells the vendor this client is alive.
+// reportActivation tells the vendor this account is alive.
 //
 // The two events are what the vendor keys the daily plan grant on, so they go
 // out before every preview rather than once per process: the vendor dedups by
 // device and date, so repeating them costs one small request and covers the
 // case where the day's first preview happens before the events have landed.
 //
+// The events carry the account's own credential.  They used to go out
+// anonymously, on the reading that this endpoint is unauthenticated -- it does
+// accept a credential-less report -- but an anonymous report names only the
+// device, so a pool of accounts behind one device id reports "somebody is
+// alive" once and leaves every account after the first unattributed.  Measured
+// on 2026-10-29: the account that had the desktop client signed in was offered
+// and granted the daily plan, while a second account on the same device, whose
+// only liveness signal was these anonymous reports, was answered with an empty
+// preview at 20:00, 21:00 and 21:05 and then with 1004 ("this account is not
+// eligible") when asked directly.  The same account was offered the plan
+// minutes later, once its own credential had been sent with the events.  The
+// attributed attempt therefore goes first and the anonymous one stays as the
+// fallback, so an account kind the endpoint will not accept still reports.
+//
 // A failure is deliberately not fatal.  The reference swallows it for the same
 // reason ("reporting failure does not block; the next call makes it up"), and
 // the caller already treats an empty preview as a fact rather than an error.
 // It is logged, though, so an operator can tell "the vendor says there is
 // nothing today" apart from "the liveness signal never got through".
-func (c *Client) reportActivation(ctx context.Context) {
+func (c *Client) reportActivation(ctx context.Context, acct *Account) {
+	// An attributed report is the one that can mark *this* account active, so
+	// it is tried first.  A refusal (or a credential kind this endpoint does
+	// not take) falls back rather than costing the caller its liveness signal.
+	if acct != nil && c.reportEvents(ctx, acct) == nil {
+		return
+	}
+	_ = c.reportEvents(ctx, nil)
+}
+
+// reportEvents sends both activation events as one account, or anonymously
+// when acct is nil, and returns the first failure.
+func (c *Client) reportEvents(ctx context.Context, acct *Account) error {
 	for _, event := range activationEvents {
 		body := map[string]string{
 			"event":       event,
@@ -403,14 +429,22 @@ func (c *Client) reportActivation(ctx context.Context) {
 			"platform":    activationPlatform,
 			"app_version": c.appVersion(),
 		}
-		// No credential: this endpoint is unauthenticated, and a nil account is
-		// how planDo says so.  The identity headers -- including the
-		// X-Device-Mid the vendor checks -- are still installed.
-		if err := c.planDo(ctx, http.MethodPost, eventReportPath, nil, "", "", body, nil); err != nil {
+		// The envelope is decoded rather than discarded: this vendor reports a
+		// refusal as HTTP 200 with a non-zero business code, so a call that
+		// only checks the status treats "no permission" as delivered and never
+		// falls back to the anonymous report.
+		var env planEnvelope
+		if err := c.planDo(ctx, http.MethodPost, eventReportPath, acct, "", "", body, &env); err != nil {
 			c.pool.log("zcode: %s event report failed: %v", event, err)
-			return
+			return err
+		}
+		if env.Code != 0 {
+			err := &claimError{code: env.Code, msg: strings.TrimSpace(env.Msg)}
+			c.pool.log("zcode: %s event report refused: %v", event, err)
+			return err
 		}
 	}
+	return nil
 }
 
 // claimPreview lists what the vendor is currently offering this account,
@@ -418,10 +452,11 @@ func (c *Client) reportActivation(ctx context.Context) {
 // error.
 func (c *Client) claimPreview(ctx context.Context, acct *Account) ([]claimPlan, error) {
 	// The preview is the request the vendor answers from liveness, so the
-	// liveness report has to precede it.  Both the panel's board and the
-	// scheduler's batch reach the vendor through here, so neither needs to
-	// remember to do it.
-	c.reportActivation(ctx)
+	// liveness report has to precede it -- and it has to be this account's
+	// report, or the vendor is judging activity it cannot attribute.  Both the
+	// panel's board and the scheduler's batch reach the vendor through here, so
+	// neither needs to remember to do it.
+	c.reportActivation(ctx, acct)
 
 	used := c.appVersion()
 	plans, err := c.previewOnce(ctx, acct)

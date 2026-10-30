@@ -33,6 +33,10 @@ type source struct {
 	// It is separate from Disabled, which is the operator's switch, and it is
 	// runtime-only so a reload never resurrects a rejected credential.
 	invalid map[string]bool
+	// balanceProbe is the negative cache for the "auto" balance protocol: a
+	// relay that answers none of the four billing probes is remembered here so
+	// the next sweep skips it instead of repeating four failures.
+	balanceProbe map[string]balanceProbeState
 	// authExhausted is the wrapper's veto on that verdict: an auth-shaped
 	// refusal that is really "this credit package is drained" (the OfficeAce
 	// gateway answers a zero-credit account with a bare 401) is a cooldown,
@@ -515,9 +519,50 @@ func (s *source) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 		return nil, fmt.Errorf("%w: %s request limit reached; retry after %s", core.ErrBusy, s.name, limitBlock.Until.Format(time.RFC3339))
 	}
 	if cooling {
-		return nil, fmt.Errorf("%w: %s has a key for model %q but it is cooling down", core.ErrBusy, s.name, req.Model)
+		// This is a cooldown, not the in-flight ceiling.  It still has to be an
+		// ErrBusy: the gateway treats that sentinel as "skip this platform
+		// without spending a retry", which is exactly right, and answering 429
+		// rather than a hard failure is what lets the caller back off.  But
+		// ErrBusy's own text says "client is at its in-flight limit", and that
+		// sentence sent operators hunting for contention on a platform whose
+		// only problem was a parked key.  coolingError keeps the sentinel and
+		// replaces the wording.
+		return nil, &coolingError{
+			source: s.name,
+			model:  req.Model,
+			until:  s.coolingUntilFor(req.Model, s.now(), s.cooling),
+		}
 	}
 	return nil, fmt.Errorf("%w: %s has no ready API key for model %q; scan models first", core.ErrNotConfigured, s.name, req.Model)
+}
+
+// coolingError says a platform has a key for the model but parked it, and when
+// it becomes selectable again.
+//
+// It is an ErrBusy: the gateway's rule for that sentinel -- skip the platform,
+// answer backpressure, do not spend a retry -- is the correct behaviour here.
+// Only the wording differs, because "client is at its in-flight limit" describes
+// contention and this is a cooldown.  The two states need different operator
+// actions (raise a ceiling vs. wait for a park to lapse), so they must not read
+// the same in a log.
+type coolingError struct {
+	source string
+	model  string
+	until  string
+}
+
+func (e *coolingError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return fmt.Sprintf("%s has a key for model %q but it is cooling down until %s",
+		e.source, e.model, e.until)
+}
+
+// Is makes errors.Is(err, core.ErrBusy) true, which is what the gateway and the
+// module's own callers match on.
+func (e *coolingError) Is(target error) bool {
+	return target == core.ErrBusy
 }
 
 func (s *source) accountLimitBlocked(id string, now time.Time) *requestLimitBlock {
@@ -525,6 +570,45 @@ func (s *source) accountLimitBlocked(id string, now time.Time) *requestLimitBloc
 		return nil
 	}
 	return s.limits.AccountBlocked(id, now)
+}
+
+// coolingUntilFor reports when the earliest-parked key able to serve model
+// becomes selectable again, for the operator-facing reason string.
+//
+// The caller has already established that every candidate was cooling; this
+// answers "for how long", which is the only part of the sentence an operator
+// can act on.  An unreadable state (nothing cooling, a zero timestamp) falls
+// back to a wording that makes no promise about the time.
+func (s *source) coolingUntilFor(model string, now time.Time, cooling map[string]time.Time) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var soonest time.Time
+	for _, p := range s.rows {
+		if p.Disabled || s.invalid[p.ID] {
+			continue
+		}
+		serves := false
+		for _, m := range p.Models {
+			if m == model {
+				serves = true
+				break
+			}
+		}
+		if !serves {
+			continue
+		}
+		until, ok := cooling[p.ID]
+		if !ok || !now.Before(until) {
+			continue
+		}
+		if soonest.IsZero() || until.Before(soonest) {
+			soonest = until
+		}
+	}
+	if soonest.IsZero() {
+		return "the cooldown lapses"
+	}
+	return soonest.Format(time.RFC3339)
 }
 
 func (s *source) sourceLimitBlocked(now time.Time) *requestLimitBlock {

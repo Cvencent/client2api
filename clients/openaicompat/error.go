@@ -28,6 +28,13 @@ const (
 	kindBlocked         failureKind = "blocked"
 	kindServer          failureKind = "server"
 	kindClient          failureKind = "client"
+	// kindForbidden is a 403 whose text names neither a dead credential nor a
+	// satisfied billing complaint.  Relays use 403 for three different things
+	// -- a revoked key, a spent free tier, and "this account is not allowed
+	// this group/model" -- and only the first is about the credential.  It is
+	// kept apart from kindAuth so it rotates and fails over instead of marking
+	// the key 账号异常.
+	kindForbidden failureKind = "forbidden"
 	// kindPayloadTooLarge is HTTP 413.  It is deliberately its own kind rather
 	// than part of kindClient: the body was too large for THIS provider's own
 	// limit, and providers differ by orders of magnitude (a 32 KiB edge limit
@@ -43,6 +50,14 @@ var (
 		"out of credit", "no credit", "requires more credit", "add credit",
 		"credit limit", "payment required", "exceeded your current quota",
 		"quota exceeded", "insufficient_quota", "billing",
+		// A relay that meters a free tier per window refuses with 403, not 429,
+		// once that window is spent: chatanywhere answers "The free points
+		// available in the current 7-day window are insufficient for this
+		// request".  Read as auth, that marks the credential 账号异常 and asks
+		// the operator to re-import a key that is perfectly valid; the window
+		// resets on its own, which is exactly what the quota cooldown models.
+		"insufficient for this request", "free points", "7-day window",
+		"点数不足", "额度不足", "余额不足", "配额不足", "额度已用完",
 	}
 	rateMarkers = []string{
 		"rate limit", "rate-limit", "ratelimit", "too many requests",
@@ -53,10 +68,18 @@ var (
 		"invalid_api_key", "api key not found", "invalid key",
 		"key was disabled", "key has been disabled", "revoked", "unauthorized",
 		"authentication", "invalid credentials",
+		"appkey or appsecret is invalid",
 	}
 	notFoundMarkers = []string{
 		"model not found", "not a valid model", "unknown model",
 		"invalid model", "does not exist", "no such model",
+	}
+	// banMarkers are the 403s that really do end a credential's life.  They
+	// must stay ahead of the ambiguous-403 branch, or a banned key would be
+	// kept in rotation and asked again on every request.
+	banMarkers = []string{
+		"banned", "has been banned", "account is banned", "封禁", "已封",
+		"account suspended", "account disabled", "key has been disabled",
 	}
 	// turnedAwayMarkers name refusals about what the model can do on this
 	// relay, not about the credential or the content: the relay's upstream
@@ -66,6 +89,12 @@ var (
 	// this relay".  Classifying them as a model-scoped refusal is what lets
 	// the gateway move a model-group request to a sibling that does serve
 	// tools instead of returning the 400 to the caller.
+	//
+	// The group-permission entries are the same shape one level up: lingxiai
+	// answers "No permission to access group Gemini 反重力" with a 403 while the
+	// key serves every other group fine.  The status-only branch read that 403
+	// as a dead credential and marked the whole key 账号异常, which also took
+	// the models it CAN serve out of rotation.
 	turnedAwayMarkers = []string{
 		"tool choice not supported", "tool_choice not supported",
 		"model_tool_choice_not_supported", "model_tool_not_supported",
@@ -73,6 +102,8 @@ var (
 		"not support tool calling", "not support function call",
 		"tool use is not supported", "tools are not supported",
 		"不支持工具调用", "不支持工具", "不支持函数调用",
+		"no permission to access group", "permission to access group",
+		"无权访问分组", "无权访问该分组", "分组无权限",
 	}
 	blockedMarkers = []string{
 		"flagged", "moderation", "moderated", "content policy",
@@ -118,6 +149,12 @@ func classifyFailure(status int, text string) failureKind {
 	if containsMarker(text, turnedAwayMarkers) {
 		return kindModelTurnedAway
 	}
+	// A ban is the one 403 that really is terminal for the credential: the
+	// vendor will never serve this key again, so the row has to become 账号异常
+	// and stop consuming requests.
+	if containsMarker(text, banMarkers) {
+		return kindAuth
+	}
 	if containsMarker(text, authMarkers) {
 		return kindAuth
 	}
@@ -125,8 +162,17 @@ func classifyFailure(status int, text string) failureKind {
 		return kindRateLimit
 	}
 	switch {
-	case status == 401 || status == 403:
+	case status == 401:
 		return kindAuth
+	case status == 403:
+		// A bare 403 is ambiguous, and the two ways of guessing wrong are not
+		// equally bad.  Calling it auth (the old behaviour) marks the key
+		// 账号异常 and removes a credential that may be perfectly good; calling
+		// it a transport fault keeps the account in rotation and lets the
+		// sibling account or the next platform serve the turn.  A 403 that
+		// really means "this key is dead" says so -- "invalid api key", "has
+		// been banned", "revoked" -- and those are matched above.
+		return kindForbidden
 	case status == 413:
 		return kindPayloadTooLarge
 	case status == 429:
@@ -151,6 +197,13 @@ func coreKindFor(k failureKind) core.FailureKind {
 		return core.FailureModelRefused
 	case kindAuth:
 		return core.FailureAuth
+	case kindForbidden:
+		// An ambiguous 403: the credential is not provably dead, so nothing is
+		// marked invalid.  FailureModelRefused is the shape that keeps the
+		// account in rotation, records the model as unavailable on this
+		// platform, and lets the gateway try a sibling -- which is what the
+		// group-permission refusals and the spent-free-tier refusals need.
+		return core.FailureModelRefused
 	case kindServer:
 		return core.FailureUpstream
 	case kindBlocked:

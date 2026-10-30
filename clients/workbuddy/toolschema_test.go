@@ -109,9 +109,69 @@ func TestNormalizeToolSchema(t *testing.T) {
 			want: `{"type":"object","properties":{"a":{"type":"string"},"b":{"type":"number"}},"required":["b"]}`,
 		},
 		{
-			name: "root ref is inlined",
+			name: "root ref is inlined and the now-unused defs are pruned",
 			in:   `{"$ref":"#/$defs/P","$defs":{"P":{"type":"object","properties":{"a":{"type":"string"}}}}}`,
-			want: `{"type":"object","properties":{"a":{"type":"string"}},"$defs":{"P":{"type":"object","properties":{"a":{"type":"string"}}}}}`,
+			want: `{"type":"object","properties":{"a":{"type":"string"}}}`,
+		},
+		{
+			name: "a nested tuple inside a still-referenced def is rewritten and the def survives",
+			in:   `{"type":"object","properties":{"t":{"$ref":"#/$defs/T"}},"$defs":{"T":{"type":"array","items":[{"type":"string"},{"type":"number"}]}}}`,
+			want: `{"type":"object","properties":{"t":{"type":"array","items":{"anyOf":[{"type":"string"},{"type":"number"}]}}}}`,
+		},
+		{
+			name: "nested refs are inlined wherever they appear",
+			in:   `{"type":"object","properties":{"a":{"$ref":"#/$defs/P"},"b":{"$ref":"#/$defs/P"}},"$defs":{"P":{"type":"object","properties":{"x":{"type":"string"}}}}}`,
+			want: `{"type":"object","properties":{"a":{"type":"object","properties":{"x":{"type":"string"}}},"b":{"type":"object","properties":{"x":{"type":"string"}}}}}`,
+		},
+		{
+			name: "a self-referential def is cut rather than expanded forever",
+			in:   `{"type":"object","properties":{"n":{"$ref":"#/$defs/Node"}},"$defs":{"Node":{"type":"object","properties":{"next":{"$ref":"#/$defs/Node"}}}}}`,
+			want: `{"type":"object","properties":{"n":{"type":"object","properties":{}}}}`,
+		},
+		{
+			name: "nullable type array collapses to the non-null type",
+			in:   `{"type":"object","properties":{"a":{"type":["string","null"]}}}`,
+			want: `{"type":"object","properties":{"a":{"type":"string"}}}`,
+		},
+		{
+			name: "an all-null type array is dropped with its now-empty property",
+			in:   `{"type":"object","properties":{"a":{"type":["null"]}}}`,
+			want: `{"type":"object","properties":{}}`,
+		},
+		{
+			name: "a union type becomes anyOf",
+			in:   `{"type":"object","properties":{"a":{"type":["string","number"]}}}`,
+			want: `{"type":"object","properties":{"a":{"anyOf":[{"type":"string"},{"type":"number"}]}}}`,
+		},
+		{
+			name: "a type array that also declares properties stays an object",
+			in:   `{"type":"object","properties":{"a":{"type":["object","null"],"properties":{"b":{"type":"string"}}}}}`,
+			want: `{"type":"object","properties":{"a":{"type":"object","properties":{"b":{"type":"string"}}}}}`,
+		},
+		{
+			name: "const becomes a one-value enum",
+			in:   `{"type":"object","properties":{"kind":{"type":"string","const":"city"}}}`,
+			want: `{"type":"object","properties":{"kind":{"type":"string","enum":["city"]}}}`,
+		},
+		{
+			name: "a const next to an enum is dropped rather than merged",
+			in:   `{"type":"object","properties":{"k":{"type":"string","const":"a","enum":["a","b"]}}}`,
+			want: `{"type":"object","properties":{"k":{"type":"string","enum":["a","b"]}}}`,
+		},
+		{
+			name: "nullable and schema metadata keywords are dropped",
+			in:   `{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"a":{"type":"string","nullable":true,"$comment":"x"}}}`,
+			want: `{"type":"object","properties":{"a":{"type":"string"}}}`,
+		},
+		{
+			name: "a required name with no declared property is dropped",
+			in:   `{"type":"object","properties":{"a":{"type":"string"},"b":null},"required":["a","b"]}`,
+			want: `{"type":"object","properties":{"a":{"type":"string"}},"required":["a"]}`,
+		},
+		{
+			name: "an all-dropped required list disappears",
+			in:   `{"type":"object","properties":{"a":{"type":"string"},"b":null},"required":["b"]}`,
+			want: `{"type":"object","properties":{"a":{"type":"string"}}}`,
 		},
 		{
 			name: "unresolvable root ref is dropped",
@@ -149,9 +209,9 @@ func TestNormalizeToolSchema(t *testing.T) {
 			want: `{"type":"object","properties":{"a":{"type":"array","items":{"type":"array","items":{"type":"string"}}}}}`,
 		},
 		{
-			name: "tuple inside a $defs entry is rewritten",
+			name: "the old defs-only tuple case now prunes the unreferenced def",
 			in:   `{"type":"object","$defs":{"T":{"type":"array","items":[{"type":"string"},{"type":"number"}]}},"properties":{}}`,
-			want: `{"type":"object","$defs":{"T":{"type":"array","items":{"anyOf":[{"type":"string"},{"type":"number"}]}}},"properties":{}}`,
+			want: `{"type":"object","properties":{}}`,
 		},
 		{
 			name: "value constraints survive byte-for-byte",

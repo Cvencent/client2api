@@ -504,3 +504,35 @@ func TestSourceProbeFallsBackWhenStoredFirstModelIsNotChat(t *testing.T) {
 		t.Fatalf("probed model = %q, want GLM-5.3-Flash", got)
 	}
 }
+
+// A cooldown and an in-flight ceiling both answer backpressure, but they need
+// different operator actions, so they must not read the same.  The old text
+// said "client is at its in-flight limit" for both, which is what sent an
+// operator looking for contention on a platform that only had a parked key.
+func TestCoolingErrorKeepsBackpressureButNotTheContentionWording(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "temporary upstream failure", http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+	c, err := newSource("relay", core.SourceConfig{BaseURL: srv.URL}, core.Deps{DataDir: t.TempDir(), HTTPClient: srv.Client()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.AddAccount(context.Background(), core.AccountSpec{Fields: map[string]string{"api_key": "demo-key", "models": "demo"}}); err != nil {
+		t.Fatal(err)
+	}
+	req := &core.ChatRequest{Model: "demo", Messages: []core.Message{{Role: "user", Content: "hi"}}}
+	if _, err := c.Chat(context.Background(), req); err == nil {
+		t.Fatal("first chat unexpectedly succeeded")
+	}
+	_, err = c.Chat(context.Background(), req)
+	if !errors.Is(err, core.ErrBusy) {
+		t.Fatalf("second chat error = %v, want it to match core.ErrBusy", err)
+	}
+	if strings.Contains(err.Error(), "in-flight") {
+		t.Fatalf("cooling error borrows the in-flight wording: %v", err)
+	}
+	if !strings.Contains(err.Error(), "cooling down until") {
+		t.Fatalf("cooling error = %v, want it to say when the park lapses", err)
+	}
+}

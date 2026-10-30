@@ -1000,6 +1000,13 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 		// 6004 parks the model on this account, not the account, because the
 		// credential is still perfectly good for every other model.
 		kind := c.noteAttemptFailure(a, route.bare, err, freeModel)
+		if kind == ErrFunctionParams {
+			// The normalized schema was refused anyway, so the vendor's rule
+			// this one broke is not in toolschema.go yet.  Leave the tools array
+			// behind: the response names no field, so the rewritten body is the
+			// only evidence of what the validator objected to.
+			c.dumpRejectedSchema(body, err.Error())
+		}
 		lastErr = err
 		if !retryableKind(kind) {
 			return nil, classifyFailure(err, lastAccount)
