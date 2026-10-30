@@ -301,3 +301,24 @@ func usageBarsStealGlobalBar(src string) bool {
 	}
 	return strings.Contains(rest, `class="bar"`)
 }
+
+// TestUsageNoteCountsDetailRecordsNotLogLines 钉住用量页头部的「明细保留 N 条」
+// 读的是每请求明细环（recent），不是 OVER.log_lines。
+//
+// 前科（issue #4）：「保留 N 条」取的是运行日志的内存行数（overview 的
+// log_lines），同一页面里「最近调用」子表又写着 100/100 条，两个数字互相
+// 矛盾；日志行数随日志增长，这个标注还永远追不上真相。
+func TestUsageNoteCountsDetailRecordsNotLogLines(t *testing.T) {
+	src := poolStatsUISource(t)
+
+	body := poolStatsFuncBody(t, src, "renderUsage")
+	// 头部标注必须来自用量报告自带的 recent（与最近调用子表同源）。
+	if !strings.Contains(body, `+ " · 明细保留 " + ((d.recent || []).length || "-") + "条"`) &&
+		!strings.Contains(body, `+ " · 明细保留 " + ((d.recent || []).length || "-") + " 条"`) {
+		t.Error("usNote 没有用 d.recent 的长度当明细保留数：标注会退回别的量")
+	}
+	// 防退化：不能再引用运行日志行数。
+	if strings.Contains(body, "OVER && OVER.log_lines") || strings.Contains(body, "OVER.log_lines") {
+		t.Error("usNote 仍在读 OVER.log_lines：那是运行日志行数，不是用量明细的保留数（issue #4）")
+	}
+}

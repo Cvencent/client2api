@@ -15445,11 +15445,15 @@ async function renderUsage() {
   const d = r.data || {}, t = d.totals || {};
   const req = t.requests || 0, fail = t.failures || 0;
   const rate = req ? Math.round((req - fail) / req * 100) : 100;
-  $("#usNote").textContent = (d.window_hours ? "窗口 " + d.window_hours + " 小时" : "全部保留记录") + " · 保留 " + ((OVER && OVER.log_lines) || "-") + " 条";
+  // 「保留」说的是每请求明细环（与下面「最近调用」子表同一份 recent），不是
+  // overview 里的运行日志行数——那读起来像这个页面的留存容量，和子表的
+  // 100/100 打架（issue #4）。
+  $("#usNote").textContent = (d.window_hours ? "窗口 " + d.window_hours + " 小时" : "全部保留记录") + " · 明细保留 " + ((d.recent || []).length || "-") + " 条";
   $("#usStats").textContent = numf(req) + " / " + numf(fail);
   renderUsageTiles(d, t, rate);
   // 每次换掉 innerHTML，柱子的 .usreveal 都是新元素，扫光动画自然重播一次。
-  // 用量页 5 秒轮询一次，但这层动画只有半秒、且揭示后就是完整的图，重播不会晃眼；
+  // 用量页不轮询：进入/切子表/手动刷新时才重画（refreshVisible 只刷账号页），
+  // 这层动画只有半秒、且揭示后就是完整的图，重播不会晃眼；
   // 真正需要避免的是「操作员正看着某根柱子，它忽然缩回去」—— 那已经由
   // usageChartHover 里的 data-us-v 时间戳挡住了。
   $("#usChart").innerHTML = usageChartSVG(d.series);
