@@ -17,8 +17,11 @@ func TestPanelUsesUnifiedAppleStyleDesignLayer(t *testing.T) {
 		"backdrop-filter: blur(18px) saturate(180%)",
 		"color-mix(in srgb, var(--surface) 78%, transparent)",
 		".nav a.on::before",
-		".view:not([hidden]) { animation: uiViewIn",
-		"@keyframes uiViewIn",
+		// 视图容器的整层淡入已经移除：它会和三套区块级编排叠在一起，每次切页
+		// 整屏先透明再浮现，观感就是「闪一下」。现在入场由 .fx-in 负责，
+		// 这里改成钉住那套编排本身，而不是被删掉的那条规则。
+		".fx-in { animation: fxInUp",
+		"@keyframes fxInUp",
 		".subtabs {",
 		".subtab.on",
 		"button:focus-visible",

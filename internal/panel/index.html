@@ -424,22 +424,31 @@ body.mode-3d .board3d { display: block; }
 
 /* ① 级联进场：卡片/面板按 --i 次序上浮 + 轻微放大 + 稍微解糊。
    比原来「统一 6px 淡入」更有层次：眼睛会顺着次序扫过去。 */
-.fx-in { animation: fxInUp 480ms cubic-bezier(.16, 1, .3, 1) both; animation-delay: calc(min(var(--i, 0), 20) * 42ms); }
+/* 起始透明度不是 0 而是 .55：从全透明淡入时，第一帧整块内容是「不存在」的，
+   观感就是页面闪一下。内容从半透明开始上浮，既能读出「进来了」的层次，
+   又不会有一瞬间的空白。位移也收到 8px：14px 在密集表格里像跳了一下。 */
+.fx-in { animation: fxInUp 380ms cubic-bezier(.16, 1, .3, 1) both; animation-delay: calc(min(var(--i, 0), 20) * 34ms); }
 @keyframes fxInUp {
-  from { opacity: 0; transform: translateY(14px) scale(.988); filter: blur(3px); }
-  60%  { filter: blur(0); }
-  to   { opacity: 1; transform: none; filter: none; }
+  from { opacity: .55; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
 }
 
 /* ② 滚动显现：只在进入视口时演一次（.fx-in 由 IntersectionObserver 加上） */
-.fx-lazy { opacity: 0; transform: translateY(16px); }
-.fx-lazy.fx-in { opacity: 1; transform: none; }
-@media (prefers-reduced-motion: reduce) { .fx-lazy { opacity: 1; transform: none; } }
+/* 滚动显现：只做位移，不做透明。内容从头就是可见的——「滚下去才出现」在
+   长页面上会让人觉得内容丢了一块。 */
+.fx-lazy { transform: translateY(10px); }
+.fx-lazy.fx-in { transform: none; transition: transform 420ms cubic-bezier(.16,1,.3,1); }
+@media (prefers-reduced-motion: reduce) { .fx-lazy { transform: none; } }
 
 /* ③ 进度条/占比条生长 */
 @keyframes fxGrow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
 
 /* ④ 点击波纹：从指针处扩散的一圈柔光，20 次/秒也不会掉帧 */
+/* 波纹用 absolute 定位，所以宿主必须是定位元素。button 默认是 static，
+   于是 offsetParent 落到了外层的 .topbar / .box 上——点击位置被算成相对那个
+   容器，波纹就飞到了屏幕另一头（实测偏移 -1521px）。给所有可能承接波纹的
+   宿主补 position: relative，波纹才落在指针下面。 */
+button, .fx-rip, .acct-card, .pk-card, .ov-kpi, .berth, .uscard, .rl-node { position: relative; }
 .fx-ripple {
   position: absolute; border-radius: 50%; pointer-events: none; z-index: 5;
   background: radial-gradient(circle, color-mix(in srgb, var(--accent) 46%, transparent), transparent 68%);
@@ -503,10 +512,36 @@ body.mode-3d .board3d { display: block; }
 }
 
 /* ⑥ 账号池卡片墙：默认视图。表格退成可选（.acc-table 模式）。 */
-/* 卡片墙 + 常驻概况栏。筛选到只剩一两张卡时，右栏仍然是有内容的——
-   上一版这种情况下右边是一整片黑。 */
-.acct-split { display: grid; grid-template-columns: minmax(0, 1fr) 268px; align-items: start; }
-@media (max-width: 1180px) { .acct-split { grid-template-columns: minmax(0, 1fr); } .acct-side { display: none; } }
+/* 全池概况：挂在页头标题右侧的中间槽里，横排一行。
+   它曾经是内容区右侧的一整列，但那会把页面拉长——一组「池子有多大」的读数
+   不值得占一栏版面。 */
+.masthead .mh-mid { display: none; }
+#view-accounts .masthead .mh-mid {
+  display: flex; align-items: center; gap: 12px; min-width: 0;
+  /* 页头是 align-items: flex-end，这里自己抬到标题基线上，读起来像标题的
+     一个注脚而不是另起一行。 */
+  align-self: flex-end; margin: 0 24px 6px 26px;
+}
+.as-pct { display: inline-flex; align-items: baseline; gap: 7px; flex: none; }
+.as-pct b { font: 700 22px/1 var(--mono); letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
+.as-pct i { font: 500 10.5px/1 var(--mono); color: var(--ink-3); font-style: normal; white-space: nowrap; }
+.as-strip {
+  display: inline-flex; gap: 2px; height: 6px; width: 112px; flex: none;
+  border-radius: 3px; overflow: hidden; background: var(--surface-2);
+}
+.as-strip i { display: block; height: 100%; min-width: 3px; transform-origin: left center; }
+.as-strip i.ok { background: var(--ok); }
+.as-strip i.warn { background: var(--warn); }
+.as-strip i.bad { background: var(--bad); }
+.as-strip i.idle { background: color-mix(in srgb, var(--ink-3) 45%, transparent); }
+.as-nums { display: inline-flex; align-items: center; gap: 8px; min-width: 0; overflow: hidden; }
+.as-nums i {
+  font: 500 10.5px/1 var(--mono); color: var(--ink-3); font-style: normal; white-space: nowrap;
+}
+.as-nums i.w { color: var(--warn); }
+.as-nums i.b { color: var(--bad); }
+@media (max-width: 1180px) { #view-accounts .masthead .mh-mid { display: none; } }
+
 .acct-board {
   display: grid; gap: 12px; padding: 4px 18px 18px;
   grid-template-columns: repeat(auto-fill, minmax(268px, 1fr));
@@ -738,11 +773,7 @@ body.acct-mode-table .acct-board { display: none; }
    改成一个只在超宽屏才生效的上限：本机 1840px 可用宽度下内容通栏，和顶栏对齐；
    真正的大屏（>2200px）才收住，免得一行拉得读不下去。 */
 .view { padding: 22px 24px 64px; max-width: 2200px; width: 100%; }
-.view:not([hidden]) { animation: viewIn var(--dur-med) var(--ease-out) both; }
-@keyframes viewIn {
-  from { opacity: 0; transform: translateY(6px); }
-  to { opacity: 1; transform: translateY(0); }
-}
+/* 同上：容器层的 viewIn 已移除，见 .fx-in 的区块级编排。 */
 .view[hidden] { display: none; }
 
 /* ── 控件 ─────────────────────────────────────────────────────────── */
@@ -2509,10 +2540,7 @@ body {
 .topbar .meta { color: var(--ink-3); }
 
 .view { padding: 24px 26px 72px; animation: none; }
-.view:not([hidden]) { animation: uiViewIn var(--dur-page) var(--ease-smooth) both; }
-@keyframes uiViewIn {
-  from { opacity: 0; transform: translate3d(0, 8px, 0); }
-  to { opacity: 1; transform: translate3d(0, 0, 0); }
+/* 视图容器整层淡入已统一移除（切页闪烁的根因）：见 .fx-in。 */
 }
 @keyframes uiPanelIn {
   from { opacity: 0; transform: translate3d(0, 5px, 0) scale(.995); }
@@ -3956,8 +3984,7 @@ body {
 .topbar .sep { color: var(--line); }
 .topbar .meta { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-3); font-size: var(--type-xs); font-variant-numeric: tabular-nums; }
 .view { padding: 22px 24px 76px; }
-.view:not([hidden]) { animation: uiViewIn var(--dur-page) var(--ease) both; }
-@keyframes uiViewIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+/* 视图容器整层淡入已统一移除（切页闪烁的根因）：见 .fx-in。 */
 
 /* -- 3. 控件 ------------------------------------------------------------ */
 button, input, select, textarea { border-color: var(--hairline); }
@@ -4480,8 +4507,8 @@ input, select, textarea, .stat, .subtab {
 [data-theme="dark"] .box { border-color: color-mix(in srgb, var(--line) 78%, transparent); }
 
 /* -- 7. 过渡：视图切换加一点点位移，不阻塞导航 ------------------------- */
-.view:not([hidden]) { animation: ovIn 240ms var(--ease) both; }
-@keyframes ovIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+/* 视图容器的整层淡入已移除（见动效层的说明）：区块级编排由 .fx-in 负责。
+   这里保留一行占位注释，避免后来的人以为漏了动画又加回来。 */
 @media (prefers-reduced-motion: reduce) {
   .view:not([hidden]), .box { animation: none !important; transition: none !important; }
 }
@@ -5072,8 +5099,9 @@ input, select, textarea, .stat, .subtab {
 /* 视图容器：这一列唯一的滚动区。 */
 .viewwrap { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; min-height: 0; }
 .view { padding: 20px 24px 72px; max-width: 2200px; width: 100%; margin: 0 auto; }
-.view:not([hidden]) { animation: shellViewIn 200ms var(--ease) both; }
-@keyframes shellViewIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
+/* 视图容器本身**不再**整体淡入。之前这里叠了三层动画（容器 200ms + 容器
+   再一层 viewIn + 每个区块各自淡入），每次切页整屏先透明再浮现，观感就是
+   「闪一下」。现在只留区块级编排（见 .fx-in），容器立刻可见。 */
 
 /* 窄屏：侧栏收成一条顶部工具带，内容列照旧自己滚。 */
 @media (max-width: 900px) {
@@ -5398,22 +5426,8 @@ input, select, textarea, .stat, .subtab {
 
 /* 1) 视图进场：同级区块按顺序错峰浮现（0/40/80ms…，最多 5 档）。
       每屏只演一次；切回来的视图带 .settle，直接就是最终状态。 */
-.view:not([hidden]):not(.settle) > .box,
-.view:not([hidden]):not(.settle) > .stats,
-.view:not([hidden]):not(.settle) > .tcbar,
-.view:not([hidden]):not(.settle) > .rl-head,
-.view:not([hidden]):not(.settle) > .rl-kpis {
-  animation: blockIn 320ms var(--ease) both;
-}
-.view:not([hidden]):not(.settle) > :nth-child(1) { animation-delay: 0ms; }
-.view:not([hidden]):not(.settle) > :nth-child(2) { animation-delay: 40ms; }
-.view:not([hidden]):not(.settle) > :nth-child(3) { animation-delay: 80ms; }
-.view:not([hidden]):not(.settle) > :nth-child(4) { animation-delay: 120ms; }
-.view:not([hidden]):not(.settle) > :nth-child(n+5) { animation-delay: 160ms; }
-@keyframes blockIn {
-  from { opacity: 0; transform: translateY(8px); }
-  to   { opacity: 1; transform: none; }
-}
+/* 区块级入场统一由 .fx-in（见动效增强层）负责，这里不再叠一层 blockIn。
+   两套同时跑的话，同一块内容会先被 blockIn 淡入一次、再被 fx-in 淡入一次。 */
 
 /* 2) 统计数字：值变化时轻轻向上淡入，让「刚读到的数」和「之前的数」分得开。
       只对 .stat .v 生效，表格里的数字不动——那里的行一直在刷新，动会晃眼。 */
@@ -6617,10 +6631,7 @@ html:not([data-theme="light"]) body::after {
             </div>
           </details>
         </header>
-        <div class="acct-split">
-          <div class="acct-board" id="acctBoard"></div>
-          <aside class="acct-side" id="acctSide" aria-label="全池概况"></aside>
-        </div>
+        <div class="acct-board" id="acctBoard"></div>
         <div class="tbl-wrap acc-table-wrap">
         <table class="acc">
           <colgroup>
@@ -8359,11 +8370,14 @@ function revealView(view) {
 // fxAfterData 在数据加载完后再编排一次：卡片是数据到了才生成的，切页那一刻
 // 容器还是空的——只编排一次的话，用户永远看不到卡片级联，只看到空壳淡入。
 function fxAfterData(view) {
+  let grown = false;
   const run = () => {
     const host = document.getElementById("view-" + view);
     if (!host || VIEW !== view) return;
     fxCascade(host);
-    fxGrow(host);
+    // 生长条只演一次：进度条是 scaleX 动画，重播会让条子缩回去再长出来，
+    // 那是「闪」的另一种形式。
+    if (!grown) { grown = true; fxGrow(host); }
     fxScrollIn(host);
   };
   requestAnimationFrame(() => requestAnimationFrame(run));
@@ -8627,6 +8641,7 @@ function mountMasthead(view) {
           '<h2 class="mh-title"></h2>' +
           '<p class="mh-sub"></p>' +
         '</div>' +
+        '<div class="mh-mid"></div>' +
         '<div class="mh-right"></div>' +
       '</div>';
     host.insertBefore(mh, host.firstChild);
@@ -8798,6 +8813,9 @@ function go(v) {
   if (shown) {
     if (VIEW_ENTERED.has(v)) shown.classList.add("settle");
     else { VIEW_ENTERED.add(v); shown.classList.remove("settle"); }
+    // 每次「进入」这一页都清掉上一次的编排标记，卡片墙随后重画时才能再演一遍；
+    // 同一页内的数据刷新不会经过这里，所以轮询不会重播。
+    shown.querySelectorAll("[data-fx-done]").forEach(el => { delete el.dataset.fxDone; });
     // 进场编排：级联上浮（42ms/项）+ 视口内生长条。上一版是统一 6px 淡入，
     // 整页像「一起亮了一下」，读不出层次；现在眼睛会顺着次序扫过去。
     revealView(v);
@@ -9962,12 +9980,19 @@ function fxCascade(host, sel) {
       ".box, .ov-kpi, .pk-card, .acct-card, .berth, .rl-node, .uscard, .acc tbody tr, .ev, .cfgrow")]
     .filter(el => el.offsetParent !== null)
     .slice(0, 40);
-  items.forEach((el, i) => {
+  // 只演「这一轮新出现」的元素。数据加载完成后会再调一次，如果每次都把全部
+  // 元素重放一遍（remove → reflow → add），已经可见的区块会重新从透明淡入——
+  // 观感就是页面连着闪两三次。用 dataset 记住已演过的，第二次起只处理新元素。
+  let fresh = 0;
+  items.forEach(el => {
+    if (el.dataset.fxDone === "1") return;
+    el.dataset.fxDone = "1";
+    el.style.setProperty("--i", String(fresh++));
     el.classList.remove("fx-in");
-    el.style.setProperty("--i", String(i));
     void el.offsetWidth;
     el.classList.add("fx-in");
   });
+  return fresh;
 }
 
 // fxScrollIn 让长页面里靠下的模块「滚到才演」。用 IntersectionObserver 一次
@@ -10028,6 +10053,12 @@ function initRipple() {
     if (!host) return;
     const r = host.getBoundingClientRect();
     if (!r.width || !r.height) return;
+    // 兜底：波纹是 absolute，宿主不是定位元素时会以更外层的容器为基准，
+    // 位置就歪了。这里就地补一次（只补一次，写进 dataset）。
+    if (getComputedStyle(host).position === "static") {
+      host.style.position = "relative";
+      host.dataset.fxPos = "1";
+    }
     const d = Math.max(r.width, r.height) * 1.6;
     const s = document.createElement("span");
     s.className = "fx-ripple";
@@ -11523,6 +11554,32 @@ function atlasFrame() {
   const D = 90;
   ATLAS.cam.position.set(Math.sin(t * 0.05) * 2.2, Math.sin(elev) * D, Math.cos(elev) * D);
   ATLAS.cam.lookAt(0, 0.55, 0);
+  // 星图的背景板同样钉在相机前方，并按正交视锥的实际尺寸铺满（正交相机没有
+  // fov，用 frustum 的 right/top）。
+  if (ATLAS.env && ATLAS.env.dome) {
+    const d = ATLAS.env.dome;
+    const vw = (ATLAS.cam.right - ATLAS.cam.left) * 2.2;
+    const vh = (ATLAS.cam.top - ATLAS.cam.bottom) * 2.2;
+    if (Math.abs(d.geometry.parameters.width - vw) > 0.5) {
+      d.geometry.dispose();
+      d.geometry = new THREE.PlaneGeometry(vw, vh);
+      /* 正交相机把一张贴图拉满整个视锥，云团会被放大成一片平涂。
+         用 clamp 模式 + 放大的 repeat 取贴图的一小块：等效于「这块天只是整片
+         天空的一角」，既有细节又不会出现平铺接缝（clamp 到边缘像素）。
+         之前用 RepeatWrapping + repeat>1，接缝正好落在画面中央，浅色下是一道
+         竖直亮带。 */
+      if (d.material && d.material.map) {
+        const m = d.material.map;
+        m.wrapS = m.wrapT = THREE.ClampToEdgeWrapping;
+        m.repeat.set(1.6, 1.0);
+        m.offset.set(0.18, 0.06);
+        m.needsUpdate = true;
+      }
+    }
+    d.quaternion.copy(ATLAS.cam.quaternion);
+    d.position.copy(ATLAS.cam.position).add(
+      new THREE.Vector3(0, 0, -1).applyQuaternion(ATLAS.cam.quaternion).multiplyScalar(120));
+  }
   // 正交视锥：环在这个仰角下投影成「宽 2R、高 2R·sin(elev)」的椭圆，再加上
   // 铭牌的占位，两者取大者并留 8% 边距。上一版把手算的半宽半高当成了高度，
   // 结果整个环被裁掉一半。
@@ -11704,67 +11761,271 @@ function envGlowTex() {
 function envBlend(P) { return P.starAdd ? THREE.AdditiveBlending : THREE.NormalBlending; }
 
 // envAttach 把一整套环境装进 root，返回一个可被帧循环推进的句柄。
+/* ── 环境：一个真正的「场景」，而不是一块网格 ────────────────────────────
+   用户的原话是「还是非常简陋的网格，就像一个 demo 一样，背景图呢？背景的
+   样式呢？动画呢」。之前只有：纯黑渐变天穹（对比度 4%）+ 520 颗 0.26px 的
+   星点 + 一张 GridHelper。三层都几乎看不见，所以读起来只有浅网格。
+
+   这一版按「深空场景」重做，五个层次从远到近：
+     ① 天穹      竖向渐变 + 两团巨大的星云（程序化噪声，跟着时间缓慢流动）
+     ② 银河带    一条斜贯天空的雾状亮带，带颗粒
+     ③ 远星层    3000 颗 0.5~1.2px 的小星，慢速自转，形成视差底
+     ④ 近星层    240 颗 1.5~3px 的亮星，带十字光芒，快速自转
+     ⑤ 地面      网格退到 0.18 不透明度，主体交给极坐标刻度环 + 地平线辉光
+   星云是 canvas 上的多倍频噪声（几层随机光斑叠加后模糊），不是一张贴图资源：
+   面板是离线单文件的，不能引外部图片。噪声种子固定，所以每次构建长得一样。
+*/
+const ENV_CLOUDS = {};   // 主题 -> 星云贴图（按主题缓存，尺寸大，重建一次很贵）
+
+function envNebulaTex(P) {
+  const key = P.domeTop + "|" + P.domeBot + "|" + (P.star || 0);
+  if (ENV_CLOUDS[key]) return ENV_CLOUDS[key];
+  // 2048×1024：星图的视锥要一张贴图铺满整个窗口，1024 宽的云会被放大成平涂。
+  const W = 2048, H = 1024;
+  const c = document.createElement("canvas");
+  c.width = W; c.height = H;
+  const g = c.getContext("2d");
+  if (!g) return null;
+  // 底色：竖向渐变（近地平线略亮）
+  const lg = g.createLinearGradient(0, 0, 0, H);
+  lg.addColorStop(0, P.domeTop);
+  lg.addColorStop(0.55, P.domeMid);
+  lg.addColorStop(1, P.domeBot);
+  g.fillStyle = lg;
+  g.fillRect(0, 0, W, H);
+
+  // 星云：多倍频「光斑云」。每层用一组随机椭圆 + 大模糊叠加，层数越多越像
+  // 真实的弥漫气体：大块的底 + 中等的丝 + 小块的核。
+  const seedRand = (seed => () => {
+    seed = (seed * 1664525 + 1013904223) % 4294967296;
+    return seed / 4294967296;
+  })(20261030);
+  const dark = document.documentElement.getAttribute("data-theme") !== "light";
+  // 主色是蓝，青色做辅，紫只在少数几团里出现——紫多了整幅画面会偏品红，
+  // 和界面本身的蓝紫强调色打架。
+  const hues = dark
+    ? [[96, 140, 255], [70, 170, 235], [120, 120, 250], [80, 200, 220], [150, 110, 220]]
+    : [[120, 150, 225], [105, 175, 215], [140, 135, 225], [120, 190, 205], [160, 140, 210]];
+  // 浅色主题的星云必须更淡：它是一张白底，任何饱和度都会把卡片压下去。
+  const layers = [
+    { n: 4, r: [0.30, 0.54], a: dark ? 0.11 : 0.085, blur: 90 },
+    { n: 7, r: [0.12, 0.26], a: dark ? 0.09 : 0.06, blur: 54 },
+    { n: 12, r: [0.04, 0.10], a: dark ? 0.10 : 0.05, blur: 26 },
+  ];
+  layers.forEach(layer => {
+    g.save();
+    g.globalCompositeOperation = dark ? "lighter" : "source-over";
+    for (let i = 0; i < layer.n; i++) {
+      const hue = hues[i % hues.length];
+      const cx = seedRand() * W;
+      const cy = seedRand() * H * 0.92;
+      const rr = (layer.r[0] + seedRand() * (layer.r[1] - layer.r[0])) * W;
+      const rg = g.createRadialGradient(cx, cy, 0, cx, cy, rr);
+      const alpha = layer.a * (0.55 + seedRand() * 0.75);
+      rg.addColorStop(0, `rgba(${hue[0]},${hue[1]},${hue[2]},${alpha.toFixed(3)})`);
+      rg.addColorStop(0.55, `rgba(${hue[0]},${hue[1]},${hue[2]},${(alpha * 0.32).toFixed(3)})`);
+      rg.addColorStop(1, `rgba(${hue[0]},${hue[1]},${hue[2]},0)`);
+      g.fillStyle = rg;
+      g.beginPath(); g.arc(cx, cy, rr, 0, Math.PI * 2); g.fill();
+    }
+    g.restore();
+  });
+
+  // 银河带：一条斜贯的雾状亮带。深色主题偏冷白，浅色偏灰蓝。
+  g.save();
+  g.translate(W * 0.5, H * 0.42);
+  g.rotate(-0.44);
+  const bandW = W * 0.30, bandH = H * 1.9;
+  const bg = g.createLinearGradient(0, -bandW, 0, bandW);
+  const bandInk = dark ? "150,175,255" : "110,130,180";
+  bg.addColorStop(0, `rgba(${bandInk},0)`);
+  bg.addColorStop(0.42, `rgba(${bandInk},${dark ? 0.07 : 0.08})`);
+  bg.addColorStop(0.5, `rgba(${bandInk},${dark ? 0.15 : 0.12})`);
+  bg.addColorStop(0.58, `rgba(${bandInk},${dark ? 0.07 : 0.08})`);
+  bg.addColorStop(1, `rgba(${bandInk},0)`);
+  g.fillStyle = bg;
+  g.fillRect(-bandH / 2, -bandW, bandH, bandW * 2);
+  // 带内的颗粒：让它有「尘埃」的质感，而不是一条平滑的带子
+  for (let i = 0; i < 620; i++) {
+    const x = seedRand() * bandH - bandH / 2;
+    const y = (seedRand() - 0.5) * bandW * 1.7;
+    const falloff = 1 - Math.abs(y) / (bandW * 0.95);
+    if (falloff <= 0) continue;
+    const a = (dark ? 0.5 : 0.32) * falloff * (0.35 + seedRand() * 0.8);
+    g.fillStyle = `rgba(255,255,255,${a.toFixed(3)})`;
+    const s = 0.6 + seedRand() * 1.5;
+    g.fillRect(x, y, s, s);
+  }
+  g.restore();
+
+  // 只做一次整体轻模糊，把云团与银河带揉在一起（比逐层 blur 快得多）
+  const soft = document.createElement("canvas");
+  soft.width = W; soft.height = H;
+  const sg = soft.getContext("2d");
+  if (sg && typeof sg.filter === "string") {
+    sg.filter = "blur(3px)";
+    sg.drawImage(c, 0, 0);
+  } else if (sg) {
+    sg.drawImage(c, 0, 0);
+  }
+  const tex = new THREE.CanvasTexture(soft);
+  tex.wrapS = THREE.RepeatWrapping;
+  ENV_CLOUDS[key] = tex;
+  return tex;
+}
+
+// envStarSprite 画一枚星点精灵：中心实、边缘柔，可选十字光芒。
+// 用精灵而不是纯色点：PointsMaterial 的方块在近距离会露馅。
+function envStarSprite(rays) {
+  const key = rays ? "star4" : "star1";
+  if (ENV_CLOUDS[key]) return ENV_CLOUDS[key];
+  const S = 64;
+  const c = document.createElement("canvas");
+  c.width = S; c.height = S;
+  const g = c.getContext("2d");
+  if (!g) return null;
+  const rg = g.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+  rg.addColorStop(0, "rgba(255,255,255,1)");
+  rg.addColorStop(0.22, "rgba(255,255,255,0.92)");
+  rg.addColorStop(0.5, "rgba(255,255,255,0.26)");
+  rg.addColorStop(1, "rgba(255,255,255,0)");
+  g.fillStyle = rg;
+  g.beginPath(); g.arc(S / 2, S / 2, S / 2, 0, Math.PI * 2); g.fill();
+  if (rays) {
+    // 十字光芒：两条极细的渐变条，亮星才有
+    g.globalCompositeOperation = "lighter";
+    const ray = g.createLinearGradient(0, S / 2, S, S / 2);
+    ray.addColorStop(0, "rgba(255,255,255,0)");
+    ray.addColorStop(0.5, "rgba(255,255,255,0.55)");
+    ray.addColorStop(1, "rgba(255,255,255,0)");
+    g.fillStyle = ray;
+    g.fillRect(0, S / 2 - 0.9, S, 1.8);
+    g.save();
+    g.translate(S / 2, S / 2); g.rotate(Math.PI / 2); g.translate(-S / 2, -S / 2);
+    g.fillRect(0, S / 2 - 0.9, S, 1.8);
+    g.restore();
+  }
+  const tex = new THREE.CanvasTexture(c);
+  ENV_CLOUDS[key] = tex;
+  return tex;
+}
+
+// envStarLayer 生成一层星：count 颗，分布在半径 rMin..rMax 的球壳上半部。
+// speed 是自转角速度，两层不同速度才有视差。
+function envStarLayer(P, count, rMin, rMax, size, opacity, fy, seed, sprite) {
+  const arr = new Float32Array(count * 3);
+  let s = seed || 1;
+  const rnd = () => { s = (s * 1664525 + 1013904223) % 4294967296; return s / 4294967296; };
+  for (let i = 0; i < count; i++) {
+    const theta = rnd() * Math.PI * 2;
+    // 只取地平线以上（phi 从 0 到 ~95°）：地平线以下会被地面挡住，白算
+    const phi = Math.acos(1 - rnd() * 0.97);
+    const r = rMin + rnd() * (rMax - rMin);
+    arr[i * 3] = Math.sin(phi) * Math.cos(theta) * r;
+    arr[i * 3 + 1] = Math.cos(phi) * r + fy;
+    arr[i * 3 + 2] = Math.sin(phi) * Math.sin(theta) * r;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(arr, 3));
+  return new THREE.Points(geo, new THREE.PointsMaterial({
+    color: P.star, size: size, sizeAttenuation: true, transparent: true,
+    map: sprite || envStarSprite(false), alphaTest: 0.01,
+    opacity: opacity, depthWrite: false, blending: envBlend(P) }));
+}
+
 function envAttach(root, opt) {
   const P = fxPalette();
   const R = Math.max(2.4, opt.radius || 8);
   const fy = opt.floorY == null ? -1.4 : opt.floorY;
   const grp = new THREE.Group();
-  const env = { R, fy, grp, scan: [], stars: null, glow: null, dome: null };
+  const env = { R, fy, grp, scan: [], stars: null, starsFar: null, glow: null, dome: null, nebula: null };
 
-  // 天穹：大号内向球 + 竖直渐变，给画面一个「室内」而不是「虚空」
+  /* ① 天穹：**一块巨大的背景板**，不是球体。
+     球体贴图在极点必然收拢成一条折线，而极点正好落在画面上沿——那条弧就是
+     接缝。背景板是一整张平铺的星云图，没有 UV 汇聚点，也就没有接缝；而且它
+     始终在相机前方（跟随相机水平朝向），所以看起来是「无限远的天」。 */
+  const domeTex = envNebulaTex(P);
+  // 背景板尺寸必须**铺满整个视野**：按「相机最远距离 × 视角」算一个足够大的
+  // 平面，再留 1.6 倍余量（绕场旋转时也不露边）。写死一个 R*7 会在宽舞台上
+  // 露出左右两条黑边——那就是「背景板」的边框。
+  // R 越大（星图的环很大），背景板也越大；正交相机那边会按视锥再纠正一次。
+  const domeW = R * 16;
   const dome = new THREE.Mesh(
-    new THREE.SphereGeometry(R * 3.1, 40, 26),
-    new THREE.MeshBasicMaterial({ map: envDomeTex(P), side: THREE.BackSide, depthWrite: false }));
-  dome.position.y = fy + R * 0.3;
+    new THREE.PlaneGeometry(domeW, domeW * 0.66),
+    new THREE.MeshBasicMaterial({ map: domeTex, depthWrite: false, depthTest: false }));
+  dome.position.set(0, fy + R * 1.2, -R * 7.0);
+  dome.renderOrder = -100;
   grp.add(dome);
   env.dome = dome;
 
-  // 星场：只放在地平线以上，避免星点穿到地板下面
-  const N = opt.stars == null ? 520 : opt.stars;
-  const arr = new Float32Array(N * 3);
-  for (let i = 0; i < N; i++) {
-    const u = Math.random() * Math.PI * 2;
-    const v = Math.acos(Math.random() * 0.94);           // 上半球，越靠地平线越密
-    const rr = R * (1.55 + Math.random() * 1.45);
-    arr[i * 3] = Math.sin(v) * Math.cos(u) * rr;
-    arr[i * 3 + 1] = Math.cos(v) * rr + fy + R * 0.04;
-    arr[i * 3 + 2] = Math.sin(v) * Math.sin(u) * rr;
-  }
-  const sg = new THREE.BufferGeometry();
-  sg.setAttribute("position", new THREE.BufferAttribute(arr, 3));
-  const stars = new THREE.Points(sg, new THREE.PointsMaterial({
-    color: P.star, size: P.starSize, sizeAttenuation: true, transparent: true,
-    map: envGlowTex(), alphaTest: 0.02,
-    opacity: P.starOpacity, depthWrite: false, blending: envBlend(P) }));
-  grp.add(stars);
-  env.stars = stars;
+  // ② 远星层：小而密、自转慢 → 视差底。星点是**背景**，所以尺寸压到刚好看得见：
+  //    上一版近星给到 starSize*6.5、220 颗带光芒，屏幕上一片雪白抢掉了卡片。
+  const far = envStarLayer(P, 2400, R * 2.0, R * 3.0, P.starSize * 1.1, P.starOpacity * 0.5, fy, 7, envStarSprite(false));
+  grp.add(far);
+  env.starsFar = far;
 
-  // 地平线辉光：一张径向渐变贴片贴地铺开，制造「远处有光」的纵深
+  // ③ 近星层：稍大、带十字光芒、自转快 → 视差面。只留 90 颗，且比远星只大
+  //    约 3 倍：亮星要稀，稀才像星，密了就成噪点。
+  const near = envStarLayer(P, 90, R * 1.6, R * 2.2, P.starSize * 3.4, P.starOpacity * 0.75, fy, 31, envStarSprite(true));
+  grp.add(near);
+  env.stars = near;
+
+  // ④ 地平线辉光：贴地铺开的一团柔光，制造「远处有光源」
   const glow = new THREE.Mesh(
-    new THREE.PlaneGeometry(R * 5.0, R * 5.0),
+    new THREE.PlaneGeometry(R * 6.4, R * 6.4),
     new THREE.MeshBasicMaterial({
-      map: envGlowTex(), color: P.halo, transparent: true, opacity: P.haloOpacity,
+      map: envGlowTex(), color: P.halo, transparent: true, opacity: P.haloOpacity * 1.8,
       depthWrite: false, blending: envBlend(P) }));
   glow.rotation.x = -Math.PI / 2;
   glow.position.y = fy + 0.02;
+  glow.userData.base = glow.material.opacity;
   grp.add(glow);
   env.glow = glow;
 
-  // 地面网格：两级色，远近不同亮，地平线才有距离感
-  const grid = new THREE.GridHelper(R * 4.4, 26, P.gridA, P.gridB);
-  if (grid.material) { grid.material.transparent = true; grid.material.opacity = P.gridOpacity; }
+  // ⑤ 地面：网格**退成背景**（0.18），主体换成极坐标刻度环——它更像「一台
+  //    机器的台面」而不是「一个 3D demo 的默认网格」。
+  const grid = new THREE.GridHelper(R * 4.6, 40, P.gridA, P.gridB);
+  if (grid.material) { grid.material.transparent = true; grid.material.opacity = P.gridOpacity * 0.33; }
   grid.position.y = fy;
   grp.add(grid);
   env.grid = grid;
 
-  // 扫描环：两圈错相向外扩散，一个「这台机器在跑」的持续信号
-  for (let k = 0; k < 2; k++) {
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(1, 0.011, 5, 96),
+  // 极坐标环：由内向外几圈，越外越淡，最外一圈带刻度短划
+  for (let k = 1; k <= 4; k++) {
+    const rr = R * 0.42 * k;
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(rr, 0.006 + 0.002 * k, 4, 128),
+      new THREE.MeshBasicMaterial({ color: P.beam, transparent: true,
+        opacity: Math.max(0.05, 0.20 - k * 0.035), depthWrite: false, blending: envBlend(P) }));
+    ring.rotation.x = Math.PI / 2;
+    ring.position.y = fy + 0.004;
+    grp.add(ring);
+  }
+  // 刻度短划：36 条，贴在第二圈附近，像台面的角度刻度
+  const ticks = new THREE.Group();
+  for (let i = 0; i < 36; i++) {
+    const a = (i / 36) * Math.PI * 2;
+    const major = i % 9 === 0;
+    const len = major ? R * 0.10 : R * 0.05;
+    const rr = R * 0.84;
+    const tick = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.008, len),
+      new THREE.MeshBasicMaterial({ color: P.beam, transparent: true,
+        opacity: major ? 0.30 : 0.14, depthWrite: false, blending: envBlend(P) }));
+    tick.position.set(Math.cos(a) * rr, fy + 0.006, Math.sin(a) * rr);
+    tick.rotation.x = -Math.PI / 2;
+    tick.rotation.z = -a;
+    ticks.add(tick);
+  }
+  grp.add(ticks);
+
+  // ⑥ 扫描环：两圈错相向外扩散
+  for (let k = 0; k < 3; k++) {
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(1, 0.010, 5, 128),
       new THREE.MeshBasicMaterial({ color: P.beam, transparent: true, opacity: 0,
         blending: envBlend(P), depthWrite: false }));
     ring.rotation.x = Math.PI / 2;
     ring.position.y = fy + 0.035;
-    ring.userData.phase = k * 0.5;
+    ring.userData.phase = k / 3;
     grp.add(ring);
     env.scan.push(ring);
   }
@@ -11772,20 +12033,34 @@ function envAttach(root, opt) {
   root.add(grp);
   return env;
 }
-
 function envTick(env, t) {
   if (!env) return;
-  if (env.stars) env.stars.rotation.y = t * 0.013;
+  // 两层星以不同速度自转：近层快、远层慢，转动时就有了视差（这是「有深度」
+  // 最便宜也最有效的来源）。之前只有一层、0.013 弧度/秒，看不出在动。
+  if (env.starsFar) env.starsFar.rotation.y = t * 0.006;
+  if (env.stars) env.stars.rotation.y = t * 0.017;
+  /* 星云流动：只有**重复次数为 1**（单张贴图铺满视野）时才做偏移摆动。
+     重复次数 >1 时（星图的视锥很大，必须重复才能保住细节），偏移会把贴图的
+     平铺接缝推过画面正中——浅色主题下那就是一道竖直亮带。那种情况改成不动
+     贴图、只让星层自转来提供「在动」的感觉。 */
+  if (env.dome && env.dome.material && env.dome.material.map) {
+    const m = env.dome.material.map;
+    if ((m.repeat.x || 1) <= 1.01) {
+      m.offset.x = Math.sin(t * 0.019) * 0.03 - 0.015;
+      m.offset.y = Math.sin(t * 0.031) * 0.01;
+    }
+  }
   if (env.glow) {
-    const s = 1 + Math.sin(t * 0.55) * 0.04;
+    const s = 1 + Math.sin(t * 0.55) * 0.05;
     env.glow.scale.set(s, s, 1);
+    env.glow.material.opacity = env.glow.userData.base * (0.85 + Math.sin(t * 0.42) * 0.15);
   }
   const span = env.R * 1.85;
   for (const r of env.scan) {
-    const ph = ((t * 0.34 + r.userData.phase) % 1);
-    const rad = 0.5 + ph * span;
+    const ph = ((t * 0.30 + r.userData.phase) % 1);
+    const rad = 0.4 + ph * span;
     r.scale.set(rad, rad, 1);
-    r.material.opacity = (1 - ph) * 0.5;
+    r.material.opacity = Math.sin(Math.PI * ph) * 0.42;
   }
 }
 
@@ -11813,18 +12088,21 @@ function fxPalette() {
         floor: 0x2b3552, grid: 0x1b2236, hub: 0x8fa8ff, hubWire: 0x6f8cff, plateBlur: "rgba(0,0,0,0.55)",
         // 环境：深空底 + 冷色星点 + 网格两级色。浅色主题这些必须整体翻过来，
         // 否则「加亮的星」在白底上等于不存在（加法混合在白上不产生任何变化）。
-        domeTop: "#05060b", domeMid: "#0a0e1a", domeBot: "#131b2f",
-        star: 0xbfd0ff, starOpacity: 0.72, starSize: 0.26, starAdd: true,
-        gridA: 0x2f3a58, gridB: 0x1b2236, gridOpacity: 0.55,
-        beam: 0x4a63c8, beamOpacity: 0.34, halo: 0x5f6cd8, haloOpacity: 0.16,
+        // 天穹必须有**可读的明暗差**：上一版 rgb(5,6,11)→rgb(18,26,46) 只差
+        // 4%，屏幕上就是一块纯黑，于是整幅画面只剩网格。现在顶部深、近地平线
+        // 明显偏蓝紫，星云和银河带才有「背景」可言。
+        domeTop: "#070a16", domeMid: "#101a35", domeBot: "#1d2b52",
+        star: 0xd6e2ff, starOpacity: 0.9, starSize: 0.3, starAdd: true,
+        gridA: 0x3a4874, gridB: 0x1d2742, gridOpacity: 0.55,
+        beam: 0x6d86e8, beamOpacity: 0.34, halo: 0x7a8cf0, haloOpacity: 0.16,
         plateGlow: 0.30 }
     : { plate: "rgba(255,255,255,0.97)", plateEdge: "rgba(18,22,38,0.14)",
         ink: "#1a1f2e", ink2: "#5c6478", bar: "rgba(18,22,38,0.10)",
         floor: 0xb7c0d4, grid: 0xd5dbe7, hub: 0x4a63c8, hubWire: 0x3d55b0, plateBlur: "rgba(30,38,60,0.22)",
-        domeTop: "#f7f9fd", domeMid: "#e9eef8", domeBot: "#dde4f1",
-        star: 0x5a6f9e, starOpacity: 0.40, starSize: 0.22, starAdd: false,
-        gridA: 0x9aa6bf, gridB: 0xc6cddd, gridOpacity: 0.7,
-        beam: 0x7b8ab8, beamOpacity: 0.30, halo: 0x6f7fd0, haloOpacity: 0.10,
+        domeTop: "#f6f9ff", domeMid: "#eaf0fc", domeBot: "#dbe4f5",
+        star: 0x46578a, starOpacity: 0.62, starSize: 0.26, starAdd: false,
+        gridA: 0x94a2c0, gridB: 0xc2cade, gridOpacity: 0.7,
+        beam: 0x6f80b5, beamOpacity: 0.30, halo: 0x6377c8, haloOpacity: 0.14,
         plateGlow: 0.14 };
 }
 
@@ -12767,6 +13045,22 @@ function b3dFrame() {
   const camX = B3D.camX || 0;
   B3D.cam.position.set(camX, camY, fit);
   B3D.cam.lookAt(camX, (B3D.camY || 0) * 0.6, 0);
+  // 背景板始终**贴在相机前方**并正对相机，尺寸按视锥在该距离下的实际宽高算。
+  // 写死尺寸是错的：舞台是 4:1 的宽扁带，同一个距离下横向视野比纵向宽 4 倍，
+  // 固定宽度的板子只能盖住中间一半（实测 NDC 只到 ±0.5）。
+  if (B3D.env && B3D.env.dome && B3D.cam) {
+    const d = B3D.env.dome;
+    const DIST = 60;
+    const vh = 2 * DIST * Math.tan((B3D.cam.fov * Math.PI / 180) / 2);
+    const vw = vh * (B3D.cam.aspect || 1);
+    if (d.geometry.parameters.width !== vw) {
+      d.geometry.dispose();
+      d.geometry = new THREE.PlaneGeometry(vw * 1.12, vh * 1.12);   // 12% 余量，转向时不露边
+    }
+    d.quaternion.copy(B3D.cam.quaternion);
+    d.position.copy(B3D.cam.position).add(
+      new THREE.Vector3(0, 0, -1).applyQuaternion(B3D.cam.quaternion).multiplyScalar(DIST));
+  }
   // 板卡始终朝向相机（billboard）：只有这样才能保证任何角度文字都正着。
   B3D.billboards.forEach(g => fxFace(g, B3D.root, B3D.cam));
   // 悬停呼吸：每块板子在自己的高度上轻微起伏，相位错开——静止画面也在呼吸。
@@ -13051,7 +13345,10 @@ const ACCT_COUNT_PREV = new Map();
 // renderAcctSide 画「全池概况」。它统计的是**未筛选**的全部账号，所以左边
 // 筛到只剩一张卡时，右边仍然告诉你这个池子有多大、卡在哪个平台。
 function renderAcctSide() {
-  const host = $("#acctSide");
+  // 概况挂到页头标题右侧的中间槽（.mh-mid），不再占用内容区右侧一整列——
+  // 那一列会把页面撑长，而它只是一组「池子有多大」的读数，不该占版面。
+  const mh = document.querySelector("#view-accounts > .masthead");
+  const host = mh ? mh.querySelector(".mh-mid") : null;
   if (!host) return;
   const t = acctTotals();
   const pct = t.total ? Math.round(t.ready / t.total * 100) : 0;
@@ -13075,15 +13372,20 @@ function renderAcctSide() {
       '<span class="track"><i class="' + tone + '" style="width:' + w.toFixed(1) + '%"></i></span>' +
       '<span class="n">' + x.ready + "/" + x.total + "</span></div>";
   }).join("");
+  // 一行紧凑读数：百分比 + 一条状态比例带 + 几个计数 + 平台明细的悬停提示。
+  // 页头的高度是给标题用的，这里不能再长一行，所以全部横排、超出就省略。
+  const perTip = per.map(x => platformLabel(x.n) + " " + x.ready + "/" + x.total).join(" · ");
   host.innerHTML =
-    '<div class="as-h"><b>全池概况</b><span>不随筛选变化</span></div>' +
-    '<div class="as-big"><b>' + pct + '%</b><span>可用 · ' + t.ready + "/" + t.total + " 个账号</span></div>" +
-    (strip ? '<div class="as-strip">' + strip + "</div>" : "") +
-    (rows ? '<div class="as-rows">' + rows + "</div>" : '<div class="quietline"><i></i>还没有任何账号。</div>') +
-    '<div class="as-foot">' + per.length + " 个平台 · 冷却 " + t.cooling + " · 风控 " + t.risk +
-      " · 异常 " + t.fault + " · 停用 " + t.disabled + "</div>";
+    '<span class="as-pct" title="全池可用率（不随左栏筛选变化）"><b>' + pct + '%</b>' +
+      '<i>可用 ' + t.ready + "/" + t.total + "</i></span>" +
+    (strip ? '<span class="as-strip" title="按状态分布：可用 / 冷却 / 异常 / 停用">' + strip + "</span>" : "") +
+    '<span class="as-nums" title="' + esc(perTip || "还没有账号") + '">' +
+      '<i class="p">' + per.length + " 平台</i>" +
+      (t.cooling ? '<i class="w">冷却 ' + t.cooling + "</i>" : "") +
+      (t.risk + t.fault ? '<i class="b">异常 ' + (t.risk + t.fault) + "</i>" : "") +
+    "</span>";
   // 数字滚动：池规模的百分比变化时滚一下（只在同一个元素上，重绘后依然连得上）
-  const big = host.querySelector(".as-big b");
+  const big = host.querySelector(".as-pct b");
   if (big) fxCount(big, pct, { fmt: v => Math.round(v) + "%", dur: 520 });
   // 生长动画只在「池子真的变了」时演一次。renderAccounts 每 5 秒轮询一次，
   // 每次都重播的话这一栏的条会一直抖——那是噪音，不是信息。
