@@ -6,6 +6,22 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.5.21] - 2026-10-31
+
+### Fixed
+
+- **账号卡展开后不再出现两排相同的操作按钮（[#3](https://github.com/Cvencent/client2api/issues/3)）。**
+  卡片模板在展开态同时渲染了外层 `.ac-foot` 和 `acctDetailHTML` 内嵌的
+  `.ac-foot wide`——后者是 3D 检视块（`b3dInspect`）的唯一动作排，卡片就地
+  展开复用同一函数时没人去掉外层那份，于是同一组按钮上下叠了两排。现在
+  open 态跳过外层 foot（内嵌那份就是完整动作链）；收起态的外层 foot 与
+  3D 检视路径的内嵌 foot 都不受影响。
+
+### Installer
+
+- `client2api-setup-0.5.21.exe`（空包，不含账号凭据或本机配置）
+- SHA256：`FA73CB9B9187DDF001300D50EA9401B7AA4294C62F33AC668D0A455FB3F66EA1`
+
 ## [0.5.20] - 2026-10-31
 
 ### Fixed

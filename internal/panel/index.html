@@ -13466,8 +13466,12 @@ function renderAcctBoard(pageRows, caps, acts, showBal) {
         '<div class="ac-row"><span class="k">模型</span><b>' + accModelsCell(CUR, a) + "</b></div>" +
         '<div class="ac-row"><span class="k">状态说明</span><b>' + noteCell(a) + "</b></div>" +
       "</div>" +
-      (open ? acctDetailHTML(g, a, caps, acts, showBal, prio) : "") +
-      '<div class="ac-foot">' + acctCardActs(a, caps, acts) + "</div>" +
+      (open ? acctDetailHTML(g, a, caps, acts, showBal, prio)
+            // 展开态里 acctDetailHTML 已内嵌一份 .ac-foot wide；再留外层这排
+            // 就是两排一模一样的按钮（issue #3）。收起态没有详情块，外层 foot
+            // 仍是唯一的动作排。3D 检视（b3dInspect）复用 acctDetailHTML 且无
+            // 外层 foot，内嵌那份不能动。
+            : '<div class="ac-foot">' + acctCardActs(a, caps, acts) + "</div>") +
       "</article>";
   }).join("");
   // 主读数的数字滚动：只在「同一个元素」上从旧值滚到新值。卡片是每次重绘
