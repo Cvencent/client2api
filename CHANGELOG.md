@@ -45,6 +45,7 @@ workbuddy 工具 schema 的新校验规则，以及 zcode 每日计划的账号�
 ### Installer
 
 - `client2api-setup-0.5.14.exe`（空包，不含账号凭据或本机配置）
+- SHA256：`0131990DB8656D406FE6D05C26B75D2D1757AA07DB25AD4C9541353A2D4E3C3F`
 
 ## [0.5.13] - 2026-10-30
 
