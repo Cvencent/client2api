@@ -9743,7 +9743,11 @@ function rlRenderEvents(traces) {
     box.innerHTML = '<div class="rl-empty">暂无请求流水。</div>';
     return;
   }
-  $("#rlEvNote").textContent = "最近 " + traces.length + " 条";
+  // 流水只画最近几条；总数在 KPI 里。这里注明「最近」，避免两个数字不一致
+  // 被当成 bug。
+  $("#rlEvNote").textContent = "最近 " + traces.length + " 条" +
+    (report.total_traces != null && report.total_traces > traces.length
+      ? "（窗口内共 " + report.total_traces + "）" : "");
   box.innerHTML = traces.slice(0, 30).map(t => {
     const lanes = (t.lanes || []).slice().sort((a, b) => a.candidate - b.candidate);
     const winLane = lanes.find((_, i) => i === t.winner) || null;
@@ -9778,7 +9782,10 @@ function rlRenderKpis(report) {
   const lat = traces.filter(t => t.has_latency);
   const avg = lat.length ? Math.round(lat.reduce((a, t) => a + t.latency_ms, 0) / lat.length) : 0;
   const kpis = [
-    { v: traces.length, l: "窗口内请求" },
+    // 窗口内请求的总数来自服务端（截断前计的数）；流水图只画最近 traces.length
+    // 条。之前直接用 traces.length，它被 limit=60 封顶——请求一多，这个数就
+    // 永远停在 60，看起来像统计错了。
+    { v: (report.total_traces != null ? report.total_traces : traces.length), l: "窗口内请求" },
     { v: fail, l: "全部失败", bad: fail > 0 },
     { v: report.rerouted || 0, l: "发生改道", warn: (report.rerouted || 0) > 0 },
     { v: avg ? rlLatency(avg, true) : "—", l: "平均延迟" },

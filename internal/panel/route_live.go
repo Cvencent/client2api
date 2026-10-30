@@ -99,6 +99,12 @@ type RouteLiveReport struct {
 	// Rerouted counts traces where more than one lane was offered, which is
 	// the number the view's own headline reports.
 	Rerouted int `json:"rerouted"`
+	// TotalTraces is how many traces the window actually holds, counted before
+	// the limit cut the list down. The KPI used to show len(Traces), which is
+	// capped at the request's limit — so on a busy day it sat at exactly 60 no
+	// matter how many requests there were, and looked wrong. The diagram still
+	// draws at most Traces; this number is only for the counter.
+	TotalTraces int `json:"total_traces,omitempty"`
 }
 
 const (
@@ -266,6 +272,9 @@ func buildRouteLiveReport(recs []gateway.UsageRecord, limit, windowHours int, no
 		}
 		return ids[i] > ids[j]
 	})
+	// The counter must reflect the window, not the draw limit: count before
+	// cutting, otherwise a busy day pins the KPI at exactly `limit`.
+	report.TotalTraces = len(ids)
 	if len(ids) > limit {
 		ids = ids[:limit]
 	}
