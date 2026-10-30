@@ -5,7 +5,7 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-当前版本：**0.5.19**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：**0.5.20**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 流式断流排查：升级后系统日志新增 `stream: id=...` 终止诊断，包含协议、平台/模型、
 上游事件数、`finish_reason`、正文/推理字节数、工具调用数、completion token、
@@ -254,7 +254,7 @@ client2api 是一个**个人自用**的 OpenAI 兼容网关。它把你自己在
 - 每日余额刷新支持按时刻、按间隔或 5/6 段 Cron 表达式；已停用账号会被跳过，定时读取不会让账号恢复，只会反复触发厂商拒绝。
 - 批量执行和任务看板，覆盖模块支持的各种账号任务。
 - 恢复探测、每日余额刷新和签到任务。
-- 签到当天已成功、或厂商明确表示该账号当天不可签到时，账号的签到按钮会置灰并显示状态，批量签到也会跳过；网络/鉴权等临时失败仍可点击重试。状态按北京时间跨天自动重置。
+- 签到当天已成功、或厂商明确表示该账号当天不可签到时，账号的签到按钮会置灰并显示状态，批量签到也会跳过；网络/鉴权等临时失败仍可点击重试。状态按北京时间跨天自动重置。重复窗口（一个 Cron 在厂商发放窗口内多次触发的排班）读同一份状态：当天已领取的账号直接跳过、不再打扰厂商，「暂无可领」则让窗口继续询问。billing 预览为空时窗口还会走厂商的营销投递通道：确认带「领取套餐」动作的活动并接着 claim，让无人值守的排班拿到只经弹窗发放的套餐（如周末档）；不带套餐动作的活动一律不代答。
 - 成功率、延迟、输入/输出 tokens、缓存命中率和最近调用。
 - 每条调用显示会话 ID，并支持按模型、按账号统计。
 - 人民币费用估算、厂商官方价表、models.dev 回退和手动价格覆盖。
