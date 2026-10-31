@@ -6,6 +6,24 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.5.23] - 2026-10-31
+
+### Fixed
+
+- **901–1100px 视口全页横滚归零（[#5](https://github.com/Cvencent/client2api/issues/5)）。**
+  `.main` 基础的 `overflow:hidden`（裁住极光装饰层）被两条 `max-width:900px`
+  媒体查询的 `overflow:visible`（为 sticky 顶栏）打开后，`.main::after` 极光层
+  `inset:-30%` + 46s 旋转的对角线包围盒整条计进 scrollable overflow——该宽度
+  区间内全部 13 页可拖出 436–794px 横向空白。修法：两条 900px 查询里极光层
+  收边（`inset:0`）并停旋转（纯氛围层，无感知），另给 `.main` 补一条断点无关的
+  `overflow-x: clip` 兜底。sticky 顶栏依赖的纵向 visible 语义不变；headless
+  实测 900/1000/1280px 下 13 个视图横向溢出全部为 0，sticky 行为正常。
+
+### Installer
+
+- `client2api-setup-0.5.23.exe`（空包，不含账号凭据或本机配置）
+- SHA256：`3A83221BB516FF6AAC0D24FE53A530365BBD74D3AE90A8A08D6877D007D3F41E`
+
 ## [0.5.22] - 2026-10-31
 
 ### Fixed

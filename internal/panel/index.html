@@ -5164,7 +5164,11 @@ input, select, textarea, .stat, .subtab {
     font-size: 10.5px; order: 3;
   }
   .sigmeta { display: none; }   /* 窄屏只留连接状态，版本号和就绪数不值得占一行 */
-  .main { overflow: visible; }
+  .main { overflow: visible; overflow-x: clip; }
+  /* overflow:visible 是给 sticky 顶栏的；极光层在 761-1100px 这段同样是横滚
+     主凶（issue #5）：inset:-30% + 旋转的对角线包围盒会整条计进 scrollable
+     overflow。收边 + 停旋转，氛围仍是完整的一层渐变，无感知。 */
+  .main::after { inset: 0; animation: none; }
   .viewwrap { overflow: visible; }
   .topbar { position: sticky; top: 0; padding: 9px 12px; min-height: 52px; }
   .topbar h1 { font-size: 15.5px; }
@@ -6142,7 +6146,9 @@ html:not([data-theme="light"]) body::after {
   .cmdsig .cmdmono { display: none; }
   .topbar { min-height: 0; padding: 10px 12px 0; }
   .view { padding: 10px 12px 56px; }
-  .main { overflow: visible; }
+  .main { overflow: visible; overflow-x: clip; }
+  /* 同 5137 块：visible 是给 sticky 的，极光层收边停转（issue #5）。 */
+  .main::after { inset: 0; animation: none; }
   .viewwrap { overflow: visible; }
 }
 
