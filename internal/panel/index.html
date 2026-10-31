@@ -53,7 +53,9 @@
   --sans: "Helvetica Neue", Helvetica, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", Arial, sans-serif;
 }
 [data-theme="light"] {
-  /* 浅色同样走 oklch，色相与暗色一致（245）：两个主题是同一套色的明度翻转，
+  /* ⚠ 死块：本文件后文的另一份 [data-theme="light"] 会整体覆盖这里的同名变量
+     （最终生效的是 --bg:#f6f7f9 那一份）。调浅色主题变量请改那一份，改这里无效。
+     浅色同样走 oklch，色相与暗色一致（245）：两个主题是同一套色的明度翻转，
      不是两套独立的配色。中性色仍然带那一点冷色相。 */
   --bg: oklch(96.5% .005 245);
   --surface: oklch(100% 0 0);
@@ -2481,6 +2483,7 @@ input, select, textarea { transition-property: border-color, box-shadow, backgro
 }
 
 [data-theme="light"] {
+  /* ⚠ 死块：同名变量会被后文 --bg:#f6f7f9 那一份覆盖。调浅色主题请改那一份。 */
   --bg: #f4f5f7;
   --surface: rgba(255,255,255,.82);
   --surface-2: rgba(242,242,247,.86);
@@ -3933,6 +3936,7 @@ kbd {
   --shadow-sm: 0 1px 3px rgba(0,0,0,.36);
 }
 [data-theme="light"] {
+  /* ⚠ 死块：同名变量会被后文 --bg:#f6f7f9 那一份覆盖。调浅色主题请改那一份。 */
   --bg: #f3f4f7;
   --surface: rgba(255,255,255,.92);
   --surface-2: rgba(243,244,248,.94);
@@ -5609,6 +5613,8 @@ details[open] > .fold > .foldbody,
           "PingFang SC", "Microsoft YaHei", sans-serif;
   --mono: "SF Mono", "Cascadia Mono", "JetBrains Mono", Consolas, ui-monospace, monospace;
 }
+/* ★ 浅色主题的生效块：本文件里所有 [data-theme="light"] 中，这一份最后定义、
+   实际生效（前面的三份是死块，见各自注释）。调浅色主题变量请改这里。 */
 [data-theme="light"] {
   --bg: #f6f7f9;
   --surface: #ffffff;
@@ -5618,7 +5624,10 @@ details[open] > .fold > .foldbody,
   --line-soft: rgba(16, 24, 40, .06);
   --ink: #14181f;
   --ink-2: #4a5260;
-  --ink-3: #7a828f;
+  /* #687181 是 #7a828f 同色相略降明度：压在 #fff / #f6f7f9 / #f7f8fa 三种
+     实际背景上都 ≥4.59:1（WCAG AA 4.5）。旧值 3.6~3.9 只在深色达标的页面里
+     没人注意——浅色 30 处次要文字整体不达标（issue #15）。 */
+  --ink-3: #687181;
 
   --accent: #3d6ae0;
   --accent-hover: #4c7dff;

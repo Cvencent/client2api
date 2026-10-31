@@ -7,6 +7,7 @@ package panel
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	_ "embed"
 	"encoding/json"
 	"errors"
@@ -15,6 +16,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -306,24 +308,41 @@ func New(opts Options) http.Handler {
 	// Vendored third-party JS (Three.js, Motion), served from the binary so the
 	// panel keeps working fully offline.  Exact allowlist -- the catch-all below
 	// must stay the only thing that answers for anything else under /panel/.
+	// The bytes never change within a build, so they carry a one-year immutable
+	// cache; a new release ships new bytes, and the shell that references them
+	// is itself revalidated by ETag, so stale pairs self-heal on the next load.
+	gzipVendorOnce()
 	mux.HandleFunc("/panel/vendors/", func(w http.ResponseWriter, r *http.Request) {
 		name := strings.TrimPrefix(r.URL.Path, "/panel/vendors/")
-		var body []byte
+		var body, gz []byte
 		switch name {
 		case "three.min.js":
-			body = threeJS
+			body, gz = threeJS, threeGZ
 		case "motion.min.js":
-			body = motionJS
+			body, gz = motionJS, motionGZ
 		default:
 			http.NotFound(w, r)
 			return
 		}
 		setSecurityHeaders(w)
 		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		if acceptsGzip(r) && len(gz) > 0 {
+			w.Header().Set("Content-Encoding", "gzip")
+			w.Header().Set("Vary", "Accept-Encoding")
+			w.Header().Set("Content-Length", strconv.Itoa(len(gz)))
+			_, _ = w.Write(gz)
+			return
+		}
+		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
 		_, _ = w.Write(body)
 	})
 
+	// The shell carries an ETag of its content hash: a reload asks again with
+	// If-None-Match and gets a bodyless 304 instead of 1.2 MB (issue #14).
+	// no-store is gone in favour of no-cache semantics -- the page is never
+	// used from cache without revalidating, so staleness stays impossible.
+	shellETag := fmt.Sprintf(`"%x"`, sha256.Sum256(indexHTML))
 	mux.HandleFunc("/panel/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/panel/api/") {
 			http.NotFound(w, r)
@@ -334,8 +353,13 @@ func New(opts Options) http.Handler {
 		// standing between it and a framing/sniffing attack.
 		setSecurityHeaders(w)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-store")
-		_, _ = w.Write(indexHTML)
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("ETag", shellETag)
+		if match := r.Header.Get("If-None-Match"); match != "" && etagMatches(match, shellETag) {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		writeGzip(w, r, indexHTML)
 	})
 
 	// "/" is the catch-all mounted by the gateway: send browsers to the panel
