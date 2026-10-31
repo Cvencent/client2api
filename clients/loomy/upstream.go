@@ -86,7 +86,11 @@ func (u *upstream) business(ctx context.Context, method, path string, params []q
 		return nil, fmt.Errorf("loomy: reading %s: %w", path, err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, &apiError{Status: resp.StatusCode, Message: truncate(strings.TrimSpace(string(payload)), 300)}
+		return nil, &apiError{
+			Status:     resp.StatusCode,
+			Message:    truncate(strings.TrimSpace(string(payload)), 300),
+			RetryAfter: parseRetryAfter(resp.Header),
+		}
 	}
 
 	env := parseEnvelope(payload)
@@ -207,8 +211,9 @@ func (u *upstream) openChatStream(ctx context.Context, token string, body []byte
 		firstCancel()
 		cancel()
 		return nil, &apiError{
-			Status:  resp.StatusCode,
-			Message: truncate(strings.TrimSpace(string(payload)), 300),
+			Status:     resp.StatusCode,
+			Message:    truncate(strings.TrimSpace(string(payload)), 300),
+			RetryAfter: parseRetryAfter(resp.Header),
 		}
 	}
 

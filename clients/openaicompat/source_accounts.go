@@ -247,7 +247,7 @@ func (s *source) scan(ctx context.Context, p storedProvider, transport *Client, 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return transport.classifyHTTP("models", p.ID, resp.StatusCode, readLimited(resp.Body, maxErrorBytes))
+		return transport.classifyHTTP("models", p.ID, resp.StatusCode, readLimited(resp.Body, maxErrorBytes), resp.Header)
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxModelsBytes+1))
 	if err != nil {

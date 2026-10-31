@@ -14,7 +14,7 @@ import (
 func TestDecodeEnvelopeReadsNestedErrorMessage(t *testing.T) {
 	raw := []byte(`{"error":{"code":"400","message":"Invalid schema for function 'x': \"^[^=\\0]+$\" is not a \"regex\"","param":null,"type":"invalid_request_error"}}`)
 
-	_, err := decodeEnvelope(http.StatusBadRequest, raw)
+	_, err := decodeEnvelope(http.StatusBadRequest, raw, nil)
 	if err == nil {
 		t.Fatal("a nested error payload must produce an error")
 	}

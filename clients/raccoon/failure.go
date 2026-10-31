@@ -67,7 +67,14 @@ func classifyFailure(err error, accountID string) error {
 	} else if se := statusOf(err); se != 0 && se >= http.StatusBadRequest && se <= 599 {
 		status = se
 	}
-	return core.Fail("raccoon", accountID, kind, status, err)
+	f := core.Fail("raccoon", accountID, kind, status, err)
+	// The vendor's own retry hint rides along for the gateway's rate-limit
+	// park: a limiter that answers "60s" gets the pair back in 60s instead of
+	// after the gateway's own doubling ladder (issue #9).
+	if errors.As(err, &ae) && ae.RetryAfter > 0 && kind == core.FailureRateLimited {
+		f.RetryAfter = ae.RetryAfter
+	}
+	return f
 }
 
 // poolExhausted builds the headline for a walk that ended without a serving

@@ -532,8 +532,18 @@ func (s *store) penaliseChatWithStage(id string, err error, now time.Time, stage
 		a.failures++
 		a.lastError = redactErr(err)
 		a.sessionFailures = 0
+		// The vendor's own Retry-After wins over the local ladder when it is
+		// longer (issue #9): a limiter that says "cool down 90s" knows the
+		// window better than a stage table that would answer 30s and send the
+		// account straight back into another 429.  The ladder still advances so
+		// repeated refusals keep escalating, and parseRetryAfter has already
+		// capped the hint at two hours.
 		nextStage := a.cooldownStage + 1
-		if delay, ok := chatCooldownForStage(nextStage); ok {
+		delay, ladderOK := chatCooldownForStage(nextStage)
+		if ra := retryAfterOf(err); ra > delay {
+			delay, ladderOK = ra, true
+		}
+		if ladderOK {
 			a.cooldownStage = nextStage
 			a.cooldownTill = now.Add(delay)
 			a.probeAfter = now.Add(backgroundProbeDelay())
@@ -548,6 +558,16 @@ func (s *store) penaliseChatWithStage(id string, err error, now time.Time, stage
 		return true
 	}
 	return false
+}
+
+// retryAfterOf digs the vendor's retry hint out of an apiError, zero when the
+// answer carried no headers to parse.
+func retryAfterOf(err error) time.Duration {
+	var api *apiError
+	if errors.As(err, &api) {
+		return api.RetryAfter
+	}
+	return 0
 }
 
 // markChatCreditExhausted records the second, confirmed credit refusal on the

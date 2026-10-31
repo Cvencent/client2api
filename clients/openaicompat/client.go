@@ -349,7 +349,7 @@ func (c *Client) doChat(ctx context.Context, prov ProviderConfig, accountID stri
 		raw := readLimited(resp.Body, maxErrorBytes)
 		_ = resp.Body.Close()
 		cancel()
-		return nil, c.classifyHTTP("chat", accountID, resp.StatusCode, raw)
+		return nil, c.classifyHTTP("chat", accountID, resp.StatusCode, raw, resp.Header)
 	}
 	// The stream holds the slot the caller took; closing it returns the slot.
 	return newChatStream(c, resp, prov, accountID, cancel), nil

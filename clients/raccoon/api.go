@@ -60,6 +60,9 @@ type apiError struct {
 	IAMCode   string
 	Message   string
 	RequestID string
+	// RetryAfter is the vendor's own retry hint from the response headers,
+	// already parsed and capped.  Zero when the answer said nothing (issue #9).
+	RetryAfter time.Duration
 }
 
 func (e *apiError) Error() string {
@@ -114,20 +117,23 @@ func isAuthError(err error) bool {
 // decodeEnvelope validates one response and returns its `data` member.
 //
 // `code == 0` is success. When `code` is absent the HTTP status is the
-// authority, so a >= 400 response is an error even with no envelope.
+// authority, so a >= 400 response is an error even with no envelope.  header
+// may be nil; when present, a 429's Retry-After hint is parsed onto the error
+// so the cooldown honours the vendor's own window (issue #9).
 //
 // The IAM service answers with a different envelope (see iamEnvelope), so the
 // symbolic shape is tried first and the numeric one second. Trying IAM first is
 // safe because `code` there is a string: unmarshalling it into the numeric
 // envelope fails, and the numeric path is the only one that can then succeed.
-func decodeEnvelope(status int, raw []byte) (json.RawMessage, error) {
+func decodeEnvelope(status int, raw []byte, header http.Header) (json.RawMessage, error) {
+	ra := parseRetryAfter(header)
 	if data, err, matched := decodeIAMEnvelope(status, raw); matched {
 		return data, err
 	}
 	var env envelope
 	if err := json.Unmarshal(raw, &env); err != nil {
 		if status >= 400 {
-			return nil, &apiError{Status: status, Message: truncate(string(raw), 300)}
+			return nil, &apiError{Status: status, Message: truncate(string(raw), 300), RetryAfter: ra}
 		}
 		return nil, &apiError{Status: status, Message: "unparseable response: " + truncate(string(raw), 300)}
 	}
@@ -143,15 +149,61 @@ func decodeEnvelope(status int, raw []byte) (json.RawMessage, error) {
 				msg = msg + ": " + d
 			}
 		}
-		return nil, &apiError{Status: status, Code: env.Code, Message: msg}
+		return nil, &apiError{Status: status, Code: env.Code, Message: msg, RetryAfter: ra}
 	}
 	if status >= 400 {
 		if env.Error != nil && strings.TrimSpace(env.Error.Message) != "" {
-			return nil, &apiError{Status: status, Message: strings.TrimSpace(env.Error.Message)}
+			return nil, &apiError{Status: status, Message: strings.TrimSpace(env.Error.Message), RetryAfter: ra}
 		}
-		return nil, &apiError{Status: status, Message: http.StatusText(status)}
+		return nil, &apiError{Status: status, Message: http.StatusText(status), RetryAfter: ra}
 	}
 	return env.Data, nil
+}
+
+// parseRetryAfter honours the reset headers, capped at two hours so a broken or
+// hostile value cannot park an account for a week.  The three forms cline and
+// trae already parse: "Retry-After" in seconds or as an HTTP date,
+// "X-Ratelimit-Reset" as an epoch second count, and "Retry-After-Ms" in
+// milliseconds (issue #9).
+func parseRetryAfter(h http.Header) time.Duration {
+	if h == nil {
+		return 0
+	}
+	const cap = 2 * time.Hour
+	for _, key := range []string{"Retry-After", "X-Ratelimit-Reset", "Retry-After-Ms"} {
+		v := strings.TrimSpace(h.Get(key))
+		if v == "" {
+			continue
+		}
+		if key == "Retry-After-Ms" {
+			if ms, err := strconv.ParseInt(v, 10, 64); err == nil && ms > 0 {
+				d := time.Duration(ms) * time.Millisecond
+				if d > cap {
+					d = cap
+				}
+				return d
+			}
+			continue
+		}
+		if secs, err := strconv.ParseInt(v, 10, 64); err == nil && secs > 0 {
+			d := time.Duration(secs) * time.Second
+			if d > cap {
+				d = cap
+			}
+			return d
+		}
+		if t, err := http.ParseTime(v); err == nil {
+			d := time.Until(t)
+			if d <= 0 {
+				continue
+			}
+			if d > cap {
+				d = cap
+			}
+			return d
+		}
+	}
+	return 0
 }
 
 // iamEnvelope is the IAM service's response shape. `code` is a symbolic string
@@ -305,7 +357,7 @@ func (c *Client) doOnce(ctx context.Context, method, path string, hdr http.Heade
 	if err != nil {
 		return fmt.Errorf("raccoon: reading response: %w", err)
 	}
-	data, err := decodeEnvelope(resp.StatusCode, raw)
+	data, err := decodeEnvelope(resp.StatusCode, raw, resp.Header)
 	if err != nil {
 		return err
 	}
@@ -449,7 +501,7 @@ func (c *Client) fetchCatalog(ctx context.Context, cred credential) ([]core.Mode
 	if err != nil {
 		return nil, err
 	}
-	if _, err := decodeEnvelope(resp.StatusCode, raw); err != nil {
+	if _, err := decodeEnvelope(resp.StatusCode, raw, resp.Header); err != nil {
 		return nil, err
 	}
 	return parseCatalog(raw), nil

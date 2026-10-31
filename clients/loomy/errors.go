@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"client2api/internal/core"
 )
@@ -119,6 +120,11 @@ type apiError struct {
 	Status int
 	// Message is the vendor's own text where there is one.
 	Message string
+	// RetryAfter is the vendor's own retry hint from the response headers
+	// (Retry-After / X-Ratelimit-Reset / Retry-After-Ms), already parsed and
+	// capped.  Zero when the vendor said nothing; the cooldown ladder then
+	// decides on its own (issue #9).
+	RetryAfter time.Duration
 }
 
 func (e *apiError) Error() string {
@@ -290,6 +296,15 @@ func classifyFailure(err error, accountID string) error {
 	if errors.As(err, &api) && failureKind(err) == core.FailureContextWindow {
 		return core.Fail("loomy", accountID, core.FailureContextWindow, api.Status, err)
 	}
+	// A 429 carries the vendor's own retry hint to the gateway, which parks the
+	// (account, model) pair for exactly that long instead of doubling its own
+	// backoff (issue #9).  A limiter that answers "60s" should have the account
+	// back in 60s, not after the fixed ladder's later stages.
+	if errors.As(err, &api) && failureKind(err) == core.FailureRateLimited && api.RetryAfter > 0 {
+		f := core.Fail("loomy", accountID, core.FailureRateLimited, api.Status, err)
+		f.RetryAfter = api.RetryAfter
+		return f
+	}
 	return err
 }
 
@@ -303,6 +318,52 @@ func errSessionExpired(accountID string) error {
 		msg += " for account " + accountID
 	}
 	return &apiError{Code: loomyAuthErrorCode, Message: msg}
+}
+
+// parseRetryAfter honours the vendor's reset headers, capped at two hours so a
+// broken or hostile value cannot park an account for a week.  The three forms
+// seen in the wild are the same ones cline/codearts/qwenwork already parse:
+// "Retry-After" in seconds or as an HTTP date, "X-Ratelimit-Reset" as an epoch
+// second count, and "Retry-After-Ms" in milliseconds (issue #9).
+func parseRetryAfter(h http.Header) time.Duration {
+	if h == nil {
+		return 0
+	}
+	const cap = 2 * time.Hour
+	for _, key := range []string{"Retry-After", "X-Ratelimit-Reset", "Retry-After-Ms"} {
+		v := strings.TrimSpace(h.Get(key))
+		if v == "" {
+			continue
+		}
+		if key == "Retry-After-Ms" {
+			if ms, err := strconv.ParseInt(v, 10, 64); err == nil && ms > 0 {
+				d := time.Duration(ms) * time.Millisecond
+				if d > cap {
+					d = cap
+				}
+				return d
+			}
+			continue
+		}
+		if secs, err := strconv.ParseInt(v, 10, 64); err == nil && secs > 0 {
+			d := time.Duration(secs) * time.Second
+			if d > cap {
+				d = cap
+			}
+			return d
+		}
+		if t, err := http.ParseTime(v); err == nil {
+			d := time.Until(t)
+			if d <= 0 {
+				continue
+			}
+			if d > cap {
+				d = cap
+			}
+			return d
+		}
+	}
+	return 0
 }
 
 // callerGone reports whether a request failed because the caller walked away

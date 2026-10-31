@@ -6,6 +6,27 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.5.26] - 2026-10-31
+
+### Added
+
+- **loomy / openaicompat 系 / raccoon 的 429 现在遵循上游 Retry-After（[#9](https://github.com/Cvencent/client2api/issues/9)）。**
+  Retry-After 解析此前只在 cline/codearts/qwenwork/trae/workbuddy 实现，主力
+  平台限流后只能按本地固定冷却回血，上游给的精确窗口被白白扔掉。现在三个
+  模块补齐同款解析（`Retry-After` 秒数/HTTP 日期、`X-Ratelimit-Reset`、
+  `Retry-After-Ms`，统一 2 小时钳制）：**loomy** 的 apiError 携带提示，模块内
+  冷却取「阶梯与提示中较长者」（阶梯照常逐级），并以带提示的
+  `FailureRateLimited` 交给网关 park；**openaicompat**（覆盖 officeace /
+  bcsn / chatanywhere 等 10+ 中转）的 `classifyHTTP` 接收响应头并把提示塞进
+  Failure；**raccoon** 的 `decodeEnvelope` 解析到 apiError、分类时透传。
+  网关 `modelpark.Park` 原本就以 positive retryAfter 覆盖指数退避（钳
+  30 分钟），无需改动。
+
+### Installer
+
+- `client2api-setup-0.5.26.exe`（空包，不含账号凭据或本机配置）
+- SHA256：`C8087DA7DB916B1999BE15BE88BDD8E4AEB99B237FBCB9D0963970D3BB533CC2`
+
 ## [0.5.25] - 2026-10-31
 
 ### Fixed

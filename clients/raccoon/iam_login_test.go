@@ -19,7 +19,7 @@ import (
 func TestDecodeEnvelopeReadsTheIAMShape(t *testing.T) {
 	raw := []byte(`{"code":"COMMON_INVALID_ARGUMENT","message":"captcha_token invalid","request_id":"req-1","details":{}}`)
 
-	_, err := decodeEnvelope(http.StatusBadRequest, raw)
+	_, err := decodeEnvelope(http.StatusBadRequest, raw, nil)
 	if err == nil {
 		t.Fatal("an IAM refusal must produce an error")
 	}
@@ -42,7 +42,7 @@ func TestDecodeEnvelopeReadsTheIAMShape(t *testing.T) {
 func TestDecodeEnvelopeAcceptsTheIAMSuccess(t *testing.T) {
 	raw := []byte(`{"code":"OK","data":{"verification_id":"v-1","expires_in":300}}`)
 
-	data, err := decodeEnvelope(http.StatusOK, raw)
+	data, err := decodeEnvelope(http.StatusOK, raw, nil)
 	if err != nil {
 		t.Fatalf("OK envelope rejected: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestDecodeEnvelopeAcceptsTheIAMSuccess(t *testing.T) {
 func TestDecodeEnvelopeKeepsNumericCodesNumeric(t *testing.T) {
 	raw := []byte(`{"code":100006,"message":"captcha_verify_error","details":"captcha verify failed"}`)
 
-	_, err := decodeEnvelope(http.StatusBadRequest, raw)
+	_, err := decodeEnvelope(http.StatusBadRequest, raw, nil)
 	if err == nil {
 		t.Fatal("a 100006 refusal must produce an error")
 	}
@@ -83,7 +83,7 @@ func TestDecodeEnvelopeKeepsNumericCodesNumeric(t *testing.T) {
 func TestDecodeEnvelopeStillReportsPlainHTTPFailures(t *testing.T) {
 	raw := []byte("404 page not found\n")
 
-	_, err := decodeEnvelope(http.StatusNotFound, raw)
+	_, err := decodeEnvelope(http.StatusNotFound, raw, nil)
 	if err == nil {
 		t.Fatal("a plain 404 must produce an error")
 	}

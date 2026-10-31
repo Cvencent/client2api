@@ -6,7 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"client2api/internal/core"
 )
@@ -301,15 +304,68 @@ func (c *Client) scrubFor(accountID, msg string) string {
 	return truncate(msg, 300)
 }
 
-// classifyHTTP turns a non-2xx response into a typed failure.
-func (c *Client) classifyHTTP(op, accountID string, status int, body []byte) error {
+// classifyHTTP turns a non-2xx response into a typed failure.  header may be
+// nil: a rate-limit verdict that carries a Retry-After hint hands that hint to
+// the gateway, which parks the (account, model) pair for exactly that long
+// instead of doubling its own backoff (issue #9).
+func (c *Client) classifyHTTP(op, accountID string, status int, body []byte, header http.Header) error {
 	_, msg := parseErrorEnvelope(body)
 	if msg == "" {
 		msg = truncate(strings.TrimSpace(string(body)), 300)
 	}
 	k := classifyFailure(status, msg)
 	msg = c.scrubFor(accountID, msg)
-	return core.Fail(c.Name(), accountID, coreKindFor(k), status, &upstreamError{Op: op, Status: status, Msg: msg})
+	f := core.Fail(c.Name(), accountID, coreKindFor(k), status, &upstreamError{Op: op, Status: status, Msg: msg})
+	if k == kindRateLimit {
+		f.RetryAfter = parseRetryAfter(header)
+	}
+	return f
+}
+
+// parseRetryAfter honours the reset headers relays actually send, capped at two
+// hours so a broken or hostile value cannot park an account for a week.  The
+// same three forms cline/trae/qwenwork already parse: "Retry-After" in seconds
+// or as an HTTP date, "X-Ratelimit-Reset" as an epoch second count, and
+// "Retry-After-Ms" in milliseconds (issue #9).
+func parseRetryAfter(h http.Header) time.Duration {
+	if h == nil {
+		return 0
+	}
+	const cap = 2 * time.Hour
+	for _, key := range []string{"Retry-After", "X-Ratelimit-Reset", "Retry-After-Ms"} {
+		v := strings.TrimSpace(h.Get(key))
+		if v == "" {
+			continue
+		}
+		if key == "Retry-After-Ms" {
+			if ms, err := strconv.ParseInt(v, 10, 64); err == nil && ms > 0 {
+				d := time.Duration(ms) * time.Millisecond
+				if d > cap {
+					d = cap
+				}
+				return d
+			}
+			continue
+		}
+		if secs, err := strconv.ParseInt(v, 10, 64); err == nil && secs > 0 {
+			d := time.Duration(secs) * time.Second
+			if d > cap {
+				d = cap
+			}
+			return d
+		}
+		if t, err := http.ParseTime(v); err == nil {
+			d := time.Until(t)
+			if d <= 0 {
+				continue
+			}
+			if d > cap {
+				d = cap
+			}
+			return d
+		}
+	}
+	return 0
 }
 
 // classifyUpstream turns a transport error into a typed failure.

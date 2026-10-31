@@ -551,7 +551,7 @@ func (c *Client) postChatOnce(ctx context.Context, cred credential, req *core.Ch
 	if rerr != nil {
 		return nil, fmt.Errorf("raccoon: reading response: %w", rerr)
 	}
-	data, derr := decodeEnvelope(resp.StatusCode, raw)
+	data, derr := decodeEnvelope(resp.StatusCode, raw, resp.Header)
 	if derr != nil {
 		if statusOf(derr) == http.StatusRequestEntityTooLarge {
 			return nil, requestTooLarge(len(encoded))
@@ -559,7 +559,7 @@ func (c *Client) postChatOnce(ctx context.Context, cred credential, req *core.Ch
 		return nil, derr
 	}
 	if resp.StatusCode >= 400 {
-		return nil, &apiError{Status: resp.StatusCode, Message: truncate(string(raw), 300)}
+		return nil, &apiError{Status: resp.StatusCode, Message: truncate(string(raw), 300), RetryAfter: parseRetryAfter(resp.Header)}
 	}
 	// A whole completion delivered as one JSON document — either bare or
 	// wrapped in the vendor envelope: re-frame the unwrapped payload as SSE so
