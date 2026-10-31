@@ -45,7 +45,8 @@ func TestRiskAndAccountFaultHaveSeparateCounters(t *testing.T) {
 	// 磁贴数字现在经 tickNumber 滚动到新值（数字变化的方向感），但
 	// 「风控 / 账号异常 / 已停用各自有独立计数并写进各自的磁贴」这个契约不变。
 	for _, want := range []string{
-		`let total = 0, ready = 0, cool = 0, risk = 0, fault = 0, disabled = 0;`,
+		// low_credit 拆出独立计数（issue #24），声明行随之多一项。
+		`let total = 0, ready = 0, cool = 0, lowCredit = 0, risk = 0, fault = 0, disabled = 0;`,
 		`else if (cls.key === "risk") risk++;`,
 		`else if (cls.key === "fault") fault++;`,
 		`else if (cls.key === "disabled") disabled++;`,
