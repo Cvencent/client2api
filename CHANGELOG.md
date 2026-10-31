@@ -6,6 +6,27 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.5.35] - 2026-11-01
+
+### Fixed
+
+- **积分构成页不再把「无到期时间」的余额画成告警红（[#28](https://github.com/Cvencent/client2api/issues/28)）。**
+  `pkUrgency` 的第一行 `Number(days)` 把 `null` 变成 0——`isFinite(0)` 为真、
+  `0 <= 3` 命中红档，于是没有到期时间（= 永久有效）的批次整条画成
+  `--bad`，与同段 tooltip 的「无到期时间」自相矛盾，也和到期分布图
+  「不猜到期日、整段跳过」的口径相反。现在 `null`/`undefined` 显式走灰色
+  later 档；顺带把「已到期」（`d <= 0`）从「3 天内」拆成单独的 expired 档。
+- **模型页页头读数在目录落地后重算（[#27](https://github.com/Cvencent/client2api/issues/27)）。**
+  `mastStats` 直接读全局 `MODELS`，而页头只在进页那一刻同步算一次——冷启动
+  进页永远停在「模型 0 / 0 个客户端」，上游刷新后停在旧目录，与同屏面板头
+  和列表脚注对不上。现在 `renderModels` 在目录落地且当前视图就是 models 时
+  重算一次页头，读数与面板取自同一时刻、同一份数据。
+
+### Installer
+
+- `client2api-setup-0.5.35.exe`（空包，不含账号凭据或本机配置）
+- SHA256：`FD0626FF367502632383B3E8AD6DD4DAC801412300D2D698C0DE8E4079FB2807`
+
 ## [0.5.34] - 2026-11-01
 
 ### Fixed

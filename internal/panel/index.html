@@ -16405,6 +16405,11 @@ async function renderModels(refresh) {
     });
   });
   MODELS = cls;
+  // 目录落地后重算一次页头（issue #27）：mountMasthead 是进页那一刻同步算的，
+  // 而这一页的数据是异步到的——冷启动进页时 MODELS 还是空数组，页头永远停在
+  // 「模型 0 / 0 个客户端」；上游刷新后也停在旧目录。读数应当和它下面的面板
+  // 取自同一时刻、同一份数据。
+  if (VIEW === "models") mountMasthead("models");
   // 账号池的模型列 / 弹层读的是同一份实时目录；每次渲染模型表都顺手刷新它。
   applyModelCatalog(cls);
   MD_ITEMS = items;
@@ -19857,8 +19862,14 @@ function pkBySource(packs) {
 //
 // 三档的边界是操作意义：3 天内要动手、7 天内要留意、其余不用管。
 function pkUrgency(days) {
+  // days === null 是「批次没有到期时间」——不能当 0 天处理：Number(null) 是 0，
+  // isFinite(0) 为真，0<=3 就命中了红档，把「永久有效」画成最严重的告警红，
+  // 与同段 tooltip 的「无到期时间」自相矛盾（issue #28）。到期分布图对
+  // days === null 是整段跳过的（不猜到期日），这条路径用同一口径走灰色。
+  if (days === null || days === undefined) return { key: "later", color: "color-mix(in srgb, var(--ink-3) 55%, transparent)" };
   const d = Number(days);
   if (!isFinite(d)) return { key: "later", color: "color-mix(in srgb, var(--ink-3) 55%, transparent)" };
+  if (d <= 0) return { key: "expired", color: "var(--bad)" };
   if (d <= 3) return { key: "soon", color: "var(--bad)" };
   if (d <= 7) return { key: "week", color: "var(--warn)" };
   return { key: "later", color: "color-mix(in srgb, var(--ink-3) 55%, transparent)" };
