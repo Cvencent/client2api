@@ -10177,12 +10177,15 @@ function springValue(from, to, opts) {
 // tickNumber 把一个数字从旧值滚到新值（弹簧物理：快出去、轻过冲、稳落位）。
 // 只服务统计磁贴：数字变化的「方向感」是免费的理解辅助——7→6 和 6→7 看起来
 // 不一样，而瞬间替换看不出是谁涨了谁掉了。reduced-motion 或数值相同则直接落位。
-const TICK_RAF = new Map();
+// 动画句柄按元素记（WeakMap），不用 el.id：总览四格 KPI 的 .v 没有 id，四个
+// 元素曾共用 "" 这个 key 互相取消 rAF，前三格永久停在 0（issue #10）。WeakMap
+// 对已被 innerHTML 重建抛弃的旧元素自动可回收，不积句柄。
+const TICK_RAF = new WeakMap();
 function tickNumber(el, to) {
   const from = Number(String(el.textContent).replace(/[^0-9.-]/g, "")) || 0;
   const target = Number(to) || 0;
-  const key = el.id || "";
-  if (TICK_RAF.has(key)) { cancelAnimationFrame(TICK_RAF.get(key)); TICK_RAF.delete(key); }
+  const prev = TICK_RAF.get(el);
+  if (prev != null) { cancelAnimationFrame(prev); TICK_RAF.delete(el); }
   if (from === target || RL_STAGE.reduce) { el.textContent = String(target); return; }
   const sample = springValue(from, target, { stiffness: 180, damping: 20 });
   let last = Math.round(from);
@@ -10191,10 +10194,10 @@ function tickNumber(el, to) {
     const s = sample(performance.now());
     const v = Math.round(s.value);
     if (v !== last) { el.textContent = String(v); last = v; }
-    if (s.done) { TICK_RAF.delete(key); return; }
-    TICK_RAF.set(key, requestAnimationFrame(loop));
+    if (s.done) { TICK_RAF.delete(el); return; }
+    TICK_RAF.set(el, requestAnimationFrame(loop));
   };
-  TICK_RAF.set(key, requestAnimationFrame(loop));
+  TICK_RAF.set(el, requestAnimationFrame(loop));
 }
 
 function renderStats() {
@@ -16734,6 +16737,12 @@ function cfgText(id, label, value, ph, help) {
 // as an empty box, and the save path turns an empty box back into "delete this
 // key", which is how an operator returns a tuned value to the built-in default.
 function cfgFieldText(v) {
+  // A masked value must not land in an input as literal text: the config page
+  // used to render "<redacted>" into the sticky-TTL field, and every save then
+  // failed duration validation on a string the operator cannot see (issue #13).
+  // An empty field means "unchanged" to every reader (readDurField /
+  // readNumField treat "" as keep the current value), which is exactly right.
+  if (v === "<redacted>") return "";
   return v == null ? "" : String(v);
 }
 

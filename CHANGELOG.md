@@ -6,6 +6,32 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.5.27] - 2026-10-31
+
+### Fixed
+
+- **配置页「保存配置」不再恒失败（[#13](https://github.com/Cvencent/client2api/issues/13)）。**
+  凭据脱敏正则里的裸 `session` / `auth` 词命中了**配置块名**而非凭据字段：
+  `session_sticky` 整块和 `sources.*.auth_cooldown` 被整体打成 `<redacted>`，
+  时长占位符填进输入框后，保存时长的格式校验必然拒绝——整页等于只读。三处
+  修复：凭据键正则收紧为具体组合（`session_token` / `auth_token` /
+  `authorization` / `private_key` 等），`tokens` 复数与 `keys_path` 类键不再
+  误伤，修后示例配置只有 `api_key` 命中；`maskSecret` 递归下探、只 mask
+  字符串值，布尔/数字/时长原样保留（真撞上凭据块时普通设置不再连坐）；前端
+  `cfgFieldText` 遇 `<redacted>` 渲染为空——空串对时长/数值读取器就是
+  「沿用现值」的合法语义，占位符永远不再进输入框。
+
+- **总览页四格 KPI 不再恒显示 0（[#10](https://github.com/Cvencent/client2api/issues/10)）。**
+  `tickNumber` 用 `el.id` 当动画句柄的 key，而四格 KPI 由 innerHTML 重建的
+  `.v` 元素没有 id——四个元素共用空 key 互相取消动画帧，前三格永久停在 0。
+  句柄改记在 `WeakMap<Element>` 上，key 跟着元素走：id 缺失或重复都不再
+  互相取消，被重建抛弃的旧元素句柄也可自动回收。
+
+### Installer
+
+- `client2api-setup-0.5.27.exe`（空包，不含账号凭据或本机配置）
+- SHA256：`1746B19A8C02D739FE6F704E7A2242DFECA737F5AB489555BB4506AEDF796280`
+
 ## [0.5.26] - 2026-10-31
 
 ### Added

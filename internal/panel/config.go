@@ -14,7 +14,17 @@ import (
 // exists because core.RedactAny redacts each value string in isolation: a bare
 // secret sitting under a key named "api_key" is not caught by any of core's
 // patterns, so the key itself has to be the signal.
-var secretConfigKey = regexp.MustCompile(`(?i)token|secret|passwd|password|api[_-]?key|apikey|auth|cookie|credential|session|bearer|private|(^|[^a-z])keys?([^a-z]|$)`)
+//
+// The words are deliberately compound-specific.  Bare "session" and "auth"
+// used to be on this list, and they matched CONFIG BLOCK names, not credential
+// fields: session_sticky (a map of booleans and durations) and
+// sources.*.auth_cooldown (a cooldown) came back fully "<redacted>", the
+// configuration page rendered that placeholder into the inputs, and every
+// save then failed the duration validation on a value the operator cannot
+// even see (issue #13).  A credential key names the credential itself --
+// session_token, auth_token, authorization -- and a cooldown named
+// auth_cooldown is not one.
+var secretConfigKey = regexp.MustCompile(`(?i)api[_-]?key|apikey|token([^a-z]|$)|secret|passwd|password|cookie|credential|bearer|private[_-]?key|(^|[^a-z])key([^a-z]|$)|keys?$|authorization|session[_-]?(token|key|id)|auth[_-]?(token|key|header)`)
 
 type configResponse struct {
 	Path      string `json:"path"`
@@ -313,7 +323,10 @@ func redactSourceDefinitions(v any) any {
 
 // maskSecret blanks a credential value while keeping the shape the panel needs:
 // an empty string stays empty (so "not set" is still distinguishable from
-// "set"), and a container keeps its keys with every value masked.
+// "set"), and a container has only its STRING members masked: a block that
+// carries a credential next to plain settings keeps those settings readable,
+// because a boolean or a duration under a credential-ish key is still just a
+// boolean or a duration (issue #13).
 func maskSecret(v any) any {
 	switch t := v.(type) {
 	case nil:
@@ -325,17 +338,19 @@ func maskSecret(v any) any {
 		return "<redacted>"
 	case map[string]any:
 		out := make(map[string]any, len(t))
-		for k := range t {
-			out[k] = "<redacted>"
+		for k, val := range t {
+			out[k] = maskSecret(val)
 		}
 		return out
 	case []any:
 		out := make([]any, len(t))
-		for i := range t {
-			out[i] = "<redacted>"
+		for i, val := range t {
+			out[i] = maskSecret(val)
 		}
 		return out
 	default:
-		return "<redacted>"
+		// Numbers, booleans and durations are not credentials; masking them
+		// turned session_sticky's ttl into "<redacted>" and wedged the page.
+		return t
 	}
 }

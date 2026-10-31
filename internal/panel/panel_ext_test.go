@@ -743,8 +743,45 @@ func TestMaskSecretKeepsShape(t *testing.T) {
 	if got := maskSecret([]any{"a", "b"}); len(got.([]any)) != 2 {
 		t.Errorf("maskSecret(slice) = %v", got)
 	}
-	if got := maskSecret(42); got != "<redacted>" {
-		t.Errorf("maskSecret(number) = %v", got)
+	// Numbers, booleans and durations are not credentials.  Masking them used
+	// to turn session_sticky's ttl into "<redacted>", which the config page
+	// then rendered into a duration input and every save failed (issue #13).
+	if got := maskSecret(42); got != 42 {
+		t.Errorf("maskSecret(number) = %v, want the number itself", got)
+	}
+	if got := maskSecret(false); got != false {
+		t.Errorf("maskSecret(bool) = %v, want the bool itself", got)
+	}
+	if got := maskSecret("45m"); got != "<redacted>" {
+		t.Errorf("maskSecret(duration string) = %v, want masked (a bare string is still a credential slot)", got)
+	}
+}
+
+// The credential-key regex must match keys that NAME a credential and leave
+// config blocks alone.  The bare "session" and "auth" words used to hit
+// session_sticky (a boolean/duration map) and sources.*.auth_cooldown (a
+// cooldown): both came back "<redacted>", the page rendered that placeholder
+// into the inputs, and every save failed the duration validation on a value
+// the operator cannot see (issue #13).
+func TestSecretConfigKeyMatchesCredentialsNotBlocks(t *testing.T) {
+	secrets := []string{
+		"api_key", "apiKey", "api-key", "token", "refresh_token", "access_token",
+		"client_secret", "password", "cookie", "credential", "bearer_token",
+		"private_key", "session_token", "auth_token", "authorization", "session_key",
+	}
+	for _, k := range secrets {
+		if !secretConfigKey.MatchString(k) {
+			t.Errorf("secretConfigKey(%q) = false, want a credential key matched", k)
+		}
+	}
+	plain := []string{
+		"session_sticky", "auth_cooldown", "max_tokens_field", "sessions",
+		"author", "authorizer_realm", "autologin", "enabled", "ttl", "keys_path_hint",
+	}
+	for _, k := range plain {
+		if secretConfigKey.MatchString(k) {
+			t.Errorf("secretConfigKey(%q) = true, want a plain config key left alone", k)
+		}
 	}
 }
 
