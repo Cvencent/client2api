@@ -8302,10 +8302,24 @@ async function loadStatus() {
   return true;
 }
 
+// 连接态记账：连续失败次数与上次成功时间（issue #20）。let 在 setNav 前声明。
+let NAV_FAILS = 0, NAV_LAST_OK = null;
+
 function setNav(ok, msg) {
+  // 连接态由每一次轮询驱动：连续失败把绿点翻红并写明「上次成功」的时间——
+  // 「已连接」曾只在首屏置位一次，后端死了几分钟页面还在说连着（issue #20）。
+  if (!ok) NAV_FAILS++;
+  else { NAV_FAILS = 0; NAV_LAST_OK = new Date(); }
   $("#navPulse").style.background = ok ? "var(--ok)" : "var(--bad)";
   const ready = (SNAP.clients || []).filter(c => c.ready).length;
-  $("#navState").textContent = ok ? "已连接" : (msg || "未连接");
+  let state;
+  if (ok) state = "已连接";
+  else {
+    state = (msg || "未连接") + "（已重试 " + NAV_FAILS + " 次";
+    if (NAV_LAST_OK) state += " · 上次成功 " + NAV_LAST_OK.toTimeString().slice(0, 8);
+    state += "）";
+  }
+  $("#navState").textContent = state;
   $("#navVer").textContent = "v" + (SNAP.version || "-");
   $("#navRedis").textContent = NAMES.length + " 客户端 / " + ready + " 就绪 · " + redisLabel();
   $("#subMeta").textContent = SNAP.listen || "-";
@@ -22371,6 +22385,17 @@ function panelURLForListen(listen) {
 }
 async function restartProcess() {
   if (CFG_RESTARTING) return;
+  // 危险操作确认，与删除账号/清空对话同一套约定——只有这里漏了（issue #17）。
+  // 文案按「是否真有在途请求」分档：无流量轻确认，有流量明确警告会被中断；
+  // 待生效的已保存改动顺带说明。
+  const inflight = poolSum("in_flight");
+  const pending = CFG_PENDING_RESTART.length
+    ? "已保存的改动（" + CFG_PENDING_RESTART.join("、") + "）将在重启后生效。"
+    : "";
+  const q = inflight
+    ? "重启进程会中断当前所有在途请求（现在有 " + inflight + " 个在途）。" + pending + "确定继续？"
+    : "确定重启进程？" + pending;
+  if (!confirm(q)) return;
   CFG_RESTARTING = true;
   const btn = $("#btnCfgRestart");
   btn.disabled = true;
@@ -23892,6 +23917,9 @@ async function refreshAll(loud) {
 /* 原版每 5s 静默刷新「当前可见」的视图（账号 / 日志 / 任务中心），所以在途数、
    健康注记、积分自己会走，不必手点刷新。这里补上账号视图这一路（日志那路本来
    就有，保持 4s 不变；任务中心有自己的队列/任务板定时器，不重复挂）。
+   总览也在轮询里（issue #20）：这一页的承诺是「一屏回答现在有没有事」，不刷新
+   的数字加上只在首屏置位的「已连接」，后端死了页面还在说健康。refreshAll 的
+   失败路径本来就会 setNav(false)，绿点从此由每一次轮询的结果驱动。
    三条跳过规则：弹层开着（用户正在添加账号/填密钥）、登录轮询进行中、对话流进行中
    —— 免得把用户正在操作的界面重建掉；上一轮还没回来也不重入。 */
 let visBusy = false;
@@ -23899,7 +23927,7 @@ async function refreshVisible() {
   if (visBusy) return;
   if ($("#addVeil").classList.contains("on") || $("#keyVeil").classList.contains("on")) return;
   if (ADD.timer || CHAT.busy) return;
-  if (VIEW !== "accounts") return;
+  if (VIEW !== "accounts" && VIEW !== "overview") return;
   visBusy = true;
   try {
     // 顺带把实时模型目录刷新一遍：模块上架新模型时，账号弹层不必等用户手动点
