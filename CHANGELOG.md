@@ -6,6 +6,28 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.5.34] - 2026-11-01
+
+### Fixed
+
+- **用量页页头读数不再按客户端数放大（[#26](https://github.com/Cvencent/client2api/issues/26)）。**
+  每个模组的 `GET /accounts` 都携带全池一份 `stats`（panel.go:938，overview.go
+  的设计说明明确说不要这么做），前端 `acctStatTotals` 又逐模组累加——同一份
+  全局统计被加 N 遍（N = 客户端数，实测 38 倍）。现在按账号 id 去重后求和；
+  页头 Token 改用与磁贴同一套 B/M/k 分级的 `fmtTok`（此前误用上下文窗口的
+  `fmtK`，2.09e12 吐出「2090302613K」）；副文案从「本进程累计」改为如实的
+  「账号侧累计」。
+- **卡片墙就地展开的检视块纳入轮询豁免（[#25](https://github.com/Cvencent/client2api/issues/25)）。**
+  #23 的编辑豁免只查表格容器：卡片墙里同一个 `acctDetailHTML`（同一个优先级
+  滑杆、同一批测试模型下拉）拖动中 5 秒轮询一到就被 `renderAcctBoard` 整片
+  重建。豁免检测扩为表格 + 卡片墙两个容器，`renderAcctBoard` 同样吃豁免、
+  跳过本轮（单轮生效，下一拍数据照常跟上）。
+
+### Installer
+
+- `client2api-setup-0.5.34.exe`（空包，不含账号凭据或本机配置）
+- SHA256：`3E1E948287F5DF63253AF298AEABE0B49917D18C9801B2EB834AC897037A4DB1`
+
 ## [0.5.33] - 2026-10-31
 
 ### Fixed

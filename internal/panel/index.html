@@ -8600,11 +8600,18 @@ function acctTotals() {
 // acctStatTotals 把所有账号的流量切片求和（ACCTS[].stats），用量页的读数
 // 从这里来——它和账号池上那一列是同一份数据，不需要额外请求。
 function acctStatTotals() {
+  // 按账号 id 去重（issue #26）：每个模组的 GET /accounts 都携带全池一份 stats，
+  // NAMES 逐模组累加会把同一份全局统计加 N 遍（N = 客户端数，实测 38 倍）。
+  // 同一账号 id 在任何模组响应里都是同一行，去重后即真实值；服务端将来按模组
+  // 收窄 stats 时这里依旧成立（不重复就行）。
   let requests = 0, tokens = 0, any = false;
+  const seen = {};
   NAMES.forEach(n => {
     const st = (ACCTS[n] || {}).stats;
     if (!st) return;
     Object.keys(st).forEach(id => {
+      if (seen[id]) return;
+      seen[id] = 1;
       const s = st[id];
       if (!s || typeof s !== "object") return;
       any = true;
@@ -8651,8 +8658,8 @@ function mastStats(view) {
       const u = acctStatTotals();
       return u
         ? [
-            { k: "请求", v: numf(u.requests), s: "本进程累计" },
-            { k: "Token", v: fmtK(u.tokens), s: "输入 + 输出" },
+            { k: "请求", v: numf(u.requests), s: "账号侧累计" },
+            { k: "Token", v: fmtTok(u.tokens), s: "输入 + 输出" },
           ]
         : [];
     }
@@ -13625,8 +13632,13 @@ function renderAccounts() {
   // activeElement 落在表内、或行内 .accPrio / .test-model 正被按住时，跳过本轮
   // 的 tbody 重建（单轮豁免，下一拍数据照常跟上）。页头读数与分页照常更新。
   const tb = $("#accBody");
+  const board = $("#acctBoard");
+  // 卡片墙的检视块（acctDetailHTML）里有同一个滑杆/下拉（issue #25）：豁免范围
+  // 覆盖表格与卡片墙两个容器，不然 #23 的修复只救一半。
   const editingInTable = tb.contains(document.activeElement) ||
-    !!tb.querySelector(".accPrio:focus, .accPrio:active, select.test-model:focus, select.test-model:active");
+    board.contains(document.activeElement) ||
+    !!tb.querySelector(".accPrio:focus, .accPrio:active, select.test-model:focus, select.test-model:active") ||
+    !!board.querySelector(".accPrio:focus, .accPrio:active, select.test-model:focus, select.test-model:active");
   const rec = ACCTS[CUR] || { accounts: [], capabilities: {} };
   const list = rec.accounts || [];
   const caps = rec.capabilities || {};
@@ -13764,7 +13776,8 @@ function renderAccounts() {
   // 的全文回填进 title，鼠标停一下就能看全；这里统一补一次，不在行模板里再拼一遍。
   tb.querySelectorAll("td:nth-child(2) .hint").forEach(el => { el.title = el.textContent; });
   // 同一批数据再画一遍卡片墙，并按记住的模式决定谁可见（CSS 用 body 类切换）。
-  renderAcctBoard(pageRows, caps, acts, showBal);
+  // 卡片墙与表格吃同一个豁免（issue #25）：展开卡里的滑杆正被拖动时跳过本轮。
+  if (!editingInTable) renderAcctBoard(pageRows, caps, acts, showBal);
   renderAcctSide();
   setAccMode(accMode());
 }
