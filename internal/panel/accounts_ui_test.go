@@ -193,6 +193,9 @@ func TestPoolTilesUseTheSameStateClassifierAsTheRows(t *testing.T) {
 		"const cls = accountState(st);",
 		`if (cls.key === "ready") ready++;`,
 		`else if (cls.key === "cooling") cool++;`,
+		// low_credit 拆成独立桶（issue #24）：分钟级自愈的限流和等待回血的
+		// 积分耗尽，操作动作完全不同，不能同计一个「冷却中」。
+		`else if (cls.key === "low_credit") lowCredit++;`,
 		`else if (cls.key === "risk") risk++;`,
 		`else if (cls.key === "fault") fault++;`,
 		`else if (cls.key === "disabled") disabled++;`,
