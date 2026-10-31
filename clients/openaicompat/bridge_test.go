@@ -2,6 +2,7 @@ package openaicompat
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -200,5 +201,50 @@ func TestApplyHeadersSkipsAuthorizationWhenKeyless(t *testing.T) {
 	keyed.applyHeaders(req2)
 	if got := req2.Header.Get("Authorization"); got != "Bearer sk-test" {
 		t.Fatalf("Authorization = %q, want the bearer key", got)
+	}
+}
+
+// A base URL the HTTP client cannot use must be refused at save time (issue
+// #21): "api.example.com/v1" without its scheme used to store as a ready
+// account and the first request burned the failure budget on "unsupported
+// protocol scheme".
+func TestValidateBaseURLRejectsUnusableAddresses(t *testing.T) {
+	bad := map[string]string{
+		"api.example.com/v1":     "missing the http://",
+		"not-a-url":              "missing the http://",
+		"javascript:alert(1)":    `scheme "javascript"`,
+		"ftp://relay.example/v1": `scheme "ftp"`,
+		"http:///v1":             "missing a host name",
+	}
+	for raw, want := range bad {
+		err := validateBaseURL(raw)
+		if err == nil {
+			t.Errorf("validateBaseURL(%q) = nil, want rejected", raw)
+			continue
+		}
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("validateBaseURL(%q) = %q, want it to mention %q", raw, err.Error(), want)
+		}
+	}
+	good := []string{"http://127.0.0.1:9000/v1", "https://relay.example/v1", "HTTPS://Relay.Example/v1"}
+	for _, raw := range good {
+		if err := validateBaseURL(raw); err != nil {
+			t.Errorf("validateBaseURL(%q) = %v, want accepted", raw, err)
+		}
+	}
+}
+
+// A URL that cannot be used at all is a configuration fault: FailureOther
+// keeps the account in the pool (noteProviderFailure skips it) and stops the
+// gateway from hinting "vendor degraded, retry" about a typo (issue #21).
+func TestClassifyUpstreamCallsUnusableURLAConfigFault(t *testing.T) {
+	c := &Client{}
+	err := errors.New(`Post "api.example.com/v1/chat/completions": unsupported protocol scheme ""`)
+	f, ok := core.AsFailure(c.classifyUpstream("acct-1", err))
+	if !ok {
+		t.Fatal("expected a classified failure")
+	}
+	if f.Kind != core.FailureOther {
+		t.Fatalf("kind = %v, want other (a configuration fault, not a vendor one)", f.Kind)
 	}
 }

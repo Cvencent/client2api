@@ -369,6 +369,14 @@ func parseRetryAfter(h http.Header) time.Duration {
 }
 
 // classifyUpstream turns a transport error into a typed failure.
+//
+// An error that means "this URL cannot be used at all" -- unsupported scheme,
+// unresolvable host from a typo -- is a CONFIGURATION fault, not a vendor
+// one: it used to land on kindServer, so the gateway answered 502 with the
+// "vendor is degraded, retry" hint about a misspelled base_url, and three
+// identical failures spent the provider's failure budget and parked the
+// account (issue #21).  FailureOther is the shape noteProviderFailure already
+// skips, so the account stays in the pool and nothing suggests retrying.
 func (c *Client) classifyUpstream(accountID string, err error) error {
 	if err == nil {
 		return nil
@@ -378,9 +386,36 @@ func (c *Client) classifyUpstream(accountID string, err error) error {
 		k = kindNone
 	} else if isTimeout(err) {
 		k = kindServer
+	} else if isUnusableURLError(err) {
+		k = kindClient
 	}
 	msg := truncate(core.Redact(err.Error()), 300)
 	return core.Fail(c.Name(), accountID, coreKindFor(k), 0, &upstreamError{Op: "request", Msg: msg})
+}
+
+// unusableURLMarkers are the transport-layer spellings of "the request never
+// left because the address itself is wrong".  A DNS failure is included: a
+// typo'd host name produces the same misleading "vendor down" surface as a
+// typo'd scheme, and a relay that really existed does not disappear between
+// two saves.
+var unusableURLMarkers = []string{
+	"unsupported protocol scheme",
+	"no such host",
+	"not a valid url",
+	"invalid url",
+}
+
+func isUnusableURLError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	for _, m := range unusableURLMarkers {
+		if strings.Contains(msg, m) {
+			return true
+		}
+	}
+	return false
 }
 
 func isTimeout(err error) bool {

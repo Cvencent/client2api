@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -498,6 +499,30 @@ func validateModelGroups(cfg map[string]any) error {
 	return nil
 }
 
+// validateListen checks a listen address the way the process is about to use
+// it.  An empty value is legal (applyDefaults fills the built-in address); a
+// host may be empty, which is ":port" -- every interface.  Everything else
+// needs a parseable port in 0-65535: saving "127.0.0.1" used to succeed, the
+// toast pointed at the restart button, and the fresh process died on
+// net.Listen while the page kept saying "connected" (issue #19).
+func validateListen(addr string) error {
+	if strings.TrimSpace(addr) == "" {
+		return nil
+	}
+	if addr != strings.TrimSpace(addr) {
+		return fmt.Errorf("listen %q has surrounding whitespace", addr)
+	}
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("listen %q: %v (write it as host:port, e.g. 127.0.0.1:8788)", addr, err)
+	}
+	n, err := strconv.Atoi(port)
+	if err != nil || n < 0 || n > 65535 {
+		return fmt.Errorf("listen %q: port %q must be a number between 0 and 65535", addr, port)
+	}
+	return nil
+}
+
 // validateConfig type-checks the document the way the process will read it.
 // Without this a typo saved from the editor would only surface as a failed
 // startup, long after the save looked successful.
@@ -519,8 +544,14 @@ func validateConfig(cfg map[string]any) error {
 		if !ok || v == nil {
 			continue
 		}
-		if _, ok := v.(string); !ok {
+		s, ok := v.(string)
+		if !ok {
 			return fmt.Errorf("%s must be a string", k)
+		}
+		if k == "listen" {
+			if err := validateListen(s); err != nil {
+				return err
+			}
 		}
 	}
 	if v, ok := cfg["aliases"]; ok && v != nil {

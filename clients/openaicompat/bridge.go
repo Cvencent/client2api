@@ -150,3 +150,28 @@ func isLoopbackBase(raw string) bool {
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
 }
+
+// validateBaseURL rejects a base URL the HTTP client cannot use.  A missing
+// scheme is the classic paste error: "api.example.com/v1" used to store as a
+// ready account and the first real request died on "unsupported protocol
+// scheme" -- three retries, the failure budget spent, the account parked, and
+// a 503 that read as the vendor being down (issue #21).  A non-http(s) scheme
+// (javascript:, file:) is rejected outright.  No silent completion: a quietly
+// rewritten address is harder to debug than an immediate error.
+func validateBaseURL(raw string) error {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return fmt.Errorf("not a valid URL: %v", err)
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "http", "https":
+	case "":
+		return fmt.Errorf("missing the http:// or https:// prefix")
+	default:
+		return fmt.Errorf("scheme %q is not http(s)", u.Scheme)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("missing a host name")
+	}
+	return nil
+}

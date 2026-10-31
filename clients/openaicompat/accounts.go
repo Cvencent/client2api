@@ -104,6 +104,15 @@ func (c *Client) AddAccount(ctx context.Context, spec core.AccountSpec) (core.Ac
 	if baseURL == "" {
 		return core.AccountRecord{}, fmt.Errorf("provider %q has no built-in base URL; enter one in the base_url field", id)
 	}
+	// The address is checked here, at save time: "api.example.com/v1" without
+	// its scheme used to save as a ready account, and the first real request
+	// then burned the failure budget on "unsupported protocol scheme" while
+	// the panel read it as the vendor being down (issue #21).  No silent
+	// scheme completion -- a quietly rewritten address is harder to debug
+	// than an immediate error.
+	if err := validateBaseURL(baseURL); err != nil {
+		return core.AccountRecord{}, fmt.Errorf("base_url %q: %v", baseURL, err)
+	}
 
 	// A key is required unless the upstream is on this machine: a loopback
 	// base URL is the one case where the service itself answers keyless.

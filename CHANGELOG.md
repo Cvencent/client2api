@@ -6,6 +6,32 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.5.29] - 2026-10-31
+
+### Fixed
+
+- **「监听地址」保存前校验，不再一错锁死面板（[#19](https://github.com/Cvencent/client2api/issues/19)）。**
+  `validateConfig` 对 `listen` 此前只做字符串类型检查：少写端口、写垃圾串都能
+  保存成功，保存 toast 引导用户点「重启进程」，新进程随即死在 `net.Listen`，
+  交接不留错误记录，面板从此打不开。现在保存前后端用同一规则把关（空=沿用
+  内置默认；host 可空；端口必须是 0-65535 的数字——0 保留给测试场景），前端
+  在保存入口先预检并聚焦报错；`validateConfig` 单测覆盖合法/非法全表。
+
+- **中转站 `base_url` 保存即校验，URL 结构错误不再伪装成厂商故障（[#21](https://github.com/Cvencent/client2api/issues/21)）。**
+  少写 `http://` 的地址此前照存为「就绪」，第一次真实请求报 503
+  platform exhausted，三次重试烧光熔断预算把账号打进冷却，gateway_hint 还
+  说「厂商降级，可重试」。两层修复：添加账号时 `validateBaseURL` 校验
+  （scheme 必须 http/https、host 非空，缺协议头明确报错、不静默补全）；
+  `classifyUpstream` 把 `unsupported protocol scheme` / `no such host` 这类
+  「地址本身不可用」的错误归为 `FailureOther`（配置错误语义）——
+  `noteProviderFailure` 本就跳过该类，账号不再被打进冷却，错误提示也不再
+  指向厂商。
+
+### Installer
+
+- `client2api-setup-0.5.29.exe`（空包，不含账号凭据或本机配置）
+- SHA256：`596E7FB237DC8A5F4FD7BBA59958611CE0D9C5433677C83F744AA1D65A913E81`
+
 ## [0.5.28] - 2026-10-31
 
 ### Added

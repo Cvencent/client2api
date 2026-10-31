@@ -18367,7 +18367,24 @@ function pruneUnchanged(patch, baseline) {
 async function saveConfig() {
   const val = s => { const el = $(s); return el ? el.value.trim() : ""; };
   const patch = {};
-  if ($("#cfgListen")) patch.listen = val("#cfgListen");
+  // The listen address is checked here with the same rule the server applies:
+  // a bad value used to save fine and only killed the process on the restart
+  // the success toast itself suggested (issue #19).  An empty field is the
+  // built-in default; "[v6]:port" or "host:port" or ":port" are the shapes.
+  if ($("#cfgListen")) {
+    const addr = val("#cfgListen");
+    let portOK = addr === "";
+    if (!portOK) {
+      const m = addr.match(/^(?:\[[^\]]+\]|[^:]+)?:?(\d{1,5})$/);
+      portOK = !!m && Number(m[1]) >= 1 && Number(m[1]) <= 65535;
+    }
+    if (!portOK) {
+      toast("「监听地址」格式应为 host:port，例如 127.0.0.1:8788（端口 1-65535）", "err");
+      $("#cfgListen").focus();
+      return;
+    }
+    patch.listen = addr;
+  }
   if ($("#cfgDataDir")) patch.data_dir = val("#cfgDataDir");
   if ($("#cfgProxy")) patch.proxy = val("#cfgProxy");
   if ($("#cfgEgressEnabled")) {
