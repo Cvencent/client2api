@@ -101,6 +101,14 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      # installer/setup 的测试对着 //go:embed all:payload 断言安装行为，而
+      # payload/* 是 build.ps1 的产物（.gitignore 只留 .gitkeep）。跑测试
+      # 前先打一遍 -NoData 空包：既把 payload 备好，也让「打包脚本能跑通」
+      # 变成 CI 断言（issue #36 方向 3）。
+      - name: stage installer payload (build.ps1 -NoData)
+        shell: pwsh
+        run: '& ./installer/build.ps1 -NoData'
+
       - name: go test
         run: go test -count=1 -timeout 20m ./...
 
