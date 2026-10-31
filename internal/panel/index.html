@@ -13602,7 +13602,14 @@ function renderAccounts() {
   ensureTestModels();
   renderChips(); renderStats();
   renderTranscriptionCallInfo();
+  // 编辑豁免（issue #23）：表格每 5s 整片重建一次，正在编辑的「优先级」会被
+  // 换掉（值和焦点一起消失、不补发保存），选好的「测试模型」被改回默认，文本
+  // 选中也被清掉。3D 检视面板在 #6 已有同款豁免（inspectBusy），表格这条补上：
+  // activeElement 落在表内、或行内 .accPrio / .test-model 正被按住时，跳过本轮
+  // 的 tbody 重建（单轮豁免，下一拍数据照常跟上）。页头读数与分页照常更新。
   const tb = $("#accBody");
+  const editingInTable = tb.contains(document.activeElement) ||
+    !!tb.querySelector(".accPrio:focus, .accPrio:active, select.test-model:focus, select.test-model:active");
   const rec = ACCTS[CUR] || { accounts: [], capabilities: {} };
   const list = rec.accounts || [];
   const caps = rec.capabilities || {};
@@ -13689,6 +13696,7 @@ function renderAccounts() {
     const empty = caps.transcription
       ? "该平台不需要账号，可直接用上方地址调用转写"
       : (rec.unsupported ? "该模块不支持账号管理" : "还没有账号，点右上角「添加账号」");
+    if (editingInTable) return;  // 编辑豁免（issue #23）：空态等下一拍再画
     tb.innerHTML = '<tr><td colspan="' + cols + '" class="hint">' + (rec.unsupported ? empty : (BOOTING ? "正在加载账号…" : empty)) + '</td></tr>';
     if ($("#acctBoard")) $("#acctBoard").innerHTML = '<div class="quietline"><i></i>' + esc(BOOTING ? "正在加载账号…" : empty) + '</div>';
     hideAccPager();
@@ -13704,12 +13712,14 @@ function renderAccounts() {
     const emptyText = stateFilter
       ? "没有「" + accStateFilterLabel(stateFilter) + "」状态的账号" + (qRaw ? "，关键词「" + qRaw + "」" : "")
       : "没有账号匹配「" + qRaw + "」";
+    if (editingInTable) return;  // 编辑豁免（issue #23）
     tb.innerHTML = '<tr class="filtered"><td colspan="' + cols + '" class="hint">' + esc(emptyText) + " · " + tail + '</td></tr>';
     if ($("#acctBoard")) $("#acctBoard").innerHTML = '<div class="quietline"><i></i>' + esc(emptyText) + " · " + tail + '</div>';
     hideAccPager();
     return;
   }
   if (showBal) ensureBalances(CUR);
+  if (editingInTable) return;  // 编辑豁免（issue #23）：正在编辑的行不重建
   tb.innerHTML = pageRows.map(g => {
     // 只有一个通道的账号照旧渲染成原来那一行：其余五个模块看起来没有任何变化。
     if (g.rows.length === 1) return accRowHTML(g.rows[0], caps, acts, showBal, false, false, "", g.rows);
@@ -14896,13 +14906,27 @@ function bulk(kind) {
   if (kind === "refresh") {
     refreshCredentials();
   } else if (kind === "test") {
-    toast("逐个测试 " + list.length + " 个账号…");
+    // 对齐 checkinClient 的批量模式（issue #22）：按钮禁用 + N/M 进度 + 分档
+    // 收尾。以前按钮不禁用，连点两下就是两轮全池上游探测；全失败也只说
+    // 「测试完成」，把「找出坏账号」最该给的结论藏起来。
+    const btn = $("#btnTestAll");
+    const keep = btn ? btn.textContent : "";
+    if (btn) { btn.disabled = true; btn.textContent = "测试 0/" + list.length; }
+    let done = 0, ok = 0, failed = 0;
     (async () => {
-      for (const a of list) {
-        const r = await api(cbase(CUR) + "/accounts/" + aid(a.id) + "/test", { method: "POST" });
-        if (r.ok) applyAccounts(CUR, r.data);
+      try {
+        for (const a of list) {
+          if (btn) btn.textContent = "测试 " + (done + 1) + "/" + list.length;
+          const r = await api(cbase(CUR) + "/accounts/" + aid(a.id) + "/test", { method: "POST" });
+          if (r.ok) { applyAccounts(CUR, r.data); ok++; } else failed++;
+          done++;
+          if (btn) btn.textContent = "测试 " + done + "/" + list.length;
+        }
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = keep || "测试全部账号"; }
       }
-      renderAccounts(); toast("测试完成");
+      renderAccounts();
+      toast(platformLabel(CUR) + " 测试：成功 " + ok + "，失败 " + failed, failed ? "err" : "ok");
     })();
   } else if (kind === "checkin") {
     if (!caps.checkin) return toast(platformLabel(CUR) + " 没有签到能力", "err");

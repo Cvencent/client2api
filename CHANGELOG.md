@@ -6,6 +6,28 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.5.32] - 2026-10-31
+
+### Fixed
+
+- **表格呈现下编辑中的账号行不再被 5 秒轮询打断（[#23](https://github.com/Cvencent/client2api/issues/23)）。**
+  `renderAccounts` 此前无条件整片重建 tbody：编辑到一半的「优先级」值和焦点
+  一起消失（且不补发保存，调整静默作废）、选好的「测试模型」被改回默认、选中
+  的文本被清掉——3D 检视面板在 #6 已有豁免，表格没有。现在重建前判断
+  `#accBody` 内是否有正在操作的控件（activeElement 落在表内，或 `.accPrio` /
+  `.test-model` 处于焦点/按住），命中则本轮跳过 tbody 重建（页头读数照常），
+  下一拍数据照常跟上。
+- **「测试全部账号」对齐其它批量操作的交互（[#22](https://github.com/Cvencent/client2api/issues/22)）。**
+  此前按钮全程不禁用（连点两下就是两轮全池上游探测）、无进度、全失败也只报
+  「测试完成」。现在对齐同文件 `checkinClient()` 的模式：按钮禁用、文案
+  「测试 N/M」逐个推进、收尾 toast 带成功/失败计数（有失败走 err 触发
+  role=alert）。
+
+### Installer
+
+- `client2api-setup-0.5.32.exe`（空包，不含账号凭据或本机配置）
+- SHA256：`0706F718F0CDD773A2BA9994F527B5C64526F0AC89FD6C9D3F026E03F7978599`
+
 ## [0.5.31] - 2026-10-31
 
 ### Added
