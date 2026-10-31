@@ -6,6 +6,32 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.5.31] - 2026-10-31
+
+### Added
+
+- **面板静态资源 gzip 压缩 + 缓存协商（[#14](https://github.com/Cvencent/client2api/issues/14)）。**
+  首屏 1.96 MB（shell 1.2 MB + three.min.js 576 KB + motion.min.js 61 KB）此前
+  原样传输且 `no-store`——每次刷新完整重下。现在：`/panel/` 与 `/panel/vendors/`
+  按 `Accept-Encoding` 协商 gzip（两个 vendor 库启动时预压一次，实测合计省
+  ~74%）；vendors 是随构建固定的字节，改 `public, max-age=31536000, immutable`
+  长缓存；shell 的 `no-store` 改 `no-cache` + 内容哈希 ETag——刷新时
+  `If-None-Match` 命中即回无 body 的 304，页面永远不会在未询问的情况下用缓存。
+
+### Fixed
+
+- **浅色主题次要文字对比度提至 WCAG AA（[#15](https://github.com/Cvencent/client2api/issues/15)）。**
+  实际生效的浅色块 `--ink-3` 从 `#7a828f`（压白底 3.6~3.9:1）提到同色相的
+  `#687181`（三种实际背景上均 ≥4.59:1）——面板地址、页头按钮、筛选 chip 等
+  30 处次要文字不再糊进背景。同文件 4 套 light / 4 套 `:root` / 2 套 dark 的
+  重叠定义加注释标明死块与生效块，消除「改哪份才生效」的歧义（彻底合并留
+  后续）。
+
+### Installer
+
+- `client2api-setup-0.5.31.exe`（空包，不含账号凭据或本机配置）
+- SHA256：`FAA10DFBA1C00F8EC1F4040553BDA488FEC0917E005885F401D72257F0BA5A05`
+
 ## [0.5.30] - 2026-10-31
 
 ### Fixed
