@@ -789,3 +789,109 @@ func TestSecretConfigKeyMatchesCredentialsNotBlocks(t *testing.T) {
 type errFake string
 
 func (e errFake) Error() string { return string(e) }
+
+// TestPoolEndpointCarriesTheVolatileSliceOnly pins the light poll's shape
+// (issue #33): pool/health/lease extras/redis mode ride along, capabilities
+// and model lists do not -- that is what keeps the 5-second tick from
+// shipping 36KB of static metadata per module.  fakePoolClient lives in
+// poolstats_test.go.
+func TestPoolEndpointCarriesTheVolatileSliceOnly(t *testing.T) {
+	c := &fakePoolClient{
+		fakeClient: &fakeClient{
+			name:   "zcode",
+			status: core.Status{Name: "zcode", Ready: true, Accounts: statusAccounts()},
+		},
+		pool:   core.PoolStats{InFlight: 3},
+		health: core.Health{Servable: true},
+	}
+	reg := registryOf(c)
+	reg.SetPlatformConfigs(map[string]core.PlatformConfig{"zcode": {MaxInFlightPerAccount: 3}})
+	h := New(Options{
+		Registry: reg,
+		Started:  time.Now(),
+		InFlight: fakeTracker{"zcode\x1facct-plain": 2, "zcode\x1facct-own": 7},
+	})
+
+	rec := get(t, h, "/panel/api/pool")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("pool = %d (%s)", rec.Code, rec.Body.String())
+	}
+	body := decodeMap(t, rec)
+	if _, ok := body["redis_mode"]; !ok {
+		t.Fatalf("pool body = %v, want redis_mode", body)
+	}
+	clients, _ := body["clients"].([]any)
+	if len(clients) != 1 {
+		t.Fatalf("clients = %v, want one row", clients)
+	}
+	row, _ := clients[0].(map[string]any)
+	if row["name"] != "zcode" || row["ready"] != true {
+		t.Fatalf("row = %v, want zcode ready", row)
+	}
+	if _, ok := row["pool"].(map[string]any); !ok {
+		t.Fatalf("row = %v, want a pool block", row)
+	}
+	if _, ok := row["health"].(map[string]any); !ok {
+		t.Fatalf("row = %v, want a health block", row)
+	}
+	if _, ok := row["capabilities"]; ok {
+		t.Fatalf("row = %v, capabilities must not ride the light poll", row)
+	}
+	if _, ok := row["models"]; ok {
+		t.Fatalf("row = %v, models must not ride the light poll", row)
+	}
+	// Only lease-bearing accounts ride the light poll: an account without
+	// extras has nothing volatile to say, so listing it would just ship bytes
+	// back every 5 seconds for nothing.
+	accounts, _ := row["accounts"].([]any)
+	if len(accounts) != 1 {
+		t.Fatalf("accounts = %v, want only the lease-bearing row", accounts)
+	}
+	a, _ := accounts[0].(map[string]any)
+	if a["id"] != "acct-own" {
+		t.Fatalf("accounts = %v, want acct-own (the one with extras)", accounts)
+	}
+}
+
+// TestModelsListServesETagAnd304 pins the conditional-request contract on the
+// heaviest panel payload (issue #33): first response carries a strong ETag,
+// the same catalogue re-requested with If-None-Match answers 304 without a
+// body, and a genuinely changed catalogue mints a different ETag.
+func TestModelsListServesETagAnd304(t *testing.T) {
+	c := &fakeClient{name: "zcode", models: []core.Model{{ID: "m1", OwnedBy: "zcode"}}}
+	h := New(Options{Registry: registryOf(c), Started: time.Now()})
+
+	rec := get(t, h, "/panel/api/models")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("models = %d (%s)", rec.Code, rec.Body.String())
+	}
+	etag := rec.Header().Get("ETag")
+	if etag == "" {
+		t.Fatal("models response carries no ETag")
+	}
+
+	// Same catalogue again: 304, empty body.
+	req := httptest.NewRequest(http.MethodGet, "/panel/api/models", nil)
+	req.Header.Set("If-None-Match", etag)
+	rec304 := httptest.NewRecorder()
+	h.ServeHTTP(rec304, req)
+	if rec304.Code != http.StatusNotModified {
+		t.Fatalf("conditional models = %d, want 304 (body %s)", rec304.Code, rec304.Body.String())
+	}
+	if rec304.Body.Len() != 0 {
+		t.Fatalf("304 body = %q, want empty", rec304.Body.String())
+	}
+
+	// A changed catalogue must mint a different ETag and a 200.
+	c.models = []core.Model{{ID: "m2", OwnedBy: "zcode"}}
+	req2 := httptest.NewRequest(http.MethodGet, "/panel/api/models", nil)
+	req2.Header.Set("If-None-Match", etag)
+	rec2 := httptest.NewRecorder()
+	h.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("changed models = %d, want 200", rec2.Code)
+	}
+	if rec2.Header().Get("ETag") == etag {
+		t.Fatal("changed catalogue kept the old ETag")
+	}
+}

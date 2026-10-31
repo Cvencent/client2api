@@ -6,6 +6,28 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.5.38] - 2026-11-01
+
+### Changed
+
+- **面板 5 秒轮询不再每拍拖一整份客户端元数据。** 实测一拍两个请求
+  （overview + status）约 101KB，其中 capabilities 一份 36KB 字节级重复、
+  每拍真正变化的字段只有 6.4KB——22 个模块静置一小时约 90MB 下行，纯流量
+  与 JSON 解析的浪费。现在轮询打新增的 `/panel/api/pool`：只带 pool、
+  health、按账号的在途租约和 redis_mode（实测一拍 655B，-99%）；capabilities
+  /models 这些静态块只随 overview 走。`/panel/api/status` 本体一字未动，
+  诊断脚本和兜底路径照旧。
+- **模型目录接上条件请求与缓存。** `/panel/api/models` 是面板最重的
+  payload（284KB），之前模型页每次进场都整份重拉，还绕过了现成的
+  `MODEL_CATALOG_TTL_MS`。现在 GET 带 ETag（对 clients 切片哈希，
+  refreshed_at 每秒在动不参与），客户端缓存上次响应、重进页面走 TTL、
+  过期了带 If-None-Match——304 复用缓存，实测重进一页 607B（-99.8%）。
+
+### Installer
+
+- `client2api-setup-0.5.38.exe`（空包，不含账号凭据或本机配置）
+- SHA256：`722061B3AF36C204B0AC8FF7D0D44D1EDAA42071D2DB3BD4A245C800BC3CFC99`
+
 ## [0.5.37] - 2026-11-01
 
 ### Fixed

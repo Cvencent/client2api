@@ -180,13 +180,14 @@ const out = process.argv[2];
   try {
     const block = ` + string(blockJSON) + `;
     const fn = new Function("api", "applyModelCatalog", "MODEL_CATALOG_TTL_MS",
-      "MODEL_CATALOG_AT", "MODEL_CATALOG_INFLIGHT", "async " + block + "\nreturn refreshModelCatalog;");
+      "MODEL_CATALOG_AT", "MODEL_CATALOG_INFLIGHT", "MODEL_ETAG", "MODEL_LAST",
+      "async " + block + "\nreturn refreshModelCatalog;");
     const make = (ok) => {
       let calls = 0;
       const api = async () => { calls++; return { ok: ok, status: 200, data: { clients: [{ name: "trae", models: [{ id: "deepseek-v4.1-flash" }] }] } }; };
       let applied = 0;
       const apply = () => { applied++; };
-      const refresh = fn(api, apply, 30000, 0, null);
+      const refresh = fn(api, apply, 30000, 0, null, null, null);
       return { refresh: refresh, calls: () => calls, applied: () => applied };
     };
 

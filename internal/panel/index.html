@@ -7891,13 +7891,15 @@ async function api(path, opt) {
   const text = await res.text();
   let data = null;
   if (text) { try { data = JSON.parse(text); } catch (e) { data = { raw: text }; } }
+  // 条件请求需要看到 ETag：把调用方关心的几个响应头平铺出来（小写键）。
+  const rawHeaders = { etag: res.headers.get("ETag") || "" };
   if (res.status === 401 || res.status === 403) { showKey(); }
   const rawErr = data && (data.error || data.message) || (res.ok ? "" : ("HTTP " + res.status));
   // 错误归一化成**字符串**。OpenAI 风格的错误体是对象
   // （{"error":{"message":"…","type":"…"}}），原来直接把对象赋给 err，
   // 拼进提示就成了「读取模型失败：[object Object]」——90 处调用方全都这样。
   const err = errText(rawErr);
-  return { status: res.status, ok: res.ok, data: data, err: err };
+  return { status: res.status, ok: res.ok, data: data, err: err, rawHeaders: rawHeaders };
 }
 const cbase = n => "/panel/api/clients/" + encodeURIComponent(n);
 const aid = id => encodeURIComponent(id);
@@ -7908,6 +7910,9 @@ let SNAP = { clients: [] }, OVER = null, NAMES = [], REG = [], ACCTS = {}, CUR =
 // 账号池的模型列 / 弹层优先用它，只在某平台还没取到目录时才退回 overview 的
 // Status.Models（模块的静态兜底列表），否则两个页面会显示两套模型名。
 let MODEL_CATALOG = {};
+// 最近一次 /panel/api/models 的完整响应与它的 ETag：模型页进场重用 TTL 内的
+// 缓存；TTL 到期再取时带上 ETag，服务端 304 就不重传 284KB（issue #33）。
+let MODEL_LAST = null, MODEL_ETAG = null;
 // 实时目录的刷新节流：/panel/api/models 会让每个模块向上游取一次，账号页每
 // 5s 轮询不能每轮都打一遍。TTL 内的重复调用直接复用上次结果；并发调用合并成
 // 一次；失败不写入目录，也不记「刚刷新过」，所以下一轮还能重试。
@@ -8229,7 +8234,11 @@ function poolIndex(d) {
   return { redis_mode: d && d.redis_mode, clients: byName };
 }
 async function loadPoolStatus() {
-  const r = await api("/panel/api/status");
+  // /panel/api/pool 是 status 的易变切片（pool/health/在途租约/redis_mode），
+  // 形状是 poolIndex 认识的子集——capabilities/models/detail 这些静态块
+  // 不随轮询走，一拍从 ~50KB 掉到几 KB（issue #33）。status 本体留给
+  // 诊断脚本和 overview 缺席时的兜底路径。
+  const r = await api("/panel/api/pool");
   POOL = (r.ok && r.data && r.data.clients) ? poolIndex(r.data) : null;
 }
 function poolClient(n) { return (POOL && POOL.clients && POOL.clients[n]) || null; }
@@ -14404,8 +14413,13 @@ async function refreshModelCatalog(force) {
   if (MODEL_CATALOG_INFLIGHT) return MODEL_CATALOG_INFLIGHT;
   if (!force && MODEL_CATALOG_AT && Date.now() - MODEL_CATALOG_AT < MODEL_CATALOG_TTL_MS) return true;
   const run = (async () => {
-    const r = await api("/panel/api/models");
+    // 条件请求：手里有 ETag 就带上。304 表示目录没变——不重传正文，
+    // TTL 照常续期；200 才是真正的新目录。
+    const r = await api("/panel/api/models", MODEL_ETAG ? { headers: { "If-None-Match": MODEL_ETAG } } : undefined);
+    if (r.status === 304) { MODEL_CATALOG_AT = Date.now(); return true; }
     if (!r.ok) return false;
+    MODEL_LAST = r.data;
+    MODEL_ETAG = (r.rawHeaders && r.rawHeaders.etag) || null;
     applyModelCatalog(r.data && r.data.clients);
     MODEL_CATALOG_AT = Date.now();
     return true;
@@ -16328,11 +16342,18 @@ function mdCopyButton(client, model) {
 async function renderModels(refresh) {
   // /panel/api/models keeps the client boundary that /v1/models flattens away,
   // and POST /panel/api/models/refresh is the only path that asks upstream.
+  // 进场（refresh=false）不再每次整份重拉：走 refreshModelCatalog 的 TTL，
+  // 过期了也带 ETag 做条件请求，304 直接复用上一份 payload（issue #33）。
   $("#mdNote").textContent = refresh ? "正在向上游重新获取…" : "读取中…";
-  const [r, pr] = await Promise.all([
-    refresh ? api("/panel/api/models/refresh", { method: "POST" }) : api("/panel/api/models"),
-    api("/panel/api/model_probes"),
-  ]);
+  let r;
+  if (refresh) {
+    r = await api("/panel/api/models/refresh", { method: "POST" });
+    if (r.ok) { MODEL_LAST = r.data; MODEL_ETAG = r.rawHeaders && r.rawHeaders.etag || null; applyModelCatalog(r.data && r.data.clients); MODEL_CATALOG_AT = Date.now(); }
+  } else {
+    const ok = await refreshModelCatalog(false);
+    r = ok && MODEL_LAST ? { ok: true, data: MODEL_LAST } : { ok: false, err: "模型目录暂不可用" };
+  }
+  const pr = await api("/panel/api/model_probes");
   if (!r.ok) { $("#mdNote").textContent = "获取失败：" + r.err; $("#mdBody").innerHTML = '<tr><td colspan="14" class="hint">' + esc(r.err) + '</td></tr>'; return; }
   // 探测数据是可选增强：未配置 / 工具还没跑过 / 读取失败，都退化为无标注，
   // 绝不让它影响模型列表本身（与 /panel/api/model_probes 的空集语义一致）。

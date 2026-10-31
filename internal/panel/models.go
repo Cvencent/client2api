@@ -2,6 +2,9 @@ package panel
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"sort"
 	"strings"
@@ -167,10 +170,36 @@ func (p *panel) serveModels(w http.ResponseWriter, r *http.Request, refresh bool
 	if r.URL.Query().Get("client") == "" {
 		out = append(out, p.virtualModelsFor(out))
 	}
-	writeJSON(w, http.StatusOK, modelsReport{
+	// The catalogue is the heaviest panel payload (~280KB with 20+ modules)
+	// and changes rarely -- only a refresh or a module's own list change moves
+	// it.  Serve it with a strong ETag and honour If-None-Match so the models
+	// page re-entering costs a 304 instead of the full body (issue #33).
+	// The etag hashes the clients slice, not the whole report: refreshed_at
+	// moves every second and would otherwise mint a fresh etag each poll.
+	body, err := json.Marshal(modelsReport{
 		RefreshedAt: time.Now().UTC().Format(time.RFC3339),
 		Clients:     out,
 	})
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "marshal models: "+err.Error())
+		return
+	}
+	stamp, herr := json.Marshal(out)
+	if herr != nil {
+		stamp = body
+	}
+	sum := sha256.Sum256(stamp)
+	etag := `"` + hex.EncodeToString(sum[:16]) + `"`
+	w.Header().Set("ETag", etag)
+	if match := r.Header.Get("If-None-Match"); match != "" && etagMatches(match, etag) {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
+	_, _ = w.Write([]byte("\n"))
 }
 
 // virtualModelsFor exposes the gateway-level routing names in the same

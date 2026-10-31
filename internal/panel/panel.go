@@ -261,6 +261,11 @@ func New(opts Options) http.Handler {
 	// The polling/aggregate surface the dashboard reads.  These are additive:
 	// the routes above keep their exact old behaviour.
 	api("/panel/api/overview", p.handleOverview)
+	// /panel/api/pool is the 5-second poll's payload: the volatile slice only
+	// (pool/health/per-account leases, redis mode).  /panel/api/status keeps
+	// its full shape for external diagnostics; the panel no longer carries
+	// 36KB of capabilities per tick on the light route (issue #33).
+	api("/panel/api/pool", p.handlePool)
 	api("/panel/api/logs", p.handleLogs)
 	api("/panel/api/models", p.handleModelsList)
 	api("/panel/api/models/refresh", p.handleModelsRefresh)
@@ -549,11 +554,67 @@ func (p *panel) handleStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, snap)
 }
 
-func (p *panel) handleReload(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeErr(w, http.StatusMethodNotAllowed, "use POST")
-		return
+// poolRow is one module's entry in the light poll.  accounts carry only the
+// lease extras (in_flight / in_flight_limit), which is the volatile part the
+// accounts table reads from status; anything static stays in overview.
+type poolRow struct {
+	Name    string          `json:"name"`
+	Ready   bool            `json:"ready"`
+	Pool    *core.PoolStats `json:"pool,omitempty"`
+	Health  *core.Health    `json:"health,omitempty"`
+	Account []poolAccount   `json:"accounts,omitempty"`
+}
+
+type poolAccount struct {
+	ID    string         `json:"id"`
+	Extra map[string]any `json:"extra,omitempty"`
+}
+
+type poolSnapshot struct {
+	Version   string    `json:"version"`
+	RedisMode string    `json:"redis_mode"`
+	Clients   []poolRow `json:"clients"`
+}
+
+// handlePool answers the dashboard's 5-second poll with just the volatile
+// slice of /panel/api/status: pool stats, health, per-account in-flight
+// leases and the redis mode.  A 22-module install measured ~51KB per status
+// poll, 90% of it capabilities and static model lists that never change
+// between ticks (issue #33).
+func (p *panel) handlePool(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := p.ctx(r, 30*time.Second)
+	defer cancel()
+
+	snap := poolSnapshot{
+		Version:   p.opts.Version,
+		RedisMode: redisModeNoop,
+		Clients:   []poolRow{},
 	}
+	if p.opts.Registry != nil {
+		for _, c := range p.opts.Registry.All() {
+			st := core.RedactStatus(c.Status(ctx))
+			row := poolRow{Name: st.Name, Ready: st.Ready}
+			// Account lease extras are the one per-account volatile block the
+			// accounts table polls for; ids ride along so the page can index.
+			for _, a := range st.Accounts {
+				if a.Extra == nil {
+					continue
+				}
+				row.Account = append(row.Account, poolAccount{ID: a.ID, Extra: a.Extra})
+			}
+			if ps, ok := core.PoolStatsOf(c); ok {
+				row.Pool = &ps
+			}
+			if h, ok := core.HealthOf(c); ok {
+				row.Health = &h
+			}
+			snap.Clients = append(snap.Clients, row)
+		}
+	}
+	writeJSON(w, http.StatusOK, snap)
+}
+
+func (p *panel) handleReload(w http.ResponseWriter, r *http.Request) {
 	if p.opts.Reload == nil {
 		writeErr(w, http.StatusNotImplemented, "reload not wired")
 		return
