@@ -6,6 +6,30 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.5.24] - 2026-10-31
+
+### Fixed
+
+- **3D 模式下选中的板卡与检视面板活不过一个轮询周期（[#6](https://github.com/Cvencent/client2api/issues/6)）。**
+  账号池 5s 轮询改变读数 → 1.5s 签名对账整体重建舞台 → 重建无条件
+  `B3D.sel=-1` 并收起检视面板（`.b3d-inspect`），活跃流量下点选后约 4.75s
+  必失。现在重建前按 label 记住选中的板卡，重建后按 label 找回索引并恢复
+  读数与检视面板（账号被删才真正清空）；用户正与检视面板交互（面板内有
+  focus 或滑杆拖动中）时该轮签名重建整体跳过，与拖拽豁免同款。
+
+- **两条 401 节拍日志刷了 5 天 ~1400 行：日志去重从未跨 sweep 生效（[#7](https://github.com/Cvencent/client2api/issues/7)）。**
+  `probeLogDeduper` 原来在每次 sweep 函数体内新建——自带一张全新 seen map，
+  注释里承诺的一小时窗口从未真正生效；`ModelRefresher` 循环则在去重之外
+  完全裸打，已失效凭据每 5 分钟被敲一次并原样记一条。现在 deduper 提为
+  进程级单例，余额 sweep、恢复 sweep 与 ModelRefresher 三条路径共用：同一
+  (平台, 账号, 错误文本) 一小时至多一条，窗口过后恢复记录并附
+  `repeated N×` 被抑制条数。
+
+### Installer
+
+- `client2api-setup-0.5.24.exe`（空包，不含账号凭据或本机配置）
+- SHA256：`3C276E6E6FD5311730E70980F588F58059760E316748F33D2A35FF1ADCDA2CF3`
+
 ## [0.5.23] - 2026-10-31
 
 ### Fixed

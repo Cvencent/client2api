@@ -182,3 +182,28 @@ func TestProbeLogDeduperIsSafeForConcurrentSweeps(t *testing.T) {
 		<-done
 	}
 }
+
+// The deduper the sweeps actually share must survive from one sweep to the
+// next: a fresh map per call made the one-hour window fictional, and a dead
+// credential printed the same 401 every five minutes for days (issue #7).
+func TestSharedProbeLogDeduperSurvivesAcrossSweeps(t *testing.T) {
+	// Not a fresh instance on purpose: the singleton is the subject here.
+	d := sharedProbeLogDeduper()
+
+	// Freeze time so the test does not depend on the wall clock.
+	orig := d.now
+	now := time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC)
+	d.now = func() time.Time { return now }
+	t.Cleanup(func() { d.now = orig })
+
+	err := errors.New("HTTP 401: The API Key appears to be invalid or may have expired")
+	if _, log := d.shouldLog("kimi", "key-1", err); !log {
+		t.Fatal("the first failure must be logged")
+	}
+	// The next sweep, five minutes later: the same failure through the same
+	// shared instance must be silent now that the map survives.
+	now = now.Add(5 * time.Minute)
+	if _, log := d.shouldLog("kimi", "key-1", err); log {
+		t.Fatal("the shared deduper forgot the failure between sweeps: the drumbeat is back")
+	}
+}

@@ -13311,6 +13311,11 @@ function mountBoard3d(view) {
   b3dMountControls();
   const spec = b3dSpec(view);
   const samePage = B3D.view === view;
+  // 重建前记住用户正选中的那块板卡：签名重建是对的（读数变了舞台要跟上），
+  // 但 b3dClear 会无条件 sel=-1 并收起检视面板——活跃流量下选中活不过一个
+  // 轮询周期（issue #6）。按 label 找回：账号的 label 是稳定身份；重建后
+  // 找不到（账号被删）才真正清空。
+  const prevSel = samePage && B3D.sel >= 0 && B3D.items[B3D.sel] ? B3D.items[B3D.sel].label : null;
   B3D.view = view;
   B3D.sig = spec.items.map(x => x.label + "|" + x.value + "|" + x.raw).join("~");
   // 同一页内的数据刷新（轮询）不应该重播入场展开——那是「换页」的编排。
@@ -13332,6 +13337,12 @@ function mountBoard3d(view) {
   } else {
     none.hidden = true;
     b3dBuild(spec);
+    // 按 label 找回重建前的选中（issue #6）：板卡是每次重建重新生成的，
+    // 只有 label 是跨重建稳定的身份。readout/检视面板由 b3dReadout 统一画。
+    if (prevSel != null) {
+      const idx = B3D.items.findIndex(it => it.label === prevSel);
+      if (idx >= 0) B3D.sel = idx;  // 找不到就保持 b3dClear 的 -1：账号真没了
+    }
   }
   if (B3D.hintEl) B3D.hintEl.textContent = spec.hint || "DRAG";
   b3dReadout();
@@ -23912,7 +23923,12 @@ window.addEventListener("unhandledrejection", ev => panelBootError(ev.reason));
         // 判据用「签名」而不是「条目数」：条目数不变时读数仍可能变（调用次数、
         // 告警条数…），只看数量会让舞台一直显示旧值；而随口重建又会让入场
         // 展开动画每 1.5 秒重播一次。签名对比两者都对。
-        if (B3D.renderer && B3D.view === VIEW && document.body.classList.contains("mode-3d") && !B3D.drag) {
+        // 拖拽之外，用户正与检视面板交互（面板内有 focus、或滑杆拖动中）也
+        // 跳过本轮：重建会把面板在手上换掉，打断点按/拖动手势（issue #6）。
+        // 豁免是单轮的，下一拍数据照常跟上。
+        const inspect = B3D.host && B3D.host.querySelector(".b3d-inspect");
+        const inspectBusy = inspect && (inspect.contains(document.activeElement) || inspect.querySelector(".accPrio:active"));
+        if (B3D.renderer && B3D.view === VIEW && document.body.classList.contains("mode-3d") && !B3D.drag && !inspectBusy) {
           const spec = b3dSpec(VIEW);
           const sig = spec.items.map(x => x.label + "|" + x.value + "|" + x.raw).join("~");
           if (sig !== B3D.sig) mountBoard3d(VIEW);

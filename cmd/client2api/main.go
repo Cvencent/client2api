@@ -44,7 +44,7 @@ import (
 )
 
 // version is overridable with -ldflags "-X main.version=...".
-var version = "0.5.23"
+var version = "0.5.24"
 
 // restartHandoffEnv marks the replacement half of a panel restart.  It tells a
 // starting process to keep retrying the listen address instead of failing fast,
@@ -1010,8 +1010,11 @@ func refreshBalancesMatching(ctx context.Context, reg *core.Registry, client str
 	// what makes the log unreadable: the one failure an operator can act on is
 	// buried in ninety-nine they cannot.  One line per (platform, account,
 	// error) per window, with the suppressed count attached when it returns,
-	// keeps the signal and drops the drumbeat.
-	dedupe := newProbeLogDeduper(probeLogWindow)
+	// keeps the signal and drops the drumbeat.  The deduper is the process-wide
+	// one: a fresh map per call made the hour-wide window fictional, because
+	// the same (platform, account, error) reappearing in the next sweep was a
+	// key it had never seen (issue #7).
+	dedupe := sharedProbeLogDeduper()
 	for _, c := range reg.All() {
 		if client != "" && !strings.EqualFold(c.Name(), client) {
 			continue
@@ -1409,7 +1412,16 @@ func run() error {
 				_, err := r.RefreshModels(rctx)
 				cancel()
 				if err != nil {
-					logger.Printf("[%s] balance refresh: %v", c.Name(), err)
+					// The same probe deduper as the balance sweep: this loop
+					// runs on the same five-minute tick and used to log raw,
+					// so one dead key produced the same 401 every five minutes
+					// for days (issue #7).  The module-level account field is
+					// empty here -- RefreshModels fans out on its own -- so
+					// the identity is (platform, "", error text), which is the
+					// right grain: one line per platform per window.
+					if msg, log := sharedProbeLogDeduper().shouldLog(c.Name(), "", err); log {
+						logf(logger, "[%s] balance refresh: %s", c.Name(), msg)
+					}
 				}
 			}
 		},

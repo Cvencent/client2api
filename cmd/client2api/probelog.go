@@ -58,6 +58,31 @@ func newProbeLogDeduper(window time.Duration) *probeLogDeduper {
 	}
 }
 
+// sharedProbeLog is the process-wide deduper.  The soft sweep renews the
+// balances every five minutes, and the per-sweep `newProbeLogDeduper` each call
+// created came with a fresh seen map -- so the one-hour window the struct
+// promises never actually spanned two sweeps, and one dead credential printed
+// the same 401 every five minutes for days (issue #7).  One instance shared by
+// every sweep path (balance sweep, recovery sweep, and the ModelRefresher loop
+// that used to log outside any dedupe) makes the window real: a failure is
+// written at most once per hour no matter which path hit it, and its
+// suppressed repeats come back attached to the next line.
+//
+// Concurrent sweeps are already safe (shouldLog holds the mutex), so a
+// once-initialised singleton is all the lifecycle it needs.
+var (
+	sharedProbeLogOnce sync.Once
+	sharedProbeLog     *probeLogDeduper
+)
+
+// sharedProbeLogDeduper returns the process-wide deduper.
+func sharedProbeLogDeduper() *probeLogDeduper {
+	sharedProbeLogOnce.Do(func() {
+		sharedProbeLog = newProbeLogDeduper(probeLogWindow)
+	})
+	return sharedProbeLog
+}
+
 // shouldLog reports whether this failure is worth a line right now, and the
 // text to print (with a suppressed-repeat suffix when the failure came back
 // after being quiet).
