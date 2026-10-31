@@ -6614,6 +6614,7 @@ html:not([data-theme="light"]) body::after {
         <button type="button" class="stat clickable" data-state-filter="" title="显示全部账号"><div class="v" id="sTotal">-</div><div class="k">账号总数</div></button>
         <button type="button" class="stat good clickable" data-state-filter="ready" title="只看可用账号"><div class="v" id="sHealthy">-</div><div class="k">可用</div></button>
         <button type="button" class="stat warn clickable" data-state-filter="cooling" title="只看冷却中的账号"><div class="v" id="sCooling">-</div><div class="k">冷却中</div></button>
+        <button type="button" class="stat warn clickable" data-state-filter="low_credit" title="只看积分不足的账号（等待签到/余额回血，或充值）"><div class="v" id="sLowCredit">-</div><div class="k">积分不足</div></button>
         <button type="button" class="stat bad clickable" data-state-filter="risk" title="只看风控账号"><div class="v" id="sRisk">-</div><div class="k">风控</div></button>
         <button type="button" class="stat bad clickable" data-state-filter="fault" title="只看异常账号"><div class="v" id="sFault">-</div><div class="k">账号异常</div></button>
         <button type="button" class="stat bad clickable" data-state-filter="disabled" title="只看已停用账号"><div class="v" id="sDisabled">-</div><div class="k">已停用</div></button>
@@ -6636,6 +6637,7 @@ html:not([data-theme="light"]) body::after {
             <option value="">全部</option>
             <option value="ready">可用</option>
             <option value="cooling">冷却中</option>
+            <option value="low_credit">积分不足</option>
             <option value="risk">风控</option>
             <option value="fault">账号异常</option>
             <option value="disabled">已停用</option>
@@ -8581,12 +8583,13 @@ const MASTHEADS = {
 
 // addrTotal 把当前所有客户端的账号按状态聚合一次（masthead 的读数用它）。
 function acctTotals() {
-  const t = { total: 0, ready: 0, cooling: 0, risk: 0, fault: 0, disabled: 0 };
+  const t = { total: 0, ready: 0, cooling: 0, low_credit: 0, risk: 0, fault: 0, disabled: 0 };
   NAMES.forEach(n => accGroups((ACCTS[n] || {}).accounts).forEach(g => {
     t.total++;
     const k = accountState(accGroupStat(g)).key;
     if (k === "ready") t.ready++;
     else if (k === "cooling") t.cooling++;
+    else if (k === "low_credit") t.low_credit++;
     else if (k === "risk") t.risk++;
     else if (k === "fault") t.fault++;
     else if (k === "disabled") t.disabled++;
@@ -8623,7 +8626,7 @@ function mastStats(view) {
     case "accounts":
       return [
         { k: "账号", v: String(t.total), s: t.ready + " 可用" },
-        { k: "需处理", v: String(t.risk + t.fault + t.disabled), s: t.cooling + " 冷却中", tone: (t.risk + t.fault + t.disabled) ? "bad" : "" },
+        { k: "需处理", v: String(t.risk + t.fault + t.disabled), s: t.cooling + " 冷却中 · " + t.low_credit + " 积分不足", tone: (t.risk + t.fault + t.disabled) ? "bad" : "" },
       ];
     case "overview":
       return [
@@ -9901,7 +9904,7 @@ function rlStopPolling() {
 // 旧值可滚（详见 renderOverview 里的注释）。
 const OV_KPI_PREV = [];
 async function renderOverview() {
-  const cls = { ready: 0, cooling: 0, risk: 0, fault: 0, disabled: 0, unknown: 0 };
+  const cls = { ready: 0, cooling: 0, low_credit: 0, risk: 0, fault: 0, disabled: 0, unknown: 0 };
   let total = 0;
   const needAttention = [];
   NAMES.forEach(n => {
@@ -10230,13 +10233,14 @@ function renderStats() {
   // 的行会被上面记成「禁用」（exhausted 就是这样）或干脆掉出所有桶（low_credit /
   // quota_exceeded / rate_limited 一个字都没匹配上）——磁贴间的数字也就对不起来。
   // unknown 没有对应的 tile，按行里的「未知」处理，不计入任何一桶。
-  let total = 0, ready = 0, cool = 0, risk = 0, fault = 0, disabled = 0;
+  let total = 0, ready = 0, cool = 0, lowCredit = 0, risk = 0, fault = 0, disabled = 0;
   NAMES.forEach(n => accGroups(ACCTS[n] && ACCTS[n].accounts).forEach(g => {
     const st = accGroupStat(g);
     const cls = accountState(st);
     total++;
     if (cls.key === "ready") ready++;
     else if (cls.key === "cooling") cool++;
+    else if (cls.key === "low_credit") lowCredit++;
     else if (cls.key === "risk") risk++;
     else if (cls.key === "fault") fault++;
     else if (cls.key === "disabled") disabled++;
@@ -10247,6 +10251,7 @@ function renderStats() {
   if (navAcc) { navAcc.textContent = String(total); navAcc.title = "账号总数"; navAcc.hidden = !total; navAcc.style.background = "color-mix(in srgb, var(--accent) 18%, transparent)"; navAcc.style.color = "var(--accent-text)"; }
   tickNumber($("#sHealthy"), ready);
   tickNumber($("#sCooling"), cool);
+  tickNumber($("#sLowCredit"), lowCredit);
   tickNumber($("#sRisk"), risk);
   tickNumber($("#sFault"), fault);
   tickNumber($("#sDisabled"), disabled);
@@ -10257,7 +10262,7 @@ function renderStats() {
   // 「风控 / 账号异常 / 已停用」三个 0 还穿着告警红。一屏健康状态下最响的东西
   // 成了三个 0，正好是反的。现在按「这一格里所有数值」统一判定：
   // 任意一格只要显示 0（或 -），就归 zero 档。
-  ["sTotal", "sHealthy", "sCooling", "sRisk", "sFault", "sDisabled",
+  ["sTotal", "sHealthy", "sCooling", "sLowCredit", "sRisk", "sFault", "sDisabled",
    "sClients", "sReady", "sSticky"].forEach(id => {
     const el = $("#" + id);
     if (!el) return;
@@ -10284,7 +10289,13 @@ function accountState(a) {
   if (raw === "risk" || raw === "fault" || raw === "account_fault" || note.startsWith("account_fault")) {
     return { key: "risk", label: "风控", cls: "err" };
   }
-  if (raw === "cooling" || raw === "exhausted" || raw === "low_credit" || raw === "quota_exceeded" || raw === "rate_limited") {
+  // low_credit 单独一档（issue #24）：限流/熔断是分钟级自愈的调度状态，等就
+  // 能好；积分低于保留线是小时~天级的经济状态，没人充值/签到就永远挂着。两种
+  // 状态混进「冷却中」会让操作员把「该充值了」读成「等一会儿就好」。
+  if (raw === "low_credit") {
+    return { key: "low_credit", label: "积分不足", cls: "warn" };
+  }
+  if (raw === "cooling" || raw === "exhausted" || raw === "quota_exceeded" || raw === "rate_limited") {
     return { key: "cooling", label: "冷却中", cls: "warn" };
   }
   if (raw === "invalid" || raw === "expired" || raw === "unauthorized") {
@@ -11230,8 +11241,8 @@ function atlasZones() {
   const u = acctStatTotals();
   const models = (MODELS || []).reduce((a, c) => a + ((c.models || []).length), 0);
   const z = [
-    { view: "overview",   label: "总览",   sub: t.total ? Math.round(t.ready / t.total * 100) + "% 可用" : "无账号", count: t.total, tone: hard ? "bad" : (t.cooling ? "warn" : "ok") },
-    { view: "accounts",   label: "账号池", sub: t.ready + " / " + t.total + " 可用", count: t.total, tone: hard ? "bad" : (t.cooling ? "warn" : "ok") },
+    { view: "overview",   label: "总览",   sub: t.total ? Math.round(t.ready / t.total * 100) + "% 可用" : "无账号", count: t.total, tone: hard ? "bad" : (t.cooling || t.low_credit ? "warn" : "ok") },
+    { view: "accounts",   label: "账号池", sub: t.ready + " / " + t.total + " 可用", count: t.total, tone: hard ? "bad" : (t.cooling || t.low_credit ? "warn" : "ok") },
     { view: "routelive",  label: "实况",   sub: ((RL_DATA && RL_DATA.traces) || []).length + " 条在窗口内", count: ((RL_DATA && RL_DATA.traces) || []).length, tone: "ok" },
     { view: "models",     label: "模型",   sub: models + " 个", count: models, tone: "" },
     { view: "platforms",  label: "平台",   sub: (SNAP.clients || []).length + " 个已接入", count: (SNAP.clients || []).length, tone: "" },
@@ -12451,12 +12462,13 @@ function b3dAcctItems(n) {
       label: g.identity || accountIdentity(a) || "账号",
       value: st ? numf(Number(st.requests) || 0) : null,
       raw: st ? (Number(st.requests) || 0) : 0,
-      tone: k === "ready" ? "ok" : (k === "cooling" ? "warn" : "bad"),
+      tone: k === "ready" ? "ok" : (k === "cooling" || k === "low_credit" ? "warn" : "bad"),
       sub: accountState(accGroupStat(g)).label,
       // 3D 卡片上「状态词当主角」时，下面那行要解释这个状态意味着什么。
       why: (function (k, a) {
         if (k === "ready") return "可以接单 · 优先级 " + (a.priority == null ? 0 : a.priority);
         if (k === "cooling") return "冷却中 · 稍后自动恢复";
+        if (k === "low_credit") return "积分不足 · 等签到/余额回血，或充值";
         return "需要处理";
       })(k, a),
       // 带上原始对象：3D 里选中一块板卡时，下方的检视面板要用它渲染可操作面。
@@ -13431,7 +13443,7 @@ function acctCardActs(a, caps, acts) {
 function acctDetailHTML(g, a, caps, acts, showBal, prio) {
   const chans = g.rows.map(r => {
     const rs = accountState(r);
-    const tone = rs.key === "ready" ? "ok" : (rs.key === "cooling" ? "warn" : "bad");
+    const tone = rs.key === "ready" ? "ok" : (rs.key === "cooling" || rs.key === "low_credit" ? "warn" : "bad");
     return '<div class="ac-chan ' + tone + '"><span class="ac-lamp" aria-hidden="true"></span>' +
       '<span class="ac-chan-name" title="' + esc(accountHint(r)) + '">' + esc(r.fields && r.fields.realm ? realmName(CUR, r.fields.realm) : (accountHint(r) || "通道")) + "</span>" +
       '<span class="ac-chan-state">' + esc(rs.label) + "</span>" +
@@ -13482,7 +13494,7 @@ function renderAcctBoard(pageRows, caps, acts, showBal) {
   host.innerHTML = pageRows.map((g, i) => {
     const st = accGroupStat(g);
     const key = accountState(st).key;
-    const tone = key === "ready" ? "ok" : (key === "cooling" ? "warn" : "bad");
+    const tone = key === "ready" ? "ok" : (key === "cooling" || key === "low_credit" ? "warn" : "bad");
     const a = g.rows[0];
     const stat = accStatOf(a.id);
     const req = stat ? (Number(stat.requests) || 0) : null;
@@ -13551,7 +13563,7 @@ function renderAcctSide() {
   const t = acctTotals();
   const pct = t.total ? Math.round(t.ready / t.total * 100) : 0;
   const segs = [
-    ["ok", t.ready], ["warn", t.cooling], ["bad", t.risk + t.fault], ["idle", t.disabled],
+    ["ok", t.ready], ["warn", t.cooling + t.low_credit], ["bad", t.risk + t.fault], ["idle", t.disabled],
   ].filter(x => x[1] > 0);
   const strip = segs.map(([k, v]) =>
     '<i class="' + k + '" style="flex:' + v + ' 1 0" title="' + statusWord(k) + " " + v + ' 个"></i>').join("");
@@ -13559,7 +13571,12 @@ function renderAcctSide() {
   const per = NAMES.map(n => {
     const groups = accGroups((ACCTS[n] || {}).accounts);
     const ready = groups.filter(g => accountState(accGroupStat(g)).key === "ready").length;
-    const cooling = groups.filter(g => accountState(accGroupStat(g)).key === "cooling").length;
+    // low_credit 与冷却同作 warn 来源（issue #24）：两者都是「凭据还好、暂时
+    // 不可用」，和风控/异常的红不是一档。
+    const cooling = groups.filter(g => {
+      const k = accountState(accGroupStat(g)).key;
+      return k === "cooling" || k === "low_credit";
+    }).length;
     return { n: n, total: groups.length, ready: ready, cooling: cooling };
   }).filter(x => x.total > 0).sort((a, b) => b.total - a.total);
   const maxTot = Math.max(1, ...per.map(x => x.total));
@@ -13726,7 +13743,7 @@ function renderAccounts() {
     const st = accGroupStat(g);
     const open = accIsOpen(CUR, g.key);
     return '<tr class="acc-grp" data-grp="' + esc(g.key) + '" aria-expanded="' + (open ? "true" : "false") + '" tabindex="0">' +
-        '<td class="mark"><span class="caret" aria-hidden="true">' + (open ? "▾" : "▸") + '</span><span class="pulse" style="background:' + (accountState(st).key === "ready" ? "var(--ok)" : (accountState(st).key === "cooling" ? "var(--warn)" : "var(--bad)")) + '"></span></td>' +
+        '<td class="mark"><span class="caret" aria-hidden="true">' + (open ? "▾" : "▸") + '</span><span class="pulse" style="background:' + (accountState(st).key === "ready" ? "var(--ok)" : (accountState(st).key === "cooling" || accountState(st).key === "low_credit" ? "var(--warn)" : "var(--bad)")) + '"></span></td>' +
         '<td><div class="name">' + esc(g.identity) + ' <span class="chip">' + g.rows.length + ' 个通道</span></div>' +
           '<div class="hint">' + esc(g.rows[0].client || CUR) + ' · 同一账号的不同登录方式</div></td>' +
         '<td>' + stateChip(st) + '</td>' +
@@ -14072,7 +14089,7 @@ function accRowHTML(a, caps, acts, showBal, chan, open, groupKey, group) {
     ? ' class="acc-chan" data-chan="' + esc(groupKey) + '"' + (open ? "" : " hidden")
     : '';
   return '<tr' + trAttrs + '>' +
-    '<td class="mark"><span class="pulse" style="background:' + (accountState(a).key === "ready" ? "var(--ok)" : (accountState(a).key === "cooling" ? "var(--warn)" : "var(--bad)")) + '"></span></td>' +
+    '<td class="mark"><span class="pulse" style="background:' + (accountState(a).key === "ready" ? "var(--ok)" : (accountState(a).key === "cooling" || accountState(a).key === "low_credit" ? "var(--warn)" : "var(--bad)")) + '"></span></td>' +
     '<td><div class="name">' + (chan ? '<span class="branch">└</span> ' : '') + esc(accountIdentity(a)) + realmTag(a) + '</div><div class="hint">' + esc(accountHint(a)) + '</div></td>' +
     '<td>' + stateChip(a) + '</td>' +
     '<td class="c-models">' + accModelsCell(CUR, a) + '</td>' +
