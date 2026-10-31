@@ -1088,6 +1088,11 @@ legend { font-size: 12px; color: var(--ink-3); font-weight: 600; padding-bottom:
 .veil.on { display: flex; align-items: center; justify-content: center; padding: 20px; }
 .veil.on { animation: veilIn 140ms var(--ease-out) both; }
 @keyframes veilIn { from { opacity: 0; } to { opacity: 1; } }
+/* 退场（issue #32）：hideVeil 先摘 .on 换 .out，播一段比进场短的淡出，
+   animationend 后才置 hidden。全文件统一走 hideVeil，一处修 12 层全生效。
+   .veil 基础样式没有 opacity 声明，这里显式落到 0，动画结束停在隐藏态。 */
+.veil.out { opacity: 0; animation: veilOut 150ms var(--ease-out) both; }
+@keyframes veilOut { from { opacity: 1; } to { opacity: 0; } }
 .dlg {
   background: var(--surface); border: 1px solid var(--line); border-radius: 13px;
   width: 560px; max-width: 100%; max-height: 86vh; display: flex; flex-direction: column;
@@ -1095,6 +1100,10 @@ legend { font-size: 12px; color: var(--ink-3); font-weight: 600; padding-bottom:
   animation: dlgIn var(--dur-med) var(--ease-out) both;
 }
 @keyframes dlgIn { from { opacity: 0; transform: scale(.985) translateY(4px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+/* 弹窗本体的退场：内容「退回去」而不是被切断（issue #32）。挂在 .veil.out
+   下，只有退出中的那层弹窗播它。 */
+.veil.out .dlg { animation: dlgOut 150ms var(--ease-out) both; }
+@keyframes dlgOut { from { opacity: 1; transform: scale(1) translateY(0); } to { opacity: 0; transform: scale(.99) translateY(3px); } }
 .dlg header { padding: 17px 20px 13px; border-bottom: 1px solid var(--line-soft); }
 .dlg header h3 { font-size: 15px; font-weight: 620; }
 .dlg header .hint { color: var(--ink-3); font-size: 12.5px; margin-top: 5px; }
@@ -2676,6 +2685,10 @@ details.cfg summary:hover, details.adv summary:hover { color: var(--accent-text)
 }
 .veil.on { animation: uiVeilIn 180ms var(--ease-smooth) both; }
 @keyframes uiVeilIn { from { opacity: 0; } to { opacity: 1; } }
+/* 统一层（毛玻璃）的退场与基础层同款：blur(22px) 一帧消失最刺眼，
+   让模糊跟着 150ms 淡出去（issue #32）。 */
+.veil.out { opacity: 0; animation: uiVeilOut 150ms var(--ease-smooth) both; }
+@keyframes uiVeilOut { from { opacity: 1; } to { opacity: 0; } }
 .dlg {
   border: 1px solid color-mix(in srgb, white 20%, transparent); border-radius: 20px;
   background: var(--material-strong); box-shadow: var(--shadow-float);
@@ -7302,9 +7315,9 @@ html:not([data-theme="light"]) body::after {
 
 <!-- 账号任务 -->
 <div class="veil" id="taskVeil">
-  <div class="dlg" style="width:940px">
+  <div class="dlg" style="width:940px" role="dialog" aria-modal="true" aria-labelledby="taskTitle">
     <header>
-      <h3>积分任务 <span class="hint" id="taskWho"></span></h3>
+      <h3 id="taskTitle">积分任务 <span class="hint" id="taskWho"></span></h3>
       <div class="hint">
         「接受」是报名（幂等，重复点不会报错）；进度达标后才会出现「领取」。
         标记为「需人工」的任务没有对应接口，必须按任务说明在官方客户端完成。
@@ -7332,9 +7345,9 @@ html:not([data-theme="light"]) body::after {
 
 <!-- 人机验证：厂商活动领取前必须先过一次它自己的验证码 -->
 <div class="veil" id="capVeil">
-  <div class="dlg" style="width:470px">
+  <div class="dlg" style="width:470px" role="dialog" aria-modal="true" aria-labelledby="capTitle">
     <header>
-      <h3>人机验证 <span class="hint" id="capWho"></span></h3>
+      <h3 id="capTitle">人机验证 <span class="hint" id="capWho"></span></h3>
       <div class="hint">
         厂商要求先过一次它自己的验证码，通过后会自动继续。多数情况下无感通过；
         如果被风控拦住，框里会出现一个按钮，点一下即可。
@@ -7353,9 +7366,9 @@ html:not([data-theme="light"]) body::after {
 
 <!-- 开学季券码 -->
 <div class="veil" id="vcVeil">
-  <div class="dlg" style="width:860px">
+  <div class="dlg" style="width:860px" role="dialog" aria-modal="true" aria-labelledby="vcTitle">
     <header>
-      <h3>开学季 · 我的券码</h3>
+      <h3 id="vcTitle">开学季 · 我的券码</h3>
       <div class="hint">抽奖抽中的第三方券。券码不脱敏，可直接复制到对应 App / 小程序兑换。</div>
     </header>
     <div class="body" id="vcBody"></div>
@@ -7369,7 +7382,7 @@ html:not([data-theme="light"]) body::after {
 </div>
 
 <div class="veil" id="sourceVeil" hidden>
-  <form class="dlg" id="sourceForm">
+  <form class="dlg" id="sourceForm" role="dialog" aria-modal="true" aria-labelledby="sourceTitle">
     <header><h3 id="sourceTitle">添加中转站</h3></header>
     <div class="body">
       <div class="fld"><label class="lb" for="sourceID">平台 ID *</label><input id="sourceID" required pattern="[a-z][a-z0-9\-]{0,63}" maxlength="64" placeholder="my-relay" autocomplete="off" spellcheck="false"></div>
@@ -7412,7 +7425,7 @@ html:not([data-theme="light"]) body::after {
 
 <!-- 添加账号 -->
 <div class="veil" id="addVeil">
-  <div class="dlg">
+  <div class="dlg" role="dialog" aria-modal="true" aria-labelledby="addTitle">
     <header>
       <h3 id="addTitle">添加账号</h3>
       <div class="tabs" id="addTabs">
@@ -7602,9 +7615,9 @@ html:not([data-theme="light"]) body::after {
      重登也就不知道该用哪一个。标识由操作员自己填，存在网关配置里（跟账号优先级
      同一套持久化），升级保留，只在本机显示。 -->
 <div class="veil" id="noteVeil">
-  <div class="dlg" style="width:440px">
+  <div class="dlg" style="width:440px" role="dialog" aria-modal="true" aria-labelledby="noteTitle">
     <header>
-      <h3>账号身份标识</h3>
+      <h3 id="noteTitle">账号身份标识</h3>
       <div class="hint" id="noteHelp"></div>
     </header>
     <div class="body">
@@ -7626,9 +7639,9 @@ html:not([data-theme="light"]) body::after {
 <!-- 邀请码 / 兑换码：Loomy 的两个积分动作。邀请码绑定是「使用邀请码兑换积分」，
      兑换码是另一个积分券接口；两者放在一个弹层里但分别提交，避免把两种码混用。 -->
 <div class="veil" id="inviteVeil">
-  <div class="dlg" style="width:520px">
+  <div class="dlg" style="width:520px" role="dialog" aria-modal="true" aria-labelledby="inviteTitle">
     <header>
-      <h3>邀请码 / 兑换码 <span class="hint" id="inviteWho"></span></h3>
+      <h3 id="inviteTitle">邀请码 / 兑换码 <span class="hint" id="inviteWho"></span></h3>
       <div class="hint" id="inviteHelp">邀请码用于把账号绑定到指定邀请人；兑换码是积分券，两者的接口和用途不同。</div>
     </header>
     <div class="body">
@@ -7656,9 +7669,9 @@ html:not([data-theme="light"]) body::after {
      启用」让这个账号无视账号级健康判定（冷却/额度/风控/session 等）直接可用；只有逐模型限流仍然生效。
      模块没上报逐模型状态时按平台目录补齐。不支持该能力的模块保持只读显示。 -->
 <div class="veil" id="modelVeil">
-  <div class="dlg" style="width:640px">
+  <div class="dlg" style="width:640px" role="dialog" aria-modal="true" aria-labelledby="modelTitle">
     <header>
-      <h3>模型可用情况</h3>
+      <h3 id="modelTitle">模型可用情况</h3>
       <div class="hint" id="modelHelp"></div>
     </header>
     <div class="body" id="modelBody"></div>
@@ -7732,9 +7745,9 @@ html:not([data-theme="light"]) body::after {
 
 <!-- 密钥 -->
 <div class="veil" id="keyVeil" data-lock="1">
-  <div class="dlg" style="width:420px">
+  <div class="dlg" style="width:420px" role="dialog" aria-modal="true" aria-labelledby="keyTitle">
     <header>
-      <h3>需要访问密钥</h3>
+      <h3 id="keyTitle">需要访问密钥</h3>
       <div class="hint">该网关已启用 api_key 鉴权，请输入配置里的密钥。</div>
     </header>
     <div class="body">
@@ -10219,7 +10232,10 @@ function tickNumber(el, to) {
   const target = Number(to) || 0;
   const prev = TICK_RAF.get(el);
   if (prev != null) { cancelAnimationFrame(prev); TICK_RAF.delete(el); }
-  if (from === target || RL_STAGE.reduce) { el.textContent = String(target); return; }
+  // 判 motionReduce() 而不是 RL_STAGE.reduce：后者只有进过「实况」页渲染过
+  // 舞台才被赋值，冷启动直接进账号池时它是 false，开「减少动效」的用户照样
+  // 看到弹簧数字（issue #31）。motionReduce() 两边都查。
+  if (from === target || motionReduce()) { el.textContent = String(target); return; }
   const sample = springValue(from, target, { stiffness: 180, damping: 20 });
   let last = Math.round(from);
   el.textContent = String(last);
@@ -11658,10 +11674,13 @@ function atlasFrame() {
   const nowMs = performance.now();
   const dt = Math.min(0.05, Math.max(0.001, (nowMs - (ATLAS.lastMs || nowMs)) / 1000));
   ATLAS.lastMs = nowMs;
-  ATLAS.t += dt;
+  // 「减少动效」下时间冻结：t 不再推进，铭牌漂浮/中枢自转/相机绕场这些
+  // 持续位移全部停住（issue #30）。拖拽/缩放/悬停高亮不受影响——那些是
+  // 用户主动触发的反馈，不是环境动效。
+  if (!motionReduce()) ATLAS.t += dt;
   const t = ATLAS.t;
   // 地图缓慢自转：这是一张会呼吸的空间图，不是一张静止的平面图。
-  if (!ATLAS.drag) ATLAS.yaw += 0.0011;
+  if (!ATLAS.drag && !motionReduce()) ATLAS.yaw += 0.0011;
   ATLAS.root.rotation.y = ATLAS.yaw;
   // 相机绕场：仰角决定环被投影成多扁的椭圆。仰角太低，环正面会挤成一条线、
   // 铭牌互相压；太高就变成一张平面图、失去空间感。58° 起、可往上拖。
@@ -11718,7 +11737,8 @@ function atlasFrame() {
     c.updateProjectionMatrix();
   }
   ATLAS.billboards.forEach(b => fxFace(b, ATLAS.root, ATLAS.cam));
-  // 铭牌上下漂浮，相位错开
+  // 铭牌上下漂浮，相位错开；「减少动效」下 t 冻结，漂浮量恒为 sin(常数)，
+  // 每帧同值不产生位移，无需单独分支。
   ATLAS.floaters.forEach(f => {
     if (f.spin) {
       if (f.ringed) { f.obj.rotation.z = t * 0.20; }
@@ -11737,8 +11757,14 @@ function atlasFrame() {
   ATLAS.renderer.render(ATLAS.scene, ATLAS.cam);
   ATLAS.raf = requestAnimationFrame(atlasFrame);
 }
-function atlasStart() { if (!ATLAS.raf && ATLAS.renderer) ATLAS.raf = requestAnimationFrame(atlasFrame); }
+function atlasStart() {
+  if (!ATLAS.raf && ATLAS.renderer) ATLAS.raf = requestAnimationFrame(atlasFrame);
+}
 function atlasStop() { if (ATLAS.raf) { cancelAnimationFrame(ATLAS.raf); ATLAS.raf = 0; } }
+// atlasEnsureStatic 在「减少动效」切换的瞬间把场景摆正：把自转停过的 yaw
+// 冻回当前值（不再推进），下一帧用静止的 t 重新构图。交给 rAF 补一帧即可，
+// frame 循环里的 motionReduce() 分支自己会跳过所有推进。
+function atlasReduceSnap() { ATLAS.lastMs = 0; }
 
 /* ── 外壳：地图铺满窗口，抽屉从右侧滑出 ───────────────────────────────── */
 function atlasMount() {
@@ -12158,6 +12184,19 @@ function envAttach(root, opt) {
 }
 function envTick(env, t) {
   if (!env) return;
+  // 「减少动效」下整个环境层静止（issue #30）：星层转角停在建场初始值、
+  // 光晕取基准亮度，雷达环直接隐掉——它们只有「在扫」一个状态，停住就是
+  // 一道凭空的圆环。星云偏移不再动。
+  if (motionReduce()) {
+    if (env.starsFar) env.starsFar.rotation.y = 0;
+    if (env.stars) env.stars.rotation.y = 0;
+    if (env.glow) {
+      env.glow.scale.set(1, 1, 1);
+      env.glow.material.opacity = env.glow.userData.base;
+    }
+    for (const r of env.scan) r.material.opacity = 0;
+    return;
+  }
   // 两层星以不同速度自转：近层快、远层慢，转动时就有了视差（这是「有深度」
   // 最便宜也最有效的来源）。之前只有一层、0.013 弧度/秒，看不出在动。
   if (env.starsFar) env.starsFar.rotation.y = t * 0.006;
@@ -13183,11 +13222,15 @@ function b3dFrame() {
   const nowMs = performance.now();
   const dt = Math.min(0.05, Math.max(0.001, (nowMs - (B3D.lastMs || nowMs)) / 1000));
   B3D.lastMs = nowMs;
-  B3D.t += dt;
+  // 「减少动效」下时间冻结（issue #30）：相机呼吸/板卡自转/悬浮全部停住。
+  // 入场展开依赖 t 推进，所以 reduce 下直接把 born 拉远——k 一步到 1，
+  // 卡片落位不再播 0.9 秒的生长动画。拖拽/缩放/悬停反馈不受影响。
+  if (motionReduce()) B3D.born = -1;
+  else B3D.t += dt;
   const t = B3D.t;
   // 相机缓慢环绕几度（±4°），只是给静止画面一点「在场」的呼吸，不是把整墙
   // 转走——转得多字就读不了。用户拖拽时直接接管这个角度。
-  if (!B3D.drag) B3D.yaw += 0.0009;
+  if (!B3D.drag && !motionReduce()) B3D.yaw += 0.0009;
   const yaw = Math.sin(B3D.yaw) * 0.075 + B3D.dragYaw;
   B3D.root.rotation.y = yaw;
   const pitch = B3D.pitch;
@@ -13222,6 +13265,8 @@ function b3dFrame() {
     if (f.spin) { f.obj.rotation.z = t * 0.24 + i; return; }
     if (!f.obj) return;
     const on = i === B3D.sel || i === B3D.hover;
+    // 「减少动效」下 t 冻结，sin(常数) 恒定，悬浮不再位移；选中/悬停抬升
+    // 保留——那是即时反馈，不是环境动效。
     const lift = (i === B3D.sel ? 0.13 : 0) + (i === B3D.hover ? 0.07 : 0) + Math.sin(t * 0.8 + f.ph) * 0.05;
     f.obj.position.y = f.base + lift;
     // 悬停/选中时背后的光晕变亮：3D 里没有 CSS 的 :hover，这就是「这块能点」
@@ -13261,6 +13306,9 @@ function b3dFrame() {
 }
 function b3dStart() { if (!B3D.raf && B3D.renderer) B3D.raf = requestAnimationFrame(b3dFrame); }
 function b3dStop() { if (B3D.raf) { cancelAnimationFrame(B3D.raf); B3D.raf = 0; } }
+// b3dReduceSnap：「减少动效」切换瞬间丢弃时间基线，下一帧立刻按冻结的 t
+// 重新构图（frame 内的 motionReduce() 分支会跳过所有推进）。
+function b3dReduceSnap() { B3D.lastMs = 0; }
 
 /* ── 挂载：每个视图一个舞台 + 一个「3D / 列表」开关 ───────────────────── */
 // b3dWhenReady 等 vendored 的 Three.js 到位再回调。它是 defer 加载的，一定
@@ -20726,8 +20774,78 @@ applyTheme(LS.get("theme", "dark"));
 /* ── 密钥弹层 ─────────────────────────────────────────────────────────── */
 /* .veil is display:none in the stylesheet and only .veil.on turns it into a
    flex overlay, so toggling the hidden attribute alone shows nothing. */
-function showVeil(el) { el.hidden = false; el.classList.add("on"); }
-function hideVeil(el) { el.hidden = true; el.classList.remove("on"); }
+
+/* 弹层的语义 + 焦点管理 + 焦点陷阱（issue #16）和退场动画（issue #32）
+   全部收在这对出入口里：12 个 .veil 只从 showVeil/hideVeil 进出（Esc 的
+   closeTopVeil 逐分支收尾后也落到 hideVeil），一处改全部受益。
+
+   showVeil：
+   - 记录打开前的焦点，打开后移到弹层里第一个可聚焦元素（读屏用户听到
+     「进入对话框」，键盘用户不用 Tab 十几次才进得来）；
+   - 给 .dlg 补 role="dialog" / aria-modal="true"（HTML 里漏写的 9 个由
+     这里统一兜住；aria-labelledby 仍以 HTML 里已有的为准，cmdk 用 aria-label）。
+   hideVeil：
+   - 先摘 .on 加 .out 播 ~150ms 退场，animationend 后才置 hidden——关闭
+     从「一帧硬切」变成内容退回去；reduce 下全局 animation:none 规则会
+     立刻 fire animationend，天然退化为瞬时关闭，不用另写分支；
+   - 焦点还原到打开前的元素。
+   焦点陷阱挂在 document 级 keydown：只拦 Tab 且只在有 .veil.on 时接管，
+   首/尾互绕把焦点锁在最上层弹层里。 */
+
+const VEIL_FOCUS = new WeakMap();   // veil -> 打开前的 activeElement
+
+function veilFocusables(root) {
+  return Array.from(root.querySelectorAll(
+    'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), ' +
+    'select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'))
+    .filter(el => el.offsetParent !== null || el === document.activeElement);
+}
+
+function showVeil(el) {
+  el.classList.remove("out");
+  el.hidden = false;
+  el.classList.add("on");
+  const dlg = el.querySelector(".dlg, .cmdk");
+  if (dlg && !dlg.hasAttribute("role")) { dlg.setAttribute("role", "dialog"); dlg.setAttribute("aria-modal", "true"); }
+  const prev = document.activeElement;
+  if (prev && el.contains(prev)) VEIL_FOCUS.delete(el);
+  else if (prev) VEIL_FOCUS.set(el, prev);
+  const f = veilFocusables(el)[0];
+  if (f) { try { f.focus({ preventScroll: true }); } catch (e) { f.focus(); } }
+}
+function hideVeil(el) {
+  const wasOn = el.classList.contains("on") && !el.classList.contains("out");
+  el.classList.remove("on");
+  if (!wasOn) { el.hidden = true; return; }   // 退场中重复调用 / 关一个没开的层
+  const restore = VEIL_FOCUS.get(el);
+  VEIL_FOCUS.delete(el);
+  const finish = () => {
+    el.removeEventListener("animationend", onEnd);
+    if (el.classList.contains("out")) { el.classList.remove("out"); el.hidden = true; }
+  };
+  const onEnd = ev => { if (ev.target === el) finish(); };
+  el.addEventListener("animationend", onEnd);
+  el.classList.add("out");
+  // 兜底：animationend 被吞（元素 display:none、事件在退场前又被 showVeil
+  // 打断等）时 260ms 后强制收尾；showVeil 会先摘 .out，不会和正常路径打架。
+  setTimeout(finish, 260);
+  if (restore && typeof restore.focus === "function") {
+    try { restore.focus({ preventScroll: true }); } catch (e) { restore.focus(); }
+  }
+}
+// 焦点陷阱：只在有弹层开着时拦 Tab，循环范围限定在最上层弹层内。
+window.addEventListener("keydown", ev => {
+  if (ev.key !== "Tab") return;
+  const veil = topVeil ? topVeil() : null;
+  if (!veil) return;
+  const items = veilFocusables(veil);
+  if (!items.length) return;
+  const first = items[0], last = items[items.length - 1];
+  const cur = document.activeElement;
+  if (!veil.contains(cur)) { ev.preventDefault(); first.focus(); return; }
+  if (ev.shiftKey && cur === first) { ev.preventDefault(); last.focus(); }
+  else if (!ev.shiftKey && cur === last) { ev.preventDefault(); first.focus(); }
+}, true);
 function showKey() { showVeil($("#keyVeil")); }
 $("#btnEye").addEventListener("click", () => { const i = $("#keyInput"); i.type = i.type === "password" ? "text" : "password"; });
 $("#btnKey").addEventListener("click", async () => {
@@ -24034,6 +24152,22 @@ window.addEventListener("unhandledrejection", ev => panelBootError(ev.reason));
 (async function boot() {
   try {
     MOTION_FX.reduce = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+    // 运行中改系统设置也要跟上（issue #30 顺带）：CSS 的 @media 立即生效，
+    // JS 侧的 MOTION_FX 原来只在 boot 读一次，聚光灯/涟漪/数字弹簧会动到
+    // 下次刷新。WebGL 两块场景靠帧内的 motionReduce() 分支自然静止，
+    // 切换瞬间丢掉时间基线，下一帧直接按冻结时间构图。
+    try {
+      const mql = window.matchMedia("(prefers-reduced-motion: reduce)");
+      const onReduceChange = () => {
+        MOTION_FX.reduce = !!mql.matches;
+        if (mql.matches) {
+          if (typeof atlasReduceSnap === "function") atlasReduceSnap();
+          if (typeof b3dReduceSnap === "function") b3dReduceSnap();
+        }
+      };
+      if (mql.addEventListener) mql.addEventListener("change", onReduceChange);
+      else if (mql.addListener) mql.addListener(onReduceChange);
+    } catch (e) {}
     // 首帧就把账号池的呈现模式定下来（卡片墙是默认），避免先闪一下表格。
     setAccMode(accMode());
     // 3D 是默认呈现方式（用户明确要求），列表视图一键切回并记住。

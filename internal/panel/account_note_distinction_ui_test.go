@@ -13,7 +13,7 @@ func TestAccountStatusAndIdentityLabelsAreDistinct(t *testing.T) {
 	for _, want := range []string{
 		`<th class="c-note" title="`,
 		`>状态说明</th>`,
-		`<h3>账号身份标识</h3>`,
+		`<h3 id="noteTitle">账号身份标识</h3>`,
 	} {
 		if !strings.Contains(src, want) {
 			t.Errorf("index.html 少了区分状态说明与账号标识所需的内容：%s", want)

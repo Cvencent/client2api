@@ -134,7 +134,7 @@ func TestSourceLimitsEditorIsWired(t *testing.T) {
 	if strings.Contains(src, `id="sourceRPM"`) || strings.Contains(src, `id="sourceAccountRPM"`) {
 		t.Error("legacy RPM inputs are still rendered; rules should be the only request-count editor")
 	}
-	start := strings.Index(src, `<form class="dlg" id="sourceForm">`)
+	start := strings.Index(src, `<form class="dlg" id="sourceForm" role="dialog" aria-modal="true" aria-labelledby="sourceTitle">`)
 	if start < 0 {
 		t.Fatal("source form not found")
 	}
