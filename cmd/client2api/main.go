@@ -44,7 +44,7 @@ import (
 )
 
 // version is overridable with -ldflags "-X main.version=...".
-var version = "0.5.27"
+var version = "0.5.28"
 
 // restartHandoffEnv marks the replacement half of a panel restart.  It tells a
 // starting process to keep retrying the listen address instead of failing fast,
@@ -1593,8 +1593,11 @@ func run() error {
 
 	// The gateway's transient per-model rate-limit memory, shared with the
 	// panel so the model dialog can show a 429 a module only recorded as an
-	// account-level cooldown.  Runtime-only on purpose.
+	// account-level cooldown.  Runtime-only on purpose.  Every effective park
+	// logs one line: which account/model, how long, vendor hint or local
+	// ladder, and the running hit count (issue #18).
 	modelParks := modelpark.New()
+	modelParks.SetLogf(logger.Printf)
 	sessionPlatforms := gateway.NewSessionPlatforms()
 	sessionPlatforms.StartGC()
 	defer sessionPlatforms.StopGC()

@@ -53,11 +53,28 @@ type Store struct {
 	mu    sync.Mutex
 	now   func() time.Time
 	parks map[parkKey]parkRecord
+	// logf, when set, receives one line per effective park: what got parked,
+	// for how long, from the vendor's hint or the local ladder, and how many
+	// times this triple has been parked.  Without it a 429's routing row is
+	// all an operator ever sees -- the window itself was invisible (issue #18).
+	// Parks are deliberately not folded: the doubling IS the information.
+	logf func(format string, args ...any)
 }
 
 // New returns an empty store.
 func New() *Store {
 	return &Store{now: time.Now, parks: map[parkKey]parkRecord{}}
+}
+
+// SetLogf wires the park logger.  Nil (the default) keeps the store silent;
+// tests pass a capture function.  Callers inject it once, right after New.
+func (s *Store) SetLogf(logf func(format string, args ...any)) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.logf = logf
 }
 
 // Park records one rate-limit window and returns how long it will last.
@@ -88,6 +105,14 @@ func (s *Store) Park(platform, account, model, reason string, retryAfter time.Du
 		until:  now.Add(d),
 		reason: strings.TrimSpace(reason),
 		hits:   hits,
+	}
+	if s.logf != nil {
+		source := "ladder"
+		if retryAfter > 0 {
+			source = "retry_after=" + d.String()
+		}
+		s.logf("[parks] %s/%s account %s parked %s (%s, hit #%d): %s",
+			k.platform, k.model, core.MaskSecret(k.account), d, source, hits, reason)
 	}
 	return d
 }

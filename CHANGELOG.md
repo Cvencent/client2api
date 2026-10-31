@@ -6,6 +6,23 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.5.28] - 2026-10-31
+
+### Added
+
+- **modelpark 的停机动作现在有日志了（[#18](https://github.com/Cvencent/client2api/issues/18)）。**
+  `Store.Park` 此前只更新内存 map，一个 (平台, 账号, 模型) 被停了多久、是第
+  几次命中、用上游 Retry-After 还是本地阶梯，日志里无处可查——#9 的修复也
+  无法从日志验收。`Store` 增加可选 `logf`（`SetLogf` 注入，nil 安全），每次
+  park 生效打一行：平台/模型/账号（`core.MaskSecret` 打码）、时长、来源
+  （`retry_after=Ns` 或 `ladder`）、累计命中次数与脱敏原因。park 事件有意
+  不折叠：时长逐次翻倍本身就是信息。
+
+### Installer
+
+- `client2api-setup-0.5.28.exe`（空包，不含账号凭据或本机配置）
+- SHA256：`010D29A3CF9E9250F08971B5CFC90D65A0B49EA14051A85EB9A6D3691B59A708`
+
 ## [0.5.27] - 2026-10-31
 
 ### Fixed
