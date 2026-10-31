@@ -8640,8 +8640,13 @@ function mastStats(view) {
     case "alerts": {
       const badge = $("#alertBadge");
       const n = (badge && !badge.hidden) ? (Number(badge.textContent) || 0) : 0;
+      // 「未读 0」不等于「干净」：打开页面即全部已读是设计（renderAlerts 立即
+      // ack），所以这个分支的 n 几乎恒为 0，副文案跟着写「干净」就与同屏的
+      // 告警柱/流水打架（issue #8）。「干净」留给真没有流水时；有流水就把
+      // 页头如实报一条数。
+      const flow = (ALERT_ROWS || []).length;
       return [
-        { k: "未读", v: String(n), s: n ? "需要看一眼" : "干净", tone: n ? "bad" : "" },
+        { k: "未读", v: String(n), s: n ? "需要看一眼" : (flow ? flow + " 条流水" : "干净"), tone: n ? "bad" : "" },
         { k: "平台", v: String((SNAP.clients || []).length), s: "在监控" },
       ];
     }
