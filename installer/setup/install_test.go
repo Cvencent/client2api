@@ -43,11 +43,17 @@ func TestSmokeTestPanelHashFallback(t *testing.T) {
 	}
 	defer os.Remove(candidate)
 
-	root := os.Getenv("SystemRoot")
-	if root == "" {
-		root = `C:\Windows`
+	// The fake browser must EXIST (panelsmoke stats C2A_BROWSER before using
+	// it) but be unusable, so the browser check fails on every machine.  A
+	// zero-byte text file does that; cmd.exe does not -- on a runner with a
+	// real Edge installed the hardcoded browserPaths() probe would still find
+	// a working browser and the smoke would legitimately pass with no
+	// fallback warning.
+	fakeBrowser := filepath.Join(t.TempDir(), "not-a-browser.txt")
+	if err := os.WriteFile(fakeBrowser, nil, 0o644); err != nil {
+		t.Fatal(err)
 	}
-	t.Setenv("C2A_BROWSER", filepath.Join(root, "System32", "cmd.exe"))
+	t.Setenv("C2A_BROWSER", fakeBrowser)
 	t.Setenv("CHROME_BIN", "")
 	t.Setenv("PATH", t.TempDir())
 	t.Setenv("ProgramFiles", "")

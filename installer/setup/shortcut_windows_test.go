@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"golang.org/x/sys/windows"
 )
 
 // TestCreateShortcutPersistsTargetArgumentsAndWorkingDir guards the COM vtable
@@ -16,7 +18,7 @@ import (
 // no arguments.  Reading the raw file keeps the check independent of the very
 // struct that is under test.
 func TestCreateShortcutPersistsTargetArgumentsAndWorkingDir(t *testing.T) {
-	dir := t.TempDir()
+	dir := longPath(t.TempDir())
 	target := filepath.Join(dir, "appdir", "client2api.exe")
 	work := filepath.Join(dir, "workdir")
 	icon := filepath.Join(dir, "appdir", "client2api.ico")
@@ -73,4 +75,20 @@ func linkContains(raw []byte, s string) bool {
 		wide = append(wide, byte(r), byte(r>>8))
 	}
 	return bytes.Contains(raw, wide)
+}
+
+// longPath expands a possibly 8.3-short path (GitHub runners hand out TEMP
+// under RUNNER~1) to its long form.  The .lnk the shell writes stores the long
+// path, so asserting on the short form fails only on machines whose temp path
+// is short-named -- an environment artifact, not a product fault.
+func longPath(p string) string {
+	n, err := windows.GetLongPathName(windows.StringToUTF16Ptr(p), nil, 0)
+	if err != nil || n == 0 {
+		return p
+	}
+	buf := make([]uint16, n)
+	if _, err := windows.GetLongPathName(windows.StringToUTF16Ptr(p), &buf[0], n); err != nil {
+		return p
+	}
+	return windows.UTF16ToString(buf)
 }
