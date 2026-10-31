@@ -11,8 +11,6 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
-
-	"client2api/internal/browser"
 )
 
 func TestVerifyFileHash(t *testing.T) {
@@ -62,15 +60,15 @@ func TestSmokeTestPanelHashFallback(t *testing.T) {
 	t.Setenv("ProgramFiles(x86)", "")
 	t.Setenv("LOCALAPPDATA", "")
 
-	warning, err := smokeTestPanel(candidate)
+	// -browser pins panelsmoke to the fake alone: its own discovery would
+	// otherwise find the runner's real Edge and legitimately pass, which made
+	// this fallback untestable on CI (three red rounds before this pin).
+	warning, err := smokeTestPanel(candidate, fakeBrowser)
 	if err != nil {
 		t.Fatalf("smokeTestPanel did not use the build-gated hash fallback: %v", err)
 	}
 	if warning == "" {
-		// The smoke PASSED, meaning some browser booted the panel despite the
-		// pinned fake -- name the candidates so the next failure is readable.
-		t.Fatalf("smokeTestPanel returned no warning when the browser check failed; candidates=%v",
-			browser.BrowserCandidates())
+		t.Fatal("smokeTestPanel returned no warning when the browser check failed")
 	}
 }
 

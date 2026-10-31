@@ -370,7 +370,13 @@ func verifyBuildGatedHash(exePath string) error {
 // timeout) even though the same binary passed the build gate on the build host.
 // In that environment only, fall back to a SHA-256 comparison against the
 // smoke-gated payload; a mismatch still refuses the install.
-func smokeTestPanel(exePath string) (string, error) {
+// smokeTestPanel runs the staged panelsmoke against the candidate.  An
+// optional browserOverride pins panelsmoke to exactly one browser executable
+// (passed through its -browser flag), which is how the tests force the
+// browser-check failure deterministically: without it panelsmoke would keep
+// searching the machine and a runner with a working Edge would legitimately
+// pass, making the fallback path untestable there.
+func smokeTestPanel(exePath string, browserOverride ...string) (string, error) {
 	tmp, err := os.MkdirTemp("", "client2api-panelcheck-")
 	if err != nil {
 		return "", fmt.Errorf("创建自检目录失败：%w", err)
@@ -393,7 +399,11 @@ func smokeTestPanel(exePath string) (string, error) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), panelCheckTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, smokeExe, "-exe", candidate)
+	args := []string{"-exe", candidate}
+	if len(browserOverride) > 0 && strings.TrimSpace(browserOverride[0]) != "" {
+		args = append(args, "-browser", browserOverride[0])
+	}
+	cmd := exec.CommandContext(ctx, smokeExe, args...)
 	cmd.Dir = tmp
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	out, err := cmd.CombinedOutput()
