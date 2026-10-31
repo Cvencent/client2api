@@ -119,12 +119,16 @@ func (c *Client) catalogueFromRoutes(routes []modelRoute) []core.Model {
 }
 
 // refreshModelsAsync refreshes the cache off the request path.
+//
+// The goroutine parses vendor JSON inside pullAccountMenu, so it runs under
+// core.GoSafe like every other module's background worker: a panic there must
+// cost the refresh, not the whole gateway (issue #35).
 func (c *Client) refreshModelsAsync() {
 	ctx, cancel := context.WithTimeout(context.Background(), c.cfg.probeTimeout())
-	go func() {
+	core.GoSafe("doubao refreshModelsAsync", nil, func() {
 		defer cancel()
 		_, _ = c.RefreshModels(ctx)
-	}()
+	})
 }
 
 // dedupeIDs trims, drops blanks and removes duplicates, preserving order.

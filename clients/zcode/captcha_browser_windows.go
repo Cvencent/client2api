@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"time"
 	"unsafe"
+
+	"client2api/internal/core"
 )
 
 // browserCandidates lists where Windows keeps Edge and Chrome.  Edge ships
@@ -306,7 +308,7 @@ func guardBrowserWindow(profile string, stop <-chan struct{}, logf func(string, 
 	if profile == "" {
 		return
 	}
-	go func() {
+	core.GoSafe("zcode captcha window guard", nil, func() {
 		_ = logf
 		deadline := time.Now().Add(25 * time.Second)
 		for time.Now().Before(deadline) {
@@ -317,7 +319,7 @@ func guardBrowserWindow(profile string, stop <-chan struct{}, logf func(string, 
 			case <-time.After(50 * time.Millisecond):
 			}
 		}
-	}()
+	})
 }
 
 func moveWindowsOffscreen(profile string) {

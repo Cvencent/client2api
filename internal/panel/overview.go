@@ -46,6 +46,13 @@ type overview struct {
 	// never flashes an empty table first.  This is the reference's field name.
 	AuthRequired bool             `json:"auth_required"`
 	Clients      []overviewClient `json:"clients"`
+	// StoreErrors carries the persisted stores' most recent disk failure,
+	// keyed by store name ("chat history", "check-in state", "balance cache",
+	// "task board cache").  A write that could not land must not be silent:
+	// the page shows data a restart will erase, which is the hardest class of
+	// fault to trace from the outside (issue #34).  Absent when everything
+	// has been written cleanly.
+	StoreErrors map[string]string `json:"store_errors,omitempty"`
 }
 
 // handleOverview is the dashboard's single polling endpoint.  It bounds the
@@ -69,6 +76,7 @@ func (p *panel) handleOverview(w http.ResponseWriter, r *http.Request) {
 		Stats:        p.overviewStats(),
 		FullAccounts: true,
 		Clients:      []overviewClient{},
+		StoreErrors:  p.storeErrors(),
 	}
 	if p.opts.Registry == nil {
 		writeJSON(w, http.StatusOK, out)

@@ -241,6 +241,9 @@ func New(opts Options) http.Handler {
 	p.initCheckins()
 	p.initTaskBoardCache()
 	p.initChatHistory()
+	// A store write that cannot land must ring the log ring immediately
+	// (issue #34), not just sit in the tracker until overview is asked.
+	p.wireStoreLogs()
 	p.queue = newBatchQueue(p.sweeps)
 	p.queue.run = p.execSweep
 	p.queue.report = p.panicReport()
@@ -497,6 +500,9 @@ func balanceHandler(opts Options) (*panel, http.Handler) {
 	p.initCheckins()
 	p.initTaskBoardCache()
 	p.initChatHistory()
+	// A store write that cannot land must ring the log ring immediately
+	// (issue #34), not just sit in the tracker until overview is asked.
+	p.wireStoreLogs()
 	p.queue = newBatchQueue(p.sweeps)
 	p.queue.run = p.execSweep
 	p.queue.report = p.panicReport()

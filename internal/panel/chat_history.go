@@ -64,6 +64,9 @@ type chatHistoryStore struct {
 	persistMu sync.Mutex
 	path      string
 	now       func() time.Time
+	// errs remembers the last disk failure so the overview can badge it and
+	// the log ring can record it the moment it happens (issue #34).
+	errs storeErrTracker
 	// lastMs makes the timestamps strictly increasing.  Two creates inside one
 	// millisecond would otherwise tie, and List's tie-break (by id) would show
 	// the older conversation above the one the operator just touched.
@@ -297,10 +300,17 @@ func (s *chatHistoryStore) persist() {
 
 	raw, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
+		s.errs.failed("chat history", err)
 		return
 	}
-	_ = core.WriteFileAtomic(s.path, append(raw, '\n'))
+	if err := core.WriteFileAtomic(s.path, append(raw, '\n')); err != nil {
+		s.errs.failed("chat history", err)
+	}
 }
+
+// LastError exposes the most recent disk failure to the overview payload
+// (issue #34); "" when every write has landed.
+func (s *chatHistoryStore) LastError() string { return s.errs.LastError() }
 
 var errChatThreadNotFound = errors.New("chat thread not found")
 

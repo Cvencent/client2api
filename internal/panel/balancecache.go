@@ -103,6 +103,9 @@ type balanceCache struct {
 	all       balanceProvider
 	soon      func() time.Duration
 	path      string
+	// errs remembers the last disk failure for overview's last_error badge
+	// (issue #34).
+	errs      storeErrTracker
 	clients   map[string]map[string]balanceEntry
 	refreshes map[string]*balanceClientRefresh
 
@@ -153,6 +156,15 @@ func (s *BalanceStore) Publish(client, id string, bal core.Balance) {
 		return
 	}
 	s.cache.put(client, id, bal)
+}
+
+// LastError exposes the cache's most recent disk failure for the overview
+// payload (issue #34); "" when every write has landed or the store is absent.
+func (s *BalanceStore) LastError() string {
+	if s == nil || s.cache == nil {
+		return ""
+	}
+	return s.cache.LastError()
 }
 
 func (c *balanceCache) load() {
@@ -211,8 +223,14 @@ func (c *balanceCache) persist() {
 	// name path+".tmp", which two concurrent writers could interleave into --
 	// publishing exactly the half-written document the rename exists to
 	// prevent.
-	_ = core.WriteFileAtomic(c.path, append(raw, '\n'))
+	if err := core.WriteFileAtomic(c.path, append(raw, '\n')); err != nil {
+		c.errs.failed("balance cache", err)
+	}
 }
+
+// LastError exposes the most recent disk failure to the overview payload
+// (issue #34); "" when every write has landed.
+func (c *balanceCache) LastError() string { return c.errs.LastError() }
 
 // copyBalanceClients clones the whole cache document.  It must be called with
 // c.mu held, and the result is what a writer encodes without the lock.

@@ -31,7 +31,14 @@ type Client struct {
 	deps core.Deps
 	cfg  *Config
 	http *http.Client
-	pool *pool
+	// directHTTP is the same vendor client without a proxy hop.  The billing
+	// and chat paths tolerate the configured proxy, but the marketing touch
+	// endpoint hangs one (measured live on 2026-10-30: the desktop client
+	// connects directly), so the popup flow runs on this one.  It carries the
+	// configured TLS profile, only the proxy is absent.  Nil when the module
+	// was built without an inspectable transport and never direct-dials.
+	directHTTP *http.Client
+	pool       *pool
 	// models is the TTL cache of the vendor's own model list (see models.go).
 	models *modelCache
 	// logins holds the panel-driven Z.AI sign-in flows that are still in
@@ -110,6 +117,7 @@ func New(deps core.Deps) (core.Client, error) {
 		deps:        deps,
 		cfg:         cfg,
 		http:        hc,
+		directHTTP:  directClient(deps, cfg, hc),
 		pool:        p,
 		models:      newModelCache(),
 		logins:      &loginSessions{},
@@ -128,6 +136,39 @@ func New(deps core.Deps) (core.Client, error) {
 
 // Name returns the routing prefix ("zcode/<model>").
 func (c *Client) Name() string { return "zcode" }
+
+// directClient builds the proxy-less twin of the module's vendor client.  It
+// mirrors the TLS profile decision New made -- a named fingerprint is rebuilt
+// without the proxy, a stock client is rebuilt the same way -- so the
+// marketing channel dials the vendor directly without changing what the
+// handshake looks like.  deps.Proxy empty or a caller-supplied client without
+// an inspectable transport yields nil: the marketing calls then report the gap
+// instead of hanging on a proxy the endpoint refuses.
+func directClient(deps core.Deps, cfg *Config, shared *http.Client) *http.Client {
+	if deps.Proxy == "" {
+		// The shared client is already direct.  A caller-supplied client whose
+		// transport is not a stock *http.Transport (the tests' fake transport)
+		// stays as-is: rebuilding would drop the transport the caller chose,
+		// and a fake carries no proxy to strip.
+		if shared == nil {
+			return nil
+		}
+		return shared
+	}
+	// A named profile was already built over deps.Proxy; rebuild without it.
+	// The stock path is what ProfileNone/ProfileGolang produce.
+	fhc, err := fingerprint.New(fingerprint.Options{
+		Profile:  cfg.tlsProfile(),
+		Protocol: cfg.tlsProtocol(),
+		Proxy:    "",
+		Logf:     deps.Logf,
+	})
+	if err != nil {
+		deps.Logf("zcode: direct client (no proxy) ignored: %v", err)
+		return nil
+	}
+	return fhc
+}
 
 // Models and RefreshModels live in models.go: the catalogue is fetched from
 // the vendor's own /v1/models endpoint and cached with a TTL.
@@ -597,7 +638,13 @@ func (c *Client) prefetchCaptcha() {
 	if !c.captchaPool.beginPrefetch() {
 		return
 	}
-	go func() {
+	// The prefetch drives a subprocess and a browser and parses their pages,
+	// all off the request path; a panic here used to be completely uncaught
+	// because this package had no GoSafe at all (issue #35).  endPrefetch
+	// must still run so the pool does not wedge "prefetching" forever, so the
+	// release stays a defer inside the wrapped function.
+	report := func(msg string) { c.deps.Log("%s", msg) }
+	core.GoSafe("zcode captcha prefetch", report, func() {
 		defer c.captchaPool.endPrefetch()
 		ctx, cancel := context.WithTimeout(context.Background(), captchaMintTimeout)
 		defer cancel()
@@ -611,7 +658,7 @@ func (c *Client) prefetchCaptcha() {
 		}
 		c.captchaGate.noteSuccess()
 		c.captchaPool.put(param, region, time.Now())
-	}()
+	})
 }
 
 // mintCaptchaNow is the synchronous mint path shared by the pool and legacy

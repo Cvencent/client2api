@@ -37,7 +37,12 @@ type CheckinStore struct {
 	persistMu sync.Mutex
 	path      string
 	now       func() time.Time
-	clients   map[string]map[string]map[string]checkinStateEntry
+	// errs remembers the last disk failure: checkin_state.json is the only
+	// record that "this account already settled today", so a write that
+	// silently vanished used to surface only as a duplicate-claim risk after
+	// the next restart (issue #34).
+	errs    storeErrTracker
+	clients map[string]map[string]map[string]checkinStateEntry
 }
 
 // NewCheckinStore opens the persistent state file.  A missing or corrupt file
@@ -229,10 +234,17 @@ func (s *CheckinStore) persist() {
 
 	raw, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
+		s.errs.failed("check-in state", err)
 		return
 	}
-	_ = core.WriteFileAtomic(s.path, append(raw, '\n'))
+	if err := core.WriteFileAtomic(s.path, append(raw, '\n')); err != nil {
+		s.errs.failed("check-in state", err)
+	}
 }
+
+// LastError exposes the most recent disk failure to the overview payload
+// (issue #34); "" when every write has landed.
+func (s *CheckinStore) LastError() string { return s.errs.LastError() }
 
 func (p *panel) initCheckins() {
 	if p == nil {

@@ -15,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"client2api/internal/core"
 )
 
 // captchaBrowserProcess is the small lifecycle surface the mint needs from a
@@ -156,7 +158,13 @@ func newCaptchaSession(info regionInfo) (*captchaSession, error) {
 	mux.HandleFunc("/", s.servePage)
 	mux.HandleFunc("/reply", s.serveReply)
 	s.srv = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
-	go func() { _ = s.srv.Serve(ln) }()
+	// Serve's panic would otherwise take the whole gateway down; this package
+	// had no GoSafe anywhere before (issue #35).  No report hook here: the
+	// session has no logger, so the trace goes to core.GoSafe's stderr
+	// fallback -- the same place an unrecovered panic would have printed it.
+	core.GoSafe("zcode captcha page server", nil, func() {
+		_ = s.srv.Serve(ln)
+	})
 	return s, nil
 }
 
@@ -312,7 +320,10 @@ func (b *browserSolver) mintOnce(ctx context.Context, info regionInfo) (string, 
 	}
 	kid = proc.PID()
 	waited := make(chan struct{})
-	go func() { _ = proc.Wait(); close(waited) }()
+	core.GoSafe("zcode captcha browser wait", func(msg string) { b.logf("%s", msg) }, func() {
+		_ = proc.Wait()
+		close(waited)
+	})
 	// Chromium clamps its initial window placement onto the desktop even
 	// with --window-position set, so the window has to be moved again from
 	// outside once it exists.  See guardBrowserWindow.

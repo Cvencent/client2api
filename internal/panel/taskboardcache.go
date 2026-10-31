@@ -33,7 +33,10 @@ type taskBoardCache struct {
 	// never waits on a marshal plus a file create/write/rename.
 	persistMu sync.Mutex
 	path      string
-	clients   map[string]map[string]taskBoardCacheEntry
+	// errs remembers the last disk failure for overview's last_error badge
+	// (issue #34).
+	errs    storeErrTracker
+	clients map[string]map[string]taskBoardCacheEntry
 }
 
 func newTaskBoardCache(path string) *taskBoardCache {
@@ -149,10 +152,17 @@ func (c *taskBoardCache) persist() {
 
 	raw, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
+		c.errs.failed("task board cache", err)
 		return
 	}
-	_ = core.WriteFileAtomic(c.path, append(raw, '\n'))
+	if err := core.WriteFileAtomic(c.path, append(raw, '\n')); err != nil {
+		c.errs.failed("task board cache", err)
+	}
 }
+
+// LastError exposes the most recent disk failure to the overview payload
+// (issue #34); "" when every write has landed.
+func (c *taskBoardCache) LastError() string { return c.errs.LastError() }
 
 // copyTaskBoardClients clones the whole cache document.  It must be called with
 // c.mu held; the result is what the encoder walks without the lock.

@@ -75,8 +75,37 @@ jobs:
       - name: go test -race
         run: go test -race -count=1 -timeout 30m ./...
 
+  # windows-native 门禁（issue #36）：ubuntu 上的全套门禁从不编译 windows-only
+  # 代码——installer/setup 那 2964 行、31 个 windows-only 测试全部隐身。一次
+  # 语法错就能一路绿灯直达 tag，而安装器是用户双击的第一个入口。本 job 在
+  # windows runner 上跑与 ubuntu 同口径的 vet + test（windows 下自动带上全部
+  # windows-only 套件，本机实测 ~30s），把「没编译过」挡在 tag 之前。
+  windows-test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: gofmt
+        shell: pwsh
+        run: |
+          $unformatted = gofmt -l .
+          if ($unformatted) {
+            Write-Host "::error::gofmt needed on:"
+            Write-Host $unformatted
+            exit 1
+          }
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test -count=1 -timeout 20m ./...
+
   build:
-    needs: test
+    needs: [test, windows-test]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false

@@ -6,6 +6,40 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.5.39] - 2026-11-01
+
+### Fixed
+
+- **面板持久化 store 的磁盘写失败不再无声。** 四个 store（对话历史、签到去重
+  状态、余额缓存、任务看板缓存）原来把 `core.WriteFileAtomic` 的错误整行
+  丢弃——目录只读、磁盘满、杀软锁文件时页面照常显示，重启后数据无声消失，
+  日志里一个字都没有。现在统一接 `storeErrTracker`：失败记进
+  `store_errors` 随 `/panel/api/overview` 下发、当场打进面板日志环；
+  抄的就是 alerts.Store 已有的模式。
+
+### Added
+
+- **CI 加 windows-native 门禁。** 原来四个 job 全在 ubuntu 上跑，
+  windows-only 的 4617 行代码（含用户双击的 installer/setup 2964 行）和
+  31 个 Windows 测试从不编译、从不执行——一次语法错可以一路绿灯直达 tag。
+  新增 `windows-test` job（windows-latest：gofmt/vet/test 全量，
+  windows 下自动带上全部 windows-only 套件），发布构建改为依赖
+  `[test, windows-test]`。
+
+### Changed
+
+- **三个模块的后台 goroutine 补上 panic 兜底。** doubao/doubaoime/zcode
+  是 22 个模块里仅有的三个 0 处 `core.GoSafe` 的包，裸 goroutine 崩了会
+  带走整个网关。现在 doubao 的 `refreshModelsAsync`、zcode 的验证码
+  预取（请求路径上开子进程驱动浏览器）、验证码页面服务器、浏览器进程
+  等待、窗口守护全部换成 `core.GoSafe`；zcode 预取带 `deps.Log` 上报，
+  其余走 stderr 兜底。
+
+### Installer
+
+- `client2api-setup-0.5.39.exe`（空包，不含账号凭据或本机配置）
+- SHA256：`C5E53D723E9E1EE01FF315F5C29A55E84A7823C4411644C6428B32E2E9963CE3`
+
 ## [0.5.38] - 2026-11-01
 
 ### Changed
