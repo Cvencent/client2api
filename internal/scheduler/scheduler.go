@@ -582,6 +582,12 @@ type Runner struct {
 	lanesMu sync.Mutex
 	lanes   map[string]*batchLane
 	batchWG sync.WaitGroup
+
+	// catchupOnce guards the boot catch-up lane: the first Run pass after
+	// the process starts looks for today's timetable windows that came due
+	// while the process was down (a release restart landing mid-batch is the
+	// common case) and re-dispatches the uncovered ones exactly once.
+	catchupOnce sync.Once
 }
 
 // scheduledBatch is one queued timetable firing.
@@ -898,6 +904,15 @@ func (r *Runner) Run(ctx context.Context) {
 		}
 
 		now := r.now()
+		// Boot catch-up (issue #29): a release restart that lands in the
+		// middle of a batch kills the rest of it, and plan() only ever looks
+		// at windows strictly after now, so the truncated window never
+		// re-fires.  Once per process, before planning, scan today's past
+		// windows against the persisted run journal and re-dispatch the ones
+		// no finished run covers.  It runs in its own lane (guarded by
+		// batchWG) so the main loop keeps its normal cadence.
+		r.startCatchUpOnce(ctx, cfg)
+
 		fires := r.plan(now, cfg)
 		balDue, hasBal := r.balanceNext(now, cfg, balStored)
 
@@ -1162,6 +1177,147 @@ func (r *Runner) dispatchBatch(ctx context.Context, client, batch string) {
 		r.runBatchLane(ctx, lane, started)
 	}()
 	<-started
+}
+
+// Catch-up tuning.  A window is a candidate for re-dispatch only when it came
+// due recently: a process that was down for days must not greet its return by
+// stampeding every vendor with yesterday's missed sweeps.  The coverage net is
+// deliberately wide -- a window counts as covered by any schedule-triggered
+// run that started near it -- because the catch-up's job is to repair the
+// narrow "restart killed the batch" case, and checkinDoneForToday already
+// guards the per-account repeated-claim path.
+const (
+	catchupHorizon      = 6 * time.Hour
+	catchupGrace        = 90 * time.Second // window must be past by this much to be considered missed
+	catchupCoverBefore  = 5 * time.Minute  // a run starting this much early still covers
+	catchupCoverAfter   = 90 * time.Minute // ...and this much late (slow drain of earlier windows)
+	catchupStaggerFloor = 5 * time.Second  // between dispatches, so 20 platforms don't all fire at once
+)
+
+// startCatchUpOnce runs the boot catch-up at most once per process.
+func (r *Runner) startCatchUpOnce(ctx context.Context, cfg Config) {
+	r.catchupOnce.Do(func() {
+		r.batchWG.Add(1)
+		go func() {
+			defer r.batchWG.Done()
+			r.catchUpMissedWindows(ctx, cfg)
+		}()
+	})
+}
+
+// catchUpMissedWindows re-dispatches today's timetable windows that came due
+// within catchupHorizon and have no finished schedule-triggered run covering
+// them.  The run journal (schedule_runs.json) survives restarts, so a
+// truncated batch -- which never reached record() -- leaves its window
+// uncovered and gets re-run; accounts that did finish are deduped by the
+// check-in state store as usual.
+func (r *Runner) catchUpMissedWindows(ctx context.Context, cfg Config) {
+	if r.reg == nil || !cfg.Enabled || ctx.Err() != nil {
+		return
+	}
+	now := r.now()
+	horizonStart := now.Add(-catchupHorizon)
+	type missed struct {
+		client, batch string
+		window        time.Time
+	}
+	var pending []missed
+	seen := map[string]bool{} // client+"/"+batch+window key, paranoid dedupe
+
+	consider := func(client, batch string, g Group, at time.Time) {
+		if at.IsZero() || at.After(now) {
+			return
+		}
+		if d := now.Sub(at); d < catchupGrace || d > catchupHorizon {
+			return
+		}
+		key := client + "/" + batch + "@" + at.Format(time.RFC3339)
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		if r.windowCovered(client, batch, at, now) {
+			return
+		}
+		pending = append(pending, missed{client: client, batch: batch, window: at})
+	}
+
+	for _, c := range r.reg.All() {
+		batches := core.PlannedBatches(c)
+		for _, b := range batches {
+			if !runnableBatch(c, b) {
+				continue
+			}
+			g, known := cfg.GroupFor(c.Name(), b.Name)
+			if !known || !g.Enabled {
+				continue
+			}
+			if strings.TrimSpace(g.Cron) != "" {
+				for _, at := range CronOccurrencesBefore(g.Cron, now.Add(-catchupGrace), CST, horizonStart) {
+					consider(c.Name(), b.Name, g, at)
+				}
+				continue
+			}
+			// Hours-based: every configured hour of today in CST, whether it
+			// is past or upcoming; consider() filters to the missed range.
+			n := now.In(CST)
+			midnight := time.Date(n.Year(), n.Month(), n.Day(), 0, 0, 0, 0, CST)
+			for _, h := range g.Hours {
+				if h < 0 || h > 23 {
+					continue
+				}
+				consider(c.Name(), b.Name, g, time.Date(midnight.Year(), midnight.Month(), midnight.Day(), h, 0, 0, 0, CST))
+			}
+		}
+	}
+
+	if len(pending) == 0 {
+		return
+	}
+	// Oldest window first: the oldest missed sweep is the one whose vendor
+	// quota refresh has been waiting the longest.
+	sort.Slice(pending, func(i, j int) bool { return pending[i].window.Before(pending[j].window) })
+	r.log("[scheduler] catch-up: %d missed window(s) since boot, re-dispatching (oldest first)", len(pending))
+	for i, m := range pending {
+		if ctx.Err() != nil {
+			return
+		}
+		if i > 0 {
+			// Stagger: a restart at :00 with 15 uncovered platforms must not
+			// open 15 vendor connections in the same second.
+			if !r.sleep(ctx, jitter(catchupStaggerFloor)) {
+				return
+			}
+		}
+		r.log("[scheduler] catch-up: %s/%s (window %s, missed by %s)",
+			m.client, m.batch, m.window.Format("15:04:05"), now.Sub(m.window).Round(time.Second))
+		r.dispatchBatch(ctx, m.client, m.batch)
+	}
+}
+
+// windowCovered reports whether the persisted run journal shows a
+// schedule-triggered run for (client, batch) starting inside the coverage net
+// around one window.  Runs the journal forgot (no HistoryPath configured) are
+// reported uncovered, which is the safe direction: the check-in store still
+// prevents duplicate claims.
+func (r *Runner) windowCovered(client, batch string, window, now time.Time) bool {
+	r.mu.RLock()
+	hist := append([]RunRecord(nil), r.history...)
+	r.mu.RUnlock()
+	for _, rec := range hist {
+		if !strings.EqualFold(rec.Client, client) || !strings.EqualFold(rec.Batch, batch) {
+			continue
+		}
+		if rec.Trigger != TriggerSchedule {
+			continue
+		}
+		started := rec.Started
+		if started.Before(window.Add(-catchupCoverBefore)) || started.After(window.Add(catchupCoverAfter)) {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 // runBatchLane drains one platform's queue in order.  Recover is deliberate:

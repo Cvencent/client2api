@@ -292,6 +292,38 @@ func containsCronValue(values []int, value int) bool {
 	return false
 }
 
+// CronOccurrencesBefore lists today's (in loc) activations of expr that fall
+// in (since, until], chronologically.  It backs the boot catch-up: the same
+// calendar windows the timetable would have fired had the process been up.
+// An invalid expression returns nothing -- the caller simply has no catch-up
+// windows for that group, the same answer as a group with no Hours.
+func CronOccurrencesBefore(expr string, until time.Time, loc *time.Location, since time.Time) []time.Time {
+	spec, err := parseCron(expr)
+	if err != nil || loc == nil {
+		return nil
+	}
+	until = until.In(loc)
+	since = since.In(loc)
+	day := time.Date(until.Year(), until.Month(), until.Day(), 0, 0, 0, 0, loc)
+	if !spec.matchesDay(day) {
+		return nil
+	}
+	var out []time.Time
+	for _, hour := range spec.hours {
+		for _, minute := range spec.minutes {
+			for _, second := range spec.seconds {
+				cand := time.Date(day.Year(), day.Month(), day.Day(), hour, minute, second, 0, loc)
+				if cand.After(until) || !cand.After(since) {
+					continue
+				}
+				out = append(out, cand)
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Before(out[j]) })
+	return out
+}
+
 func sameCronDay(a, b time.Time) bool {
 	ay, am, ad := a.Date()
 	by, bm, bd := b.Date()

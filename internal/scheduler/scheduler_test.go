@@ -2467,3 +2467,279 @@ func TestDeclaredCheckinTaskPublishesExplicitActionMapping(t *testing.T) {
 		t.Fatalf("published action = %q, want daily-checkin", gotAction)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Boot catch-up (issue #29): a restart that lands mid-batch truncates it, and
+// plan() only ever looks at windows strictly after now, so the window never
+// re-fires.  The catch-up scans the persisted run journal for today's
+// uncovered windows and re-dispatches them once.
+// ---------------------------------------------------------------------------
+
+// catchupClock is a fakeClock whose Sleep also advances real waiting so the
+// lane goroutines in the catch-up stagger actually run; the stagger sleeps go
+// through the injected Sleep, so the virtual clock handles them.
+func TestCatchUpRunsMissedWindow(t *testing.T) {
+	logs := &recorder{}
+	// Boot at 01:10 CST: the 01:00 window came due 10 minutes ago.  Hour 2
+	// keeps the main loop's first wait short (50 virtual minutes) so the
+	// fake clock never crosses a day boundary - fakeClock.Sleep advances
+	// before consulting the hook, and a day-sized advance would race the
+	// catch-up goroutine's horizon check.
+	clk := newFakeClock(time.Date(2026, 3, 4, 1, 10, 0, 0, CST), logs)
+	f := &checkinOnly{name: "fake", accounts: []core.AccountRecord{{ID: "a", Enabled: true}}, rec: logs}
+	reg := registryOf(f)
+	r := New(deps(reg, clk, logs))
+	r.Reconfigure(Config{Enabled: true, Checkin: Group{Enabled: true, Hours: []int{1, 2}}})
+	// The virtual clock must not churn whole days: the first main-loop sleep
+	// returns false immediately (and never advances), so Run exits while the
+	// catch-up lane — its own goroutine, joined by batchWG — still runs to
+	// completion.  The hook goes in before Run starts: fakeClock.Sleep
+	// advances *before* consulting the hook, so a set-after-start hook would
+	// let the first sleep jump a whole day and push the missed window out of
+	// the catch-up horizon.
+	clk.onSleep = func() bool { return false }
+	runInBackground(t, r)
+
+	// No history: the 01:00 window is uncovered.  The catch-up goroutine
+	// dispatches it via the lane; wait for the vendor call to land.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, ok := r.Status().Last["fake/"+batchCheckin]; ok {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("catch-up did not dispatch the missed 01:00 window; events=%v logs=%v", logs.all(), logs.lines())
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if !findCheckinEvent(logs, "a") {
+		t.Fatalf("events = %v, want the vendor checkin call", logs.all())
+	}
+	found := false
+	for _, line := range logs.lines() {
+		if strings.Contains(line, "catch-up") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("logs = %v, want a catch-up line", logs.lines())
+	}
+}
+
+func TestCatchUpSkipsCoveredWindow(t *testing.T) {
+	logs := &recorder{}
+	clk := newFakeClock(time.Date(2026, 3, 4, 1, 10, 0, 0, CST), logs)
+	f := &checkinOnly{name: "fake", accounts: []core.AccountRecord{{ID: "a", Enabled: true}}, rec: logs}
+	r := New(deps(registryOf(f), clk, logs))
+	// The 01:00 window fired and finished before the restart: a finished
+	// schedule-triggered run started at 01:00:30 covers it.
+	r.record(Report{Client: "fake", Batch: batchCheckin, Started: time.Date(2026, 3, 4, 1, 0, 30, 0, CST)}, TriggerSchedule)
+	r.Reconfigure(Config{Enabled: true, Checkin: Group{Enabled: true, Hours: []int{1}}})
+	// The virtual clock must not churn whole days: the first main-loop sleep
+	// returns false immediately (and never advances), so Run exits while the
+	// catch-up lane — its own goroutine, joined by batchWG — still runs to
+	// completion.  The hook goes in before Run starts: fakeClock.Sleep
+	// advances *before* consulting the hook, so a set-after-start hook would
+	// let the first sleep jump a whole day and push the missed window out of
+	// the catch-up horizon.
+	clk.onSleep = func() bool { return false }
+	runInBackground(t, r)
+
+	// Give the catch-up goroutine a moment to (not) do anything.
+	time.Sleep(150 * time.Millisecond)
+	if findCheckinEvent(logs, "a") {
+		t.Fatalf("events = %v, want no vendor call for a covered window", logs.all())
+	}
+	for _, line := range logs.lines() {
+		if strings.Contains(line, "catch-up") {
+			t.Fatalf("logs = %v, want no catch-up activity", logs.lines())
+		}
+	}
+}
+
+func TestCatchUpIgnoresOldAndFutureWindows(t *testing.T) {
+	logs := &recorder{}
+	// Boot at 09:10: the 01:00 window is 8h old, beyond the 6h horizon, so
+	// nothing may fire.  (The within-horizon case is TestCatchUpNineOclock-
+	// WindowFires; the future 14:00 window simply stays on the timetable.)
+	clk := newFakeClock(time.Date(2026, 3, 4, 9, 10, 0, 0, CST), logs)
+	f := &checkinOnly{name: "fake", accounts: []core.AccountRecord{{ID: "a", Enabled: true}}, rec: logs}
+	r := New(deps(registryOf(f), clk, logs))
+	r.Reconfigure(Config{Enabled: true, Checkin: Group{Enabled: true, Hours: []int{1, 14}}})
+	// The virtual clock must not churn whole days: the first main-loop sleep
+	// returns false immediately (and never advances), so Run exits while the
+	// catch-up lane — its own goroutine, joined by batchWG — still runs to
+	// completion.  The hook goes in before Run starts: fakeClock.Sleep
+	// advances *before* consulting the hook, so a set-after-start hook would
+	// let the first sleep jump a whole day and push the missed window out of
+	// the catch-up horizon.
+	clk.onSleep = func() bool { return false }
+	runInBackground(t, r)
+
+	time.Sleep(150 * time.Millisecond)
+	for _, ev := range logs.all() {
+		if ev == "checkin:a/daily" {
+			t.Fatalf("events = %v, want no vendor call: 01:00 is beyond the horizon and 14:00 has not come due", logs.all())
+		}
+	}
+}
+
+func TestCatchUpNineOclockWindowFires(t *testing.T) {
+	logs := &recorder{}
+	// Same boot as above; 09:00 is 10 minutes old (past the 90s grace,
+	// inside the 6h horizon), so exactly that window must re-dispatch.
+	clk := newFakeClock(time.Date(2026, 3, 4, 9, 10, 0, 0, CST), logs)
+	f := &checkinOnly{name: "fake", accounts: []core.AccountRecord{{ID: "a", Enabled: true}}, rec: logs}
+	r := New(deps(registryOf(f), clk, logs))
+	r.Reconfigure(Config{Enabled: true, Checkin: Group{Enabled: true, Hours: []int{1, 9, 14}}})
+	// The virtual clock must not churn whole days: the first main-loop sleep
+	// returns false immediately (and never advances), so Run exits while the
+	// catch-up lane — its own goroutine, joined by batchWG — still runs to
+	// completion.  The hook goes in before Run starts: fakeClock.Sleep
+	// advances *before* consulting the hook, so a set-after-start hook would
+	// let the first sleep jump a whole day and push the missed window out of
+	// the catch-up horizon.
+	clk.onSleep = func() bool { return false }
+	runInBackground(t, r)
+
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if findCheckinEvent(logs, "a") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("catch-up did not dispatch the missed 09:00 window")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	found := false
+	for _, line := range logs.lines() {
+		if strings.Contains(line, "catch-up: %s/%s (window %s") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("logs = %v, want the 09:00 window named", logs.lines())
+	}
+}
+
+func TestCatchUpManualRunDoesNotCoverWindow(t *testing.T) {
+	logs := &recorder{}
+	clk := newFakeClock(time.Date(2026, 3, 4, 1, 10, 0, 0, CST), logs)
+	f := &checkinOnly{name: "fake", accounts: []core.AccountRecord{{ID: "a", Enabled: true}}, rec: logs}
+	r := New(deps(registryOf(f), clk, logs))
+	// A manual run near the window is an operator action, not proof the
+	// timetable window completed.
+	r.record(Report{Client: "fake", Batch: batchCheckin, Started: time.Date(2026, 3, 4, 1, 0, 30, 0, CST)}, TriggerManual)
+	r.Reconfigure(Config{Enabled: true, Checkin: Group{Enabled: true, Hours: []int{1, 2}}})
+	// The virtual clock must not churn whole days: the first main-loop sleep
+	// returns false immediately (and never advances), so Run exits while the
+	// catch-up lane — its own goroutine, joined by batchWG — still runs to
+	// completion.  The hook goes in before Run starts: fakeClock.Sleep
+	// advances *before* consulting the hook, so a set-after-start hook would
+	// let the first sleep jump a whole day and push the missed window out of
+	// the catch-up horizon.
+	clk.onSleep = func() bool { return false }
+	runInBackground(t, r)
+
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if findCheckinEvent(logs, "a") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("manual run must not count as window coverage")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestCronOccurrencesBefore(t *testing.T) {
+	// zcode's repeated grant window: every 10 minutes from 19:05 to 22:55.
+	now := time.Date(2026, 3, 4, 19, 22, 0, 0, CST)
+	got := CronOccurrencesBefore("5-55/10 19-22 * * *", now, CST, now.Add(-time.Hour))
+	if len(got) != 2 {
+		t.Fatalf("occurrences = %v, want 19:05 and 19:15", got)
+	}
+	if !got[0].Equal(time.Date(2026, 3, 4, 19, 5, 0, 0, CST)) || !got[1].Equal(time.Date(2026, 3, 4, 19, 15, 0, 0, CST)) {
+		t.Fatalf("occurrences = %v, want [19:05 19:15]", got)
+	}
+	if bad := CronOccurrencesBefore("not a cron", now, CST, now.Add(-time.Hour)); len(bad) != 0 {
+		t.Fatalf("invalid expr = %v, want none", bad)
+	}
+}
+
+func TestCatchUpCronWindow(t *testing.T) {
+	logs := &recorder{}
+	// Boot 19:22: the 19:05 cron firing came due 17 minutes ago with no run
+	// covering it; the 19:15 one is only 7 minutes old and also uncovered.
+	// Both must re-dispatch, oldest first.
+	clk := newFakeClock(time.Date(2026, 3, 4, 19, 22, 0, 0, CST), logs)
+	f := &checkinOnly{name: "zcode", accounts: []core.AccountRecord{{ID: "a", Enabled: true}}, rec: logs}
+	r := New(deps(registryOf(f), clk, logs))
+	r.Reconfigure(Config{Enabled: true, Clients: map[string]map[string]Group{
+		"zcode": {"checkin": {Enabled: true, Cron: "5-55/10 19-22 * * *"}},
+	}})
+	// The virtual clock must not churn whole days: the first main-loop sleep
+	// returns false immediately (and never advances), so Run exits while the
+	// catch-up lane — its own goroutine, joined by batchWG — still runs to
+	// completion.  The hook goes in before Run starts: fakeClock.Sleep
+	// advances *before* consulting the hook, so a set-after-start hook would
+	// let the first sleep jump a whole day and push the missed window out of
+	// the catch-up horizon.
+	clk.onSleep = func() bool { return false }
+	runInBackground(t, r)
+
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if findCheckinEvent(logs, "a") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("catch-up did not dispatch the missed cron window; events=%v logs=%v", logs.all(), logs.lines())
+		}
+		time.Sleep(time.Millisecond)
+	}
+	found := false
+	for _, line := range logs.lines() {
+		if strings.Contains(line, "catch-up: %s/%s (window %s") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("logs = %v, want the 19:05 window named oldest-first", logs.lines())
+	}
+}
+
+// findEvent reports whether the recorder holds exactly the given event.
+func findEvent(logs *recorder, want string) (string, bool) {
+	for _, ev := range logs.all() {
+		if ev == want {
+			return ev, true
+		}
+	}
+	return "", false
+}
+
+// findCheckinEvent reports whether the vendor check-in fired for one account.
+// The synthetic check-in batch calls Checkin with an empty action string, so
+// the recorded event is "checkin:<id>/".
+func findCheckinEvent(logs *recorder, id string) bool {
+	prefix := "checkin:" + id + "/"
+	for _, ev := range logs.all() {
+		if strings.HasPrefix(ev, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// runInBackground starts the runner loop and returns a cancel func.  The
+// catch-up lane lives inside Run, so these tests must actually run it.
+func runInBackground(t *testing.T, r *Runner) context.CancelFunc {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { r.Run(ctx) }()
+	t.Cleanup(cancel)
+	return cancel
+}
