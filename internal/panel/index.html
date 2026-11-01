@@ -95,6 +95,15 @@ body {
 }
 ::selection { background: var(--accent-soft); }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+/* 跳过链接（issue #39）：默认钉出视口外，键盘聚焦时出现在左上。
+   href="#main" 一步越过 13 项主导航——WCAG 2.4.1 Bypass Blocks。 */
+.skip-link {
+  position: fixed; top: -48px; left: 12px; z-index: 2147483000;
+  padding: 8px 14px; border-radius: 0 0 9px 9px;
+  background: var(--accent); color: #fff; font: 550 13px var(--sans);
+  text-decoration: none; transition: top 120ms var(--ease-out);
+}
+.skip-link:focus-visible { top: 0; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 
 /* 全局进场编排：每页切进来时 .box / 卡片 / 行以 320ms 指数减速淡入上浮，
@@ -2599,7 +2608,7 @@ input, select, textarea {
 input:hover:not(:disabled):not(:focus), select:hover:not(:disabled):not(:focus), textarea:hover:not(:disabled):not(:focus) { border-color: color-mix(in srgb, var(--ink-3) 55%, var(--line)); }
 input:focus, select:focus, textarea:focus { border-color: var(--accent); box-shadow: var(--focus-ring); outline: none; }
 button:focus-visible, .chip:focus-visible, .nav a:focus-visible, summary:focus-visible, [tabindex]:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 55%, transparent); outline-offset: 2px; }
-input:focus-visible, select:focus-visible, textarea:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; box-shadow: var(--focus-ring); }
 
 .box, .stats, .uschart, .pfplat .tblbar, .pager, .savebar, .pk-card, .sms-box, .auto-box, .ownkey, .qc-box, .qc-card, .logbox, .cfgjson, .auto-log, .vc, .mpark-m {
   border-color: var(--hairline);
@@ -4044,8 +4053,13 @@ button.xs { min-height: 26px; padding: 2px 9px; font-size: var(--type-xs); borde
 button.icon { min-height: var(--ctl-h); padding: 6px 9px; }
 input, select, textarea { min-height: var(--ctl-h); border-radius: var(--radius-ctl); background: color-mix(in srgb, var(--surface) 94%, transparent); }
 input[type=checkbox] { min-height: 0; }
+/* 焦点指示的双层设计（issue #38）：1px 实心 accent 外描边负责对比度（两套
+   主题都过 3:1），--ring 的 30% 光晕只负责美观——单靠半透明光晕在深浅两套
+   主题下都到不了 3:1（实测 1.49/1.46）。这里曾经 outline:none 一刀切掉，
+   把 2613 行那套 55% 的 focus-visible 样式整个压掉，键盘用户只能盯着一圈
+   1.5:1 的淡晕找焦点。 */
 input:focus, select:focus, textarea:focus, button:focus-visible, a:focus-visible, [tabindex]:focus-visible, summary:focus-visible {
-  outline: none; border-color: var(--accent); box-shadow: var(--ring);
+  outline: 1px solid var(--accent); outline-offset: 1px; border-color: var(--accent); box-shadow: var(--ring);
 }
 .chip, .tag, .realm-tag, .lch, kbd { border-radius: var(--radius-pill); font-size: var(--type-xs); min-height: 22px; }
 .chip { padding: 2px 9px; border: 1px solid var(--hairline); background: color-mix(in srgb, var(--surface-2) 80%, transparent); color: var(--ink-2); }
@@ -6467,6 +6481,7 @@ html:not([data-theme="light"]) body::after {
 </style>
 </head>
 <body>
+  <a class="skip-link" href="#main" data-skip-link>跳到主内容</a>
 <div class="shell">
   <!-- 顶栏命令条：导航、状态、命令入口都在这一行。
        原来的左侧竖栏把 208–236px 的宽度整条让给了导航，而导航只有 13 个链接；
@@ -6502,7 +6517,7 @@ html:not([data-theme="light"]) body::after {
     </span>
   </nav>
 
-  <div class="main">
+  <div class="main" role="main" id="main">
     <!-- 动态背景层：一层极淡的网格 + 缓慢漂移的节点粒子（2D canvas，不是
          WebGL——它要铺满整屏且永远在动，canvas 2D 在这里更省电）。它只负责
          氛围，不承载信息，所以透明度压得很低、鼠标不穿透、reduced-motion 停画。 -->
@@ -8881,7 +8896,13 @@ const SHELL = {
   // syncActive 是导航「选中」的唯一入口。所有导航项都带 data-view，
   // 所以这里不关心它们在哪个容器里——将来再挪位置也不用改它。
   syncActive(view) {
-    $$("[data-view]").forEach(a => a.classList.toggle("on", a.dataset.view === view));
+    $$("[data-view]").forEach(a => {
+      a.classList.toggle("on", a.dataset.view === view);
+      // aria-current 让读屏把当前项读成「当前页」而不是第 N 个一模一样的
+      // 链接；syncActive 是导航选中的唯一入口，这里同步就不会漏（issue #39）。
+      if (a.dataset.view === view) a.setAttribute("aria-current", "page");
+      else a.removeAttribute("aria-current");
+    });
   },
 };
 
@@ -16678,7 +16699,7 @@ function mdComboKeydown(ev) {
     mdComboPaint();
     return;
   }
-  if (ev.key === "Enter" && MD_COMBO.open) {
+  if (ev.key === "Enter" && !ev.isComposing && ev.keyCode !== 229 && MD_COMBO.open) {
     ev.preventDefault();
     const cur = $("#mdClient").value.trim();
     const exact = MD_COMBO.items.find(it => it.value === cur);
@@ -20792,6 +20813,22 @@ $("#themeToggle").addEventListener("click", ev => {
 });
 applyTheme(LS.get("theme", "dark"));
 
+/* ── 回车入口工具（issue #37）───────────────────────────────────────────
+   「回车即执行」的输入框过去各自监听 keydown 只判 ev.key === "Enter"，从不看
+   输入法组合态：中文输入法打字时按回车（上屏/确认候选）被当成发送或保存——
+   账号备注存成拼音、对话把半截拼音发给模型。onEnter 统一先拦组合态再判键：
+   ev.isComposing 覆盖 Chromium，keyCode === 229 兜底 Safari 确认回车时
+   isComposing 先变 false 的怪癖。只拦这一个键，不拦输入本身。
+   新增「回车即执行」输入框一律走 onEnter，不要再各写各的 keydown。 */
+function onEnter(el, fn) {
+  if (!el) return;
+  el.addEventListener("keydown", ev => {
+    if (ev.key !== "Enter" || ev.isComposing || ev.keyCode === 229) return;
+    ev.preventDefault();
+    fn(ev);
+  });
+}
+
 /* ── 密钥弹层 ─────────────────────────────────────────────────────────── */
 /* .veil is display:none in the stylesheet and only .veil.on turns it into a
    flex overlay, so toggling the hidden attribute alone shows nothing. */
@@ -22955,7 +22992,7 @@ $("#pfGroups").addEventListener("keydown", ev => {
     pfGroupFilter();
     return;
   }
-  if (search && ev.key === "Enter") {
+  if (search && ev.key === "Enter" && !ev.isComposing && ev.keyCode !== 229) {
     const hits = Array.from($("#pfGroups").querySelectorAll(".pfGroup")).filter(group => !group.hidden);
     if (hits.length === 1) {
       pfGroupSetOpen(hits[0], true);
@@ -23101,7 +23138,7 @@ $("#stickyRows").addEventListener("click", ev => {
 $("#btnNoteClose").addEventListener("click", closeAccountNote);
 $("#btnNoteClear").addEventListener("click", () => { $("#noteInput").value = ""; saveAccountNote(); });
 $("#btnNoteSave").addEventListener("click", saveAccountNote);
-$("#noteInput").addEventListener("keydown", ev => { if (ev.key === "Enter") { ev.preventDefault(); saveAccountNote(); } });
+onEnter($("#noteInput"), () => saveAccountNote());
 $("#keyVeil").addEventListener("click", ev => { if (ev.target === $("#keyVeil") && !$("#keyVeil").dataset.lock) hideVeil($("#keyVeil")); });
 $("#addTabs").addEventListener("click", ev => { const t = ev.target.closest && ev.target.closest("[data-tab]"); if (t) setAddTab(t.dataset.tab); });
 $("#addClient").addEventListener("change", () => { pickAddClient($("#addClient").value); });
@@ -23109,9 +23146,9 @@ $("#btnStartLogin").addEventListener("click", startLogin);
 $("#btnHandoff").addEventListener("click", handoffImport);
 $("#btnOwnKeySave").addEventListener("click", saveOwnKey);
 // 回车＝保存：这是个单行的粘贴框，粘完直接回车是最自然的动作。
-$("#addOwnKey").addEventListener("keydown", ev => {
-  if (ev.key !== "Enter" || !ev.target || ev.target.tagName !== "INPUT") return;
-  ev.preventDefault(); saveOwnKey();
+onEnter($("#addOwnKey"), ev => {
+  if (!ev.target || ev.target.tagName !== "INPUT") return;
+  saveOwnKey();
 });
 $("#ownKeyOthers").addEventListener("click", async ev => {
   const b = ev.target.closest && ev.target.closest("[data-ownkey-off]");
@@ -23132,7 +23169,7 @@ $("#btnAutoStop").addEventListener("click", autoStop);
 $("#btnSmsGet").addEventListener("click", () => smsGet($("#smsPhone").value.trim()));
 $("#btnPhoneCodeSend").addEventListener("click", phoneCodeSend);
 $("#btnPhoneCodeFinish").addEventListener("click", phoneCodeFinish);
-$("#phoneCodeCode").addEventListener("keydown", (e) => { if (e.key === "Enter") phoneCodeFinish(); });
+onEnter($("#phoneCodeCode"), () => phoneCodeFinish());
 $("#btnSmsQuery").addEventListener("click", smsQueryOnly);
 $("#btnSmsRelease").addEventListener("click", () => releaseSms("ok", false));
 $("#btnSmsCopyNum").addEventListener("click", () => { const p = ADD.sms && ADD.sms.phone; if (p) smsCopy(p, "号码"); });
@@ -23250,7 +23287,7 @@ $("#cmdkList").addEventListener("click", ev => {
 $("#cmdkInput").addEventListener("keydown", ev => {
   if (ev.key === "ArrowDown") { ev.preventDefault(); CMDK.sel = Math.min(CMDK.sel + 1, CMDK.items.length - 1); cmdkRender(); }
   else if (ev.key === "ArrowUp") { ev.preventDefault(); CMDK.sel = Math.max(CMDK.sel - 1, 0); cmdkRender(); }
-  else if (ev.key === "Enter") { ev.preventDefault(); cmdkRun(CMDK.sel); }
+  else if (ev.key === "Enter" && !ev.isComposing && ev.keyCode !== 229) { ev.preventDefault(); cmdkRun(CMDK.sel); }
   else if (ev.key === "Escape") { ev.preventDefault(); cmdkClose(); }
 });
 window.addEventListener("keydown", ev => {
@@ -24057,6 +24094,7 @@ $("#chatThreads").addEventListener("click", ev => {
   if (row) chatOpenThread(row.getAttribute("data-thread"));
 });
 $("#chatThreads").addEventListener("keydown", ev => {
+  if (ev.isComposing || ev.keyCode === 229) return;
   if (ev.key !== "Enter" && ev.key !== " ") return;
   const row = ev.target.closest("[data-thread]");
   if (!row) return;
@@ -24072,7 +24110,7 @@ $("#chatLog").addEventListener("click", ev => {
 });
 $("#chatInput").addEventListener("input", () => chatAutosize());
 $("#chatInput").addEventListener("keydown", ev => {
-  if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); chatSend(); }
+  if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing && ev.keyCode !== 229) { ev.preventDefault(); chatSend(); }
 });
 
 const USAGE_SUBTABS = setupSubtabs("usage", () => {
