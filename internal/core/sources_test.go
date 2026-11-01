@@ -144,3 +144,24 @@ func TestSourceReconciliationRetainsInstancesAndRemovesRoutes(t *testing.T) {
 		t.Fatal("removed source is still routed/listed")
 	}
 }
+
+// A relay's chat timeout is optional and, when set, must be a positive Go
+// duration.  Zero is rejected on purpose: a "0s" chat timeout would mean
+// waiting forever while holding a platform in-flight slot, which is the exact
+// failure this knob exists to bound (an operator who wants the default should
+// leave it empty).
+func TestSourceChatTimeoutValidation(t *testing.T) {
+	base := func(raw string) SourceConfig {
+		return SourceConfig{BaseURL: "https://relay.example/v1", ChatTimeout: raw}
+	}
+	for _, ok := range []string{"", "30s", "2m", "10m", "1h30m"} {
+		if err := ValidateSources(map[string]SourceConfig{"relay": base(ok)}); err != nil {
+			t.Errorf("chat_timeout %q should be accepted: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"0s", "-5s", "10", "abc", "0"} {
+		if err := ValidateSources(map[string]SourceConfig{"relay": base(bad)}); err == nil {
+			t.Errorf("chat_timeout %q should be rejected", bad)
+		}
+	}
+}

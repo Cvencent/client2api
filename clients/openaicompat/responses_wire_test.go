@@ -186,7 +186,7 @@ func responsesSSEFeed(frames ...string) *http.Response {
 func newResponsesTestStream(t *testing.T, frames ...string) *chatStream {
 	t.Helper()
 	c := &Client{cfg: Config{APIFormat: responsesFormat}, now: time.Now}
-	return newChatStream(c, responsesSSEFeed(frames...), ProviderConfig{}, "acct", func() {})
+	return newChatStream(c, responsesSSEFeed(frames...), ProviderConfig{}, "acct", func() {}, nil)
 }
 
 func TestResponsesStreamTextAndUsage(t *testing.T) {

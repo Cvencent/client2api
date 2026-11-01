@@ -78,6 +78,15 @@ type SourceConfig struct {
 	QuotaCooldown     string `json:"quota_cooldown,omitempty"`
 	AuthCooldown      string `json:"auth_cooldown,omitempty"`
 	UpstreamCooldown  string `json:"upstream_cooldown,omitempty"`
+
+	// ChatTimeout bounds one upstream completion for this relay.  A relay that
+	// accepts the connection and then hangs holds a platform in-flight slot for
+	// the whole timeout, so a too-generous value turns a few stalled requests
+	// into apparent saturation: the ceiling is reached and later requests are
+	// skipped even though nothing is really being served.  Empty means the
+	// module's own default.  The operator tunes it per relay because a slow
+	// relay and a fast one need different patience.
+	ChatTimeout string `json:"chat_timeout,omitempty"`
 }
 
 // SourceRequestLimit is one request-count rule for a relay.  Scope is either
@@ -322,6 +331,9 @@ func ValidateSources(sources map[string]SourceConfig) error {
 		if cfg.MaxInFlightPerAccount != nil && *cfg.MaxInFlightPerAccount < 0 {
 			return fmt.Errorf("source %q: max_in_flight_per_account must be >= 0", id)
 		}
+		if err := validateSourceDuration(cfg.ChatTimeout, "chat_timeout"); err != nil {
+			return fmt.Errorf("source %q: %w", id, err)
+		}
 		for name, raw := range map[string]string{
 			"cooldown":            cfg.Cooldown,
 			"rate_limit_cooldown": cfg.RateLimitCooldown,
@@ -419,6 +431,26 @@ func validateSourceCooldown(raw string) error {
 	}
 	if d < 0 {
 		return fmt.Errorf("must not be negative")
+	}
+	return nil
+}
+
+// validateSourceDuration is the shared shape check for a per-source timeout
+// knob.  An absent value is fine (the module default applies); a set value must
+// parse as a positive Go duration, and zero is rejected rather than accepted as
+// "no timeout", because a chat timeout of 0 would mean waiting forever while
+// holding an in-flight slot -- the exact failure this knob exists to bound.
+func validateSourceDuration(raw, field string) error {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return fmt.Errorf("%s must be a duration such as 30s, 2m or 10m", field)
+	}
+	if d <= 0 {
+		return fmt.Errorf("%s must be a positive duration", field)
 	}
 	return nil
 }

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"client2api/internal/core"
@@ -344,7 +345,8 @@ func (c *Client) wireFormat() string {
 // doChat issues one POST against a provider: /chat/completions on the default
 // wire, /responses when the source's api_format says so.
 func (c *Client) doChat(ctx context.Context, prov ProviderConfig, accountID string, body []byte) (core.Stream, error) {
-	reqCtx, cancel := context.WithTimeout(ctxOrBackground(ctx), c.cfg.chatTimeout())
+	parent := ctxOrBackground(ctx)
+	reqCtx, cancel := context.WithTimeout(parent, c.cfg.chatTimeout())
 	endpoint := prov.chatURL()
 	if c.cfg.APIFormat == responsesFormat {
 		endpoint = prov.responsesURL()
@@ -356,19 +358,96 @@ func (c *Client) doChat(ctx context.Context, prov ProviderConfig, accountID stri
 	}
 	prov.applyHeaders(httpReq)
 
+	// Bound the wait for the response HEADERS, which is a stage the stream's
+	// own first-token guard cannot see: that timer only starts once a stream
+	// exists.  A relay that accepts the connection and then never writes a
+	// header would otherwise hold this request until chat_timeout, and since
+	// the request owns a platform in-flight slot for its whole life, a few of
+	// those look exactly like a platform at its ceiling.  Keep-alive comments
+	// cannot extend this: it is measured from here, not from each byte.
+	//
+	// The guard is armed BEFORE Do so it covers the connect and header wait,
+	// then handed to the stream so a single deadline spans both stages instead
+	// of restarting once the body begins.
+	headerDeadline := newHeaderGuard(c.cfg.firstToken(), cancel)
 	resp, err := c.httpClient().Do(httpReq)
 	if err != nil {
+		headerDeadline.disarm()
 		cancel()
+		if headerDeadline.fired() {
+			// Our own deadline cut the header wait, not the vendor.  This is
+			// the same "nothing visible was produced" verdict the stream's
+			// first-token guard reaches, so it must be retryable: the request
+			// is preserved for a sibling platform.  It is already a classified
+			// *core.Failure, so it is returned as-is rather than being run
+			// through classifyUpstream a second time (which would re-wrap it
+			// and drop the account).
+			return nil, firstFrameTimeoutError(c.Name(), accountID, c.cfg.firstToken())
+		}
 		return nil, c.classifyUpstream(accountID, err)
 	}
 	if resp.StatusCode != http.StatusOK {
+		headerDeadline.disarm()
 		raw := readLimited(resp.Body, maxErrorBytes)
 		_ = resp.Body.Close()
 		cancel()
 		return nil, c.classifyHTTP("chat", accountID, resp.StatusCode, raw, resp.Header)
 	}
 	// The stream holds the slot the caller took; closing it returns the slot.
-	return newChatStream(c, resp, prov, accountID, cancel), nil
+	return newChatStream(c, resp, prov, accountID, cancel, headerDeadline), nil
+}
+
+// headerGuard bounds the wait between sending a request and receiving its
+// response headers.  It is deliberately a separate type from the stream's
+// first-token timer so the two share one deadline rather than stacking: the
+// stream takes over the same guard (see newChatStream) instead of arming a
+// fresh timer, so a relay that spends most of the budget on headers does not
+// get a second full first-token window to sit in.
+type headerGuard struct {
+	timer *time.Timer
+	hit   atomic.Bool
+}
+
+// newHeaderGuard arms the header deadline and cancels the request when it
+// fires.  A zero or negative window disarms nothing because there is nothing to
+// bound; the caller's own context still applies.
+func newHeaderGuard(d time.Duration, cancel context.CancelFunc) *headerGuard {
+	g := &headerGuard{}
+	if d <= 0 || cancel == nil {
+		return g
+	}
+	g.timer = time.AfterFunc(d, func() {
+		g.hit.Store(true)
+		cancel()
+	})
+	return g
+}
+
+func (g *headerGuard) disarm() {
+	if g != nil && g.timer != nil {
+		g.timer.Stop()
+	}
+}
+
+func (g *headerGuard) fired() bool { return g != nil && g.hit.Load() }
+
+// takeTimer hands the still-running timer to the stream, which will stop it on
+// the first visible frame.  Returns nil once it has fired or been disarmed.
+func (g *headerGuard) takeTimer() *time.Timer {
+	if g == nil {
+		return nil
+	}
+	return g.timer
+}
+
+// firstFrameTimeoutError is the classified "no visible frame in time" failure
+// the whole module reports for this condition, so a header-stage stall and a
+// stream-stage stall read identically to the gateway and the operator.  It
+// carries the account so the usage row and the alert can name it, exactly as
+// the stream's own first-token failure does.
+func firstFrameTimeoutError(client, accountID string, d time.Duration) error {
+	return core.Fail(client, accountID, core.FailureUpstream, 0,
+		fmt.Errorf("openai-compat: no visible frame within %s (the provider kept the connection alive without answering)", d))
 }
 
 // --- status ----------------------------------------------------------------
