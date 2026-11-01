@@ -12773,22 +12773,28 @@ function b3dSpec(view) {
     case "chat": {
       // 对话页 3D 说明「这台机器现在能拿哪些客户端 / 档位做链路验证」：
       // 每个客户端一张卡，读数是可用的模型档数，并标出它是否已就绪。
-      const items = (MODELS || []).slice(0, 12).map(c => {
-        const ms = c.models || [];
-        const ci = clientInfo(c.name) || {};
+      // 数据源必须与页面的模型下拉同源（issue #40）：下拉读的是 status 的
+      // clients[].models（/v1/models 同一份数据），此前的 3D 卡读的是
+      // MODELS 目录缓存——只有进过模型页才有值，于是出现「下拉 39 项可选、
+      // 舞台却挂『还没有模型目录 / 先刷新模型』」的自相矛盾，而它建议的
+      // 「点右上角刷新」刷的是状态，根本不会填充目录，指路也是错的。
+      const items = (SNAP.clients || []).slice(0, 12).map(c => {
+        const ms = (c.models || []).length;
         return {
-          label: platformLabel(c.name), value: ms.length,
-          tone: ms.length ? (ci.ready ? "ok" : "warn") : "bad",
-          sub: ci.ready ? "已就绪" : "未就绪", raw: ms.length, unit: "档",
-          facts: [["客户端", platformLabel(c.name)], ["模型档", ms.length + " 个"],
-            ["状态", ci.ready ? "就绪" : "未就绪"], ["用途", "对话链路验证"]],
+          label: platformLabel(c.name), value: ms,
+          tone: ms ? (c.ready ? "ok" : "warn") : "bad",
+          sub: c.ready ? (ms ? "已就绪" : "已就绪 · 无模型上报") : "未就绪",
+          raw: ms, unit: "档",
+          facts: [["客户端", platformLabel(c.name)], ["模型档", ms + " 个"],
+            ["状态", c.ready ? "就绪" : "未就绪"], ["用途", "对话链路验证"]],
         };
       });
       if (!items.length) return { shape: "tunnel", hint: "SANDBOX · DRAG", items: [
-        { label: "还没有模型目录", value: null, tone: "warn", sub: "先刷新模型",
-          raw: 0, facts: [["下一步", "点右上角刷新"], ["位置", "模型与档位页"]] },
+        { label: "还没有客户端在线", value: null, tone: "warn", sub: "注册一个客户端后回来",
+          raw: 0, facts: [["下一步", "客户端页注册或启用"], ["位置", "客户端"]] },
       ] };
-      return { shape: "ring", hint: "SANDBOX · DRAG", items };
+      const readyModels = items.reduce((n, c) => n + (c.raw || 0), 0);
+      return { shape: "ring", hint: readyModels ? "SANDBOX · " + readyModels + " MODELS · DRAG" : "SANDBOX · DRAG", items };
     }
     case "config": return { shape: "tunnel", hint: "CONFIG · DRAG", items: [
       { label: "监听地址", value: null, tone: "", sub: SNAP.listen || "", raw: 0,
