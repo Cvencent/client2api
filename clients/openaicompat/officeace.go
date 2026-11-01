@@ -156,10 +156,21 @@ func (o *officeAceSource) officeAceRepairDue(id string, now time.Time) bool {
 // expires and a refusal falls back to the dead-key case.
 const officeAceExhaustedWindow = 30 * time.Minute
 
-// noteOfficeAcePoints records the credit position a premium read observed and,
-// when it shows a drained package, supersedes a stale dead-key verdict with
-// the quota cooldown: points may come back (daily check-in, a new trial, a
-// top-up), a revoked key does not.  remaining -1 records "not drained".
+// noteOfficeAcePoints records the credit position a premium read observed and
+// acts on it.  remaining -1 records "not drained".
+//
+// A zero read is the account's own economy, not a minute-scale hiccup: there
+// is nothing to refresh and no sibling request that could succeed, so the
+// account parks on the quota path the moment the read lands -- without
+// waiting for the next chat request to walk into the drained package and pay
+// for the discovery with a failed call (issue #57: the panel kept showing the
+// row as available between the crash and the next crash).  A non-zero read is
+// the opposite verdict: whatever parked the row has healed (a top-up, a daily
+// check-in), so the parking is cleared immediately instead of waiting out a
+// 5-minute cooldown that no longer means anything.
+//
+// points may come back; a revoked key does not, so a stale dead-key verdict
+// is still superseded -- the read outranks the mark.
 func (o *officeAceSource) noteOfficeAcePoints(id string, remaining int64, now time.Time) {
 	o.pointsMu.Lock()
 	if o.points == nil {
@@ -169,7 +180,12 @@ func (o *officeAceSource) noteOfficeAcePoints(id string, remaining int64, now ti
 	o.points[id] = remaining
 	o.pointsAt[id] = now
 	o.pointsMu.Unlock()
-	if remaining != 0 || o.source == nil {
+	if remaining < 0 {
+		// "not drained" records the number without a verdict either way.
+		return
+	}
+	if remaining > 0 {
+		o.reviveOfficeAceAccount(id)
 		return
 	}
 	s := o.source
@@ -177,7 +193,23 @@ func (o *officeAceSource) noteOfficeAcePoints(id string, remaining int64, now ti
 	defer s.mu.Unlock()
 	if s.invalid[id] {
 		delete(s.invalid, id)
-		s.parkLocked(id, core.FailureQuota)
+	}
+	s.parkLocked(id, core.FailureQuota)
+}
+
+// reviveOfficeAceAccount clears the quota parking a zero read left behind
+// once a later read shows the package refilled.
+func (o *officeAceSource) reviveOfficeAceAccount(id string) {
+	if o.source == nil {
+		return
+	}
+	s := o.source
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if until, ok := s.cooling[id]; ok && until.After(s.now()) {
+		// The row only re-enters the pick on evidence, and the evidence here
+		// is this very read: the same source that parked it unparks it.
+		delete(s.cooling, id)
 	}
 }
 

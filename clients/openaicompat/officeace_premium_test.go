@@ -946,13 +946,13 @@ func TestOfficeAceDrainedPackageParksQuotaNotInvalid(t *testing.T) {
 	o := officeAcePremiumSource(t, srv)
 	id := officeAceAddChatAccount(t, o, srv)
 
-	// The panel sweep has seen the drained package, so the wrapper knows the
-	// refusal is the exhaustion verdict.
+	// Since issue #57 the zero read itself is the verdict and parks the
+	// account at read time -- no chat needs to walk into the wall first.  The
+	// parked row must hold out of rotation: a request inside the cooldown
+	// window answers busy without another vendor roundtrip, so the vendor
+	// never hears about the account until its credits come back.
 	if _, err := o.AccountBalance(context.Background(), id, 0); err != nil {
 		t.Fatalf("balance: %v", err)
-	}
-	if err := officeAceChatOnce(t, o.source); err == nil {
-		t.Fatal("chat against a drained account unexpectedly succeeded")
 	}
 	records, err := o.source.Accounts(context.Background())
 	if err != nil {
@@ -962,15 +962,13 @@ func TestOfficeAceDrainedPackageParksQuotaNotInvalid(t *testing.T) {
 		t.Fatalf("records = %+v, want one account", records)
 	}
 	if got := records[0].State; got != "cooling" {
-		t.Fatalf("state after a drained-package 401 = %q, want cooling", got)
+		t.Fatalf("state after a zero-credit read = %q, want cooling", got)
 	}
-	// The quota park must hold the account out of rotation: a request inside
-	// the cooldown window answers busy without another vendor roundtrip.
 	if err := officeAceChatOnce(t, o.source); !errors.Is(err, core.ErrBusy) {
-		t.Fatalf("second chat during the quota cooldown = %v, want busy", err)
+		t.Fatalf("chat during the read-time quota park = %v, want busy", err)
 	}
-	if got := chatCalls.Load(); got != 1 {
-		t.Fatalf("chat calls = %d, want 1 (the cooldown must park, not retry)", got)
+	if got := chatCalls.Load(); got != 0 {
+		t.Fatalf("chat calls = %d, want 0 (the read-time park must hold, not retry)", got)
 	}
 }
 
@@ -1058,7 +1056,10 @@ func TestOfficeAceLiveCreditKeepsDeadKeyInvalid(t *testing.T) {
 // while the panel sweep was off would cool down instead of surfacing the
 // dead-key verdict.
 func TestOfficeAceExhaustedVerdictExpires(t *testing.T) {
-	o := &officeAceSource{source: &source{}}
+	o := &officeAceSource{source: &source{
+		now:     time.Now,
+		cooling: map[string]time.Time{},
+	}}
 	now := time.Now()
 	o.noteOfficeAcePoints("a", 0, now)
 	if !o.officeAceCreditsExhausted("a", now.Add(29*time.Minute)) {
@@ -1073,5 +1074,130 @@ func TestOfficeAceExhaustedVerdictExpires(t *testing.T) {
 	o.noteOfficeAcePoints("b", -1, now)
 	if o.officeAceCreditsExhausted("b", now) {
 		t.Fatal("an unlimited position must not count as exhausted")
+	}
+}
+
+// TestOfficeAceZeroBalanceReadParksWithoutAWall pins issue #57: the panel
+// sweep reads credits for accounts nobody has chatted through, so the zero
+// read is the FIRST and only evidence an un-called drained package ever
+// produces.  Parking must happen at read time -- the account must be held
+// out of rotation (busy, no vendor roundtrip) before a caller has paid for
+// the discovery with a failed chat.
+func TestOfficeAceZeroBalanceReadParksWithoutAWall(t *testing.T) {
+	var chatCalls atomic.Int32
+	srv := officeAceChatServer(t, officeAceDrainedSubscriptionJSON, &chatCalls)
+	defer srv.Close()
+
+	o := officeAcePremiumSource(t, srv)
+	id := officeAceAddChatAccount(t, o, srv)
+
+	if _, err := o.AccountBalance(context.Background(), id, 0); err != nil {
+		t.Fatalf("balance: %v", err)
+	}
+	// The zero read must park on its own: the row cools before any chat.
+	records, err := o.source.Accounts(context.Background())
+	if err != nil {
+		t.Fatalf("accounts: %v", err)
+	}
+	if got := records[0].State; got != "cooling" {
+		t.Fatalf("state after a zero-credit read = %q, want cooling", got)
+	}
+	// And the park holds the account out of the pick without a vendor call.
+	if err := officeAceChatOnce(t, o.source); !errors.Is(err, core.ErrBusy) {
+		t.Fatalf("chat against a freshly parked zero-credit account = %v, want busy", err)
+	}
+	if got := chatCalls.Load(); got != 0 {
+		t.Fatalf("chat calls = %d, want 0 -- the wall must never be hit", got)
+	}
+}
+
+// A non-zero read is the opposite verdict: whatever parked the row (a zero
+// read, or a chat-time quota park) has healed, so the parking clears at read
+// time instead of waiting out the 5-minute cooldown.  The fixture server is
+// rewritten mid-test: the first read walks the drained subscription, the
+// second a funded one.
+func TestOfficeAcePositiveBalanceReadRevivesAParkedAccount(t *testing.T) {
+	sub := officeAceDrainedSubscriptionJSON
+	var chatCalls atomic.Int32
+	mu := sync.Mutex{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/chat/completions") {
+			chatCalls.Add(1)
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = io.WriteString(w, `{"error_msg":"AppKey or AppSecret is invalid","error_code":"APIG.1009"}`)
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Path == officeAcePremiumPathSubscription {
+			mu.Lock()
+			body := sub
+			mu.Unlock()
+			_, _ = io.WriteString(w, body)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	o := officeAcePremiumSource(t, srv)
+	id := officeAceAddChatAccount(t, o, srv)
+
+	if _, err := o.AccountBalance(context.Background(), id, 0); err != nil {
+		t.Fatalf("balance: %v", err)
+	}
+	records, err := o.source.Accounts(context.Background())
+	if err != nil {
+		t.Fatalf("accounts: %v", err)
+	}
+	if got := records[0].State; got != "cooling" {
+		t.Fatalf("precondition: state = %q, want cooling", got)
+	}
+	// The account refilled.  A fresh positive read must clear the park.
+	mu.Lock()
+	sub = officeAcePremiumSubscriptionJSON
+	mu.Unlock()
+	if _, err := o.AccountBalance(context.Background(), id, 0); err != nil {
+		t.Fatalf("balance: %v", err)
+	}
+	records, err = o.source.Accounts(context.Background())
+	if err != nil {
+		t.Fatalf("accounts: %v", err)
+	}
+	if got := records[0].State; got != "ready" {
+		t.Fatalf("state after a positive read = %q, want ready", got)
+	}
+}
+
+// A drained package under a stale dead-key mark reads as the quota cooldown,
+// not 账号异常 -- the read outranks the mark, so a refilled account is never
+// stranded in a state only a re-login can clear.
+func TestOfficeAceZeroReadStillSupersedesAStaleInvalidMark(t *testing.T) {
+	var chatCalls atomic.Int32
+	srv := officeAceChatServer(t, officeAceDrainedSubscriptionJSON, &chatCalls)
+	defer srv.Close()
+
+	o := officeAcePremiumSource(t, srv)
+	id := officeAceAddChatAccount(t, o, srv)
+
+	// A chat-time 401 marks the key dead.
+	if err := officeAceChatOnce(t, o.source); err == nil {
+		t.Fatal("chat against a refused key unexpectedly succeeded")
+	}
+	records, err := o.source.Accounts(context.Background())
+	if err != nil {
+		t.Fatalf("accounts: %v", err)
+	}
+	if got := records[0].State; got != "invalid" {
+		t.Fatalf("precondition: state = %q, want invalid", got)
+	}
+	// A zero read supersedes the mark: quota cooldown, not invalid.
+	if _, err := o.AccountBalance(context.Background(), id, 0); err != nil {
+		t.Fatalf("balance: %v", err)
+	}
+	records, err = o.source.Accounts(context.Background())
+	if err != nil {
+		t.Fatalf("accounts: %v", err)
+	}
+	if got := records[0].State; got != "cooling" {
+		t.Fatalf("state after the zero read = %q, want cooling", got)
 	}
 }

@@ -33,6 +33,35 @@
 - `client2api-setup-0.5.47.exe`（空包，不含账号凭据或本机配置）
 - SHA256：`EE780BD84B0C8A1CAB096AE8354A353C5B968C516576BF02DD775B472C27CD7F`
 
+## [0.5.48] - 2026-11-01
+
+### Installer
+
+- `client2api-setup-0.5.48.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `D6A49826854C64C1F8A75A201F228E58FE6EE7BEB81293900421BBB8F2AFE05A`
+
+### Fixed
+
+- **officeace 的「input token limit is 1048576」上下文超限 400 不再是终态。** 同一个
+  物理原因（会话输入超出模型窗口），hcnsec 轮转、opencode 触发压缩，officeace 的措辞
+  却让整条请求链断掉：`context_guard.go` 的上下文拒绝识别器不认识这句裸陈述句型（五个
+  tooLongPatterns 都要求 `>` / `exceed` / `maximum context length` 之类的比较形态），
+  于是 openaicompat 落 kindClient → FailureOther 终态，请求死在第一个命中该措辞的平台，
+  带着精确窗口数字的 400 也学不进去。现在 tooLongPatterns 新增 `input token limit is N`
+  句型：400 被归为 FailureContextWindow（`context_guard.go` 的 tooLongPatterns 末条），
+  复用既有链路——轮转下一平台 + `learnContextWindowFromFailure` 把 1048576 学为窗口 +
+  带测量的同平台裁剪重试一次；真实请求形态的 400（参数错误等）不受影响，负向测试钉住。
+
+- **officeace 0 积分账号读到 0 即停车，充值后读到非 0 即复活。** 余额软扫描早就读到了
+  0（balance_cache 新鲜），但 `noteOfficeAcePoints` 只在 supersede 死 key 时才停车——
+  健康的 0 积分账号要等下一次 chat 撞上 drained package 的 auth 形拒绝才停 5 分钟，
+  5 分钟一到又放出又撞墙，面板在「冷却中 ↔ 可用」间振荡，用户看到的 400 就是这个循环。
+  现在 `officeace.go` 的 `noteOfficeAcePoints` 读到 0 无条件 `parkLocked(FailureQuota)`
+  （对 stale invalid 标记同样覆盖，读数优先于标记），读到正数立即清冷却（充值/签到即
+  复活，不等 5 分钟冷却自然到期）；软扫描每几分钟就有一份新鲜读数，面板状态从此与
+  余额一致。`officeace_premium_test.go` 三个新测试钉住读时停车、正数复活、0 读数压过
+  stale invalid。
+
 ## [0.5.46] - 2026-11-01
 
 ### Fixed

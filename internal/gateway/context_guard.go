@@ -380,6 +380,13 @@ var tooLongPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)context[^0-9]{0,20}?(?:length|window|limit)[^0-9]{0,20}?(\d[\d,_]*)[^0-9]{0,20}?exceed`),
 	// "context limit (1048568 tokens)"
 	regexp.MustCompile(`(?i)context\s+limit[^0-9]{0,20}?(\d[\d,_]*)\s*tokens?`),
+	// officeace: "input token limit is 1048576" -- the vendor states the
+	// window as a bare fact, with no comparison shape around it.  The number
+	// here is the LIMIT, not this request's measurement, so it must land in
+	// the limit patterns: measuredSizePatterns must never read it, or the
+	// "Observed <= Limit" drop below would silently discard the only number
+	// the vendor named.
+	regexp.MustCompile(`(?i)input\s+token\s+limit\s+(?:is\s+)?(\d[\d,_]*)`),
 }
 
 // measuredSizePatterns find the size the vendor measured THIS request at, when

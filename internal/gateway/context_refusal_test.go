@@ -228,3 +228,70 @@ func TestNormalizeContextRefusalPromotesTheTokenrhythmUnclassified400(t *testing
 		t.Fatalf("limit from normalized error = %d, want 1048568", limit)
 	}
 }
+
+// officeace answers an oversized prompt with "input token limit is 1048576" --
+// the window stated as a bare fact, no comparison shape anywhere.  Before the
+// dedicated pattern it fell through every tooLongPatterns arm (none of them
+// matches a limit with no ">"/"exceed"/"maximum context length" framing), so
+// openaicompat classified it kindClient and the caller got a terminal
+// invalid_request with the window number thrown away (issue #56: three
+// platforms, one physical cause, and the officeace wording was the one that
+// killed the whole chain).
+const officeAceContextRefusal = "openai-compat: chat (HTTP 400): input token limit is 1048576"
+
+func TestLooksLikeContextRefusalRecognisesTheOfficeAceSentence(t *testing.T) {
+	limit, ok := looksLikeContextRefusal(officeAceContextRefusal)
+	if !ok {
+		t.Fatalf("the officeace refusal was not recognised: %q", officeAceContextRefusal)
+	}
+	if limit != 1048576 {
+		t.Fatalf("limit = %d, want 1048576 -- the bare-fact number is the window", limit)
+	}
+}
+
+// The number in "input token limit is N" is the LIMIT, never this request's
+// measurement.  measuredSizePatterns must not claim it: if they did, the
+// "Observed <= Limit" sanity drop would discard the only number the vendor
+// named, and the trim retry would run blind.
+func TestOfficeAceRefusalNumberIsTheLimitNotTheMeasurement(t *testing.T) {
+	sizes := parseRefusalSizes(officeAceContextRefusal)
+	if sizes.Limit != 1048576 {
+		t.Fatalf("limit = %d, want 1048576", sizes.Limit)
+	}
+	if sizes.Observed != 0 {
+		t.Fatalf("observed = %d, want 0: the sentence never measures this request", sizes.Observed)
+	}
+}
+
+func TestNormalizeContextRefusalPromotesTheOfficeAceUnclassified400(t *testing.T) {
+	raw := core.Fail("officeace", "acct", core.FailureOther, 400, errors.New(officeAceContextRefusal))
+	got := normalizeContextRefusal(raw)
+	f, ok := core.AsFailure(got)
+	if !ok || f.Kind != core.FailureContextWindow {
+		t.Fatalf("got %v, want a context-window failure", got)
+	}
+	if f.Status != 400 || f.Client != "officeace" || f.Account != "acct" {
+		t.Fatalf("attribution/status lost: %+v", f)
+	}
+	if limit := parseLimitFromMessage(got.Error()); limit != 1048576 {
+		t.Fatalf("limit from normalized error = %d, want 1048576 learnable", limit)
+	}
+}
+
+// A genuine request-shape 400 that merely carries the word "token" somewhere
+// must keep its verdict -- the new pattern anchors on the full "input token
+// limit is N" shape, not on the bare word.
+func TestOfficeAcePatternDoesNotSwallowPlainRequestRefusals(t *testing.T) {
+	for _, msg := range []string{
+		"invalid parameter: max_tokens must be a positive integer",
+		"tool use is not supported for this model",
+		"unknown model: gpt-x",
+	} {
+		if _, ok := looksLikeContextRefusal(msg); ok {
+			t.Errorf("looksLikeContextRefusal(%q) = true, want false", msg)
+		}
+		if sizes := parseRefusalSizes(msg); sizes.Limit != 0 || sizes.Observed != 0 {
+			t.Errorf("parseRefusalSizes(%q) = %+v, want empty", msg, sizes)
+		}
+	}
+}
