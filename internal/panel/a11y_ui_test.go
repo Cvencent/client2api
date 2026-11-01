@@ -114,3 +114,25 @@ func stripTags(s string) string {
 	}
 	return strings.Join(strings.Fields(b.String()), " ")
 }
+
+// TestReduceMediaQueryCoversPseudoElements 钉住 issue #53：reduce 媒体查询的
+// 选择器必须把伪元素写全。::before/::after 不继承宿主的 transition，只有 * 的
+// 规则打不到它们——冷启动 reduce 下全站 20+ 条伪元素过渡（导航亮口、排序列头
+// 箭头、折叠指示……）照旧插值，最长 0.5s。animation 与 transition 同一理由：
+// 写全一处，两类属性都别漏。
+func TestReduceMediaQueryCoversPseudoElements(t *testing.T) {
+	src := poolStatsUISource(t)
+
+	if !strings.Contains(src, "*, *::before, *::after { transition: none !important; animation: none !important; }") {
+		t.Fatal("reduce 媒体查询没有把伪元素写全：伪元素的过渡在 reduce 下仍会插值（issue #53）")
+	}
+	// 旧写法（只有 *，没有伪元素）不许回来。
+	if strings.Contains(src, "@media (prefers-reduced-motion: reduce) { * { transition: none !important;") {
+		t.Fatal("reduce 媒体查询退回了只写 * 的旧选择器（issue #53 回归）")
+	}
+	// 同文件另一条 reduce 规则（animation + scroll-behavior）此前已写全伪元素，
+	// 钉住它不许退化成同样只写 *。
+	if !strings.Contains(src, "*, *::before, *::after { animation: none !important; scroll-behavior: auto !important; }") {
+		t.Fatal("reduce 的 animation 规则失去了伪元素选择器：伪元素动画会重新动起来")
+	}
+}

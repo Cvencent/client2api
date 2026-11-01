@@ -233,10 +233,23 @@ func (c *Client) claimViaMarketing(ctx context.Context, acct *Account) []string 
 			continue
 		}
 		if err := c.marketingConfirm(ctx, acct, d.CampaignID); err != nil {
-			c.pool.log("zcode: confirming campaign %s for %s refused: %v", d.CampaignID, acct.ID, err)
-			continue
+			// "Already claimed" (1003) is the steady state of a second sweep:
+			// the operator's client confirmed this campaign earlier today, so
+			// the consent is on record and the plan is claimable.  The claim
+			// below is what reads the vendor's verdict -- "already claimed"
+			// again there reads as done, not as a refusal -- so the plan stays
+			// in the walk.  A refusal that is not the steady state (a campaign
+			// withdrawn mid-flight, a transport hiccup) keeps skipping: there
+			// is nothing this sweep should claim on its own authority.
+			ce := asClaimError(err)
+			if ce == nil || ce.code != claimCodeAlreadyClaimed {
+				c.pool.log("zcode: confirming campaign %s for %s refused: %v", d.CampaignID, acct.ID, err)
+				continue
+			}
+			c.pool.log("zcode: campaign %s already confirmed (plan %s) for %s; claiming anyway", d.CampaignID, planID, acct.ID)
+		} else {
+			c.pool.log("zcode: confirmed campaign %s (plan %s) for %s", d.CampaignID, planID, acct.ID)
 		}
-		c.pool.log("zcode: confirmed campaign %s (plan %s) for %s", d.CampaignID, planID, acct.ID)
 		confirmed = append(confirmed, planID)
 	}
 	return confirmed

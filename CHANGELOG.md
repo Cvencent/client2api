@@ -33,6 +33,33 @@
 - `client2api-setup-0.5.47.exe`（空包，不含账号凭据或本机配置）
 - SHA256：`EE780BD84B0C8A1CAB096AE8354A353C5B968C516576BF02DD775B472C27CD7F`
 
+## [0.5.49] - 2026-11-02
+
+### Fixed
+
+- **余额软扫描不再敲 invalid 账号的门。** #48 修掉了 renew 扫描对 invalid 的裸敲门，
+  但 balance sweep 的状态门 `balanceProbeEligible`（main.go）只挡 recoverable
+  （cooling/exhausted/low_credit 等），invalid 恰好漏网——每 5 分钟两次注定失败的
+  上游请求：模块内部 `ensureFresh` 的 oauth 换新吃一个 invalid_grant，再拿死 token
+  查余额吃一个 401。现在软扫描对 invalid 也返回 false（recovery sweep 本来就经由
+  ready/unknown/recoverable 白名单天然排除它）；操作员重新登录后账号回到 ready，
+  扫描自然恢复探测。
+- **「已确认」的活动弹窗不再被当成拒绝。** 确认弹窗的 answer 1003（今天的第二次
+  扫描必然看到）与「已领取」一样是稳态：操作员的客户端已确认过活动、套餐本就可领，
+  下一步的 claim 才是读厂商裁决的那一跳。`claimViaMarketing` 此前把确认 1003 当
+  refusal 跳过，扫描在确认已发生时反而报「无可领取」。现在确认 1003 仍把该套餐放进
+  claim 队列，由 claim 的 1003/成功读出结果；其他 refusal 照旧跳过。
+- **「减少动效」管住了伪元素的过渡。** reduce 媒体查询的全局规则选择器只有 `*`，
+  而 ::before/::after 不继承宿主的 transition——冷启动 reduce 下全站 20+ 条伪元素
+  过渡（导航频道亮口、排序列头箭头、折叠指示等，最长 0.5s）照旧插值。选择器补全为
+  `*, *::before, *::after`（animation 半边同理由补全）；a11y UI 测试钉住新选择器、
+  禁止退回旧写法，也钉住另一条 reduce 规则的伪元素不许丢。
+
+### Installer
+
+- `client2api-setup-0.5.49.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `105786D672A662699941F3D967C390BF1C9E6BF239407DEBE9AC749618058B8E`
+
 ## [0.5.48] - 2026-11-01
 
 ### Installer

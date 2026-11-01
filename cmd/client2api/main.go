@@ -44,7 +44,7 @@ import (
 )
 
 // version is overridable with -ldflags "-X main.version=...".
-var version = "0.5.48"
+var version = "0.5.49"
 
 // restartHandoffEnv marks the replacement half of a panel restart.  It tells a
 // starting process to keep retrying the listen address instead of failing fast,
@@ -1084,6 +1084,16 @@ func balanceProbeEligible(state string, includeRecoverable bool) bool {
 			return true
 		}
 		return core.IsRecoverableAccountState(state)
+	}
+	// An invalid credential is dead in the way a balance read cannot fix: the
+	// vendor revoked the token, so every probe buys a guaranteed-failing oauth
+	// refresh followed by a guaranteed 401, twice per sweep (issue #52, the
+	// fourth knock-after-#48).  The operator's re-login flips the row back to
+	// ready and the sweep picks it up again; until then the door stays closed.
+	// The recovery sweep reaches the same answer through the branch above,
+	// which already excludes everything outside ready/unknown/recoverable.
+	if state == "invalid" {
+		return false
 	}
 	return !core.IsRecoverableAccountState(state)
 }

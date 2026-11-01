@@ -104,7 +104,10 @@ body {
   text-decoration: none; transition: top 120ms var(--ease-out);
 }
 .skip-link:focus-visible { top: 0; }
-@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+/* reduce 的选择器必须把伪元素写全：::before/::after 不继承宿主的 transition，
+   只有 * 的规则打不到它们——导航亮口、排序列头箭头等 20+ 条伪元素过渡会在
+   reduce 下照旧插值（issue #53）。animation 与 transition 同一理由。 */
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }
 
 /* 全局进场编排：每页切进来时 .box / 卡片 / 行以 320ms 指数减速淡入上浮，
    由 revealView() 逐项加 24ms 延迟。reduced-motion 下被上面那条全局规则关掉。 */

@@ -225,3 +225,39 @@ func TestRenewSweepHonoursBackgroundProbeGate(t *testing.T) {
 		t.Fatalf("renew sweep consulted the recovery probe gate: %v", got)
 	}
 }
+
+// TestRefreshBalancesSkipsInvalidAccounts pins issue #52: the soft sweep must
+// not probe a dead credential.  #48 closed the renew sweep's knock; this is
+// the fourth path -- balance sweep -> AccountBalance -> ensureFresh, which
+// buys a guaranteed-failing oauth refresh (invalid_grant) followed by a
+// guaranteed 401, twice every five minutes, until an operator re-logins.
+func TestRefreshBalancesSkipsInvalidAccounts(t *testing.T) {
+	f := &gatedSweepClient{
+		renewFakeClient: &renewFakeClient{
+			name: "minimaxcode",
+			accounts: []core.AccountRecord{
+				{ID: "ready", Enabled: true, State: "ready"},
+				{ID: "invalid", Enabled: true, State: "invalid"},
+				{ID: "INVALID-upper", Enabled: true, State: "INVALID"},
+				{ID: "invalid-spaced", Enabled: true, State: " invalid "},
+			},
+		},
+		allowed: map[string]bool{"ready": true},
+	}
+	reg := core.NewRegistry()
+	reg.Add(f)
+
+	refreshBalances(context.Background(), reg, 0, quietLogger(), nil)
+
+	if got := f.AccountBalanceCalls(); len(got) != 1 || got[0] != "ready" {
+		t.Fatalf("background balance sweep called %v, want only ready -- an invalid credential must not be probed (issue #52)", got)
+	}
+	// The soft sweep consults the module-side quiet-probe gate only for
+	// accounts it actually probes, so the gate must not have been asked about
+	// the dead ones either.
+	for _, asked := range f.GateCalls() {
+		if asked != "ready" {
+			t.Errorf("gate was consulted for %q; the state gate should have stopped the probe first", asked)
+		}
+	}
+}

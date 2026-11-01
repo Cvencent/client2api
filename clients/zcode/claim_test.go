@@ -109,10 +109,23 @@ func routeTransport(t *testing.T, routes map[string]func(*http.Request) (*http.R
 		}
 	}
 	return &fakeTransport{handler: func(r *http.Request) (*http.Response, error) {
+		// Longest fragment wins.  marketingActionPath ("…/touch/action")
+		// contains marketingTouchPath ("…/touch") as a prefix, so a bare
+		// range over the map picked whichever handler iteration order
+		// offered first: the confirm POST was answered by the delivery
+		// list roughly half the time and by the action refusal the rest.
+		// That coin flip made the confirm-1003 steady-state test flaky
+		// (CI red twice on 2026-11-01/02) without any production meaning.
+		best := ""
+		var handler func(*http.Request) (*http.Response, error)
 		for fragment, h := range routes {
-			if strings.Contains(r.URL.Path, fragment) {
-				return h(r)
+			if strings.Contains(r.URL.Path, fragment) && len(fragment) > len(best) {
+				best = fragment
+				handler = h
 			}
+		}
+		if handler != nil {
+			return handler(r)
 		}
 		t.Errorf("unexpected request: %s %s", r.Method, r.URL)
 		return jsonResponse(http.StatusNotFound, `{"code":404,"msg":"no route"}`), nil
