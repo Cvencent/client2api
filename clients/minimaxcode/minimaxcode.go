@@ -602,7 +602,19 @@ func (c *Client) ensureFresh(ctx context.Context, id string) Account {
 // renewable reports whether a snapshot has a lapsed token and somewhere to
 // renew it from.  A credential that recorded no expiry counts as lapsed: the
 // store's own field is advisory, and trying is cheaper than failing.
+//
+// An account whose authorization the vendor has already killed (markNeedsLogin:
+// state=invalid, "login_required") is not renewable in any sense that matters --
+// the refresh token is revoked, so the exchange is guaranteed to answer
+// invalid_grant, and every caller that reaches ensureFresh (chat, tasks, the
+// balance sweep's AccountBalance, the check-in status) would pay that doomed
+// oauth round trip on its own cadence (issue #68: ~288 wasted calls per day per
+// dead row).  Only a fresh sign-in re-arms the account, so renewal stays off
+// until then.
 func renewable(a Account) bool {
+	if a.State == stateInvalid {
+		return false
+	}
 	if strings.TrimSpace(a.RefreshToken) == "" {
 		return false
 	}

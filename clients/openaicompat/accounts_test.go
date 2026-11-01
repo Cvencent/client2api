@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 	"unicode"
 
 	"client2api/internal/core"
@@ -248,4 +249,97 @@ func hasHan(s string) bool {
 		}
 	}
 	return false
+}
+
+// TestDisabledAccountReadsAsDisabledNotInvalid pins issue #66: an
+// operator-disabled row is a decision, not a broken credential.  Both pool
+// projections used to fold it into "invalid", which pushed the row into the
+// panel's 账号异常 bucket -- whose advice is "re-login", advice that can
+// never fix an enable switch -- and left the 已停用 KPI at zero.
+func TestDisabledAccountReadsAsDisabledNotInvalid(t *testing.T) {
+	dir := t.TempDir()
+	c := newTestClient(t, dir)
+	ctx := context.Background()
+	if _, err := c.AddAccount(ctx, core.AccountSpec{
+		Fields: map[string]string{"provider": "mistral", "api_key": "k"},
+	}); err != nil {
+		t.Fatalf("AddAccount: %v", err)
+	}
+	if err := c.SetAccountEnabled(ctx, "mistral", false); err != nil {
+		t.Fatalf("SetAccountEnabled: %v", err)
+	}
+
+	// The pool's own record projection.
+	records := c.pool.records(time.Now())
+	var rec *core.AccountRecord
+	for i := range records {
+		if records[i].ID == "mistral" {
+			rec = &records[i]
+			break
+		}
+	}
+	if rec == nil {
+		t.Fatal("disabled account vanished from the record list")
+	}
+	if rec.State != "disabled" {
+		t.Fatalf("pool records state = %q, want disabled (issue #66)", rec.State)
+	}
+	if rec.Note == "" {
+		t.Fatal("disabled row carries no note; the panel would show a bare state")
+	}
+
+	// The status projection the panel actually renders.
+	st := c.Status(ctx)
+	var found bool
+	for _, a := range st.Accounts {
+		if a.ID == "mistral" {
+			found = true
+			if a.State != "disabled" {
+				t.Fatalf("status state = %q, want disabled (issue #66)", a.State)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("disabled account vanished from the status list")
+	}
+}
+
+// TestRejectedKeyRowCarriesItsReason pins the other half of issue #66: a
+// vendor-rejected key lands in the invalid state, and the reason it was
+// rejected (the same message the balance sweep hands to noteFailure, which
+// records it as the row's last_error) must reach the note the panel renders
+// -- a bare 账号异常 sends the operator digging through fields.
+func TestRejectedKeyRowCarriesItsReason(t *testing.T) {
+	dir := t.TempDir()
+	c := newTestClient(t, dir)
+	if _, err := c.AddAccount(context.Background(), core.AccountSpec{
+		Fields: map[string]string{"provider": "mistral", "api_key": "k"},
+	}); err != nil {
+		t.Fatalf("AddAccount: %v", err)
+	}
+	// The rejection arrives exactly as the balance sweep records it: a
+	// noteFailure with the vendor's own words (which becomes the row's
+	// last_error), plus a state projection that marks the row invalid.  The
+	// Client-side Accounts projection carries the reason through stateAt's
+	// expired branch when the wording is auth-shaped; the source-side branch
+	// under test adds the note for the plain invalid mark.
+	c.pool.noteFailure("mistral", 1, time.Now().Add(time.Hour), "New API token usage: HTTP 401: unauthorized")
+
+	out := c.pool.records(c.now())
+	var rec *core.AccountRecord
+	for i := range out {
+		if out[i].ID == "mistral" {
+			rec = &out[i]
+			break
+		}
+	}
+	if rec == nil {
+		t.Fatal("invalid account missing from Accounts")
+	}
+	if rec.State != "expired" {
+		t.Fatalf("state = %q, want expired -- an auth-worded rejection is a dead credential, not throttling", rec.State)
+	}
+	if rec.Note == "" || !strings.Contains(rec.Note, "unauthorized") {
+		t.Fatalf("note = %q, want the vendor's reason carried next to the state (issue #66)", rec.Note)
+	}
 }

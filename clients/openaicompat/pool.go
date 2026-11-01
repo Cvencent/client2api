@@ -326,10 +326,15 @@ func (p *providerPool) records(now time.Time) []core.AccountRecord {
 
 // stateAt is the pool state one provider is in right now.  A parked provider
 // reads as "cooling" so the panel and the picker agree; the operator can still
-// see it, and it becomes selectable again when the window expires.
+// see it, and it becomes selectable again when the window expires.  A disabled
+// provider is an operator decision, not a broken credential: reporting it as
+// "invalid" pointed the panel's 账号异常 bucket at rows whose only fix is
+// flipping the enable switch back, so it reports "disabled" (issue #66) --
+// workbuddy already speaks the same word, and the panel has had the bucket all
+// along.
 func (p *providerPool) stateAt(now time.Time, a *providerRecord) string {
 	if a.Disabled {
-		return "invalid"
+		return "disabled"
 	}
 	if a.cooldownUntil.IsZero() || !now.Before(a.cooldownUntil) {
 		return "ready"
@@ -345,7 +350,7 @@ func (p *providerPool) stateAt(now time.Time, a *providerRecord) string {
 // noteAt is the one-line explanation the panel shows next to a parked row.
 func (p *providerPool) noteAt(now time.Time, a *providerRecord) string {
 	if a.Disabled {
-		return ""
+		return "operator disabled; re-enable to serve traffic"
 	}
 	if a.cooldownUntil.IsZero() || !now.Before(a.cooldownUntil) {
 		return ""

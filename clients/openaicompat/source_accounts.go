@@ -36,6 +36,15 @@ func (s *source) Accounts(context.Context) ([]core.AccountRecord, error) {
 		}
 		if s.invalid[out[i].ID] {
 			out[i].State = "invalid"
+			// The rejection reason is already on the row's last_error; surface
+			// it in the note so 账号异常 carries the next step (issue #66).
+			if out[i].Note == "" {
+				if last, _ := out[i].Fields["last_error"].(string); last != "" {
+					out[i].Note = "key rejected: " + last
+				} else {
+					out[i].Note = "key rejected: re-import the key"
+				}
+			}
 			continue
 		}
 		if time.Now().Before(s.cooling[out[i].ID]) {

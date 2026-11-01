@@ -266,7 +266,12 @@ func (s *source) transportLocked() *Client {
 	for _, p := range s.rows {
 		providers = append(providers, s.providerLocked(p))
 	}
-	return &Client{instanceName: s.name, deps: s.depsWithClient(), cfg: Config{MaxTokensField: field, APIFormat: normalizeAPIFormat(s.cfg.APIFormat), Providers: providers}, pool: s.pool, now: time.Now, wireModel: s.wireModel}
+	// The relay's own chat timeout travels with the transport so one operator
+	// knob bounds every request this source makes: a relay that accepts the
+	// connection and then hangs would otherwise hold a platform in-flight slot
+	// for the module-wide default, and a couple of those look like a platform
+	// at its ceiling.  Empty keeps the module default (see cfg.chatTimeout).
+	return &Client{instanceName: s.name, deps: s.depsWithClient(), cfg: Config{MaxTokensField: field, APIFormat: normalizeAPIFormat(s.cfg.APIFormat), ChatTimeout: s.cfg.ChatTimeout, Providers: providers}, pool: s.pool, now: time.Now, wireModel: s.wireModel}
 }
 func (s *source) providerLocked(p storedProvider) ProviderConfig {
 	ua := p.UserAgent
@@ -351,10 +356,24 @@ func (s *source) Status(ctx context.Context) core.Status {
 		a.Extra["model_cooldowns"] = parks
 		switch {
 		case !a.Enabled:
-			a.State = "invalid"
+			// An operator-disabled row is a decision, not a fault: the panel's
+			// disabled bucket is where it belongs, and 账号异常's re-login
+			// advice would send the operator the wrong way (issue #66).
+			a.State = "disabled"
+			a.Note = "operator disabled; re-enable to serve traffic"
 		case s.invalid[a.ID]:
 			// The vendor rejected this key; waiting does not bring it back.
+			// The rejection reason lives in the row's own last_error -- say so
+			// next to the state instead of a bare 账号异常 that leaves the
+			// operator guessing (issue #66).
 			a.State = "invalid"
+			if a.Note == "" {
+				if last, _ := a.Extra["last_error"].(string); last != "" {
+					a.Note = "key rejected: " + last
+				} else {
+					a.Note = "key rejected: re-import the key"
+				}
+			}
 		case now.Before(s.cooling[a.ID]):
 			a.State = "cooling"
 			if limitBlock != nil {

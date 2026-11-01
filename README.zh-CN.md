@@ -5,7 +5,7 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-当前版本：**0.5.49**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：**0.5.50**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 流式断流排查：升级后系统日志新增 `stream: id=...` 终止诊断，包含协议、平台/模型、
 上游事件数、`finish_reason`、正文/推理字节数、工具调用数、completion token、
@@ -227,6 +227,13 @@ client2api 是一个**个人自用**的 OpenAI 兼容网关。它把你自己在
   显式 `0` 表示不限制。`cooldown` 是通用冷却，`rate_limit_cooldown`、`quota_cooldown`、
   `auth_cooldown`、`upstream_cooldown` 分别覆盖限流、额度、鉴权和上游故障；专用值优先于
   通用值，留空使用默认值（限流 30s、额度和鉴权 5m、上游 10s），`0s` 关闭对应冷却。
+- `chat_timeout` 限制这个中转站单次上游对话的硬上限（默认 `10m`）。它重要是因为一条请求在
+  整个生命周期里都占着该平台的在途名额：中转站接了连接却不再回数据时，这些名额会一直被占
+  到超时，于是两三条卡死的请求看起来就和「平台并发打满」一模一样——后续请求被
+  “已经达到平台在途上限”跳过，其实并没有在服务任何人。对偶尔卡死的中转站把它调小
+  （例如 `2m`），卡住的请求会更快释放名额并切到下一个平台，而不是白等十分钟。等待首帧的
+  时限从请求发出的那一刻起用同一个值计算，所以「响应头都还没回来」的卡死会比这个值更早被
+  切断；留空保持默认。
 - 中转站支持扫描模型；扫描失败时保留上一次成功的模型目录。
 - 中转站余额刷新支持 `balance_protocol`：`auto`（默认）依次探测 New API `GET /api/usage/token/`、Sub2API `GET /v1/usage`、New API 控制台 `GET /api/user/self`（仅在配置控制台凭据时），最后是 OpenAI Billing 的 `credit_grants` 与 `subscription`。也可固定为 `newapi`、`sub2api`、`openai_billing`，或设为 `none` 关闭查询。
 - `balance_quota_per_usd`（默认 `500000`）用于把 New API 的额度单位换算成美元；Sub2API 和 OpenAI Billing 直接按美元读取。

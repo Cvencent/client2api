@@ -33,6 +33,28 @@
 - `client2api-setup-0.5.47.exe`（空包，不含账号凭据或本机配置）
 - SHA256：`EE780BD84B0C8A1CAB096AE8354A353C5B968C516576BF02DD775B472C27CD7F`
 
+## [0.5.50] - 2026-11-02
+
+### Fixed
+
+- **openaicompat 系的「操作员停用」不再读成「账号异常」。** 两个半区（pool 的
+  `stateAt` 与 source 的 Status/Accounts 投影）都把 disabled 折叠成 invalid，
+  停用账号被面板的「账号异常」桶收走（提示重登——永远不会改变这行），「已停用」
+  KPI 恒为 0。现在停用行报 `disabled`（workbuddy 同款字面量，面板桶现成）并带
+  一行「操作员停用；重新启用即可」的 note；vendor 拒收置 invalid 的行把行内
+  last_error 的原因带进 note（「key rejected: …」），裸「账号异常」不再让操作员
+  翻字段猜原因。
+- **minimaxcode 失效凭据不再吃必然失败的 oauth 刷新。** #48/#52 的两道 cmd 层闸
+  拦住了「调度器会不会问」，但模块内 `renewable()` 不看账号状态——ensureFresh 的
+  四条调用路径（chat/tasks/余额/签到）任何一条摸到 vendor 已吊销的账号都会白打
+  一次 token 交换（每账号每天 ~288 次）。`renewable()` 现在对 state=invalid 直接
+  返回 false；操作员重新登录后 markNeedsLogin 的反向路径自然恢复续期。
+
+### Installer
+
+- `client2api-setup-0.5.50.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `F48DE078AB5FB6490D3FAC72E59FF903253E98CC2FED736916337EDFB15370A7`
+
 ## [0.5.49] - 2026-11-02
 
 ### Fixed

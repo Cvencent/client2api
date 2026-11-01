@@ -5,7 +5,7 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-Current version: **0.5.49**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
+Current version: **0.5.50**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
 
 client2api is a personal, local-only OpenAI-compatible gateway. It aggregates
 the accounts and API Keys **you own** on different AI coding clients and
@@ -593,6 +593,18 @@ loop that never ended.
   `auth_cooldown` and `upstream_cooldown` override it per failure kind. An unset
   specific value uses the built-in default (30s for rate limits, 5m for quota/auth,
   10s for upstream failures); `0s` disables that cooldown.
+- `chat_timeout` bounds one upstream completion for that relay (default `10m`).
+  It matters because a request owns its platform in-flight slot for its whole
+  life: a relay that accepts the connection and then stops writing holds those
+  slots until the timeout, so two or three stalled requests can look exactly like
+  a platform at its ceiling, and later requests are skipped with
+  "already at its platform in-flight ceiling" while nothing is really being
+  served. Lower it (for example `2m`) for a relay that occasionally wedges, so a
+  stalled request releases its slot and the chain moves on instead of waiting ten
+  minutes. The wait for the first visible frame is bounded by this same deadline
+  from the moment the request is sent, so a stall *before* the response headers
+  is cut even sooner than the full value; leave the field empty to keep the
+  default.
 - Model scanning for relay platforms, with cached catalogues when a scan fails. A vendor that names catalogue ids with a literal `models/` prefix (Google's OpenAI-compatible layer) has that prefix stripped, so relay routing ids stay `relay/<model>`.
 - Balance refresh for relay platforms via `balance_protocol`: `auto` (default) probes New API `GET /api/usage/token/`, then Sub2API `GET /v1/usage`, then the New API console `GET /api/user/self` (only when console credentials are set), then OpenAI Billing `credit_grants` + `subscription`. Pin a single protocol with `newapi`, `sub2api` or `openai_billing`, or set `none` to skip balance reads.
 - `balance_quota_per_usd` (default `500000`) converts New API quota units to USD; Sub2API and OpenAI Billing values are read as real USD.

@@ -150,3 +150,49 @@ func TestRestartDoesNotParkAHealthyManagedRow(t *testing.T) {
 		t.Fatalf("restart reported the managed row as %q (%q), want ready", recs[0].State, recs[0].Note)
 	}
 }
+
+// TestEnsureFreshSkipsAnInvalidAccount pins issue #68: once the vendor has
+// killed the authorization (markNeedsLogin -> state=invalid), the refresh
+// token is revoked and every oauth exchange is guaranteed to answer
+// invalid_grant.  The cmd-layer gates (#48 renew sweep, #52 balance sweep)
+// stop the scheduler from ASKING about the account; this gate stops the module
+// from spending a doomed token exchange whenever anything (chat, tasks, the
+// balance sweep, check-in status) reaches ensureFresh anyway.
+func TestEnsureFreshSkipsAnInvalidAccount(t *testing.T) {
+	const id = "minimaxcode:prod/cn/mcode-public"
+
+	c, ft := newTestClient(t, loginConfig(), func(req *http.Request) (*http.Response, error) {
+		t.Errorf("token endpoint was called for an invalid account: %s %s", req.Method, req.URL)
+		return jsonResponse(http.StatusOK,
+			`{"access_token":"mmoat_should_not_happen","refresh_token":"mmort_x","expires_in":3600}`), nil
+	})
+
+	c.pool.mu.Lock()
+	c.pool.ensureLocked()
+	c.pool.putManagedLocked(&Account{
+		ID:           id,
+		Label:        "MiniMax-dead",
+		Token:        "mmoat_lapsed",
+		Source:       sourceManaged,
+		Origin:       managedFile,
+		Enabled:      true,
+		Managed:      true,
+		State:        stateInvalid,
+		RefreshToken: "mmort_revoked",
+		ClientID:     oauthClientIDDesktop,
+		ExpiresAt:    time.Now().Add(-time.Minute),
+	})
+	_ = c.pool.saveManagedLocked()
+	c.pool.mu.Unlock()
+
+	got := c.ensureFresh(context.Background(), id)
+	if got.Token != "mmoat_lapsed" {
+		t.Fatalf("ensureFresh renewed a dead credential: token %q, want the lapsed one untouched", got.Token)
+	}
+	if got.State != stateInvalid {
+		t.Fatalf("state = %q, want invalid preserved (login_required still stands)", got.State)
+	}
+	if n := ft.count(); n != 0 {
+		t.Fatalf("token endpoint was called %d times, want 0 -- the revoked token must not be spent", n)
+	}
+}
