@@ -6,6 +6,25 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.5.44] - 2026-11-01
+
+### Fixed
+
+- **账号表列定义与单元格数同进同退。** 无余额能力的客户端（kilocode/kimi/
+  opencode/doubaoime/openai-compat 等 5 个）行内按 `showBal` 少渲染一个
+  余额 `<td>`，但 `<colgroup>` 的 `<col class="col-bal">` 静态写死——
+  `table-layout:fixed` 下声明列仍占位，表右端空出 `col-acts` 宽度的死白带，
+  操作列被挤到 117px、5 个控件叠成 4 行（行高 137px，同账号数需要 2.7 倍
+  垂直空间），「测试模型」下拉窄到读不出模型名。现在 `body.hide-bal` 同时
+  收起该列定义，12 个单元格铺满 12 列，`col-acts` 回到声明宽度；并补了
+  「col 定义跟着单元格走」的回归断言（原测试只数源码字符串，列错位照样
+  13=13）。
+
+### Installer
+
+- `client2api-setup-0.5.44.exe`（空包，不含账号凭据或本机配置）
+- SHA256：`F35CD1F03771A5F1A82D0C00448F79C03720115DA27842FAA6A638C06A682A79`
+
 ## [0.5.43] - 2026-11-01
 
 ### Fixed

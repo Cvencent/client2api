@@ -294,3 +294,21 @@ func TestPoolStatsIDGuardCatchesARenamedTile(t *testing.T) {
 	}
 	t.Error("shell id 守卫对改名后的 #sSticky 没意见：它守不住这一块界面")
 }
+
+// TestBalanceColumnDefinitionFollowsTheCells 钉住 issue #44 的回归断言：
+// 无余额能力时行内少渲染一个余额 td，colgroup 的 <col class="col-bal"> 也必须
+// 同时收起——table-layout:fixed 下声明列不收，表右端就空出 col-acts 宽度的
+// 死白带，操作列被挤成两列网格叠 4 行。三个条件缺一不可：colgroup 静态存在
+// （12 列其余表头还在）、hide-bal 藏单元格、hide-bal 同时收列定义。
+func TestBalanceColumnDefinitionFollowsTheCells(t *testing.T) {
+	src := poolStatsUISource(t)
+	if !strings.Contains(src, `<col class="col-bal">`) {
+		t.Fatal("colgroup 里找不到余额列定义（<col class=\"col-bal\">），列结构变了需要同步本测试")
+	}
+	if !strings.Contains(src, "body.hide-bal .c-bal { display: none; }") {
+		t.Error("hide-bal 不再隐藏余额单元格：无余额能力的客户端会多出一个空单元格")
+	}
+	if !strings.Contains(src, "body.hide-bal col.col-bal { display: none; }") {
+		t.Error("hide-bal 没有同时收起 colgroup 的余额列定义：table-layout:fixed 下第 13 列永久占位，表右端空出 22.5% 死白带（issue #44）")
+	}
+}

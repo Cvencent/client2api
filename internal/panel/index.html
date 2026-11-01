@@ -1531,6 +1531,12 @@ button.chip.on { background: var(--accent-soft); color: var(--accent); border-co
 .acc .c-bal .bal-line { display: block; color: var(--ink-3); font-size: 10.5px; margin-top: 2px; }
 .acc .c-bal .bar i { display: block; height: 100%; background: var(--ok); }
 body.hide-bal .c-bal { display: none; }
+/* 列定义与单元格数同进同退（issue #44）：行内按 showBal 少渲染一个余额
+   td，但 colgroup 的 <col class="col-bal"> 原来静态写死——table-layout:fixed
+   下声明列仍占位，表右端空出 22.5% 的死白带，操作列被挤成 117px、按钮叠
+   4 行。这里让该列跟着 body.hide-bal 一起收起：12 个单元格铺满 12 列，
+   col-acts 天然回到声明宽度。 */
+body.hide-bal col.col-bal { display: none; }
 /* 一个厂商账号一行，它下面缩进的是这个账号的各个登录通道。分组行稍微加重、通道行
    用左侧竖线连起来，这样"这几行是同一个账号"是一眼能看出来的，而不用去读备注。
    通道行默认收起：账号池先回答"有哪些账号"，"这个账号是哪几条通道"是第二步。 */
