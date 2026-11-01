@@ -1742,14 +1742,33 @@ func writeErr(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]any{"error": core.Redact(msg)})
 }
 
+// maxPanelBody bounds one panel API request body.  16 MiB: the chat page
+// PATCHes a whole conversation's messages on every turn, and a long session
+// crosses 1 MiB in real use -- at the old 1 MiB limit the reader silently
+// truncated the body, json.Unmarshal answered "unexpected end of JSON input",
+// and the turn the operator just watched appear was wiped by the follow-up
+// reload (issue #78).  16 MiB clears the largest realistic transcript while
+// staying well under any sane request timeout.
+const maxPanelBody = 16 << 20
+
+// errBodyTooLarge names the truncation case so the caller can answer 413
+// ("payload too large") instead of a misleading "invalid JSON".
+var errBodyTooLarge = errors.New("request body exceeds the panel limit")
+
 // decodeBody reads and decodes a JSON request body, tolerating an empty body.
+// The limit is maxPanelBody plus one byte: reading one byte past the cap is
+// how "this body was larger than the limit" is distinguished from "this body
+// was valid but truncated by the reader".
 func decodeBody(r *http.Request, v any) error {
 	if r.Body == nil {
 		return nil
 	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxPanelBody+1))
 	if err != nil {
 		return err
+	}
+	if len(body) > maxPanelBody {
+		return fmt.Errorf("%w (%s)", errBodyTooLarge, formatBytes(maxPanelBody))
 	}
 	if len(strings.TrimSpace(string(body))) == 0 {
 		return nil
@@ -1757,9 +1776,21 @@ func decodeBody(r *http.Request, v any) error {
 	return json.Unmarshal(body, v)
 }
 
+// formatBytes renders a byte count for an error message.
+func formatBytes(n int) string {
+	if n >= 1<<20 {
+		return fmt.Sprintf("%d MiB", n>>20)
+	}
+	return fmt.Sprintf("%d KiB", n>>10)
+}
+
 // decodeJSON is decodeBody plus the HTTP error response.
 func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	if err := decodeBody(r, v); err != nil {
+		if errors.Is(err, errBodyTooLarge) {
+			writeErr(w, http.StatusRequestEntityTooLarge, err.Error())
+			return false
+		}
 		writeErr(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
 		return false
 	}

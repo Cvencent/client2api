@@ -17380,6 +17380,11 @@ function pfSyncPrioritySchedule() {
     const rows = Array.from(box.querySelectorAll(".pfSchedRow"));
     const cols = box.querySelector(".pfSchedCols");
     let active = null;
+    // 有内容的行数（issue #80）：渲染层在无规则时故意塞一行空占位
+    // （(rules.length ? rules : [{}])），把 DOM 行数当徽标会让「一条都没配」
+    // 恒显「1 条」，和同屏的「当前未命中分时规则」互相打脸。格式无效的行也
+    // 不算——它连保存都会被拒，计数只对能存下来的规则负责。
+    let realRows = 0;
     rows.forEach(row => {
       const startRaw = row.querySelector(".pfSchedStart").value.trim();
       const endRaw = row.querySelector(".pfSchedEnd").value.trim();
@@ -17394,11 +17399,12 @@ function pfSyncPrioritySchedule() {
       const flag = row.querySelector(".pfSchedFlag");
       if (flag) flag.textContent = bad ? "时间格式无效" : (on ? "当前生效" : "未生效");
       if (on) active = prioRaw;
+      if (!empty && !bad) realRows++;
     });
     if (cols) cols.hidden = rows.length === 0;
     const toggle = plat.querySelector(".pfSchedToggle");
     const badge = toggle ? toggle.querySelector(".pfSchedCount") : null;
-    if (badge) badge.textContent = rows.length + " 条";
+    if (badge) badge.textContent = realRows === 0 ? "未配置" : realRows + " 条";
     const nowEl = box.querySelector(".pfSchedNow");
     if (nowEl) {
       nowEl.textContent = active == null ? "当前未命中分时规则" : ("当前生效优先级 " + active);
@@ -23950,10 +23956,15 @@ async function chatSaveThread(id, patch, quiet) {
   if (!id) return null;
   const r = await api("/panel/api/chat/conversations/" + encodeURIComponent(id), { method: "PATCH", body: patch });
   if (!r.ok) {
-    if (!quiet) toast("保存对话失败：" + r.err, "err");
+    // quiet=false 的调用自己弹 toast；settle 的静默保存（quiet=true）失败
+    // 也必须出声（issue #78）：保存 400 后紧跟的重读会把刚出现的回答从屏幕
+    // 上抹掉，操作员看到的是"回答闪现一下然后消失"而没有任何解释——上游的
+    // 钱已经花了。
+    toast("保存对话失败：" + r.err + (r.status === 413 ? "（对话记录超过面板请求上限，这条对话已无法继续保存）" : ""), "err");
     return null;
   }
   const saved = r.data;
+  if (CHAT.current === id) CHAT.saveFailed = false;
   if (saved) {
     // 保存的是可回传上游的干净上下文（user/assistant）。当前会话里可能还有
     // 失败气泡（role=error），它不会写进记录，但必须留在屏幕上——否则一保存，
@@ -24137,7 +24148,9 @@ async function chatSend() {
       key: CHAT.key || "",
       title: (cur && cur.title && cur.title !== "新对话") ? cur.title : text.slice(0, 24),
     }, true);
-    if (turnOK) await chatLoadThreads();
+    // 保存失败时不重读（issue #78）：服务端那份记录还没有这一轮，重读会把
+    // 屏幕上刚出现的回答抹掉。保留内存态，操作员至少能看到并复制回答。
+    if (turnOK && !CHAT.saveFailed) await chatLoadThreads();
   };
   const fail = async (msg, status) => { turnOK = false; out.role = "error"; out.content = msg; chatSettle(out, status, t0, ttft, usage, finish); await settle(); };
 
