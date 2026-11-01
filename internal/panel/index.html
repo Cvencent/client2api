@@ -5792,8 +5792,11 @@ html:not([data-theme="light"]) body::after {
   opacity: .72;
 }
 .chips > .chip.idle:hover { opacity: 1; background: var(--surface-2); border-color: var(--line); }
-.chips > .chip.has { color: var(--ink-2); }
-.chips > .chip.has b { color: var(--ink); font-variant-numeric: tabular-nums; }
+.chips > .chip.has:not(.on) { color: var(--ink-2); }
+.chips > .chip.has:not(.on) b { color: var(--ink); font-variant-numeric: tabular-nums; }
+/* 选中档的白字由 .chips .chip.on 一条规则说话（issue #46）：.has 的次级
+   灰曾因选择器权重（0,2,1 > 0,2,0）把 on 态的白字压回 --ink-2，实测
+   两套主题 1.06~2.55:1，全不达 AA。:not(.on) 让覆盖只发生在未选中档。 */
 /* 两档的分界：第一个 idle 之前画一条淡竖线 */
 .chips > .chip.has + .chip.idle { margin-left: 6px; }
 .chips > .chip.has + .chip.idle::before {
@@ -13889,7 +13892,11 @@ function renderAccounts() {
   }).join("");
   // 账号列的 hint 在 168px 列宽下会被省略号截断（id 又先截到 40 字符）。把截断后
   // 的全文回填进 title，鼠标停一下就能看全；这里统一补一次，不在行模板里再拼一遍。
+  // 账号列两行都按截断即给 title（issue #45）：hint 原来就有，.name（账号
+  // 标识/备注）被漏掉——它才是最容易被 150px 截断的那行，卡片视图的
+  // .ac-name 同字段是有 title 的，表格这条路没接上。
   tb.querySelectorAll("td:nth-child(2) .hint").forEach(el => { el.title = el.textContent; });
+  tb.querySelectorAll("td:nth-child(2) .name").forEach(el => { el.title = el.textContent; });
   // 同一批数据再画一遍卡片墙，并按记住的模式决定谁可见（CSS 用 body 类切换）。
   // 卡片墙与表格吃同一个豁免（issue #25）：展开卡里的滑杆正被拖动时跳过本轮。
   if (!editingInTable) renderAcctBoard(pageRows, caps, acts, showBal);
