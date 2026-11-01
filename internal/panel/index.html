@@ -9019,9 +9019,34 @@ const REFRESH_BY_VIEW = {
   "config": () => renderConfig(),
   "logs": () => renderLogs(),
 };
+// refreshBusy 是顶栏刷新的在途互斥（issue #43）：上一轮没回来就不接下一轮。
+// 连点几下 = 几轮全站重读（实测一次点击 28 请求/152KB，连点 3 下 72 请求），
+// 而按钮原本既不置灰也不提示——「点了没反应」恰恰是人再点一次的原因。
+let refreshBusy = false;
 function refreshCurrentView() {
+  // 流式中的对话页不该被刷新碰（issue #42）：renderChat 会从服务端记录重读
+  // 对话，而这一轮还没落盘。只刷新模型目录，界面消息保持内存态。
+  if (VIEW === "chat" && CHAT.busy) {
+    refreshModelCatalog(false).catch(() => {});
+    return;
+  }
+  if (refreshBusy) return;
+  refreshBusy = true;
+  const btn = $("#btnRefresh");
+  const keep = btn.textContent;
+  btn.disabled = true; btn.textContent = "刷新中…";
+  const done = () => { refreshBusy = false; btn.disabled = false; btn.textContent = keep; };
   const fn = REFRESH_BY_VIEW[VIEW] || REFRESH_BY_VIEW.accounts;
-  fn();
+  try {
+    const r = fn();
+    // 同步视图直接收尾；返回 Promise 的（loadAllAccounts / renderModels 等）
+    // 等它回来再恢复——失败也要恢复，按钮不能卡死在「刷新中」。
+    if (r && typeof r.catch === "function") r.then(done, done);
+    else done();
+  } catch (e) {
+    done();
+    throw e;
+  }
 }
 
 /* ── 账号池 ───────────────────────────────────────────────────────────── */
@@ -23667,6 +23692,14 @@ async function chatLoadThreads(keepCurrent) {
   if (CHAT.current && !CHAT.threads.some(t => t.id === CHAT.current)) CHAT.current = "";
   if (!CHAT.current && keepCurrent !== false && CHAT.threads.length) CHAT.current = CHAT.threads[0].id;
   const cur = CHAT.threads.find(t => t.id === CHAT.current);
+  // 流式中的回合还没落盘（issue #42）：服务端记录里这一轮是空的，此时整体
+  // 替换 CHAT.msgs 会把正在生成的对话从界面上整个抹掉——用户付出上游额度，
+  // 得到「还没有对话」的空态和一条 messages:[] 的记录。busy 期间只刷新
+  // 列表与标题，屏幕上的消息保持内存态；settle 落盘后的那次重读才是真相。
+  if (CHAT.busy) {
+    chatDrawThreads();
+    return true;
+  }
   CHAT.msgs = cur ? (cur.messages || []) : [];
   CHAT.key = (cur && cur.key) || "";
   chatDrawThreads();
@@ -23862,6 +23895,9 @@ function chatScrollBottom() {
   if (box) box.scrollTop = box.scrollHeight;
 }
 async function renderChat(force) {
+  // 流式中的回合不能被「重读服务端记录」覆盖（issue #42）：切走再切回、点
+  // 顶栏刷新都会走到这里。busy 期间照常填充下拉与账号（界面要保持可用），
+  // 但 chatLoadThreads 会保留内存态消息，等 settle 落盘后再重读。
   if (force || !CHAT.models.length) CHAT.models = await chatModels();
   chatFillClients(); chatFillModels(); chatFillAccounts();
   await chatLoadThreads();
@@ -23929,6 +23965,11 @@ async function chatSend() {
   if (!text) return;
   const model = $("#chatModel").value;
   if (!model) { toast("没有可用模型", "err"); return; }
+  // 这一轮真正使用的 client/account 在发送时刻定格（issue #42 顺带）：settle
+  // 落盘时下拉框可能已被用户切走，读当时值会写出 client 与 model 自相矛盾、
+  // 重开时模型选择静默丢失的记录。
+  const turnClient = $("#chatClient").value || "";
+  const turnAccount = $("#chatAccount").value || "";
   if (!(await chatEnsureThread())) return;
   const threadID = CHAT.current;
   if (!(await chatBind())) return;
@@ -23950,6 +23991,9 @@ async function chatSend() {
   const out = { role: "assistant", content: "", reasoning: "" };
   CHAT.msgs.push(out);
   CHAT.busy = true; $("#btnChatSend").disabled = true; $("#btnChatStop").disabled = false;
+  // 流式期间锁住选择控件：切换它们既影响不了已在途的请求，又会让 settle 落盘
+  // 出自相矛盾的记录（issue #42 顺带）。
+  $("#chatClient").disabled = true; $("#chatModel").disabled = true; $("#chatAccount").disabled = true;
   CHAT.ctrl = new AbortController();
   chatDraw();
   chatScrollBottom();
@@ -23960,14 +24004,16 @@ async function chatSend() {
   // 记录，重读会把它从屏幕上抹掉，看起来像错误自己消失了。
   let turnOK = true;
   const settle = async () => {
-    CHAT.busy = false; $("#btnChatSend").disabled = false; $("#btnChatStop").disabled = true; CHAT.ctrl = null;
+    CHAT.busy = false;
+    $("#btnChatSend").disabled = false; $("#btnChatStop").disabled = true; CHAT.ctrl = null;
+    $("#chatClient").disabled = false; $("#chatModel").disabled = false; $("#chatAccount").disabled = false;
     chatDraw();
     const cur = chatCurrentThread();
     await chatSaveThread(threadID, {
       messages: CHAT.msgs.filter(m => m.role === "user" || m.role === "assistant"),
       model: model,
-      client: $("#chatClient").value || "",
-      account: $("#chatAccount").value || "",
+      client: turnClient,
+      account: turnAccount,
       key: CHAT.key || "",
       title: (cur && cur.title && cur.title !== "新对话") ? cur.title : text.slice(0, 24),
     }, true);
@@ -24157,7 +24203,7 @@ async function refreshAll(loud) {
   refreshAlertBadge().catch(() => {});
   // 总览读的是 ACCTS / SNAP，必须在账号加载完之后再画一次；否则首屏会显示 0。
   renderOverview();
-  if (VIEW === "chat") renderChat(true);
+  if (VIEW === "chat" && !CHAT.busy) renderChat(true);
   if (VIEW === "usage") renderUsage();
   if (VIEW === "alerts") renderAlerts();
   if (VIEW === "credits") renderCredits();
