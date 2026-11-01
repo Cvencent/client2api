@@ -7462,6 +7462,10 @@ html:not([data-theme="light"]) body::after {
           <label class="fld"><span class="lb">鉴权冷却</span><input id="sourceAuthCooldown" type="text" placeholder="默认 5m" autocomplete="off" spellcheck="false"><span class="hint">API Key 被上游拒绝后的冷却；0s 关闭。</span></label>
           <label class="fld"><span class="lb">上游故障冷却</span><input id="sourceUpstreamCooldown" type="text" placeholder="默认 10s" autocomplete="off" spellcheck="false"><span class="hint">网络、5xx 等上游故障后的冷却；0s 关闭。</span></label>
         </div>
+        <div class="hint">对话超时是一次上游请求的硬上限（默认 10m）。中转站接了连接却不回数据时，请求会一直占着这个平台的在途名额直到超时；调小它能让卡死的请求更快释放、更早切到别的平台。</div>
+        <div class="grid2">
+          <label class="fld"><span class="lb">对话超时</span><input id="sourceChatTimeout" type="text" placeholder="留空 = 默认 10m" autocomplete="off" spellcheck="false"><span class="hint">支持 Go duration 写法（30s、2m、10m）；留空用默认 10m。多个卡死请求会占满并发上限，导致后续请求被跳过。</span></label>
+        </div>
       </fieldset>
       <label class="chk"><input id="sourceEnabled" type="checkbox" checked>启用平台</label>
       <div class="state err" id="sourceError" hidden></div>
@@ -8134,6 +8138,7 @@ function openSource(id) {
   $("#sourceQuotaCooldown").value = cfg.quota_cooldown || "";
   $("#sourceAuthCooldown").value = cfg.auth_cooldown || "";
   $("#sourceUpstreamCooldown").value = cfg.upstream_cooldown || "";
+  $("#sourceChatTimeout").value = cfg.chat_timeout || "";
   $("#sourceEnabled").checked = !cfg.disabled;
   $("#sourceKeyField").hidden = !!id;
   $("#sourceError").hidden = true;
@@ -8238,6 +8243,9 @@ async function saveSource(ev) {
       const value = $(selector).value.trim();
       if (value) cfg[field] = value;
     }
+    // 对话超时：留空表示沿用模块默认（10m），所以只有填了才写进配置。
+    const chatTimeout = $("#sourceChatTimeout").value.trim();
+    if (chatTimeout) cfg.chat_timeout = chatTimeout;
     if (key && cfg.disabled) throw new Error("启用平台后才能添加首个 API Key");
     const saved = await api("/panel/api/sources/" + encodeURIComponent(id), { method: "PUT", body: cfg });
     if (!saved.ok) throw new Error(saved.err);
@@ -13835,6 +13843,14 @@ function renderAccounts() {
   const balRefresh = (BALS[CUR] || {}).refresh;
   if (balRefresh && balRefresh.running) accText += " · 余额刷新 " + (balRefresh.done || 0) + "/" + (balRefresh.total || 0);
   if (full) accText += " · " + full + " 个账号在途占满";
+  // 平台总并发（issue #67）：网关此刻对这个平台承载多少请求、离操作员设的上限
+  // 还有多远。上限 0 是「未配置」，读作「不限」——显示成 0 会让人以为平台被锁死
+  // 在 0，那正是这单要治的「看起来都是无限/都是零」的误读。服务端没带这块（老
+  // 版本载荷）时一个字不加，保持向后兼容。
+  const pif = (px || {}).platform_in_flight;
+  if (pif && typeof pif.in_flight === "number") {
+    accText += " · 平台在途 " + pif.in_flight + (pif.ceiling > 0 ? " / 上限 " + pif.ceiling : "（不限）");
+  }
   // 静默轮询读取失败时不弹 toast（每 5s 一次会刷屏），理由记在这里：这一行
   // 本来就属于「当前客户端怎么了」，比一个转瞬即逝的浮层更容易看见。
   if (rec.error) accText += " · 读取失败：" + rec.error;
@@ -17822,7 +17838,10 @@ function routeStepHTML(s) {
   const ctxTip = ctx > 0
     ? "上下文窗口 " + numf(ctx) + " tokens" + (ctxSource ? "，来源：" + ctxSource : "")
     : "模型目录没有公开这个模型的上下文窗口";
-  return '<div class="pfplat rpStep" draggable="true" data-rp-platform="' + esc(s.platform) + '" data-rp-position="' + s.position + '">' +
+  // 一个平台可能贡献多个候选模型（显式成员 + Auto 池展开的等价 id），所以
+  // 行的身份是 (平台, 模型)，不是平台：只按平台索引会让同平台的两行互相覆盖，
+  // 拖动 / 上下移写回时就会丢掉其中一行。
+  return '<div class="pfplat rpStep" draggable="true" data-rp-platform="' + esc(s.platform) + '" data-rp-model="' + esc(s.model_id) + '" data-rp-position="' + s.position + '">' +
     '<div class="pfhead">' +
     '<span class="rpDrag" title="拖动调整优先级" aria-hidden="true">≡</span>' +
     '<span class="pfname"><span class="rpPos">#' + s.position + '</span> · ' + esc(platformLabel(s.platform)) + '</span>' +
@@ -17836,6 +17855,14 @@ function routeStepHTML(s) {
     '<button class="xs rpMove" type="button" data-rp-move="1" aria-label="下移 ' + esc(platformLabel(s.platform)) + '">下移</button>' +
     '<span class="rpSpeed hint">未测速</span>' +
     '</div></div>';
+}
+
+// routeRowKey 是链路里一行的稳定身份：计划返回的 (平台, 模型)。缺模型时退回
+// 平台名，兼容没有 model_id 的旧响应。
+function routeRowKey(platform, model) {
+  const p = String(platform || "");
+  const m = String(model || "");
+  return m ? p + "\u0000" + m : p;
 }
 
 function routeSpeedCellHTML(x) {
@@ -17876,7 +17903,7 @@ async function runRoutePlan() {
     rows.push('<div class="rpList">');
     steps.forEach(s => rows.push(routeStepHTML(s)));
     rows.push('</div>');
-    rows.push('<div class="hint">顺序为静态预演：每个平台行显示该模型生效的上下文窗口与来源；实际请求还会受账号可用性、冷却与健康状态影响。拖动或上移下移会把顺序写回该平台的模型优先级（比下一行小 1），测速会为每个平台实际调用一次。</div>');
+    rows.push('<div class="hint">顺序为静态预演：每一行是路由链上的一个候选（平台 + 具体模型）。同一个平台可能占多行，例如 Auto 成员展开出它的裸 ID，而操作员又显式配了该平台的另一个模型 —— 运行时两个都会试，所以这里也分行列出。每行显示该模型生效的上下文窗口与来源；实际请求还会受账号可用性、冷却与健康状态影响。拖动或上移下移会把顺序写回该平台的模型优先级（比下一行小 1），测速会为每个候选实际调用一次。</div>');
     out.innerHTML = rows.join("");
   } finally {
     btn.disabled = false;
@@ -17904,9 +17931,11 @@ async function runRouteSpeed() {
   });
   const apply = x => {
     if (!x) return;
-    const platform = String(x.platform || "");
+    // 按 (平台, 模型) 落到唯一一行：一个平台可能有两行候选模型，只按平台匹配
+    // 会把两行都刷成同一次探测的结果。
+    const key = routeRowKey(x.platform, x.model_id);
     out.querySelectorAll(".rpStep").forEach(row => {
-      if (String(row.dataset.rpPlatform || "") !== platform) return;
+      if (routeRowKey(row.dataset.rpPlatform, row.dataset.rpModel) !== key) return;
       const cell = row.querySelector(".rpSpeed");
       if (cell) cell.innerHTML = routeSpeedCellHTML(x);
     });
@@ -18016,11 +18045,13 @@ function renumberRouteRows() {
 async function applyRouteOrder() {
   const list = document.querySelector("#rpResult .rpList");
   if (!list || !RP) return false;
-  const byPlatform = {};
-  (RP.steps || []).forEach(s => { byPlatform[s.platform] = s; });
+  // 索引键是 (平台, 模型)：同一个平台可能有两行候选模型，只按平台索引会让
+  // 后一行覆盖前一行，拖动写回时悄悄丢掉一个模型。
+  const byKey = {};
+  (RP.steps || []).forEach(s => { byKey[routeRowKey(s.platform, s.model_id)] = s; });
   const ordered = Array.from(list.children)
     .filter(el => el.classList && el.classList.contains("rpStep"))
-    .map(row => byPlatform[row.dataset.rpPlatform])
+    .map(row => byKey[routeRowKey(row.dataset.rpPlatform, row.dataset.rpModel)])
     .filter(Boolean);
   const edits = routeOrderEdits(ordered);
   const cards = Array.from(document.querySelectorAll("#pfBody .pfplat"));

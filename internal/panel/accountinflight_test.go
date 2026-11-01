@@ -2,6 +2,7 @@ package panel
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +14,10 @@ type fakeTracker map[string]int
 
 func (f fakeTracker) AccountInFlight(platform, accountID string) int {
 	return f[platform+"\x1f"+accountID]
+}
+
+func (f fakeTracker) PlatformInFlight(platform string) int {
+	return f["platform"+platform]
 }
 
 // statusAccounts builds one module whose Status reports two accounts: one with
@@ -133,5 +138,74 @@ func TestStatusWithoutGatewayCountersLeavesTheCountBlank(t *testing.T) {
 	ownEx := own["extra"].(map[string]any)
 	if ownEx["in_flight"] != float64(5) || ownEx["in_flight_limit"] != float64(1) {
 		t.Errorf("own account extra = %v, want the module's untouched numbers", ownEx)
+	}
+}
+
+// TestStatusCarriesThePlatformConcurrencyRead pins issue #67's platform-level
+// half: the payload names how many requests the gateway is carrying against
+// this platform right now and the operator's ceiling for it, so the accounts
+// table can answer "这个平台现在有多少在打、离上限多远" without a second
+// poll.  ceiling 0 means "no ceiling configured" -- the frontend renders 不限,
+// never a bare 0 that reads back as "locked at zero".
+func TestStatusCarriesThePlatformConcurrencyRead(t *testing.T) {
+	c := &fakeClient{name: "zcode", status: core.Status{Name: "zcode", Ready: true, Accounts: statusAccounts()}}
+	reg := registryOf(c)
+	reg.SetPlatformConfigs(map[string]core.PlatformConfig{"zcode": {MaxInFlight: 8}})
+	h := New(Options{
+		Registry: reg,
+		Started:  time.Now(),
+		InFlight: fakeTracker{"platform\x1fzcode": 3},
+	})
+
+	rec := get(t, h, "/panel/api/status")
+	entry := onlyClient(t, decodeMap(t, rec))
+	pif, ok := entry["platform_in_flight"].(map[string]any)
+	if !ok {
+		t.Fatalf("status carries no platform_in_flight block: %v", entry)
+	}
+	if pif["in_flight"] != float64(3) {
+		t.Errorf("platform in_flight = %v, want the gateway's 3", pif["in_flight"])
+	}
+	if pif["ceiling"] != float64(8) {
+		t.Errorf("platform ceiling = %v, want the operator's 8", pif["ceiling"])
+	}
+}
+
+// The light pool poll carries the same read: the accounts table refreshes from
+// this endpoint every 5 seconds, and the header readout must move without a
+// second request.
+func TestPoolCarriesThePlatformConcurrencyRead(t *testing.T) {
+	c := &fakeClient{name: "zcode", status: core.Status{Name: "zcode", Ready: true, Accounts: statusAccounts()}}
+	reg := registryOf(c)
+	reg.SetPlatformConfigs(map[string]core.PlatformConfig{"zcode": {MaxInFlight: 0}})
+	h := New(Options{Registry: reg, Started: time.Now(), InFlight: fakeTracker{"platform\x1fzcode": 5}})
+
+	rec := get(t, h, "/panel/api/pool")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("pool = %d (%s)", rec.Code, rec.Body.String())
+	}
+	clients := decodeMap(t, rec)["clients"].([]any)
+	row := clients[0].(map[string]any)
+	pif, ok := row["platform_in_flight"].(map[string]any)
+	if !ok {
+		t.Fatalf("pool row carries no platform_in_flight block: %v", row)
+	}
+	if pif["in_flight"] != float64(5) {
+		t.Errorf("platform in_flight = %v, want 5", pif["in_flight"])
+	}
+	if pif["ceiling"] != float64(0) {
+		t.Errorf("ceiling = %v, want 0 -- the page must read 不限, not a locked platform", pif["ceiling"])
+	}
+}
+
+// The accounts header names the platform concurrency next to the account
+// count, and an unconfigured ceiling reads 不限 rather than 0 (issue #67).
+func TestAccountsHeaderRendersThePlatformConcurrencyRead(t *testing.T) {
+	src := poolStatsUISource(t)
+	if !strings.Contains(src, "\" · 平台在途 \" + pif.in_flight") {
+		t.Fatal("账号池头部没有渲染平台在途读数（issue #67）")
+	}
+	if !strings.Contains(src, "pif.ceiling > 0 ? \" / 上限 \" + pif.ceiling : \"（不限）\"") {
+		t.Fatal("未配置上限没有读作「不限」：显示成 0 会被读成平台被锁死（issue #67）")
 	}
 }

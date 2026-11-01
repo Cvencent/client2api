@@ -193,6 +193,21 @@ type Options struct {
 // concrete store so tests and embedders can stand in for the gateway.
 type AccountInFlightSource interface {
 	AccountInFlight(platform, accountID string) int
+	// PlatformInFlight reports how many requests the gateway is carrying
+	// against one platform right now; the ceiling lives in the registry, so
+	// the two answers reach the panel through different halves (issue #67).
+	PlatformInFlight(platform string) int
+}
+
+// platformInFlightView is the platform-level concurrency read the accounts
+// table header shows: how many requests the gateway is carrying against this
+// platform right now, and the operator's ceiling for it.  ceiling==0 means
+// "no ceiling configured" and the frontend says 不限 -- a bare 0 would read
+// back as "nothing in flight / nothing allowed", the exact confusion issue
+// #67 is about.
+type platformInFlightView struct {
+	InFlight int `json:"in_flight"`
+	Ceiling  int `json:"ceiling"`
 }
 
 // clientView is a module's self-report plus what the panel is allowed to ask
@@ -200,7 +215,8 @@ type AccountInFlightSource interface {
 // for one module and a bare table for another, without any per-client code.
 type clientView struct {
 	core.Status
-	Capabilities core.Capabilities `json:"capabilities"`
+	Capabilities     core.Capabilities     `json:"capabilities"`
+	PlatformInFlight *platformInFlightView `json:"platform_in_flight,omitempty"`
 	// Pool is present only for a module that keeps an account pool, so the page
 	// can tell "this client has no pool" from "this client's pool is idle".
 	Pool *core.PoolStats `json:"pool,omitempty"`
@@ -542,6 +558,7 @@ func (p *panel) handleStatus(w http.ResponseWriter, r *http.Request) {
 			}
 			mergeModelParks(&view.Status, c.Name(), p.opts.ModelParks)
 			p.decorateAccountInFlight(c.Name(), view.Status.Accounts)
+			view.PlatformInFlight = p.platformInFlight(c.Name())
 			// Both are optional capabilities, so a module that has neither is
 			// simply reported as such instead of as zeroes.
 			if ps, ok := core.PoolStatsOf(c); ok {
@@ -569,6 +586,10 @@ type poolRow struct {
 	Pool    *core.PoolStats `json:"pool,omitempty"`
 	Health  *core.Health    `json:"health,omitempty"`
 	Account []poolAccount   `json:"accounts,omitempty"`
+	// PlatformInFlight carries the same platform-level read /panel/api/status
+	// does: the accounts table polls this light endpoint every 5s, and its
+	// header row needs the live number without a second poll (issue #67).
+	PlatformInFlight *platformInFlightView `json:"platform_in_flight,omitempty"`
 }
 
 type poolAccount struct {
@@ -599,7 +620,15 @@ func (p *panel) handlePool(w http.ResponseWriter, r *http.Request) {
 	if p.opts.Registry != nil {
 		for _, c := range p.opts.Registry.All() {
 			st := core.RedactStatus(c.Status(ctx))
-			row := poolRow{Name: st.Name, Ready: st.Ready}
+			// The accounts table reads its in-flight column from this light
+			// poll, so it has to carry the same decoration /status applies: the
+			// platform's per-account ceiling plus the gateway's own lease
+			// counter.  Without it a module that keeps no ceiling of its own
+			// (rzol and the other relay platforms) arrives with no
+			// in_flight_limit key at all, and the page draws the operator's "3"
+			// as ∞ -- which was exactly this poll's bug.
+			p.decorateAccountInFlight(st.Name, st.Accounts)
+			row := poolRow{Name: st.Name, Ready: st.Ready, PlatformInFlight: p.platformInFlight(st.Name)}
 			// Account lease extras are the one per-account volatile block the
 			// accounts table polls for; ids ride along so the page can index.
 			for _, a := range st.Accounts {
@@ -1584,6 +1613,24 @@ func (p *panel) decorateAccountNotes(platform string, list []core.AccountRecord)
 			list[i].OperatorNote = note
 		}
 	}
+}
+
+// platformInFlight builds the platform-level concurrency view: the gateway's
+// live lease count for this platform, and the operator's ceiling (0 = none).
+// Both halves exist already -- the tracker keeps the live count, the registry
+// keeps the ceiling -- they just never had a channel to the page (issue #67).
+func (p *panel) platformInFlight(platform string) *platformInFlightView {
+	if p == nil {
+		return nil
+	}
+	v := platformInFlightView{}
+	if p.opts.InFlight != nil {
+		v.InFlight = p.opts.InFlight.PlatformInFlight(platform)
+	}
+	if p.opts.Registry != nil {
+		v.Ceiling = p.opts.Registry.MaxInFlightFor(platform)
+	}
+	return &v
 }
 
 // decorateAccountInFlight fills the account pool's 在途 column from the two

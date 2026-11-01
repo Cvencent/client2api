@@ -33,6 +33,22 @@
 - `client2api-setup-0.5.47.exe`（空包，不含账号凭据或本机配置）
 - SHA256：`EE780BD84B0C8A1CAB096AE8354A353C5B968C516576BF02DD775B472C27CD7F`
 
+## [0.5.52] - 2026-11-02
+
+### Added
+
+- **账号池头部新增平台总并发读数（issue #67）。** `/panel/api/status` 与 pool
+  轻端点的 client 级载荷新增 `platform_in_flight`（网关此刻对该平台承载的请求数，
+  数据源 `InFlightTrackers.PlatformInFlight`）与 `ceiling`（操作员设的平台上限，
+  `Registry.MaxInFlightFor`）；账号池头部在账号数旁显示「平台在途 N / 上限 X」，
+  未配置上限读作「不限」而不是 0——0 会被读成平台被锁死，正是这单要治的「看起来
+  都是无限/都是零」。pool 轻端点同步携带，账号表 5 秒轮询不用第二次请求。
+
+### Installer
+
+- `client2api-setup-0.5.52.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `780E7EFF3D5D665BB70085E830F5D02B75CA75AF4C5350225E5C02A6B2405549`
+
 ## [0.5.51] - 2026-11-02
 
 ### Fixed
