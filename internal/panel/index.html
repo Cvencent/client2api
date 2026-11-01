@@ -18147,6 +18147,10 @@ function pfSetAll(open) {
 // 操作员从没写过的默认值。保存后立刻热加载，路由策略不用等重启。
 async function savePlatforms() {
   if (!PF) { await renderPlatforms(); }
+  // A failed read draws an error block and returns with PF still null
+  // (issue #83): the loop below would find zero cards and report the empty
+  // patch as 「已保存，内容没有变化」-- a success claim with no request sent.
+  if (!PF) { toast("平台配置还没读取成功，无法保存；先等读取恢复", "err"); return; }
   const changed = {};
   let bad = "", badReason = "";
   for (const el of document.querySelectorAll("#pfBody .pfplat")) {
@@ -18513,6 +18517,11 @@ async function renderConfig() {
   if (!p.ok) {
     $("#cfgPath").textContent = "读取失败";
     form.innerHTML = '<div class="state err">' + esc(p.err) + '</div>';
+    // With nothing read there is nothing to save (issue #83): a live save
+    // button here walks a null CFG into saveConfig and dies with a raw
+    // TypeError pinned to the bottom of the page.
+    $("#btnCfgSave").disabled = true;
+    $("#btnCfgRestart").disabled = true;
     return;
   }
   const d = p.data || {}, c = d.config || {};
@@ -18684,6 +18693,9 @@ function pruneUnchanged(patch, baseline) {
 // never showed (a credential) goes back as the placeholder, which the server
 // treats as "unchanged".
 async function saveConfig() {
+  // The config was never read (issue #83): saving would walk a null CFG into
+  // the alias diff below and die with a raw TypeError.  Say what to do instead.
+  if (!CFG) { toast("配置还没读取成功，先等右上角恢复再试", "err"); return; }
   const val = s => { const el = $(s); return el ? el.value.trim() : ""; };
   const patch = {};
   // The listen address is checked here with the same rule the server applies:
@@ -18834,11 +18846,22 @@ function logLevelClass(text) {
 let LOG_LINES = [];
 async function renderLogs() {
   const r = await api("/panel/api/logs?lines=500");
-  if (!r.ok) { $("#logNote").textContent = "读取失败"; $("#logBox").innerHTML = '<div class="state err">' + esc(r.err) + '</div>'; return; }
+  if (!r.ok) {
+    $("#logNote").textContent = "读取失败";
+    $("#logBox").innerHTML = '<div class="state err">' + esc(r.err) + '</div>';
+    // The error state is part of the dedupe stamp too (issue #84): a success
+    // that follows a failure must redraw even when no new lines arrived, or
+    // the page stays stuck on the old "读取失败" until an unrelated event
+    // changes the stamp.
+    LOGSEEN = "err";
+    return;
+  }
   const d = r.data || {}, all = d.entries || [];
   // The 4s poll rebuilt up to 500 rows of innerHTML every time, even when nothing
   // had been logged.  Compare first and leave the DOM alone when it cannot differ.
-  const stamp = String(d.total || 0) + "|" + LOGCH;
+  // "ok" rides in the stamp so an error round and a success round can never
+  // dedupe against each other (issue #84).
+  const stamp = "ok:" + String(d.total || 0) + "|" + LOGCH;
   if (stamp === LOGSEEN) return;
   LOGSEEN = stamp;
   LOG_LINES = all;
@@ -24385,8 +24408,20 @@ function panelBootError(err) {
   document.documentElement.dataset.c2aBootError = "1";
   const bar = document.createElement("div");
   bar.id = "c2aBootError";
-  bar.textContent = "控制台发生错误：" + msg;
-  bar.style.cssText = "position:fixed;left:12px;right:12px;bottom:12px;z-index:2147483647;background:#c45656;color:#fff;padding:10px 14px;border-radius:6px;font:13px/1.5 ui-monospace,Consolas,monospace;white-space:pre-wrap;box-shadow:0 4px 20px rgba(0,0,0,.35)";
+  const full = "控制台发生错误：" + msg;
+  // The stack goes to the console; the operator gets the first line and a way
+  // to dismiss the bar -- an unclosable fixed overlay pinned over the page
+  // bottom outlived every retry and hid the very controls someone would use
+  // to recover (issue #83).
+  bar.textContent = full.split("\n")[0];
+  console.error(full);
+  bar.style.cssText = "position:fixed;left:12px;right:12px;bottom:12px;z-index:2147483647;background:#c45656;color:#fff;padding:10px 14px;border-radius:6px;font:13px/1.5 ui-monospace,Consolas,monospace;white-space:pre-wrap;box-shadow:0 4px 20px rgba(0,0,0,.35);display:flex;gap:12px;align-items:flex-start";
+  const close = document.createElement("button");
+  close.type = "button";
+  close.textContent = "知道了";
+  close.style.cssText = "flex:none;background:rgba(0,0,0,.25);color:#fff;border:0;border-radius:4px;padding:4px 10px;font:inherit;cursor:pointer";
+  close.addEventListener("click", () => { bar.remove(); delete document.documentElement.dataset.c2aBootError; });
+  bar.appendChild(close);
   (document.body || document.documentElement).appendChild(bar);
 }
 window.addEventListener("error", ev => {

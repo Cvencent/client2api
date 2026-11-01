@@ -113,7 +113,7 @@ func TestLogViewSkipsRedrawWhenNothingChanged(t *testing.T) {
 		t.Fatal("没有 LOGSEEN 记账，日志页每 4 秒整段重画 500 行")
 	}
 	body := poolStatsFuncBody(t, src, "renderLogs")
-	if !strings.Contains(body, `const stamp = String(d.total || 0) + "|" + LOGCH;`) {
+	if !strings.Contains(body, `const stamp = "ok:" + String(d.total || 0) + "|" + LOGCH;`) {
 		t.Error("renderLogs 没有把「累计行数 | 频道」当重画判据")
 	}
 	if !strings.Contains(body, "if (stamp === LOGSEEN) return;") {
