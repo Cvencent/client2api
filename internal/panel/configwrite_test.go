@@ -744,3 +744,50 @@ func TestConfigKeepsEmptySectionsAcrossUnrelatedSaves(t *testing.T) {
 		}
 	}
 }
+
+// TestConfigPatchRejectsATypedClientBlock pins issue #79: a value the panel's
+// own "其它键" textarea writes must be judged by the module's own parser, the
+// same one startup runs -- a string where the module wants a bool used to save
+// with a 200, hot-reload with a 200, and then silently skip the whole module
+// at the next restart while every page kept rendering the platform.
+func TestConfigPatchRejectsATypedClientBlock(t *testing.T) {
+	path := configFile(t, baseConfig)
+	p := configPanel(path)
+
+	w, _ := doConfig(t, p, http.MethodPatch, `{"clients":{"kimi":{"assume_logged_in":"true"}}}`)
+	if w.Code == http.StatusOK {
+		t.Fatalf("a bool-typed module key saved as a string: HTTP 200; the module would be skipped at the next restart (issue #79): %s", w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "would fail to load") {
+		t.Fatalf("error body does not name the startup consequence: %s", w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "assume_logged_in") {
+		t.Fatalf("error body does not name the offending key: %s", w.Body.String())
+	}
+	// The bad value must not be on the disk.
+	if raw, _ := json.Marshal(onDisk(t, path)["clients"]); strings.Contains(string(raw), `"assume_logged_in":"true"`) {
+		t.Fatalf("the invalid block reached the disk: %s", raw)
+	}
+}
+
+// The happy half: a well-typed block saves exactly as before, and an entry for
+// a module that no longer exists is left alone rather than judged against a
+// schema nobody has.
+func TestConfigPatchAcceptsWellTypedBlocksAndStrangers(t *testing.T) {
+	path := configFile(t, baseConfig)
+	p := configPanel(path)
+
+	mustSave(t, p, `{"clients":{"kimi":{"assume_logged_in":true,"max_concurrency":7}}}`)
+	clients := onDisk(t, path)["clients"].(map[string]any)
+	kimi := clients["kimi"].(map[string]any)
+	if kimi["assume_logged_in"] != true || kimi["max_concurrency"] != float64(7) {
+		t.Fatalf("a well-typed block was rejected: %v", kimi)
+	}
+
+	// "not-a-module" is not a registered name; the generic shape check passed
+	// it, and the typed check has no schema to judge it with.
+	mustSave(t, p, `{"clients":{"not-a-module":{"anything":"goes"}}}`)
+	if _, ok := onDisk(t, path)["clients"].(map[string]any)["not-a-module"]; !ok {
+		t.Fatal("an unregistered client entry was dropped")
+	}
+}

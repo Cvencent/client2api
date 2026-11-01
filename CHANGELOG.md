@@ -33,6 +33,26 @@
 - `client2api-setup-0.5.47.exe`（空包，不含账号凭据或本机配置）
 - SHA256：`EE780BD84B0C8A1CAB096AE8354A353C5B968C516576BF02DD775B472C27CD7F`
 
+## [0.5.57] - 2026-11-02
+
+### Fixed
+
+- **平台页「其它键」写错类型在保存当场被拒，不再重启后静默下线整个模块。**
+  validateConfig 对 clients 只做形状检查，而模块在启动时把自己的配置块强类型
+  反序列化——`{"assume_logged_in":"true"}`（手写 JSON 把 bool 写成字符串）能
+  一路 200 保存、200 热加载，重启后整个模块 FAILED to load 被跳过，而面板每个
+  页面照常渲染该平台（卡片列表取自 registered），chat 请求 404 才暴露。现在
+  `validateClientBlocks`（configwrite.go）按面板自有的模块字段目录（moduleOptions，
+  正是「其它键」旁边表单的同一份 schema）校验已知键的类型：bool 键必须是布尔、
+  number 键必须是数字——错类型在保存当场报错并点名键与期望类型；schema 外的键
+  是模块自有领域，照旧放行。kimi 的目录补上 `assume_logged_in`（此前只在其它键
+  里可写）。
+
+### Installer
+
+- `client2api-setup-0.5.57.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `B93B2C59FB8BF49D8A7ACCD415EAECA53C4407CEAC940F508FC7E6FDEF8E6787`
+
 ## [0.5.56] - 2026-11-02
 
 ### Fixed

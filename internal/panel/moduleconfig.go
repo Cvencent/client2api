@@ -166,6 +166,7 @@ var moduleOptions = map[string][]moduleOption{
 		{Key: "timeout_seconds", Label: "单次超时（秒）", Kind: optNumber, Help: "一次调用最多等多久。"},
 		{Key: "media_dir", Label: "媒体目录", Kind: optText, Help: "图片等附件的落地目录。留空用模块内置值。"},
 		{Key: "allow_image_download", Label: "允许下载图片", Kind: optBool, Help: "打开后会把上游返回的图片下载到媒体目录。"},
+		{Key: "assume_logged_in", Label: "视为已登录", Kind: optBool, Help: "打开后跳过 CLI 登录检查，直接把 CLI 当作已登录。写成带引号的“true”会在启动时被强类型解析拒绝（issue #79）。"},
 		{Key: "login_mode", Label: "登录方式", Kind: optText, Help: "面板登录时走哪种流程。留空用模块内置值。"},
 		{Key: "tls_profile", Label: "TLS 指纹", Kind: optChoice, Help: tlsProfileHelp, Choices: tlsProfileChoices},
 		{Key: "tls_protocol", Label: "HTTP 版本", Kind: optChoice, Help: tlsProtocolHelp, Choices: tlsProtocolChoices},

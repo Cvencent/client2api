@@ -44,6 +44,16 @@ func Registered() []string {
 	return out
 }
 
+// FactoryOf reports whether a module with this name is registered, without
+// building it.  Config validation uses it to skip entries that name no shipped
+// module instead of treating their absence as an error.
+func FactoryOf(name string) (Factory, bool) {
+	regMu.RLock()
+	defer regMu.RUnlock()
+	f, ok := factories[name]
+	return f, ok
+}
+
 // Build instantiates a module by name.
 func Build(name string, deps Deps) (Client, error) {
 	regMu.RLock()

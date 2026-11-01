@@ -169,6 +169,9 @@ func writeConfigKeys(path string, patch map[string]any) ([]string, map[string]an
 	if err := validateConfig(merged); err != nil {
 		return nil, nil, &configInvalidError{err: err}
 	}
+	if err := validateClientBlocks(merged); err != nil {
+		return nil, nil, &configInvalidError{err: err}
+	}
 	out, err := marshalConfigOrdered(merged)
 	if err != nil {
 		return nil, nil, fmt.Errorf("encoding config: %w", err)
@@ -833,6 +836,79 @@ func validateConfig(cfg map[string]any) error {
 	if v, ok := cfg["schedule"]; ok && v != nil {
 		if err := validateScheduleConfig(v); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// validateClientBlocks judges each configured module's block against the
+// panel's own field schema -- the same catalog the "其它键" textarea sits next
+// to (issue #79).  The modules unmarshal their block into strongly typed
+// structs at startup, and a type mismatch there is a hard failure: the module
+// is skipped, the process keeps running with one less platform, and every page
+// still renders because the panel reads the registry of loaded modules.  A
+// value the panel itself wrote therefore could not fail until the next
+// restart, 200 responses all the way down.  Checking the known keys here --
+// a bool kind must be a bool, a number kind a number -- turns the most common
+// slip ({"assume_logged_in":"true"}, quoted by hand) into a save-time error
+// that names the key and the type, and a bad value never reaches the disk.
+// Keys outside the schema are the module's own domain and pass untouched, as
+// are entries that name no shipped module.
+func validateClientBlocks(cfg map[string]any) error {
+	v, ok := cfg["clients"]
+	if !ok || v == nil {
+		return nil
+	}
+	m, ok := v.(map[string]any)
+	if !ok {
+		return nil // shape already rejected above
+	}
+	for name, block := range m {
+		opts, known := moduleOptions[name]
+		if !known {
+			continue
+		}
+		obj, ok := block.(map[string]any)
+		if !ok {
+			continue // shape already rejected above
+		}
+		for _, o := range opts {
+			val, present := obj[o.Key]
+			if !present || val == nil {
+				continue
+			}
+			if err := checkOptionKind(name, o, val); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// checkOptionKind validates one module config value against its schema kind.
+func checkOptionKind(client string, o moduleOption, val any) error {
+	bad := func(want string) error {
+		return fmt.Errorf("client %q: %s (%s) must be %s, got %T -- the module would fail to load at startup with this value",
+			client, o.Key, o.Label, want, val)
+	}
+	switch o.Kind {
+	case optBool:
+		if _, ok := val.(bool); !ok {
+			return bad("true or false (unquoted)")
+		}
+	case optNumber:
+		switch val.(type) {
+		case float64, int, int64:
+		default:
+			return bad("a number (without quotes)")
+		}
+	case optList:
+		switch l := val.(type) {
+		case []any:
+		case string:
+			_ = l // a comma-separated string is what the panel itself writes; fine
+		default:
+			return bad("a list or a comma-separated string")
 		}
 	}
 	return nil
