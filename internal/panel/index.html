@@ -15814,6 +15814,10 @@ async function renderAlerts() {
   const rows = (r.data && r.data.alerts) || [];
   ALERT_ROWS = rows;   // 3D 舞台按平台汇总这些行
   updateAlertBadge(0);
+  // 流水落地后重算一次页头（issue #49）：mountMasthead 是进页那一刻同步算的，
+  // 而 ALERT_ROWS 是异步到的——冷启动进告警页时它还是空数组，「未读」磁贴的
+  // 副文案永远停在「干净」，和同屏十几条流水自相矛盾（#8 的分档被时序绕过）。
+  if (VIEW === "alerts") mountMasthead("alerts");
   $("#alertNote").textContent = rows.length + " 条" + (r.data && r.data.last_error ? " · 写入异常：" + r.data.last_error : "");
   api("/panel/api/alerts", { method: "POST" }).then(function (ack) {
     if (ack && ack.ok) updateAlertBadge(0);

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -514,6 +515,16 @@ func classifyErr(err error) errKind {
 			return kindAuth
 		case ae.Status == 402:
 			return kindQuota
+		case isWalletRefusal(ae):
+			// The vendor bills an empty wallet as a 400, but the refusal is
+			// about the account's balance, not the request: a funded sibling
+			// answers the same body. Folding it into kindClient (issue #51)
+			// made the walk stop at the first account and left the empty
+			// wallet unparked, so the same broke account was picked first
+			// every time. kindQuota rotates and parks, which is what a
+			// wallet verdict needs; the free-model branch above the walk's
+			// failure handling keeps its own semantics either way.
+			return kindQuota
 		case ae.Status == 429:
 			return kindTransient
 		case ae.Status >= 500:
@@ -539,4 +550,29 @@ func classifyErr(err error) errKind {
 		return kindNetwork
 	}
 	return kindNone
+}
+
+// walletPhrases are the vendor's own spellings of "this wallet is empty".
+// They arrive as HTTP 400 (not 402), so the status alone cannot tell them
+// apart from a genuine request-shape refusal.
+var walletPhrases = []string{"余额不足", "请充值", "insufficient credit", "insufficient balance"}
+
+// isWalletRefusal reports whether the vendor refused the request because the
+// account has no credit left. The message is the only signal the vendor
+// gives: the same 400 with a different body is still a request-shape
+// refusal and must stay kindClient.
+func isWalletRefusal(ae *apiError) bool {
+	if ae == nil || ae.Status != http.StatusBadRequest {
+		return false
+	}
+	msg := ae.Message
+	if msg == "" {
+		msg = ae.Error()
+	}
+	for _, phrase := range walletPhrases {
+		if strings.Contains(msg, phrase) {
+			return true
+		}
+	}
+	return false
 }
