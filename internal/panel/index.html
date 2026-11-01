@@ -10089,7 +10089,11 @@ async function renderOverview() {
       esc(x.label) + '<b>' + (x.kind === "empty" ? "无账号" : x.n + " 不可用") + '</b></button>').join("") +
       (needAttention.length > 4 ? '<span class="hint">还有 ' + (needAttention.length - 4) + ' 个</span>' : "") + '</div>');
   } else if (!bits.length) {
-    bits.push('<span class="ov-pill ok">全部正常</span>');
+    // 「全部正常」只在确实读到过账号数据之后才说（issue #82）：读取中给中性
+    // 占位，别用绿色肯定语气回答一个还没问过的问题。
+    bits.push(BOOTING
+      ? '<span class="ov-pill">正在加载…</span>'
+      : '<span class="ov-pill ok">全部正常</span>');
   }
   attn.innerHTML = bits.join("");
 
@@ -10128,7 +10132,7 @@ async function renderOverview() {
   $("#ovBars").innerHTML = total
     ? '<div class="ov-stack">' + segs.map(x => '<i style="flex:' + x.n + ';background:' + x.c + '" title="' + esc(x.k) + ' ' + x.n + '"></i>').join("") + '</div>' +
       '<div class="ov-legend">' + segs.map(x => '<span><i style="background:' + x.c + '"></i>' + esc(x.k) + ' <b>' + x.n + '</b></span>').join("") + '</div>'
-    : '<div class="ov-empty">还没有接入账号</div>';
+    : (BOOTING ? '<div class="ov-empty">正在加载账号…</div>' : '<div class="ov-empty">还没有接入账号</div>');
 
   // 流量：/overview 只回网关自开始以来的请求/失败累计，不带 24 小时窗口
   // （那是 /usage 的活）。这里就画这两个真实存在的数，不假装有一个窗口切片。
@@ -10361,6 +10365,14 @@ function tickNumber(el, to) {
 }
 
 function renderStats() {
+  // 冷启动的统计格回答「-」而不是 0（issue #82）：0 是一个肯定结论（「一个
+  // 账号都没有」），而首帧数据还没回来，什么都还不知道。
+  if (BOOTING) {
+    ["sTotal","sReady","sCooling","sLowCredit","sRisk","sFault","sDisabled","sClients","sReadyClients"].forEach(id => {
+      const el = $("#" + id); if (el) el.textContent = "-";
+    });
+    return;
+  }
   // 这几个 tile 数的是账号，不是凭据：一个账号有两个通道，它仍然只是一个账号。
   // 分桶必须和表里那颗状态 chip 走同一套 accountState，不能按 state 的字面值再
   // 分一次。以前这里认死了 "cooling" / "invalid" 等几个词，于是下面显示「冷却中」
@@ -13830,6 +13842,15 @@ function renderAccounts() {
     : "";
   syncBalanceButton(CUR);
   const cols = showBal ? 13 : 12;
+  // 冷启动先答「正在加载」（issue #82）：CUR 要等 /overview 回来才赋值，首帧
+  // 必为空——先判 !CUR 会让下面的 BOOTING 占位永远不可达，中间几秒页面用
+  // 肯定语气说「没有已注册的客户端」而实际有几十个。
+  if (BOOTING) {
+    tb.innerHTML = '<tr><td colspan="' + cols + '" class="hint">正在加载账号…</td></tr>';
+    if ($("#acctBoard")) $("#acctBoard").innerHTML = '<div class="quietline"><i></i>正在加载账号…</div>';
+    hideAccPager();
+    return;
+  }
   if (!CUR) { tb.innerHTML = '<tr><td colspan="' + cols + '" class="hint">没有已注册的客户端</td></tr>'; $("#accNote").textContent = ""; hideAccPager(); return; }
   // accNote 是当前客户端的注解：模块说不可服务时原样带上它给的理由
   // （health.note），只要有账号在途占满就在末尾追加一句；为 0 时一个字不动。
