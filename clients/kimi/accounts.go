@@ -557,10 +557,35 @@ func (c *Client) cliLoginEntry(bin string, binErr error, creds credentialReport,
 		rec.Enabled = st.enabledOr(cliLoginID, false)
 		rec.Note = "the kimi CLI is not installed, so no login can exist; " + installHint
 	case len(refs) > 0:
+		// Same verdict as credentialReport.accounts() (issue #47): a file that
+		// states an expiry in the past is NOT ready -- the CLI refreshes it on
+		// the next prompt, but until then every request dies, and the panel
+		// showing "ready" hid exactly that.  The two paths must agree on one
+		// credential.
+		expired := ""
 		rec.State = "ready"
 		rec.Enabled = st.enabledOr(cliLoginID, true)
 		rec.Note = fmt.Sprintf("logged in: credential evidence at %s. The token itself belongs to the CLI and is never read by this module.",
 			strings.Join(refs, ", "))
+		for _, src := range creds.sources {
+			if !src.Found || src.ExpiresAt == "" {
+				continue
+			}
+			if exp, err := time.Parse(time.RFC3339, src.ExpiresAt); err == nil && exp.Before(time.Now()) {
+				expired = src.ExpiresAt
+				break
+			}
+		}
+		if expired != "" {
+			rec.State = "invalid"
+			rec.Note = "credential has expired (" + expired + "); the CLI refreshes it on the next prompt"
+		}
+		for _, src := range creds.sources {
+			if src.Found && src.ExpiresAt != "" {
+				rec.ExpiresAt = src.ExpiresAt
+				break
+			}
+		}
 	case c.cfg.AssumeLoggedIn:
 		rec.State = "ready"
 		rec.Enabled = st.enabledOr(cliLoginID, true)

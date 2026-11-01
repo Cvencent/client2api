@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"strconv"
 	"strings"
@@ -76,7 +77,13 @@ func refreshExpiringAccountsMatching(ctx context.Context, reg *core.Registry, cl
 			results, err := am.RefreshAccount(rctx, acct.ID)
 			cancel()
 			if err != nil {
-				logf(logger, "[%s] renew %s: %v", c.Name(), core.MaskSecret(acct.ID), core.Redact(err.Error()))
+				// Renewal failures repeat on the same five-minute beat as the
+				// sweep itself; without the shared deduper a dead refresh
+				// token printed the same line every tick (issue #48, the
+				// third unprotected path after #7 fixed the other two).
+				if msg, log := sharedProbeLogDeduper().shouldLog(c.Name(), acct.ID, err); log {
+					logf(logger, "[%s] renew %s: %s", c.Name(), core.MaskSecret(acct.ID), msg)
+				}
 				continue
 			}
 			for _, res := range results {
@@ -87,7 +94,9 @@ func refreshExpiringAccountsMatching(ctx context.Context, reg *core.Registry, cl
 				if msg == "" {
 					msg = "renewal did not report success"
 				}
-				logf(logger, "[%s] renew %s: %s", c.Name(), core.MaskSecret(res.AccountID), core.Redact(msg))
+				if folded, log := sharedProbeLogDeduper().shouldLog(c.Name(), res.AccountID, errors.New(msg)); log {
+					logf(logger, "[%s] renew %s: %s", c.Name(), core.MaskSecret(res.AccountID), folded)
+				}
 			}
 		}
 	}
@@ -102,6 +111,16 @@ func refreshExpiringAccountsMatching(ctx context.Context, reg *core.Registry, cl
 // permanent.
 func renewableAccount(acct core.AccountRecord) bool {
 	if !acct.Enabled {
+		return false
+	}
+	// An invalid credential is dead in the way renewal cannot fix: the vendor
+	// has revoked the token and only a fresh authorization helps (issue #48).
+	// Sweeping it every five minutes bought a guaranteed-failing oauth round
+	// trip each tick -- minimaxcode's invalid_grant said so thirteen times in
+	// seventy-five minutes.  Everything else (ready/unknown proactive renewal,
+	// the recoverable park states) stays renewable: those are exactly the
+	// accounts a renewal can keep alive.
+	if strings.EqualFold(strings.TrimSpace(acct.State), "invalid") {
 		return false
 	}
 	if v, ok := acct.Fields["refreshable"]; ok {

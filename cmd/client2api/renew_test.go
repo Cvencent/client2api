@@ -204,3 +204,30 @@ func TestParseAccountExpiryAcceptsPublishedShapes(t *testing.T) {
 		}
 	}
 }
+
+// TestRenewableAccountSkipsInvalid pins the issue #48 state gate: an invalid
+// credential is dead in the way renewal cannot fix (the vendor revoked the
+// token), so the sweep must not knock on that door every five minutes.
+// Everything a renewal CAN keep alive stays renewable.
+func TestRenewableAccountSkipsInvalid(t *testing.T) {
+	base := core.AccountRecord{Enabled: true, ExpiresAt: "2026-01-01T00:00:00Z"}
+	cases := []struct {
+		state string
+		want  bool
+	}{
+		{"ready", true},
+		{"unknown", true},
+		{"cooling", true},
+		{"low_credit", true},
+		{"invalid", false},
+		{"INVALID", false},
+		{" invalid ", false},
+	}
+	for _, tc := range cases {
+		acct := base
+		acct.State = tc.state
+		if got := renewableAccount(acct); got != tc.want {
+			t.Errorf("renewableAccount(state=%q) = %v, want %v", tc.state, got, tc.want)
+		}
+	}
+}

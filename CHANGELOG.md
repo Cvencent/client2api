@@ -6,6 +6,28 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.5.46] - 2026-11-01
+
+### Fixed
+
+- **续期扫描不再对 invalid 账号每 5 分钟裸敲门。** `renewableAccount` 只看
+  enabled/refreshable/expires_at，一条 refresh token 已被上游作废
+  （`invalid_grant`）的 invalid 账号照样每拍被续期一次——75 分钟 13 条注定
+  失败的 oauth 往返，且失败行裸打不走去重（#7 修了两条路径，这是第三条
+  漏网的）。现在 `state=invalid` 跳过续期（续期救不了需要重新授权的凭据，
+  ready/unknown 与可恢复停靠态照旧续期）；两处失败行接共享去重器，同文
+  故障一小时一条并带抑制计数。
+- **kimi 的 cli-login 行不再对过期凭据报 ready。** 面板路径的
+  `cliLoginEntry` 只看凭据文件存在，诊断路径的 `file:*` 行却判过期——
+  同一时刻同一模块两个结论，面板显示可用而所有请求都在死。现在
+  `cli-login` 读文件声明的过期时间：已过期改报 invalid 并带「CLI 下次
+  prompt 自行刷新」备注，两条路径对同一份凭据同一个结论。
+
+### Installer
+
+- `client2api-setup-0.5.46.exe`（空包，不含账号凭据或本机配置）
+- SHA256：`76D7E003CCC9CA3F69B528B6968FABEED52181157ACF4EEE83B26957672450C4`
+
 ## [0.5.45] - 2026-11-01
 
 ### Fixed

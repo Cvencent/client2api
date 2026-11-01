@@ -1271,3 +1271,46 @@ func TestLivePanelAccountsAgainstTheRealMachine(t *testing.T) {
 		t.Logf("found %-9s importable=%-5v %s", d.Kind, d.Importable, d.Path)
 	}
 }
+
+// TestExpiredCliLoginIsNotReady pins the issue #47 verdict unification: the
+// panel's cli-login row and the diagnostic file:* rows must agree on one
+// credential.  A file that states an expiry in the past is NOT ready even
+// though it exists -- the CLI refreshes it on the next prompt, but until then
+// every request dies and a "ready" badge hid exactly that.
+func TestExpiredCliLoginIsNotReady(t *testing.T) {
+	credPath := filepath.Join(t.TempDir(), "kimi-credentials.json")
+	credsFileAt(t, credPath, "cli-token-1", "2020-01-02T03:04:05Z")
+	c, _, _ := clientWithStubCLI(t, map[string]any{"credential_files": []string{credPath}})
+
+	rows := accountsOrFatal(t, c)
+	var cli *core.AccountRecord
+	for i := range rows {
+		if rows[i].ID == cliLoginID {
+			cli = &rows[i]
+		}
+	}
+	if cli == nil {
+		t.Fatalf("cli-login row missing from %+v", rows)
+	}
+	if cli.State != "invalid" {
+		t.Errorf("expired cli-login state = %q, want invalid (ready hid the dead credential from the panel)", cli.State)
+	}
+	if !strings.Contains(cli.Note, "expired") {
+		t.Errorf("note = %q, want an expiry mention", cli.Note)
+	}
+}
+
+// TestFreshCliLoginStaysReady guards the other half: a file whose expiry is in
+// the future must not be demoted by the same check.
+func TestFreshCliLoginStaysReady(t *testing.T) {
+	credPath := filepath.Join(t.TempDir(), "kimi-credentials.json")
+	credsFileAt(t, credPath, "cli-token-1", "2099-01-02T03:04:05Z")
+	c, _, _ := clientWithStubCLI(t, map[string]any{"credential_files": []string{credPath}})
+
+	rows := accountsOrFatal(t, c)
+	for _, r := range rows {
+		if r.ID == cliLoginID && r.State != "ready" {
+			t.Errorf("fresh cli-login state = %q, want ready", r.State)
+		}
+	}
+}
