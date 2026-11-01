@@ -112,10 +112,13 @@ func decodeEnvelope(status int, raw []byte) (json.RawMessage, error) {
 
 func truncate(s string, n int) string {
 	s = strings.TrimSpace(s)
-	if len(s) <= n {
+	r := []rune(s)
+	if len(r) <= n {
 		return s
 	}
-	return s[:n] + "..."
+	// Rune cut, not byte cut (issue #70): a byte slice through a multi-byte
+	// character yields invalid UTF-8 that renders as U+FFFD on the panel.
+	return string(r[:n]) + "..."
 }
 
 func (c *Client) do(ctx context.Context, method, path string, hdr http.Header, payload, out any) error {

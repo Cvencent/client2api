@@ -401,8 +401,12 @@ func redactErr(err error) string {
 
 // truncate bounds an upstream body before it is echoed into an error message.
 func truncate(s string, limit int) string {
-	if len(s) <= limit {
+	r := []rune(s)
+	if len(r) <= limit {
 		return s
 	}
-	return s[:limit] + "..."
+	// Rune cut, not byte cut: vendor messages are Chinese, and a byte slice
+	// through a multi-byte character yields invalid UTF-8 that renders as
+	// U+FFFD on the panel (issue #70).
+	return string(r[:limit]) + "..."
 }

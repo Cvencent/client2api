@@ -8296,7 +8296,11 @@ function poolIndex(d) {
   ((d && d.clients) || []).forEach(c => {
     const extra = {};
     (c.accounts || []).forEach(a => { if (a && a.extra) extra[a.id] = a.extra; });
-    byName[c.name] = { pool: c.pool || null, health: c.health || null, extra: extra };
+    // platform_in_flight 是服务端 client 级字段的又一员（issue #67）——
+    // issue #73 的教训：这个白名单每加一个键都要跟着长，漏一个渲染端就静默
+    // 空白（无报错可查）。harness 有测试钉住两者同步。
+    byName[c.name] = { pool: c.pool || null, health: c.health || null, extra: extra,
+      platform_in_flight: c.platform_in_flight || null };
   });
   return { redis_mode: d && d.redis_mode, clients: byName };
 }

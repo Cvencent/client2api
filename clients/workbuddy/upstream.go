@@ -1703,8 +1703,14 @@ func applyModelPromotionsAt(byID map[string]ModelInfo, promos []v3ModelPromotion
 
 // truncate shortens a diagnostic string.
 func truncate(s string, n int) string {
-	if n <= 0 || len(s) <= n {
+	if n <= 0 {
 		return s
 	}
-	return s[:n] + "…"
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	// Rune cut, not byte cut (issue #70): vendor messages are Chinese, and a
+	// byte slice through a multi-byte character yields invalid UTF-8.
+	return string(r[:n]) + "…"
 }

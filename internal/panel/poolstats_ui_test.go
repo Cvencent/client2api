@@ -276,6 +276,17 @@ func TestPoolStatsPoolIndexKeepsOrMissesTheOptionalBlocks(t *testing.T) {
 			t.Errorf("poolIndex 缺少 %q：缺席的 pool / health / extra 会变成假数据", want)
 		}
 	}
+	// 服务端 client 级字段必须透传（issue #73）：platform_in_flight 在两个
+	// 端点上都发、渲染端也读，唯独这份白名单把它丢了——#67 的平台读数在
+	// 0.5.52 上静默不可见。每给 /status 加一个 client 级字段，这里就多一行；
+	// 漏掉的后果不是报错而是空白，谁也看不见。
+	for _, want := range []string{
+		"platform_in_flight: c.platform_in_flight || null",
+	} {
+		if !strings.Contains(idx, want) {
+			t.Errorf("poolIndex 没有透传 %q：渲染端会拿到 undefined，平台并发读数静默消失（issue #73）", want)
+		}
+	}
 }
 
 // TestPoolStatsIDGuardCatchesARenamedTile 是负控：shell_test.go 的守卫是这块

@@ -541,10 +541,14 @@ func (c *Client) modelIDs() []string {
 // --- small helpers ----------------------------------------------------------
 
 func truncate(s string, n int) string {
-	if len(s) <= n {
+	r := []rune(s)
+	if len(r) <= n {
 		return s
 	}
-	return s[:n]
+	// Rune cut, not byte cut (issue #70): vendor messages are Chinese, and a
+	// byte slice through a multi-byte character yields invalid UTF-8 that
+	// renders as U+FFFD on the panel.
+	return string(r[:n])
 }
 
 func readLimited(r io.Reader, n int64) []byte {

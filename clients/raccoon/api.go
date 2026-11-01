@@ -261,10 +261,13 @@ func decodeIAMEnvelope(status int, raw []byte) (data json.RawMessage, err error,
 
 func truncate(s string, n int) string {
 	s = strings.TrimSpace(s)
-	if len(s) <= n {
+	r := []rune(s)
+	if len(r) <= n {
 		return s
 	}
-	return s[:n] + "…"
+	// Rune cut, not byte cut (issue #70): vendor refusals are Chinese, and a
+	// byte slice through a multi-byte character yields invalid UTF-8.
+	return string(r[:n]) + "…"
 }
 
 // requestTooLarge builds the error for the vendor's 413. The vendor's own

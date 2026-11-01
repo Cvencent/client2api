@@ -33,6 +33,26 @@
 - `client2api-setup-0.5.47.exe`（空包，不含账号凭据或本机配置）
 - SHA256：`EE780BD84B0C8A1CAB096AE8354A353C5B968C516576BF02DD775B472C27CD7F`
 
+## [0.5.53] - 2026-11-02
+
+### Fixed
+
+- **#67 的「平台在途」在面板上真的可见了。** 服务端两个端点都在发
+  `platform_in_flight`、渲染端也在读，但中间的 `poolIndex` 映射白名单只有
+  pool/health/extra 三个键——字段在这里被丢，渲染条件永远不成立，0.5.52 的
+  平台并发读数静默不可见。现在 poolIndex 透传该字段；harness 测试钉住「服务端
+  client 级字段 ↔ poolIndex 白名单」同步，防止下一个字段再断一次。
+- **中文厂商报错不再被切出半个字。** clients/ 下 16 份同名 truncate 有 10 份按
+  字节切（`s[:n]`），切点落在多字节字符中间产出非法 UTF-8，经 JSON 序列化在
+  面板显示成「积分余�...」。10 处（qoder/loomy/trae/minimaxcode/openaicompat/
+  zcode/doubao/autoclaw/raccoon/workbuddy）统一改为 rune 切，与另 6 份既有实现
+  同口径；新测试钉住「任意长度中文截断后 utf8.Valid 恒真」。
+
+### Installer
+
+- `client2api-setup-0.5.53.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `12A9B0A9FC074F13C51D7F46E33B996F03B2CC8FF25239A9F2C9D9B0902672D4`
+
 ## [0.5.52] - 2026-11-02
 
 ### Added

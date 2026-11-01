@@ -263,10 +263,13 @@ func extractErrorMessage(body []byte) string {
 
 // truncate bounds a message for the panel.
 func truncate(s string, n int) string {
-	if len(s) <= n {
+	r := []rune(s)
+	if len(r) <= n {
 		return s
 	}
-	return s[:n] + "..."
+	// Rune cut, not byte cut (issue #70): vendor messages are Chinese, and a
+	// byte slice through a multi-byte character yields invalid UTF-8.
+	return string(r[:n]) + "..."
 }
 
 // accountInfo narrows the account/profile replies to the fields Status and the
