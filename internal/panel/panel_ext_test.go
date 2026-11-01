@@ -840,16 +840,38 @@ func TestPoolEndpointCarriesTheVolatileSliceOnly(t *testing.T) {
 	if _, ok := row["models"]; ok {
 		t.Fatalf("row = %v, models must not ride the light poll", row)
 	}
-	// Only lease-bearing accounts ride the light poll: an account without
-	// extras has nothing volatile to say, so listing it would just ship bytes
-	// back every 5 seconds for nothing.
+	// Every account rides the light poll, not only the ones a module happened
+	// to give extras to: the in-flight column is decorated here exactly as
+	// /status decorates it, so an account with no module bookkeeping still
+	// carries the gateway's own lease count and the platform's ceiling.  An
+	// account left out would make the page draw "—" (or ∞ for a missing
+	// ceiling) for a number both endpoints really know -- the two endpoints
+	// disagreeing about one account is the bug this poll used to have.
 	accounts, _ := row["accounts"].([]any)
-	if len(accounts) != 1 {
-		t.Fatalf("accounts = %v, want only the lease-bearing row", accounts)
+	if len(accounts) != 2 {
+		t.Fatalf("accounts = %v, want both rows (every account carries a decorated lease)", accounts)
 	}
-	a, _ := accounts[0].(map[string]any)
-	if a["id"] != "acct-own" {
-		t.Fatalf("accounts = %v, want acct-own (the one with extras)", accounts)
+	byID := map[string]map[string]any{}
+	for _, raw := range accounts {
+		a, _ := raw.(map[string]any)
+		id, _ := a["id"].(string)
+		byID[id], _ = a["extra"].(map[string]any)
+	}
+	plain, ok := byID["acct-plain"]
+	if !ok {
+		t.Fatalf("accounts = %v, want acct-plain (module reports nothing for it)", accounts)
+	}
+	if plain["in_flight"] != float64(2) || plain["in_flight_limit"] != float64(3) {
+		t.Fatalf("acct-plain extra = %v, want the gateway's 2 and the platform ceiling 3", plain)
+	}
+	own, ok := byID["acct-own"]
+	if !ok {
+		t.Fatalf("accounts = %v, want acct-own", accounts)
+	}
+	// The module keeps its own count, so its 5 wins over the gateway's 7, and
+	// the displayed ceiling is the tighter of its own 1 and the platform's 3.
+	if own["in_flight"] != float64(5) || own["in_flight_limit"] != float64(1) {
+		t.Fatalf("acct-own extra = %v, want the module's 5 and its tighter ceiling 1", own)
 	}
 }
 
