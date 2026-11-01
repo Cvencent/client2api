@@ -25,6 +25,7 @@ func TestParseLimitFromMessage(t *testing.T) {
 		{"comma separated", "prompt is too long: 100,001 tokens > 100,000 maximum", 100000},
 		{"underscore separated", "prompt is too long: 100001 tokens > 1048576 maximum", 1048576},
 		{"maximum phrased after", "maximum context length is 200000 tokens", 200000},
+		{"input token limit", "input token limit is 1048576", 1048576},
 		{"exceeds phrased", "request exceeds the model's 128000 token limit", 128000},
 		{"no number at all", "prompt is too long", 0},
 		{"unrelated refusal", "account credits exhausted at upstream", 0},

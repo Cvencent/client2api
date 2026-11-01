@@ -379,6 +379,7 @@ var tooLongPatterns = []*regexp.Regexp{
 	// "context length 100000 exceeded"
 	regexp.MustCompile(`(?i)context[^0-9]{0,20}?(?:length|window|limit)[^0-9]{0,20}?(\d[\d,_]*)[^0-9]{0,20}?exceed`),
 	// "context limit (1048568 tokens)"
+	regexp.MustCompile(`(?i)\binput\s+token\s+limit\s+is\s+(\d[\d,_]*)\b`),
 	regexp.MustCompile(`(?i)context\s+limit[^0-9]{0,20}?(\d[\d,_]*)\s*tokens?`),
 }
 
