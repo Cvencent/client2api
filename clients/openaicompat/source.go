@@ -10,7 +10,9 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -29,6 +31,13 @@ type source struct {
 	rows    []storedProvider
 	pool    *providerPool
 	cooling map[string]time.Time
+	// preconsume tracks the wallet the vendor reported in each pre-consume
+	// refusal ("¥0.000002 remaining, ¥1.09 required"): the last amount seen
+	// and how many consecutive refusals have carried the SAME amount.  A
+	// repeated amount means nobody topped up, so the quota cooldown backs off
+	// instead of re-asking every 30 minutes; a changed amount (or a success)
+	// resets it.  issue #81.
+	preconsume map[string]preconsumeWallet
 	// invalid holds the vendor's own verdict about one key (it answered 401).
 	// It is separate from Disabled, which is the operator's switch, and it is
 	// runtime-only so a reload never resurrects a rejected credential.
@@ -72,15 +81,16 @@ func newSource(name string, cfg core.SourceConfig, deps core.Deps) (*source, err
 		return nil, err
 	}
 	s := &source{
-		name:     name,
-		deps:     deps,
-		now:      time.Now,
-		pool:     newProviderPool(),
-		cooling:  map[string]time.Time{},
-		invalid:  map[string]bool{},
-		lastUsed: map[string]uint64{},
-		limits:   limits,
-		affinity: core.NewAffinity(0),
+		name:       name,
+		deps:       deps,
+		now:        time.Now,
+		pool:       newProviderPool(),
+		cooling:    map[string]time.Time{},
+		preconsume: map[string]preconsumeWallet{},
+		invalid:    map[string]bool{},
+		lastUsed:   map[string]uint64{},
+		limits:     limits,
+		affinity:   core.NewAffinity(0),
 	}
 	s.affinity.StartGC()
 	if err := s.ConfigureSource(cfg); err != nil {
@@ -675,7 +685,8 @@ func (s *source) noteFailure(id, key, base string, err error) {
 	defer s.mu.Unlock()
 	for _, p := range s.rows {
 		if p.ID == id && p.APIKey == key && s.accountBaseLocked(p) == strings.TrimRight(base, "/") {
-			s.lastErr = describeError(err)
+			refusal := describeError(err)
+			s.lastErr = refusal
 			kind := core.FailureKindOf(err)
 			if kind == core.FailureAuth && s.authExhausted != nil && s.authExhausted(id) {
 				// The wrapper knows this account is out of credits: the
@@ -689,7 +700,7 @@ func (s *source) noteFailure(id, key, base string, err error) {
 			case core.FailureRateLimited:
 				s.parkLocked(id, core.FailureRateLimited)
 			case core.FailureAuth, core.FailureQuota:
-				s.parkLocked(id, kind)
+				s.parkLocked(id, kind, refusal)
 			case core.FailureUpstream:
 				s.parkLocked(id, core.FailureUpstream)
 			}
@@ -707,13 +718,88 @@ func (s *source) noteFailure(id, key, base string, err error) {
 	}
 }
 
-func (s *source) parkLocked(id string, kind core.FailureKind) {
+func (s *source) parkLocked(id string, kind core.FailureKind, refusal ...string) {
 	cooldown := s.cfg.CooldownFor(kind, sourceDefaultCooldown(kind))
+	if kind == core.FailureQuota && len(refusal) > 0 {
+		cooldown = s.quotaCooldown(id, refusal[0], cooldown)
+	}
 	if cooldown > 0 {
 		s.cooling[id] = s.now().Add(cooldown)
 		return
 	}
 	delete(s.cooling, id)
+}
+
+// preconsumeWallet remembers what the vendor said the wallet holds, and how
+// many consecutive refusals have said the same thing.
+type preconsumeWallet struct {
+	remainingMicros int64
+	streak          int
+}
+
+// preconsumeRemainingRE extracts the balance from the pre-consume refusal's
+// fixed wording: "Not enough quota to pre-consume for this request:
+// ¥0.000002 remaining, ¥1.092788 required".  The vendor puts its own
+// measurement of the wallet in every refusal (issue #81); the gateway would
+// otherwise be blind to it and re-ask at a fixed 30-minute cadence all night.
+var preconsumeRemainingRE = regexp.MustCompile(`¥\s*([0-9]+(?:\.[0-9]+)?)\s+remaining`)
+
+// preconsumeRemaining reads the wallet amount out of a pre-consume refusal, or
+// returns ok=false when the message does not carry one.
+func preconsumeRemaining(msg string) (int64, bool) {
+	m := preconsumeRemainingRE.FindStringSubmatch(msg)
+	if m == nil {
+		return 0, false
+	}
+	// Micro-yuan keeps the comparison exact: the vendor prints up to six
+	// decimals, so a float round-trip could make two equal balances differ.
+	f, err := strconv.ParseFloat(m[1], 64)
+	if err != nil {
+		return 0, false
+	}
+	return int64(f * 1e6), true
+}
+
+// quotaCooldown decides how long a quota park should hold, given the wallet
+// the vendor just reported.  The base is the configured quota cooldown; when
+// consecutive refusals carry the SAME remaining amount, nobody has topped up,
+// and re-asking every cycle only buys a guaranteed 403 round trip (12-18s on
+// the pre-consume relays), so the cooldown doubles per identical refusal up to
+// a two-hour ceiling.  A different amount -- a top-up landed, or the request
+// size crossed a different threshold -- resets the streak: the vendor's number
+// changed, so the next cycle deserves a prompt re-check.  Balances readable
+// via the sweep are unaffected: this only shapes the park the 403 itself
+// causes.  msg is the refusal text; empty means the caller had no message and
+// the base applies unchanged.
+func (s *source) quotaCooldown(id string, msg string, base time.Duration) time.Duration {
+	const ceiling = 2 * time.Hour
+	if base <= 0 {
+		return base
+	}
+	amount, hasAmount := preconsumeRemaining(msg)
+	if !hasAmount {
+		return base
+	}
+	if s.preconsume == nil {
+		s.preconsume = map[string]preconsumeWallet{}
+	}
+	prev := s.preconsume[id]
+	if amount == prev.remainingMicros {
+		prev.streak++
+	} else {
+		prev = preconsumeWallet{remainingMicros: amount, streak: 0}
+	}
+	s.preconsume[id] = prev
+	// streak counts previous identical refusals; the first identical one keeps
+	// the base, the next doubles, and so on, capped at the ceiling.
+	backoff := base
+	for i := 0; i < prev.streak; i++ {
+		backoff *= 2
+		if backoff >= ceiling {
+			return ceiling
+		}
+	}
+	return backoff
 }
 
 func sourceDefaultCooldown(kind core.FailureKind) time.Duration {

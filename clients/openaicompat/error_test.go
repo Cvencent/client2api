@@ -115,3 +115,52 @@ func TestClassifyFailureReadsThePreConsumeRefusalAsCredit(t *testing.T) {
 		t.Fatalf("classifyFailure(403, %q) = %v, want kindForbidden", "permission denied for this resource", got)
 	}
 }
+
+// TestQuotaCooldownBacksOffOnAnUnchangedWallet pins issue #81: the pre-consume
+// vendors print the wallet balance in every refusal, and an unchanged amount
+// means nobody topped up -- re-asking every 30-minute cycle only buys a
+// guaranteed 403 round trip.  The cooldown doubles per identical refusal up to
+// a two-hour ceiling; a changed amount (a top-up landed) resets the streak so
+// the next cycle is a prompt re-check.
+func TestQuotaCooldownBacksOffOnAnUnchangedWallet(t *testing.T) {
+	dir := t.TempDir()
+	s, err := newSource("rzol", core.SourceConfig{BaseURL: "https://relay.example/v1"}, core.Deps{DataDir: dir})
+	if err != nil {
+		t.Fatalf("new source: %v", err)
+	}
+	refusal := "Not enough quota to pre-consume for this request: ¥0.000002 remaining, ¥1.092788 required"
+
+	base := 30 * time.Minute
+	// First refusal parks for the base.
+	if got := s.quotaCooldown("acct", refusal, base); got != base {
+		t.Fatalf("first refusal: cooldown = %v, want the base %v", got, base)
+	}
+	// The same amount again: nobody topped up, back off.
+	if got := s.quotaCooldown("acct", refusal, base); got != 60*time.Minute {
+		t.Fatalf("second identical refusal: cooldown = %v, want 1h", got)
+	}
+	if got := s.quotaCooldown("acct", refusal, base); got != 120*time.Minute {
+		t.Fatalf("third identical refusal: cooldown = %v, want 2h", got)
+	}
+	// The ceiling holds from here on.
+	if got := s.quotaCooldown("acct", refusal, base); got != 120*time.Minute {
+		t.Fatalf("fourth identical refusal: cooldown = %v, want the 2h ceiling", got)
+	}
+
+	// A top-up landed: the vendor's number changed, so the streak resets and
+	// the next cycle re-checks promptly.
+	topped := "Not enough quota to pre-consume for this request: ¥12.500000 remaining, ¥1.092788 required"
+	if got := s.quotaCooldown("acct", topped, base); got != base {
+		t.Fatalf("changed amount: cooldown = %v, want the base %v (streak reset)", got, base)
+	}
+
+	// A refusal that carries no amount leaves the base alone.
+	if got := s.quotaCooldown("acct", "insufficient balance", base); got != base {
+		t.Fatalf("unmeasured refusal: cooldown = %v, want the base", got)
+	}
+
+	// A different account is tracked independently.
+	if got := s.quotaCooldown("other", refusal, base); got != base {
+		t.Fatalf("a second account's first refusal = %v, want the base", got)
+	}
+}
