@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"client2api/internal/core"
@@ -167,6 +168,167 @@ func TestASuccessClearsTheFailureRecord(t *testing.T) {
 	attempt() // served
 	if rec, _ := c.pool.byID("groq"); rec.failures != 0 {
 		t.Fatalf("failures = %d, want 0 after the provider served a request", rec.failures)
+	}
+}
+
+// A relay edge hiccup answers with a status that reads like a refusal and a
+// body that carries no vendor envelope at all -- hcnsec intermittently returns
+// 404/498 + the bare word "openai_error" for a model it served seconds earlier.
+// The body cannot match any marker table, so the old status-only branches put a
+// transient upstream fault into the caller-shaped buckets (404 -> kindNotFound,
+// other 4xx -> kindClient), both terminal in the decision table: the request
+// died with a 404 while the sibling platform sat healthy next in the chain.
+func TestBareOpenaiErrorBodyIsAnUpstreamFault(t *testing.T) {
+	cases := []struct {
+		name      string
+		status    int
+		wantModel bool
+	}{
+		{name: "a bare 404 body is an upstream fault, not a missing model", status: http.StatusNotFound},
+		{name: "the non-standard 498 is an upstream fault", status: 498},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(`openai_error`))
+			}))
+			defer srv.Close()
+
+			c := newProviderTestClient(t, srv, "groq")
+			req := &core.ChatRequest{
+				Model:    "groq/openai/gpt-oss-120b",
+				Messages: []core.Message{{Role: "user", Content: "hi"}},
+				Stream:   true,
+			}
+			req.SetAccountAcquirer(func(string) (func(), error) { return func() {}, nil })
+
+			_, err := c.Chat(context.Background(), req)
+			f, ok := core.AsFailure(err)
+			if !ok {
+				t.Fatalf("err = %v, want a classified *core.Failure", err)
+			}
+			if f.Kind != core.FailureUpstream {
+				t.Fatalf("kind = %q, want upstream: a non-envelope body is a relay fault, not a caller refusal", f.Kind)
+			}
+			if !core.Retryable(f.Kind) {
+				t.Fatalf("kind %q must rotate; the same relay serves the next turn", f.Kind)
+			}
+			// Retryable is also what the routing loop uses to move the request
+			// to the next candidate platform in a multi-candidate chain, so a
+			// hiccup never ends the chain while a sibling sits next in line.
+			if f.Status != tc.status {
+				t.Fatalf("status = %d, want the vendor's %d preserved", f.Status, tc.status)
+			}
+		})
+	}
+}
+
+// A structured 404 naming a missing model is the relay saying "this id does not
+// exist here".  The credential is fine and every account on the relay would
+// answer the same, so the verdict must be FailureModelRefused -- the same one
+// trae/openrouter/minimaxcode hand down -- which moves the request to the next
+// platform without parking anything.
+func TestAStructured404IsAModelRefusal(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"error":{"message":"model not found: gpt-oss-120b"}}`))
+	}))
+	defer srv.Close()
+
+	c := newProviderTestClient(t, srv, "groq")
+	req := &core.ChatRequest{
+		Model:    "groq/openai/gpt-oss-120b",
+		Messages: []core.Message{{Role: "user", Content: "hi"}},
+		Stream:   true,
+	}
+	req.SetAccountAcquirer(func(string) (func(), error) { return func() {}, nil })
+
+	_, err := c.Chat(context.Background(), req)
+	f, ok := core.AsFailure(err)
+	if !ok {
+		t.Fatalf("err = %v, want a classified *core.Failure", err)
+	}
+	if f.Kind != core.FailureModelRefused {
+		t.Fatalf("kind = %q, want model_refused: the model is missing on this relay, not the request", f.Kind)
+	}
+	if rec, _ := c.pool.byID("groq"); rec.failures != 0 {
+		t.Fatalf("failures = %d, want 0: a missing model says nothing about the credential", rec.failures)
+	}
+	if !core.NextPlatformOn(f.Kind) {
+		t.Fatal("a model refusal must move the request to the next platform")
+	}
+}
+
+// One same-provider retry for an upstream-classified fault: the relay that
+// hiccuped on this request serves the next one, so the retry rescues a caller
+// whose chain has no other platform to move to.  The verdict must not be
+// recorded when the retry serves -- one blip is not a park.
+func TestAnUpstreamFaultIsRetriedOnceOnTheSameProvider(t *testing.T) {
+	var hits int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt64(&hits, 1) == 1 {
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte(`{"error":{"message":"bad gateway"}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer srv.Close()
+
+	c := newProviderTestClient(t, srv, "groq")
+	req := &core.ChatRequest{
+		Model:    "groq/openai/gpt-oss-120b",
+		Messages: []core.Message{{Role: "user", Content: "hi"}},
+		Stream:   true,
+	}
+	req.SetAccountAcquirer(func(string) (func(), error) { return func() {}, nil })
+
+	stream, err := c.Chat(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Chat = %v, want the retry to serve", err)
+	}
+	if _, _, _, _, _, _ = drainStream(stream); atomic.LoadInt64(&hits) != 2 {
+		t.Fatalf("hits = %d, want 2 (the hiccup, then the serving retry)", atomic.LoadInt64(&hits))
+	}
+	if rec, _ := c.pool.byID("groq"); rec.failures != 0 {
+		t.Fatalf("failures = %d, want 0: a blip the retry recovered from is not a verdict", rec.failures)
+	}
+}
+
+// Two consecutive upstream faults exhaust the one same-provider retry and the
+// rotation budget with it, so the request ends as the last vendor verdict
+// instead of looping.
+func TestTwoUpstreamFaultsEndTheRequest(t *testing.T) {
+	var hits int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt64(&hits, 1)
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(`{"error":{"message":"bad gateway"}}`))
+	}))
+	defer srv.Close()
+
+	c := newProviderTestClient(t, srv, "groq")
+	req := &core.ChatRequest{
+		Model:    "groq/openai/gpt-oss-120b",
+		Messages: []core.Message{{Role: "user", Content: "hi"}},
+		Stream:   true,
+	}
+	req.SetAccountAcquirer(func(string) (func(), error) { return func() {}, nil })
+
+	_, err := c.Chat(context.Background(), req)
+	if err == nil {
+		t.Fatal("Chat reported success against a dead relay")
+	}
+	if got := atomic.LoadInt64(&hits); got != 2 {
+		t.Fatalf("hits = %d, want 2: the hiccup and its single retry, nothing more", got)
+	}
+	f, ok := core.AsFailure(err)
+	if !ok || f.Kind != core.FailureUpstream {
+		t.Fatalf("err = %v, want an upstream-classified failure", err)
 	}
 }
 

@@ -495,6 +495,29 @@ func (s *source) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 		}
 		core.NoteServedBy(req, p.ID)
 		stream, err := transport.doChat(ctx, prov, p.ID, body)
+		if err != nil && core.FailureKindOf(err) == core.FailureUpstream {
+			// An upstream-classified fault (5xx, a bare non-envelope 404/498
+			// body) is an edge hiccup, not a credential verdict: the same relay
+			// serves the next turn seconds later.  One immediate same-account
+			// retry before the verdict is recorded rescues the request when the
+			// pool holds only this account, and it does not double-park or
+			// double-count anything because noteFailure has not run yet.
+			if retry, rerr := transport.doChat(ctx, prov, p.ID, body); rerr == nil {
+				attempts++
+				s.mu.Lock()
+				delete(s.cooling, p.ID)
+				delete(s.invalid, p.ID)
+				s.mu.Unlock()
+				return &sourceStream{Stream: retry, source: s, id: p.ID, key: p.APIKey, base: prov.BaseURL}, nil
+			} else if ctx.Err() != nil {
+				// The caller walked away during the retry; report that instead
+				// of the stale first error.
+				req.ReleaseAccountSlot()
+				return nil, ctx.Err()
+			} else {
+				err = rerr
+			}
+		}
 		attempts++
 		if err == nil {
 			// A served request is direct evidence that the key works, so it

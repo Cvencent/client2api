@@ -400,11 +400,16 @@ func (c *Client) fetchTicketCredential(ctx context.Context, ticketID, secret str
 }
 
 // storeLoginResult persists a freshly minted credential and reports success.
+// When the sign-in was driven by the auto login, the rented phone number rides
+// along so a later draw avoids it.
 func (c *Client) storeLoginResult(sess *panelLogin, acct account) {
 	if c.accountsPath == "" {
 		sess.set(core.LoginFailed, "signed in, but there is no data directory to store the credential in", "")
 		return
 	}
+	sess.mu.Lock()
+	acct.Phone = strings.TrimSpace(sess.phone)
+	sess.mu.Unlock()
 	if err := c.storeAccount(acct); err != nil {
 		sess.set(core.LoginFailed, "signed in, but the credential could not be stored: "+err.Error(), "")
 		return

@@ -58,9 +58,12 @@ const (
 
 	// onboardingBoardTTL bounds how often the board re-reads upstream.  The
 	// panel re-reads /tasks every few seconds while a run is in flight and this
-	// is a network call, so a few seconds of staleness saves a lot of traffic.
-	// A run drops the cache, so a completion is never stale.
-	onboardingBoardTTL = 10 * time.Second
+	// is a network call, so staleness saves traffic.  It used to be 10 s, but
+	// the vendor's endpoint slowed to 6-20 s per read (measured 2026-11-01),
+	// which turned every panel poll that missed the cache into a fresh 10-20 s
+	// request; 60 s keeps the board reactive to a run without hammering a slow
+	// upstream.  A run still drops the cache, so a completion is never stale.
+	onboardingBoardTTL = 60 * time.Second
 )
 
 // onboardingRunNote is what the board says beside a chore it can report.
@@ -162,8 +165,11 @@ type onboardingBoard struct {
 // at most once per onboardingBoardTTL.
 //
 // The returned map is shared with the cache and must be treated as read-only.
-// A failed read is never cached: a board that could not be read has to be able
-// to report the failure the moment it happens.
+// A failed read is never cached, but a FAILED read also does not throw away a
+// still-fresh cached board: the vendor's endpoint has been observed slowing to
+// tens of seconds and timing callers out, and returning the board it answered
+// moments ago beats returning an error the panel can only show.  The next
+// successful read replaces it as usual.
 func (c *Client) boardFor(ctx context.Context, acc account) (map[string]bool, error) {
 	now := time.Now().UTC()
 	c.board.mu.Lock()
@@ -176,6 +182,18 @@ func (c *Client) boardFor(ctx context.Context, acc account) (map[string]bool, er
 
 	tasks, err := c.up.onboardingTasks(ctx, acc.AccessToken)
 	if err != nil {
+		// The caller-gone case says nothing about the board and is returned
+		// as-is either way.
+		c.board.mu.Lock()
+		stale := c.board.tasks != nil && c.board.account == acc.ID && now.Sub(c.board.at) < staleBoardGrace
+		var out map[string]bool
+		if stale {
+			out = c.board.tasks
+		}
+		c.board.mu.Unlock()
+		if stale {
+			return out, nil
+		}
 		return nil, err
 	}
 	c.board.mu.Lock()
@@ -183,6 +201,11 @@ func (c *Client) boardFor(ctx context.Context, acc account) (map[string]bool, er
 	c.board.mu.Unlock()
 	return tasks, nil
 }
+
+// staleBoardGrace extends onboardingBoardTTL for reads that failed: a board
+// this young is still a truthful answer to "what does the vendor say", while a
+// fresh upstream error is only a reason to believe the network hiccuped.
+const staleBoardGrace = 5 * time.Minute
 
 // forgetBoard drops the cache, so the read that follows a run sees the
 // completion that just landed instead of the state that preceded it.

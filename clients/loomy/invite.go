@@ -13,16 +13,25 @@ import (
 	"client2api/internal/core"
 )
 
-// invite.go implements the two code surfaces the Loomy desktop client exposes
-// on its points page.  They are deliberately separate:
+// invite.go implements the three code surfaces the Loomy desktop client
+// exposes on its points page.  They are deliberately separate:
 //
-//	POST /points/activation                 {"inviteCode":"P276D2","deviceId":"…"}
-//	POST /points/redemption-codes/redeem    {"code":"…"}
+//	GET  /api/v1/invitation-codes           (the inviter's own codes + usage)
+//	POST /api/v1/points/activation          {"inviteCode":"P276D2","deviceId":"…"}
+//	POST /api/v1/points/redemption-codes/redeem {"code":"…"}
 //
-// The first binds the account to an invitation code and is the call behind
-// "使用邀请码兑换积分"; the second spends a redemption-code voucher.  Calling
-// the first on every account is what makes the operator's invite code apply to
-// the whole pool, including accounts added later through SMS or a pasted token.
+// The first lists the codes the account ITSELF hands out, with usedCount /
+// maxUses / status -- exactly what the desktop client's invite page renders.
+// The second binds the account to an invitation code and is the call behind
+// "使用邀请码兑换积分"; the third spends a redemption-code voucher.  Binding a
+// NEW account therefore picks a live code from the pool instead of a compiled
+// default: an operator code that has spent all of its uses can no longer bind
+// anything, while every account in the pool carries its own 20-use code.
+//
+// The /points/activation read used to be expected to carry invitationCodes;
+// probing every account of a live deployment showed it only ever answers
+// {activated, appliedInvitationCode}, so the separate listing endpoint is the
+// authority on how many uses each code has left.
 
 var _ core.InviteCodeProvider = (*Client)(nil)
 var _ core.InviteCodeFleetBinder = (*Client)(nil)
@@ -54,6 +63,65 @@ type inviteActivation struct {
 type redemptionOutcome struct {
 	Points         float64 `json:"points"`
 	CurrentBalance float64 `json:"currentBalance"`
+}
+
+// inviteCodeUse is one row of the inviter's own code list: the code, how many
+// accounts have already bound through it, its per-code cap and the vendor's
+// own active/expired verdict.
+type inviteCodeUse struct {
+	InviteCode string
+	UsedCount  int
+	MaxUses    int
+	Status     string
+}
+
+// usesLeft reports the remaining bindings, or 0 when the code is spent,
+// expired or the vendor omitted the cap.
+func (c inviteCodeUse) usesLeft() int {
+	if !strings.EqualFold(c.Status, "active") {
+		return 0
+	}
+	left := c.MaxUses - c.UsedCount
+	if left < 0 {
+		return 0
+	}
+	return left
+}
+
+// queryInviteCodes lists the codes the token's own account hands out.  The
+// desktop client calls GET /api/v1/invitation-codes behind its invite page.
+func (u *upstream) queryInviteCodes(ctx context.Context, token string) ([]inviteCodeUse, error) {
+	data, err := u.business(ctx, http.MethodGet, "/invitation-codes", nil, token, nil)
+	if err != nil {
+		return nil, err
+	}
+	var out struct {
+		List []struct {
+			InviteCode string `json:"inviteCode"`
+			UsedCount  int    `json:"usedCount"`
+			MaxUses    int    `json:"maxUses"`
+			Status     string `json:"status"`
+		} `json:"list"`
+	}
+	if len(data) > 0 && string(data) != "null" {
+		if err := json.Unmarshal(data, &out); err != nil {
+			return nil, fmt.Errorf("loomy: reading invitation codes: %w", err)
+		}
+	}
+	codes := make([]inviteCodeUse, 0, len(out.List))
+	for _, row := range out.List {
+		code := strings.TrimSpace(row.InviteCode)
+		if code == "" {
+			continue
+		}
+		codes = append(codes, inviteCodeUse{
+			InviteCode: code,
+			UsedCount:  row.UsedCount,
+			MaxUses:    row.MaxUses,
+			Status:     strings.TrimSpace(row.Status),
+		})
+	}
+	return codes, nil
 }
 
 // inviteActivationStatus performs the read-only check the desktop client does
@@ -115,10 +183,32 @@ func (u *upstream) redeemCode(ctx context.Context, token, code string) (redempti
 	return out, nil
 }
 
-// InviteCodeDefault implements core.InviteCodeProvider.
-func (c *Client) InviteCodeDefault(context.Context) string {
+// invitePickTTL bounds how long one pool-wide code scan is trusted.  The scan
+// is one GET per account; the panel's status route re-reads capabilities on
+// every refresh, so an uncached pick would turn each UI poll into a 40-request
+// burst against the vendor.  A bind always re-scans with a fresh read.
+const invitePickTTL = 10 * time.Minute
+
+// cachedInvitePick memoizes one pickInviteCode sweep.  protected by c.inviteMu.
+type cachedInvitePick struct {
+	code    string
+	seen    []inviteCodeUse
+	scanned time.Time
+}
+
+// InviteCodeDefault implements core.InviteCodeProvider.  It answers the code
+// the NEXT bind would use: a live pool code with uses left when one exists,
+// otherwise the configured default.  The pool scan is memoized for
+// invitePickTTL because the panel calls this on every status refresh; the
+// binding path itself re-scans so a spent code is never used twice.
+func (c *Client) InviteCodeDefault(ctx context.Context) string {
 	if c == nil {
 		return ""
+	}
+	if c.store != nil && c.store.count() > 0 {
+		if picked, _, _ := c.pickedInviteCode(ctx, ""); picked != "" {
+			return picked
+		}
 	}
 	return c.cfg.inviteCode()
 }
@@ -126,6 +216,70 @@ func (c *Client) InviteCodeDefault(context.Context) string {
 // InviteCodeBindAllSafe reports that Loomy's activation endpoint is idempotent
 // and accepts the code on any account, so a fleet-wide sweep is meaningful.
 func (c *Client) InviteCodeBindAllSafe() bool { return true }
+
+// pickInviteCode scans the pool once and reports the code with the most uses
+// left plus every code row it saw.  It is the uncached core; callers go
+// through pickedInviteCode so the panel path reuses the sweep.
+//
+// The pool snapshot order is the operator's own ordering; ties are broken by
+// that order, which makes repeated picks fall down the pool instead of always
+// hammering one account.  exclude is the account being bound: its own code
+// cannot invite itself, so it is skipped.
+func (c *Client) pickInviteCode(ctx context.Context, exclude string) (string, []inviteCodeUse, error) {
+	bestCode := ""
+	var best inviteCodeUse
+	var seen []inviteCodeUse
+	for _, acc := range c.store.snapshot() {
+		if acc.ID == exclude || !acc.Enabled || strings.TrimSpace(acc.AccessToken) == "" {
+			continue
+		}
+		codes, err := c.up.queryInviteCodes(ctx, acc.AccessToken)
+		if err != nil {
+			// One unreachable account must not blind the picker: it is skipped,
+			// and if that leaves nothing, the caller falls back to the config.
+			continue
+		}
+		seen = append(seen, codes...)
+		for _, cu := range codes {
+			if cu.usesLeft() <= 0 {
+				continue
+			}
+			if bestCode == "" || cu.usesLeft() > best.usesLeft() {
+				bestCode, best = cu.InviteCode, cu
+			}
+		}
+	}
+	return bestCode, seen, nil
+}
+
+// pickedInviteCode is pickInviteCode behind the memo.  A cache written without
+// an exclude still answers an excluded pick correctly in the common case: the
+// excluded account is the one just bound, so its own code is either spent or
+// was not the winner.  The binding path forces a fresh sweep only when the
+// cache is empty.
+func (c *Client) pickedInviteCode(ctx context.Context, exclude string) (string, []inviteCodeUse, error) {
+	c.inviteMu.Lock()
+	cached, haveCache := c.invitePick, c.invitePick != nil
+	c.inviteMu.Unlock()
+	if haveCache && time.Since(cached.scanned) < invitePickTTL {
+		return cached.code, cached.seen, nil
+	}
+	code, seen, err := c.pickInviteCode(ctx, exclude)
+	if err != nil || code == "" {
+		// Nothing usable: do not memoize a dead answer for the full TTL.  The
+		// config fallback still applies at the caller.
+		if haveCache {
+			c.inviteMu.Lock()
+			c.invitePick = nil
+			c.inviteMu.Unlock()
+		}
+		return code, seen, err
+	}
+	c.inviteMu.Lock()
+	c.invitePick = &cachedInvitePick{code: code, seen: seen, scanned: time.Now()}
+	c.inviteMu.Unlock()
+	return code, seen, nil
+}
 
 // BindAccountInviteCode implements core.InviteCodeProvider.
 //
@@ -139,14 +293,30 @@ func (c *Client) BindAccountInviteCode(ctx context.Context, id, code string) (co
 		return core.InviteCodeResult{}, fmt.Errorf("loomy: no account %q", id)
 	}
 	code = strings.TrimSpace(code)
+	pickNote := ""
 	if code == "" {
-		code = c.cfg.inviteCode()
+		// No explicit code: pick the live code with the most remaining uses
+		// from the pool's own accounts.  Only when the pool cannot answer
+		// (empty, unreachable, or every code spent) does the compiled default
+		// apply.  The pick runs fresh for the account being bound so a code
+		// that hit its cap between the memo and now is never reused.
+		if picked, _, err := c.pickInviteCode(ctx, acc.ID); err == nil && picked != "" {
+			code = picked
+		} else if cfgCode := c.cfg.inviteCode(); cfgCode != "" {
+			code = cfgCode
+			if err != nil {
+				pickNote = "邀请码余量查询失败，退回配置的邀请码"
+			} else {
+				pickNote = "账号池里的邀请码都已用尽，退回配置的邀请码"
+			}
+		}
 	}
 	res := core.InviteCodeResult{
 		AccountID: acc.ID,
 		Code:      code,
 		At:        time.Now().UTC().Format(time.RFC3339),
 	}
+	res.Message = pickNote
 	if code == "" {
 		res.Error = "loomy: no invite code was supplied and no default is configured"
 		return res, nil

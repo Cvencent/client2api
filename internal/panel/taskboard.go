@@ -218,11 +218,20 @@ func (p *panel) taskList(w http.ResponseWriter, r *http.Request, c core.Client) 
 		p.taskListAll(w, r, c, tp)
 		return
 	}
-	ctx, cancel := p.ctx(r, 30*time.Second)
+	// The budget matches accountTasks: both serve the same board, and a slow
+	// upstream read (loomy's onboarding endpoint has been measured at 6-20 s)
+	// must survive one cache-missed re-read.  30 s used to fail here first —
+	// "读取失败 · loomy: GET /onboarding/tasks: context deadline exceeded" —
+	// while the same call through the per-account route succeeded.
+	ctx, cancel := p.ctx(r, taskScanTimeout)
 	defer cancel()
 
 	list, cached, fetchedAt, err := p.taskBoardTasks(ctx, c.Name(), tp, accountID, r.URL.Query().Get("refresh") == "1")
-	if err != nil {
+	if err != nil && len(list) == 0 {
+		// Nothing to show and the read failed: honest 502.  When the fallback
+		// did produce the last good list, serving it with cached=true and a
+		// note beats a red page — the board renders exactly what the vendor
+		// answered last time and says so.
 		writeErr(w, http.StatusBadGateway, err.Error())
 		return
 	}
@@ -233,7 +242,16 @@ func (p *panel) taskList(w http.ResponseWriter, r *http.Request, c core.Client) 
 		"runs":       p.runs.forClientAccount(c.Name(), accountID, 50),
 		"cached":     cached,
 		"fetched_at": fetchedAt,
+		"error":      errStringOrEmpty(err),
 	})
+}
+
+// errStringOrEmpty renders a possibly-nil error for the JSON payload.
+func errStringOrEmpty(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 type taskAccountRow struct {
@@ -291,6 +309,16 @@ func (p *panel) taskListAll(w http.ResponseWriter, r *http.Request, c core.Clien
 			rows[i].Cached = cached
 			rows[i].FetchedAt = fetchedAt
 			if err != nil {
+				// The fallback in taskBoardTasks already answered with the last
+				// good list when one existed; this row only reports the error
+				// when there is genuinely nothing to show.  When there is, the
+				// row renders the cached list and the error is kept for the
+				// freshness caption rather than turning the whole row red.
+				if len(list) > 0 {
+					rows[i].Tasks = list
+					rows[i].Error = ""
+					return
+				}
 				rows[i].Error = core.Redact(err.Error())
 				return
 			}
@@ -304,6 +332,13 @@ func (p *panel) taskListAll(w http.ResponseWriter, r *http.Request, c core.Clien
 // taskBoardTasks serves a cached task list when one exists, avoiding a vendor
 // call for accounts the board has already seen.  force is the manual-refresh
 // path: it always asks upstream and replaces the cache entry.
+//
+// A failed read does not overwrite the remembered list: the vendor's endpoints
+// have been observed slowing to 6-20 s and the operator's browser cancels an
+// in-flight scan when it re-polls or navigates, so one bad read used to both
+// show "读取失败" on the row AND poison the cache with the error for the next
+// poll.  The last good list stays in place and keeps carrying cached=true; only
+// a successful read replaces it.
 func (p *panel) taskBoardTasks(ctx context.Context, client string, tp core.TaskProvider, accountID string, force bool) ([]core.TaskInfo, bool, int64, error) {
 	if !force && p != nil && p.taskBoardCache != nil {
 		if e, ok := p.taskBoardCache.entry(client, accountID); ok {
@@ -316,7 +351,16 @@ func (p *panel) taskBoardTasks(ctx context.Context, client string, tp core.TaskP
 	}
 	list, err := tp.Tasks(ctx, accountID)
 	if err != nil {
+		// A previous good answer still beats the error, whatever killed this
+		// read: a cancelled caller (the browser re-polled or navigated away)
+		// and a slow upstream are both transient, and the board row renders
+		// the fresh error only when there is nothing to show instead.  An
+		// entry written for a FAILED read (e.Error set) is deliberately not
+		// served: that row is meant to keep failing visibly.
 		if p != nil && p.taskBoardCache != nil {
+			if e, ok := p.taskBoardCache.entry(client, accountID); ok && e.Error == "" && len(e.Tasks) > 0 {
+				return append([]core.TaskInfo(nil), e.Tasks...), true, e.FetchedAt, err
+			}
 			p.taskBoardCache.put(client, accountID, nil, err)
 		}
 		return nil, false, time.Now().UnixMilli(), err

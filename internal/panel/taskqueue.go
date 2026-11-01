@@ -345,7 +345,11 @@ func (p *panel) scanTasks(ctx context.Context, c core.Client, tp core.TaskProvid
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			rows[i] = taskScanRow{Account: a.ID, Label: core.Redact(a.Label)}
-			list, err := tp.Tasks(ctx, a.ID)
+			// The board's fallback path keeps a cancelled or slow read from
+			// showing "读取失败" when a previous scan just answered for this
+			// account; a queue round wants the freshest verdict, not a cached
+			// one, so the result is used for display either way.
+			list, _, _, err := p.taskBoardTasks(ctx, c.Name(), tp, a.ID, true)
 			if err != nil {
 				rows[i].Error = core.Redact(err.Error())
 				return

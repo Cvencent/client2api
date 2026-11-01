@@ -71,12 +71,20 @@ type tokenCredentials struct {
 // errRefreshTerminal marks a refresh failure that no retry can fix: the
 // refresh token itself is dead and the operator has to sign in again.
 //
-// The reference implementation classifies exactly two conditions this way —
-// `error == "invalid_grant"` and an `error_code` containing
-// `ExpiredRefreshToken` — and deliberately does NOT include
+// Three conditions are classified this way — `error == "invalid_grant"`, an
+// `error_code` containing `ExpiredRefreshToken`, and the STS code `STS5.1806`
+// ("invalid refresh token").  It deliberately does NOT include
 // `InvalidDPoPHeader`, which is a per-request rejection rather than evidence
 // that the refresh token is gone.  Getting that wrong would mark a perfectly
 // good account dead because one proof was malformed.
+//
+// `STS5.1806` is safe to add because this classifier is only ever consulted on
+// the refresh grant (postToken sets terminalErr there and nowhere else), so the
+// code cannot be the authorisation-code-already-used case.  Live evidence: a
+// credential whose refresh token's own `exp` had passed answered
+// `HTTP 400 {"error_code":"STS5.1806","error_msg":"invalid refresh token:
+// 'refresh code has expired'"}` on every five-minute sweep forever, because
+// the two reference conditions did not match its spelling (issue #53).
 var errRefreshTerminal = errors.New("codearts: the refresh token is no longer valid; sign in again")
 
 // isTerminalRefreshFailure reports whether a failed token response means the
@@ -88,8 +96,20 @@ func isTerminalRefreshFailure(resp *tokenResponse) bool {
 	if strings.EqualFold(strings.TrimSpace(resp.Error), "invalid_grant") {
 		return true
 	}
-	return strings.Contains(resp.ErrorCode, "ExpiredRefreshToken")
+	code := strings.TrimSpace(resp.ErrorCode)
+	if strings.Contains(code, "ExpiredRefreshToken") {
+		return true
+	}
+	// The STS endpoint's own code for an unusable refresh token.  Huawei spells
+	// it differently from the IAM code above, and only the message says why
+	// ("refresh code has expired"), so the code is what is matched.
+	return strings.Contains(strings.ToUpper(code), stsInvalidRefreshTokenCode)
 }
+
+// stsInvalidRefreshTokenCode is the STS endpoint's code for a refresh token it
+// will not accept.  Matched through ToUpper so it is case-insensitive like the
+// rest of this classifier.
+const stsInvalidRefreshTokenCode = "STS5.1806"
 
 // tokenErrorText renders the failure the server described.
 func tokenErrorText(resp *tokenResponse) string {

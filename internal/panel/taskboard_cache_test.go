@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"context"
 	"net/http"
 	"testing"
 	"time"
@@ -153,5 +154,77 @@ func TestTaskBoardCacheExpires(t *testing.T) {
 	row, _ := accounts[0].(map[string]any)
 	if row["cached"] == true {
 		t.Fatalf("the refetched row was still marked cached: %v", row)
+	}
+}
+
+// The vendor behind a task board can slow to tens of seconds and the browser
+// cancels an in-flight scan when it re-polls or navigates.  One cancelled read
+// used to render "读取失败" on the row AND poison the cache with the error, so
+// the next poll served the failure too.  A failed read now leaves the last
+// good list in place: the row keeps showing it (cached=true) instead of an
+// error, and the error never enters the cache while a good entry exists.
+func TestAFailedBoardReadKeepsTheLastGoodList(t *testing.T) {
+	c := newSweepClient("loomy", core.TaskResult{OK: true}, liveAccount("a1"))
+	c.fakeTaskClient.tasks = []core.TaskInfo{{Code: "share_soul", Auto: true, Claimed: true}}
+	p := taskPanel(t, c)
+	p.initTaskBoardCache()
+
+	rec, _ := doTask(t, p, http.MethodGet, "/panel/api/clients/loomy/tasks?all=1&refresh=1", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("first scan: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	// The upstream goes dark exactly the way a cancelled browser read does.
+	c.fakeTaskClient.tasks = nil
+	c.fakeTaskClient.listErr = context.Canceled
+	rec, out := doTask(t, p, http.MethodGet, "/panel/api/clients/loomy/tasks?all=1&refresh=1", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("failed scan: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	accounts, _ := out["accounts"].([]any)
+	row, _ := accounts[0].(map[string]any)
+	if row["error"] != nil && row["error"] != "" {
+		t.Fatalf("a row with a last-good list reported an error: %v", row)
+	}
+	tasks, _ := row["tasks"].([]any)
+	if len(tasks) != 1 {
+		t.Fatalf("row tasks = %v, want the remembered share_soul row", tasks)
+	}
+	if row["cached"] != true {
+		t.Fatalf("the fallback row was not marked cached: %v", row)
+	}
+
+	// The next non-forced poll must still serve the good list, not the error.
+	rec, out = doTask(t, p, http.MethodGet, "/panel/api/clients/loomy/tasks?all=1", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("poll after failure: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	accounts, _ = out["accounts"].([]any)
+	row, _ = accounts[0].(map[string]any)
+	if row["error"] != nil && row["error"] != "" {
+		t.Fatalf("the error leaked into the cache and the next poll: %v", row)
+	}
+	tasks, _ = row["tasks"].([]any)
+	if len(tasks) != 1 {
+		t.Fatalf("tasks after the failure = %v, want the good list still served", tasks)
+	}
+}
+
+// When there is NO last good list the error stays visible: a board that has
+// never answered must not pretend to be empty.
+func TestAFailedBoardReadWithoutHistoryStillReportsTheError(t *testing.T) {
+	c := newSweepClient("loomy", core.TaskResult{OK: true}, liveAccount("a1"))
+	c.fakeTaskClient.listErr = context.DeadlineExceeded
+	p := taskPanel(t, c)
+	p.initTaskBoardCache()
+
+	rec, out := doTask(t, p, http.MethodGet, "/panel/api/clients/loomy/tasks?all=1&refresh=1", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("scan: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	accounts, _ := out["accounts"].([]any)
+	row, _ := accounts[0].(map[string]any)
+	if row["error"] == nil || row["error"] == "" {
+		t.Fatalf("a first-time failure hid the error: %v", row)
 	}
 }

@@ -15,21 +15,16 @@ import (
 )
 
 // Compile-time proof of which optional core interfaces this module serves.
-// Deliberately NOT implemented (and why):
-//   - core.TaskProvider / core.BatchProvider / core.CaptchaProvider /
-//     core.HintProvider: the vendor exposes nothing of the sort.
 //
 // core.LoginProvider is implemented in login.go (loopback QR + SMS page);
 // core.CheckinProvider is implemented in checkin.go (the desktop login-points
 // grant, which extends the daily 300 credits and which the vendor only grants
-// to its own desktop app).
-// Deliberately NOT implemented (and why):
-//   - core.AutoLoginProvider: the one-click 一键接码 flow is OFF.  The vendor
-//     moved SMS login to the IAM service and hardened the Aliyun scene so the
-//     traceless fast path no longer auto-passes: their own login page now
-//     needs a human to drag the slider, so an unattended run can never get a
-//     usable captcha token.  Rather than leave a button that always fails, the
-//     module no longer advertises the capability and the panel hides it.
+// to its own desktop app); core.AutoLoginProvider is implemented in
+// autologin.go: the browser drives the loopback page itself, so the Aliyun
+// traceless captcha runs inside a real Chromium exactly as it does for a
+// manual sign-in.  The 2026-10-21 removal only ever killed the old
+// bypass-the-browser path; driving the page is what the vendor's own flow
+// expects.  Deliberately NOT implemented (and why):
 //   - core.TaskProvider / core.BatchProvider / core.CaptchaProvider /
 //     core.HintProvider: the vendor exposes nothing of the sort.
 var (
@@ -41,6 +36,7 @@ var (
 	_ core.BalanceProvider     = (*Client)(nil)
 	_ core.PackageProvider     = (*Client)(nil)
 	_ core.SMSProvider         = (*Client)(nil)
+	_ core.AutoLoginProvider   = (*Client)(nil)
 )
 
 const probeTimeout = 30 * time.Second

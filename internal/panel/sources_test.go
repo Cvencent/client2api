@@ -362,3 +362,44 @@ func TestSourceRedactionMasksUnexpectedCredentials(t *testing.T) {
 		t.Fatal("non-secret token field was masked")
 	}
 }
+
+// The platform page draws a card for every platforms.<id> key, and deleting a
+// relay used to clear only sources.<id>.  A row left behind by an earlier save
+// therefore kept a card that the delete button could not remove: the request
+// answered 404 because the source definition was already gone.
+func TestSourceDeleteClearsPolicyOnlyResidue(t *testing.T) {
+	path := configFile(t, `{"platforms":{"ghost":{"model_priorities":{"m1":null,"m2":null}}}}`)
+	p := configPanel(path)
+	p.opts.Registry = core.NewRegistry()
+	p.opts.Reload = func() error { return nil }
+
+	w := httptest.NewRecorder()
+	p.handleSource(w, httptest.NewRequest(http.MethodDelete, "/panel/api/sources/ghost", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("delete residue: %d %s", w.Code, w.Body.String())
+	}
+	platforms, _ := onDisk(t, path)["platforms"].(map[string]any)
+	if entry, present := platforms["ghost"]; present {
+		t.Fatalf("the residue survived: %v", entry)
+	}
+}
+
+// A delete for a name that has neither a source definition nor any policy is
+// still a 404: "nothing matched" must not read as a successful removal.
+func TestSourceDeleteStillRejectsAnUnknownName(t *testing.T) {
+	path := configFile(t, `{"platforms":{"other":{"priority":1}}}`)
+	p := configPanel(path)
+	p.opts.Registry = core.NewRegistry()
+	p.opts.Reload = func() error { return nil }
+
+	w := httptest.NewRecorder()
+	p.handleSource(w, httptest.NewRequest(http.MethodDelete, "/panel/api/sources/ghost", nil))
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("unknown name: %d %s", w.Code, w.Body.String())
+	}
+	// The unrelated platform is untouched.
+	platforms, _ := onDisk(t, path)["platforms"].(map[string]any)
+	if _, present := platforms["other"]; !present {
+		t.Fatal("an unrelated platform was cleared")
+	}
+}

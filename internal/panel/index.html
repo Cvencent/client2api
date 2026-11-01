@@ -133,6 +133,16 @@ body {
   animation: auroraSpin 46s linear infinite;
   will-change: transform;
 }
+/* 手机上这一层是横滚主凶，两个来源都修：
+   1) inset:-30% 的本体溢出——blur 会把边界糊掉，窄屏收不回没视觉损失；
+   2) auroraSpin 旋转的正方形按对角线扫出一个 √2 倍的包围盒，浏览器把整条
+      旋转轨迹计进 scrollable overflow，页面因此可以拖出几百像素空白。
+      窄屏直接停旋转（静态渐变依然是完整的氛围层），并给 .main 上
+      overflow-x:clip 兜底，任何装饰层的溢出都不再传成横滚。 */
+@media (max-width: 760px) {
+  .main::after { inset: 0; animation: none; }
+  .main { overflow-x: clip; }
+}
 @keyframes auroraSpin { to { transform: rotate(360deg); } }
 
 /* ② 聚光灯卡片：鼠标在卡片上移动时，一枚柔光跟着走（React Bits Spotlight）。
@@ -538,6 +548,8 @@ button, .fx-rip, .acct-card, .pk-card, .ov-kpi, .berth, .uscard, .rl-node { posi
    不吃事件，每次点击生成 8 枚短命火花，rAF 衰减到零即停。 */
 #sparkField {
   position: fixed; inset: 0; z-index: 2147483000; pointer-events: none;
+  /* 位图尺寸是 CSS 宽 × dpr（手机上 780px），intrinsic size 不许反推布局。 */
+  width: 100vw; height: 100vh; max-width: 100vw; max-height: 100vh;
 }
 
 /* ⑥ 账号池卡片墙：默认视图。表格退成可选（.acc-table 模式）。 */
@@ -2057,6 +2069,10 @@ button.primary:active:not(:disabled) { filter: brightness(.94); }
 /* 九、平台配置页。每个平台一张可折叠的卡片：头部一行放优先级与开关，展开后
    才是模型清单。模型动辄几百个，给清单固定高度并内部滚动，页面本身不跟着疯长。 */
 .pfplat { border: 1px solid var(--line-soft); border-radius: 9px; margin-bottom: 10px; overflow: hidden; }
+/* A platform with no source definition and no running module: only leftover
+   routing policy.  Dashed border says "this is residue", not a live platform. */
+.pfplat.orphan { border-style: dashed; }
+.pfplat.orphan > .pfhead { background: color-mix(in srgb, var(--surface-2) 70%, transparent); }
 .pfSubtabs { width: auto; margin: 14px 18px 0; }
 .pfhead { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; padding: 9px 12px; background: var(--surface-2); }
 .pfhead .pfname { font-weight: 600; font-size: 13px; min-width: 96px; max-width: 100%; overflow-wrap: anywhere; }
@@ -6117,6 +6133,10 @@ html:not([data-theme="light"]) body::after {
    网格用 CSS 画（静态、零成本），漂移粒子用 canvas（bgField）画。 */
 .bgfield {
   position: absolute; inset: 0; width: 100%; height: 100%;
+  /* 手机上 canvas 位图被 bgfResize 设成 CSS 宽 × dpr（390×2=780px），这个
+     intrinsic width 会通过 min-content 把 .main 撑出横向滚动——整页因此
+     被放大成「内容挤在左边一条、右边一片空」。锁死 CSS 尺寸不让位图反推布局。 */
+  max-width: 100%; max-height: 100%;
   pointer-events: none; z-index: 0; opacity: .55;
 }
 .main::before {
@@ -7671,7 +7691,7 @@ html:not([data-theme="light"]) body::after {
     <div class="body">
       <div class="fld">
         <label class="lb" for="inviteCodeInput">邀请码</label>
-        <input id="inviteCodeInput" type="text" maxlength="64" spellcheck="false" autocomplete="off" placeholder="例如 P276D2" style="width:100%">
+        <input id="inviteCodeInput" type="text" maxlength="64" spellcheck="false" autocomplete="off" placeholder="留空 = 自动选账号池里余量最大的邀请码" style="width:100%">
       </div>
       <div class="fld">
         <label class="lb" for="redeemCodeInput">兑换码</label>
@@ -8238,6 +8258,18 @@ async function deleteSource(id, btn) {
     const r = await api("/panel/api/sources/" + encodeURIComponent(id), { method: "DELETE" });
     if (!r.ok) { toast("删除失败：" + r.err, "err"); return; }
     await loadStatus(); await renderPlatforms(true); toast("中转站已删除");
+  } finally { btn.disabled = false; }
+}
+// 残留平台没有中转站定义可删，只有一层路由策略：这张卡片是被策略本身撑起来
+// 的，所以删除要落到 platforms.<id> 上（服务端对这种情况清策略并允许 404 之外的
+// 成功）。账号文件同样保留。
+async function purgePlatform(id, btn) {
+  if (!confirm("清除平台「" + platformLabel(id) + "」的残留配置？\n\n这个平台已经没有中转站定义、也没有模块在跑，只剩路由策略（模型优先级、禁用清单、账号备注）。清除后卡片不再出现，账号文件会保留。")) return;
+  btn.disabled = true;
+  try {
+    const r = await api("/panel/api/sources/" + encodeURIComponent(id), { method: "DELETE" });
+    if (!r.ok) { toast("清除失败：" + r.err, "err"); return; }
+    await loadStatus(); await renderPlatforms(true); toast("残留配置已清除");
   } finally { btn.disabled = false; }
 }
 function capsOf(n) { const a = ACCTS[n]; if (a && a.capabilities) return a.capabilities; const c = clientInfo(n); return (c && c.capabilities) || {}; }
@@ -13775,8 +13807,12 @@ function renderAccounts() {
   // 对已有账号一律拒绝，铺一个按钮出来只会让每一行都报错。
   const fleetBind = !!caps.invite_codes && !caps.invite_code_new_account_only;
   $("#btnInviteAll").hidden = !fleetBind;
-  $("#btnInviteAll").textContent = fleetBind && caps.invite_code_default ? "全部绑定 " + caps.invite_code_default : "全部绑定邀请码";
-  $("#btnInviteAll").title = fleetBind ? "为所有已启用账号绑定默认邀请码；已绑定的会跳过，绑定了其他邀请码的只报告不覆盖" : "";
+  // invite_code_default 是动态的：Loomy 每次绑定前从账号池里挑余量最大的
+  // 邀请码，所以文案不写死一个码，只说明选码规则。
+  $("#btnInviteAll").textContent = "全部绑定邀请码";
+  $("#btnInviteAll").title = fleetBind
+    ? "为每个已启用账号绑定一个邀请码：优先从账号池里选剩余次数最多的邀请码，池里没有可用余量时退回配置的默认码；已绑定的会跳过，绑定了其他邀请码的只报告不覆盖"
+    : "";
   syncBalanceButton(CUR);
   const cols = showBal ? 13 : 12;
   if (!CUR) { tb.innerHTML = '<tr><td colspan="' + cols + '" class="hint">没有已注册的客户端</td></tr>'; $("#accNote").textContent = ""; hideAccPager(); return; }
@@ -14321,7 +14357,7 @@ function openInviteDialog(id) {
   $("#redeemCodeInput").value = "";
   $("#inviteMsg").hidden = true;
   $("#inviteHelp").textContent = INVITE.code
-    ? "默认邀请码：" + INVITE.code + "。绑定会对该账号立即生效。"
+    ? "默认邀请码：" + INVITE.code + "（账号池里当前余量最大的）。留空则每次绑定前自动重选。"
     : "邀请码用于把账号绑定到指定邀请人；兑换码是积分券，两者的接口和用途不同。";
   showVeil($("#inviteVeil"));
   $("#inviteCodeInput").focus();
@@ -14339,11 +14375,12 @@ function inviteShow(msg, bad) {
 async function inviteBind() {
   const n = INVITE.client, id = INVITE.id;
   const code = String($("#inviteCodeInput").value || "").trim();
-  if (!code) return inviteShow("请输入邀请码", true);
+  // 留空 = 交给模块自己选码：Loomy 会从账号池里挑当前余量最大的邀请码。
+  if (!code && !capsOf(n).invite_codes) return inviteShow("请输入邀请码", true);
   const btn = $("#btnInviteBind"), keep = btn.textContent;
   btn.disabled = true; btn.textContent = "绑定中…";
   try {
-    const r = await api(cbase(n) + "/invites/bind", { method: "POST", body: { account: id, code } });
+    const r = await api(cbase(n) + "/invites/bind", { method: "POST", body: code ? { account: id, code } : { account: id } });
     if (!r.ok) return inviteShow("绑定失败：" + r.err, true);
     const x = r.data || {};
     const results = x.results || [];
@@ -15099,17 +15136,21 @@ function bulk(kind) {
   }
 }
 
-// bindInviteAll binds the module's default invite code to every enabled
-// account.  The server walks the pool one account at a time so a single vendor
-// refusal stays on that row; this function only owns the button/progress.
+// bindInviteAll binds an invite code to every enabled account.  Omitting the
+// code lets the module pick per account: Loomy chooses the pool code with the
+// most remaining uses, falling back to its configured default only when the
+// pool has nothing live.  The server walks the pool one account at a time so a
+// single vendor refusal stays on that row; this function only owns the
+// button/progress.
 async function bindInviteAll() {
-  const n = CUR, code = String(capsOf(n).invite_code_default || "").trim();
-  if (!code) return toast("没有配置默认邀请码", "err");
-  if (!confirm("为所有已启用账号绑定邀请码 " + code + "？\n\n已绑定的账号会跳过；绑定了其他邀请码的只报告，不覆盖。")) return;
+  const n = CUR, caps = capsOf(n);
+  const code = String(caps.invite_code_default || "").trim();
+  if (!code && !caps.invite_codes) return toast("没有配置默认邀请码", "err");
+  if (!confirm("为所有已启用账号绑定邀请码？\n\n会优先从账号池里选剩余次数最多的邀请码逐个绑定" + (code ? "（当前余量最大：" + code + "）" : "") + "；\n已绑定的账号会跳过；绑定了其他邀请码的只报告，不覆盖。")) return;
   const btn = $("#btnInviteAll"), keep = btn ? btn.textContent : "";
   if (btn) { btn.disabled = true; btn.textContent = "绑定中…"; }
   try {
-    const r = await api(cbase(n) + "/invites/bind", { method: "POST", body: { code } });
+    const r = await api(cbase(n) + "/invites/bind", { method: "POST", body: code ? { code } : {} });
     if (!r.ok) return toast("全部绑定失败：" + r.err, "err");
     if (r.data && r.data.accounts) { applyAccounts(n, r.data); renderAccounts(); }
     const x = r.data || {};
@@ -16464,7 +16505,11 @@ async function renderModels(refresh) {
       const probe = probeOf(m.id);
       if (probe) probed++;
       const nm = rememberModelMeta(c.name, m);
-      const ctx = ex.context_length || ex.context_window || 0;
+      // 主行显示服务端解析后的窗口，不是模块目录的原始 extra：手工覆盖、
+      // 学到的窗口和官方预设都只在解析结果里，extra 还停在厂商报的旧数。
+      // 只读 extra 会让同一个模型的主行和详情行显示两个数（详情读的是解析值），
+      // 也会让 155 个 Auto 虚拟行主行写着「—」而详情明明有窗口。
+      const ctx = m.context_length || ex.context_length || ex.context_window || 0;
       // 每一行把 HTML 和"可搜索文本"一起存下来：搜索框、客户端下拉、只看上游/只看免费这四个
       // 条件都只是在这个数组上过滤，不会再问一次上游。
       items.push({
@@ -17589,6 +17634,14 @@ async function renderPlatforms(preserveDraft = false) {
   const draft = preserveDraft ? capturePlatformDraft() : null;
   SOURCE_DEFS = c.sources || {};
   BUILTIN_SOURCES = new Set((cfg.data && cfg.data.builtin_sources) || []);
+  // 有东西在背后撑着的平台名：中转站定义、在注册表里跑着的模块、或本进程
+  // 已注册的客户端。剩下的 platforms.* 条目就是删除时的残留策略，卡片会
+  // 一直留着却没有账号池和模型目录，必须给一个能真的清掉的入口。
+  const knownPlats = new Set([
+    ...((cfg.data && cfg.data.clients) || []),
+    ...((cfg.data && cfg.data.registered) || []),
+    ...Object.keys(SOURCE_DEFS),
+  ]);
   const policy = c.platforms || {};
   const clientCfg = c.clients || {};
   const modSchema = cfg.data.module_schema || {};
@@ -17671,7 +17724,8 @@ async function renderPlatforms(preserveDraft = false) {
     const mif = entry.max_in_flight == null || entry.max_in_flight === 0 ? "" : String(entry.max_in_flight);
     const mifAcct = entry.max_in_flight_per_account == null || entry.max_in_flight_per_account === 0 ? "" : String(entry.max_in_flight_per_account);
     const res = entry.reserve_credits == null || entry.reserve_credits === 0 ? "" : String(entry.reserve_credits);
-    out.push('<div class="pfplat" data-client="' + esc(n) + '">');
+    const orphan = !knownPlats.has(n);
+    out.push('<div class="pfplat' + (orphan ? " orphan" : "") + '" data-client="' + esc(n) + '">');
     out.push('<div class="pfhead">' +
       '<button class="xs pfToggle" type="button" aria-expanded="false" title="展开 / 收起详情与模型清单">▸</button>' +
       '<span class="pfname" title="' + esc(n) + '">' + esc(platformLabel(n)) + '</span>' +
@@ -17683,6 +17737,7 @@ async function renderPlatforms(preserveDraft = false) {
       '<span class="pfcount">' + list.length + " 个模型 · 禁用 " + off.length + '</span>' +
       '<span class="grow"></span>' +
       (SOURCE_DEFS[n] ? '<button class="xs sourceAccounts" type="button">账号池</button><button class="xs sourceScan" type="button"' + (SOURCE_DEFS[n].disabled ? ' disabled' : '') + '>扫描模型</button>' + (BUILTIN_SOURCES.has(n) ? '' : '<button class="xs sourceEdit" type="button">编辑</button><button class="xs sourceDelete" type="button">删除</button>') : '') +
+      (orphan ? '<button class="xs sourcePurge" type="button" title="这个平台只剩路由策略，没有中转站定义也没有模块在跑；清掉这些残留后卡片就不再出现">清除残留</button>' : '') +
       '<button class="xs pfAll" type="button">全允许</button>' +
       '<button class="xs pfNone" type="button">全禁用</button>' +
       '</div>');
@@ -23071,6 +23126,7 @@ $("#pfBody").addEventListener("click", ev => {
   const id = plat.dataset.client;
   if (ev.target.closest(".sourceEdit")) { openSource(id); return; }
   if (ev.target.closest(".sourceDelete")) { deleteSource(id, ev.target.closest("button")); return; }
+  if (ev.target.closest(".sourcePurge")) { purgePlatform(id, ev.target.closest("button")); return; }
   if (ev.target.closest(".sourceScan")) { scanSource(id, ev.target.closest("button")); return; }
   if (ev.target.closest(".sourceAccounts")) { CUR = id; ACC_PAGE = 1; location.hash = "#accounts"; go("accounts"); return; }
   if (ev.target.closest(".pfToggle")) {

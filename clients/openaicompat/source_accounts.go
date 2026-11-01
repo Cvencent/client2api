@@ -97,6 +97,7 @@ func (s *source) addAccount(ctx context.Context, spec core.AccountSpec, baseURL 
 		Models:             splitModels(spec.Fields["models"]),
 		BalanceAccessToken: strings.TrimSpace(spec.Fields["balance_access_token"]),
 		BalanceUserID:      strings.TrimSpace(spec.Fields["balance_user_id"]),
+		Phone:              strings.TrimSpace(spec.Fields["phone"]),
 	}
 	if spec.Enabled != nil {
 		p.Disabled = !*spec.Enabled
@@ -121,6 +122,11 @@ func (s *source) addAccount(ctx context.Context, spec core.AccountSpec, baseURL 
 			}
 			if p.BalanceUserID == "" {
 				p.BalanceUserID = old.BalanceUserID
+			}
+			// An edit that leaves the phone blank keeps the recorded one; only
+			// a fresh login with a new number rewrites it.
+			if p.Phone == "" {
+				p.Phone = old.Phone
 			}
 			// An edit that leaves app_secret blank keeps the stored half of
 			// the Basic pair; removing the account is how it is cleared.

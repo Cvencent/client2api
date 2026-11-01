@@ -121,6 +121,12 @@ without waiting for an operator to press a button.
 the stored PKCE verifier, and carries a **DPoP proof** (see below) in a `DPoP`
 header.
 
+The refresh-token family has a **fixed 30-day lifetime**: rotating the token does
+not extend it, so `exp` on a freshly rotated token still equals the credential's
+`created_at + 30 days`. Past that, renewal is impossible and only a fresh sign-in
+helps. Three renewal paths exist and all are covered — the proactive refresh in
+the chat path, the five-minute idle sweep, and the panel's renewal button.
+
 A refresh is only possible when the stored credential has **all** of: an access
 key id, a secret access key, a refresh token, and the DPoP private key. A
 credential supplied through the config has the first two but not the last two —
@@ -129,16 +135,36 @@ credential supplied through the config has the first two but not the last two �
 `this credential has no refresh token, so it cannot be renewed; sign in again`
 rather than failing obscurely later.
 
-Only two answers are treated as terminal — the refresh token is dead and the
+Three answers are treated as terminal — the refresh token is dead and the
 operator must sign in again:
 
 - `error == "invalid_grant"`
 - `error_code` containing `ExpiredRefreshToken`
+- `error_code` containing `STS5.1806` (the STS endpoint's own code for an
+  unusable refresh token; only the message says why, e.g. `invalid refresh
+  token: 'refresh code has expired'`)
+
+`STS5.1806` is safe to add because this classifier is only ever consulted on the
+refresh grant, so the code cannot be the authorisation-code-already-used case.
+Measured live: the refresh-token family has a **fixed 30-day lifetime** — the
+`exp` claim of a rotated token stays anchored to the credential's creation
+(`created_at + 30d`), it does not slide forward — so a credential that has been
+renewed daily for thirty days still dies on day thirty, and STSing it then
+answers `STS5.1806` on every attempt forever.
 
 `InvalidDPoPHeader` is deliberately **not** terminal: it is a per-request
 rejection, and treating it as terminal would throw away a perfectly good refresh
 token over a transient proof problem. The reference implementation removed it
 from the terminal set for the same reason.
+
+Refreshes are **serialised per account** (`pool.refreshLock`). The vendor rotates
+the refresh token on every exchange, and the gateway allows two concurrent
+requests per account (`max_in_flight_per_account`), so two renewal paths could
+otherwise be exchanging from the same rotating token at once. A waiter re-reads
+the stored credential and reuses the winner's rotation instead of exchanging
+again. This also matters because `STS5.1806` is now terminal: if the vendor
+retires the token it just replaced, an unsynchronised loser would present that
+retired token and park a healthy account.
 
 ---
 
@@ -603,6 +629,11 @@ this repository works.
 - **`InvalidDPoPHeader` in the terminal-refresh set.** It is not in the ported
   code. A DPoP proof problem is per-request; treating it as "your refresh token
   is dead" would force an unnecessary re-login.
+- **The terminal set was too small, not too large.** The reference's two
+  conditions did not include the `STS5.1806` code the STS endpoint actually sends
+  for an expired refresh code, so a credential that reached the end of its
+  thirty-day family was renewed on every sweep forever. That code is terminal
+  here (see *Refreshing*).
 - **`refreshAll()` filtering by `enabled`.** The reference's own
   `docs/adding-a-new-provider.md` records this as a real defect it fixed;
   refresh here is driven per-account and never gated on the enabled flag.

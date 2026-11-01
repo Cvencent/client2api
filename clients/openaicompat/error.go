@@ -130,6 +130,29 @@ func containsMarker(text string, markers []string) bool {
 	return false
 }
 
+// hasJSONErrorEnvelope reports whether a raw response body carries any JSON:
+// an error envelope or an object.  A body that carries none of it -- a bare
+// word like "openai_error", an HTML error page -- cannot match any marker
+// table, so the caller falls back to the status's own semantics.
+func hasJSONErrorEnvelope(body string) bool {
+	return strings.ContainsAny(body, "{}")
+}
+
+// ambiguousChatStatuses are the statuses whose bare form means nothing useful
+// on a chat endpoint.  A text/plain 429 or a 401 is a complete vendor verdict
+// (throttled, rejected key) and the status branch classifies it correctly; a
+// bare 404 is not -- a model that the same relay served seconds earlier is not
+// "not found", and 498 is not a standard status at all.  hcnsec intermittently
+// answers both with the bare word "openai_error" between perfectly served
+// turns, and reading them through the status table turned a transient relay
+// hiccup into a terminal caller-shaped refusal.
+func ambiguousChatStatus(status int) bool {
+	return status == http.StatusNotFound || (status >= 400 && status < 500 &&
+		status != http.StatusUnauthorized && status != http.StatusPaymentRequired &&
+		status != http.StatusTooManyRequests && status != http.StatusRequestEntityTooLarge &&
+		status != http.StatusForbidden && status != http.StatusBadRequest && status != http.StatusUnprocessableEntity)
+}
+
 // classifyFailure is a pure function of the status and the message text.
 func classifyFailure(status int, text string) failureKind {
 	if status == 402 {
@@ -181,6 +204,12 @@ func classifyFailure(status int, text string) failureKind {
 	case status == 429:
 		return kindRateLimit
 	case status == 404:
+		// A structured 404 with no not-found marker is still most likely a
+		// missing route or missing model on THIS relay.  kindNotFound maps to
+		// FailureModelRefused, which keeps the account healthy and moves the
+		// request to the next platform -- the same verdict trae, openrouter,
+		// kilocode, minimaxcode and lobsterai hand down, and the reason the
+		// gateway's old "unclassified 404" guess was retired.
 		return kindNotFound
 	case status >= 500:
 		return kindServer
@@ -197,6 +226,13 @@ func coreKindFor(k failureKind) core.FailureKind {
 	case kindRateLimit:
 		return core.FailureRateLimited
 	case kindModelTurnedAway:
+		return core.FailureModelRefused
+	case kindNotFound:
+		// "This model / this route does not exist here": the credential is not
+		// implicated, and every account on this relay would answer the same, so
+		// the request belongs on the next platform.  FailureModelRefused is the
+		// kind that does both; the other not-found-carrying modules already
+		// answer this way.
 		return core.FailureModelRefused
 	case kindAuth:
 		return core.FailureAuth
@@ -314,6 +350,14 @@ func (c *Client) classifyHTTP(op, accountID string, status int, body []byte, hea
 		msg = truncate(strings.TrimSpace(string(body)), 300)
 	}
 	k := classifyFailure(status, msg)
+	// A bare status whose chat semantics are meaningless -- a 404 for a model
+	// the relay served seconds earlier, a non-standard 498 -- with a body that
+	// names no vendor verdict is a relay hiccup, not a refusal.  Clear status
+	// verdicts (401/402/403/400/413/422/429, 5xx) and any JSON body keep the
+	// whole classification below.  See ambiguousChatStatus.
+	if ambiguousChatStatus(status) && !hasJSONErrorEnvelope(string(body)) {
+		k = kindServer
+	}
 	msg = c.scrubFor(accountID, msg)
 	f := core.Fail(c.Name(), accountID, coreKindFor(k), status, &upstreamError{Op: op, Status: status, Msg: msg})
 	if k == kindRateLimit {

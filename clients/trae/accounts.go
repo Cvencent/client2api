@@ -13,6 +13,8 @@ package trae
 //	AccountManager     — list / add / remove / enable / test / refresh
 //	CredentialImporter — find and import the desktop app's storage.json
 //	LoginProvider      — drive the CN console's web OAuth from Go (weblogin.go)
+//	SMSProvider        — rent numbers from the shared eomsg platform (sms.go)
+//	AutoLoginProvider  — one-click phone-code sign-in (autologin.go)
 //
 // Storage: <DataDir>/accounts.json, mode 0600.  It holds live tokens in plain
 // text, which is the same trust level as the storage.json it can import; it is
@@ -41,6 +43,8 @@ var (
 	_ core.CredentialImporter = (*Client)(nil)
 	_ core.LoginProvider      = (*Client)(nil)
 	_ core.Reviver            = (*Client)(nil)
+	_ core.SMSProvider        = (*Client)(nil)
+	_ core.AutoLoginProvider  = (*Client)(nil)
 )
 
 // accountsFileName is the store inside the module's DataDir.
@@ -77,6 +81,10 @@ type storedAccount struct {
 	ExpiresAt        string `json:"expires_at,omitempty"`
 	RefreshExpiresAt string `json:"refresh_expires_at,omitempty"`
 	AddedAt          string `json:"added_at,omitempty"`
+	// Phone is the number the one-click auto login rented for this account.
+	// A fresh draw avoids it, so the platform cannot hand back a number the
+	// pool already holds.  Empty for a pasted or discovered credential.
+	Phone string `json:"phone,omitempty"`
 }
 
 // accountStore is the whole on-disk state.  Disabled lists discovered accounts

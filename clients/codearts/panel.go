@@ -340,7 +340,11 @@ type panelLogin struct {
 	verifier  string
 	startedAt time.Time
 	expiresAt time.Time
-	cancel    context.CancelFunc
+	// phone is the number the auto login rented for this session.  An
+	// interactive sign-in leaves it empty; the store write records it so a
+	// later draw avoids the number.
+	phone  string
+	cancel context.CancelFunc
 
 	state     string
 	message   string

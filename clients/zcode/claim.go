@@ -558,7 +558,9 @@ const planCurrentPath = "/api/v1/zcode-plan/billing/current"
 
 // planCurrentOf reads the plans the account currently holds, newest document
 // shape first.  Unlike a preview, an empty answer here is a real "no active
-// plan": this endpoint reports what was granted, not what might be offered.
+// plan" in the vendor's older shape -- but since 2026-10-30 this endpoint can
+// also answer an empty envelope for accounts that hold a live plan, so it is
+// the fallback behind the balance read, never the authority.
 func (c *Client) planCurrentOf(ctx context.Context, acct *Account) (*planBalances, error) {
 	q := url.Values{}
 	q.Set("app_version", c.appVersion())
@@ -919,6 +921,50 @@ func (c *Client) Checkin(ctx context.Context, id, action string) (core.CheckinRe
 			c.pool.clearPenalty(acct.ID)
 			return done()
 		}
+		// The popup channel is the other way a plan reaches an account: the
+		// vendor delivers a campaign, the operator's client confirms it on a
+		// button press, and only then does the plan become claimable -- a
+		// direct claim before the confirmation answers 1004 ("not eligible").
+		// An unattended run confirms the campaigns that advertise a plan claim
+		// and walks whatever they unlocked, which is the same decision the
+		// operator makes by pressing the popup's button.
+		confirmed := c.claimViaMarketing(ctx, acct)
+		for _, planID := range confirmed {
+			// The confirmation may take a moment to open the claim; a refusal
+			// here is retried by the next scheduled sweep, so one pass with the
+			// vendor's own codes reported is enough.
+			startsAt, endsAt, err := c.claimPlanOnce(ctx, acct, planID, "", "")
+			if err == nil {
+				res.OK = true
+				res.Code = 0
+				res.Message = fmt.Sprintf("claimed %s (campaign)", planID)
+				res.Data = map[string]any{
+					"plan_id":   planID,
+					"starts_at": time.Unix(startsAt, 0).UTC().Format(time.RFC3339),
+					"ends_at":   time.Unix(endsAt, 0).UTC().Format(time.RFC3339),
+				}
+				c.pool.clearPenalty(acct.ID)
+				return done()
+			}
+			ce := asClaimError(err)
+			if ce == nil {
+				c.claimFailure(&res, err)
+				return done()
+			}
+			// The vendor's own "already claimed" is the steady state here just
+			// as it is on the preview walk: the confirmation went through and
+			// the grant is on the account, so a stale quota verdict must not
+			// keep it parked.
+			if ce.code == claimCodeAlreadyClaimed {
+				res.OK = true
+				res.Code = ce.code
+				res.Message = ce.Error()
+				res.Data = map[string]any{"plan_id": planID}
+				c.pool.clearPenalty(acct.ID)
+				return done()
+			}
+			c.pool.log("zcode: claim after confirming %s refused: %v", planID, ce)
+		}
 		// Nothing to claim is a definitive answer for today, not a transport
 		// failure.  Mark it skipped so the panel can disable the action until
 		// the next Shanghai day instead of inviting the same empty click.
@@ -1104,20 +1150,27 @@ func (c *Client) captchaTokenIfCheap(ctx context.Context) (param, region string)
 	return param, region
 }
 
-// heldPlanWindow reads billing/current and returns the live window it names,
-// reporting false when the account holds none.
+// heldPlanWindow reports the live window of a grant the account already
+// holds, or false when it holds none.
 //
-// It is one small read with no captcha, which is the whole point: the daily
-// grant arrives without one, so the check-in leg can settle the question for
-// such an account even on an install that has no solver at all.  A failed read
-// is reported as false -- the caller then keeps its usual "nothing to claim"
-// verdict, which is right for a vendor that did not answer.
+// Two endpoints can name a held plan and they stopped agreeing: billing/balance
+// lists the active plans and their entitlement rows, while billing/current
+// began answering an empty envelope for accounts that demonstrably hold a plan
+// (measured 2026-10-30, both before and after a successful weekend claim).
+// The desktop client reads the balance document for the same decision -- its
+// "hasActiveStartPlan" flag flips on the balance answer -- so the balance read
+// is the authority here and the current read is the fallback for an older
+// vendor shape that still fills it.
 func (c *Client) heldPlanWindow(ctx context.Context, acct *Account) (planWindow, bool) {
+	if doc, err := c.planBalanceOf(ctx, acct); err == nil {
+		if win, ok := activePlanWindow(doc, time.Now()); ok {
+			return win, true
+		}
+	} else {
+		c.pool.log("zcode: reading balance for %s failed: %v", acct.ID, err)
+	}
 	current, err := c.planCurrentOf(ctx, acct)
 	if err != nil {
-		// Not an error the operator can act on: a preview already ran, so the
-		// only thing a failed follow-up read changes is whether the account is
-		// reported as holding a grant.  Log it and keep the old verdict.
 		c.pool.log("zcode: reading held plan for %s failed: %v", acct.ID, err)
 		return planWindow{}, false
 	}

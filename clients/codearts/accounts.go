@@ -74,6 +74,11 @@ type account struct {
 
 	CreatedAt int64 `json:"created_at,omitempty"`
 	UpdatedAt int64 `json:"updated_at,omitempty"`
+
+	// Phone is the number the one-click auto login rented for this account.
+	// A fresh draw avoids it, so the platform cannot hand back a number the
+	// pool already holds.  Empty for a credential pasted by hand.
+	Phone string `json:"phone,omitempty"`
 }
 
 // accountsStore is the JSON document in accounts.json.

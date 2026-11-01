@@ -235,10 +235,19 @@ func mergeConfigIn(base, patch map[string]any, namespace string) map[string]any 
 	for k, v := range base {
 		out[k] = v
 	}
+	// Case-insensitive folding reads the keys that were already on disk, never
+	// the ones this patch itself just introduced: two patch siblings that differ
+	// only in case are a malformed document the validator must still reject, not
+	// two entries to quietly merge into one.  The snapshot is taken before the
+	// loop because out grows as entries are added.
+	baseKeys := make(map[string]any, len(base))
+	for k, v := range base {
+		baseKeys[k] = v
+	}
 	for k, pv := range patch {
 		key := k
 		if namespace == "model_groups" {
-			key = matchConfigKey(out, k)
+			key = matchConfigKey(baseKeys, k)
 		}
 		if pv == nil {
 			delete(out, key)
@@ -247,11 +256,33 @@ func mergeConfigIn(base, patch map[string]any, namespace string) map[string]any 
 		if isRedacted(pv) {
 			continue // keep whatever is on disk
 		}
-		if bm, ok := out[key].(map[string]any); ok {
-			if pm, ok := pv.(map[string]any); ok {
-				out[key] = mergeConfigIn(bm, pm, childConfigNamespace(namespace, key))
-				continue
+		if pm, ok := pv.(map[string]any); ok {
+			// Recurse even when the key is absent on disk.  A patch that only
+			// carries nulls -- the panel's "clear these overrides" shape -- must
+			// delete from an empty table rather than be stored verbatim, or the
+			// nulls become a ghost entry that outlives what they described.
+			bm, existed := out[key].(map[string]any)
+			merged := mergeConfigIn(bm, pm, childConfigNamespace(namespace, key))
+			if len(merged) == 0 {
+				switch {
+				case !existed:
+					// Nothing on disk and nothing left to write: a delete-only
+					// patch must not materialize an entry.  The panel draws a
+					// card for every key present, so an empty object here would
+					// resurrect the very platform that was just removed.
+					delete(out, key)
+					continue
+				case len(bm) > 0:
+					// The patch removed this entry's last field, so the entry
+					// itself is gone rather than merely empty.
+					delete(out, key)
+					continue
+				}
+				// An entry that was already an empty object on disk stays
+				// exactly as the operator wrote it.
 			}
+			out[key] = merged
+			continue
 		}
 		out[key] = pv
 	}

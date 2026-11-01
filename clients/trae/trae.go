@@ -23,6 +23,7 @@ import (
 
 	"client2api/internal/core"
 	"client2api/internal/fingerprint"
+	"client2api/internal/smscap"
 )
 
 // clientName is both the registered name and the routing prefix.
@@ -72,6 +73,16 @@ type Client struct {
 	// created lazily so a Client built by a test literal works unchanged.
 	loginMu sync.Mutex
 	logins  map[string]*webLoginSession
+
+	// smsRot spreads consecutive rentals across provinces so one region does
+	// not take repeated traffic; see sms.go.
+	smsRot smscap.Rotator
+
+	// autoMu guards autoJobs, the in-flight one-click runs (autologin.go).
+	// autoDriver is injectable so tests never launch a real browser.
+	autoMu     sync.Mutex
+	autoJobs   map[string]*traeAutoJob
+	autoDriver traeAutoDriver
 
 	requests atomic.Int64
 	failures atomic.Int64

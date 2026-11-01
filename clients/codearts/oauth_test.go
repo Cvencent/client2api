@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -90,10 +91,10 @@ func TestBuildPortalLoginResultURL(t *testing.T) {
 	}
 }
 
-// The reference implementation classifies exactly two conditions as a dead
-// refresh token, and DELIBERATELY not InvalidDPoPHeader — that is a
-// per-request rejection, and treating it as terminal would park a perfectly
-// good account because one proof was malformed.
+// The classifier treats three conditions as a dead refresh token, and
+// DELIBERATELY not InvalidDPoPHeader — that is a per-request rejection, and
+// treating it as terminal would park a perfectly good account because one
+// proof was malformed.
 func TestIsTerminalRefreshFailure(t *testing.T) {
 	cases := []struct {
 		resp *tokenResponse
@@ -104,6 +105,11 @@ func TestIsTerminalRefreshFailure(t *testing.T) {
 		{&tokenResponse{Error: "invalid_grant"}, true, "invalid_grant means the refresh token is gone"},
 		{&tokenResponse{Error: "INVALID_GRANT"}, true, "the comparison is case-insensitive"},
 		{&tokenResponse{ErrorCode: "IAM.ExpiredRefreshToken"}, true, "ExpiredRefreshToken is terminal"},
+		// The live shape: the STS endpoint spells its expired-refresh-code
+		// refusal with its own code, which the two reference conditions did not
+		// match, so the sweep knocked on a dead token forever (issue #53).
+		{&tokenResponse{ErrorCode: "STS5.1806", ErrorMsg: "invalid refresh token: 'refresh code has expired'"}, true, "the STS code for an expired refresh code is terminal"},
+		{&tokenResponse{ErrorCode: "sts5.1806"}, true, "the STS code match is case-insensitive"},
 		{&tokenResponse{ErrorCode: "InvalidDPoPHeader"}, false, "a bad proof is NOT a dead refresh token"},
 		{&tokenResponse{Error: "invalid_dpop_proof"}, false, "a bad proof is NOT a dead refresh token"},
 		{&tokenResponse{Error: "server_error"}, false, "a transient server error is retryable"},
@@ -350,6 +356,179 @@ func TestExchangeRefreshTokenExpiredRefreshTokenCode(t *testing.T) {
 	_, err := c.exchangeRefreshToken(context.Background(), "RT", "V", key)
 	if !errors.Is(err, errRefreshTerminal) {
 		t.Fatalf("err = %v, want it to wrap errRefreshTerminal", err)
+	}
+}
+
+// The live refusal, byte-for-byte as the STS endpoint sent it: the code is
+// STS5.1806, NOT the IAM ExpiredRefreshToken the reference classified, so the
+// old two-condition check missed it and the five-minute sweep renewed a dead
+// credential forever (issue #53).  The message is carried through so the log
+// still says why.
+func TestExchangeRefreshTokenSTSExpiredRefreshCodeIsTerminal(t *testing.T) {
+	srv, _ := newSTSServer(t, http.StatusBadRequest,
+		`{"error_code":"STS5.1806","error_msg":"invalid refresh token: 'refresh code has expired'"}`)
+	c := newTestClient(t, `{"base_url":"http://127.0.0.1:1","sts_url":`+jsonString(srv.URL)+`}`)
+	key, _ := generateDpopKeyPair()
+
+	_, err := c.exchangeRefreshToken(context.Background(), "RT", "V", key)
+	if err == nil {
+		t.Fatal("an expired refresh code produced no error")
+	}
+	if !errors.Is(err, errRefreshTerminal) {
+		t.Fatalf("err = %v, want it to wrap errRefreshTerminal — a refresh code the vendor says has expired cannot be renewed", err)
+	}
+	if !strings.Contains(err.Error(), "STS5.1806") {
+		t.Errorf("err = %q, want the vendor's own code carried through", err.Error())
+	}
+}
+
+// The classification has to reach the pool, not just the error value: the sweep
+// and the panel button both renew through RefreshAccount, and a credential the
+// vendor says is finished must be parked as invalid (needs a fresh sign-in)
+// rather than cooled down, which would invite another doomed renewal on the
+// next five-minute tick.
+func TestRefreshAccountParksOnExpiredRefreshCode(t *testing.T) {
+	srv, _ := newSTSServer(t, http.StatusBadRequest,
+		`{"error_code":"STS5.1806","error_msg":"invalid refresh token: 'refresh code has expired'"}`)
+	key, err := generateDpopKeyPair()
+	if err != nil {
+		t.Fatalf("generateDpopKeyPair: %v", err)
+	}
+	c := newTestClient(t, `{"base_url":"http://127.0.0.1:1","sts_url":`+jsonString(srv.URL)+`}`)
+	e := &entry{acct: account{
+		ID: "acct-1", AccessKeyID: "AKOLD", SecretAccessKey: "SKOLD", SecurityToken: "TOKOLD",
+		RefreshToken: "RTOLD", CodeVerifier: "V", DpopPrivateJwk: key.PrivateJwk,
+		ExpiresAt: time.Now().Add(time.Minute).Unix(),
+	}}
+	c.pool.entries = append(c.pool.entries, e)
+
+	results, err := c.RefreshAccount(context.Background(), "acct-1")
+	if err != nil {
+		t.Fatalf("RefreshAccount: %v", err)
+	}
+	if len(results) != 1 || results[0].OK {
+		t.Fatalf("results = %+v, want one failed renewal", results)
+	}
+
+	st := c.Status(context.Background())
+	if len(st.Accounts) != 1 {
+		t.Fatalf("accounts = %+v, want one row", st.Accounts)
+	}
+	if got := st.Accounts[0].State; got != stateInvalid {
+		t.Fatalf("state after an expired refresh code = %q, want %q — renewal cannot repair it, so the sweep must stop knocking", got, stateInvalid)
+	}
+}
+
+// The vendor rotates the refresh token on every exchange, so two renewal paths
+// firing at once would race: the loser would present a token the winner has
+// already retired, STS answers a retired token with STS5.1806, and — now that
+// that code is terminal — the loser would park a perfectly healthy account.
+// The per-account refresh lock makes the waiter reuse the winner's credential
+// instead of exchanging again.
+func TestRefreshCredentialSerialisesRotationPerAccount(t *testing.T) {
+	var (
+		mu    sync.Mutex
+		calls int
+	)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		calls++
+		n := calls
+		mu.Unlock()
+		if n == 1 {
+			// Hold the first exchange open so the second caller is genuinely
+			// waiting on the lock, not arriving after the fact.
+			close(started)
+			<-release
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"credentials":{
+			"access_key_id":"AKNEW","secret_access_key":"SKNEW","security_token":"TOKNEW",
+			"expiration":"2031-01-02T03:04:05Z"},"refresh_token":"RTNEW"}`))
+	}))
+	defer srv.Close()
+
+	key, err := generateDpopKeyPair()
+	if err != nil {
+		t.Fatalf("generateDpopKeyPair: %v", err)
+	}
+	c := newTestClient(t, `{"base_url":"http://127.0.0.1:1","sts_url":`+jsonString(srv.URL)+`}`)
+	held := &entry{acct: account{
+		ID: "acct-1", AccessKeyID: "AKOLD", SecretAccessKey: "SKOLD", SecurityToken: "TOKOLD",
+		RefreshToken: "RTOLD", CodeVerifier: "V", DpopPrivateJwk: key.PrivateJwk,
+	}}
+	c.pool.entries = append(c.pool.entries, held)
+
+	// Both callers hold the SAME entry pointer, which is the production shape:
+	// every caller takes its entry from the pool, so concurrent chats on one
+	// account share it.  Run under -race this also catches a snapshot taken
+	// outside the pool lock, since the winner writes that entry mid-flight.
+	first := make(chan error, 1)
+	go func() { first <- c.refreshCredential(context.Background(), held) }()
+	<-started
+
+	second := make(chan error, 1)
+	go func() { second <- c.refreshCredential(context.Background(), held) }()
+	close(release)
+
+	if err := <-first; err != nil {
+		t.Fatalf("first refresh: %v", err)
+	}
+	if err := <-second; err != nil {
+		t.Fatalf("second refresh: %v", err)
+	}
+
+	mu.Lock()
+	got := calls
+	mu.Unlock()
+	if got != 1 {
+		t.Errorf("token endpoint calls = %d, want 1: the waiter must reuse the winner's rotated credential", got)
+	}
+	if tok := held.acct.RefreshToken; tok != "RTNEW" {
+		t.Errorf("stored refresh token = %q, want the rotated RTNEW", tok)
+	}
+}
+
+// No renewal path may read an entry's fields outside the pool lock.  Concurrent
+// chats on one account share the entry, and a winner rotating it mid-flight
+// would race such a read -- the kind of torn read that decides whether a
+// credential is exchanged again or declared dead.
+func TestRefreshCredentialConcurrentOnOneEntry(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"credentials":{
+			"access_key_id":"AKNEW","secret_access_key":"SKNEW","security_token":"TOKNEW",
+			"expiration":"2031-01-02T03:04:05Z"},"refresh_token":"RTNEW"}`))
+	}))
+	defer srv.Close()
+
+	key, err := generateDpopKeyPair()
+	if err != nil {
+		t.Fatalf("generateDpopKeyPair: %v", err)
+	}
+	c := newTestClient(t, `{"base_url":"http://127.0.0.1:1","sts_url":`+jsonString(srv.URL)+`}`)
+	e := &entry{acct: account{
+		ID: "acct-1", AccessKeyID: "AKOLD", SecretAccessKey: "SKOLD", SecurityToken: "TOKOLD",
+		RefreshToken: "RTOLD", CodeVerifier: "V", DpopPrivateJwk: key.PrivateJwk,
+	}}
+	c.pool.entries = append(c.pool.entries, e)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = c.refreshCredential(context.Background(), e)
+		}()
+	}
+	wg.Wait()
+
+	if tok := e.acct.RefreshToken; tok != "RTNEW" {
+		t.Errorf("stored refresh token = %q, want the rotated RTNEW", tok)
 	}
 }
 

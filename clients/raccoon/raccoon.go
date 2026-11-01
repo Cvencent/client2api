@@ -91,6 +91,11 @@ type Client struct {
 	// smsRot spreads consecutive rentals across provinces so one region does
 	// not take repeated traffic.
 	smsRot smscap.Rotator
+
+	autoMu   sync.Mutex
+	autoJobs map[string]*raccoonAutoJob
+	// autoDriver is injectable so tests never launch a real browser.
+	autoDriver raccoonAutoDriver
 }
 
 // New builds the module. A malformed config is logged and replaced with

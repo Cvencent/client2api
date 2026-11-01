@@ -253,6 +253,11 @@ type webLoginSession struct {
 	srv *http.Server
 	ln  net.Listener
 
+	// phone is the number the auto login rented for this session.  An
+	// interactive sign-in leaves it empty; completeLogin records it on the
+	// stored account so a later draw avoids the number.
+	phone string
+
 	// serveDone is closed once the Serve goroutine has returned.  shutdown waits
 	// on it: closing a listening socket on Windows only completes the pending
 	// Accept when that goroutine unwinds, so without the wait a caller that
@@ -624,6 +629,9 @@ func (c *Client) completeLogin(ctx context.Context, sess *webLoginSession, cred 
 	sa.Enabled = true
 	sa.MachineID = sess.machineID
 	sa.DeviceID = sess.deviceID
+	// Empty for an interactive sign-in; the auto login rides its rented
+	// number on the session so a later draw avoids it.
+	sa.Phone = strings.TrimSpace(sess.phone)
 	if sa.ID == "" {
 		return "", errors.New("the logged-in credential has no stable account id")
 	}

@@ -30,7 +30,12 @@ type storedProvider struct {
 	// so the premium routes (每日签到/余额/套餐) can be signed later without
 	// the desktop client running.  It stays nil for every other relay.
 	OfficeAce *officeAceStoredSession `json:"officeace,omitempty"`
-	Disabled  bool                    `json:"disabled,omitempty"`
+	// Phone is the number the one-click auto login rented for this account.
+	// It is what keeps a fresh draw from handing back a number the pool
+	// already holds, and what the panel's re-login dialog pins.  Empty for a
+	// key pasted by hand or a relay that has nothing to do with phones.
+	Phone    string `json:"phone,omitempty"`
+	Disabled bool   `json:"disabled,omitempty"`
 }
 
 // storePath is the module's own credential store.

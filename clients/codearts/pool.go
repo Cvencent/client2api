@@ -115,6 +115,11 @@ type pool struct {
 	stateDirty bool
 	lastFlush  time.Time
 
+	// refreshMu guards refreshLocks, the per-account single-flight table for
+	// token refreshes.  See refreshLock for why it is per account.
+	refreshMu    sync.Mutex
+	refreshLocks map[string]*sync.Mutex
+
 	// onSave is called (outside the lock) after a credential store write, so a
 	// caller can observe persistence failures in tests.
 	onSave func(error)
@@ -123,6 +128,57 @@ type pool struct {
 // newPool builds an empty pool.
 func newPool() *pool {
 	return &pool{flushEvery: defaultStoreFlush}
+}
+
+// refreshLock returns the mutex that serialises token refreshes for one account.
+//
+// The vendor rotates the refresh token on every exchange (its `iat` advances on
+// each renewal while the family's `exp` stays anchored), so two callers that
+// both decide to renew would race on one rotating credential.  If the vendor
+// retires the token it just replaced, the loser presents that retired token,
+// gets STS5.1806 — now classified as terminal — and parks a healthy account.
+// One refresher per account at a time, and the waiter reuses the credential the
+// winner stored instead of exchanging again.
+func (p *pool) refreshLock(id string) *sync.Mutex {
+	p.refreshMu.Lock()
+	defer p.refreshMu.Unlock()
+	if p.refreshLocks == nil {
+		p.refreshLocks = map[string]*sync.Mutex{}
+	}
+	m, ok := p.refreshLocks[id]
+	if !ok {
+		m = &sync.Mutex{}
+		p.refreshLocks[id] = m
+	}
+	return m
+}
+
+// credSnapshot returns the account id and credential for e, read under the pool
+// lock.
+//
+// Every read of an entry's fields happens here, under the lock, because a
+// concurrent refresher writes that same entry through updateCredential.  Even
+// e.id() is such a read — it reads e.acct — so deriving the id outside this
+// helper races the write, and a torn read here decides whether a credential is
+// exchanged again or declared dead.
+//
+// The pointer match keeps the pooled copy authoritative when e is the entry the
+// pool holds (the production case: every caller gets its entry from the pool).
+// A caller holding a detached copy of the same account falls back to its own
+// snapshot; the id it returns still drives the per-account refresh lock, so the
+// two callers serialise anyway.
+func (p *pool) credSnapshot(e *entry) (string, account) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, cur := range p.entries {
+		if cur == e {
+			return cur.id(), cur.acct
+		}
+	}
+	if e == nil {
+		return "", account{}
+	}
+	return e.id(), e.acct
 }
 
 // ---------------------------------------------------------------------------

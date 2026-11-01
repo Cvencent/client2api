@@ -589,11 +589,38 @@ func wireToolCalls(calls []core.ToolCall) []wireToolCall {
 // It returns errRefreshTerminal when the vendor says the refresh token itself
 // is dead, which is the one failure the pool treats as a reason to park the
 // account indefinitely.
+//
+// Refreshes are serialised per account.  The vendor rotates the refresh token
+// on every exchange, so without that lock a second caller would be exchanging
+// from a token the first has already replaced.  A caller that finds the stored
+// token already rotated by someone else reuses the winner's credential instead
+// of exchanging again, which is what keeps a rotation from being spent twice.
 func (c *Client) refreshCredential(ctx context.Context, e *entry) error {
-	acct := e.account()
-	if !acct.refreshable() {
+	if e == nil {
+		return errors.New("codearts: no account to renew")
+	}
+	// One locked snapshot provides both the id and the credential, so no read of
+	// e's fields happens outside the pool lock.
+	id, before := c.pool.credSnapshot(e)
+	if !before.refreshable() {
 		return errors.New("codearts: this credential has no refresh token (or no stored DPoP key), so it cannot be renewed")
 	}
+
+	// Serialise per account: the vendor rotates the refresh token it just
+	// exchanged, so a second concurrent exchange would be spending a rotation
+	// nobody can reuse.
+	lock := c.pool.refreshLock(id)
+	lock.Lock()
+	defer lock.Unlock()
+
+	// Re-read under the lock.  If the token changed while this caller waited,
+	// someone else already rotated it and exchanging again would present a
+	// token the vendor has retired.
+	_, acct := c.pool.credSnapshot(e)
+	if acct.RefreshToken != before.RefreshToken {
+		return nil
+	}
+
 	key, err := keyPairFromStoredJwk(acct.DpopPrivateJwk)
 	if err != nil {
 		return err

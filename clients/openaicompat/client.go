@@ -274,6 +274,22 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 	}
 	core.NoteServedBy(req, rec.ID)
 	stream, err := c.doChat(ctx, prov, rec.ID, body)
+	if err != nil && core.FailureKindOf(err) == core.FailureUpstream {
+		// An upstream-classified fault is an edge hiccup, not a credential
+		// verdict: the same relay serves the next turn seconds later.  One
+		// immediate same-provider retry before the verdict is recorded rescues
+		// a request that has no other provider to rotate to.
+		if retry, rerr := c.doChat(ctx, prov, rec.ID, body); rerr == nil {
+			c.pool.noteSuccess(rec.ID)
+			return retry, nil
+		} else if ctx.Err() != nil {
+			// The caller walked away during the retry.
+			req.ReleaseAccountSlot()
+			return nil, ctx.Err()
+		} else {
+			err = rerr
+		}
+	}
 	if err != nil {
 		req.ReleaseAccountSlot()
 		c.noteProviderFailure(rec.ID, err)

@@ -144,11 +144,15 @@ func (f *fakePoolTaskClient) RefreshAccount(context.Context, string) ([]core.Ref
 }
 
 // Tasks records which account the queue asked about, which the embedded fake
-// cannot do because it ignores the id.
+// cannot do because it ignores the id.  The embedded listErr still governs the
+// outcome, so tests can simulate a cancelled or slow vendor read.
 func (f *fakePoolTaskClient) Tasks(_ context.Context, accountID string) ([]core.TaskInfo, error) {
 	f.scanMu.Lock()
 	f.asked = append(f.asked, accountID)
 	f.scanMu.Unlock()
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
 	return f.tasks, nil
 }
 

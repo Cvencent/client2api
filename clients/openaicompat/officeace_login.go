@@ -124,6 +124,10 @@ type officeAceLoginSession struct {
 	verifier  string
 	key       *ecdsa.PrivateKey
 	startedAt time.Time
+	// phone is the number the auto login rented for this session.  An
+	// interactive sign-in leaves it empty; completeLogin records it on the
+	// stored account so the pool can avoid the number next time.
+	phone string
 
 	mu        sync.Mutex
 	status    string
@@ -830,6 +834,9 @@ func (o *officeAceSource) completeLogin(ctx context.Context, session *officeAceL
 		Fields: map[string]string{
 			"api_key":    info.AuthInfo.AppKey,
 			"app_secret": info.AuthInfo.AppSecret,
+			// Empty for an interactive sign-in; the auto login rides its
+			// rented number on the session so the pool can avoid it later.
+			"phone": strings.TrimSpace(session.phone),
 		},
 	}, baseURL)
 	if err != nil {

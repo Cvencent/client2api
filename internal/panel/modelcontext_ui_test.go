@@ -82,6 +82,24 @@ func TestModelsViewEditsContextAndOutput(t *testing.T) {
 	}
 }
 
+// TestModelsViewMainRowShowsTheResolvedWindow 钉住主行「上下文」列读的是
+// 服务端解析后的窗口，不是模块目录的原始 extra。
+//
+// 这两个数大多时候相等，所以只读 extra 也能画出看似正确的表；一旦操作员手工
+// 覆盖了窗口、或网关从厂商拒绝里学到了新窗口，extra 仍停在厂商报的旧值，主行
+// 和详情行就会各显示一个数（详情读的是解析值）。实测部署里 169 行有这种分叉：
+// 14 行真实平台行主行显示旧数，155 个 Auto 虚拟行主行写着「—」而详情明明有窗口。
+func TestModelsViewMainRowShowsTheResolvedWindow(t *testing.T) {
+	src := poolStatsUISource(t)
+	render := poolStatsFuncBody(t, src, "renderModels")
+	if !strings.Contains(render, "const ctx = m.context_length ||") {
+		t.Error("主行的 ctx 没有优先读 m.context_length（解析后的窗口）")
+	}
+	if strings.Contains(render, "const ctx = ex.context_length") {
+		t.Error("主行的 ctx 直接读了 ex.context_length：手工覆盖和学到的窗口都不会反映到主行")
+	}
+}
+
 // TestModelsViewReadsTheMetadataKeysTheGoStructSends 是跨包一致性检查：
 // 界面读的字段名必须逐字等于 panel.modelInfo 的 json tag。
 func TestModelsViewReadsTheMetadataKeysTheGoStructSends(t *testing.T) {

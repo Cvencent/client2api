@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"client2api/internal/core"
+	"client2api/internal/smscap"
 )
 
 // codearts.go is the module's entry point: the client type, its constructor,
@@ -50,6 +51,15 @@ type Client struct {
 
 	loginMu sync.Mutex
 	logins  map[string]*panelLogin
+
+	// smsRot spreads fresh draws across provinces the same way the officeace
+	// module does; see sms.go.
+	smsRot smscap.Rotator
+
+	autoMu   sync.Mutex
+	autoJobs map[string]*codeartsAutoJob
+	// autoDriver is injectable so tests never launch a real browser.
+	autoDriver codeartsAutoDriver
 
 	// affinity pins a conversation to the credential that first served it.
 	// See affinity.go.

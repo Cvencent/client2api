@@ -22,8 +22,11 @@ import (
 //  3. open the Huawei login page and choose phone-code login;
 //  4. fill the number, request a code and wait for the SMS platform to receive
 //     it;
-//  5. submit the code and let the existing PollLogin exchange the authorization
-//     code for credentials.
+//  5. submit the code, accept the first-login agreement if Huawei puts one up,
+//     and keep the page open until the OAuth redirect reaches the gateway's
+//     callback;
+//  6. let the existing PollLogin exchange the authorization code for
+//     credentials.
 //
 // A browser driver is injectable so tests never launch a real browser.  The
 // default driver uses the same Chromium CDP wrapper as the other modules.
@@ -35,6 +38,12 @@ const (
 	officeAceAutoJobTTL       = 30 * time.Minute
 	officeAceAutoMaxLogLines  = 80
 )
+
+// officeAceRedirectWait bounds the window the login page is kept open after
+// the consent step, so the OAuth redirect to the gateway's callback has time
+// to run before the browser is torn down.  It is a var so a test can shrink it
+// like the settle knobs above.
+var officeAceRedirectWait = 45 * time.Second
 
 // Selectors verified against the Huawei account page used by OfficeAce.
 const (
@@ -374,7 +383,15 @@ func (o *officeAceSource) runAutoLogin(ctx context.Context, job *officeAceAutoJo
 
 func (o *officeAceSource) autoLogin(ctx context.Context, job *officeAceAutoJob, req core.AutoLoginRequest, opts core.SMSOpts) error {
 	job.setStep("renting")
-	num, err := o.AcquirePhone(ctx, opts, strings.TrimSpace(req.Phone), req.Avoid)
+	// The pool's own numbers join the batch's avoid list: the platform must
+	// not hand back a number an existing account already sits on, or the run
+	// signs into an account that is already in the pool and reports a
+	// duplicate.
+	avoid := req.Avoid
+	if pooled := o.pooledPhones(); len(pooled) > 0 {
+		avoid = append(append([]string(nil), avoid...), pooled...)
+	}
+	num, err := o.AcquirePhone(ctx, opts, strings.TrimSpace(req.Phone), avoid)
 	if err != nil {
 		return fmt.Errorf("取号失败：%w", err)
 	}
@@ -404,6 +421,12 @@ func (o *officeAceSource) autoLogin(ctx context.Context, job *officeAceAutoJob, 
 		return o.waitAutoSMSCode(waitCtx, job, opts, num.Phone)
 	}, job.logf); err != nil {
 		return fmt.Errorf("浏览器登录失败：%w", err)
+	}
+	// The rented number rides on the session so completeLogin records it on
+	// the stored account: the pool must avoid this number on every later
+	// draw, or the platform hands back an account that is already held.
+	if sess, ok := o.getLogin(job.sessionID); ok {
+		sess.phone = num.Phone
 	}
 
 	job.setStep("polling")
@@ -438,6 +461,25 @@ func (o *officeAceSource) autoLogin(ctx context.Context, job *officeAceAutoJob, 
 		case <-time.After(2 * time.Second):
 		}
 	}
+}
+
+// pooledPhones lists the numbers already recorded on pool accounts.  A fresh
+// draw must not return one of them: the number would sign into an account
+// this pool already holds.  Accounts added before the phone started being
+// recorded have nothing to contribute, which is fine.
+func (o *officeAceSource) pooledPhones() []string {
+	if o == nil || o.source == nil {
+		return nil
+	}
+	o.source.mu.Lock()
+	defer o.source.mu.Unlock()
+	out := make([]string, 0, len(o.source.rows))
+	for _, row := range o.source.rows {
+		if phone := strings.TrimSpace(row.Phone); phone != "" {
+			out = append(out, phone)
+		}
+	}
+	return out
 }
 
 func (o *officeAceSource) releaseAutoPhone(ctx context.Context, job *officeAceAutoJob, opts core.SMSOpts, num core.SMSNumber) {
@@ -579,7 +621,52 @@ func (officeAceBrowserDriver) Drive(ctx context.Context, url, phone string, wait
 	if err := acceptOfficeAceRegistrationConsent(ctx, page, logf); err != nil {
 		return fmt.Errorf("确认华为云用户协议失败：%w", err)
 	}
+	// The authorization code only reaches the cloud when the page lands on the
+	// gateway's callback, so the browser has to stay alive until the redirect
+	// has run.  A first-login consent dialog was up right until now, which is
+	// why an existing account (no dialog, the scan below burns 12 seconds) used
+	// to slip through while a fresh one was killed the moment Drive returned.
+	if err := waitOfficeAceAuthorizationRedirect(ctx, page, logf); err != nil {
+		return err
+	}
 	return nil
+}
+
+// waitOfficeAceAuthorizationRedirect keeps the page open until the OAuth
+// redirect leaves the Huawei login flow, then returns.  The caller owns the
+// browser lifecycle: closing it any earlier drops the code the cloud is
+// polling for.  A consent dialog that reappears during the window is confirmed
+// again, because Huawei has been observed re-asking right after the first
+// acceptance.
+func waitOfficeAceAuthorizationRedirect(ctx context.Context, page officeAceAutoPage, logf func(string, ...any)) error {
+	logf("正在等待华为跳转授权回调…")
+	deadline := time.Now().Add(officeAceRedirectWait)
+	for {
+		url, err := page.EvalString(ctx, "location.href")
+		if err == nil && strings.Contains(url, officeAceRedirectPath) {
+			logf("华为已跳转授权回调，等待凭据交换…")
+			return nil
+		}
+		// A slow consent dialog re-rendering over the redirect must be
+		// dismissed again or the redirect can never run.
+		if ok, cerr := page.Exists(ctx, officeAceSelCloudAgreementDialog); cerr == nil && ok {
+			logf("协议弹窗再次出现，重新确认…")
+			if err := confirmOfficeAceCloudAgreement(ctx, page, officeAceRegistrationContinueWait, logf); err != nil {
+				return fmt.Errorf("重新确认华为云用户协议失败：%w", err)
+			}
+		}
+		if time.Now().After(deadline) {
+			if err != nil {
+				return fmt.Errorf("读取华为页面跳转状态失败：%w", err)
+			}
+			return errors.New("华为没有跳转到授权回调（页面仍停留在登录流程里）")
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
 }
 
 // officeAceConsentKind says which first-login agreement, if any, the sign-in

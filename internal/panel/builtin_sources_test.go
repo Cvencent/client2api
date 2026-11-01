@@ -88,3 +88,26 @@ func TestPanelRefusesToDeleteBuiltinSource(t *testing.T) {
 		t.Fatalf("delete builtin: %d %s", w.Code, w.Body.String())
 	}
 }
+
+// A platform whose only remaining trace is routing policy has no source
+// definition, so the account/edit/delete buttons never render and the card
+// looked permanent.  The residue button is the way out, and it must be offered
+// exactly for those cards.
+func TestPanelOffersResidueCleanupForPolicyOnlyPlatforms(t *testing.T) {
+	src := string(indexHTML)
+	for _, want := range []string{
+		"const orphan = !knownPlats.has(n);",
+		"orphan ? '<button class=\"xs sourcePurge\"",
+		"if (ev.target.closest(\".sourcePurge\")) { purgePlatform(id, ev.target.closest(\"button\")); return; }",
+		"async function purgePlatform(id, btn) {",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("residue cleanup UI is missing %q", want)
+		}
+	}
+	// A name with a module or a source behind it is a live platform: showing the
+	// residue button there would invite deleting something the operator still uses.
+	if strings.Contains(src, "knownPlats.has(n) ? '<button class=\"xs sourcePurge\"") {
+		t.Error("the residue button is offered for live platforms too")
+	}
+}

@@ -648,3 +648,99 @@ func TestConfigDeletesAPerPlatformOverride(t *testing.T) {
 		t.Errorf("the shared master switch was disturbed: %v", sched)
 	}
 }
+
+// A "clear these overrides" patch is a table of nulls.  When its parent entry is
+// absent on disk the merge used to fall through and store the nulls verbatim,
+// materialising an entry that nothing on disk had asked for -- and the platform
+// page draws a card for every key, so the platform reappeared as soon as the
+// operator deleted it.
+func TestConfigDoesNotMaterializeAnEntryFromNulls(t *testing.T) {
+	path := configFile(t, `{"sources":{"relay":{"base_url":"https://relay.example/v1"}}}`)
+	p := configPanel(path)
+
+	mustSave(t, p, `{"platforms":{"relay":{"model_priorities":{"m1":null,"m2":null}}}}`)
+
+	cfg := onDisk(t, path)
+	if platforms, ok := cfg["platforms"].(map[string]any); ok {
+		if entry, present := platforms["relay"]; present {
+			t.Fatalf("a delete-only patch created %v instead of clearing nothing", entry)
+		}
+	}
+	// The patch said nothing about sources, so that entry is untouched: a null
+	// table must create nothing without also destroying its siblings.
+	if sources, _ := cfg["sources"].(map[string]any); len(sources) != 1 {
+		t.Fatalf("an unrelated section was disturbed: %v", sources)
+	}
+}
+
+// The same null-table patch against an entry that does exist must still delete
+// the named keys, and dropping the last field removes the now-empty entry rather
+// than leaving a phantom behind.
+func TestConfigDeletesNulledFieldsAndPrunesTheEmptyEntry(t *testing.T) {
+	path := configFile(t, `{"platforms":{"relay":{"model_priorities":{"m1":-8,"m2":-3}}}}`)
+	p := configPanel(path)
+
+	mustSave(t, p, `{"platforms":{"relay":{"model_priorities":{"m1":null}}}}`)
+
+	platforms, _ := onDisk(t, path)["platforms"].(map[string]any)
+	entry, _ := platforms["relay"].(map[string]any)
+	prios, _ := entry["model_priorities"].(map[string]any)
+	if _, ok := prios["m1"]; ok {
+		t.Errorf("m1 survived the null: %v", prios)
+	}
+	if prios["m2"] != float64(-3) {
+		t.Errorf("m2 was disturbed: %v", prios)
+	}
+
+	mustSave(t, p, `{"platforms":{"relay":{"model_priorities":{"m2":null}}}}`)
+	platforms, _ = onDisk(t, path)["platforms"].(map[string]any)
+	if entry, present := platforms["relay"]; present {
+		t.Fatalf("an entry whose last field was nulled remained: %v", entry)
+	}
+}
+
+// An entry the operator wrote as an empty object is a deliberate assertion and
+// must survive a patch that says nothing about its fields.
+func TestConfigKeepsAnEmptyEntryTheOperatorWrote(t *testing.T) {
+	path := configFile(t, `{"platforms":{"relay":{}}}`)
+	p := configPanel(path)
+
+	mustSave(t, p, `{"platforms":{"relay":{"model_priorities":{"m1":null}}}}`)
+
+	platforms, _ := onDisk(t, path)["platforms"].(map[string]any)
+	if _, present := platforms["relay"]; !present {
+		t.Fatal("the operator's explicit empty entry was pruned")
+	}
+}
+
+// Pruning applies at every level, so removing the last override from the last
+// entry of a section leaves no empty shell behind.  A section that is absent and
+// a section that is empty mean the same thing to the loader, and an empty shell
+// is precisely the residue the platform page cannot get rid of.
+func TestConfigPrunesTheSectionOnceItsLastEntryIsGone(t *testing.T) {
+	path := configFile(t, `{"platforms":{"relay":{"model_priorities":{"m1":-8}}}}`)
+	p := configPanel(path)
+
+	mustSave(t, p, `{"platforms":{"relay":{"model_priorities":{"m1":null}}}}`)
+
+	if _, present := onDisk(t, path)["platforms"]; present {
+		t.Fatalf("an emptied platform section was left behind: %v", onDisk(t, path)["platforms"])
+	}
+}
+
+// Pruning only ever removes an entry a patch actually emptied.  A section the
+// operator wrote as an empty object is an assertion, and an unrelated save --
+// which is the common case, the panel always resends the whole form -- must not
+// quietly drop it.
+func TestConfigKeepsEmptySectionsAcrossUnrelatedSaves(t *testing.T) {
+	path := configFile(t, `{"aliases":{},"panel":{},"listen":"127.0.0.1:8788"}`)
+
+	mustSave(t, configPanel(path), `{"proxy":"http://127.0.0.1:8888"}`)
+
+	cfg := onDisk(t, path)
+	for _, section := range []string{"aliases", "panel"} {
+		if _, present := cfg[section]; !present {
+			t.Errorf("the empty %s section was dropped by an unrelated save: %v", section, cfg)
+		}
+	}
+}

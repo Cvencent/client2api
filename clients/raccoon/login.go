@@ -212,6 +212,15 @@ func (c *Client) loginByID(id string) *loginSession {
 	return c.logins[id]
 }
 
+// removeLogin forgets one session, so a finished run's loopback server does
+// not linger until the next sweep.  Cancelling the server is the caller's
+// business; this only drops the map entry.
+func (c *Client) removeLogin(id string) {
+	c.loginMu.Lock()
+	defer c.loginMu.Unlock()
+	delete(c.logins, id)
+}
+
 // --- core.LoginProvider ---------------------------------------------------
 
 // StartLogin binds a loopback page and returns its URL.

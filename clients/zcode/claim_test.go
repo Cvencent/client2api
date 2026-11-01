@@ -88,12 +88,24 @@ func routeTransport(t *testing.T, routes map[string]func(*http.Request) (*http.R
 		}
 	}
 	// An empty preview makes the board and the check-in leg ask
-	// billing/current what the account actually holds.  Like the liveness
-	// report, the default answer is "nothing", so a test only has to describe
-	// this route when it is about a held grant.
+	// billing/balance (the authority for a held grant since the current
+	// endpoint began answering empty) and billing/current what the account
+	// actually holds, then the marketing channel whether a campaign is
+	// pending.  The defaults are all "nothing", so a test only has to
+	// describe these routes when it is about one of them.
+	if _, ok := routes[planBalancePath]; !ok {
+		routes[planBalancePath] = func(*http.Request) (*http.Response, error) {
+			return jsonResponse(http.StatusOK, `{"code":0,"data":{"server_time":1,"plans":[],"balances":[]}}`), nil
+		}
+	}
 	if _, ok := routes[planCurrentPath]; !ok {
 		routes[planCurrentPath] = func(*http.Request) (*http.Response, error) {
 			return jsonResponse(http.StatusOK, `{"code":0,"data":{"server_time":1,"plans":[]}}`), nil
+		}
+	}
+	if _, ok := routes[marketingTouchPath]; !ok {
+		routes[marketingTouchPath] = func(*http.Request) (*http.Response, error) {
+			return jsonResponse(http.StatusOK, `{"code":0,"data":{"server_time":1,"language":"zh-CN","deliveries":[]}}`), nil
 		}
 	}
 	return &fakeTransport{handler: func(r *http.Request) (*http.Response, error) {

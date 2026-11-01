@@ -158,6 +158,18 @@ type Config struct {
 	// http/1.1) and downgrade when the server refuses h2.
 	TLSProtocol string `json:"tls_protocol"`
 
+	// --- one-time SMS (auto login) -----------------------------------------
+	// The eomsg platform settings the auto login rents numbers through.  The
+	// panel's per-request token override beats all of these; EOMSG_TOKEN is
+	// the process-level fallback.  See sms.go.
+	SMS struct {
+		Token     string   `json:"sms_token"`
+		Keyword   string   `json:"sms_keyword"`
+		Base      string   `json:"sms_base"`
+		CardType  string   `json:"sms_card_type"`
+		Provinces []string `json:"sms_provinces"`
+	} `json:"sms"`
+
 	// --- behaviour ---------------------------------------------------------
 	// SelfRenew is OFF by default: ExchangeToken rotates the refresh-token
 	// family server-side, which can log the desktop app out (trae2api ships

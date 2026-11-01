@@ -811,6 +811,113 @@ func TestOfficeAceRegistrationConsentReportsAStuckConfirmButton(t *testing.T) {
 	}
 }
 
+// fakeOfficeAceRedirectPage models the sign-in page after the consent step:
+// the URL only becomes the gateway callback after the redirect has run, and a
+// consent dialog can reappear on the way there.
+type fakeOfficeAceRedirectPage struct {
+	mu          sync.Mutex
+	href        string
+	dialogOpen  bool
+	checked     bool
+	acceptCalls int
+}
+
+func (p *fakeOfficeAceRedirectPage) Exists(_ context.Context, selector string) (bool, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.dialogOpen && selector == officeAceSelCloudAgreementDialog, nil
+}
+
+func (p *fakeOfficeAceRedirectPage) Click(_ context.Context, selector string) (bool, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if selector != officeAceSelCloudAgreementCheck {
+		return false, nil
+	}
+	p.checked = true
+	return true, nil
+}
+
+func (p *fakeOfficeAceRedirectPage) EvalBool(_ context.Context, expression string) (bool, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	switch expression {
+	case officeAceCloudAgreementCheckedExpr:
+		return p.checked, nil
+	case officeAceCloudAgreementAcceptExpr:
+		if !p.dialogOpen || !p.checked {
+			return false, nil
+		}
+		p.acceptCalls++
+		p.dialogOpen = false
+		return true, nil
+	case officeAceCloudAgreementClosedExpr:
+		return !p.dialogOpen, nil
+	default:
+		return false, nil
+	}
+}
+
+func (p *fakeOfficeAceRedirectPage) EvalString(_ context.Context, _ string) (string, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.href, nil
+}
+
+func TestOfficeAceRedirectWaitReturnsOnTheCallback(t *testing.T) {
+	page := &fakeOfficeAceRedirectPage{href: "https://gw.example" + officeAceRedirectPath + "?code=abc"}
+	if err := waitOfficeAceAuthorizationRedirect(context.Background(), page, func(string, ...any) {}); err != nil {
+		t.Fatalf("waitOfficeAceAuthorizationRedirect: %v", err)
+	}
+}
+
+func TestOfficeAceRedirectWaitDismissesAReappearingDialog(t *testing.T) {
+	restore := officeAceRedirectWait
+	officeAceRedirectWait = 300 * time.Millisecond
+	t.Cleanup(func() { officeAceRedirectWait = restore })
+
+	page := &fakeOfficeAceRedirectPage{dialogOpen: true, checked: false}
+	go func() {
+		// The dialog confirms on the next probe, then the redirect runs.
+		for i := 0; i < 100; i++ {
+			page.mu.Lock()
+			if !page.dialogOpen {
+				page.href = "https://gw.example" + officeAceRedirectPath + "?code=abc"
+			}
+			page.mu.Unlock()
+			time.Sleep(20 * time.Millisecond)
+		}
+	}()
+	var logs []string
+	err := waitOfficeAceAuthorizationRedirect(context.Background(), page, func(format string, args ...any) {
+		logs = append(logs, fmt.Sprintf(format, args...))
+	})
+	if err != nil {
+		t.Fatalf("waitOfficeAceAuthorizationRedirect: %v", err)
+	}
+	if page.acceptCalls != 1 {
+		t.Fatalf("dialog confirms = %d, want 1", page.acceptCalls)
+	}
+	if !strings.Contains(strings.Join(logs, "\n"), "协议弹窗再次出现") {
+		t.Fatalf("logs = %v, want the re-confirmation reported", logs)
+	}
+}
+
+func TestOfficeAceRedirectWaitReportsAMissingRedirect(t *testing.T) {
+	restore := officeAceRedirectWait
+	officeAceRedirectWait = 60 * time.Millisecond
+	t.Cleanup(func() { officeAceRedirectWait = restore })
+
+	page := &fakeOfficeAceRedirectPage{href: "https://id.example/authui/login.html"}
+	err := waitOfficeAceAuthorizationRedirect(context.Background(), page, func(string, ...any) {})
+	if err == nil {
+		t.Fatal("the wait reported success though the page never reached the callback")
+	}
+	if !strings.Contains(err.Error(), "华为没有跳转到授权回调") {
+		t.Fatalf("err = %v, want the missing-redirect diagnosis", err)
+	}
+}
+
 // fakeOfficeAceSendCodePage models Huawei's get-code control: the click can be
 // dropped (the SPA had not armed its handler yet), and only an accepted send
 // puts the resend countdown on screen.

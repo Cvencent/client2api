@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"client2api/internal/core"
 )
@@ -263,6 +264,75 @@ func TestTheBoardIsCachedButAFailedReadIsNot(t *testing.T) {
 	}
 	if got := failing.count(); got != 2 {
 		t.Errorf("two failed reads made %d requests, want 2: failures are never cached", got)
+	}
+}
+
+// failingUpstream answers every request with a transport failure, standing in
+// for the upstream going dark between one board read and the next.
+func failingUpstream() *http.Client {
+	return &http.Client{Transport: &stubTransport{handler: func(*http.Request, string) *http.Response {
+		return nil // RoundTrip with a nil response is a transport error
+	}}}
+}
+
+// The vendor's endpoint has been observed slowing to 6-20 s and timing callers
+// out (2026-11-01).  A board the vendor answered moments ago is a better
+// answer than the resulting error: the read that failed is still not cached,
+// but a fresh cached board is served instead of the error.
+func TestAFailedReadServesAStillFreshBoardInsteadOfTheError(t *testing.T) {
+	flags := map[string]bool{"first_message": true}
+	rt := &stubTransport{handler: func(r *http.Request, _ string) *http.Response {
+		return jsonResponse(http.StatusOK, boardEnvelope(t, flags))
+	}}
+	c := newTestClient(t, "{}", rt)
+	seedAccount(t, c, "loomy-1", testToken, 0)
+
+	if _, err := c.Tasks(context.Background(), ""); err != nil {
+		t.Fatalf("Tasks: %v", err)
+	}
+	if got := rt.count(); got != 1 {
+		t.Fatalf("requests = %d, want 1", got)
+	}
+
+	// The upstream goes dark.  The board read must still succeed from the
+	// cache, and the account must not be penalised for it.
+	c.up = &upstream{cfg: c.cfg, json: failingUpstream()}
+	rows, err := c.Tasks(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Tasks on a dead upstream with a fresh board: %v", err)
+	}
+	if row := rowsByCode(rows)["first_message"]; !row.Claimed {
+		t.Errorf("first_message = %+v, want the cached completion flag honoured", row)
+	}
+	acc, ok := c.store.lookup("loomy-1")
+	if !ok {
+		t.Fatal("the account vanished")
+	}
+	if acc.dead || !acc.cooldownTill.IsZero() || acc.failures != 0 {
+		t.Errorf("account state after a served-from-cache failure = %+v, want untouched", acc)
+	}
+}
+
+// Once the board is older than the grace window the error is honest again: a
+// day-old flag map must not masquerade as the vendor's current answer.
+func TestAStaleBoardDoesNotMaskTheError(t *testing.T) {
+	rt := &stubTransport{handler: func(r *http.Request, _ string) *http.Response {
+		return jsonResponse(http.StatusOK, boardEnvelope(t, map[string]bool{"first_message": true}))
+	}}
+	c := newTestClient(t, "{}", rt)
+	seedAccount(t, c, "loomy-1", testToken, 0)
+
+	if _, err := c.Tasks(context.Background(), ""); err != nil {
+		t.Fatalf("Tasks: %v", err)
+	}
+	// Age the board past the grace window.
+	c.board.mu.Lock()
+	c.board.at = time.Now().UTC().Add(-staleBoardGrace - time.Minute)
+	c.board.mu.Unlock()
+
+	c.up = &upstream{cfg: c.cfg, json: failingUpstream()}
+	if _, err := c.Tasks(context.Background(), ""); err == nil {
+		t.Fatal("a day-old board answered for a dead upstream; it must not")
 	}
 }
 
