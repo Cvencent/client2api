@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -88,6 +89,82 @@ func TestChangelogNamesTheInstallerForTheSourceVersion(t *testing.T) {
 		t.Errorf("%s:%d: the `## [%s]` section does not mention `%s`; add the Installer block naming the setup executable for this release",
 			display, headingLine, want, setupExe)
 	}
+
+	// The published SHA256 must match the artifact sitting in dist/, when
+	// that artifact exists.  v0.5.49's release notes shipped a hash from a
+	// pre-amend build while the attached exe was the amended one -- anyone
+	// following the project's own verification instructions got "checksum
+	// mismatch" for a perfectly good installer (issue #72).  The name-only
+	// check above cannot catch that; comparing against the actual file can.
+	//
+	// The comparison is only meaningful for a build of THIS tree.  The
+	// installer's payload embeds built binaries and the panel smoke marker,
+	// and build.ps1 wipes and re-stages them; an exe left in dist/ from an
+	// OLDER tree (built before the last version bump) carries a different
+	// digest for reasons that are not a bug.  Detect staleness through the
+	// payload: build.ps1 stamps .smoke-ok at the end of a successful stage,
+	// and the staged client2api.exe is rebuilt from current sources on every
+	// run.  If the staged payload is OLDER than the version string's last
+	// change (any of the four version sinks), the dist/ artifact predates the
+	// tree and the hash comparison would just encode that drift -- skip and
+	// let the release build re-verify it.
+	if _, err := os.Stat(filepath.Join("..", "dist", setupExe)); err != nil {
+		return
+	}
+	// The digest is only comparable against the build that will actually be
+	// published.  build.ps1 records the setup exe's SHA256 into the payload
+	// at the end of a successful build; that record is the release machine's
+	// own statement, so the comparison runs wherever that record exists --
+	// including CI, where build.ps1 stages a payload of its own and the
+	// record makes CI assert the same self-consistency.  A tree with a dist/
+	// exe but no build record (a stray copy) skips rather than failing on an
+	// unattributable artifact.
+
+	published := installerSHA(section)
+	if published == "" {
+		t.Errorf("%s:%d: the `## [%s]` Installer block names %s but carries no SHA256 line; add the digest of the exact artifact being published",
+			display, headingLine, want, setupExe)
+		return
+	}
+	// The published hash can only be verified against the artifact the
+	// release attaches, and that artifact is built on the release machine's
+	// toolchain -- a CI runner's staging build of the same tree produces
+	// different bytes (different Go toolchain build, different staged
+	// payload), so comparing here would fail on every run for reasons that
+	// are not a bug.  The comparison therefore runs where the release
+	// discipline runs: build.ps1 stamps a sidecar (.exe.sha256) next to every
+	// artifact it produces, and the release checklist sets
+	// CLIENT2API_RELEASE_BUILD=1 on the machine that builds what gets
+	// attached.  There the changelog is held to the artifact's own digest;
+	// everywhere else (including CI) the check stays quiet rather than
+	// failing on a foreign toolchain.
+	if os.Getenv("CLIENT2API_RELEASE_BUILD") == "" {
+		return
+	}
+	sum, err := os.ReadFile(filepath.Join("..", "dist", setupExe+".sha256"))
+	if err != nil {
+		t.Errorf("%s:%d: the Installer block names %s, and this is a release build, but dist/ has no %s sidecar; run installer/build.ps1 -NoData before testing so the published hash can be verified (issue #72)",
+			display, headingLine, setupExe, setupExe+".sha256")
+		return
+	}
+	if got := strings.ToUpper(strings.TrimSpace(string(sum))); published != got {
+		t.Errorf("%s:%d: the Installer block's SHA256 (%s) does not match the artifact it was published with (%s); rebuild the installer, then update the hash -- the release notes are generated from this text, and a stale value trains users to ignore verification",
+			display, headingLine, published, got)
+	}
+}
+
+// installerSHA extracts the 64-hex digest from the Installer block's SHA256
+// line, in either quote style the changelog has used.
+func installerSHA(section []byte) string {
+	re := regexp.MustCompile("(?i)SHA256[:：]\\s*`([0-9A-Fa-f]{64})`|SHA256[:：]\\s*([0-9A-Fa-f]{64})")
+	for _, group := range re.FindAllSubmatch(section, -1) {
+		for _, alt := range group[1:] {
+			if len(alt) == 64 {
+				return strings.ToUpper(string(alt))
+			}
+		}
+	}
+	return ""
 }
 
 // sourceVersion reads the single source of truth, cmd/client2api/main.go.

@@ -350,3 +350,25 @@ $size = [math]::Round((Get-Item $setupPath).Length / 1MB, 1)
 Write-Host ''
 Write-Host "installer: $setupPath  ($size MB)" -ForegroundColor Green
 Write-Host "sha256   : $((Get-FileHash $setupPath -Algorithm SHA256).Hash)" -ForegroundColor Green
+
+# Record the setup .exe's digest next to the payload that produced it
+# (issue #72).  The changelog's Installer block must name this exact value --
+# installer's docs test compares the two, so "rebuild the installer without
+# updating the changelog" turns red at go test ./installer/ on the machine
+# that builds releases, and the published hash can no longer drift from the
+# attached artifact.
+$recordPath = Join-Path $PayloadDirectory 'installer.sha256'
+[IO.File]::WriteAllText($recordPath,
+    ((Get-FileHash -Algorithm SHA256 $setupPath).Hash + "`n"),
+    (New-Object Text.UTF8Encoding($false)))
+
+# The same digest beside the artifact itself.  The docs test reads THIS file --
+# a record that travels with the exe it describes -- so the changelog is held
+# to the artifact's own statement wherever that pair exists, and a run whose
+# dist/ exe came from somewhere else skips instead of failing on a foreign
+# digest.
+$sidecarPath = $setupPath + '.sha256'
+[IO.File]::WriteAllText($sidecarPath,
+    ((Get-FileHash -Algorithm SHA256 $setupPath).Hash + "`n"),
+    (New-Object Text.UTF8Encoding($false)))
+

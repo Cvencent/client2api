@@ -74,6 +74,10 @@ Set-Location 'D:\client2api-src'
   本地 autocrlf 检出会误报，用 `git cat-file blob HEAD:<file> | gofmt -l`
   这类字节级校验）。**写文件不要用 PS 5.1 的 `Set-Content -Encoding UTF8`**
   （带 BOM），用 python utf-8 或 `[System.IO.File]::WriteAllText`。
+- 打发版包的机器上设 `CLIENT2API_RELEASE_BUILD=1` 再跑
+  `go test ./installer/`：这是「CHANGELOG 里的 SHA256 = dist/ 实际产物」断言的
+  开关（issue #72）。build.ps1 每次构建都会在产物旁写 `.exe.sha256` 旁车记录；
+  CI 与未设该变量的环境自动跳过比对（外部工具链的产物字节不同，不可比）。
 - Release 上挂的 Windows 安装包必须是 **`-NoData` 空包**（仓库是 public 的，
   数据包含全部账号凭据）。空包在对应 tag 的 worktree 里单独构建后
   `gh release upload`，同时把它的 SHA256 回填进 `CHANGELOG.md` 对应小节

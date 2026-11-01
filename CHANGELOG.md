@@ -33,6 +33,24 @@
 - `client2api-setup-0.5.47.exe`（空包，不含账号凭据或本机配置）
 - SHA256：`EE780BD84B0C8A1CAB096AE8354A353C5B968C516576BF02DD775B472C27CD7F`
 
+## [0.5.54] - 2026-11-02
+
+### Fixed
+
+- **发布完整性：安装包的 SHA256 从「手抄」变成「断言」。** v0.5.49 的 Release
+  说明公布了一个与附件不符的哈希（正文在 amend 重写前生成、附件换新后正文未再
+  生成），任何人按项目自定的流程校验都会得到「校验失败」。三层收紧：
+  `installer/docs_version_test.go` 新增断言——dist/ 里有对应版本安装包时，
+  CHANGELOG Installer 段的 64 位哈希必须等于该文件实际摘要（干净 clone 无产物则
+  跳过；CI 的 windows-test 必有产物，永远覆盖）；「改包不改文档」从此在
+  `go test ./installer/` 就红。v0.5.49 的 Release 正文已用正确哈希
+  （105786D6…）修正。
+
+### Installer
+
+- `client2api-setup-0.5.54.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `F0D55030B24FABAB731B1D3487C13F140F95846F5247EAE9D624C1C92DAF49AA`
+
 ## [0.5.53] - 2026-11-02
 
 ### Fixed

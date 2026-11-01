@@ -187,7 +187,22 @@ func assertNoLeak(t *testing.T, what string, value any, secrets ...string) {
 		if strings.Contains(string(raw), secret) {
 			t.Fatalf("%s leaks %q: %s", what, secret, raw)
 		}
+		// Prefix probes ask "does a truncated form of the secret appear?".
+		// For a long random hex secret that question is only meaningful at
+		// prefixes long enough to be distinguishable: a 4-hex fragment
+		// collides with any independently minted random hex field (session
+		// ids, flow ids) with probability ~1e-4 per window, which passes for
+		// weeks locally and then fires on CI (2026-11-02).  A 4-character
+		// probe stays meaningful for human-typed secrets; a 64-hex one is
+		// probed at 8+.
+		minProbe := 4
+		if len(secret) >= 32 {
+			minProbe = 8
+		}
 		for _, n := range []int{4, 8, 12, 16} {
+			if n < minProbe {
+				continue
+			}
 			if len(secret) > n && strings.Contains(string(raw), secret[:n]) {
 				t.Fatalf("%s leaks a %d-character prefix of %q: %s", what, n, secret, raw)
 			}
