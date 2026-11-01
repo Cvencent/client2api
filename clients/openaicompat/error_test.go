@@ -1,6 +1,9 @@
 package openaicompat
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"testing"
@@ -56,5 +59,38 @@ func TestClassifyHTTPCarriesRetryAfter(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestClassifyUpstreamKeepsTheCallerCancellationAlive pins issue #69: a
+// context.Canceled (or DeadlineExceeded) that bubbles out of the HTTP round
+// trip used to be recognised and then re-wrapped as an upstreamError whose
+// Unwrap chain drops the original error -- so the gateway's failureReason
+// could no longer probe errors.Is(err, context.Canceled) and the same caller
+// cancellation wore the 上游拒绝 label or the 调用方已取消 one depending on
+// which layer happened to notice it first.  The identity must survive.
+func TestClassifyUpstreamKeepsTheCallerCancellationAlive(t *testing.T) {
+	c := &Client{}
+
+	canceled := fmt.Errorf(`Post "https://relay.example/v1/chat/completions": %w`, context.Canceled)
+	if got := c.classifyUpstream("acct-1", canceled); !errors.Is(got, context.Canceled) {
+		t.Fatalf("classifyUpstream severed the cancellation identity: %v", got)
+	}
+	// It is also not a *core.Failure: a bare context.Canceled is what the
+	// routing loop reads as "nobody's failure".
+	if _, ok := core.AsFailure(c.classifyUpstream("acct-1", canceled)); ok {
+		t.Fatal("a cancellation was wrapped as a classified failure")
+	}
+
+	deadline := fmt.Errorf(`Post "https://relay.example/v1/chat/completions": %w`, context.DeadlineExceeded)
+	if got := c.classifyUpstream("acct-1", deadline); !errors.Is(got, context.DeadlineExceeded) {
+		t.Fatalf("classifyUpstream severed the deadline identity: %v", got)
+	}
+
+	// A genuine transport fault keeps its classified envelope.
+	plain := errors.New(`Post "https://relay.example/v1/chat/completions": connection reset by peer`)
+	f, ok := core.AsFailure(c.classifyUpstream("acct-1", plain))
+	if !ok || f.Kind != core.FailureUpstream && f.Kind != core.FailureOther {
+		t.Fatalf("a real transport fault lost its envelope: %v", plain)
 	}
 }

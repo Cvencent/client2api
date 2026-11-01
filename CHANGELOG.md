@@ -33,6 +33,25 @@
 - `client2api-setup-0.5.47.exe`（空包，不含账号凭据或本机配置）
 - SHA256：`EE780BD84B0C8A1CAB096AE8354A353C5B968C516576BF02DD775B472C27CD7F`
 
+## [0.5.51] - 2026-11-02
+
+### Fixed
+
+- **调用方取消不再丢失在 openaicompat 的错误信封里。** 取消发生在 HTTP 往返中、
+  以 `*url.Error{Err: context.Canceled}` 冒出时，`classifyUpstream` 识别了它却把
+  身份切断：映射 kindNone → FailureOther，再用不保留 Unwrap 链的 `upstreamError`
+  重新包装——网关 `failureReason` 的 `errors.Is(context.Canceled)` 探不到，同一
+  次取消标签取决于哪层先观测到（「调用方已取消」/「上游拒绝」随机，recent.json
+  session 实证同一会话三种标签两种）。现在 Canceled/DeadlineExceeded 原样上抛：
+  标签恢复正确，路由循环也把裸 context.Canceled 读成「非平台失败」而不是终态
+  FailureOther；DeadlineExceeded 同链路恢复「请求超时」语义。真实传输故障的分类
+  信封不受影响。
+
+### Installer
+
+- `client2api-setup-0.5.51.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `5DC77C1AF43CF91C3BFABB02AA6BF35F2186387A71697DF4AC2900F4E07CC44F`
+
 ## [0.5.50] - 2026-11-02
 
 ### Fixed

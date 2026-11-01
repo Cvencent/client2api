@@ -425,10 +425,23 @@ func (c *Client) classifyUpstream(accountID string, err error) error {
 	if err == nil {
 		return nil
 	}
-	k := kindServer
+	// A caller cancellation or an exhausted deadline is not a verdict about
+	// the platform, and its identity must survive the envelope: the gateway's
+	// failureReason probes errors.Is(err, context.Canceled/DeadlineExceeded)
+	// to name the row 调用方已取消 / 请求超时, and the routing loop treats a
+	// bare context.Canceled as "nobody's failure".  classifyUpstream used to
+	// recognise both and then map them to kindNone -> FailureOther inside a
+	// fresh upstreamError whose Unwrap chain drops the original error, so the
+	// identity was severed right here and the same cancellation wore the
+	// 上游拒绝 label or the 调用方已取消 one depending on which layer noticed
+	// it first (issue #69).  Handing the error back unwrapped keeps those
+	// probes working and leaves the classification of real vendor faults
+	// untouched.
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		k = kindNone
-	} else if isTimeout(err) {
+		return err
+	}
+	k := kindServer
+	if isTimeout(err) {
 		k = kindServer
 	} else if isUnusableURLError(err) {
 		k = kindClient
