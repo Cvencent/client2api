@@ -60,6 +60,15 @@ var (
 		// the operator to re-import a key that is perfectly valid; the window
 		// resets on its own, which is exactly what the quota cooldown models.
 		"insufficient for this request", "free points", "7-day window",
+		// The pre-consume vendors: they estimate each request's cost and refuse
+		// with 403 "Not enough quota to pre-consume for this request: ¥x
+		// remaining, ¥y required" when the estimate exceeds the balance.  Small
+		// requests pre-consume fine, so the same account answers 200 and 403
+		// interchangeably -- "insufficient quota" does not contain-match this
+		// wording, and unclassified the 403 lands on kindForbidden, keeping a
+		// ¥0 account ready while every large request burns a 12-18s round trip
+		// before failing over (issue #77).
+		"not enough quota", "to pre-consume",
 		"点数不足", "额度不足", "余额不足", "配额不足", "额度已用完",
 	}
 	rateMarkers = []string{

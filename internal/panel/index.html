@@ -24014,7 +24014,16 @@ async function renderChat(force) {
   await chatLoadThreads();
 }
 
-function chatDraw() {
+// chatDraw redraws the conversation.  streaming=true during a streaming
+// reply: the live region is switched off for the intermediate redraws, because
+// every innerHTML rewrite of an aria-live container re-announces the WHOLE
+// region to a screen reader -- 41 fragments meant 44 announcements of the
+// full history (issue #76).  The final draw runs with streaming=false, which
+// restores aria-live="polite" and lets the finished reply land as one
+// announcement.
+function chatDraw(streaming) {
+  const live = $("#chatLog");
+  if (live) live.setAttribute("aria-live", streaming ? "off" : "polite");
   const tags = [];
   if (CHAT.key) tags.push('<span class="chip on">会话 ' + esc(CHAT.key) + "</span>");
   if (CHAT.msgs.length) tags.push('<span class="chip">' + CHAT.msgs.length + " 条消息</span>");
@@ -24118,7 +24127,7 @@ async function chatSend() {
     CHAT.busy = false;
     $("#btnChatSend").disabled = false; $("#btnChatStop").disabled = true; CHAT.ctrl = null;
     $("#chatClient").disabled = false; $("#chatModel").disabled = false; $("#chatAccount").disabled = false;
-    chatDraw();
+    chatDraw(false); // the finished reply lands as ONE announcement (issue #76)
     const cur = chatCurrentThread();
     await chatSaveThread(threadID, {
       messages: CHAT.msgs.filter(m => m.role === "user" || m.role === "assistant"),
@@ -24185,7 +24194,7 @@ async function chatSend() {
           return;
         }
         const ch = (ev.choices || [])[0] || {}, d = ch.delta || {};
-        if (d.content) { if (!ttft) ttft = performance.now() - t0; out.content += chatText(d.content); chatDraw(); chatScrollBottom(); }
+        if (d.content) { if (!ttft) ttft = performance.now() - t0; out.content += chatText(d.content); chatDraw(true); chatScrollBottom(); }
         if (d.reasoning_content) out.reasoning += d.reasoning_content;
         if (ev.usage) usage = ev.usage;
         if (ch.finish_reason) finish = ch.finish_reason;

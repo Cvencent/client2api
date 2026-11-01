@@ -33,6 +33,28 @@
 - `client2api-setup-0.5.47.exe`（空包，不含账号凭据或本机配置）
 - SHA256：`EE780BD84B0C8A1CAB096AE8354A353C5B968C516576BF02DD775B472C27CD7F`
 
+## [0.5.55] - 2026-11-02
+
+### Fixed
+
+- **预扣型厂商的「Not enough quota to pre-consume」403 归入余额桶。** 这类厂商按
+  请求预估费用做预扣：余额见底时同一账号小请求 200、大请求 403，而
+  creditMarkers 的逐字面匹配不认识这句原话（「insufficient quota」≠「not enough
+  quota」），403 落 kindForbidden → FailureModelRefused——¥0 账号保持 ready，
+  每个大请求白烧 12-18s TTFB 才改道。creditMarkers 新增 `not enough quota` 与
+  `to pre-consume`：403 带该短语 → FailureQuota 按 quota 冷却停车，余额刷新见
+  钱自动放出；真 403（权限拒绝）保持原判。
+- **对话页流式回复不再让读屏逐片重播整段历史。** #chatLog 整块是 aria-live
+  容器而流式循环每片整段重写 innerHTML——41 个分片实测 44 次播报、每次都是
+  全量历史。chatDraw 新增 streaming 参数：流式中间态把 aria-live 摘到 off
+  （读屏闭嘴），settle 的最终绘制恢复 polite，完成的回复作为一次宣告落地；
+  harness 测试钉住两处调用点，缺了恢复分支会比原来更糟（永不播报）。
+
+### Installer
+
+- `client2api-setup-0.5.55.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `D3E8F4B6E21E62A8003317DA60B820C6962CE3FEB0F52FC26AC0B5663591611E`
+
 ## [0.5.54] - 2026-11-02
 
 ### Fixed

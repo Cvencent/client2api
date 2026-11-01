@@ -94,3 +94,24 @@ func TestClassifyUpstreamKeepsTheCallerCancellationAlive(t *testing.T) {
 		t.Fatalf("a real transport fault lost its envelope: %v", plain)
 	}
 }
+
+// TestClassifyFailureReadsThePreConsumeRefusalAsCredit pins issue #77: the
+// pre-consume vendors estimate each request's cost and answer 403 "Not enough
+// quota to pre-consume for this request: ¥0.000002 remaining, ¥1.09 required"
+// when the estimate exceeds the balance.  The same account answers 200 to
+// small requests, so the row must park as quota (and revive when the balance
+// sweep sees money) rather than stay ready through FailureModelRefused.
+func TestClassifyFailureReadsThePreConsumeRefusalAsCredit(t *testing.T) {
+	msg := "Not enough quota to pre-consume for this request: ¥0.000002 remaining, ¥1.092788 required"
+	if got := classifyFailure(403, msg); got != kindCredit {
+		t.Fatalf("classifyFailure(403, pre-consume refusal) = %v, want kindCredit -- an empty wallet is the account's economy, not a forbidden route", got)
+	}
+	// The short marker form alone matches too.
+	if got := classifyFailure(403, "not enough quota"); got != kindCredit {
+		t.Fatalf("classifyFailure(403, %q) = %v, want kindCredit", "not enough quota", got)
+	}
+	// A genuine route-forbidden 403 keeps its verdict.
+	if got := classifyFailure(403, "permission denied for this resource"); got != kindForbidden {
+		t.Fatalf("classifyFailure(403, %q) = %v, want kindForbidden", "permission denied for this resource", got)
+	}
+}
