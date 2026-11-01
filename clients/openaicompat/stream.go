@@ -197,16 +197,25 @@ type chatStream struct {
 	// that one arrived, and firstTimedOut says this timer -- not the vendor --
 	// ended the stream.  See defaultFirstToken for why an SSE keep-alive must
 	// not be allowed to hold this deadline open.
+	//
+	// firstTimer may be the guard doChat armed before sending the request, in
+	// which case one deadline spans the header wait AND the stream instead of
+	// restarting here; headerFired reports that the guard, not a fresh stream
+	// timer, is what cancelled the request.
 	firstTimer    *time.Timer
 	firstSeen     atomic.Bool
 	firstTimedOut atomic.Bool
+	headerGuard   *headerGuard
 }
 
 // httpResponse is the stream's handle on the underlying HTTP response; it is
 // an alias so this file does not need a separate import surface.
 type httpResponse = httpResponseAlias
 
-func newChatStream(c *Client, resp *httpResponseAlias, prov ProviderConfig, accountID string, cancel context.CancelFunc) *chatStream {
+// newChatStream builds the stream.  guard, when non-nil, is the deadline
+// doChat already armed for the response headers: the stream adopts its timer so
+// the caller gets one first-frame budget across both stages, not two.
+func newChatStream(c *Client, resp *httpResponseAlias, prov ProviderConfig, accountID string, cancel context.CancelFunc, guard *headerGuard) *chatStream {
 	body := newIdleReader(resp.Body, c.cfg.streamIdle())
 	// The provider's in-flight count follows the stream's lifetime exactly: this
 	// constructor runs only after a successful upstream call, and release() is
@@ -215,31 +224,43 @@ func newChatStream(c *Client, resp *httpResponseAlias, prov ProviderConfig, acco
 		c.pool.noteInFlight(accountID, 1)
 	}
 	s := &chatStream{
-		client:    c,
-		resp:      resp,
-		body:      body,
-		reader:    newSSEReader(body),
-		prov:      prov,
-		accountID: accountID,
-		cancel:    cancel,
-		finish:    "stop",
-		toolCalls: make(map[int]*core.ToolCallDelta),
-		wire:      c.wireFormat(),
-		respCalls: make(map[int]*respCall),
+		client:      c,
+		resp:        resp,
+		body:        body,
+		reader:      newSSEReader(body),
+		prov:        prov,
+		accountID:   accountID,
+		cancel:      cancel,
+		finish:      "stop",
+		toolCalls:   make(map[int]*core.ToolCallDelta),
+		wire:        c.wireFormat(),
+		respCalls:   make(map[int]*respCall),
+		headerGuard: guard,
 	}
 	// A relay that queues a request keeps the TCP stream alive with SSE
 	// comments, so the byte-idle deadline never fires and the caller waits
 	// minutes for what turns out to be an error.  This deadline is measured
 	// from the first visible frame instead, and closing the body is what makes
 	// that wait visible to Recv as a stall.
+	//
+	// When a header guard already armed the deadline, adopt its timer rather
+	// than starting a second one: the guard covers the header wait, and this
+	// stream covers the body -- stacking them would hand a relay that stalled
+	// on headers a second full budget.  The guard's timer fires by cancelling
+	// the request, so the stream must remember it was ours by copying the
+	// fired flag into firstTimedOut (see readFailure).
 	if d := c.cfg.firstToken(); d > 0 {
-		s.firstTimer = time.AfterFunc(d, func() {
-			if s.firstSeen.Load() {
-				return
-			}
-			s.firstTimedOut.Store(true)
-			_ = body.Close()
-		})
+		if guard != nil && guard.takeTimer() != nil {
+			s.firstTimer = guard.timer
+		} else {
+			s.firstTimer = time.AfterFunc(d, func() {
+				if s.firstSeen.Load() {
+					return
+				}
+				s.firstTimedOut.Store(true)
+				_ = body.Close()
+			})
+		}
 	}
 	return s
 }
@@ -304,17 +325,21 @@ func eventIsVisible(ev core.Event) bool {
 
 func (s *chatStream) readFailure(err error) (core.Event, error) {
 	s.done = true
+	// Our own first-frame deadline is checked BEFORE the request-context error.
+	// The header guard stops a stalled relay by cancelling the request, so the
+	// context reads as Canceled -- but that is this module's verdict ("nothing
+	// visible was produced"), not the caller walking away, and reporting the
+	// bare cancellation would land on a kind the gateway does not retry.  The
+	// guard's flag is what tells the two apart.
+	headerTimedOut := s.headerGuard != nil && s.headerGuard.fired()
 	ctxErr := s.ctxErr()
 	s.release()
-	if ctxErr != nil {
-		return core.Event{}, ctxErr
-	}
-	// The first-token deadline closed the body.  Report it as the stall it is,
-	// with a kind the gateway can act on: nothing visible was produced, so a
-	// sibling platform can still serve the turn.
-	if s.firstTimedOut.Load() {
+	if headerTimedOut || s.firstTimedOut.Load() {
 		msg := fmt.Sprintf("no visible frame within %s (the provider kept the connection alive without answering)", s.client.cfg.firstToken())
 		return core.Event{}, core.Fail(s.client.Name(), s.accountID, core.FailureUpstream, 0, fmt.Errorf("openai-compat: %s", msg))
+	}
+	if ctxErr != nil {
+		return core.Event{}, ctxErr
 	}
 	if s.body.timedOut() {
 		msg := fmt.Sprintf("the stream stalled for %s", s.client.cfg.streamIdle())
