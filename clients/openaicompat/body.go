@@ -94,6 +94,7 @@ type oaiToolDef struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description,omitempty"`
 	Parameters  json.RawMessage `json:"parameters,omitempty"`
+	Strict      bool            `json:"strict,omitempty"`
 }
 
 type oaiTool struct {
@@ -254,6 +255,7 @@ func wireTools(in []core.Tool) []oaiTool {
 				Name:        name,
 				Description: t.Description,
 				Parameters:  normalizeToolSchema(t.Parameters),
+				Strict:      t.Strict,
 			},
 		})
 	}

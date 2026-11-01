@@ -809,8 +809,15 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 	defer stat.done()
 
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+	rawBody, err := io.ReadAll(r.Body)
+	if err != nil {
+		stat.status = http.StatusBadRequest
+		s.fail(&rec, err)
+		writeError(w, http.StatusBadRequest, "invalid_request_error", "invalid body: "+err.Error())
+		return
+	}
 	var wire chatRequest
-	if err := json.NewDecoder(r.Body).Decode(&wire); err != nil {
+	if err := json.Unmarshal(rawBody, &wire); err != nil {
 		stat.status = http.StatusBadRequest
 		s.fail(&rec, err)
 		writeError(w, http.StatusBadRequest, "invalid_request_error", "invalid JSON: "+err.Error())
@@ -820,12 +827,19 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 	stat.model = wire.Model
 	stat.mode = chatMode(wire.Stream)
 
-	req, err := toCoreRequest(&wire)
+	req, err := toCoreRequest(&wire, rawBody)
 	if err != nil {
 		stat.status = http.StatusBadRequest
 		s.fail(&rec, err)
 		writeError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return
+	}
+	// Standard OpenAI parameters this gateway does not model were silently
+	// dropped with a 200 before (issue #41) -- "JSON mode does not work"
+	// became untraceable.  One line per request names what was dropped; the
+	// keys modules do consume are folded into req.Options and not reported.
+	if dropped := droppedParams(rawBody); len(dropped) > 0 {
+		s.opts.Logger.Printf("[chat] dropped unsupported params: %s (model %s)", strings.Join(dropped, ", "), wire.Model)
 	}
 	// A caller that runs its own conversation turns can hand the turn id over;
 	// a module that aggregates its upstream calls per turn honours it verbatim

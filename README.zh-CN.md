@@ -5,7 +5,7 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-当前版本：**0.5.41**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：**0.5.42**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 流式断流排查：升级后系统日志新增 `stream: id=...` 终止诊断，包含协议、平台/模型、
 上游事件数、`finish_reason`、正文/推理字节数、工具调用数、completion token、
@@ -139,6 +139,12 @@ client2api 是一个**个人自用**的 OpenAI 兼容网关。它把你自己在
 ### 网关与路由
 
 - OpenAI 兼容的 `POST /v1/chat/completions` 和 `POST /v1/responses`。
+- 请求体里的标准 OpenAI 参数按模块能力归一：`presence_penalty / frequency_penalty /
+  top_k / seed / parallel_tool_calls` 写在顶层会被折叠进各模块已有的参数通道
+  （`client2api:{}` 显式写法优先）；`tools[].function.strict` 全链透传。
+  `n > 1` 返回 400 并说明原因（本网关一次只产出一个候选，不再"200 但只给一条"）；
+  其余未建模的标准参数（如 `response_format / logit_bias / logprobs`）会被丢弃，
+  丢弃时在日志里记一行 `dropped unsupported params`，不再无声。
 - Anthropic Messages 入站兼容 `POST /v1/messages` 与 `POST /v1/messages/count_tokens`，支持 Claude Code 常用的字符串或 block content、system、tools、tool result、thinking、usage、流式 SSE、非流式响应和 Anthropic 风格错误；任何能处理翻译后对话请求的平台都可以服务它。
 - OpenAI 兼容的 `POST /v1/audio/transcriptions`（multipart 的 `file` + `model`）；
   `GET /v1/models` 会把语音平台的模型一并列出并标记 `extra.kind = "transcription"`。

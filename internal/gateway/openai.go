@@ -42,6 +42,10 @@ type chatTool struct {
 		Name        string          `json:"name"`
 		Description string          `json:"description,omitempty"`
 		Parameters  json.RawMessage `json:"parameters,omitempty"`
+		// Strict is OpenAI's structured-outputs switch.  It used to be
+		// stripped by the whitelist decode, so a client asking for strict
+		// function calls silently got a non-strict one upstream (issue #41).
+		Strict bool `json:"strict,omitempty"`
 	} `json:"function"`
 }
 
@@ -61,6 +65,12 @@ type chatRequest struct {
 	} `json:"stream_options,omitempty"`
 	User    string         `json:"user,omitempty"`
 	Options map[string]any `json:"client2api,omitempty"`
+
+	// N is OpenAI's number-of-choices parameter.  Anything above 1 cannot be
+	// honoured without fanning out upstream calls, and answering "200 but one
+	// choice" was the hardest-to-trace kind of contract break (issue #41), so
+	// it is decoded only to be rejected loudly in toCoreRequest.
+	N int `json:"n,omitempty"`
 
 	// Thinking level.  Three spellings reach this endpoint: the flat
 	// reasoning_effort a codex++ relay sends, the Responses-shaped reasoning
@@ -263,7 +273,50 @@ func resolveConversationID(w *chatRequest) string {
 	return strings.TrimSpace(w.ConversationIDCamel)
 }
 
-func toCoreRequest(w *chatRequest) (*core.ChatRequest, error) {
+// standardOptionKeys are OpenAI-standard request parameters that modules
+// already consume through req.Options.  A client writing them at the standard
+// top level used to lose them to the whitelist decode with no error, no log
+// and a 200 (issue #41); they are folded into Options here so the existing
+// module-side readers pick them up.  A client2api{} spelling wins: it is the
+// project's explicit override channel.
+var standardOptionKeys = []string{
+	"presence_penalty", "frequency_penalty", "top_k", "seed", "parallel_tool_calls",
+}
+
+// mergeStandardOptions copies the standard-spelled parameters into Options.
+// raw is the untouched request body: the whitelist decode has already dropped
+// the unmodeled keys by the time this runs, so the fold has to read the bytes
+// the client actually sent.
+func mergeStandardOptions(w *chatRequest, raw []byte) map[string]any {
+	out := w.Options
+	if out == nil {
+		out = map[string]any{}
+	}
+	var all map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &all); err != nil {
+		return out
+	}
+	for _, k := range standardOptionKeys {
+		v, exists := all[k]
+		if !exists {
+			continue
+		}
+		if _, already := out[k]; already {
+			continue
+		}
+		var decoded any
+		if err := json.Unmarshal(v, &decoded); err != nil {
+			continue
+		}
+		out[k] = decoded
+	}
+	return out
+}
+
+func toCoreRequest(w *chatRequest, raw []byte) (*core.ChatRequest, error) {
+	if w.N > 1 {
+		return nil, fmt.Errorf("n=%d is not supported: this gateway serves one choice per request; drop the field or split the call", w.N)
+	}
 	req := &core.ChatRequest{
 		Model:          w.Model,
 		ToolChoice:     w.ToolChoice,
@@ -274,7 +327,7 @@ func toCoreRequest(w *chatRequest) (*core.ChatRequest, error) {
 		Stream:         w.Stream,
 		User:           w.User,
 		ConversationID: resolveConversationID(w),
-		Options:        optionsWithReasoningEffort(w.Options, reasoningEffortFor(w)),
+		Options:        optionsWithReasoningEffort(mergeStandardOptions(w, raw), reasoningEffortFor(w)),
 	}
 	if req.MaxTokens == nil {
 		req.MaxTokens = w.MaxCompletionTokens
@@ -318,6 +371,7 @@ func toCoreRequest(w *chatRequest) (*core.ChatRequest, error) {
 			Name:        t.Function.Name,
 			Description: t.Function.Description,
 			Parameters:  t.Function.Parameters,
+			Strict:      t.Function.Strict,
 		})
 	}
 	return req, nil
@@ -332,6 +386,44 @@ func optionsWithReasoningEffort(options map[string]any, effort string) map[strin
 		out[k] = v
 	}
 	out["reasoning_effort"] = effort
+	return out
+}
+
+// unmodeledKeys are OpenAI-standard request parameters this gateway does not
+// model and therefore drops during the whitelist decode.  Dropping silently
+// made "JSON mode does not work" untraceable (issue #41), so the handler logs
+// every dropped key once per request.
+var unmodeledKeys = []string{
+	"response_format", "n", "logit_bias", "logprobs", "top_logprobs",
+	"repetition_penalty", "top_k", "presence_penalty", "frequency_penalty",
+	"seed", "parallel_tool_calls",
+}
+
+// droppedParams lists the unmodeled standard keys the request carried, read
+// from the raw body for the same reason as mergeStandardOptions.  Keys the
+// gateway folds into Options are NOT reported here -- they reached the
+// module, nothing was dropped.
+func droppedParams(raw []byte) []string {
+	var all map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &all); err != nil {
+		return nil
+	}
+	var out []string
+	for _, k := range unmodeledKeys {
+		if _, ok := all[k]; !ok {
+			continue
+		}
+		modeled := false
+		for _, m := range standardOptionKeys {
+			if m == k {
+				modeled = true
+				break
+			}
+		}
+		if !modeled {
+			out = append(out, k)
+		}
+	}
 	return out
 }
 

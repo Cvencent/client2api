@@ -1051,3 +1051,119 @@ func TestChatBodyAboveTheLimitIsRejected(t *testing.T) {
 		t.Fatalf("oversized body reached the catalogue %d times", c.modelsCalls)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Standard-parameter normalisation (issue #41)
+// ---------------------------------------------------------------------------
+
+func TestStandardParametersFoldIntoOptions(t *testing.T) {
+	body := `{"model":"m1","messages":[{"role":"user","content":"hi"}],
+		"presence_penalty":0.5,"frequency_penalty":-0.2,"top_k":40,"seed":7,"parallel_tool_calls":false}`
+	c := &testClient{name: "cap"}
+	srv := newTestServer(t, c, NewStats(), NewUsageStore(10))
+	rec := chat(t, srv, body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("chat = %d (%s)", rec.Code, rec.Body.String())
+	}
+	got := c.seen
+	if got == nil {
+		t.Fatal("module never saw the request")
+	}
+	for key, want := range map[string]any{
+		"presence_penalty": 0.5, "frequency_penalty": -0.2, "top_k": float64(40),
+		"seed": float64(7), "parallel_tool_calls": false,
+	} {
+		v, ok := got.Options[key]
+		if !ok {
+			t.Errorf("Options[%q] missing after the fold", key)
+			continue
+		}
+		if fv, _ := v.(float64); want == false && v != false {
+			t.Errorf("Options[%q] = %v, want false", key, v)
+		} else if want != false && fv != want.(float64) {
+			t.Errorf("Options[%q] = %v, want %v", key, v, want)
+		}
+	}
+}
+
+func TestClient2apiSpellingWinsOverStandard(t *testing.T) {
+	body := `{"model":"m1","messages":[{"role":"user","content":"hi"}],
+		"seed":1,"client2api":{"seed":42}}`
+	c := &testClient{name: "cap"}
+	srv := newTestServer(t, c, NewStats(), NewUsageStore(10))
+	rec := chat(t, srv, body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("chat = %d (%s)", rec.Code, rec.Body.String())
+	}
+	got := c.seen
+	if got == nil {
+		t.Fatal("module never saw the request")
+	}
+	if v, _ := got.Options["seed"].(float64); v != 42 {
+		t.Fatalf("Options[seed] = %v, want 42 (the explicit client2api spelling must win)", got.Options["seed"])
+	}
+}
+
+func TestNGreaterThanOneIsRejectedLoudly(t *testing.T) {
+	body := `{"model":"m1","n":2,"messages":[{"role":"user","content":"hi"}]}`
+	c := &testClient{name: "cap"}
+	srv := newTestServer(t, c, NewStats(), NewUsageStore(10))
+	rec := chat(t, srv, body)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("n=2 → %d, want 400 (silently returning one choice was the bug)", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "n=2") {
+		t.Fatalf("body = %.200s, want the parameter named", rec.Body.String())
+	}
+}
+
+func TestNOnePassesSilently(t *testing.T) {
+	body := `{"model":"m1","n":1,"messages":[{"role":"user","content":"hi"}]}`
+	c := &testClient{name: "cap"}
+	srv := newTestServer(t, c, NewStats(), NewUsageStore(10))
+	rec := chat(t, srv, body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("n=1 → %d, want 200 (it is the default)", rec.Code)
+	}
+}
+
+func TestDroppedParamsListsUnmodeledOnly(t *testing.T) {
+	wire := `{"model":"m1","response_format":{"type":"json_object"},"seed":3,"top_k":5,"messages":[{"role":"user","content":"hi"}]}`
+	dropped := droppedParams([]byte(wire))
+	for _, want := range []string{"response_format"} {
+		found := false
+		for _, d := range dropped {
+			if d == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("dropped = %v, want %q in the list", dropped, want)
+		}
+	}
+	for _, modeled := range []string{"seed", "top_k"} {
+		for _, d := range dropped {
+			if d == modeled {
+				t.Errorf("dropped = %v, want %q absent (it folds into Options)", dropped, modeled)
+			}
+		}
+	}
+}
+
+func TestToolStrictSurvivesTheDecode(t *testing.T) {
+	body := `{"model":"m1","messages":[{"role":"user","content":"hi"}],
+		"tools":[{"type":"function","function":{"name":"f","strict":true,"parameters":{"type":"object"}}}]}`
+	c := &testClient{name: "cap"}
+	srv := newTestServer(t, c, NewStats(), NewUsageStore(10))
+	rec := chat(t, srv, body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("chat = %d (%s)", rec.Code, rec.Body.String())
+	}
+	got := c.seen
+	if got == nil {
+		t.Fatal("module never saw the request")
+	}
+	if len(got.Tools) != 1 || !got.Tools[0].Strict {
+		t.Fatalf("tools = %+v, want one tool with Strict=true surviving the decode", got.Tools)
+	}
+}

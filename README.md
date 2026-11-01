@@ -5,7 +5,7 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-Current version: **0.5.41**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
+Current version: **0.5.42**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
 
 client2api is a personal, local-only OpenAI-compatible gateway. It aggregates
 the accounts and API Keys **you own** on different AI coding clients and
@@ -180,6 +180,14 @@ loop that never ended.
 ### Gateway and routing
 
 - OpenAI-compatible `POST /v1/chat/completions`, `POST /v1/responses`,
+- Standard OpenAI parameters are folded per module capability: top-level
+  `presence_penalty / frequency_penalty / top_k / seed / parallel_tool_calls`
+  merge into the module option channel (an explicit `client2api:{}` spelling
+  wins); `tools[].function.strict` passes through end to end. `n > 1` answers
+  400 with the reason (one choice per request, no more "200 with one choice");
+  other unmodeled standard parameters (e.g. `response_format / logit_bias /
+  logprobs`) are dropped, and every drop logs one `dropped unsupported params`
+  line instead of vanishing.
   `POST /v1/responses/compact`, and inbound Anthropic `POST /v1/messages` / `POST /v1/messages/count_tokens`.
 - The Anthropic Messages ingress supports Claude Code's string or block
   content, system prompts, tools, tool results, thinking, usage, streaming SSE,

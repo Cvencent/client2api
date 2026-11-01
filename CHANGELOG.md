@@ -6,6 +6,25 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.5.42] - 2026-11-01
+
+### Fixed
+
+- **标准 OpenAI 参数不再被静默丢弃。** 入站白名单把 `response_format / n /
+  seed / 惩罚项` 这类标准写法整个丢掉——不转发、不报错、不留痕，然后回
+  200：结构化输出整条路是断的（客户端拿到散文，JSON 解析失败，操作员只会
+  算到"模型不听话"），`n > 1` 违反响应契约只回一条。现在：
+  模块已有参数通道的 5 个键（`presence_penalty / frequency_penalty / top_k /
+  seed / parallel_tool_calls`）写标准顶层位置会折叠进模块参数（`client2api:{}`
+  显式写法优先）；`tools[].function.strict` 全链透传到 openai-compat 上游；
+  `n > 1` 回 400 并说明原因；其余未建模参数丢弃时日志记一行
+  `dropped unsupported params`——同源网关里"静默丢弃 + 200"本该是显式选择。
+
+### Installer
+
+- `client2api-setup-0.5.42.exe`（空包，不含账号凭据或本机配置）
+- SHA256：`5CA4C19680753207E6A4DD4600EDE77C9973BB414F88325AF582D8B8799B201C`
+
 ## [0.5.41] - 2026-11-01
 
 ### Fixed

@@ -96,6 +96,10 @@ type Tool struct {
 	Name        string
 	Description string
 	Parameters  json.RawMessage
+	// Strict is OpenAI's structured-outputs switch for function tools.  It
+	// rides the gateway decode into the module, which forwards it when its
+	// upstream speaks OpenAI; modules that cannot honour it just ignore it.
+	Strict bool
 }
 
 // ChatRequest is a normalised completion request.
