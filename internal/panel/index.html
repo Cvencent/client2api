@@ -874,12 +874,15 @@ label.fld > .hint { display: block; font-size: 11.5px; color: var(--ink-3); marg
   border: 1px solid var(--line); border-radius: 11px; background: var(--surface);
   overflow: hidden; margin-bottom: 20px; box-shadow: var(--shadow);
 }
-/* 账号池这条统计带有 7 个格子（含 #sSticky 粘性会话），列数必须跟着内容走：
-   写死 6 会把第 7 个甩到第二行、独占 1/6 宽、右边空出 5/6，看着像坏了。
-   窄窗口退 4 列正好排成 4+3 两行（没有落单的），再窄才退 3 列 / 2 列。 */
-@media (max-width: 1500px) { .stats { grid-template-columns: repeat(4, 1fr); } }
-@media (max-width: 980px) { .stats { grid-template-columns: repeat(3, 1fr); } }
-@media (max-width: 560px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+/* 账号池这条统计带有 10 个格子（含 #sSticky 粘性会话），列数必须跟着内容走：
+   写死 6 会把多出来的格子甩到第二行、右边空出大片，看着像坏了。窄窗口要换行
+   重排，别让格子无声消失。
+   重排规则不在这一带（issue #111）：它的权威定义在下面 5xxx 行的 flex 版
+   .stats（10-28 起 display: flex / flex-wrap: nowrap）。这里原来的三条
+   @media 只写 grid-template-columns——容器早已不是 grid，同属性更早出现，
+   三条从那天起就是死代码，窄窗于是靠 .stat 的 min-width 硬撑、溢出被
+   .viewwrap 的 overflow-x 裁掉，900~1160px 之间既放不下也滚不动。
+   对 flex 生效的写法必须写在权威定义之后（权重相同时后置生效），见那一段。 */
 .stat { padding: 14px 17px; border-right: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft); }
 .stat .v { font: 600 26px/1.15 var(--mono); font-variant-numeric: tabular-nums; letter-spacing: -.02em; white-space: nowrap; }
 .stat .k { color: var(--ink-3); font-size: 11.5px; margin-top: 5px; }
@@ -1862,7 +1865,11 @@ html { scrollbar-gutter: stable; }
    按钮自然落到第二行，形成一条真正的工具条。 */
 .box > header .chips { flex: 1 1 auto; min-width: 0; flex-wrap: wrap; row-gap: 5px; }
 .chips .chip { cursor: pointer; transition: border-color .12s, color .12s, background .12s; }
-.chips .chip:hover { border-color: var(--accent); color: var(--ink); }
+/* hover 的次级灰只在未选中档上生效（issue #109）：选中档的文字色由
+   .chips .chip.on 的白字说话，让 hover 也去改它的话，鼠标一进一出文字就
+   在「看得见 / 看不见」之间翻——正是 #109 里那条「hover 变深字」的第二个
+   来源（第一个是卡片头那条规则，已补 :not(.on)）。 */
+.chips .chip:hover:not(.on) { border-color: var(--accent); color: var(--ink); }
 
 /* 四、账号表。12 列在 1280px 窗口下实测要 1431px、容器只有 1012px，而列数被
    回归测试钉住不能删。于是把长文本压成省略号、把内边距和按钮收回来，让常见
@@ -2669,7 +2676,10 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 1px
 
 .chip, .tag, .realm-tag, .lch, kbd { border-radius: 999px; }
 .chip { min-height: 28px; padding: 4px 10px; background: color-mix(in srgb, var(--surface-2) 78%, transparent); transition: color var(--dur-quick) var(--ease-smooth), background var(--dur-quick) var(--ease-smooth), border-color var(--dur-quick) var(--ease-smooth), transform var(--dur-quick) var(--ease-smooth); }
-.chip:hover, .chips .chip:hover { border-color: color-mix(in srgb, var(--accent) 48%, var(--line)); color: var(--accent-text); background: var(--accent-soft); }
+/* hover 不碰选中档（issue #109）：这条与 .chips .chip.on 同权重 (0,3,0) 且更后，
+   不改就把选中档的白字换成 --accent-text，鼠标进出时文字在「看得见/看不见」
+   之间翻。选中档的底色与文字由 .chips .chip.on 独占。 */
+.chip:hover:not(.on), .chips .chip:hover:not(.on) { border-color: color-mix(in srgb, var(--accent) 48%, var(--line)); color: var(--accent-text); background: var(--accent-soft); }
 .chips .chip.on, button.chip.on, .chip.on { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 42%, transparent); color: var(--accent-text); font-weight: 650; }
 
 .subtabs {
@@ -4798,7 +4808,9 @@ input, select, textarea, .stat, .subtab {
   color: var(--ink-2);
   transition: color var(--dur) var(--ease), background-color var(--dur) var(--ease), border-color var(--dur) var(--ease);
 }
-.chips .chip:hover, button.chip:hover { border-color: color-mix(in srgb, var(--accent) 40%, var(--hairline)); color: var(--ink); }
+/* 同上（issue #109）：这条 (0,3,0) 排在 .chips .chip.on 之后，是选中档 hover
+   变深字的那一个来源。:not(.on) 后只作用于未选中档。 */
+.chips .chip:hover:not(.on), button.chip:hover:not(.on) { border-color: color-mix(in srgb, var(--accent) 40%, var(--hairline)); color: var(--ink); }
 /* 带红/黄状态点的客户端：给它一点底色，但比胶囊本身淡得多，不喧宾夺主。 */
 .chips .chip .pulse[style*="--bad"], .chips .chip .pulse[style*="255,95,87"] { box-shadow: 0 0 0 3px color-mix(in srgb, var(--bad) 22%, transparent); }
 .chips .chip .pulse { width: 6px; height: 6px; }
@@ -5313,11 +5325,32 @@ input, select, textarea, .stat, .subtab {
 .stats .stat.is-zero .k { color: var(--ink-3); }
 /* 那一格同时是当前筛选时仍要能看出选中——用底边，不用染色。 */
 .stats button.stat.is-zero.on .v { color: var(--accent-text) !important; }
+/* 窄窗重排（issue #111）：放不下就换行，格子不会无声消失。10 格 × min 112px
+   加上 .view 的左右内边距，约需 1160px 才排得下——所以 1160 起退 4 列，
+   560 起退 2 列。必须用 flex-basis（容器是 flex），不是从 grid 版继承来的
+   grid-template-columns；也必须写在这里（.stats 权威定义之后），否则同权重
+   的前置规则会被 5282 行的 :first-child 覆盖掉。
+   权威定义里的 :first-child { flex: 1.4 1 0 } 是宽窗的强调，窄窗要跟其余格子
+   同宽，所以在两档断点里把它一起改成同样的 basis。grow 设 0：10 格按 4 列排是
+   4+4+2，若允许拉伸，最后那两格会被撑成半行宽的两个大块，看着像坏了。 */
+@media (max-width: 1160px) {
+  .stats { flex-wrap: wrap; row-gap: 6px; }
+  .stats > .stat, .stats > button.stat { flex: 0 1 25%; }
+  .stats > .stat:first-child { flex: 0 1 25%; }
+  /* 选中底边（5299 行）写的是 bottom: -5px：宽窗时它正好压在统计带那条分界线上，
+     换行后第一行的格子会在下一行顶部画穿一条 2px 线。窄窗把它收回格内。 */
+  .stats > button.stat.on::after { bottom: 0; }
+}
+@media (max-width: 560px) {
+  .stats > .stat, .stats > button.stat { flex: 0 1 50%; }
+  .stats > .stat:first-child { flex: 0 1 50%; }
+}
+/* 更窄的窗口再把字号与内边距收一档（这条断点原来只做这件事，顺手把
+   overflow-x: auto 拿掉——换行之后不再需要横向滚动）。 */
 @media (max-width: 900px) {
-  .stats { overflow-x: auto; scrollbar-width: none; }
-  .stats::-webkit-scrollbar { display: none; }
-  .stats > .stat, .stats > button.stat { flex: 0 0 auto; min-width: 104px; padding: 9px 13px; }
+  .stats > .stat, .stats > button.stat { padding: 9px 13px; }
   .stats > .stat .v { font-size: 18px; }
+  .stats > .stat:first-child .v { font-size: 22px; }
 }
 
 /* -- 32. 表格里的行内动作（权威层）---------------------------------------
@@ -6392,12 +6425,17 @@ html:not([data-theme="light"]) body::after {
    悬停才给底色。原来每行都有 border + hover 双层。 */
 .acc tbody td { border-bottom: 1px solid color-mix(in srgb, var(--line) 45%, transparent); }
 .acc tbody tr:hover { background: color-mix(in srgb, var(--accent) 4%, transparent); }
-/* 卡片头的动作是次级（灰底描边），不是主要——一页只有一个主按钮。primary
-   豁免（issue #86）：这条的权重 (0,2,1) 高于 button.primary (0,1,1) 且更后，
+/* 卡片头的动作是次级（灰底描边），不是主要——一页只有一个主按钮。两处豁免：
+   primary（issue #86）——这条的权重 (0,2,1) 高于 button.primary (0,1,1) 且更后，
    不豁免会把主按钮的 accent 底换成卡片底色——浅色主题下白底白字（对比度 1:1），
-   深色下主操作与旁边的次级控件同貌。hover 的文字色同理只在非主按钮上生效。 */
-.box > header button.xs:not(.primary) { background: var(--surface); border-color: var(--line); }
-.box > header button.xs:not(.primary):hover:not(:disabled) { border-color: var(--ink-3); color: var(--ink); }
+   深色下主操作与旁边的次级控件同貌。hover 的文字色同理只在非主按钮上生效。
+   选中态（issue #109）——卡片头里的筛选条也有 .xs chip.on（账号池的客户端筛选条、
+   日志页的频道条）。#86 那次加 :not(.primary) 把权重从 (0,2,1) 抬到 (0,3,1)，
+   正好越过 .chips .chip.on 的 (0,3,0)，于是选中档的 accent 渐变底被换成卡片底色：
+   浅色下白底白字（1:1 不可见），深色下与未选中档同貌。补 :not(.on) 让
+   .chips .chip.on 继续做选中态的唯一说话者，别再靠权重压别人。 */
+.box > header button.xs:not(.primary):not(.on) { background: var(--surface); border-color: var(--line); }
+.box > header button.xs:not(.primary):not(.on):hover:not(:disabled) { border-color: var(--ink-3); color: var(--ink); }
 
 /* 子页签（chip subtab）：不用胶囊，用文字 + 底边，和顶栏导航同一套语法。 */
 .subtabs { gap: 2px; margin-bottom: 14px; border-bottom: 1px solid var(--line); }

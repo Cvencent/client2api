@@ -11,6 +11,11 @@ import (
 // (0,1,1) 且更后，不豁免会把卡片头主按钮的 accent 底换成卡片底色——浅色主题
 // 下白底白字（对比度 1:1，按钮文字不可见），深色下主操作与旁边的次级控件
 // 同貌。修复：次级化规则与 hover 文字色都用 :not(.primary) 豁免主按钮。
+//
+// 同一条规则现在还要豁免选中态（issue #109）：:not(.primary) 把权重抬到
+// (0,3,1)，越过了 .chips .chip.on 的 (0,3,0)，卡片头里的筛选条选中档同样
+// 会被换成卡片底色。两条豁免（.primary / .on）缺一都会复发，所以这里断言
+// 的是一条完整选择器——改这条规则时必须两个豁免都在。
 
 func TestHeaderSecondaryRuleSparesPrimaryButtons(t *testing.T) {
 	src := poolStatsUISource(t)
@@ -18,12 +23,12 @@ func TestHeaderSecondaryRuleSparesPrimaryButtons(t *testing.T) {
 	sec := poolStatsFuncBody(t, src, "renderPlatforms")
 	_ = sec // renderPlatforms 不是样式所在；真正的断言在全文上。
 
-	// 次级化规则必须带 :not(.primary) 豁免。
-	if !strings.Contains(src, ".box > header button.xs:not(.primary) { background: var(--surface); border-color: var(--line); }") {
-		t.Fatal("卡片头次级化规则没有豁免 .primary：主按钮的 accent 底被换成卡片底色，浅色主题白底白字（issue #86）")
+	// 次级化规则必须同时豁免主按钮与选中态（#86 / #109）。
+	if !strings.Contains(src, ".box > header button.xs:not(.primary):not(.on) { background: var(--surface); border-color: var(--line); }") {
+		t.Fatal("卡片头次级化规则没有同时豁免 .primary 与 .on：主按钮白底白字（issue #86），筛选条选中档同样白底白字（issue #109）")
 	}
-	if !strings.Contains(src, ".box > header button.xs:not(.primary):hover:not(:disabled)") {
-		t.Fatal("卡片头 hover 规则没有豁免 .primary：主按钮 hover 会变深字压蓝底（issue #86）")
+	if !strings.Contains(src, ".box > header button.xs:not(.primary):not(.on):hover:not(:disabled)") {
+		t.Fatal("卡片头 hover 规则没有同时豁免 .primary 与 .on：主按钮 hover 会变深字压蓝底（issue #86），选中档 hover 的文字色也会翻（issue #109）")
 	}
 	// 旧的整族规则（无豁免）不许回来。
 	if strings.Contains(src, ".box > header button.xs { background:") {
