@@ -18887,6 +18887,20 @@ function logLevelClass(text) {
 }
 let LOG_LINES = [];
 async function renderLogs() {
+  // 两段式轮询（issue #92）：先问 total（约百字节），没变就早退——静止时
+  // 这一拍 0 行新增，旧实现却整份重下 500 行（约 133 KB）。total 变了才把
+  // 正文拉回来；下面既有的 LOGSEEN 去重继续管「正文到了但和上次一样」的
+  // 少见情况（频道切换等）。
+  const meta = await api("/panel/api/logs?meta=1");
+  if (meta.ok) {
+    // The meta stamp lives in the same LOGSEEN namespace but under its own
+    // "meta:" prefix (issue #84's lesson): it can never dedupe against an
+    // "ok:" body stamp or the "err" stamp, so every state transition forces
+    // the right redraw.
+    const stamp0 = "meta:" + String((meta.data || {}).total || 0) + "|" + LOGCH;
+    if (stamp0 === LOGSEEN) return;
+    LOGSEEN = stamp0;
+  }
   const r = await api("/panel/api/logs?lines=500");
   if (!r.ok) {
     $("#logNote").textContent = "读取失败";
