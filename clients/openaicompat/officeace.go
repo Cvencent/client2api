@@ -150,12 +150,6 @@ func (o *officeAceSource) officeAceRepairDue(id string, now time.Time) bool {
 	return true
 }
 
-// officeAceExhaustedWindow bounds how long a cached zero-credit position may
-// drive the exhaustion verdict.  The panel sweeps balances every few minutes,
-// so a fresh read is almost always available; after the window the verdict
-// expires and a refusal falls back to the dead-key case.
-const officeAceExhaustedWindow = 30 * time.Minute
-
 // noteOfficeAcePoints records the credit position a premium read observed and
 // acts on it.  remaining -1 records "not drained".
 //
@@ -213,15 +207,24 @@ func (o *officeAceSource) reviveOfficeAceAccount(id string) {
 	}
 }
 
-// officeAceCreditsExhausted reports whether a recent panel read saw the
-// account's credits at zero.
+// officeAceCreditsExhausted reports whether the account's credits were zero
+// at the most recent read and nothing since has said otherwise (issue #104).
+//
+// The window used to be "read within the last 30 minutes" -- but after #57's
+// zero-read parks the row, the 5-minute soft sweep skips cooling accounts and
+// the recovery sweep runs every 4 hours, so the cache ALWAYS expired before
+// the 5-minute cooldown lapsed.  The next chat then hit the drained package,
+// the veto was dead, and the row flipped to invalid -- a state neither sweep
+// ever revisits (self-lock).  A zero position on these accounts is a stable
+// fact observed across days, not a transient: it stands until a positive
+// read (top-up, check-in) overwrites it.
 func (o *officeAceSource) officeAceCreditsExhausted(id string, now time.Time) bool {
 	o.pointsMu.Lock()
 	defer o.pointsMu.Unlock()
-	at, ok := o.pointsAt[id]
-	if !ok || now.Sub(at) > officeAceExhaustedWindow {
+	if _, ok := o.pointsAt[id]; !ok {
 		return false
 	}
+	_ = now
 	return o.points[id] == 0
 }
 

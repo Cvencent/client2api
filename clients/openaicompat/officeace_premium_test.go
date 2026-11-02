@@ -1054,22 +1054,22 @@ func TestOfficeAceLiveCreditKeepsDeadKeyInvalid(t *testing.T) {
 	}
 }
 
-// TestOfficeAceExhaustedVerdictExpires pins the freshness window: a stale
-// zero-credit read must not pin the veto forever, or an account that refilled
-// while the panel sweep was off would cool down instead of surfacing the
-// dead-key verdict.
-func TestOfficeAceExhaustedVerdictExpires(t *testing.T) {
+// TestOfficeAceExhaustedVerdictStandsUntilAPositiveRead pins the veto
+// semantics after issue #104: a zero-credit read is a stable fact observed
+// across days, and the old 30-minute freshness window let the veto die exactly
+// when the 5-minute cooldown lapsed -- the next chat hit the drained package
+// and flipped the row to invalid, a state no sweep ever revisits (self-lock).
+// The verdict now stands until a positive read overwrites it; the positive
+// read also clears the parking, so a refilled account is back in rotation.
+func TestOfficeAceExhaustedVerdictStandsUntilAPositiveRead(t *testing.T) {
 	o := &officeAceSource{source: &source{
 		now:     time.Now,
 		cooling: map[string]time.Time{},
 	}}
 	now := time.Now()
 	o.noteOfficeAcePoints("a", 0, now)
-	if !o.officeAceCreditsExhausted("a", now.Add(29*time.Minute)) {
-		t.Fatal("a fresh zero-credit read must count as exhausted")
-	}
-	if o.officeAceCreditsExhausted("a", now.Add(31*time.Minute)) {
-		t.Fatal("the exhaustion verdict must expire with its window")
+	if !o.officeAceCreditsExhausted("a", now.Add(31*time.Minute)) {
+		t.Fatal("a zero read must stand past the old 30-minute window: the sweeps' cadence never refreshes a cooling row (issue #104)")
 	}
 	if o.officeAceCreditsExhausted("missing", now) {
 		t.Fatal("an account without a cached read must not count as exhausted")
@@ -1077,6 +1077,12 @@ func TestOfficeAceExhaustedVerdictExpires(t *testing.T) {
 	o.noteOfficeAcePoints("b", -1, now)
 	if o.officeAceCreditsExhausted("b", now) {
 		t.Fatal("an unlimited position must not count as exhausted")
+	}
+	// The positive read is what ends the veto -- and it also clears the
+	// parking, so a refilled account returns to rotation without waiting.
+	o.noteOfficeAcePoints("a", 4600, now.Add(time.Hour))
+	if o.officeAceCreditsExhausted("a", now.Add(time.Hour)) {
+		t.Fatal("a positive read must end the exhaustion verdict")
 	}
 }
 
@@ -1258,6 +1264,52 @@ func TestBalanceReadNeverInvalidates(t *testing.T) {
 		}
 		if a.State != "cooling" {
 			t.Fatalf("state = %q, want cooling (the park still applies, only the invalid verdict is gone)", a.State)
+		}
+	}
+}
+
+// TestChatFortyOneAfterCooldownStaysQuotaNotInvalid pins issue #104's exact
+// self-lock: after #57 parks a zero-credit row, the sweeps' cadence (soft skip
+// + 4h recovery) never refreshes its read cache, the 5-minute cooldown lapses,
+// a chat hits the drained package, and the veto used to be dead -- writing
+// invalid, a state neither sweep revisits.  With the veto standing until a
+// positive read, the same chat lands on the quota path instead.
+func TestChatFortyOneAfterCooldownStaysQuotaNotInvalid(t *testing.T) {
+	var chatCalls atomic.Int32
+	srv := officeAceChatServer(t, officeAceDrainedSubscriptionJSON, &chatCalls)
+	defer srv.Close()
+
+	o := officeAcePremiumSource(t, srv)
+	id := officeAceAddChatAccount(t, o, srv)
+
+	// The read lands zero: the row parks (issue #57).
+	if _, err := o.AccountBalance(context.Background(), id, 0); err != nil {
+		t.Fatalf("balance: %v", err)
+	}
+	records, err := o.source.Accounts(context.Background())
+	if err != nil {
+		t.Fatalf("accounts: %v", err)
+	}
+	if records[0].State != "cooling" {
+		t.Fatalf("precondition: state = %q, want cooling", records[0].State)
+	}
+	// Simulate the cooldown lapse: point the clock past the park window.  The
+	// read cache is by design NOT refreshed (the sweeps skip cooling rows), so
+	// the veto must still recognize the drained package.
+	o.source.now = func() time.Time { return time.Now().Add(2 * time.Hour) }
+	if err := officeAceChatOnce(t, o.source); err == nil {
+		t.Fatal("chat against a drained package unexpectedly succeeded")
+	}
+	records, err = o.source.Accounts(context.Background())
+	if err != nil {
+		t.Fatalf("accounts: %v", err)
+	}
+	for _, a := range records {
+		if a.ID == id && a.State == "invalid" {
+			t.Fatalf("state = %q after a post-cooldown chat 401; the token race veto must hold and keep the row on the quota path (issue #104)", a.State)
+		}
+		if a.ID == id && a.State != "cooling" {
+			t.Fatalf("state = %q, want still cooling (re-parked on quota)", a.State)
 		}
 	}
 }
