@@ -54,6 +54,48 @@
 - `client2api-setup-0.5.73.exe`（空包，不含账号凭据或本机配置）
   SHA256: `EF4235020D68984FF57BCFBC0529DFB561609B257CFA1E6ACB0F10A54EE8486C`
 
+## [0.5.77] - 2026-11-02
+
+### Fixed
+
+- **无障碍：状态/偏好通道已经存在，但漏接了消费者一类（#75 + #54）**——两单
+  同型：机制都在（ARIA 属性、`motionReduce()` 分支、`bgfStop()` 实现），只有
+  某一个消费者从没被订阅，而且两边都不报错：
+  - **三处二选一开关的选中档现在能被读屏读到。** `#themeToggle`（深色/浅色）、
+    `#view3dToggle`（3D/列表）、`#acctModeToggle`（卡片/表格）都只用
+    `class="... on"` 表达选中态，同步点（`index.html:21142`、`:13546`、`:13667`）
+    三行旁边都没有任何 ARIA 状态——AX 树里这 6 个按钮是 6 枚一模一样的裸
+    `button`，读屏用户点完「3D」听不到状态变化，而画面变化恰恰是他们看不到的
+    （WCAG 2.2 AA 4.1.2 Name, Role, Value）。现在三处都补 `aria-pressed`：
+    静态 HTML 六个按钮各带初始值，三个同步函数在 toggle class 的同一行用同一个
+    `on` 变量写状态，不会出现「看着亮、读屏说没选」。同页的指标筛选族
+    （`:11263`）本来就是这么做的，这次是补齐同一套口径（#75）。
+  - **运行中切「减少动效」时两块 2D canvas 也停了。** `onReduceChange`
+    （`index.html:24664`）只接了 WebGL 两块（`atlasReduceSnap` /
+    `b3dReduceSnap`）；CSS 靠 `@media` 立即生效，所以切换那一瞬间看起来「已经
+    生效」——唯独背景粒子场与点击火花照旧，一直动到下次刷新，而 `bgfStop()`
+    全文件只有定义、零调用。这是 #30「只覆盖一半比完全不支持更糟」的同一类，
+    只是剩下的一半从 WebGL 换成了 2D canvas。现在：
+    ① `onReduceChange` 进入 reduce 调 `bgfStop()`、离开时调 `bgfStart()`；
+    ② `bgfStop()` 停循环之外再按当前尺寸清一帧——只 cancel 的话粒子连线会结在
+    屏幕上，冻结的残影看起来像画面卡住；
+    ③ `initSpark` 的 `pointerdown` 回调在使用点再判一次 `motionReduce()`
+    （顶上那个守卫只在建监听时查一次，运行中切换后监听已经挂着）；
+    ④ `bgfStart()` 改成幂等（`BGF.raf` 守卫 + resize 监听只挂一次的 `BGF.wired`），
+    因为现在它会被首屏与「离开 reduce」两处调用（#54）。
+  - 守卫测试：新增 `internal/panel/reduce_motion_consumers_ui_test.go`（stop 函数
+    必须存在且被调用、两个方向都接、停下要清画布、`bgfStart` 必须幂等、火花的
+    偏好判断必须在使用点且在生成粒子之前）；`a11y_ui_test.go` 追加
+    `TestToggleGroupsExposeTheirSelectedSide`（六个静态初始值 + 三个同步点，
+    并要求状态与 class 由同一个变量驱动）。
+  - README 中英两版同步：写明三处开关用 `aria-pressed`，以及运行中切「减少
+    动效」对 CSS / 两处 WebGL / 两块 2D canvas 同时生效。
+
+### Installer
+
+- `client2api-setup-0.5.77.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `786049E9A08A846E632BBDC1925788787F01F730A84AB82AEE9F8030E1F8CB08`
+
 ## [0.5.76] - 2026-11-02
 
 ### Fixed

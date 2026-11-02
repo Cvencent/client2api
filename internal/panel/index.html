@@ -6623,11 +6623,16 @@ html:not([data-theme="light"]) body::after {
       </button>
       <!-- 主题：两段式显式开关。之前是一个「深→浅→跟随系统」的三态图标按钮，
            用户看不出来现在是什么、也不想要坐着等的第三态，改成深/浅两个可见段落。 -->
+      <!-- 三个二选一开关的状态必须能被辅助技术读到（issue #75）：只有 class="on"
+           时，AX 树里这 6 个按钮是 6 枚一模一样的裸 button，读屏用户点完「3D」
+           听不到任何状态变化——而画面变化恰恰是他们看不到的。状态用 aria-pressed
+           表达（外观是按钮组不是标签页），静态初始值在这里，运行时同步点在各
+           setTheme / setView3dMode / setAccMode 里（与 class 的 toggle 同一行）。 -->
       <span class="theme-toggle" id="themeToggle" role="group" aria-label="界面主题">
-        <button type="button" data-th="dark" title="深色主题">
+        <button type="button" data-th="dark" aria-pressed="false" title="深色主题">
           <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M13.2 9.6A5.6 5.6 0 0 1 6.4 2.8a5.6 5.6 0 1 0 6.8 6.8z"/></svg><span>深色</span>
         </button>
-        <button type="button" data-th="light" title="浅色主题">
+        <button type="button" data-th="light" aria-pressed="false" title="浅色主题">
           <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="8" cy="8" r="3.1"/><path d="M8 1.4v1.6M8 13v1.6M1.4 8h1.6M13 8h1.6M3.3 3.3l1.1 1.1M11.6 11.6l1.1 1.1M12.7 3.3l-1.1 1.1M4.4 11.6l-1.1 1.1"/></svg><span>浅色</span>
         </button>
       </span>
@@ -6637,8 +6642,8 @@ html:not([data-theme="light"]) body::after {
         <span>星图</span>
       </button>
       <span class="view3d-toggle" id="view3dToggle" role="group" aria-label="页面呈现方式">
-        <button type="button" data-view3d="3d" class="on" title="把这个页面的数据立起来看">3D</button>
-        <button type="button" data-view3d="lists" title="回到密集的列表视图">列表</button>
+        <button type="button" data-view3d="3d" class="on" aria-pressed="true" title="把这个页面的数据立起来看">3D</button>
+        <button type="button" data-view3d="lists" aria-pressed="false" title="回到密集的列表视图">列表</button>
       </span>
       <button id="btnRefresh" title="重新读取当前页面的数据">刷新</button>
       <button class="primary" id="btnAdd" hidden>添加账号</button>
@@ -6759,8 +6764,8 @@ html:not([data-theme="light"]) body::after {
           <!-- 两种读法：卡片墙（默认，看状态）与表格（改东西）。数据同一个源，
                切换只换呈现，不重新请求。 -->
           <span class="acct-board-toggle" id="acctModeToggle" role="group" aria-label="账号池呈现方式">
-            <button type="button" data-acct-mode="board" class="on">卡片</button>
-            <button type="button" data-acct-mode="table">表格</button>
+            <button type="button" data-acct-mode="board" class="on" aria-pressed="true">卡片</button>
+            <button type="button" data-acct-mode="table" aria-pressed="false">表格</button>
           </span>
           <span class="note" id="accNote"></span>
           <button class="xs" id="btnRefreshAll" title="重新向上游续期/刷新已启用账号的登录凭据（续期 access token）；平台不提供续期时会如实提示">刷新凭据</button>
@@ -8590,7 +8595,7 @@ function fxAfterData(view) {
    像一张正在呼吸的网络。它铺满内容区、压在一切之下、鼠标穿透，只提供
    氛围。reduced-motion 时不画（保持静态网格）。粒子数按面积自适应，
    上限 46 个，保证小屏也不卡。 */
-const BGF = { raf: 0, canvas: null, ctx: null, pts: [], w: 0, h: 0, dpr: 1 };
+const BGF = { raf: 0, canvas: null, ctx: null, pts: [], w: 0, h: 0, dpr: 1, wired: false };
 function bgfResize() {
   const c = BGF.canvas;
   if (!c) return;
@@ -8609,13 +8614,19 @@ function bgfResize() {
     });
   }
 }
+// bgfStart 起背景粒子场的循环。它可以被调用多次（首屏一次；运行中从
+// 「减少动效」切回来时再一次，issue #54），所以两件事必须幂等：
+//   · 已经在跑就不再起第二个循环；
+//   · resize 监听只挂一次——每调用一次挂一个的话，离开 reduce 几个来回之后
+//     一次窗口 resize 会跑好几遍 bgfResize（每次重建全部粒子）。
 function bgfStart() {
   BGF.canvas = document.getElementById("bgField");
   if (!BGF.canvas || motionReduce()) return;
+  if (BGF.raf) return;
   BGF.ctx = BGF.canvas.getContext("2d");
   if (!BGF.ctx) return;
   bgfResize();
-  window.addEventListener("resize", bgfResize, { passive: true });
+  if (!BGF.wired) { BGF.wired = true; window.addEventListener("resize", bgfResize, { passive: true }); }
   const LINK = 118;
   const loop = () => {
     BGF.raf = requestAnimationFrame(loop);
@@ -8650,7 +8661,17 @@ function bgfStart() {
   };
   BGF.raf = requestAnimationFrame(loop);
 }
-function bgfStop() { if (BGF.raf) { cancelAnimationFrame(BGF.raf); BGF.raf = 0; } }
+// bgfStop 停掉背景粒子场的循环，并把画布按当前尺寸清一帧（issue #54）。
+// 只 cancelAnimationFrame 的话，停住那一刻的粒子连线会留在屏幕上——它是运动
+// 特效的残影，冻结在那儿看起来像画面卡住，而不是「动效已关」。所以显式清空：
+// 动效关掉之后这块画布就是一块干净的透明层。
+function bgfStop() {
+  if (BGF.raf) { cancelAnimationFrame(BGF.raf); BGF.raf = 0; }
+  if (BGF.ctx && BGF.w && BGF.h) {
+    BGF.ctx.setTransform(BGF.dpr, 0, 0, BGF.dpr, 0, 0);
+    BGF.ctx.clearRect(0, 0, BGF.w, BGF.h);
+  }
+}
 
 /* ── 聚光灯跟踪（React Bits Spotlight）────────────────────────────────
    在一个视口级监听里把鼠标位置写进最近的 .box 的 --mx/--my，CSS 那边
@@ -8908,6 +8929,10 @@ function initSpark() {
     // 只对左键/主触点迸射；拖动和右键不打扰。
     if (ev.button !== undefined && ev.button !== 0) return;
     if (typeof ev.clientX !== "number") return;
+    // 运行中改「减少动效」也要跟上（issue #54）：initSpark 顶上那个守卫只在建
+    // 监听时查一次，切换之后这道监听已经挂着了——不在这里再判一次，用户明确
+    // 要求「别再动」之后每点一下照样迸射 9 枚粒子。
+    if (motionReduce()) return;
     // 坐标必须按 canvas 自己的矩形换算：clientX 是视口坐标，只要 canvas 的某个
     // 祖先带了 transform / 缩放（面板在外壳里就可能是这样），两者就对不上，
     // 火花会画偏——这就是上一版「爆炸位置和我点的地方不对应」的原因。
@@ -13543,7 +13568,12 @@ function setView3dMode(m) {
   const was3d = document.body.classList.contains("mode-3d");
   document.body.classList.toggle("mode-3d", mode === "3d");
   document.body.classList.toggle("mode-lists", mode === "lists");
-  $$(".view3d-toggle button").forEach(b => b.classList.toggle("on", b.dataset.view3d === mode));
+  $$(".view3d-toggle button").forEach(b => {
+    const on = b.dataset.view3d === mode;
+    b.classList.toggle("on", on);
+    // 状态一起写进无障碍树（issue #75）：只改 class 的话读屏读不出选中档。
+    b.setAttribute("aria-pressed", on ? "true" : "false");
+  });
   if (mode === "3d") {
     /* 切到 3D 的过渡。
        注意顺序：列表模式下页里**还没有** .board3d（mountBoard3d 才创建它），
@@ -13664,7 +13694,11 @@ function setAccMode(m) {
   try { localStorage.setItem(ACC_MODE_KEY, mode); } catch (e) {}
   document.body.classList.toggle("acct-mode-board", mode === "board");
   document.body.classList.toggle("acct-mode-table", mode === "table");
-  $$("#acctModeToggle button").forEach(b => b.classList.toggle("on", b.dataset.acctMode === mode));
+  $$("#acctModeToggle button").forEach(b => {
+    const on = b.dataset.acctMode === mode;
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-pressed", on ? "true" : "false");  // issue #75
+  });
 }
 
 // testButton 渲染账号行的「测试」动作。实现了 ModelTester 的模块（caps.test_model）
@@ -21139,7 +21173,13 @@ function applyTheme(t) {
   LS.set("theme", theme);
   // 先同步开关选中态再判断「是否真的变了」——首次加载时 data-theme 已经是
   // 深色，如果提前 return，开关会一个都不亮。
-  $$("#themeToggle button").forEach(b => b.classList.toggle("on", b.dataset.th === theme));
+  $$("#themeToggle button").forEach(b => {
+    const on = b.dataset.th === theme;
+    b.classList.toggle("on", on);
+    // 首次加载时 data-theme 可能已经等于 theme，上面的提前 return 会跳过后面的
+    // 重建逻辑——所以状态必须在这里、class 旁边就写完（issue #75）。
+    b.setAttribute("aria-pressed", on ? "true" : "false");
+  });
   if (prev === theme) return;
   // 主题变了：贴图缓存按主题分键，清掉旧的一套免得越积越多。
   if (typeof B3D !== "undefined") B3D.texCache = {};
@@ -24666,6 +24706,15 @@ document.addEventListener("visibilitychange", () => {
         if (mql.matches) {
           if (typeof atlasReduceSnap === "function") atlasReduceSnap();
           if (typeof b3dReduceSnap === "function") b3dReduceSnap();
+        }
+        // 两块 2D canvas 也接进同一条路径（issue #54）：CSS 与 WebGL 在切换那一
+        // 瞬间就停了，只有背景粒子场与点击火花照旧——看起来「已经生效」，实际
+        // 会一直动到下次刷新，比完全不支持更糟。bgfStop 此前全文件零调用。
+        // 关：停循环并清画布；开：按当尺寸重新起循环（bgfStart 自己会按 Canvas
+        // 的实测尺寸重建，所以离开 reduce 后不用管窗口尺寸是否变过）。
+        if (typeof bgfStop === "function") {
+          if (mql.matches) bgfStop();
+          else if (typeof bgfStart === "function") bgfStart();
         }
       };
       if (mql.addEventListener) mql.addEventListener("change", onReduceChange);

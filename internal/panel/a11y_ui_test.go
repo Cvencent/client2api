@@ -136,3 +136,48 @@ func TestReduceMediaQueryCoversPseudoElements(t *testing.T) {
 		t.Fatal("reduce 的 animation 规则失去了伪元素选择器：伪元素动画会重新动起来")
 	}
 }
+
+// TestToggleGroupsExposeTheirSelectedSide 覆盖 issue #75：三处二选一开关
+// （界面主题 / 页面呈现方式 / 账号池呈现方式）只有 class="on" 时，AX 树里是
+// 六枚一模一样的裸 button——读屏用户听不出当前是哪一档，而「当前是深色还是
+// 浅色」对光敏/低视力用户是刚需信息。状态必须写进无障碍树（aria-pressed，
+// 与「按钮组」的视觉语义一致；同页的指标筛选族已经是这么做的）。
+//
+// 静态初始值 + 三个运行时同步点都要在，缺任一处都会有一条路径上的状态是空的。
+func TestToggleGroupsExposeTheirSelectedSide(t *testing.T) {
+	src := poolStatsUISource(t)
+
+	// 静态 HTML：六个按钮各带一个 aria-pressed。
+	for _, want := range []string{
+		`data-th="dark" aria-pressed=`,
+		`data-th="light" aria-pressed=`,
+		`data-view3d="3d" class="on" aria-pressed="true"`,
+		`data-view3d="lists" aria-pressed="false"`,
+		`data-acct-mode="board" class="on" aria-pressed="true"`,
+		`data-acct-mode="table" aria-pressed="false"`,
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("静态开关缺少 %s：读屏读不到这一档的选中状态（issue #75）", want)
+		}
+	}
+	// 三个运行时同步点：class 与 aria-pressed 必须成对出现。
+	theme := poolStatsFuncBody(t, src, "applyTheme")
+	if !strings.Contains(theme, `b.setAttribute("aria-pressed", on ? "true" : "false")`) {
+		t.Error("applyTheme 只改了 class：切主题时无障碍树里的状态不跟着走（issue #75）")
+	}
+	v3d := poolStatsFuncBody(t, src, "setView3dMode")
+	if !strings.Contains(v3d, `b.setAttribute("aria-pressed", on ? "true" : "false")`) {
+		t.Error("setView3dMode 只改了 class：切 3D/列表时状态不同步（issue #75）")
+	}
+	acc := poolStatsFuncBody(t, src, "setAccMode")
+	if !strings.Contains(acc, `b.setAttribute("aria-pressed", on ? "true" : "false")`) {
+		t.Error("setAccMode 只改了 class：切卡片/表格时状态不同步（issue #75）")
+	}
+	// 同步点必须与 class 在同一个按钮上（on 由 class 的判据算出），不许写成
+	// 另一个条件——否则会出现「看着亮、读屏说没选」。
+	for name, body := range map[string]string{"applyTheme": theme, "setView3dMode": v3d, "setAccMode": acc} {
+		if !strings.Contains(body, "b.classList.toggle(\"on\", on)") {
+			t.Errorf("%s 的 aria-pressed 不是由同一个 on 变量驱动：class 与状态可能分叉（issue #75）", name)
+		}
+	}
+}
