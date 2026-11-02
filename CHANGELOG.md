@@ -33,6 +33,28 @@
 - `client2api-setup-0.5.47.exe`（空包，不含账号凭据或本机配置）
 - SHA256：`EE780BD84B0C8A1CAB096AE8354A353C5B968C516576BF02DD775B472C27CD7F`
 
+## [0.5.61] - 2026-11-02
+
+### Fixed
+
+- **页头巨型标题不再随 5 秒轮询反复重播。** mountMasthead 挂在轮询路径上且每
+  次调用都无条件重拆标题 span（每片带 from opacity:0 的入场动画）——新元素 =
+  动画从零开始，稳定的账号池页上整行标题每 5 秒闪一遍。拆分只在首建时做一次
+  （childElementCount 守卫），后续轮询只更新右侧读数；reduce 用户保持原有的
+  textContent 路径。
+- **账号轮转时归还在途槽，面板「在途」列与平台总闸对得上。** codearts 等模块
+  在自己的重试循环里换账号时，上一账号的网关租约一直骑在请求上——轮转点
+  （busy 跳过、刷新失败、队列拒绝、可重试上游错、探测拒绝）不归还就 continue，
+  槽位被占满整轮，账号池「在途」列与「平台在途」总数对不上。轮转点现在统一
+  `req.ReleaseAccountSlot()`（幂等）；同族排查覆盖 autoclaw 的 busy 路径与
+  cline 的刷新重试/死凭据轮转。terminal/return 路径本就由网关兜底
+  （releaseStream.Close），未动。
+
+### Installer
+
+- `client2api-setup-0.5.61.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `F2ADB4473877F9A7E65C47BC6BBBBA6741B505A218E065E88D7FC3A0A60464CC`
+
 ## [0.5.60] - 2026-11-02
 
 ### Fixed

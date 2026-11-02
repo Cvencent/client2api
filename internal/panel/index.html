@@ -8806,11 +8806,17 @@ function mountMasthead(view) {
   const rightEl = mh.querySelector(".mh-right");
   titleEl.textContent = spec.title;         // 最终文本先落位（无动画时也对）
   subEl.textContent = spec.sub;
-  if (!motionReduce()) {
+  if (motionReduce()) {
+    titleEl.textContent = spec.title;
+  } else if (!titleEl.childElementCount) {
+    // 标题的拆分动画只在首建时做一次（issue #90）：每片 span 都带 from
+    // opacity:0 的入场动画，轮询路径每 5 秒重拆一次 = 标题整行反复重播。
+    // 后续调用只需保证文本正确；页头每拍要更新的只有右侧读数。
+    titleEl.textContent = spec.title;         // 最终文本先落位（无动画时也对）
     const chars = Array.from(spec.title);
     titleEl.innerHTML = chars.map((ch, i) =>
       '<span style="display:inline-block;animation:ttlChar 420ms cubic-bezier(.16,1,.3,1) both;animation-delay:' + (i * 26) + 'ms">' +
-      esc(ch === " " ? "\u00a0" : ch) + "</span>").join("");
+      esc(ch === " " ? " " : ch) + "</span>").join("");
   }
   const stats = mastStats(view);
   rightEl.innerHTML = stats.map(s =>

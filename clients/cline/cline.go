@@ -321,6 +321,10 @@ func (c *Client) openChat(ctx context.Context, release context.CancelFunc, req *
 		if ue.Kind == kindAuth && e.acct.refreshable() && !refreshed[e.acct.id()] {
 			refreshed[e.acct.id()] = true
 			if refreshErr := c.tryRefresh(ctx, e); refreshErr == nil {
+				// The retried attempt re-acquires on the SAME account, so the
+				// old lease must go back first or the account's own ceiling
+				// counts the abandoned attempt (issue #89).
+				req.ReleaseAccountSlot()
 				i-- // the retry does not consume an attempt slot
 				continue
 			} else {
@@ -329,6 +333,7 @@ func (c *Client) openChat(ctx context.Context, release context.CancelFunc, req *
 				c.pool.markDead(e, msg)
 				skip[e.acct.id()] = true
 				lastErr, lastAcct = refreshErr, e.acct
+				req.ReleaseAccountSlot()
 				continue
 			}
 		}

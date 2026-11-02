@@ -101,7 +101,12 @@ func (c *Client) openStream(ctx context.Context, req *core.ChatRequest, release 
 		if err := req.AcquireAccountSlot(acctID); err != nil {
 			busy = true
 			// A full account is not an upstream attempt. Keep the request's
-			// switch budget for an account that can actually be called.
+			// switch budget for an account that can actually be called.  The
+			// previous attempt's lease (if any) still rides on the request:
+			// hand it back before rotating, or its in-flight slot is held for
+			// the life of this turn and the panel's 在途 column cannot
+			// reconcile with the platform total (issue #89).
+			req.ReleaseAccountSlot()
 			i--
 			continue
 		}
@@ -122,6 +127,7 @@ func (c *Client) openStream(ctx context.Context, req *core.ChatRequest, release 
 					c.pool.markFailure(e, kindAuth, err.Error())
 				}
 				lastErr, lastAcct = err, acctID
+				req.ReleaseAccountSlot()
 				continue
 			}
 		}
@@ -140,11 +146,13 @@ func (c *Client) openStream(ctx context.Context, req *core.ChatRequest, release 
 				if qerr != nil {
 					lastErr, lastAcct = qerr, acctID
 					c.pool.markFailure(e, kindQueue, qerr.Error())
+					req.ReleaseAccountSlot()
 					continue
 				}
 				if !started {
 					lastErr, lastAcct = err, acctID
 					c.pool.markFailure(e, kindQueue, msg)
+					req.ReleaseAccountSlot()
 					continue
 				}
 				resp, err = c.sendChat(ctx, e.account(), req)
@@ -221,6 +229,7 @@ func (c *Client) openStream(ctx context.Context, req *core.ChatRequest, release 
 				if !retryable(kind) {
 					return nil, c.terminal(err, acctID)
 				}
+				req.ReleaseAccountSlot()
 				continue
 			}
 		}
@@ -253,6 +262,7 @@ func (c *Client) openStream(ctx context.Context, req *core.ChatRequest, release 
 			if !retryable(kind) {
 				return nil, c.terminal(probeErr, acctID)
 			}
+			req.ReleaseAccountSlot()
 			continue
 		}
 		c.pool.markUsedFor(e, freeModel)

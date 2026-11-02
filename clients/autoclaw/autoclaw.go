@@ -287,7 +287,11 @@ func (c *Client) openChat(ctx context.Context, cancel context.CancelFunc, req *c
 			skip[e.acct.id()] = true
 			busy = true
 			// A full account is not an upstream attempt. Keep the request's
-			// switch budget for an account that can actually be called.
+			// switch budget for an account that can actually be called.  The
+			// previous attempt's lease (if any) rides on the request: hand it
+			// back before rotating, or its slot is held for the whole turn
+			// (issue #89).
+			req.ReleaseAccountSlot()
 			i--
 			continue
 		}
