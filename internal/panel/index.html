@@ -19648,7 +19648,20 @@ async function renderQC() {
   $("#qcChips").innerHTML = qcChipsHTML(list, cur);
   renderQCBatches(cur);
   syncSchoolBtn();
-  if (!cur) renderQueue([], null, "还没有客户端提供任务看板", "一个客户端实现了任务能力后，这里会自动出现。");
+  if (!cur) {
+    renderQueue([], null, "还没有客户端提供任务看板", "一个客户端实现了任务能力后，这里会自动出现。");
+    return;
+  }
+  // 客户端存在时，上一轮空分支写进 #tcEmpty 的文案必须归位（issue #105）：
+  // caps 没到手的那次 renderQC 会写入「还没有客户端提供任务看板」，等 caps
+  // 到位、chips 画出来后，没人把这条假话藏回去——它与 chips 自相矛盾滞留，
+  // 直到用户真的点一次扫描。恢复静态默认文案并藏起，数据交给扫描路径。
+  const empty = $("#tcEmpty");
+  if (empty && empty.style.display !== "none") {
+    empty.querySelector(".t").textContent = "还没有扫描过";
+    empty.querySelector(".d").textContent = "点右上角「扫描任务」，或选一个客户端查看它的任务看板。";
+    empty.style.display = "none";
+  }
 }
 // 扫描结果 → 分组条目（无执行状态）
 function groupItems(d) {
@@ -23582,10 +23595,24 @@ window.addEventListener("keydown", ev => {
   const t = ev.target;
   const typing = !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable);
   // "/" 跳到当前视图的搜索框。焦点已经在输入控件里、或者有弹窗开着的时候不抢。
+  // 目标不再按视图 id 写死（issue #106）：新增子页/搜索框时绑定没跟上，4 个
+  // 占位写着「（/）」的框按了没反应、对话页还把焦点挪去「缩小模型列表」。现在
+  // 先找当前视图内第一个可见的 search/.filt 输入框，找不到再回退到原三档。
   if (ev.key === "/" && !typing && !topVeil()) {
-    const box = VIEW === "models" ? $("#mdSearch")
+    const host = document.getElementById("view-" + VIEW);
+    let box = null;
+    if (host) {
+      box = [...host.querySelectorAll("input[type=search], input.filt")].find(el => {
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0 && !el.disabled;
+      }) || null;
+    }
+    if (!box) box = VIEW === "models" ? $("#mdSearch")
       : VIEW === "accounts" ? $("#accSearch")
-        : VIEW === "chat" ? chatOpenAdvanced(true) : null;
+        // 对话页的主输入框是消息框（issue #106）：旧行为把焦点挪去高级面板里的
+        // 「缩小模型列表」，有反馈但指错了地方；也不给没有任何搜索框承诺的页
+        // 强塞一个目标。
+        : VIEW === "chat" ? $("#chatInput") : null;
     if (!box) return;
     ev.preventDefault();
     box.focus();
