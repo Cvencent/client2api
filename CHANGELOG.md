@@ -33,6 +33,25 @@
 - `client2api-setup-0.5.47.exe`（空包，不含账号凭据或本机配置）
 - SHA256：`EE780BD84B0C8A1CAB096AE8354A353C5B968C516576BF02DD775B472C27CD7F`
 
+## [0.5.63] - 2026-11-02
+
+### Changed
+
+- **移除零消费者的 motion.min.js（64 KB，每次加载都下载）。** 全站弹簧动效走
+  自研的 springValue，该库没有任何读取点；屏蔽对照实验证明面板功能与动效均
+  不依赖它。script 标签、embed、allowlist 分支、vendor 文件一并移除，「Motion
+  给全站的弹簧进场编排」的误导注释改写为移除记录（issue #94）。
+- **客户端页不再把 overview 已带的账号重新下载一遍。** renderClients 第一行
+  无条件 loadAllAccounts()——21 个请求 / 89 KB，与 overview
+  （full_accounts=true）刚带回的那份逐字节相同。沿用 refreshAll 的短路口径：
+  OVER_FULL 为真时不再全量 fan-out，强制重读走顶栏刷新的 loud 路径（issue
+  #93）。
+
+### Installer
+
+- `client2api-setup-0.5.63.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `A3FC722767B21D583ED1AD6EA119476B1F6823ADE3EB7533979C9B2A9BA03278`
+
 ## [0.5.62] - 2026-11-02
 
 ### Fixed

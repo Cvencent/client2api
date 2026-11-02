@@ -77,9 +77,6 @@ var indexHTML []byte
 //go:embed vendors/three.min.js
 var threeJS []byte
 
-//go:embed vendors/motion.min.js
-var motionJS []byte
-
 // Options configures the panel.
 type Options struct {
 	Registry *core.Registry
@@ -342,8 +339,6 @@ func New(opts Options) http.Handler {
 		switch name {
 		case "three.min.js":
 			body, gz = threeJS, threeGZ
-		case "motion.min.js":
-			body, gz = motionJS, motionGZ
 		default:
 			http.NotFound(w, r)
 			return

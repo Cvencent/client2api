@@ -22,14 +22,12 @@ import (
 var (
 	vendorGzOnce sync.Once
 	threeGZ      []byte
-	motionGZ     []byte
 )
 
 // gzipVendorOnce pre-compresses the vendored libraries into memory.
 func gzipVendorOnce() {
 	vendorGzOnce.Do(func() {
 		threeGZ = gzipBytes(threeJS)
-		motionGZ = gzipBytes(motionJS)
 	})
 }
 

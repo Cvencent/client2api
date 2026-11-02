@@ -15982,7 +15982,10 @@ function berthCap(on, label, abbr) {
     (on ? (abbr || "✓") : "·") + "</span>";
 }
 async function renderClients() {
-  await loadAllAccounts();
+  // 与 refreshAll 的短路同口径（issue #93）：OVER_FULL 为真时 overview 已经
+  // 带回了每个模块的完整账号清单，再全量 fan-out 一轮 /accounts 是把同一份
+  // 字节下载第二遍。需要强制重读走顶栏刷新的 loud 路径。
+  if (!OVER_FULL) await loadAllAccounts();
   // 能力清单的列序和旧表头一致：管理 → 导入 → 登录 → 接码 → 自动添加 → 签到 → 刷新。
   const CAPS = [
     ["manage", "账号管理", "管"], ["import", "导入凭据", "导"], ["login", "浏览器登录", "登"],
@@ -24540,9 +24543,9 @@ window.addEventListener("unhandledrejection", ev => panelBootError(ev.reason));
 })();
 </script>
 <!-- 本地 vendored 第三方库（不走 CDN，网关离线也能跑）：Three.js 给路由舞台的
-     3D 网关核心，Motion 给全站的弹簧进场编排。两者都在 defer 加载，面板自己的
-     脚本先跑，增强层在它们到位后自检启用（typeof THREE === "undefined" 就跳过）。 -->
+     3D 网关核心。defer 加载，面板自己的脚本先跑，增强层在它到位后自检启用
+     （typeof THREE === "undefined" 就跳过）。Motion 曾在这里但全站零消费——
+     弹簧动效走自研的 springValue，2026-11-02 移除（issue #94）。 -->
 <script src="/panel/vendors/three.min.js" defer></script>
-<script src="/panel/vendors/motion.min.js" defer></script>
 </body>
 </html>
