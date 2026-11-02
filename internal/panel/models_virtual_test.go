@@ -182,7 +182,7 @@ func TestModelContextAcceptsVirtualClient(t *testing.T) {
 	h := New(Options{ModelOverrides: store})
 	body := `{"clients":{"` + core.VirtualModelClient + `":{"Auto/DeepSeek-V4.1-Flash":{"context_length":1048576,"max_output_tokens":65536,"supported_efforts":["low","max"],"default_effort":"max"}}}}`
 	req := httptest.NewRequest(http.MethodPost, "/panel/api/model_context", strings.NewReader(body))
-req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
+	req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
 	req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
 	req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
 	req.Header.Set("Content-Type", "application/json")

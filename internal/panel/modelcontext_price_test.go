@@ -19,7 +19,7 @@ func TestModelContextPriceRoundTripAndPartialUpdates(t *testing.T) {
 	post := func(body string) {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodPost, "/panel/api/model_context", strings.NewReader(body))
-req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
+		req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
 		req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
 		req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
 		rec := httptest.NewRecorder()

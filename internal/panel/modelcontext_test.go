@@ -19,7 +19,7 @@ func TestModelContextOverridesRoundTrip(t *testing.T) {
 
 	body := `{"clients":{"zcode":{"glm-5.3-flash":{"context_length":1048576,"max_output_tokens":131072}}}}`
 	req := httptest.NewRequest(http.MethodPost, "/panel/api/model_context", strings.NewReader(body))
-req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
+	req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
 	req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
 	req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
 	rec := httptest.NewRecorder()
@@ -50,7 +50,7 @@ func TestModelContextEffortPolicyRoundTrip(t *testing.T) {
 
 	body := `{"clients":{"workbuddy":{"cn:glm-5.3":{"supported_efforts":["low","high","max"],"default_effort":"max","elevate_top":true}}}}`
 	req := httptest.NewRequest(http.MethodPost, "/panel/api/model_context", strings.NewReader(body))
-req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
+	req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
 	req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
 	req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
 	rec := httptest.NewRecorder()
@@ -94,7 +94,7 @@ func TestModelContextRestoreDefaultClearsManualElevateChoice(t *testing.T) {
 
 	body := `{"clients":{"cline":{"cline-free/deepseek-v4.1-flash":{"elevate_top_default":true}}}}`
 	req := httptest.NewRequest(http.MethodPost, "/panel/api/model_context", strings.NewReader(body))
-req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
+	req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
 	req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
 	req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
 	rec := httptest.NewRecorder()
@@ -119,7 +119,7 @@ func TestModelContextEffortMappingsRoundTrip(t *testing.T) {
 
 	body := `{"clients":{"glm-5.3-flash":{"glm-5.3-flash":{"effort_mappings":[{"from":"high","to":"max"},{"from":"xhigh","to":"max"}]}}}}`
 	req := httptest.NewRequest(http.MethodPost, "/panel/api/model_context", strings.NewReader(body))
-req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
+	req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
 	req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
 	req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
 	rec := httptest.NewRecorder()
@@ -163,7 +163,7 @@ func TestModelContextRestoreDefaultAlsoClearsEffortMappings(t *testing.T) {
 
 	body := `{"clients":{"glm-5.3-flash":{"glm-5.3-flash":{"elevate_top_default":true}}}}`
 	req := httptest.NewRequest(http.MethodPost, "/panel/api/model_context", strings.NewReader(body))
-req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
+	req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
 	req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
 	req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
 	rec := httptest.NewRecorder()
