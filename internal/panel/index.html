@@ -100,7 +100,7 @@ body {
 .skip-link {
   position: fixed; top: -48px; left: 12px; z-index: 2147483000;
   padding: 8px 14px; border-radius: 0 0 9px 9px;
-  background: var(--accent); color: #fff; font: 550 13px var(--sans);
+  background: var(--accent); color: var(--accent-ink); font: 550 13px var(--sans);
   text-decoration: none; transition: top 120ms var(--ease-out);
 }
 .skip-link:focus-visible { top: 0; }
@@ -15992,7 +15992,10 @@ function berthBadge(name) {
 // 说明「第 4 个符号是接码还是签到」——页面上也没有列头。现在开启的那一格
 // 写「管 / 导 / 登 / 码 / 添 / 签 / 刷」，配上 title 的完整名称，能自我解释。
 function berthCap(on, label, abbr) {
-  return '<span class="pc ' + (on ? "on" : "off") + '" title="' + esc(label || "") + '">' +
+  // AX 两态必须可分（issue #100）：「管」和「·」在无障碍树里原来是同一个
+  // generic 节点，读屏念出来两态一模一样。aria-label 写明「有：X / 无：X」。
+  return '<span class="pc ' + (on ? "on" : "off") + '" title="' + esc(label || "") + '"' +
+    ' aria-label="' + esc((on ? "有：" : "无：") + (label || "")) + '">' +
     (on ? (abbr || "✓") : "·") + "</span>";
 }
 async function renderClients() {
@@ -16006,9 +16009,12 @@ async function renderClients() {
     ["sms", "接码", "码"], ["auto_login", "自动添加", "添"], ["checkin", "每日签到", "签"],
     ["refresh_models", "上游刷新", "刷"],
   ];
-  const capHdr = '<div class="berth b-head" aria-hidden="true">' +
+  // 表头不再整行 aria-hidden（issue #100）：列名是「第 N 格是什么」的唯一
+  // 上下文，藏掉它辅助技术就只剩七枚同名节点。每个能力列给 AX 真名
+  // （能力 + 单字），视觉不变。
+  const capHdr = '<div class="berth b-head">' +
     '<span></span><span class="b-id"><b>客户端</b></span>' +
-    '<span class="b-caps">' + CAPS.map(([, cap, ab]) => '<span class="pc hd" title="' + esc(cap) + '">' + esc(ab) + "</span>").join("") + "</span>" +
+    '<span class="b-caps">' + CAPS.map(([, cap, ab]) => '<span class="pc hd" title="' + esc(cap) + '" aria-label="' + esc(cap + "（" + ab + "）") + '">' + esc(ab) + "</span>").join("") + "</span>" +
     '<span class="b-count"><span>账号</span></span><span class="b-fields"><span>字段</span></span></div>';
   $("#pkBody").innerHTML = capHdr + NAMES.map(n => {
     const c = clientInfo(n) || {}, k = capsOf(n), a = ACCTS[n] || { accounts: [] };
