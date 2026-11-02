@@ -19758,12 +19758,14 @@ async function scRefreshRuns() {
   scRenderRuns(SC.data.runs || []);
 }
 
+// renderSchedule 读一遍排期。返回 true/false 让调用方能按结果说话——
+// 之前它只写 DOM 就 return，调用方（tcScan）无从知道这次读成没成（issue #122）。
 async function renderSchedule() {
   const r = await api("/panel/api/schedule");
   if (!r.ok) {
     $("#scNote").textContent = "读取失败";
     $("#scBody").innerHTML = '<div class="pad state err">' + esc(r.err) + "</div>";
-    return;
+    return false;
   }
   const d = r.data || {};
   SC.data = d;
@@ -19775,6 +19777,7 @@ async function renderSchedule() {
   $("#scCount").textContent = ((d.rows || []).length) + " 条规则";
   scRenderRows();
   scRenderRuns(d.runs || []);
+  return true;
 }
 
 async function scSave() {
@@ -20066,6 +20069,9 @@ function qrowHTML(it) {
     '<span class="msg">' + esc(it.message || "") + "</span>" +
     "</div>";
 }
+// renderQueue 画扫描结果。「没有待办」与「这次没读到」是两件事：
+// 前者是成功的空态（庆祝语气成立），后者是失败——把错误塞进同一个庆祝
+// 容器，操作员会以为当天该领的任务都做完了（issue #121）。
 function renderQueue(groups, progress, emptyTitle, emptyDesc) {
   const empty = $("#tcEmpty"), list = $("#qcList");
   if (!groups.length) {
@@ -20086,6 +20092,18 @@ function renderQueue(groups, progress, emptyTitle, emptyDesc) {
   }).join('');
   $("#qcSummary").textContent = total + " 项";
   updateProgress(progress);
+}
+// renderQueueError 是「这次扫描没有成功」的唯一画法：与空态分开的容器，
+// 标题直说失败，正文是脱敏后的错误，并清掉上一轮的待办列表。失败绝不复用
+// 「没有待办任务 🎉」那个庆祝标题（issue #121）。
+function renderQueueError(msg) {
+  const empty = $("#tcEmpty");
+  empty.querySelector(".t").textContent = "扫描失败";
+  empty.querySelector(".d").textContent = "没有读到待办任务：" + (msg || "未知错误") +
+    "。这不是「没有待办」——检查该模块是否可达后重试。";
+  empty.style.display = "";
+  $("#qcList").innerHTML = "";
+  $("#qProg").hidden = true; $("#qcSummary").textContent = "";
 }
 function updateProgress(q) {
   if (!q || !q.items) { $("#qProg").hidden = true; return; }
@@ -20116,12 +20134,21 @@ async function qcScan() {
   const n = qcPick(list);
   $("#qcChips").innerHTML = qcChipsHTML(list, n);
   if (!n) { toast("还没有客户端提供任务看板", "err"); return; }
+  const keep = b.textContent;
   b.disabled = true; b.textContent = "扫描中…";
   try {
     const r = await api(cbase(n) + "/tasks/scan_all", { method: "POST" });
-    if (!r.ok) { renderQueue([], null, "没有待办任务 🎉", r.err || (n + " 没有提供任务看板")); return; }
+    if (!r.ok) {
+      // 失败有自己的画法（issue #121）：不复用「没有待办」的庆祝空态。
+      renderQueueError(r.err || (n + " 没有提供任务看板"));
+      toast("扫描失败：" + (r.err || "没有读到任务看板"), "err");
+      return;
+    }
     renderQueue(groupItems(r.data), null, "没有待办任务 🎉", "这个模块的账号成长任务与开学季活动都已完成，明日再来。");
-  } finally { b.disabled = false; b.textContent = "扫描待办"; }
+  } finally {
+    // 复位到点名前的原文，别把静态名「扫描成长任务」改成别的（issue #121）。
+    b.disabled = false; b.textContent = keep;
+  }
 }
 async function qcRun() {
   const list = qcClients();
@@ -23107,13 +23134,21 @@ function tcCurrentSubtab() {
   const api = SUBTABS.get("taskscenter");
   return (api && api.active) || "schedule";
 }
-function tcScan() {
+async function tcScan() {
   const sub = tcCurrentSubtab();
   if (sub === "batch") { qcScan(); ckScan(); return; }
   if (sub === "board") { tbRefreshTasks(); return; }
-  // 定时任务页的「扫描」= 重新读取排期
-  renderSchedule();
-  toast("已重新读取排期", "ok");
+  // 定时任务页的「扫描」= 重新读取排期。成功提示必须叼在结果上：之前
+  // renderSchedule() 没 await、toast 无条件，读失败时会同时弹绿色「已重新
+  // 读取排期」和正文「读取失败」（issue #122）。
+  const b = $("#btnTcScan");
+  const keep = b ? b.textContent : "";
+  if (b) { b.disabled = true; b.textContent = "读取中…"; }
+  let ok = false;
+  try { ok = await renderSchedule(); }
+  catch (e) { ok = false; }
+  finally { if (b) { b.disabled = false; b.textContent = keep; } }
+  toast(ok === false ? "重新读取排期失败" : "已重新读取排期", ok === false ? "err" : "ok");
 }
 function tcRun() {
   const sub = tcCurrentSubtab();
