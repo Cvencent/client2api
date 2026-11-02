@@ -5,7 +5,7 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-Current version: **0.5.75**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
+Current version: **0.5.76**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
 
 client2api is a personal, local-only OpenAI-compatible gateway. It aggregates
 the accounts and API Keys **you own** on different AI coding clients and
@@ -644,13 +644,16 @@ loop that never ended.
   control restores the module default, and keys the panel does not yet describe
   stay available under `Other keys (JSON)`. Module config changes take effect
   after restarting the process.
-- The Platform Configuration route chain has two separate actions. **Link Test**
-  statically replays the failover chain - which platform would be tried first,
-  which one comes next, the effective priority and where it comes from
-  (platform priority, a time window, a model group or the dynamic Auto pool) -
-  and shows each platform model's effective context window and source so the
-  order can be judged with context capacity in view, without reading account
-  state or calling upstream. **Speed Test** resolves the same chain, then sends
+- The Platform Configuration route chain (the **Link Test** sub-tab) has two
+  separate buttons. **Rehearsal** (`预演顺序`) statically replays the failover
+  chain - which platform would be tried first, which one comes next, the
+  effective priority and where it comes from (platform priority, a time window,
+  a model group or the dynamic Auto pool) - and shows each platform model's
+  effective context window and source so the order can be judged with context
+  capacity in view, without reading account state or calling upstream. Each
+  button carries exactly one name: the static HTML, the in-flight label and the
+  reset value all agree, so the empty-state hint never points at a label the
+  page does not show. **Speed Test** (`实测速率`) resolves the same chain, then sends
   one minimal live request per platform through that platform's own account pool
   and reports first-event latency, total elapsed time, the serving account,
   completion tokens and tok/s. The tok/s figure is throughput over the whole
@@ -664,6 +667,17 @@ loop that never ended.
   a platform above a row showing `0` writes `-1` -- and hot-reloads it. Clearing
   that box deletes the override so the model inherits the platform priority
   again.
+- The Packages page lists every compiled-in module as a berth row (identity,
+  readiness lamp, capability symbols, account and field counts). Its
+  **Re-probe** button re-reads `/panel/api/overview`, then every module's account
+  list, then redraws the page: the capability block is derived per request from
+  the compiled-in module types rather than cached, so this button is what brings
+  a newly installed module, a swapped upstream or a changed account pool into the
+  berth rows. It greys out and reads "探测中…" while the round trip is in flight
+  and reports the module count when it finishes, the same feedback contract the
+  account pool's refresh-credentials button uses. Entering the page itself does
+  not fan out (the overview answer already carries the accounts), so the page
+  and the button are deliberately two paths.
 - Runtime Log
 
 ### Tasks, usage and accounting

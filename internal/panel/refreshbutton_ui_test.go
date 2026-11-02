@@ -174,6 +174,12 @@ func TestScatteredRefreshButtonsAreGone(t *testing.T) {
 			t.Errorf("按钮 %s 不见了；它做的是和统一刷新不同的事，不该被合并掉", k)
 		}
 	}
+	// 留着还不够：名字承诺了行为，实现就得真干那件事（issue #107）。#93 把
+	// renderClients 的账号读取短路之后，btnPk 曾一度接在它上面——按钮只剩
+	// 「把内存里的表重排一遍」，零请求零反馈。它接的是 probeClients，不是 render。
+	if !strings.Contains(src, `$("#btnPk").addEventListener("click", probeClients);`) {
+		t.Error(`#btnPk 没有接 probeClients：名字承诺「重新探测」，实现只剩 DOM 重排（issue #107）`)
+	}
 }
 
 // TestRefreshCredentialsIsHonest 钉住账号池「刷新凭据」按钮的回报方式。

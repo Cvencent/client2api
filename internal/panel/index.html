@@ -7350,9 +7350,14 @@ html:not([data-theme="light"]) body::after {
               <button class="xs" id="btnRpTest" title="只做本地静态预演，不调用上游">预演顺序</button>
               <button class="xs" id="btnRpSpeed" title="并发真实调用每个平台，会产生费用">实测速率</button>
             </span>
+            <!-- 按钮名只有一个来源（issue #110）：原来静态 HTML 写「预演顺序」、
+                 runRoutePlan 的 finally 复位成「测试链路」、runRouteSpeed 复位成
+                 「测速」，空态文案又照着「测试链路」写——首屏那个名字在页面上
+                 根本不存在（按钮只在跑完一次预演后才叫它）。改名只在两个
+                 函数里做完，不要在别处再写这两个名字。 -->
             <span class="hint">预演只算顺序、不花钱；实测会真的调用上游。拖动结果会把顺序写回「模型优先级」，即平台配置里该模型行上的那个数字（比下一行小 1），两处始终同一个值。</span>
           </div>
-          <div class="pad" id="rpResult"><div class="hint">输入模型名后点「测试链路」，查看平台的调用顺序、上下文窗口和优先级。</div></div>
+          <div class="pad" id="rpResult"><div class="hint">输入模型名后点「预演顺序」，查看平台的调用顺序、上下文窗口和优先级。</div></div>
         </div>
         <div class="savebar">
           <span class="hint">勾选 = 允许调用，取消勾选即加入该平台黑名单；优先级填整数，可以为负数，数字越小越先路由，例如 -10 比 -5 更优先；留空使用默认 0。「平台总并发 / 网关单账号并发」与「最低余额」在平台头部，WorkBuddy 卡片里额外有账号池治理。保存后立即热加载生效，无需重启。</span>
@@ -16036,7 +16041,44 @@ function berthCap(on, label, abbr) {
     ' aria-label="' + esc((on ? "有：" : "无：") + (label || "")) + '">' +
     (on ? (abbr || "✓") : "·") + "</span>";
 }
+// probeClients 是「客户端舱位」右上角颗「重新探测」按钮真正干的事（issue #107）。
+//
+// 它曾经直接接在 renderClients 上，而 renderClients 在 OVER_FULL 为真时第一步就
+// 短路（#93：overview 已经带回了每个模块的账号，不再 fan-out）——于是整颗按钮
+// 只剩「把内存里的表重排一遍」：零请求、零反馈、按钮文案与状态都不动，而名字
+// 承诺的是探测能力。而能力块（capabilities）恰恰只来自 /overview 的一次重读：
+// 服务端的 p.capabilities() 是每次请求现场由 CapabilitiesOf 折出来的，不缓存，
+// 所以「重新探测」= 重读 /overview + 重读各模块账号（号池可能也变了）+ 重画本页。
+//
+// 两条路径分开：renderClients 仍走短路（那是进入页面该做的事），用户点按钮走这里。
+// 在途反馈与账号页「刷新凭据」同一套口径：置灰 + 「探测中…」，结束再报一句实话，
+// 失败时把真实原因说出来而不是静默。
+let probeClientsBusy = false;
+async function probeClients() {
+  const btn = $("#btnPk");
+  if (probeClientsBusy) return;
+  probeClientsBusy = true;
+  const keep = btn ? btn.textContent : "";
+  if (btn) { btn.disabled = true; btn.textContent = "探测中…"; }
+  try {
+    const ok = await loadStatus();      // 重读 /overview：能力块就在这里
+    if (!ok) { toast("探测失败：无法连接网关", "err"); return; }
+    await loadAllAccounts(true);        // 号池一并重读（静默，别每模块弹一次）
+    renderClients();
+    toast("已重新探测 " + NAMES.length + " 个客户端的能力");
+  } catch (e) {
+    toast("探测失败：" + String((e && e.message) || e), "err");
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = keep || "重新探测"; }
+    probeClientsBusy = false;
+  }
+}
+
 async function renderClients() {
+  // 与 refreshAll 的短路同口径（issue #93）：OVER_FULL 为真时 overview 已经
+  // 带回了每个模块的完整账号清单，再全量 fan-out 一轮 /accounts 是把同一份
+  // 字节下载第二遍。需要强制重读走头上的「重新探测」或顶栏刷新的 loud 路径。
+  if (!OVER_FULL) await loadAllAccounts();
   // 与 refreshAll 的短路同口径（issue #93）：OVER_FULL 为真时 overview 已经
   // 带回了每个模块的完整账号清单，再全量 fan-out 一轮 /accounts 是把同一份
   // 字节下载第二遍。需要强制重读走顶栏刷新的 loud 路径。
@@ -18022,7 +18064,10 @@ async function runRoutePlan() {
     out.innerHTML = rows.join("");
   } finally {
     btn.disabled = false;
-    btn.textContent = "测试链路";
+    // 复位值与静态 HTML 必须是同一个名字（issue #110）：不一样的时候，首屏那个
+    // 名字在页面上不存在（空态文案指的正是它）；多开两次预演时按钮还会在
+    // 「预演顺序 / 解析中…」之间闪。两个名字都只在各自动作函数里写一次。
+    btn.textContent = "预演顺序";
     if (speedBtn) speedBtn.disabled = false;
   }
 }
@@ -18106,7 +18151,7 @@ async function runRouteSpeed() {
       cell.innerHTML = '<span class="hint">未返回</span>';
     });
     btn.disabled = false;
-    btn.textContent = "测速";
+    btn.textContent = "实测速率";  // 与静态 HTML 同名（issue #110）
     if (testBtn) testBtn.disabled = false;
   }
 }
@@ -22825,7 +22870,9 @@ $("#scBody").addEventListener("click", e => {
   const run = e.target.closest("[data-scrun]");
   if (run) scRunNow(run);
 });
-$("#btnPk").addEventListener("click", renderClients);
+// 按钮接的是 probeClients，不是 renderClients（issue #107）：后者在 OVER_FULL 下
+// 短路成纯 DOM 重排，点下去等于什么都没做。
+$("#btnPk").addEventListener("click", probeClients);
   $("#usWindow").addEventListener("change", renderUsage);
   $("#usRecentFilter").addEventListener("change", renderRecentRows);
   $("#btnAlertsClear").addEventListener("click", clearAlerts);
