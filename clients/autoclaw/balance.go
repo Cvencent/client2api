@@ -229,6 +229,10 @@ func walletBalanceLines(wallets []walletLine) []core.BalanceLine {
 // it as a credit pool; an unknown wallet (a token grant, say) keeps its own
 // display name and no invented unit.
 func walletUnit(scope string) string {
+	// Record the campaign scope here: this is the one place every wallet read
+	// passes through, and it is what retires the "claimed in the vendor client"
+	// reminder on the daily-credits action (issue #117).
+	noteCampaignScope(scope)
 	switch scope {
 	case "daily", "monthly", "long_term", "annual", "campaign":
 		return "积分"

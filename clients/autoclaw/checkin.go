@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"client2api/internal/core"
@@ -41,9 +42,58 @@ func (c *Client) CheckinActions(ctx context.Context) []core.CheckinAction {
 	return []core.CheckinAction{{
 		ID:    checkinActionDaily,
 		Label: "领取每日积分",
-		Help:  "POST /userapi/v1/user-info，AutoClaw 客户端登录后自动领取；服务端按天去重，重复请求仍是正常结果。",
+		Help: "POST /userapi/v1/user-info，AutoClaw 客户端登录后自动领取；服务端按天去重，重复请求仍是正常结果。" +
+			// 活动类赠送不在这条通道上（issue #117）。这句话必须出现在操作员按的
+			// 那颗按钮上：README 里写过，但按完按钮看到钱包仍是 0 的人不会去翻
+			// README，只会以为网关漏领了。
+			campaignClaimNote(),
 	}}
 }
+
+// campaignClaimNote is the reminder attached to the daily-credits action, and the
+// reason it is conditional on a campaign wallet never having been seen.
+//
+// The vendor announces campaigns ("注册送 5000 万 Token") that read as "log in
+// and claim".  The claim happens on the vendor's own campaign page / client, and
+// whether the grant then shows up as a wallet is the vendor's decision -- this
+// module's README says as much, and the wallet scope list already renders a
+// `campaign` entry the moment one appears.  So while no campaign wallet has ever
+// come back, the honest reading is "not claimable from here"; once one does, the
+// sentence has no business being shown any more.
+func campaignClaimNote() string {
+	if campaignScopeSeen() {
+		return ""
+	}
+	return " 注意：厂商活动页宣传的「送 Token」由服务端发放，领取动作在官方客户端里完成，" +
+		"本模块只覆盖这条每日积分通道；活动积分到账后会作为一条活动钱包显示。"
+}
+
+// campaignScopeSeen reports whether any balance read has ever returned a campaign
+// wallet.  Mirrors the ledger every wallet read already feeds (balance.go), so no
+// new plumbing is needed.
+func campaignScopeSeen() bool {
+	lockCampaign.Lock()
+	defer lockCampaign.Unlock()
+	return campaignSeen
+}
+
+// noteCampaignScope records that a wallet read mentioned the campaign scope, which
+// is what retires campaignClaimNote.  Called from the wallet decode path.
+func noteCampaignScope(scope string) {
+	switch strings.ToLower(strings.TrimSpace(scope)) {
+	case "campaign":
+	default:
+		return
+	}
+	lockCampaign.Lock()
+	campaignSeen = true
+	lockCampaign.Unlock()
+}
+
+var (
+	lockCampaign sync.Mutex
+	campaignSeen bool
+)
 
 // Checkin performs the daily claim for one account.
 //
