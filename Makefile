@@ -43,8 +43,12 @@ fmt-check: ## fail if any file needs gofmt
 vet: ## run go vet
 	$(GO) vet $(PKG)
 
+.PHONY: payload
+payload: ## stage installer/setup/payload via build.ps1 -NoData (needs pwsh + go; what the installer/setup contract tests read)
+	pwsh -File installer/build.ps1 -NoData
+
 .PHONY: test
-test: ## offline unit tests, no network
+test: ## offline unit tests, no network.  installer/setup contract tests SKIP when payload is absent; run `make payload` first to exercise them.
 	$(GO) test -count=1 -timeout 20m $(PKG)
 
 .PHONY: race
@@ -52,7 +56,7 @@ race: ## unit tests under the race detector (needs CGO_ENABLED=1 and a C compile
 	$(GO) test -race -count=1 -timeout 60m $(PKG)
 
 .PHONY: check
-check: fmt-check vet test ## the same gate CI runs, in the same order
+check: fmt-check vet test ## fmt + vet + test.  CI also runs: panel JS syntax, real-browser smoke, -race, and installer payload staging (`make payload` before `make test`).
 
 ##@ Build
 

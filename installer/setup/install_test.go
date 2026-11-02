@@ -111,6 +111,9 @@ func TestOperatorStatePaths(t *testing.T) {
 // must replace the program and leave that config exactly as it was found.
 func TestWritePayloadPreservesExistingOperatorState(t *testing.T) {
 	dir := t.TempDir()
+	if _, err := fs.Stat(payload, "payload/"+appExe); err != nil {
+		t.Skip("staged installer payload is not present")
+	}
 
 	const live = `{"listen":"127.0.0.1:9999","pool":{"prefer_expiring":true}}`
 	configPath := filepath.Join(dir, "configs", "client2api.json")
@@ -160,6 +163,9 @@ func TestWritePayloadPreservesExistingOperatorState(t *testing.T) {
 // a program-only package still seeds the config but no data tree.
 func TestWritePayloadSeedsFreshInstall(t *testing.T) {
 	for _, includeData := range []bool{true, false} {
+		if _, err := fs.Stat(payload, "payload/"+appExe); err != nil {
+			t.Skip("staged installer payload is not present")
+		}
 		dir := t.TempDir()
 		written, preserved, err := writePayload(dir, includeData)
 		if err != nil {
@@ -424,6 +430,9 @@ func hasPath(paths []string, want string) bool {
 // instead of on a user's first /v1/audio/transcriptions call.
 func TestWritePayloadInstallsTheBundledFFmpeg(t *testing.T) {
 	dir := t.TempDir()
+	if _, err := fs.Stat(payload, "payload/"+appExe); err != nil {
+		t.Skip("staged installer payload is not present")
+	}
 	if _, _, err := writePayload(dir, false); err != nil {
 		t.Fatalf("writePayload: %v", err)
 	}

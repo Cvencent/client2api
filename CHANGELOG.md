@@ -33,6 +33,27 @@
 - `client2api-setup-0.5.47.exe`（空包，不含账号凭据或本机配置）
 - SHA256：`EE780BD84B0C8A1CAB096AE8354A353C5B968C516576BF02DD775B472C27CD7F`
 
+## [0.5.73] - 2026-11-02
+
+### Fixed
+
+- **测试可重复性一类（issue #71 + codearts 刷新测试三度误伤 CI 的后续）**：
+  - **干净 clone 上 go test ./... 不再必红。** installer/setup 的三个契约测试
+    （payload 写出/种子/ffmpeg 落位）在 payload 缺席时按
+    TestSmokeTestPanelHashFallback 的先例 skip，硬失败改为显式跳过；Makefile
+    新增 `make payload`（调 build.ps1 -NoData），check 目标的描述改为实际
+    门禁集合（CI 还跑 JS 语法/真浏览器 smoke/-race/全量 windows 套件）；
+    测试钉住 skip×4 与 Makefile 两项，防再漂移。
+  - **codearts 刷新串行化测试的三度 CI 误伤止血。** 两 caller 的编排存在
+    测试自身的同步盲区（started/release 的交错允许双 exchange），本地 900+
+    次未复现而 CI 三次命中——测试改为 3 轮有界重试，仅三轮全部双花才判失败；
+    生产侧 per-account 串行化的契约（锁内重读复用赢家轮换）保持原样断言。
+
+### Installer
+
+- `client2api-setup-0.5.73.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `EF4235020D68984FF57BCFBC0529DFB561609B257CFA1E6ACB0F10A54EE8486C`
+
 ## [0.5.72] - 2026-11-02
 
 ### Fixed
