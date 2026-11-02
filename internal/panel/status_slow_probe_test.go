@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"client2api/internal/gateway"
+	"client2api/internal/scheduler"
 )
 
 // 两个只读端点的 p99 观测（issue #96）。
@@ -33,7 +34,7 @@ func TestStatusSlowResponseIsLoggedWithTheTickOffset(t *testing.T) {
 	for _, want := range []string{
 		`slowReadProbe("/panel/api/status")`,
 		`slowReadProbe("/panel/api/pool")`,
-		"into 5m tick window",
+		"tickOffset",
 		"d <= time.Second",
 	} {
 		if !strings.Contains(src, want) {
@@ -53,15 +54,15 @@ func TestStatusSlowResponseIsLoggedWithTheTickOffset(t *testing.T) {
 	// where the log ring lives (handleStatus reads p.opts.Logs on the slow path).
 	pp := &panel{opts: Options{Version: "test", Logs: ring}}
 	pp.wireStoreLogs()
-	pp.opts.Logs.Add("panel: slow /panel/api/status: 5s0ms (into 5m tick window: 2m30s)")
+	pp.opts.Logs.Add("panel: slow /panel/api/status: 5s0ms (next balance tick in 2m30s)")
 	h := New(Options{Version: "test", Logs: ring})
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/panel/api/logs?lines=500", nil))
 	if !strings.Contains(rec.Body.String(), "slow /panel/api/status") {
 		t.Fatal("慢响应行没有落进运行日志：观测线在真实面板上不可见（issue #96）")
 	}
-	if !strings.Contains(rec.Body.String(), "into 5m tick window") {
-		t.Fatal("慢响应行缺 tick 窗口偏移：无法与 sweep tick 做相关性（issue #96）")
+	if !strings.Contains(rec.Body.String(), "next balance tick in") {
+		t.Fatal("慢响应行缺 tick 偏移：无法与 sweep tick 做相关性（issue #96）")
 	}
 }
 
@@ -75,10 +76,17 @@ func TestStatusSlowResponseIsLoggedWithTheTickOffset(t *testing.T) {
 func TestTheSlowReadLineReachesTheDurableLogNotOnlyTheRing(t *testing.T) {
 	ring := gateway.NewLogRing(200)
 	var durable strings.Builder
+	// A wired scheduler, like a real process: the line must carry the
+	// scheduler-anchored offset, not the wall-clock fallback.
+	sched := &fakeScheduler{st: scheduler.Status{
+		Enabled: true,
+		Next:    map[string]time.Time{scheduler.BalanceTickName: time.Now().Add(2 * time.Minute)},
+	}}
 	pp := &panel{opts: Options{
-		Version: "test",
-		Logs:    ring,
-		OpsLog:  func(line string) { durable.WriteString(line + "\n") },
+		Version:   "test",
+		Logs:      ring,
+		Scheduler: sched,
+		OpsLog:    func(line string) { durable.WriteString(line + "\n") },
 	}}
 
 	// A slow /status must land in BOTH surfaces with the same text.
@@ -89,8 +97,8 @@ func TestTheSlowReadLineReachesTheDurableLogNotOnlyTheRing(t *testing.T) {
 	if !strings.Contains(durable.String(), "slow /panel/api/status") {
 		t.Fatal("慢响应没有落到文件日志：环之外没有活过一天的观测面，一周样本无从攒起（issue #96）")
 	}
-	if !strings.Contains(durable.String(), "into 5m tick window") {
-		t.Fatal("文件日志那一行缺 tick 窗口偏移：与 sweep tick 的相关性必须在文件里也能算（issue #96）")
+	if !strings.Contains(durable.String(), "next balance tick in") {
+		t.Fatal("文件日志那一行缺 tick 偏移：与 sweep tick 的相关性必须在文件里也能算（issue #96）")
 	}
 	entries := ring.Entries(0)
 	if len(entries) == 0 || !strings.Contains(entries[len(entries)-1].Text, "slow /panel/api/status") {
@@ -128,5 +136,51 @@ func TestPanelDiagnosticsAreRedactedBeforeTheDurableLog(t *testing.T) {
 	}
 	if !strings.Contains(durable[0], "<redacted>") {
 		t.Fatalf("凭据没有被替换成红标：%q", durable[0])
+	}
+}
+
+// 探针的 tick 偏移必须以**调度器真实的余额 tick** 为原点，不能拿挂钟相位顶替
+// （issue #96 的仪器缺陷）。
+//
+// 旧实现取 `started.UnixNano() % 5min`，也就是 :00/:05/:10 的挂钟相位；而调度器
+// 把 tick 锚在**进程启动时刻**（`tickBalance` 里 `r.balNext = r.now().Add(every)`），
+// 于是两边相位差可以任意（本机实测 85s），且每次重启还会平移。用错原点的偏移
+// 无法与真实 sweep 对齐——正是这条观测线唯一的用途。
+func TestTheTickOffsetIsAnchoredToTheSchedulerNotTheWallClock(t *testing.T) {
+	src, err := os.ReadFile("panel.go")
+	if err != nil {
+		t.Skipf("cannot read panel.go: %v", err)
+	}
+	s := string(src)
+
+	// 必须读调度器发布的下一枚 tick，而不是自己算挂钟相位。
+	if !strings.Contains(s, "scheduler.BalanceTickName") {
+		t.Fatal("slowReadProbe 没有读 scheduler.BalanceTickName：偏移会退回挂钟相位，与真实 sweep 相位无关（issue #96）")
+	}
+	// 反证：旧写法必须消失。挂钟取模只允许留在**明确的降级文案**里（并自称
+	// wall-clock），不能作为主路径。
+	if n := strings.Count(s, "UnixNano()%"); n != 1 {
+		t.Errorf("挂钟取模出现 %d 次，期望 1 次（只允许 in tickOffset 的降级分支）", n)
+	}
+
+	// 行为：装一个把下一枚 tick 放在 2 分钟后的调度器，探针必须说「next balance
+	// tick in 2m0s」——与当时挂在哪个挂钟相位无关。
+	sched := &fakeScheduler{st: scheduler.Status{
+		Enabled: true,
+		Next:    map[string]time.Time{scheduler.BalanceTickName: time.Now().Add(2 * time.Minute)},
+	}}
+	pp := &panel{opts: Options{Version: "test", Scheduler: sched}}
+	got := pp.tickOffset(time.Now())
+	if !strings.Contains(got, "next balance tick in") {
+		t.Fatalf("tickOffset = %q，期望「next balance tick in ...」（issue #96）", got)
+	}
+	if !strings.Contains(got, "1m") && !strings.Contains(got, "2m") {
+		t.Errorf("tickOffset = %q，期望约 2 分钟（锚在调度器而不是挂钟）", got)
+	}
+
+	// 没有任何调度器时（测试/嵌入方）必须**自称**是挂钟相位，绝不冒充调度器锚点。
+	bare := &panel{opts: Options{Version: "test"}}
+	if got := bare.tickOffset(time.Now()); !strings.Contains(got, "wall-clock") {
+		t.Errorf("无调度器时 tickOffset = %q，应显式标注 wall-clock，避免与调度器锚点样本混为一谈（issue #96）", got)
 	}
 }

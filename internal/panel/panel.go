@@ -566,10 +566,56 @@ func (p *panel) slowReadProbe(route string) func() {
 		if d <= time.Second {
 			return
 		}
-		p.opsf("panel: slow %s: %s (into 5m tick window: %s)",
-			route, d.Round(time.Millisecond),
-			time.Duration(started.UnixNano()%(5*int64(time.Minute))).Round(time.Second))
+		p.opsf("panel: slow %s: %s (%s)",
+			route, d.Round(time.Millisecond), p.tickOffset(started))
 	}
+}
+
+// tickOffset says where in the balance-refresh cycle a moment falls.
+//
+// The first version of this line derived the phase from the wall clock
+// (`started.UnixNano() % 5min`), which is the ORIGIN THE SCHEDULER DOES NOT
+// USE: it anchors the tick to process start (`tickBalance` sets
+// `r.balNext = r.now().Add(every)`), so on a start at 05:41:25 the real ticks
+// are 07:11:25 / 07:16:25 while the wall clock says :10:00/:15:00 -- an 85s
+// error, re-randomised by every restart.  Every offset collected that way was
+// unusable for the one correlation the line exists for (issue #96).
+//
+// The scheduler already publishes the truth: Status().Next[BalanceTickName] is
+// the next fire.  Report the distance to it, so the number means the same thing
+// whatever the phase: "next balance tick in 2m16s" / "balance tick was 40s ago".
+// A negative-looking (already past) tick is reported as time since the fire, so
+// a read that lands AFTER the sweep starts is not mislabelled as "before".
+func (p *panel) tickOffset(t time.Time) string {
+	if p.opts.Scheduler != nil {
+		if next, ok := p.opts.Scheduler.Status().Next[scheduler.BalanceTickName]; ok && !next.IsZero() {
+			if d := next.Sub(t); d >= 0 {
+				return "next balance tick in " + d.Round(time.Second).String()
+			} else if d := t.Sub(next); d <= 10*time.Minute {
+				// The published next-fire is already behind us: either the
+				// sweep is running now or the status is a moment stale.  Say
+				// so rather than printing a misleading "in -Xs".
+				return "balance tick started " + d.Round(time.Second).String() + " ago"
+			}
+		}
+	}
+	// No scheduler wired (tests, embedders) or the tick is disabled: fall back
+	// to the wall clock and SAY SO, so a sample can never be mistaken for the
+	// scheduler-anchored form.
+	window := 5 * time.Minute
+	if cfg := p.schedulerConfig(); cfg.BalanceRefresh.Every > 0 {
+		window = cfg.BalanceRefresh.Every
+	}
+	return "wall-clock phase " + time.Duration(t.UnixNano()%int64(window)).Round(time.Second).String()
+}
+
+// schedulerConfig is the live timetable, or the zero Config when no scheduler
+// is wired.  Only the balance-tick period is read.
+func (p *panel) schedulerConfig() scheduler.Config {
+	if p.opts.Scheduler == nil {
+		return scheduler.Config{}
+	}
+	return p.opts.Scheduler.Config()
 }
 
 // opsf records one panel diagnostic in both surfaces.

@@ -54,6 +54,30 @@
 - `client2api-setup-0.5.73.exe`（空包，不含账号凭据或本机配置）
   SHA256: `EF4235020D68984FF57BCFBC0529DFB561609B257CFA1E6ACB0F10A54EE8486C`
 
+## [0.5.93] - 2026-11-03
+
+### Fixed
+
+- **#96 的慢响应探针把 tick 偏移量在了错误的原点，导致已攒的样本无法用于本单唯一要做的相关性分析**：
+  探针用 `started.UnixNano() % 5min` 计算「落入 5 分钟余额 tick 窗口的位置」，那是**挂钟**
+  相位（:00/:05/:10）；而调度器把余额 tick 锚在**进程启动时刻**——`tickBalance` 里
+  `r.balNext = r.now().Add(every)`（`internal/scheduler/scheduler.go:1001`）。两边相位没有任何关系：
+  本机实测启动 05:41:25 → 真实 tick 落在 **07:11:25 / 07:16:25**，而探针声称边界在 :10:00/:15:00，
+  **差 85 秒**；且相位每次重启都会平移。于是此前攒到的 6 枚样本，偏移值全部相对错误原点，
+  拿它去和真实 sweep 时刻对齐会系统性错位——这恰恰是本单唯一想要的证据。
+  现在偏移直接取自**调度器发布的下一枚 tick**（`Status().Next[scheduler.BalanceTickName]`），
+  输出改为与相位无关的「next balance tick in 2m16s」／「balance tick started 40s ago」
+  （落在 sweep 开始**之后**的读不再被误标成「之前」）；没有调度器（测试/嵌入方）或 tick 被关时，
+  退化为挂钟相位并**显式自称** `wall-clock phase …`，绝不与调度器锚点样本混淆。
+  - 新增 `TestTheTickOffsetIsAnchoredToTheSchedulerNotTheWallClock`：钉住偏移必须读
+    `scheduler.BalanceTickName`，且全文件只允许剩 1 处挂钟取模（即 `tickOffset` 的降级分支）；
+    **实测把实现换回挂钟写法必红**。既有两条探针测试同步改到新契约。
+
+### Installer
+
+- `client2api-setup-0.5.93.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `1C5691A55BCEEAC0C539F44588F0AEAABF5E14461950680D758F0E96BA454D27`
+
 ## [0.5.92] - 2026-11-03
 
 ### Fixed
