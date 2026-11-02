@@ -16847,9 +16847,14 @@ function mdComboPaint() {
   const cur = MD_CLIENT_COMMITTED;
   $("#mdClientList").innerHTML = MD_COMBO.items.map((it, i) =>
     '<button type="button" class="mdcombo-item' + (cur === it.value ? " on" : "") + (i === MD_COMBO.active ? " active" : "") +
-    '" data-client="' + esc(it.value) + '" role="option" aria-selected="' + (cur === it.value) + '">' +
+    '" id="mdclient-opt-' + i + '" data-client="' + esc(it.value) + '" role="option" aria-selected="' + (i === MD_COMBO.active) + '">' +
     '<span>' + esc(it.label) + '</span>' + (it.sub ? '<span class="mdcombo-sub">' + esc(it.sub) + '</span>' : '') + '</button>'
   ).join("");
+  // aria-activedescendant 指到键盘高亮项（issue #101）；-1（无高亮）摘掉。
+  const inp = $("#mdClient");
+  const act = $("#mdClientList").querySelector(".mdcombo-item.active");
+  if (act && act.id) inp.setAttribute("aria-activedescendant", act.id);
+  else inp.removeAttribute("aria-activedescendant");
 }
 function mdComboClose() {
   MD_COMBO.open = false;
@@ -23501,7 +23506,7 @@ function cmdkRender() {
     let html = "", lastKind = "";
     CMDK.items.forEach((c, i) => {
       if (c.kind !== lastKind) { html += '<div class="cmdk-group">' + esc(c.kind) + '</div>'; lastKind = c.kind; }
-      html += '<button class="cmdk-item' + (i === CMDK.sel ? " sel" : "") + '" type="button" role="option" aria-selected="' + (i === CMDK.sel) + '" data-cmd="' + i + '">' +
+      html += '<button class="cmdk-item' + (i === CMDK.sel ? " sel" : "") + '" type="button" role="option" id="cmdk-opt-' + i + '" aria-selected="' + (i === CMDK.sel) + '" data-cmd="' + i + '">' +
         '<span class="ic">' + esc(c.icon || "•") + '</span><span class="t">' + esc(c.label) + '</span><span class="h">' + esc(c.hint) + '</span></button>';
     });
     list.innerHTML = html;
@@ -23509,6 +23514,12 @@ function cmdkRender() {
   $("#cmdkCount").textContent = CMDK.items.length + " / " + all.length;
   const sel = list.querySelector(".cmdk-item.sel");
   if (sel && sel.scrollIntoView) sel.scrollIntoView({ block: "nearest" });
+  // aria-activedescendant 把「当前项」接给读屏（issue #101）：焦点保留在输入
+  // 框的 combobox 范式里，高亮只在视觉上挪动，辅助技术全程听不到——除非输入
+  // 框的这条关系指过去。没有选中项（空列表）时摘掉。
+  const inp = $("#cmdkInput");
+  if (sel && sel.id) inp.setAttribute("aria-activedescendant", sel.id);
+  else inp.removeAttribute("aria-activedescendant");
 }
 function cmdkOpen() {
   CMDK.open = true; CMDK.sel = 0;

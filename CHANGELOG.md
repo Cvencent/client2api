@@ -33,6 +33,23 @@
 - `client2api-setup-0.5.47.exe`（空包，不含账号凭据或本机配置）
 - SHA256：`EE780BD84B0C8A1CAB096AE8354A353C5B968C516576BF02DD775B472C27CD7F`
 
+## [0.5.70] - 2026-11-02
+
+### Fixed
+
+- **两处 combobox 的键盘高亮对辅助技术可见。** Ctrl+K 命令面板与模型页客户端
+  筛选都是「焦点保留在输入框」的手搓 combobox：上下键在视觉上挪高亮，但
+  option 既没有稳定 id、输入框也没有 aria-activedescendant——读屏全程只听空
+  输入框，Ctrl+K 跳视图对读屏用户不可用。两处 option 生成时带稳定 id
+  （`cmdk-opt-<i>` / `mdclient-opt-<i>`），重画后把输入框的
+  aria-activedescendant 指到当前高亮项，空列表/无高亮时摘掉；贴合现有结构，
+  视觉与键盘行为不变（issue #101）。
+
+### Installer
+
+- `client2api-setup-0.5.70.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `2E766B5081226DCBFC94D1CD64DBAC749C49068B85B092B20CB523004C4DA386`
+
 ## [0.5.69] - 2026-11-02
 
 ### Fixed
