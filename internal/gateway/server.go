@@ -1239,6 +1239,22 @@ func cloneChatRequest(src *core.ChatRequest) *core.ChatRequest {
 	return &cp
 }
 
+// publishGuardAlert records a process-level gate transition in the operator's
+// alert journal (issue #98).  The WAF IP brake and the degraded-prompt window
+// change behavior for every platform at once, but until now their only trace
+// was one log line, while the alerts page's empty state promised exactly these
+// events would appear here.
+func (s *server) publishGuardAlert(kind, detail string) {
+	s.opts.Logger.Printf("guard: %s", detail)
+	if s.opts.NotifyAlert != nil {
+		s.opts.NotifyAlert(alerts.Alert{
+			At:     time.Now(),
+			Kind:   kind,
+			Detail: detail,
+		})
+	}
+}
+
 func (s *server) publishPlatformAlert(client, model, account string, ev core.HealthEvent) {
 	if !ev.Alert {
 		return
@@ -1451,7 +1467,16 @@ func (s *server) openStreamRecorded(ctx context.Context, client core.Client, req
 
 		if f.Kind == core.FailureContentBlocked {
 			if guard != nil {
+				wasDegraded := guard.Snapshot().DegradeActive
 				guard.ReportContentBlock()
+				if !wasDegraded {
+					// The degraded-prompt window just opened (issue #98): every
+					// gated module now serves the neutral prompt until midnight
+					// CST, and the panel must say so.
+					s.publishGuardAlert("prompt_degraded", fmt.Sprintf(
+						"degraded prompt window open after repeated content blocks; until %s",
+						guard.Snapshot().DegradeUntil))
+				}
 			}
 			// Only the module can rewrite its own request, so the retry is
 			// offered to it through the optional Degrader capability.
@@ -1470,6 +1495,11 @@ func (s *server) openStreamRecorded(ctx context.Context, client core.Client, req
 			return nil, err
 		}
 		if f.Kind == core.FailureWAF && guard != nil && guard.ReportWAF(f.Account) {
+			// The gate just closed rotation for every platform on this egress
+			// IP (issue #98): the panel must say so, not just the log line.
+			s.publishGuardAlert("waf_ip_blocked", fmt.Sprintf(
+				"exit IP blocked by upstream WAF: %d accounts hit waf 403 within the window; rotation paused until %s",
+				core.WAFIPThreshold, guard.Snapshot().WAFUntil))
 			return nil, err
 		}
 		if attempt >= maxRotate {

@@ -10053,6 +10053,17 @@ function rlStopPolling() {
 // 旧值可滚（详见 renderOverview 里的注释）。
 const OV_KPI_PREV = [];
 async function renderOverview() {
+    // 进程级闸的全局状态条（issue #98）：WAF IP 闸开着 = 所有平台一起失败、
+  // 轮转被主动暂停；降级窗口开着 = 受闸模块的系统提示词已被换成中性版。
+  // 没有这一条，操作员把整站故障归因到账号或模型。
+  const guardInfo = OVER && OVER.guard;
+  if (guardInfo && guardInfo.waf_active) {
+    const until = guardInfo.waf_until ? new Date(guardInfo.waf_until).toLocaleTimeString() : "";
+    bits.push('<span class="ov-pill err">WAF 拦截：出口 IP 轮转已暂停' + (until ? "，至 " + until : "") + '</span>');
+  } else if (guardInfo && guardInfo.degrade_active) {
+    const until = guardInfo.degrade_until ? new Date(guardInfo.degrade_until).toLocaleTimeString() : "";
+    bits.push('<span class="ov-pill warn">降级提示词生效中' + (until ? "，至 " + until : "") + '</span>');
+  }
   const cls = { ready: 0, cooling: 0, low_credit: 0, risk: 0, fault: 0, disabled: 0, unknown: 0 };
   let total = 0;
   const needAttention = [];

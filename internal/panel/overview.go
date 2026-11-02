@@ -46,6 +46,12 @@ type overview struct {
 	// never flashes an empty table first.  This is the reference's field name.
 	AuthRequired bool             `json:"auth_required"`
 	Clients      []overviewClient `json:"clients"`
+	// Guard is the process-level egress-IP brake and degraded-prompt window
+	// (issue #98): when either is active every platform fails or every gated
+	// module serves a rewritten prompt, and until now the panel had no way to
+	// say so -- the operator attributed the outage to accounts or models.
+	// Zero value means both gates are closed.
+	Guard *core.GuardSnapshot `json:"guard,omitempty"`
 	// StoreErrors carries the persisted stores' most recent disk failure,
 	// keyed by store name ("chat history", "check-in state", "balance cache",
 	// "task board cache").  A write that could not land must not be silent:
@@ -77,6 +83,15 @@ func (p *panel) handleOverview(w http.ResponseWriter, r *http.Request) {
 		FullAccounts: true,
 		Clients:      []overviewClient{},
 		StoreErrors:  p.storeErrors(),
+	}
+	if p.opts.Guard != nil {
+		g := p.opts.Guard.Snapshot()
+		if g.WAFActive || g.DegradeActive {
+			// Only carry the snapshot when a gate is open (issue #98): the
+			// zero value is the common case and the page reads its absence as
+			// "nothing to announce".
+			out.Guard = &g
+		}
 	}
 	if p.opts.Registry == nil {
 		writeJSON(w, http.StatusOK, out)
