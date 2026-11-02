@@ -44,7 +44,7 @@ import (
 )
 
 // version is overridable with -ldflags "-X main.version=...".
-var version = "0.5.90"
+var version = "0.5.91"
 
 // restartHandoffEnv marks the replacement half of a panel restart.  It tells a
 // starting process to keep retrying the listen address instead of failing fast,
@@ -1633,13 +1633,22 @@ func run() error {
 		ConfigPath: absConfigPath,
 		// Where the modules keep their credential stores, so the panel can
 		// export them and restore them into another instance.
-		DataDir:        cfg.DataDir,
-		AuthEnabled:    cfg.APIKey != "",
-		Live:           live,
-		Guard:          guard,
-		Stats:          stats,
-		Usage:          usage,
-		Logs:           logs,
+		DataDir:     cfg.DataDir,
+		AuthEnabled: cfg.APIKey != "",
+		Live:        live,
+		Guard:       guard,
+		Stats:       stats,
+		Usage:       usage,
+		Logs:        logs,
+		// The panel's own diagnostics (slow reads, recovered panics, store
+		// write failures) go through the process logger as well, so they reach
+		// the durable file and not only the ring -- the ring keeps 2000 lines
+		// and is dominated by chat rows, so a week of latency samples (issue
+		// #96) cannot accumulate there.  Output writes the line verbatim (it is
+		// already redacted and may contain '%'); the logger stamps it the way
+		// every other file record is stamped, and the ring normalises that
+		// stamp, so the two surfaces agree on the text.
+		OpsLog:         func(line string) { _ = logger.Output(2, line) },
 		Alerts:         alertStore,
 		Scheduler:      sched,
 		ModelOverrides: modelOverrides,

@@ -1,7 +1,6 @@
 package panel
 
 import (
-	"fmt"
 	"sync"
 
 	"client2api/internal/core"
@@ -63,16 +62,17 @@ func (t *storeErrTracker) LastError() string {
 }
 
 // wireStoreLogs points every persisted store's failure reporter at the panel's
-// log ring, so a write that cannot land shows up in the live log the moment it
-// happens (issue #34) instead of only after a restart surfaces an empty store.
-// Stores built without a ring (tests, embedders) keep silent trackers.
+// diagnostics, so a write that cannot land shows up in the live log the moment
+// it happens (issue #34) instead of only after a restart surfaces an empty
+// store.  It reaches the durable file as well as the ring: a read-only
+// directory that persists for hours would otherwise roll out of the ring
+// before anyone read it.  Stores built without either sink (tests, embedders)
+// keep silent trackers.
 func (p *panel) wireStoreLogs() {
-	if p == nil || p.opts.Logs == nil {
+	if p == nil || (p.opts.Logs == nil && p.opts.OpsLog == nil) {
 		return
 	}
-	logf := func(format string, args ...any) {
-		p.opts.Logs.Add(fmt.Sprintf(format, args...))
-	}
+	logf := p.opsf
 	if p.chatHistory != nil {
 		p.chatHistory.errs.setLog(logf)
 	}

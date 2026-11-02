@@ -58,6 +58,62 @@ func onboardingTransport(t *testing.T, flags map[string]bool) *stubTransport {
 	}}
 }
 
+// An empty (or entirely absent) vendor board is still the EIGHT registry rows,
+// all unclaimed -- not an empty list (issue #60's "the registry rows did not get
+// laid out" observation).
+//
+// The one path that legitimately returns no rows is "no credential at all",
+// which the panel words as the normal "no account is ready" state.  A board
+// whose `tasks` object is empty or missing is a different fact: the vendor
+// answered, and it named none of the eight chores as done.  Rendering that as
+// zero rows would make a live account look like a platform with no task
+// support, and would hide eight runnable chores.
+func TestAnEmptyVendorBoardStillLaysOutTheRegistry(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		flags map[string]bool
+	}{
+		{"empty tasks object", map[string]bool{}},
+		{"tasks field absent", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newTestClient(t, "{}", onboardingTransport(t, tc.flags))
+			seedAccount(t, c, "loomy-1", testToken, 0)
+
+			rows, err := c.Tasks(context.Background(), "loomy-1")
+			if err != nil {
+				t.Fatalf("Tasks: %v", err)
+			}
+			if len(rows) != len(onboardingRegistry) {
+				t.Fatalf("board has %d rows, want the %d registry chores (issue #60)", len(rows), len(onboardingRegistry))
+			}
+			for _, row := range rows {
+				if row.Claimed {
+					t.Errorf("%s reported claimed on an empty vendor board", row.Code)
+				}
+				if !row.Auto {
+					t.Errorf("%s is not runnable on an empty vendor board", row.Code)
+				}
+				if row.Credit <= 0 {
+					t.Errorf("%s lost its price (%d) on an empty vendor board", row.Code, row.Credit)
+				}
+			}
+		})
+	}
+}
+
+// And the honest empty answer stays where it belongs: no credential at all.
+func TestNoCredentialStillMeansNoRows(t *testing.T) {
+	c := newTestClient(t, "{}", onboardingTransport(t, map[string]bool{}))
+	rows, err := c.Tasks(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Tasks: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("board has %d rows with no credential configured, want none", len(rows))
+	}
+}
+
 // rowsByCode indexes a board.
 func rowsByCode(rows []core.TaskInfo) map[string]core.TaskInfo {
 	out := make(map[string]core.TaskInfo, len(rows))

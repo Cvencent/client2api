@@ -134,6 +134,18 @@ type Options struct {
 	Stats *gateway.Stats
 	Usage *gateway.UsageStore
 	Logs  *gateway.LogRing
+	// OpsLog, when set, carries the panel's own diagnostic lines -- throttled
+	// endpoint latency, recovered panics and store write failures -- to the
+	// durable process log as well as the ring.
+	//
+	// The ring is a minutes-long window under chat traffic (capacity 2000,
+	// dominated by per-request rows), so anything meant to be read back over
+	// days -- issue #96 asks for a week of latency samples -- must reach the
+	// file.  The line arrives already redacted and already formatted, so the
+	// sink must write it verbatim rather than treat it as a format string.  Nil
+	// keeps the panel silent outside the ring, which is what tests and
+	// embedders get.
+	OpsLog func(line string)
 	// Alerts is the persistent platform-health notification journal.  The
 	// gateway appends to it and the panel reads it; nil hides the bell count.
 	Alerts *alerts.Store
@@ -547,16 +559,33 @@ func seedBalanceCache(p *panel, client, id string, bal core.Balance) {
 func (p *panel) slowReadProbe(route string) func() {
 	started := time.Now()
 	return func() {
-		if p.opts.Logs == nil {
+		if p.opts.Logs == nil && p.opts.OpsLog == nil {
 			return
 		}
 		d := time.Since(started)
 		if d <= time.Second {
 			return
 		}
-		p.opts.Logs.Add(fmt.Sprintf("panel: slow %s: %s (into 5m tick window: %s)",
+		p.opsf("panel: slow %s: %s (into 5m tick window: %s)",
 			route, d.Round(time.Millisecond),
-			time.Duration(started.UnixNano()%(5*int64(time.Minute))).Round(time.Second)))
+			time.Duration(started.UnixNano()%(5*int64(time.Minute))).Round(time.Second))
+	}
+}
+
+// opsf records one panel diagnostic in both surfaces.
+//
+// The durable log is the only one that survives the ring's minutes-long
+// turnover (issue #96), so it is written first.  Redaction happens here because
+// the log FILE does not redact while the ring does, and the line is handed to
+// the sink as plain text (never as a format string) so a stray '%' in an
+// upstream error cannot corrupt it.
+func (p *panel) opsf(format string, args ...any) {
+	msg := core.Redact(fmt.Sprintf(format, args...))
+	if p.opts.OpsLog != nil {
+		p.opts.OpsLog(msg)
+	}
+	if p.opts.Logs != nil {
+		p.opts.Logs.Add(msg)
 	}
 }
 

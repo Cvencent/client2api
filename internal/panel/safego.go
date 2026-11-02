@@ -31,12 +31,14 @@ func (p *panel) safeGoThen(what string, then func(string), fn func()) {
 	}, fn)
 }
 
-// panicReport records a recovered panic where an operator will look: the log
-// ring the dashboard reads.  A nil return leaves core.GoSafe writing to stderr,
-// which is what a panel built without instrumentation gets.
+// panicReport records a recovered panic where an operator will look: the panel
+// diagnostics, which reach both the ring the dashboard reads and the durable
+// log file (a panic is exactly the line you go looking for after the fact).  A
+// nil return leaves core.GoSafe writing to stderr, which is what a panel built
+// without instrumentation gets.
 func (p *panel) panicReport() func(string) {
-	if p.opts.Logs == nil {
+	if p.opts.Logs == nil && p.opts.OpsLog == nil {
 		return nil
 	}
-	return func(msg string) { p.opts.Logs.Add(msg) }
+	return func(msg string) { p.opsf("%s", msg) }
 }
