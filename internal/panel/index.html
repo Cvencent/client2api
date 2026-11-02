@@ -97,6 +97,12 @@ body {
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
 /* 跳过链接（issue #39）：默认钉出视口外，键盘聚焦时出现在左上。
    href="#main" 一步越过 13 项主导航——WCAG 2.4.1 Bypass Blocks。 */
+/* sr-only：只对辅助技术可见的说明文字（issue #120）。不能用 hidden / display:none
+   ——那样读屏也读不到；这里用 1px 裁剪把视觉藏起来，无障碍树保持完整。 */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
 .skip-link {
   position: fixed; top: -48px; left: 12px; z-index: 2147483000;
   padding: 8px 14px; border-radius: 0 0 9px 9px;
@@ -7386,6 +7392,9 @@ html:not([data-theme="light"]) body::after {
           <span class="note" id="cfgPath">-</span>
           <button class="xs" id="btnCfgRestart" hidden>重启进程</button>
         </header>
+        <!-- 时长字段共用的错误说明（issue #120）：视觉上隐藏、无障碍树里可见。
+             文字由 DUR_TIP 在首次使用时写入，避免与 JS 里的常量各写一份。 -->
+        <span class="sr-only" id="durTip"></span>
         <div class="pad" id="cfgForm"></div>
         <div class="savebar">
           <span class="hint" id="cfgNote">-</span>
@@ -7715,7 +7724,9 @@ html:not([data-theme="light"]) body::after {
         <div id="manFields"></div>
         <div id="manKeyLink" class="hint" hidden></div>
         <div class="fld"><label class="lb" for="manLabel">备注（可选）</label><input id="manLabel" type="text" placeholder="给这个账号起个名字"></div>
-        <div id="manErr" class="state err" hidden></div>
+        <!-- 弹窗级错误：字段级错误已经逐条挂到各自字段上（issue #120），这一条是
+             「说不上是哪一栏」时的兜底，需要 role="alert" 才能被读屏播报。 -->
+        <div id="manErr" class="state err" role="alert" hidden></div>
       </div>
     </div>
     <footer>
@@ -17402,12 +17413,33 @@ function durationBad(id) {
   const v = el.value.trim();
   return v !== "" && v !== "0" && !DUR_RE.test(v);
 }
+// durTipEl 是时长字段共用的说明元素（issue #120）：所有时长字段的错误文案是同一句，
+// 所以一个元素够用。它必须是**可见于无障碍树**的（sr-only 而不是 hidden/display:none）
+// ——被视觉隐藏的说明才会被读屏念出来。
+function durTipEl() {
+  // 元素由标记提供（shell_test 的「脚本只许引用标记里有的 id」那条守卫要求如此），
+  // 这里只负责把文案填进去——DUR_TIP 是唯一来源，不在标记里再抄一份。
+  const el = document.getElementById("durTip");
+  if (el && !el.textContent) el.textContent = DUR_TIP;
+  return el;
+}
+
 function markDurationFields() {
   DUR_FIELDS.forEach(id => {
     const el = $(durSel(id));
     if (!el) return;
     const bad = durationBad(id);
     el.classList.toggle("invalid", bad);
+    // 状态与说明都要进无障碍树（issue #120）：红边与 title 对读屏用户是不存在的，
+    // 而 title 本身在很多读屏里也不会作为 description 被念出来。
+    if (bad) {
+      el.setAttribute("aria-invalid", "true");
+      const tip = durTipEl();
+      if (tip) el.setAttribute("aria-describedby", tip.id);
+    } else {
+      el.removeAttribute("aria-invalid");
+      el.removeAttribute("aria-describedby");
+    }
     el.title = bad ? DUR_TIP : "";
   });
 }
@@ -22615,7 +22647,10 @@ function manualFieldHTML(f) {
   }
   return '<div class="fld" data-field="' + esc(f.key) + '">' + lb + inp +
     (f.help ? '<div class="hint">' + esc(f.help) + '</div>' : "") +
-    '<div class="fldErr" hidden></div></div>';
+    // The error line carries a stable id so the input can point at it with
+    // aria-describedby (issue #120): without one the message exists on screen
+    // and nowhere in the accessibility tree.
+    '<div class="fldErr" id="' + esc(fldErrId(f.key)) + '" hidden></div></div>';
 }
 
 function manualGuideSteps(fs, k) {
@@ -22685,8 +22720,19 @@ function renderManual() {
   wireManualKeyLink(n);
 }
 
+// fldErrId 是字段错误行的稳定 id（issue #120）：input 的 aria-describedby 要指向
+// 它，读屏才会把「请填写API key」念出来。字段键会被拼进 id，所以非字母数字一律
+// 折成「-」，避免某些模块的键把选择器/引用弄坏。
+function fldErrId(key) {
+  return "flderr-" + String(key || "").replace(/[^A-Za-z0-9_-]/g, "-");
+}
+
 // manualFieldError 把一条错误贴在对应字段下面，并给输入框上红边。返回是否找到
 // 那个字段，调用方据此决定要不要回落到弹窗顶部的错误区。
+//
+// 视觉之外还有三条程序化出口（issue #120）：input 上的 aria-invalid、指向错误行的
+// aria-describedby、以及把焦点送到这个字段——读屏用户提交后被直接带到问题处，
+// 而不是在若干输入框之间逐个 Tab 去猜哪一栏错了。
 function manualFieldError(key, msg) {
   const box = $$("#manFields .fld").find(d => d.dataset.field === key);
   if (!box) return false;
@@ -22695,15 +22741,42 @@ function manualFieldError(key, msg) {
   const adv = box.closest("details");
   if (adv) adv.open = true;
   const err = box.querySelector(".fldErr");
-  if (err) { err.hidden = false; err.textContent = msg; }
+  if (err) {
+    err.id = fldErrId(key);
+    err.hidden = false;
+    err.textContent = msg;
+  }
   const inp = box.querySelector("[data-key]");
-  if (inp) inp.classList.add("invalid");
+  if (inp) {
+    inp.classList.add("invalid");
+    inp.setAttribute("aria-invalid", "true");
+    if (err) inp.setAttribute("aria-describedby", err.id);
+  }
+  return true;
+}
+
+// focusFirstManualError 把焦点送到第一个出错的字段（issue #120）。提交时读屏用户
+// 需要知道问题在哪一栏，而「红边出现在屏幕某处」对他们是不存在的。
+function focusFirstManualError() {
+  const bad = $$("#manFields .fld").find(d => {
+    const e = d.querySelector(".fldErr");
+    return e && !e.hidden;
+  });
+  if (!bad) return false;
+  const inp = bad.querySelector("[data-key]");
+  if (!inp) return false;
+  try { inp.focus(); } catch (e) { return false; }
   return true;
 }
 
 function clearManualErrors() {
   $$("#manFields .fldErr").forEach(el => { el.hidden = true; el.textContent = ""; });
-  $$("#manFields .invalid").forEach(el => el.classList.remove("invalid"));
+  $$("#manFields .invalid").forEach(el => {
+    el.classList.remove("invalid");
+    // 清掉程序化状态，否则一个已经填好的字段在无障碍树里仍然是「无效」（#120）。
+    el.removeAttribute("aria-invalid");
+    el.removeAttribute("aria-describedby");
+  });
   $("#manErr").hidden = true;
 }
 
@@ -22752,7 +22825,7 @@ async function doManual() {
     if (!f.required) continue;
     if (!String(body.fields[f.key] || "").trim()) manualFieldError(f.key, "请填写" + (f.label || f.key));
   }
-  if ($$("#manFields .fldErr").some(el => !el.hidden)) return;
+  if ($$("#manFields .fldErr").some(el => !el.hidden)) { focusFirstManualError(); return; }
   const btn = $("#btnManual");
   btn.disabled = true; const was = btn.textContent; btn.textContent = "添加中…";
   const r = await api(cbase(n) + "/accounts", { method: "POST", body: body });

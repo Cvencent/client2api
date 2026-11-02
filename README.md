@@ -5,7 +5,7 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-Current version: **0.5.87**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
+Current version: **0.5.88**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
 
 client2api is a personal, local-only OpenAI-compatible gateway. It aggregates
 the accounts and API Keys **you own** on different AI coding clients and
@@ -688,6 +688,10 @@ loop that never ended.
   account pool's refresh-credentials button uses. Entering the page itself does
   not fan out (the overview answer already carries the accounts), so the page
   and the button are deliberately two paths.
+- Field-level form errors reach assistive technology, not just the eye: the
+  failing input carries `aria-invalid="true"` and an `aria-describedby` pointing
+  at its error line, a locally-rejected submit moves focus to the first failing
+  field, and the dialog-wide fallback error is a `role="alert"`.
 - The account pool's card wall gives each card a real disclosure control: its
   head (name plus state word) carries `role="button"`, `aria-expanded` and an
   `aria-controls` pointing at the detail block, so a screen reader announces

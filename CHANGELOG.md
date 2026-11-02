@@ -54,6 +54,42 @@
 - `client2api-setup-0.5.73.exe`（空包，不含账号凭据或本机配置）
   SHA256: `EF4235020D68984FF57BCFBC0529DFB561609B257CFA1E6ACB0F10A54EE8486C`
 
+## [0.5.88] - 2026-11-03
+
+### Fixed
+
+- **表单字段级错误只有视觉表达，辅助技术拿不到任何东西（#120）**。出错时只是
+  「红边 + 旁边一段红字」：全仓 `aria-invalid` / `aria-describedby` /
+  `aria-errormessage` 各 0 次，AX 树里那个输入框**和没出错时一模一样**
+  （`invalid=false`、无 description），焦点也不动——读屏用户提交一个缺必填项的
+  表单，听到的与成功提交一样。面板其余部分都做过无障碍（`aria-live` 12 处、
+  `role=dialog` 13 个、`aria-expanded` 29 处），这一格是漏掉。
+  两处落点都补上了：
+  - **手动添加账号弹窗**：错误行有稳定 id（`flderr-<key>`），输入框出错时带
+    `aria-invalid="true"` + `aria-describedby` 指向它；`clearManualErrors` 在清空
+    错误时把这两个属性一起摘掉（否则填对的字段仍被报成无效）；提交被本地拦下时
+    把**焦点送到第一个出错的字段**；弹窗级兜底错误 `#manErr` 补 `role="alert"`。
+  - **配置页时长字段**：`markDurationFields` 出错时设 `aria-invalid` +
+    `aria-describedby`，指向一个共用说明元素 `#durTip`（`.sr-only`：视觉隐藏、
+    无障碍树可见；用 `hidden`/`display:none` 读屏同样读不到）。元素放在静态标记里
+    而不是运行时创建——`shell_test` 的「脚本只许引用标记里有的 id」那条守卫要求
+    如此，文案仍只有 `DUR_TIP` 一处（首次使用时写入）。合法值会摘掉两个属性。
+  - **实测**（隔离实例 v0.5.88）：手动添加弹窗点「添加」后 CDP
+    `getPartialAXTree` 上该输入框为 `role=textbox`、
+    `properties.invalid="true"`、`describedby="flderr-api_key"`、
+    `description="请填写API key"`、`focused=true`（修前 `invalid=false`、
+    `description=None`、焦点不动）；配置页把「会话粘性 TTL」填成 `abc` 后
+    `aria-invalid="true"`、`describedby="durTip"`，改回 `30m` 后两个属性都消失。
+  - 测试：新增 `internal/panel/form_field_error_a11y_ui_test.go` 两条（错误行必须有
+    稳定 id 且被 `aria-describedby` 引用、清空时必须摘掉两个属性、提交时必须聚焦
+    第一个出错字段、`#manErr` 必须有 `role=alert`；时长字段那一处要求状态双向
+    复位、说明元素在标记里且是 `sr-only`、文案只有 `DUR_TIP` 一个来源）。
+
+### Installer
+
+- `client2api-setup-0.5.88.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `C26F9020750976E8EA8AD0F1A45512B48C804CCDB327F57FA67BB2C705711A37`
+
 ## [0.5.87] - 2026-11-03
 
 ### Fixed
