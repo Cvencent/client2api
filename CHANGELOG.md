@@ -54,6 +54,42 @@
 - `client2api-setup-0.5.73.exe`（空包，不含账号凭据或本机配置）
   SHA256: `EF4235020D68984FF57BCFBC0529DFB561609B257CFA1E6ACB0F10A54EE8486C`
 
+## [0.5.87] - 2026-11-03
+
+### Fixed
+
+- **账号池卡片墙：板卡点不开，且它对辅助技术既没名字也没状态（#118 + #119）**：
+  - **点板卡终于会展开。** 默认呈现是卡片墙，但点任何一块板卡都看不出变化：状态确实
+    翻了（`ACC_OPEN` 里有了分组键），界面永远不跟上——实测 9 秒不动，blur 一下立刻
+    正常。根因是重建豁免的判据「焦点在这个容器内」，而板卡自己是 `tabindex="0"`，
+    点一下焦点必然落在它身上，于是**每一拍都被豁免掉**。现在豁免只看**表单控件**
+    （`input`/`select`/`textarea`/`contenteditable`，含按住中的 `.accPrio` 与
+    `select.test-model`）：板卡与组头行不算——它们是按同一份数据重画同一块卡片，
+    焦点落在上面不会打断任何输入，而「点了要看到展开」正是这条路的用途。#23/#25
+    要保护的滑杆拖动、下拉开着、输入到一半三类控件仍一对一覆盖（#118）。
+  - **板卡的展开态能被读屏读出来，也有名字了。** 原来 `aria-expanded` 写在
+    `<article>` 上，而 `article` 不支持这个属性——AX 树里连 `expanded` 都没有，两态
+    同貌；这一层也没有任何可访问名，Tab 过去只念「article」。现在卡片头（账号名 +
+    状态词）是**披露控件**：`role="button"` + `aria-expanded` + `aria-controls`
+    指向详情块，名字由 `aria-labelledby` 指向那两段文字，与同页表格里
+    `tr[data-grp]` 那条既有实现是同一套语义而不是第二套。3D 检视复用同一个渲染器
+    且没有披露控件，所以 `detailID` 是可选的（它不传就不写 id）（#119）。
+  - **实测**（隔离实例）：真实鼠标点一次板卡中心 → `aria-expanded="true"`、
+    `.ac-detail#acd-0` 立刻存在（不再等 9 秒）；CDP `getPartialAXTree` 上卡片头是
+    `role=button`、`name="anonymous (free) 可用"`、展开时 `properties.expanded=true`
+    且 `controls` 解析到 `acd-0`，收起时同节点 `expanded=false`。
+  - 测试：新增 `internal/panel/acct_card_disclosure_ui_test.go` 两条——豁免判据必须
+    只覆盖表单控件（并钉住按住中的滑杆/下拉仍在豁免里），卡片头必须带
+    `role="button"` + `aria-expanded` + `aria-controls` + `aria-labelledby`、
+    名字指向的两段文字必须带对应 id、`aria-controls` 的目标必须真的画出来、
+    以及 3D 检视那条不带 id 的调用不许被改。
+  - README 中英两版同步了这两处（板卡是真正的展开控件、豁免只覆盖表单控件）。
+
+### Installer
+
+- `client2api-setup-0.5.87.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `CB0C372B650D3F071635B998C389ECFB58886F7A5F1C67BCC0AEA3B0CD6C6026`
+
 ## [0.5.86] - 2026-11-03
 
 ### Fixed

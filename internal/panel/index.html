@@ -13851,7 +13851,10 @@ function acctCardActs(a, caps, acts) {
 // acctDetailHTML 是板卡「就地展开」后的详情：不再跳去表格，就地给出这个账号
 // 的可操作面——通道逐个列出、优先级用滑杆拖、动作链铺开。用 slider 而不是数字
 // 输入框，是因为「调优先级」本质是排序位置，拖比输更直接。
-function acctDetailHTML(g, a, caps, acts, showBal, prio) {
+// acctDetailHTML renders the expanded block.  detailID is optional: the card wall
+// passes one so aria-controls has a target (issue #119); the 3D inspector reuses
+// this renderer without a disclosure control, so it passes nothing.
+function acctDetailHTML(g, a, caps, acts, showBal, prio, detailID) {
   const chans = g.rows.map(r => {
     const rs = accountState(r);
     const tone = rs.key === "ready" ? "ok" : (rs.key === "cooling" || rs.key === "low_credit" ? "warn" : "bad");
@@ -13868,7 +13871,7 @@ function acctDetailHTML(g, a, caps, acts, showBal, prio) {
         '<output class="pv">' + esc(String(prio)) + "</output></div>"
     : "";
   const balRow = bal ? '<div class="ac-row"><span class="k">余额</span><b>' + bal + "</b></div>" : "";
-  return '<div class="ac-detail">' +
+  return '<div class="ac-detail"' + (detailID ? ' id="' + esc(detailID) + '"' : "") + '>' +
     '<div class="ac-rows">' +
       '<div class="ac-row"><span class="k">账号</span><b title="' + esc(accountHint(a)) + '">' + esc(String(a.id || "")) + "</b></div>" +
       balRow +
@@ -13920,12 +13923,22 @@ function renderAcctBoard(pageRows, caps, acts, showBal) {
     if (req == null && showBal) { big = ""; bigLab = "余额"; }
     const open = accIsOpen(CUR, g.key);
     const prio = a.priority == null ? 0 : Number(a.priority) || 0;
-    return '<article class="acct-card ' + tone + (open ? " open" : "") + '" data-grp="' + esc(g.key) + '"' +
-        ' tabindex="0" aria-expanded="' + (open ? "true" : "false") + '">' +
+    // 披露语义挂在**受支持的 role** 上并给出可访问名（issue #119）。
+    // 原来把 aria-expanded 写在 <article> 上：article 不支持这个属性，Chrome 的
+    // AX 树直接丢掉它，两态同貌；而且这一层没有任何名字，Tab 过去读屏只念
+    // 「article」。现在卡片头（名字 + 状态词）就是披露控件：role=button 携带
+    // aria-expanded + aria-controls，名字由 aria-labelledby 指向那两段文字——
+    // 与同页表格里 tr[data-grp] 那条既有实现同一套语义，不是第二套。
+    const detailId = "acd-" + String(i);
+    const headId = "ach-" + String(i);
+    return '<article class="acct-card ' + tone + (open ? " open" : "") + '" data-grp="' + esc(g.key) + '">' +
       '<div class="tilt-glare"></div>' +
-      '<div class="ac-head"><span class="ac-lamp" aria-hidden="true"></span>' +
-        '<span class="ac-name" title="' + esc(nm) + '">' + esc(nm) + "</span>" +
-        '<span class="ac-state">' + esc(accountState(st).label) + "</span></div>" +
+      '<div class="ac-head" id="' + headId + '" role="button" tabindex="0" data-grp="' + esc(g.key) + '"' +
+        ' aria-expanded="' + (open ? "true" : "false") + '" aria-controls="' + detailId + '"' +
+        ' aria-labelledby="' + headId + '-n ' + headId + '-s">' +
+        '<span class="ac-lamp" aria-hidden="true"></span>' +
+        '<span class="ac-name" id="' + headId + '-n" title="' + esc(nm) + '">' + esc(nm) + "</span>" +
+        '<span class="ac-state" id="' + headId + '-s">' + esc(accountState(st).label) + "</span></div>" +
       (big ? '<div class="ac-metric"><b data-fx-count="' + esc(String(req == null ? "" : req)) + '">' + esc(big) + '</b><span>' + esc(bigLab) + "</span>" +
         (multi ? "<span>· " + g.rows.length + " 个通道</span>" : "") + "</div>"
         : '<div class="ac-metric">' + (showBal ? accBalanceCell(a) : "") + "</div>") +
@@ -13937,7 +13950,7 @@ function renderAcctBoard(pageRows, caps, acts, showBal) {
         '<div class="ac-row"><span class="k">模型</span><b>' + accModelsCell(CUR, a) + "</b></div>" +
         '<div class="ac-row"><span class="k">状态说明</span><b>' + noteCell(a) + "</b></div>" +
       "</div>" +
-      (open ? acctDetailHTML(g, a, caps, acts, showBal, prio)
+      (open ? acctDetailHTML(g, a, caps, acts, showBal, prio, detailId)
             // 展开态里 acctDetailHTML 已内嵌一份 .ac-foot wide；再留外层这排
             // 就是两排一模一样的按钮（issue #3）。收起态没有详情块，外层 foot
             // 仍是唯一的动作排。3D 检视（b3dInspect）复用 acctDetailHTML 且无
@@ -14039,10 +14052,18 @@ function renderAccounts() {
   const board = $("#acctBoard");
   // 卡片墙的检视块（acctDetailHTML）里有同一个滑杆/下拉（issue #25）：豁免范围
   // 覆盖表格与卡片墙两个容器，不然 #23 的修复只救一半。
-  const editingInTable = tb.contains(document.activeElement) ||
-    board.contains(document.activeElement) ||
-    !!tb.querySelector(".accPrio:focus, .accPrio:active, select.test-model:focus, select.test-model:active") ||
-    !!board.querySelector(".accPrio:focus, .accPrio:active, select.test-model:focus, select.test-model:active");
+  // 「正在编辑」的判据是「焦点落在会被重建打断的**表单控件**上」，不是「焦点
+  // 在这个容器内」（issue #118）。板卡与组头行都是 tabindex="0"，点一下/按回车
+  // 之后焦点必然落在它们自己身上——用 contains() 判的话每一拍都被豁免，ACC_OPEN
+  // 翻了而界面永远不画（实测 9 秒不动，blur 一下立刻正常）。
+  // 真正要保护的是 #23/#25 那三类：滑杆拖到一半被抽走、下拉开着被换掉、输入框里
+  // 的字丢失——都是表单控件，与下面的判据一一对应。
+  const active = document.activeElement;
+  const isFormControl = !!active && active.matches &&
+    active.matches("input, select, textarea, [contenteditable=true]");
+  const editingInTable = (isFormControl && (tb.contains(active) || board.contains(active))) ||
+    !!tb.querySelector(".accPrio:active, select.test-model:active") ||
+    !!board.querySelector(".accPrio:active, select.test-model:active");
   const rec = ACCTS[CUR] || { accounts: [], capabilities: {} };
   const list = rec.accounts || [];
   const caps = rec.capabilities || {};
