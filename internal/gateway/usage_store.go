@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -375,6 +376,13 @@ func (s *UsageStore) flush(force bool) error {
 			f.Buckets = append(f.Buckets, *b)
 		}
 	}
+	// 稳定顺序（issue #112）：buckets 是 map，迭代序每次不同，于是「数据没变」
+	// 的两次 flush 也会产出一份逐字节不同的文档——实测两份相隔 65 秒的文件只有
+	// 13.6% 的字节相同，备份/去重/人眼 diff 全都吃不到。按身份键排序后，内容不变
+	// 就是同一串字节；变化的那十几个 bucket 也就能在看 diff 时一眼看出。
+	sort.Slice(f.Buckets, func(i, j int) bool {
+		return f.Buckets[i].key() < f.Buckets[j].key()
+	})
 	if len(s.lastOK) > 0 {
 		f.LastOK = make(map[string]time.Time, len(s.lastOK))
 		for id, ts := range s.lastOK {
@@ -383,7 +391,11 @@ func (s *UsageStore) flush(force bool) error {
 	}
 	s.mu.Unlock()
 
-	raw, err := json.MarshalIndent(f, "", "  ")
+	// 紧凑序列化（issue #112）：这个文件是机器读的，缩进纯属放大——同一份文档
+	// MarshalIndent 得 2,520,878 B、json.Marshal 得 1,561,255 B，缩进独占 61.5%。
+	// 每 30 秒把整份文档重写一遍的路径上，这 61.5% 是纯写盘量与 fsync 时间。
+	// 要给人看的话在面板或工具里再美化，不要落在持续写入的格式上。
+	raw, err := json.Marshal(f)
 	if err != nil {
 		s.reportError("usage encode", err)
 		return err
@@ -403,7 +415,7 @@ func (s *UsageStore) flush(force bool) error {
 	}
 
 	if len(rf.Records) > 0 {
-		rraw, err := json.MarshalIndent(rf, "", "  ")
+		rraw, err := json.Marshal(rf)
 		if err != nil {
 			s.reportError("recent encode", err)
 			return err

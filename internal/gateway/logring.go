@@ -174,6 +174,39 @@ func (r *LogRing) Entries(limit int) []LogEntry {
 	return out
 }
 
+// EntriesSince returns the entries stored after the first `since` lines, i.e. the
+// ones a reader that already saw `since` lines has not seen yet (issue #113).
+//
+// The second result reports whether the answer is complete: it is false when
+// `since` predates the oldest line still retained, because the lines in between
+// have been overwritten and can no longer be returned.  A caller that gets false
+// must replace its view with Entries(limit) instead of appending, or it would
+// silently skip whatever fell out of the window.
+//
+// The sequence number of an entry is its position in the stream since the process
+// started (1-based): the oldest retained entry is Total()-count+1, so a caller
+// can keep the Total() it last rendered and pass it straight back here.
+func (r *LogRing) EntriesSince(since int64) ([]LogEntry, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	total := r.total.Load()
+	oldest := total - int64(r.count) + 1
+	if since < oldest-1 {
+		// Asked from before what is retained: the gap is unrecoverable.
+		return nil, false
+	}
+	if since >= total {
+		return nil, true
+	}
+	first := int(since - (oldest - 1)) // index within the retained window
+	out := make([]LogEntry, 0, r.count-first)
+	for i := first; i < r.count; i++ {
+		out = append(out, r.buf[(r.start+i)%r.capacity])
+	}
+	return out, true
+}
+
 // Lines returns just the text of up to limit retained lines, oldest first.
 func (r *LogRing) Lines(limit int) []string {
 	entries := r.Entries(limit)

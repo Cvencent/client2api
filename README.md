@@ -5,7 +5,7 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-Current version: **0.5.80**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
+Current version: **0.5.81**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
 
 client2api is a personal, local-only OpenAI-compatible gateway. It aggregates
 the accounts and API Keys **you own** on different AI coding clients and
@@ -711,6 +711,16 @@ loop that never ended.
   again after a successful save), an unsaved-changes marker appears next to it,
   the 5s poll stops repainting the form while you are editing, and leaving the
   page — closing the tab or switching views — asks before discarding.
+- The Runtime Log poll is genuinely two-phase: the 4-second tick asks a ~29-byte
+  counter probe first and leaves the DOM alone when the total has not moved, then
+  fetches *only the lines after the last one it rendered* when it has. A cursor
+  that has already fallen out of the retained window gets the full window back
+  with a `partial: false` marker, so the page replaces rather than silently
+  skipping a gap.
+- The usage history file is written compactly (no indentation — the document is
+  machine-read; that alone was 61.5% of its bytes) and with its buckets in a
+  stable order, so two flushes of unchanged data produce identical bytes instead
+  of a fresh shuffle of the whole document.
 - Runtime Log
 
 ### Tasks, usage and accounting

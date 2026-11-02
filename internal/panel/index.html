@@ -19175,7 +19175,14 @@ let LOGPIN = true;
 let LOGCH = "all";
 // 上一次真正重画的「累计行数 | 频道」。网关的累计计数只增不减，所以它没变就等于
 // 没有新行，这一轮可以整段跳过；切换频道是唯一另一种必须重画的情况。
+// LOGSEEN 是「当前展示内容的 <total|频道>」去重戳，meta 与正文写的是**同一个**
+// 值（issue #113）。此前 meta 写 "meta:" 前缀、正文写 "ok:" 前缀，于是每一拍
+// meta 的戳都跟上一拍正文留下的 "ok:" 戳对不上——早退分支一次都命不中，两段式
+// 只剩「每拍必然重下 500 行」那一半。
+// LOGBODY 单独记「已渲染到第几行」，作为增量请求的游标；它与 LOGSEEN 职责不同：
+// 前者回答「还能不能早退」，后者回答「从哪一行往后要」。
 let LOGSEEN = null;
+let LOGBODY = null;
 const LOG_CH_LABEL = { task: "任务", chat: "对话", sys: "系统" };
 function logChannelName(ch) { return LOG_CH_LABEL[ch] || ch || "系统"; }
 function logLevelClass(text) {
@@ -19186,20 +19193,26 @@ function logLevelClass(text) {
 let LOG_LINES = [];
 async function renderLogs() {
   // 两段式轮询（issue #92）：先问 total（约百字节），没变就早退——静止时
-  // 这一拍 0 行新增，旧实现却整份重下 500 行（约 133 KB）。total 变了才把
-  // 正文拉回来；下面既有的 LOGSEEN 去重继续管「正文到了但和上次一样」的
-  // 少见情况（频道切换等）。
+  // 这一拍 0 行新增，旧实现却整份重下 500 行（约 133 KB）。
+  //
+  // 早退的判据是「当前展示内容的 total|频道」，meta 与正文写同一个戳
+  // （issue #113）。别把两边的戳分成不同前缀：那样每一拍 meta 的戳都跟上一拍
+  // 正文留下的戳对不上，早退分支永远命不中，两段式等于不存在。
+  //
+  // total 变了也不整份重下：带 since 游标只要新增那几行（issue #113 的第二半）。
+  // 部署实例平均 2.2 秒新增一行、轮询 4 秒一拍，所以「total 未变」几乎不成立，
+  // 真正的省钱点在这里。
   const meta = await api("/panel/api/logs?meta=1");
-  if (meta.ok) {
-    // The meta stamp lives in the same LOGSEEN namespace but under its own
-    // "meta:" prefix (issue #84's lesson): it can never dedupe against an
-    // "ok:" body stamp or the "err" stamp, so every state transition forces
-    // the right redraw.
-    const stamp0 = "meta:" + String((meta.data || {}).total || 0) + "|" + LOGCH;
-    if (stamp0 === LOGSEEN) return;
-    LOGSEEN = stamp0;
+  const metaTotal = meta.ok ? Number((meta.data || {}).total || 0) : null;
+  if (metaTotal != null) {
+    const stamp = "ok:" + String(metaTotal) + "|" + LOGCH;
+    if (stamp === LOGSEEN) return;
   }
-  const r = await api("/panel/api/logs?lines=500");
+  // 有游标、且这一拍之前已经渲染过同一频道 → 只要新增行。
+  const cursorOk = metaTotal != null && LOGBODY != null && LOGBODY.ch === LOGCH && LOGBODY.total <= metaTotal;
+  const r = cursorOk
+    ? await api("/panel/api/logs?since=" + LOGBODY.total + "&lines=500")
+    : await api("/panel/api/logs?lines=500");
   if (!r.ok) {
     $("#logNote").textContent = "读取失败";
     $("#logBox").innerHTML = '<div class="state err">' + esc(r.err) + '</div>';
@@ -19208,16 +19221,29 @@ async function renderLogs() {
     // the page stays stuck on the old "读取失败" until an unrelated event
     // changes the stamp.
     LOGSEEN = "err";
+    LOGBODY = null;   // 出错后下一次必须整份重读，别拿旧游标接续（issue #113）
     return;
   }
-  const d = r.data || {}, all = d.entries || [];
+  const d = r.data || {}, fresh = d.entries || [];
   // The 4s poll rebuilt up to 500 rows of innerHTML every time, even when nothing
   // had been logged.  Compare first and leave the DOM alone when it cannot differ.
   // "ok" rides in the stamp so an error round and a success round can never
   // dedupe against each other (issue #84).
   const stamp = "ok:" + String(d.total || 0) + "|" + LOGCH;
   if (stamp === LOGSEEN) return;
+  // 增量与整份两种响应（issue #113）：partial 为真时 fresh 只是新增的那几行，
+  // 接在已渲染的窗口后面；否则（首读 / 换频道 / 游标已滑出保留窗口）整份替换。
+  let all;
+  if (d.partial) {
+    all = LOG_LINES.concat(fresh);
+    // 保留窗口有上限：只留最近 capacity 行，和整份响应的口径一致。
+    const cap = Number(d.capacity) || 0;
+    if (cap > 0 && all.length > cap) all = all.slice(all.length - cap);
+  } else {
+    all = fresh;
+  }
   LOGSEEN = stamp;
+  LOGBODY = { total: Number(d.total || 0), ch: LOGCH };
   LOG_LINES = all;
   const box = $("#logBox");
   /* 先看用户是不是本来就在底部：翻上去读历史时不该被新一轮日志拽回来。 */

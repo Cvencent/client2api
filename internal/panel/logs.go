@@ -18,6 +18,12 @@ type logsResponse struct {
 	Entries  []gateway.LogEntry `json:"entries"`
 	Total    int64              `json:"total"`
 	Capacity int                `json:"capacity"`
+	// Partial reports that Entries holds only the lines after the caller's
+	// `since` cursor, so the page appends them instead of replacing the window
+	// (issue #113).  False means "this is the whole retained window" — either
+	// because no cursor was given, or because the cursor predates what is still
+	// retained and the gap cannot be filled.
+	Partial bool `json:"partial,omitempty"`
 }
 
 // logsMetaResponse is the two integers the 4-second poll actually needs
@@ -55,6 +61,35 @@ func (p *panel) handleLogs(w http.ResponseWriter, r *http.Request) {
 			Capacity: ring.Capacity(),
 		})
 		return
+	}
+
+	// Incremental fetch (issue #113).  The 4-second poll used to re-download the
+	// whole 500-line window whenever total moved — and on a real deployment a line
+	// arrives every ~2.2s, so total moves on essentially every tick.  With a
+	// cursor the page asks for "everything after the line I last rendered" and
+	// receives the one or two lines that actually appeared (~110 B each) instead
+	// of ~95 KB.
+	//
+	// The cursor is the same Total() the page already renders, so it needs no new
+	// state on the server.  A cursor that has fallen out of the retained window
+	// cannot be served incrementally; that case answers with the full window and
+	// Partial=false so the page replaces rather than appends.
+	if raw := r.URL.Query().Get("since"); raw != "" {
+		since, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "since must be an integer")
+			return
+		}
+		if entries, ok := ring.EntriesSince(since); ok {
+			writeJSON(w, http.StatusOK, logsResponse{
+				Entries:  entries,
+				Total:    ring.Total(),
+				Capacity: ring.Capacity(),
+				Partial:  true,
+			})
+			return
+		}
+		// Fall through to the full window below.
 	}
 
 	limit := defaultLogLines

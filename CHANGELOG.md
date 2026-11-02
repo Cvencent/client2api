@@ -54,6 +54,56 @@
 - `client2api-setup-0.5.73.exe`（空包，不含账号凭据或本机配置）
   SHA256: `EF4235020D68984FF57BCFBC0529DFB561609B257CFA1E6ACB0F10A54EE8486C`
 
+## [0.5.81] - 2026-11-02
+
+### Fixed
+
+- **「优化机制建好了但实际没生效」一类（#113 + #112）**——两单都不是没做优化，
+  机制都在，但一个被同一段代码的另一半覆盖掉、另一个只做了半程：
+  - **日志页的两段式轮询真的生效了。** 面板的 4 秒一拍先问 `meta=1` 轻查询（约
+    百字节），total 没变就早退——但**早退分支一次都命不中**：meta 戳写
+    `LOGSEEN = "meta:<total>|<ch>"`，正文拉回来后同一拍又把它改成
+    `"ok:<total>|<ch>"`，下一拍算出的 meta 戳与它前缀不同，永远不相等（`index.html`
+    的 renderLogs）。当时给 meta 戳加独立前缀的理由是「三种状态不能互相去重」
+    （#84 的教训），但三种状态本来就由 total 与频道区分，不需要靠前缀——那个前缀
+    的实际效果是让 meta 守卫自己匹配不上自己。现在 meta 与正文写同一个
+    `"ok:<total>|<ch>"` 戳（错误态仍是 `"err"`，且出错时作废增量游标）。
+    另一半同样重要：只修戳不够——部署实例平均 **2.2 秒新增一行**、轮询 4 秒一拍，
+    「total 未变」几乎不成立，所以新增 `/panel/api/logs?since=<total>` 游标：
+    变了也只取新增的那几行（本机实测 11 行 = **2 351 B**，而整份 500 行是
+    **10 631 B**）。游标已滑出保留窗口时（中间的行走掉了）服务端退回整份并带
+    `partial: false`，页面据此替换而不是追加——否则会静默跳过一段日志。客户端在
+    `partial` 时把新行接在已渲染窗口后面并按 capacity 截断，换频道 / total 回退 /
+    出错都强制整份重读。
+    实测（隔离实例，4 秒一拍的稳态）：日志静止的那 14 秒 **正文请求 0 次**、只发
+    3 次 29 B 的 meta 探针；持续有新日志时是 `meta=1`（29 B）+ `since=<游标>`
+    （486~1 336 B）配对，**整份 500 行的请求 0 次**。
+  - **用量库不再每 30 秒把缩进版整份重写一遍。** `usage_store.go` 用
+    `json.MarshalIndent(f, "", "  ")` 序列化整份文档，缩进纯属放大——实测同一份
+    文档缩进版 2 520 878 B、紧凑版 1 561 255 B，**缩进独占 61.5%**；这个文件是
+    机器读的。现在改用 `json.Marshal`（`recent.json` 同一处理）；另外 buckets 从
+    map 迭代出来、每次顺序都不同，导致「数据没变」的两次 flush 也产出一份逐字节
+    不同的文档（实测两份相隔 65 秒的文件只有 **13.6%** 字节相同），现在序列化前
+    按身份键 `scope|client|realm|account|model` 排序——内容不变就是同一串字节，
+    可 diff、可被备份/去重吃掉。分片 / append-only journal 那条方向改动面大，
+    本轮不动。
+  - **顺带修掉一条「PASS 而缺陷在」的守卫测试**：`logs_meta_probe_test.go` 的
+    `TestLogsRenderUsesTheTwoPhasePoll` 把 `"meta:"` 那个前缀写成断言——它正是
+    缺陷本身。改成钉三件行为（先问 meta、同形戳早退、正文按需拉取），戳的具体形态
+    由新增的 `log_poll_incremental_ui_test.go` 钉。
+  - 新增守卫：`internal/gateway/logring_since_test.go`（游标能接上 / 已接不上 /
+    逐拍推进后与整份窗口一致）、`internal/gateway/usage_store_compact_test.go`
+    （不许再用 MarshalIndent、排序必须在序列化前、以及真跑两次 flush 断言
+    「数据没变 → 字节相同」与「落盘文档里没有缩进」）、
+    `internal/panel/log_poll_incremental_ui_test.go`（戳同形、错误态作废游标、
+    带 since、partial 追加与 capacity 截断、以及服务端确实解析 since 并标 partial）。
+  - README 中英两版同步了这两处行为。
+
+### Installer
+
+- `client2api-setup-0.5.81.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `955D55619F681595388F4BE8E477B96818A2860B78185F561FE49D97F266F094`
+
 ## [0.5.80] - 2026-11-02
 
 ### Fixed
