@@ -5,7 +5,7 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-Current version: **0.5.77**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
+Current version: **0.5.78**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
 
 client2api is a personal, local-only OpenAI-compatible gateway. It aggregates
 the accounts and API Keys **you own** on different AI coding clients and
@@ -686,6 +686,12 @@ loop that never ended.
   without a reload, for every consumer of the preference at once: the CSS layer,
   both WebGL scenes, and the two 2D canvases (the background particle field
   stops and its canvas is cleared; click sparks stop being emitted).
+- Entry animation runs once per view per session: a view that has been shown
+  before re-renders straight to its final state, so switching back and forth
+  does not replay the whole-page cascade. Switching the Task Board to another
+  client puts the summary line and the body into a pending state before the
+  request goes out, so the new client's account chips never sit next to the
+  previous client's rows while a slow upstream answers.
 - Runtime Log
 
 ### Tasks, usage and accounting

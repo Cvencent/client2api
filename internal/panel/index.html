@@ -5544,8 +5544,9 @@ input, select, textarea, .stat, .subtab {
    这一层补三件具体的事：视图进场时区块依次浮现、统计数字读出来后滚到位、
    折叠区展开时高度平滑过渡。全部在 prefers-reduced-motion 下一并关掉。 */
 
-/* 1) 视图进场：同级区块按顺序错峰浮现（0/40/80ms…，最多 5 档）。
-      每屏只演一次；切回来的视图带 .settle，直接就是最终状态。 */
+/* 1) 视图进场：同级区块按顺序错峰浮现（34ms/项）。
+      每屏只演一次；切回来的视图带 .settle，直接就是最终状态——判据在 JS 侧
+      （fxCascade 首行读 .settle 后直接返回，issue #55）。 */
 /* 区块级入场统一由 .fx-in（见动效增强层）负责，这里不再叠一层 blockIn。
    两套同时跑的话，同一块内容会先被 blockIn 淡入一次、再被 fx-in 淡入一次。 */
 
@@ -8496,7 +8497,10 @@ function setNav(ok, msg) {
    导航从左侧竖栏搬到了顶栏（见 CSS 第 40 节）。这里只剩两件事：
    把命令面板接到顶栏按钮上，以及在切页时点亮对应的导航项。 */
 // 已演过进场动画的视图。每屏只演一次：切回来重播会让频繁来回切换变得烦躁。
+// go() 进页时按它给视图打 .settle，fxCascade 读到就跳过编排（issue #55）——
+// 两者是一对：只写不读（或只读不写）都会让「只演一次」断掉。
 const VIEW_ENTERED = new Set();
+
 
 /* ── 全局弹簧动效层（Motion / Anime.js 手法，纯原生）────────────────────
    三件事，覆盖「所有页面的所有按钮都有动效」这条要求：
@@ -9058,16 +9062,22 @@ function go(v) {
   VIEW = v;
   SHELL.syncActive(v);
   $$(".view").forEach(s => { s.hidden = s.id !== "view-" + v; });
-  // 进场动画只演一次：给已经看过的视图打上 settle，CSS 那边就不再重播。
+  // 进场编排只演一次（issue #55）：settle 现在是真判据，不是只写不读的标记。
+  // 这条机制曾经断成两半——`.settle` 的写入还在，读它的那族 CSS 在「区块级
+  // 编排改由 .fx-in 负责」那一次提交里被删了；同时这里又无差别清掉整页的
+  // data-fx-done，于是每次切回来都把整页重演一遍（配置页尾部延迟 408ms），
+  // 而注释仍写着「只演一次」。现在把判据放回代码里：带 settle 的视图直接跳过
+  // 编排（见 revealView / fxCascade 的首行守卫），首演时才真正点火。
   const shown = $("#view-" + v);
   if (shown) {
     if (VIEW_ENTERED.has(v)) shown.classList.add("settle");
     else { VIEW_ENTERED.add(v); shown.classList.remove("settle"); }
-    // 每次「进入」这一页都清掉上一次的编排标记，卡片墙随后重画时才能再演一遍；
-    // 同一页内的数据刷新不会经过这里，所以轮询不会重播。
-    shown.querySelectorAll("[data-fx-done]").forEach(el => { delete el.dataset.fxDone; });
-    // 进场编排：级联上浮（42ms/项）+ 视口内生长条。上一版是统一 6px 淡入，
+    // 进场编排：级联上浮（34ms/项）+ 视口内生长条。上一版是统一 6px 淡入，
     // 整页像「一起亮了一下」，读不出层次；现在眼睛会顺着次序扫过去。
+    // 这里不再清 data-fx-done：那次清除是为了让「卡片墙随后重画时能再演一遍」，
+    // 但它是无差别的——没被重画的静态区块（.box / .cfgrow / 表格行…）也跟着
+    // 重新级联。同一页内原地重画的数据本来就不经过 go()，而新生成的元素没有
+    // fxDone，该演的照样会演（fxAfterData 那条路径）。
     revealView(v);
     fxCascade(shown);
     fxAfterData(v);
@@ -10283,6 +10293,9 @@ const FXX = { io: null, seen: new WeakSet() };
 // 用 CSS 变量 --i 驱动 delay，避免为每个元素写内联 animationDelay。
 function fxCascade(host, sel) {
   if (!host || motionReduce()) return;
+  // 已经进场过的视图不再编排（issue #55）：settle 是 go() 打的「这一页演过」，
+  // 这里是它唯一的读者。少了这一句，判据写了没人读，每次切回来整页重演。
+  if (host.classList.contains("settle")) return;
   // 选择器覆盖「视觉单元」：面板、卡片、舱位条、表格行。上限 40：再多就
   // 每项延迟 42ms，最后一项要等 1.7 秒，反而显得慢。
   const items = [...host.querySelectorAll(sel ||
@@ -10292,6 +10305,7 @@ function fxCascade(host, sel) {
   // 只演「这一轮新出现」的元素。数据加载完成后会再调一次，如果每次都把全部
   // 元素重放一遍（remove → reflow → add），已经可见的区块会重新从透明淡入——
   // 观感就是页面连着闪两三次。用 dataset 记住已演过的，第二次起只处理新元素。
+  //
   let fresh = 0;
   items.forEach(el => {
     if (el.dataset.fxDone === "1") return;
@@ -20065,6 +20079,13 @@ async function renderTaskBoard(force) {
   else if (!TASKCENTER.allAccounts && !TASKCENTER.account) { TASKCENTER.allAccounts = true; }
   $("#tbAccountsBar").hidden = !accts.length;
   $("#tbAccounts").innerHTML = tbAccountChips(accts);
+
+  // 发请求前必须把头部与正文推进过渡态（issue #61）。账号条上面刚换成了新客户端
+  // 的账号，而 /tasks 的往返（loomy 这类上游慢的动辄一分钟）期间 #tbNote /
+  // #tbBody 还是上一个客户端的内容——页面上同时呈现两个客户端的东西，分不清
+  // 「点了没生效」还是「在加载」。过渡态一起立起来，旧正文就不会和新账号条并排。
+  $("#tbNote").textContent = platformLabel(TB.client) + " · 扫描中…";
+  $("#tbBody").innerHTML = '<div class="pad hint">正在读取 ' + esc(platformLabel(TB.client)) + ' 的任务状态…</div>';
 
   const params = [];
   if (TASKCENTER.allAccounts) params.push("all=1");
