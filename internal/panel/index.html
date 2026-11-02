@@ -8600,12 +8600,60 @@ function fxAfterData(view) {
    氛围。reduced-motion 时不画（保持静态网格）。粒子数按面积自适应，
    上限 46 个，保证小屏也不卡。 */
 const BGF = { raf: 0, canvas: null, ctx: null, pts: [], w: 0, h: 0, dpr: 1, wired: false };
+// BGF_MAX_PX 是这块氛围画布的像素上限（issue #91）。它只是个漂移连线层，信息量
+// 为零，却按整块视口面积付每帧 clear + fill 的钱：dpr 取 min(2, devicePixelRatio)
+// 时 2x 屏上背板是 2860×1696 ≈ 4.85 Mpx（粒子数却只从 25 涨到 46，点数与 dpr
+// 无关）——像素量翻了四倍，买到的只是更细的 1px 线。按上限等比降 dpr，把 2x 屏
+// 的背板压到约 1.3 Mpx，外观几乎不变（线更粗一点，本来就是 0.32 透明度的短线）。
+/* texCachePut 是 3D 舞台 / 星图铭牌贴图缓存的统一写入口（issue #65）。
+   这两处缓存原来就是两个普通对象：键里带了读数（会变），而对象没有上限、也没有
+   淘汰——读数一动就多一张 520×560 的贴图，只进不出（实测每拍 +2.22 MB，两张卡
+   ≈ 26 MB/分钟）。贴图是真的占着纹理单元（缓存 +2 → renderer.info.memory.textures
+   +2），堆到上限就是 WebGL 上下文丢失。这里给它一个上界：超了按插入顺序淘汰最
+   旧的、淘汰时 dispose 掉纹理本身。
+
+   两条纪律写在这里，两处调用都受益：
+   · **正在用的键不动**。live 是「这一轮重建真正取用过的键」的集合，由
+     texCacheMarkLive 在重建结束后标记，texCacheSweep 在下一轮清理时读它。
+     没有这道保护会把正在渲染的贴图 dispose 掉，屏幕上的板卡会变黑/花掉。
+   · **切主题要 dispose 而不是把对象丢掉**。原实现 `B3D.texCache = {}` 只是丢引用，
+     纹理仍占着显存，两次主题来回切就漏掉一批。
+   上限取 96：够装下「一整页板卡 × 两套主题」的常用组合（22 张卡也就 22 个键/主题），
+   又远低于会撞纹理上限的量级。 */
+const TEX_CACHE_MAX = 96;
+const texCacheLive = new Set();
+function texCacheSweep(cache) {
+  const keys = Object.keys(cache);
+  if (keys.length <= TEX_CACHE_MAX) return;
+  // keys 是插入顺序；从最旧的开始淘汰，但跳过 live（正在场景里用的）。
+  for (const k of keys) {
+    if (Object.keys(cache).length <= TEX_CACHE_MAX) break;
+    if (texCacheLive.has(k)) continue;
+    const t = cache[k];
+    delete cache[k];
+    if (t && t.dispose) { try { t.dispose(); } catch (e) {} }
+  }
+}
+function texCacheMarkLive(keys) {
+  texCacheLive.clear();
+  keys.forEach(k => texCacheLive.add(k));
+}
+// texCacheReset 是切主题那条路径：把所有贴图真正释放掉，而不是丢引用。
+function texCacheReset(cache) {
+  if (!cache) return;
+  Object.keys(cache).forEach(k => { const t = cache[k]; if (t && t.dispose) { try { t.dispose(); } catch (e) {} } });
+  Object.keys(cache).forEach(k => { delete cache[k]; });
+  texCacheLive.clear();
+}
+const BGF_MAX_PX = 1.3e6;
 function bgfResize() {
   const c = BGF.canvas;
   if (!c) return;
   const r = c.getBoundingClientRect();
-  BGF.dpr = Math.min(2, window.devicePixelRatio || 1);
   BGF.w = r.width; BGF.h = r.height;
+  let d = Math.min(2, window.devicePixelRatio || 1);
+  if (r.width * r.height * d * d > BGF_MAX_PX) d = Math.sqrt(BGF_MAX_PX / Math.max(1, r.width * r.height));
+  BGF.dpr = Math.max(0.5, d);
   c.width = Math.round(r.width * BGF.dpr);
   c.height = Math.round(r.height * BGF.dpr);
   const want = Math.min(46, Math.round(r.width * r.height / 26000));
@@ -8632,8 +8680,18 @@ function bgfStart() {
   bgfResize();
   if (!BGF.wired) { BGF.wired = true; window.addEventListener("resize", bgfResize, { passive: true }); }
   const LINK = 118;
-  const loop = () => {
+  // 纯氛围层降到 ~30fps（issue #91）：漂移连线看不出 30 与 60 的差别，但开销差
+  // 一倍。用时间戳自己节流，而不是 setInterval——后者与 rAF 的节拍会互相打架。
+  const FRAME_MS = 1000 / 30;
+  let last = 0;
+  const loop = ts => {
     BGF.raf = requestAnimationFrame(loop);
+    if (ts && ts - last < FRAME_MS) return;
+    last = ts || 0;
+    // 页面不可见时不画（issue #91）：后台标签的 rAF 本来就降频，但面板常驻第二个
+    // 显示器/侧屏时一直可见，这条就一直付钱。**窗口失焦不停**——用户把浏览器放
+    // 在侧屏盯着看正是常态，失焦即冻结会像卡住。只按 Page Visibility 判。
+    if (document.visibilityState === "hidden") return;
     const ctx = BGF.ctx, w = BGF.w, h = BGF.h;
     ctx.setTransform(BGF.dpr, 0, 0, BGF.dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
@@ -8671,11 +8729,22 @@ function bgfStart() {
 // 动效关掉之后这块画布就是一块干净的透明层。
 function bgfStop() {
   if (BGF.raf) { cancelAnimationFrame(BGF.raf); BGF.raf = 0; }
+  bgfWipe();
+}
+// bgfWipe 只清画布（不碰循环）。两处用它：bgfStop 收尾，以及页面从隐藏回到可见
+// 时抹掉「上次可见那一帧」（issue #91）——那期间循环挂着不画，屏幕上留着的还是
+// 停手前的画面，不抹的话会看到一层不动的旧粒子连线。
+function bgfWipe() {
   if (BGF.ctx && BGF.w && BGF.h) {
     BGF.ctx.setTransform(BGF.dpr, 0, 0, BGF.dpr, 0, 0);
     BGF.ctx.clearRect(0, 0, BGF.w, BGF.h);
   }
 }
+// 从隐藏回到可见时同步一次节流基线并抹掉旧帧：否则恢复后的第一帧会因为
+// `ts - last` 巨大而直接放行（无害），但屏幕上会先闪一下冻结的旧画面。
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") bgfWipe();
+}, { passive: true });
 
 /* ── 聚光灯跟踪（React Bits Spotlight）────────────────────────────────
    在一个视口级监听里把鼠标位置写进最近的 .box 的 --mx/--my，CSS 那边
@@ -11585,6 +11654,7 @@ function atlasLabelTexture(z) {
   g.textAlign = "left";
   const tex = new THREE.CanvasTexture(c);
   ATLAS.texCache[key] = tex;
+  (ATLAS.liveKeys || (ATLAS.liveKeys = [])).push(key);
   return tex;
 }
 
@@ -11767,6 +11837,11 @@ function atlasBuild() {
   hub.add(envHalo(P.hub, 9.0, P.plateGlow * 1.15));
 
   ATLAS.env = envAttach(ATLAS.scene, { radius: R * 0.68, floorY: groundGridY(), stars: 620 });
+  // 这一轮真正取用过的贴图键标为 live，并淘汰超限的旧键（issue #65）。放在
+  // 最后：此刻场景已经建完，live 集合里就是「正在被谁用着」的完整名单。
+  texCacheMarkLive(ATLAS.liveKeys || []);
+  ATLAS.liveKeys = [];
+  texCacheSweep(ATLAS.texCache);
 }
 // groundGridY 与立柱底部对齐（立柱从 -2.4 起立）。
 function groundGridY() { return -2.4; }
@@ -12658,6 +12733,7 @@ function b3dTexture(item, maxV) {
   }
   const tex = new THREE.CanvasTexture(c);
   B3D.texCache[key] = tex;
+  (B3D.liveKeys || (B3D.liveKeys = [])).push(key);
   return tex;
 }
 
@@ -12691,6 +12767,7 @@ function b3dBarLabel(item, col) {
   g.fillText(String(item.value == null ? "—" : item.value), 12, 78);
   const tex = new THREE.CanvasTexture(c);
   B3D.texCache[key] = tex;
+  (B3D.liveKeys || (B3D.liveKeys = [])).push(key);
   return tex;
 }
 
@@ -13683,6 +13760,12 @@ function mountBoard3d(view) {
   } else {
     none.hidden = true;
     b3dBuild(spec);
+    // 这一轮建场景时取用过的贴图键 = 正在被渲染的那批（issue #65）。标为 live、
+    // 清掉超限的旧键放在建完之后：b3dBuild 内部各分支都会调 b3dTexture / b3dBarLabel，
+    // 收尾时 liveKeys 就是完整名单。
+    texCacheMarkLive(B3D.liveKeys || []);
+    B3D.liveKeys = [];
+    texCacheSweep(B3D.texCache);
     // 按 label 找回重建前的选中（issue #6）：板卡是每次重建重新生成的，
     // 只有 label 是跨重建稳定的身份。readout/检视面板由 b3dReadout 统一画。
     if (prevSel != null) {
@@ -21203,8 +21286,10 @@ function applyTheme(t) {
   });
   if (prev === theme) return;
   // 主题变了：贴图缓存按主题分键，清掉旧的一套免得越积越多。
-  if (typeof B3D !== "undefined") B3D.texCache = {};
-  if (typeof ATLAS !== "undefined") ATLAS.texCache = {};
+  // 切主题要把贴图真正释放掉（issue #65）：`texCache = {}` 只是丢引用，纹理仍
+  // 占着显存——两次主题来回切就漏一批。texCacheReset 逐个 dispose 再清空。
+  if (typeof B3D !== "undefined") texCacheReset(B3D.texCache);
+  if (typeof ATLAS !== "undefined") texCacheReset(ATLAS.texCache);
   if (typeof ENVKIT !== "undefined") { ENVKIT.dome = {}; ENVKIT.glow = null; }
   // 重建正在显示的两块画布（都只在它们真的存在时才动）。
   try {
@@ -24629,7 +24714,17 @@ async function refreshAll(loud) {
   if (VIEW === "logs") renderLogs();
   // 数据到位后把当前页的 masthead 读数重算一遍（它读的就是上面这些）。
   mountMasthead(VIEW);
-  if (document.body.classList.contains("mode-3d")) mountBoard3d(VIEW);
+  // 3D 舞台走签名判断（issue #65）。这里原来是无条件 mountBoard3d(VIEW)：每 5 秒
+  // 一拍都重建场景，而贴图缓存按读数分键——读数一动就多一张 520×560 的贴图，
+  // 只进不出（实测每拍 +2.22 MB）。同文件 1.5 秒那条 tick（afterViewData 与
+  // 舞台对账）早就写了签名守卫，同一页面两套口径；这里统一到签名判断上，
+  // 读数没变就不重建，直接砍掉空载下绝大部分贴图生成与场景重建。
+  if (document.body.classList.contains("mode-3d")) {
+    const spec = b3dSpec(VIEW);
+    const sig = spec.items.map(x => x.label + "|" + x.value + "|" + x.raw).join("~");
+    if (sig !== B3D.sig || B3D.view !== VIEW) mountBoard3d(VIEW);
+    else B3D.sig = sig;
+  }
   if (loud) toast("已刷新");
   return true;
 }

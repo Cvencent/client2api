@@ -33,9 +33,16 @@ func TestReduceMotionChangeStopsTheBackgroundField(t *testing.T) {
 		t.Fatal("onReduceChange 没有在离开 reduce 时重新起循环：粒子场再也回不来了（issue #54）")
 	}
 	// 停下之后要清一帧：只 cancel 的话粒子连线会结在屏幕上。
+	// 清画布的实现抽到了 bgfWipe（issue #91 把「从隐藏回到可见也要抹一帧」一起
+	// 收进去了），所以这里钉「bgfStop 必须调它」+「bgfWipe 必须真的清」两段，
+	// 而不是把 clearRect 钉在 bgfStop 的循环体里。
 	stop := poolStatsFuncBody(t, src, "bgfStop")
-	if !strings.Contains(stop, "clearRect(") {
+	if !strings.Contains(stop, "bgfWipe(") {
 		t.Error("bgfStop 没有清画布：停住那一刻的粒子连线会留在屏幕上，看起来像画面卡住（issue #54）")
+	}
+	wipe := poolStatsFuncBody(t, src, "bgfWipe")
+	if !strings.Contains(wipe, "clearRect(") {
+		t.Error("bgfWipe 没有真的清画布：bgfStop / 回到可见时抹掉旧帧都失效（issue #54）")
 	}
 }
 
