@@ -548,6 +548,20 @@ func (s *stream) Recv() (core.Event, error) {
 			return ev, nil
 		}
 	case <-s.done:
+		// done can close while the reader still has events buffered -- the
+		// reader sends every event it parsed BEFORE recording the outcome, and
+		// both channels are ready at that point, so the select above may pick
+		// either.  Without this drain the terminal error wins the race and the
+		// events it should have followed are then delivered AFTER it: the
+		// caller sees content following a failure (a CI run caught exactly
+		// that: "second Recv err = <nil>, want io.EOF").
+		select {
+		case ev, ok := <-s.events:
+			if ok {
+				return ev, nil
+			}
+		default:
+		}
 	}
 	s.mu.Lock()
 	err := s.err

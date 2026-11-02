@@ -89,6 +89,18 @@
     复用了 boot 的会话、三条判据都是量出来的、跳过故意隐藏的列、进账号池前切到
     表格呈现（卡片墙下表格宽高为 0，直接量会在正确的代码上失败）。
 
+  - **顺带修掉 CI 红暴露出来的 codearts 流竞态。** 本次发版的 tag 流水线在
+    `clients/codearts` 上红了一次：`TestStreamDeliversATerminalErrorOnce` 报
+    「second Recv err = <nil>, want io.EOF」。查下去不是测试抖动，是 `Recv` 里
+    的真实竞态——reader 先把它解析出的事件送进**带缓冲**的 channel，最后才记录
+    结果并关闭 `done`；两个 channel 同时就绪时 `select` 随机挑一个，于是「事件还
+    在缓冲区里」时错误完全可能先被返回，那些事件随后在**错误之后**交付给调用方
+    （调用方看到「先失败、后内容」）。修法是 `done` 分支里先非阻塞地把缓冲中已有的
+    事件取出来再返回错误。新增 `clients/codearts/sse_receive_order_test.go`：一条
+    构造出该交错顺序的确定性用例（**在未修的代码上必红**，已实测），加两条压力
+    用例（500 轮「内容 + 致命错误」断言错误之后不再有事件、200 轮干净结束断言
+    事件不丢不乱序）。
+
 ### Installer
 
 - `client2api-setup-0.5.90.exe`（空包，不含账号凭据或本机配置）
