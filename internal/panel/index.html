@@ -1510,6 +1510,10 @@ button.chip.on { background: var(--accent-soft); color: var(--accent); border-co
 /* 表格单元格：8px/12px 在 1180px 封顶时是必要的，去掉封顶后可以给回呼吸感。 */
 .acc th, .acc td { padding: 10px 14px; border-bottom: 1px solid var(--line-soft); text-align: left; vertical-align: middle; }
 .acc thead th { color: var(--ink-3); font-weight: 500; font-size: 12px; background: var(--surface-2); white-space: nowrap; }
+/* 可排序列头的箭头属于本列（issue #87）：列宽吃紧时标签收缩而不是溢出到
+   邻列——sticky 表头按 DOM 序后列压前列，溢出的箭头会被邻居盖住且点击落到
+   邻列的排序上。 */
+.acc thead th.sortable { max-width: 100%; overflow: hidden; }
 /* 机架轨道头：账号池的表头不再是「表格的灰色头带」，而是一条刻度轨道——
    无底色、细等宽小字、字距拉开，像机架顶部的通道标签条。
    列名下面带 1px 刻度线（sortable 列的刻度更亮，暗示可点）。 */
@@ -1873,13 +1877,18 @@ html { scrollbar-gutter: stable; }
 #view-accounts table.acc .col-models { width: 6%; }
 #view-accounts table.acc .col-prio { width: 5%; }
 #view-accounts table.acc .col-bal { width: 8%; }
-#view-accounts table.acc .col-rate { width: 5%; }
-#view-accounts table.acc .col-inflight { width: 4%; }
+/* 「成功 / 失败」列（issue #87）：5% 装不下 nowrap 的「成功 / 失败」标签，
+   内容溢出后被 sticky 的「在途」列头盖住——箭头不可见、点击落到邻列。加宽
+   到 6%，「在途」两字本来就只占 4% 的一半，各让一点。 */
+#view-accounts table.acc .col-rate { width: 6%; }
+#view-accounts table.acc .col-inflight { width: 4.5%; }
 #view-accounts table.acc .col-usage { width: 9.5%; }
 #view-accounts table.acc .col-last { width: 6%; }
 #view-accounts table.acc .col-expiry { width: 7.5%; }
 #view-accounts table.acc .col-note { width: 8.5%; }
-#view-accounts table.acc .col-acts { width: 22.5%; }
+/* 操作列 22.5→21：给「成功 / 失败」列让 1.5%（issue #87）；该列自身的
+   144px 两列网格问题另案（issue #88）。 */
+#view-accounts table.acc .col-acts { width: 21%; }
 #view-accounts table.acc th.sortable { cursor: pointer; user-select: none; white-space: nowrap; transition: color .15s ease, background .15s ease; }
 #view-accounts table.acc th.sortable:hover { color: var(--accent-text); background: var(--surface-2); }
 #view-accounts table.acc th.sortable:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
@@ -6380,9 +6389,12 @@ html:not([data-theme="light"]) body::after {
    悬停才给底色。原来每行都有 border + hover 双层。 */
 .acc tbody td { border-bottom: 1px solid color-mix(in srgb, var(--line) 45%, transparent); }
 .acc tbody tr:hover { background: color-mix(in srgb, var(--accent) 4%, transparent); }
-/* 卡片头的动作是次级（灰底描边），不是主要——一页只有一个主按钮。 */
-.box > header button.xs { background: var(--surface); border-color: var(--line); }
-.box > header button.xs:hover:not(:disabled) { border-color: var(--ink-3); color: var(--ink); }
+/* 卡片头的动作是次级（灰底描边），不是主要——一页只有一个主按钮。primary
+   豁免（issue #86）：这条的权重 (0,2,1) 高于 button.primary (0,1,1) 且更后，
+   不豁免会把主按钮的 accent 底换成卡片底色——浅色主题下白底白字（对比度 1:1），
+   深色下主操作与旁边的次级控件同貌。hover 的文字色同理只在非主按钮上生效。 */
+.box > header button.xs:not(.primary) { background: var(--surface); border-color: var(--line); }
+.box > header button.xs:not(.primary):hover:not(:disabled) { border-color: var(--ink-3); color: var(--ink); }
 
 /* 子页签（chip subtab）：不用胶囊，用文字 + 底边，和顶栏导航同一套语法。 */
 .subtabs { gap: 2px; margin-bottom: 14px; border-bottom: 1px solid var(--line); }

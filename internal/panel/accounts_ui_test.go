@@ -292,7 +292,7 @@ func TestAccountColumnsSplitTheTableEvenly(t *testing.T) {
 		`#view-accounts table.acc .col-last { width: 6%; }`,
 		`#view-accounts table.acc .col-bal { width: 8%; }`,
 		`#view-accounts table.acc .col-note { width: 8.5%; }`,
-		`#view-accounts table.acc .col-acts { width: 22.5%; }`,
+		`#view-accounts table.acc .col-acts { width: 21%; }`,
 		`#view-accounts table.acc td.c-usage,`,
 		`#view-accounts table.acc td.c-last { overflow: hidden; }`,
 		`<td class="c-usage">' + accUsageCell(a) + '</td>`,
