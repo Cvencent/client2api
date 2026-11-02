@@ -41,6 +41,18 @@ const (
 	defaultIdleTimeout   = 2 * time.Minute
 	defaultCooldown      = 60 * time.Second
 	defaultQuotaCooldown = 12 * time.Hour
+	// defaultFreeQuotaCooldown is the FIRST park for the free-tier usage gate
+	// (issue #108).  The vendor says "Free usage limit reached. Free models work
+	// in OpenCode" -- the free tier is throttled and reopens on its own, so the
+	// account is fine.  Its first park is short, and only repeated refusals back
+	// off; 12 hours was the balance-exhausted park applied to a gate that
+	// reopens in minutes to hours.
+	defaultFreeQuotaCooldown = 30 * time.Minute
+	// freeQuotaCooldownCap bounds that backoff.  Even a gate that keeps refusing
+	// all day must be re-probed within a couple of hours: the vendor publishes
+	// no reset time, so the only way to learn it is to ask again, and a probe
+	// that succeeds restores the account immediately.
+	freeQuotaCooldownCap = 4 * time.Hour
 	defaultMaxInFlight   = 4
 	defaultQueueTimeout  = time.Minute
 
@@ -337,6 +349,24 @@ func (cfg Config) cooldown() time.Duration      { return cfg.Cooldown.or(default
 
 // tlsProfile is the normalized profile name: "" (stock), or a known profile.
 func (cfg Config) tlsProfile() string { return cfg.TLSProfile }
+
+// freeQuotaCooldown is the park for the free-tier usage gate, given how many
+// consecutive refusals this account has accumulated (issue #108).
+//
+// 30 minutes, 1 hour, 2 hours, then the 4-hour cap: long enough that a gate
+// refusing every few minutes is not hammered, short enough that a gate which
+// reopens within the hour is noticed within the hour.  The count is reset by any
+// served request, so the ladder never runs away.
+func (cfg Config) freeQuotaCooldown(strikes int) time.Duration {
+	d := defaultFreeQuotaCooldown
+	for i := 1; i < strikes && d < freeQuotaCooldownCap; i++ {
+		d *= 2
+	}
+	if d > freeQuotaCooldownCap {
+		d = freeQuotaCooldownCap
+	}
+	return d
+}
 
 func (cfg Config) quotaCooldown() time.Duration {
 	return cfg.QuotaCooldown.or(defaultQuotaCooldown)

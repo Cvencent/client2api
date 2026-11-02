@@ -86,6 +86,11 @@ func TestFreeEnvBlockSystemMessageComesFirst(t *testing.T) {
 // refusal lands on.  The message carries neither "rate limit" nor "quota" nor
 // "free tier", so without the marker it fell to the 429 status fallback and
 // the account retried every minute against a wall that does not move.
+//
+// The DURATION changed with issue #108.  It used to park for
+// defaultQuotaCooldown (12h), which treated a gate the vendor says reopens on
+// its own ("Free models work in OpenCode") as an exhausted balance.  It now takes
+// the first rung of the free-quota ladder: short, and re-probed.
 func TestFreeUsageLimitErrorParksForQuotaCooldown(t *testing.T) {
 	c := newTestClient(t, Config{})
 	addAccount(t, c, "opencode:a", "sk-a")
@@ -112,8 +117,63 @@ func TestFreeUsageLimitErrorParksForQuotaCooldown(t *testing.T) {
 	}
 	// The hermetic clock is frozen at testNow, so the remaining park is
 	// measured from there, not from the real time.
-	if remain := until.Sub(testNow); remain < defaultQuotaCooldown-time.Minute {
-		t.Fatalf("the gate refusal parked the account for %s, want about %s", remain, defaultQuotaCooldown)
+	if remain := until.Sub(testNow); remain != defaultFreeQuotaCooldown {
+		t.Fatalf("the gate refusal parked the account for %s, want the first rung of the free-quota ladder (%s, issue #108)",
+			remain, defaultFreeQuotaCooldown)
+	}
+}
+
+// TestFreeQuotaCooldownBacksOffAndIsCapped 钉住 #108 的阶梯：第一次短、连续被拒
+// 才加倍、封顶远低于配额停车。
+func TestFreeQuotaCooldownBacksOffAndIsCapped(t *testing.T) {
+	cfg := Config{}
+	want := []time.Duration{
+		defaultFreeQuotaCooldown,     // 1 strike
+		2 * defaultFreeQuotaCooldown, // 2
+		4 * defaultFreeQuotaCooldown, // 3
+		freeQuotaCooldownCap,         // 4 — capped
+		freeQuotaCooldownCap,         // 5 — stays capped
+		freeQuotaCooldownCap,         // 100 — stays capped
+	}
+	strikes := []int{1, 2, 3, 4, 5, 100}
+	for i, n := range strikes {
+		if got := cfg.freeQuotaCooldown(n); got != want[i] {
+			t.Fatalf("freeQuotaCooldown(%d) = %s, want %s", n, got, want[i])
+		}
+	}
+	if freeQuotaCooldownCap >= defaultQuotaCooldown {
+		t.Fatalf("封顶 %s 不小于配额停车 %s：这条闸的封顶必须明显低于余额耗尽（issue #108）",
+			freeQuotaCooldownCap, defaultQuotaCooldown)
+	}
+	if defaultFreeQuotaCooldown >= defaultQuotaCooldown {
+		t.Fatal("首次停车不小于 12h：等于没改（issue #108）")
+	}
+}
+
+// TestFreeQuotaGateLadderAdvancesOnRepeatedRefusal 端到端：同一账号连续被这道闸
+// 拒绝，停车时长随 err_count 逐次加倍。
+func TestFreeQuotaGateLadderAdvancesOnRepeatedRefusal(t *testing.T) {
+	c := newTestClient(t, Config{})
+	addAccount(t, c, "opencode:a", "sk-a")
+
+	body := []byte(`{"type":"error","error":{"type":"FreeUsageLimitError","message":"Free usage limit reached. Free models work in OpenCode"}}`)
+	var prev time.Duration
+	for strike := 1; strike <= 3; strike++ {
+		acct, _ := c.pool.byID("opencode:a")
+		_ = c.classifyHTTP("chat", acct, 429, body)
+		after, _ := c.pool.byID("opencode:a")
+		until, err := time.Parse(time.RFC3339, after.CooldownUntil)
+		if err != nil {
+			t.Fatalf("strike %d: CooldownUntil = %q", strike, after.CooldownUntil)
+		}
+		remain := until.Sub(testNow)
+		if strike > 1 && remain <= prev {
+			t.Fatalf("第 %d 次拒绝的停车 %s 没有比上一次 %s 更长：阶梯没生效（issue #108）", strike, remain, prev)
+		}
+		if remain > freeQuotaCooldownCap {
+			t.Fatalf("第 %d 次拒绝停车 %s 超过封顶 %s", strike, remain, freeQuotaCooldownCap)
+		}
+		prev = remain
 	}
 }
 

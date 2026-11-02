@@ -54,6 +54,41 @@
 - `client2api-setup-0.5.73.exe`（空包，不含账号凭据或本机配置）
   SHA256: `EF4235020D68984FF57BCFBC0529DFB561609B257CFA1E6ACB0F10A54EE8486C`
 
+## [0.5.86] - 2026-11-03
+
+### Fixed
+
+- **「把会自愈的软闸当成硬停车」一类（#108 + #63）**：
+  - **OpenCode 免费层额度闸不再一刀停 12 小时。** `FreeUsageLimitError`（`Free usage
+    limit reached. Free models work in OpenCode; subscribe to OpenCode Go to keep
+    going`）原来落进 `kindQuota`，于是按 `defaultQuotaCooldown = 12h` 停车——而报文
+    自己说的是「免费额度到顶、免费模型仍然可用」，这是会自行重开、且重置节奏厂商并未
+    公布的软闸，不是余额烧穿、也不是 key 死亡。现在它有独立判定 `kindFreeQuota`：
+    首次停车 **30 分钟**，连续被拒才 **加倍退避**（1h → 2h），**封顶 4 小时**，任何一次
+    被服务的请求都会把计数清零（阶梯挂在既有的 `ErrCount` 上，成功即复位）。给网关的
+    语义仍是 quota（换号可救、可轮转），变的只是模块自己的停车时长：这条闸拒绝了
+    也不再把账号停到次日。
+    **注意面板仍会显示 vendor 原话**（`LastError` 全文透传），只是状态桶不再等同于
+    「余额耗尽」的 12 小时停车。
+  - **小浣熊自动登录改用有头浏览器，且验证码发送有一次原地重试。** headless=new 下
+    Aliyun 无痕验证按环境信号打分，mint 出的 token 被 vendor IAM 在 3 秒后判废——每次
+    尝试白烧一个接码号码后释放；而这个功能的场景就是「操作员坐在机器旁点一下」，所以
+    改成有头窗口（`internal/browser` 的注释本就写明有头「更不容易触发 bot 启发式」）。
+    另一半是 driver 见错即 abort：一句「图形验证码校验失败，请重新完成滑块验证」其实是
+    可恢复的（组件会重新武装、下一次点击 mint 新 token），现在点击与等待抽成
+    `clickAndWaitRaccoonSend`，外层做**恰好一次**重试；第二次仍被拒则原样上报，不
+    无限点击（对着一直说不的 vendor 反复点只会烧更多号码）。
+  - 测试：新增 `clients/opencode/freetier_env_test.go` 的阶梯两条（首次 30m、逐次加倍、
+    封顶 4h；端到端连续三次拒绝停车时长递增且不超封顶），并把原来钉「停 12h」的断言按
+    新语义更新；新增 `clients/raccoon/autologin_visible_retry_test.go` 四条（不许
+    headless、必须有界重试、第一次拒绝后重试成功且点击恰好两次、两次都拒则如实上报
+    且不透支点击次数）。
+
+### Installer
+
+- `client2api-setup-0.5.86.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `CED6DD84D2F942104AD2763FAE3873A45B31BD48D39D14E6EE20780F068C5AFF`
+
 ## [0.5.85] - 2026-11-03
 
 ### Fixed

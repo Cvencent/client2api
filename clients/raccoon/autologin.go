@@ -457,7 +457,16 @@ func (raccoonBrowserDriver) Drive(ctx context.Context, url, phone string, waitCo
 	if waitCode == nil {
 		return errors.New("the SMS code reader is missing")
 	}
-	br, err := browser.Launch(ctx, browser.LaunchOpts{StartURL: url, Headless: true})
+	// Visible on purpose (issue #63).  This vendor's login page runs an Aliyun
+	// traceless challenge whose token is scored on environmental signals; under
+	// headless=new the token it mints is rejected by the vendor IAM three
+	// seconds after the send, so every attempt burned a rented phone number and
+	// released it again.  The feature exists for an operator sitting at the
+	// machine, so a window is the honest trade -- internal/browser documents a
+	// visible window as "less likely to trip bot heuristics" for exactly this
+	// reason.  A machine with no desktop still gets an error rather than a
+	// silently-succeeding login that cannot work.
+	br, err := browser.Launch(ctx, browser.LaunchOpts{StartURL: url, Headless: false})
 	if err != nil {
 		return err
 	}
@@ -522,11 +531,33 @@ func (raccoonBrowserDriver) Drive(ctx context.Context, url, phone string, waitCo
 // nothing — the status line is the only honest signal.
 func requestRaccoonSMS(ctx context.Context, page raccoonAutoPage, logf func(string, ...any)) error {
 	logf("正在请求发送验证码（页面内无痕验证）…")
-	// The Aliyun script wires its own listener to the button; give it a beat
-	// so the click cannot land before the handler is armed.
-	if !sleepRaccoon(ctx, raccoonSendSettle) {
-		return ctx.Err()
+	// One retry, in place (issue #63).  A refusal naming the challenge
+	// ("图形验证码校验失败，请重新完成滑块验证") is recoverable: the widget re-arms and
+	// the next click mints a fresh token.  Before this, the first refusal ended
+	// the run and released the rented number, which turned a stale challenge
+	// into a lost attempt.  A second refusal is reported as-is -- clicking again
+	// at a vendor that keeps saying no only burns more numbers.
+	const attempts = 2
+	var lastErr error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		// The Aliyun script wires its own listener to the button; give it a beat
+		// so the click cannot land before the handler is armed.
+		if !sleepRaccoon(ctx, raccoonSendSettle) {
+			return ctx.Err()
+		}
+		lastErr = clickAndWaitRaccoonSend(ctx, page, logf)
+		if lastErr == nil {
+			return nil
+		}
+		if attempt < attempts {
+			logf("发送验证码未成功（%v），重新完成验证后再试一次", lastErr)
+		}
 	}
+	return lastErr
+}
+
+// clickAndWaitRaccoonSend clicks the send button and reads the page's verdict.
+func clickAndWaitRaccoonSend(ctx context.Context, page raccoonAutoPage, logf func(string, ...any)) error {
 	clicked, err := page.Click(ctx, raccoonSelSend)
 	if err != nil {
 		return fmt.Errorf("点击获取验证码失败：%w", err)

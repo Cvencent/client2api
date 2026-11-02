@@ -553,6 +553,23 @@ func (p *pool) setCooldown(id string, until time.Time, reason string) bool {
 	return true
 }
 
+// noteFreeQuotaStrike records one refusal of the free-tier usage gate and
+// returns how many the account has accumulated in a row (issue #108).
+//
+// ErrCount already means "consecutive failures" and is reset by any served
+// request (clearCooldown), so the free-quota ladder rides on it rather than
+// growing a second counter that could disagree with the first.
+func (p *pool) noteFreeQuotaStrike(id string) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	a := p.find(id)
+	if a == nil {
+		return 1
+	}
+	a.ErrCount++
+	return a.ErrCount
+}
+
 func (p *pool) clearCooldown(id string) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()

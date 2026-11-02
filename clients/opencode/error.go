@@ -31,11 +31,17 @@ import (
 type failureKind string
 
 const (
-	kindNone      failureKind = ""
-	kindModel     failureKind = "model"     // unknown model: the caller's fault, no account impact
-	kindAuth      failureKind = "auth"      // the key was rejected
-	kindQuota     failureKind = "quota"     // out of credit: park for a long time
-	kindFreeTier  failureKind = "freetier"  // the free-tier handshake was refused: transient
+	kindNone     failureKind = ""
+	kindModel    failureKind = "model"    // unknown model: the caller's fault, no account impact
+	kindAuth     failureKind = "auth"     // the key was rejected
+	kindQuota    failureKind = "quota"    // out of credit: park for a long time
+	kindFreeTier failureKind = "freetier" // the free-tier handshake was refused: transient
+	// kindFreeQuota is the free-tier USAGE gate: "FreeUsageLimitError: Free usage
+	// limit reached. Free models work in OpenCode; subscribe to keep going".
+	// Distinct from kindQuota on purpose (issue #108): a drained balance needs a
+	// refill before anything changes, while this gate reopens on its own
+	// schedule, so its park is short and re-probed rather than 12 hours long.
+	kindFreeQuota failureKind = "freequota"
 	kindRate      failureKind = "rate"      // throttled: park briefly
 	kindServer    failureKind = "server"    // 5xx
 	kindClient    failureKind = "client"    // 4xx this module did not anticipate
@@ -56,6 +62,12 @@ func coreKindFor(k failureKind) core.FailureKind {
 		return core.FailureQuota
 	case kindRate:
 		return core.FailureRateLimited
+	case kindFreeQuota:
+		// To the gateway this is still a quota-shaped refusal: another account on
+		// this platform may have free quota left, so it stays rotatable rather
+		// than terminal (issue #108).  What changed is the module's own parking:
+		// a short, backed-off cooldown instead of the 12-hour balance park.
+		return core.FailureQuota
 	case kindFreeTier:
 		// The free tier is gated by request shape, not by the credential, and
 		// the gate opens and closes on its own.  Retrying is right, so this is a
@@ -198,9 +210,9 @@ func classifyType(typ string) failureKind {
 		// refusal is not a bad key.
 		return kindFreeTier
 	case strings.Contains(lower, "usagelimit") || strings.Contains(lower, "usage limit"):
-		// FreeUsageLimitError: the free-tier gate refusal.  Quota, not rate —
-		// see the quotaMarkers note.
-		return kindQuota
+		// FreeUsageLimitError: the free-tier usage gate.  Its own verdict, not
+		// kindQuota -- see kindFreeQuota (issue #108).
+		return kindFreeQuota
 	case strings.Contains(lower, "ratelimit") || strings.Contains(lower, "toomanyrequest"):
 		return kindRate
 	case strings.Contains(lower, "credit") || strings.Contains(lower, "quota") ||
@@ -412,6 +424,14 @@ func (c *Client) noteFailure(acct *accountRecord, k failureKind, msg string) {
 		c.pool.disable(acct.ID, firstNonEmpty(msg, "the vendor rejected this key"))
 	case kindQuota:
 		c.pool.setCooldown(acct.ID, now.Add(c.cfg.quotaCooldown()), firstNonEmpty(msg, "out of credit"))
+	case kindFreeQuota:
+		// Short first park, doubling only while the gate keeps refusing
+		// (issue #108).  acct.ErrCount counts consecutive failures and is reset
+		// by any served request, so a gate that reopens silently costs one park
+		// and the account is back in rotation.
+		strikes := c.pool.noteFreeQuotaStrike(acct.ID)
+		until := now.Add(c.cfg.freeQuotaCooldown(strikes))
+		c.pool.setCooldown(acct.ID, until, firstNonEmpty(msg, "free usage limit reached; the gate reopens on its own"))
 	case kindRate:
 		c.pool.setCooldown(acct.ID, now.Add(c.cfg.cooldown()), firstNonEmpty(msg, "throttled"))
 	case kindFreeTier:
