@@ -548,10 +548,10 @@ func seedBalanceCache(p *panel, client, id string, bal core.Balance) {
 // slowReadProbe is the p99 observation for the two read-only endpoints
 // (issue #96).  Both read in-memory snapshots and should answer in
 // milliseconds; a response over a second is the spike an external monitor sees
-// a few times a day.  The line carries the elapsed time and the offset into the
-// 5-minute balance-tick window, so a week of them settles whether the sweep's
-// registry walk is what the read queues behind -- before anyone reshapes the
-// locking on a hunch.
+// a few times a day.  The line carries the elapsed time and the distance to the
+// balance-refresh tick (see tickOffset), so a week of them settles whether the
+// sweep's registry walk is what the read queues behind -- before anyone
+// reshapes the locking on a hunch.
 //
 // It covers /pool as well as /status because /pool is what the PANEL polls every
 // five seconds (issue #33 made it the light endpoint); a spike there is what the
