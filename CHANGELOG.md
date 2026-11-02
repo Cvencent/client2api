@@ -33,6 +33,23 @@
 - `client2api-setup-0.5.47.exe`（空包，不含账号凭据或本机配置）
 - SHA256：`EE780BD84B0C8A1CAB096AE8354A353C5B968C516576BF02DD775B472C27CD7F`
 
+## [0.5.64] - 2026-11-02
+
+### Changed
+
+- **面板轮询接上 Page Visibility 门控。** 两个全局轮询（状态 5s、日志 4s）
+  原先无条件运转——面板挂后台标签仍每 5 秒打 /status + /pool，一小时
+  ~1440 次没人看的 GET。新 `setIntervalVisible` 包装：hidden 时跳过 tick；
+  `visibilitychange` 恢复可见且距上次执行已满一个周期（5s）时补跑一次
+  `refreshVisible`，操作员回到面板看到的是当前数据而不是一个周期的陈旧。
+  登录/接码/录音等短生命周期的用户主动轮询不在本单范围（issue #95 方向 1；
+  方向 2 的节奏分档涉及各页新鲜度取舍，留作后续单议）。
+
+### Installer
+
+- `client2api-setup-0.5.64.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `34913B1F1B9F24B2E08A0DEC7281B24E8CBE2AF8A0A50A0CF3C014D61A730830`
+
 ## [0.5.63] - 2026-11-02
 
 ### Changed

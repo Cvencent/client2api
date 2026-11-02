@@ -232,12 +232,16 @@ func TestVisibleViewIsPolledLikeTheReference(t *testing.T) {
 	if !strings.Contains(src, "function refreshVisible()") {
 		t.Fatal("壳里没有 refreshVisible()：账号视图不会像原版那样自己刷新")
 	}
-	if !strings.Contains(src, "setInterval(refreshVisible, 5000)") {
-		t.Error("refreshVisible 没有按原版的 5s 节奏挂上定时器")
+	// 两路轮询仍按原节奏挂定时器，但走可见性门控包装（issue #95）：后台
+	// 标签不再打没人看的接口。
+	if !strings.Contains(src, "setIntervalVisible(refreshVisible, 5000)") {
+		t.Error("refreshVisible 没有按原版的 5s 节奏挂上门控定时器")
 	}
-	// 日志那路的 4s 是本仓既有的更高频刷新，不能被顶掉。
-	if !strings.Contains(src, "if (VIEW === \"logs\") renderLogs(); }, 4000)") {
-		t.Error("日志 4s 刷新被改掉了：本仓日志比原版更勤，是有意的")
+	if !strings.Contains(src, "setIntervalVisible(() => { if (VIEW === \"logs\") renderLogs(); }, 4000)") {
+		t.Error("日志 4s 刷新没有挂上门控定时器：本仓日志比原版更勤，是有意的")
+	}
+	if strings.Contains(src, "setInterval(refreshVisible, 5000)") {
+		t.Error("状态轮询退回了无门控的 setInterval：后台标签照打（issue #95 回归）")
 	}
 
 	body := poolStatsFuncBody(t, src, "refreshVisible")

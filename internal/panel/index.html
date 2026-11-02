@@ -24470,6 +24470,31 @@ window.addEventListener("error", ev => {
   if (ev.error || ev.message) panelBootError(ev.error || ev.message);
 });
 window.addEventListener("unhandledrejection", ev => panelBootError(ev.reason));
+// setIntervalVisible is setInterval with a Page Visibility gate (issue #95):
+// a dashboard polled from a background tab spends its 5s cadence on responses
+// nobody is watching -- ~1440 pointless GETs an hour per timer.  While the
+// document is hidden the tick is skipped entirely; on the way back to visible,
+// if at least one full period has passed since the last execution, one catch-up
+// run happens immediately so the operator lands on current data instead of a
+// full period of staleness.
+let lastVisibleTick = 0;
+function setIntervalVisible(fn, ms) {
+  return setInterval(() => {
+    if (document.hidden) return;
+    lastVisibleTick = Date.now();
+    fn();
+  }, ms);
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) return;
+  // Catch-up: only when a whole period of staleness has actually accrued.
+  // 5s is the finest cadence the panel runs; use it as the threshold.
+  if (lastVisibleTick && Date.now() - lastVisibleTick >= 5000) {
+    lastVisibleTick = Date.now();
+    refreshVisible();
+  }
+});
+
 (async function boot() {
   try {
     MOTION_FX.reduce = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
@@ -24534,8 +24559,8 @@ window.addEventListener("unhandledrejection", ev => panelBootError(ev.reason));
     go((location.hash || "#overview").slice(1));
     await refreshAll();
     refreshAlertBadge().catch(() => {});
-    setInterval(() => { if (VIEW === "logs") renderLogs(); }, 4000);
-    setInterval(refreshVisible, 5000);
+    setIntervalVisible(() => { if (VIEW === "logs") renderLogs(); }, 4000);
+    setIntervalVisible(refreshVisible, 5000);
     document.documentElement.dataset.c2aReady = "1";
   } catch (e) {
     panelBootError(e);
