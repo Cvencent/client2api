@@ -156,6 +156,7 @@ func TestTestModelReachesTheModule(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/panel/api/clients/faketester/accounts/a1/test",
 		strings.NewReader(`{"model":"vendor/model-x"}`))
+	req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
 	req.Header.Set("Content-Type", "application/json")
 	srv.ServeHTTP(rec, req)
 
@@ -181,6 +182,7 @@ func TestEmptyModelKeepsTheOldBehaviour(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/panel/api/clients/faketester/accounts/a1/test", nil)
+	req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
 	srv.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -206,6 +208,7 @@ func TestUnsupportedModelIsAFailedProbeNotARequest(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/panel/api/clients/faketester/accounts/a1/test",
 		strings.NewReader(`{"model":"unsupported-model"}`))
+	req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
 	req.Header.Set("Content-Type", "application/json")
 	srv.ServeHTTP(rec, req)
 
@@ -230,6 +233,7 @@ func TestModelIsIgnoredByModulesThatDoNotSupportIt(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/panel/api/clients/faketester/accounts/a1/test",
 		strings.NewReader(`{"model":"vendor/model-x"}`))
+	req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
 	req.Header.Set("Content-Type", "application/json")
 	srv.ServeHTTP(rec, req)
 

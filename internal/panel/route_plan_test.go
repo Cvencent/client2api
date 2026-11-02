@@ -15,6 +15,9 @@ import (
 func routePlanPost(t *testing.T, h http.Handler, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/panel/api/route_plan", strings.NewReader(body))
+req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
+	req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
+	req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)

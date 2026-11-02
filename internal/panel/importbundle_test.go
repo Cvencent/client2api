@@ -71,6 +71,9 @@ func (f *fakeBundleAccountClient) ImportBundle(ctx context.Context, name string,
 func bundlePost(t *testing.T, h http.Handler, target, contentType string, body []byte) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, target, bytes.NewReader(body))
+req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
+	req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
+	req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
 	}

@@ -40,6 +40,9 @@ func TestStoreWriteFailureSurfacesInOverview(t *testing.T) {
 	// id) even though the disk write fails.
 	payload, _ := json.Marshal(map[string]any{"title": "probe", "messages": []any{}})
 	req := httptest.NewRequest(http.MethodPost, "/panel/api/chat/conversations", strings.NewReader(string(payload)))
+req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
+	req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
+	req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {

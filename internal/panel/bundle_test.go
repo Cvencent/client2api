@@ -63,6 +63,9 @@ func bundleImport(t *testing.T, p *panel, doc bundleDoc) (*httptest.ResponseReco
 		t.Fatalf("marshal bundle: %v", err)
 	}
 	req := httptest.NewRequest(http.MethodPost, "/panel/api/bundle", strings.NewReader(string(body)))
+req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
+	req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
+	req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	p.handleBundle(rec, req)

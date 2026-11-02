@@ -40,6 +40,7 @@ func doConfig(t *testing.T, p *panel, method, body string) (*httptest.ResponseRe
 	} else {
 		r = httptest.NewRequest(method, "/panel/api/config", strings.NewReader(body))
 	}
+	r.Host = "127.0.0.1" // 写接口来源闸（issue #103）：测试请求来自本面板。
 	w := httptest.NewRecorder()
 	p.handleConfig(w, r)
 

@@ -33,6 +33,23 @@
 - `client2api-setup-0.5.47.exe`（空包，不含账号凭据或本机配置）
 - SHA256：`EE780BD84B0C8A1CAB096AE8354A353C5B968C516576BF02DD775B472C27CD7F`
 
+## [0.5.71] - 2026-11-02
+
+### Fixed
+
+- **面板写接口加来源闸（CSRF 防线，issue #103）。** 面板的全部写方法
+  （POST/PATCH/PUT/DELETE）此前不校验来源：同机任意网页一次跨站 POST 就能改写
+  配置并落盘（curl 实测 200），而 no-cors 表单/fetch 恰好能发出这种请求。
+  `authed` 包裹层现在对写方法检查 `Origin` / `Sec-Fetch-Site` / `Host` 的
+  组合：同源放行；无来源的同机工具（curl、面板自身 fetch）放行；Host 非本
+  面板/回环（DNS rebinding）或跨站来源一律 403。测试里 60+ 处写请求的 Host
+  默认值成片修正为回环——同一类问题一次收拾。
+
+### Installer
+
+- `client2api-setup-0.5.71.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `6A2B2BE51CD2E64FFD36B6FAF9F660D5998851F4BCF684BDE593515479313346`
+
 ## [0.5.70] - 2026-11-02
 
 ### Fixed

@@ -45,6 +45,9 @@ func TestAlertsReadEndpointClearsTheBadge(t *testing.T) {
 		t.Fatalf("unread = %v, want 2", got["unread"])
 	}
 	req := httptest.NewRequest(http.MethodPost, "/panel/api/alerts", nil)
+req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
+	req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
+	req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -78,6 +81,9 @@ func TestAlertsDeleteClearsHistory(t *testing.T) {
 	h := New(Options{Alerts: store, Started: time.Now()})
 
 	req := httptest.NewRequest(http.MethodDelete, "/panel/api/alerts", nil)
+req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
+	req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
+	req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {

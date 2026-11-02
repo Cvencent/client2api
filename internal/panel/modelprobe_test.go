@@ -56,6 +56,9 @@ func TestModelProbeClearRemovesOnlyThatModel(t *testing.T) {
 	h := New(Options{Probes: probes})
 	body := `{"client":"raccoon","model":"model-a"}`
 	req := httptest.NewRequest(http.MethodPost, "/panel/api/model_probe/clear", strings.NewReader(body))
+req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
+	req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
+	req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -80,6 +83,9 @@ func TestModelProbeClearRejectsBadRequests(t *testing.T) {
 	}
 
 	req2 := httptest.NewRequest(http.MethodPost, "/panel/api/model_probe/clear", strings.NewReader(`{"model":"m"}`))
+req2.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
+	req2.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
+	req2.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
 	req2.Header.Set("Content-Type", "application/json")
 	rec2 := httptest.NewRecorder()
 	h.ServeHTTP(rec2, req2)
@@ -102,6 +108,9 @@ func TestModelProbeClearLeavesLearnedWindowAndOverride(t *testing.T) {
 	}
 	h := New(Options{Probes: probes, ModelOverrides: overrides})
 	req := httptest.NewRequest(http.MethodPost, "/panel/api/model_probe/clear", strings.NewReader(`{"client":"raccoon","model":"model-a"}`))
+req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
+	req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
+	req.Host = "127.0.0.1" // 面板写接口来源闸（issue #103）
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)

@@ -194,6 +194,7 @@ func hitRoute(t *testing.T, h http.Handler, method, path, body string) *httptest
 		rd = strings.NewReader(body)
 	}
 	req := httptest.NewRequest(method, path, rd)
+	req.Host = "127.0.0.1" // 写接口来源闸（issue #103）：测试请求来自本面板。
 	if body != "" {
 		req.Header.Set("Content-Type", "application/json")
 	}
