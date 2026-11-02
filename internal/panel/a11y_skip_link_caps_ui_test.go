@@ -11,7 +11,10 @@ import (
 // --accent（#4c7dff）上只有 3.69:1；--accent-ink 随主题配过，两个主题都达标。
 func TestSkipLinkColorFollowsTheTheme(t *testing.T) {
 	src := poolStatsUISource(t)
-	if !strings.Contains(src, "background: var(--accent); color: var(--accent-ink); font: 550 13px var(--sans);") {
+	// 字号单位随 #74 迁到 rem（13px → 0.8125rem，1rem = 基准 16px，逐像素相等）；
+	// 这条断言关心的是颜色，所以只钉颜色与字重，字号允许单位迁移。
+	if !strings.Contains(src, "background: var(--accent); color: var(--accent-ink); font: 550 ") ||
+		!strings.Contains(src, "rem var(--sans);") {
 		t.Fatal("跳过链接的写死 #fff 还在：深色主题下对比度 3.69:1，键盘用户的第一个焦点读不清（issue #102）")
 	}
 }

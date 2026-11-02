@@ -5,7 +5,7 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-当前版本：**0.5.79**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：**0.5.80**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 流式断流排查：升级后系统日志新增 `stream: id=...` 终止诊断，包含协议、平台/模型、
 上游事件数、`finish_reason`、正文/推理字节数、工具调用数、completion token、
@@ -263,6 +263,7 @@ client2api 是一个**个人自用**的 OpenAI 兼容网关。它把你自己在
 - 无障碍：三处二选一开关（主题深/浅、页面 3D/列表、账号池卡片/表格）用 `aria-pressed` 表达当前选中哪一档，与视觉高亮同步更新，读屏会念出状态而不是两个一模一样的按钮。运行中改系统的「减少动效」立即生效且不需要刷新，偏好对全部消费者同时起作用：CSS 层、两块 WebGL 场景、以及两块 2D canvas（背景粒子场停下并清空画布，点击火花不再生成）。
 - 进场动画每个视图每会话只演一次：已经看过的视图切回来直接是最终状态，来回切页不会重播整页级联。任务看板切换客户端时，摘要行与正文在请求发出前就进入「扫描中」提示态，慢上游还在返回的整段时间里，新客户端的账号标签不会和上一个客户端的行并排出现。
 - 面板的常驻开销都有上界（它本来就是长时间开着的界面）：装饰用的背景粒子场按 ~30fps 绘制、背板画布像素量上限约 1.3 Mpx（2x 屏原来会给一个点数与像素比无关的装饰层分配 4.85 Mpx），页面不可见时完全不画（**窗口失焦不停**——把面板放在第二块屏上是常态，失焦即冻结会被当成卡住）。3D 舞台的铭牌贴图缓存带上界、淘汰时 `dispose()`，且不会拆掉当前场景正在用的那些；切主题真正释放贴图而不是丢引用；5 秒轮询只在数据签名变化时重建舞台，不再每拍重建。
+- 字号用相对单位，所以浏览器自带的「只缩放文本」（Chrome 的默认字号、Firefox 的「仅缩放文本」）能真正放大面板：全部 `font-size`、`font` 简写、`--type-*` 五档与 `clamp()` 边界都用 `rem`，基准是 `html { font-size: 100% }`，1rem = 16px——默认档位下的字号与原来逐像素相同。配置页会追踪未保存的改动：保存按钮只在改动后亮起（保存成功后回到禁用态），旁边出现「有未保存的改动」标记，编辑期间 5 秒轮询不再重画表单以免清掉正在输入的值，离开页面（关 tab 或切视图）前会先问一次。
 - 运行日志
 
 ### 任务、用量与计费
