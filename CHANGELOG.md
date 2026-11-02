@@ -33,6 +33,25 @@
 - `client2api-setup-0.5.47.exe`（空包，不含账号凭据或本机配置）
 - SHA256：`EE780BD84B0C8A1CAB096AE8354A353C5B968C516576BF02DD775B472C27CD7F`
 
+## [0.5.66] - 2026-11-02
+
+### Changed
+
+- **PR 门禁补上 installer 路径（issue #99）。** go-binaries.yml 的
+  pull_request.paths 不含 installer/**——只改安装器的 PR 一条 CI 都不跑，而
+  windows-test 这个 job 存在的理由正是编译那批 windows-only 代码。paths 补上
+  `installer/**`、`third_party/**`（构建要暂存的 vendored ffmpeg）与
+  `Makefile`；gate 测试钉住三行不许再被摘掉。
+- **/panel/api/status 接上 >1s 慢响应观测（issue #96 方向 3）。** 偶发 ~5s
+  尖刺、瞬时恢复、疑似与余额扫描锁面相关——归因需要一周量级的样本。超过 1s
+  的响应写进运行日志一行，带耗时与落入 5 分钟 tick 窗口的位置；跑一周看
+  尖刺与 sweep tick 的相关性，再决定是否缩小锁面或改原子快照。
+
+### Installer
+
+- `client2api-setup-0.5.66.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `76D57079197F808DCDB953BD214E5E9015276407176DAEAF455A3C52BE2D0888`
+
 ## [0.5.65] - 2026-11-02
 
 ### Changed

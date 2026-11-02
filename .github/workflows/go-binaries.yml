@@ -17,6 +17,9 @@ on:
       - "cmd/**"
       - "clients/**"
       - "internal/**"
+      - "installer/**"
+      - "third_party/**"
+      - "Makefile"
       - "configs/client2api.example.json"
       - ".github/workflows/go-binaries.yml"
   workflow_dispatch:

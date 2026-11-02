@@ -112,3 +112,18 @@ func TestCIRunsThePanelSmokeTest(t *testing.T) {
 		}
 	}
 }
+
+// TestCIPullRequestsCoverTheInstaller pins the pull_request path filter
+// (issue #99): the windows-test job exists to compile the windows-only
+// installer/setup code, yet a PR touching only installer/ matched none of the
+// declared paths and ran zero checks -- the only gate-free code in the repo,
+// verified only after landing on main.  installer/**, third_party/** (the
+// vendored ffmpeg the build stages) and the Makefile belong beside the rest.
+func TestCIPullRequestsCoverTheInstaller(t *testing.T) {
+	wf := gateRead(t, filepath.Join("..", ".github", "workflows", "go-binaries.yml"))
+	for _, want := range []string{`- "installer/**"`, `- "third_party/**"`, `- "Makefile"`} {
+		if !strings.Contains(wf, want) {
+			t.Errorf("go-binaries.yml pull_request.paths is missing %s; a PR touching only the installer runs no CI at all (issue #99)", want)
+		}
+	}
+}

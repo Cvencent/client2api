@@ -534,6 +534,24 @@ func seedBalanceCache(p *panel, client, id string, bal core.Balance) {
 // ---------------------------------------------------------------------------
 
 func (p *panel) handleStatus(w http.ResponseWriter, r *http.Request) {
+	started := time.Now()
+	defer func() {
+		// The p99 probe (issue #96): the handler reads in-memory snapshots and
+		// should answer in milliseconds.  A response over a second is the spike
+		// the operator's monitor sees three times a day -- log it with the
+		// elapsed time and the tick window it fell into, so a week of these
+		// lines settles whether the balance sweep's registry walk is what the
+		// read lock queues behind before anyone reshapes the locking.
+		if d := time.Since(started); d > time.Second && p.opts.Logs != nil {
+			// Offset into the 5-minute balance-tick window: a spike that lands
+			// within seconds of :00/:05/:10 ... points at the sweep; one that
+			// does not, points elsewhere.  Into the live log ring, where the
+			// operator (and the next week of samples) can see it (issue #96).
+			p.opts.Logs.Add(fmt.Sprintf("panel: slow /panel/api/status: %s (into 5m tick window: %s)",
+				d.Round(time.Millisecond),
+				time.Duration(started.UnixNano()%(5*int64(time.Minute))).Round(time.Second)))
+		}
+	}()
 	ctx, cancel := p.ctx(r, 30*time.Second)
 	defer cancel()
 
