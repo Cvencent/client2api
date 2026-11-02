@@ -96,10 +96,6 @@ func (s *source) noteBalanceVerdict(id string, err error) {
 	window := s.cfg.CooldownFor(core.FailureAuth, sourceDefaultCooldown(core.FailureAuth))
 	s.pool.noteFailure(id, 1, s.now().Add(window), msg)
 	s.mu.Lock()
-	if s.invalid == nil {
-		s.invalid = map[string]bool{}
-	}
-	s.invalid[id] = true
 	s.lastErr = msg
 	if window > 0 {
 		if s.cooling == nil {
@@ -107,6 +103,14 @@ func (s *source) noteBalanceVerdict(id string, err error) {
 		}
 		s.cooling[id] = s.now().Add(window)
 	}
+	// No s.invalid here (issue #85): a read-path 401 is frequently the IAM
+	// token race (APIG.1009) -- the signed token expired and this endpoint hit
+	// the expiry before the chat path renewed it.  The credential never
+	// changed, a chat 200 lands minutes later, and the row flipped
+	// 冷却中 ↔ 账号异常 all night while the only honest remedy was waiting for
+	// the daily credit refresh.  The read path's job is numbers, not
+	// credentials: it parks the row (above) and lets the chat path -- which
+	// has a live 200 as direct counter-evidence -- own the invalid verdict.
 	s.mu.Unlock()
 }
 

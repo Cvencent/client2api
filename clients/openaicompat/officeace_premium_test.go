@@ -1007,8 +1007,11 @@ func TestOfficeAceBalanceReadSupersedesDeadKeyVerdict(t *testing.T) {
 }
 
 // TestOfficeAceLiveCreditKeepsDeadKeyInvalid is the guard on the veto itself:
-// when the account still has credits, the same 401 is a verdict about the key
-// and must stay invalid with the re-login path.
+// when the account still has credits, a CHAT-path 401 is a verdict about the
+// key and must stay invalid with the re-login path.  (The balance read path no
+// longer writes invalid at all -- issue #85: its 401 is frequently the IAM
+// token race, and the row must not flip to 账号异常 for a credential that
+// serves 200 minutes later.)
 func TestOfficeAceLiveCreditKeepsDeadKeyInvalid(t *testing.T) {
 	var chatCalls atomic.Int32
 	live := `{
@@ -1199,5 +1202,62 @@ func TestOfficeAceZeroReadStillSupersedesAStaleInvalidMark(t *testing.T) {
 	}
 	if got := records[0].State; got != "cooling" {
 		t.Fatalf("state after the zero read = %q, want cooling", got)
+	}
+}
+
+// TestBalanceReadNeverInvalidates pins issue #85: a read-path 401 is
+// frequently the IAM token race (APIG.1009 -- the signed token expired and
+// the models endpoint hit the expiry before the chat path renewed it).  The
+// credential never changed and chat serves 200 minutes later; writing
+// invalid from the read path made the row flip 冷却中 ↔ 账号异常 all night
+// with a re-login remedy that fixes nothing.  The read path parks (cooldown)
+// and logs; the invalid verdict belongs to the chat path alone.
+func TestBalanceReadNeverInvalidates(t *testing.T) {
+	// The relay path: a balance probe that answers the IAM token race (401
+	// APIG.1009 -- the signed token expired and this endpoint hit the expiry
+	// before chat renewed it).  The row must park, not become 账号异常.
+	var probe401 atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Every billing probe answers the same transient 401; the chat key
+		// (not exercised here) is fine.
+		probe401.Add(1)
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = io.WriteString(w, `{"error":{"message":"Invalid token","type":"invalid_request_error"}}`)
+	}))
+	defer srv.Close()
+
+	s, err := newSource("testrelay", core.SourceConfig{BaseURL: srv.URL + "/v1"}, core.Deps{
+		DataDir:    t.TempDir(),
+		HTTPClient: srv.Client(),
+	})
+	if err != nil {
+		t.Fatalf("new source: %v", err)
+	}
+	rec, err := s.addAccount(context.Background(), core.AccountSpec{
+		ID:     "relay-test",
+		Label:  "relay-test",
+		Fields: map[string]string{"api_key": "test-key", "models": "m"},
+	}, srv.URL+"/v2")
+	if err != nil {
+		t.Fatalf("add account: %v", err)
+	}
+
+	if _, err := s.AccountBalance(context.Background(), rec.ID, 0); err == nil {
+		t.Fatal("balance read unexpectedly succeeded against a 401 probe")
+	}
+	out, err := s.Accounts(context.Background())
+	if err != nil {
+		t.Fatalf("accounts: %v", err)
+	}
+	for _, a := range out {
+		if a.ID != "relay-test" {
+			continue
+		}
+		if a.State == "invalid" {
+			t.Fatalf("the read path wrote invalid: state = %q; a token race must not become 账号异常 (issue #85)", a.State)
+		}
+		if a.State != "cooling" {
+			t.Fatalf("state = %q, want cooling (the park still applies, only the invalid verdict is gone)", a.State)
+		}
 	}
 }

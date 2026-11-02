@@ -33,6 +33,28 @@
 - `client2api-setup-0.5.47.exe`（空包，不含账号凭据或本机配置）
 - SHA256：`EE780BD84B0C8A1CAB096AE8354A353C5B968C516576BF02DD775B472C27CD7F`
 
+## [0.5.68] - 2026-11-02
+
+### Fixed
+
+- **华为平台账号不再在「冷却中」↔「账号异常」之间整夜翻转。** 余额/模型路径
+  的 IAM 401（APIG.1009，签名令牌过期竞态——AppKey/AppSecret 是常量，同账号
+  几分钟内 chat 全部 200）此前会写 `s.invalid`，行被打成「账号异常」引导重登；
+  下一次 chat 200 又把 invalid 清掉翻回来。读数路径的职责是数字不是凭据：
+  `noteBalanceVerdict`（balance.go）保留停车（cooldown），invalid 判定只属于
+  chat 路径——那里有 200 的直接反证机制。真实死 key 仍由 chat 路径判为
+  账号异常，重登语义不变。
+- **账号表操作列不再把行高撑到 2~3 倍。** #44 把操作列的宽度还回来之后
+  （1440px 下约 300px），写死的两列网格把每颗按钮拉到 144px、行高撑到
+  137~198px——一屏只能看全 1 行。网格改 `repeat(auto-fit, minmax(96px,
+  1fr))`（308px 排 3 列，行高与同行一致），窄屏兜底同步 auto-fit 84px；
+  「领取每日签到积分」等长标签由 .test-split 整行豁免不被截断。
+
+### Installer
+
+- `client2api-setup-0.5.68.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `4EDB725F587019E5EB2431A5B64CCD34F91CEF89DDED194EA03697356F46E5B3`
+
 ## [0.5.67] - 2026-11-02
 
 ### Fixed

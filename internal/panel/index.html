@@ -4300,7 +4300,7 @@ input, select, textarea, .stat, .subtab {
   .subtabs::-webkit-scrollbar { display: none; }
   .subtabs .subtab { flex: 0 0 auto; }
   /* 窄屏的账号行：操作按钮两列，行高不塌也不暴涨 */
-  #view-accounts table.acc .c-acts .actwrap { grid-template-columns: repeat(2, minmax(54px, 1fr)); }
+  #view-accounts table.acc .c-acts .actwrap { grid-template-columns: repeat(auto-fit, minmax(84px, 1fr)); }
   .stat { min-height: 72px; padding: 12px 14px; }
   .dlg { border-radius: 15px; }
   .dlg header, .dlg footer { padding-left: 16px; padding-right: 16px; }
@@ -6172,13 +6172,16 @@ html:not([data-theme="light"]) body::after {
 /* 空的状态说明列收窄到只剩留白，把宽度让给左边的账号名。 */
 #view-accounts table.acc td.c-note:empty { padding-left: 0; padding-right: 0; }
 #view-accounts table.acc .c-note .note { max-width: 26ch; }
-/* 行内操作：列宽 22.5% 放不下四个四字按钮，所以按钮文字改成两字
-   （见 renderAccounts 的「标识」）。布局用两列定宽网格——一行两列、两行放四个，
-   这是这一列唯一能同时做到「不截断」和「不撑高」的排法。
-   flex-wrap 试过：它会按内容宽度排出 3+1 或 4+0 的不齐行，反而更乱。 */
+/* 行内操作：按钮文字改成两字（见 renderAccounts 的「标识」）。列数按
+   内容定而不是写死 2（issue #88）：#44 把这一列的宽度还回来之后（1440px 下
+   约 300px），写死两列把每颗按钮拉到 144px、行高撑到 137~198px——一屏只能
+   看全 1 行。auto-fit 以 96px 为一格下限：308px 排 3 列，按钮 96~100px、
+   行高与同行其它内容一致；长标签（领取每日签到积分）由 .test-split 整行豁免
+   与 nowrap-clip 收尾。flex-wrap 试过：它会按内容宽度排出 3+1 或 4+0 的
+   不齐行，反而更乱。 */
 #view-accounts table.acc .c-acts .actwrap {
   display: grid;
-  grid-template-columns: repeat(2, minmax(46px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
   gap: 4px;
 }
 /* 「测试 + 模型」占满整行两列：塞进 46px 一格里，下拉会窄到看不清模型名。 */
