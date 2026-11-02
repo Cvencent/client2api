@@ -54,6 +54,50 @@
 - `client2api-setup-0.5.73.exe`（空包，不含账号凭据或本机配置）
   SHA256: `EF4235020D68984FF57BCFBC0529DFB561609B257CFA1E6ACB0F10A54EE8486C`
 
+## [0.5.82] - 2026-11-03
+
+### Fixed
+
+- **「结果语义掩盖真实状况」一类（#59 + #64）**——两单的共同形状：计数/超时口径
+  是「诚实」的（refused 不是失败、超时是真的超时），但合起来让一个持续失败的状态
+  在日志里长得像正常运行：
+  - **任务板全量扫描不再把队尾的账号掐掉。** 全量扫描原本是一个 2 分钟的整体
+    ctx（`taskScanTimeout`）配 4 并发（`taskScanConc`）：52 账号 × 上游 10s ÷ 4 =
+    130s 超过预算，而排在队尾的正是**最新添加的账号**，于是它们拿
+    `context deadline exceeded`——「新账号怎么扫都扫不到」的主因。
+    两处改动：并发 **4 → 8**（同样的池子降到 ~65s，给预算留一倍余量），以及给
+    **每个账号一份子超时**（`taskAccountTimeout = 25s`，`internal/panel/taskboard.go`
+    在扫描循环里 `context.WithTimeout` 派生）。子超时是关键：慢了的那一个账号以
+    自己的超时收尾，而不是一直占着并发槽把还在排队的账号一起拖到全局截止上。
+    超时的行给专用措辞（「这个账号读取超时（上游慢），本轮先略过；其余账号已正常
+    读取，可再扫一次」）而不是一句裸 ctx 错误，并用 `ctx.Err() == nil` 把
+    「这个账号慢」与「整轮被掐」区分开（#59）。
+  - **批任务的 `done` 行不再以 `failed=0` 冒充「一切正常」。** workbuddy/blackcat
+    连续 8 晚 100% 被拒（`this account's board has no task "black_cat"`）、每晚 15
+    分钟上游调用零收益，而 `done:` 行是 `refused=21 skipped=0 failed=0`——refused
+    的语义（厂商说「不做」，不是传输失败）本身没写错，缺的是「全拒」这个事实没有
+    说出来。现在 `allRefusedNote` 在「每一跑都被拒、零成功、零失败、零跳过」时给
+    done 行加一句显眼尾巴（`<< ALL N ATTEMPTS REFUSED, 0 succeeded — check whether
+    the vendor still offers this chore`）；计数语义一律不动，拒绝仍不计入 failed。
+    另一半是**取证**：`fetchTask` 命中不到某个码时，把这块板子**实际持有**的码
+    清单记一行日志（`workbuddy: board (web) has no "black_cat"; it carried: …`，
+    上限 24 个并标注还有多少）。这行才是区分「厂商下线/改名」与「模块查错了地方」
+    的证据——此前只有一句 refused，两种情况的处置完全不同（一个停批、一个修通道），
+    而日志无法自证是哪一种（#64）。
+  - 守卫测试：新增 `internal/panel/task_scan_timeout_ui_test.go`（并发不许退回 4、
+    每账号子超时必须存在且真的进了扫描循环并在读出后 cancel、超时措辞必须区分
+    「单账号慢」与「整轮被掐」、不许靠调大整轮预算来掩盖）、
+    `internal/scheduler/batch_refusal_note_test.go`（拒绝不许计成 failed、提示只在
+    「全拒且零成功」时触发、两个 done 行发射点都要接上）、
+    `clients/workbuddy/board_miss_evidence_test.go`（miss 时必须列出板子实际持有的
+    码、日志要有长度上限）。
+  - README 中英两版同步了这三处行为（扫描并发与子超时、全拒提示、板子码取证）。
+
+### Installer
+
+- `client2api-setup-0.5.82.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `B1A1959A90C0282C57D69F3FE5A4E8BE0BF714EFBD486E9ADE58FF64B639D645`
+
 ## [0.5.81] - 2026-11-02
 
 ### Fixed

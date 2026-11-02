@@ -1376,8 +1376,9 @@ func (r *Runner) runBatchAs(ctx context.Context, clientName, batchName, trigger 
 		// double-run.  Tests route this through Deps.Sleep.
 		r.sleep(ctx, settle)
 		r.record(rep, trigger)
-		r.log("[scheduler] %s/%s done: accounts=%d ran=%d refused=%d skipped=%d failed=%d in %s",
-			rep.Client, rep.Batch, rep.Accounts, rep.Ran, rep.Refused, rep.Skipped, rep.Failed, rep.Duration)
+		r.log("[scheduler] %s/%s done: accounts=%d ran=%d refused=%d skipped=%d failed=%d in %s%s",
+			rep.Client, rep.Batch, rep.Accounts, rep.Ran, rep.Refused, rep.Skipped, rep.Failed, rep.Duration,
+			allRefusedNote(rep))
 		return rep
 	}
 
@@ -1853,6 +1854,19 @@ func (r *Runner) Config() Config {
 	return cfg
 }
 
+// allRefusedNote is the tail added to a done line whose run produced nothing but
+// refusals (issue #64).  The counters themselves are honest — a refusal really
+// is "the vendor would not do it", which is not a transport failure — but a line
+// reading `refused=21 skipped=0 failed=0` looks like a clean run, and eight
+// nights of that hid a chore the vendor no longer offers.  When every attempt
+// was refused and none succeeded, the line says so in words.
+func allRefusedNote(rep Report) string {
+	if rep.Refused > 0 && rep.Ran == rep.Refused && rep.Failed == 0 && rep.Skipped == 0 {
+		return fmt.Sprintf("  << ALL %d ATTEMPTS REFUSED, 0 succeeded — check whether the vendor still offers this chore", rep.Refused)
+	}
+	return ""
+}
+
 // Report summarizes one batch execution.
 type Report struct {
 	Client      string        `json:"client"`
@@ -2018,7 +2032,8 @@ func (r *Runner) runCheckinBatchAs(ctx context.Context, c core.Client, b core.Ba
 	rep.Duration = r.now().Sub(rep.Started)
 	r.sleep(ctx, settle)
 	r.record(rep, trigger)
-	r.log("[scheduler] %s/%s done: accounts=%d ran=%d refused=%d skipped=%d failed=%d in %s",
-		rep.Client, rep.Batch, rep.Accounts, rep.Ran, rep.Refused, rep.Skipped, rep.Failed, rep.Duration)
+	r.log("[scheduler] %s/%s done: accounts=%d ran=%d refused=%d skipped=%d failed=%d in %s%s",
+		rep.Client, rep.Batch, rep.Accounts, rep.Ran, rep.Refused, rep.Skipped, rep.Failed, rep.Duration,
+		allRefusedNote(rep))
 	return rep
 }

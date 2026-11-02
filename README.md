@@ -5,7 +5,7 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-Current version: **0.5.81**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
+Current version: **0.5.82**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
 
 client2api is a personal, local-only OpenAI-compatible gateway. It aggregates
 the accounts and API Keys **you own** on different AI coding clients and
@@ -726,7 +726,16 @@ loop that never ended.
 ### Tasks, usage and accounting
 
 - Scheduled tasks with Asia/Shanghai times and per-platform overrides, including second/minute/hour intervals with symmetric jitter.
-- Batch execution and a task board for supported account actions.
+- Batch execution and a task board for supported account actions. A board scan
+  runs up to eight accounts at a time and gives each account its own read budget,
+  so one slow upstream account reports its own timeout instead of holding a slot
+  until the scan-wide deadline and cutting off the accounts still queued behind
+  it (newly added accounts sit at the end of that queue). A batch whose every
+  attempt was refused and none succeeded says so on its `done` line — the refusal
+  counter itself stays what it is (a vendor "no", not a transport failure), but
+  the line no longer reads like a clean run. When a board does not carry a chore's
+  code, the module logs the codes that board *did* carry, which is what tells a
+  dropped or renamed vendor chore apart from a module looking in the wrong place.
 - Daily balance refresh can run by time, by interval, or by a 5/6-field cron expression. A disabled account is skipped: a timer cannot make it usable again, and probing it only repeats the vendor's refusal.
 - Recovery probes, daily balance refresh and check-in.
 - A check-in the vendor settles (already done today, or the vendor says the account cannot check in today) greys out that account's button for the rest of the Shanghai day, whether it came from the account button, task centre or scheduler, and is skipped by batch runs; transient network/auth errors stay clickable and reset automatically at the next Shanghai day. A repeated check-in window (a cron that fires several times during one vendor's grant window) reads the same state: an account that already settled today is skipped without another vendor call, while "nothing to claim yet" keeps the window asking. When the billing preview is empty the window also walks the vendor's marketing channel: a delivered campaign that advertises a plan claim is confirmed on the operator's behalf and then claimed, which is how the unattended path picks up popup-only grants such as the weekend build. Campaigns without a plan action are never confirmed.

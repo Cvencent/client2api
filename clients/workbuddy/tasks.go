@@ -506,6 +506,14 @@ func parseGrowthTasks(data json.RawMessage, mp bool) ([]taskRow, error) {
 
 // fetchTask reads one row fresh from one channel, or (nil, nil) when the
 // channel does not carry that code.
+//
+// A miss logs the codes the board DID carry (issue #64).  "this account's board
+// has no task X" is produced here, and without the list there is no way to tell
+// a vendor that dropped or renamed the chore from a module that is looking in
+// the wrong place: the batch then reports refused=all / failed=0 for nights on
+// end and the log says nothing that could settle it.  One line here does.
+// The codes are identifiers, not credentials, so they go out as-is; the list is
+// capped so a runaway board cannot flood the log.
 func (c *Client) fetchTask(ctx context.Context, a *Auth, code string, mp bool) (*growthTask, error) {
 	rows, err := c.listGrowthTasks(ctx, a, mp)
 	if err != nil {
@@ -517,7 +525,33 @@ func (c *Client) fetchTask(ctx context.Context, a *Auth, code string, mp bool) (
 			return &t, nil
 		}
 	}
+	// core.Deps is a value type whose Logf has a no-op default, so a plain call
+	// is safe — the guard is only about not formatting when nobody listens.
+	if c.deps.Logf != nil {
+		codes := make([]string, 0, len(rows))
+		for i := range rows {
+			if cd := strings.TrimSpace(rows[i].task.TaskCode); cd != "" {
+				codes = append(codes, cd)
+			}
+		}
+		const maxCodes = 24
+		extra := ""
+		if len(codes) > maxCodes {
+			extra = fmt.Sprintf(" (+%d more)", len(codes)-maxCodes)
+			codes = codes[:maxCodes]
+		}
+		c.deps.Logf("workbuddy: board (%s) has no %q; it carried: %s%s",
+			taskChannelName(mp), code, strings.Join(codes, ","), extra)
+	}
 	return nil, nil
+}
+
+// taskChannelName labels which board a read went to, for the miss log.
+func taskChannelName(mp bool) string {
+	if mp {
+		return "miniprogram"
+	}
+	return "web"
 }
 
 // readTask reads one row from the channel that owns the code, falling back to

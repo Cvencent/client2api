@@ -305,7 +305,12 @@ func (p *panel) taskListAll(w http.ResponseWriter, r *http.Request, c core.Clien
 				Tasks:   []core.TaskInfo{},
 				Runs:    p.runs.forClientAccount(c.Name(), account.ID, 50),
 			}
-			list, cached, fetchedAt, err := p.taskBoardTasks(ctx, c.Name(), tp, account.ID, force)
+			// 每账号一份子超时（issue #59）：慢了的那一个账号以自己的超时收尾，而不是
+			// 一直占着并发槽、把还在排队的账号一起拖到整轮 2 分钟的全局截止上——
+			// 「列表尾部（正是新加的账号）超时」就是这么来的。
+			actx, acancel := context.WithTimeout(ctx, taskAccountTimeout)
+			list, cached, fetchedAt, err := p.taskBoardTasks(actx, c.Name(), tp, account.ID, force)
+			acancel()
 			rows[i].Cached = cached
 			rows[i].FetchedAt = fetchedAt
 			if err != nil {
@@ -317,6 +322,13 @@ func (p *panel) taskListAll(w http.ResponseWriter, r *http.Request, c core.Clien
 				if len(list) > 0 {
 					rows[i].Tasks = list
 					rows[i].Error = ""
+					return
+				}
+				// 措辞要能区分「这个账号慢」与「整轮被掐」（issue #59）：一句裸
+				// context deadline exceeded 让操作员看不出是哪一个、也不知道下一轮
+				// 会不会好。子超时触发时把「这个账号」写进错误里。
+				if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+					rows[i].Error = core.Redact(accountTimeoutNote)
 					return
 				}
 				rows[i].Error = core.Redact(err.Error())

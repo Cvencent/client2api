@@ -38,7 +38,27 @@ const (
 	// taskScanConc bounds how many accounts a scan asks at once.  Upstream
 	// calls tolerate a handful at a time; a pool of twenty at once looks like
 	// a scraper.
-	taskScanConc = 4
+	//
+	// Raised 4 -> 8 (issue #59): a 52-account pool against an upstream that has
+	// slowed to 10s a call is 52*10/4 = 130s, past the 2-minute budget, so the
+	// accounts at the END of the list — which is where newly added accounts
+	// sit — were the ones that came back with context deadline exceeded.  Eight
+	// at a time puts the same pool at ~65s and leaves the budget a full
+	// doubling of headroom.  It stays far short of "the whole pool at once",
+	// which is what makes an upstream treat us as a scraper.
+	taskScanConc = 8
+	// taskAccountTimeout bounds ONE account's read inside a scan (issue #59).
+	// Without it a single slow account holds its slot until the scan-wide
+	// deadline, so the accounts still queued behind it are cut off by a
+	// deadline that has nothing to do with them.  A per-account bound turns
+	// that into one row that reports its own timeout while the rest of the
+	// scan finishes normally.
+	taskAccountTimeout = 25 * time.Second
+	// accountTimeoutNote is what a row whose own read timed out says (issue #59).
+	// The bare "context deadline exceeded" the upstream plumbing produces reads
+	// like the whole scan failed; this says which account was slow and that the
+	// rest of the board is still valid.
+	accountTimeoutNote = "这个账号读取超时（上游慢），本轮先略过；其余账号已正常读取，可再扫一次"
 	// taskQueueMinConc/taskQueueMaxConc clamp what the operator asks for.
 	// Beyond four, per-account chores start colliding on the vendors' own
 	// per-account locks, which turns a faster queue into a slower one.
