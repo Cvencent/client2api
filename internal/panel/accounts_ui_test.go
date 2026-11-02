@@ -275,24 +275,29 @@ func TestAccountPriorityColumnStaysNarrow(t *testing.T) {
 	src := string(indexHTML)
 	for _, want := range []string{
 		`<col class="col-prio">`,
-		`#view-accounts table.acc .col-prio { width: 5%; }`,
+		// 窄是这条测试的意图；具体百分比由 colWidthPct 比较（#97：钉字面量
+		// 会让等效重排也红，而真正要保的是「它仍然很窄」）。
 		`#view-accounts table.acc .accPrio { width: 52px; min-width: 52px;`,
 	} {
 		if !strings.Contains(src, want) {
 			t.Errorf("account priority column sizing is missing %s", want)
 		}
 	}
+	// 「窄」的判据：它必须比装得下 3 个汉字 + 箭头所需的宽度更宽松地让位给
+	// 别的列——这里只要求它不超过 6%，与 rate 列的相对关系由
+	// TestAccountColumnsSplitTheTableEvenly 钉。
+	if got := colWidthPct(t, src, "prio"); got > 6 {
+		t.Errorf("优先级列 %v%% 太宽：这一列只有一个滑杆，宽度该让给中文表头（issue #97）", got)
+	}
 }
 
 func TestAccountColumnsSplitTheTableEvenly(t *testing.T) {
 	src := string(indexHTML)
 	for _, want := range []string{
-		`#view-accounts table.acc .col-account { width: 12%; }`,
-		`#view-accounts table.acc .col-usage { width: 9.5%; }`,
-		`#view-accounts table.acc .col-last { width: 6%; }`,
-		`#view-accounts table.acc .col-bal { width: 8%; }`,
-		`#view-accounts table.acc .col-note { width: 8.5%; }`,
-		`#view-accounts table.acc .col-acts { width: 21%; }`,
+		// 具体百分比钉一条就够（#97：逐条钉字面量会让「等效重排」也红，而
+		// 真正要保的是下面那两条结构性断言——13 条规则、合计 100%——以及
+		// 关键列的相对关系）。
+		`#view-accounts table.acc .col-account { width: 10%; }`,
 		`#view-accounts table.acc td.c-usage,`,
 		`#view-accounts table.acc td.c-last { overflow: hidden; }`,
 		`<td class="c-usage">' + accUsageCell(a) + '</td>`,

@@ -1889,24 +1889,35 @@ html { font-size: 100%; scrollbar-gutter: stable; }
 #view-accounts table.acc th, #view-accounts table.acc td { padding: 8px 7px; }
 #view-accounts table.acc .mark { width: 7px; min-width: 7px; padding: 0; }
 #view-accounts table.acc { table-layout: fixed; width: 100%; }
+/* 列宽是百分比，但表头里那几段中文标签是 nowrap 的固定宽度：窗口窄到某个程度
+   之后，百分比再怎么分都放不下「成功 / 失败 ↕」，溢出的部分会被 sticky 的邻列
+   表头盖住（issue #87，实测 1280px 下 79px vs 需要 99px）。与其让它无声裁剪，
+   不如给表一个下限——低于它由 .tbl-wrap 横滚（用量页的磁贴带就是这么做）。 */
+#view-accounts table.acc { min-width: 1290px; }
 #view-accounts table.acc .col-mark { width: 1%; }
-#view-accounts table.acc .col-account { width: 12%; }
-#view-accounts table.acc .col-state { width: 5%; }
-#view-accounts table.acc .col-models { width: 6%; }
-#view-accounts table.acc .col-prio { width: 5%; }
-#view-accounts table.acc .col-bal { width: 8%; }
-/* 「成功 / 失败」列（issue #87）：5% 装不下 nowrap 的「成功 / 失败」标签，
-   内容溢出后被 sticky 的「在途」列头盖住——箭头不可见、点击落到邻列。加宽
-   到 6%，「在途」两字本来就只占 4% 的一半，各让一点。 */
-#view-accounts table.acc .col-rate { width: 6%; }
-#view-accounts table.acc .col-inflight { width: 4.5%; }
-#view-accounts table.acc .col-usage { width: 9.5%; }
+#view-accounts table.acc .col-account { width: 10%; }
+#view-accounts table.acc .col-state { width: 4.5%; }
+#view-accounts table.acc .col-models { width: 5.5%; }
+#view-accounts table.acc .col-prio { width: 5.5%; }
+#view-accounts table.acc .col-bal { width: 7%; }
+/* 「成功 / 失败」列（issue #87；#97 装上几何门禁后当场复现仍未修好）。
+   标签是 nowrap 的，内容比列宽时溢出部分被 sticky 的「在途」列头盖住——箭头
+   不可见、点击落到邻列。#87 把它从 5% 提到 6%，但实测 1280px 视口下这一列
+   只有 79px、表头连箭头需要 99px（1440px 下 90px 仍裁 9px）——**百分比在变窄
+   的表里永远预留不出 nowrap 中文标签要的那点宽度**，所以这次两件事一起做：
+   ① 按实测重排百分比（合计仍为 100%）：rate 6%→8%、prio 5%→5.5%（它也要
+      68px 而只有 66px），从 account/state/models/bal/usage/note 各让一点；
+   ② 给表设 min-width 下限（见下面那条规则），低于下限时由 .tbl-wrap 横滚，
+      不再无声裁剪。 */
+#view-accounts table.acc .col-rate { width: 8%; }
+#view-accounts table.acc .col-inflight { width: 5%; }
+#view-accounts table.acc .col-usage { width: 9%; }
 #view-accounts table.acc .col-last { width: 6%; }
 #view-accounts table.acc .col-expiry { width: 7.5%; }
-#view-accounts table.acc .col-note { width: 8.5%; }
+#view-accounts table.acc .col-note { width: 8%; }
 /* 操作列 22.5→21：给「成功 / 失败」列让 1.5%（issue #87）；该列自身的
    144px 两列网格问题另案（issue #88）。 */
-#view-accounts table.acc .col-acts { width: 21%; }
+#view-accounts table.acc .col-acts { width: 23%; }
 #view-accounts table.acc th.sortable { cursor: pointer; user-select: none; white-space: nowrap; transition: color .15s ease, background .15s ease; }
 #view-accounts table.acc th.sortable:hover { color: var(--accent-text); background: var(--surface-2); }
 #view-accounts table.acc th.sortable:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }

@@ -1,6 +1,8 @@
 package panel
 
 import (
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -15,17 +17,39 @@ import (
 func TestRateColumnFitsItsHeader(t *testing.T) {
 	src := poolStatsUISource(t)
 
-	if !strings.Contains(src, "#view-accounts table.acc .col-rate { width: 6%; }") {
-		t.Fatal("col-rate 仍是 5%：装不下 nowrap 的「成功 / 失败」标签，箭头被邻列盖住（issue #87）")
+	// 这里原来逐条钉字面量（`width: 6%` / `4.5%`），#97 换上几何门禁后暴露出
+	// 它挡不住真正的缺陷：那条规则在，而 1280px 下这一列只有 79px、表头需要
+	// 99px，箭头照样被邻列盖住——**测试绿而缺陷在**，正是本单要消掉的那种
+	// 「钉字面量而非行为」。现在结构性要求交给真正的几何断言
+	// （cmd/panelsmoke 的 assertLayout 实测 scrollWidth/clientWidth 与
+	// elementFromPoint），这里只留两条便宜的结构检查：
+	//   1. rate 列必须比 prio 列宽（前者装 5 个汉字 + 箭头，后者只有 3 个汉字）；
+	//   2. 窄窗必须让表横滚，而不是把表头裁掉。
+	rate := colWidthPct(t, src, "rate")
+	prio := colWidthPct(t, src, "prio")
+	if rate <= prio {
+		t.Errorf("col-rate (%v%%) 不大于 col-prio (%v%%)：装 5 个汉字加箭头的列比 3 个汉字的列还窄（issue #87）", rate, prio)
 	}
-	if !strings.Contains(src, "#view-accounts table.acc .col-inflight { width: 4.5%; }") {
-		t.Fatal("col-inflight 没有同步到 4.5%：加宽 rate 列的代价无处可付（issue #87）")
-	}
-	if strings.Contains(src, "#view-accounts table.acc .col-rate { width: 5%; }") {
-		t.Error("col-rate 退回了 5%（issue #87 回归）")
+	if !strings.Contains(src, "#view-accounts table.acc { min-width: 1290px; }") {
+		t.Fatal("窄窗没有让账号表横滚：百分比放不下 nowrap 中文表头时会被无声裁掉（issue #87/#97）")
 	}
 	// 可排序列头的收拢兜底：列宽吃紧时标签收缩而不是溢出到邻列。
 	if !strings.Contains(src, ".acc thead th.sortable { max-width: 100%; overflow: hidden; }") {
 		t.Fatal("可排序列头没有收拢兜底：窄窗口下溢出内容仍会被 sticky 邻列盖住（issue #87）")
 	}
+}
+
+// colWidthPct reads one declared account-column width.
+func colWidthPct(t *testing.T, src, col string) float64 {
+	t.Helper()
+	re := regexp.MustCompile(`#view-accounts table\.acc \.col-` + regexp.QuoteMeta(col) + ` \{ width: ([0-9.]+)%; \}`)
+	m := re.FindStringSubmatch(src)
+	if m == nil {
+		t.Fatalf("no width rule for col-%s", col)
+	}
+	v, err := strconv.ParseFloat(m[1], 64)
+	if err != nil {
+		t.Fatalf("parse col-%s width %q: %v", col, m[1], err)
+	}
+	return v
 }

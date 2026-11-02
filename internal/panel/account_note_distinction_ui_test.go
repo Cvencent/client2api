@@ -58,7 +58,8 @@ func TestStatusNoteCellAlwaysCarriesFullTip(t *testing.T) {
 func TestStatusNoteColumnIsWiderAndWrapsTwoLines(t *testing.T) {
 	src := string(indexHTML)
 	for _, want := range []string{
-		`#view-accounts table.acc .col-note { width: 8.5%; }`,
+		// 宽度那条改由 colWidthPct 比较（#97）：这里要保的是「它比默认窄列宽」
+		// 与两行展示，而不是某个特定百分比。
 		`-webkit-line-clamp: 2;`,
 		`display: -webkit-box;`,
 	} {
@@ -68,5 +69,9 @@ func TestStatusNoteColumnIsWiderAndWrapsTwoLines(t *testing.T) {
 	}
 	if strings.Contains(src, `#view-accounts table.acc td .note { display: inline-block; max-width: 100px;`) {
 		t.Error("状态说明列仍然是单行 100px 截断")
+	}
+	// 它得比窄列（优先级）宽，否则两行裁剪的内容根本撑不开。
+	if note, prio := colWidthPct(t, src, "note"), colWidthPct(t, src, "prio"); note <= prio {
+		t.Errorf("状态说明列 %v%% 不比优先级列 %v%% 宽：两行展示没有空间（issue #97）", note, prio)
 	}
 }

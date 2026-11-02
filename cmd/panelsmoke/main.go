@@ -113,26 +113,37 @@ func run() error {
 
 	var problems []string
 	for _, browser := range candidates {
-		runCtx, cancelRun := context.WithTimeout(ctx, browserTimeout)
-		dom, err := smokeBrowser(runCtx, browser, base+"/panel/", dir)
-		timedOut := runCtx.Err() != nil
-		cancelRun()
-		if err != nil {
-			if timedOut {
-				problems = append(problems, fmt.Sprintf("%s: timed out after %s", browser, browserTimeout))
-			} else {
-				problems = append(problems, fmt.Sprintf("%s: %v", browser, err))
+		// One attempt = one context and one browser session, released together on
+		// every path (including the success return and the debug-dump write).
+		attemptErr := func() error {
+			runCtx, cancelRun := context.WithTimeout(ctx, browserTimeout)
+			defer cancelRun()
+			dom, page, closePage, err := smokeBrowser(runCtx, browser, base+"/panel/", dir)
+			if err != nil {
+				if runCtx.Err() != nil {
+					return fmt.Errorf("timed out after %s", browserTimeout)
+				}
+				return err
 			}
+			defer closePage()
+			if *domFlag != "" {
+				_ = os.WriteFile(*domFlag, []byte(dom), 0o644)
+			}
+			if err := assertBooted(dom); err != nil {
+				return err
+			}
+			// The geometry phase (issue #97) runs in the session that just proved
+			// boot: a boot marker says the script ran, not that the page is laid
+			// out.  A clipped header, an arrow covered by the next column or an
+			// invisible primary button all ship today because nothing measures
+			// anything.
+			return assertLayout(runCtx, page)
+		}()
+		if attemptErr != nil {
+			problems = append(problems, fmt.Sprintf("%s: %v", browser, attemptErr))
 			continue
 		}
-		if *domFlag != "" {
-			_ = os.WriteFile(*domFlag, []byte(dom), 0o644)
-		}
-		if err := assertBooted(dom); err != nil {
-			problems = append(problems, fmt.Sprintf("%s: %v", browser, err))
-			continue
-		}
-		fmt.Printf("panelsmoke: %s booted the panel cleanly (browser %s)\n",
+		fmt.Printf("panelsmoke: %s booted the panel cleanly and passed the layout checks (browser %s)\n",
 			filepath.Base(exe), browser)
 		return nil
 	}
@@ -310,7 +321,7 @@ func probeURL(ctx context.Context, client *http.Client, url string, wantShell bo
 // can exit successfully without writing any DOM to stdout.  Driving the
 // DevTools endpoint also lets the gate wait for the panel's explicit boot
 // marker instead of guessing with --virtual-time-budget.
-func smokeBrowser(ctx context.Context, browserPath, url, dir string) (string, error) {
+func smokeBrowser(ctx context.Context, browserPath, url, dir string) (string, *browser.Page, func(), error) {
 	profileRoot := filepath.Join(dir, "profile-"+sanitize(filepath.Base(browserPath)))
 	b, err := browser.Launch(ctx, browser.LaunchOpts{
 		ExecPath:    browserPath,
@@ -320,9 +331,8 @@ func smokeBrowser(ctx context.Context, browserPath, url, dir string) (string, er
 		Timeout:     25 * time.Second,
 	})
 	if err != nil {
-		return "", err
+		return "", nil, nil, err
 	}
-	defer b.Close()
 
 	page := b.Page()
 	ready := `(() => { const h = document.documentElement; return !!(h && (` +
@@ -330,12 +340,129 @@ func smokeBrowser(ctx context.Context, browserPath, url, dir string) (string, er
 		`h.getAttribute("data-c2a-boot-error") === "1")); })()`
 	ok, err := page.WaitFor(ctx, ready, 10*time.Second)
 	if err != nil {
-		return "", err
+		b.Close()
+		return "", nil, nil, err
 	}
 	if !ok {
-		return "", fmt.Errorf("panel did not finish booting before the deadline")
+		b.Close()
+		return "", nil, nil, fmt.Errorf("panel did not finish booting before the deadline")
 	}
-	return page.EvalString(ctx, `document.documentElement ? document.documentElement.outerHTML : ""`)
+	dom, err := page.EvalString(ctx, `document.documentElement ? document.documentElement.outerHTML : ""`)
+	if err != nil {
+		b.Close()
+		return "", nil, nil, err
+	}
+	// The caller owns the shutdown now: the geometry phase runs in this same
+	// session (a second launch would pay another browser start for no reason and
+	// could land on a different rendering).
+	return dom, page, b.Close, nil
+}
+
+// assertLayout measures the rendered accounts view (issue #97).
+//
+// Every assertion here is about what the browser actually laid out, which is the
+// class of defect the text-based panel tests cannot see.  They are written as
+// questions an operator would ask looking at the screen -- "can I read this
+// column header", "if I click that sort arrow, do I hit it", "is this button
+// visible" -- rather than as restatements of the CSS that produced them, so a
+// legitimate refactor (col-rate 6% -> 6.0%, or a different layout mechanism
+// entirely) keeps them green while a real regression fails them.
+//
+// The numbers come from the live page, so a failure says which element and by
+// how much.
+func assertLayout(ctx context.Context, page *browser.Page) error {
+	if page == nil {
+		return nil
+	}
+	// The accounts view is where the reported layout defects lived (#44 / #86 /
+	// #87 / #88): a fixed-layout table with a sticky header, percentage column
+	// widths and a sortable-header row.
+	if _, err := page.Eval(ctx, `(() => { if (typeof go === "function") go("accounts"); return true; })()`); err != nil {
+		return fmt.Errorf("switch to the accounts view: %w", err)
+	}
+	// The accounts view defaults to the CARD wall, where the table exists in the
+	// DOM but is hidden -- measuring it there returns zeros and would fail every
+	// check for the wrong reason.  The table is what the reported layout defects
+	// lived in, so select it explicitly.
+	if _, err := page.Eval(ctx, `(() => { if (typeof setAccMode === "function") setAccMode("table"); return true; })()`); err != nil {
+		return fmt.Errorf("switch to the table presentation: %w", err)
+	}
+	if ok, err := page.WaitFor(ctx, `(() => { const t = document.querySelector("#view-accounts table.acc"); return !!(t && t.getBoundingClientRect().width > 0); })()`, 10*time.Second); err != nil {
+		return fmt.Errorf("wait for the accounts table: %w", err)
+	} else if !ok {
+		// No accounts at all is a legitimate state for a fresh instance; there is
+		// nothing to measure.
+		return nil
+	}
+
+	// One expression so the whole probe sees a single layout, and one report so a
+	// failure names every offending element instead of only the first.
+	probe := `(() => {
+	  const problems = [];
+	  const name = el => {
+	    if (!el) return "(missing)";
+	    const id = el.id ? "#" + el.id : "";
+	    const t = (el.textContent || "").trim().slice(0, 18);
+	    return el.tagName.toLowerCase() + id + (t ? " " + JSON.stringify(t) : "");
+	  };
+	  // 1. A sortable header must fit its own column.  overflow:hidden clips the
+	  //    label silently -- the report measured a zero-width sort arrow whose
+	  //    click landed on the NEXT column's header (issue #87).
+	  document.querySelectorAll("#view-accounts table.acc thead th.sortable").forEach(th => {
+	    if (th.scrollWidth > th.clientWidth + 1) {
+	      problems.push("列头被裁: " + name(th) + " 需要 " + th.scrollWidth + "px / 可用 " + th.clientWidth + "px");
+	    }
+	  });
+	  // 2. The sort arrow must be visible AND hit-testable: its centre has to
+	  //    resolve to that same header, or clicking it sorts a different column.
+	  document.querySelectorAll("#view-accounts table.acc thead th.sortable .sort-mark").forEach(mark => {
+	    const th0 = mark.parentElement;
+	    // A header whose whole column is hidden is not a defect: the balance
+	    // column is dropped on purpose when the platform reports no balances
+	    // (body.hide-bal, issue #44 -- the alternative was an empty 22% gutter).
+	    // Skip anything the layout has taken out, and judge only what is shown.
+	    if (!th0 || th0.offsetParent === null || th0.getBoundingClientRect().width < 1) return;
+	    const r = mark.getBoundingClientRect();
+	    if (r.width < 1 || r.height < 1) {
+	      problems.push("排序箭头不可见: " + name(mark.parentElement) + " " + r.width.toFixed(1) + "x" + r.height.toFixed(1));
+	      return;
+	    }
+	    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+	    const th = mark.parentElement;
+	    if (!hit || !th.contains(hit)) {
+	      problems.push("排序箭头被遮挡: " + name(th) + " 的箭头位置命中了 " + name(hit));
+	    }
+	  });
+	  // 3. A primary button must not render its text in its own background colour
+	  //    (#86: 1:1 in the light theme, i.e. an invisible label).
+	  const rgb = v => { const m = /rgba?\(([^)]+)\)/.exec(v || ""); if (!m) return null;
+	    const p = m[1].split(",").map(x => parseFloat(x)); return p.length >= 3 ? p.slice(0, 3) : null; };
+	  const lum = c => { const f = v => { v /= 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+	    return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]); };
+	  document.querySelectorAll(".box > header button.primary, button.primary").forEach(btn => {
+	    const cs = getComputedStyle(btn);
+	    const fg = rgb(cs.color), bg = rgb(cs.backgroundColor);
+	    if (!fg || !bg) return;
+	    const l1 = lum(fg), l2 = lum(bg);
+	    const ratio = (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+	    if (ratio < 2.0) {
+	      problems.push("主按钮文字与底色几乎同色: " + name(btn) + " 对比度 " + ratio.toFixed(2) + ":1");
+	    }
+	    const r = btn.getBoundingClientRect();
+	    if (r.width < 1 || r.height < 1) {
+	      problems.push("主按钮尺寸为零: " + name(btn));
+	    }
+	  });
+	  return problems.join(" || ");
+	})()`
+	report, err := page.EvalString(ctx, probe)
+	if err != nil {
+		return fmt.Errorf("measure the layout: %w", err)
+	}
+	if strings.TrimSpace(report) != "" {
+		return fmt.Errorf("layout regression:\n  %s", strings.Join(strings.Split(report, " || "), "\n  "))
+	}
+	return nil
 }
 
 // assertBooted is the actual assertion.  A missing ready marker is the 0.1.5
