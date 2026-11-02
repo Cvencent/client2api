@@ -54,6 +54,46 @@
 - `client2api-setup-0.5.73.exe`（空包，不含账号凭据或本机配置）
   SHA256: `EF4235020D68984FF57BCFBC0529DFB561609B257CFA1E6ACB0F10A54EE8486C`
 
+## [0.5.84] - 2026-11-03
+
+### Fixed
+
+- **契约只写了一半一类（#114 + #115）**——两单的共同形状：字段/文档/访问器都在，
+  但另一侧没有兑现，而且失败方式比"没生效"更糟：
+  - **lobsterai 的时长字段现在真的接受裸数字，而且一个坏键再也吃不掉账号池。**
+    README 承诺「Go duration 字符串（`"90s"`）**或裸 JSON 数字读作秒数**
+    （`"cooldown": 300`）；其它形状退回默认而不是让模块失败」，但 10 个时长字段
+    是裸 `string`——`{"cooldown": 300}` 直接让 `json.Unmarshal` 报错，而调用方
+    （`lobsterai.go`）用 `cfg = Config{}` 收场，于是**同一块里的 `accounts[]` /
+    `extra_models[]` 一起消失**：照着 README 写一个裸数字，代价是整个平台的账号池
+    被静默清空（面板保存时还只回 200）。现在时长字段是自定义 `durationField`：
+    字符串与裸数字都收（数字归一成 `"300s"`，与 opencode 等模块的既有约定一致），
+    无法解析的形状**只让这一个键退回默认**，并且 `parseConfig` 失败时先把
+    `accounts[]` / `extra_models[]` 抢救出来——即便将来又有哪个字段写错，也不会再
+    出现「账号一起没」。错误本身仍返回给面板显示，不再静默。
+  - **tabbit 的 `timeouts.cache_seconds` 有读取点了。** 这个键有字段、有注释、
+    有 README 行，`cacheTTL()`（`clients/tabbit/config.go:165`）也照着定义好了，
+    但全仓零调用——面板每 5 秒读一次 `/panel/api/status`，每一拍都真的重打一次
+    sidecar 的 `/health`，尽管答案在这个窗口里不可能变（同 struct 的
+    `models_cache_seconds` 对照组则真的在用）。现在状态读数走 `probeCached()`：
+    窗口内复用上一次**成功**的探测结果，缓存按 sidecar 的 `base_url` 分键（改指
+    另一个 sidecar 立即生效），失败永不缓存（sidecar 恢复下一拍就能看到）。
+    **就绪、登录与托管启动路径刻意仍直接调 `probe()`**——它们问的是「现在活着吗」，
+    缓存会把刚启动的 sidecar 报成健康，那比多打一次请求更糟（`waitHealthy` 会对着
+    过期结果空转）。
+  - 测试：新增 `clients/lobsterai/config_duration_forms_test.go`（两种写法都收、
+    bool/对象/数组/超量数字/乱字符串都只降级该键、解析错误后账号池仍在、裸数字
+    序列化回 Go duration 字符串）与 `clients/tabbit/health_cache_test.go`（窗口内
+    8 次读状态只打 1 次 `/health`、窗口过期后重新探测、失败不缓存、
+    换地址立即失效、就绪路径绕过缓存）。两个模块 README 同步：lobsterai 写明
+    降级是**按键**的且账号池不受解析问题影响；tabbit 写明 `cache_seconds` 管的是
+    状态读数、以及为什么就绪/登录路径不缓存。
+
+### Installer
+
+- `client2api-setup-0.5.84.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `5F597DAF40B52E069CA2E10888444346753FAE221DE8863E1AD7457A7E36FF6E`
+
 ## [0.5.83] - 2026-11-03
 
 ### Fixed

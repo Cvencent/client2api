@@ -202,26 +202,76 @@ type Config struct {
 	// to override the token.
 	ExtraHeaders map[string]string `json:"extra_headers,omitempty"`
 
-	// Duration knobs, as Go duration strings ("10m", "500ms").
-	LoginTimeout   string `json:"login_timeout,omitempty"`
-	ChatTimeout    string `json:"chat_timeout,omitempty"`
-	ModelsTimeout  string `json:"models_timeout,omitempty"`
-	CheckinTimeout string `json:"checkin_timeout,omitempty"`
-	VersionTimeout string `json:"version_timeout,omitempty"`
-	ModelsTTL      string `json:"models_ttl,omitempty"`
-	VersionTTL     string `json:"version_ttl,omitempty"`
-	Cooldown       string `json:"cooldown,omitempty"`
-	QuotaCooldown  string `json:"quota_cooldown,omitempty"`
-	RefreshMargin  string `json:"refresh_margin,omitempty"`
+	// Duration knobs.  Each accepts a Go duration string ("10m", "500ms") or a
+	// bare JSON number read as seconds (300) -- see durationField.
+	LoginTimeout   durationField `json:"login_timeout,omitempty"`
+	ChatTimeout    durationField `json:"chat_timeout,omitempty"`
+	ModelsTimeout  durationField `json:"models_timeout,omitempty"`
+	CheckinTimeout durationField `json:"checkin_timeout,omitempty"`
+	VersionTimeout durationField `json:"version_timeout,omitempty"`
+	ModelsTTL      durationField `json:"models_ttl,omitempty"`
+	VersionTTL     durationField `json:"version_ttl,omitempty"`
+	Cooldown       durationField `json:"cooldown,omitempty"`
+	QuotaCooldown  durationField `json:"quota_cooldown,omitempty"`
+	RefreshMargin  durationField `json:"refresh_margin,omitempty"`
 
 	MaxInFlight int `json:"max_in_flight,omitempty"`
 
 	Accounts []AccountConfig `json:"accounts,omitempty"`
 }
 
+// durationField is a duration knob that accepts what the README promises: a Go
+// duration string ("90s") or a bare JSON number read as seconds (300).
+//
+// UnmarshalJSON never returns an error.  A shape it cannot parse becomes empty,
+// which every accessor reads as "use the documented default".  That is the
+// contract, and it is not a nicety: these blocks also carry accounts[], and a
+// plain `string` field made `{"cooldown": 300}` a decode error -- which the
+// caller answered by zeroing the WHOLE Config, silently emptying the account
+// pool of a platform whose only mistake was following the README (issue #114).
+//
+// The value is kept as the original string when one was given, so the panel and
+// anything that re-serialises the document keep seeing the operator's spelling.
+type durationField string
+
+func (d *durationField) UnmarshalJSON(b []byte) error {
+	*d = ""
+	s := strings.TrimSpace(string(b))
+	if s == "" || s == "null" {
+		return nil
+	}
+	if s[0] == '"' {
+		var v string
+		if err := json.Unmarshal(b, &v); err != nil {
+			return nil
+		}
+		// An unparseable string is recorded as given; durationOr turns it into
+		// the default, which is what "anything else falls back" means.
+		*d = durationField(strings.TrimSpace(v))
+		return nil
+	}
+	var secs float64
+	if err := json.Unmarshal(b, &secs); err != nil {
+		return nil
+	}
+	// A month is the ceiling: anything larger is a unit mistake (milliseconds
+	// pasted as seconds), not a deliberate deadline.
+	if secs > 0 && secs <= 30*24*60*60 {
+		*d = durationField(strconv.FormatFloat(secs, 'f', -1, 64) + "s")
+	}
+	return nil
+}
+
 // parseConfig decodes the module's config block.  An absent block is not an
 // error: it is a Config with defaults, which is what a deployment that only
 // pastes a credential into the panel needs.
+//
+// A decode error no longer costs the account pool (issue #114).  The caller has
+// always answered a failed parse with `cfg = Config{}`, so one mistyped field
+// meant "this platform now has no accounts" -- a data-loss shape for a typo.
+// The error is still returned (the panel needs to show it), but the identity
+// parts of the block are salvaged out of the same bytes first, so a future
+// strict-type mistake can only cost the knob it belongs to.
 func parseConfig(raw json.RawMessage) (Config, error) {
 	var cfg Config
 	trimmed := strings.TrimSpace(string(raw))
@@ -229,7 +279,16 @@ func parseConfig(raw json.RawMessage) (Config, error) {
 		return cfg, nil
 	}
 	if err := json.Unmarshal(raw, &cfg); err != nil {
-		return Config{}, fmt.Errorf("clients.%s: %w", clientName, err)
+		// Salvage what must survive a bad neighbour.  This struct deliberately
+		// declares only the fields the pool is built from, so json ignores
+		// everything else (including whatever failed) and succeeds.
+		var keep struct {
+			Accounts    []AccountConfig `json:"accounts"`
+			ExtraModels []string        `json:"extra_models"`
+		}
+		_ = json.Unmarshal(raw, &keep)
+		return Config{Accounts: keep.Accounts, ExtraModels: keep.ExtraModels},
+			fmt.Errorf("clients.%s: %w", clientName, err)
 	}
 	return cfg, nil
 }
@@ -366,8 +425,8 @@ func keyfromOr(raw, def string) string {
 // durationOr parses a Go duration string, falling back to def when it is empty
 // or unparseable.  A negative value is treated as unset rather than as "no
 // timeout", because a zero timeout silently disables the guard.
-func durationOr(raw string, def time.Duration) time.Duration {
-	raw = strings.TrimSpace(raw)
+func durationOr(field durationField, def time.Duration) time.Duration {
+	raw := strings.TrimSpace(string(field))
 	if raw == "" {
 		return def
 	}

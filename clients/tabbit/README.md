@@ -134,6 +134,14 @@ Every field is optional; an absent object behaves like `{}`.
 | `include_usage` | bool | `true` | Ask the sidecar for a usage chunk (`stream_options.include_usage`). |
 | `timeouts.*` | float seconds | see below | `status_seconds` 0.9, `health_seconds` 1.5, `models_seconds` 10, `request_seconds` 900, `start_seconds` 20, `cache_seconds` 5, `models_cache_seconds` 60. |
 
+`cache_seconds` bounds how long a `/health` result is reused by the **status
+readout** (`/panel/api/status`), so a panel that polls every 5 seconds does not
+re-probe the sidecar each tick. Only successful probes are cached, the cache is
+keyed on the sidecar's `base_url` (pointing the module at a different sidecar
+takes effect immediately), and the readiness, login and managed-start paths
+deliberately bypass it: they ask "is it up right now" and a cached answer would
+report a just-started sidecar as healthy.
+
 A malformed config is never fatal: `New` keeps the parse error, logs
 `config rejected, continuing with defaults: …`, and `Status()` reports
 `invalid config: …`. `Chat` then returns `core.ErrNotConfigured` (HTTP 503).

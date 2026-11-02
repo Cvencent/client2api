@@ -312,7 +312,9 @@ func (c *Client) Status(ctx context.Context) core.Status {
 		return st
 	}
 
-	h := c.probe(ctx, loc, c.cfg.Timeouts.statusBudget())
+	// The readout, not a readiness check: reuse a /health answer inside
+	// timeouts.cache_seconds instead of re-asking on every panel poll (#115).
+	h := c.probeCached(ctx, loc, c.cfg.Timeouts.statusBudget())
 	c.storeHealth(h)
 
 	acct := core.AccountStatus{ID: loc.baseURL, Label: "tabbit2api sidecar", Enabled: true}

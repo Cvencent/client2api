@@ -142,7 +142,9 @@ only pays out for a first-time account, and the vendor decides that.
 
 Durations accept a Go duration string (`"90s"`) or a bare JSON number read as
 seconds (`"cooldown": 300`); anything else falls back to the default rather than
-failing the module.
+failing the module.  That fallback is per key: a shape this module cannot read
+costs only that one value, never the rest of the block — the account pool in
+`accounts[]` survives any decode problem (issue #114).
 
 ### `accounts[]` entries
 

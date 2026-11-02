@@ -101,6 +101,54 @@ func parseHealth(raw []byte) healthInfo {
 	return info
 }
 
+// probeCached answers the readout from a recent successful /health when one is
+// younger than timeouts.cache_seconds, and probes otherwise (issue #115).
+//
+// Only the status readout uses it.  cache_seconds described exactly this and had
+// no reader at all: cacheTTL() was defined and never called, so every status
+// poll -- and the panel polls it every 5 seconds -- re-hit the sidecar's /health
+// even though the answer cannot have changed.
+//
+// The readiness and login paths deliberately keep calling probe() directly: they
+// ask "is it up right now", and a cached answer would turn a just-started
+// sidecar into a false success (waitHealthy would spin on a stale ok forever,
+// which is worse than one extra request).
+//
+// Only successful probes are reused.  A failure means "we do not know", and
+// retrying is what makes a sidecar that comes back show up on the next tick
+// instead of one cache window later.
+//
+// The cache is keyed on the sidecar's base URL: pointing the module at a
+// different sidecar must not serve the previous one's verdict.
+func (c *Client) probeCached(ctx context.Context, loc location, budget time.Duration) healthState {
+	ttl := c.cfg.Timeouts.cacheTTL()
+	if ttl > 0 {
+		if prev, ok := c.recentHealth(loc.baseURL, ttl); ok {
+			return prev
+		}
+	}
+	st := c.probe(ctx, loc, budget)
+	if st.ok {
+		c.storeHealth(st)
+	}
+	return st
+}
+
+// recentHealth returns the last successful probe for baseURL when it is younger
+// than ttl.
+func (c *Client) recentHealth(baseURL string, ttl time.Duration) (healthState, bool) {
+	c.mu.Lock()
+	prev := c.health
+	c.mu.Unlock()
+	if !prev.ok || prev.baseURL != baseURL || prev.at.IsZero() {
+		return healthState{}, false
+	}
+	if time.Since(prev.at) >= ttl {
+		return healthState{}, false
+	}
+	return prev, true
+}
+
 // probe asks the sidecar whether it is alive.  It is bounded by budget and
 // never panics or blocks longer than that.
 func (c *Client) probe(ctx context.Context, loc location, budget time.Duration) healthState {
