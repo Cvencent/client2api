@@ -5,7 +5,7 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-当前版本：**0.5.82**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：**0.5.83**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 流式断流排查：升级后系统日志新增 `stream: id=...` 终止诊断，包含协议、平台/模型、
 上游事件数、`finish_reason`、正文/推理字节数、工具调用数、completion token、
@@ -169,6 +169,7 @@ client2api 是一个**个人自用**的 OpenAI 兼容网关。它把你自己在
 - 平台级、账号级、账号内并发限制。
 - 会话粘性、重试、冷却和自动故障切换；面板会列出粘性会话使用的模型，可强制解绑账号，也可在强制切换时指定目标平台；不指定时则清除账号和平台粘性并重新按优先级选择。切换前已经发出的请求可以正常完成，但它的成功回调不能再把旧平台粘性写回来；下一次请求会从操作员的最新选择重新选路。
 - 统一把鉴权、额度、WAF、超时、限流等错误映射为 OpenAI 形状。
+- 能读余额的平台（officeace）把「鉴权形状的拒绝」按余额读数分流：**只要这个账号有过余额读数**（0 / 正数 / 不限量都一样），401 就走额度冷却而不是标成死 key——充值、签到、试用续上都会让它自己回来。厂商把耗尽的订阅和凭据问题回成同一句 `AppKey or AppSecret is invalid` + `APIG.1009`，文本无法区分两者；而这家厂商的 IAM 401 从来不是模型 key 死亡（key 是长期 App Key / App Secret），所以读数才是唯一的判别信号。从未读过余额的账号仍按死 key 处理（账号异常 + 重新导入）。操作员口径：「余额为 0 就不该打上去，直接冷却中，后面有了余额才放开」。
 - 厂商拒绝凭据时，各平台统一显示为「账号异常」而不是「冷却中」。401 无论 body 写什么（厂商业务信封、泛化的 `token expired`、还是边缘网关那段裸 HTML）都是对凭据本身的判定：无法自行续期的模块直接把账号停用为 `invalid`，让操作员重新导入，而不是冷却一轮后又把同一个死令牌放回轮换。能续期的模块先试一次刷新，且只有刷新令牌本身被拒（不是超时或 5xx）才算终态。请求一旦被正常服务，该判定立即清除，所以恢复可用的凭据会自动回到池里，面板的「恢复」也始终能手动解除。
 - 部分厂商会在 HTTP 200 的 SSE 流里返回额度、鉴权、限流或 WAF 错误。网关会在提交流之前先读第一帧；如果这是可重试错误，就关闭该流并交给下一个候选平台，而不是把 502 直接丢给调用方。零余额账号会退出轮换，直到充值、签到或余额刷新读到正数。
 - Responses 上下文守卫在本会裁剪时，会折叠旧历史并返回一个 `compaction` 项，而不是静默丢掉最旧的消息；调用方下一轮可以携带这条压缩状态。压缩失败时仍回退到原来的裁剪路径，聊天与 Anthropic 协议没有压缩词汇，仍以 `context_window_exceeded` 回报。

@@ -95,3 +95,38 @@ func TestLogCursorIsServedByThePanel(t *testing.T) {
 		t.Error("游标接不上时没有退回整份窗口：调用方会静默跳过中间那段（issue #113）")
 	}
 }
+
+// TestLogPollSkipsOverlappingTicks 钉住 #113 的边界修正：轮询重叠时必须跳过，
+// 不能在途再发一拍。
+//
+// 触发条件（单次 body fetch 拖过 4 秒）在本机几乎不会出现，但一旦出现就是**重复
+// 追加**：两拍都以同一个游标发 since，各自返回后都 concat，后回来的那份把同一批行
+// 再接一遍。旧的整份替换是幂等的，所以这是增量化带进来的回归——它必须由守卫堵住，
+// 而不是靠「按 total 过滤」只救恰好同游标的那一种重叠。
+func TestLogPollSkipsOverlappingTicks(t *testing.T) {
+	src := poolStatsUISource(t)
+	body := poolStatsFuncBody(t, src, "renderLogs")
+
+	// 守卫存在且在发请求之前生效。
+	if !strings.Contains(body, "if (LOG_BUSY) return;") {
+		t.Fatal("日志轮询没有 in-flight 守卫：两拍重叠时同一批行会被追加两次（issue #113）")
+	}
+	guard := strings.Index(body, "if (LOG_BUSY) return;")
+	req := strings.Index(body, `api("/panel/api/logs?meta=1")`)
+	if guard < 0 || req < 0 || guard > req {
+		t.Error("守卫不在第一次请求之前：重叠的那一拍照样会发出去（issue #113）")
+	}
+	// 复位必须在 finally 里——成功/失败/早退三条路都要复位，卡死的守卫比重复追加更糟。
+	if !strings.Contains(body, "LOG_BUSY = false;") {
+		t.Fatal("守卫没有复位点：一次异常就会让日志页永远不再轮询（issue #113）")
+	}
+	if !strings.Contains(body, "} finally {") {
+		t.Error("守卫的复位不在 finally 里：失败路径会把守卫留在 true（issue #113）")
+	}
+	// 复位点必须在函数体内（早退分支不会执行到），且整段被 try 包住。
+	tryAt := strings.Index(body, "try {")
+	firstReq := strings.Index(body, `const meta = await api(`)
+	if tryAt < 0 || firstReq < 0 || tryAt > firstReq {
+		t.Error("try 块没有包住第一次请求：失败时 finally 也不会跑到（issue #113）")
+	}
+}

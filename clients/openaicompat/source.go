@@ -47,10 +47,14 @@ type source struct {
 	// the next sweep skips it instead of repeating four failures.
 	balanceProbe map[string]balanceProbeState
 	// authExhausted is the wrapper's veto on that verdict: an auth-shaped
-	// refusal that is really "this credit package is drained" (the OfficeAce
-	// gateway answers a zero-credit account with a bare 401) is a cooldown,
-	// because a refill revives it.  Nil on plain relays.
-	authExhausted func(id string) bool
+	// refusal this source can attribute to credits rather than to the key is a
+	// cooldown, because a refill revives it.  Nil on plain relays.
+	//
+	// It is consulted with the refusal text so the wrapper can answer per
+	// refusal (issue #104): "this package is drained" and "the IAM exchange
+	// raced" are both cooldowns, but "the App Key itself is gone" is still a
+	// dead key, and only the wrapper can tell them apart.
+	authExhausted func(id, refusal string) bool
 	lastUsed      map[string]uint64
 	sequence      uint64
 	limits        *sourceRequestLimiter
@@ -688,12 +692,11 @@ func (s *source) noteFailure(id, key, base string, err error) {
 			refusal := describeError(err)
 			s.lastErr = refusal
 			kind := core.FailureKindOf(err)
-			if kind == core.FailureAuth && s.authExhausted != nil && s.authExhausted(id) {
-				// The wrapper knows this account is out of credits: the
-				// auth-shaped refusal is the drained-package verdict, not a
-				// dead key.  Park it on the quota path -- a refill (daily
-				// check-in, a new trial, a top-up) revives the row without
-				// operator action.
+			if kind == core.FailureAuth && s.authExhausted != nil && s.authExhausted(id, refusal) {
+				// The wrapper attributed this auth-shaped refusal to credits, so
+				// it is a cooldown rather than a dead-key verdict (issue #104).
+				// The wrapper decides per refusal; see officeAceSource for the
+				// two shapes it answers and the one it deliberately does not.
 				kind = core.FailureQuota
 			}
 			switch kind {

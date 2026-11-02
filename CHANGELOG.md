@@ -54,6 +54,47 @@
 - `client2api-setup-0.5.73.exe`（空包，不含账号凭据或本机配置）
   SHA256: `EF4235020D68984FF57BCFBC0529DFB561609B257CFA1E6ACB0F10A54EE8486C`
 
+## [0.5.83] - 2026-11-03
+
+### Fixed
+
+- **officeace 不再量产 invalid（#104 重开），日志增量轮询不再重复追加（#113 重开）**：
+  - **officeace 的鉴权形状拒绝按余额读数分流，不再只看「恰好为 0」。** 现场是
+    invalid 9 / ready 3，其中至少 4 个被误标时**是有余额的**（45 ~ 3.3k 积分）：
+    它们的 401 是 IAM 交换竞态，而否决只认「最近一次读数恰好为 0」，于是落进
+    `kindAuth` → 写 invalid → **自锁**（选择器跳过、软扫与恢复扫都跳过，能清标记的
+    200 永远打不出去）。现在的判据是「这个账号**有没有过**余额读数」——0、正数、
+    不限量一律走额度冷却（0 停车等回血，正数走 quota 短冷却，行保持可用），只有
+    **从未读过余额**的账号保留死 key 路径（账号异常 + 重新导入）。
+    判别信号不能是拒绝文本：这家厂商对**耗尽的**订阅回的就是同一句
+    `AppKey or AppSecret is invalid` + `APIG.1009`（premium 测试的耗尽 fixture 就是
+    这个形状），任何按消息内容把它判回死 key 的规则都会重新冻结 #57 的耗尽路径；
+    而 #85 已定性这家厂商的 IAM 401 从来不是模型 key 死亡（key 是长期
+    App Key / App Secret）。操作员口径：「余额为 0 就不该打上去，直接冷却中，后面
+    有了余额才放开」。为此 `authExhausted` 钩子改为接收拒绝文本（`func(id, refusal
+    string) bool`），让**有能力**从文本里读出「insufficient credit」的中转站也能用
+    上它；officeace 明确忽略文本并在注释里写明为什么。
+  - **日志页的增量轮询在轮询重叠时不再重复追加。** 上一版引入的 `since` 游标没有
+    in-flight 守卫：`setIntervalVisible` 每 4s 无条件触发，两拍都以同一个
+    `LOGBODY.total` 发 `since`，各自返回后都走「追加」分支，后回来的那份把同一批行
+    再接一遍（旧的整份替换是幂等的，所以这是增量化带进来的回归）。现在 `renderLogs`
+    以 `LOG_BUSY` 早退，并在 `finally` 里复位——成功、失败、早退三条路都复位，卡死的
+    守卫比重复追加更糟。守卫比「按 total 过滤」彻底：任何两拍重叠都该跳过（第二拍
+    看到的是同一个世界），而且还省掉一次往返。
+  - 测试：新增 `clients/openaicompat/officeace_veto_widened_test.go`（任意读数都豁免、
+    文本不可判别这件事本身、以及端到端的「有余额的账号走完 chat 401 之后不是
+    invalid」）；`officeace_premium_test.go` 那条把「不限量不算耗尽」钉成旧语义的断言
+    按新语义更新（并注明是 2026-11-02 重开带来的语义扩张）；`internal/panel/
+    log_poll_incremental_ui_test.go` 追加 `TestLogPollSkipsOverlappingTicks`（守卫存在
+    且在首次请求之前、复位在 finally、try 包住首次请求）。
+  - README 中英两版同步了这两处（鉴权形状拒绝的分流判据与它为什么不能看文本、
+    日志轮询的重叠守卫）。
+
+### Installer
+
+- `client2api-setup-0.5.83.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `EB6F17CCA4212FF917732551C6A85CD00E2CFE88FF361139173154ADC058B5F5`
+
 ## [0.5.82] - 2026-11-03
 
 ### Fixed

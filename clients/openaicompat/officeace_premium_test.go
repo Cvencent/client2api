@@ -1074,16 +1074,27 @@ func TestOfficeAceExhaustedVerdictStandsUntilAPositiveRead(t *testing.T) {
 	if o.officeAceCreditsExhausted("missing", now) {
 		t.Fatal("an account without a cached read must not count as exhausted")
 	}
+	// The meaning of this verdict widened with the 2026-11-02 reopen: it no
+	// longer asks "is the position zero" but "is this a credits matter at all".
+	// An unlimited position is still NOT a dead key -- its 401 is the same IAM
+	// race the operator measured on funded rows -- so it takes the quota path
+	// too.  What must stay false is an account no read has ever touched; that
+	// is the line above.
 	o.noteOfficeAcePoints("b", -1, now)
-	if o.officeAceCreditsExhausted("b", now) {
-		t.Fatal("an unlimited position must not count as exhausted")
+	if !o.officeAceCreditsExhausted("b", now) {
+		t.Fatal("an unlimited position must still keep the row off the dead-key path (issue #104)")
 	}
-	// The positive read is what ends the veto -- and it also clears the
-	// parking, so a refilled account returns to rotation without waiting.
+	// A positive read ends the *parking* -- it clears it at read time, so a
+	// refilled account returns to rotation without waiting -- but it is still a
+	// credits position, so a later 401 cools down rather than killing the key.
 	o.noteOfficeAcePoints("a", 4600, now.Add(time.Hour))
-	if o.officeAceCreditsExhausted("a", now.Add(time.Hour)) {
-		t.Fatal("a positive read must end the exhaustion verdict")
+	if !o.officeAceCreditsExhausted("a", now.Add(time.Hour)) {
+		t.Fatal("a funded row must keep the veto: its 401 is the token race, not a dead key (issue #104)")
 	}
+	// That the positive read also clears the parking (so a refilled account
+	// returns to rotation without waiting) is covered end-to-end by
+	// TestOfficeAcePositiveBalanceReadRevivesAParkedAccount; this unit fixture
+	// has no rows to render.
 }
 
 // TestOfficeAceZeroBalanceReadParksWithoutAWall pins issue #57: the panel

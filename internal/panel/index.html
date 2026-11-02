@@ -19183,6 +19183,13 @@ let LOGCH = "all";
 // 前者回答「还能不能早退」，后者回答「从哪一行往后要」。
 let LOGSEEN = null;
 let LOGBODY = null;
+// LOG_BUSY 是这一拍的 in-flight 守卫（issue #113 的边界）：轮询是
+// setIntervalVisible 每 4s 无条件触发，两拍重叠时都以同一个 LOGBODY.total 发
+// since 请求，各自返回后都走「追加」分支——后回来的那份把同一批行再接一遍，
+// 页面上出现重复日志。旧的整份重读是幂等替换所以没这问题，增量化把它带进来了。
+// 守卫比「按 total 过滤」更彻底：两拍看到的是同一个世界，第二拍重发本就没有意义，
+// 而且它同时省掉一次往返。失败也不许把守卫卡死，所以在 finally 里复位。
+let LOG_BUSY = false;
 const LOG_CH_LABEL = { task: "任务", chat: "对话", sys: "系统" };
 function logChannelName(ch) { return LOG_CH_LABEL[ch] || ch || "系统"; }
 function logLevelClass(text) {
@@ -19202,6 +19209,9 @@ async function renderLogs() {
   // total 变了也不整份重下：带 since 游标只要新增那几行（issue #113 的第二半）。
   // 部署实例平均 2.2 秒新增一行、轮询 4 秒一拍，所以「total 未变」几乎不成立，
   // 真正的省钱点在这里。
+  if (LOG_BUSY) return;
+  LOG_BUSY = true;
+  try {
   const meta = await api("/panel/api/logs?meta=1");
   const metaTotal = meta.ok ? Number((meta.data || {}).total || 0) : null;
   if (metaTotal != null) {
@@ -19266,6 +19276,10 @@ async function renderLogs() {
     return '<span class="ln' + logLevelClass(e.text) + '">' + ch + esc(t + " " + e.text) + "</span>";
   }).join("") || '<div class="state">暂无日志</div>';
   if (LOGPIN && atEnd) box.scrollTop = box.scrollHeight;
+  } finally {
+    // 成功、失败、早退都要复位：守卫卡死比重复追加更糟（日志页会一直不更新）。
+    LOG_BUSY = false;
+  }
 }
 
 /* ── 定时任务（任务中心）────────────────────────────────────────────

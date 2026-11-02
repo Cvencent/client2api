@@ -207,31 +207,62 @@ func (o *officeAceSource) reviveOfficeAceAccount(id string) {
 	}
 }
 
-// officeAceCreditsExhausted reports whether the account's credits were zero
-// at the most recent read and nothing since has said otherwise (issue #104).
+// officeAceRefusalIsCredits reports whether an auth-shaped refusal from this
+// vendor is about credits rather than about the key (issue #104).
 //
-// The window used to be "read within the last 30 minutes" -- but after #57's
-// zero-read parks the row, the 5-minute soft sweep skips cooling accounts and
-// the recovery sweep runs every 4 hours, so the cache ALWAYS expired before
-// the 5-minute cooldown lapsed.  The next chat then hit the drained package,
-// the veto was dead, and the row flipped to invalid -- a state neither sweep
-// ever revisits (self-lock).  A zero position on these accounts is a stable
-// fact observed across days, not a transient: it stands until a positive
-// read (top-up, check-in) overwrites it.
-func (o *officeAceSource) officeAceCreditsExhausted(id string, now time.Time) bool {
+// The signal cannot be the refusal text.  This vendor answers the drained
+// package with the very same bare 401 APIG.1009 "AppKey or AppSecret is
+// invalid" it would use for a credential problem -- that is documented by the
+// fixture the premium tests use to represent exhaustion.  So a message-based
+// rule either freezes the drained case (the operator's #57 behaviour) or lets a
+// genuinely dead key cool down for ever; neither is acceptable.
+//
+// What does discriminate is the credit position, and the operator's direction
+// (2026-11-02) is to widen what the veto accepts:
+//
+//	"余额为 0 就不该打上去，直接冷却中，后面有了余额才放开"
+//	"points 有读数即豁免 invalid，0 走 quota、>0 也走 quota 短冷却"
+//
+// i.e. the veto fires whenever a premium read has ever recorded a position for
+// the account, whatever that position is:
+//
+//	zero       -> quota park; a refill revives it (#57).
+//	positive   -> quota cooldown; the row stays usable and the next chat either
+//	              succeeds or cools down again.  This is the operator's measured
+//	              45 .. 3.3k-point rows, whose 401 is the IAM exchange racing
+//	              (#85 established that this vendor's IAM 401 is never the model
+//	              key dying -- the key is a long-lived App Key / App Secret pair).
+//	unlimited  -> same as positive: nothing to be drained.
+//
+// And it deliberately does NOT fire for an account no read has touched.  That
+// keeps the dead-key path for a source we know nothing about -- a relay whose
+// authExhausted is nil behaves identically -- and leaves the 账号异常 row with
+// its re-import guidance as the answer for a key that was refused before any
+// credit was ever read.
+func (o *officeAceSource) officeAceRefusalIsCredits(id string) bool {
 	o.pointsMu.Lock()
 	defer o.pointsMu.Unlock()
-	if _, ok := o.pointsAt[id]; !ok {
-		return false
-	}
+	_, seen := o.pointsAt[id]
+	return seen
+}
+
+// officeAceCreditsExhausted is the veto verdict for one account, in the shape
+// the premium tests ask it.  It answers "does this source have a credit opinion
+// about the account", which is what officeAceRefusalIsCredits uses.
+func (o *officeAceSource) officeAceCreditsExhausted(id string, now time.Time) bool {
 	_ = now
-	return o.points[id] == 0
+	return o.officeAceRefusalIsCredits(id)
 }
 
 // bindAuthExhaustedHook teaches the generic source about the exhaustion veto.
 func (o *officeAceSource) bindAuthExhaustedHook() {
-	o.source.authExhausted = func(id string) bool {
-		return o.officeAceCreditsExhausted(id, time.Now())
+	o.source.authExhausted = func(id, refusal string) bool {
+		// refusal is accepted and ignored on purpose: for this vendor the text
+		// cannot separate exhaustion from a dead key (see above).  The hook
+		// takes it because a source that CAN read the text (a relay that spells
+		// "insufficient credit" in its 401) would need it.
+		_ = refusal
+		return o.officeAceRefusalIsCredits(id)
 	}
 }
 

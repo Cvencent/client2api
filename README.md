@@ -5,7 +5,7 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-Current version: **0.5.82**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
+Current version: **0.5.83**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
 
 client2api is a personal, local-only OpenAI-compatible gateway. It aggregates
 the accounts and API Keys **you own** on different AI coding clients and
@@ -251,6 +251,16 @@ loop that never ended.
 - Any upstream 429 parks the `(platform, account, model)` triple for a cooldown: 60 seconds at first, doubling per consecutive failure and capped at 30 minutes, or the vendor's own `Retry-After` when it sent one (also capped). The gateway refuses that account for that model while the park is live, so a module rotates to another account or platform instead of walking back into the same rate limit, and the account's model dialog shows when the park is released and how much time is left. A module that reports every attempt through `core.ChatRequest.NoteAccountFailure` is covered even when it recovers on another account; the rest fall back to the gateway's terminal-failure record.
 - Conversation stickiness, retries, cooldown and automatic failover, with panel controls that show each live binding's model and can force-unbind or force-switch a session. A force-switch can clear platform/account stickiness for automatic selection again or pin a chosen platform while still auto-selecting its account. The sticky-session dialog also has a one-click 一键强制切换 that runs 自动选择 for every listed conversation at once, so the next turn re-ranks platforms and accounts from scratch. A request that started before the switch may finish normally, but its late success cannot recreate the old binding; the next turn ranks from the operator's latest state.
 - OpenAI-shaped error mapping for auth, quota, WAF, timeout and rate-limit failures.
+- A source that can read credit positions (`officeace`) routes an auth-shaped
+  refusal by that position: **as soon as the account has any recorded position**
+  (zero, positive or unlimited alike) a 401 cools down on the quota path rather
+  than being marked a dead key, so a top-up, a check-in or a renewed trial brings
+  the row back on its own. This vendor answers a drained subscription and a
+  credential problem with the same `AppKey or AppSecret is invalid` +
+  `APIG.1009`, so the message cannot separate them — and its IAM 401 is never the
+  model key dying (the key is a long-lived App Key / App Secret pair), which
+  leaves the credit read as the only usable signal. An account no read has ever
+  touched still takes the dead-key path below.
 - A credential the vendor rejects is reported as 账号异常, not 冷却中, on every
   platform. A 401 is a verdict about the credential whatever its body says (the
   vendor's business envelope, a generic `token expired`, or the edge gateway's
