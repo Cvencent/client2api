@@ -31,17 +31,35 @@ var (
 	changelogHeadingPattern = regexp.MustCompile(`(?m)^##[ \t]+\[([^\]]+)\]`)
 )
 
-// TestReadmesAdvertiseTheSourceVersion keeps the version line in both READMEs
-// equal to cmd/client2api/main.go.  The READMEs are shipped verbatim in the
-// installer payload and are what a visitor reads first, so a stale number here
-// is a release-page bug that no compiler can catch.
+// versionedDocs are every file that states the product version to a reader.
+//
+// The list is the guard's whole contract: a document that spells the version out
+// but is missing from here drifts silently, which is exactly what happened to
+// docs/REFERENCE*.md -- they sat on 0.4.5 for 81 releases without one failure
+// (issue #116).  Adding a version line to a new document means adding it here,
+// and the count assertion below makes that obligation visible rather than
+// remembered.
+var versionedDocs = []string{
+	filepath.Join("..", "README.md"),
+	filepath.Join("..", "README.zh-CN.md"),
+	filepath.Join("..", "docs", "REFERENCE.md"),
+	filepath.Join("..", "docs", "REFERENCE.zh-CN.md"),
+}
+
+// TestReadmesAdvertiseTheSourceVersion keeps the version line in every document
+// that carries one equal to cmd/client2api/main.go.  These files are shipped
+// verbatim in the installer payload and are what a visitor reads first, so a
+// stale number here is a release-page bug that no compiler can catch.
 func TestReadmesAdvertiseTheSourceVersion(t *testing.T) {
 	want := sourceVersion(t)
 
-	for _, rel := range []string{
-		filepath.Join("..", "README.md"),
-		filepath.Join("..", "README.zh-CN.md"),
-	} {
+	// The minimum is spelled out so deleting a file from the list to make the
+	// guard pass is not a quiet option.
+	if len(versionedDocs) < 4 {
+		t.Fatalf("versionedDocs lists %d documents; the four that carry a version line today are README.md, README.zh-CN.md, docs/REFERENCE.md and docs/REFERENCE.zh-CN.md (issue #116)",
+			len(versionedDocs))
+	}
+	for _, rel := range versionedDocs {
 		display := filepath.ToSlash(rel)
 		body, err := os.ReadFile(rel)
 		if err != nil {

@@ -954,6 +954,18 @@ func (s *server) serveRemainingCandidates(w http.ResponseWriter, r *http.Request
 			if probeErr != nil {
 				stream.Close()
 				probeErr = normalizeContextRefusal(probeErr)
+				// A refusal that arrived inside the stream is the same
+				// evidence a module-return refusal is: the vendor said how big
+				// its window really is, so learn it, and spend the probe lease
+				// it just refuted.  Skipping this is what left the gateway
+				// trimming to 496 089 tokens and being refused for minutes at a
+				// time while the vendor had plainly said 262 144 (issue #62).
+				if f, ok := core.AsFailure(probeErr); ok && f.Kind == core.FailureContextWindow {
+					s.learnContextWindowFromFailure(attemptCtx, client, upstreamModel, probeErr)
+					if rec != nil && rec.Probed && s.probes != nil {
+						s.probes.recordRefused(client.Name(), upstreamModel, rec.ProbedFromTokens)
+					}
+				}
 				s.noteFailedCandidate(rec, client, upstreamModel, probeErr)
 				lastClient, lastHint, lastErr = client, hintCtx, probeErr
 				s.opts.Logger.Printf("chat: platform %s model %s failed inside stream (%v), trying the next platform", client.Name(), upstreamModel, probeErr)
@@ -1078,14 +1090,21 @@ func probeFirstFrame(stream core.Stream) ([]core.Event, error) {
 				head = append(head, ev)
 				continue
 			}
-			f, ok := core.AsFailure(ev.Err)
+			// A context refusal read here gets the same promotion the caller
+			// applies to a module-return error (issue #62).  Resolving it in
+			// the probe is what lets the next platform be tried with the
+			// knowledge that this candidate cannot fit the request -- and it
+			// keeps the two sites from disagreeing about what the error even
+			// is, which is how the unlearned window survived this long.
+			refusal := normalizeContextRefusal(ev.Err)
+			f, ok := core.AsFailure(refusal)
 			if !ok || !core.Retryable(f.Kind) {
 				// A content-policy or unclassified refusal is the platform's
 				// answer and must be shown as such, not retried behind the
 				// caller's back.
 				return append(head, ev), nil
 			}
-			return nil, ev.Err
+			return nil, refusal
 		case core.EventDelta:
 			if ev.Delta != "" || ev.Reasoning != "" {
 				// Real content (or an answer the caller can already watch
@@ -1763,6 +1782,46 @@ func errorCodeFor(err error, status int) string {
 // It is separate from writeUpstreamError because the per-request console row
 // needs the status of a refused request, and a row must not have to write a
 // response to learn it.
+// guardStreamContextRefusal puts an error that arrived INSIDE a stream through
+// the same context guard the module-return path uses (issue #62).
+//
+// A vendor may accept the POST, open the stream, hold it for minutes and only
+// then put "your prompt is too long" in an error frame.  That error used to go
+// straight to s.fail with whatever kind the module's own classifier produced
+// (kindClient -> FailureOther for openaicompat), which meant the three things
+// the guard exists to do never happened:
+//
+//   - the window the vendor named was never learned, so the gateway kept
+//     advertising a figure the vendor had already refused;
+//   - the (platform, model) probe lease was never spent, so an accepted probe
+//     kept acting as the trim floor even though the vendor had just refuted it;
+//   - the caller received a bare 502 upstream_error with no context-window
+//     semantics, so nothing downstream compacted and the same body was re-sent
+//     for another multi-minute round trip.
+//
+// The error is promoted to core.FailureContextWindow and the caller is handed
+// that, which is what makes errorCodeFor report context_window_exceeded on the
+// wire.  An error that is not a context refusal is returned unchanged.
+//
+// There is deliberately no trimmed retry here: the response is already open,
+// and re-reading the upstream would be answering into a stream the caller has
+// begun to parse.  The compaction signal is the safe lever at this point in the
+// request's life; the module-return path still owns the retry.
+func (s *server) guardStreamContextRefusal(ctx context.Context, client core.Client, model string, rec *UsageRecord, err error) error {
+	if err == nil || client == nil {
+		return err
+	}
+	promoted := normalizeContextRefusal(err)
+	if f, ok := core.AsFailure(promoted); !ok || f.Kind != core.FailureContextWindow {
+		return promoted
+	}
+	s.learnContextWindowFromFailure(ctx, client, model, promoted)
+	if rec != nil && rec.Probed && s.probes != nil {
+		s.probes.recordRefused(client.Name(), model, rec.ProbedFromTokens)
+	}
+	return promoted
+}
+
 func upstreamErrorShape(err error) (int, string, core.FailureKind) {
 	status := http.StatusBadGateway
 	typ := "upstream_error"
@@ -1918,7 +1977,15 @@ func modelSupportsImages(m core.Model) (value, stated bool) {
 // streaming
 // ---------------------------------------------------------------------------
 
-func (s *server) streamSSE(w http.ResponseWriter, r *http.Request, client core.Client, model string, stream core.Stream, includeUsage bool, rec *UsageRecord, stat *chatStat, hintCtx func() core.HintContext) {
+// streamSSE renders one turn as OpenAI-style SSE.
+//
+// upstreamModel is the id the module resolved for this candidate.  It is
+// separate from model (the caller's own string, echoed back on the wire) because
+// the context guard, the probe store and the learned windows are all keyed on
+// the resolved id: an in-stream refusal has to be attributed to the model the
+// vendor actually served, or the window is learned against a key nothing reads
+// (issue #62).
+func (s *server) streamSSE(w http.ResponseWriter, r *http.Request, client core.Client, model string, stream core.Stream, includeUsage bool, rec *UsageRecord, stat *chatStat, hintCtx func() core.HintContext, upstreamModel string) {
 	clientName := client.Name()
 	var usage *core.Usage
 	started := time.Now()
@@ -2103,13 +2170,20 @@ func (s *server) streamSSE(w http.ResponseWriter, r *http.Request, client core.C
 			streamFailed = true
 			stat.status = http.StatusBadGateway
 			if ev.Err != nil {
-				s.fail(rec, ev.Err)
-				msg := fmt.Sprintf("[%s] %s", clientName, ev.Err.Error())
-				_, _, kind := upstreamErrorShape(ev.Err)
+				// Promote a context refusal here too (issue #62).  This is the
+				// frame the caller receives, so it is also where the wire code
+				// either says context_window_exceeded -- letting the caller
+				// compact and retry -- or stays a bare upstream_error that
+				// invites the same oversized body back.
+				guarded := s.guardStreamContextRefusal(r.Context(), client, upstreamModel, rec, ev.Err)
+				status, typ, kind := upstreamErrorShape(guarded)
+				stat.status = status
+				s.fail(rec, guarded)
+				msg := fmt.Sprintf("[%s] %s", clientName, guarded.Error())
 				b, _ := json.Marshal(apiErrorEnvelope{Error: apiError{
 					Message:     msg,
-					Type:        "upstream_error",
-					Code:        errorCodeFor(ev.Err, http.StatusBadGateway),
+					Type:        typ,
+					Code:        errorCodeFor(guarded, status),
 					GatewayHint: s.gatewayHint(client, kind, msg, hintCtx()),
 				}})
 				fmt.Fprintf(w, "data: %s\n\n", b)
@@ -2149,7 +2223,7 @@ func (s *server) streamSSE(w http.ResponseWriter, r *http.Request, client core.C
 // buffering (stream=false)
 // ---------------------------------------------------------------------------
 
-func (s *server) bufferCompletion(w http.ResponseWriter, r *http.Request, client core.Client, model string, stream core.Stream, rec *UsageRecord, stat *chatStat, hintCtx func() core.HintContext) {
+func (s *server) bufferCompletion(w http.ResponseWriter, r *http.Request, client core.Client, model string, stream core.Stream, rec *UsageRecord, stat *chatStat, hintCtx func() core.HintContext, upstreamModel string) {
 	var (
 		text      strings.Builder
 		reasoning strings.Builder
@@ -2223,7 +2297,7 @@ func (s *server) bufferCompletion(w http.ResponseWriter, r *http.Request, client
 			}
 		case core.EventError:
 			if ev.Err != nil {
-				streamErr = ev.Err
+				streamErr = s.guardStreamContextRefusal(r.Context(), client, upstreamModel, rec, ev.Err)
 			}
 		}
 	}

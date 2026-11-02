@@ -54,6 +54,59 @@
 - `client2api-setup-0.5.73.exe`（空包，不含账号凭据或本机配置）
   SHA256: `EF4235020D68984FF57BCFBC0529DFB561609B257CFA1E6ACB0F10A54EE8486C`
 
+## [0.5.85] - 2026-11-03
+
+### Fixed
+
+- **流内到达的上下文超限现在走完整条护栏（#62），文档版本行不再有守卫管不到的角落（#116）**：
+  - **vendor 把「prompt 太长」放进 SSE 流里时，窗口会被学到、probe 裁决会被作废、
+    线上语义会变成上下文超限。** 同一堵墙原来有两条路，护栏只覆盖「模块 return
+    error」那条：vendor 接受 POST、开出流、TTFB 300 秒后才在流里吐 error chunk
+    （openaicompat 分类成 `kindClient` → `FailureOther`）→ 直接 `s.fail` 写行、按
+    502 回调用方。三件事因此全部落空：vendor 亲口说的 262144 进不了
+    `learned_context_windows.json`；accepted probe 的 496 089 仍是 trim floor（vendor
+    刚推翻它却没人听，于是每轮裁到 496K、照样吃同一个 400，3-5 分钟一轮）；
+    调用方拿到裸 502 `upstream_error`，没有 `context_window_exceeded` 语义、不会压缩，
+    同一体型无限重发。现在新增 `guardStreamContextRefusal`，把流内错误过
+    `normalizeContextRefusal` → 学窗口 → 消耗被推翻的 probe lease，并且：
+    ① `probeFirstFrame`（"HTTP 200 却在流里拒绝"那条路）也做同样的提升与学习；
+    ② SSE 终帧在线错误改用提升后的错误算状态与 code，所以线上会出现
+    `context_window_exceeded` / `invalid_request_error`；
+    ③ 发射器拿到**模块解析出的** model id（`emitArgs.upstreamModel`）而不是调用方
+    自己的名字——learned/probe 两个 store 都是按它分键的，用错键等于学到一个没人读的
+    窗口；
+    ④ **learned 窗口压过 accepted probe 的 floor**（两个 store 打架时 vendor 赢），
+    并在学到更小的窗口时把高于它的 accepted 记录作废（`retireProbeAboveLimit`），
+    否则那条 floor 仍会在面板上与探针结论里继续发言；
+    ⑤ 流内路径**不做裁剪重试**：响应已经开出，重读上游等于往调用方已经开始解析的
+    流里再答一次；压缩信号是这一步安全的杠杆。
+  - **trim 日志行打印真实预算。** 原来取 `effectiveContextWindow`（override→learned→
+    published），而报告里那个模型三处全空，于是日志写「to fit 0 tokens」，真实施加者
+    是 496 089 的 probe floor——一行与它所描述的决定互相矛盾的日志会把下一个人带偏。
+    现在打印 `probeAdjustedBudget` 的值并附来源。
+  - **`measuredSizePatterns` 能读 OpenAI 官方句型。** `you requested 128000 output
+    tokens and your prompt contains at least 134145 input tokens` 里
+    `requested\s+(\d+)\s*tokens?` 被 `output` 隔断、比较式也不中，于是
+    `Observed=0`、比例重试永远走不到。补了两条句型，并把「取哪个数」的规则从
+    「第一个命中的」改成「最大的那个非 limit 数」——官方句型先说的是 **output 预留**
+    （128000），真正的测量值（134145）在后面，首个命中会把响应预算当成请求测量值。
+    同时去掉 `retryBudgetForMeasuredRefusal` 里 `observed <= limit` 的拒绝条件：
+    vendor 可以在**输入本身没超**、而输入+调用方要求的输出超过窗口时拒绝
+    （OpenAI 官方句型就是这个形状），那种情况下 vendor 的测量值恰恰是最有用的信息。
+  - **#116：版本守卫不再漏文件，两份 REFERENCE 的版本行跟上。** `docs/REFERENCE.md`
+    与 `docs/REFERENCE.zh-CN.md` 停在 **0.4.5**（0.4.5 之后已发 81 个 0.5.x 版本），
+    因为 `TestReadmesAdvertiseTheSourceVersion` 的循环里只列了两份 README。现在四份
+    文档都进 `versionedDocs`，并加一条下限断言（少于 4 份即失败）——把「删掉一个文件
+    让守卫变绿」从静默选项变成显式失败。两份 REFERENCE 的版本行已更新到当前版本。
+  - 测试：新增 `internal/gateway/instream_context_guard_test.go` 七条（流内超限被学到、
+    线上 code 是 `context_window_exceeded`、accepted probe 被作废、learned 压过 probe
+    floor、trim 日志不用 `effectiveContextWindow`、OpenAI 句型两个数字都读得出）。
+
+### Installer
+
+- `client2api-setup-0.5.85.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `D471EC76F5973FF05FF4C78DEA2687E15FFC562F42C8B736CE14627D8903E4F8`
+
 ## [0.5.84] - 2026-11-03
 
 ### Fixed

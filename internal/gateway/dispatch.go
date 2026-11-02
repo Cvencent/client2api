@@ -107,11 +107,16 @@ func moduleUnavailable(c core.Client) (core.Health, error) {
 
 // emitArgs is what an emitter needs to render one successful attempt.
 type emitArgs struct {
-	s       *server
-	client  core.Client
-	model   string
-	stream  core.Stream
-	hintCtx func() core.HintContext
+	s      *server
+	client core.Client
+	model  string
+	// upstreamModel is the id the MODULE resolved for this candidate.  The
+	// guard's learned windows and probe records are keyed on it, not on the
+	// caller's own model string, so an emitter that needs to consult either one
+	// must use this rather than model.
+	upstreamModel string
+	stream        core.Stream
+	hintCtx       func() core.HintContext
 	// toolNames is the table routeInput carries, passed through so a vendor's
 	// flattened call can be put back into the pair Codex dispatches on.
 	toolNames map[string]namespacedTool
@@ -142,11 +147,11 @@ type chatEmitter interface {
 type chatWireEmitter struct{ includeUsage bool }
 
 func (e chatWireEmitter) emitStream(w http.ResponseWriter, r *http.Request, a emitArgs) {
-	a.s.streamSSE(w, r, a.client, a.model, a.stream, e.includeUsage, a.rec, a.stat, a.hintCtx)
+	a.s.streamSSE(w, r, a.client, a.model, a.stream, e.includeUsage, a.rec, a.stat, a.hintCtx, a.upstreamModel)
 }
 
 func (e chatWireEmitter) emitBuffered(w http.ResponseWriter, r *http.Request, a emitArgs) {
-	a.s.bufferCompletion(w, r, a.client, a.model, a.stream, a.rec, a.stat, a.hintCtx)
+	a.s.bufferCompletion(w, r, a.client, a.model, a.stream, a.rec, a.stat, a.hintCtx, a.upstreamModel)
 }
 
 // protocolError renders a failure in the request's own wire protocol, falling
@@ -494,6 +499,11 @@ func (s *server) routeAndServeMessages(w http.ResponseWriter, r *http.Request, i
 	defer stream.Close()
 
 	a := emitArgs{s: s, client: client, model: in.modelForWire, stream: stream, hintCtx: hintCtx, toolNames: in.toolNames, trailingCompaction: in.trailingCompaction, rec: in.rec, stat: in.stat}
+	// model is the CALLER's name for the wire; the module's resolved id is what
+	// the guard, the probe store and the learned window are all keyed on.  The
+	// emitters need both, and passing only the wire name made their in-stream
+	// context guard look up a key that does not exist (issue #62).
+	a.upstreamModel = upstreamModel
 	if in.stream {
 		in.emitter.emitStream(w, r, a)
 		return

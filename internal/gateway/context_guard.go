@@ -81,6 +81,43 @@ func (s *server) probeEnabled() bool {
 	return s.opts.ProbeBeforeTrim
 }
 
+// trimBudget is the input budget the trim actually obeyed for this request.
+//
+// It exists so the trim log line and the trim share one source (issue #62,
+// finding A): the line used to print effectiveContextWindow, which is the
+// display window, while applyContextBudget was given probeAdjustedBudget.  The
+// two are usually equal and differ exactly when the probe floor or a learned
+// limit is in play -- which is when the log matters most.
+func (s *server) trimBudget(ctx context.Context, client core.Client, model string, maxOutput int, limit int64) int64 {
+	return s.probeAdjustedBudget(ctx, client, model, maxOutput, limit)
+}
+
+// trimBudgetSource names where that budget came from, so the line answers
+// "why this number" without the reader re-deriving it.
+func (s *server) trimBudgetSource(ctx context.Context, client core.Client, model string, maxOutput int, limit int64) string {
+	budget := s.probeAdjustedBudget(ctx, client, model, maxOutput, limit)
+	if budget <= 0 {
+		return "source unknown (no window to budget against)"
+	}
+	if s.opts.ModelOverrides != nil {
+		if o, ok := s.opts.ModelOverrides.Get(client.Name(), model); ok && o.ContextLength > 0 {
+			base := s.promptBudget(ctx, client, model, maxOutput, limit)
+			if base > 0 && base <= budget {
+				return "source the configured override"
+			}
+		}
+	}
+	base := s.promptBudget(ctx, client, model, maxOutput, limit)
+	switch {
+	case base > 0 && base == budget:
+		return "source the reported window"
+	case base <= 0:
+		return "source a probed floor (no reported window)"
+	default:
+		return "source a probed floor below the reported window"
+	}
+}
+
 // probeAdjustedBudget is the trim budget after the model's accepted floor is
 // taken into account.
 //
@@ -109,6 +146,19 @@ func (s *server) probeAdjustedBudget(ctx context.Context, client core.Client, mo
 				floor = o.ContextLength
 			}
 		}
+	}
+	// A vendor-reported limit outranks an accepted probe (issue #62).
+	//
+	// The probe floor answers "how large a prompt has this model served?", and
+	// an accepted probe is the gateway's own optimistic guess being waved
+	// through.  A learned window is the vendor stating its own limit.  When the
+	// two disagree the vendor wins, or the guard keeps sizing requests to a
+	// figure the vendor has already refused: the observed case was an accepted
+	// probe at 496 089 tokens still acting as the trim floor after the vendor
+	// plainly said 262 144, so every request was trimmed to fit a window that
+	// does not exist and refused anyway, three to five minutes at a time.
+	if learned := s.learnedWindows.get(client.Name(), model); learned > 0 && floor > learned {
+		floor = learned
 	}
 	if floor > budget {
 		return floor
@@ -397,6 +447,16 @@ var tooLongPatterns = []*regexp.Regexp{
 var measuredSizePatterns = []*regexp.Regexp{
 	// litellm: "However, you requested 1263369 tokens (1163369 in the messages, ...)"
 	regexp.MustCompile(`(?i)(?:you\s+)?requested\s+(\d[\d,_]*)\s*tokens?`),
+	// OpenAI's own sentence: "you requested 128000 output tokens and your prompt
+	// contains at least 134145 input tokens".  The pattern above is defeated by
+	// the word "output" sitting between the number and "tokens", so this refusal
+	// was read as "the vendor named no measurement" and never reached the
+	// proportional retry -- even on the module-return path that already had the
+	// guard (issue #62, finding B).
+	regexp.MustCompile(`(?i)requested\s+(\d[\d,_]*)\s+(?:output\s+)?tokens?`),
+	// "your prompt contains at least 134145 input tokens" -- the same refusal's
+	// second number, and the one that actually measures the input.
+	regexp.MustCompile(`(?i)(?:contains\s+)?at\s+least\s+(\d[\d,_]*)\s+(?:input\s+)?tokens?`),
 	// "1427021 tokens > 1048576 maximum" -- the comparison form, measurement first
 	regexp.MustCompile(`(?i)\b(\d[\d,_]*)\s*tokens?\s*[>>=]{1,2}`),
 }
@@ -457,21 +517,38 @@ func parseRefusalSizes(msg string) refusalSizes {
 			break
 		}
 	}
+	// The measurement is the largest number the message offers that is not the
+	// limit itself (issue #62, finding B).
+	//
+	// Taking the first pattern that matched was wrong for OpenAI's own sentence:
+	// "you requested 128000 output tokens and your prompt contains at least
+	// 134145 input tokens" names the OUTPUT reservation first and the input size
+	// second.  First-match recorded 128000 as the measurement -- a number
+	// SMALLER than the prompt, describing the response budget rather than the
+	// request -- and the "not larger than the limit" guard then dropped it, so
+	// the proportional retry never ran even though the vendor had just measured
+	// the prompt exactly.
+	//
+	// The measurement is by definition the size the vendor found, and a refusal
+	// happens because that size exceeded the limit, so the largest candidate
+	// above the limit is the right reading.  Limit-only refusals name one number
+	// and never get here.
 	for _, re := range measuredSizePatterns {
 		m := re.FindStringSubmatch(lower)
 		if m == nil {
 			continue
 		}
-		if observed, ok := parseTokenCount(m[1]); ok {
-			sizes.Observed = observed
-			break
+		observed, ok := parseTokenCount(m[1])
+		if !ok {
+			continue
 		}
-	}
-	// A "measurement" that is not actually larger than the limit is one of
-	// the limit's own numbers seen twice, not a measurement.  Dropping it
-	// keeps Observed meaning exactly what it says.
-	if sizes.Limit > 0 && sizes.Observed <= sizes.Limit {
-		sizes.Observed = 0
+		if sizes.Limit > 0 && observed == sizes.Limit {
+			// The limit's own number seen a second time is not a measurement.
+			continue
+		}
+		if observed > sizes.Observed {
+			sizes.Observed = observed
+		}
 	}
 	return sizes
 }
@@ -733,7 +810,36 @@ func (s *server) learnContextWindowFromFailure(ctx context.Context, client core.
 			"context: %s/%s refused a prompt that needs more room than the %d tokens advertised; the vendor's own limit was %d, recorded it",
 			client.Name(), model, published, limit)
 	}
+	s.retireProbeAboveLimit(client, model, limit)
 	return limit
+}
+
+// retireProbeAboveLimit spends an accepted probe whose premise this refusal has
+// just refuted (issue #62).
+//
+// An accepted probe means "the vendor served a prompt this large, so the
+// estimator was reading high".  A vendor-stated limit BELOW that size says the
+// opposite, and the two cannot both be true.  Keeping the acceptance lets it
+// go on acting as the trim floor -- the observed case trimmed every request to
+// 496 089 tokens against a 262 144-token window and was refused each time
+// (probeAdjustedBudget would now cap it, but the record itself is still a lie
+// the probe store would publish and the panel would show).
+//
+// Only the acceptance is retired; a probe with no such conflict is left alone,
+// because "this model served a big prompt" is still true and useful.
+func (s *server) retireProbeAboveLimit(client core.Client, model string, limit int64) {
+	if s == nil || s.probes == nil || client == nil || model == "" || limit <= 0 {
+		return
+	}
+	rec, ok := s.probes.get(client.Name(), model)
+	if !ok || rec.Outcome != probeOutcomeAccepted || rec.EstimateTokens <= limit {
+		return
+	}
+	if s.probes.recordRefused(client.Name(), model, rec.EstimateTokens) {
+		s.opts.Logger.Printf(
+			"context: %s/%s had an accepted probe at %d tokens, but the vendor's limit is %d; retiring the accepted verdict",
+			client.Name(), model, rec.EstimateTokens, limit)
+	}
 }
 
 // catalogueExtraContextKey carries the metadata the resolver already read for
@@ -967,7 +1073,17 @@ const measuredRefusalMaxOvershoot = 8
 // ratio between the vendor's count and the gateway's estimate says how much of
 // the history the vendor's window can actually hold.
 func retryBudgetForMeasuredRefusal(req *core.ChatRequest, observed, limit int64, maxOutput int) int64 {
-	if req == nil || observed <= 0 || limit <= 0 || observed <= limit {
+	// observed <= limit is NOT a reason to decline (issue #62, finding B).  A
+	// vendor can refuse a request whose INPUT fits while the input plus the
+	// caller's requested output does not -- OpenAI's own sentence does exactly
+	// that ("you requested 128000 output tokens and your prompt contains at
+	// least 134145 input tokens" against a 262144 window).  Refusing to retry
+	// there threw away the vendor's measurement of the prompt, which is the
+	// whole reason this function takes one.  The room left after the output
+	// reservation is what the retry aims at, and the guards below (budget must
+	// be at least the floor and less than the estimate, or there is nothing to
+	// trim) still decide whether a retry is worth making.
+	if req == nil || observed <= 0 || limit <= 0 {
 		return 0
 	}
 	if observed > limit*measuredRefusalMaxOvershoot {
@@ -1124,10 +1240,18 @@ func (s *server) prepareCandidateAttempt(ctx context.Context, candidate core.Can
 		return nil, contextWindowRefusal(client, model, window, report.BeforeTokens)
 	}
 	if trimmed {
-		window := s.effectiveContextWindow(ctx, client, model)
+		// Report the budget the trim actually obeyed, not the display window
+		// (issue #62, finding A).  effectiveContextWindow resolves
+		// override -> learned -> published, and for the model in the report all
+		// three were empty, so the line printed "to fit 0 tokens" while the trim
+		// had really been sized by the probe floor at 496 089.  A log line that
+		// disagrees with the decision it describes sends the next reader down
+		// the wrong path.
 		s.opts.Logger.Printf(
-			"context: trimmed %d oldest message(s) for %s/%s to fit %d tokens (about %d -> %d)",
-			report.DroppedMessages, client.Name(), model, window,
+			"context: trimmed %d oldest message(s) for %s/%s to fit %d %s (about %d -> %d)",
+			report.DroppedMessages, client.Name(), model,
+			s.trimBudget(ctx, client, model, maxOutput, limit),
+			s.trimBudgetSource(ctx, client, model, maxOutput, limit),
 			report.BeforeTokens, report.AfterTokens)
 	}
 
