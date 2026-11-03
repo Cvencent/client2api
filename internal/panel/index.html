@@ -665,6 +665,9 @@ button, .fx-rip, .acct-card, .pk-card, .ov-kpi, .berth, .uscard, .rl-node { posi
 .acct-card .ac-row .k { color: var(--ink-3); }
 .acct-card .ac-row b { font: 600 0.75rem var(--mono); font-variant-numeric: tabular-nums; }
 .acct-card .ac-foot { display: flex; gap: 6px; margin-top: 12px; flex-wrap: wrap; }
+/* 一行里混着 34px 的模型下拉与 26px 的 button.xs（issue #160）：
+   默认 align-items: normal 会把矮的拉到高的那么高，只此一行 center。 */
+.acct-card .ac-foot { align-items: center; }
 /* 「测试」+ 模型下拉：两个控件拼成一个整体，中间一条竖分隔线。
    表格的操作列只有 22.5% 宽，所以下拉本身很窄（只显示模型名的后半段），
    title 里有完整名字。 */
@@ -844,7 +847,6 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 button.ghost { background: transparent; }
 button.danger { color: var(--bad); }
 button.danger:hover:not(:disabled) { border-color: var(--bad); }
-button.xs { padding: 3.5px 9px; font-size: 0.78125rem; border-radius: 6px; }
 button.icon { padding: 7px 9px; }
 input, select {
   font: inherit; color: var(--ink); background: var(--surface-2);
@@ -2379,7 +2381,6 @@ button.danger { color: var(--bad-text); border-color: var(--line); background: v
 button.danger:hover:not(:disabled) { color: #fff; background: var(--bad); border-color: var(--bad); }
 button.ghost { background: transparent; border-color: transparent; color: var(--ink-3); }
 button.ghost:hover:not(:disabled) { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
-button.xs { padding: 3px 10px; font-size: 0.75rem; border-radius: var(--radius-sm); }
 button.icon { padding: 6px 8px; }
 button:disabled { opacity: .5; cursor: not-allowed; }
 
@@ -2676,7 +2677,6 @@ button.primary { background: linear-gradient(180deg, color-mix(in srgb, var(--ac
 button.primary:hover:not(:disabled) { background: linear-gradient(180deg, var(--accent-hover), color-mix(in srgb, var(--accent-hover) 86%, black)); border-color: var(--accent-hover); color: var(--accent-ink); color: var(--accent-ink); transform: translateY(-1px); }
 button.primary:active:not(:disabled), button:active:not(:disabled), .chip:active, .nav a:active { transform: scale(.975); }
 button.icon { min-width: 36px; min-height: 36px; padding: 0; display: inline-grid; place-items: center; }
-button.xs { min-height: 28px; border-radius: 8px; }
 
 input, select, textarea {
   border-radius: var(--radius-control); border-color: var(--hairline); background: color-mix(in srgb, var(--surface) 88%, transparent);
@@ -3327,11 +3327,6 @@ button.primary:hover:not(:disabled) {
   color: var(--accent-ink);
   border-color: var(--accent-active);
   background: linear-gradient(180deg, var(--accent-hover), var(--accent-active));
-}
-button.xs {
-  min-height: 28px;
-  padding: 3px 10px;
-  border-radius: 8px;
 }
 input,
 select,
@@ -4129,6 +4124,9 @@ button.primary {
 }
 button.primary:hover:not(:disabled) { color: var(--accent-ink); background: linear-gradient(180deg, var(--accent-solid-hover), var(--accent-solid-active)); }
 button.ghost { background: transparent; border-color: transparent; }
+/* button.xs 的唯一权威定义（issue #160）：同文件曾有五份互相覆盖的
+   button.xs（26/28 互斥、padding 三种），「一颗 xs 按钮多高」取决于落点容器
+   而不是设计。26px 是最后写入并实际胜出的那轮（3812c1c），收编为唯一值。 */
 button.xs { min-height: 26px; padding: 2px 9px; font-size: var(--type-xs); border-radius: 7px; }
 button.icon { min-height: var(--ctl-h); padding: 6px 9px; }
 input, select, textarea { min-height: var(--ctl-h); border-radius: var(--radius-ctl); background: color-mix(in srgb, var(--surface) 94%, transparent); }
@@ -5303,7 +5301,12 @@ input, select, textarea, .stat, .subtab {
    分组交给间距（第一格与其余之间空得更多）。 */
 .stats {
   display: flex;
-  flex-wrap: nowrap;
+  /* 常开换行（issue #159）：换行判据从「视口宽度」换成「容器放不放下」——
+     1160px 断点只在「字号 = 100%」时成立，文字放大（WCAG 1.4.4 的 200% 文字
+     路径）不改变 innerWidth，走不到那一支，标签就被 ellipsis 就地吃掉
+     （200% 下实测 9/10 截断）。min-width 同步换成 em：绝对像素不会跟着
+     字号涨，rem 迁移（#74）落地后暴露的正是「字会放大、布局不会」这层。 */
+  flex-wrap: wrap;
   align-items: stretch;
   gap: 0;
   border: 0; border-bottom: 1px solid var(--line);
@@ -5317,7 +5320,9 @@ input, select, textarea, .stat, .subtab {
 }
 .stats > .stat, .stats > button.stat {
   flex: 1 1 0;
-  min-width: 112px;
+  /* em 随字号一起变宽：100% 字号下等价原来的 112px（7em），放大后格子跟着
+     长宽，标签不再截断（issue #159）。 */
+  min-width: 7em;
   display: flex; flex-direction: column; align-items: flex-start; justify-content: center;
   gap: 3px; padding: 10px 16px 12px;
   border: 0; border-radius: 0;
@@ -6468,14 +6473,17 @@ html:not([data-theme="light"]) body::after {
 .chat-empty p { font-size: 0.78125rem; max-width: 46ch; margin: 0 auto; }
 
 /* ── 3. 卡片头与工具条：一套控件高度 ────────────────────────────────────── */
-/* 卡片头里的按钮、卡片头自己的高度、工具条里的输入，全部对齐到 30px。
-   原来按钮有 26/28/34 三种高度，混排时像三套控件。 */
+/* 工具条与卡片头的输入、按钮统一引用 --ctl-h / --ctl-h-sm（issue #160）：
+   大控件 34px、同行小动作 26px（button.xs 权威值）。这行原本注释写
+   「全部对齐到 30px」，实测 207 个控件里 30px 一个没有——30 是一条臆造
+   的设计记录；同文件五个 button.xs、单点 30px 都是同一案子的分叉。 */
 .box > header { min-height: 52px; padding: 11px 16px; }
 .box > header h3 { font-size: var(--type-base); font-weight: 600; letter-spacing: -.012em; }
 .box > header h3 .hint { font-size: 0.71875rem; max-width: 54ch; }
-.box > header .xs, .box > header button.xs { min-height: 28px; }
+/* 卡片头里的小按钮不再改写高度：同文件的 .box > header .xs 曾把同一颗
+   button.xs 又抬到 28px，与权威 26px 冲突——删掉改写权，高度只有一个来源。 */
 .tblbar { min-height: 48px; padding: 9px 16px; }
-.tblbar input[type="search"] { min-height: 30px; }
+.tblbar input[type="search"] { min-height: var(--ctl-h); padding: 6px 13px; }
 
 /* ── 4. 表格：行高、动作分级 ────────────────────────────────────────────── */
 /* 表格是这些页面的主体，所以行高和分隔线要克制：行与行之间只留一条极淡的线，
@@ -6786,16 +6794,16 @@ html:not([data-theme="light"]) body::after {
     <!-- 账号池 -->
     <section class="view" id="view-accounts">
       <div class="stats">
-        <button type="button" class="stat clickable" data-state-filter="" title="显示全部账号"><div class="v" id="sTotal">-</div><div class="k">账号总数</div></button>
-        <button type="button" class="stat good clickable" data-state-filter="ready" title="只看可用账号"><div class="v" id="sHealthy">-</div><div class="k">可用</div></button>
-        <button type="button" class="stat warn clickable" data-state-filter="cooling" title="只看冷却中的账号"><div class="v" id="sCooling">-</div><div class="k">冷却中</div></button>
-        <button type="button" class="stat warn clickable" data-state-filter="low_credit" title="只看积分不足的账号（等待签到/余额回血，或充值）"><div class="v" id="sLowCredit">-</div><div class="k">积分不足</div></button>
-        <button type="button" class="stat bad clickable" data-state-filter="risk" title="只看风控账号"><div class="v" id="sRisk">-</div><div class="k">风控</div></button>
-        <button type="button" class="stat bad clickable" data-state-filter="fault" title="只看异常账号"><div class="v" id="sFault">-</div><div class="k">账号异常</div></button>
-        <button type="button" class="stat bad clickable" data-state-filter="disabled" title="只看已停用账号"><div class="v" id="sDisabled">-</div><div class="k">已停用</div></button>
-        <div class="stat"><div class="v" id="sClients">-</div><div class="k">已接入客户端</div></div>
-        <div class="stat"><div class="v" id="sReady">-</div><div class="k">就绪客户端</div></div>
-        <button type="button" class="stat sticky-tile" id="sStickyTile" aria-haspopup="dialog" aria-controls="stickyVeil" title="查看并管理粘性会话">
+        <button type="button" class="stat clickable" data-state-filter="" title="账号总数：显示全部账号"><div class="v" id="sTotal">-</div><div class="k">账号总数</div></button>
+        <button type="button" class="stat good clickable" data-state-filter="ready" title="可用：只看可用账号"><div class="v" id="sHealthy">-</div><div class="k">可用</div></button>
+        <button type="button" class="stat warn clickable" data-state-filter="cooling" title="冷却中：只看冷却中的账号"><div class="v" id="sCooling">-</div><div class="k">冷却中</div></button>
+        <button type="button" class="stat warn clickable" data-state-filter="low_credit" title="积分不足：只看积分不足的账号（等待签到/余额回血，或充值）"><div class="v" id="sLowCredit">-</div><div class="k">积分不足</div></button>
+        <button type="button" class="stat bad clickable" data-state-filter="risk" title="风控：只看风控账号"><div class="v" id="sRisk">-</div><div class="k">风控</div></button>
+        <button type="button" class="stat bad clickable" data-state-filter="fault" title="账号异常：只看异常账号"><div class="v" id="sFault">-</div><div class="k">账号异常</div></button>
+        <button type="button" class="stat bad clickable" data-state-filter="disabled" title="已停用：只看已停用账号"><div class="v" id="sDisabled">-</div><div class="k">已停用</div></button>
+        <div class="stat" title="已接入客户端（本实例注册的平台数）"><div class="v" id="sClients">-</div><div class="k">已接入客户端</div></div>
+        <div class="stat" title="就绪客户端（其中可用平台数）"><div class="v" id="sReady">-</div><div class="k">就绪客户端</div></div>
+        <button type="button" class="stat sticky-tile" id="sStickyTile" aria-haspopup="dialog" aria-controls="stickyVeil" title="粘性会话：查看并管理粘性会话">
           <div class="v" id="sSticky">-</div><div class="k">粘性会话</div>
         </button>
       </div>

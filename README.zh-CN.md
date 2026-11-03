@@ -5,7 +5,7 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-当前版本：**0.7.5**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：**0.7.6**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 流式断流排查：升级后系统日志新增 `stream: id=...` 终止诊断，包含协议、平台/模型、
 上游事件数、`finish_reason`、正文/推理字节数、工具调用数、completion token、
@@ -264,6 +264,8 @@ client2api 是一个**个人自用**的 OpenAI 兼容网关。它把你自己在
 - 表单的字段级错误不只是红边：出错的输入框带 `aria-invalid="true"` 与指向错误文字的 `aria-describedby`，提交被本地拦下时焦点会落到第一个出错的字段上，弹窗级的兜底错误带 `role="alert"`——读屏用户能听到「哪一栏错了、为什么错」，而不是只看到一片红色。
 - 账号池卡片墙的板卡是一个真正的展开控件：卡片头（账号名 + 状态词）带 `role="button"`、`aria-expanded` 与指向详情块的 `aria-controls`，读屏会念出「<账号名> <状态>，已展开/已收起」而不是一个无名的 `article`；点它或按回车立即就地展开。轮询重建的豁免只覆盖**表单控件**（优先级滑杆、测试模型下拉、输入框），所以焦点落在板卡上不再让展开永远画不出来。
 - 面板数据表格的无障碍命名与列关联：每张表带视觉隐藏的 `<caption class="sr-only">`（读屏念「账号池」「最近调用」而不是光秃秃的「表格」），每个列头带 `scope="col"`（单元格导航时逐格报所属列）；子页签面板里没有可聚焦元素时（如用量页「统计明细」，纯文本+表格、永远不会有输入框），容器自身可聚焦——Tab 能进入内容区而不是整块跳过（WAI-ARIA APG Tabs 模式，issue #151/#152）。
+- 账号池统计带不再被字号涨破：换行判据从「视口宽度」（1160px 断点）换成「容器能不能放下」（flex-wrap 常开 + min-width 用 em 随字号一起变宽）——200% 文字路径（WCAG 1.4.4）不改视口宽度，原来的断点走不进去，9/10 标签被省略号吃掉（issue #159）。两格无 title 的 div 统计「已接入客户端/就绪客户端」补上可读回的 title，其余八格的 title 改成「标签原文：动作说明」两段式，悬停内容和被截断的词是同一句话。
+- 控件高度的「一套刻度」从注释落进声明：button.xs 的五份互相覆盖定义（26/28 互斥）收编为唯一权威值 26px，卡片头对它的小按钮改写权删除，工具条搜索框的单点 30px 换成 --ctl-h 引用——「一颗 xs 按钮多高」回到取决于设计而不是落点容器；一行里混着 34px 下拉与 26px 小按钮的容器给 align-items: center，矮的不再被拉高；原来注释里臆造的「全部对齐到 30px」（207 个控件里 30px 一个没有）如实改为本次选中的 34/26 两档（issue #160）。
 - 「测试全部账号」在入口定格发起平台：循环、结果写回与收尾报告全部使用发起那一刻的平台——「点完就去看看别的平台」不再让剩余探测改道到新平台（拿旧账号 id 问新平台的 /test 成片 4xx）、结果写错缓存、或用新平台的名字报一组不存在的计数（issue #158；与对话页发送时刻定格 turnClient 的既有写法同一件事）。
 - 用量页读取失败时，「这一页所有承载数字的地方」一起清掉：四张明细表、「请求 / 失败」读数带、最近调用子表与「N / N 条」、各子页 note 全部复位，且每个子页自己的 header 各留一个错误位（换子页不再丢提示）——此前失败分支只换图表、清磁贴，其余数字留上一帧，与真·正常只差一个藏在别的子页里的提示（issue #156）。
 - 添加账号弹层的三档切换（浏览器登录 / 导入凭据 / 手动添加）与另外四组子页签共用同一套标签页语义：`role="tablist"/"tab"/"tabpanel"`、`aria-selected`、roving tabindex（键盘只占一个停靠点）、方向键与 Home/End 在档间移动并跳过隐藏档（模块能力不足的空页签不会被键盘走到）——读屏能念出「当前是哪一档」，键盘用户不用再连按三次 Tab（issue #150）。

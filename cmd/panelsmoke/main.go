@@ -168,6 +168,12 @@ func run() error {
 			if err := assertA11yTablesAndPanels(runCtx, page); err != nil {
 				return err
 			}
+			// The stats band must survive the 200% text path (issue #159):
+			// every tile carries a title, and nothing clips after the font
+			// scale-up (the wrap decision is no longer viewport-gated).
+			if err := assertStatsResizesWithText(runCtx, page); err != nil {
+				return err
+			}
 			// The bulk test must keep addressing the platform it started on
 			// (issue #158): a mid-run platform switch used to redirect the
 			// remaining probes and misattribute the closing count.

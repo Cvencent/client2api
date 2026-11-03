@@ -99,8 +99,6 @@ func assertBulkTestPlatformFrozen(ctx context.Context, page *browser.Page) error
 	}
 	// Let the async bulk run finish.
 	time.Sleep(2500 * time.Millisecond)
-	dbg, _ := page.EvalString(ctx, `(() => JSON.stringify({mid: window.__c2a158.dbgMid, calls: window.__c2a158.calls}))()`)
-	fmt.Printf("panelsmoke: [dbg 158] %s\n", dbg)
 	// Read the calls back (the promise above only carried the mid-run state).
 	calls, err := page.EvalString(ctx, `(() => JSON.stringify((window.__c2a158 || {calls: []}).calls))()`)
 	if err != nil {
