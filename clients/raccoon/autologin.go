@@ -54,6 +54,13 @@ var raccoonSendWait = 20 * time.Second
 // digest race drops one.
 var raccoonSendSettle = 1500 * time.Millisecond
 
+// raccoonRefusalRearm is how long to let the challenge widget re-arm after a
+// refusal, before the single in-place retry clicks again (issue #141).  The
+// refusal already lowered the environment score the widget scores against, so a
+// click a second and a half later is the shape most likely to be refused twice;
+// this gives the widget a real window.  A var so a test can shrink it.
+var raccoonRefusalRearm = 20 * time.Second
+
 // The loopback page's DOM.  These ids are ours, not a vendor SPA's, so they
 // are stable by construction.
 const (
@@ -83,16 +90,20 @@ type raccoonAutoDriver interface {
 // raccoonAutoJob is one in-flight auto-login.  Every field is read under mu
 // because the panel polls while the background run writes.
 type raccoonAutoJob struct {
-	mu         sync.Mutex
-	id         string
-	sessionID  string
-	url        string
-	state      string
-	step       string
-	phone      string
-	message    string
-	accountID  string
-	lines      []core.AutoLogLine
+	mu        sync.Mutex
+	id        string
+	sessionID string
+	url       string
+	state     string
+	step      string
+	phone     string
+	message   string
+	accountID string
+	lines     []core.AutoLogLine
+	// logLine, when set, mirrors each transcript line to the module log so the
+	// failure is greppable in client2api.log after the job has expired
+	// (issue #141).  Nil keeps a hand-built job in-memory only.
+	logLine    func(format string, args ...any)
 	startedAt  time.Time
 	finishedAt time.Time
 	expiresAt  time.Time
@@ -102,8 +113,20 @@ type raccoonAutoJob struct {
 func (j *raccoonAutoJob) logf(format string, args ...any) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	j.appendLocked(fmt.Sprintf(format, args...))
+	text := fmt.Sprintf(format, args...)
+	j.appendLocked(text)
+	// 落一行到模块日志（issue #141）。transcript 只在内存环里、且随 job 过期
+	// 一起消失：事后按 client2api.log 排查时「零命中」是按构造必然，不是「没发生」。
+	// appendLocked 已经脱敏过，这里用同一段文本，两个面不会分叉。
+	if j.logLine != nil {
+		j.logLine("%s", redactAutoLine(text))
+	}
 }
+
+// redactAutoLine is the one place the transcript's text is redacted, so the ring
+// copy and the file copy cannot disagree (issue #141).  core.Redact is
+// idempotent, which keeps the ring's own redaction harmless.
+func redactAutoLine(text string) string { return core.Redact(text) }
 
 func (j *raccoonAutoJob) appendLocked(text string) {
 	if len(j.lines) >= raccoonAutoMaxLogLines {
@@ -228,6 +251,9 @@ func (c *Client) StartAutoLogin(ctx context.Context, req core.AutoLoginRequest) 
 		step:      "starting",
 		startedAt: c.now(),
 		cancel:    cancel,
+		// The durable surface (issue #141): deps.Logf is already scoped to this
+		// module and fans out to the ring, the log file and stdout.
+		logLine: c.deps.Logf,
 	}
 	c.putAutoJob(job)
 	job.logf("小浣熊自动登录已启动（session=%s）", shortRaccoonID(login.SessionID))
@@ -550,7 +576,14 @@ func requestRaccoonSMS(ctx context.Context, page raccoonAutoPage, logf func(stri
 			return nil
 		}
 		if attempt < attempts {
-			logf("发送验证码未成功（%v），重新完成验证后再试一次", lastErr)
+			// Give the widget time to re-arm before the retry (issue #141): a
+			// refusal is exactly when the environment score drops, so clicking
+			// again right away is the repeat the reporter measured.
+			logf("发送验证码未成功（%v），等 %s 让滑块重新武装后再试一次", lastErr, raccoonRefusalRearm)
+			if !sleepRaccoon(ctx, raccoonRefusalRearm) {
+				return ctx.Err()
+			}
+			continue
 		}
 	}
 	return lastErr

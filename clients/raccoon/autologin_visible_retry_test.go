@@ -148,3 +148,56 @@ func (a *alwaysRefuse) EvalBool(ctx context.Context, expr string) (bool, error) 
 
 var _ = errors.New
 var _ = io.Discard
+
+// 自动登录的 transcript 必须**同时**落模块日志（issue #141）。
+//
+// 现场：失败后按 `client2api.log` grep 是**零命中**，而那不是「没发生」——
+// `raccoonAutoJob.logf` 只往内存环（j.lines，上限 80）里塞，从不走 deps.Logf；
+// 环还会随 job 过期一起消失，一小时后去查连 transcript 都没了。与 #96 的
+// 「环/文件分面」同型。
+func TestAutoLoginTranscriptReachesTheDurableLog(t *testing.T) {
+	raw, err := os.ReadFile("autologin.go")
+	if err != nil {
+		t.Fatalf("读不到 autologin.go：%v", err)
+	}
+	src := string(raw)
+
+	if !strings.Contains(src, "logLine") {
+		t.Fatal("raccoonAutoJob 没有落盘通道：transcript 只在内存环里，按 client2api.log 排查永远零命中（issue #141）")
+	}
+	if !strings.Contains(src, "logLine: c.deps.Logf") {
+		t.Error("job 构造时没有接上 deps.Logf：通道字段存在但没人接（issue #141）")
+	}
+	// 落盘那一行必须走同一段脱敏后的文本，两个面不能分叉。
+	body := src[strings.Index(src, "func (j *raccoonAutoJob) logf("):]
+	body = body[:strings.Index(body, "\n}")]
+	if !strings.Contains(body, "redactAutoLine(") {
+		t.Error("落盘没有走统一脱敏：环里的副本与文件里的副本可能分叉（issue #141）")
+	}
+}
+
+// 拒绝后的重试必须先给滑块留重新武装的时间（issue #141 方向 2）。
+//
+// 拒绝本身就意味着环境评分下降，1.5 秒后再点一次正是最容易被二次拒绝的形状。
+// 这里钉「有界」而不是「多久」：常量是 var，测试可以缩短，但不能没有。
+func TestARefusedChallengeGetsTimeToRearmBeforeTheRetry(t *testing.T) {
+	raw, err := os.ReadFile("autologin.go")
+	if err != nil {
+		t.Fatalf("读不到 autologin.go：%v", err)
+	}
+	src := string(raw)
+
+	if !strings.Contains(src, "raccoonRefusalRearm") {
+		t.Fatal("重试前没有重新武装窗口：拒绝后立刻再点，是报告里「两次全拒」最可能的自伤形状（issue #141）")
+	}
+	i := strings.Index(src, "func requestRaccoonSMS(")
+	body := src[i:]
+	body = body[:strings.Index(body, "\n}")]
+	if !strings.Contains(body, "sleepRaccoon(ctx, raccoonRefusalRearm)") {
+		t.Error("重试循环里没有等重新武装：常量声明了却没用（issue #141）")
+	}
+	// 仍然必须有界——不许退化成无限重试（那会持续烧号码与上游风控）。
+	if !strings.Contains(body, "const attempts = 2") {
+		t.Error("重试上限不见了：对着一直说不的 vendor 反复点击只会烧更多号码（issue #63/#141）")
+	}
+}

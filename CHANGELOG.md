@@ -54,6 +54,37 @@
 - `client2api-setup-0.5.73.exe`（空包，不含账号凭据或本机配置）
   SHA256: `EF4235020D68984FF57BCFBC0529DFB561609B257CFA1E6ACB0F10A54EE8486C`
 
+## [0.6.2] - 2026-11-03
+
+### Fixed
+
+- **小浣熊自动登录的 transcript 不落文件日志，事后按文件排查「零命中」是按构造必然（#141）**：
+  `raccoonAutoJob.logf`（`clients/raccoon/autologin.go`）只把行塞进**内存环**（`j.lines`，上限 80、脱敏），
+  **从不走 `deps.Logf`**——而环随 job 过期一起消失，所以「`client2api.log` 全文 0 次该错误」不能读成
+  「没发生」，这与 #96 的「环/文件分面」同型。现在每条 transcript 行**同时**镜像到模块日志
+  （`deps.Logf`，扇出到环 + `client2api.log` + stdout），且走**同一段** `redactAutoLine()`（`core.Redact`，
+  幂等）——两个面不会分叉。行里已含账号/号码等，走既有的脱敏规则。
+- **被拒后的原地重试没有给滑块留重新武装时间（#141 方向 2）**：重试原先只隔
+  `raccoonSendSettle`（1.5 秒）就再点一次；而**拒绝本身就意味着环境评分已下降**，立刻重点正是报告里
+  「两次全拒」最可能的自伤形状。现在重试前等一个**有界的** `raccoonRefusalRearm`（20 秒，`var` 便于测试
+  缩短），并在日志里写明等了多久。**仍然保持上限 2 次**，不退化成无限重试（那会持续烧号码与上游风控）。
+  - 新增两条看守测试（`clients/raccoon/autologin_visible_retry_test.go`）：transcript 必须接上
+    `deps.Logf` 且走统一脱敏；重试循环必须等重新武装且仍有 `attempts = 2` 上限。
+    **实测分别回退这两处即红。**
+
+### 说明（不是缺陷，已在 issue 里回复）
+
+- 报告里的方向 3「失败时立刻释放接码号码」**不成立**：号码在 `autoLogin` 开头取一次，
+  由 `defer releasePhone()` 在整个 run 结束后统一释放（跨两次尝试都持有），不是「一次拒绝即释放」。
+- 报告里的方向 1「厂商滑块拒绝本身」**不是本仓能修的**：那是对这台机器/这条链路的风控评分。
+  已在 issue 里给出可判定的对照（同一账号用官方客户端手工登录一次：官方也弹且不过 = IP/设备信誉，
+  官方能过 = 自动化指纹），由操作员侧验证。
+
+### Installer
+
+- `client2api-setup-0.6.2.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `E6984BA0B2FF2F8EA2DB415509325BA864AAA66DFC6BBD1D3685543820E22BB3`
+
 ## [0.6.1] - 2026-11-03
 
 ### Fixed
