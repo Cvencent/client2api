@@ -14097,6 +14097,12 @@ function renderAccounts() {
   const active = document.activeElement;
   const isFormControl = !!active && active.matches &&
     active.matches("input, select, textarea, [contenteditable=true]");
+  // 焦点身份（issue #140）：整片重建会把焦点所在的**按钮**一起换掉，焦点掉回
+  // body，用户刚要按的那一下回车就没了（实测 clicks=[]）。豁免判据不能再放宽
+  // ——那是 #118 的坑（板卡自身 tabindex=0，一放宽就每拍都豁免、界面不画）。
+  // 所以改成「记住它的稳定身份、重建后把焦点还回去」：按钮带 data-do（+ data-id），
+  // 两者合起来唯一定位到替代元素。刻意**不含** .ac-head（那只负责展开，必须重画）。
+  const focusKey = acctFocusKey(active, tb, board);
   const editingInTable = (isFormControl && (tb.contains(active) || board.contains(active))) ||
     !!tb.querySelector(".accPrio:active, select.test-model:active") ||
     !!board.querySelector(".accPrio:active, select.test-model:active");
@@ -14264,8 +14270,66 @@ function renderAccounts() {
   // 同一批数据再画一遍卡片墙，并按记住的模式决定谁可见（CSS 用 body 类切换）。
   // 卡片墙与表格吃同一个豁免（issue #25）：展开卡里的滑杆正被拖动时跳过本轮。
   if (!editingInTable) renderAcctBoard(pageRows, caps, acts, showBal);
+  // 重建之后把焦点还给等价的那颗元素（issue #140）。只在重建**真的把它换掉**时
+  // 做：豁免命中（表单控件）时原元素还在，这里就是空操作。
+  restoreAcctFocus(focusKey);
   renderAcctSide();
   setAccMode(accMode());
+}
+
+// acctFocusKey 给「正在被操作、且会被重建换掉」的控件算一个稳定身份。
+//
+// 返回空串表示不需要还原：没有焦点、焦点不在账号容器里、或者焦点所在的元素
+// 本身就是这次重建要更新的对象（.ac-head 板卡头部，tabindex=0 —— 它的展开
+// 状态必须重画，豁免它就会把 #118 带回来）。
+function acctFocusKey(active, tb, board) {
+  if (!active || !active.closest) return "";
+  if (!(tb.contains(active) || board.contains(active))) return "";
+  if (active.classList && active.classList.contains("ac-head")) return "";
+  const do_ = active.getAttribute && active.getAttribute("data-do");
+  if (do_) return do_ + "|" + (active.getAttribute("data-id") || active.getAttribute("data-act") || "");
+  if (active.id) return "id|" + active.id;
+  return "";
+}
+
+// restoreAcctFocus 把焦点放回重建后与之等价的那颗控件。
+function restoreAcctFocus(key) {
+  if (!key) return;
+  // 已经有人把焦点拿走了（用户又按了 Tab）就不要抢回来。
+  const cur = document.activeElement;
+  if (cur && cur !== document.body) return;
+  const [kind, rest] = key.split("|");
+  let el = null;
+  if (kind === "id") {
+    el = document.getElementById(rest);
+  } else {
+    const parts = key.split("|");
+    const sel = '[data-do="' + (window.CSS && CSS.escape ? CSS.escape(parts[0]) : parts[0]) + '"]';
+    const same = (cand) => {
+      if (!cand) return false;
+      if (!parts[1]) return true;
+      const v = cand.getAttribute("data-id") || cand.getAttribute("data-act") || "";
+      return v === parts[1];
+    };
+    // 只在**当前可见**的那个容器里找替代元素：表格与卡片墙同时存在于 DOM，
+    // 而另一个是隐藏的（body 类切换呈现）。不限定范围就会命中隐藏那一份——
+    // 焦点落到一个不可见按钮上，等于没还原（实测 activeElement 回到 body）。
+    const hosts = [];
+    if (document.body.classList.contains("acct-mode-board")) {
+      const b = document.querySelector("#acctBoard");
+      if (b) hosts.push(b);
+    } else {
+      const t = document.querySelector("#accBody");
+      if (t) hosts.push(t);
+    }
+    for (const h of hosts) {
+      for (const c of h.querySelectorAll(sel)) {
+        if (same(c)) { el = c; break; }
+      }
+      if (el) break;
+    }
+  }
+  if (el && el.focus) el.focus({ preventScroll: true });
 }
 
 // hideAccPager 把分页条收起来。池子小到一页放得下时它不该出现——一个永远点不
@@ -22935,6 +22999,16 @@ function accGrpFrom(ev) {
 }
 function accPaneKey(ev) {
   if (ev.key !== "Enter" && ev.key !== " ") return;
+  // 键盘激活属于控件自己（issue #139）：板卡上的按钮必然在 .acct-card[data-grp]
+  // 祖先里，于是每一次在按钮上按回车/空格都被当成「在板卡上按了回车」——
+  // preventDefault 把按钮自己的激活一起取消，click 根本不派发（实测 clicks=[]，
+  // 弹层不出现，卡片反而被展开）。表格那条没坏只是因为它的行没有 data-grp。
+  // 与 accPaneClick 里那条表单豁免同口径，区别是这里必须把 button 也算进来。
+  //
+  // 注意**不能**把 [role=button] 收进来：板卡自己的头部就是
+  // `div.ac-head[role=button][data-grp]`（index.html:13972），它才是承担
+  // Enter/空格展开职责的那一个。用真正的交互控件做判据即可。
+  if (ev.target.closest && ev.target.closest("button, a[href], input, select, textarea, label, output")) return;
   const g = accGrpFrom(ev);
   if (!g) return;
   ev.preventDefault();

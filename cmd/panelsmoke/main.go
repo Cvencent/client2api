@@ -140,6 +140,13 @@ func run() error {
 			if err := assertLayout(runCtx, page); err != nil {
 				return err
 			}
+			// The accounts pane's keyboard behaviour (issues #139/#140): these
+			// are measured in the browser because the go test suite only ever
+			// matched text against index.html, which is why a swallowed Enter
+			// and a stolen focus both shipped.
+			if err := assertAccountsKeyboard(runCtx, page); err != nil {
+				return err
+			}
 			// The captcha document is a separate go:embed'ed page with its own
 			// inline script, and until issue #128 nothing executed it: a parse
 			// error there left every gate green while the overlay hung on
@@ -363,6 +370,81 @@ func smokeBrowser(ctx context.Context, browserPath, url, dir string) (string, *b
 	// session (a second launch would pay another browser start for no reason and
 	// could land on a different rendering).
 	return dom, page, b.Close, nil
+}
+
+// assertAccountsKeyboard checks the accounts pane the way a keyboard user meets
+// it (issues #139 and #140).
+//
+// Two behaviours, both invisible to a text assertion:
+//
+//  1. Enter/Space on a row's action button must reach the BUTTON.  The pane's
+//     keydown handler used to preventDefault every Enter inside a card, which
+//     also cancelled the button's own activation (measured: no click at all),
+//     while the card HEAD still has to keep that responsibility.
+//  2. A rebuild (the pane repaints every 5s) must not drop focus to <body>.  The
+//     reporter measured the focused button being replaced wholesale.
+//
+// The check seeds one account through the page's own state, because a fresh
+// instance has no row to press, and restores the previous state afterwards.
+func assertAccountsKeyboard(ctx context.Context, page *browser.Page) error {
+	if page == nil {
+		return nil
+	}
+	report, err := page.EvalString(ctx, `(() => {
+	  const problems = [];
+	  if (typeof setAccMode !== "function" || typeof renderAccounts !== "function") return "";
+	  const hadNames = NAMES.slice(), hadCur = CUR, hadAccts = Object.keys(ACCTS);
+	  try {
+	    ACCTS["__smoke__"] = { capabilities: { manage: true, actions: [] },
+	      accounts: [{ id: "smoke-1", label: "smoke-1", state: "ready", enabled: true, fields: {}, note: "", priorities: {} }] };
+	    NAMES.length = 0; NAMES.push("__smoke__"); CUR = "__smoke__";
+	    const press = (el, key) => {
+	      const ev = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+	      el.dispatchEvent(ev);
+	      return ev.defaultPrevented;   // true = the browser would not activate it
+	    };
+	    for (const mode of ["card", "table"]) {
+	      setAccMode(mode); renderAccounts();
+	      const host = mode === "card" ? document.querySelector("#acctBoard") : document.querySelector("#accBody");
+	      const btn = host && host.querySelector('button[data-do]');
+	      if (!btn) { problems.push("账号池 " + mode + " 呈现下找不到带 data-do 的行内按钮，键盘检查无从进行"); continue; }
+	      // 1. the button owns its keys
+	      if (press(btn, "Enter")) problems.push(mode + " 呈现：行内按钮上的 Enter 被面板处理器 preventDefault，按钮自己的激活被吃掉（#139）");
+	      if (press(btn, " ")) problems.push(mode + " 呈现：行内按钮上的空格被吃掉（#139）");
+	      // 2. focus survives a rebuild
+	      btn.focus();
+	      const want = btn.getAttribute("data-do");
+	      renderAccounts();
+	      const a = document.activeElement;
+	      if (a === document.body || a === document.documentElement) {
+	        problems.push(mode + " 呈现：重建后焦点掉回 body（#140，原来停在 data-do=" + want + " 上）");
+	      }
+	    }
+	    // the card HEAD must still own Enter/Space (that is #118's fix, and the
+	    // reason the exemption cannot simply be "anywhere in the container")
+	    setAccMode("card"); renderAccounts();
+	    const head = document.querySelector("#acctBoard .ac-head");
+	    if (head) {
+	      const ev = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+	      head.dispatchEvent(ev);
+	      if (!ev.defaultPrevented) problems.push("板卡头部不再响应 Enter：展开/收起的键盘路径被让给了浏览器（#118 回归）");
+	    }
+	  } finally {
+	    NAMES.length = 0; for (const n of hadNames) NAMES.push(n);
+	    CUR = hadCur;
+	    for (const k of Object.keys(ACCTS)) if (k === "__smoke__") delete ACCTS[k];
+	    void hadAccts;
+	    try { setAccMode("table"); renderAccounts(); } catch (e) { }
+	  }
+	  return problems.join(" || ");
+	})()`)
+	if err != nil {
+		return fmt.Errorf("press the accounts keyboard: %w", err)
+	}
+	if strings.TrimSpace(report) != "" {
+		return fmt.Errorf("accounts keyboard regression:\n  %s", strings.Join(strings.Split(report, " || "), "\n  "))
+	}
+	return nil
 }
 
 // assertLayout measures the rendered accounts view (issue #97).

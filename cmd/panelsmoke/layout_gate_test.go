@@ -86,4 +86,22 @@ func TestTheGateMeasuresLayoutNotJustBoot(t *testing.T) {
 	if !strings.Contains(src, "func assertCaptchaDocs(") {
 		t.Error("没有 assertCaptchaDocs 实现")
 	}
+
+	// 账号池的键盘行为也要在门禁上（#139/#140）：1138 处 go test 断言全是对
+	// index.html 的文本匹配，从来没有真的按过这些键，所以「Enter 被吃掉」和
+	// 「焦点被抢回 body」两条都能一路绿灯上线。
+	if !strings.Contains(src, "assertAccountsKeyboard(runCtx, page)") {
+		t.Error("账号池的键盘检查没有进真浏览器阶段（#139 行内按钮的 Enter 被吞、#140 重建抢走焦点）")
+	}
+	kb := body("assertAccountsKeyboard")
+	for _, want := range []struct{ needle, why string }{
+		{`button[data-do]`, "必须以行内动作按钮为判据（#139）"},
+		{"defaultPrevented", "必须量 preventDefault：被它拦下就等于按钮不会激活（#139）"},
+		{"document.activeElement", "必须量重建后的焦点落点（#140）"},
+		{".ac-head", "必须钉住板卡头部仍承担 Enter/空格展开，否则会把 #118 带回来"},
+	} {
+		if !strings.Contains(kb, want.needle) {
+			t.Errorf("键盘检查缺少 %q —— %s", want.needle, want.why)
+		}
+	}
 }

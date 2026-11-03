@@ -54,6 +54,41 @@
 - `client2api-setup-0.5.73.exe`（空包，不含账号凭据或本机配置）
   SHA256: `EF4235020D68984FF57BCFBC0529DFB561609B257CFA1E6ACB0F10A54EE8486C`
 
+## [0.6.1] - 2026-11-03
+
+### Fixed
+
+- **账号池卡片墙上，行内动作按钮的键盘激活被面板键处理器吃掉（#139）**：`accPaneKey`
+  （`internal/panel/index.html`）对 Enter/空格一律 `preventDefault()` + `accToggleOpen()`，
+  **不看事件目标是不是一颗按钮**；而 `accGrpFrom` 只找「祖先里有没有 `.acct-card[data-grp]`」，
+  板卡上的按钮必然命中——于是按钮自己的激活被取消，`click` 根本不派发（报告方实测 `clicks=[]`，
+  标识弹层不出现、卡片反而被展开）。表格那条没坏只是因为它的行没有 `data-grp`。
+  现在在开头把键盘激活让回给控件本身（`button, a[href], input, select, textarea, label, output`），
+  与 `accPaneClick` 里那条表单豁免同口径。**刻意不含 `[role=button]`**：板卡头部
+  `div.ac-head[role=button][data-grp]` 才是承担展开职责的那一个，收进来会把 #118 带回。
+- **每 5 秒的轮询重建把键盘焦点抢回 `body`，并连带吞掉已发出的按键（#140）**：编辑豁免判据
+  （`58e9421` 为 #23/#25 收窄的 `isFormControl`）只把 `input/select/textarea/contenteditable`
+  当成「正在编辑」，**按钮被排除在外**，于是重建把焦点所在的按钮整个换掉；焦点掉回 body 之后
+  再按 Enter 什么都不发生（报告方实测 `activeElement` 由 `BUTTON` 变 `BODY`，且两个版本的重绘
+  次数相同——变量是判据不是重绘）。
+  **修法按报告方的首选方向：记住焦点的稳定身份、重建后还原**——按钮带 `data-do`（+`data-id`），
+  重建后在该身份上找回替代元素并 `focus()`；**只在当前可见的容器里找**（表格与卡片墙同时存在
+  DOM，另一个是隐藏的；不限定范围会命中隐藏那份，实测焦点仍回 body）。不改豁免判据，
+  所以 #118 不会回归：板卡头部（`.ac-head`）**明确排除**在身份之外——它正是必须重画的那一个。
+- **门禁补上这一类**：`cmd/panelsmoke` 的真浏览器阶段新增 `assertAccountsKeyboard`——在卡片与表格
+  两种呈现下各塞一个账号，量两件事：行内按钮上的 Enter/空格**不得**被 `preventDefault`
+  （#139），以及重建后 `activeElement` **不得**掉回 body（#140）；另钉住板卡头部仍须响应
+  Enter（防 #118 回归）。`layout_gate_test.go` 同步钉住这条判据在门禁路径上。
+  - **实测**：分别回退两处修复（恢复旧 `accPaneKey` / 去掉焦点还原），门禁**分别**报出对应失败；
+    修复后两种呈现全绿。
+- 新增 `internal/panel/accounts_keyboard_ui_test.go` 的静态契约（豁免集合必须含 `button` 且不含
+  `role=button`、还原必须限定可见容器、`.ac-head` 必须在身份之外）。
+
+### Installer
+
+- `client2api-setup-0.6.1.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `99AF5E4543506CF555C225978158C1F0BDD483C307742AC2D8F5461879DD5354`
+
 ## [0.6.0] - 2026-11-03
 
 ### Security
