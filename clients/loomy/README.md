@@ -40,7 +40,7 @@ honestly rather than pretending otherwise:
   `1 min` on the second, `2 min` on the third. A fourth failed round marks the
   account `abnormal` instead of handing it yet another cooldown; the panel then
   shows `invalid` and asks the operator to revive it after fixing the cause or
-  to log in again. Any successful chat clears both the stage and the flag.
+  to log in again. Any successful chat clears both the stage and the flag -- and so does a funded balance read (see the self-heal note below, issue #153).
 * When a **side channel** -- the balance sweep, package read, catalogue
   refresh, task report or keepalive heartbeat -- gets `100002`/`020002`, the
   account is only cooled down, not parked. Those reads are useful evidence but
@@ -374,9 +374,15 @@ An upgrade also converts the old first-chat-`100002`/`dead` verdict into one
 session failure plus a recoverable cooldown, so accounts already shown as
 `invalid` by that bug do not need to be revived by hand.
 
-An account marked `abnormal` by the chat ladder stays out of the pool until the
-operator revives it (panel action) or logs in again and imports a fresh token.
-The flag is persisted, so a restart does not quietly return it to rotation.
+An account marked `abnormal` by the chat ladder stays out of the pool until it
+is revived by a panel action, a re-login -- or, since the self-heal (issue
+#153), by a funded balance read: `applyBalance` clears the mark (plus the
+failure counters and cooldown clocks beside it) the moment a balance read
+returns a positive number, because reaching the vendor with this credential and
+getting a real figure back is the strongest available proof that the session is
+alive.  A zero reading proves nothing and clears nothing.  The `invalid` note
+the panel showed is derived from the mark, so it disappears with it.  The flag
+is persisted, so a restart does not quietly return it to rotation.
 
 When a successful balance read reports an available balance at or below the
 platform's `reserve_credits`, the account is parked as `low_credit`. That park

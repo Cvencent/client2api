@@ -758,9 +758,19 @@ func (s *store) setEnabled(id string, enabled bool) error {
 }
 
 // applyBalance records the last balance verdict against the platform's
-// low-balance guard.  It owns only the dedicated lowCredit park: a rate-limit
-// or session cooldown keeps its own clock, and a successful balance read must
-// not clear it by accident.
+// low-balance guard, and is also the one self-heal path for the abnormal mark
+// (issue #153).  It does not own the rate-limit or session cooldowns: those
+// keep their own clocks, and a successful balance read must not clear them by
+// accident.
+//
+// abnormal is set when the chat-failure ladder runs out and cleared only by an
+// explicit revive -- so a selector that skips abnormal rows could never send
+// the chat 200 that would prove the session healthy again, and the row stayed
+// invalid for ever.  A funded balance read is exactly the missing proof (#104
+// / #126 family): the module just reached the vendor with this credential and
+// got a real number back.  Clearing the mark here mirrors the lowCredit lift
+// beside it; the abnormal note needs no separate reset because status derives
+// it from the mark.
 func (s *store) applyBalance(id string, credits int64, reserve int) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -768,9 +778,22 @@ func (s *store) applyBalance(id string, credits int64, reserve int) bool {
 		if a.ID != id {
 			continue
 		}
+		// A funded read proves the credential is alive: the abnormal mark's
+		// cause was a past outage, not this key.
+		revived := false
+		if credits > 0 && a.abnormal {
+			a.abnormal = false
+			a.failures = 0
+			a.sessionFailures = 0
+			a.cooldownStage = 0
+			a.lastError = ""
+			a.cooldownTill = time.Time{}
+			a.probeAfter = time.Time{}
+			revived = true
+		}
 		if reserve < 0 {
 			if !a.lowCredit {
-				return false
+				return revived
 			}
 			a.lowCredit = false
 			_ = s.saveState()
@@ -778,14 +801,14 @@ func (s *store) applyBalance(id string, credits int64, reserve int) bool {
 		}
 		if credits <= int64(reserve) {
 			if a.lowCredit {
-				return false
+				return revived
 			}
 			a.lowCredit = true
 			_ = s.saveState()
 			return true
 		}
 		if !a.lowCredit {
-			return false
+			return revived
 		}
 		a.lowCredit = false
 		_ = s.saveState()

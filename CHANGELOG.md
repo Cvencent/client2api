@@ -6,6 +6,33 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.1] - 2026-11-04
+
+### Fixed
+
+- **小浣熊（loomy）的 abnormal 标记没有「有余额读数即自愈」的出路（#153）**：
+  chat 失败阶梯走完把账号标成 abnormal（面板显示「账号异常」，note
+  「repeated chat failures…」）之后，选择器跳过 abnormal 行——证明会话活着的
+  chat 200 永远打不进来；而余额读数拿到了数也不被允许复活：`applyBalance`
+  （`clients/loomy/accounts.go:764`）只清 lowCredit。操作员实测「点余额有数、
+  点测试通过、行永远停在账号异常」，与 officeace 的 #126 完全同型的自锁。
+  现在 `applyBalance` 在读数**有余量**（credits > 0）时顺带清 abnormal 及其
+  伴随的失败计数与冷却钟——余额读数是模块刚拿到的「这个键没死」的最强证据
+  （#104/#126 家族同款判据），自愈形状与紧挨着的 lowCredit 提升完全对称。
+  **零余额读数不算证据、不清标记**（不能把一个真出问题的账号放回轮换）；
+  note 是从标记派生的（`accounts.go:1233`），标记清了话术自动消失；限时冷却
+  与会话冷却照旧不归它管（各自的钟不能被误清）。看守
+  `clients/loomy/abnormal_selfheal_test.go`：有余量读数清标记并复位全部惩罚
+  状态（状态行/note 跟着恢复）、**零余额读数不清**（反向钉子，第一版实现
+  就被它当场判红——credits=0 走的是 lowCredit 分支但自愈不该搭车）、双标记
+  （abnormal + lowCredit）一次读数同清。**双向 A/B**：去掉 `credits > 0`
+  门槛 → 反向测试红；禁用自愈 → 主测试红。
+
+### Installer
+
+- `client2api-setup-0.7.1.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `204C9010F81E8BDFF60E078BA8B77AF040CC33BFC036D55B9F3EB3608636A140`
+
 ## [0.7.0] - 2026-11-04
 
 ### Added
