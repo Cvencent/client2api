@@ -2,6 +2,7 @@ package panel
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -117,8 +118,64 @@ func (s *chatHistoryStore) load() {
 	}
 }
 
-// List returns every conversation, newest update first.  Messages are included
-// so selecting a thread is one round trip, not list-then-fetch.
+// ChatThreadSummary is one row of the conversation list: everything the sidebar
+// renders, and nothing else.
+//
+// The list used to carry the full `messages` array of every thread ("so
+// selecting a thread is one round trip"), which made a page that shows titles
+// cost the size of the whole library: 340 threads measured 5.89 MB, re-sent on
+// entry, on refresh, and after every completed turn (issue #127).  The
+// transcript is already served per-thread by GET
+// /panel/api/chat/conversations/<id>, so the list only needs the summary that
+// the sidebar actually draws.  MessageCount is included because the sidebar
+// shows it and the client would otherwise have to fetch to learn it.
+type ChatThreadSummary struct {
+	ID        string `json:"id"`
+	Title     string `json:"title"`
+	Client    string `json:"client,omitempty"`
+	Model     string `json:"model,omitempty"`
+	Account   string `json:"account,omitempty"`
+	Key       string `json:"key,omitempty"`
+	CreatedAt int64  `json:"created_at"`
+	UpdatedAt int64  `json:"updated_at"`
+	// MessageCount is len(messages) without shipping them.
+	MessageCount int `json:"message_count"`
+}
+
+// ListSummaries returns every conversation without its transcript, newest
+// update first (issue #127).
+func (s *chatHistoryStore) ListSummaries() []ChatThreadSummary {
+	if s == nil {
+		return []ChatThreadSummary{}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]ChatThreadSummary, 0, len(s.threads))
+	for _, t := range s.threads {
+		out = append(out, ChatThreadSummary{
+			ID:           t.ID,
+			Title:        t.Title,
+			Client:       t.Client,
+			Model:        t.Model,
+			Account:      t.Account,
+			Key:          t.Key,
+			CreatedAt:    t.CreatedAt,
+			UpdatedAt:    t.UpdatedAt,
+			MessageCount: len(t.Messages),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].UpdatedAt != out[j].UpdatedAt {
+			return out[i].UpdatedAt > out[j].UpdatedAt
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out
+}
+
+// List returns every conversation WITH its transcript, newest update first.
+// Only the single-thread endpoint and the store's own callers need this; the
+// list endpoint serves ListSummaries (issue #127).
 func (s *chatHistoryStore) List() []ChatThread {
 	if s == nil {
 		return []ChatThread{}
@@ -351,7 +408,29 @@ func (p *panel) handleChatConversations(w http.ResponseWriter, r *http.Request) 
 	}
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, http.StatusOK, map[string]any{"conversations": p.chatHistory.List()})
+		// Summaries only, plus a conditional request: this endpoint is read on
+		// every page entry, every refresh, and after every completed turn, and
+		// used to cost the size of the whole library each time (issue #127).
+		// Same shape as /panel/api/models (models.go): hash what the client can
+		// see, honour If-None-Match with a bodiless 304.
+		summaries := p.chatHistory.ListSummaries()
+		body, err := json.Marshal(map[string]any{"conversations": summaries})
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "marshal conversations: "+err.Error())
+			return
+		}
+		sum := sha256.Sum256(body)
+		etag := `"` + hex.EncodeToString(sum[:16]) + `"`
+		w.Header().Set("ETag", etag)
+		if match := r.Header.Get("If-None-Match"); match != "" && etagMatches(match, etag) {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(body)
+		_, _ = w.Write([]byte("\n"))
 
 	case http.MethodPost:
 		var in ChatThread

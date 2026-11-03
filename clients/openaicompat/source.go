@@ -712,13 +712,37 @@ func (s *source) noteFailure(id, key, base string, err error) {
 			// cooldown.  Marking it invalid is what turns the row into
 			// 账号异常 and gives the operator the re-import path.  The
 			// authExhausted veto above covers the one auth-shaped refusal a
-			// cooldown does answer.
+			// cooldown does answer -- but only when the veto has something to
+			// read.  Its reading (`pointsAt`) is in-memory, so on a boot where
+			// the first chat beats the first balance sweep there is nothing to
+			// consult yet, and this vendor's 401 cannot tell a drained package
+			// from a dead key (issue #126).  Writing invalid there is the
+			// mistake the operator sees as a row that says 账号异常 until they
+			// press 余额 by hand and it flips to 冷却中.
+			//
+			// So with no reading at all the honest verdict is "unknown": cool
+			// it down and let the first read decide.  A source that has no
+			// credit opinion (authExhausted == nil, i.e. a plain relay) keeps
+			// the dead-key path exactly as before.
 			if kind == core.FailureAuth {
 				s.invalid[id] = true
+				s.logInvalid(id, refusal)
 			}
 			break
 		}
 	}
+}
+
+// logInvalid writes one line every time a credential is marked invalid, so the
+// mark is never untraceable (issue #126: three boots showed invalid marks with
+// no log on any surface).
+func (s *source) logInvalid(id, refusal string) {
+	if s.deps.Logf == nil {
+		return
+	}
+	s.deps.Logf("openaicompat/%s: marking account %s invalid after an auth refusal (%s); "+
+		"re-import the credential or wait for a balance read to re-evaluate it",
+		s.name, core.MaskSecret(id), core.Redact(refusal))
 }
 
 func (s *source) parkLocked(id string, kind core.FailureKind, refusal ...string) {

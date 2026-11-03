@@ -54,6 +54,44 @@
 - `client2api-setup-0.5.73.exe`（空包，不含账号凭据或本机配置）
   SHA256: `EF4235020D68984FF57BCFBC0529DFB561609B257CFA1E6ACB0F10A54EE8486C`
 
+## [0.5.98] - 2026-11-03
+
+### Fixed
+
+- **对话记录列表接口整份回传全部消息（#127）**：`GET /panel/api/chat/conversations` 把**每条对话的完整
+  `messages`** 一起回传（`internal/panel/chat_history.go` 的 `List()`），于是「列表」这一件事的字节数
+  等于**整个对话库的全体积**：340 条对话实测 **5.89 MB**，而它**进页面读一次、每轮问答结束再读一次、
+  点刷新又读一次**（`index.html` 的 `chatSend` settle 里 `await chatLoadThreads()`），无上限、无分页、
+  无条件请求。
+  现在列表只回**摘要**（`ChatThreadSummary`：id/title/client/model/account/key/时间戳/`message_count`，
+  **不含正文**），正文由**既有的** `GET /panel/api/chat/conversations/<id>` 按需取；并给列表加了
+  **强 ETag + `If-None-Match` → 304**（照 `/panel/api/models` 的既有写法），进页面/刷新不再重下正文。
+  - **实测**（隔离实例、340 条对话 × 12 轮）：列表 **6,177,230 B → 54,310 B（缩小 113 倍）**，
+    响应体不再含 `messages` 字段；带 `If-None-Match` 回 **304（0 字节）**。
+  - **前端跟着改**：`chatOpenThread` / `chatLoadThreads` 打开某条对话时取该条的正文，并加
+    `CHAT.msgsCache` 逐条缓存（实测：首次打开 1 次请求、切回 **0 次请求**）。侧栏搜索只能搜**已打开过**
+    的对话正文（没打开过的按标题匹配）——这是摘要化的取舍，注释与行为一致，不再假装能搜全库。
+  - **旧的「消息顺序跨重启保持」与「写入的消息不丢」两条测试**改走单条对话端点（那才是正文所在），
+    并新增断言：**列表不得出现正文**、`message_count` 正确。两条旧断言钉的正是 #127 本身。
+- **officeace 积分读数不落盘，导致 boot 早于 sweep 时 auth 401 被误标「账号异常」（#126）**：
+  `s.invalid`、`points`、`pointsAt` 全是**内存结构**（`clients/openaicompat/source.go` / `officeace.go`），
+  所以「chat 先于第一枚余额 sweep 到达」的 boot 上，判定「这条 401 是额度还是死键」的 veto **无读数可查**，
+  于是写成 `invalid` → 行显示「账号异常 / 重新导入」；操作员点一下「余额」立刻翻成「冷却中」——
+  状态跟着**读数**走，而读数重启即空。
+  现在**读数落盘**（`officeace_points.json`，与模块自己的 accounts.json 同目录，按账号记最后一次读数与时刻），
+  构造时加载、每次读数后写回；判别语义与 `#104` 完全一致（**只有从未读过的账号才走死 key 路径**），
+  三条既有断言（invalid→cooling 的自愈、有余额仍保持 invalid、零读覆盖陈旧标记）**全部保持通过**。
+  另外补上 issue 点名的第二个子面：**每次写 `s.invalid` 都留一行日志**（账号 + 失败摘要 + 模块），
+  那三个「完全无日志的 invalid 标记」从此有源可查。
+  - **实测**：新建 `officeace_points_persist_test.go`，四条断言——读数跨重启存活、**重启后 sweep 之前的
+    chat 401 不再标 invalid**（正是操作员报障的场景）、从未读过的账号仍保持死 key、写 invalid 必留痕；
+    **实测把落盘去掉即复现 `state="invalid"`**。
+
+### Installer
+
+- `client2api-setup-0.5.98.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `B0866CA850E8B63035E6FE80F281DCDE713A64D83D404DD5940831EDE2777A4A`
+
 ## [0.5.97] - 2026-11-03
 
 ### Fixed

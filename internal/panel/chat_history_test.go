@@ -144,16 +144,26 @@ func TestChatHistoryHTTPRoundTrip(t *testing.T) {
 		t.Fatalf("list status = %d, body %s", rec.Code, rec.Body.String())
 	}
 	var list struct {
-		Conversations []ChatThread `json:"conversations"`
+		Conversations []ChatThreadSummary `json:"conversations"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
 		t.Fatalf("decode list: %v", err)
 	}
-	if len(list.Conversations) != 1 || len(list.Conversations[0].Messages) != 1 {
-		t.Fatalf("list = %+v", list)
+	// 列表是摘要：这条在、条数对、正文不在（issue #127）。
+	if len(list.Conversations) != 1 || list.Conversations[0].MessageCount != 1 {
+		t.Fatalf("摘要列表 = %+v，期望 1 条、message_count=1", list.Conversations)
 	}
-	if list.Conversations[0].Messages[0].Content != "第一问" {
-		t.Fatalf("message lost: %+v", list.Conversations[0].Messages)
+	if strings.Contains(rec.Body.String(), "第一问") {
+		t.Fatalf("列表仍然回传正文：整库体积的问题没有解决（issue #127）:\n%s", rec.Body.String())
+	}
+	// 正文从单条对话端点读（页面打开一条对话时走的就是这条路）。
+	rec = hitRoute(t, h, http.MethodGet, "/panel/api/chat/conversations/"+created.ID, "")
+	var thread ChatThread
+	if err := json.Unmarshal(rec.Body.Bytes(), &thread); err != nil {
+		t.Fatalf("decode thread: %v", err)
+	}
+	if len(thread.Messages) != 1 || thread.Messages[0].Content != "第一问" {
+		t.Fatalf("message lost: %+v", thread.Messages)
 	}
 
 	rec = hitRoute(t, h, http.MethodPatch, "/panel/api/chat/conversations/"+created.ID,

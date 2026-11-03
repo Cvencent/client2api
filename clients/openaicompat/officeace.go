@@ -174,6 +174,9 @@ func (o *officeAceSource) noteOfficeAcePoints(id string, remaining int64, now ti
 	o.points[id] = remaining
 	o.pointsAt[id] = now
 	o.pointsMu.Unlock()
+	// The veto that reads this back is what decides dead-key vs credits, and it
+	// has to answer across a restart (issue #126): persist the reading.
+	o.saveOfficeAcePoints()
 	if remaining < 0 {
 		// "not drained" records the number without a verdict either way.
 		return
@@ -205,6 +208,80 @@ func (o *officeAceSource) reviveOfficeAceAccount(id string) {
 		// is this very read: the same source that parked it unparks it.
 		delete(s.cooling, id)
 	}
+}
+
+// officeAcePointsFileName is where the last credit reading per account survives
+// a restart.  It lives beside the module's own accounts.json because it is the
+// same kind of state: runtime facts the module keeps about its credentials.
+//
+// Persisting it is what fixes issue #126.  The veto that decides "this 401 is
+// about credits, not the key" is built on "has this account ever been read?"
+// -- and with that held only in memory, a boot whose first chat beats the first
+// balance sweep has no reading to consult, so the row was marked 账号异常 until
+// the operator pressed 余额 by hand and it flipped to 冷却中.  The verdict
+// follows the reading, so the reading has to survive the restart.
+const officeAcePointsFileName = "officeace_points.json"
+
+type officeAcePointsFile struct {
+	Accounts map[string]officeAcePointReading `json:"accounts"`
+}
+
+type officeAcePointReading struct {
+	Remaining int64     `json:"remaining"`
+	ReadAt    time.Time `json:"read_at"`
+}
+
+// officeAcePointsPath is "" when the module has no data directory, which keeps
+// a hand-built client (tests) fully in-memory.
+func (o *officeAceSource) officeAcePointsPath() string {
+	if o == nil || o.source == nil || o.source.deps.DataDir == "" {
+		return ""
+	}
+	return filepath.Join(o.source.deps.DataDir, officeAcePointsFileName)
+}
+
+// loadOfficeAcePoints restores the persisted readings.  A missing or corrupt
+// file is not an error: it means "nothing read yet", which is exactly the state
+// a first boot is in.
+func (o *officeAceSource) loadOfficeAcePoints() {
+	path := o.officeAcePointsPath()
+	if path == "" {
+		return
+	}
+	var file officeAcePointsFile
+	if err := core.ReadJSON(path, &file); err != nil || len(file.Accounts) == 0 {
+		return
+	}
+	o.pointsMu.Lock()
+	defer o.pointsMu.Unlock()
+	if o.points == nil {
+		o.points = map[string]int64{}
+		o.pointsAt = map[string]time.Time{}
+	}
+	for id, r := range file.Accounts {
+		o.points[id] = r.Remaining
+		o.pointsAt[id] = r.ReadAt
+	}
+}
+
+// saveOfficeAcePoints rewrites the persisted readings.  Best-effort: a reading
+// that cannot be written must never fail the read that produced it, because the
+// in-memory value is still correct for this process.
+func (o *officeAceSource) saveOfficeAcePoints() {
+	path := o.officeAcePointsPath()
+	if path == "" {
+		return
+	}
+	o.pointsMu.Lock()
+	file := officeAcePointsFile{Accounts: make(map[string]officeAcePointReading, len(o.pointsAt))}
+	for id, at := range o.pointsAt {
+		file.Accounts[id] = officeAcePointReading{Remaining: o.points[id], ReadAt: at}
+	}
+	o.pointsMu.Unlock()
+	if len(file.Accounts) == 0 {
+		return
+	}
+	_ = core.WriteJSONAtomic(path, file)
 }
 
 // officeAceRefusalIsCredits reports whether an auth-shaped refusal from this
@@ -271,6 +348,7 @@ func wrapOfficeAceSource(name string, cfg core.SourceConfig, s *source) core.Sou
 		return s
 	}
 	oa := &officeAceSource{source: s, eps: defaultOfficeAceEndpoints()}
+	oa.loadOfficeAcePoints()
 	oa.enableDesktopModelSelection()
 	oa.bindAuthExhaustedHook()
 	if !officeAceLocalSupported() {

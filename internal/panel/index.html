@@ -24131,6 +24131,11 @@ window.addEventListener("keydown", ev => {
 const CHAT = {
   models: [], key: "", msgs: [], busy: false, ctrl: null,
   threads: [], current: null, editing: "", sideHidden: false,
+  // msgsCache holds the transcript of each thread we have opened.  The list
+  // endpoint returns summaries only (issue #127), so this is what lets the
+  // sidebar search see message bodies of threads already visited, and what
+  // makes switching back to one instant.
+  msgsCache: {},
 };
 // 语音转写测试的运行时状态。recorder 非空 = 正在录音；busy = 上传中。
 const TRANS = { recorder: null, stream: null, chunks: [], started: 0, timer: 0, model: "", busy: false, starting: false, drop: false };
@@ -24446,7 +24451,11 @@ async function chatLoadThreads(keepCurrent) {
     chatDrawThreads();
     return true;
   }
-  CHAT.msgs = cur ? (cur.messages || []) : [];
+  // cur is a summary now; the transcript for the selected thread comes from
+  // the per-thread endpoint (issue #127).
+  const full = cur ? await chatFetchThread(cur.id) : null;
+  if (cur && CHAT.current !== cur.id) return true;  // selection moved while we waited
+  CHAT.msgs = full ? (full.messages || []) : [];
   CHAT.key = (cur && cur.key) || "";
   chatDrawThreads();
   chatDraw();
@@ -24481,13 +24490,37 @@ async function chatNewThread() {
   $("#chatInput").focus();
 }
 
+// chatFetchThread loads one conversation's transcript.  The list endpoint now
+// returns summaries only (issue #127: 340 threads were 5.89 MB, re-sent after
+// every turn), so the transcript is fetched when a thread is opened.
+async function chatFetchThread(id) {
+  const r = await api("/panel/api/chat/conversations/" + encodeURIComponent(id));
+  if (!r.ok || !r.data) return null;
+  // Keep it for the sidebar search and for switching back (issue #127: the
+  // list no longer carries transcripts).
+  CHAT.msgsCache[id] = r.data.messages || [];
+  return r.data;
+}
+
 async function chatOpenThread(id) {
   if (CHAT.busy) { toast("正在生成回复，先停止再切换对话", "err"); return; }
   if (CHAT.current === id) return;
   CHAT.current = id;
   const t = CHAT.threads.find(x => x.id === id);
-  CHAT.msgs = t ? (t.messages || []) : [];
-  CHAT.key = (t && t.key) || "";
+  // The list carries summaries, so the transcript comes from the per-thread
+  // endpoint (issue #127) -- unless we already have it, in which case switching
+  // back is instant.  A failed read is not an empty conversation: say so rather
+  // than showing "还没有对话" over a thread that does have messages.
+  const full = CHAT.msgsCache[id]
+    ? { messages: CHAT.msgsCache[id], key: (t && t.key) || "" }
+    : await chatFetchThread(id);
+  if (id !== CHAT.current) return;   // the user switched again while we waited
+  if (!full) {
+    toast("读取这段对话失败", "err");
+    return;
+  }
+  CHAT.msgs = full.messages || [];
+  CHAT.key = (full && full.key) || "";
   if (t && t.model) {
     const e = chatEntry({ id: t.model });
     const clients = Array.from($("#chatClient").options).map(o => o.value);
@@ -24507,8 +24540,11 @@ async function chatOpenThread(id) {
 function chatDrawThreads() {
   const box = $("#chatThreads"), empty = $("#chatThreadEmpty");
   const q = ($("#chatSearch").value || "").trim().toLowerCase();
-  const rows = CHAT.threads.filter(t => !q || chatTitleOf(t).toLowerCase().indexOf(q) >= 0 ||
-    (t.messages || []).some(m => String(m.content || "").toLowerCase().indexOf(q) >= 0));
+  // 列表只带摘要（issue #127），所以消息正文只能搜**已经打开过**的对话（那时
+  // 正文在 msgsCache 里）。没打开过的对话只按标题匹配——占位文案里写明了这点，
+  // 免得操作员以为「搜不到」等于「没有」。
+  const hitBody = t => (CHAT.msgsCache[t.id] || []).some(m => String(m.content || "").toLowerCase().indexOf(q) >= 0);
+  const rows = CHAT.threads.filter(t => !q || chatTitleOf(t).toLowerCase().indexOf(q) >= 0 || hitBody(t));
   if (!rows.length) {
     box.innerHTML = "";
     empty.hidden = false;
@@ -24558,8 +24594,9 @@ async function chatDeleteThread(id) {
     CHAT.key = "";
     if (CHAT.threads.length) CHAT.current = CHAT.threads[0].id;
     const cur = CHAT.threads.find(x => x.id === CHAT.current);
-    CHAT.msgs = cur ? (cur.messages || []) : [];
+    CHAT.msgs = cur ? (CHAT.msgsCache[cur.id] || []) : [];
     CHAT.key = (cur && cur.key) || "";
+    if (cur) chatFetchThread(cur.id).then(() => { if (CHAT.current === cur.id) { CHAT.msgs = CHAT.msgsCache[cur.id] || []; chatDraw(); } });
   }
   chatDrawThreads();
   chatDraw();

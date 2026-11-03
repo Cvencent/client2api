@@ -76,23 +76,39 @@ func TestChatHistoryHTTPKeepsOrderAcrossTurns(t *testing.T) {
 	}
 
 	// 换一个进程（同一个 data 目录）读，顺序必须保持。
+	//
+	// 列表只回摘要（issue #127），所以正文从**单条对话**端点读——这也正是页面
+	// 打开一条对话时走的路径，测试跟着它才算测到真实读取链。
 	again := New(Options{DataDir: dir})
-	rec = hitRoute(t, again, http.MethodGet, "/panel/api/chat/conversations", "")
+	rec = hitRoute(t, again, http.MethodGet, "/panel/api/chat/conversations/"+t1.ID, "")
 	want := []string{"第一问", "第一答", "第二问"}
 	for i, w := range want {
 		if !strings.Contains(rec.Body.String(), w) {
 			t.Fatalf("重启后丢了第 %d 条 %q: %s", i+1, w, rec.Body.String())
 		}
 	}
+	var thread ChatThread
+	if err := json.Unmarshal(rec.Body.Bytes(), &thread); err != nil {
+		t.Fatalf("decode thread: %v", err)
+	}
+	got := thread.Messages
+	if len(got) != 3 || got[0].Content != "第一问" || got[2].Content != "第二问" {
+		t.Fatalf("order = %+v", got)
+	}
+
+	// 列表本身：这一条必须出现，但**不带正文**，只报条数（issue #127）。
+	rec = hitRoute(t, again, http.MethodGet, "/panel/api/chat/conversations", "")
+	if strings.Contains(rec.Body.String(), "第一问") {
+		t.Fatalf("列表仍然回传消息正文：整库体积的问题没有解决（issue #127）:\n%s", rec.Body.String())
+	}
 	var list struct {
-		Conversations []ChatThread `json:"conversations"`
+		Conversations []ChatThreadSummary `json:"conversations"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
 		t.Fatalf("decode list: %v", err)
 	}
-	got := list.Conversations[0].Messages
-	if len(got) != 3 || got[0].Content != "第一问" || got[2].Content != "第二问" {
-		t.Fatalf("order = %+v", got)
+	if len(list.Conversations) != 1 || list.Conversations[0].MessageCount != 3 {
+		t.Fatalf("摘要列表 = %+v，期望 1 条、message_count=3", list.Conversations)
 	}
 }
 
