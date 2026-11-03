@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -44,7 +45,7 @@ import (
 )
 
 // version is overridable with -ldflags "-X main.version=...".
-var version = "0.6.2"
+var version = "0.6.3"
 
 // restartHandoffEnv marks the replacement half of a panel restart.  It tells a
 // starting process to keep retrying the listen address instead of failing fast,
@@ -575,6 +576,11 @@ type poolConfig struct {
 	PreferExpiring      *bool   `json:"prefer_expiring"`
 	ExpiringSoon        string  `json:"expiring_soon"`
 	CostExploreInterval string  `json:"cost_explore_interval"`
+	// SweepGap is the host-side pause between two accounts in a balance sweep
+	// (issue #142).  It is not handed to a module -- the sweep is ours -- so it
+	// is read here rather than through PoolTuning; it sits in pool.* because it
+	// tunes the same account-probing traffic the rest of the block does.
+	SweepGap string `json:"sweep_gap"`
 }
 
 type cooldownConfig struct {
@@ -706,6 +712,11 @@ func (c *fileConfig) applyDefaults() {
 	}
 	if c.Pool.CostExploreInterval == "" {
 		c.Pool.CostExploreInterval = "30m"
+	}
+	if c.Pool.SweepGap == "" {
+		// 400ms: enough that ten accounts take four seconds instead of one,
+		// short enough that a five-minute sweep is not visibly slower.
+		c.Pool.SweepGap = "400ms"
 	}
 	if c.Cooldown.SoftRate == "" {
 		c.Cooldown.SoftRate = "600s"
@@ -862,6 +873,9 @@ func (c *fileConfig) applyEnv() {
 	if v := envValue(envNames("EXPIRING_SOON")...); v != "" {
 		c.Pool.ExpiringSoon = v
 	}
+	if v := envValue(envNames("SWEEP_GAP")...); v != "" {
+		c.Pool.SweepGap = v
+	}
 	if b, ok := envBool("PREFER_EXPIRING"); ok {
 		c.Pool.PreferExpiring = &b
 	}
@@ -993,17 +1007,63 @@ type balancePublish func(client, id string, bal core.Balance)
 // Capability-gated on both halves: a module that cannot report balances, or
 // cannot list its accounts, is skipped rather than guessed at.
 func refreshBalances(ctx context.Context, reg *core.Registry, soon time.Duration, logger *log.Logger, publish balancePublish) {
-	refreshBalancesMatching(ctx, reg, "", soon, logger, false, false, publish)
+	refreshBalancesMatching(ctx, reg, "", soon, logger, false, false, publish, sweepAccountGap())
+}
+
+// The balance sweep paces itself with sweepAccountGap: the batch scheduler
+// already refuses to fire two accounts back to back
+// (scheduler.DefaultAccountGap) because a burst at a vendor gets rolled back,
+// and the sweep lacked the same courtesy -- the first tick after boot, where
+// every account is freshly eligible because no cooldown mark exists yet, fired
+// the whole pool at line speed (issue #142).  The gap is short by design: it is
+// not the batch scheduler's 45s and does not pace a vendor's per-account work,
+// it only stops the sweep being line-rate, so steady state (five accounts per
+// five minutes) is unchanged and the operator-visible effect is the flattened
+// boot burst.
+//
+// defaultSweepAccountGap is pool.sweep_gap when the file is silent.
+const defaultSweepAccountGap = 400 * time.Millisecond
+
+// sweepGapLive is the gap the two sweeps read, refreshed from the config at
+// boot and on every reload.  The sweeps are plain functions called from the
+// scheduler's hooks, so they cannot reach the live holder that run() owns; a
+// one-cell holder is the same answer sharedProbeLogDeduper gives for the log
+// window (issue #7), and it keeps the gap genuinely hot: a reload is picked up
+// by the next sweep with no restart.
+//
+// The zero value is "no pause".  That is deliberate for tests -- a timing
+// assertion wants the real code path with a pause it controls -- and harmless
+// in production, because run() seeds it from the config (or the default) before
+// the scheduler can fire.
+var sweepGapLive atomic.Int64 // nanoseconds
+
+// setSweepAccountGap installs the configured gap; a negative value is read as
+// "no pause" rather than as a wait until the process dies.
+func setSweepAccountGap(d time.Duration) {
+	if d < 0 {
+		d = 0
+	}
+	sweepGapLive.Store(int64(d))
+}
+
+// sweepAccountGap is the current gap.
+func sweepAccountGap() time.Duration { return time.Duration(sweepGapLive.Load()) }
+
+// sweepGapFromConfig projects pool.sweep_gap, with the same "0 is a real
+// setting" rule as cost_explore_interval: an operator who writes 0 wants the
+// pauses off, not the default back.
+func sweepGapFromConfig(c *fileConfig) time.Duration {
+	return durAllowZero(c.Pool.SweepGap, defaultSweepAccountGap)
 }
 
 // refreshBalancesForClient is the scheduled recovery sweep.  It is scoped to
 // one platform, includes accounts parked in recoverable states, and bypasses
 // the module's quiet-probe gate because the scheduler already paced the probe.
 func refreshBalancesForClient(ctx context.Context, reg *core.Registry, client string, soon time.Duration, logger *log.Logger, includeRecoverable bool, publish balancePublish) {
-	refreshBalancesMatching(ctx, reg, client, soon, logger, includeRecoverable, includeRecoverable, publish)
+	refreshBalancesMatching(ctx, reg, client, soon, logger, includeRecoverable, includeRecoverable, publish, sweepAccountGap())
 }
 
-func refreshBalancesMatching(ctx context.Context, reg *core.Registry, client string, soon time.Duration, logger *log.Logger, includeRecoverable, ignoreGate bool, publish balancePublish) {
+func refreshBalancesMatching(ctx context.Context, reg *core.Registry, client string, soon time.Duration, logger *log.Logger, includeRecoverable, ignoreGate bool, publish balancePublish, accountGap time.Duration) {
 	client = strings.TrimSpace(client)
 	// The sweep runs every five minutes, so a relay that answers 404 or a key
 	// the vendor banned produces the same line a hundred times a day.  That is
@@ -1036,6 +1096,7 @@ func refreshBalancesMatching(ctx context.Context, reg *core.Registry, client str
 			}
 			continue
 		}
+		probed := 0
 		for _, acct := range accounts {
 			// A disabled account is an explicit operator decision.  Reading its
 			// balance on a timer cannot make it usable again and only turns a
@@ -1049,6 +1110,15 @@ func refreshBalancesMatching(ctx context.Context, reg *core.Registry, client str
 			if !ignoreGate && !core.BackgroundProbeAllowed(ctx, c, acct.ID) {
 				continue
 			}
+			// Never two accounts back to back (issue #142).  The gap sits
+			// between probes, so it does not delay the first one and the
+			// steady rate is unchanged -- it only spreads the boot burst.
+			if probed > 0 && accountGap > 0 {
+				if !core.SleepCtx(ctx, accountGap) {
+					return
+				}
+			}
+			probed++
 			// One dead credential must not abort the sweep.  The pool hears
 			// about that failure through the chat path, which is where a
 			// failure can actually be classified; here we only need the
@@ -1289,6 +1359,9 @@ func run() error {
 	}
 
 	live := livecfg.New(cfg.liveSnapshot())
+	// The balance sweep's per-account gap (issue #142).  Seeded before the
+	// scheduler starts, so the first tick already respects it.
+	setSweepAccountGap(sweepGapFromConfig(cfg))
 	guard := core.NewGuard(logger.Printf)
 
 	disabled := map[string]bool{}
@@ -1485,6 +1558,7 @@ func run() error {
 			return err
 		}
 		live.Store(next.liveSnapshot())
+		setSweepAccountGap(sweepGapFromConfig(next))
 		n := core.ApplyLive(registry, next.liveSettings())
 		// Routing policy is hot too: a platform's priority or blacklist must
 		// take effect on the next request, not only after a restart.

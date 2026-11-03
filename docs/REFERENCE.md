@@ -163,7 +163,7 @@ HTTP 429 endpoint outages, are classified as upstream failures.
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-Current version: **0.6.2**. Full history: [CHANGELOG.md](../CHANGELOG.md).
+Current version: **0.6.3**. Full history: [CHANGELOG.md](../CHANGELOG.md).
 
 ### Request-count limits
 
@@ -920,6 +920,7 @@ set, `CLIENT2API_*` wins.
 | `CLIENT2API_SOFT_RATE` / `CLIENT2API_SOFT_RATE_MAX` | `cooldown.soft_rate` / `soft_rate_max` |
 | `CLIENT2API_PROMPT_MODE` / `CLIENT2API_PROMPT_FILE` | `prompt.mode` / `prompt.file` |
 | `CLIENT2API_EXPIRING_SOON` / `CLIENT2API_PREFER_EXPIRING` | `pool.expiring_soon` / `pool.prefer_expiring` |
+| `CLIENT2API_SWEEP_GAP` | `pool.sweep_gap` |
 | `CLIENT2API_SANITIZE_FINGERPRINTS` | `features.sanitize_blacklist_fingerprints` |
 | `CLIENT2API_AUTH_DIR` | `clients.workbuddy.accounts_dir` |
 | `CLIENT2API_USER_AGENT`, `CLIENT2API_CLIENT_VERSION`, `CLIENT2API_CLI_VERSION`, `CLIENT2API_CLIENT_NAME` | the same keys under `clients.workbuddy` |
@@ -972,6 +973,7 @@ to every module that implements `core.LiveReloader`, with no restart.
 | `prompt.mode` / `prompt.file` | hot; **only workbuddy acts on it** — see below |
 | `pool.max_in_flight` / `pool.max_in_flight_global` | hot; enforced by workbuddy |
 | `pool.breaker_*` / `pool.degrade_*` / `pool.idle_weight_*` / `pool.prefer_expiring` / `pool.expiring_soon` / `pool.cost_explore_interval` | hot; acted on by workbuddy |
+| `pool.sweep_gap` | hot; read by the host's own balance sweep (`cmd/client2api`), not by a module |
 | `session_sticky.enabled` / `ttl` / `gc_interval` | hot; the switch and the window reach every module that binds conversations |
 | `platforms.<name>.*` | hot; priority and the model blacklist reach routing immediately, the ceilings are enforced by the gateway, and `reserve_credits` is enforced by workbuddy |
 | `model_groups` | hot; group names and member ids start routing immediately, group priorities included |
@@ -1204,6 +1206,18 @@ with no observation for that model are normally passed over, and this window is
 how often one of them is allowed through instead. The exploration is a
 **diversion of a request that was going upstream anyway, never an extra call**,
 so it adds nothing to the IP's request count; `"0"` switches it off.
+
+`pool.sweep_gap` (default **400ms**) is the pause the **host-side balance sweep**
+takes between two accounts. It is not handed to any module: the sweep lives in
+`cmd/client2api`, and the batch scheduler already paces its own accounts
+(`scheduler.DefaultAccountGap`). What the sweep lacked was the same courtesy —
+it walked the pool at line speed, so the first tick after boot, where every
+account is freshly eligible because no cooldown mark exists yet, probed the
+whole pool inside one second (issue #142). The gap is deliberately short: it
+does not pace a vendor's per-account work, it only stops the sweep being
+line-rate, and steady state is unchanged (five accounts per five minutes is
+sixty probes an hour either way). `"0"` switches it off. Changing it is hot on
+the next sweep.
 
 `session_sticky.enabled` (default **true**) is the master switch, and it is
 deliberately not the same knob as the window: turning it off means **no binding

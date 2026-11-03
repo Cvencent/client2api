@@ -124,7 +124,7 @@ func TestDurationFieldsAreValidatedWhileTyping(t *testing.T) {
 	want := []string{
 		"cfgCoolSoftRate", "cfgCoolSoftRateMax", "cfgPoolBreakerCooldown",
 		"cfgPoolBreakerCooldownMax", "cfgPoolDegradeCooldown", "cfgPoolDegradeCooldownMax",
-		"cfgPoolCostExplore", "cfgPoolExpiringSoon", "cfgStickyTTL",
+		"cfgPoolCostExplore", "cfgPoolExpiringSoon", "cfgPoolSweepGap", "cfgStickyTTL",
 	}
 	block := durationFieldList(t, src)
 	for _, id := range want {

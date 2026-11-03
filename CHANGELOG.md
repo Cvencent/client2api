@@ -54,6 +54,50 @@
 - `client2api-setup-0.5.73.exe`（空包，不含账号凭据或本机配置）
   SHA256: `EF4235020D68984FF57BCFBC0529DFB561609B257CFA1E6ACB0F10A54EE8486C`
 
+## [0.6.3] - 2026-11-03
+
+### Fixed
+
+- **余额扫描没有账号间隔，boot 后首扫以线速把全池打给厂商（#142）**：
+  `refreshBalancesMatching`（`cmd/client2api/main.go`）是一个**无间隔**的串行循环——
+  厂商答多快就打多快。批量任务早在 `scheduler.DefaultAccountGap` 里为同一件事设了 45s
+  （「never fire two accounts back to back」），余额 sweep 是 0。于是 boot 后所有账号状态
+  全新（还没有冷却标记）、首次 sweep 对全池逐个探测，报告实测 10 个 loomy 账号在 ~1 秒内
+  全部吃 502——稳态并不算过频（ready 账号 5 个/5 分钟 = 60 probes/h），过频的是这次突发；
+  厂商正在劣化时，一次抖动还会把整池推进失败计数。现在两个入口（每 5 分钟的软扫、
+  每 4 小时且**故意含 cooling 账号**的恢复扫）都在两次探测**之间**停顿，
+  间隔是**可配置**的 `pool.sweep_gap`（默认 **400ms**，`0` 关闭，随热加载生效）——
+  故意很短：目标只是别线速，不是给厂商的每账号工作配速，稳态完全不变。
+  新增 `cmd/client2api/sweepgap_test.go`：**A/B 对照**（同一段代码只改间隔这一个变量，
+  有间隔时量得到、0 时必须量不到，只断言「有停顿」而不做反向对照等于没证明是间隔造成的）、
+  配置链（空/`"0"`/合法/非法四种输入）、两个入口都接线。前端在 WorkBuddy 平台卡片里
+  渲染同一个键（`index.html`），漏掉它这一项就是「死配置」。
+- **对话标题没有长度上限，页头标题区写着「可截断」却零截断（#143）**：两层都修。
+  **服务端**：`chatHistoryStore.Create` / `Update` / `Rename` 只做 `TrimSpace`，
+  `PATCH {"title": …}` 实测 200 并回读 280 字符，更极端的 **1,000,000 字符**标题也 200、
+  落盘 1,002,152 B。现在照同仓既有范式（账号备注 `maxAccountNoteRunes = 120`，
+  「an unbounded string would let one careless paste bloat the config and wreck the layout」）
+  加了 `maxChatTitleRunes = 120`：**按字符不按字节**计数，超限**拒绝**（400 + 点名上限）
+  而不是静默截断（那会让页面显示一个操作员没打过的标题，同 #121/#122 的教训）。
+  **前端**：`.chat-head-title h3` 原本只有一条裸 `white-space: nowrap`，而紧邻的副标题
+  `.chat-head-title .note` 与侧栏 `.chat-title` 都有完整的一组——同一字段一处截断一处
+  不截断，所以这不是设计选择。现在补齐 `min-width:0 / overflow:hidden / text-overflow:ellipsis`，
+  并写在**宣告 nowrap 的那同一条规则里**（本仓同权重后写者胜已出过四次事故 #86/#109/#111/#123，
+  别把正确性押在顺序上）；`.chat-head-title` 自己补 `min-width:0`——flex 项的默认 `auto`
+  就是那个不换行标题的 min-content 宽度，「可收缩」因此在长标题下失效（报告里
+  8,000,489px 的 scrollWidth 有一半是这里）；被裁掉的尾部挂 `title` 全文作为出口。
+  重命名走前端同一颗数字 `CHAT_TITLE_MAX`，超限时提示而不是让服务端 400 变成一句
+  「重命名失败」。新增 `internal/panel/chat_title_cap_test.go`（服务端：字符计数、
+  拒绝而非截断、三条写入路径、落盘体积）与 `chat_head_title_ui_test.go`（样式契约 +
+  前后端两颗数字必须相等），并在 `cmd/panelsmoke` 加了真浏览器几何断言
+  `assertChatHeader`：**实测回退到修复前的 CSS 会红**，且报出的重叠像素（`#btnChatClear` 86px）
+  与报告表格逐档吻合。
+
+### Installer
+
+- `client2api-setup-0.6.3.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `41D41BF4A2CDF1CF7A7C58972D4DB988894CEAEB7817DBFBC6F0E9F2070483A8`
+
 ## [0.6.2] - 2026-11-03
 
 ### Fixed

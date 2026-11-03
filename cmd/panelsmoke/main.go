@@ -147,6 +147,15 @@ func run() error {
 			if err := assertAccountsKeyboard(runCtx, page); err != nil {
 				return err
 			}
+			// The chat header (issue #143): a long conversation title used to
+			// paint over the client/model dropdowns -- text drawn on top, hit
+			// tests resolving to the dropdown underneath -- so the line was
+			// neither readable nor clickable.  Whether an element really covers
+			// another is only answerable in the browser, which is why this is
+			// measured here and not asserted against the stylesheet.
+			if err := assertChatHeader(runCtx, page); err != nil {
+				return err
+			}
 			// The captcha document is a separate go:embed'ed page with its own
 			// inline script, and until issue #128 nothing executed it: a parse
 			// error there left every gate green while the overlay hung on
@@ -572,6 +581,118 @@ func assertLayout(ctx context.Context, page *browser.Page) error {
 	}
 	if strings.TrimSpace(report) != "" {
 		return fmt.Errorf("layout regression:\n  %s", strings.Join(strings.Split(report, " || "), "\n  "))
+	}
+	return nil
+}
+
+// assertChatHeader measures the chat header with a deliberately overlong title
+// (issue #143).
+//
+// The reported defect was not "the title is ugly": `.chat-head-title h3` had a
+// bare `white-space: nowrap` and nothing else, so a 70-character title painted
+// over the client and model dropdowns -- `elementFromPoint` returned the
+// dropdown, i.e. the operator could not read the line and clicking what looked
+// like a title hit a select instead.  A 1,000,000-character title grew the
+// header's scrollWidth past 8,000,000px.
+//
+// This is measured rather than asserted as CSS: the question is "does the
+// header line stay inside its box", which only the layout engine can answer,
+// and a legitimate restyle (a different truncation mechanism) must keep it
+// green.  The title is injected through the same path the page uses
+// (chatSyncHead reads CHAT.threads), so the check exercises real rendering.
+func assertChatHeader(ctx context.Context, page *browser.Page) error {
+	if page == nil {
+		return nil
+	}
+	report, err := page.EvalString(ctx, `(() => {
+	  const problems = [];
+	  if (typeof go !== "function" || typeof chatSyncHead !== "function") return "";
+	  const hadView = (typeof VIEW === "string") ? VIEW : "";
+	  const hadThreads = CHAT.threads.slice(), hadCurrent = CHAT.current;
+	  try {
+	    go("chat");
+	    // A title far past any sane limit; the server caps writes at 120 runes,
+	    // but the header must survive whatever is already on disk (records
+	    // written before the cap existed, or by hand).
+	    const long = "会话标题甲乙丙丁".repeat(30) + "结尾标记";
+	    CHAT.threads = [{ id: "__smoke__", title: long, client: "loomy", model: "loomy/deepseek", message_count: 0 }];
+	    CHAT.current = "__smoke__";
+	    chatSyncHead();
+
+	    const head = document.querySelector(".chat-head");
+	    const h3 = document.querySelector("#chatTitle");
+	    if (!head || !h3) { problems.push("对话页头找不到 .chat-head 或 #chatTitle，几何检查无从进行"); return problems.join(" || "); }
+
+	    const hr = head.getBoundingClientRect();
+	    // 1. The header's own content must not overflow its box.  This is the
+	    //    measured form of the 8,000,489px scrollWidth in the report.
+	    if (head.scrollWidth > head.clientWidth + 1) {
+	      problems.push("页头内容溢出自己的框: scrollWidth " + head.scrollWidth + " / clientWidth " + head.clientWidth);
+	    }
+	    // 1. The title box must fit inside the header it lives in.  With the
+	    //    defect it did not: overflow:visible plus a bare nowrap left
+	    //    the 3000px-wide text box overlapping everything to its right.  A
+	    //    clipped element is *supposed* to report scrollWidth > clientWidth
+	    //    -- that is ellipsis having something to clip -- so the judged
+	    //    quantity is the RECT, not the scroll width.
+	    const hr2 = h3.getBoundingClientRect();
+	    if (hr2.right > hr.right + 1) {
+	      problems.push("标题矩形越出页头右边界 " + (hr2.right - hr.right).toFixed(1) + "px（#143：文字画到了控件上）");
+	    }
+	    if (hr2.width > hr.width + 1) {
+	      problems.push("标题矩形比页头还宽: " + hr2.width.toFixed(1) + " > " + hr.width.toFixed(1));
+	    }
+	    if (hr2.height > 40) {
+	      problems.push("标题被折成多行（高 " + hr2.height.toFixed(1) + "px）：页头是单行，" +
+	        "折行会把下方的控件推走");
+	    }
+	    // 2. No overlap with the controls that follow it in the same row.  A
+	    //    title that extends into a dropdown is exactly the reported defect,
+	    //    regardless of which one paints on top.
+	    const controls = ["#chatClient", "#chatModel", "#chatSideToggle", "#btnChatAdvanced", "#btnChatClear"];
+	    for (const sel of controls) {
+	      const el = document.querySelector(sel);
+	      if (!el || el.offsetParent === null) continue;
+	      const er = el.getBoundingClientRect();
+	      if (er.width < 1) continue;
+	      const overlap = Math.min(hr.right, er.right) > Math.max(hr.left, er.left) && hr.right - er.left > 0;
+	      const vOverlap = Math.min(hr.bottom, er.bottom) > Math.max(hr.top, er.top);
+	      const hit = h3.getBoundingClientRect();
+	      if (vOverlap && Math.min(hit.right, er.right) - Math.max(hit.left, er.left) > 1) {
+	        problems.push("标题矩形与 " + sel + " 重叠 " +
+	          (Math.min(hit.right, er.right) - Math.max(hit.left, er.left)).toFixed(1) + "px（#143：文字压在控件上，读不清也点不准）");
+	      }
+	      void overlap;
+	    }
+	    // 3. The dropdowns must still be hit-testable in the row they share:
+	    //    a visible-but-covered control is the "both ends wrong" half.
+	    for (const sel of ["#chatClient", "#chatModel"]) {
+	      const el = document.querySelector(sel);
+	      if (!el || el.offsetParent === null) continue;
+	      const r = el.getBoundingClientRect();
+	      if (r.width < 1 || r.height < 1) continue;
+	      const t = document.elementFromPoint(r.left + Math.min(r.width / 2, 40), r.top + r.height / 2);
+	      if (!t || !el.contains(t)) {
+	        problems.push(sel + " 在页头里点不到: 命中了 " + (t ? (t.tagName.toLowerCase() + (t.id ? "#" + t.id : "")) : "null"));
+	      }
+	    }
+	    // 4. The clipped tail needs an outlet: the full title must be on the
+	    //    element as a tooltip.
+	    if (h3.title !== long) {
+	      problems.push("截断后的标题没有挂全文 title（期望 " + long.length + " 字符，实际 " +
+	        (h3.title ? h3.title.length : 0) + " 字符）：被裁掉的部分没有出口");
+	    }
+	  } finally {
+	    CHAT.threads = hadThreads; CHAT.current = hadCurrent;
+	    try { chatSyncHead(); if (hadView) go(hadView); } catch (e) { }
+	  }
+	  return problems.join(" || ");
+	})()`)
+	if err != nil {
+		return fmt.Errorf("measure the chat header: %w", err)
+	}
+	if strings.TrimSpace(report) != "" {
+		return fmt.Errorf("chat header regression:\n  %s", strings.Join(strings.Split(report, " || "), "\n  "))
 	}
 	return nil
 }

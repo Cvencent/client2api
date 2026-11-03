@@ -6041,11 +6041,25 @@ html:not([data-theme="light"]) body::after {
    空状态改成在可用高度里真正居中。 */
 .chat-head { padding: 11px 16px; gap: 10px 14px; }
 .chat-head-title {
+  /* flex:1 1 220px 让标题区吃掉剩余宽度，min-width:0 是它敢变窄的前提：
+     flex 项的 min-width 默认是 auto（= min-content），一个不换行的长标题就是
+     min-content，于是「可收缩」在长标题下失效。issue #143 的 8,000,489px
+     scrollWidth 就有这一半。 */
   flex: 1 1 220px;
   display: flex; align-items: baseline; gap: 9px;
   min-width: 0;
+  /* 内层也是 flex 行，长标题溢出时把这一行自己的 dirty 区域框住，
+     否则 .chat-head 的 scrollWidth 仍会被内容撑大。 */
+  overflow: hidden;
 }
-.chat-head-title h3 { white-space: nowrap; }
+/* 标题自己也要截断，和副标题同一组（issue #143）。只给 nowrap 是半拉修复：
+   页头这一行在宽标题下会把「客户端 / 模型」两个下拉盖住——文字画在上面、
+   命中的却是下拉，读不清也点不准。侧栏 `.chat-thread .t-title` 早就有一整套，
+   同字段一处截断一处不截断是缺陷不是设计。三条写在这条规则里（而不是另起
+   一条后置规则）：本仓同权重后写者胜已经出过四次事故，别把正确性押在顺序上。 */
+.chat-head-title h3 {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 /* 副标题（还没有开始 / 模型名）单行截断：它是状态说明，不该把标题挤成两行。 */
 .chat-head-title .note {
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -17487,7 +17501,7 @@ function cfgAliasRow(name, target) {
 const DUR_RE = /^(\d+(\.\d+)?(ns|us|µs|ms|s|m|h))+$/;
 const DUR_FIELDS = ["cfgCoolSoftRate", "cfgCoolSoftRateMax", "cfgPoolBreakerCooldown",
   "cfgPoolBreakerCooldownMax", "cfgPoolDegradeCooldown", "cfgPoolDegradeCooldownMax",
-  "cfgPoolCostExplore", "cfgPoolExpiringSoon", "cfgStickyTTL"];
+  "cfgPoolCostExplore", "cfgPoolExpiringSoon", "cfgPoolSweepGap", "cfgStickyTTL"];
 const DUR_TIP = "格式应为 Go 时长：30m / 2h / 600s / 1h30m（或 0 表示关闭）";
 /* DUR_FIELDS 里存的是裸 id（表单委托要拿 ev.target.id 去比对，见 cfgForm 的 input
    监听），而下面三个辅助函数历史上一直把参数原样交给 $()。$ 是 querySelector，
@@ -17697,6 +17711,10 @@ function pfWorkBuddyPoolHTML(c) {
       "免费层垄断时定期探索未知号；<code>0</code> 关停。") +
     pfWBText("cfgPoolExpiringSoon", "快过期路由窗口", pool.expiring_soon, "168h",
       "窗口内按最早到期优先；<code>0</code> 关闭。") +
+    pfWBText("cfgPoolSweepGap", "余额扫描账号间隔", pool.sweep_gap, "400ms",
+      "余额扫描两个账号之间的停顿；<code>0</code> 关闭（回到逐账号连发）。" +
+      "开机会把全池一次问一遍，没有间隔就是同一秒里把整池打给厂商——" +
+      "厂商正在劣化时，一次抖动会污染整池的失败计数。") +
     pfWBCheck("cfgPoolPreferExpiring", "快过期积分优先", !!pool.prefer_expiring,
       "关闭后完全不使用到期信息选号。") +
     pfWBText("cfgPromptMode", "提示词模式", prompt.mode, "passthrough",
@@ -18678,7 +18696,8 @@ async function savePlatforms() {
       readDurField("cfgPoolDegradeCooldown", "degrade_cooldown", pool, bPool) &&
       readDurField("cfgPoolDegradeCooldownMax", "degrade_cooldown_max", pool, bPool) &&
       readDurField("cfgPoolCostExplore", "cost_explore_interval", pool, bPool) &&
-      readDurField("cfgPoolExpiringSoon", "expiring_soon", pool, bPool);
+      readDurField("cfgPoolExpiringSoon", "expiring_soon", pool, bPool) &&
+      readDurField("cfgPoolSweepGap", "sweep_gap", pool, bPool);
     if (!ok) return false;
     const pref = $("#cfgPoolPreferExpiring");
     if (pref) {
@@ -24506,6 +24525,12 @@ function chatThreadMeta(t) {
   return bits.join(" · ");
 }
 
+// CHAT_TITLE_MAX mirrors the server's maxChatTitleRunes (chat_history.go).  Two
+// numbers, one rule: the page refuses early with a readable message, and the
+// store refuses again so a hand-made PATCH cannot write a title the header was
+// never sized for (issue #143).
+const CHAT_TITLE_MAX = 120;
+
 function chatTitleOf(t) {
   return (t && t.title) || "新对话";
 }
@@ -24539,7 +24564,13 @@ async function chatLoadThreads(keepCurrent) {
 
 function chatSyncHead() {
   const t = CHAT.threads.find(x => x.id === CHAT.current);
-  $("#chatTitle").textContent = t ? chatTitleOf(t) : "新对话";
+  const title = t ? chatTitleOf(t) : "新对话";
+  const h3 = $("#chatTitle");
+  h3.textContent = title;
+  // 页头用省略号截断（issue #143），所以被裁掉的尾部要有出口：悬停时给全文。
+  // 截断只在宽度不够时发生，title 一直挂着不会撒谎（对比 #45 的先例：
+  // 同一字段一处看得全、一处看不全时，看不全的那处必须自己交代）。
+  h3.title = title;
   $("#chatSubTitle").textContent = t ? chatThreadMeta(t) : "还没有开始";
 }
 
@@ -24644,10 +24675,17 @@ function chatDrawThreads() {
 async function chatRenameThread(id) {
   const t = CHAT.threads.find(x => x.id === id);
   if (!t) return;
-  const next = window.prompt("对话名称", chatTitleOf(t));
+  const next = window.prompt("对话名称（最长 " + CHAT_TITLE_MAX + " 个字符）", chatTitleOf(t));
   if (next == null) return;
   const title = next.trim();
   if (!title) return;
+  // 服务端有同样的上限（maxChatTitleRunes）：这里先拦一道，能给出比 400 更早、
+  // 更清楚的话；服务端那道仍然在，别指望前端是唯一闸门（issue #143）。
+  if ([...title].length > CHAT_TITLE_MAX) {
+    toast("对话名称最长 " + CHAT_TITLE_MAX + " 个字符（现在 " + [...title].length + " 个），" +
+      "超出的部分没有被截断保存，请改短后再试", "err");
+    return;
+  }
   const r = await api("/panel/api/chat/conversations/" + encodeURIComponent(id), { method: "PATCH", body: { title: title } });
   if (!r.ok) { toast("重命名失败：" + r.err, "err"); return; }
   t.title = title;

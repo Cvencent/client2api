@@ -129,7 +129,7 @@ Windows 上仍可 **导入 → 探测本机凭据** 读取已经登录的桌面�
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-当前版本：**0.6.2**。完整更新记录见 [CHANGELOG.md](../CHANGELOG.md)。
+当前版本：**0.6.3**。完整更新记录见 [CHANGELOG.md](../CHANGELOG.md)。
 
 ### 请求次数限额
 
@@ -726,6 +726,12 @@ Responses 客户端用来触发压缩的代码。即使模块只拿到一个普�
   照着原样保留即可。保存模块配置后需要重启进程生效。
 * `prompt.*` 与 `features.sanitize_blacklist_fingerprints` 目前只作用于 WorkBuddy，
   面板把它们和账号池设置一起放在 WorkBuddy 的平台卡片里；它们随热加载生效。
+* `pool.sweep_gap`（默认 **400ms**）是网关**自身的余额扫描**在两个账号之间停顿的长度。
+  它不是给模块的键：扫描在 `cmd/client2api`，批量任务另有 `scheduler.DefaultAccountGap`
+  给自己的账号配速；余额扫描缺的正是同一种节制——它按线速走完整个池子，于是开机后第一次
+  扫描（此时没有冷却标记，所有账号都是「够格」的）在**一秒内**把整池问了一遍厂商（issue #142）。
+  这个间隔**故意很短**：它不给厂商的每账号工作配速，只是别线速；稳态完全不变
+  （5 个账号 / 5 分钟，无论有没有间隔都是 60 probes/h）。`"0"` 关闭。改动在下一次扫描生效。
 * `proxy` 会应用到所有模块的厂商请求。带指纹客户端的模块在设置代理时强制使用
   HTTP/1.1，因为 `x/net/http2` 无法穿过该代理。
 * `egress` 是可选的托管出口。`client` 模式接受 `http`、`https`、`socks5` 或
@@ -758,6 +764,7 @@ Responses 客户端用来触发压缩的代码。即使模块只拿到一个普�
 | `CLIENT2API_SOFT_RATE` / `CLIENT2API_SOFT_RATE_MAX` | `cooldown.soft_rate` / `soft_rate_max` |
 | `CLIENT2API_PROMPT_MODE` / `CLIENT2API_PROMPT_FILE` | `prompt.mode` / `prompt.file` |
 | `CLIENT2API_EXPIRING_SOON` / `CLIENT2API_PREFER_EXPIRING` | `pool.expiring_soon` / `pool.prefer_expiring` |
+| `CLIENT2API_SWEEP_GAP` | `pool.sweep_gap` |
 | `CLIENT2API_SANITIZE_FINGERPRINTS` | `features.sanitize_blacklist_fingerprints` |
 
 优先级是：**默认值 < 配置文件 < 环境变量**。空值等于未设置；无法解析的值会忽略，
@@ -770,7 +777,7 @@ Responses 客户端用来触发压缩的代码。即使模块只拿到一个普�
 | `features.sanitize_blacklist_fingerprints` | 热更新，默认开启 |
 | `cooldown.soft_rate` / `soft_rate_max` | 热更新 |
 | `prompt.mode` / `prompt.file` | 热更新，仅 WorkBuddy 响应 |
-| `pool.*` | 热更新，主要由 WorkBuddy 执行 |
+| `pool.*` | 热更新，主要由 WorkBuddy 执行；`pool.sweep_gap` 由网关自身的余额扫描读取（不下发给模块） |
 | `session_sticky.enabled` / `ttl` / `gc_interval` | 热更新，影响所有绑定会话的模块 |
 | `platforms.<name>.*` | 热更新，优先级、模型黑名单、并发上限立即生效 |
 | `model_groups` | 热更新，组名、成员名和组内优先级立即生效 |

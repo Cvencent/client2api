@@ -82,7 +82,8 @@
     "idle_weight_max": 5.0,
     "prefer_expiring": true,
     "expiring_soon": "168h",
-    "cost_explore_interval": "30m"
+    "cost_explore_interval": "30m",
+    "sweep_gap": "400ms"
   },
   "session_sticky": {
     "enabled": true,

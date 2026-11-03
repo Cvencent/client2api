@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"client2api/internal/core"
 )
@@ -24,6 +26,39 @@ import (
 // the browser: a different browser, or the same browser after clearing site
 // data, must still see every conversation.
 const DefaultChatHistoryFileName = "panel/chat_history.json"
+
+// maxChatTitleRunes bounds an operator-authored conversation title.  It follows
+// maxAccountNoteRunes (configwrite.go) for the same two reasons, and it is the
+// server-side half of issue #143: the title is drawn in the chat header, and an
+// unbounded one let a single paste of 1,000,000 characters (measured: 200 OK,
+// 1,002,152 bytes on disk, an 8,000,489px-wide header) paint over the client and
+// model dropdowns -- so the operator could neither read the line nor click what
+// was under it.  The same field is already ellipsised in the sidebar, so the
+// header was the one place a long title was not a design choice.
+//
+// 120 runes is the note's number: enough for a pasted sentence in Chinese or a
+// fairly long command line, small enough that the header truncation is about
+// reading, not about surviving a megabyte.
+const maxChatTitleRunes = 120
+
+// clampChatTitle trims and caps a title, reporting whether it had to cut.  The
+// caller rejects the write rather than storing a silently shortened string: the
+// page shows the returned title, so a quiet cut would look like the save simply
+// worked and leave the operator wondering where the rest went (the same rule
+// #121/#122 settled for the queue labels).
+func clampChatTitle(title string) (string, bool) {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return "", false
+	}
+	if utf8.RuneCountInString(title) <= maxChatTitleRunes {
+		return title, false
+	}
+	// Cut on a rune boundary, never mid-character: a byte slice here would
+	// leave a broken UTF-8 tail that the JSON encoder replaces with U+FFFD.
+	runes := []rune(title)
+	return string(runes[:maxChatTitleRunes]), true
+}
 
 // ChatTurn is one persisted message.  Reasoning is kept apart from Content so
 // the UI can show a collapsed "thinking" block without folding it into the
@@ -214,7 +249,10 @@ func (s *chatHistoryStore) Create(in ChatThread) (ChatThread, error) {
 	if s == nil {
 		return ChatThread{}, errors.New("no chat history store")
 	}
-	title := strings.TrimSpace(in.Title)
+	title, err := titleOrError(in.Title)
+	if err != nil {
+		return ChatThread{}, err
+	}
 	if title == "" {
 		title = "新对话"
 	}
@@ -252,7 +290,12 @@ func (s *chatHistoryStore) Update(id string, patch ChatThread) (ChatThread, erro
 		return ChatThread{}, errChatThreadNotFound
 	}
 	if patch.Title != "" {
-		t.Title = strings.TrimSpace(patch.Title)
+		title, err := titleOrError(patch.Title)
+		if err != nil {
+			s.mu.Unlock()
+			return ChatThread{}, err
+		}
+		t.Title = title
 	}
 	if patch.Client != "" {
 		t.Client = strings.TrimSpace(patch.Client)
@@ -305,6 +348,8 @@ func (s *chatHistoryStore) Append(id string, turn ChatTurn) (ChatThread, error) 
 }
 
 func (s *chatHistoryStore) Rename(id, title string) (ChatThread, error) {
+	// Update is the one gate: it enforces the rune cap, so this path cannot
+	// disagree with the PATCH route about what is storable (issue #143).
 	title = strings.TrimSpace(title)
 	if title == "" {
 		return ChatThread{}, errors.New("title is required")
@@ -370,6 +415,25 @@ func (s *chatHistoryStore) persist() {
 func (s *chatHistoryStore) LastError() string { return s.errs.LastError() }
 
 var errChatThreadNotFound = errors.New("chat thread not found")
+
+// chatTitleTooLongError is a rejected write, not a failure: the operator typed
+// something the page should hand back rather than store (issue #143).
+type chatTitleTooLongError struct{ n int }
+
+func (e chatTitleTooLongError) Error() string {
+	return fmt.Sprintf("对话标题最长 %d 个字符（收到 %d 个）", maxChatTitleRunes, e.n)
+}
+
+// titleOrError applies the cap.  A write over the limit is refused; the caller
+// reports the limit so the page can tell the operator instead of pretending the
+// save worked.
+func titleOrError(raw string) (string, error) {
+	title, cut := clampChatTitle(raw)
+	if cut {
+		return "", chatTitleTooLongError{n: utf8.RuneCountInString(strings.TrimSpace(raw))}
+	}
+	return title, nil
+}
 
 func copyTurns(in []ChatTurn) []ChatTurn {
 	if in == nil {
