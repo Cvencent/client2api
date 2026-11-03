@@ -6,6 +6,41 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.0] - 2026-11-04
+
+### Added
+
+- **架构约定有了机械看守（#149）**：`MODULE-CONTRACT.md` 开头两条 import 约束
+  （`internal/`、`cmd/` 不得 import 具体模块包；`clients/*` 不得互相 import）此前
+  **零覆盖**——报告方实测注入两处违反后 gofmt / vet / build / test 四道全绿，而同一份
+  文档里能量化的约定（接口四方法、`clients/all` 名单、注册名）都有机械兜底。新增
+  `internal/panel/module_contract_import_test.go`：扫描 Go 源文件的 import 块
+  （不依赖 `go list` 的输出格式，失败直接点名文件与行）。两条合法的既有接线被显式
+  豁免：`cmd/*` 与 `clients/all` 各自的角色就是文档写的那个——注册表只有一份、
+  模块之间只经 `core.Client` 接口对话。**双向验证**：照报告的探针注入
+  `internal/panel` → `clients/loomy`、`clients/loomy` → `clients/raccoon` 两处违反，
+  两份测试分别红并点名注入文件。
+
+### Fixed
+
+- **添加账号弹层的三档切换补齐标签页语义（#150）**：浏览器登录 / 导入凭据 / 手动添加
+  这组走的是 `setAddTab` 老路径，只切 class——读屏听到的是三颗一模一样的按钮、
+  键盘用户要连按三次 Tab 且方向键完全无效；而同文件四组结构一样的子页签
+  （用量/任务中心/模型/平台）经 `setupSubtabs` 全都做对了。现在这组也带
+  `role="tablist"/"tab"/"tabpanel"`、`aria-selected`、`aria-controls`、
+  roving tabindex（键盘一个停靠点），并接上同一套手势：←/→ 环绕、Home/End 到两端、
+  **跳过隐藏档**（minimaxcode 这类模块的「浏览器登录」页签是 hidden 的，不能被
+  键盘走到）、选中与焦点一起动。看守两层：`cmd/panelsmoke` 的真浏览器断言
+  `assertAddTabsSemantics`（AX 树属性 + 真实键事件，**实测回退到裸按钮即红**，
+  逐条复现报告的「role=null / aria-selected=null / 方向键后 index=0」）；
+  `internal/panel/addtabs_semantics_ui_test.go` 钉标记与同步逻辑（aria-selected 与
+  roving tabindex 在 setAddTab 里同步、隐藏档不占 Tab 序、preventDefault）。
+
+### Installer
+
+- `client2api-setup-0.7.0.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `F9CAAA5BE6E60AF92E9E3D105A0FB927B896593B66DF26B736543F4051C1F8A5`
+
 ## [0.6.9] - 2026-11-04
 
 ### Fixed

@@ -7605,10 +7605,13 @@ html:not([data-theme="light"]) body::after {
   <div class="dlg" role="dialog" aria-modal="true" aria-labelledby="addTitle">
     <header>
       <h3 id="addTitle">添加账号</h3>
-      <div class="tabs" id="addTabs">
-        <button class="tab on" data-tab="login">浏览器登录</button>
-        <button class="tab" data-tab="import">导入凭据</button>
-        <button class="tab" data-tab="manual">手动添加</button>
+      <!-- 与用量/任务中心那四组 setupSubtabs 同一套 ARIA 语义（issue #150）：
+           读屏念「标签页、已选中」而不是三颗一模一样的按钮；roving tabindex
+           让键盘只占一个停靠点，方向键在档间移动。 -->
+      <div class="tabs" id="addTabs" role="tablist" aria-label="添加账号方式">
+        <button class="tab on" data-tab="login" id="addTabLoginBtn" role="tab" aria-selected="true" aria-controls="addTabLogin">浏览器登录</button>
+        <button class="tab" data-tab="import" id="addTabImportBtn" role="tab" aria-selected="false" aria-controls="addTabImport" tabindex="-1">导入凭据</button>
+        <button class="tab" data-tab="manual" id="addTabManualBtn" role="tab" aria-selected="false" aria-controls="addTabManual" tabindex="-1">手动添加</button>
       </div>
     </header>
     <div class="body">
@@ -7618,7 +7621,7 @@ html:not([data-theme="light"]) body::after {
       </div>
 
       <!-- 浏览器登录 -->
-      <div id="addTabLogin" class="tab-panel">
+      <div id="addTabLogin" class="tab-panel" role="tabpanel" aria-labelledby="addTabLoginBtn">
         <div id="addNotice" class="state" hidden></div>
         <div id="addRealm" class="realm-row" hidden></div>
         <div id="addProxyRow" class="fld" hidden>
@@ -7732,7 +7735,7 @@ html:not([data-theme="light"]) body::after {
       </div>
 
       <!-- 导入凭据 -->
-      <div id="addTabImport" class="tab-panel" hidden>
+      <div id="addTabImport" class="tab-panel" role="tabpanel" aria-labelledby="addTabImportBtn" hidden>
         <div class="hint" style="margin-bottom:8px">先「探测本机凭据」，再选择要导入的条目；也可以直接全部导入。</div>
         <div class="state" id="addPick" hidden></div>
         <div id="impList"></div>
@@ -7754,7 +7757,7 @@ html:not([data-theme="light"]) body::after {
       </div>
 
       <!-- 手动添加 -->
-      <div id="addTabManual" class="tab-panel" hidden>
+      <div id="addTabManual" class="tab-panel" role="tabpanel" aria-labelledby="addTabManualBtn" hidden>
         <!-- 一键连接本机服务：只有声明了 capabilities.quick_connect 的模块才有。
              探测是只读的，连接才会建档；默认只露一个主按钮。 -->
         <div id="manGuide" class="man-guide" hidden></div>
@@ -22389,7 +22392,14 @@ function pickAddClient(n) {
 }
 function setAddTab(t) {
   ADD.tab = t;
-  $$("#addTabs .tab").forEach(x => x.classList.toggle("on", x.dataset.tab === t));
+  $$("#addTabs .tab").forEach(x => {
+    const on = x.dataset.tab === t;
+    x.classList.toggle("on", on);
+    // ARIA 与 roving tabindex 同步（issue #150）：读屏念「已选中」，键盘
+    // 只占一个停靠点。隐藏的档（模块能力不支持时）不占 Tab 序。
+    x.setAttribute("aria-selected", on ? "true" : "false");
+    x.tabIndex = (on && !x.hidden) ? 0 : -1;
+  });
   $("#addTabLogin").hidden = t !== "login";
   $("#addTabImport").hidden = t !== "import";
   $("#addTabManual").hidden = t !== "manual";
@@ -24069,6 +24079,23 @@ $("#btnNoteSave").addEventListener("click", saveAccountNote);
 onEnter($("#noteInput"), () => saveAccountNote());
 $("#keyVeil").addEventListener("click", ev => { if (ev.target === $("#keyVeil") && !$("#keyVeil").dataset.lock) hideVeil($("#keyVeil")); });
 $("#addTabs").addEventListener("click", ev => { const t = ev.target.closest && ev.target.closest("[data-tab]"); if (t) setAddTab(t.dataset.tab); });
+// 方向键在档间移动（issue #150）：与 setupSubtabs 的四组同一套手势
+// （←/→ 环绕，Home/End 到两端），跳过隐藏的档——minimaxcode 这类模块
+// 的「浏览器登录」页签是 hidden 的，不该被键盘走到。落选档的焦点
+// 交给目标档（roving tabindex 的标准行为）。
+$("#addTabs").addEventListener("keydown", ev => {
+  if (ev.key !== "ArrowLeft" && ev.key !== "ArrowRight" && ev.key !== "Home" && ev.key !== "End") return;
+  const tabs = $$("#addTabs .tab").filter(x => !x.hidden);
+  if (!tabs.length) return;
+  const cur = tabs.find(x => x.dataset.tab === ADD.tab) || tabs[0];
+  let next = null;
+  if (ev.key === "ArrowLeft") next = tabs[(tabs.indexOf(cur) - 1 + tabs.length) % tabs.length];
+  else if (ev.key === "ArrowRight") next = tabs[(tabs.indexOf(cur) + 1) % tabs.length];
+  else if (ev.key === "Home") next = tabs[0];
+  else next = tabs[tabs.length - 1];
+  ev.preventDefault();
+  if (next) { setAddTab(next.dataset.tab); next.focus(); }
+});
 $("#addClient").addEventListener("change", () => { pickAddClient($("#addClient").value); });
 $("#btnStartLogin").addEventListener("click", startLogin);
 $("#btnHandoff").addEventListener("click", handoffImport);

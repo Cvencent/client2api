@@ -156,6 +156,12 @@ func run() error {
 			if err := assertChatHeader(runCtx, page); err != nil {
 				return err
 			}
+			// The add-account dialog's three-mode switch (issue #150): its
+			// ARIA roles, selected state and arrow-key handling, measured in
+			// the AX tree and with real key events.
+			if err := assertAddTabsSemantics(runCtx, page); err != nil {
+				return err
+			}
 			// The polling pages (issues #90/#144): a rebuilt element is a fresh
 			// element, and every entrance animation starts over.  Measured by
 			// node identity in a live DOM, which is how the reporter proved it.
