@@ -6,6 +6,38 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.4] - 2026-11-04
+
+### Fixed
+
+- **「测试全部账号」的成败判据读错字段：10 个账号全部探测失败仍报绿色
+  「成功 10，失败 0」（#157）**：批量分支只看 HTTP 状态码（`if (r.ok) ok++`），
+  而这个接口的约定恰恰相反——探测跑完但失败是 200 + `result.ok=false`
+  （服务端原话：「a probe that ran and failed is a 200 with ok=false」，
+  `internal/panel/panel.go` 的守卫注释）。同一份响应，单账号按钮读的是
+  `result.ok`（判据正确），批量读的是 `r.ok`——#22 的修复补了进度与禁用，
+  结论判据没补。现在批量分支与单账号对齐：`r.ok && result.ok` 才计成功，
+  失败计 `result.error`；收尾 toast 附失败清单（至多前 3 条 + 「另有 N 个」，
+  单账号能说的那句话批量没理由不说）。看守
+  `internal/panel/bulk_test_verdict_test.go`：上游 200 + `result.ok=false`
+  时计数必须进 failed、失败原因进 toast——**回退判据即红**。
+- **用量页读失败只清了一半承载面（#156）**：失败分支原先只写 `#usNote`、
+  换图表为错误块、清磁贴收读数条；四张明细表、`#usStats`（请求/失败读数带）、
+  最近调用子表与「N / N 条」、页头读数**全留上一帧**，与真·正常只差一个挂在
+  「总览」子页 header 里的提示——换子页即不可见。现在失败分支把这一页所有
+  承载数字的地方一起复位（四表与最近调用换成一行错误提示、`#usStats` 复位
+  `-`、各 note 清空、`US_RECENT` 内存缓存清掉），且每个子页自己的 header
+  各留一个错误位（`#usStatsErr`/`#usRecentErr`，`hidden` 起始、成功路径收起，
+  换子页不丢提示）。看守两层：`cmd/panelsmoke` 的 `assertUsageReadFailure`
+  真浏览器断言（包装 `window.fetch` 注入失败，对真实渲染后的帧量残留，
+  恢复 fetch 后重画让页面保持健康）；`internal/panel/usage_read_failure_ui_test.go`
+  钉失败分支处理的全部承载位与 `US_RECENT` 复位。
+
+### Installer
+
+- `client2api-setup-0.7.4.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `0BBC02BA4C3D1EE4DEA4725A9C9C2F960B8A27BF3FDB650C033337DBB1579AD7`
+
 ## [0.7.3] - 2026-11-04
 
 ### Fixed

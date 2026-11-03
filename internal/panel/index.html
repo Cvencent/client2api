@@ -7034,7 +7034,7 @@ html:not([data-theme="light"]) body::after {
       </div>
       <div class="subtab-panel" data-subtab-panel="usage-recent" id="usage-panel-recent" role="tabpanel" aria-labelledby="usage-tab-recent" hidden>
       <div class="box">
-        <header><h3>最近调用</h3><span class="grow"></span><span class="note" id="usRecentNote"></span>
+        <header><h3>最近调用</h3><span class="grow"></span><span class="note err" id="usRecentErr" hidden></span><span class="note" id="usRecentNote"></span>
           <select id="usRecentFilter"><option value="">全部结果</option><option value="ok">仅成功</option><option value="fail">仅失败</option></select>
         </header>
         <div class="tbl-wrap">
@@ -7047,7 +7047,7 @@ html:not([data-theme="light"]) body::after {
       </div>
       <div class="subtab-panel" data-subtab-panel="usage-stats" id="usage-panel-stats" role="tabpanel" aria-labelledby="usage-tab-stats" hidden>
       <div class="box">
-        <header><h3>按客户端</h3><span class="grow"></span><span class="note" id="usClientNote"></span></header>
+        <header><h3>按客户端</h3><span class="grow"></span><span class="note err" id="usStatsErr" hidden></span><span class="note" id="usClientNote"></span></header>
         <div class="tbl-wrap">
         <table class="acc md"><caption class="sr-only">按客户端</caption>
           <thead><tr><th scope="col">客户端</th><th scope="col">请求</th><th scope="col">失败</th><th scope="col">输入 tokens</th><th scope="col">输出 tokens</th><th scope="col">合计 tokens</th></tr></thead>
@@ -15585,10 +15585,22 @@ function bulk(kind) {
     let done = 0, ok = 0, failed = 0;
     (async () => {
       try {
+        const failures = [];
         for (const a of list) {
           if (btn) btn.textContent = "测试 " + (done + 1) + "/" + list.length;
           const r = await api(cbase(CUR) + "/accounts/" + aid(a.id) + "/test", { method: "POST" });
-          if (r.ok) { applyAccounts(CUR, r.data); ok++; } else failed++;
+          // 结论在 result.ok 里，不在 HTTP 状态码里（issue #157）：探测跑完
+          // 但失败是 200 + ok=false，是正常结果——只看 r.ok 会把 10 个坏账号
+          // 报成 10 个全好（单账号按钮同一份响应读的就是 result.ok）。
+          const res = (r.ok && r.data && r.data.result) || {};
+          if (r.ok && res.ok) {
+            ok++;
+            applyAccounts(CUR, r.data);
+          } else {
+            failed++;
+            failures.push(a.label || a.id + "：" + (res.error || r.err || "测试请求本身失败"));
+            if (r.ok) applyAccounts(CUR, r.data);
+          }
           done++;
           if (btn) btn.textContent = "测试 " + done + "/" + list.length;
         }
@@ -15596,7 +15608,13 @@ function bulk(kind) {
         if (btn) { btn.disabled = false; btn.textContent = keep || "测试全部账号"; }
       }
       renderAccounts();
-      toast(platformLabel(CUR) + " 测试：成功 " + ok + "，失败 " + failed, failed ? "err" : "ok");
+      // 失败清单随分档 toast 一起给出：单账号按钮能说的那句话，批量没理由不说
+      // （issue #157 的建议 2；至多前 3 条 + 「另有 N 个」，避免 toast 撑爆）。
+      let tail = "";
+      if (failures.length) {
+        tail = "：" + failures.slice(0, 3).join("；") + (failures.length > 3 ? "（另有 " + (failures.length - 3) + " 个）" : "");
+      }
+      toast(platformLabel(CUR) + " 测试：成功 " + ok + "，失败 " + failed + tail, failed ? "err" : "ok");
     })();
   } else if (kind === "checkin") {
     if (!caps.checkin) return toast(platformLabel(CUR) + " 没有签到能力", "err");
@@ -16178,15 +16196,40 @@ async function renderUsage() {
   const win = Number($("#usWindow") ? $("#usWindow").value : 72) || 0;
   const r = await api("/panel/api/usage?window=" + win);
   if (!r.ok) {
-    $("#usNote").textContent = "获取失败：" + r.err;
+    // 失败分支必须把「这一页所有数字」一起清掉（issue #156）：只换图的话，
+    // 四张明细表、#usStats、最近调用子表和页头读数全留上一帧，与真·正常
+    // 只差一个藏在「总览」子页里的提示——换子页它就不可见了。每个子页自己的
+    // header 各留一个错误位（usStatsErr / usRecentErr），换子页不丢。
+    const msg = "获取失败：" + r.err;
+    $("#usNote").textContent = msg;
     $("#usChart").innerHTML = '<div class="state err">' + esc(r.err) + '</div>';
-    // 磁贴和读数条也要一起收掉：只把图换成错误态的话，上一帧的数字还留在屏幕上，
-    // 读起来像「这次拉取是好的，只是没数据」。
     const tiles = $("#usTiles");
     if (tiles) tiles.innerHTML = "";
     const read = $("#usRead");
     if (read) read.hidden = true;
+    const stats = $("#usStats");
+    if (stats) stats.textContent = "-";
+    const statErr = $("#usStatsErr");
+    if (statErr) { statErr.textContent = msg; statErr.hidden = false; }
+    const statNote = $("#usClientNote");
+    if (statNote) statNote.textContent = "";
+    for (const id of ["usClientBody", "usAccBody", "usModelBody", "usRealmBody", "usRecentBody"]) {
+      const tb = document.getElementById(id);
+      if (tb) tb.innerHTML = '<tr><td colspan="17" class="hint">' + esc(msg) + '</td></tr>';
+    }
+    for (const id of ["usClientNote", "usAccNote", "usModelNote", "usRealmNote", "usRecentNote"]) {
+      const n = document.getElementById(id);
+      if (n) n.textContent = "";
+    }
+    const recentErr = $("#usRecentErr");
+    if (recentErr) { recentErr.textContent = msg; recentErr.hidden = false; }
+    US_RECENT = [];
     return;
+  }
+  // 恢复成功路径时把错误位收掉（issue #156）：失败态不能黏住。
+  for (const id of ["usStatsErr", "usRecentErr"]) {
+    const e = document.getElementById(id);
+    if (e) { e.hidden = true; e.textContent = ""; }
   }
   const d = r.data || {}, t = d.totals || {};
   const req = t.requests || 0, fail = t.failures || 0;
