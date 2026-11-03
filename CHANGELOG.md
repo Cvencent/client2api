@@ -54,6 +54,31 @@
 - `client2api-setup-0.5.73.exe`（空包，不含账号凭据或本机配置）
   SHA256: `EF4235020D68984FF57BCFBC0529DFB561609B257CFA1E6ACB0F10A54EE8486C`
 
+## [0.6.0] - 2026-11-03
+
+### Security
+
+- **依赖升级：`govulncheck` 的符号级可达公告从 10 条降到 0 条（#129）**。`go.mod` 自首次公开提交
+  （2026-10-04）起从未更新，366 个提交里没有动过一行依赖；v0.5.99 补上了「让漂移可见」的两条机制
+  （CI 的 `govulncheck` 报告 + `.github/dependabot.yml`），本版把依赖真正升上去：
+  - `golang.org/x/net` **v0.59.0 → v0.62.0**（消掉 5 条 HTTP/2 服务端/传输层公告：
+    GO-2026-6603 / 6610 / 6611 / 6612 / 6617）；
+  - `golang.org/x/crypto` v0.57.0 → v0.58.0、`golang.org/x/sys` v0.48.0 → v0.49.0、
+    `golang.org/x/text` v0.42.0 → v0.43.0、`github.com/klauspost/compress` v1.17.4 → v1.20.3、
+    `github.com/andybalholm/brotli` v1.0.6 → v1.2.7；
+  - `go.mod` 新增 **`toolchain go1.27.3`**：剩余 10 条可达公告全部在 **go1.27.1 的标准库**里
+    （crypto/x509、crypto/tls、net/http 与 net/http/internal/http2、net/textproto、mime/multipart），
+    只升模块升不掉，必须换工具链。CI 侧本来就是 1.27.3，本地构建机此前是 1.27.1。
+  - **验收**：`govulncheck ./...` 的 `rc` 从 **3 → 0**，输出 `No vulnerabilities found.`
+  - **CI 的 `govulncheck` 步骤随之从「只报不挡」翻成阻塞**（去掉 `continue-on-error`，`rc != 0` 即
+    `exit 1`）——这是 v0.5.99 里承诺的顺序：树先干净，门禁才挡得住人。
+  - 全量 `go test ./...`（含 -race 之外的全部包）、`go vet`、gofmt 在新依赖 + go1.27.3 下全绿。
+
+### Installer
+
+- `client2api-setup-0.6.0.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `4F448FB6D4086762BE2DBB667AD3B0E098558062081B9A1E9EBB206E7A777288`
+
 ## [0.5.99] - 2026-11-03
 
 ### Fixed
