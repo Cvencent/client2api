@@ -54,6 +54,40 @@
 - `client2api-setup-0.5.73.exe`（空包，不含账号凭据或本机配置）
   SHA256: `EF4235020D68984FF57BCFBC0529DFB561609B257CFA1E6ACB0F10A54EE8486C`
 
+## [0.5.96] - 2026-11-03
+
+### Fixed
+
+- **#96 根因找到并修掉：面板读一次 `/panel/api/status` 会在同步路径里对上游发 52 个串行请求**。
+  v0.5.94 加的 breakdown 仪器一上线就点名：
+
+  ```
+  panel: slow /panel/api/status breakdown: loomy capabilities took 4.194s of 4.218s
+  panel: slow /panel/api/status breakdown: loomy capabilities took 3.441s of 3.446s
+  ```
+
+  链路：`handleStatus` 每模块调 `p.capabilities(ctx, c)` → `core.CapabilitiesOf` 里的
+  `InviteCodeProvider` → **`InviteCodeDefault(ctx)`**（`internal/core/accounts.go:798`）；loomy 的实现
+  （`clients/loomy/invite.go`）在 memo 未命中时跑 `pickInviteCode`，而它**对池里每个账号发一次真实
+  HTTP `GET /invitation-codes`、串行、无并发**（本机 loomy 有 **52 个**启用账号）。
+  这一条同时解释了全部现象：只有 `/status` 尖刺（`/pool` **不调** `capabilities()`）、幅度 3～4.5s、
+  间歇（memo TTL 10 分钟）、启动后第一读必中、与 tick 相位无关。
+
+  **修法**（照同仓 gemini 的 `warmCatalogue` 范式）：`InviteCodeDefault` **永不阻塞**——
+  读取只回 memo 里的已知值（尚无 memo 时回配置兜底），池扫描改为 `core.GoSafe`
+  **后台单飞**（同时只跑一次、有总预算上限），扫完回填 memo 供后续读取使用。绑定路径
+  （`BindAccountInviteCode`）**不变**，仍用 `pickInviteCode` 现扫，所以已用尽的码不会被绑第二次。
+  顺带删掉改造后失去调用者的 `pickedInviteCode`。
+  - 全仓同类复查：扫过所有「能力接口里带 ctx 的方法」，确认**没有第二个模块**在能力枚举里做同步上游调用（0 命中）。
+  - 测试：`TestInviteCodeDefaultNeverBlocksTheReadOnThePoolScan` 分三半钉住新契约——冷读必须**立即**返回且不打上游、
+    后台扫描落地后读数换成池内最优码（功能没丢）、memo 命中后再连读不产生任何上游请求；
+    **实测把实现换回阻塞版必红**。原有两条断言「同步返回池内码」的旧测试改到新契约（它们钉的正是 #96 的行为）。
+
+### Installer
+
+- `client2api-setup-0.5.96.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `DCB3121F23DAAA8A9090EA886CCA7CCDF24452029722B316737776850EB1CCA6`
+
 ## [0.5.95] - 2026-11-03
 
 ### Fixed

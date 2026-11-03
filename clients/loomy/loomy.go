@@ -102,12 +102,13 @@ type Client struct {
 	// the LRU pool one account per turn. See affinity.go.
 	affinity *core.Affinity
 
-	// inviteMu guards invitePick, the memoized pool-wide invitation-code sweep
-	// behind InviteCodeDefault (invite.go).  The panel reads the default code
-	// on every status refresh; without the memo that read would fan out one
-	// upstream GET per account each time.
-	inviteMu   sync.Mutex
-	invitePick *cachedInvitePick
+	// inviteMu guards invitePick, the pool-wide invitation-code sweep behind
+	// InviteCodeDefault (invite.go).  The panel reads the default code on every
+	// status refresh; the sweep is one upstream GET per account, so it runs in
+	// the BACKGROUND (issue #96) and this memo is what the read serves.
+	inviteMu       sync.Mutex
+	invitePick     *cachedInvitePick
+	inviteScanning bool
 
 	// inFlight is the number of chat streams currently open.  Chat feeds it
 	// through core.TrackStream, so PoolStats reports real concurrency.

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestInviteDefaultIsTheOperatorsCode(t *testing.T) {
@@ -74,8 +75,14 @@ func TestInviteCodeDefaultPicksTheCodeWithMostUsesLeft(t *testing.T) {
 	seedAccount(t, c, "acc-a", "tok-a", 0)
 	seedAccount(t, c, "acc-b", "tok-b", 0)
 
-	// acc-b's code has 15 uses left against acc-a's 1, so it wins.
-	if got := c.InviteCodeDefault(context.Background()); got != "BBBBBB" {
+	// The read itself must NOT block on the pool scan (issue #96): before the
+	// first background sweep lands it answers the configured default.
+	if got := c.InviteCodeDefault(context.Background()); got != "P276D2" {
+		t.Fatalf("a read before the first sweep = %q, want the configured P276D2 (the read must not block, issue #96)", got)
+	}
+	// acc-b's code has 15 uses left against acc-a's 1, so it wins -- observable
+	// once the background sweep has landed.
+	if got := waitForInvitePick(t, c, "BBBBBB"); got != "BBBBBB" {
 		t.Fatalf("picked code = %q, want BBBBBB (15 uses left vs 1)", got)
 	}
 
@@ -172,7 +179,14 @@ func TestBindAccountInviteCodeAnExplicitCodeBeatsThePicker(t *testing.T) {
 	}
 }
 
-func TestInviteCodeDefaultMemoizesThePoolScan(t *testing.T) {
+// 面板每次刷新状态都会读一次默认邀请码，而这条读取**绝不能**等上游
+// （issue #96：52 个账号的池子一次冷扫描把 /panel/api/status 拖住 3～4 秒）。
+//
+// 判据分两半：
+//  1. 读取必须立刻返回，且**不做任何上游请求**——它只回已知值或配置兜底；
+//  2. 后台扫描仍然发生（功能不丢），扫描结果落进 memo 后读取就换成它；
+//  3. 面板连续轮询时，扫描由 memo/TTL 与「同时只跑一个」共同收敛，不随读次增长。
+func TestInviteCodeDefaultNeverBlocksTheReadOnThePoolScan(t *testing.T) {
 	stub := &inviteCodesStub{codes: map[string][]inviteCodeUse{
 		"tok-a": {{InviteCode: "AAAAAA", UsedCount: 0, MaxUses: 20, Status: "active"}},
 	}}
@@ -181,17 +195,54 @@ func TestInviteCodeDefaultMemoizesThePoolScan(t *testing.T) {
 	seedAccount(t, c, "acc-a", "tok-a", 0)
 
 	ctx := context.Background()
+	// 第一次读取：还没扫过，必须立即给配置兜底，且这一次读取不产生上游请求。
+	done := make(chan string, 1)
+	go func() { done <- c.InviteCodeDefault(ctx) }()
+	select {
+	case got := <-done:
+		if got != "P276D2" {
+			t.Fatalf("cold read = %q, want the configured P276D2", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("InviteCodeDefault 阻塞了：读数在等上游扫描，这正是 #96 的尖刺来源")
+	}
+
+	// 后台扫描落地后，读取换成池子里余量最大的码（功能没丢）。
+	if got := waitForInvitePick(t, c, "AAAAAA"); got != "AAAAAA" {
+		t.Fatalf("after the sweep picked = %q, want AAAAAA", got)
+	}
+
+	// 再连读若干次：memo 命中时读取必须**一次上游都不打**。
+	stub.mu.Lock()
+	before := stub.hits
+	stub.mu.Unlock()
 	for i := 0; i < 5; i++ {
 		if got := c.InviteCodeDefault(ctx); got != "AAAAAA" {
-			t.Fatalf("call %d picked %q, want AAAAAA", i, got)
+			t.Fatalf("call %d picked %q, want the memoized AAAAAA", i, got)
 		}
 	}
 	stub.mu.Lock()
-	hits := stub.hits
+	after := stub.hits
 	stub.mu.Unlock()
-	if hits != 1 {
-		t.Fatalf("sent %d invitation-codes reads for 5 default reads; the memo must hold", hits)
+	if after != before {
+		t.Fatalf("memo 命中后又打了 %d 次上游；读数不该触发扫描", after-before)
 	}
+}
+
+// waitForInvitePick 等后台扫描把 memo 填成 want，最多几秒。扫描是异步的，
+// 测试必须等它落地而不是假定同步返回。
+func waitForInvitePick(t *testing.T, c *Client, want string) string {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	var last string
+	for time.Now().Before(deadline) {
+		last = c.InviteCodeDefault(context.Background())
+		if last == want {
+			return last
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return last
 }
 
 func TestBindAccountInviteCodePostsTheDesktopClientsPayload(t *testing.T) {

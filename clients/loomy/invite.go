@@ -189,6 +189,11 @@ func (u *upstream) redeemCode(ctx context.Context, token, code string) (redempti
 // burst against the vendor.  A bind always re-scans with a fresh read.
 const invitePickTTL = 10 * time.Minute
 
+// maxInviteScanBudget bounds one background pool scan.  The scan is one GET per
+// account; the budget is one request timeout per account, capped here so a very
+// large pool cannot tie the goroutine (and its context) up indefinitely.
+const maxInviteScanBudget = 3 * time.Minute
+
 // cachedInvitePick memoizes one pickInviteCode sweep.  protected by c.inviteMu.
 type cachedInvitePick struct {
 	code    string
@@ -198,19 +203,87 @@ type cachedInvitePick struct {
 
 // InviteCodeDefault implements core.InviteCodeProvider.  It answers the code
 // the NEXT bind would use: a live pool code with uses left when one exists,
-// otherwise the configured default.  The pool scan is memoized for
-// invitePickTTL because the panel calls this on every status refresh; the
-// binding path itself re-scans so a spent code is never used twice.
+// otherwise the configured default.
+//
+// It NEVER blocks on the vendor (issue #96).  The panel reads this on every
+// status refresh, and the pool scan behind it is one GET per account: on a
+// deployment with 52 accounts a cold scan held /panel/api/status for 3-4
+// seconds, which is the spike #96 spent several rounds chasing.  The memo below
+// only reduced how OFTEN that happened, not that it blocked a read.
+//
+// So the read now serves the last known answer and refreshes in the background
+// -- the same shape gemini's warmCatalogue uses.  Until the first scan lands it
+// answers the configured default, which is what the bind would have fallen back
+// to anyway.  BindAccountInviteCode still re-scans fresh when it needs an
+// authoritative code, so a spent code is never bound twice.
 func (c *Client) InviteCodeDefault(ctx context.Context) string {
 	if c == nil {
 		return ""
 	}
-	if c.store != nil && c.store.count() > 0 {
-		if picked, _, _ := c.pickedInviteCode(ctx, ""); picked != "" {
-			return picked
-		}
+	c.warmInvitePick(ctx)
+	if code, _, ok := c.cachedInvitePick(); ok && code != "" {
+		return code
 	}
 	return c.cfg.inviteCode()
+}
+
+// cachedInvitePick returns the memoized pick without touching the network.
+func (c *Client) cachedInvitePick() (string, []inviteCodeUse, bool) {
+	c.inviteMu.Lock()
+	defer c.inviteMu.Unlock()
+	if c.invitePick == nil {
+		return "", nil, false
+	}
+	return c.invitePick.code, c.invitePick.seen, true
+}
+
+// warmInvitePick starts one background pool scan when the memo is stale.  It
+// returns immediately, so a status read is never held by the sweep.
+func (c *Client) warmInvitePick(ctx context.Context) {
+	if c.store == nil || c.store.count() == 0 {
+		return
+	}
+	c.inviteMu.Lock()
+	if c.invitePick != nil && time.Since(c.invitePick.scanned) < invitePickTTL {
+		c.inviteMu.Unlock()
+		return
+	}
+	if c.inviteScanning {
+		// One sweep at a time: the panel polls every five seconds, and a sweep
+		// takes longer than that.
+		c.inviteMu.Unlock()
+		return
+	}
+	c.inviteScanning = true
+	c.inviteMu.Unlock()
+
+	core.GoSafe("loomy invite-code scan", func(msg string) { c.logf("%s", msg) }, func() {
+		defer func() {
+			c.inviteMu.Lock()
+			c.inviteScanning = false
+			c.inviteMu.Unlock()
+		}()
+		// The scan outlives the request that triggered it, so it does not
+		// inherit that request's context -- but it still needs a ceiling: one
+		// budget per account, capped so a large pool cannot hold the goroutine
+		// for hours.
+		budget := c.cfg.requestTimeout()
+		if n := time.Duration(c.store.count()); n > 0 {
+			budget *= n
+		}
+		if budget > maxInviteScanBudget {
+			budget = maxInviteScanBudget
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), budget)
+		defer cancel()
+		code, seen, err := c.pickInviteCode(ctx, "")
+		if err != nil || code == "" {
+			return
+		}
+		c.inviteMu.Lock()
+		c.invitePick = &cachedInvitePick{code: code, seen: seen, scanned: time.Now()}
+		c.inviteMu.Unlock()
+	})
 }
 
 // InviteCodeBindAllSafe reports that Loomy's activation endpoint is idempotent
@@ -250,35 +323,6 @@ func (c *Client) pickInviteCode(ctx context.Context, exclude string) (string, []
 		}
 	}
 	return bestCode, seen, nil
-}
-
-// pickedInviteCode is pickInviteCode behind the memo.  A cache written without
-// an exclude still answers an excluded pick correctly in the common case: the
-// excluded account is the one just bound, so its own code is either spent or
-// was not the winner.  The binding path forces a fresh sweep only when the
-// cache is empty.
-func (c *Client) pickedInviteCode(ctx context.Context, exclude string) (string, []inviteCodeUse, error) {
-	c.inviteMu.Lock()
-	cached, haveCache := c.invitePick, c.invitePick != nil
-	c.inviteMu.Unlock()
-	if haveCache && time.Since(cached.scanned) < invitePickTTL {
-		return cached.code, cached.seen, nil
-	}
-	code, seen, err := c.pickInviteCode(ctx, exclude)
-	if err != nil || code == "" {
-		// Nothing usable: do not memoize a dead answer for the full TTL.  The
-		// config fallback still applies at the caller.
-		if haveCache {
-			c.inviteMu.Lock()
-			c.invitePick = nil
-			c.inviteMu.Unlock()
-		}
-		return code, seen, err
-	}
-	c.inviteMu.Lock()
-	c.invitePick = &cachedInvitePick{code: code, seen: seen, scanned: time.Now()}
-	c.inviteMu.Unlock()
-	return code, seen, nil
 }
 
 // BindAccountInviteCode implements core.InviteCodeProvider.
