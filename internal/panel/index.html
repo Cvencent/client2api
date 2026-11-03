@@ -6843,15 +6843,15 @@ html:not([data-theme="light"]) body::after {
         </header>
         <div class="acct-board" id="acctBoard"></div>
         <div class="tbl-wrap acc-table-wrap">
-        <table class="acc">
+        <table class="acc"><caption class="sr-only">账号池</caption>
           <colgroup>
             <col class="col-mark"><col class="col-account"><col class="col-state"><col class="col-models"><col class="col-prio">
             <col class="col-bal"><col class="col-rate"><col class="col-inflight"><col class="col-usage">
             <col class="col-last"><col class="col-expiry"><col class="col-note"><col class="col-acts">
           </colgroup>
           <thead><tr>
-            <th class="mark" aria-hidden="true"></th>
-            <th class="sortable" id="accSortAccount" data-sort="account" tabindex="0" aria-sort="none" title="按账号排序">账号 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="sortable" id="accSortState" data-sort="state" tabindex="0" aria-sort="none" title="按状态排序">状态 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="c-models sortable" id="accSortModels" data-sort="models" tabindex="0" aria-sort="none" title="按模型可用情况排序">模型 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="sortable" id="accSortPrio" data-sort="prio" tabindex="0" aria-sort="none" title="按优先级排序">优先级 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="c-bal sortable" id="accSortBal" data-sort="balance" tabindex="0" aria-sort="none" title="按余额排序">余额 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="sortable" id="accSortRate" data-sort="rate" tabindex="0" aria-sort="none" title="按成功 / 失败排序">成功 / 失败 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="sortable" id="accSortInflight" data-sort="inflight" tabindex="0" aria-sort="none" title="按在途占用排序">在途 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="c-usage sortable" id="accSortUsage" data-sort="usage" tabindex="0" aria-sort="none" title="按调用次数和 token 用量排序">用量 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="c-last sortable" id="accSortLast" data-sort="last" tabindex="0" aria-sort="none" title="按最近成功时间排序">最近成功 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="sortable" id="accSortExpiry" data-sort="expiry" tabindex="0" aria-sort="none" title="按凭据到期时间排序">到期 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="c-note" title="模块返回的账号状态说明，例如冷却、限流、凭据失效；它不是右侧的账号标识">状态说明</th><th class="c-acts"></th>
+            <th class="mark" aria-hidden="true" scope="col"></th>
+            <th class="sortable" id="accSortAccount" data-sort="account" tabindex="0" aria-sort="none" title="按账号排序" scope="col">账号 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="sortable" id="accSortState" data-sort="state" tabindex="0" aria-sort="none" title="按状态排序" scope="col">状态 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="c-models sortable" id="accSortModels" data-sort="models" tabindex="0" aria-sort="none" title="按模型可用情况排序" scope="col">模型 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="sortable" id="accSortPrio" data-sort="prio" tabindex="0" aria-sort="none" title="按优先级排序" scope="col">优先级 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="c-bal sortable" id="accSortBal" data-sort="balance" tabindex="0" aria-sort="none" title="按余额排序" scope="col">余额 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="sortable" id="accSortRate" data-sort="rate" tabindex="0" aria-sort="none" title="按成功 / 失败排序" scope="col">成功 / 失败 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="sortable" id="accSortInflight" data-sort="inflight" tabindex="0" aria-sort="none" title="按在途占用排序" scope="col">在途 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="c-usage sortable" id="accSortUsage" data-sort="usage" tabindex="0" aria-sort="none" title="按调用次数和 token 用量排序" scope="col">用量 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="c-last sortable" id="accSortLast" data-sort="last" tabindex="0" aria-sort="none" title="按最近成功时间排序" scope="col">最近成功 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="sortable" id="accSortExpiry" data-sort="expiry" tabindex="0" aria-sort="none" title="按凭据到期时间排序" scope="col">到期 <span class="sort-mark" aria-hidden="true">↕</span></th><th class="c-note" title="模块返回的账号状态说明，例如冷却、限流、凭据失效；它不是右侧的账号标识" scope="col">状态说明</th><th class="c-acts" scope="col"></th>
           </tr></thead>
           <tbody id="accBody"></tbody>
         </table>
@@ -7038,8 +7038,8 @@ html:not([data-theme="light"]) body::after {
           <select id="usRecentFilter"><option value="">全部结果</option><option value="ok">仅成功</option><option value="fail">仅失败</option></select>
         </header>
         <div class="tbl-wrap">
-        <table class="acc md">
-          <thead><tr><th>时间</th><th>平台</th><th>模型</th><th>思考强度</th><th title="调用方报的就原样显示，没报则按消息内容推一个">会话ID</th><th>账号</th><th>结果</th><th>失败原因</th><th>候选</th><th>输入</th><th>输出</th><th>缓存 tokens</th><th>缓存命中率</th><th>花费 <span class="hint">¥/百万 tokens 计价</span></th><th>合计</th><th>耗时</th><th>速率</th></tr></thead>
+        <table class="acc md"><caption class="sr-only">最近调用</caption>
+          <thead><tr><th scope="col">时间</th><th scope="col">平台</th><th scope="col">模型</th><th scope="col">思考强度</th><th title="调用方报的就原样显示，没报则按消息内容推一个" scope="col">会话ID</th><th scope="col">账号</th><th scope="col">结果</th><th scope="col">失败原因</th><th scope="col">候选</th><th scope="col">输入</th><th scope="col">输出</th><th scope="col">缓存 tokens</th><th scope="col">缓存命中率</th><th scope="col">花费 <span class="hint">¥/百万 tokens 计价</span></th><th scope="col">合计</th><th scope="col">耗时</th><th scope="col">速率</th></tr></thead>
           <tbody id="usRecentBody"></tbody>
         </table>
         </div>
@@ -7049,8 +7049,8 @@ html:not([data-theme="light"]) body::after {
       <div class="box">
         <header><h3>按客户端</h3><span class="grow"></span><span class="note" id="usClientNote"></span></header>
         <div class="tbl-wrap">
-        <table class="acc md">
-          <thead><tr><th>客户端</th><th>请求</th><th>失败</th><th>输入 tokens</th><th>输出 tokens</th><th>合计 tokens</th></tr></thead>
+        <table class="acc md"><caption class="sr-only">按客户端</caption>
+          <thead><tr><th scope="col">客户端</th><th scope="col">请求</th><th scope="col">失败</th><th scope="col">输入 tokens</th><th scope="col">输出 tokens</th><th scope="col">合计 tokens</th></tr></thead>
           <tbody id="usClientBody"></tbody>
         </table>
         </div>
@@ -7058,8 +7058,8 @@ html:not([data-theme="light"]) body::after {
       <div class="box">
         <header><h3>按账号</h3><span class="grow"></span><span class="note" id="usAccNote">请求数含失败尝试</span></header>
         <div class="tbl-wrap">
-        <table class="acc md">
-          <thead><tr><th>账号</th><th>域</th><th>请求</th><th>失败</th><th>输入 tokens</th><th>输出 tokens</th><th>合计 tokens</th><th>均延迟</th><th>均速率</th><th>最近成功</th></tr></thead>
+        <table class="acc md"><caption class="sr-only">按账号</caption>
+          <thead><tr><th scope="col">账号</th><th scope="col">域</th><th scope="col">请求</th><th scope="col">失败</th><th scope="col">输入 tokens</th><th scope="col">输出 tokens</th><th scope="col">合计 tokens</th><th scope="col">均延迟</th><th scope="col">均速率</th><th scope="col">最近成功</th></tr></thead>
           <tbody id="usAccBody"></tbody>
         </table>
         </div>
@@ -7067,8 +7067,8 @@ html:not([data-theme="light"]) body::after {
       <div class="box">
         <header><h3>按模型</h3><span class="grow"></span><span class="note" id="usModelNote"></span></header>
         <div class="tbl-wrap">
-        <table class="acc md">
-          <thead><tr><th>模型</th><th>请求</th><th>失败</th><th>输入 tokens</th><th>输出 tokens</th><th>合计 tokens</th></tr></thead>
+        <table class="acc md"><caption class="sr-only">按模型</caption>
+          <thead><tr><th scope="col">模型</th><th scope="col">请求</th><th scope="col">失败</th><th scope="col">输入 tokens</th><th scope="col">输出 tokens</th><th scope="col">合计 tokens</th></tr></thead>
           <tbody id="usModelBody"></tbody>
         </table>
         </div>
@@ -7076,8 +7076,8 @@ html:not([data-theme="light"]) body::after {
       <div class="box">
         <header><h3>按域</h3><span class="grow"></span><span class="note" id="usRealmNote"></span></header>
         <div class="tbl-wrap">
-        <table class="acc md">
-          <thead><tr><th>域</th><th>请求</th><th>失败</th><th>输入 tokens</th><th>输出 tokens</th><th>合计 tokens</th></tr></thead>
+        <table class="acc md"><caption class="sr-only">按域</caption>
+          <thead><tr><th scope="col">域</th><th scope="col">请求</th><th scope="col">失败</th><th scope="col">输入 tokens</th><th scope="col">输出 tokens</th><th scope="col">合计 tokens</th></tr></thead>
           <tbody id="usRealmBody"></tbody>
         </table>
         </div>
@@ -7289,12 +7289,12 @@ html:not([data-theme="light"]) body::after {
           <span class="note" id="mdCount"></span>
         </div>
         <div class="tbl-wrap">
-        <table class="acc md">
+        <table class="acc md"><caption class="sr-only">模型能力</caption>
           <thead><tr>
-            <th>模型</th><th>客户端</th><th>来源</th>
-            <th class="sortable" id="mdSortContext" data-md-sort="context" tabindex="0" aria-sort="none" title="按上下文窗口排序">上下文 <span class="sort-mark" aria-hidden="true">↕</span></th>
-            <th title="输入 / 输出，人民币每百万 tokens">价格</th>
-            <th></th>
+            <th scope="col">模型</th><th scope="col">客户端</th><th scope="col">来源</th>
+            <th class="sortable" id="mdSortContext" data-md-sort="context" tabindex="0" aria-sort="none" title="按上下文窗口排序" scope="col">上下文 <span class="sort-mark" aria-hidden="true">↕</span></th>
+            <th title="输入 / 输出，人民币每百万 tokens" scope="col">价格</th>
+            <th scope="col"></th>
           </tr></thead>
           <tbody id="mdBody"><tr><td colspan="6" class="hint" style="padding:26px 20px;text-align:center">正在读取模型目录…</td></tr></tbody>
         </table>
@@ -7354,8 +7354,8 @@ html:not([data-theme="light"]) body::after {
             <span class="hint">选择“全部模型”会删除 exposed_models 配置；选择“仅勾选模型”后，空选择表示一个模型也不对外。</span>
           </div>
           <div class="tbl-wrap">
-            <table class="acc md">
-              <thead><tr><th class="excheck">对外</th><th>模型</th><th>类型</th><th>平台</th><th>目标 / 成员</th></tr></thead>
+            <table class="acc md"><caption class="sr-only">对外模型</caption>
+              <thead><tr><th class="excheck" scope="col">对外</th><th scope="col">模型</th><th scope="col">类型</th><th scope="col">平台</th><th scope="col">目标 / 成员</th></tr></thead>
               <tbody id="exBody"></tbody>
             </table>
           </div>
@@ -7499,8 +7499,8 @@ html:not([data-theme="light"]) body::after {
     <div class="body">
       <div class="state" id="taskState"><span class="dots">读取中</span></div>
       <div class="tbl-wrap">
-        <table class="acc md" id="taskTable" hidden>
-          <thead><tr><th>任务</th><th>进度</th><th>奖励</th><th>状态</th><th class="c-acts">操作</th></tr></thead>
+        <table class="acc md" id="taskTable" hidden><caption class="sr-only">积分任务</caption>
+          <thead><tr><th scope="col">任务</th><th scope="col">进度</th><th scope="col">奖励</th><th scope="col">状态</th><th class="c-acts" scope="col">操作</th></tr></thead>
           <tbody id="taskBody"></tbody>
         </table>
       </div>
@@ -7975,7 +7975,19 @@ function setupSubtabs(key, onShow) {
       t.tabIndex = on ? 0 : -1;
     });
     const target = tab.getAttribute("aria-controls");
-    panels.forEach(p => { p.hidden = p.id !== target; });
+    panels.forEach(p => {
+      p.hidden = p.id !== target;
+      // 键盘可达（issue #151，WAI-ARIA APG Tabs 模式）：tabpanel 里没有
+      // 可聚焦元素时，容器自己必须可聚焦，否则 Tab 会从页签直接跳过整块
+      // 内容——用量页「统计明细」是唯一的纯文本分析页，永远不会有输入框，
+      // 不修就永久空白。有可聚焦内容的面板维持无停靠点。在切换的这一刻
+      // 量（渲染后的 DOM），而不是在写标记时猜。
+      if (p.hidden) {
+        p.removeAttribute("tabindex");
+        return;
+      }
+      p.tabIndex = p.querySelector("a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]") ? -1 : 0;
+    });
     if (onShow) onShow(name);
     if (focus) tab.focus();
     return true;
@@ -17074,7 +17086,7 @@ async function renderModels(refresh) {
           '<td class="mdacts"><button class="xs mdopen" type="button" aria-expanded="false" title="展开这个模型的全部可编辑字段">详情</button></td>' +
           '</tr>' +
           '<tr class="mddetail" data-client="' + esc(c.name) + '" data-model="' + esc(m.id) + '" hidden>' +
-          '<td colspan="6"><div class="mddgrid"><table><tr>' +
+          '<td colspan="6"><div class="mddgrid"><table><caption class="sr-only">模型明细</caption><tr>' +
           mdField(rateCell(ex), "rate") +
           mdField(mdDefaultEffortCell(m), "default_effort") +
           mdField(mdEffortsCell(m), "efforts") +
@@ -19812,12 +19824,12 @@ function scRenderRows() {
   const bodyHTML = shown.map(scRowHTML).join("");
   // colgroup 把列宽钉死：六列全靠内容撑宽时，「时点」和「下一跳」两列宽度随
   // 每行内容跳动，扫一列扫不到底。
-  box.innerHTML = '<div class="tbl-wrap"><table class="acc sc">' +
+  box.innerHTML = '<div class="tbl-wrap"><table class="acc sc"><caption class="sr-only">运行记录</caption>' +
     '<colgroup><col style="width:26%"><col style="width:210px">' +
     '<col style="width:54px"><col style="width:88px"><col style="width:70px"><col style="width:132px"></colgroup>' +
     "<thead><tr>" +
-    "<th>任务</th><th>时点 / 间隔 / Cron</th><th>启用</th><th>下一跳</th><th>自定义</th>" +
-    "<th>操作</th></tr></thead><tbody>" + bodyHTML + "</tbody></table></div>";
+    "<th scope=\"col\" scope=\"col\">任务</th><th scope=\"col\" scope=\"col\">时点 / 间隔 / Cron</th><th scope=\"col\" scope=\"col\">启用</th><th scope=\"col\" scope=\"col\">下一跳</th><th scope=\"col\" scope=\"col\">自定义</th>" +
+    "<th scope=\"col\" scope=\"col\">操作</th></tr></thead><tbody>" + bodyHTML + "</tbody></table></div>";
   box.querySelectorAll(".scrow").forEach(el => {
     const key = scKey(el.dataset.client, el.dataset.batch);
     SC.rows[key] = Object.assign({}, shown.filter(r => scKey(r.client, r.batch) === key)[0], { el: el });
@@ -20614,7 +20626,7 @@ async function renderTaskBoard(force) {
       "<td>" + tbState(t) + "</td>" +
       '<td class="acc-acts">' + act + "</td></tr>";
   }).join("");
-  $("#tbBody").innerHTML = '<div class="tbl-wrap"><table class="acc"><thead><tr><th>任务</th><th>进度</th><th>奖励</th><th>状态</th><th>操作</th></tr></thead><tbody>' +
+  $("#tbBody").innerHTML = '<div class="tbl-wrap"><table class="acc"><caption class="sr-only">任务看板</caption><thead><tr><th scope="col">任务</th><th scope="col">进度</th><th scope="col">奖励</th><th scope="col">状态</th><th scope="col">操作</th></tr></thead><tbody>' +
     rows + "</tbody></table></div>";
   tbSchedule();
 }
@@ -21159,8 +21171,9 @@ async function renderCredits() {
   const now = Date.now();
   $("#pkExpiry").innerHTML = renderExpiryDistribution(merged, now);
   body.innerHTML = pkSummaryCards(merged, now) +
-    '<div class="tbl-wrap"><table class="acc md"><thead><tr>' +
-    "<th>批次 / 名称</th><th>剩余</th><th>总量</th><th>已用</th><th>到期</th>" +
+    '<div class="tbl-wrap"><table class="acc md"><caption class="sr-only">全部账号任务</caption><thead><tr>' +
+    "<caption class=\"sr-only\">积分构成</caption>" +
+    "<th scope=\"col\" scope=\"col\">批次 / 名称</th><th scope=\"col\" scope=\"col\">剩余</th><th scope=\"col\" scope=\"col\">总量</th><th scope=\"col\" scope=\"col\">已用</th><th scope=\"col\" scope=\"col\">到期</th>" +
     "</tr></thead><tbody>" + merged.map(a => crAcctRow(a, limit)).join("") + "</tbody></table></div>";
 }
 /* 展开/收起：只翻同组的 data-pk-row 行。按钮文案同步换，aria-expanded 也跟着

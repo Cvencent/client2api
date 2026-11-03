@@ -162,6 +162,12 @@ func run() error {
 			if err := assertAddTabsSemantics(runCtx, page); err != nil {
 				return err
 			}
+			// Table naming/scoping and tabpanel reachability (issues
+			// #151/#152): the usage view alone carries four tables, and one
+			// panel used to be keyboard-unreachable in its entirety.
+			if err := assertA11yTablesAndPanels(runCtx, page); err != nil {
+				return err
+			}
 			// The polling pages (issues #90/#144): a rebuilt element is a fresh
 			// element, and every entrance animation starts over.  Measured by
 			// node identity in a live DOM, which is how the reporter proved it.

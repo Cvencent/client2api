@@ -45,7 +45,7 @@ import (
 )
 
 // version is overridable with -ldflags "-X main.version=...".
-var version = "0.7.1"
+var version = "0.7.2"
 
 // restartHandoffEnv marks the replacement half of a panel restart.  It tells a
 // starting process to keep retrying the listen address instead of failing fast,

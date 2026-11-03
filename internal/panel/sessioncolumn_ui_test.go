@@ -21,8 +21,16 @@ func TestSessionIDColumnExplainsDerivedAndEmptyValues(t *testing.T) {
 	src := poolStatsUISource(t)
 
 	// 1. 表头说清这一列的来历，但不用可见说明文字撑宽整列。
-	if !strings.Contains(src, `title="调用方报的就原样显示，没报则按消息内容推一个">会话ID</th>`) {
+	// #152 之后列头带 scope="col"，属性顺序不固定：判据是「这一列的 th 上
+	// 同时有 title 说明与会话ID 文本」，不再钉死 title 后必须紧跟 >。
+	thIdx := strings.Index(src, `title="调用方报的就原样显示，没报则按消息内容推一个"`)
+	if thIdx < 0 {
 		t.Error("会话ID 表头没有用 title 说明这一列的值从哪来")
+	} else {
+		closeIdx := strings.Index(src[thIdx:], ">会话ID")
+		if closeIdx < 0 || closeIdx > 200 {
+			t.Error("title 所在的表头没有紧跟会话ID 文本：列头结构变了，请重新核对")
+		}
 	}
 	if strings.Contains(src, `会话ID <span class="hint">`) {
 		t.Error("会话ID 表头仍有可见说明文字：这一列会被撑宽，挤到后面的结果列")

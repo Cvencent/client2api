@@ -5,7 +5,7 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-Current version: **0.7.1**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
+Current version: **0.7.2**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
 
 client2api is a personal, local-only OpenAI-compatible gateway. It aggregates
 the accounts and API Keys **you own** on different AI coding clients and
@@ -252,6 +252,7 @@ loop that never ended.
 - Conversation stickiness, retries, cooldown and automatic failover, with panel controls that show each live binding's model and can force-unbind or force-switch a session. A force-switch can clear platform/account stickiness for automatic selection again or pin a chosen platform while still auto-selecting its account. The sticky-session dialog also has a one-click 一键强制切换 that runs 自动选择 for every listed conversation at once, so the next turn re-ranks platforms and accounts from scratch. A request that started before the switch may finish normally, but its late success cannot recreate the old binding; the next turn ranks from the operator's latest state.
 - A **manual** SMS send or code submission that the vendor refuses logs a line to `data/logs/client2api.log` and keeps the vendor's own answer (HTTP status, symbolic code, `request_id`) appended to the operator-facing sentence. Without them a post-mortem cannot tell an IP/device reputation block from a recognised automation fingerprint, and there is no `request_id` to ask the vendor about; this path used to collapse the whole vendor error into one fixed sentence and log nothing at all.
 - A one-click auto-login run's full transcript goes to the in-memory panel **and** to `data/logs/client2api.log`. The panel copy is a ring that expires with the job, so grepping the file after the fact used to return zero hits — which meant "that surface does not exist by construction", not "it did not happen". All five modules that offer auto-login (trae, autoclaw, codearts, loomy, raccoon) write through one point, share one redaction pass, and include the terminal line (success, failure reason, or cancelled).
+- Every data table carries a visually hidden `<caption class="sr-only">` (screen readers announce "账号池"/"最近调用" instead of a bare "table") and every column header a `scope="col"` (cells report their column while navigating). A tabpanel whose content has no focusable element -- the usage "统计明细" page, pure text and tables with no input ever -- is focusable itself, so Tab enters the content instead of skipping it (WAI-ARIA APG Tabs, issues #151/#152).
 - The add-account dialog's three-mode switch (browser login / import / manual) shares the tab semantics of the four sibling subtab groups: `role="tablist"/"tab"/"tabpanel"`, `aria-selected`, roving tabindex (one Tab stop instead of three) and arrow/Home/End navigation that skips hidden tabs, so a screen reader announces which mode is active and keyboard users are not stuck (issue #150).
 - OpenAI-shaped error mapping for auth, quota, WAF, timeout and rate-limit failures.
 - A source that can read credit positions (`officeace`) routes an auth-shaped
