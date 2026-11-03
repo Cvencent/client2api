@@ -785,12 +785,16 @@ func parseResponsesContent(raw json.RawMessage) (string, []core.ContentPart, err
 	if err := json.Unmarshal(trimmed, &parts); err != nil {
 		return "", nil, err
 	}
-	for _, part := range parts {
+	for i, part := range parts {
 		var kind string
 		if err := json.Unmarshal(part["type"], &kind); err != nil && len(part["type"]) > 0 {
 			return "", nil, err
 		}
 		switch kind {
+		case "input_text":
+			// Responses' user-facing text part: the same payload the Chat
+			// path reads from "text", under a different type name.
+			part["type"] = json.RawMessage(`"text"`)
 		case "output_text":
 			part["type"] = json.RawMessage(`"text"`)
 		case "input_image":
@@ -808,6 +812,14 @@ func parseResponsesContent(raw json.RawMessage) (string, []core.ContentPart, err
 			}
 			part["type"] = json.RawMessage(`"image_url"`)
 			part["image_url"] = encoded
+		default:
+			// input_file and input_audio fall here (issue #154): rewriting
+			// their type used to leave the shared Chat decoder to drop them
+			// silently, so a file-bearing request answered 200 with an empty
+			// prompt.  Refuse with the type named instead -- same reasoning
+			// as the Chat path's default branch.
+			return "", nil, fmt.Errorf(
+				"unsupported content part type %q at index %d: this gateway does not carry it, and forwarding without it would send an incomplete prompt", kind, i)
 		}
 	}
 	normalized, err := json.Marshal(parts)

@@ -584,9 +584,10 @@ func (s *source) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 		// only problem was a parked key.  coolingError keeps the sentinel and
 		// replaces the wording.
 		return nil, &coolingError{
-			source: s.name,
-			model:  req.Model,
-			until:  s.coolingUntilFor(req.Model, s.now(), s.cooling),
+			source:  s.name,
+			model:   req.Model,
+			until:   s.coolingUntilFor(req.Model, s.now(), s.cooling),
+			untilAt: s.coolingUntilInstant(req.Model, s.now(), s.cooling),
 		}
 	}
 	return nil, fmt.Errorf("%w: %s has no ready API key for model %q; scan models first", core.ErrNotConfigured, s.name, req.Model)
@@ -605,6 +606,11 @@ type coolingError struct {
 	source string
 	model  string
 	until  string
+	// untilAt is the instant until names, kept as a time so the gateway can
+	// compute the real remaining wait for the outbound Retry-After header
+	// (issue #155).  Zero when the instant was not resolvable -- then the
+	// header stays off rather than lying with a constant.
+	untilAt time.Time
 }
 
 func (e *coolingError) Error() string {
@@ -613,6 +619,21 @@ func (e *coolingError) Error() string {
 	}
 	return fmt.Sprintf("%s has a key for model %q but it is cooling down until %s",
 		e.source, e.model, e.until)
+}
+
+// RetryAfterHint is what the gateway forwards as the outbound Retry-After
+// header: the real remaining wait, not a constant.  Zero means "unknown" --
+// the header is then omitted entirely, because a wrong short value turns every
+// well-behaved client into a retry storm for the whole cooldown (issue #155).
+func (e *coolingError) RetryAfterHint() time.Duration {
+	if e == nil || e.untilAt.IsZero() {
+		return 0
+	}
+	d := time.Until(e.untilAt)
+	if d <= 0 {
+		return 0
+	}
+	return d
 }
 
 // Is makes errors.Is(err, core.ErrBusy) true, which is what the gateway and the
@@ -626,6 +647,38 @@ func (s *source) accountLimitBlocked(id string, now time.Time) *requestLimitBloc
 		return nil
 	}
 	return s.limits.AccountBlocked(id, now)
+}
+
+// coolingUntilInstant is coolingUntilFor as a time.Time, for the outbound
+// Retry-After header (issue #155): the operator-facing string answers "until
+// when", the header needs "how much longer".  Zero when nothing is cooling.
+func (s *source) coolingUntilInstant(model string, now time.Time, cooling map[string]time.Time) time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var soonest time.Time
+	for _, p := range s.rows {
+		if p.Disabled || s.invalid[p.ID] {
+			continue
+		}
+		serves := false
+		for _, m := range p.Models {
+			if m == model {
+				serves = true
+				break
+			}
+		}
+		if !serves {
+			continue
+		}
+		until, ok := cooling[p.ID]
+		if !ok || !now.Before(until) {
+			continue
+		}
+		if soonest.IsZero() || until.Before(soonest) {
+			soonest = until
+		}
+	}
+	return soonest
 }
 
 // coolingUntilFor reports when the earliest-parked key able to serve model

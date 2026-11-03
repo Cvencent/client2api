@@ -312,7 +312,7 @@ func decodeAnthropicContent(raw json.RawMessage) (string, []core.ContentPart, []
 	}
 	var sb strings.Builder
 	var parts []core.ContentPart
-	for _, b := range blocks {
+	for i, b := range blocks {
 		switch b.Type {
 		case "text", "":
 			if b.Text == "" {
@@ -337,6 +337,22 @@ func decodeAnthropicContent(raw json.RawMessage) (string, []core.ContentPart, []
 			}
 			if url != "" {
 				parts = append(parts, core.ContentPart{Type: "image_url", ImageURL: url})
+			}
+		default:
+			// thinking / tool_use / tool_result are consumed by
+			// translateAnthropicMessage from the raw blocks this function
+			// also returns, so they are not dropped and must pass through
+			// untouched.  Anything ELSE ("document", the only PDF/text
+			// attachment block Claude-side) used to vanish here, and a
+			// message that carried only that block then died further out as
+			// the misleading "messages must not be empty" (issue #154).
+			// Refuse with the type named, at the block the caller can find.
+			switch b.Type {
+			case "thinking", "tool_use", "tool_result", "redacted_thinking":
+				// consumed upstream; keep the raw block as-is
+			default:
+				return "", nil, nil, fmt.Errorf(
+					"unsupported content block type %q at index %d: this gateway does not carry it, and forwarding without it would send an incomplete prompt", b.Type, i)
 			}
 		}
 	}

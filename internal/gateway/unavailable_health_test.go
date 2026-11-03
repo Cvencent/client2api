@@ -87,8 +87,10 @@ func TestPlatformExhaustedReturnsServiceUnavailableWithRetryAfter(t *testing.T) 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
 	}
-	if got := rec.Header().Get("Retry-After"); got != "30" {
-		t.Fatalf("Retry-After = %q, want 30", got)
+	// issue #155 之后：无冷却时刻可用的 503 不再携带写死的 30——那会把内部
+	// 跳过窗口说成调用方该等的时长。缺省（无头）比一个错的短值安全。
+	if got := rec.Header().Get("Retry-After"); got != "" {
+		t.Fatalf("Retry-After = %q, want NO header（无提示时宁缺勿错，issue #155）", got)
 	}
 	if !strings.Contains(rec.Body.String(), `"code":"no_healthy_account"`) {
 		t.Fatalf("body = %s, want no_healthy_account", rec.Body.String())

@@ -150,6 +150,36 @@ func RetryAfterOf(err error) time.Duration {
 	return 0
 }
 
+// RetryAfterHint is the optional capability behind RetryAfterHintOf: an error
+// that knows how long the caller should actually wait implements it, and the
+// gateway forwards that duration as the outbound Retry-After header.  It is
+// distinct from RetryAfterOf because the two answers come from opposite
+// directions: a classified Failure carries the VENDOR's hint (vendor →
+// gateway), while this interface carries what the gateway itself computed for
+// the CALLER (gateway → caller).  A cooldown error has the second but not the
+// first, and conflating them is what made the outbound header a constant while
+// the body named a real instant (issue #155).
+type RetryAfterHint interface {
+	RetryAfterHint() time.Duration
+}
+
+// RetryAfterHintOf returns the wait err knows about, or 0 when err carries no
+// hint.  Zero means "unknown", not "retry now": the caller falls back to its
+// own default and MUST NOT read it as a one-second retry.
+func RetryAfterHintOf(err error) time.Duration {
+	for err != nil {
+		if h, ok := err.(RetryAfterHint); ok {
+			return h.RetryAfterHint()
+		}
+		u, ok := err.(interface{ Unwrap() error })
+		if !ok {
+			return 0
+		}
+		err = u.Unwrap()
+	}
+	return 0
+}
+
 // action is what the gateway does with one classified refusal.
 //
 // It answers two independent questions that used to be answered in two places

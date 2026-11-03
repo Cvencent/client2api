@@ -396,6 +396,8 @@ func TestChatReportsBackpressureAs429(t *testing.T) {
 	if rec.Code != http.StatusTooManyRequests {
 		t.Fatalf("status = %d, want 429", rec.Code)
 	}
+	// 普通背压没有自己的冷却时刻，仍用保守常数 1（issue #155 之后：
+	// 带冷却时刻的错误会携带真实剩余时间，见 content/hint 的看守）。
 	if got := rec.Header().Get("Retry-After"); got != "1" {
 		t.Errorf("Retry-After = %q, want 1", got)
 	}

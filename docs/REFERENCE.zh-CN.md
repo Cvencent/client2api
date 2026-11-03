@@ -820,7 +820,7 @@ WorkBuddy 提示词与指纹清洗，都在 **平台配置** 页里按平台/模
 |---|---|---|
 | `core.ErrNotConfigured` | 503 | `no_healthy_account` |
 | `core.ErrUnsupported` | 400 | `invalid_request` |
-| `core.ErrBusy` | 429 + `Retry-After: 1` | `rate_limit_exceeded` |
+| `core.ErrBusy` | 429 + `Retry-After: 1`（错误自带冷却时刻时为真实剩余秒数） | `rate_limit_exceeded` |
 | 上下文超时 | 504 | `upstream_timeout` |
 | `FailureWAF` | 403 | `waf_ip_blocked` |
 | `FailureRateLimited` | 429 | `rate_limit_exceeded` |
@@ -831,6 +831,14 @@ WorkBuddy 提示词与指纹清洗，都在 **平台配置** 页里按平台/模
 | 无效入站 Bearer | 401 | `invalid_api_key` |
 | 本地限制 | 5xx | `server_error` |
 | 其他 | 502 | `upstream_error` |
+
+出站 `Retry-After` 头写的是**本网关**知道的等待时长，不是常数（issue #155）。
+错误自带冷却时刻（中转站把钥匙停到某个时间点）时，头写真实的剩余秒数，
+让头与正文里的 `until` 说同一件事。普通背压（在途上限）保留历史上的
+1 秒提示——那个上限已知且短。503「平台耗尽」**不带** `Retry-After`：
+它背后的 30 秒是内部跳过顺序的记账，不是调用方该等的时长；一个错误的短值
+会把所有遵守该头的客户端骗进整个冷却期的重试风暴。
+
 
 流式请求中途失败也使用同一套错误框架。`core.ErrBusy` 是背压而非故障：
 所有可用账号都达到并发上限时应重试，而不是认为路由损坏。

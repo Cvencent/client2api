@@ -1867,10 +1867,24 @@ func upstreamErrorShape(err error) (int, string, core.FailureKind) {
 func (s *server) writeUpstreamError(w http.ResponseWriter, c core.Client, ctx func() core.HintContext, err error) {
 	clientName := c.Name()
 	status, typ, kind := upstreamErrorShape(err)
-	if errors.Is(err, core.ErrBusy) {
+	// The outbound Retry-After is the wait THIS gateway knows about, not a
+	// constant (issue #155).  A cooling platform carries its own instant
+	// (core.RetryAfterHint), so the header names the real remaining time; the
+	// 30s platform-exhausted window is bookkeeping for the internal skip
+	// order, not a caller-facing wait, and no hint means NO header -- a wrong
+	// short value turns every well-behaved client into a retry storm for the
+	// whole cooldown, while omitting the header leaves the caller on its own
+	// default.
+	hint := core.RetryAfterHintOf(err)
+	switch {
+	case hint > 0:
+		// A real cooldown instant: forward the remaining wait, rounded up to
+		// whole seconds (a 0-second header would read as "retry now").
+		w.Header().Set("Retry-After", strconv.Itoa(int(hint/time.Second)+1))
+	case errors.Is(err, core.ErrBusy):
+		// Plain backpressure (the in-flight ceiling): the ceiling is known
+		// and short, so the historical one-second hint stays honest here.
 		w.Header().Set("Retry-After", "1")
-	} else if errors.Is(err, core.ErrPlatformExhausted) {
-		w.Header().Set("Retry-After", strconv.Itoa(int(core.PlatformUnavailableCooldown/time.Second)))
 	}
 	msg := fmt.Sprintf("[%s] %s", clientName, err.Error())
 	s.opts.Logger.Printf("chat: client %s: %v", clientName, err)

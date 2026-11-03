@@ -1266,7 +1266,7 @@ vendor's own numeric business code inside `message` — it never promotes
 |---|---|---|
 | `core.ErrNotConfigured` | 503 | `no_healthy_account` |
 | `core.ErrUnsupported` | 400 | `invalid_request` |
-| `core.ErrBusy` | 429 + `Retry-After: 1` | `rate_limit_exceeded` |
+| `core.ErrBusy` | 429 + `Retry-After: 1` (or the real remaining cooldown when the error carries one) | `rate_limit_exceeded` |
 | context deadline | 504 | `upstream_timeout` |
 | `FailureWAF` | 403 | `waf_ip_blocked` |
 | `FailureRateLimited` | 429 | `rate_limit_exceeded` |
@@ -1277,6 +1277,17 @@ vendor's own numeric business code inside `message` — it never promotes
 | a rejected inbound bearer | 401 | `invalid_api_key` |
 | a local limitation (no streaming, 5xx) | 5xx | `server_error` |
 | anything else | 502 | `upstream_error` |
+
+The outbound `Retry-After` header is the wait **this gateway** knows about,
+not a constant (issue #155).  An error that carries its own cooldown instant --
+a relay whose keys are cooling until a stated time -- gets the real remaining
+seconds, so the header and the body's `until` say the same thing.  Plain
+backpressure (the in-flight ceiling) keeps the historical one-second hint,
+because that ceiling is known and short.  A 503 "platform exhausted" carries
+**no** `Retry-After`: the 30-second window behind it is internal skip
+bookkeeping, not a caller-facing wait, and a wrong short value turns every
+client that honours the header into a retry storm for the whole cooldown.
+
 
 A mid-stream failure is framed the same way: the stream breaking under us is
 `upstream_parse`, and an `error` event the module classified carries its own

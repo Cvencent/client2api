@@ -455,7 +455,7 @@ func parseContent(raw json.RawMessage) (string, []core.ContentPart, error) {
 		}
 		var sb strings.Builder
 		out := make([]core.ContentPart, 0, len(parts))
-		for _, p := range parts {
+		for i, p := range parts {
 			switch p.Type {
 			case "text", "input_text", "":
 				sb.WriteString(p.Text)
@@ -468,6 +468,28 @@ func parseContent(raw json.RawMessage) (string, []core.ContentPart, error) {
 						Detail:   p.ImageURL.Detail,
 					})
 				}
+			default:
+				// An unrecognised part used to be dropped silently: the request
+				// went upstream with whatever text remained and answered 200,
+				// so an audio-bearing message became "asked about nothing"
+				// (issue #154).  A wrong answer is harder to trace than a
+				// clear 400, and the same file's droppedParams already set
+				// the "dropped things must leave a trace" precedent -- but a
+				// part is worse than a param, because the upstream answer is
+				// wrong, not merely short.  Name the index and the type.
+				//
+				// encrypted_content is the one silent skip that stays: it is
+				// another deployment's ciphertext, carried by the delegated
+				// agent envelope, whose text the envelope builder replaces
+				// with "[encrypted agent payload omitted]" on purpose --
+				// forwarding the blob, or refusing the whole turn, would both
+				// be wrong.
+				if p.Type == "encrypted_content" {
+					continue
+				}
+				// A/B probe: rejecting is the behaviour under test.
+				return "", nil, fmt.Errorf(
+					"unsupported content part type %q at index %d: this gateway does not carry it, and forwarding without it would send an incomplete prompt", p.Type, i)
 			}
 		}
 		return sb.String(), out, nil
