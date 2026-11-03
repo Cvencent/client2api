@@ -3,7 +3,7 @@ module client2api
 go 1.27
 
 require (
-	github.com/andybalholm/brotli v1.0.6
+	github.com/andybalholm/brotli v1.2.7
 	github.com/refraction-networking/utls v1.8.2
 	golang.org/x/net v0.59.0
 	golang.org/x/sys v0.48.0
