@@ -6,53 +6,41 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
-## [0.5.47] - 2026-11-01
+## [0.6.9] - 2026-11-04
 
 ### Fixed
 
-- **小浣熊把「积分余额不足」400 当成了与账号无关的请求错误。** 厂商把空钱包
-  报成 HTTP 400（`积分余额不足，请充值后重试`），`classifyErr` 的 `>= 400`
-  兜底把它落进 `kindClient`——不换号（`retryable=false`，首轮就
-  `siblingFutile` 停走）、不停车（`cooldownFor` 没有 kindClient 档），于是
-  0 积分账号每次都被先选中、池内有余额的账号从不被询问，一天 30 次重复
-  同一个死循环，日志里 30 行「not account-specific」把排障方向带偏（#51）。
-  「余额不足」是账号的钱包状态：同一请求换一个有余额的账号就会成功。现在
-  400 + 文案含「余额不足/请充值/insufficient credit」映射为 `kindQuota`——
-  换号可救 + `exhausted` 停车，与 402 路径同语义；免费模型拒绝仍走
-  `ParkFreeModel` 的成对停靠，不受影响。真正的请求形状 400（413/404/参数
-  校验）保持 `kindClient` 不变。
-- **告警页页头首屏不再对流水说「干净」。** `mountMasthead` 是进页那一刻
-  同步算的，而 `ALERT_ROWS` 是 `renderAlerts` 异步回来的——冷启动进告警页
-  时它还是空数组，「未读」磁贴副文案停在「干净」，与同屏十几条流水自相
-  矛盾（#8 的分档被时序绕过；模型页同款竞态 #27 已修，告警页漏掉了同样
-  的补丁）。现在 `renderAlerts` 在流水落地后重算当前页页头（带
-  `VIEW === "alerts"` 守卫，#49）。
+- **`CHANGELOG.md` 里 `## [0.5.0]` 出现两次、`0.5.47`/`0.5.73` 被抬到文件顶上：发布说明
+  生成器按「第一个匹配」取段，文件与线上 Release 已不是同一份文本（#148）**：
+  - 删掉重复的第一份 `## [0.5.0]`（那 22 行 ZCode 内容在 `## [0.5.1]` 的 `### Fixed`
+    里已有更好的措辞，逐字核对过），保留与线上 Release 一致的第二份；
+  - 把 `0.5.47` / `0.5.73` 放回它们该在的位置（`0.5.48` 之上、`0.5.46` 之下，
+    `0.5.73` 在 `0.5.74` 与 `0.5.72` 之间），恢复全文「新的在上」；
+  - 新看守 `installer/changelog_format_test.go`：**同一版本标题只出现一次** + 版本标题
+    严格降序（`[Unreleased]` 豁免）+ 与流水线生成器同口径的抽取歧义断言。
+    两向验证：重新注入重复标题即红（两份测试都红）、把一个 0.6.x 段挪到 0.5.x 之上也红。
+- **20 份 `config.example.json` 只有 5 份有「示例可解析」守卫，唯一形状不对的恰好
+  落在没守卫的 15 份里（#147）**：`clients/loomy/config.example.json` 是唯一一份
+  「宿主配置」形状（顶层 `{"clients":{…}}`）而不是「模块对象」的示例——照模块
+  README 那句 "copy-paste starting point" 整份贴进 `clients.loomy`，`parseConfig`
+  走 `json.Unmarshal` 对未知键**不报错**，静默解出零值 `config{}`（A/B 实测：
+  整份贴 = `api_base="" accounts=0`，只贴内层 = 正常；两边都 `err == nil`）。
+  - loomy 示例改回模块对象形状；
+  - **凭据占位纪律**：loomy 示例里自首次公开发布（`b87768f`，2026-10-04）就带着
+    两个具体值的凭据字段（一个 16 字符 id、一个 32 字符 secret，git 历史可查）——
+    现已清空，**并请操作员确认轮换**（轮换只能由持有方做）。其余示例的
+    `REPLACE-ME` / `PUT-YOUR-` 类自述占位符按全仓惯例保留；
+  - 为缺守卫的 **15 个模块各补一份** `configexample_test.go`（守卫必须在模块包内，
+    才能调各自的 `parseConfig`）：示例必须用模块自己的解析器解出**非零** config
+    （`encoding/json` 忽略未知键，「能解析」不代表「解出了东西」——零值检查才是
+    #147 的核心判据），且凭据字段不得携带具体值（URL 不是凭据、自述占位符按惯例
+    保留、`auth.mode: "api_key"` 这类**键名不是凭据字段**的行不算）。
+    至此 20/20 全覆盖。
 
 ### Installer
 
-- `client2api-setup-0.5.47.exe`（空包，不含账号凭据或本机配置）
-- SHA256：`EE780BD84B0C8A1CAB096AE8354A353C5B968C516576BF02DD775B472C27CD7F`
-
-## [0.5.73] - 2026-11-02
-
-### Fixed
-
-- **测试可重复性一类（issue #71 + codearts 刷新测试三度误伤 CI 的后续）**：
-  - **干净 clone 上 go test ./... 不再必红。** installer/setup 的三个契约测试
-    （payload 写出/种子/ffmpeg 落位）在 payload 缺席时按
-    TestSmokeTestPanelHashFallback 的先例 skip，硬失败改为显式跳过；Makefile
-    新增 `make payload`（调 build.ps1 -NoData），check 目标的描述改为实际
-    门禁集合（CI 还跑 JS 语法/真浏览器 smoke/-race/全量 windows 套件）；
-    测试钉住 skip×4 与 Makefile 两项，防再漂移。
-  - **codearts 刷新串行化测试的三度 CI 误伤止血。** 两 caller 的编排存在
-    测试自身的同步盲区（started/release 的交错允许双 exchange），本地 900+
-    次未复现而 CI 三次命中——测试改为 3 轮有界重试，仅三轮全部双花才判失败；
-    生产侧 per-account 串行化的契约（锁内重读复用赢家轮换）保持原样断言。
-
-### Installer
-
-- `client2api-setup-0.5.73.exe`（空包，不含账号凭据或本机配置）
-  SHA256: `EF4235020D68984FF57BCFBC0529DFB561609B257CFA1E6ACB0F10A54EE8486C`
+- `client2api-setup-0.6.9.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `BBC80E93C1B7378B7F050FBCF7A46670210D318B4C24635A0C9A8C70FA7A3918`
 
 ## [0.6.8] - 2026-11-03
 
@@ -1346,6 +1334,27 @@
 - `client2api-setup-0.5.74.exe`（空包，不含账号凭据或本机配置）
   SHA256: `4915FEEF28E0F52F9B18A05AC482426DEFAB0887B9A78C3AF633C144A57BEBAA`
 
+## [0.5.73] - 2026-11-02
+
+### Fixed
+
+- **测试可重复性一类（issue #71 + codearts 刷新测试三度误伤 CI 的后续）**：
+  - **干净 clone 上 go test ./... 不再必红。** installer/setup 的三个契约测试
+    （payload 写出/种子/ffmpeg 落位）在 payload 缺席时按
+    TestSmokeTestPanelHashFallback 的先例 skip，硬失败改为显式跳过；Makefile
+    新增 `make payload`（调 build.ps1 -NoData），check 目标的描述改为实际
+    门禁集合（CI 还跑 JS 语法/真浏览器 smoke/-race/全量 windows 套件）；
+    测试钉住 skip×4 与 Makefile 两项，防再漂移。
+  - **codearts 刷新串行化测试的三度 CI 误伤止血。** 两 caller 的编排存在
+    测试自身的同步盲区（started/release 的交错允许双 exchange），本地 900+
+    次未复现而 CI 三次命中——测试改为 3 轮有界重试，仅三轮全部双花才判失败；
+    生产侧 per-account 串行化的契约（锁内重读复用赢家轮换）保持原样断言。
+
+### Installer
+
+- `client2api-setup-0.5.73.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `EF4235020D68984FF57BCFBC0529DFB561609B257CFA1E6ACB0F10A54EE8486C`
+
 ## [0.5.72] - 2026-11-02
 
 ### Fixed
@@ -1921,6 +1930,33 @@
   扩为 `5-55/10 19-22 * * *`（每 10 分钟一次共 24 档，23 点停）——普通 start-plan
   19 点开窗，WEEKEND 档实测 22 点后才投递，两条线都得盖住。调度器读每日签到
   状态：`done` 跳过不打扰厂商，`unavailable` 继续问；没接状态存储的部署不变。
+
+## [0.5.47] - 2026-11-01
+
+### Fixed
+
+- **小浣熊把「积分余额不足」400 当成了与账号无关的请求错误。** 厂商把空钱包
+  报成 HTTP 400（`积分余额不足，请充值后重试`），`classifyErr` 的 `>= 400`
+  兜底把它落进 `kindClient`——不换号（`retryable=false`，首轮就
+  `siblingFutile` 停走）、不停车（`cooldownFor` 没有 kindClient 档），于是
+  0 积分账号每次都被先选中、池内有余额的账号从不被询问，一天 30 次重复
+  同一个死循环，日志里 30 行「not account-specific」把排障方向带偏（#51）。
+  「余额不足」是账号的钱包状态：同一请求换一个有余额的账号就会成功。现在
+  400 + 文案含「余额不足/请充值/insufficient credit」映射为 `kindQuota`——
+  换号可救 + `exhausted` 停车，与 402 路径同语义；免费模型拒绝仍走
+  `ParkFreeModel` 的成对停靠，不受影响。真正的请求形状 400（413/404/参数
+  校验）保持 `kindClient` 不变。
+- **告警页页头首屏不再对流水说「干净」。** `mountMasthead` 是进页那一刻
+  同步算的，而 `ALERT_ROWS` 是 `renderAlerts` 异步回来的——冷启动进告警页
+  时它还是空数组，「未读」磁贴副文案停在「干净」，与同屏十几条流水自相
+  矛盾（#8 的分档被时序绕过；模型页同款竞态 #27 已修，告警页漏掉了同样
+  的补丁）。现在 `renderAlerts` 在流水落地后重算当前页页头（带
+  `VIEW === "alerts"` 守卫，#49）。
+
+### Installer
+
+- `client2api-setup-0.5.47.exe`（空包，不含账号凭据或本机配置）
+- SHA256：`EE780BD84B0C8A1CAB096AE8354A353C5B968C516576BF02DD775B472C27CD7F`
 
 ## [0.5.46] - 2026-11-01
 
@@ -2926,28 +2962,6 @@ workbuddy 工具 schema 的新校验规则，以及 zcode 每日计划的账号�
 - `client2api-setup-0.5.1.exe`（空包，不含账号凭据或本机配置）
 - SHA256：`863732BEF714FCA55D51E2BE0B2A544E87E72341A0740340083C886833FBA1C9`
 - 升级会保留现有 `configs/client2api.json`、`data/`、账号池、用量和任务数据。
-
-## [0.5.0] - 2026-10-28
-
-### Fixed
-
-- **ZCode 的活动套餐不再需要验证码，程序现在能自己领了。** 客户端弹窗里那个
-  「ZCODE GLOBAL BUILD · 300,000,000 tokens」原来只能手动点「领取」——程序侧一直判定
-  「没有验证码就没法领」，直接放弃。实测（2026-10-28）厂商已经不校验验证码：
-  带一个不存在的 plan id 去问，返回的是 `1001 套餐不存在` 而不是 `3007 验证码失败`；
-  完全不带 `X-Aliyun-Captcha-Verify-Param` 头的领取请求被正常接受。所以那段「先铸造
-  token 再领」的前置条件是在拒绝一个本来能成功的请求——这正是弹窗挂在那儿没人领的时候。
-
-  现在：`claim` 正常发出；只有手上已经有 token（面板浏览器刚铸造过、或还在缓存里）或
-  配置了 solver 时才附带；没配 solver 的安装不再为它花任何成本。厂商若恢复校验，
-  配了 solver 的账号照常工作，没配的会拿到 `3007`，面板原样转述。
-
-- **设备指纹是风控真正在读的东西。** 领取时返回 `3012「账号或网络环境存在异常」`
-  并不是账号问题：实测同一账号、同一凭据，用程序自己生成的 device_mid 被拒，
-  换成 ZCode 桌面客户端自己的 id（`~/.zcode/v2/telemetry-state.json`，也就是弹窗
-  「领取」按钮发出去的那个身份）几秒后就领到了。现在设备 id 优先采用桌面客户端的，
-  并且领取路径遇到 `3012` 时会切到该 id 重走一遍（多花一次往返，之后不再重复）。
-  聊天路径上的 `3012` 语义不变，仍是出口 IP 级别的风控。
 
 ## [0.5.0] - 2026-10-28
 
