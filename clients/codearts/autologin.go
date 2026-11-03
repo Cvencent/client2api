@@ -116,15 +116,22 @@ type codeartsAutoDriver interface {
 // codeartsAutoJob is one in-flight auto-login.  Every field is read under mu
 // because the panel polls while the background run writes.
 type codeartsAutoJob struct {
-	mu         sync.Mutex
-	id         string
-	sessionID  string
-	url        string
-	state      string
-	step       string
-	phone      string
-	message    string
-	accountID  string
+	mu        sync.Mutex
+	id        string
+	sessionID string
+	url       string
+	state     string
+	step      string
+	phone     string
+	message   string
+	accountID string
+	// logLine, when set, mirrors each transcript line to the module log so a
+	// failed run is greppable in client2api.log after the job has expired
+	// (issue #141).  It sits on the ONE ring writer rather than on logf(),
+	// because finish() and the cancel path append directly -- the terminal
+	// failure message and "已取消" are exactly what a post-mortem looks for.
+	// Nil keeps a hand-built job in-memory only.
+	logLine    func(format string, args ...any)
 	lines      []core.AutoLogLine
 	startedAt  time.Time
 	finishedAt time.Time
@@ -138,13 +145,31 @@ func (j *codeartsAutoJob) logf(format string, args ...any) {
 	j.appendLocked(fmt.Sprintf(format, args...))
 }
 
+// redactAutoLine is the one place the transcript's text is redacted, so the ring
+// copy and the file copy cannot disagree (issue #141).  core.Redact is
+// idempotent, which keeps the ring's own redaction harmless.
+func redactAutoLine(text string) string { return core.Redact(text) }
+
+// appendLocked is the ONE writer of j.lines, so the mirror to the module log
+// belongs here (issue #141): finish() and the cancel path append directly, and
+// those are the lines a post-mortem looks for.  Callers hold j.mu, so the file
+// order matches the ring order.
+//
+// Without this the transcript lived only in an in-memory ring that expires with
+// the job, and grepping client2api.log for a failure that already happened
+// returned zero hits *by construction* -- not because nothing happened (#96 has
+// the same ring-vs-file shape).
 func (j *codeartsAutoJob) appendLocked(text string) {
+	text = redactAutoLine(text)
+	if j.logLine != nil {
+		j.logLine("%s", text)
+	}
 	if len(j.lines) >= codeartsAutoMaxLogLines {
 		return
 	}
 	j.lines = append(j.lines, core.AutoLogLine{
 		At:   time.Now().Format(time.RFC3339),
-		Text: core.Redact(text),
+		Text: text,
 	})
 }
 
@@ -268,6 +293,10 @@ func (c *Client) StartAutoLogin(ctx context.Context, req core.AutoLoginRequest) 
 		step:      "starting",
 		startedAt: time.Now(),
 		cancel:    cancel,
+		// The durable surface (issue #141): deps.Logf fans out to the ring, the
+		// log file and stdout.  codearts already carries it for affinity; the
+		// auto-login transcript was the one path that missed it.
+		logLine: c.deps.Logf,
 	}
 	c.putAutoJob(job)
 	job.logf("CodeArts 自动登录已启动（session=%s）", shortCodeartsID(login.SessionID))

@@ -168,11 +168,25 @@ func TestAutoLoginTranscriptReachesTheDurableLog(t *testing.T) {
 	if !strings.Contains(src, "logLine: c.deps.Logf") {
 		t.Error("job 构造时没有接上 deps.Logf：通道字段存在但没人接（issue #141）")
 	}
-	// 落盘那一行必须走同一段脱敏后的文本，两个面不能分叉。
-	body := src[strings.Index(src, "func (j *raccoonAutoJob) logf("):]
+	// 落盘必须挂在**唯一的那次环写入**上，而不是挂在 logf 上（issue #141）。
+	//
+	// 第一版把镜像写在 logf()，可 finish()（终态失败信息）与取消路径都直接调
+	// appendLocked——排查时最想看的那几行恰恰是唯一没落文件的。判据因此是
+	// 「appendLocked 里有 logLine」，只找 logf 是看不出这个问题的。
+	body := src[strings.Index(src, "func (j *raccoonAutoJob) appendLocked("):]
 	body = body[:strings.Index(body, "\n}")]
+	if !strings.Contains(body, "j.logLine(") {
+		t.Error("落盘没有挂在 appendLocked（唯一的环写入点）上：finish() 的终态信息与「已取消」" +
+			"都直接调它，镜像挂在 logf 就会漏掉那几行（issue #141）")
+	}
 	if !strings.Contains(body, "redactAutoLine(") {
 		t.Error("落盘没有走统一脱敏：环里的副本与文件里的副本可能分叉（issue #141）")
+	}
+	// 反向：logf 里不该再有第二处镜像（同一件事只有一个说话的人）。
+	logf := src[strings.Index(src, "func (j *raccoonAutoJob) logf("):]
+	logf = logf[:strings.Index(logf, "\n}")]
+	if strings.Contains(logf, "j.logLine(") {
+		t.Error("logf 里还有一处镜像：appendLocked 已经镜像过了，同一行会落两次（issue #141）")
 	}
 }
 

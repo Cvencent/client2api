@@ -58,14 +58,21 @@ const (
 // autoJob is one auto-login run.  Its log is append-only and every field is
 // read under mu, because the panel polls while the run goroutine writes.
 type autoJob struct {
-	mu         sync.Mutex
-	id         string
-	realm      string
-	phone      string
-	step       string
-	state      string
-	message    string
-	accountID  string
+	mu        sync.Mutex
+	id        string
+	realm     string
+	phone     string
+	step      string
+	state     string
+	message   string
+	accountID string
+	// logLine, when set, mirrors each transcript line to the module log so a
+	// failed run is greppable in client2api.log after the job has expired
+	// (issue #141).  It sits on the ONE ring writer rather than on logf(),
+	// because finish() and the cancel path append directly -- the terminal
+	// failure message and "已取消" are exactly what a post-mortem looks for.
+	// Nil keeps a hand-built job in-memory only.
+	logLine    func(format string, args ...any)
 	lines      []core.AutoLogLine
 	startedAt  time.Time
 	finishedAt time.Time
@@ -76,12 +83,34 @@ type autoJob struct {
 func (j *autoJob) logf(format string, args ...any) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	j.appendLocked(fmt.Sprintf(format, args...))
+}
+
+// redactAutoLine is the one place the transcript's text is redacted, so the ring
+// copy and the file copy cannot disagree (issue #141).  core.Redact is
+// idempotent, which keeps the ring's own redaction harmless.
+func redactAutoLine(text string) string { return core.Redact(text) }
+
+// appendLocked is the ONE writer of j.lines, so the mirror to the module log
+// belongs here (issue #141): finish() and the cancel path append directly, and
+// those are the lines a post-mortem looks for.  Callers hold j.mu, so the file
+// order matches the ring order.
+//
+// Without this the transcript lived only in an in-memory ring that expires with
+// the job, and grepping client2api.log for a failure that already happened
+// returned zero hits *by construction* -- not because nothing happened (#96 has
+// the same ring-vs-file shape).
+func (j *autoJob) appendLocked(text string) {
+	text = redactAutoLine(text)
+	if j.logLine != nil {
+		j.logLine("%s", text)
+	}
 	if len(j.lines) >= autoMaxLogLines {
 		return
 	}
 	j.lines = append(j.lines, core.AutoLogLine{
 		At:   time.Now().Format(time.RFC3339),
-		Text: core.Redact(fmt.Sprintf(format, args...)),
+		Text: text,
 	})
 }
 
@@ -113,6 +142,14 @@ func (j *autoJob) finish(state, message, accountID string) {
 	}
 	j.finishedAt = time.Now()
 	j.expiresAt = j.finishedAt.Add(autoJobTTL)
+	// A terminal verdict is the single most useful line in the transcript, so it
+	// goes through the one writer like every other line (issue #141).  This
+	// module used to set j.message and stop there, so the reason a run failed
+	// never entered the ring *or* the file -- the very question a post-mortem
+	// opens the log to answer.
+	if strings.TrimSpace(message) != "" {
+		j.appendLocked(message)
+	}
 }
 
 func (j *autoJob) snapshot() core.AutoLoginJob {
@@ -189,6 +226,11 @@ func (c *Client) StartAutoLogin(ctx context.Context, req core.AutoLoginRequest) 
 		step:      "starting",
 		startedAt: time.Now(),
 		cancel:    cancel,
+		// The durable surface (issue #141): deps.Logf fans out to the ring, the
+		// log file and stdout.  autoclaw already carries it for the pool and the
+		// fingerprint client; the auto-login transcript was the one path that
+		// missed it.
+		logLine: c.deps.Logf,
 	}
 	c.putAutoJob(job)
 	core.GoSafe("autoclaw auto login", func(msg string) {

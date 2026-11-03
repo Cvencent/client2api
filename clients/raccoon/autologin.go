@@ -113,14 +113,7 @@ type raccoonAutoJob struct {
 func (j *raccoonAutoJob) logf(format string, args ...any) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	text := fmt.Sprintf(format, args...)
-	j.appendLocked(text)
-	// 落一行到模块日志（issue #141）。transcript 只在内存环里、且随 job 过期
-	// 一起消失：事后按 client2api.log 排查时「零命中」是按构造必然，不是「没发生」。
-	// appendLocked 已经脱敏过，这里用同一段文本，两个面不会分叉。
-	if j.logLine != nil {
-		j.logLine("%s", redactAutoLine(text))
-	}
+	j.appendLocked(fmt.Sprintf(format, args...))
 }
 
 // redactAutoLine is the one place the transcript's text is redacted, so the ring
@@ -128,13 +121,31 @@ func (j *raccoonAutoJob) logf(format string, args ...any) {
 // idempotent, which keeps the ring's own redaction harmless.
 func redactAutoLine(text string) string { return core.Redact(text) }
 
+// appendLocked is the ONE writer of j.lines, so the mirror to the module log
+// belongs here rather than in logf (issue #141).  It used to sit in logf(), and
+// finish() and the cancel path call appendLocked directly -- so the lines that
+// matter most for a post-mortem (the terminal failure message and "已取消")
+// were the only ones that never reached client2api.log.  A guard test that only
+// greps logf() cannot see that; this one asserts the mirror is in the writer.
+//
+// The transcript lives in an in-memory ring that expires with the job, so
+// grepping client2api.log for a failure that already happened returned zero
+// hits *by construction* -- not because nothing happened.  That is the trap the
+// reporter fell into (#96 has the same ring-vs-file shape).
+//
+// Callers hold j.mu, which is why the ring append and the log line are one
+// atomic step: the file's order matches the ring's.
 func (j *raccoonAutoJob) appendLocked(text string) {
+	text = redactAutoLine(text)
+	if j.logLine != nil {
+		j.logLine("%s", text)
+	}
 	if len(j.lines) >= raccoonAutoMaxLogLines {
 		return
 	}
 	j.lines = append(j.lines, core.AutoLogLine{
 		At:   time.Now().Format(time.RFC3339),
-		Text: core.Redact(text),
+		Text: text,
 	})
 }
 
