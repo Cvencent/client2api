@@ -54,6 +54,29 @@
 - `client2api-setup-0.5.73.exe`（空包，不含账号凭据或本机配置）
   SHA256: `EF4235020D68984FF57BCFBC0529DFB561609B257CFA1E6ACB0F10A54EE8486C`
 
+## [0.5.94] - 2026-11-03
+
+### Added
+
+- **#96 的 `/panel/api/status` 慢读现在会指名到「哪个模块的哪个阶段」**：本单的归因在上一轮被一次
+  **同刻对照**收窄——背靠背连打两个端点，同一瞬间 `/status` 3210ms 而 `/pool` 只要 5ms，而 `/pool`
+  **也**每个模块调同一个 `Status()`（`internal/panel/panel.go`），所以「余额扫描持锁」「进程级停顿
+  （GC/磁盘/杀软/抢占）」**都被排除**（那些会让两个端点一起慢）；落盘样本也一致：9 枚慢样本**全部**
+  是 `/status`，`/pool` **0 枚**。只剩 `/status` 每模块多做的两件事：`p.capabilities(ctx, c)` 与
+  `mergeModelParks`。
+  逐个读这些能力方法的函数体看不出开销（大多是静态字段表），所以这次**让它在发生时自报家门**：
+  `/status` 的每客户端循环现在把「模块自身 `Status()`」与「capabilities 枚举」**分开计时**，
+  任一超过 100ms 就记一条 `panel: slow /panel/api/status breakdown: <模块> <阶段> took Xs of Ys`，
+  只报**最慢的那个阶段**（写错模块名会把方向带偏）。仍在双面上落盘（环 + 可轮转文件）。
+  - 新增 `TestASlowStatusNamesTheModuleAndPhase`（慢读必须点名最慢阶段、快读不出这条线）与
+    `TestOnlySlowPhasesEnterTheStatusBreakdown`（100ms 门限、两个阶段分开计时）；前者**实测把
+    「取最慢」改成「取第一个」必红**。
+
+### Installer
+
+- `client2api-setup-0.5.94.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `5B729F131E5EF8D339E28DA8F35405B684B6EC8CA5B42DE10BDB3C61C7617835`
+
 ## [0.5.93] - 2026-11-03
 
 ### Fixed

@@ -635,7 +635,36 @@ func (p *panel) opsf(format string, args ...any) {
 	}
 }
 
+// statusPhase names the per-client work inside /status when one client eats the
+// budget (issue #96).
+//
+// The dual-poll comparison put the spike on /status alone -- /pool answered in
+// 5ms at the same instant while calling the same per-client Status() -- so the
+// cost is in what only /status does per client (capabilities plus the model-park
+// merge), and reading those methods did not reveal it.  Rather than keep
+// inferring, record the module and the phase the next time it crosses a second.
+type statusPhase struct {
+	name string
+	took time.Duration
+}
+
+func (p *panel) logSlowStatus(total time.Duration, phases []statusPhase) {
+	if total <= time.Second {
+		return
+	}
+	// The slowest phase is the answer; keep the rest only as context.
+	worst := phases[0]
+	for _, ph := range phases[1:] {
+		if ph.took > worst.took {
+			worst = ph
+		}
+	}
+	p.opsf("panel: slow /panel/api/status breakdown: %s took %s of %s",
+		worst.name, worst.took.Round(time.Millisecond), total.Round(time.Millisecond))
+}
+
 func (p *panel) handleStatus(w http.ResponseWriter, r *http.Request) {
+	requestStart := time.Now()
 	defer p.slowReadProbe("/panel/api/status")()
 	ctx, cancel := p.ctx(r, 30*time.Second)
 	defer cancel()
@@ -648,11 +677,26 @@ func (p *panel) handleStatus(w http.ResponseWriter, r *http.Request) {
 		Clients:   []clientView{},
 		RedisMode: redisModeNoop,
 	}
+	var phases []statusPhase
 	if p.opts.Registry != nil {
 		for _, c := range p.opts.Registry.All() {
+			// Time the two halves per client: the module's own Status() and the
+			// capability enumeration /status does on top of it (issue #96).
+			modStart := time.Now()
+			st := core.RedactStatus(c.Status(ctx))
+			stTook := time.Since(modStart)
+			capsStart := time.Now()
+			caps := p.capabilities(ctx, c)
+			capsTook := time.Since(capsStart)
+			if capsTook > 100*time.Millisecond {
+				phases = append(phases, statusPhase{name: c.Name() + " capabilities", took: capsTook})
+			}
+			if stTook > 100*time.Millisecond {
+				phases = append(phases, statusPhase{name: c.Name() + " status", took: stTook})
+			}
 			view := clientView{
-				Status:       core.RedactStatus(c.Status(ctx)),
-				Capabilities: p.capabilities(ctx, c),
+				Status:       st,
+				Capabilities: caps,
 			}
 			mergeModelParks(&view.Status, c.Name(), p.opts.ModelParks)
 			p.decorateAccountInFlight(c.Name(), view.Status.Accounts)
@@ -671,6 +715,9 @@ func (p *panel) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if p.opts.Scheduler != nil {
 		st := p.opts.Scheduler.Status()
 		snap.Schedule = &st
+	}
+	if len(phases) > 0 {
+		p.logSlowStatus(time.Since(requestStart), phases)
 	}
 	writeJSON(w, http.StatusOK, snap)
 }

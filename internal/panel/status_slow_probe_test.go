@@ -184,3 +184,60 @@ func TestTheTickOffsetIsAnchoredToTheSchedulerNotTheWallClock(t *testing.T) {
 		t.Errorf("无调度器时 tickOffset = %q，应显式标注 wall-clock，避免与调度器锚点样本混为一谈（issue #96）", got)
 	}
 }
+
+// /status 的慢读必须能**指名到模块与阶段**（issue #96）。
+//
+// dual-poll 对照把尖刺钉在 /status 自己身上（同刻 /pool 只要 5ms，而 /pool 也
+// 每模块调同一个 Status()），于是嫌疑落到只有 /status 会做的 per-client 工作：
+// capabilities 枚举 + model-park 合并。逐个读这些方法的函数体看不出开销，只能
+// 让它在发生的那一刻自报家门——否则下一轮还是靠推理（dual-poll 这种对照很贵）。
+func TestASlowStatusNamesTheModuleAndPhase(t *testing.T) {
+	ring := gateway.NewLogRing(200)
+	var durable strings.Builder
+	pp := &panel{opts: Options{
+		Version: "test", Logs: ring,
+		OpsLog: func(l string) { durable.WriteString(l + "\n") },
+	}}
+
+	// Above the threshold: the slowest phase is named, with both numbers.
+	pp.logSlowStatus(1500*time.Millisecond, []statusPhase{
+		{name: "loomy status", took: 120 * time.Millisecond},
+		{name: "workbuddy capabilities", took: 1300 * time.Millisecond},
+	})
+	got := durable.String()
+	for _, want := range []string{"breakdown", "workbuddy capabilities", "1.3s", "1.5s"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("慢 /status 诊断缺少 %q：定位不到是哪个模块/阶段（issue #96）；got=%q", want, got)
+		}
+	}
+	// 只认最慢的那个阶段：把最慢的写成别的模块等于指错方向。
+	if strings.Contains(got, "loomy status") {
+		t.Error("breakdown 报了非最慢阶段：模块名会被误导（issue #96）")
+	}
+
+	// 快请求不出这条线（否则退化成访问日志）。
+	durable.Reset()
+	pp.logSlowStatus(200*time.Millisecond, []statusPhase{{name: "x status", took: 150 * time.Millisecond}})
+	if durable.Len() != 0 {
+		t.Fatalf("快 /status 也打了 breakdown：观测线退化成访问日志（%q）", durable.String())
+	}
+}
+
+// 计数门限：只有超过 100ms 的 per-client 阶段才进 breakdown，否则每个正常
+// 模块（毫秒级）都会灌进来，一行都读不了。
+func TestOnlySlowPhasesEnterTheStatusBreakdown(t *testing.T) {
+	src, err := os.ReadFile("panel.go")
+	if err != nil {
+		t.Skipf("cannot read panel.go: %v", err)
+	}
+	s := string(src)
+	if !strings.Contains(s, "100*time.Millisecond") {
+		t.Error("per-client 阶段没有 100ms 门限：breakdown 会被毫秒级模块灌满（issue #96）")
+	}
+	// 两个阶段都要单独计时：合成一个总时长就分不清是模块自己慢还是枚举慢。
+	for _, want := range []string{"capsTook", "stTook"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("per-client 阶段没有分开计时 %q：分不清是 Status() 慢还是 capabilities() 慢（issue #96）", want)
+		}
+	}
+}
