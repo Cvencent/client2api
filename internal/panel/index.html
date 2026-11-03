@@ -167,6 +167,11 @@ body {
 .box:hover::after { opacity: 1; }
 /* 卡片内容是 z-index 1，确保柔光在内容之下。 */
 .box > * { position: relative; z-index: 1; }
+/* 菜单的裁剪（见 .box 的 overflow:clip）：盒子矮的时候绝对定位的菜单会被切掉，
+   展开菜单就等于按不到下面几项（issue #123 的第二条路径）。只在菜单开着时放开，
+   菜单收起后立刻恢复裁切；overflow:visible 同样不是滚动容器，sticky 的 .savebar
+   不受影响。 */
+.box:has(.opmore[open]) { overflow: visible; }
 
 /* ③ 主按钮扫光（Uiverse）：一条斜向高光在悬停时从左扫到右。 */
 button.primary { position: relative; overflow: hidden; isolation: isolate; }
@@ -905,7 +910,13 @@ label.fld > .hint { display: block; font-size: 0.71875rem; color: var(--ink-3); 
    否则 .savebar 的 position:sticky;bottom:0 会以这个盒子当参照，而它根本不滚动，
    「粘底」就退化成普通文档流 —— 配置页那种四千多像素的长表单，保存按钮要一路
    滚到底才看得见，操作员会以为没有保存入口。 */
-.box > header { display: flex; align-items: center; gap: 12px; padding: 13px 18px; border-bottom: 1px solid var(--line-soft); }
+/* 面板块的下拉菜单（.opmore）必须能压住同一个盒子里的**兄弟**元素。
+   上面那条 `.box > *` 给每个直接子元素都上了 position:relative + z-index:1，
+   于是 <header> 自成层叠上下文——菜单自己的 z-index:60（见 .opmore > .opmenu）
+   只在这个上下文内部有效，跳不出去；同层里 DOM 排在 header 之后的看板/表格
+   按绘制顺序整个盖在菜单上，菜单看得见、鼠标点不动（键盘 Tab 却正常，因为
+   它不做命中测试）。把 header 抬到兄弟之上即可（issue #123）。 */
+.box > header { display: flex; align-items: center; gap: 12px; padding: 13px 18px; border-bottom: 1px solid var(--line-soft); z-index: 2; }
 .box > header h3 { font-size: 0.84375rem; font-weight: 600; }
 .box > header h3 .hint { font-size: 0.71875rem; font-weight: 400; color: var(--ink-3); margin-left: 6px; }
 .box > header .grow { flex: 1; }
@@ -1447,15 +1458,18 @@ legend { font-size: 0.75rem; color: var(--ink-3); font-weight: 600; padding-bott
   .pk-expiry-chart { max-height: 260px; overflow-y: auto; overflow-x: hidden;
     scrollbar-gutter: stable; scrollbar-width: thin; padding-right: 10px;
     overscroll-behavior: contain; }
-  .pk-expiry-hdr { display: grid; grid-template-columns: 64px minmax(80px, 1fr) 72px;
+  .pk-expiry-hdr { display: grid; grid-template-columns: 64px minmax(80px, 1fr) minmax(72px, max-content);
     align-items: center; gap: 9px; margin-bottom: 4px; color: var(--ink-3);
     font-size: 0.6875rem; }
   .pk-expiry-hdr > b { text-align: right; font-weight: 600; }
-  .pk-expiry-row { display: grid; grid-template-columns: 64px minmax(80px, 1fr) 72px;
+  .pk-expiry-row { display: grid; grid-template-columns: 64px minmax(80px, 1fr) minmax(72px, max-content);
     align-items: center; gap: 9px; min-height: 30px; padding-right: 2px; }
   .pk-expiry-row > span { color: var(--ink-3); font-size: 0.71875rem; }
+  /* 读数是**一个数**，不是散文：九位数（上亿积分，本面板常态）会被
+     overflow-wrap:anywhere 在逗号后断开，读成两个数（issue #124）。列宽改成
+     按内容取（下限仍是原来的 72px），并且这里禁止折行——数字不该在任何位置断开。 */
   .pk-expiry-row > b { text-align: right; font: 600 0.71875rem var(--mono);
-    font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+    font-variant-numeric: tabular-nums; white-space: nowrap; }
   .pk-expiry-track { display: flex; align-items: stretch; gap: 2px; height: 9px;
     border-radius: 5px; background: var(--surface-2); overflow: hidden; }
   .pk-expiry-seg { display: block; min-width: 2px; height: 100%; cursor: default;

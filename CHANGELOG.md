@@ -54,6 +54,41 @@
 - `client2api-setup-0.5.73.exe`（空包，不含账号凭据或本机配置）
   SHA256: `EF4235020D68984FF57BCFBC0529DFB561609B257CFA1E6ACB0F10A54EE8486C`
 
+## [0.5.95] - 2026-11-03
+
+### Fixed
+
+- **面板块头部的下拉菜单看得见、鼠标点不动（#123）**：账号池「批量操作」、平台页「更多」这类
+  `<details class="opmore">` 菜单，展开后渲染完全正常，但**每一项的鼠标点击都落到菜单下面的
+  看板/表格上**——零请求、零提示、菜单也不收起（键盘 Tab+Enter 反而正常，所以用 `.click()` 或
+  键盘自测发现不了）。两条独立成因，都已用反事实证实：
+  - `internal/panel/index.html:169` 的 `.box > * { position: relative; z-index: 1; }` 让 `<header>`
+    自成层叠上下文，菜单自己的 `z-index: 60` 跳不出去，同层里 DOM 排在其后的看板/表格按绘制
+    顺序整个盖住菜单。现在把 `.box > header` 抬到兄弟之上（`z-index: 2`，且必须后写才生效）。
+  - `.box { overflow: clip }` 会把向下溢出的绝对定位菜单裁掉（实测筛到 0 行时 143px 菜单有 65px
+    落在盒外）。新增 `.box:has(.opmore[open]) { overflow: visible }`——只在菜单展开时放开，
+    收起即恢复；`visible` 同样不是滚动容器，sticky 的保存条不受影响（`clip` 正是为它选的）。
+  实测（隔离实例、真浏览器）：账号池两项与平台页四项现在**全部命中自己**；在 CSSOM 里把
+  `z-index` 还原成 1，立刻复现报告里的 `div#acctBoard`。
+- **积分构成页「剩余积分」九位数在数字中间折成两行（#124）**：`#pkExpiry .pk-expiry-row > b`
+  同时带 `overflow-wrap: anywhere`，而第三列写死 `72px`——九位数 `190,671,648` 自然宽
+  80.1px 装不下，于是在**逗号后的数字中间**断开（第一行 `190,671,64`、第二行 `8`），整页最
+  关键的读数被读成两个数。现在最后一列改为按内容取宽（`minmax(72px, max-content)`，下限仍是
+  原来的 72px），并给读数加 `white-space: nowrap`。**表头与数据行共用同一套列模板，两处一起改**，
+  否则会错位。实测：修前 72×29（两行）→ 修后 77×14（一行）。
+- **打包门禁补上这一类**：`cmd/panelsmoke` 的 `assertLayout` 新增第 4 条几何断言——每个
+  `.box > header details.opmore` 展开后，对每一项 `elementFromPoint(中心)` 必须命中它自己。
+  文本断言拦不住这一类（#87 是「点到的不是自己」的同族），只有真浏览器命中测试能拦。
+  `layout_gate_test.go` 同步钉住这条判据在门禁路径上。
+- 新增 `internal/panel/header_dropdown_and_reading_ui_test.go`：钉住层叠契约（header 的 z-index
+  必须高于 `.box > *` 且后写）、菜单展开时必须放开裁切、读数禁止折行、表头与数据行列模板必须
+  一致且最后一列不再是固定 72px。三条断言**实测在回退成旧 CSS 时必红**。
+
+### Installer
+
+- `client2api-setup-0.5.95.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `247689E7AC294121645B5E7AAC52AB3181B20A4F23E8925BD08A9D2566E57143`
+
 ## [0.5.94] - 2026-11-03
 
 ### Added

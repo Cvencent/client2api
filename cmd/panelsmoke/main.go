@@ -453,6 +453,28 @@ func assertLayout(ctx context.Context, page *browser.Page) error {
 	      problems.push("主按钮尺寸为零: " + name(btn));
 	    }
 	  });
+	  // 4. A dropdown in a box header must be clickable, not just painted
+	  //    (issue #123): the header used to sit in the same stacking context as
+	  //    the board/table that follows it, so every menu item hit-tested to the
+	  //    element UNDERNEATH -- visible, unclickable, and no keyboard symptom.
+	  document.querySelectorAll(".box > header details.opmore").forEach(det => {
+	    const menu = det.querySelector(".opmenu");
+	    if (!menu) return;
+	    // Open it the way a click would; restore afterwards so the next check
+	    // sees the page it expects.
+	    const wasOpen = det.open;
+	    det.open = true;
+	    menu.querySelectorAll("button, label").forEach(it => {
+	      if (it.offsetParent === null) return;  // hidden item, not a defect
+	      const r = it.getBoundingClientRect();
+	      if (r.width < 1 || r.height < 1) return;
+	      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+	      if (!hit || !it.contains(hit)) {
+	        problems.push("下拉菜单项点不到: " + name(it) + " 的位置命中了 " + name(hit) + "（#123）");
+	      }
+	    });
+	    det.open = wasOpen;
+	  });
 	  return problems.join(" || ");
 	})()`
 	report, err := page.EvalString(ctx, probe)

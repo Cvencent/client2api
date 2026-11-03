@@ -50,6 +50,7 @@ func TestTheGateMeasuresLayoutNotJustBoot(t *testing.T) {
 		{"scrollWidth > th.clientWidth", "列头被裁：表头超出列宽时 overflow:hidden 会静默吃掉标签（#87）"},
 		{"document.elementFromPoint(", "排序箭头被遮挡：箭头位置的命中测试必须落到自己那一列，否则点击排的是邻列（#87）"},
 		{"getComputedStyle", "主按钮对比度：文字与底色同色时标签不可见（#86）"},
+		{".box > header details.opmore", "面板块头部的下拉菜单必须真的点得到（#123：菜单渲染正常、每项却命中下面的看板/表格）"},
 	} {
 		if !strings.Contains(layout, want.needle) {
 			t.Errorf("几何断言缺少 %q —— %s", want.needle, want.why)
