@@ -25,10 +25,17 @@ import (
 type fakeStream struct {
 	events []core.Event
 	i      int
+	// recvErr, when set, is returned once the events run out -- or immediately
+	// when there are none.  It lets a test model the two ways a stream loop can
+	// be told to stop: a clean EOF and an error carrying a cause (issue #125).
+	recvErr error
 }
 
 func (s *fakeStream) Recv() (core.Event, error) {
 	if s.i >= len(s.events) {
+		if s.recvErr != nil {
+			return core.Event{}, s.recvErr
+		}
 		return core.Event{}, io.EOF
 	}
 	ev := s.events[s.i]
@@ -42,6 +49,9 @@ type testClient struct {
 	name    string
 	events  []core.Event
 	chatErr error
+	// recvErr is handed to the fake stream, so a test can make Recv fail with a
+	// cause (issue #125).
+	recvErr error
 	// catalogue overrides the default one-model answer, so a test can pin the
 	// per-model Extra fields a module publishes.
 	catalogue []core.Model
@@ -97,10 +107,10 @@ func (c *testClient) Chat(ctx context.Context, req *core.ChatRequest) (core.Stre
 		return &fakeStream{events: c.callEvents[ix]}, nil
 	}
 	events := c.events
-	if events == nil {
+	if events == nil && c.recvErr == nil {
 		events = []core.Event{{Type: core.EventDone, Finish: "stop"}}
 	}
-	return &fakeStream{events: events}, nil
+	return &fakeStream{events: events, recvErr: c.recvErr}, nil
 }
 
 func (c *testClient) Status(ctx context.Context) core.Status {

@@ -2080,6 +2080,23 @@ func (s *server) streamSSE(w http.ResponseWriter, r *http.Request, client core.C
 			if finished {
 				break
 			}
+			// A cancel that lands while Recv is blocked arrives HERE, not at the
+			// context check between frames.  Reporting it as an upstream read
+			// failure mixes "the vendor's stream broke" with "the caller hung
+			// up" in the one label operators filter on (issue #125), and the two
+			// are opposite conclusions.  The health path already tells them apart
+			// (failure_normalize splits on errors.Is(err, context.Canceled));
+			// only the label was wrong.
+			if errors.Is(err, context.Canceled) || r.Context().Err() != nil {
+				terminal = "caller_canceled"
+				stat.status = http.StatusRequestTimeout
+				s.fail(rec, context.Canceled)
+				// RETURN, not break: the tail of this function sets
+				// terminal="completed" for a stream that ended without a
+				// failure, which would overwrite the label we just set.  The
+				// between-frames branch above returns for the same reason.
+				return
+			}
 			terminal = "upstream_read_error"
 			streamFailed = true
 			stat.status = http.StatusBadGateway

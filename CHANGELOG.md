@@ -54,6 +54,34 @@
 - `client2api-setup-0.5.73.exe`（空包，不含账号凭据或本机配置）
   SHA256: `EF4235020D68984FF57BCFBC0529DFB561609B257CFA1E6ACB0F10A54EE8486C`
 
+## [0.5.97] - 2026-11-03
+
+### Fixed
+
+- **流式终态标签把「调用方断开」记成 `upstream_read_error`（#125）**：两条流循环都只在**两帧之间**
+  检查 `r.Context().Err()`；取消若发生在 `stream.Recv()` **阻塞中**，取消身份是**通过 Recv 的 err 返回的**，
+  于是落进「凡 Recv 出错都打 `upstream_read_error`」的统一分支——实测日志里错误文本写
+  `context canceled`（调用方断开），终态却写 `upstream_read_error`（上游读失败），两个相反的结论。
+  健康统计不受影响（`s.fail` 经 `failure_normalize` 按 `errors.Is` 分流，账号不会被误冷却），所以这是
+  **纯标签缺陷**：但按 `terminal` 统计上游失败率、事后按标签排障时会被污染（长生成 + 短超时客户端的
+  部署里偏高）。这与 #69（调用方取消在分类里丢身份）同族。
+  现在 Recv 的错误分支做与「两帧之间」那条**同样的分流**：`errors.Is(err, context.Canceled)` 或
+  `r.Context().Err() != nil` → `terminal=caller_canceled` + 408，其余仍是 `upstream_read_error`。
+  - **两处同病同修**：HTTP chat（`internal/gateway/server.go`）与 Responses 流
+    (`internal/gateway/responses_stream.go`)。
+  - 修的过程中发现并避开了一个自己造的坑：该分支必须 **`return` 而不是 `break`**——函数尾部会给
+    「没有失败地结束」的流补 `terminal="completed"`，`break` 会把刚设的标签覆盖掉（第一次实测就
+    复现成了 `terminal=completed events=1`）。
+  - 新增 `internal/gateway/stream_terminal_cancel_test.go`：三半——A 取消经 Recv 返回必须记
+    `caller_canceled`、B **真正的上游读错误仍必须是 `upstream_read_error`**（防「一律改叫
+    caller_canceled」的反向过修）、C 两条取消路径的标签与状态必须一致且 Responses 侧同修。
+    三个变异体（去掉 chat 侧分流 / 去掉 Responses 侧分流 / 只看单一条件）**实测均被拦下**。
+
+### Installer
+
+- `client2api-setup-0.5.97.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `6595CE465B43B833562CB70558152FF948D4233F1CA47BFB78146E96E053D14E`
+
 ## [0.5.96] - 2026-11-03
 
 ### Fixed

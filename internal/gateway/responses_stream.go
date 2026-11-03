@@ -274,6 +274,14 @@ receive:
 				}
 				break
 			}
+			// Same split as the chat loop: a cancel delivered through Recv is
+			// the caller leaving, not the vendor's stream breaking (issue #125).
+			if errors.Is(err, context.Canceled) || r.Context().Err() != nil {
+				terminal = "caller_canceled"
+				a.stat.status = http.StatusRequestTimeout
+				streamErr = context.Canceled
+				break
+			}
 			terminal = "upstream_read_error"
 			a.stat.status = http.StatusBadGateway
 			streamErr = err
