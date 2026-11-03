@@ -124,6 +124,13 @@ func (c *Client) handleSmsSend(sess *loginSession) http.HandlerFunc {
 		if err != nil {
 			// A failed send does NOT end the session: the slider may simply
 			// have expired, and the operator can retry in place.
+			// Log the refusal and its vendor detail (issue #141): the page shows
+			// the sentence, but a post-mortem needs the file.  #141's first
+			// direction is decided by comparing an official-client manual login
+			// with this one, and before this nothing on the manual path reached
+			// client2api.log at all -- so "was it refused, and by what code" was
+			// unanswerable after the fact.
+			c.logLoginFailure("send", phone, err)
 			writeLoginJSON(w, http.StatusOK, map[string]any{"ok": false, "message": c.scrub(err.Error())})
 			return
 		}
@@ -163,12 +170,33 @@ func (c *Client) handleSmsVerify(sess *loginSession) http.HandlerFunc {
 		}
 		cred, err := c.loginWithSMS(r.Context(), phone, verificationID, code)
 		if err != nil {
+			// Same reason as the send step above (issue #141).
+			c.logLoginFailure("verify", phone, err)
 			writeLoginJSON(w, http.StatusOK, map[string]any{"ok": false, "message": c.scrub(err.Error())})
 			return
 		}
 		c.finishLogin(r.Context(), sess, cred)
 		writeLoginJSON(w, http.StatusOK, map[string]any{"ok": true})
 	}
+}
+
+// logLoginFailure records one refusal from the interactive (manual) login so it
+// survives in client2api.log (issue #141).  The page shows the operator a
+// sentence and the session may still recover; neither leaves a trace, and the
+// question this answers -- "did the official client get refused too, and with
+// what vendor code" -- can only be answered from the file.
+//
+// The phone is masked and the whole line passes through the module's own scrub,
+// so a token embedded in a vendor message cannot leak into the log.
+func (c *Client) logLoginFailure(stage, phone string, err error) {
+	if c == nil || c.deps.Logf == nil || err == nil {
+		return
+	}
+	line := "raccoon: manual login " + stage + " refused for " + core.MaskSecret(phone)
+	if d := apiDiagnostic(err); d != "" {
+		line += " [" + d + "]"
+	}
+	c.deps.Log("%s: %s", line, c.scrub(err.Error()))
 }
 
 // readLoginBody decodes a small JSON object.  A malformed body is answered

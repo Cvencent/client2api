@@ -54,6 +54,36 @@
 - `client2api-setup-0.5.73.exe`（空包，不含账号凭据或本机配置）
   SHA256: `EF4235020D68984FF57BCFBC0529DFB561609B257CFA1E6ACB0F10A54EE8486C`
 
+## [0.6.6] - 2026-11-03
+
+### Fixed
+
+- **面板手工登录被厂商拒绝时，厂商的原始诊断被丢掉、且这条路径全程不落日志（#141）**：
+  #141 的方向 1 要求操作员在同一台机器上用**官方客户端手工登录一次**做对照，以此判断厂商是
+  「IP/设备信誉被风控」还是「自动化指纹被识别」。但这轮反向核对「方向 1 需要什么证据」时发现，
+  这条路径**既不给操作员看、也不落文件**：
+  - `clients/raccoon/login.go` 的 `smsSendError` 把整条 `apiError` 折叠成一句固定中文
+    （`图形验证码校验失败，请重新完成滑块验证`），厂商的 `Status` / `Code` / `IAMCode`
+    （如 `COMMON_INVALID_ARGUMENT`）/ `RequestID` **全部被替换掉**；而 `apiError.RequestID`
+    （`api.go:62`，由 `api.go:259` 从 IAM 信封解出）**全仓没有任何一处渲染或打印**——
+    `request_id` 恰恰是向厂商追问某一次拒绝的唯一把手。
+  - 交互式登录（`login_page.go` 的 `handleSmsSend` / `handleSmsVerify`）**没有任何
+    `deps.Log`/`logf` 调用**，所以事后 `client2api.log` 里连「曾经被拒过」都看不到——
+    与 #141 方向 4 的环/文件分面同型，只是换了一条路径。
+  现在：**保留厂商诊断**（那句中文后面**附加** HTTP 状态、符号码与 `request_id`，
+  人话在前、机器码在后；非 captcha 的拒绝照旧原样透传），且**送码与验证码校验的拒绝各写一行
+  到模块日志**（含阶段与厂商答复）。手机号打码、整行走既有的 `scrub`/`Redact`。
+  于是「官方客户端也失败」这件事从此在 `data/logs/client2api.log` 里有据可查。
+  新增 `clients/raccoon/login_diagnostic_test.go`：诊断渲染（空诊断不吐半截标点、符号码与
+  数字码各取其一、传输失败不编造答复）+ **功能性**判据（真驱动 `handleSmsSend` 打到一个
+  会拒绝的上游，断言 `request_id`/符号码到达日志 sink，且手机号没进日志）。
+  **分别回退「诊断附加」与「handler 落日志」即红**（两处都验过）。
+
+### Installer
+
+- `client2api-setup-0.6.6.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `CB8799C8E6A0ED97F53BF224DF622703074544936596E548ECD3D6C8DF398A53`
+
 ## [0.6.5] - 2026-11-03
 
 ### Fixed

@@ -435,16 +435,33 @@ func (c *Client) sendSMS(ctx context.Context, phone, captchaParam string) (smsCh
 // solve the slider again, so they are named explicitly instead of being passed
 // through as a bare vendor code. Every other refusal keeps its own message —
 // a bad phone number must never be reported as a captcha problem.
+//
+// The vendor's own diagnostics are APPENDED rather than replaced (issue #141).
+// The collapsed sentence is what the operator can act on, but the status code,
+// the symbolic code and the request_id are what decides between the two causes
+// this gateway cannot tell apart on its own -- an IP/device reputation block
+// versus a recognised automation fingerprint. That distinction is the only way
+// to answer #141's first direction, and a request_id is also the only handle a
+// vendor will accept when asked about one specific refusal. Replacing the whole
+// apiError, as this used to, threw all three away: the sentence survived and
+// the evidence did not.
 func smsSendError(err error) error {
 	var ae *apiError
 	if !errors.As(err, &ae) {
 		return err
 	}
+	detail := ae.diagnostic()
+	withDetail := func(sentence string) error {
+		if detail == "" {
+			return errors.New(sentence)
+		}
+		return errors.New(sentence + "（厂商答复：" + detail + "）")
+	}
 	// 100006 is the legacy web code. The IAM service, which is what the send
 	// now goes through, reports the same condition against the captcha_token
 	// field, so the message is what identifies it.
 	if ae.Code == 100006 || strings.Contains(strings.ToLower(ae.Message), "captcha") {
-		return errors.New("raccoon: 图形验证码校验失败，请重新完成滑块验证")
+		return withDetail("raccoon: 图形验证码校验失败，请重新完成滑块验证")
 	}
 	return err
 }

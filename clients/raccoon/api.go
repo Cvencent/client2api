@@ -88,6 +88,42 @@ func (e *apiError) Error() string {
 	}
 }
 
+// diagnostic renders the machine-readable half of a refusal: the HTTP status,
+// whichever code the vendor used (numeric for the web API, symbolic for IAM)
+// and its request_id.  It exists because a caller that replaces the message
+// with an operator-facing sentence must still be able to carry these along
+// (issue #141): the status and the code decide whether a refusal is a captcha
+// problem, a reputation block or a bad phone number, and the request_id is the
+// only handle the vendor will trace.  Empty string when the error carries none
+// of them, so a caller can skip the suffix entirely.
+func (e *apiError) diagnostic() string {
+	var parts []string
+	if e.Status >= 400 {
+		parts = append(parts, fmt.Sprintf("HTTP %d", e.Status))
+	}
+	switch {
+	case e.Code != 0:
+		parts = append(parts, fmt.Sprintf("code %d", e.Code))
+	case strings.TrimSpace(e.IAMCode) != "":
+		parts = append(parts, strings.TrimSpace(e.IAMCode))
+	}
+	if id := strings.TrimSpace(e.RequestID); id != "" {
+		parts = append(parts, "request_id "+id)
+	}
+	return strings.Join(parts, " · ")
+}
+
+// apiDiagnostic renders the same detail from a wrapped error, and is what a
+// caller logs when it cannot keep the error itself.  A non-apiError yields ""
+// (a transport failure has no vendor answer to quote).
+func apiDiagnostic(err error) string {
+	var ae *apiError
+	if !errors.As(err, &ae) {
+		return ""
+	}
+	return ae.diagnostic()
+}
+
 func statusOf(err error) int {
 	var ae *apiError
 	if errors.As(err, &ae) {
