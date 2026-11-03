@@ -5614,7 +5614,12 @@ details[open] > .fold > .foldbody,
 }
 
 /* 4) 行内出现：表格/队列的新行淡入。列表整体重画时不加类，只有真正
-      「新出现的一条」才带上 .rowin，避免整表闪一遍。 */
+      「新出现的一条」才带上 .rowin，避免整表闪一遍。
+   这条注释原先只兑现了一半：.rowin 定义在这里，可从没被任何代码加上；相反，
+   运行记录时间线的 .runitem 是**裸的**动画（见 36 节），于是「整表重画时不闪」
+   这条规则在最需要它的那块上失效——scRenderRuns 每 4 秒整段重建，每条记录
+   重播一次滑入（issue #144）。截断与动画同理：一个属性只能有一个说话的人。
+   现在动画只挂在 .rowin 上，行要动就自己带这个类。 */
 .rowin { animation: rowIn 260ms var(--ease) both; }
 @keyframes rowIn { from { opacity: 0; transform: translateX(-6px); } }
 
@@ -5658,7 +5663,8 @@ details[open] > .fold > .foldbody,
   position: relative; display: grid; grid-template-columns: 74px minmax(0, 1fr);
   gap: 14px; padding: 10px 0 10px 16px;
   border-left: 2px solid var(--line-soft);
-  animation: rowIn 260ms var(--ease) both;
+  /* 入场动画不写在这里（issue #144）：.runitem 会被整段 innerHTML 重建，
+     动画一挂上去就是「每拍重播」。要动的新行自己带 .rowin（见 4 节）。 */
 }
 .runitem:last-child { border-left-color: transparent; }
 /* 时间线上的节点：好事一个小实点，失败一个醒目的红点 */
@@ -9549,6 +9555,9 @@ function renderChips() {
    这里不推断任何东西。哪条线、哪几站、谁亮谁灭，全部来自那一条接口返回的
    traces 与 lanes；没有记录时画一句「还没有请求」，而不是画一条好看的假线路。 */
 let RL_TIMER = null, RL_DATA = null, RL_LOADING = false;
+// RL_RESUME 是这张页自己的可见性补拍钩子（见 rlStartPolling）。挂在全局的
+// visibilitychange 上，而不是再装一个监听器：那一处已经有统一的补拍逻辑。
+let RL_RESUME = null;
 
 function rlLatency(ms, has) {
   if (!has) return "—";
@@ -10167,6 +10176,13 @@ function rlRenderEvents(report, traces) {
   $("#rlEvNote").textContent = "最近 " + traces.length + " 条" +
     (report.total_traces != null && report.total_traces > traces.length
       ? "（窗口内共 " + report.total_traces + "）" : "");
+  // 流水行也吃同一条守卫：它和上面四格在同一个 5 秒轮询里。这张表比四格长得多
+  // （最多 30 行），无条件重建的代价和视觉干扰都更大。
+  const sig = traces.slice(0, 30).map(t => t.at + "\u0000" + (t.failed ? "1" : "0") + "\u0000" +
+    (t.total_traces != null ? t.total_traces : "") + "\u0000" +
+    ((t.lanes || []).map(l => l.account_label || l.account || l.client || "") + "\u0000" +
+      (l.failed ? "f" : "") + "\u0000" + (l.latency_ms || 0)).join(",")).join("|");
+  if (!onlyChanged("rlEvents", sig)) return;
   box.innerHTML = traces.slice(0, 30).map(t => {
     const lanes = (t.lanes || []).slice().sort((a, b) => a.candidate - b.candidate);
     const winLane = lanes.find((_, i) => i === t.winner) || null;
@@ -10194,6 +10210,25 @@ function rlRenderEvents(report, traces) {
   }).join("");
 }
 
+// onlyChanged 是「只有内容真的变了才重建 DOM」的共享判据。
+//
+// 同一类缺陷在本仓已出现三次，形状一模一样：轮询路径无条件重建 innerHTML，
+// 而重建出来的新元素带着 from 值的入场动画，于是「读数没变也把动画放一遍」。
+//   #90：mountMasthead 每 5 秒重拆页头标题的 span（ttlChar 逐个淡入）。
+//   #144：rlRenderKpis 每 5 秒重建四格读数（numIn 整排淡入上浮）。
+//   同页对照：rlRenderMap 用 RL_STAGE_SIG 守卫（「节点结构只在变化时重画」），
+//   总览的 #ovKpis 用 OV_KPI_PREV + tickNumber 保证重建后表现正确——作者对
+//   「重建之后要怎样」是有意识的，漏掉的是「要不要重建」这一步。
+//
+// 判据是内容签名：没变就让整块 DOM 一动不动。不动比「重建再抑动画」更好——
+// 零成本，而且不可能抖（没有新元素就谈不上动画从零起步）。
+const POLL_SIG = Object.create(null);
+function onlyChanged(key, sig) {
+  if (POLL_SIG[key] === sig) return false;
+  POLL_SIG[key] = sig;
+  return true;
+}
+
 function rlRenderKpis(report) {
   const traces = report.traces || [];
   const ok = traces.filter(t => !t.failed).length;
@@ -10209,6 +10244,10 @@ function rlRenderKpis(report) {
     { v: report.rerouted || 0, l: "发生改道", warn: (report.rerouted || 0) > 0 },
     { v: avg ? rlLatency(avg, true) : "—", l: "平均延迟" },
   ];
+  // 签名里带上颜色档（bad/warn），否则「失败从 0 变 1」时数字变了、颜色档跟着变，
+  // 签名不变就漏画（红色是这一格里唯一让人一眼看到的东西）。
+  const sig = kpis.map(k => k.v + "\u0000" + k.l + "\u0000" + (k.bad ? "b" : "") + (k.warn ? "w" : "")).join("|");
+  if (!onlyChanged("rlKpis", sig)) return;
   $("#rlKpis").innerHTML = kpis.map(k =>
     '<div class="rl-kpi"><div class="v"' + (k.bad ? ' style="color:var(--bad-text)"' : k.warn ? ' style="color:var(--warn-text)"' : '') + '>' +
     esc(k.v) + '</div><div class="l">' + esc(k.l) + '</div></div>').join("");
@@ -10252,15 +10291,31 @@ window.addEventListener("resize", () => {
 
 function rlStartPolling() {
   rlStopPolling();
+  // 这一拍也要过 Page Visibility 门（issue #95 的漏项，issue #144 顺带）：
+  // 文档隐藏时整拍跳过，回到前台若已隔满一个周期就补一拍。不带门的话标签页
+  // 在后台也每 5 秒发一次 /route_live 并重建四格与流水。
+  let lastTick = 0;
   const tick = () => {
     if (VIEW !== "routelive") { rlStopPolling(); return; }
-    if ($("#rlAuto") && $("#rlAuto").checked) renderRouteLive();
+    if (!document.hidden) {
+      lastTick = Date.now();
+      if ($("#rlAuto") && $("#rlAuto").checked) renderRouteLive();
+    }
     RL_TIMER = setTimeout(tick, 5000);
   };
   RL_TIMER = setTimeout(tick, 5000);
+  // 回到前台：隔满一个周期就把错过的那拍立刻补上（与 setIntervalVisible 同口径），
+  // 否则操作员切回来看到的是切走前的旧读数。
+  RL_RESUME = () => {
+    if (VIEW !== "routelive") return;
+    if (lastTick && Date.now() - lastTick >= 5000 && !document.hidden) {
+      if ($("#rlAuto") && $("#rlAuto").checked) renderRouteLive();
+    }
+  };
 }
 function rlStopPolling() {
   if (RL_TIMER) { clearTimeout(RL_TIMER); RL_TIMER = null; }
+  RL_RESUME = null;
   // 离开这一页时把在飞的光点一起收掉：动画不该在看不见的地方继续跑。
   rlFlushStage();
   rlStopHub3d();
@@ -19769,6 +19824,14 @@ function scRenderRows() {
   scUpdateDirty();
 }
 
+// RUN_SEEN 记住每个运行 id 上一拍见过的状态，用来判断哪一条是「新出现的」。
+// 键是 (时刻|客户端|批次|触发源)——journal 没有独立 id，而这四项组合在一次
+// 运行里是稳定的，两次同刻同批次的运行本来也分不出谁是谁。
+const RUN_SEEN = Object.create(null);
+function keyOfRun(r) {
+  return [r.at, r.client, r.batch, r.trigger].join("\u0000");
+}
+
 function scRenderRuns(runs) {
   const box = $("#scRunsBody");
   if (!runs.length) {
@@ -19779,6 +19842,18 @@ function scRenderRuns(runs) {
   }
   const live = runs.filter(r => r.state === "running" || r.state === "queued").length;
   $("#scRunsNote").textContent = runs.length + " 条" + (live ? " · " + live + " 进行中" : "");
+  // 运行记录列表每 4 秒在有活跃批次时重拉（scScheduleRefresh），而整段是
+  // innerHTML 重建、每条 .runitem 又带 .rowin 入场动画——不守卫就每拍重播
+  // 一次滑入（issue #144 的第三处；报告方只标注了未实测）。签名用每条记录的
+  // 全字段：进度/耗时/结果任何一项变了都得重画。
+  const sig = runs.map(r => [r.at, r.client, r.batch, r.trigger, r.state, r.accounts, r.ran,
+    r.refused, r.failed, r.skipped, r.elapsed_ms, r.error,
+    (r.refusals || []).join(","), (r.skip_reasons || []).join(",")].join("\u0000")).join("|");
+  // 只保留这一拍还在的记录：journal 有上限，键不能只进不出。
+  const present = Object.create(null);
+  runs.forEach(r => { present[keyOfRun(r)] = true; });
+  for (const k of Object.keys(RUN_SEEN)) if (!present[k]) delete RUN_SEEN[k];
+  if (!onlyChanged("scRuns", sig)) return;
   const rows = runs.map((r, i) => {
     const t = r.at ? new Date(r.at).toLocaleString("zh-CN", { hour12: false }) : "-";
     const hm = r.at ? new Date(r.at).toLocaleTimeString("zh-CN", { hour12: false, hour: "2-digit", minute: "2-digit" }) : "-";
@@ -19798,13 +19873,17 @@ function scRenderRuns(runs) {
     // 运行记录原来是一张 11 列的宽表：拒绝/跳过/失败各占一列，绝大多数格子是 0，
     // 真正有信息的那格（失败原因）被挤在最后。改成一条时间线：左边时刻，右边一句话
     // 摘要，只有非零的计数才画徽章，原因单独一行给足宽度。
+    // 只有真正「新出现的一条」带上 .rowin（4 节的承诺，issue #144 兑现它）：
+    // 整段重建时老行不动，新的那一条滑入——「刚记下这次运行」这件事本身是信息。
+    const isNew = !RUN_SEEN[keyOfRun(r)];
+    RUN_SEEN[keyOfRun(r)] = r.state;
     const badges = [];
     if (r.accounts) badges.push('<span class="rb">' + r.accounts + " 账号</span>");
     if (r.ran) badges.push('<span class="rb ok">执行 ' + r.ran + "</span>");
     if (r.refused) badges.push('<span class="rb warn">拒绝 ' + r.refused + "</span>");
     if (r.skipped) badges.push('<span class="rb">跳过 ' + r.skipped + "</span>");
     if (r.failed) badges.push('<span class="rb bad">失败 ' + r.failed + "</span>");
-    return '<li class="runitem' + (bad ? " bad" : "") + (live ? " live" : "") + '" title="' + esc(t) + '">' +
+    return '<li class="runitem' + (isNew ? " rowin" : "") + (bad ? " bad" : "") + (live ? " live" : "") + '" title="' + esc(t) + '">' +
       '<div class="runt">' + esc(hm) + '<i>' + esc(src) + '</i></div>' +
       '<div class="runb">' +
         '<div class="runline">' + st + '<b>' + esc(scLabel(r.batch)) + '</b>' +
@@ -25215,6 +25294,9 @@ function setIntervalVisible(fn, ms) {
 }
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) return;
+  // 路由实况页有自己的 5 秒轮询（不在这场全局轮询的覆盖范围内），它的补拍
+  // 钩子挂在这里而不是再装一个监听器（issue #144）。它自己判断隔了多久。
+  if (typeof RL_RESUME === "function") RL_RESUME();
   // Catch-up: only when a whole period of staleness has actually accrued.
   // 5s is the finest cadence the panel runs; use it as the threshold.
   if (lastVisibleTick && Date.now() - lastVisibleTick >= 5000) {

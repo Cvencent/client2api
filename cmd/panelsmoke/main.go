@@ -156,6 +156,12 @@ func run() error {
 			if err := assertChatHeader(runCtx, page); err != nil {
 				return err
 			}
+			// The polling pages (issues #90/#144): a rebuilt element is a fresh
+			// element, and every entrance animation starts over.  Measured by
+			// node identity in a live DOM, which is how the reporter proved it.
+			if err := assertNoPolledReplay(runCtx, page); err != nil {
+				return err
+			}
 			// The captcha document is a separate go:embed'ed page with its own
 			// inline script, and until issue #128 nothing executed it: a parse
 			// error there left every gate green while the overlay hung on
@@ -581,6 +587,101 @@ func assertLayout(ctx context.Context, page *browser.Page) error {
 	}
 	if strings.TrimSpace(report) != "" {
 		return fmt.Errorf("layout regression:\n  %s", strings.Join(strings.Split(report, " || "), "\n  "))
+	}
+	return nil
+}
+
+// assertNoPolledReplay drives the route-live page with its own 5-second poll
+// running and checks that its readings are rebuilt only when they really change
+// (issue #144).
+//
+// The defect is an UNCONDITIONAL `innerHTML` rebuild inside a polling path whose
+// new elements carry a from-value entrance animation (`.rl-kpi .v` has
+// `animation: numIn ... both`, and @keyframes numIn starts at opacity .35).  So
+// every 5 seconds all four tiles were physically replaced and replayed their
+// fade-in, even with the pooled readings frozen at 0/0/0/—.
+//
+// This is measured the way the reporter measured it -- node identity plus the
+// first sampled opacity -- rather than by asserting on the source, because
+// "was that element replaced" is only answerable in a live DOM.  A signature
+// guard that rebuilds a DIFFERENT element would still fail the identity check,
+// which is the point: the fix has to leave the existing nodes alone.
+func assertNoPolledReplay(ctx context.Context, page *browser.Page) error {
+	if page == nil {
+		return nil
+	}
+	// Land on the route-live page first.  go() is what the page itself uses; the
+	// poll starts on entry (rlStartPolling) and only runs while this view is up.
+	if _, err := page.Eval(ctx, `(() => { if (typeof go === "function") go("routelive"); return true; })()`); err != nil {
+		return fmt.Errorf("open the route-live view: %w", err)
+	}
+	// Wait for the FIRST paint before arming.  The initial four tiles are
+	// supposed to animate in -- counting them would flag correct behaviour.
+	// The defect is what happens on the NEXT tick, when the readings have not
+	// changed.
+	if ok, err := page.WaitFor(ctx,
+		`(() => document.querySelectorAll("#rlKpis .rl-kpi .v").length === 4)()`,
+		15*time.Second); err != nil {
+		return fmt.Errorf("wait for the route-live readings: %w", err)
+	} else if !ok {
+		return fmt.Errorf("route-live page never painted its four readings")
+	}
+	// Now arm: everything recorded from here on is a *rebuild*, which with the
+	// guard must not happen while the readings are frozen.
+	if _, err := page.Eval(ctx, `(() => {
+	  window.__c2aReplay = { events: [], armed: true, at: performance.now() };
+	  const seen = new WeakSet();
+	  document.querySelectorAll("#rlKpis .rl-kpi .v").forEach(n => seen.add(n));
+	  setInterval(() => {
+	    document.querySelectorAll("#rlKpis .rl-kpi .v").forEach(n => {
+	      if (seen.has(n)) return;
+	      seen.add(n);
+	      window.__c2aReplay.events.push({
+	        t: Math.round(performance.now()),
+	        opacity: getComputedStyle(n).opacity,
+	        text: n.textContent,
+	      });
+	    });
+	  }, 40);
+	  return true;
+	})()`); err != nil {
+		return fmt.Errorf("arm the route-live replay observer: %w", err)
+	}
+	// Let the poll tick at least twice.  13s covers 2 periods of the 5s timer
+	// with slack for a slow request.
+	if _, err := page.WaitFor(ctx, `(() => performance.now() - window.__c2aReplay.at > 13000)()`, 20*time.Second); err != nil {
+		return fmt.Errorf("wait for the route-live polls: %w", err)
+	}
+	report, err := page.EvalString(ctx, `(() => {
+	  const rp = window.__c2aReplay;
+	  if (!rp || !rp.armed) return "";
+	  if (!rp.events.length) return "";
+	  const problems = [];
+	  // Every recorded event is a node that did not exist 40ms earlier: with the
+	  // guard in place a frozen reading set produces NONE after the first paint.
+	  // Any event whose first sample sits at the animation's from value (.35) is
+	  // the reported replay.  (Reading the animation property itself is also
+	  // available, but the sampled opacity is what the reporter used and it is
+	  // the physical evidence that a new element started from zero.)
+	  const replayed = rp.events.filter(e => Number(e.opacity) < 0.9);
+	  if (replayed.length) {
+	    problems.push("路由实况四格读数在轮询里被整批重建并重播入场动画 " + replayed.length +
+	      " 次（issue #144）：重建节点的首采样 opacity=" +
+	      Array.from(new Set(replayed.map(e => e.opacity))).join("/") +
+	      "（numIn 的 from 值正是 .35），而四格文字是 " +
+	      JSON.stringify(Array.from(new Set(rp.events.map(e => e.text))).slice(0, 2).join(" / ")));
+	  }
+	  return problems.join(" || ");
+	})()`)
+	if err != nil {
+		return fmt.Errorf("read the route-live replay report: %w", err)
+	}
+	if strings.TrimSpace(report) != "" {
+		return fmt.Errorf("route-live poll replays: %s", strings.Join(strings.Split(report, " || "), " "))
+	}
+	// Back to the default view so the phases after this one see a stable page.
+	if _, err := page.Eval(ctx, `(() => { if (typeof go === "function") go("overview"); return true; })()`); err != nil {
+		return fmt.Errorf("leave the route-live view: %w", err)
 	}
 	return nil
 }
