@@ -34,6 +34,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"client2api/internal/browser"
 	"client2api/internal/core"
 	"client2api/internal/fingerprint"
 	"client2api/internal/smscap"
@@ -114,6 +115,17 @@ func New(deps core.Deps) (core.Client, error) {
 		if err := core.EnsureDir(deps.DataDir); err != nil {
 			deps.Log("raccoon: cannot create data dir %s: %v", deps.DataDir, err)
 		}
+	}
+	// The auto-login browser now reuses ONE persistent profile (issue #141).
+	// A forced process kill cannot run the browser's Close, so reclaim the
+	// space from profiles old enough to be nobody's live session at startup;
+	// the in-use scan keeps a second instance's browser from being deleted
+	// under it.  (The live profile itself is never stale: it is rewritten by
+	// every attempt, and only an old idle sibling would be swept.)
+	if removed, err := browser.CleanupStaleProfiles(raccoonLoginProfileRoot(deps.DataDir), 24*time.Hour, browser.ProfileInUse); err != nil {
+		deps.Log("raccoon: stale browser profile cleanup: %v", err)
+	} else if removed > 0 {
+		deps.Log("raccoon: reclaimed %d stale browser profile(s)", removed)
 	}
 	c.pool = newPool(
 		c.accountsPath,

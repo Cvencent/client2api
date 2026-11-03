@@ -129,7 +129,7 @@ Windows 上仍可 **导入 → 探测本机凭据** 读取已经登录的桌面�
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-当前版本：**0.6.7**。完整更新记录见 [CHANGELOG.md](../CHANGELOG.md)。
+当前版本：**0.6.8**。完整更新记录见 [CHANGELOG.md](../CHANGELOG.md)。
 
 ### 请求次数限额
 
@@ -905,7 +905,12 @@ WorkBuddy 提示词与指纹清洗，都在 **平台配置** 页里按平台/模
   显示“停用”，其余状态显示“恢复”或“启用”，不再把启用和恢复拆成两个容易点错的按钮。
 * “账号标识”记录登录手机号或邮箱，用来辨认账号和重登；它与“状态说明”不是同一列。
 * “重登”只在模块确实支持登录、且账号被标志为失效时出现，就地覆盖旧凭据；支持接码的
-  模块还会提供“接码重登”，但风控账号不会显示这个按钮。
+  模块还会提供“接码重登”，但风控账号不会显示这个按钮。小浣熊（raccoon）的接码自动登录
+  用**可见浏览器 + 固定 profile**：浏览器窗口有意不隐藏（无痕挑战在有头下才通过，issue #63），
+  profile 固定在 `data/raccoon/login-browser` 并跨尝试复用——厂商的设备画像靠积累状态建立信任，
+  每次新建一次性 profile 等于每次都是一台没历史的机器，会被直接拒绝（issue #141：官方客户端
+  连滑块都不弹，即「真实浏览器」能过，所以修指纹面而不是换出口）。首次尝试仍可能被拒——
+  分数要从某处开始涨——但进程启动时会清扫 24 小时以上的空闲旧 profile 回收空间。
 * 账号池默认每页 50 条，可切换 20 / 50 / 100 / 200；分页以账号分组为单位，多通道账号
   的头和所有通道不会被拆到两页。
 * 可按账号、状态、模型、优先级、余额、成功/失败、在途、用量、最近成功、到期等列排序；

@@ -54,6 +54,31 @@
 - `client2api-setup-0.5.73.exe`（空包，不含账号凭据或本机配置）
   SHA256: `EF4235020D68984FF57BCFBC0529DFB561609B257CFA1E6ACB0F10A54EE8486C`
 
+## [0.6.8] - 2026-11-03
+
+### Changed
+
+- **小浣熊接码自动登录改用固定浏览器 profile（#141 方向 1 按操作员定性收尾）**：
+  #141 的对照结论由操作员给出（评论区原话「他没有显式验证，你要用真实浏览器就行」）——
+  **官方客户端连滑块都不弹**，所以拒绝面是**自动化指纹被识别**，不是 IP/设备信誉被风控。
+  代码面上自动化与「能过的真浏览器」之间最直接的差距在 profile：`browser.Launch` 默认为
+  每次尝试 `os.MkdirTemp` 一个**全新** profile、`Close` 时整个删掉——对厂商的设备画像来说
+  每次都是一台没有历史的机器，而官方客户端带着积累的状态。现在 profile 固定在
+  `data/raccoon/login-browser`、跨尝试复用（`clients/raccoon/autologin.go` 的
+  `raccoonBrowserDriver{profileRoot: raccoonLoginProfileRoot(c.deps.DataDir)}`），让信任像
+  真浏览器那样积累；有头窗口不变（#63 的结论独立成立）。首次尝试仍可能被拒——分数要从
+  某处开始涨——但进程启动时会清扫 24 小时以上的空闲旧 profile 回收空间（照 workbuddy 的
+  既有先例，in-use 扫描保证不动正在用的那个）。看守测试
+  `clients/raccoon/autologin_profile_test.go`：Launch 必须带 `ProfileRoot` 且从数据目录派生、
+  生产路径必须接线、Launch 附近不得再出现 `MkdirTemp`；有头守卫改为不依赖 gofmt 对齐的
+  写法（多行构造后 `Headless: false` 变成 `Headless:    false`，旧判据会误报）。
+  回退 `ProfileRoot` 即红。
+
+### Installer
+
+- `client2api-setup-0.6.8.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `A8E6F852DD50D2DBC8FFDC15A1BA2F20D80AA5B05B31914E8654B67D2D44111F`
+
 ## [0.6.7] - 2026-11-03
 
 ### Fixed

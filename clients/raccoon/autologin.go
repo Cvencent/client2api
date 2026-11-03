@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -413,7 +414,10 @@ func (c *Client) autoLogin(ctx context.Context, job *raccoonAutoJob, req core.Au
 	job.setStep("browser")
 	driver := c.autoDriver
 	if driver == nil {
-		driver = raccoonBrowserDriver{}
+		// The persistent profile lives under the module's own data directory
+		// (issue #141): one fixed location the vendor's device history can
+		// learn across attempts, instead of a fresh throwaway every run.
+		driver = raccoonBrowserDriver{profileRoot: raccoonLoginProfileRoot(c.deps.DataDir)}
 	}
 	if err := driver.Drive(ctx, job.url, num.Phone, func(waitCtx context.Context) (string, error) {
 		job.setStep("sms")
@@ -485,9 +489,35 @@ func (c *Client) waitAutoSMSCode(ctx context.Context, job *raccoonAutoJob, opts 
 // shared CDP wrapper.  The page is ours, so every selector is stable by
 // construction; the Aliyun captcha runs inside the page exactly as it does
 // for a manual sign-in.
-type raccoonBrowserDriver struct{}
+//
+// raccoonBrowserProfileName is the fixed subdirectory under the raccoon data
+// directory where the auto-login browser keeps its profile.  One name, reused
+// across attempts (issue #141).
+const raccoonBrowserProfileName = "login-browser"
 
-func (raccoonBrowserDriver) Drive(ctx context.Context, url, phone string, waitCode func(context.Context) (string, error), logf func(string, ...any)) error {
+// raccoonBrowserDriver launches the visible browser with a PERSISTENT profile.
+type raccoonBrowserDriver struct {
+	// profileRoot is where the profile directory lives.  Nil-ish empty means
+	// "derive it from the working directory", which keeps a hand-built driver
+	// working; production wires the raccoon data directory in.
+	profileRoot string
+}
+
+// raccoonLoginProfileRoot is where the auto-login browser profile lives.  It is
+// deliberately NOT a throwaway (issue #141): a fresh os.MkdirTemp profile per
+// attempt is a device with no history every single time, and the operator's
+// ruling on the vendor's refusal is that the official client -- a real browser
+// with real, accumulated state -- sails through where the automation did not.
+// Keeping cookies, cache and the challenge's own device marks between attempts
+// is the closest a second browser gets to "the real browser that works".
+func raccoonLoginProfileRoot(dataDir string) string {
+	if strings.TrimSpace(dataDir) == "" {
+		return filepath.Join("run", "browser", raccoonBrowserProfileName)
+	}
+	return filepath.Join(dataDir, raccoonBrowserProfileName)
+}
+
+func (d raccoonBrowserDriver) Drive(ctx context.Context, url, phone string, waitCode func(context.Context) (string, error), logf func(string, ...any)) error {
 	if strings.TrimSpace(url) == "" {
 		return errors.New("the login page URL is empty")
 	}
@@ -503,7 +533,26 @@ func (raccoonBrowserDriver) Drive(ctx context.Context, url, phone string, waitCo
 	// visible window as "less likely to trip bot heuristics" for exactly this
 	// reason.  A machine with no desktop still gets an error rather than a
 	// silently-succeeding login that cannot work.
-	br, err := browser.Launch(ctx, browser.LaunchOpts{StartURL: url, Headless: false})
+	//
+	// The profile is persistent on purpose (issue #141).  Launch() builds a
+	// fresh throwaway profile per attempt, and the operator's side-by-side test
+	// settled the question the refusal left open: the official client -- a real
+	// browser with accumulated state -- is NOT even shown the slider, while
+	// this automation was refused twice in a row.  A profile that vanishes on
+	// Close is a device with no history every time; keeping it (cookies, cache,
+	// the challenge's own device marks) is what lets the score build up the way
+	// a real browser's does.  Attempt one may still be refused -- the score has
+	// to start somewhere -- but the refusal now costs a number only when it is
+	// genuinely fresh, not on every run for ever.
+	root := d.profileRoot
+	if strings.TrimSpace(root) == "" {
+		root = filepath.Join("run", "browser", raccoonBrowserProfileName)
+	}
+	br, err := browser.Launch(ctx, browser.LaunchOpts{
+		StartURL:    url,
+		Headless:    false,
+		ProfileRoot: root,
+	})
 	if err != nil {
 		return err
 	}

@@ -31,8 +31,16 @@ func TestAutoLoginRunsAVisibleBrowser(t *testing.T) {
 	if strings.Contains(src, "Headless: true") {
 		t.Fatal("自动登录又用 headless 浏览器：Aliyun 无痕验证在 headless 下 mint 的 token 被 vendor 拒收，每次都白烧一个接码号码（issue #63）")
 	}
-	if !strings.Contains(src, "Headless: false") {
+	// gofmt 会把结构体字面量的冒号对齐（v0.6.7 起 launch 是多行构造，变成
+	// "Headless:    false"），所以判据按字段名与值各查一次，不依赖对齐。
+	if !strings.Contains(src, "Headless:") || !strings.Contains(src, "false") {
 		t.Error("自动登录的浏览器不是显式有头：headless 是这条路的死因，必须显式写出来")
+	}
+	if i := strings.Index(src, "Headless:"); i >= 0 {
+		seg := src[i : i+40]
+		if !strings.Contains(seg, "false") {
+			t.Errorf("Headless 字段没有取 false：%q（headless 是这条路的死因，issue #63）", strings.TrimSpace(seg))
+		}
 	}
 	// 理由必须写在代码里，否则下一个人会为了「省事」改回去。
 	if !strings.Contains(src, "issue #63") {

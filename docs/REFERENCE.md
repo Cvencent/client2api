@@ -163,7 +163,7 @@ HTTP 429 endpoint outages, are classified as upstream failures.
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-Current version: **0.6.7**. Full history: [CHANGELOG.md](../CHANGELOG.md).
+Current version: **0.6.8**. Full history: [CHANGELOG.md](../CHANGELOG.md).
 
 ### Request-count limits
 
@@ -1664,7 +1664,7 @@ renderer never calls it either — so there is nothing honest to implement from.
 | lobsterai | yes | yes | yes — browser hand-off; the module returns the URL and watches for the credential it leaves behind | yes — a daily check-in action |
 | codearts | yes | no — the IDE plugin keeps no discoverable credential file | yes — the portal's own sign-in, driven as a pending session | yes — the daily check-in |
 | loomy | yes | no — nothing on disk holds a usable session | yes — one-click SMS login the module runs itself (`core.AutoLoginProvider` + `core.SMSProvider`): the panel rents a number, the module sends the code, reads it back and stores the 14-day session | yes — the first-login allowance |
-| raccoon | yes | yes | yes — loopback QR/SMS page with a stdlib QR encoder; WeChat scan or SMS, phone encrypted host-side | yes — `login-points`, the desktop login grant that extends the daily 300 credits; the vendor grants it to its own desktop app only, so a gateway call settles as "unavailable" |
+| raccoon | yes | yes | yes — loopback QR/SMS page with a stdlib QR encoder; WeChat scan or SMS, phone encrypted host-side. Auto-login runs a **visible** browser (the traceless challenge only passes headed) with a **persistent** profile under `data/raccoon/login-browser`: the vendor's device scoring builds trust from accumulated state, and a fresh throwaway profile per attempt reads as a historyless machine and is refused outright (issue #141) | yes — `login-points`, the desktop login grant that extends the daily 300 credits; the vendor grants it to its own desktop app only, so a gateway call settles as "unavailable" |
 | opencode | yes | yes — the `opencode` entry of `~/.local/share/opencode/auth.json`, plus every `*.json` in `<data_dir>/import/` | yes — two realms: anonymous free (`x-api-key: public`) and Console device-code OAuth | no — Zen has no check-in and no task API |
 | openrouter | yes | yes — `OPENROUTER_API_KEY`, the conventional credential files, an `env:NAME` reference, or a pasted key | yes — browser PKCE; the issued key is stored like a pasted one | no — the vendor has no check-in |
 | kilocode | yes | yes — API key, `KILO_API_KEY`, Kilo CLI/Desktop sign-in file, or the built-in anonymous credential | yes — device authorisation; API keys and anonymous free access are also supported | no — no check-in, balance, or task API |
