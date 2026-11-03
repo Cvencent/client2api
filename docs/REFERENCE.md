@@ -163,7 +163,7 @@ HTTP 429 endpoint outages, are classified as upstream failures.
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-Current version: **0.6.6**. Full history: [CHANGELOG.md](../CHANGELOG.md).
+Current version: **0.6.7**. Full history: [CHANGELOG.md](../CHANGELOG.md).
 
 ### Request-count limits
 
@@ -1633,7 +1633,11 @@ bursting only seconds apart, so pace is treated as part of the protocol.
 The board remembers each account's last task list in
 `data/panel/task_board_cache.json`. Reopening the board renders that cache and
 only fetches accounts with no entry; **Refresh task state** forces a fresh
-platform scan. An account card turns green once it has no actionable automated
+platform scan. **One scan writes the file once**: the per-account reads update
+memory only, and the whole document lands on disk when the scan completes --
+the same refresh used to rewrite the file once per account, which measured
+30-72 MB of disk writes for a 55-account board whose task lists had not
+changed by a single byte (issue #145). An account card turns green once it has no actionable automated
 chore left (everything claimed, or only human/locked entries remain).
 
 Four modules publish a board: `workbuddy` (the reference's whole growth centre),

@@ -16420,10 +16420,9 @@ async function renderClients() {
   // 与 refreshAll 的短路同口径（issue #93）：OVER_FULL 为真时 overview 已经
   // 带回了每个模块的完整账号清单，再全量 fan-out 一轮 /accounts 是把同一份
   // 字节下载第二遍。需要强制重读走头上的「重新探测」或顶栏刷新的 loud 路径。
-  if (!OVER_FULL) await loadAllAccounts();
-  // 与 refreshAll 的短路同口径（issue #93）：OVER_FULL 为真时 overview 已经
-  // 带回了每个模块的完整账号清单，再全量 fan-out 一轮 /accounts 是把同一份
-  // 字节下载第二遍。需要强制重读走顶栏刷新的 loud 路径。
+  // 这一段在 #93（3960f37）与 #107（f8de75b）里各写了一次（issue #146）——
+  // 回退路径下每个模块的账号被读两轮，而守卫只认「出现过」，拦不住这种
+  // 两笔修复各自追加的重复，所以下面的看守钉的是「恰好一次」。
   if (!OVER_FULL) await loadAllAccounts();
   // 能力清单的列序和旧表头一致：管理 → 导入 → 登录 → 接码 → 自动添加 → 签到 → 刷新。
   const CAPS = [

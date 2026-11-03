@@ -129,7 +129,7 @@ Windows 上仍可 **导入 → 探测本机凭据** 读取已经登录的桌面�
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-当前版本：**0.6.6**。完整更新记录见 [CHANGELOG.md](../CHANGELOG.md)。
+当前版本：**0.6.7**。完整更新记录见 [CHANGELOG.md](../CHANGELOG.md)。
 
 ### 请求次数限额
 
@@ -954,7 +954,9 @@ WorkBuddy 提示词与指纹清洗，都在 **平台配置** 页里按平台/模
   避免多个新手任务在过短时间内完成。
 * 任务看板会把每个账号最近一次任务列表写入 `data/panel/task_board_cache.json`。
   再次打开时直接显示缓存，只有新账号才会主动向平台拉取；点“刷新任务状态”可强制重新拉取
-  当前平台的全部账号或当前选中账号。某个账号已经没有可自动执行的待办（全部完成，
+  当前平台的全部账号或当前选中账号。**一轮扫描只写一次盘**：逐账号的读取只更新内存，
+  整份文档在扫描收口时落一次盘（此前是每问一个账号就整份重写一遍——55 个账号的强制重读
+  实测写 30~72 MB，而任务内容一个字节都没变，issue #145）。某个账号已经没有可自动执行的待办（全部完成，
   或只剩需人工/未解锁项）时，账号卡片会变绿。
 
 用量：

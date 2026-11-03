@@ -29,12 +29,17 @@ func TestTaskBoardCacheConcurrentWritesLeaveAReadableFile(t *testing.T) {
 	cache := newTaskBoardCache(path)
 
 	var wg sync.WaitGroup
-	// Writers: every account gets its task list, all at once.
+	// Writers: every account gets its task list, all at once, through putBatch
+	// -- the API the board's scan loop uses (issue #145).  put() itself no
+	// longer persists: per-account writes used to rewrite the whole document N
+	// times per scan, so the flush belongs to whoever knows a scan is over.
+	// The serialised persistMu is exactly what this test exercises: N
+	// concurrent putBatch calls still land every account in the file.
 	for i := range accounts {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			cache.put("wb", "a"+strconv.Itoa(i), []core.TaskInfo{{
+			cache.putBatch("wb", "a"+strconv.Itoa(i), []core.TaskInfo{{
 				Code:    "task-" + strconv.Itoa(i),
 				Title:   "Task " + strconv.Itoa(i),
 				Group:   "PC",

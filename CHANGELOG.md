@@ -54,6 +54,43 @@
 - `client2api-setup-0.5.73.exe`（空包，不含账号凭据或本机配置）
   SHA256: `EF4235020D68984FF57BCFBC0529DFB561609B257CFA1E6ACB0F10A54EE8486C`
 
+## [0.6.7] - 2026-11-03
+
+### Fixed
+
+- **任务看板缓存按账号整份重写：一次 55 账号的强制重读写 30~72 MB，而 55 条内容一条未变
+  （#145）**：`internal/panel/taskboardcache.go` 的 `put()` 每次调用末尾直接 `persist()`——
+  整份文档 `json.MarshalIndent` + `core.WriteFileAtomic`（Sync + rename）——而
+  `internal/panel/taskboard.go` 的扫描循环是**逐账号**调 `put()` 的，两者相乘：N 个账号 =
+  N 次整份重写。写盘量与「这一轮真正变了多少」完全脱钩（报告方实测：55 账号 `refresh=1`
+  写 55 遍、逐字节 diff 仅 282 B 且全部来自 `fetched_at` 时间戳；同一份种子去掉
+  `refresh=1` 则是 0 次写入——问题在**写入时机**而不是缓存本身）。
+  现在逐账号的 `put()` 只更新内存，整份文档由**知道扫描结束的调用方**落一次盘：
+  批量扫描在 `wg.Wait()` 后 `persist()` 一次（`taskboard.go`），单账号路由自己收口
+  （无批量可等）；并发写仍由 `persistMu` 串行、`WriteFileAtomic` 每次独立临时名，
+  原有的「盘上文件永远完整、读者不阻塞在 I/O 上」两条性质不变。
+  看守测试（`internal/panel/taskboardcache_writeonce_test.go`）：**行为判据**——
+  `put()` 之后盘上不得已有缓存文件、扫描收口后数据必须完整可读（单账号路由同理）；
+  **文本判据**——`put()` 的代码（剥注释后）里不得再出现 `persist`（不剥就会被它自己
+  那条「这里没有 persist」的解释性注释判红，#139 的第一版测试正是栽在这一点）。
+  另一处反向判据：删掉扫描收口的 `persist()` 即红（数据丢失那一半）。
+  两处都验过。
+- **客户端页的账号短路被写了两遍：回退路径下每个模块的账号被读两轮（#146）**：
+  `internal/panel/index.html` 的 `renderClients()` 开头，「注释 +
+  `if (!OVER_FULL) await loadAllAccounts();`」逐字出现了两份——`3960f37`（#93 原始修复）
+  与 `f8de75b`（#107）各写了一次，#107 那笔把它当新代码追加。回退路径
+  （overview 不可用、`OVER_FULL=false`）下进客户端页会把每个模块的账号整整读两遍
+  （报告方实测：切页 42 次 `/accounts` 请求、每模块恰好 2 次；「重新探测」63 次、
+  每模块 3 次；`OVER_FULL=true` 的正常路径为 0 次、行为正确）。现在删掉重复的那份
+  （保留说明更完整的一条），并把 #93 的看守测试从 `strings.Contains`（「出现过」）
+  升级为**恰好一次**（剥注释后计数）——正是原来那条弱判据放过了这个重复，
+  只断言存在等于给第三次追加开绿灯。两向验证：重新追加重复即红、整句删除也红。
+
+### Installer
+
+- `client2api-setup-0.6.7.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `0630FAD57707A889CD9133B5B772EF52747D5E4E6748729948A7DF1FBC544553`
+
 ## [0.6.6] - 2026-11-03
 
 ### Fixed

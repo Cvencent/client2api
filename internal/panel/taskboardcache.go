@@ -121,7 +121,21 @@ func (c *taskBoardCache) put(client, id string, tasks []core.TaskInfo, err error
 	}
 	byID[id] = e
 	c.mu.Unlock()
+	// No persist() here (issue #145).  put() runs once per ACCOUNT inside the
+	// board's scan loop, and persist() rewrites the WHOLE document, so a
+	// 55-account forced refresh used to serialise and rename the same file 55
+	// times -- measured at 30-72 MB of disk writes with every task list
+	// byte-identical to what was already stored, the only changing field being
+	// the 13-digit fetched_at stamp.  The write belongs to the caller that
+	// knows a scan is over: putBatch below, or a plain persist() for the
+	// single-account routes.
+}
 
+// putBatch records one entry like put and then persists ONCE.  It is what the
+// board's per-account scan loop uses, so N accounts cost one disk write, not N
+// (issue #145).
+func (c *taskBoardCache) putBatch(client, id string, tasks []core.TaskInfo, err error) {
+	c.put(client, id, tasks, err)
 	c.persist()
 }
 

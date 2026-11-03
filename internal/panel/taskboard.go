@@ -232,8 +232,16 @@ func (p *panel) taskList(w http.ResponseWriter, r *http.Request, c core.Client) 
 		// did produce the last good list, serving it with cached=true and a
 		// note beats a red page — the board renders exactly what the vendor
 		// answered last time and says so.
+		if p != nil && p.taskBoardCache != nil {
+			p.taskBoardCache.persist()
+		}
 		writeErr(w, http.StatusBadGateway, err.Error())
 		return
+	}
+	// One request, one account: there is no batch to end, so the cache flush
+	// happens here (issue #145 -- put() no longer persists on its own).
+	if p != nil && p.taskBoardCache != nil {
+		p.taskBoardCache.persist()
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"client":     c.Name(),
@@ -338,6 +346,13 @@ func (p *panel) taskListAll(w http.ResponseWriter, r *http.Request, c core.Clien
 		})
 	}
 	wg.Wait()
+	// One disk write for the whole scan (issue #145): the per-account reads
+	// above only updated memory, so a 55-account forced refresh now costs one
+	// serialise-and-rename instead of 55 -- measured at 30-72 MB with every
+	// task list identical to what was already stored.
+	if p != nil && p.taskBoardCache != nil {
+		p.taskBoardCache.persist()
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"client": c.Name(), "accounts": rows})
 }
 
@@ -374,6 +389,7 @@ func (p *panel) taskBoardTasks(ctx context.Context, client string, tp core.TaskP
 				return append([]core.TaskInfo(nil), e.Tasks...), true, e.FetchedAt, err
 			}
 			p.taskBoardCache.put(client, accountID, nil, err)
+			return nil, false, time.Now().UnixMilli(), err
 		}
 		return nil, false, time.Now().UnixMilli(), err
 	}
@@ -383,6 +399,12 @@ func (p *panel) taskBoardTasks(ctx context.Context, client string, tp core.TaskP
 	}
 	return tasks, false, time.Now().UnixMilli(), nil
 }
+
+// taskBoardPersist flushes the task-board cache to disk once for a finished
+// scan.  The per-account reads record through put() (memory only, issue #145):
+// the scan is the N-writes path, and one write at the end costs the same
+// durability for one Nth of the I/O.  A single-account request has no batch to
+// end, so its caller persists right away.
 
 // taskRun answers POST <base>/tasks/<code>/run.  It starts the chore and
 // returns immediately with the run id the caller polls.
