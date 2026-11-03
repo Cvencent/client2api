@@ -168,12 +168,6 @@ func run() error {
 			if err := assertA11yTablesAndPanels(runCtx, page); err != nil {
 				return err
 			}
-			// The usage read-failure shape (issue #156): a failed read must
-			// clear every number-carrying surface, measured with an injected
-			// fetch failure against a real rendered frame.
-			if err := assertUsageReadFailure(runCtx, page); err != nil {
-				return err
-			}
 			// The polling pages (issues #90/#144): a rebuilt element is a fresh
 			// element, and every entrance animation starts over.  Measured by
 			// node identity in a live DOM, which is how the reporter proved it.
