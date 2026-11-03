@@ -6,6 +6,38 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.3] - 2026-11-04
+
+### Fixed
+
+- **出站 `Retry-After` 写真实剩余冷却时间，不再写常数（#155）**：30 分钟配额
+  冷却回「1 秒后重试」+ 紧接着 503 回「30 秒」，与正文里的 `until` 自相矛盾，
+  遵守该头的客户端会被骗进整个冷却期的重试风暴。带冷却时刻的错误（中转站的
+  `coolingError`）现在实现 `core.RetryAfterHint`，网关把**真实剩余秒数**写进头
+  （向上取整），头与正文说同一件事；普通背压（在途上限，已知且短）保留历史上的
+  1 秒；**503「平台耗尽」不再带头**——30 秒是内部跳过顺序的记账，不是调用方
+  该等的时长，缺省比一个错的短值安全（`internal/gateway/server.go` 的
+  `writeUpstreamError`）。看守：`internal/gateway/retryafter_hint_test.go`
+  （429 头落在真实剩余区间、503 无头）+ `clients/openaicompat/cooling_retryafter_test.go`
+  （多把钥匙取最早解封、过期/无时刻/nil 均为 0）。
+- **三个入口对不认识的内容块 400 并点名类型（#154）**：`parseContent`
+  （Chat）、`parseResponsesContent`（Responses）、`decodeAnthropicContent`
+  （Anthropic）原本把 `input_audio`/`file`/`document` 静默丢掉——带音频的
+  请求变成「问了个空」回 200，Anthropic 的 document turn 死在更外层的误导性
+  「messages must not be empty」。现在各自在 default 分支拒绝并报
+  `unsupported content part type "X" at index N`。**上游合法消费的类型不误伤**：
+  Anthropic 的 thinking/tool_use/tool_result（由 translateAnthropicMessage
+  从原始块消费）、agent 信封的 encrypted_content（按既有契约替换为
+  「[encrypted agent payload omitted]」）、Responses 的 input_text（重写为
+  text）。看守 `internal/gateway/content_part_reject_test.go`：三条协议各
+  一条拒绝 + 类型点名 + 上游零接触，另有一条「合法组合仍通过」钉白名单
+  没有收紧过头。
+
+### Installer
+
+- `client2api-setup-0.7.3.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `C50C0BDE68242CF95321762BF630D39E873336C64EBCA7E39CA258FF0B677D7F`
+
 ## [0.7.2] - 2026-11-04
 
 ### Fixed
