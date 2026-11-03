@@ -49,15 +49,22 @@ func assertUsageReadFailure(ctx context.Context, page *browser.Page) error {
 	})()`); err != nil {
 		return fmt.Errorf("inject the usage failure: %w", err)
 	}
-	// Let the failed render settle: wait for the error hint to land.  The
-	// hint text is "获取失败：" + r.err, and a rejected fetch names itself.
+	// Let the failed render settle.  The hint text is "获取失败：" + r.err;
+	// a rejected fetch names itself, but CI's error wording has varied, so
+	// the wait only demands the note stop describing a healthy window
+	// ("窗口…" / "全部保留记录") -- any other text means the failure branch
+	// ran.  Settling is async (renderUsage awaits the failing fetch), hence
+	// the generous window.
 	if ok, err := page.WaitFor(ctx,
-		`(() => { const n = document.querySelector("#usNote"); return !!(n && n.textContent && n.textContent.length > 0 && n.textContent.indexOf("实时读取") < 0 && n.textContent.indexOf("窗口") < 0); })()`,
-		10*time.Second); err != nil {
+		`(() => { const n = document.querySelector("#usNote"); if (!n) return false;
+		  const t = n.textContent || "";
+		  return t.length > 0 && t.indexOf("实时读取") < 0 && t.indexOf("窗口") < 0 && t.indexOf("全部保留记录") < 0; })()`,
+		30*time.Second); err != nil {
 		return fmt.Errorf("wait for the failed render: %w", err)
 	} else if !ok {
-		return fmt.Errorf("the failed render never surfaced its error hint")
+		return fmt.Errorf("the failed render never surfaced its error hint (the failure branch must write a non-success note into #usNote, issue #156)")
 	}
+
 	report, err := page.EvalString(ctx, `(() => {
 	  const problems = [];
 	  const rows = id => document.getElementById(id) ? document.getElementById(id).children.length : -1;
