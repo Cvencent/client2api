@@ -54,6 +54,48 @@
 - `client2api-setup-0.5.73.exe`（空包，不含账号凭据或本机配置）
   SHA256: `EF4235020D68984FF57BCFBC0529DFB561609B257CFA1E6ACB0F10A54EE8486C`
 
+## [0.5.99] - 2026-11-03
+
+### Fixed
+
+- **JS 语法门禁只守住了两份内嵌 HTML 里的一份（#128）**：`internal/panel/` 下有**两份**会被 `go:embed`
+  打进二进制、且浏览器会执行内联 JS 的文档——`index.html`（面板外壳）与 `captcha.html`（厂商验证码页，
+  由外壳用同源 iframe 加载）。而门禁两处都把文件名**写死成 `index.html`**
+  （`panel_script_syntax_test.go` 的 `poolStatsUISource` + CI 的 `node -e`），于是 `captcha.html` 的脚本
+  改坏后**五道门禁全绿**（报告方实测），浏览器里却是 `Unexpected token` → 验证码页的 `report()` 永不调用
+  → 外壳的 `capSettle` 永不触发 → 遮罩一直挂在「正在向厂商申请验证…」，除取消外无出路。
+  现在三层一起补：
+  - **`go test`**：`embeddedHTMLDocs`（index.html + captcha.html）取代写死的文件名，逐个文档做
+    `node --check`；另加 `TestTheGateCoversEveryEmbeddedHTMLDocument` —— 列表**不得少于 2**、
+    每个名字必须真有对应的 `//go:embed` 指令（防「删一个名字把守卫悄悄缩小」，与 #116 同型）。
+  - **CI 的 `node` 步骤**同样改成遍历两份，并保留 `docs.length < 2` 的兜底。
+  - **`cmd/panelsmoke` 的真浏览器阶段**新增 `assertCaptchaDocs`：在同一浏览器会话里按外壳的方式打开
+    `/panel/captcha?scene_id=…`，断言文档脚本跑到了 `window.AliyunCaptchaConfig` 且**无未捕获错误**。
+    判据刻意只针对**文档本身**、不依赖厂商 SDK 可达（离线构建机不该因为连不上 alicdn 而红）。
+  - **实测**：把报告里那处多余右花括号注入 `captcha.html` 后，三层**分别都拦下了**（原来五道全绿）。
+- **依赖层没有任何信号源：`go.mod` 自首次公开提交起从未更新（#129）**：`git log -- go.mod` 只有首次公开
+  提交碰过，此后 366 个提交未动；`.github/` 下无 `dependabot.yml`，全仓 grep `govulncheck` **零命中**。
+  本轮用官方工具复核（`govulncheck` 从本地模块缓存现装）：当前树 **10 条符号级可达**公告，其中
+  **5 条在 `golang.org/x/net@v0.59.0`**（HTTP/2 服务端/传输层，修复于 v0.60.0），`rc=3`。
+  - **CI 新增 `govulncheck` 步骤**（进 `test` job）。**故意设成不阻塞**（`continue-on-error`）：这棵树在
+    本机**修不了**（模块代理不可达、本地缓存只有 go.mod 里的版本），设成 `exit 1` 会让此后每次发版都红在
+    一个已知且已登记的问题上——门禁被绕过通常就是这么开始的。它把结果写进 step summary 并打 warning，
+    依赖一升级即可翻成阻塞（正是 #129 建议的顺序）。
+  - **新增 `.github/dependabot.yml`**：`gomod` + `github-actions`，周更、按 `golang.org/x/*` /
+    `compress` 系列分组，让补丁自己开 PR。
+  - **依赖版本本身未动**（下面「已知边界」）。
+
+### Known limitations
+
+- `#129` 的**依赖升级**本轮**未做**：构建环境无网络到 Go module proxy，本地缓存只有当前版本，
+  `go get` 不可行。已修的是「让漂移可见」的两条机制（govulncheck 报告 + dependabot），
+  以及本机复核证据（10 条可达、5 条在 `x/net@v0.59.0`）。升级需要一台能访问模块代理的机器。
+
+### Installer
+
+- `client2api-setup-0.5.99.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `5A25CE5D1B67500FFF61FD8EAA4A487117E0208F74E09FDE32F6ED60FD4B902A`
+
 ## [0.5.98] - 2026-11-03
 
 ### Fixed

@@ -74,4 +74,16 @@ func TestTheGateMeasuresLayoutNotJustBoot(t *testing.T) {
 	if !strings.Contains(layout, "problems.join") || !strings.Contains(layout, "getBoundingClientRect") {
 		t.Error("几何断言没有把每个元素的具体数值带进失败信息")
 	}
+
+	// The captcha document phase is called from the attempt closure (it needs the
+	// base URL), so it is not inside assertLayout's body.  It must still be on the
+	// gate path: captcha.html is a second go:embed'ed document with its own inline
+	// script, and a break there left every gate green while the overlay hung
+	// forever (issue #128).
+	if !strings.Contains(src, "assertCaptchaDocs(runCtx, page, base)") {
+		t.Error("验证码文档没有进真浏览器阶段：它是独立的 go:embed 文档，坏了五道门禁全绿（issue #128）")
+	}
+	if !strings.Contains(src, "func assertCaptchaDocs(") {
+		t.Error("没有 assertCaptchaDocs 实现")
+	}
 }

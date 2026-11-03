@@ -1,0 +1,42 @@
+# Dependencies had never been touched: go.mod's only change was the initial
+# public release, and nothing watched it (issue #129: 11 modules, 5 reachable
+# x/net advisories, no signal anywhere).  Weekly grouped updates keep the drift
+# visible without flooding the tracker.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 5
+    groups:
+      # Security-relevant families first: x/net carries the HTTP/2 advisories,
+      # x/crypto and klauspost/compress the rest.
+      go-x:
+        patterns:
+          - "golang.org/x/*"
+      compress:
+        patterns:
+          - "github.com/klauspost/compress"
+          - "github.com/andybalholm/brotli"
+      other:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "golang.org/x/*"
+          - "github.com/klauspost/compress"
+          - "github.com/andybalholm/brotli"
+
+  # Keep the pipeline's own actions current too: a stale action is the same
+  # class of silent drift.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 5

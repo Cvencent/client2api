@@ -137,7 +137,14 @@ func run() error {
 			// out.  A clipped header, an arrow covered by the next column or an
 			// invisible primary button all ship today because nothing measures
 			// anything.
-			return assertLayout(runCtx, page)
+			if err := assertLayout(runCtx, page); err != nil {
+				return err
+			}
+			// The captcha document is a separate go:embed'ed page with its own
+			// inline script, and until issue #128 nothing executed it: a parse
+			// error there left every gate green while the overlay hung on
+			// "正在向厂商申请验证…" forever.
+			return assertCaptchaDocs(runCtx, page, base)
 		}()
 		if attemptErr != nil {
 			problems = append(problems, fmt.Sprintf("%s: %v", browser, attemptErr))
@@ -483,6 +490,55 @@ func assertLayout(ctx context.Context, page *browser.Page) error {
 	}
 	if strings.TrimSpace(report) != "" {
 		return fmt.Errorf("layout regression:\n  %s", strings.Join(strings.Split(report, " || "), "\n  "))
+	}
+	return nil
+}
+
+// assertCaptchaDocs opens the captcha document in the same browser session and
+// checks that its own script ran to completion (issue #128).
+//
+// It asserts the DOCUMENT, not the vendor: an offline build machine cannot reach
+// alicdn, and that is not this repository's failure.  What must never happen is
+// an uncaught error in the page's own script -- the shape a stray brace produces,
+// which is what left the overlay stuck with no way out.
+func assertCaptchaDocs(ctx context.Context, page *browser.Page, base string) error {
+	if page == nil {
+		return nil
+	}
+	// Collect page errors BEFORE navigating, so a parse failure is caught even
+	// though it aborts the script before any of our own markers are set.
+	if _, err := page.Eval(ctx, `(() => {
+	  window.__c2aErrors = [];
+	  window.addEventListener("error", e => window.__c2aErrors.push(String(e.message || e)));
+	  return true;
+	})()`); err != nil {
+		return fmt.Errorf("arm the captcha error listener: %w", err)
+	}
+	// Navigate the way the shell does: runCaptcha() always passes scene_id (and
+	// the document bails out early without it -- before the line that would prove
+	// the script ran), so a bare /panel/captcha would fail this check on a
+	// perfectly good build.
+	if err := page.Navigate(ctx, base+"/panel/captcha?scene_id=selftest&action=claim&region=cn&prefix=selftest"); err != nil {
+		return fmt.Errorf("open the captcha document: %w", err)
+	}
+	// The document's script runs inside an IIFE, so its helpers are not on
+	// window; what it DOES publish is AliyunCaptchaConfig, set at the top of the
+	// script before any vendor work.  Its presence means the script executed
+	// past the point a stray brace would kill it.
+	if ok, err := page.WaitFor(ctx,
+		`(() => document.readyState !== "loading" && typeof window.AliyunCaptchaConfig === "object" && window.AliyunCaptchaConfig !== null)()`,
+		10*time.Second); err != nil {
+		return fmt.Errorf("wait for the captcha script: %w", err)
+	} else if !ok {
+		return fmt.Errorf("captcha document did not finish loading: its inline script probably " +
+			"did not run (issue #128)")
+	}
+	errs, err := page.EvalString(ctx, `(() => (window.__c2aErrors || []).join(" | "))()`)
+	if err != nil {
+		return fmt.Errorf("read the captcha page errors: %w", err)
+	}
+	if strings.TrimSpace(errs) != "" {
+		return fmt.Errorf("captcha document raised an uncaught error: %s (issue #128)", errs)
 	}
 	return nil
 }

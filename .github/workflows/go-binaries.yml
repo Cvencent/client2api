@@ -53,7 +53,24 @@ jobs:
           fi
       - name: panel JS syntax
         run: |
-          node -e 'const fs=require("fs"),vm=require("vm");const html=fs.readFileSync("internal/panel/index.html","utf8");const m=html.match(/<script>([\s\S]*?)<\/script>/);if(!m)throw new Error("panel: inline script not found");new vm.Script(m[1],{filename:"internal/panel/index.html"});console.log("panel JS syntax OK")'
+          # Every embedded HTML document that runs inline JS, not one hardcoded
+          # name: index.html is the shell and captcha.html is the vendor captcha
+          # page loaded in an iframe.  Only checking the first left the second
+          # outside every gate (issue #128).  internal/panel's
+          # panel_script_syntax_test.go checks the same list in go test.
+          node -e '
+            const fs = require("fs"), vm = require("vm");
+            const docs = ["internal/panel/index.html", "internal/panel/captcha.html"];
+            if (docs.length < 2) throw new Error("panel: the document list shrank to " + docs.length);
+            for (const doc of docs) {
+              const html = fs.readFileSync(doc, "utf8");
+              const blocks = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)]
+                .map(m => m[1]).filter(b => b.trim() !== "");
+              if (!blocks.length) throw new Error(doc + ": no inline script block found");
+              blocks.forEach((b, i) => new vm.Script(b, { filename: doc + "#" + i }));
+            }
+            console.log("panel JS syntax OK (" + docs.length + " documents)");
+          '
 
       # 门禁升级：上面的 node 检查只看那段文本，服务端也照样 200，0.1.5 的
       # 死面板就是钻了这个空子。这里真的起网关 + 无头浏览器打开 /panel/，
@@ -63,6 +80,38 @@ jobs:
           go build -o /tmp/client2api ./cmd/client2api
           go build -o /tmp/panelsmoke ./cmd/panelsmoke
           /tmp/panelsmoke -exe /tmp/client2api
+
+      # 依赖层的信号源。go.mod 自首次公开提交起从未变过，而门禁没有任何一步看依赖
+      # （issue #129：11 个模块、5 条可达的 x/net 公告，零提醒）。
+      #
+      # 这一步**故意不挡**：当前树里的可达公告在这台机器上修不了（模块代理不可达，
+      # 本地缓存只有 go.mod 里的版本），一旦 exit 1 就会让此后每次发版都红在一个已知
+      # 且已登记的问题上——门禁被绕过往往就是这么开始的。所以它只报：注解到本次运行，
+      # 并把结果写进 step summary。依赖一升上去，即可改成阻塞（issue #129 建议的顺序）。
+      - name: govulncheck (report only)
+        continue-on-error: true
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          set +e
+          "$(go env GOPATH)/bin/govulncheck" ./... > /tmp/govulncheck.txt 2>&1
+          rc=$?
+          set -e
+          {
+            echo '### govulncheck (report only, issue #129)'
+            echo ''
+            echo "exit code: ${rc} (3 = symbol-reachable vulnerabilities found)"
+            echo ''
+            echo '```'
+            tail -40 /tmp/govulncheck.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$rc" = "3" ]; then
+            n=$(grep -c '^Vulnerability #' /tmp/govulncheck.txt || true)
+            echo "::warning::govulncheck: ${n} symbol-reachable vulnerability(ies) in this tree; see the job summary (issue #129)"
+          elif [ "$rc" != "0" ]; then
+            echo "::warning::govulncheck did not complete cleanly (exit ${rc}); see the job summary"
+          fi
+          cat /tmp/govulncheck.txt
 
       - name: go vet
         run: go vet ./...
