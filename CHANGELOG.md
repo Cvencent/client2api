@@ -6,6 +6,27 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.23] - 2026-11-05
+
+### Fixed
+
+- **raccoon 自动登录的「持久 profile」这次真的持久（#183，#141 的未竟修复）**：
+  v0.6.8 只改了半截——raccoon 侧把 `ProfileRoot` 指到 `data/raccoon/login-browser`，
+  但 `browser.Launch` 每次 `os.MkdirTemp` 造全新 profile、`Close` 时整个删掉：
+  「固定目录」只是固定了一次性目录的父亲，`login-browser` 始终为空，「积累
+  历史 → 挑战分养起来」从未生效（三次会话四号码全灭正是无历史设备的预期）。
+  现在 `LaunchOpts.Profile` 直接作为 `--user-data-dir` 且 `Close` 不删除；
+  启动前清掉上一轮的 `DevToolsActivePort`（残留端口文件会让第二次启动去拨
+  一个没人监听的旧端口）。raccoon 改传 `Profile`。只传 `ProfileRoot` 的旧
+  调用方行为不变（MkdirTemp+删除）。回归钉：源码契约钉 + 本机真浏览器双
+  Launch（第二次读到第一次留下的文件、Close 后目录仍在）；raccoon 旧钉升级
+  为「必须 Profile、不许再退回 ProfileRoot」。
+
+### Installer
+
+- `client2api-setup-0.7.23.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `e58e7b635721653555678b0c2140c842b861cbce2e4dc53a36a13f42d082f989`
+
 ## [0.7.22] - 2026-11-04
 
 ### Fixed

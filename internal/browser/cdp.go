@@ -50,6 +50,15 @@ type LaunchOpts struct {
 	// ProfileRoot is where the throwaway profile directory is created.  Empty
 	// means "run/browser" under the process working directory.
 	ProfileRoot string
+	// Profile is a persistent profile directory used verbatim as
+	// --user-data-dir.  It is the opposite contract of ProfileRoot: nothing is
+	// created per launch and Close does not remove it, so cookies, cache and
+	// challenge device marks survive between launches (issue #183 -- the
+	// raccoon auto-login's "device with no history every time" was exactly a
+	// ProfileRoot pointing at a fixed parent of throwaways).  Profile wins
+	// when both are set; callers that only set ProfileRoot keep the old
+	// create-and-remove behaviour unchanged.
+	Profile string
 	// Headless runs without a visible window.  A visible window is easier to
 	// debug and less likely to trip bot heuristics, but needs a desktop.
 	Headless bool
@@ -68,7 +77,10 @@ type Browser struct {
 	port    string
 	page    *Page
 	exe     string
-	once    sync.Once
+	// persistent marks a Profile launch: Close must leave the directory in
+	// place (issue #183).
+	persistent bool
+	once       sync.Once
 }
 
 // Page is a single attached tab.  Commands are addressed to the tab through a
@@ -163,19 +175,38 @@ func Launch(ctx context.Context, opts LaunchOpts) (*Browser, error) {
 	if timeout <= 0 {
 		timeout = DefaultLaunchTimeout
 	}
-	root := strings.TrimSpace(opts.ProfileRoot)
-	if root == "" {
-		root = filepath.Join("run", "browser")
-	}
-	if abs, err := filepath.Abs(root); err == nil {
-		root = abs
-	}
-	if err := os.MkdirAll(root, 0o755); err != nil {
-		return nil, fmt.Errorf("create the browser profile root %q: %w", root, err)
-	}
-	profile, err := os.MkdirTemp(root, "prof-")
-	if err != nil {
-		return nil, fmt.Errorf("create a browser profile: %w", err)
+	var profile string
+	if persistent := strings.TrimSpace(opts.Profile); persistent != "" {
+		// A persistent profile is used as-is: it must exist (Chromium creates
+		// its own files inside) and Close leaves it in place.
+		if abs, err := filepath.Abs(persistent); err == nil {
+			persistent = abs
+		}
+		if err := os.MkdirAll(persistent, 0o755); err != nil {
+			return nil, fmt.Errorf("create the persistent browser profile %q: %w", persistent, err)
+		}
+		// The port file from the previous run names a port nothing is
+		// listening on any more (and on Windows the previous processes may
+		// take a moment to die).  Remove it so waitForDevToolsPort waits for
+		// THIS launch's port instead of dialing the stale one.
+		_ = os.Remove(filepath.Join(persistent, "DevToolsActivePort"))
+		profile = persistent
+	} else {
+		root := strings.TrimSpace(opts.ProfileRoot)
+		if root == "" {
+			root = filepath.Join("run", "browser")
+		}
+		if abs, err := filepath.Abs(root); err == nil {
+			root = abs
+		}
+		if err := os.MkdirAll(root, 0o755); err != nil {
+			return nil, fmt.Errorf("create the browser profile root %q: %w", root, err)
+		}
+		p, err := os.MkdirTemp(root, "prof-")
+		if err != nil {
+			return nil, fmt.Errorf("create a browser profile: %w", err)
+		}
+		profile = p
 	}
 
 	args := []string{
@@ -214,7 +245,7 @@ func Launch(ctx context.Context, opts LaunchOpts) (*Browser, error) {
 		return nil, fmt.Errorf("start the browser: %w", err)
 	}
 
-	b := &Browser{cmd: cmd, profile: profile, exe: exe}
+	b := &Browser{cmd: cmd, profile: profile, exe: exe, persistent: strings.TrimSpace(opts.Profile) != ""}
 	cleanupOnErr := func(err error) (*Browser, error) {
 		b.Close()
 		return nil, err
@@ -256,8 +287,9 @@ func (b *Browser) Page() *Page { return b.page }
 // ExecPath reports which binary was driven, for the operator's log.
 func (b *Browser) ExecPath() string { return b.exe }
 
-// Close kills the browser and removes its throwaway profile.  It is safe to
-// call more than once.
+// Close kills the browser.  A throwaway profile is removed with it; a
+// persistent one (LaunchOpts.Profile) is kept -- that is the whole point of
+// the field (issue #183).  Safe to call more than once.
 func (b *Browser) Close() {
 	b.once.Do(func() {
 		if b.page != nil {
@@ -266,6 +298,9 @@ func (b *Browser) Close() {
 		if b.cmd != nil && b.cmd.Process != nil {
 			_ = b.cmd.Process.Kill()
 			_, _ = b.cmd.Process.Wait()
+		}
+		if b.persistent {
+			return
 		}
 		closeBrowserProfile(b.exe, b.profile)
 		if b.profile != "" {

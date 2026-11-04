@@ -33,11 +33,17 @@ func TestAutoLoginProfileIsPersistentNotThrowaway(t *testing.T) {
 	}
 	src := string(raw)
 
-	// Launch 必须带 ProfileRoot，且指向固定位置（不是空 = 默认 temp 行为）。
-	if !strings.Contains(src, "ProfileRoot:") {
-		t.Fatal("自动登录的 Launch 没有 ProfileRoot：每次尝试都是一个全新的一次性 profile，" +
-			"对厂商设备画像来说是台没有历史的机器（issue #141：官方客户端带着积累状态能过，" +
+	// Launch 必须带 Profile（#183：真正的持久 user-data-dir，Close 不删），
+	// 且指向固定位置。曾用 ProfileRoot——那只是「固定了一次性 profile 的
+	// 父目录」，MkdirTemp+删除原样在跑，login-browser 目录始终为空，#141 的
+	// 「积累历史」一天都没发生过。
+	if !strings.Contains(src, "Profile:") {
+		t.Fatal("自动登录的 Launch 没有 Profile：每次尝试都是一个全新的一次性 profile，" +
+			"对厂商设备画像来说是台没有历史的机器（issue #141/#183：官方客户端带着积累状态能过，" +
 			"自动化两次被拒）")
+	}
+	if strings.Contains(src, "ProfileRoot:") {
+		t.Error("还在用 ProfileRoot：它只固定一次性 profile 的父目录，不是持久 profile（issue #183）")
 	}
 	// profile 根必须从数据目录派生（固定位置），而不是另起 temp。
 	if !strings.Contains(src, "raccoonLoginProfileRoot(") {

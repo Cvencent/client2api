@@ -548,10 +548,16 @@ func (d raccoonBrowserDriver) Drive(ctx context.Context, url, phone string, wait
 	if strings.TrimSpace(root) == "" {
 		root = filepath.Join("run", "browser", raccoonBrowserProfileName)
 	}
+	// Profile (not ProfileRoot) is the field that makes the comment above
+	// true (issue #183): ProfileRoot only fixed the parent of throwaways --
+	// every attempt still got a fresh os.MkdirTemp profile that Close
+	// deleted, so the "device with no history" outcome the operator ruled on
+	// kept happening.  Profile is used verbatim as --user-data-dir and Close
+	// leaves it in place.
 	br, err := browser.Launch(ctx, browser.LaunchOpts{
-		StartURL:    url,
-		Headless:    false,
-		ProfileRoot: root,
+		StartURL: url,
+		Headless: false,
+		Profile:  root,
 	})
 	if err != nil {
 		return err
