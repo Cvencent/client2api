@@ -28,8 +28,8 @@ func TestReserveGuardParksStoredZeroWhenPolicyIsInstalled(t *testing.T) {
 	p.SetReserveCredits(0)
 
 	got := statusOf(t, p, a.ID())
-	if got.State != stateExhausted || !strings.HasPrefix(got.Note, reserveCreditNote) {
+	if got.State != "low_credit" || !strings.HasPrefix(got.Note, reserveCreditNote) {
 		t.Fatalf("stored zero after policy application = %q/%q, want %q/%q",
-			got.State, got.Note, stateExhausted, reserveCreditNote)
+			got.State, got.Note, "low_credit", reserveCreditNote)
 	}
 }

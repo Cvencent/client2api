@@ -38,7 +38,7 @@ func TestZeroBalanceParksTheAccountAndBlocksSoftProbes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Accounts: %v", err)
 	}
-	if len(records) != 1 || records[0].State != "cooling" {
+	if len(records) != 1 || records[0].State != "low_credit" {
 		t.Fatalf("records = %+v, want one cooling account", records)
 	}
 }

@@ -157,7 +157,7 @@ func TestChatCreditExhaustionParksUntilTheBalanceRecovers(t *testing.T) {
 		t.Fatal("a zero-credit account recovered when the transient cooldown expired")
 	}
 	record := accountRecord(&acc, time.Now().UTC())
-	if record.State != "cooling" || record.Fields["low_credit"] != true {
+	if record.State != "low_credit" || record.Fields["low_credit"] != true {
 		t.Fatalf("HTTP 402 account record = %+v, want cooling with low_credit", record)
 	}
 }
