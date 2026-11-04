@@ -17532,14 +17532,35 @@ async function renderExposedModels(force) {
   });
   items.sort((a, b) => String(a.id).localeCompare(String(b.id)));
   EX_ITEMS = items;
+  // 重读前先记住没保存的改动（issue #181）：「重新读取」和「保存」挨在同一
+  // 个工具栏里，操作员点它多半只是想看看有没有新模型上架——几十行里挑好的
+  // 那批勾选不能被静默冲掉。同页「模型能力」的「重新获取」就是贴回编辑的
+  // （mdReapplyEdits），两个按钮的行为必须一致。
+  const prevMode = EX_MODE, prevSelected = new Set(EX_SELECTED), prevBaseline = EX_BASELINE;
+  const hadEdits = EX_LOADED && exDirty();
   EX_SELECTED = new Set(selectedRaw.map(exKey).filter(Boolean));
   EX_MODE = configured ? "selected" : "all";
   if (!configured) EX_SELECTED = new Set(items.map(it => exKey(it.id)).filter(Boolean));
   EX_BASELINE = { mode: EX_MODE, selected: new Set(EX_SELECTED) };
+  if (hadEdits && prevBaseline) {
+    // 操作员的相对改动（相对上一次 baseline）贴到新的服务端集合上：加过的
+    // 键仍加、去掉的仍去；键从服务端消失的（下架/改名）没得选，自然落掉。
+    const added = [...prevSelected].filter(k => !prevBaseline.selected.has(k));
+    const removed = [...prevBaseline.selected].filter(k => !prevSelected.has(k));
+    for (const k of removed) EX_SELECTED.delete(k);
+    for (const k of added) {
+      if (known.has(k)) EX_SELECTED.add(k);
+    }
+    if (prevMode) EX_MODE = prevMode;
+  }
   EX_LOADED = true;
   EX_LOADING = false;
   exSetMode(EX_MODE);
   exApply();
+  if (hadEdits) {
+    const kept = exDirty() ? "（未保存的勾选改动已保留，" + EX_SELECTED.size + " / " + items.length + "）" : "（与磁盘一致，无需保存）";
+    toast("已重新读取" + kept);
+  }
 }
 async function exSave() {
   if (!exDirty() || EX_LOADING) return;
@@ -23496,9 +23517,22 @@ function tcRun() {
 }
 $("#btnTcScan").addEventListener("click", tcScan);
 $("#btnTcRun").addEventListener("click", tcRun);
-// 「更多操作」选完就收起，别让菜单挡住下面的内容。
-$("#tcMore").addEventListener("click", e => {
-  if (e.target.closest("button")) e.currentTarget.removeAttribute("open");
+// .opmore 下拉（批量操作/平台「更多」/任务中心「更多操作」）统一退场（issue
+// #182）：选完收起、点外面收起、Esc 收起。原来只有 #tcMore 一处写死了「选完
+// 收起」，其余实例三条路全不通——菜单展开后一直压在表格上，只能再点一次
+// summary 或切页。三段委托一处管全部实例：
+document.addEventListener("click", e => {
+  // 选中菜单项就收起那一份（含 #tcMore，原特例收编到这里）。
+  const item = e.target.closest(".opmore .opmenu button");
+  if (item) {
+    const d = item.closest(".opmore");
+    if (d) d.removeAttribute("open");
+    return;
+  }
+  // 点在浮层外面：收起所有开着的。
+  if (!e.target.closest(".opmore")) {
+    document.querySelectorAll(".opmore[open]").forEach(d => d.removeAttribute("open"));
+  }
 });
 // 两个 chips 行共用 TB.client：点任一处，两边一起跟着换。
 $("#qcChips").addEventListener("click", e => {
@@ -24455,6 +24489,9 @@ window.addEventListener("keydown", ev => {
     // 密钥框把 Esc 吞掉（closeTopVeil 见到 lock 会直接返回 false）。
     if (typeof CMDK !== "undefined" && CMDK.open) { cmdkClose(); return; }
     closeTopVeil();
+    // 弹层都关了才轮到 .opmore 小浮层（issue #182）：只读键盘的用户原本
+    // 关不掉它们——summary 只会 toggle，Esc 是这类菜单唯一缺的退场键。
+    document.querySelectorAll(".opmore[open]").forEach(d => d.removeAttribute("open"));
   }
 });
 
