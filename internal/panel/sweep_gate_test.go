@@ -113,15 +113,18 @@ func TestQueueRefusesPastItsCap(t *testing.T) {
 		t.Fatalf("over-cap POST = %d (%s), want 429（超限要显式拒绝而不是静默堆积，issue #173）", rec.Code, rec.Body.String())
 	}
 	// cap 检查把 worker 手里那个也算一格；worker 是否已把第一个取走是
-	// 调度时序（本地快、CI 慢），所以只断言「pending + 运行中 ≤ cap」且
-	// 第 9 个请求已被拒——429 本身就是上限生效的证据。
+	// 调度时序（本地快、CI 慢），所以断言「occupied（pending + current 占用）
+	// ≤ cap」且第 9 个请求已被拒——429 本身就是上限生效的证据。
 	p.queue.mu.Lock()
-	pending, running, occupied := len(p.queue.items), p.queue.running, p.queue.current != nil
+	pending, occupied := len(p.queue.items), p.queue.current != nil
 	p.queue.mu.Unlock()
-	if occupied := pending + 1; running && occupied > batchQueueMax {
-		t.Fatalf("pending=%d + running 1 = %d, past the cap %d", pending, occupied, batchQueueMax)
+	total := pending
+	if occupied {
+		total++
 	}
-	_ = occupied
+	if total > batchQueueMax {
+		t.Fatalf("pending=%d + current=%v = %d, past the cap %d", pending, occupied, total, batchQueueMax)
+	}
 }
 
 func TestEnqueueErrorsTranslateToTheirStatusCodes(t *testing.T) {
