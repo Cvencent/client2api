@@ -6,6 +6,42 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.13] - 2026-11-04
+
+### Fixed
+
+- **批量巡检下发接口的方法闸与队列纪律（#173，#103 的唯一绕过形态）**：四个下发
+  handler（`batches.go` 的 `batchStart`/`recoveryStart`/`dailyBalanceStart`/
+  `balanceAll`）曾一个都不看 `r.Method`——写来源闸只在写方法上运行，于是
+  GET/HEAD/TRACE 直接绕过整道闸：隔离实例实测同一 URL 跨站头 POST 403 而 GET
+  202 并真的排进队列，另一源上一张 1×1 `<img>` 就让面板执行了一轮全池签到；
+  `balance_all` 一次 GET 就是全平台余额刷新。且队列无去重（30 个 GET 88ms 全
+  202、深度 1→31）、无上限、无取消。现在：四 handler 非 POST 一律 **405**
+  （`requirePost`，与 `taskRunQueue` 对齐）；同一 `(平台, 批次)` 在排队或运行中
+  时重复下发回 **409**（前端注释承诺已久的「已经有一轮在跑」这次真的存在，
+  `batchQueue.enqueue` 去重 + `current` 记录 worker 手里的那一轮）；队列深度
+  （含运行中的一轮）到 `batchQueueMax=8` 回 **429**，不再静默堆积；被拒绝的
+  sweep 从运行日志里移除，不再留一条永恒「排队」行。
+- **整机快照导出/导入的量纲与超限语义（#174）**：导出按原始凭据字节限
+  8 MiB（`collectAccountFiles`）、导入按 base64 文档字节限同一个 8 MiB
+  （`readBundleUpload` 的 `LimitReader`）——1.334 倍膨胀让 6.2~8 MB 原始凭据
+  导出的快照永远导不回去，且超限被静默截断后 `json.Unmarshal` 报「unexpected
+  end of JSON input」，被包装成 **「not a client2api bundle」**误导操作员去怀疑
+  文件格式。现在：读取上限独立为 `maxBundleUploadBytes = 2×maxBundleBytes`
+  （base64 + JSON 框架的硬顶），读取用「多读一字节」区分「超限」与「格式错」
+  （`decodeBody` 在 #78 用过的同一招），超限回 **413** 并说明上限；导入的原始
+  凭据字节检查照旧在 `bundlePlan`（量纲统一）；导出在写 body 前自检编码后的
+  文档大小（`bundleEncodedSize`），拒绝产出一个本机永远导不回去的快照。
+  看守 `internal/panel/sweep_gate_test.go`（#173 五条：非 POST 405 + Allow 头、
+  去重 409、上限 429、错误码翻译、拒绝项不留「排队」尸位）与
+  `internal/panel/bundle_size_test.go`（#174 四条：超限 413 说人话、导出自检
+  不误拒合法文档、量纲常量关系钉死、导出→导入往返）。
+
+### Installer
+
+- `client2api-setup-0.7.13.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `626730e7b963fb958e692ef1156416248ba57e5bf4d4b342dfcae96cfc49f896`
+
 ## [0.7.12] - 2026-11-04
 
 ### Fixed

@@ -5,7 +5,7 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-Current version: **0.7.12**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
+Current version: **0.7.13**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
 
 client2api is a personal, local-only OpenAI-compatible gateway. It aggregates
 the accounts and API Keys **you own** on different AI coding clients and
@@ -547,7 +547,20 @@ loop that never ended.
   module-facing contract is `core.ChatRequest.FreeModel`, and the free labelling
   itself is shared in `core.ModelIsFree`.
 - Manual import, local credential discovery, bundle import and browser/device login where supported.
+  Both sides of the full-machine snapshot (`/panel/api/bundle`) measure their
+  8 MiB cap in **raw credential bytes**; the imported base64 document has its
+  own 16 MiB read ceiling and a body past it answers 413 naming the limit --
+  no more disguising "too large" as "not a bundle" (issue #174). The export
+  self-checks the encoded document before writing a body, and refuses to
+  produce a snapshot this deployment could never restore.
 - Re-login, revive, test, check-in, balance refresh and account deletion.
+- The task board's seven sweep-dispatch buttons and `batches/<name>/run`
+  accept **POST only** (anything else answers 405): a GET used to dispatch a
+  real upstream sweep, and since the #103 write gate runs for write methods
+  only, a single cross-site `<img>` could queue a pool-wide round of vendor
+  calls (issue #173). Re-dispatching the same (platform, batch) while one is
+  queued or running answers 409; past the queue-depth cap the request answers
+  429 instead of piling on silently.
 - Loomy's two locally-derived marks get a **low-frequency self-heal side door**
   (issues #168/#169): `abnormal` (a transient upstream 500/502) and `expired`
   (the local 14-day estimate -- the vendor never reports an expiry) used to be

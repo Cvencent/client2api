@@ -5,7 +5,7 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-当前版本：**0.7.12**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：**0.7.13**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 流式断流排查：升级后系统日志新增 `stream: id=...` 终止诊断，包含协议、平台/模型、
 上游事件数、`finish_reason`、正文/推理字节数、工具调用数、completion token、
@@ -193,7 +193,15 @@ client2api 是一个**个人自用**的 OpenAI 兼容网关。它把你自己在
 - Raccoon 的 IAM 短信登录会在读取资料前确认业务会话；仍返回 HTTP 400 / code `200901` 的调用会先确认再重放一次，因此修复前保存的裸令牌账号也会自愈。
 - Raccoon 每日 300 积分是被桌面登录发放接口**延长有效期**，不是由它发放：厂商 00:00 发当日额度（当日 24:00 清零），桌面端登录后延长到 7 天。实测这条奖励厂商**只发给它自己的桌面客户端**——网关用同样的 POST、同样的头和令牌一律得到 `granted:false`，账本里 4 次成功全部紧贴桌面端启动时刻。因此本机签到按钮现在记成「不可用（需桌面端登录领取）」而不是失败；若账本证明今天的额度已经延长，则记成「已领取」。
 - 支持手动添加、本地凭据发现、整包导入，以及模块支持时的浏览器/设备登录。
+  整机快照（`/panel/api/bundle`）两侧的 8 MiB 上限都按**原始凭据字节**计；导入的
+  base64 文档另有 16 MiB 的读取硬顶，超限回 413 并说明上限——不再把「文件太大」
+  伪装成「不是 bundle」（issue #174）。导出在写 body 前自检编码后的文档大小，
+  拒绝产出一个本机永远导不回去的快照。
 - 支持重新登录、恢复、测试、签到、刷新余额和删除账号。
+  任务中心的七颗批量下发按钮与 `batches/<name>/run` 只接受 **POST**（其余动词
+  405）：此前 GET 也能下发，而写来源闸只在写方法上运行，一张跨站 `<img>` 就能
+  给全池排进真实上游巡检（issue #173）。同一 `(平台, 批次)` 在排队或运行中时
+  重复下发回 409；队列深度（含运行中的一轮）到上限后回 429，不再静默堆积。
 - Loomy 的两类本地标记有**低频自愈旁路**（issues #168/#169）：`abnormal`（瞬时上游
   500/502 误标）与 `expired`（本地 14 天估算钟，厂商从不回报 expiry）原本被所有自动
   路径跳过，自愈出口只剩操作员手动刷新；现在后台余额 sweep 会对这两类账号按 6..12h
