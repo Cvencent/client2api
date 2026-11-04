@@ -155,12 +155,19 @@ jobs:
       # payload/* 是 build.ps1 的产物（.gitignore 只留 .gitkeep）。跑测试
       # 前先打一遍 -NoData 空包：既把 payload 备好，也让「打包脚本能跑通」
       # 变成 CI 断言（issue #36 方向 3）。
+      # go test 与浏览器 smoke 解耦（issue #193）：staging 步骤跑 panelsmoke
+      # （真浏览器门禁），它 flaky 一次会把整个 job 红掉、连带 go test 被
+      # skipped——那批 windows-only 测试本该是这个 job 唯一的产出。拆成
+      # 「先跑全部不依赖 payload 的包」+「staging 后补跑 installer/setup」。
+      - name: go test (payload-independent packages)
+        run: go test -count=1 -timeout 20m $(go list ./... | grep -v 'installer/setup')
+
       - name: stage installer payload (build.ps1 -NoData)
         shell: pwsh
         run: '& ./installer/build.ps1 -NoData'
 
-      - name: go test
-        run: go test -count=1 -timeout 20m ./...
+      - name: go test (installer/setup, needs the staged payload)
+        run: go test -count=1 -timeout 5m ./installer/setup
 
   build:
     needs: [test, windows-test]

@@ -22,6 +22,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -49,10 +50,37 @@ const (
 )
 
 const (
-	// browserTimeout bounds one browser launch.  A browser that hangs here is
-	// skipped in favour of the next candidate instead of eating the whole run.
-	browserTimeout = 30 * time.Second
+	// browserTimeout bounds one browser LAUNCH: bring the browser up, load
+	// /panel/ and wait for the ready attribute.  It used to bound the whole
+	// attempt -- launch plus every assertion -- while the assertion stages
+	// alone measured 21s locally (assertNoPolledReplay waits a fixed 13s for
+	// two poll cycles), leaving 29% headroom; on a slower runner the budget
+	// died mid-stage and the error named whichever stage was running then,
+	// sending the operator to chase a phantom regression (issue #193).
+	browserTimeout = 45 * time.Second
+
+	// stageBudget bounds the assertion sequence once the page is up.  The
+	// stages are a fixed script with one known 13s sleep inside, so 90s is
+	// ~4x the measured cost and a real hang still ends the attempt in
+	// bounded time.
+	stageBudget = 90 * time.Second
 )
+
+// timedStage runs one assertion with its duration logged: a stage that takes
+// 13 of the 30 seconds the old budget had was invisible on CI (issue #193).
+// stage errs are wrapped with the name so the error names the real loser.
+func timedStage(name string, fn func() error) error {
+	start := time.Now()
+	err := fn()
+	fmt.Fprintf(os.Stderr, "panelsmoke: stage %s: %s\n", name, time.Since(start).Round(time.Millisecond))
+	if err != nil {
+		if ctxErr := context.DeadlineExceeded; errors.Is(err, ctxErr) {
+			return fmt.Errorf("stage %s: budget exhausted (%s in)", name, time.Since(start).Round(time.Millisecond))
+		}
+		return fmt.Errorf("stage %s: %w", name, err)
+	}
+	return nil
+}
 
 func main() {
 	if err := run(); err != nil {
@@ -116,16 +144,22 @@ func run() error {
 		// One attempt = one context and one browser session, released together on
 		// every path (including the success return and the debug-dump write).
 		attemptErr := func() error {
-			runCtx, cancelRun := context.WithTimeout(ctx, browserTimeout)
-			defer cancelRun()
-			dom, page, closePage, err := smokeBrowser(runCtx, browser, base+"/panel/", dir)
+			// Two budgets (issue #193): the launch budget bounds smokeBrowser
+			// -- a hung browser is skipped for the next candidate -- and the
+			// stage budget bounds the assertion sequence that follows, each
+			// stage timed into the log so a slow one is visible on CI.
+			launchCtx, cancelLaunch := context.WithTimeout(ctx, browserTimeout)
+			dom, page, closePage, err := smokeBrowser(launchCtx, browser, base+"/panel/", dir)
+			cancelLaunch()
 			if err != nil {
-				if runCtx.Err() != nil {
-					return fmt.Errorf("timed out after %s", browserTimeout)
+				if launchCtx.Err() != nil {
+					return fmt.Errorf("browser launch exceeded %s", browserTimeout)
 				}
 				return err
 			}
 			defer closePage()
+			runCtx, cancelRun := context.WithTimeout(ctx, stageBudget)
+			defer cancelRun()
 			if *domFlag != "" {
 				_ = os.WriteFile(*domFlag, []byte(dom), 0o644)
 			}
@@ -137,14 +171,14 @@ func run() error {
 			// out.  A clipped header, an arrow covered by the next column or an
 			// invisible primary button all ship today because nothing measures
 			// anything.
-			if err := assertLayout(runCtx, page); err != nil {
+			if err := timedStage("layout", func() error { return assertLayout(runCtx, page) }); err != nil {
 				return err
 			}
 			// The accounts pane's keyboard behaviour (issues #139/#140): these
 			// are measured in the browser because the go test suite only ever
 			// matched text against index.html, which is why a swallowed Enter
 			// and a stolen focus both shipped.
-			if err := assertAccountsKeyboard(runCtx, page); err != nil {
+			if err := timedStage("accountsKeyboard", func() error { return assertAccountsKeyboard(runCtx, page) }); err != nil {
 				return err
 			}
 			// The chat header (issue #143): a long conversation title used to
@@ -153,37 +187,37 @@ func run() error {
 			// neither readable nor clickable.  Whether an element really covers
 			// another is only answerable in the browser, which is why this is
 			// measured here and not asserted against the stylesheet.
-			if err := assertChatHeader(runCtx, page); err != nil {
+			if err := timedStage("chatHeader", func() error { return assertChatHeader(runCtx, page) }); err != nil {
 				return err
 			}
 			// The add-account dialog's three-mode switch (issue #150): its
 			// ARIA roles, selected state and arrow-key handling, measured in
 			// the AX tree and with real key events.
-			if err := assertAddTabsSemantics(runCtx, page); err != nil {
+			if err := timedStage("addTabs", func() error { return assertAddTabsSemantics(runCtx, page) }); err != nil {
 				return err
 			}
 			// Table naming/scoping and tabpanel reachability (issues
 			// #151/#152): the usage view alone carries four tables, and one
 			// panel used to be keyboard-unreachable in its entirety.
-			if err := assertA11yTablesAndPanels(runCtx, page); err != nil {
+			if err := timedStage("a11yTables", func() error { return assertA11yTablesAndPanels(runCtx, page) }); err != nil {
 				return err
 			}
 			// The stats band must survive the 200% text path (issue #159):
 			// every tile carries a title, and nothing clips after the font
 			// scale-up (the wrap decision is no longer viewport-gated).
-			if err := assertStatsResizesWithText(runCtx, page); err != nil {
+			if err := timedStage("statsResizes", func() error { return assertStatsResizesWithText(runCtx, page) }); err != nil {
 				return err
 			}
 			// The bulk test must keep addressing the platform it started on
 			// (issue #158): a mid-run platform switch used to redirect the
 			// remaining probes and misattribute the closing count.
-			if err := assertBulkTestPlatformFrozen(runCtx, page); err != nil {
+			if err := timedStage("bulkTestPlatformFrozen", func() error { return assertBulkTestPlatformFrozen(runCtx, page) }); err != nil {
 				return err
 			}
 			// The polling pages (issues #90/#144): a rebuilt element is a fresh
 			// element, and every entrance animation starts over.  Measured by
 			// node identity in a live DOM, which is how the reporter proved it.
-			if err := assertNoPolledReplay(runCtx, page); err != nil {
+			if err := timedStage("noPolledReplay", func() error { return assertNoPolledReplay(runCtx, page) }); err != nil {
 				return err
 			}
 			// The captcha document is a separate go:embed'ed page with its own

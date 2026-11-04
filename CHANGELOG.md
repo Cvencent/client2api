@@ -6,6 +6,27 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.30] - 2026-11-05
+
+### Fixed
+
+- **panelsmoke 真浏览器门禁的时间预算按真实形状拆分（#193）**：30 秒预算
+  曾包住「启动+导航+全部断言」整串，而断言段本机实测就要 21 秒（其中
+  `assertNoPolledReplay` 一段固定等 13 秒）——CI runner 稍慢就预算用尽，
+  切断点落在当时正跑的阶段上（每次红的阶段都不一样），windows-only 测试
+  整段被连带 skipped。四条修法：①启动预算（45s，只包 `smokeBrowser`）与
+  断言预算（90s，只包断言序列）分开；②每阶段耗时进 stderr 日志（本机
+  实测：layout 68ms … bulkTest 3.5s、noPolledReplay 13.35s——13 秒一段在
+  CI 上从此看得见）；③`ctx.Err()` 到期不再被说成页面行为（预算用尽报
+  「budget exhausted」并带阶段名与已耗时）；④windows workflow 的 `go test`
+  与浏览器 smoke 解耦——先跑全部不依赖 payload 的包，staging 后补跑
+  `installer/setup`，一次 panelsmoke flake 不再连带跳过它守护的测试。
+
+### Installer
+
+- `client2api-setup-0.7.30.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `ff66ca0b620785ddee0228865b2318960b56f705fe7e8984f6033f94ad2f0889`
+
 ## [0.7.29] - 2026-11-05
 
 ### Fixed
