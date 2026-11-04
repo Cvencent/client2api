@@ -589,7 +589,10 @@ func (c *Client) fetchVersion(ctx context.Context) (string, bool) {
 //
 // It never fetches: this is called while building the headers of a chat
 // request, and a chat must not wait on a third-party manifest service.  The
-// configured fallback is what answers until a background refresh lands.
+// answer is the freshest of three layers (issue #178): a version fetched this
+// process, the persisted last-known-good from a previous one, and only then
+// the configured fallback constant -- "0.1.0" for a whole process lifetime is
+// exactly the outcome this chain exists to stop.
 func (c *Client) clientVersion(ctx context.Context) string {
 	c.versionMu.Lock()
 	v := c.version
@@ -608,7 +611,9 @@ func (c *Client) versionState() (string, bool) {
 	return c.version, stale
 }
 
-// storeVersion caches a fetched version.
+// storeVersion caches a fetched version and persists it as the
+// last-known-good (issue #178): the next process keeps speaking it even if the
+// version endpoint is unreachable at startup.
 func (c *Client) storeVersion(v string) {
 	if !validVersion(v) {
 		return
@@ -617,6 +622,7 @@ func (c *Client) storeVersion(v string) {
 	c.version = v
 	c.versionAt = c.now()
 	c.versionMu.Unlock()
+	c.persistVersion(v)
 }
 
 // refreshVersionIfStale fetches the version when the cache is cold or old.

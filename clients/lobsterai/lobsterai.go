@@ -127,6 +127,10 @@ func New(deps core.Deps) (core.Client, error) {
 	if len(recs) > 0 {
 		deps.Log("lobsterai: loaded %d account(s)", len(recs))
 	}
+	// Seed the version cache from the persisted last-known-good: a process
+	// restarted during a version-endpoint outage keeps speaking the last real
+	// version instead of the fallback constant (issue #178).
+	c.loadPersistedVersion()
 	return c, nil
 }
 

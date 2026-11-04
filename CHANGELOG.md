@@ -6,6 +6,28 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.24] - 2026-11-05
+
+### Fixed
+
+- **lobsterai 的 `version` 不再「取不到就自称 0.1.0」（#178）**：版本服务一
+  不可达，`clientVersion` 曾整个进程生命周期都回落到写死的
+  `defaultClientVersion="0.1.0"`——官方从 2026.10 系列起步，0.1.0 从未发布
+  过，主动自称一个不存在的古老客户端比 stale 更可疑（10/29 起持续一周、
+  244 次请求，封号当日最后一轮仍带 0.1.0）。现在 last-known-good 持久化在
+  模块数据目录 `version.json`（与 accounts.json 同级、同规则：无 DataDir
+  不落盘）：取值优先级 = 本进程动态值 > 上一进程 LKG > 配置常量；构造时
+  seed、`storeVersion` 时落盘（临时文件+rename 原子写）；坏文件忽略不致命。
+  更新源恢复后的主动重试沿用既有机制（每次 ensureFresh/checkin 前
+  `refreshVersionIfStale`、chat 路径异步 6h TTL）。守护测试钉住三层优先级、
+  跨重启复活与坏文件回落；「省略参数」未做——checkin 的 version 是
+  必需 query 参数（模块注释与厂商行为一致），缺参数比 stale 更糟。
+
+### Installer
+
+- `client2api-setup-0.7.24.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `a463957033a08f420a7f80076c09a5e3a6178d3e90ec8b28e75164a1c8a34281`
+
 ## [0.7.23] - 2026-11-05
 
 ### Fixed
