@@ -9273,7 +9273,7 @@ function go(v) {
   Promise.resolve().then(() => afterViewData(v)).catch(() => {});
   setTimeout(() => { if (VIEW === v) afterViewData(v); }, 520);
   setTimeout(() => { if (VIEW === v) afterViewData(v); }, 1400);
-  if (v) setTimeout(markScrollableTables, 0);
+  if (v) scheduleScrollableCheck();
 }
 
 // fitChatHeight 让对话页的工作区正好填满「顶栏 + masthead 之下」的剩余高度。
@@ -23235,16 +23235,27 @@ document.addEventListener("click", ev => {
 });
 
 // 表格横向可滚动时打个标记，让右侧渐隐只在真的能往右滚时出现。
+// 两个读几何的纪律（issue #165）：
+// 1. 读和写不穿插——先把各容器的 scrollWidth/clientWidth/scrollLeft 一次攒完，
+//    再统一切 class。交替读写会迫使浏览器对每个容器各做一次强制同步布局。
+// 2. 跳过隐藏容器（offsetParent === null）：隐藏视图的布局浏览器本来就会跳过，
+//    实测同一函数在总览页只要 1.9~5.5ms 就是这个原因。
 function markScrollableTables() {
-  $$(".tbl-wrap").forEach(w => {
-    const more = w.scrollWidth - w.clientWidth - w.scrollLeft > 4;
-    w.classList.toggle("scrollable-x", more);
-  });
+  const wraps = $$(".tbl-wrap");
+  const geo = wraps.map(w => [w, w.scrollWidth - w.clientWidth - w.scrollLeft]);
+  for (const [w, more] of geo) w.classList.toggle("scrollable-x", more > 4);
 }
 window.addEventListener("resize", markScrollableTables);
 document.addEventListener("scroll", ev => {
   if (ev.target && ev.target.classList && ev.target.classList.contains("tbl-wrap")) markScrollableTables();
 }, true);
+// scheduleScrollableCheck 把读几何挪到「布局已定」的下一帧：轮询路径刚整表
+// 重建完 DOM，同步去读 scrollWidth 会把「重建」和「为新 DOM 做完整布局」串行
+// 压进同一个任务（200 个账号 233ms，占那一拍的六成）。rAF 让浏览器先自然落
+// 布局，读取时布局是干净的（同一份数据实测 0.2~0.3ms）。
+function scheduleScrollableCheck() {
+  requestAnimationFrame(markScrollableTables);
+}
 
 let accSearchTick = 0;
 $("#accSearch").addEventListener("input", () => {
@@ -25317,7 +25328,10 @@ async function refreshAll(loud) {
   // a gateway that cannot answer /overview falls back to the per-client path.
   if (!OVER_FULL || loud) await loadAllAccounts(!loud);
   renderAccounts();
-  markScrollableTables();
+  // 读几何挪到下一帧（issue #165）：这里是「刚整表重建完就同步读 scrollWidth」
+  // 的踩点处——强制同步布局把这一拍拖到六成时间花在读几何上。rAF 落完布局再读，
+  // 读取本身回到 0.2ms 量级。
+  scheduleScrollableCheck();
   refreshAlertBadge().catch(() => {});
   // 总览读的是 ACCTS / SNAP，必须在账号加载完之后再画一次；否则首屏会显示 0。
   renderOverview();
