@@ -6,6 +6,42 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.10] - 2026-11-04
+
+### Fixed
+
+- **模块层写盘失败不再静默（#166）**：#34 修掉了面板四个 store 的「写失败只留
+  `_ =`」，但模块层还有一族空体 if——`clients/loomy` 9 处、`clients/qoder` 3 处
+  `if err := s.saveState(); err != nil { _ = err }`，最恶劣的一处注释还写着
+  "it is reported" 而同一行把错误扔掉。写不进去时（磁盘满/目录只读/杀软锁文件/
+  网络盘掉线）零日志，重启后按上一份更旧的、更宽松的判决继续跑：冷却阶梯退档、
+  判死的账号复活重新被打上游。现在：
+  - loomy/qoder/doubao 三个 store 各加 nil-safe `warnf` 字段（照 qoder
+    `onRemoveCLIDir` 的回调注入模式，Client 在 loadStore 之后装 `deps.Logf`），
+    全部空体 if 与裸 `_ = s.save…()`（守卫又抓出 loomy 7 处本单没列的）统一改为
+    `s.warn("…: writing %s: %v", path, err)`；
+  - doubao 的 `revive()`（`clients/doubao/accounts.go`）改为原样返回 save 错误：
+    此前面板点「复活」接口回成功、账号显示正常，写入没落地时重启后回原样——
+    与 #34 在面板层修掉的「界面说有、重启就没了」逐字同型；
+  - officeace 的裸 `_ = core.WriteJSONAtomic`（`clients/openaicompat/officeace.go`
+    的 `saveOfficeAcePoints`）补日志；best-effort 语义保留——读数写不进去不该
+    打死产生它的那次读，但零日志曾让重启后的零读数触发 #104 的耗尽否决；
+  - 机械守卫 `installer/save_failure_guard_test.go`：扫 clients/ 全部非测试 Go
+    文件，save-if 空体与裸 `_ = s.save…()` 出现即红。
+- **仓库一致性：tracked 文件违着 ignore 规则（#167）**：`output/playwright/` 下
+  两个 Playwright 探针 0.1.31 就进了库，五天后 `.gitignore:93` 才加
+  `/output/playwright/*.js`——加规则时漏了 `git rm --cached`，tracked 文件不因
+  ignore 而消失。这两个文件带着写死的本机盘符路径与回环端口，`git add -A` 照样
+  会把它们的修改提交进公开仓库。现在两文件已出库（磁盘保留、规则生效），并加
+  守卫 `cmd/client2api/ignore_consistency_test.go`：跑
+  `git -C <repo root> ls-files -i -c --exclude-standard` 断言为空（必须 `-C` 指
+  到仓库根——go test 的进程目录是包目录，在子目录里量会假绿，红检实测钉住）。
+
+### Installer
+
+- `client2api-setup-0.7.10.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `326722f1f4b853b39798461347b0bb0f6a53d0aceaca49a6b1a991836b6d3eb3`
+
 ## [0.7.9] - 2026-11-04
 
 ### Added
