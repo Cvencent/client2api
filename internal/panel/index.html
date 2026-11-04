@@ -9235,6 +9235,15 @@ const SHELL = {
 const TITLES = { routelive: "路由实况", overview: "总览", accounts: "账号池", chat: "对话测试", usage: "用量", alerts: "平台告警", credits: "积分构成", packages: "客户端", taskscenter: "任务中心", models: "模型与档位", platforms: "平台配置", config: "配置", logs: "运行日志" };
 function go(v) {
   if (!TITLES[v]) v = "accounts";
+  // 星图态（issue #197）：shell 是 visibility:hidden 的，这里把 section 的
+  // hidden 摘掉也只是盖在图下面——屏幕一个像素不变，命令面板的 13 条视图
+  // 命令全部静默空操作。星图态下 go(v) 落到 atlasOpen(v)（与鼠标点区域同一
+  // 个函数），抽屉开着时它自己处理切换与搬回；星图关掉后走原路径。
+  if (document.body.classList.contains("atlas-on") && TITLES[v]) {
+    if (ATLAS.open === v) return;
+    atlasOpen(v);
+    return;
+  }
   // 离开配置页前拦一次未保存改动（issue #50）。beforeunload 只管关 tab / 刷新，
   // 而用户报的主症状是「误点导航全部还原」——导航走的是 hash，funnel 到这里。
   // 只在这一道拦：用户在确认框里点了「离开」就放行，不做逐字段 diff。
@@ -12013,6 +12022,17 @@ function atlasOpen(view, ox, oy) {
   host.appendChild(sec);
   ATLAS.open = view;
   VIEW = view;
+  // 「当前视图」只有一个真相（issue #197）：抽屉打开时 hash 跟着走，浏览器
+  // 后退才会退到正确的上一页；replaceState 不触发 hashchange（避免回环）。
+  if (location.hash !== "#" + view) {
+    history.replaceState(null, "", "#" + view);
+    document.title = (TITLES[view] || view) + " · client2api";
+  }
+  // 抽屉打开 = panel 进入焦点树（issue #196）：此前 atlasBack 在视口外仍是
+  // Tab 停靠点、正文对读屏不可见。
+  ATLAS.panel.removeAttribute("inert");
+  const backBtn = ATLAS.panel.querySelector("#atlasBack");
+  if (backBtn) backBtn.removeAttribute("tabindex");
   // 抽屉从被点的那块区域「长出来」：以点击点为变形原点，滑入 + 轻微放大。
   // 这是共享元素过渡的手感——比无条件从右边滑进来更解释「我刚点了什么」。
   if (typeof ox === "number" && typeof oy === "number") {
@@ -12058,6 +12078,13 @@ function atlasClose(keepView) {
   const hint = ATLAS.host.querySelector(".atlas-hint");
   if (hint) hint.hidden = false;
   if (!keepView) { VIEW = ""; SHELL.syncActive(""); }
+  // 抽屉收起：panel 摘出焦点与无障碍树（issue #196）——未打开时它只在视口
+  // 外，却持有 Tab 停靠点。star 图本体仍可交互。
+  if (ATLAS.panel) {
+    ATLAS.panel.setAttribute("inert", "");
+    const backBtn = ATLAS.panel.querySelector("#atlasBack");
+    if (backBtn) backBtn.setAttribute("tabindex", "-1");
+  }
   b3dStop();
 }
 
@@ -12231,18 +12258,26 @@ function atlasMount() {
   if (ATLAS.host) { ATLAS.host.hidden = false; atlasStart(); return true; }
   const host = document.createElement("div");
   host.className = "atlas";
+  // 13 个领域的 DOM 等价物（issue #196）：canvas 是 aria-hidden 的纹理，
+  // 读屏与键盘用户原来在这里 0/13。清单与命令面板同一来源（TITLES），点击走
+  // 与鼠标点击同一个 atlasOpen；canvas 保持 aria-hidden（视觉是等价的，DOM
+  // 等价物在旁边——APG 对图形化导航的范式）。Ctrl+K 也是键盘等价物，提示里写明。
+  const zoneList = Object.keys(TITLES).map(v =>
+    '<button type="button" class="sr-only" role="button" data-view="' + v + '" title="进入' + (TITLES[v] || v) + '">' + (TITLES[v] || v) + '</button>'
+  ).join("");
   host.innerHTML =
     '<div class="atlas-head">' +
       '<span class="atlas-kicker"><i></i>ATLAS</span>' +
       '<b>网关星图</b>' +
-      '<span class="atlas-sub">每个领域是一个区域，点进去看详情</span>' +
+      '<span class="atlas-sub">每个领域是一个区域，点进去看详情；方向键+Enter 或 Ctrl+K 也可导航</span>' +
       '<span class="grow"></span>' +
       '<button class="xs" id="atlasExit" title="回到常规列表视图">列表视图</button>' +
     '</div>' +
-    '<div class="atlas-hint">拖动环绕 · 滚轮缩放 · 点一个区域进入</div>' +
-    '<aside class="atlas-panel" id="atlasPanel">' +
+    '<div class="atlas-hint">拖动环绕 · 滚轮缩放 · 点一个区域进入 · Ctrl+K 列出全部领域</div>' +
+    '<nav class="sr-only" id="atlasZonesNav" aria-label="全部领域">' + zoneList + '</nav>' +
+    '<aside class="atlas-panel" id="atlasPanel" inert>' +
       '<header><h2 class="atlas-panel-title"></h2><span class="grow"></span>' +
-      '<button class="xs" id="atlasBack" title="返回星图（Esc）">返回星图</button></header>' +
+      '<button class="xs" id="atlasBack" title="返回星图（Esc）" tabindex="-1">返回星图</button></header>' +
       '<div class="atlas-panel-body" id="atlasPanelBody"></div>' +
     '</aside>';
   document.body.appendChild(host);
@@ -12253,6 +12288,8 @@ function atlasMount() {
   atlasMountControls();
   host.querySelector("#atlasBack").addEventListener("click", () => atlasClose(false));
   host.querySelector("#atlasExit").addEventListener("click", () => atlasLeave());
+  host.querySelectorAll("#atlasZonesNav [data-view]").forEach(b =>
+    b.addEventListener("click", () => atlasOpen(b.dataset.view)));
   document.addEventListener("keydown", ev => { if (ev.key === "Escape" && ATLAS.open) atlasClose(false); });
   return true;
 }
@@ -12262,6 +12299,11 @@ function atlasEnter(explicit) {
   // 用户主动点「星图」进来时，把上次「退出到列表」的偏好清掉，否则下次刷新又不进。
   if (explicit) { try { localStorage.setItem("c2a.atlas", "on"); } catch (e) {} }
   document.body.classList.add("atlas-on");
+  // skip-link 在星图态指向领域列表（issue #196）：#main 在 shell 里是
+  // visibility:hidden，Enter 后焦点掉回 BODY 且屏幕无变化——承诺「跳到主
+  // 内容」就要跳到真东西。
+  const skip = document.querySelector("[data-skip-link]");
+  if (skip) skip.setAttribute("href", "#atlasZonesNav");
   atlasBuild();
   atlasStart();
   // 默认只给地图：第一印象是这张空间面，而不是又落在某个列表页上。
@@ -12279,6 +12321,8 @@ function atlasLeave() {
   if (ATLAS.host) ATLAS.host.hidden = true;
   atlasStop();
   document.body.classList.remove("atlas-on");
+  const skip2 = document.querySelector("[data-skip-link]");
+  if (skip2) skip2.setAttribute("href", "#main");
   try { localStorage.setItem("c2a.atlas", "off"); } catch (e) {}
   go(VIEW || "overview");
 }

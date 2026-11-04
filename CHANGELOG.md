@@ -6,6 +6,30 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.31] - 2026-11-05
+
+### Fixed
+
+- **星图态的键盘/读屏与路由双缺陷同根修（#196/#197）**：canvas 是
+  `aria-hidden` 的纹理，13 个领域在无障碍树 0 命中、可聚焦元素只剩 2 个、
+  方向键/Enter/Space 无任何监听者；同时 `ATLAS.open` 与 `location.hash` 两套
+  「当前视图」从不互相同步——命令面板的 13 条视图命令在星图态全部静默空操作
+  （标题变了屏幕没变），浏览器后退留下一块 78% 视口的空白抽屉。
+  修法四件：①`.atlas` 内补 sr-only 领域列表（13 个 role=button，清单与命令
+  面板同源取自 TITLES，点击走与鼠标同一个 `atlasOpen`，canvas 保持
+  aria-hidden——APG 对图形化导航的范式）；②抽屉未打开时 panel
+  `inert` + atlasBack `tabindex=-1`（视口外隐形 Tab 停靠点消失），打开时
+  解除；③`atlasOpen` 写 hash（replaceState 防回环）、`go()` 在星图态落到
+  `atlasOpen`——「当前视图」只剩一个真相，浏览器后退自动开对应抽屉；
+  ④skip-link 在星图态指向领域列表（此前 Enter 跳到 visibility:hidden 的
+  `<main>` 焦点掉回 BODY）。提示文案补「Ctrl+K 列出全部领域」。守护测试
+  钉住清单来源、inert 切换、hash 单真相与 go 分派。
+
+### Installer
+
+- `client2api-setup-0.7.31.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `58d53d0b3cd01d53c0404f4f737214972f118616b4377b211f4328d090951973`
+
 ## [0.7.30] - 2026-11-05
 
 ### Fixed
