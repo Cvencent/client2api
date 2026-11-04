@@ -58,6 +58,12 @@ type Account struct {
 
 	apiKey string
 	jwt    string
+	// waf is the per-account consecutive-WAF-judgement breaker (issue #198):
+	// three 3012s in a row park the account for a WAF-shaped cooldown that
+	// doubles per extra judgement.  In-process on purpose -- the streak is a
+	// statement about right now, and a restart resets it to the plain
+	// per-judgement cooldown.
+	waf *wafBackoff
 }
 
 // secret returns the credential actually sent upstream.

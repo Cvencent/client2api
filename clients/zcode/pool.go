@@ -391,6 +391,14 @@ func (p *pool) selectableLocked(a *Account, now time.Time) bool {
 			return false
 		}
 	}
+	// The per-account WAF breaker (issue #198): three consecutive 3012s park
+	// the account for a WAF-shaped cooldown, so a single-available-account
+	// platform stops paying the captcha+3012 toll against a closed risk
+	// window.  When it lapses the account is selectable again -- that request
+	// IS the probe.
+	if a.waf != nil && a.waf.remaining(now) > 0 {
+		return false
+	}
 	if a.Mode == modeJWT && !p.captchaReady() {
 		return false
 	}
@@ -554,6 +562,9 @@ func (p *pool) mark(id string, apply func(*Account)) {
 	for _, a := range p.accounts {
 		if a.ID != id {
 			continue
+		}
+		if a.waf == nil {
+			a.waf = newWAFBackoff()
 		}
 		apply(a)
 		p.saveLocked()

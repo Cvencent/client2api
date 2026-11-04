@@ -278,6 +278,15 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 
 		stream, err := c.attempt(ctx, req, acct, model)
 		if err == nil {
+			// A real 200 is the strongest evidence the vendor's risk window
+			// has expired (issue #198): clear the per-account WAF breaker so
+			// the next streak starts from zero.
+			c.pool.mark(acct.ID, func(a *Account) {
+				if a.waf == nil {
+					a.waf = newWAFBackoff()
+				}
+				a.waf.noteSuccess(time.Now())
+			})
 			c.inFlight.Add(1)
 			return core.TrackStream(stream, func() { c.inFlight.Add(-1) }), nil
 		}
@@ -802,10 +811,27 @@ func (c *Client) recordFailure(acct *Account, ue *upstreamError) {
 			a.LastError = ue.short()
 		})
 	case kindRisk:
+		// The per-account WAF breaker (issue #198): three consecutive
+		// judgements escalate from the plain cooldown to a WAF-shaped one
+		// that doubles per extra hit -- the vendor's risk window outlasts
+		// any fixed interval, and every attempt inside it pays a captcha
+		// mint plus the 3012 round trip at zero success probability.
+		wafCool := time.Duration(0)
 		c.pool.mark(acct.ID, func(a *Account) {
+			if a.waf == nil {
+				a.waf = newWAFBackoff()
+			}
+			wafCool = a.waf.noteWAF(now)
 			a.State = stateCooling
 			a.CooldownUntil = now.Add(c.cfg.cooldown())
-			a.Note = "risk control (3012): back off before retrying"
+			if wafCool > a.CooldownUntil.Sub(now) {
+				a.CooldownUntil = now.Add(wafCool)
+			}
+			if wafCool > 0 {
+				a.Note = "risk control (3012): WAF breaker open, backing off before retrying"
+			} else {
+				a.Note = "risk control (3012): back off before retrying"
+			}
 			a.LastError = ue.short()
 		})
 	case kindRateLimit:
