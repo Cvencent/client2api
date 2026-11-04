@@ -6,6 +6,46 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.9] - 2026-11-04
+
+### Added
+
+- **裁剪丢掉的中段后台折叠成摘要并钉回窗口（#164，Claude Code auto-compact 同型）**：
+  此前 `applyContextBudget` 只做掐头——保 system 头与最新 call-balanced 尾，
+  中间整块丢弃。对 agent 型调用方（opencode 的 worker 循环）被丢的正是任务实质
+  （读过的文件、写过的补丁、工具调用与结果），实测 opencode/glm-5.3-flash-free
+  26/26 每轮丢 2,100~2,600 条中段（857K~1.05M → 168K tokens），连续性全靠猜。
+  现在：一次裁剪丢掉 ≥50 条消息时，被丢中段交给单个后台折叠协程
+  （`internal/gateway/trim_summary.go`：复用 Responses 压缩的分块与轮次上限
+  `splitForSummarisation`/`mergeOldest`，走正常路由路径 `openStream`）；摘要按
+  「system 轮 + 中段逐字」的 SHA-256 指纹缓存（≤96 条、24h TTL）。同一会话下一轮
+  再被裁剪时若指纹命中，摘要作为一条带说明头的 user 轮钉在 system 头与保留尾
+  之间，其体积计入裁剪预算（`applyContextBudgetWithFold` 两趟收敛：先算纯裁剪
+  边界得到指纹，再带摘要重算边界；摘要挤不下就跳过钉入，绝不破坏请求）。
+  摘要失败只写一行日志、下一轮自动重试：主请求永远不等摘要、不因摘要失败而
+  变化，未命中缓存时行为与纯裁剪完全一致。
+  看守 `internal/gateway/trim_summary_test.go`：指纹确定性/缓存 TTL 与容量/
+  钉入位置/offer 通道/折叠成功与失败分流/端到端两轮（turn 1 折叠落库、turn 2
+  钉进上游实际收到的请求）。
+
+### Fixed
+
+- **账号池轮询那一拍六成花在多余的强制同步布局上（#165）**：`refreshAll()` 在
+  整表重建后同步调 `markScrollableTables()` 读 `scrollWidth`，把「重建 DOM」和
+  「为新 DOM 做完整布局」串行压进同一个任务——50 个账号 54ms、200 个 233ms，
+  200/页时一次真实点击的事件时长到 248ms（超 INP 阈值）。修法
+  （`internal/panel/index.html`）：轮询路径改 `scheduleScrollableCheck()`——
+  rAF 下一帧读，浏览器先自然落布局（同一份数据实测 0.2~0.3ms）；函数本体
+  先攒读再统一写（读写交替曾迫使每个容器各做一次布局）；视图切换路径
+  `setTimeout(…,0)` 统一成同一 rAF 通道。resize/scroll 两个事件路径语义不变。
+  看守 `internal/panel/scrollable_check_ui_test.go`：轮询路径不得同步读几何、
+  函数体必须先读后写。
+
+### Installer
+
+- `client2api-setup-0.7.9.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `26eb40096ae4f02e6bffdf93801cee93c8b9ca24829cf6e4632d80eeda4d4a77`
+
 ## [0.7.8] - 2026-11-04
 
 ### Fixed
