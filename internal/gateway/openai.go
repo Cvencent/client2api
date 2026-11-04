@@ -170,6 +170,17 @@ type modelEntry struct {
 	// entirely when a module publishes none, so a plain catalogue still looks
 	// exactly like the OpenAI one.
 	Extra map[string]any `json:"extra,omitempty"`
+	// Modalities is the OpenAI-style input/output declaration (the shape
+	// OpenAI and relays like magpie publish), folded from the module's own
+	// capability flags at publish time so a downstream consumer never has to
+	// parse the extra dialects (issue #188).  Omitted for models the
+	// catalogue says nothing about: unknown is not unsupported.
+	Modalities *modelModalities `json:"modalities,omitempty"`
+}
+
+type modelModalities struct {
+	Input  []string `json:"input"`
+	Output []string `json:"output"`
 }
 
 type apiErrorEnvelope struct {

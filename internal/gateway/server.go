@@ -390,6 +390,11 @@ type autoModelPick struct {
 	// defaultEffort is the first candidate's advertised default in routing
 	// order, which is also the level an omitted request will inherit.
 	defaultEffort string
+	// image/imageStated fold the platforms' modality claims into the Auto
+	// entry's union (issue #188): stated by any speaker, image if any of them
+	// claims it.
+	image       bool
+	imageStated bool
 }
 
 // betterAutoDisplay keeps the Auto/ catalogue stable regardless of the
@@ -467,6 +472,17 @@ func (s *server) handleModels(w http.ResponseWriter, r *http.Request) {
 					efforts:       append([]string(nil), candidateMeta.Efforts...),
 					defaultEffort: candidateMeta.DefaultEffort,
 				}
+				// The Auto entry speaks for every platform behind the id, so
+				// its modality claim is the union: one image-capable platform
+				// makes the id image-capable, and only a stated text-only
+				// from every speaker narrows it (issue #188).
+				if img, stated := modelSupportsImages(m); stated {
+					next.image = img
+					next.imageStated = true
+					if prev, ok := auto[key]; ok && prev.imageStated && prev.image {
+						next.image = true
+					}
+				}
 				if prev, ok := auto[key]; ok {
 					if prev.window > next.window {
 						next.window = prev.window
@@ -477,6 +493,13 @@ func (s *server) handleModels(w http.ResponseWriter, r *http.Request) {
 					next.efforts = dedupeEfforts(append(append([]string(nil), prev.efforts...), next.efforts...))
 					if prev.defaultEffort != "" {
 						next.defaultEffort = prev.defaultEffort
+					}
+					// A later speaker that says nothing must not erase an
+					// earlier one's claim (issue #188): the union keeps the
+					// stated facts it has already heard.
+					if !next.imageStated && prev.imageStated {
+						next.image = prev.image
+						next.imageStated = true
 					}
 					if !betterAutoDisplay(next, prev) {
 						next.display = prev.display
@@ -541,6 +564,7 @@ func (s *server) handleModels(w http.ResponseWriter, r *http.Request) {
 			if codexPlusModelRequest(r) {
 				entryID = withCodexPlusWindowSuffix(id, meta.ContextLength)
 			}
+			img, imgStated := modelSupportsImages(m)
 			out.Data = append(out.Data, modelEntry{
 				ID:              entryID,
 				Object:          "model",
@@ -549,6 +573,7 @@ func (s *server) handleModels(w http.ResponseWriter, r *http.Request) {
 				ContextLength:   meta.ContextLength,
 				MaxOutputTokens: meta.MaxOutputTokens,
 				Extra:           extra,
+				Modalities:      modalitiesShape(img, imgStated),
 			})
 		}
 	}
@@ -623,6 +648,7 @@ func (s *server) handleModels(w http.ResponseWriter, r *http.Request) {
 			ContextLength:   meta.ContextLength,
 			MaxOutputTokens: meta.MaxOutputTokens,
 			Extra:           extra,
+			Modalities:      modalitiesShape(display.image, display.imageStated),
 		})
 	}
 
@@ -640,6 +666,7 @@ func (s *server) handleModels(w http.ResponseWriter, r *http.Request) {
 		// lands on a narrower one.
 		groupMeta := modelmeta.Meta{}
 		groupDefaultEffort := ""
+		groupImage, groupImageStated := false, false
 		for _, member := range group.Members {
 			qualified := member.Client + "/" + member.Model
 			members = append(members, qualified)
@@ -655,8 +682,27 @@ func (s *server) handleModels(w http.ResponseWriter, r *http.Request) {
 					if groupDefaultEffort == "" {
 						groupDefaultEffort = pick.defaultEffort
 					}
+					// The Auto pick already carries its members' union.
+					if pick.imageStated {
+						groupImageStated = true
+						if pick.image {
+							groupImage = true
+						}
+					}
 				}
 				continue
+			}
+			for _, cm := range catalogs[member.Client] {
+				if cm.ID != member.Model {
+					continue
+				}
+				if img, stated := modelSupportsImages(cm); stated {
+					groupImageStated = true
+					if img {
+						groupImage = true
+					}
+				}
+				break
 			}
 			if m, ok := resolved[qualified]; ok {
 				groupMeta = mergeWindow(groupMeta, m)
@@ -695,6 +741,9 @@ func (s *server) handleModels(w http.ResponseWriter, r *http.Request) {
 			ContextLength:   groupMeta.ContextLength,
 			MaxOutputTokens: groupMeta.MaxOutputTokens,
 			Extra:           extra,
+			// A group's modality claim is the union of its members': one
+			// image-capable member makes the group image-capable (issue #188).
+			Modalities: modalitiesShape(groupImage, groupImageStated),
 		})
 	}
 
@@ -1995,13 +2044,53 @@ func requestHasImage(msgs []core.Message) bool {
 // modelSupportsImages reads the capability flag a module publishes on a model.
 // The second result distinguishes "the catalogue says no" from "the catalogue
 // did not say", which is the difference between a truthful claim and a guess.
+//
+// The flag arrived in three dialects (issue #188): supports_images (workbuddy,
+// tabbit, lobsterai), vision (qoder, autoclaw, cline, loomy, minimaxcode,
+// qwenwork) and the upstream-shaped input_modalities list (kilocode, loomy,
+// openrouter).  They all mean the same fact, so the reader folds them in that
+// order; the first stated answer wins and the raw keys stay untouched for any
+// consumer that reads the dialect directly.
 func modelSupportsImages(m core.Model) (value, stated bool) {
-	raw, ok := m.Extra["supports_images"]
-	if !ok {
-		return false, false
+	if raw, ok := m.Extra["supports_images"]; ok {
+		if b, isBool := raw.(bool); isBool {
+			return b, true
+		}
 	}
-	b, ok := raw.(bool)
-	return b, ok
+	if raw, ok := m.Extra["vision"]; ok {
+		if b, isBool := raw.(bool); isBool {
+			return b, true
+		}
+	}
+	if raw, ok := m.Extra["input_modalities"]; ok {
+		if list, isList := raw.([]string); isList {
+			for _, mod := range list {
+				if strings.EqualFold(strings.TrimSpace(mod), "image") {
+					return true, true
+				}
+			}
+			return false, true
+		}
+	}
+	return false, false
+}
+
+// modalitiesShape renders the OpenAI-style modality declaration a downstream
+// relay can consume without maintaining its own capability table (issue #188).
+// A model the catalogue describes as image-capable advertises both inputs; a
+// text-only claim narrows the input list instead of being silently dropped --
+// an explicit "text only" is exactly the fact magpie's preflight guessed wrong
+// from a handwritten table.  Unstated models stay omitted: unknown must not
+// read as unsupported.
+func modalitiesShape(supportsImages, stated bool) *modelModalities {
+	if !stated {
+		return nil
+	}
+	input := []string{"text"}
+	if supportsImages {
+		input = append(input, "image")
+	}
+	return &modelModalities{Input: input, Output: []string{"text"}}
 }
 
 // ---------------------------------------------------------------------------

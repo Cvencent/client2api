@@ -6,6 +6,28 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.21] - 2026-11-04
+
+### Added
+
+- **`/v1/models` 顶层发布标准 `modalities` 能力声明（#188）**：此前全部模型里
+  只有 2 个带能力标记且键名方言不一（`extra.vision` vs
+  `extra.supports_images`），下游中转被迫各自手写能力表，写错就把带图请求
+  误拦（magpie 预检 `this model accepts text only` 定责链里网关侧可修的间接
+  隐患）。现在模型条目顶层发 OpenAI/magpie 同款的
+  `modalities: {input: [...], output: ["text"]}`；模块侧的三种方言
+  （`supports_images` / `vision` / 上游形状的 `input_modalities` 列表）在
+  发布层统一折算，方言原键保留兼容。显式 text-only 照发（把 input 收窄成
+  `[text]`——一个明确事实不许静默丢失）；未声明的模型保持省略（unknown ≠
+  不支持）。`Auto/<model>` 与模型组的声明是成员平台的**并集**：一个
+  image 说话者即 image，后到的未声明平台不得抹掉先到的声明。静态钉
+  `modalities_publish_test.go`。
+
+### Installer
+
+- `client2api-setup-0.7.21.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `1520b975e6ba283bc92a37e933c9af7efa15ec2b1489c21cf91849bd13ef2b97`
+
 ## [0.7.20] - 2026-11-04
 
 ### Fixed
