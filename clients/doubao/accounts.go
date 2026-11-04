@@ -108,6 +108,23 @@ type store struct {
 	dir          string
 	accountsPath string
 	statePath    string
+
+	// warnf is the store's only logger, installed by the Client after
+	// loadStore.  A persist that fails must say so (issue #166): noteFailure's
+	// save used to be dropped on the floor, so a lost accounts file silently
+	// restored expired cooldowns on the next restart.  nil means "nothing to
+	// log to", which is what a hand-built test store gets.
+	warnf func(format string, args ...any)
+}
+
+// warn logs one line through the injected logger.  A store built without one
+// (tests, embedders) stays silent, the same deal the rest of the module grants
+// a hand-built Client.
+func (s *store) warn(format string, args ...any) {
+	if s == nil || s.warnf == nil {
+		return
+	}
+	s.warnf(format, args...)
 }
 
 // loadStore reads both files.  A missing file is not an error; a corrupt one is
@@ -227,7 +244,9 @@ func (s *store) applyConfig(entries []account) {
 		added = true
 	}
 	if added {
-		_ = s.save()
+		if err := s.save(); err != nil {
+			s.warn("doubao: writing %s: %v", s.accountsPath, err)
+		}
 	}
 }
 
@@ -306,7 +325,9 @@ func (s *store) noteSuccess(id string) {
 		a.LastError = ""
 		a.LastUsed = time.Now()
 	}
-	_ = s.save()
+	if err := s.save(); err != nil {
+		s.warn("doubao: writing %s: %v", s.accountsPath, err)
+	}
 }
 
 // failureCooldown is the policy shared by every upstream call: a dead
@@ -341,7 +362,9 @@ func (s *store) noteFailure(id string, auth bool, cooldown time.Duration, err er
 			a.CooldownUntil = time.Now().Add(cooldown)
 		}
 	}
-	_ = s.save()
+	if err := s.save(); err != nil {
+		s.warn("doubao: writing %s: %v", s.accountsPath, err)
+	}
 }
 
 // revive clears every runtime penalty on one account.
@@ -357,8 +380,10 @@ func (s *store) revive(id string) error {
 		a.LastError = ""
 		a.CooldownUntil = time.Time{}
 		a.Enabled = true
-		_ = s.save()
-		return nil
+		// The panel reports whatever this returns, so a save that did not land
+		// must come back as an error (issue #166): reporting success here let
+		// the operator revive an account the next restart put right back.
+		return s.save()
 	}
 	return fmt.Errorf("doubao: unknown account %q", id)
 }

@@ -135,6 +135,23 @@ type store struct {
 	// knowledge about where those roots live; nil means "nothing to clean up",
 	// which is what a hand-built test store gets.
 	onRemoveCLIDir func(leaf string)
+
+	// warnf is the store's only logger, installed by the Client after
+	// loadStore.  A persist that fails must say so (issue #166): every failed
+	// save used to be dropped on the floor, so a lost state.json silently
+	// restored older, looser verdicts on the next restart.  nil means "nothing
+	// to log to", which is what a hand-built test store gets.
+	warnf func(format string, args ...any)
+}
+
+// warn logs one line through the injected logger.  A store built without one
+// (tests, embedders) stays silent, the same deal the rest of the module grants
+// a hand-built Client.
+func (s *store) warn(format string, args ...any) {
+	if s == nil || s.warnf == nil {
+		return
+	}
+	s.warnf(format, args...)
 }
 
 func loadStore(path, statePath string) (*store, error) {
@@ -345,7 +362,7 @@ func (s *store) penalise(id string, err error, now time.Time, cooldown time.Dura
 			a.cooldownTill = now.Add(cooldown)
 		}
 		if saveErr := s.saveState(); saveErr != nil {
-			_ = saveErr
+			s.warn("qoder: writing %s: %v", s.statePath, saveErr)
 		}
 		return
 	}
@@ -365,7 +382,7 @@ func (s *store) reset(id string, now time.Time) {
 		a.dead = false
 		a.lastUsed = now
 		if err := s.saveState(); err != nil {
-			_ = err
+			s.warn("qoder: writing %s: %v", s.statePath, err)
 		}
 		return
 	}
@@ -386,7 +403,7 @@ func (s *store) clearPenalties(id string) {
 		a.cooldownTill = time.Time{}
 		a.dead = false
 		if err := s.saveState(); err != nil {
-			_ = err
+			s.warn("qoder: writing %s: %v", s.statePath, err)
 		}
 		return
 	}

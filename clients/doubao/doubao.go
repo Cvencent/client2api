@@ -106,6 +106,10 @@ func New(deps core.Deps) (core.Client, error) {
 		deps.Log("doubao: %v", err)
 	}
 	c.store = st
+	// The store's persist failures surface here (issue #166): noteFailure's
+	// save used to be dropped silently, and the next restart restored expired
+	// cooldowns from the last good file.
+	c.store.warnf = deps.Logf
 	c.store.applyConfig(configuredAccounts(cfg))
 
 	c.up = newUpstream(cfg, deps.HTTPClient, deps.Logf)

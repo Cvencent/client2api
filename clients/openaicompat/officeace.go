@@ -281,7 +281,13 @@ func (o *officeAceSource) saveOfficeAcePoints() {
 	if len(file.Accounts) == 0 {
 		return
 	}
-	_ = core.WriteJSONAtomic(path, file)
+	// Still best-effort (a failed write must not fail the read that produced
+	// it), but no longer silent (issue #166): a points file that stops being
+	// written used to zero every reading on the next restart, and the #104
+	// veto treated those zero readings as a drained package.
+	if err := core.WriteJSONAtomic(path, file); err != nil && o.deps.Logf != nil {
+		o.deps.Logf("openaicompat/%s: writing %s: %v", o.name, path, err)
+	}
 }
 
 // officeAceRefusalIsCredits reports whether an auth-shaped refusal from this

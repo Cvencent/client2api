@@ -162,6 +162,23 @@ type store struct {
 	path      string
 	statePath string
 	all       []*account
+
+	// warnf is the store's only logger, installed by the Client after
+	// loadStore.  A persist that fails must say so (issue #166): every failed
+	// save used to be dropped on the floor, so a lost state.json silently
+	// restored older, looser verdicts on the next restart.  nil means "nothing
+	// to log to", which is what a hand-built test store gets.
+	warnf func(format string, args ...any)
+}
+
+// warn logs one line through the injected logger.  A store built without one
+// (tests, embedders) stays silent, the same deal the rest of the module grants
+// a hand-built Client.
+func (s *store) warn(format string, args ...any) {
+	if s == nil || s.warnf == nil {
+		return
+	}
+	s.warnf(format, args...)
 }
 
 func loadStore(path, statePath string) (*store, error) {
@@ -221,7 +238,9 @@ func loadStore(path, statePath string) (*store, error) {
 		a.lastUsed = parseRFC3339(st.LastUsed)
 	}
 	if migratedState {
-		_ = s.saveState()
+		if err := s.saveState(); err != nil {
+			s.warn("loomy: writing %s: %v", s.statePath, err)
+		}
 	}
 	return s, nil
 }
@@ -470,7 +489,9 @@ func (s *store) backgroundProbeDue(id string, now time.Time, delay func() time.D
 			next = minBackgroundProbeDelay
 		}
 		a.probeAfter = now.Add(next)
-		_ = s.saveState()
+		if err := s.saveState(); err != nil {
+			s.warn("loomy: writing %s: %v", s.statePath, err)
+		}
 		return true
 	}
 	return false
@@ -502,7 +523,7 @@ func (s *store) penaliseChat(id string, err error, now time.Time, cooldown time.
 			a.cooldownTill = now.Add(delay)
 			a.probeAfter = now.Add(backgroundProbeDelay())
 			if saveErr := s.saveState(); saveErr != nil {
-				_ = saveErr
+				s.warn("loomy: writing %s: %v", s.statePath, saveErr)
 			}
 			return
 		}
@@ -510,7 +531,7 @@ func (s *store) penaliseChat(id string, err error, now time.Time, cooldown time.
 		a.cooldownTill = time.Time{}
 		a.probeAfter = time.Time{}
 		if saveErr := s.saveState(); saveErr != nil {
-			_ = saveErr
+			s.warn("loomy: writing %s: %v", s.statePath, saveErr)
 		}
 		return
 	}
@@ -553,7 +574,7 @@ func (s *store) penaliseChatWithStage(id string, err error, now time.Time, stage
 			a.probeAfter = time.Time{}
 		}
 		if saveErr := s.saveState(); saveErr != nil {
-			_ = saveErr
+			s.warn("loomy: writing %s: %v", s.statePath, saveErr)
 		}
 		return true
 	}
@@ -592,7 +613,7 @@ func (s *store) markChatCreditExhausted(id string, err error) bool {
 		a.probeAfter = time.Time{}
 		a.sessionFailures = 0
 		if saveErr := s.saveState(); saveErr != nil {
-			_ = saveErr
+			s.warn("loomy: writing %s: %v", s.statePath, saveErr)
 		}
 		return true
 	}
@@ -639,8 +660,9 @@ func (s *store) penaliseWith(id string, err error, now time.Time, cooldown time.
 		}
 		if saveErr := s.saveState(); saveErr != nil {
 			// Losing the state file costs honesty across a restart, never
-			// correctness now, so it is reported and the request continues.
-			_ = saveErr
+			// correctness now, so it is reported (issue #166: this comment used
+			// to sit over a bare `_ = saveErr`) and the request continues.
+			s.warn("loomy: writing %s: %v", s.statePath, saveErr)
 		}
 		return
 	}
@@ -672,11 +694,11 @@ func (s *store) reset(id string, now time.Time) {
 		if clearExpiry {
 			a.ExpiresAtMS = 0
 			if err := s.save(); err != nil {
-				_ = err
+				s.warn("loomy: writing %s: %v", s.path, err)
 			}
 		}
 		if err := s.saveState(); err != nil {
-			_ = err
+			s.warn("loomy: writing %s: %v", s.statePath, err)
 		}
 		return
 	}
@@ -707,11 +729,11 @@ func (s *store) resetAfterProbe(id string, now time.Time) {
 		if clearExpiry {
 			a.ExpiresAtMS = 0
 			if err := s.save(); err != nil {
-				_ = err
+				s.warn("loomy: writing %s: %v", s.path, err)
 			}
 		}
 		if err := s.saveState(); err != nil {
-			_ = err
+			s.warn("loomy: writing %s: %v", s.statePath, err)
 		}
 		return
 	}
@@ -796,7 +818,9 @@ func (s *store) applyBalance(id string, credits int64, reserve int) bool {
 				return revived
 			}
 			a.lowCredit = false
-			_ = s.saveState()
+			if err := s.saveState(); err != nil {
+				s.warn("loomy: writing %s: %v", s.statePath, err)
+			}
 			return true
 		}
 		if credits <= int64(reserve) {
@@ -804,14 +828,18 @@ func (s *store) applyBalance(id string, credits int64, reserve int) bool {
 				return revived
 			}
 			a.lowCredit = true
-			_ = s.saveState()
+			if err := s.saveState(); err != nil {
+				s.warn("loomy: writing %s: %v", s.statePath, err)
+			}
 			return true
 		}
 		if !a.lowCredit {
 			return revived
 		}
 		a.lowCredit = false
-		_ = s.saveState()
+		if err := s.saveState(); err != nil {
+			s.warn("loomy: writing %s: %v", s.statePath, err)
+		}
 		return true
 	}
 	return false
@@ -832,7 +860,9 @@ func (s *store) clearLowCredit() int {
 		cleared++
 	}
 	if cleared > 0 {
-		_ = s.saveState()
+		if err := s.saveState(); err != nil {
+			s.warn("loomy: writing %s: %v", s.statePath, err)
+		}
 	}
 	return cleared
 }
@@ -856,7 +886,9 @@ func (s *store) setInviteState(id, code string, activated bool) {
 		}
 		a.inviteCode = code
 		a.inviteActivated = activated
-		_ = s.saveState()
+		if err := s.saveState(); err != nil {
+			s.warn("loomy: writing %s: %v", s.statePath, err)
+		}
 		return
 	}
 }

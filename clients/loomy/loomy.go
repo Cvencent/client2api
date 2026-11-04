@@ -150,6 +150,10 @@ func New(deps core.Deps) (core.Client, error) {
 		deps.Log("loomy: %v", err)
 	}
 	c.store = st
+	// The store's persist failures surface here (issue #166): a save that
+	// fails used to be dropped silently, and the next restart restored older,
+	// looser verdicts from the last good file.
+	c.store.warnf = deps.Logf
 	c.store.applyConfig(configuredAccounts(cfg))
 
 	c.up = newUpstream(cfg, deps.Proxy, deps.Logf)
