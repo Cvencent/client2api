@@ -835,7 +835,9 @@ func (c *balanceCache) reconcile() bool {
 		return false
 	}
 	known := map[string]map[string]bool{}
+	present := map[string]bool{}
 	for _, cand := range c.all.All() {
+		present[cand.Name()] = true
 		am, ok := core.AsAccountManager(cand)
 		if !ok {
 			continue
@@ -861,8 +863,20 @@ func (c *balanceCache) reconcile() bool {
 	for client, byID := range c.clients {
 		ids, watched := known[client]
 		if !watched {
-			// The module is not an account manager (or its read failed):
-			// its entries are not ghosts, they are just unverifiable here.
+			if !present[client] {
+				// The whole module is gone from the registry (its source was
+				// removed): no module can resurrect these entries and the
+				// panel can never render them, so they are ghosts by
+				// definition (issue #171; bcsn/vsllm outlived their sources).
+				for id := range byID {
+					delete(byID, id)
+					dropped++
+				}
+				delete(c.clients, client)
+			}
+			// A present module that is not an account manager (or whose read
+			// failed): its entries are not ghosts, they are just unverifiable
+			// here.
 			continue
 		}
 		for id := range byID {
