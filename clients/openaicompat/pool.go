@@ -54,6 +54,13 @@ type providerRecord struct {
 type providerPool struct {
 	mu    sync.Mutex
 	accts []*providerRecord
+	// stateHook lets the owning wrapper reclassify an account the generic
+	// stateAt cannot: officeace's zero-credit parking is an economy verdict
+	// (hours~day scale, no traffic heals it), not the minute-scale cooldown
+	// the park machinery models.  Consulted after the pool's own verdict; a
+	// non-empty answer wins for both the status and the record builder
+	// (issue #24).
+	stateHook func(id string) string
 }
 
 func newProviderPool() *providerPool { return &providerPool{} }
@@ -337,12 +344,20 @@ func (p *providerPool) stateAt(now time.Time, a *providerRecord) string {
 		return "disabled"
 	}
 	if a.cooldownUntil.IsZero() || !now.Before(a.cooldownUntil) {
+		if p.stateHook != nil && p.stateHook(a.ID) != "" {
+			return p.stateHook(a.ID)
+		}
 		return "ready"
 	}
 	// A rejected key needs the operator, so it is reported as an expired
 	// credential rather than ordinary throttling.
 	if a.lastError != "" && isAuthMessage(a.lastError) {
 		return "expired"
+	}
+	if p.stateHook != nil {
+		if override := p.stateHook(a.ID); override != "" {
+			return override
+		}
 	}
 	return "cooling"
 }

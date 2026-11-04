@@ -55,6 +55,12 @@ type source struct {
 	// raced" are both cooldowns, but "the App Key itself is gone" is still a
 	// dead key, and only the wrapper can tell them apart.
 	authExhausted func(id, refusal string) bool
+	// stateOverride lets the wrapper classify an account the generic pool's
+	// stateAt cannot: officeace's zero-credit parking is an economy verdict
+	// (hours~day scale, no traffic heals it), not the minute-scale cooldown
+	// the park machinery models.  Non-empty replaces raw "cooling" in both
+	// the status and record builders; nil on plain relays (issue #24).
+	stateOverride func(id string) string
 	lastUsed      map[string]uint64
 	sequence      uint64
 	limits        *sourceRequestLimiter

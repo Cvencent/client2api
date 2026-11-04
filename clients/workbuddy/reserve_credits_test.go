@@ -53,9 +53,9 @@ func TestReserveGuardParksAKnownZeroBalanceAndRevivesIt(t *testing.T) {
 
 	got := statusOf(t, p, a.ID())
 	// Snapshot appends the remaining cooldown to a live note, so match the prefix.
-	if got.State != stateExhausted || !strings.HasPrefix(got.Note, reserveCreditNote) {
+	if got.State != "low_credit" || !strings.HasPrefix(got.Note, reserveCreditNote) {
 		t.Fatalf("zero-balance account = %q/%q, want %q/%q",
-			got.State, got.Note, stateExhausted, reserveCreditNote)
+			got.State, got.Note, "low_credit", reserveCreditNote)
 	}
 	if p.UsableForModel(a.ID(), "any-model") {
 		t.Error("a parked zero-balance account must not be usable")
@@ -83,8 +83,8 @@ func TestReserveGuardThresholdAndOffSwitch(t *testing.T) {
 
 	p.SetReserveCredits(10)
 	p.SetCreditsDetailed(a, 10, 100, 0, time.Time{}, 0)
-	if got := statusOf(t, p, a.ID()).State; got != stateExhausted {
-		t.Fatalf("balance exactly at the reserve = %q, want %q", got, stateExhausted)
+	if got := statusOf(t, p, a.ID()).State; got != "low_credit" {
+		t.Fatalf("balance exactly at the reserve = %q, want %q", got, "low_credit")
 	}
 	p.SetCreditsDetailed(a, 11, 100, 0, time.Time{}, 0)
 	if got := statusOf(t, p, a.ID()).State; got != stateReady {
@@ -94,8 +94,8 @@ func TestReserveGuardThresholdAndOffSwitch(t *testing.T) {
 	// Raising the threshold re-parks immediately, without waiting for the next
 	// balance sweep: the operator's change must be visible at once.
 	p.SetReserveCredits(50)
-	if got := statusOf(t, p, a.ID()).State; got != stateExhausted {
-		t.Fatalf("state after raising the reserve = %q, want %q", got, stateExhausted)
+	if got := statusOf(t, p, a.ID()).State; got != "low_credit" {
+		t.Fatalf("state after raising the reserve = %q, want %q", got, "low_credit")
 	}
 	if got := p.ReserveCredits(); got != 50 {
 		t.Fatalf("ReserveCredits() = %d, want 50", got)
@@ -140,9 +140,9 @@ func TestSpendingTheLastCreditParksImmediately(t *testing.T) {
 	// here empties the balance, so the guard has to park without waiting for a
 	// sweep or for the next request to fail.
 	p.NoteModelCost(a, "some-model", 3, 1000)
-	if got := statusOf(t, p, a.ID()); got.State != stateExhausted || !strings.HasPrefix(got.Note, reserveCreditNote) {
+	if got := statusOf(t, p, a.ID()); got.State != "low_credit" || !strings.HasPrefix(got.Note, reserveCreditNote) {
 		t.Fatalf("state after spending the last credit = %q/%q, want %q/%q",
-			got.State, got.Note, stateExhausted, reserveCreditNote)
+			got.State, got.Note, "low_credit", reserveCreditNote)
 	}
 }
 

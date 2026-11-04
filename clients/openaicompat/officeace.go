@@ -332,6 +332,24 @@ func (o *officeAceSource) officeAceCreditsExhausted(id string, now time.Time) bo
 }
 
 // bindAuthExhaustedHook teaches the generic source about the exhaustion veto.
+// bindStateHook teaches the generic pool to classify the zero-credit parking
+// as its own economy verdict instead of a cooldown (issue #24): the account's
+// own read is 0 -- there is nothing traffic can do, only a top-up or a daily
+// check-in refills it.  Only the zero reading answers; -1 ("not drained") and
+// positive readings leave the pool's own cooling verdict untouched.
+func (o *officeAceSource) bindStateHook() {
+	o.source.pool.mu.Lock()
+	o.source.pool.stateHook = func(id string) string {
+		o.pointsMu.Lock()
+		defer o.pointsMu.Unlock()
+		if o.points[id] == 0 && !o.pointsAt[id].IsZero() {
+			return "low_credit"
+		}
+		return ""
+	}
+	o.source.pool.mu.Unlock()
+}
+
 func (o *officeAceSource) bindAuthExhaustedHook() {
 	o.source.authExhausted = func(id, refusal string) bool {
 		// refusal is accepted and ignored on purpose: for this vendor the text
@@ -350,6 +368,7 @@ func wrapOfficeAceSource(name string, cfg core.SourceConfig, s *source) core.Sou
 	oa := &officeAceSource{source: s, eps: defaultOfficeAceEndpoints()}
 	oa.loadOfficeAcePoints()
 	oa.enableDesktopModelSelection()
+	oa.bindStateHook()
 	oa.bindAuthExhaustedHook()
 	if !officeAceLocalSupported() {
 		return oa

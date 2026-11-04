@@ -2221,6 +2221,14 @@ func (p *Pool) Snapshot() []core.AccountStatus {
 				state = stateCooling
 			}
 		}
+		// 余额护栏的停车单独报（issue #24）：minutes-scale self-healing 的
+		// 限流和 hours~day-scale 的积分耗尽是两种恢复节奏，面板的 积分不足
+		// 桶（stateCategory raw === "low_credit"）需要上游真的上报这个原始
+		// 状态。只有护栏自己创建的那种停车才算——利率限/熔断的 own 停车
+		// 还归 cooling。
+		if state == stateExhausted && e.note == reserveCreditNote {
+			state = "low_credit"
+		}
 		as := core.AccountStatus{
 			ID:      e.auth.ID(),
 			Label:   e.auth.Label(),

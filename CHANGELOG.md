@@ -6,6 +6,35 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.8] - 2026-11-04
+
+### Fixed
+
+- **「积分不足」状态真正闭环（#24，重开第三轮）**：面板的独立档（7752d3d）早已
+  在，但 loomy 的 lowCredit 分支、workbuddy 的余额护栏停车、officeace 的零积分
+  停车在**数据层**上报的 state 仍是 `"cooling"`——全网「积分不足」桶长时间收
+  不到一行，积分 0 的账号一直显示 冷却中。三个模块现在都按读数上报
+  `low_credit`：
+  - loomy：`case a.lowCredit:` 的 `record.State` 改为 `"low_credit"`
+    （`clients/loomy/accounts.go`）；
+  - workbuddy：`Snapshot()` 识别**护栏自己创建**的那种停车
+    （`stateExhausted && note == reserveCreditNote`）并上报 `"low_credit"`，
+    利率限/熔断/凭据的 own 停车照旧 cooling（`clients/workbuddy/pool.go`）；
+  - officeace：`providerPool` 新增 `stateHook`（包装层把经济态判决带回来的
+    通道，`clients/openaicompat/pool.go`），officeace 绑定零读数判据
+    （`points[id] == 0 && pointsAt` 有记录 → `"low_credit"`；-1 未泄与正读数
+    不改判；恢复探针与余额复活的消费方
+    （`IsRecoverableAccountState` / `balanceCanReviveState`）本就把
+    low_credit 计入可恢复档；选路行为零变化（usable 的 lowCredit 拦截原样）。
+  看守 `internal/panel/state_reporting_test.go`：三处状态字面量逐个钉死
+  （loomy 的 case 分支、workbuddy 的护栏判据、officeace 的零读数判据），
+  工作区测试的既有断言同步为 low_credit（行为变化正是本单的验收判据）。
+
+### Installer
+
+- `client2api-setup-0.7.8.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `488E97068C35900058ACADF573687A623E2836CDA0D5DCEA31C689114182C4F9`
+
 ## [0.7.7] - 2026-11-04
 
 ### Fixed

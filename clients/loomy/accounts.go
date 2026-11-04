@@ -1264,7 +1264,12 @@ func accountRecord(a *account, now time.Time) core.AccountRecord {
 		record.Note = "the session expired (Loomy sessions last 14 days and cannot be renewed); " +
 			"log in again and import the new token"
 	case a.lowCredit:
-		record.State = "cooling"
+		// 经济态单独报（issue #24）：分钟级自愈的限流和等待回血的积分耗尽是两种
+		// 恢复节奏，面板有 积分不足 独立桶（stateCategory 的 raw === "low_credit"
+		// 分支），7752d3d 建的档一直落不进来，就是 Astraeus 上报的 state 还是
+		// cooling。恢复探针/余额复活的消费方（IsRecoverableAccountState、
+		// balanceCanReviveState）都把 low_credit 计入可恢复档。
+		record.State = "low_credit"
 		record.Note = "credit balance is at or below the reserve; waiting for a funded " +
 			"balance refresh or daily check-in"
 		record.Fields["low_credit"] = true

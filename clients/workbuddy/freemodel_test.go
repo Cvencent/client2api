@@ -93,8 +93,8 @@ func reserveParkedPool(t *testing.T, a *Auth) (*Pool, *pickClock) {
 	t.Helper()
 	p, clk := newPickPool([]*Auth{a})
 	p.SetCreditsDetailed(a, 0, 5000, 0, time.Time{}, 0)
-	if got := statusOf(t, p, a.ID()).State; got != stateExhausted {
-		t.Fatalf("account state after reporting a zero balance = %q, want %q", got, stateExhausted)
+	if got := statusOf(t, p, a.ID()).State; got != "low_credit" {
+		t.Fatalf("account state after reporting a zero balance = %q, want %q", got, "low_credit")
 	}
 	return p, clk
 }
@@ -112,7 +112,7 @@ func TestWorkbuddyFreeModelIsServedFromAZeroBalanceAccount(t *testing.T) {
 	}
 	// The park is still the truth about the wallet: the free request used the
 	// account, it did not fix it.
-	if st := statusOf(t, p, a.ID()); st.State != stateExhausted {
+	if st := statusOf(t, p, a.ID()); st.State != "low_credit" {
 		t.Fatalf("state after serving a free model = %q, want the credit park to stand", st.State)
 	}
 }
@@ -185,7 +185,7 @@ func TestWorkbuddyFreeModelRefusalParksOnlyThatPair(t *testing.T) {
 	}
 	// The account's own state is untouched: the refusal said nothing new about
 	// the credential, and the paid models were already parked by the wallet.
-	if st := statusOf(t, p, a.ID()); st.State != stateExhausted || !strings.HasPrefix(st.Note, reserveCreditNote) {
+	if st := statusOf(t, p, a.ID()); st.State != "low_credit" || !strings.HasPrefix(st.Note, reserveCreditNote) {
 		t.Fatalf("account state after a free refusal = %q/%q, want the low-balance park", st.State, st.Note)
 	}
 	// The park lapses with the quota day, so the pair is probed again once a
@@ -202,7 +202,7 @@ func TestWorkbuddyFreeSuccessKeepsTheCreditPark(t *testing.T) {
 
 	p.MarkSuccessForModelFor(a, "free-model", true)
 	st := statusOf(t, p, a.ID())
-	if st.State != stateExhausted || !strings.HasPrefix(st.Note, reserveCreditNote) {
+	if st.State != "low_credit" || !strings.HasPrefix(st.Note, reserveCreditNote) {
 		t.Fatalf("a free success left the account %q/%q, want the credit park kept", st.State, st.Note)
 	}
 	if _, ok := p.PickForModelFor(nil, "paid-model", false); ok {
