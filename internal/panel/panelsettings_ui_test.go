@@ -75,8 +75,11 @@ func TestPackageDetailLimitReachesEveryLayer(t *testing.T) {
 	if !strings.Contains(cfg, "package_detail_limit") {
 		t.Error("config.go does not serialise panel.package_detail_limit")
 	}
-	if !strings.Contains(cfg, "PackageDetailLimit: p.opts.PackageDetailLimit") {
-		t.Error("configRead does not report the resolved PackageDetailLimit")
+	if !strings.Contains(cfg, "PackageDetailLimit: p.liveDetailLimit()") {
+		t.Error("configRead does not report the resolved PackageDetailLimit（issue #175 后生效值来自 live 快照）")
+	}
+	if !strings.Contains(cfg, "func (p *panel) liveDetailLimit()") {
+		t.Error("config.go 缺 liveDetailLimit：live 快照里的值没有读取出口（issue #175）")
 	}
 
 	// Hop 4: the writer knows the section, so a save keeps it in place

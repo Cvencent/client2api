@@ -45,6 +45,12 @@ type Snapshot struct {
 	// WorkBuddy pool. A reload must move both together.
 	ExpiringSoon time.Duration `json:"expiring_soon"`
 	AffinityTTL  time.Duration `json:"affinity_ttl"`
+	// PackageDetailLimit is how many credit batches the credits view shows
+	// per account before collapsing the rest.  A pure display number, so a
+	// reload moves it like every other panel setting -- the value used to be
+	// read once at construction and the panel kept serving the old figure
+	// while claiming the change was live (issue #175).
+	PackageDetailLimit int `json:"package_detail_limit"`
 }
 
 // AuthEnabled reports whether inbound auth is enforced.

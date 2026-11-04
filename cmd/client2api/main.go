@@ -45,7 +45,7 @@ import (
 )
 
 // version is overridable with -ldflags "-X main.version=...".
-var version = "0.7.13"
+var version = "0.7.14"
 
 // restartHandoffEnv marks the replacement half of a panel restart.  It tells a
 // starting process to keep retrying the listen address instead of failing fast,
@@ -1193,6 +1193,7 @@ func (c *fileConfig) liveSnapshot() livecfg.Snapshot {
 		PromptFile:           c.Prompt.File,
 		AffinityTTL:          dur(c.SessionSticky.TTL, core.DefaultAffinityTTL),
 		ExpiringSoon:         dur(c.Pool.ExpiringSoon, 168*time.Hour),
+		PackageDetailLimit:   c.Panel.PackageDetailLimit,
 	}
 }
 

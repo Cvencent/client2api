@@ -99,12 +99,18 @@ func (p *panel) configWrite(w http.ResponseWriter, r *http.Request) {
 			Registered:   core.Registered(),
 			Config:       redactConfig(merged),
 			ModuleSchema: moduleOptions,
+			// The saved response used to leave Panel zero (issue #175's
+			// secondary symptom): the same response then carried 9 in
+			// config.panel and 0 in panel.  The live value is one call away.
+			Panel: panelSettings{PackageDetailLimit: p.liveDetailLimit()},
 		},
 		Saved:   true,
 		Changed: changed,
 		// Only the keys a running process reads once need a restart; telling the
 		// operator to restart after a hot-only save would send them to do work
-		// the hot reload already did.
+		// the hot reload already did.  package_detail_limit is hot now (issue
+		// #175): it rides the live snapshot, so "panel" keys stay out of the
+		// restart list.
 		RestartRequired: coldChangesRequireRestart(changed),
 	}
 	if p.opts.Registry != nil {

@@ -6,6 +6,32 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.14] - 2026-11-04
+
+### Fixed
+
+- **配置页「积分批次默认展示条数」现在真的热生效（#175）**：`panel.package_detail_limit`
+  原是构造期一次性读进 `panel.Options` 的键，保存成功、`restart_required: false`，
+  运行中的进程却永远用旧值（配置文件是新值、生效值是旧值），热重载也带不动——它不在
+  `coldConfigKeys` 里，`coldChangesRequireRestart(["panel"])` 于是一口咬定「不用重启」。
+  现在把它搬进 `livecfg.Snapshot`（`PackageDetailLimit` 字段），随 reload 的
+  `live.Store` 热切换；`configRead` 与保存响应的 `panel` 都改读
+  `liveDetailLimit()`（Live 优先、回落 Options），改完立即生效且两个口径一致。
+  连带修正：保存响应里 `panel` 曾固定回 `0`（字面量里漏了这个字段），
+  配置页此前每保存一次就在响应里看见一次假值。
+- **balance_cache 幽灵条目治理（#171）**：`data/panel/balance_cache.json` 只增不减，
+  已删账号的余额缓存条目永久残留（部署实测 57 条幽灵跨 11 模块、最老 25 天；
+  「删了重加同 key」是常规排障操作，重建后旧余额立即冒充新读数，要等下一轮
+  sweep 才纠正）。两道修法：账号 DELETE 成功后同步 `drop` 该 `(平台, 账号)`
+  的缓存条目（`balancecache.go`），同 key 重建从零开始；启动时 `reconcile()`
+  拿 `AsAccountManager` 的账号清单对账一遍，清掉历史幽灵。对账只删「缓存里有、
+  账号清单里没有」的条目，模块清单读失败的那个平台整个跳过，绝不误清。
+
+### Installer
+
+- `client2api-setup-0.7.14.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `71f2c8f57aa9f229798387f9bb76665e0e54f3d0df74b52d28ade3ea5a7e13b9`
+
 ## [0.7.13] - 2026-11-04
 
 ### Fixed

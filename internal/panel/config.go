@@ -88,16 +88,32 @@ func (p *panel) handleConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 // configRead reports the configuration as it is on disk, redacted.
+// liveDetailLimit resolves the credits view's batch cap from the live
+// snapshot when one is wired, falling back to the construction-time value
+// for embedders that never built a holder (issue #175).
+func (p *panel) liveDetailLimit() int {
+	if p != nil && p.opts.Live != nil {
+		if n := p.opts.Live.Load().PackageDetailLimit; n > 0 {
+			return n
+		}
+	}
+	return p.opts.PackageDetailLimit
+}
+
 func (p *panel) configRead(w http.ResponseWriter, r *http.Request) {
 	resp := configResponse{
-		Path:         p.opts.ConfigPath,
-		Version:      p.opts.Version,
-		Addr:         p.opts.Listen,
-		APIKeySet:    p.opts.AuthEnabled,
-		CanRestart:   p.opts.Restart != nil,
-		Clients:      []string{},
-		Registered:   core.Registered(),
-		Panel:        panelSettings{PackageDetailLimit: p.opts.PackageDetailLimit},
+		Path:       p.opts.ConfigPath,
+		Version:    p.opts.Version,
+		Addr:       p.opts.Listen,
+		APIKeySet:  p.opts.AuthEnabled,
+		CanRestart: p.opts.Restart != nil,
+		Clients:    []string{},
+		Registered: core.Registered(),
+		// The live snapshot is the effective value (issue #175): the
+		// construction-time opts.PackageDetailLimit went stale the moment a
+		// reload moved the number, and the panel served the old figure while
+		// promising the change needed no restart.
+		Panel:        panelSettings{PackageDetailLimit: p.liveDetailLimit()},
 		ModuleSchema: moduleOptions,
 	}
 	if p.opts.Registry != nil {

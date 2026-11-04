@@ -817,6 +817,102 @@ func (c *balanceCache) snapshot(client string) map[string]balanceEntry {
 	return out
 }
 
+// reconcile prunes cached entries whose account no longer exists in its
+// module's pool (issue #171).  It runs at boot -- before the first sweep, so
+// a removed account's stale reading never re-enters the panel -- and the
+// entries that remain are exactly the ones the operators can still see.
+// Modules whose Accounts call fails are skipped this round: a transient
+// failure must not be read as "the pool is empty" and wipe real entries.
+// Reports whether anything was dropped.
+func (c *balanceCache) reconcile() bool {
+	if c == nil || c.all == nil {
+		return false
+	}
+	known := map[string]map[string]bool{}
+	for _, cand := range c.all.All() {
+		am, ok := core.AsAccountManager(cand)
+		if !ok {
+			continue
+		}
+		lctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		recs, err := am.Accounts(lctx)
+		cancel()
+		if err != nil {
+			continue
+		}
+		ids := map[string]bool{}
+		name := cand.Name()
+		for _, rec := range recs {
+			ids[rec.ID] = true
+		}
+		known[name] = ids
+	}
+	if len(known) == 0 {
+		return false
+	}
+	dropped := 0
+	c.mu.Lock()
+	for client, byID := range c.clients {
+		ids, watched := known[client]
+		if !watched {
+			// The module is not an account manager (or its read failed):
+			// its entries are not ghosts, they are just unverifiable here.
+			continue
+		}
+		for id := range byID {
+			if !ids[id] {
+				delete(byID, id)
+				dropped++
+			}
+		}
+		if len(byID) == 0 {
+			delete(c.clients, client)
+		}
+	}
+	if dropped > 0 {
+		c.dirty = true
+	}
+	c.mu.Unlock()
+	if dropped > 0 {
+		c.persist()
+	}
+	return dropped > 0
+}
+
+// drop forgets one cached entry and persists the removal (issue #171).  The
+// DELETE account route calls it after the module confirms the removal: the
+// cache otherwise kept deleted accounts' readings forever, and re-adding the
+// same credential key -- the documented recovery step for a misclassified
+// account -- read last month's credits as this month's.
+//
+// Dropping an entry that is not cached is a no-op that still marks the
+// document dirty is deliberately avoided: a caller may reconcile speculatively,
+// and rewriting the file for nothing teaches the disk nothing.  True when
+// something was removed.
+func (c *balanceCache) drop(client, id string) bool {
+	if c == nil || client == "" || id == "" {
+		return false
+	}
+	c.mu.Lock()
+	byID, ok := c.clients[client]
+	if !ok {
+		c.mu.Unlock()
+		return false
+	}
+	if _, had := byID[id]; !had {
+		c.mu.Unlock()
+		return false
+	}
+	delete(byID, id)
+	if len(byID) == 0 {
+		delete(c.clients, client)
+	}
+	c.dirty = true
+	c.mu.Unlock()
+	c.persist()
+	return true
+}
+
 func unitOf(rows map[string]balanceEntry) string {
 	for _, e := range rows {
 		if strings.TrimSpace(e.Unit) != "" {
