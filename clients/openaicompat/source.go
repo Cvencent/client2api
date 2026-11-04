@@ -55,21 +55,19 @@ type source struct {
 	// raced" are both cooldowns, but "the App Key itself is gone" is still a
 	// dead key, and only the wrapper can tell them apart.
 	authExhausted func(id, refusal string) bool
-	// stateOverride lets the wrapper classify an account the generic pool's
-	// stateAt cannot: officeace's zero-credit parking is an economy verdict
-	// (hours~day scale, no traffic heals it), not the minute-scale cooldown
-	// the park machinery models.  Non-empty replaces raw "cooling" in both
-	// the status and record builders; nil on plain relays (issue #24).
-	stateOverride func(id string) string
-	lastUsed      map[string]uint64
-	sequence      uint64
-	limits        *sourceRequestLimiter
-	lastErr       string
-	active        bool
-	generation    uint64
-	affinity      *core.Affinity
-	scanFilter    sourceModelFilter
-	wireModel     func(string) string
+	// (The #24 economy classification lives on providerPool.stateHook, which
+	// both the display builders and -- since issue #172 -- the chat pick
+	// consume.  A source-level stateOverride field was sketched for the same
+	// job and never wired; removed rather than left to mislead.)
+	lastUsed   map[string]uint64
+	sequence   uint64
+	limits     *sourceRequestLimiter
+	lastErr    string
+	active     bool
+	generation uint64
+	affinity   *core.Affinity
+	scanFilter sourceModelFilter
+	wireModel  func(string) string
 
 	// httpMu guards the per-source HTTP client below.  It is a separate lock
 	// from mu so a request path can fetch its client without touching the
@@ -460,6 +458,20 @@ func (s *source) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 		candidates := []storedProvider{}
 		for _, p := range s.rows {
 			if p.Disabled || tried[p.ID] || s.invalid[p.ID] {
+				continue
+			}
+			// The wrapper's own verdict participates in the pick (issue #172):
+			// officeace's zero-credit parking used to be display-only -- the
+			// chat path only looked at the 5-minute cooldown clock, so a
+			// drained account came back every five minutes, took the real 401,
+			// and cooled down again.  "Ask again in 5 minutes" always receives
+			// the same answer from an empty wallet; the operator's #24 ruling
+			// is zero credits = skipped, not retried.  A positive reading
+			// clears the verdict through reviveOfficeAceAccount immediately,
+			// so the skip costs nothing that a refill does not restore.  The
+			// hook is the same one the status/record builders consume (the
+			// #24 plumbing); a plain relay has none and keeps its old shape.
+			if s.pool != nil && s.pool.stateHook != nil && s.pool.stateHook(p.ID) == "low_credit" {
 				continue
 			}
 			for _, m := range p.Models {

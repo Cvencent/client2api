@@ -5,7 +5,7 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-Current version: **0.7.11**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
+Current version: **0.7.12**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
 
 client2api is a personal, local-only OpenAI-compatible gateway. It aggregates
 the accounts and API Keys **you own** on different AI coding clients and
@@ -271,7 +271,12 @@ loop that never ended.
   `APIG.1009`, so the message cannot separate them — and its IAM 401 is never the
   model key dying (the key is a long-lived App Key / App Secret pair), which
   leaves the credit read as the only usable signal. An account no read has ever
-  touched still takes the dead-key path below.
+  touched still takes the dead-key path below. That verdict now also **drives
+  the pick** (issue #172): an account whose reading is zero is skipped outright
+  in the chat candidate filter -- no more "cooldown lapses, real 401, cool down
+  again" every five minutes on a wallet that cannot answer differently -- and a
+  positive reading reopens the pick immediately. Unread accounts and -1
+  (unlimited) readings are unaffected.
 - A credential the vendor rejects is reported as 账号异常, not 冷却中, on every
   platform. A 401 is a verdict about the credential whatever its body says (the
   vendor's business envelope, a generic `token expired`, or the edge gateway's
