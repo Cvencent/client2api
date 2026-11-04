@@ -867,17 +867,25 @@ func TestPoolEndpointCarriesTheVolatileSliceOnly(t *testing.T) {
 	if !ok {
 		t.Fatalf("accounts = %v, want acct-plain (module reports nothing for it)", accounts)
 	}
-	if plain["in_flight"] != float64(2) || plain["in_flight_limit"] != float64(3) {
-		t.Fatalf("acct-plain extra = %v, want the gateway's 2 and the platform ceiling 3", plain)
+	// The ceiling now travels once per client (issue #192); the account row
+	// carries only the lease count.
+	if plain["in_flight"] != float64(2) || plain["in_flight_limit"] != nil {
+		t.Fatalf("acct-plain extra = %v, want the gateway's 2 and NO repeated ceiling", plain)
 	}
 	own, ok := byID["acct-own"]
 	if !ok {
 		t.Fatalf("accounts = %v, want acct-own", accounts)
 	}
 	// The module keeps its own count, so its 5 wins over the gateway's 7, and
-	// the displayed ceiling is the tighter of its own 1 and the platform's 3.
+	// its own tighter ceiling rides with the account (the platform-level 3
+	// cannot express it).
 	if own["in_flight"] != float64(5) || own["in_flight_limit"] != float64(1) {
 		t.Fatalf("acct-own extra = %v, want the module's 5 and its tighter ceiling 1", own)
+	}
+	// The client-level ceiling is the platform's 3.
+	rowLimit, _ := row["in_flight_limit"].(float64)
+	if rowLimit != 3 {
+		t.Fatalf("client in_flight_limit = %v, want the platform's 3 stated once (issue #192)", row["in_flight_limit"])
 	}
 }
 

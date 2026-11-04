@@ -9,6 +9,7 @@ import (
 	"context"
 	"crypto/sha256"
 	_ "embed"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -735,11 +736,27 @@ type poolRow struct {
 	// does: the accounts table polls this light endpoint every 5s, and its
 	// header row needs the live number without a second poll (issue #67).
 	PlatformInFlight *platformInFlightView `json:"platform_in_flight,omitempty"`
+	// InFlightLimit is the platform's per-account ceiling stated ONCE instead
+	// of being repeated into every account's extra (issue #192): the value is
+	// one number per platform, and N copies were 12% of the poll's bytes.
+	InFlightLimit *int `json:"in_flight_limit,omitempty"`
 }
 
 type poolAccount struct {
 	ID    string         `json:"id"`
 	Extra map[string]any `json:"extra,omitempty"`
+}
+
+// poolExtra is the allow-list the 5-second pool poll serializes per account
+// (issue #192): only the keys the accounts table actually reads.  Extra used
+// to ride along in full -- base_url and source are per-account copies of
+// static module config the page never reads here, and they were a third of
+// every poll's bytes on a relay platform with many accounts.
+var poolExtraKeys = map[string]bool{
+	"in_flight":       true,
+	"in_flight_limit": true,
+	"model_cooldowns": true,
+	"realm":           true,
 }
 
 type poolSnapshot struct {
@@ -763,25 +780,47 @@ func (p *panel) handlePool(w http.ResponseWriter, r *http.Request) {
 		RedisMode: redisModeNoop,
 		Clients:   []poolRow{},
 	}
+	// The poll is hot (every 5s) and usually identical between ticks (issue
+	// #192): a strong ETag over the snapshot minus nothing -- the whole
+	// document is already the volatile slice -- lets an idle page cost a 304
+	// and zero body bytes.
 	if p.opts.Registry != nil {
 		for _, c := range p.opts.Registry.All() {
 			st := core.RedactStatus(c.Status(ctx))
 			// The accounts table reads its in-flight column from this light
 			// poll, so it has to carry the same decoration /status applies: the
-			// platform's per-account ceiling plus the gateway's own lease
-			// counter.  Without it a module that keeps no ceiling of its own
-			// (rzol and the other relay platforms) arrives with no
-			// in_flight_limit key at all, and the page draws the operator's "3"
-			// as ∞ -- which was exactly this poll's bug.
+			// gateway's own lease counter per account, and the platform's
+			// per-account ceiling -- stated once per client now (issue #192),
+			// not repeated into every account.
 			p.decorateAccountInFlight(st.Name, st.Accounts)
 			row := poolRow{Name: st.Name, Ready: st.Ready, PlatformInFlight: p.platformInFlight(st.Name)}
+			ceiling := 0
+			if p.opts.Registry != nil {
+				ceiling = p.opts.Registry.MaxInFlightPerAccountFor(st.Name)
+			}
+			row.InFlightLimit = &ceiling
 			// Account lease extras are the one per-account volatile block the
 			// accounts table polls for; ids ride along so the page can index.
+			// Keys outside the allow-list (base_url, source -- per-account
+			// copies of static module config the page never reads here) stay
+			// out of the 5-second channel entirely; /overview's accounts[]
+			// still carries the full record for whoever needs it.
 			for _, a := range st.Accounts {
-				if a.Extra == nil {
-					continue
+				trimmed := map[string]any{}
+				for k, v := range a.Extra {
+					if poolExtraKeys[k] {
+						trimmed[k] = v
+					}
 				}
-				row.Account = append(row.Account, poolAccount{ID: a.ID, Extra: a.Extra})
+				// The per-account override only exists when the module states
+				// its own tighter ceiling; the platform-level number already
+				// travelled on the row.
+				if own := ceilingOf(a.Extra["in_flight_limit"]); own > 0 && (ceiling == 0 || own < ceiling) {
+					trimmed["in_flight_limit"] = own
+				} else {
+					delete(trimmed, "in_flight_limit")
+				}
+				row.Account = append(row.Account, poolAccount{ID: a.ID, Extra: trimmed})
 			}
 			if ps, ok := core.PoolStatsOf(c); ok {
 				row.Pool = &ps
@@ -791,6 +830,18 @@ func (p *panel) handlePool(w http.ResponseWriter, r *http.Request) {
 			}
 			snap.Clients = append(snap.Clients, row)
 		}
+	}
+	stamp, err := json.Marshal(snap)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "marshal pool: "+err.Error())
+		return
+	}
+	sum := sha256.Sum256(stamp)
+	etag := `"` + hex.EncodeToString(sum[:16]) + `"`
+	w.Header().Set("ETag", etag)
+	if match := r.Header.Get("If-None-Match"); match != "" && etagMatches(match, etag) {
+		w.WriteHeader(http.StatusNotModified)
+		return
 	}
 	writeJSON(w, http.StatusOK, snap)
 }

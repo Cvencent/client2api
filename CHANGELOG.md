@@ -6,6 +6,27 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.26] - 2026-11-05
+
+### Fixed
+
+- **账号池 5 秒轮询只发读数（#192）**：`/panel/api/pool` 曾把每个账号的
+  `extra` 整块重传——中转站平台上 33% 的字节是页面零读取的静态配置
+  （`base_url`/`source` 逐账号重复），12.5% 是同一个平台上限整数重复 N 遍，
+  真正动态的读数只占两成。三层修法：①`poolAccount` 按白名单序列化
+  （`in_flight`/`in_flight_limit`/`model_cooldowns`/`realm`，静态键从 5 秒
+  通道消失，`/overview` 的完整账号记录仍带全量）；②平台的每账号上限改为
+  client 级 `in_flight_limit` 只说一次，模块自己报了更紧上限的才随账号走；
+  ③补强 ETag + `If-None-Match`（照 models/conversations 的写法）——空闲时
+  5 秒一拍从 16KB（100 账号）降到 304 零正文。前端 `poolIndex`/`inflightCell`
+  同步适配（client 级兜底）。守护测试：载荷白名单（非读数键即红）、304
+  契约、relay 形状 100 账号零静态键；旧契约测试同步更新。
+
+### Installer
+
+- `client2api-setup-0.7.26.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `23587d300ae33fa7124d8798e82d5c2b5c1055acb789b501639de501ed6ab51f`
+
 ## [0.7.25] - 2026-11-05
 
 ### Added

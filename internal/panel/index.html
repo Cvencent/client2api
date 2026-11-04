@@ -8467,7 +8467,9 @@ function poolIndex(d) {
     // issue #73 的教训：这个白名单每加一个键都要跟着长，漏一个渲染端就静默
     // 空白（无报错可查）。harness 有测试钉住两者同步。
     byName[c.name] = { pool: c.pool || null, health: c.health || null, extra: extra,
-      platform_in_flight: c.platform_in_flight || null };
+      platform_in_flight: c.platform_in_flight || null,
+      // 平台的每账号上限（issue #192）：服务端只说一次，不再逐账号重复。
+      in_flight_limit: c.in_flight_limit };
   });
   return { redis_mode: d && d.redis_mode, clients: byName };
 }
@@ -8497,14 +8499,21 @@ function acctExtra(n, a) {
   if (own && own.in_flight != null) return own;
   const c = poolClient(n);
   const st = (c && c.extra && c.extra[a.id]) || null;
-  return (st && st.in_flight != null) ? st : null;
+  if (st && st.in_flight != null) return st;
+  // 平台上限只在 client 级说一次（issue #192），行渲染需要它时在此合成。
+  if (c && c.in_flight_limit != null && own && own.in_flight != null) {
+    return Object.assign({}, own, { in_flight_limit: c.in_flight_limit });
+  }
+  return (own && own.in_flight != null) ? own : null;
 }
 
 // 在途列的显示规则：limit 为 0 或压根没报 = 没有上限，写 ∞。
 function inflightCell(n, a) {
   const x = acctExtra(n, a);
   if (!x) return '<span class="hint">—</span>';
-  const lim = x.in_flight_limit;
+  // limit 的取值序：账号自己的覆盖 > 平台 client 级一份 > 没报 = ∞（issue #192）。
+  const c = poolClient(n);
+  const lim = x.in_flight_limit != null ? x.in_flight_limit : (c && c.in_flight_limit);
   return esc(String(x.in_flight) + " / " + ((lim == null || lim === 0) ? "∞" : lim));
 }
 
