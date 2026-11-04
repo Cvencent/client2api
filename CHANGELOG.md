@@ -6,6 +6,22 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.19] - 2026-11-04
+
+### Fixed
+
+- **0.7.18 的用量页回归（本次发布的目的）**：#185 的修复把「成功率」磁贴的
+  副标题判定改成了 `sub: req`，而 `req` 是外层 `renderUsage` 的局部变量、
+  `renderUsageTiles` 的作用域里没有它——用量页一打开控制台即
+  `ReferenceError: req is not defined`，整片磁贴区不渲染。改读本函数参数
+  `t.requests`（`(t.requests || 0)`），并加静态钉禁止该函数再引用不存在的
+  作用域量。
+
+### Installer
+
+- `client2api-setup-0.7.19.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `71bb13416e46c3cfbdf15b3bac1137b38d00f05450cb550c8952bb8753cb1b23`
+
 ## [0.7.18] - 2026-11-04
 
 ### Fixed

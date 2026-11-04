@@ -22,6 +22,15 @@ func TestUsageSuccessRateShowsADashWithoutSamples(t *testing.T) {
 	if !strings.Contains(tile, "还没有请求") {
 		t.Error("零样本的副标题应说「还没有请求」；「没有失败」只属于真跑过流量的场景（issue #185）")
 	}
+	// 副标题的判定必须用本函数作用域里存在的量：renderUsageTiles 只收到
+	// (d, t, rate)，曾直接引用外层 renderUsage 的 req，整个用量页一打开就
+	// ReferenceError（磁贴区全部消失）。
+	if strings.Contains(tile, "sub: req") || strings.Contains(tile, "sub:  req") {
+		t.Fatal("成功率磁贴的副标题引用了 renderUsageTiles 作用域里不存在的 req：页面会 ReferenceError")
+	}
+	if !strings.Contains(tile, "(t.requests || 0)") {
+		t.Error("成功率磁贴的副标题没有读 t.requests：有/无请求的判定落空（issue #185）")
+	}
 }
 
 // #187：上下文窗口是容量值，不许走 fmtK 的有损舍入（1,048,576 → 1049K，

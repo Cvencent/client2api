@@ -16122,7 +16122,7 @@ function renderUsageTiles(d, t, rate) {
     },
     {
       k: "成功率", v: rate == null ? "—" : rate + "%", tint: "ok", tintText: "ok-text",
-      sub: req
+      sub: (t.requests || 0)
         ? (t.failures ? '<em>' + numf(t.failures) + " 次失败</em>" : '<em>没有失败</em>')
         : '<em>还没有请求</em>',
       meter: rate,
