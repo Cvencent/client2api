@@ -120,6 +120,10 @@ func batchPanel(t *testing.T, clients ...core.Client) *panel {
 	t.Helper()
 	p := taskPanel(t, clients...)
 	p.sweeps = newBatchRuns()
+	// taskPanel hand-builds the struct and never reaches newPanel's wiring;
+	// the batch queue (issue #173's gate lives here) is part of that wiring.
+	p.queue = newBatchQueue(p.sweeps)
+	p.queue.run = p.execSweep
 	return p
 }
 

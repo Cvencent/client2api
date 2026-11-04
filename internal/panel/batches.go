@@ -2,6 +2,7 @@ package panel
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"sort"
 	"strconv"
@@ -56,6 +57,12 @@ const (
 	// defaultSettle is the shortest pause worth taking after a sweep so a
 	// re-read does not see stale upstream scoring.
 	defaultSettle = 5 * time.Second
+	// batchQueueMax bounds how many sweeps may sit queued at once (issue
+	// #173).  Each queued item is a real upstream round across the whole
+	// pool; past a handful nothing the operator asked for is served, only
+	// accumulated vendor traffic.  A request past this bound is rejected
+	// with 429 instead of piling on silently.
+	batchQueueMax = 8
 )
 
 // batchRunStates.
@@ -109,6 +116,15 @@ type batchRuns struct {
 
 func newBatchRuns() *batchRuns {
 	return &batchRuns{byID: make(map[string]*batchRun, 8)}
+}
+
+// remove drops one journal entry: the enqueue path journals before the queue
+// can refuse a duplicate or a full queue, and a refused sweep must not linger
+// as an eternal "queued" row (issue #173).
+func (s *batchRuns) remove(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.byID, id)
 }
 
 func (s *batchRuns) add(run *batchRun) *batchRun {
@@ -241,6 +257,9 @@ type batchQueue struct {
 	mu      sync.Mutex
 	items   []queuedSweep
 	running bool
+	// current is the sweep the worker is executing right now, so a duplicate
+	// of it is refused at enqueue time (issue #173); nil while idle.
+	current *queuedSweep
 	runs    *batchRuns
 	// run is the executor, injected so tests can drive the queue without a
 	// registry or a vendor.
@@ -251,24 +270,55 @@ type batchQueue struct {
 	report func(string)
 }
 
+// errBatchAlreadyQueued / errBatchQueueFull are the two refusals enqueue can
+// produce (issue #173): a duplicate (client, batch) pair and an over-full
+// queue.  The handlers translate them into 409 / 429.
+var errBatchAlreadyQueued = errors.New("this batch is already queued or running")
+var errBatchQueueFull = errors.New("the sweep queue is full; wait for the queued rounds to finish")
+
 func newBatchQueue(runs *batchRuns) *batchQueue {
 	return &batchQueue{runs: runs}
 }
 
 // enqueue appends a sweep and starts the worker if it is idle.
-func (q *batchQueue) enqueue(j queuedSweep) {
+//
+// It refuses duplicates and floods instead of accepting everything (issue
+// #173): the same (client, batch) queued twice -- or already running -- is a
+// 409, the protection the front end's comment has always promised, and a
+// request that would push the queue past batchQueueMax is a 429.  A cross-site
+// <img> used to be able to pile thirty identical sweeps into this slice in one
+// second; each one is a real upstream round across the pool.
+func (q *batchQueue) enqueue(j queuedSweep) error {
 	q.mu.Lock()
-	q.items = append(q.items, j)
-	idle := !q.running
-	if idle {
-		q.running = true
+	defer q.mu.Unlock()
+	// A duplicate of the sweep the worker is currently executing is refused
+	// too: q.current carries what left the queue for the worker, so the <img>
+	// spam cannot re-enter the moment the first item starts running.
+	if q.running && q.current != nil &&
+		q.current.client == j.client && q.current.batch.Name == j.batch.Name {
+		return errBatchAlreadyQueued
 	}
-	q.mu.Unlock()
-	if idle {
-		// GoSafe, not a bare "go": the worker outlives the response that
-		// enqueued it, so a panic here would otherwise take the gateway down.
+	for _, item := range q.items {
+		if item.client == j.client && item.batch.Name == j.batch.Name {
+			return errBatchAlreadyQueued
+		}
+	}
+	// The running sweep occupies a queue slot too: batchQueueMax bounds the
+	// operator-visible "排队" backlog plus the one in progress, which is what
+	// the panel shows and what the vendor actually feels.
+	pending := len(q.items)
+	if q.current != nil {
+		pending++
+	}
+	if pending >= batchQueueMax {
+		return errBatchQueueFull
+	}
+	q.items = append(q.items, j)
+	if !q.running {
+		q.running = true
 		core.GoSafe("panel batch worker", q.report, q.worker)
 	}
+	return nil
 }
 
 func (q *batchQueue) worker() {
@@ -281,6 +331,7 @@ func (q *batchQueue) worker() {
 		}
 		j := q.items[0]
 		q.items = q.items[1:]
+		q.current = &j
 		run := q.run
 		q.mu.Unlock()
 
@@ -717,11 +768,48 @@ func (p *panel) batchList(w http.ResponseWriter, r *http.Request, c core.Client)
 	})
 }
 
+// requirePost is the verb gate every sweep-dispatch handler sits behind
+// (issue #173).  These handlers all cause real upstream traffic, so a GET is
+// the most expensive no-op on the panel -- and, before the #103 write gate,
+// the only write shape a cross-site <img> could reach, because the gate runs
+// for write methods only.  405 for anything that is not a POST, same as
+// taskRunQueue already answered.
+func requirePost(w http.ResponseWriter, r *http.Request) bool {
+	if r.Method == http.MethodPost {
+		return true
+	}
+	w.Header().Set("Allow", http.MethodPost)
+	writeErr(w, http.StatusMethodNotAllowed, "use POST")
+	return false
+}
+
+// enqueueOr4xx runs q.enqueue and answers its two refusals the way the front
+// end's comment has always promised: 409 when the same (client, batch) is
+// already queued or running, 429 when the queue is full (issue #173).
+func (p *panel) enqueueOr4xx(w http.ResponseWriter, j queuedSweep) bool {
+	err := p.queue.enqueue(j)
+	switch {
+	case err == nil:
+		return true
+	case errors.Is(err, errBatchAlreadyQueued):
+		writeErr(w, http.StatusConflict, err.Error())
+		return false
+	case errors.Is(err, errBatchQueueFull):
+		writeErr(w, http.StatusTooManyRequests, err.Error())
+		return false
+	}
+	writeErr(w, http.StatusInternalServerError, err.Error())
+	return false
+}
+
 // batchStart answers POST <base>/batches/<name>/run and the *_all aliases.
 //
 // It journals the sweep as queued and returns 202 immediately: the sweep itself
 // takes tens of seconds per account and must not be tied to this request.
 func (p *panel) batchStart(w http.ResponseWriter, r *http.Request, c core.Client, name string) {
+	if !requirePost(w, r) {
+		return
+	}
 	if strings.EqualFold(strings.TrimSpace(name), scheduler.RecoveryTaskName) {
 		p.recoveryStart(w, r, c)
 		return
@@ -751,7 +839,12 @@ func (p *panel) batchStart(w http.ResponseWriter, r *http.Request, c core.Client
 		QueuedAt: time.Now().Format(time.RFC3339Nano),
 		Steps:    []batchStep{},
 	})
-	p.queue.enqueue(queuedSweep{runID: run.ID, client: c.Name(), batch: b})
+	if !p.enqueueOr4xx(w, queuedSweep{runID: run.ID, client: c.Name(), batch: b}) {
+		// The run was journaled before the queue refused it; a refused sweep
+		// must not linger as an eternal "queued" row.
+		p.sweeps.remove(run.ID)
+		return
+	}
 	writeJSON(w, http.StatusAccepted, toJSONRun(*run))
 }
 
@@ -759,6 +852,9 @@ func (p *panel) batchStart(w http.ResponseWriter, r *http.Request, c core.Client
 // batch it has no task codes: the scheduler hook refreshes balances and
 // renews idle credentials for the accounts parked in recoverable states.
 func (p *panel) recoveryStart(w http.ResponseWriter, r *http.Request, c core.Client) {
+	if !requirePost(w, r) {
+		return
+	}
 	if p.opts.Scheduler == nil {
 		writeErr(w, http.StatusNotImplemented, "scheduler not available")
 		return
@@ -777,6 +873,9 @@ func (p *panel) recoveryStart(w http.ResponseWriter, r *http.Request, c core.Cli
 // balance, including the accounts parked in recoverable states, so a credit
 // grant that landed after midnight lifts the park.
 func (p *panel) dailyBalanceStart(w http.ResponseWriter, r *http.Request, c core.Client) {
+	if !requirePost(w, r) {
+		return
+	}
 	if p.opts.Scheduler == nil {
 		writeErr(w, http.StatusNotImplemented, "scheduler not available")
 		return
@@ -803,6 +902,9 @@ func (p *panel) dailyBalanceStart(w http.ResponseWriter, r *http.Request, c core
 // gave it a balance hook: both mean "this build cannot do that", which is the
 // same answer every other optional mechanism gives.
 func (p *panel) balanceAll(w http.ResponseWriter, r *http.Request) {
+	if !requirePost(w, r) {
+		return
+	}
 	if p.opts.Scheduler == nil {
 		writeErr(w, http.StatusNotImplemented, "scheduler not available")
 		return
