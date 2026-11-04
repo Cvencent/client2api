@@ -31,6 +31,8 @@ type bunnyClient struct {
 	realWindow int64
 	// seen records the last request so a test can assert what was sent.
 	seen *core.ChatRequest
+	// folded, when set, is what the trim-fold summariser returns (issue #164).
+	folded string
 }
 
 func (c *bunnyClient) Name() string { return c.name }

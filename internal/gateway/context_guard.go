@@ -349,7 +349,39 @@ func balancedTailStart(msgs []core.Message) int {
 // first.  The kept window is assembled so it can never begin with a tool result
 // whose assistant turn was dropped: that is a malformed history, and vendors
 // reject it as a bad request instead of an oversized prompt.
+//
+// When a cached summary of a previously dropped middle exists for this exact
+// middle (issue #164), it is pinned between the system turns and the kept tail,
+// and its own size counts against the budget -- a pinned summary that bursts the
+// window would defeat the trim it rides on.
 func applyContextBudget(req *core.ChatRequest, budget int64) (trimReport, bool) {
+	return applyContextBudgetWithFold(req, budget, nil)
+}
+
+// trimFoldContext is what a fold-aware trim needs beyond the request: where to
+// look up a cached summary and where to offer the just-dropped middle.  All of
+// it is optional; a nil context is the plain trim.
+type trimFoldContext struct {
+	store *trimSummaryStore
+	folds *trimFoldCoordinator
+	// system is the leading system turns (verbatim from the request), carried
+	// so the offer does not re-slice the request while it is being mutated.
+	system []core.Message
+	client core.Client
+	model  string
+}
+
+// applyContextBudgetWithFold is applyContextBudget with the summary-pin path.
+// A non-nil fold context does two things, in order:
+//
+//  1. Pin: a cached summary for THIS middle is inserted after the system turns,
+//     before the kept tail.  The fingerprint covers system+middle verbatim, so
+//     a hit means the summary describes exactly what this trim is about to
+//     drop again -- nothing stale can be pinned.
+//  2. Offer: the middle this trim drops is handed to the background fold, so a
+//     LATER turn of the conversation (the agent loop resends its full history
+//     every turn) pins what this turn had to lose.
+func applyContextBudgetWithFold(req *core.ChatRequest, budget int64, fold *trimFoldContext) (trimReport, bool) {
 	if req == nil || budget <= 0 || len(req.Messages) == 0 {
 		return trimReport{}, false
 	}
@@ -370,30 +402,96 @@ func applyContextBudget(req *core.ChatRequest, budget int64) (trimReport, bool) 
 	overhead := estimated - int64(estimateMessagesTokens(req.Messages))
 	head := int64(estimateMessagesTokens(req.Messages[:pinned]))
 
-	keepFrom := -1
-	for from := pinned; from <= tail; from++ {
-		if isToolMessage(req.Messages[from]) {
-			// A result without the assistant call ahead of it is exactly the
-			// malformed shape this loop exists to avoid.
-			continue
+	// keepFromFor finds where the kept tail must start given the head size.
+	// Factored out because the fold pin needs two passes: one without a
+	// summary (to learn which middle this trim would drop -- the cache key is
+	// that middle's fingerprint), then one with the summary riding in the head.
+	keepFromFor := func(head int64) int {
+		for from := pinned; from <= tail; from++ {
+			if isToolMessage(req.Messages[from]) {
+				// A result without the assistant call ahead of it is exactly the
+				// malformed shape this loop exists to avoid.
+				continue
+			}
+			if overhead+head+int64(estimateMessagesTokens(req.Messages[from:])) <= budget {
+				return from
+			}
 		}
-		if overhead+head+int64(estimateMessagesTokens(req.Messages[from:])) <= budget {
-			keepFrom = from
-			break
-		}
+		return -1
 	}
+
+	// Pass 1: the plain trim's boundary.  The cache key is THIS middle's
+	// fingerprint -- a hit means the summary describes exactly what this trim
+	// is about to drop again, so nothing stale can be pinned.
+	keepFrom := keepFromFor(head)
 	if keepFrom < 0 {
 		// Even the newest call-balanced tail cannot fit.  Cutting into it would
 		// answer a different question, so the request is refused locally and the
 		// caller learns exactly why.
 		return trimReport{Impossible: true, BeforeTokens: estimated}, false
 	}
+	plainDropped := keepFrom - pinned
 
+	// Pass 2: pin a cached summary for that middle, ahead of the tail.  The
+	// summary rides in the head, so the boundary may move BACK (more history
+	// fits beside it is never true -- the summary costs room, so keepFrom can
+	// only move forward, never backward).  The summary itself is never counted
+	// as droppable history: it is one turn, and the whole point is that it
+	// survives.
+	pinnedSummary := ""
+	if fold != nil && fold.store != nil && plainDropped > 0 {
+		fp := trimMiddleFingerprint(req.Messages[:pinned], req.Messages[pinned:keepFrom])
+		if s, ok := fold.store.get(trimSummaryCacheKey(fp, plainDropped)); ok {
+			pinnedSummary = s
+			summaryHead := int64(estimateMessageTokens(core.Message{Role: "user", Content: trimSummaryHeader + "\n\n" + s}))
+			if inner := keepFromFor(head + summaryHead); inner >= 0 && inner > keepFrom {
+				// Only accept the pin when the tail it leaves behind still
+				// answers the question: the boundary may shrink the kept tail
+				// (the summary bought room at the middle's price), but the pin
+				// must never push the request back over budget.
+				keepFrom = inner
+			} else if inner < keepFrom || inner < 0 {
+				// The summary does not fit beside the plain-trim tail: skip the
+				// pin rather than break the request it was meant to help.
+				pinnedSummary = ""
+			}
+		}
+	}
+
+	// The middle about to be dropped, captured before the kept window is
+	// rebuilt from the original slice.  The drop threshold is judged on the
+	// final boundary, so a pin that shrank the middle below the fold threshold
+	// does not re-offer a fold for a middle that no longer needs one.
 	dropped := keepFrom - pinned
-	kept := make([]core.Message, 0, len(req.Messages)-dropped)
+	var middle []core.Message
+	if fold != nil && fold.folds != nil && dropped >= trimSummaryMinDropped {
+		middle = append([]core.Message(nil), req.Messages[pinned:keepFrom]...)
+	}
+	kept := make([]core.Message, 0, len(req.Messages)-dropped+1)
 	kept = append(kept, req.Messages[:pinned]...)
+	if pinnedSummary != "" {
+		kept = append(kept, core.Message{
+			Role:    "user",
+			Content: trimSummaryHeader + "\n\n" + pinnedSummary,
+		})
+	}
 	kept = append(kept, req.Messages[keepFrom:]...)
 	req.Messages = kept
+
+	// The middle that was really dropped this turn is offered to the background
+	// fold, so the NEXT turn of this conversation can pin it.  The offer never
+	// blocks and never fails the request; a fold in flight simply replaces it
+	// with the newest middle.
+	if len(middle) > 0 {
+		fold.folds.offer(&trimFoldJob{
+			key:     trimSummaryCacheKey(trimMiddleFingerprint(fold.system, middle), dropped),
+			system:  append([]core.Message(nil), fold.system...),
+			middle:  middle,
+			dropped: dropped,
+			client:  fold.client,
+			model:   fold.model,
+		})
+	}
 	return trimReport{
 		DroppedMessages: dropped,
 		BeforeTokens:    estimated,
@@ -1318,7 +1416,17 @@ func (s *server) guardRequestContext(ctx context.Context, req *core.ChatRequest,
 			// probeProceed: the normal budget path decides.
 		}
 	}
-	report, trimmed := applyContextBudget(req, budget)
+	var fold *trimFoldContext
+	if s.trimSummaries != nil && s.folds != nil && client != nil {
+		fold = &trimFoldContext{
+			store:  s.trimSummaries,
+			folds:  s.folds,
+			system: append([]core.Message(nil), req.Messages[:leadingSystemTurns(req.Messages)]...),
+			client: client,
+			model:  model,
+		}
+	}
+	report, trimmed := applyContextBudgetWithFold(req, budget, fold)
 	if trimmed && rec != nil {
 		rec.Trimmed = true
 		rec.TrimDropped = report.DroppedMessages

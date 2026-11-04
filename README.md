@@ -5,7 +5,7 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-Current version: **0.7.8**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
+Current version: **0.7.9**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
 
 client2api is a personal, local-only OpenAI-compatible gateway. It aggregates
 the accounts and API Keys **you own** on different AI coding clients and
@@ -350,6 +350,17 @@ loop that never ended.
   pairing, so an orphan turns a recoverable "too long" into an unrecoverable
   "bad parameters" (WorkBuddy's code 11133). When the boundary lands inside a tool
   round trip, the whole round trip is kept and the cut moves earlier.
+- The middle a trim drops is **folded in the background and pinned back** (issue
+  #164). A trim that drops 50+ messages hands the dropped middle to a single
+  background fold worker (the Responses compaction chunking and round cap, run
+  through the normal routing path); the summary is cached under a verbatim
+  fingerprint of system turns + middle (96 entries, 24h TTL). On a later turn of
+  the same conversation whose trim would drop the same middle, the summary is
+  pinned as one labelled user turn between the system head and the kept tail,
+  with its own size counted against the trim budget. A failed fold costs one log
+  line and is retried on the next turn: the main request never waits for a
+  summary and never changes shape because one failed -- with no cache hit the
+  trim behaves exactly as it did before.
 - An inline base64 image is priced as an image rather than as text. `view_image`
   returns a screenshot as a `data:image/...;base64,` URL, and a single 466x466 PNG
   is tens of thousands of characters that the plain text divisor used to read as

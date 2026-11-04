@@ -132,6 +132,11 @@ type server struct {
 	// compaction mints and verifies the gateway-owned blobs carried in Responses
 	// compaction items.  See compaction.go.
 	compaction *compactionSigner
+	// trimSummaries caches the folded summaries of middles the context guard
+	// has dropped, keyed by the middle's fingerprint; folds runs the background
+	// summarisation.  See trim_summary.go (issue #164).
+	trimSummaries *trimSummaryStore
+	folds         *trimFoldCoordinator
 	// handler is the mux this server serves.  It is kept on the struct so a test
 	// can drive the real routing without opening a listener.
 	handler http.Handler
@@ -201,6 +206,18 @@ func NewServer(opts Options) *http.Server {
 	}
 	s.estimates = newEstimateCalibrationStore(opts.EstimateCalibrationPath, s.opts.Logger.Printf)
 	s.compaction = newCompactionSigner(opts.CompactionKeyPath, s.opts.Logger.Printf)
+	s.trimSummaries = newTrimSummaryStore()
+	s.folds = newTrimFoldCoordinator(
+		s.foldSummarise,
+		func(job *trimFoldJob, summary string) {
+			s.trimSummaries.put(job.key, summary, job.dropped)
+			s.opts.Logger.Printf("context: folded %d dropped message(s) into a %d-char summary for %s/%s; later turns of this conversation will pin it",
+				job.dropped, len(summary), job.client.Name(), job.model)
+		},
+		func(job *trimFoldJob, err error) {
+			s.opts.Logger.Printf("context: folding %d dropped message(s) for %s/%s failed (%v); the next turn will retry it",
+				job.dropped, job.client.Name(), job.model, err)
+		})
 
 	s.handler = s.routes()
 
