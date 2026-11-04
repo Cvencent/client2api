@@ -6,6 +6,36 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.22] - 2026-11-04
+
+### Fixed
+
+- **入场动画不再把交互状态永久钉死（#190）**：`animation-fill-mode: both`
+  的来源层叠高于一切作者声明（含内联 style 与 `:hover`），三处终态正好落在
+  `transform`/`opacity` 上的入场动画演完就永久占位——积分卡悬停不抬升、按下
+  不下沉（同一条 hover 规则里没有入场动画的 `.vc`/`.pfplat` 却正常，一个抬
+  一个不抬）；用量柱悬停只亮 filter 不亮本体（`.on` 选中态同样打不进去）；
+  账号卡 3D 倾斜在进页头几秒不跟手（`initTilt` 写的内联 transform 被压成
+  恒等矩阵，第 5 秒轮询重建后才自己好）。修法三件：`pkIn`/`uscolIn` 的
+  `both` 改 `backwards`、关键帧删掉 `to` 帧（终态本来就在基础声明里，
+  `.82`/满宽）；`fxCascade` 照 `fxStaggerRows` 的既定范式在 `animationend`
+  撤 `.fx-in`（`data-fx-done` 保证不重播）；段条 `pkSeg` 同步对齐。
+  `apple_ui_test` 那类「源码含选择器」断言对这类缺陷无感，新守护测试直接
+  钉 fill 模式与关键帧形状。
+- **清掉三套零消费者的死机制（#191）**：`.fx-lazy`（滚动显现）、
+  `data-fx-grow`（进度条生长编排）、`@keyframes fxIn`——CSS、JS、注释
+  全齐但 markup 从未出现过任何一个消费者，`fxAfterData` 每进一页白跑两次
+  全子树 `querySelectorAll`，注释还教后来者「给元素加个类就能用」（实际
+  有 motionReduce/settle 两道早退只字未提）。整链删除：CSS 三行、
+  `fxScrollIn`/`fxGrow` 两函数、`fxAfterData` 两处调用、`SIDE_SIG` 死变量、
+  `fxIn` 关键帧与过时注释。`@keyframes fxGrow` 保留（`.pk-expiry-fill`
+  是它的静态消费者）。守护测试按「机制必须有消费者」断言，剥注释后检查。
+
+### Installer
+
+- `client2api-setup-0.7.22.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `4c373412e3178a21a6ab8f2bc22a7e53fc32975a46ac2a68ef5590d8648a365c`
+
 ## [0.7.21] - 2026-11-04
 
 ### Added

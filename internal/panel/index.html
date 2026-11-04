@@ -115,10 +115,6 @@ body {
    reduce 下照旧插值（issue #53）。animation 与 transition 同一理由。 */
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }
 
-/* 全局进场编排：每页切进来时 .box / 卡片 / 行以 320ms 指数减速淡入上浮，
-   由 revealView() 逐项加 24ms 延迟。reduced-motion 下被上面那条全局规则关掉。 */
-@keyframes fxIn {
-  from { opacity: 0; transform: translateY(6px); }
   to   { opacity: 1; transform: none; }
 }
 
@@ -489,9 +485,6 @@ body.mode-3d .board3d { display: block; }
 /* ② 滚动显现：只在进入视口时演一次（.fx-in 由 IntersectionObserver 加上） */
 /* 滚动显现：只做位移，不做透明。内容从头就是可见的——「滚下去才出现」在
    长页面上会让人觉得内容丢了一块。 */
-.fx-lazy { transform: translateY(10px); }
-.fx-lazy.fx-in { transform: none; transition: transform 420ms cubic-bezier(.16,1,.3,1); }
-@media (prefers-reduced-motion: reduce) { .fx-lazy { transform: none; } }
 
 /* ③ 进度条/占比条生长 */
 @keyframes fxGrow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
@@ -1410,9 +1403,12 @@ legend { font-size: 0.75rem; color: var(--ink-3); font-weight: 600; padding-bott
   .uschart-body .usreveal { display: block; animation: usbar .5s cubic-bezier(.2,.7,.3,1) both; }
   /* 每根柱从底部错开长出来。用 clip-path 而不是 scaleY：SVG 里 scaleY 会连
      <title>/命中区一起压，之前踩过。这里对单个 rect 用 y 位移 + 高度裁切。 */
-  .uschart-body .uscol rect.usbar { transform-origin: center bottom; animation: uscolIn 460ms cubic-bezier(.16,1,.3,1) both;
+  .uschart-body .uscol rect.usbar { transform-origin: center bottom; animation: uscolIn 460ms cubic-bezier(.16,1,.3,1) backwards;
     animation-delay: calc(min(var(--ci, 0), 24) * 22ms); }
-  @keyframes uscolIn { from { opacity: 0; transform: translateY(10px); } to { opacity: .82; transform: none; } }
+  /* backwards 而非 both（issue #190）：to 帧的 opacity .82 曾把 :hover/.on
+     的 opacity:1 永久压住——柱子只亮 filter 不亮本体。.82 本来就是基础
+     声明（上方 :1397），关键帧只管 from。 */
+  @keyframes uscolIn { from { opacity: 0; transform: translateY(10px); } }
   @media (prefers-reduced-motion: reduce) { .uschart-body .uscol rect.usbar { animation: none; } }
   .uschart-body .usreveal > svg { display: block; width: 100%; height: auto; }
   @keyframes usbar { from { clip-path: inset(100% 0 0 0); } to { clip-path: inset(0 0 0 0); } }
@@ -1490,10 +1486,14 @@ legend { font-size: 0.75rem; color: var(--ink-3); font-weight: 600; padding-bott
   .pk-card .expirybar i { display: block; height: 100%; min-width: 2px; }
   /* 卡片进场：每张卡 40ms 级联浮起（上限 8 张，再多就一起出现），
      段条从 0 宽度长出来。数据到位的「顺序感」本身就是信息。 */
-  .pk-card { animation: pkIn 240ms var(--ease-out) both; animation-delay: calc(min(var(--i, 0), 8) * 40ms); }
-  @keyframes pkIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
-  .pk-card .mixbar i, .pk-card .expirybar i { animation: pkSeg 420ms var(--ease-out) both; animation-delay: calc(160ms + min(var(--i, 0), 8) * 40ms); }
-  @keyframes pkSeg { from { transform: scaleX(0); transform-origin: left; } to { transform: scaleX(1); transform-origin: left; } }
+  /* fill 用 backwards 不用 both（issue #190）：both 的终态在动画来源层把
+     transform 钉成 none，:hover 的 -1px 抬升与 :active 的下沉永远写不进去
+     ——同行 .vc/.pfplat 没有入场动画，同一颗 hover 规则一个抬一个不抬。
+     backwards 只保延迟期间不闪，演完回落基础声明，交互立即接管。 */
+  .pk-card { animation: pkIn 240ms var(--ease-out) backwards; animation-delay: calc(min(var(--i, 0), 8) * 40ms); }
+  @keyframes pkIn { from { opacity: 0; transform: translateY(5px); } }
+  .pk-card .mixbar i, .pk-card .expirybar i { transform-origin: left; animation: pkSeg 420ms var(--ease-out) backwards; animation-delay: calc(160ms + min(var(--i, 0), 8) * 40ms); }
+  @keyframes pkSeg { from { transform: scaleX(0); } }
   @media (prefers-reduced-motion: reduce) {
     .pk-card, .pk-card .mixbar i, .pk-card .expirybar i { animation: none; }
   }
@@ -8682,15 +8682,10 @@ function revealView(view) {
 // fxAfterData 在数据加载完后再编排一次：卡片是数据到了才生成的，切页那一刻
 // 容器还是空的——只编排一次的话，用户永远看不到卡片级联，只看到空壳淡入。
 function fxAfterData(view) {
-  let grown = false;
   const run = () => {
     const host = document.getElementById("view-" + view);
     if (!host || VIEW !== view) return;
     fxCascade(host);
-    // 生长条只演一次：进度条是 scaleX 动画，重播会让条子缩回去再长出来，
-    // 那是「闪」的另一种形式。
-    if (!grown) { grown = true; fxGrow(host); }
-    fxScrollIn(host);
   };
   requestAnimationFrame(() => requestAnimationFrame(run));
   setTimeout(run, 420);
@@ -10515,12 +10510,15 @@ async function renderOverview() {
 /* ── 动效增强层（v0.5.13）───────────────────────────────────────────────
    这一层只解释「发生了什么」，不改任何布局、不藏任何内容：
      fxCascade    视图进场：按视觉顺序级联上浮，替代原来「统一 6px 淡入」
-     fxScrollIn   滚动到视口才演一遍（长页面不会一进来就全演完）
      fxCount      数字从旧值滚到新值（读数变化本身就是动效）
      fxRipple     按钮/卡片点击的波纹，颜色跟随主题
      fxMagnet     指针靠近时卡片轻微被「吸」向光标（比 tilt 更轻）
-     fxGrow       任何带 data-fx-grow 的进度条/柱改成 scaleX 生长
-   全部在 prefers-reduced-motion 下直接返回。 */
+   全部在 prefers-reduced-motion 下直接返回。
+   （fxScrollIn 与 fxGrow 曾是这套层的一部分，但 .fx-lazy 与 data-fx-grow
+   从落地起就没有任何 markup 消费者——每进一页白跑两次子树扫描，还会误导
+   后来者按注释去用。整链已删，issue #191；真需要滚动显现时按当时的需求
+   重新接，并把 motionReduce/settle 两道早退写进注释。@keyframes fxGrow
+   保留：.pk-expiry-fill 是它的静态消费者。） */
 const FXX = { io: null, seen: new WeakSet() };
 
 // fxCascade 给一个容器里的「视觉单元」分级联：卡片优先、其次面板、最后行。
@@ -10548,32 +10546,18 @@ function fxCascade(host, sel) {
     el.classList.remove("fx-in");
     void el.offsetWidth;
     el.classList.add("fx-in");
+    // 演完就撤类（fxStaggerRows 的既定范式，issue #190）：.fx-in 的 fill
+    // both 会把 transform/opacity 永久钉在终态，内联 style 写的 3D 倾斜
+    // （initTilt）在进页头几秒因此不跟手。撤类后回落基础声明，交互接管；
+    // dataset.fxDone 保证撤了也不会重播。
+    el.addEventListener("animationend", () => {
+      el.classList.remove("fx-in");
+      el.style.removeProperty("--i");
+    }, { once: true });
   });
   return fresh;
 }
 
-// fxScrollIn 让长页面里靠下的模块「滚到才演」。用 IntersectionObserver 一次
-// 性触发，演完就断开——滚动来回不会反复闪。
-function fxScrollIn(root) {
-  if (motionReduce()) return;
-  if (!("IntersectionObserver" in window)) return;
-  if (!FXX.io) {
-    FXX.io = new IntersectionObserver(entries => {
-      entries.forEach(en => {
-        if (!en.isIntersecting) return;
-        const el = en.target;
-        FXX.io.unobserve(el);
-        el.classList.add("fx-in");
-      });
-    }, { root: null, rootMargin: "0px 0px -8% 0px", threshold: 0.06 });
-  }
-  (root || document).querySelectorAll(".fx-lazy").forEach(el => {
-    if (FXX.seen.has(el)) return;
-    FXX.seen.add(el);
-    el.style.setProperty("--i", el.dataset.fxOrder || "0");
-    FXX.io.observe(el);
-  });
-}
 
 // fxCount 把元素里的数字滚过去。只处理「纯数字 + 可选千分位/单位后缀」，
 // 遇到别的内容原样保留——不去猜格式，也不改文案。
@@ -10627,18 +10611,6 @@ function initRipple() {
   }, { passive: true });
 }
 
-// fxGrow 把带 data-fx-grow 的元素从 0 长到它原本的宽度。读的是 CSS 里已经
-// 算好的宽度（scaleX 不改布局），所以不会引起回流或跳行。
-function fxGrow(root) {
-  if (motionReduce()) return;
-  (root || document).querySelectorAll("[data-fx-grow]").forEach((el, i) => {
-    el.style.transformOrigin = "left center";
-    el.style.animation = "none";
-    void el.offsetWidth;
-    el.style.animation = "fxGrow 620ms cubic-bezier(.16,1,.3,1) both";
-    el.style.animationDelay = (120 + Math.min(i, 10) * 45) + "ms";
-  });
-}
 
 // fxPulse 给某个元素一次「这里刚变了」的脉冲（边框 + 微缩放）。
 function fxPulse(el, cls) {
@@ -14171,12 +14143,7 @@ function renderAcctSide() {
   // 数字滚动：池规模的百分比变化时滚一下（只在同一个元素上，重绘后依然连得上）
   const big = host.querySelector(".as-pct b");
   if (big) fxCount(big, pct, { fmt: v => Math.round(v) + "%", dur: 520 });
-  // 生长动画只在「池子真的变了」时演一次。renderAccounts 每 5 秒轮询一次，
-  // 每次都重播的话这一栏的条会一直抖——那是噪音，不是信息。
-  const sig = t.total + "/" + t.ready + "/" + t.cooling + "/" + per.length;
-  if (sig !== SIDE_SIG) { SIDE_SIG = sig; fxGrow(host); }
 }
-let SIDE_SIG = "";
 function statusWord(k) {
   return k === "ok" ? "可用" : k === "warn" ? "冷却" : k === "bad" ? "异常" : "停用";
 }
