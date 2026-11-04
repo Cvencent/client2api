@@ -6041,10 +6041,17 @@ html:not([data-theme="light"]) body::after {
   color: var(--ink-3);
   line-height: 1.45;
   min-width: 0;
-  max-width: 52ch;
+  max-width: 54ch;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* 截断必须有出口（issue #186）：这句说明讲的是「这页能干什么、保存后要不要
+   重启」，被切掉的半句往往正是操作相关的部分。与 .savebar > .hint 同款——
+   悬停换行展开；hover 期间放开 max-width，否则换行还是被 54ch 掐着。 */
+.box > header h3 .hint:hover {
+  white-space: normal;
+  max-width: none;
 }
 
 /* 能力矩阵的勾与横线：勾是「有」，用中性前景色；横线是「没有」，压到最淡。
@@ -6487,7 +6494,8 @@ html:not([data-theme="light"]) body::after {
    的设计记录；同文件五个 button.xs、单点 30px 都是同一案子的分叉。 */
 .box > header { min-height: 52px; padding: 11px 16px; }
 .box > header h3 { font-size: var(--type-base); font-weight: 600; letter-spacing: -.012em; }
-.box > header h3 .hint { font-size: 0.71875rem; max-width: 54ch; }
+/* .hint 的 max-width 只在上方权威规则里说一次（曾 52ch/54ch 两条并存，
+   改宽度的人不知道该改哪条——issue #186 顺手合并）。 */
 /* 卡片头里的小按钮不再改写高度：同文件的 .box > header .xs 曾把同一颗
    button.xs 又抬到 28px，与权威 26px 冲突——删掉改写权，高度只有一个来源。 */
 .tblbar { min-height: 48px; padding: 9px 16px; }

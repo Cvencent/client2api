@@ -6,6 +6,24 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.20] - 2026-11-04
+
+### Fixed
+
+- **卡片头的页面说明不再「被切掉就只能猜」（#186）**：`.box > header h3 .hint`
+  被 `max-width + ellipsis + nowrap` 截断，截掉的半句没有任何办法看到——没有
+  title、悬停不展开、不能横向滚，而那句说明讲的是「这页能干什么、保存后要不要
+  重启」，被切掉的往往正是操作相关的部分（平台页那句的尾巴「WorkBuddy 还带
+  账号池治理」整段不可见）。现在与同文件 `.savebar > .hint` 的既有先例同款：
+  悬停换行展开全文，hover 期间同时放开 `max-width`（否则换行还是被 54ch 掐着）。
+  顺手合并了 52ch/54ch 两个值并存的双声明——max-width 与截断三件套从此只在
+  权威规则里说一次。静态钉 `cardhead_hint_exit_test.go`。
+
+### Installer
+
+- `client2api-setup-0.7.20.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `a63e76e453ae79e154b4cc31ec58eb1127f5432c835946bcf6da57abe4b79b4a`
+
 ## [0.7.19] - 2026-11-04
 
 ### Fixed
