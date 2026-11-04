@@ -205,11 +205,38 @@ func (p *panel) bundleExport(w http.ResponseWriter, r *http.Request) {
 			doc.AccountModelPolicies = snapshot
 		}
 	}
+	// Self-check before writing the body (issue #174): the export used to
+	// produce documents larger than the import path would read, so the one
+	// file this endpoint exists to produce could be one it could never take
+	// back.  The credential bytes are already capped at maxBundleBytes by
+	// collectAccountFiles; this measures the encoded document, whose base64
+	// payload is the part the import length cap used to bite on.
+	if size := bundleEncodedSize(doc); size > maxBundleUploadBytes {
+		writeErr(w, http.StatusInternalServerError,
+			fmt.Sprintf("the encoded bundle would be %d bytes, past the %d-byte import cap; refusing to produce a snapshot this deployment could never restore",
+				size, maxBundleUploadBytes))
+		return
+	}
 	w.Header().Set("Content-Disposition",
 		`attachment; filename="`+bundleFilePrefix+time.Now().UTC().Format("20060102-150405")+`.json"`)
 	// The body is a credential dump: never let anything cache it.
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, doc)
+}
+
+// bundleEncodedSize is the byte length the document would have on the wire:
+// one json.Marshal of the whole envelope.  It is the same encoding writeJSON
+// performs, so the export's self-check measures exactly what the import will
+// be handed.
+func bundleEncodedSize(doc bundleDoc) int {
+	b, err := json.Marshal(doc)
+	if err != nil {
+		// A document that cannot even be measured is one writeJSON will fail
+		// on too; report "unknown but large enough to worry" as the cap so the
+		// export refuses rather than lying.
+		return maxBundleUploadBytes + 1
+	}
+	return len(b)
 }
 
 // bundleScanWarnings reports module stores the scanner cannot reach. A bundle
@@ -387,7 +414,14 @@ func bundleConfigOrder(section map[string]any) []string {
 func (p *panel) bundleImport(w http.ResponseWriter, r *http.Request) {
 	_, raw, err := readBundleUpload(r)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		// A body past the upload cap is a size problem, not a format problem:
+		// answering 400 here used to disguise it as "not a client2api bundle"
+		// (issue #174, the same disguise #78 removed from decodeBody).
+		status := http.StatusBadRequest
+		if errors.Is(err, errBodyTooLarge) {
+			status = http.StatusRequestEntityTooLarge
+		}
+		writeErr(w, status, err.Error())
 		return
 	}
 	if len(bytes.TrimSpace(raw)) == 0 {

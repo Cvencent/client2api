@@ -1443,10 +1443,21 @@ func (p *panel) importCreds(w http.ResponseWriter, r *http.Request, c core.Clien
 	writeJSON(w, http.StatusOK, res)
 }
 
-// maxBundleBytes bounds one uploaded export.  A credential dump is small -- a
-// few hundred accounts is a few hundred kilobytes -- so anything past this is a
-// mistake or an attack, and refusing it before it is parsed costs nothing.
+// maxBundleBytes bounds the CREDENTIAL BYTES one bundle may carry.  Both
+// directions enforce it on the raw (decoded) bytes: export in collectAccount
+// Files, import in bundlePlan -- the same yardstick, so anything the export
+// wrote is something the import accepts (issue #174; the old import path
+// measured the base64 document instead, and its 1.334x expansion made a
+// 6.2~8 MB export one the import would refuse).
 const maxBundleBytes = 8 << 20
+
+// maxBundleUploadBytes is the abuse cap on the uploaded DOCUMENT.  The
+// document is base64 (1.334x) plus JSON framing, so twice the credential cap
+// leaves generous headroom while still refusing a body that cannot possibly
+// decode into something legal.  Reading past it is the truncation case, not a
+// parse error, so the reader asks for one extra byte and says so (the same
+// "read one more to tell truncation from corruption" rule decodeBody uses).
+const maxBundleUploadBytes = 2 * maxBundleBytes
 
 // importBundle hands an operator-supplied export document to the module that
 // owns its format.
@@ -1466,7 +1477,14 @@ func (p *panel) importBundle(w http.ResponseWriter, r *http.Request, c core.Clie
 	}
 	name, data, err := readBundleUpload(r)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		// A body past the upload cap is a size problem, not a format problem:
+		// answering 400 here used to disguise it as "not a client2api bundle"
+		// (issue #174, the same disguise #78 removed from decodeBody).
+		status := http.StatusBadRequest
+		if errors.Is(err, errBodyTooLarge) {
+			status = http.StatusRequestEntityTooLarge
+		}
+		writeErr(w, status, err.Error())
 		return
 	}
 	if len(data) == 0 {
@@ -1514,7 +1532,7 @@ func readBundleUpload(r *http.Request) (string, []byte, error) {
 		// The limit is enforced on the read below rather than only here:
 		// ParseMultipartForm spills past maxMemory to a temp file, so it bounds
 		// the in-memory copy, not what the caller may send.
-		if err := r.ParseMultipartForm(maxBundleBytes); err != nil {
+		if err := r.ParseMultipartForm(maxBundleUploadBytes); err != nil {
 			return "", nil, fmt.Errorf("parse form: %w", err)
 		}
 		f, hdr, err := r.FormFile("file")
@@ -1522,9 +1540,12 @@ func readBundleUpload(r *http.Request) (string, []byte, error) {
 			return "", nil, fmt.Errorf("missing file field: %w", err)
 		}
 		defer f.Close()
-		data, err := io.ReadAll(io.LimitReader(f, maxBundleBytes))
+		data, err := io.ReadAll(io.LimitReader(f, maxBundleUploadBytes+1))
 		if err != nil {
 			return "", nil, fmt.Errorf("read file: %w", err)
+		}
+		if len(data) > maxBundleUploadBytes {
+			return "", nil, fmt.Errorf("%w (%s)", errBodyTooLarge, formatBytes(maxBundleUploadBytes))
 		}
 		name := "upload"
 		if hdr != nil {
@@ -1534,9 +1555,12 @@ func readBundleUpload(r *http.Request) (string, []byte, error) {
 		}
 		return name, data, nil
 	}
-	data, err := io.ReadAll(io.LimitReader(r.Body, maxBundleBytes))
+	data, err := io.ReadAll(io.LimitReader(r.Body, maxBundleUploadBytes+1))
 	if err != nil {
 		return "", nil, fmt.Errorf("read body: %w", err)
+	}
+	if len(data) > maxBundleUploadBytes {
+		return "", nil, fmt.Errorf("%w (%s)", errBodyTooLarge, formatBytes(maxBundleUploadBytes))
 	}
 	return "body", data, nil
 }
