@@ -474,12 +474,15 @@ func (p *pool) availableLockedFor(e *entry, now time.Time, freeModel bool, model
 // It returns nil when nothing can serve, which every caller must treat as
 // "no credential" rather than an error to retry.
 func (p *pool) pick(skip map[string]bool) *entry {
-	return p.pickFor(skip, false, "")
+	return p.pickFor(skip, false, "", nil)
 }
 
 // pickFor is pick() for a request that may be for a free model.  The model id
 // is only consulted for a free request, where it can carry a per-pair park.
-func (p *pool) pickFor(skip map[string]bool, freeModel bool, model string) *entry {
+// roomFor, when non-nil, additionally excludes accounts whose session working
+// set is full (issue #189); a nil filter is the plain pick every existing
+// caller keeps.
+func (p *pool) pickFor(skip map[string]bool, freeModel bool, model string, roomFor func(accountID string) bool) *entry {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	now := time.Now()
@@ -490,6 +493,9 @@ func (p *pool) pickFor(skip map[string]bool, freeModel bool, model string) *entr
 			continue
 		}
 		if !p.availableLockedFor(e, now, freeModel, model) {
+			continue
+		}
+		if roomFor != nil && !roomFor(e.id()) {
 			continue
 		}
 		priority := core.AccountPriority("codearts", e.id())

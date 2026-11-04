@@ -53,6 +53,13 @@ func (c *Client) usableForRequest(model string, freeModel bool) func(accountID s
 
 // pickAccount chooses the next candidate, preferring a live conversation
 // binding. The binding is written by Chat only after this pick is accepted.
+//
+// A brand-new conversation (no binding) first tries the pool excluding
+// accounts whose session working set is full (issue #189): the vendor keeps
+// finished sessions warm, so an account at in-flight 0 can still be at its
+// three-session cap, and dropping a new chat onto it just burns a 400.  When
+// every usable account is full, the normal pick answers anyway -- demotion,
+// never exclusion.
 func (c *Client) pickAccount(req *core.ChatRequest, skip map[string]bool, freeModel bool) *entry {
 	key := conversationKey(req)
 	model := ""
@@ -70,11 +77,35 @@ func (c *Client) pickAccount(req *core.ChatRequest, skip map[string]bool, freeMo
 			}
 		}
 	}
-	return c.pool.pickFor(skip, freeModel, model)
+	if e := c.pool.pickFor(skip, freeModel, model, c.workingSetFreeOf(req)); e != nil {
+		return e
+	}
+	// Every usable account holds a full working set (or the filter was too
+	// strict): hand the request to the plain pick rather than failing it.
+	return c.pool.pickFor(skip, freeModel, model, nil)
+}
+
+// workingSetFreeOf reports whether the account has room for THIS request's
+// session: a session id already in the account's set is a continuation (the
+// vendor counts distinct sessions, and continuing one costs nothing), so the
+// filter only refuses accounts that would take on a brand-new session while
+// already holding the cap.
+func (c *Client) workingSetFreeOf(req *core.ChatRequest) func(accountID string) bool {
+	if c == nil || c.workingSet == nil {
+		return nil
+	}
+	sid := strings.TrimSpace(sessionIDFor(req))
+	if sid == "" {
+		return nil
+	}
+	return func(accountID string) bool {
+		return !c.workingSet.wouldExceed(accountID, sid, time.Now())
+	}
 }
 
 // bindServedConversation records the credential that actually received the
-// request.
+// request, and counts the vendor session toward that account's working set
+// (issue #189).
 func (c *Client) bindServedConversation(req *core.ChatRequest, accountID string) {
 	if c == nil || c.affinity == nil {
 		return
@@ -85,6 +116,9 @@ func (c *Client) bindServedConversation(req *core.ChatRequest, accountID string)
 		return
 	}
 	c.affinity.Bind(key, id)
+	if c.workingSet != nil {
+		c.workingSet.recordSession(id, sessionIDFor(req), time.Now())
+	}
 }
 
 // BindConversation implements core.ConversationBinder.

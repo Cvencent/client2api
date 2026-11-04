@@ -136,6 +136,14 @@ func (c *Client) openStream(ctx context.Context, req *core.ChatRequest, release 
 		if err != nil {
 			kind, msg := classifyErr(err)
 			if kind == kindQueue {
+				// A session-cap refusal (01041) is direct evidence the
+				// account's three-session working set is full (issue #189):
+				// pin it so the demotion filter steers new conversations
+				// away before the next refusal can happen.  Other queue
+				// wordings say nothing about sessions.
+				if c.workingSet != nil && isSessionCapRefusal(msg) {
+					c.workingSet.pinFull(acctID, time.Now())
+				}
 				// A queue rejection is expected under load, not a broken
 				// credential: poll instead of failing, and do not cool the
 				// account down.  The status endpoint is queried for OUR

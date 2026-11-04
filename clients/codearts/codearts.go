@@ -61,6 +61,10 @@ type Client struct {
 	// autoDriver is injectable so tests never launch a real browser.
 	autoDriver codeartsAutoDriver
 
+	// workingSet tracks each account's vendor session working set: the
+	// distinct sessions served inside the decay window, pinned full by a real
+	// 01041 (issue #189).
+	workingSet *sessionWorkingSet
 	// affinity pins a conversation to the credential that first served it.
 	// See affinity.go.
 	affinity *core.Affinity
@@ -90,6 +94,7 @@ func newClient(deps core.Deps) (core.Client, error) {
 		logins: make(map[string]*panelLogin),
 	}
 	c.affinity = core.NewAffinity(0)
+	c.workingSet = newSessionWorkingSet()
 	c.affinity.StartGC()
 	c.setPaths()
 	c.pool.onSave = func(err error) {

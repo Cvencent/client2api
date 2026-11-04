@@ -40,7 +40,7 @@ func TestZeroWalletStillServesFreeModels(t *testing.T) {
 	if got := p.pick(nil); got != nil {
 		t.Fatal("a spent wallet still served a paid request")
 	}
-	if got := p.pickFor(nil, true, "glm-5.3-flash"); got != e {
+	if got := p.pickFor(nil, true, "glm-5.3-flash", nil); got != e {
 		t.Fatal("a spent wallet hid a free model")
 	}
 	if e.state != stateExhausted || e.until == 0 {
@@ -52,7 +52,7 @@ func TestOtherParksStillHoldFreeModels(t *testing.T) {
 	p := newPool()
 	e := p.put(testAccount(), true)
 	p.markFailure(e, kindAuth, "expired token")
-	if got := p.pickFor(nil, true, "glm-5.3-flash"); got != nil {
+	if got := p.pickFor(nil, true, "glm-5.3-flash", nil); got != nil {
 		t.Fatal("a dead session was stepped over for a free model")
 	}
 }
@@ -62,10 +62,10 @@ func TestFreePairParkOnlyHidesThatModel(t *testing.T) {
 	e := p.put(testAccount(), true)
 	p.ParkFreeModel(e, "glm-5.3-flash", time.Hour)
 
-	if got := p.pickFor(nil, true, "glm-5.3-flash"); got != nil {
+	if got := p.pickFor(nil, true, "glm-5.3-flash", nil); got != nil {
 		t.Fatal("the refused free model was offered again")
 	}
-	if got := p.pickFor(nil, true, "deepseek-v4.1-flash"); got != e {
+	if got := p.pickFor(nil, true, "deepseek-v4.1-flash", nil); got != e {
 		t.Fatal("the pair park hid a different free model")
 	}
 	if got := p.pick(nil); got != e {
