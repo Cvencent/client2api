@@ -13044,7 +13044,7 @@ function b3dSpec(view) {
           sub: free ? free + " 个免费档" : (ms.length ? "全部计费" : "无模型"),
           raw: ms.length,
           facts: [["客户端", platformLabel(c.name)], ["模型", ms.length + " 个"],
-            ["免费档", free + " 个"], ["最大上下文", maxCtx ? fmtK(maxCtx) : "—"]],
+            ["免费档", free + " 个"], ["最大上下文", maxCtx ? numf(maxCtx) : "—"]],
           go: "models",
         };
       });
@@ -13655,8 +13655,9 @@ function b3dModelInspectHTML(it) {
   const ex = m.extra || {};
   const rows = [
     ["客户端", c.name === "__virtual__" ? "虚拟" : (platformLabel ? platformLabel(c.name) : c.name)],
-    ["上下文", m.context_length ? fmtK(m.context_length) : "—"],
-    ["最大输出", m.max_output_tokens ? fmtK(m.max_output_tokens) : "—"],
+    // 容量值用 numf 全量写出：fmtK 的舍入会把 1048576 变成 1049K（issue #187）。
+    ["上下文", m.context_length ? numf(m.context_length) : "—"],
+    ["最大输出", m.max_output_tokens ? numf(m.max_output_tokens) : "—"],
     ["价格", (function () { try { return mdPriceSummary ? String(mdPriceSummary(m) || "").replace(/<[^>]*>/g, "") : "—"; } catch (e) { return "—"; } })()],
     ["计费", ex.free ? "免费" : (ex.credits != null ? String(ex.credits) : "—")],
     ["所属", m.owned_by || "—"],
@@ -16120,10 +16121,10 @@ function renderUsageTiles(d, t, rate) {
       spark: (d.series || []).map(x => Number(x.total_tokens || 0)),
     },
     {
-      k: "成功率", v: rate + "%", tint: "ok", tintText: "ok-text",
-      sub: t.failures
-        ? '<em>' + numf(t.failures) + " 次失败</em>"
-        : '<em>没有失败</em>',
+      k: "成功率", v: rate == null ? "—" : rate + "%", tint: "ok", tintText: "ok-text",
+      sub: req
+        ? (t.failures ? '<em>' + numf(t.failures) + " 次失败</em>" : '<em>没有失败</em>')
+        : '<em>还没有请求</em>',
       meter: rate,
     },
     {
@@ -16261,7 +16262,10 @@ async function renderUsage() {
   }
   const d = r.data || {}, t = d.totals || {};
   const req = t.requests || 0, fail = t.failures || 0;
-  const rate = req ? Math.round((req - fail) / req * 100) : 100;
+  // 零样本不算比率（issue #185）：一条请求都没有时 0/0 被算术兜底成 100%，
+  // 绿点满格条把「还没跑过流量」渲染成最好的成绩。与总览页同一指标写「—」
+  // 的口径对齐；0 次失败可能只是 0 次尝试，两句话必须分清。
+  const rate = req ? Math.round((req - fail) / req * 100) : null;
   // 「保留」说的是每请求明细环（与下面「最近调用」子表同一份 recent），不是
   // overview 里的运行日志行数——那读起来像这个页面的留存容量，和子表的
   // 100/100 打架（issue #4）。
@@ -16553,6 +16557,9 @@ async function renderClients() {
    可能同时属于两个模块，而没有数据能区分它们，因此按 keys 顺序取第一个
    命中（probeKeys.find 是确定性的，同一份文件每次渲染结果一致）。要精确
    归属就得让探测工具写客户端前缀，那是工具侧的契约变更，不在网关里猜。 */
+// fmtK 只给速率类读数用（tok/s、30 天合计的刻度）：Math.round 的舍入对速率
+// 无伤大雅，但容量类读数（上下文窗口）绝不能用——1,048,576 会变成 1049K，
+// 多算 424（issue #187），容量一律走 numf 全量写出。
 function fmtK(n) { n = Number(n || 0); return n >= 1000 ? Math.round(n / 1000) + "K" : String(n); }
 function probeDays(ts) {
   if (!ts) return null;
@@ -17152,7 +17159,11 @@ async function renderModels(refresh) {
           '<td>' + (isFallback
             ? '<span class="chip err" title="' + esc(srcTitle) + '">基线</span>'
             : '<span class="mddim">上游</span>') + '</td>' +
-          '<td class="num">' + (ctx > 0 ? esc(fmtK(ctx)) : '<span class="hint">—</span>') + '</td>' +
+          // 上下文列不用 fmtK：Math.round(n/1000)+"K" 是有损舍入，
+          // 1,048,576 会显示成 1049K（多算 424），与同一行详情里的 1048576、
+          // 路由预演里的 1,048,576 三种写法打架（issue #187）。千分位
+          // 全量写出，排序仍按原始值（mdContextSorted）。
+          '<td class="num">' + (ctx > 0 ? esc(numf(ctx)) : '<span class="hint">—</span>') + '</td>' +
           '<td class="num mdpricecell">' + mdPriceSummary(m) + '</td>' +
           '<td class="mdacts"><button class="xs mdopen" type="button" aria-expanded="false" title="展开这个模型的全部可编辑字段">详情</button></td>' +
           '</tr>' +
