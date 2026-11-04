@@ -1296,7 +1296,13 @@ func (p *panel) testAccount(w http.ResponseWriter, r *http.Request, c core.Clien
 	var body struct {
 		Model string `json:"model"`
 	}
-	_ = decodeBody(r, &body) // optional
+	// Optional but validated (issue #194): empty selects the module default,
+	// a malformed body is a 400 -- it used to be swallowed, silently dropping
+	// the operator's model choice back to the module default while reporting
+	// success.
+	if !decodeJSON(w, r, &body) {
+		return
+	}
 
 	ctx, cancel := p.ctx(r, 120*time.Second)
 	defer cancel()
@@ -1376,7 +1382,11 @@ func (p *panel) checkin(w http.ResponseWriter, r *http.Request, c core.Client, i
 		CaptchaParam  string `json:"captcha_param"`
 		CaptchaRegion string `json:"captcha_region"`
 	}
-	_ = decodeBody(r, &body) // optional; empty selects the module default
+	// Optional but validated (issue #194): empty selects the module default,
+	// a malformed body is a 400 rather than a silent defaulting.
+	if !decodeJSON(w, r, &body) {
+		return
+	}
 
 	ctx, cancel := p.ctx(r, 120*time.Second)
 	defer cancel()
@@ -1421,7 +1431,13 @@ func (p *panel) refreshAccounts(w http.ResponseWriter, r *http.Request, c core.C
 	var body struct {
 		ID string `json:"id"`
 	}
-	_ = decodeBody(r, &body)
+	// The empty ID means "refresh the whole pool" -- the heaviest action this
+	// route can take -- so a malformed body must not degrade into it (issue
+	// #194): a truncated {"id": "A2"} used to read as an empty ID and sweep
+	// every account through a real upstream probe.
+	if !decodeJSON(w, r, &body) {
+		return
+	}
 
 	ctx, cancel := p.ctx(r, 180*time.Second)
 	defer cancel()

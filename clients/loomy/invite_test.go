@@ -195,16 +195,27 @@ func TestInviteCodeDefaultNeverBlocksTheReadOnThePoolScan(t *testing.T) {
 	seedAccount(t, c, "acc-a", "tok-a", 0)
 
 	ctx := context.Background()
-	// 第一次读取：还没扫过，必须立即给配置兜底，且这一次读取不产生上游请求。
-	done := make(chan string, 1)
-	go func() { done <- c.InviteCodeDefault(ctx) }()
-	select {
-	case got := <-done:
-		if got != "P276D2" {
-			t.Fatalf("cold read = %q, want the configured P276D2", got)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("InviteCodeDefault 阻塞了：读数在等上游扫描，这正是 #96 的尖刺来源")
+	// 第一次读取：必须立即返回（不阻塞在扫描上，#96 的尖刺来源）且不产生
+	// 上游请求。返回值本身不是断言对象——warmInvitePick 的后台扫描与这条读
+	// 是赛跑关系（issue #195：CI 上扫描偶尔抢先落地，读到池码是**正确**行为），
+	// 快机器上兜底、慢调度下池码，两者都合法；真正要钉的是「立即」与「零请求」。
+	stub.mu.Lock()
+	coldHitsBefore := stub.hits
+	stub.mu.Unlock()
+	coldStart := time.Now()
+	got := c.InviteCodeDefault(ctx)
+	coldElapsed := time.Since(coldStart)
+	if coldElapsed > 100*time.Millisecond {
+		t.Fatalf("cold read took %s：读数在等上游扫描，这正是 #96 的尖刺来源", coldElapsed)
+	}
+	if got != "P276D2" && got != "AAAAAA" {
+		t.Fatalf("cold read = %q, want either the configured fallback or a pool code (both are immediate correct answers)", got)
+	}
+	stub.mu.Lock()
+	coldHitsAfter := stub.hits
+	stub.mu.Unlock()
+	if coldHitsAfter != coldHitsBefore {
+		t.Fatalf("冷读打了 %d 次上游；同步读数不该触发扫描", coldHitsAfter-coldHitsBefore)
 	}
 
 	// 后台扫描落地后，读取换成池子里余量最大的码（功能没丢）。
