@@ -33,6 +33,18 @@ const (
 	captureQoderJA3 = "0303,49195-49199-49196-49200-52393-52392-49161-49171-49162-49172-4865-4866-4867,0-11-65281-23-18-5-10-13-16-43-51,4588-29-23-24-25,0"
 	captureQoderMD5 = "0a0021494b3074afab4dd7a3d5caeffe"
 
+	// lobsterai-server.youdao.com / api-overmind.youdao.com, captured from the
+	// official LobsterAI desktop (Electron) client through a blind CONNECT
+	// passthrough (issue #177): Chromium/BoringSSL-shaped, GREASE at the head
+	// of the cipher list and both ends of the extension list (the raw string
+	// is not stable across connections -- strip GREASE before comparing).
+	// Every cipher and extension this gateway's chrome-133 profile emits is
+	// present with the captured shapes, so chrome-133 is the profile that
+	// matches the vendor's own client byte-for-byte at the JA3 layer (the
+	// generic "chrome" is uTLS's HelloChrome_Auto, a different generation).
+	captureLobsterCipherSet = "51914-4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53"
+	captureLobsterMD5s      = "446cfa84bae1bc8b2bcefe15b930ca42,eb418ace14b51c7dda00239cc517c738"
+
 	// bytegate-sg.byteintlapi.com, from inside the Trae CN application, and
 	// mobile.events.data.microsoft.com. Both show Go's own crypto/tls shape:
 	// no ALPN, TLS 1.3 suites first, and Go's fixed extension order. This is the
@@ -315,4 +327,51 @@ func TestTheCapturedQoderHelloIsGoShaped(t *testing.T) {
 	if !slices.Equal(filtered, want[3]) {
 		t.Errorf("groups after dropping %v:\n got %v\nwant %v", extraGroup, filtered, want[3])
 	}
+}
+
+// TestChrome133MatchesTheLobsterCapture pins the profile the lobsterai module
+// should run (issue #177): the official desktop client's ClientHello is
+// Chromium-shaped with GREASE randomization, so the assertion compares the
+// profile's emitted cipher LIST (order included, GREASE first as uTLS emits
+// it) against the capture, not a raw JA3 md5.
+func TestChrome133MatchesTheLobsterCapture(t *testing.T) {
+	body := captureClientHello(t, Options{Profile: ProfileChrome133, Protocol: ProtocolH1})
+	// Parse the cipher list out of the hello (client hello: type+len, version,
+	// random, session id, ciphers, compression, extensions).
+	if len(body) < 64 {
+		t.Fatalf("hello too short: %d bytes", len(body))
+	}
+	pos := 4 + 2 + 32
+	sidLen := int(body[pos])
+	pos += 1 + sidLen
+	csLen := int(body[pos])<<8 | int(body[pos+1])
+	pos += 2
+	ciphers := make([]string, 0, csLen/2)
+	for i := 0; i < csLen; i += 2 {
+		ciphers = append(ciphers, strconv.Itoa(int(body[pos+i])<<8|int(body[pos+i+1])))
+	}
+	// The first cipher is GREASE and changes per connection (0x?a0a/0x?a14/…
+	// family, e.g. 31354 and 51914 in two captures): compare the real suites
+	// byte-for-byte and only assert the head value IS a GREASE codepoint.
+	grease := ciphers[0]
+	if !isGREASECipher(grease) {
+		t.Fatalf("chrome-133 first cipher %s is not GREASE: the captured official client opens its list with GREASE", grease)
+	}
+	got := strings.Join(ciphers[1:], "-")
+	want := strings.Join(strings.Split(captureLobsterCipherSet, "-")[1:], "-")
+	if got != want {
+		t.Fatalf("chrome-133 ciphers (after GREASE) = %s, want (capture) = %s", got, want)
+	}
+	// The captured md5s, for the operator diffing a future mismatch.
+	t.Logf("captured JA3 md5s (GREASE-randomized, reference only): %s", captureLobsterMD5s)
+}
+
+// isGREASECipher: uTLS GREASE ciphers are 0x?a0a, 0x?a1a ... 0x?afa
+// (low byte pattern 0x0a..0xfa with the high byte repeating it).
+func isGREASECipher(c string) bool {
+	v, err := strconv.Atoi(c)
+	if err != nil {
+		return false
+	}
+	return v&0x0f0f == 0x0a0a
 }

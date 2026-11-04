@@ -6,6 +6,25 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.28] - 2026-11-05
+
+### Fixed
+
+- **lobsterai 的 TLS 指纹对准官方客户端的真实 ClientHello（#177）**：本机
+  就装着官方 Electron 桌面端，经 CONNECT 盲转发代理（不改写一个字节）抓到
+  它对 `lobsterai-server.youdao.com` / `api-overmind.youdao.com` 的真实
+  ClientHello——Chromium/BoringSSL 形状、cipher 列表以 GREASE 开头、扩展列表
+  两端带 GREASE（每次连接 GREASE 值随机）。逐字节对比确认：**uTLS 的
+  chrome-133 profile 与官方客户端在 JA3 层完全一致**（16 个 cipher 顺序相同，
+  扩展集合相同），而通用 `chrome` 是 `HelloChrome_Auto`（另一代际）。
+  例行示例配置的 `lobsterai.tls_profile` 从 `chrome` 精确到 `chrome-133`，
+  捕获常量与 GREASE 感知断言进 `fingerprint_capture_test.go` 防回退。
+
+### Installer
+
+- `client2api-setup-0.7.28.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `e63147a2cf7981a41fc77ebbf73ef0272157e1b1cb78b33b55270e3138e07003`
+
 ## [0.7.27] - 2026-11-05
 
 ### Added

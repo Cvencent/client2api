@@ -135,7 +135,7 @@
       "tls_protocol": "http/1.1"
     },
     "lobsterai": {
-      "tls_profile": "chrome",
+      "tls_profile": "chrome-133",
       "tls_protocol": "http/1.1"
     },
     "loomy": {
