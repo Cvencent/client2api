@@ -204,8 +204,13 @@ type Config struct {
 
 	// Duration knobs.  Each accepts a Go duration string ("10m", "500ms") or a
 	// bare JSON number read as seconds (300) -- see durationField.
-	LoginTimeout   durationField `json:"login_timeout,omitempty"`
-	ChatTimeout    durationField `json:"chat_timeout,omitempty"`
+	LoginTimeout durationField `json:"login_timeout,omitempty"`
+	ChatTimeout  durationField `json:"chat_timeout,omitempty"`
+	// ChatRateGuard caps how many chats one account may serve inside the
+	// rolling window (issue #179).  0 means the conservative default; the
+	// value exists so an operator with a genuinely higher-throughput plan can
+	// raise it instead of disabling the guard.
+	ChatRateGuard  *int          `json:"chat_rate_guard,omitempty"`
 	ModelsTimeout  durationField `json:"models_timeout,omitempty"`
 	CheckinTimeout durationField `json:"checkin_timeout,omitempty"`
 	VersionTimeout durationField `json:"version_timeout,omitempty"`
@@ -441,6 +446,14 @@ func (cfg Config) loginTimeout() time.Duration {
 	return durationOr(cfg.LoginTimeout, defaultLoginTimeout)
 }
 func (cfg Config) chatTimeout() time.Duration { return durationOr(cfg.ChatTimeout, defaultChatTimeout) }
+
+// chatRateGuard is the per-account chat cap inside the rolling window.
+func (cfg Config) chatRateGuard() int {
+	if cfg.ChatRateGuard != nil && *cfg.ChatRateGuard > 0 {
+		return *cfg.ChatRateGuard
+	}
+	return defaultRateCap
+}
 
 // tlsProfile / tlsProtocol expose the transport-fingerprint keys to New.
 func (cfg Config) tlsProfile() fingerprint.Profile {

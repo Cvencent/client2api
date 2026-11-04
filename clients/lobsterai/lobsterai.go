@@ -111,6 +111,10 @@ func New(deps core.Deps) (core.Client, error) {
 		cfg = Config{}
 	}
 	c.cfg = cfg.normalize()
+	// The per-account chat frequency guard (issue #179): a consumer account is
+	// not an API throughput port, and the vendor's risk model reads
+	// frequency, not just concurrency.
+	c.pool.rate = newRateGuard(cfg.chatRateGuard())
 	if fp := cfg.tlsProfile(); fp != fingerprint.ProfileNone {
 		if fhc, ferr := fingerprint.New(fingerprint.Options{
 			Profile:  fp,

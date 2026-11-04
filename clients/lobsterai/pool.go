@@ -125,6 +125,9 @@ type pool struct {
 	mu    sync.Mutex
 	accts []*accountRecord
 	rr    int
+	// rate is the per-account chat frequency guard (issue #179).  Nil keeps
+	// the pre-guard behaviour for hand-built pools in tests.
+	rate *rateGuard
 }
 
 func newPool() *pool { return &pool{} }
@@ -201,6 +204,13 @@ func (p *pool) selectable(a *accountRecord, now time.Time, limit int) bool {
 	if a.LowCredit {
 		return false
 	}
+	if p.rate != nil && !p.rate.check(a.ID, now) {
+		// The rate guard (issue #179) is not a cooldown and must not be
+		// reported as one: the account stays ready, the row stays clean, and
+		// the request moves to a sibling.  When every sibling is also inside
+		// its window the caller sees core.ErrBusy.
+		return false
+	}
 	return !coolingDown(a, now)
 }
 
@@ -226,6 +236,7 @@ func coolingDown(a *accountRecord, now time.Time) bool {
 func (p *pool) acquire(now time.Time, limit int) (*accountRecord, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	_ = p.rate
 
 	enabled := 0
 	for _, a := range p.accts {
@@ -260,6 +271,9 @@ func (p *pool) acquire(now time.Time, limit int) (*accountRecord, error) {
 	}
 	chosen.inFlight++
 	chosen.lastUsed = now
+	if p.rate != nil {
+		p.rate.record(chosen.ID, now)
+	}
 	p.rr = (p.rr + 1) % len(p.accts)
 	return chosen, nil
 }
@@ -277,6 +291,9 @@ func (p *pool) acquireByID(id string, now time.Time, limit int) (*accountRecord,
 	}
 	a.inFlight++
 	a.lastUsed = now
+	if p.rate != nil {
+		p.rate.record(a.ID, now)
+	}
 	return a, nil
 }
 
