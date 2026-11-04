@@ -4206,8 +4206,12 @@ input:focus, select:focus, textarea:focus, button:focus-visible, a:focus-visible
   border-bottom: 1px solid var(--line);
   white-space: nowrap;
 }
-/* sortable 列头下缘一条刻度线，悬停变亮——轨道头语言，全站统一。 */
-.acc thead th.sortable { position: relative; cursor: pointer; user-select: none; }
+/* sortable 列头下缘一条刻度线，悬停变亮——轨道头语言，全站统一。
+   position 必须保持 sticky：.tbl-wrap 的粘性表头规则（上方）本来就是靠
+   th 自身 sticky 实现的，这里曾被写成 relative 把可排序列头从表头顶部
+   顶了下去（issue #170）。sticky 元素同样是绝对定位的包含块，::after
+   刻度线照常锚定在列头上。 */
+.acc thead th.sortable { position: sticky; cursor: pointer; user-select: none; }
 .acc thead th.sortable::after {
   content: ""; position: absolute; left: 12px; right: 12px; bottom: -1px; height: 1px;
   background: color-mix(in srgb, var(--line) 85%, transparent);
@@ -5945,7 +5949,8 @@ html:not([data-theme="light"]) body::after {
   letter-spacing: .09em;
   border-bottom: 1px solid var(--line);
 }
-#view-models .acc.md thead th.sortable { position: relative; }
+/* 同 #170：sticky 才能留在表头行；::after 刻度线锚定 sticky 自身不受影响。 */
+#view-models .acc.md thead th.sortable { position: sticky; }
 #view-models .acc.md thead th.sortable::after {
   content: ""; position: absolute; left: 0; right: 12px; bottom: -1px; height: 1px;
   background: color-mix(in srgb, var(--line) 85%, transparent);
@@ -18253,6 +18258,19 @@ async function renderPlatforms(preserveDraft = false) {
     body.innerHTML = failure;
     return;
   }
+  // 模型目录这一半读失败时绝不能渲染成「0 个模型」：卡片的每模型优先级与
+  // 黑名单行根本没画出来，随后的保存 diff 会把 baseline 全判成「操作员清空
+  // 了」并真的写 null（issue #180——静默删配置且汇报成功）。与 cfg 同等对待：
+  // 整页画错误块，保存按钮自然无从点起。
+  if (!md.ok) {
+    $("#pfNote").textContent = "读取失败";
+    const failure = '<div class="state err">模型目录读取失败：' + esc(md.err) +
+      "。平台路由的模型清单不可编辑，保存入口已停。</div>";
+    const groupsEl = $("#pfGroups");
+    if (groupsEl) groupsEl.innerHTML = failure;
+    body.innerHTML = failure;
+    return;
+  }
   const c = (cfg.data && cfg.data.config) || {};
   const draft = preserveDraft ? capturePlatformDraft() : null;
   SOURCE_DEFS = c.sources || {};
@@ -18270,7 +18288,12 @@ async function renderPlatforms(preserveDraft = false) {
   const modSchema = cfg.data.module_schema || {};
   const models = {};
   const modelInfos = {};
+  // 「这次没读到」必须与「没上报目录」在数据上可区分（issue #180）：前者是
+  // 行没渲染、diff 不可信；后者是真没有、空清单合法。clientModels.error 与
+  // 缺键是两种失败形态，都记进 catalogFaults。
+  const catalogFaults = {};
   ((md.data && md.data.clients) || []).forEach(x => {
+    if (x.error) catalogFaults[x.name] = x.error;
     const infos = (x.models || []).filter(m => m && m.id).map(m => ({
       id: m.id,
       free: !!(m.extra && m.extra.free),
@@ -18300,9 +18323,18 @@ async function renderPlatforms(preserveDraft = false) {
   push("workbuddy");
   names.sort();
 
+  // 平台缺席目录响应（模块这次没上报）也算 fault，前提是它本来有模型配置
+  // 可丢：一张从没配过模型优先级/黑名单的卡，空渲染也删不了什么。
+  for (const n of Object.keys(policy)) {
+    const entry = policy[n] || {};
+    const carries = (entry.model_priorities && Object.keys(entry.model_priorities).length) ||
+      (Array.isArray(entry.disabled_models) && entry.disabled_models.length);
+    if (carries && !Array.isArray(models[n])) catalogFaults[n] = "目录响应里没有这个平台";
+  }
   PF = {
     policy: policy,
     models: models,
+    catalogFaults: catalogFaults,
     modelInfos: modelInfos,
     names: names,
     baseline: JSON.parse(JSON.stringify(policy)),
@@ -18372,7 +18404,13 @@ async function renderPlatforms(preserveDraft = false) {
     out.push(modCardHTML(n, clientEntry, modSchema[n] || [], ""));
     if (list.length) out.push('<div class="pfwbhd" style="margin-top:10px">模型清单 <span class="hint" style="font-weight:400">（勾选 = 允许调用；右侧数字是该模型的优先级，留空继承平台基础优先级）</span></div>');
     if (!list.length) {
-      out.push('<div class="hint">这个平台没有可调用的模型（模块未上报目录）。</div>');
+      // 「没上报目录」与「这次没读到」要说得不一样（issue #180）：前者是
+      // 合法空态；后者是读取故障，卡片明说故障并提示保存已被拒，绝不能
+      // 冒充「这个平台没有可调用的模型」。
+      const fault = (PF.catalogFaults || {})[n];
+      out.push(fault
+        ? '<div class="state err">模型目录读取失败：' + esc(fault) + '。清单暂不可编辑，保存该平台会被拒绝。</div>'
+        : '<div class="hint">这个平台没有可调用的模型（模块未上报目录）。</div>');
     } else {
       out.push('<input class="pfFilter" type="search" placeholder="过滤模型名" spellcheck="false" autocomplete="off">');
       out.push('<div class="pfgrid">');
@@ -18748,6 +18786,15 @@ async function savePlatforms() {
   // (issue #83): the loop below would find zero cards and report the empty
   // patch as 「已保存，内容没有变化」-- a success claim with no request sent.
   if (!PF) { toast("平台配置还没读取成功，无法保存；先等读取恢复", "err"); return; }
+  // 目录这一半不可信时禁写（issue #180）：行没渲染出来的卡片，diff 会把
+  // baseline 全判成「操作员清空了」。宁可拒保存，也不静默删配置再报成功。
+  const faults = (PF && PF.catalogFaults) || {};
+  const faulted = Object.keys(faults);
+  if (faulted.length) {
+    toast("模型目录读取失败（" + faulted.slice(0, 3).join("、") + (faulted.length > 3 ? " 等" : "") +
+      "），模型清单不可编辑，已拒绝保存；先点「重新进页」恢复目录", "err");
+    return;
+  }
   const changed = {};
   let bad = "", badReason = "";
   for (const el of document.querySelectorAll("#pfBody .pfplat")) {

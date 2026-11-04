@@ -6,6 +6,33 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.16] - 2026-11-04
+
+### Fixed
+
+- **平台页在模型目录读不到时不再静默删配置（#180，P1）**：`renderPlatforms`
+  只对 `/panel/api/config` 判失败，`/panel/api/models` 这一半读失败（或某平台
+  这次缺席响应）时卡片画成「0 个模型 · 模块未上报目录」——一句不实陈述；随后
+  `savePlatforms` 拿 0 行表单减 baseline，把已有的每模型优先级逐个写成 `null`、
+  黑名单清空并汇报成功。三层修法：目录读失败与配置读失败同等对待（整页错误块、
+  不渲染假空态）；「这次没读到」（响应缺键 / `clientModels.error`）与「没上报
+  目录」（空数组）在数据上可区分（`catalogFaults`）；有 fault 时保存直接拒绝
+  并说明原因与下一步（先「重新进页」恢复目录），卡片空态文案按两种形态分开
+  说话。静态钉 `platforms_catalog_fault_test.go`。
+- **可排序列头重新粘住（#170）**：粘性表头靠 `.tbl-wrap thead th` 的
+  `position: sticky`，而 `.acc thead th.sortable` 与
+  `#view-models .acc.md thead th.sortable` 两条后置规则为画下缘刻度线把它
+  改写成 `position: relative`——只有带 `.sortable` 的列头失效：账号池 13 列
+  滚下去 12 列表头消失，模型页丢「上下文」列。sticky 元素本身就是绝对定位的
+  包含块，刻度线的 `::after` 不需要 relative；两条覆盖者改回 `sticky` 并加
+  注释，静态钉 `sortable_sticky_head_test.go` 防回退（同名选择器多条规则逐条
+  扫描，任何一条写回 relative 即红）。
+
+### Installer
+
+- `client2api-setup-0.7.16.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `c4368ea81e10c6b4863e04ab50504facd57aafb3cf4368063e55af7f41a1ca8b`
+
 ## [0.7.15] - 2026-11-04
 
 ### Fixed
