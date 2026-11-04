@@ -6,6 +6,53 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.7] - 2026-11-04
+
+### Fixed
+
+- **对话页流式回复期间每一次分片都把视口平滑拽回底部（#161）**：
+  `chatScrollBottom()` 没有日志页已有的那条「本来就在底部」判据（日志页
+  `:19553` 先量 `atEnd`、`:19571` 才落位），而且 `.chat-scroll` 带 CSS
+  `scroll-behavior: smooth`——每次赋值都变成一段动画，实测一次回答几十片
+  的持续拉扯：用户在流式期间翻上去，屏幕花约 1.2s 平滑滚回底部。
+  修（建议 1 + 3）：`chatScrollBottom(force)` 补同口径判据（阈值 24px），
+  **不在底部就不动**；`.chat-scroll` 的 CSS `scroll-behavior: smooth` 摘掉
+  （开一条长对话时那约 400ms 的自滚动画随之消失，还在的落位本来就该瞬时，
+  且 `prefers-reduced-motion` 用户不再被强加位移）；发送一刻传 `force=true`
+  ——那一刻用户就在输入行，这次落位是「发消息」这个动作的一部分。
+  **看守**：`internal/panel/chat_stream_guards_test.go`——
+  `chatScrollBottom` 必须带 `atEnd`（24px 口径）与 `force` 通道、发送时刻
+  必须 `force=true`、`.chat-scroll` 的规则本体不允许再出现
+  `scroll-behavior: smooth`。
+
+- **发送后到首字到达之前屏幕一片空白（#162）**：三个缺口叠在同一个状态——
+  ①推理分片只累加不重绘（`:25170` 那行只写 `out.reasoning +=`），deepseek/GLM
+  这类模型整个思考阶段（实测 5.4s、35 片）屏幕上是 4px 空白，直到正文第一片
+  一次性蹦出来，而 `chatDraw` 本来就会渲染 think（`:25018`），只是调用点漏
+  了；②`.chatmsg.pending` 的打字光标样式（`:3920-3925`，`chatCaret`
+  keyframes）从 v0.3.3 引入至今 `grep -c 'add("pending")' = 0`，从未生效；
+  ③`#chatDiag` 中途恒为空。修（建议 1 + 2）：推理分片补 `chatDraw(true)`、
+  发送时 `out.pending = true` 且分片到达即解开（`chatSettle` 收尾也清），
+  class 拼装加 pending 档（`m.pending ? " pending" : ""`），诊断行在发送
+  一刻写「等待首字…」、收尾照旧被统计串覆盖。
+  **看守**：同一测试文件——推理分支必须带 `chatDraw(true)` 与
+  `out.pending = false`、class 拼装必须有 pending 档、发送必须挂 pending、
+  `chatSettle` 必须清 pending、`chatDiag("等待首字…")` 必须在。
+
+- **「减少动效」下任务中心「执行」仍平滑滚动约 400ms（#163）**：
+  `:23429` 显式传 `behavior: "smooth"`——CSS 的
+  `scroll-behavior: auto !important` 与 JS 显式传的选项是两条路，前者管不住
+  后者；同文件 `:24295`（命令面板）不传参数走 CSS 是做对的参照。修（建议
+  1）：省掉参数走 CSS（reduce 下全局兜底本来就是 auto）。
+  **看守**（建议 3）：`TestNoScrollIntoViewSmoothLiteral`——逐行扫
+  `scrollIntoView` 调用、剥掉注释，**不允许任何一行再显式传
+  `behavior:"smooth"`**；A/B 把字面量塞回去即红。
+
+### Installer
+
+- `client2api-setup-0.7.7.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `35E719997A7458A53A1F83ED92542579FAD465B198BFDC78A700E1D57BFD0C89`
+
 ## [0.7.6] - 2026-11-04
 
 ### Fixed

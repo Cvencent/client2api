@@ -3883,7 +3883,10 @@ kbd {
 .chat-sys { flex: 1 1 320px; }
 .chat-sys input { margin-top: 4px; }
 
-.chat-scroll { flex: 1; overflow: auto; min-height: 0; scroll-behavior: smooth; }
+/* 不带 smooth（issue #161）：CSS 的 scroll-behavior: smooth 让「渲染完落到底」
+   变成约 400ms 的动画，开长对话像页面自己在动；落位应当是瞬时的，
+   「减少动效」的用户尤其不该被强加位移。 */
+.chat-scroll { flex: 1; overflow: auto; min-height: 0; }
 .chatlog {
   display: flex; flex-direction: column; gap: 18px;
   max-width: 900px; margin: 0 auto; padding: 22px 24px 8px;
@@ -23426,7 +23429,11 @@ function tcRun() {
   if (sub === "batch") { qcRun(); return; }
   if (sub === "board") { runAllTasks(); return; }
   // 定时任务页没有「待办」可执行：它的动作是保存排期
-  $("#scBody").scrollIntoView({ block: "start", behavior: "smooth" });
+  /* behavior:"smooth" 不过 reduce 这一关（issue #163）：CSS 的
+     scroll-behavior:auto !important 管不住 JS 显式传的选项，两者是两条路。
+     省掉参数走 CSS（与命令面板选中项同一写法），CSS 全局兜底在 reduce 下
+     本来就是 auto。 */
+  $("#scBody").scrollIntoView({ block: "start" });
   toast("定时任务请改完后按「保存并生效」", "ok");
 }
 $("#btnTcScan").addEventListener("click", tcScan);
@@ -24971,9 +24978,15 @@ function chatAutosize() {
   ta.style.height = Math.min(ta.scrollHeight, 200) + "px";
 }
 
-function chatScrollBottom() {
+function chatScrollBottom(force) {
+  /* 先看用户是不是本来就在底部：流式期间翻上去读上一条问答时不该被每一片
+     拽回底部（issue #161）——判据与日志页同一口径（24px）。
+     force 只给「用户主动发出一条」用：那一刻用户当然在输入行，滚过去是对的。 */
   const box = $("#chatScroll");
-  if (box) box.scrollTop = box.scrollHeight;
+  if (!box) return;
+  const atEnd = box.scrollTop + box.clientHeight >= box.scrollHeight - 24;
+  if (!force && !atEnd) return;
+  box.scrollTop = box.scrollHeight;
 }
 async function renderChat(force) {
   // 流式中的回合不能被「重读服务端记录」覆盖（issue #42）：切走再切回、点
@@ -25013,7 +25026,7 @@ function chatDraw(streaming) {
   box.innerHTML = CHAT.msgs.map((m, i) => {
     const me = m.role === "user", err = m.role === "error";
     const who = me ? "我" : err ? "!" : "AI";
-    const cls = me ? " me" : err ? " err" : "";
+    const cls = me ? " me" : err ? " err" : m.pending ? " pending" : "";
     const think = m.reasoning ? '<span class="think">' + esc(m.reasoning) + "</span>" : "";
     const meta = m.meta ? '<span class="meta">' + esc(m.meta) + "</span>" : "";
     return '<div class="chatmsg' + cls + '" data-i="' + i + '"><div class="who">' + who +
@@ -25038,6 +25051,7 @@ async function chatBind() {
 }
 
 function chatSettle(out, status, t0, ttft, usage, finish) {
+  out.pending = false;
   const parts = [];
   if (status) parts.push("HTTP " + status);
   parts.push(Math.round(performance.now() - t0) + " ms");
@@ -25078,15 +25092,19 @@ async function chatSend() {
   const temp = Number($("#chatTemp").value); if ($("#chatTemp").value !== "" && !isNaN(temp)) body.temperature = temp;
   if (CHAT.key) body.options = { conversation_id: CHAT.key };
 
-  const out = { role: "assistant", content: "", reasoning: "" };
+  // pending（issue #162）：已发送、首字未到——气泡带上 .chatmsg.pending，
+  // 打字光标开始闪（样式 :3921 早就写好，只是从来没有写入点）；chatDiag
+  // 同步给一句「等待首字…」，别让这一行空到收尾。
+  const out = { role: "assistant", content: "", reasoning: "", pending: true };
   CHAT.msgs.push(out);
   CHAT.busy = true; $("#btnChatSend").disabled = true; $("#btnChatStop").disabled = false;
   // 流式期间锁住选择控件：切换它们既影响不了已在途的请求，又会让 settle 落盘
   // 出自相矛盾的记录（issue #42 顺带）。
   $("#chatClient").disabled = true; $("#chatModel").disabled = true; $("#chatAccount").disabled = true;
   CHAT.ctrl = new AbortController();
+  chatDiag("等待首字…");
   chatDraw();
-  chatScrollBottom();
+  chatScrollBottom(true);
 
   const t0 = performance.now();
   let ttft = 0, usage = null, finish = "", res = null;
@@ -25166,8 +25184,11 @@ async function chatSend() {
           return;
         }
         const ch = (ev.choices || [])[0] || {}, d = ch.delta || {};
-        if (d.content) { if (!ttft) ttft = performance.now() - t0; out.content += chatText(d.content); chatDraw(true); chatScrollBottom(); }
-        if (d.reasoning_content) out.reasoning += d.reasoning_content;
+        if (d.content) { if (!ttft) ttft = performance.now() - t0; if (out.pending) { out.pending = false; } out.content += chatText(d.content); chatDraw(true); chatScrollBottom(); }
+        // 推理分片也要重绘（issue #162）：思考阶段往往比正文长得多，只累加
+        // 字符串的话，deepseek/GLM 这类模型整个思考过程屏幕上是 4px 的空白——
+        // chatDraw 本来就会渲染 think（:25017），缺的只是这一条调用。
+        if (d.reasoning_content) { if (out.pending) out.pending = false; out.reasoning += d.reasoning_content; if (!out.content) chatDraw(true); chatScrollBottom(); }
         if (ev.usage) usage = ev.usage;
         if (ch.finish_reason) finish = ch.finish_reason;
       }

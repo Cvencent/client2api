@@ -5,7 +5,7 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-当前版本：**0.7.6**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：**0.7.7**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 流式断流排查：升级后系统日志新增 `stream: id=...` 终止诊断，包含协议、平台/模型、
 上游事件数、`finish_reason`、正文/推理字节数、工具调用数、completion token、
@@ -264,6 +264,8 @@ client2api 是一个**个人自用**的 OpenAI 兼容网关。它把你自己在
 - 表单的字段级错误不只是红边：出错的输入框带 `aria-invalid="true"` 与指向错误文字的 `aria-describedby`，提交被本地拦下时焦点会落到第一个出错的字段上，弹窗级的兜底错误带 `role="alert"`——读屏用户能听到「哪一栏错了、为什么错」，而不是只看到一片红色。
 - 账号池卡片墙的板卡是一个真正的展开控件：卡片头（账号名 + 状态词）带 `role="button"`、`aria-expanded` 与指向详情块的 `aria-controls`，读屏会念出「<账号名> <状态>，已展开/已收起」而不是一个无名的 `article`；点它或按回车立即就地展开。轮询重建的豁免只覆盖**表单控件**（优先级滑杆、测试模型下拉、输入框），所以焦点落在板卡上不再让展开永远画不出来。
 - 面板数据表格的无障碍命名与列关联：每张表带视觉隐藏的 `<caption class="sr-only">`（读屏念「账号池」「最近调用」而不是光秃秃的「表格」），每个列头带 `scope="col"`（单元格导航时逐格报所属列）；子页签面板里没有可聚焦元素时（如用量页「统计明细」，纯文本+表格、永远不会有输入框），容器自身可聚焦——Tab 能进入内容区而不是整块跳过（WAI-ARIA APG Tabs 模式，issue #151/#152）。
+- 对话页的三条滚动/等待缺口一起收口：①流式分片不再把翻上去读历史的用户平滑拽回底部（`chatScrollBottom` 补上日志页同口径的「本来就在底部」判据，只在本来在底部或用户主动发出时落位）；②`.chat-scroll` 不再带 CSS `scroll-behavior: smooth`，打开长对话的落位是瞬时的（原来每次开对话都有一段约 400ms 的自滚动画）；③任务中心「执行」不再对 `scrollIntoView` 显式传 `behavior:"smooth"`——CSS 的 `scroll-behavior:auto !important` 管不住 JS 显式传的选项，省掉参数走 CSS，「减少动效」用户不再被强加位移（issue #161/#163）。
+- 对话测试页的「等待首字」不再是一片空白：发送那一刻挂上 `.chatmsg.pending`（样式里的打字光标第一次真正生效）、诊断行写「等待首字…」；**推理分片现在也会重绘**——deepseek/GLM 这类模型的整个思考阶段原来只累加字符串，屏幕上是 4px 空白，直到正文第一片才一次性蹦出来（issue #162）。
 - 账号池统计带不再被字号涨破：换行判据从「视口宽度」（1160px 断点）换成「容器能不能放下」（flex-wrap 常开 + min-width 用 em 随字号一起变宽）——200% 文字路径（WCAG 1.4.4）不改视口宽度，原来的断点走不进去，9/10 标签被省略号吃掉（issue #159）。两格无 title 的 div 统计「已接入客户端/就绪客户端」补上可读回的 title，其余八格的 title 改成「标签原文：动作说明」两段式，悬停内容和被截断的词是同一句话。
 - 控件高度的「一套刻度」从注释落进声明：button.xs 的五份互相覆盖定义（26/28 互斥）收编为唯一权威值 26px，卡片头对它的小按钮改写权删除，工具条搜索框的单点 30px 换成 --ctl-h 引用——「一颗 xs 按钮多高」回到取决于设计而不是落点容器；一行里混着 34px 下拉与 26px 小按钮的容器给 align-items: center，矮的不再被拉高；原来注释里臆造的「全部对齐到 30px」（207 个控件里 30px 一个没有）如实改为本次选中的 34/26 两档（issue #160）。
 - 「测试全部账号」在入口定格发起平台：循环、结果写回与收尾报告全部使用发起那一刻的平台——「点完就去看看别的平台」不再让剩余探测改道到新平台（拿旧账号 id 问新平台的 /test 成片 4xx）、结果写错缓存、或用新平台的名字报一组不存在的计数（issue #158；与对话页发送时刻定格 turnClient 的既有写法同一件事）。
