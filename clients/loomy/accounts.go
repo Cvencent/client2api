@@ -456,9 +456,30 @@ func (s *store) firstExpired(now time.Time) (account, bool) {
 	return account{}, false
 }
 
+// selfhealProbeDelay spreads the abnormal/expired self-heal probes over a
+// 6..12 hour window -- twice the ordinary recovery cadence, because these
+// probes go to accounts every other path is told to leave alone, and the point
+// is "eventually noticed", not "quickly noticed" (issues #168/#169).
+const selfhealProbeDelayMin = 6 * time.Hour
+const selfhealProbeDelayJitter = 6 * time.Hour
+
+func selfhealProbeDelay() time.Duration {
+	return selfhealProbeDelayMin + time.Duration(rand.Int63n(int64(selfhealProbeDelayJitter)))
+}
+
 // backgroundProbeDue gates vendor probes started by shared background sweeps.
 // A penalised account gets one probe per randomised quiet window; an explicit
 // operator action does not call this method and is never delayed.
+//
+// abnormal and expired accounts are the two self-lock cases (issues #168 and
+// #169): both marks come from *local* evidence -- a transient upstream 500/502,
+// or the 14-day clock this gateway estimates because the vendor never reports
+// an expiry -- and both have a self-heal path that only a probe can reach
+// (applyBalance clears abnormal on a funded read and drops a proven-wrong
+// expiry).  Every automatic path used to skip both marks, so the only exit was
+// the operator's hand.  They get a LOW-FREQUENCY side door on the same
+// probeAfter clock: `dead` -- the vendor's own refusal -- never qualifies, and
+// a probe that fails simply leaves the mark (and re-arms the clock).
 func (s *store) backgroundProbeDue(id string, now time.Time, delay func() time.Duration) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -466,35 +487,61 @@ func (s *store) backgroundProbeDue(id string, now time.Time, delay func() time.D
 		if a.ID != id {
 			continue
 		}
-		if !a.Enabled || a.dead || a.abnormal || strings.TrimSpace(a.AccessToken) == "" || a.expired(now) {
+		// The vendor has said no itself: no probe may launder a rejected
+		// session back into rotation, and an empty token has nothing to probe
+		// with.
+		if !a.Enabled || a.dead || strings.TrimSpace(a.AccessToken) == "" {
 			return false
 		}
-		if a.lowCredit {
-			return false
+		// The side door: abnormal/expired with a live token are probed on a
+		// low-frequency clock instead of being skipped outright.
+		selfheal := a.abnormal || a.expired(now)
+		if !selfheal {
+			if a.lowCredit {
+				return false
+			}
+			if now.Before(a.cooldownTill) {
+				return false
+			}
 		}
-		if now.Before(a.cooldownTill) {
-			return false
-		}
+		// A zero clock means "never probed from this path" -- arm it now, on
+		// the cadence this account just qualified for, and let the probe
+		// through.  A self-heal account arriving here with the ordinary 3..6h
+		// stamp left by penalise keeps that stamp until it lapses (never
+		// re-arming sooner than the mark's own clock promised).
 		if a.probeAfter.IsZero() {
+			a.probeAfter = now.Add(selfhealDelay(delay, selfheal))
+			if err := s.saveState(); err != nil {
+				s.warn("loomy: writing %s: %v", s.statePath, err)
+			}
 			return true
 		}
 		if now.Before(a.probeAfter) {
 			return false
 		}
-		next := backgroundProbeDelay()
-		if delay != nil {
-			next = delay()
-		}
-		if next < minBackgroundProbeDelay {
-			next = minBackgroundProbeDelay
-		}
-		a.probeAfter = now.Add(next)
+		a.probeAfter = now.Add(selfhealDelay(delay, selfheal))
 		if err := s.saveState(); err != nil {
 			s.warn("loomy: writing %s: %v", s.statePath, err)
 		}
 		return true
 	}
 	return false
+}
+
+// selfhealDelay picks the cadence: the side door runs on its own 6..12h clock,
+// the ordinary recovery path on the injectable 3..6h one.
+func selfhealDelay(delay func() time.Duration, selfheal bool) time.Duration {
+	if selfheal {
+		return selfhealProbeDelay()
+	}
+	if delay != nil {
+		next := delay()
+		if next < minBackgroundProbeDelay {
+			next = minBackgroundProbeDelay
+		}
+		return next
+	}
+	return backgroundProbeDelay()
 }
 
 // penalise records an authoritative chat-path failure.  A rejected session is
@@ -801,10 +848,23 @@ func (s *store) applyBalance(id string, credits int64, reserve int) bool {
 			continue
 		}
 		// A funded read proves the credential is alive: the abnormal mark's
-		// cause was a past outage, not this key.
+		// cause was a past outage, not this key.  The same read also disproves
+		// the local 14-day estimate (issue #169): the vendor answered a
+		// session the local clock had called expired, so the estimate was
+		// wrong and the stored expiry is dropped -- exactly the clearExpiry
+		// rule reset already documents ("keeping it would leave a working
+		// account marked abnormal forever"), now reachable from the one path
+		// an expired account can still be reached by.
 		revived := false
-		if credits > 0 && a.abnormal {
+		if credits > 0 && (a.abnormal || a.expired(time.Now())) {
 			a.abnormal = false
+			if a.expired(time.Now()) {
+				a.ExpiresAtMS = 0
+				// The estimate lives in accounts.json, not the state file.
+				if err := s.save(); err != nil {
+					s.warn("loomy: writing %s: %v", s.path, err)
+				}
+			}
 			a.failures = 0
 			a.sessionFailures = 0
 			a.cooldownStage = 0
@@ -1088,6 +1148,17 @@ func (c *Client) SetAccountEnabled(ctx context.Context, id string, enabled bool)
 func (c *Client) ReviveAccount(ctx context.Context, id string) error {
 	return c.store.revive(id)
 }
+
+// Loomy's invalid rows are not all dead credentials: abnormal is a transient
+// upstream fault and expired is a local 14-day estimate, and a funded balance
+// read proves both wrong (issues #168/#169).  The marker lets the shared
+// sweeps reach those rows; BackgroundProbeDue below decides whether and when.
+var _ core.SelfHealableInvalid = (*Client)(nil)
+
+// InvalidSelfHeals implements core.SelfHealableInvalid's marker method: this
+// module is the one declaring that its invalid rows include self-healable
+// marks, so the shared sweeps may knock on them (paced by BackgroundProbeDue).
+func (c *Client) InvalidSelfHeals() {}
 
 // BackgroundProbeDue implements core.BackgroundProbeGate.
 func (c *Client) BackgroundProbeDue(_ context.Context, id string) bool {

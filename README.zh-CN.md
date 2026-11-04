@@ -5,7 +5,7 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-当前版本：**0.7.10**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：**0.7.11**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 流式断流排查：升级后系统日志新增 `stream: id=...` 终止诊断，包含协议、平台/模型、
 上游事件数、`finish_reason`、正文/推理字节数、工具调用数、completion token、
@@ -194,6 +194,12 @@ client2api 是一个**个人自用**的 OpenAI 兼容网关。它把你自己在
 - Raccoon 每日 300 积分是被桌面登录发放接口**延长有效期**，不是由它发放：厂商 00:00 发当日额度（当日 24:00 清零），桌面端登录后延长到 7 天。实测这条奖励厂商**只发给它自己的桌面客户端**——网关用同样的 POST、同样的头和令牌一律得到 `granted:false`，账本里 4 次成功全部紧贴桌面端启动时刻。因此本机签到按钮现在记成「不可用（需桌面端登录领取）」而不是失败；若账本证明今天的额度已经延长，则记成「已领取」。
 - 支持手动添加、本地凭据发现、整包导入，以及模块支持时的浏览器/设备登录。
 - 支持重新登录、恢复、测试、签到、刷新余额和删除账号。
+- Loomy 的两类本地标记有**低频自愈旁路**（issues #168/#169）：`abnormal`（瞬时上游
+  500/502 误标）与 `expired`（本地 14 天估算钟，厂商从不回报 expiry）原本被所有自动
+  路径跳过，自愈出口只剩操作员手动刷新；现在后台余额 sweep 会对这两类账号按 6..12h
+  的独立时钟放行一次探测，funded 读数即清标记（abnormal）或证伪本地钟（expired，
+  `ExpiresAtMS=0` 回轮换并落盘）。反向钉子：厂商明确拒绝的 `dead`（真 100002）不得
+  借道，操作员停用优先。
 - AutoClaw、Raccoon、LobsterAI、Trae CN 的余额读取自己保证令牌新鲜，不再依赖「碰巧有
   一次测试或聊天顺手续期」：AutoClaw 与 Raccoon 在令牌进入续期窗口时先续期、被厂商以
   鉴权错误拒绝时再续期并重试一次；LobsterAI 对 HTTP 200 响应体里 `code != 0` 的拒绝也

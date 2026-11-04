@@ -45,7 +45,7 @@ import (
 )
 
 // version is overridable with -ldflags "-X main.version=...".
-var version = "0.7.10"
+var version = "0.7.11"
 
 // restartHandoffEnv marks the replacement half of a panel restart.  It tells a
 // starting process to keep retrying the listen address instead of failing fast,
@@ -1105,7 +1105,13 @@ func refreshBalancesMatching(ctx context.Context, reg *core.Registry, client str
 				continue
 			}
 			if !balanceProbeEligible(acct.State, includeRecoverable) {
-				continue
+				// The one exception to the invalid door: a module that
+				// declares a balance read can clear the mark (loomy's
+				// abnormal/expired, issues #168/#169).  The module's own
+				// BackgroundProbeDue gate below still paces it.
+				if !(acct.State == "invalid" && core.SelfHealsFromBalance(c)) {
+					continue
+				}
 			}
 			if !ignoreGate && !core.BackgroundProbeAllowed(ctx, c, acct.ID) {
 				continue
@@ -1146,6 +1152,14 @@ func refreshBalancesMatching(ctx context.Context, reg *core.Registry, client str
 // balanceProbeEligible separates the global soft sweep from the scheduled
 // recovery sweep.  The soft sweep leaves self-parking states alone; recovery
 // includes those temporary verdicts but still skips terminal credential errors.
+//
+// An "invalid" account whose module declares itself able to self-heal from a
+// balance read (core.SelfHealableInvalid) is let through anyway (issues
+// #168/#169): loomy's abnormal mark comes from a transient upstream 500/502
+// and its expired mark from a local 14-day estimate, and a funded read clears
+// both.  The module's own BackgroundProbeDue gate still paces those probes
+// low-frequency, so this is not the #52 two-knocks-per-sweep hole reopened --
+// the module decides both whether and when.
 func balanceProbeEligible(state string, includeRecoverable bool) bool {
 	state = strings.ToLower(strings.TrimSpace(state))
 	if includeRecoverable {

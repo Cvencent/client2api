@@ -5,7 +5,7 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-Current version: **0.7.10**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
+Current version: **0.7.11**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
 
 client2api is a personal, local-only OpenAI-compatible gateway. It aggregates
 the accounts and API Keys **you own** on different AI coding clients and
@@ -543,6 +543,15 @@ loop that never ended.
   itself is shared in `core.ModelIsFree`.
 - Manual import, local credential discovery, bundle import and browser/device login where supported.
 - Re-login, revive, test, check-in, balance refresh and account deletion.
+- Loomy's two locally-derived marks get a **low-frequency self-heal side door**
+  (issues #168/#169): `abnormal` (a transient upstream 500/502) and `expired`
+  (the local 14-day estimate -- the vendor never reports an expiry) used to be
+  skipped by every automatic path, leaving the operator's manual refresh as the
+  only exit. Background balance sweeps now admit those accounts once per an
+  independent 6..12h clock, and a funded read clears the mark (abnormal) or
+  disproves the local clock (expired: `ExpiresAtMS=0`, persisted back to
+  accounts.json). Reverse nails: a `dead` account -- the vendor's own 100002
+  refusal -- never takes the door, and an operator's disable wins.
 - AutoClaw, Raccoon, LobsterAI and Trae CN balance reads renew the access token
   themselves instead of depending on an unrelated Test or chat to renew it as
   a side effect. AutoClaw and Raccoon do it before reading when the token is
