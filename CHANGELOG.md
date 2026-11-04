@@ -6,6 +6,30 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.12] - 2026-11-04
+
+### Fixed
+
+- **officeace 零积分账号退出 chat 轮换（#172，#57 的下半场：pick 消费判决）**：
+  #57 让零读数停车（5 分钟 quota 冷却）、#24 让它显示「积分不足」，但 chat 候选
+  过滤只看冷却钟——每 5 分钟一次「冷却到期 → 真实 401 → 再停 5 分钟」，对空钱包
+  重问永远得到同一个答案（部署实例实测 18/19 账号零积分、仅 1 个有余额账号承接
+  全部流量，零积分账号仍在按节拍挨 401）。现在 `Chat` 候选过滤消费 `stateHook`
+  的判决（`clients/openaicompat/source.go`，与 status/record 用的是 #24 建的
+  同一条 hook）：zero 读数的账号直接不进 candidates；正数读数走现成的
+  `reviveOfficeAceAccount` 立即回到可选中；-1（not drained）与无读数的账号
+  hook 答空、照旧可选。全跳 zero 时报 `ErrNotConfigured`——网关侧与 ErrBusy
+  同为 candidateUnavailable，照样切平台。顺手删除从未被接线的
+  `source.stateOverride` 死字段（#24 实际落在 `providerPool.stateHook`）。
+  看守 `clients/openaicompat/officeace_pick_skip_test.go`：zero 不进候选
+  （vendor calls = 0）、-1 与无读数不被跳过（两次 chat 两次到厂商）、正读数
+  立即复活。
+
+### Installer
+
+- `client2api-setup-0.7.12.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `df67edc19409102cd00a680ad9ff97597c5a01c914bf16381f5f37cfba2f3f71`
+
 ## [0.7.11] - 2026-11-04
 
 ### Fixed
