@@ -6,6 +6,28 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.15] - 2026-11-04
+
+### Fixed
+
+- **codearts 积分耗尽的 400 不再把整条链打死（#176）**：上游把「钱包空了」报成
+  HTTP 400 `{"error_code":"TM.00001050","error_msg":"您的积分已耗尽，请关注活动积分
+  领取活动或者[升级套餐]…"}`——中文文案、错误码字面量都不在 `reQuotaBody` 的英文
+  形态里，于是落到 `kindClient`→`FailureOther`（「模块自己的 bug」语义）：
+  第一个耗尽的账号就终止整池轮转，其余 7 个有积分的账号一次都不被尝试，耗尽号
+  也永不进 exhausted 桶（面板永远 ready，每次被选中就白打一次 400）。
+  现在 `reQuotaBody` 认得 `TM\.00001050` 与中文形态（`积分(已)?耗尽`、`积分不足`、
+  `余额不足`、`升级套餐`）——**同一正则的第二个消费者**（SSE 内嵌错误，
+  `sse.go` 的 `streamError.kind()`）一起生效。归 `kindQuota` 后：
+  模块层首次失败即轮换下一账号、耗尽号 `markFailure(kindQuota)` 进冷却；
+  网关层 `FailureQuota` 本就 rotate+park，平台有下家就切下家。
+  反向钉子保留：真正的 `kindClient`（400 参数错误）仍然不轮换、不停车。
+
+### Installer
+
+- `client2api-setup-0.7.15.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `e863e5dcb305c50f7db9564cdaccec7a4aab45b57b6ec2cfa04a22c22fe5495b`
+
 ## [0.7.14] - 2026-11-04
 
 ### Fixed

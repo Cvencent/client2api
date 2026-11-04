@@ -31,9 +31,14 @@ func TestClassifyStatus(t *testing.T) {
 		{402, "", kindQuota},
 		{429, "", kindQuota},
 		{200, `{"error_msg":"insufficient quota"}`, kindQuota},
-		{400, `{"error_code":"TM.00001041"}`, kindQueue},
-		{400, `{"error_msg":"peak usage, try again after 10s"}`, kindQueue},
-		{400, `{"error_msg":"high demand"}`, kindQueue},
+		// The drained wallet (issue #176): the vendor says so in Chinese and
+		// names TM.00001050, both inside a 400.  Before the Chinese wording
+		// joined reQuotaBody this fell to kindClient and the first drained
+		// account terminated the whole chain.
+		{400, `{"error_code":"TM.00001050","error_msg":"您的积分已耗尽，请关注活动积分领取活动或者[升级套餐]"}`, kindQuota},
+		{400, `{"error_msg":"积分不足"}`, kindQuota},
+		{400, `{"error_msg":"余额不足，请升级套餐"}`, kindQuota},
+		{400, `{"error_code":"TM.00001050"}`, kindQuota},
 		{400, `{"error_msg":"the model does not exist"}`, kindClient},
 		{404, "", kindClient},
 		{500, "", kindTransient},
@@ -43,6 +48,32 @@ func TestClassifyStatus(t *testing.T) {
 		if got := classifyStatus(c.status, c.body); got != c.want {
 			t.Errorf("classifyStatus(%d, %q) = %v, want %v", c.status, c.body, got, c.want)
 		}
+	}
+}
+
+// The same drained-wallet refusal folded into a 200 stream (issue #176): the
+// SSE-embedded error path consumes the very same regex, so the Chinese copy
+// must classify as quota there too -- and the English quota wording must keep
+// working on both surfaces.
+func TestQuotaClassificationSpansBothSurfaces(t *testing.T) {
+	if got := classifyStatus(400, `{"error_code":"TM.00001050","error_msg":"您的积分已耗尽"}`); got != kindQuota {
+		t.Errorf("HTTP 400 drained wallet = %v, want kindQuota", got)
+	}
+	se := &streamError{code: "TM.00001050", message: "您的积分已耗尽，请[升级套餐]"}
+	if got := se.kind(); got != kindQuota {
+		t.Errorf("SSE-embedded drained wallet = %v, want kindQuota", got)
+	}
+	seEn := &streamError{code: "", message: "insufficient quota"}
+	if got := seEn.kind(); got != kindQuota {
+		t.Errorf("SSE-embedded English quota = %v, want kindQuota (the English path must not regress)", got)
+	}
+	if got := classifyStatus(400, `{"error_msg":"insufficient credit"}`); got != kindQuota {
+		t.Errorf("HTTP 400 English quota = %v, want kindQuota", got)
+	}
+	// The guard the issue asks to keep: a genuine client error (a 400 the
+	// module caused itself) stays non-rotating, non-parking.
+	if got := classifyStatus(400, `{"error_msg":"the model does not exist"}`); got != kindClient {
+		t.Errorf("HTTP 400 unknown model = %v, want kindClient", got)
 	}
 }
 

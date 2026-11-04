@@ -94,7 +94,10 @@ func failureKind(k errKind) core.FailureKind {
 // with a status code that does not describe them.  CodeArts reports a
 // concurrency-queue rejection as a 400 whose body names TM.00001041, and a
 // per-minute token limit as an HTTP 200 with an SSE-embedded error_code, so
-// the status alone is never enough.
+// the status alone is never enough.  A wallet the credits have run out on is
+// a 400 whose Chinese copy says 积分已耗尽 and names TM.00001050 (issue #176):
+// the English quota wording below never matched it, so the refusal fell
+// through to kindClient and the first drained account ended the whole chain.
 var (
 	reQueueBody = regexp.MustCompile(`(?i)peak\s+usage|try\s+again\s+after|peak\s+hours|high\s+demand|too\s+many\s+requests`)
 	reAuthBody  = regexp.MustCompile(`(?i)invalid\s+token|token\s+expired|token\s+is\s+invalid`)
@@ -106,7 +109,7 @@ var (
 	// while a token ceiling names nothing to wait on -- another credential has
 	// its own budget.
 	reRateLimitCode = regexp.MustCompile(`(?i)8111\d\.429|TPM|tokens?\s+per\s+minute|rate.?limit|too many requests|429`)
-	reQuotaBody     = regexp.MustCompile(`(?i)insufficient\s+(balance|quota|credit)|quota\s+(exceeded|exhausted)|out\s+of\s+(credit|quota)|not\s+enough\s+credit`)
+	reQuotaBody     = regexp.MustCompile(`(?i)insufficient\s+(balance|quota|credit)|quota\s+(exceeded|exhausted)|out\s+of\s+(credit|quota)|not\s+enough\s+credit|积分(已)?耗尽|积分不足|余额不足|升级套餐|TM\.00001050`)
 	reCtxBody       = regexp.MustCompile(`(?i)context\s+length|maximum\s+context|too\s+long|exceeds?\s+the\s+maximum`)
 )
 
