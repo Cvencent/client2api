@@ -30,7 +30,7 @@
 ### Installer
 
 - `client2api-setup-0.7.14.exe`（空包，不含账号凭据或本机配置）
-  SHA256: `71f2c8f57aa9f229798387f9bb76665e0e54f3d0df74b52d28ade3ea5a7e13b9`
+  SHA256: `b5dc6af420c0afa03c8f70defa8aefb459af9da706ffd4fc36482b34f805abd5`
 
 ## [0.7.13] - 2026-11-04
 

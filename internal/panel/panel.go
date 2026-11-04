@@ -498,10 +498,6 @@ func (p *panel) initBalanceCache() {
 		cachePath = filepath.Join(p.opts.DataDir, filepath.FromSlash(DefaultBalanceCacheFileName))
 	}
 	p.balanceCache = newBalanceCache(p.opts.Registry, p.expiringSoon, cachePath)
-	// Boot-time reconcile (issue #171): entries for accounts the modules no
-	// longer hold were carried forever, and re-adding a credential key then
-	// read the ghost's stale credits as if they were current.
-	p.balanceCache.reconcile()
 }
 
 // initTaskBoardCache wires the last-known task lists used by the board.  A

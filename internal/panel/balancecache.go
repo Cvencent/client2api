@@ -126,6 +126,12 @@ func newBalanceCache(all balanceProvider, soon func() time.Duration, path string
 		refreshes: map[string]*balanceClientRefresh{},
 	}
 	c.load()
+	// The reconcile belongs here and not in the panel's wiring: main shares
+	// one store between the scheduler sweeps and the panel, and the panel
+	// adopts that store instead of building its own (initBalanceCache returns
+	// early), so a hook there never runs on the deployed path.  Construction
+	// is the one point every caller goes through.
+	c.reconcile()
 	return c
 }
 

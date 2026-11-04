@@ -25,11 +25,10 @@ func TestBalanceCacheConcurrentWritesLeaveAReadableFile(t *testing.T) {
 	path := t.TempDir() + "/balance_cache.json"
 	const accounts = 24
 
-	var clients []core.Client
-	for i := range accounts {
-		clients = append(clients, quotaClient("wb", core.AccountRecord{ID: "a" + strconv.Itoa(i)}))
-	}
-	reg := registryOf(clients...)
+	// One client holding all the accounts: a registry keeps one client per
+	// name, so twenty-four same-named fakes would collapse to the last one
+	// and reconcile (issue #171) would prune the other rows as ghosts.
+	reg := registryOf(quotaClient("wb", accountsRecords(accounts)...))
 	cache := newBalanceCache(reg, func() time.Duration { return 0 }, path)
 
 	var wg sync.WaitGroup
@@ -77,4 +76,12 @@ func TestBalanceCacheConcurrentWritesLeaveAReadableFile(t *testing.T) {
 			t.Errorf("a%d has no fetched_at", i)
 		}
 	}
+}
+
+func accountsRecords(n int) []core.AccountRecord {
+	recs := make([]core.AccountRecord, 0, n)
+	for i := range n {
+		recs = append(recs, core.AccountRecord{ID: "a" + strconv.Itoa(i)})
+	}
+	return recs
 }
