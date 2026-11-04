@@ -27,6 +27,14 @@
   包含块，刻度线的 `::after` 不需要 relative；两条覆盖者改回 `sticky` 并加
   注释，静态钉 `sortable_sticky_head_test.go` 防回退（同名选择器多条规则逐条
   扫描，任何一条写回 relative 即红）。
+- **codearts 自动登录补上 `sms_base` 配置键（autoclaw 同款），CI 双线同一
+  flaky 转封闭**：`resolveSMS` 曾把接码平台根地址写死成内置默认值，自动登录
+  测试里那台 stub 服务器根本没被接上——测试实际隔着网络打真实的接码平台，
+  结果取决于对方多快拒连，10 秒等待预算在 CI 上约一半概率落败
+  （`TestCodeartsAutoLoginEndsInAStoredCredential` 双线同红）。现在
+  `clients.codearts.sms_base` 可覆盖（`config.go`/`sms.go`，留空仍用内置
+  默认），面板模块键目录补登记；测试把 stub 接进 `sms_base` 并让假浏览器
+  驱动显式失败收束流程——5 连跑 0.5 秒全绿，不再碰外网。
 
 ### Installer
 

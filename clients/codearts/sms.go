@@ -64,7 +64,10 @@ func (c *Client) resolveSMS(opts core.SMSOpts) codeartsSMSResolved {
 	if r.cardType == "" {
 		r.cardType = codeartsDefaultCardType
 	}
-	r.base = smscap.DefaultBase
+	r.base = strings.TrimSpace(c.cfg.SMSBase)
+	if r.base == "" {
+		r.base = smscap.DefaultBase
+	}
 	r.provinces = smscap.CleanProvinces(append([]string(nil), smscap.Provinces...))
 	return r
 }

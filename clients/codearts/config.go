@@ -110,6 +110,11 @@ type config struct {
 	PolicyURL string `json:"policy_url"`
 	TicketURL string `json:"ticket_url"`
 	UserAgent string `json:"user_agent"`
+	// SMSBase is the phone-rental platform's API root (autoclaw carries the
+	// same key).  Empty means the built-in default; a test (or an operator
+	// behind a mirror) points it at its own stub so the auto-login flow never
+	// reaches the real SMS host.
+	SMSBase string `json:"sms_base"`
 
 	// Credentials.  Either a list, or the single-account shorthand below.
 	Accounts        []accountConfig `json:"accounts"`

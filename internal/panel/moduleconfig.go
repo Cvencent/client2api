@@ -124,6 +124,7 @@ var moduleOptions = map[string][]moduleOption{
 		{Key: "reasoning_effort", Label: "思考档位默认值", Kind: optText, Help: "例如 low / medium / high。留空用模块内置值。"},
 		{Key: "max_tokens", Label: "默认最大输出 tokens", Kind: optNumber, Help: "请求没写 max_tokens 时用它。留空用模块内置值。"},
 		{Key: "login", Label: "允许面板登录", Kind: optBool, Help: "打开后账号页会多出浏览器登录入口。"},
+		{Key: "sms_base", Label: "接码平台地址", Kind: optText, Help: "接码服务的 API 根地址。留空用模块内置值。"},
 	},
 	"doubao": {
 		{Key: "web_base", Label: "网页版地址", Kind: optText, Help: "上游根地址。留空用模块内置值。"},

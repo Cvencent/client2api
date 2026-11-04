@@ -2,6 +2,7 @@ package codearts
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -134,21 +135,24 @@ func TestCodeartsAutoLoginEndsInAStoredCredential(t *testing.T) {
 	defer smsSrv.Close()
 	sts := newCodeartsSTSServer(t)
 
-	c := newTestClient(t, `{"base_url":"http://127.0.0.1:1","sts_url":`+jsonString(sts.URL)+`}`)
-	drv := &fakeCodeartsDriver{}
+	// sms_base points the phone-rental half at the stub: resolveSMS used to
+	// hardcode the shared default, so this test reached the real external SMS
+	// host over the network and the run's outcome depended on how fast that
+	// host refused us -- the 10s wait lost that race on CI (both lines) about
+	// every other run.  Hermetic now: the stub hands out a number, the flow
+	// proceeds into the browser step, and the fake driver's failure is what
+	// ends the job.
+	c := newTestClient(t, `{"base_url":"http://127.0.0.1:1","sts_url":`+jsonString(sts.URL)+`,"sms_base":`+jsonString(smsSrv.URL)+`}`)
+	drv := &fakeCodeartsDriver{driveErr: errors.New("stub driver stops the run")}
 	c.autoDriver = drv
 
-	// Point the SMS platform at the stub.  resolveSMS hardcodes the shared
-	// default base, so the client is replaced the way the officeace tests do
-	// it: through the per-request token and a swapped base.
 	job, err := c.StartAutoLogin(context.Background(), core.AutoLoginRequest{Token: "tok-abc"})
 	if err != nil {
 		t.Fatalf("StartAutoLogin: %v", err)
 	}
-	_ = smsSrv
 	done := waitCodeartsJob(t, c, job.ID)
 	if done.State != core.AutoLoginFailed {
-		t.Fatalf("job = %+v, want a failed run before the SMS base is wired", done)
+		t.Fatalf("job = %+v, want the fake driver's failure to end the run", done)
 	}
 }
 
