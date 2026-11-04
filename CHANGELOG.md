@@ -6,6 +6,41 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.11] - 2026-11-04
+
+### Fixed
+
+- **loomy 两类本地标记的低频自愈旁路（#168/#169，自锁家族收口）**：#153 把
+  「funded 读数清 abnormal」写进了 `applyBalance`，`reset` 里也现成放着
+  `clearExpiry`——但五条自动路径（软 sweep/恢复 sweep/panel 后台 sweep/checkin/
+  keepalive）全部跳过 abnormal/expired，自愈出口只剩操作员手动刷新。部署实例
+  0.7.10 实测：13 个 invalid 里 3 个 abnormal（成因是瞬时上游 500/502）、10 个
+  expired（10-21 同批导入，11-04 12:32-12:57 集中撞上本地 14 天钟；到期前几分钟
+  余额 API 还答得出 funded 读数 = 厂商侧会话活着）。现在：
+  - `clients/loomy/accounts.go` 的 `backgroundProbeDue` 给 `abnormal/expired 且
+    非 dead` 的账号开一条 **6..12h 独立时钟**的侧门（普通恢复账号照旧 3..6h，
+    既有节奏不变）；zero 时钟的第一拍当场拨到自己的频率；
+  - `applyBalance` 的 funded 读数顺带清被证伪的本地到期钟
+    （`ExpiresAtMS=0`，落 accounts.json——#169 的 clearExpiry 语义从「成功调用后
+    才有机会跑」接通到「探测即可达」）；
+  - 网关侧 `core.SelfHealableInvalid` 标记接口：loomy 声明后，main.go 的
+    `balanceProbeEligible` 在 `invalid` 处放行这类模块的行——模块自己的
+    `BackgroundProbeDue` 仍然决定每一拍跑不跑，#52「真死 key 每轮挨两次
+    探测」的保证不回退（dead 会话探测得到的是厂商自己的 100002，状态原样）；
+  - 反向钉子：`dead`（厂商明确拒绝）不得借道；非 funded 读数不清钟；
+    操作员停用优先。keepalive 一侧 expired 本就可达（心跳成功 → reset →
+    clearExpiry），abnormal 仍由余额读数复活（reset 不清 abnormal 的既有分工
+    不变）。
+  看守 `clients/loomy/selfheal_side_door_test.go`：侧门放行与时钟形状
+  （abnormal/expired 各 6..12h）、dead/disabled 反向钉、普通恢复时钟不变、
+  funded 清钟落盘、非 funded 不清钟、模块内端到端链条（过闸 → 读数 → 标记
+  清掉）、标记接口声明。
+
+### Installer
+
+- `client2api-setup-0.7.11.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `1e9f86afbc243011a20ed6803c092cd45fe39d19ee6d80b5a01f1e01e888e085`
+
 ## [0.7.10] - 2026-11-04
 
 ### Fixed
