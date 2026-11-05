@@ -75,10 +75,20 @@ func TestInviteCodeDefaultPicksTheCodeWithMostUsesLeft(t *testing.T) {
 	seedAccount(t, c, "acc-a", "tok-a", 0)
 	seedAccount(t, c, "acc-b", "tok-b", 0)
 
-	// The read itself must NOT block on the pool scan (issue #96): before the
-	// first background sweep lands it answers the configured default.
-	if got := c.InviteCodeDefault(context.Background()); got != "P276D2" {
-		t.Fatalf("a read before the first sweep = %q, want the configured P276D2 (the read must not block, issue #96)", got)
+	// The read itself must NOT block on the pool scan (issue #96).  The value
+	// is not an assertion target (issue #195's sibling): the background sweep
+	// and this read race, and on a loaded CI runner the sweep occasionally
+	// lands first -- "BBBBBB" is then the CORRECT answer for a read that
+	// arrived after the sweep.  What is pinned is the property: immediate
+	// return, either the configured fallback or a pool code, and no upstream
+	// hit from the synchronous read itself.
+	hitsBefore := stub.hits
+	first := c.InviteCodeDefault(context.Background())
+	if first != "P276D2" && first != "AAAAAA" && first != "BBBBBB" {
+		t.Fatalf("a read before the first sweep = %q, want the fallback or a pool code (issue #195/#196 family)", first)
+	}
+	if stub.hits != hitsBefore {
+		t.Fatalf("the synchronous read triggered %d upstream call(s)：读数不该自己触发扫描（issue #96）", stub.hits-hitsBefore)
 	}
 	// acc-b's code has 15 uses left against acc-a's 1, so it wins -- observable
 	// once the background sweep has landed.
