@@ -58,9 +58,10 @@ type Client struct {
 	httpOnce sync.Once
 	http     *http.Client
 
-	modelsMu sync.Mutex
-	models   []core.Model
-	modelsAt time.Time
+	modelsMu       sync.Mutex
+	models         []core.Model
+	modelsAt       time.Time
+	modelsFailedAt time.Time
 
 	// loginMu guards the interactive-login sessions (free/OAuth).
 	loginMu sync.Mutex
@@ -236,11 +237,25 @@ func (c *Client) Models(ctx context.Context) ([]core.Model, error) {
 	if cached, ok := c.cachedModels(); ok {
 		return c.servedModels(cached), nil
 	}
+	// Negative window (issue #214): a fetch that just failed serves the last
+	// good list (or the built-in fallback) WITHOUT another vendor call, so a
+	// hung /models is not re-paid on every bare-name request.
+	if func() bool {
+		c.modelsMu.Lock()
+		defer c.modelsMu.Unlock()
+		return c.failedRecently(c.now())
+	}() {
+		if last, ok := c.lastModels(); ok {
+			return c.servedModels(last), nil
+		}
+		return c.servedModels(fallbackModels(c.cfg)), nil
+	}
 	ctx, cancel := context.WithTimeout(ctx, c.cfg.modelsTimeout())
 	defer cancel()
 	models, err := c.fetchModels(ctx)
 	if err != nil {
 		c.noteError("listing models: " + describeError(err))
+		c.noteModelsFailure(c.now())
 		if last, ok := c.lastModels(); ok {
 			return c.servedModels(last), nil
 		}

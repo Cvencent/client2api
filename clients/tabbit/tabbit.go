@@ -34,12 +34,13 @@ type Client struct {
 
 	getenv func(string) string
 
-	mu         sync.Mutex
-	health     healthState
-	catalog    []core.Model
-	catalogAt  time.Time
-	discovered string
-	lastErr    string
+	mu              sync.Mutex
+	health          healthState
+	catalog         []core.Model
+	catalogAt       time.Time
+	catalogFailedAt time.Time
+	discovered      string
+	lastErr         string
 
 	// acctMu guards the panel's endpoint store (accounts.go).  It is separate
 	// from mu so a slow health probe never blocks the account list.
@@ -143,6 +144,12 @@ func (c *Client) Models(ctx context.Context) ([]core.Model, error) {
 	if models, ok := c.cachedCatalog(); ok {
 		return models, nil
 	}
+	// Negative window (issue #214): a fetch that just failed serves the
+	// fallback without another vendor call, so a hung /models is not re-paid
+	// on every bare-name request.
+	if c.failedRecently(time.Now()) {
+		return fallbackModels(c.cfg), nil
+	}
 	loc := c.locate()
 	if strings.TrimSpace(loc.baseURL) == "" {
 		return fallbackModels(c.cfg), nil
@@ -150,6 +157,7 @@ func (c *Client) Models(ctx context.Context) ([]core.Model, error) {
 	models, err := c.fetchModels(ctx, loc)
 	if err != nil {
 		c.noteError(err.Error())
+		c.noteCatalogFailure(time.Now())
 		return fallbackModels(c.cfg), nil
 	}
 	c.storeCatalog(models, time.Now())
@@ -478,6 +486,23 @@ var defaultHTTPClient = &http.Client{
 		MaxIdleConnsPerHost: 8,
 		IdleConnTimeout:     90 * time.Second,
 	},
+}
+
+// catalogFailCooldown is the negative window after a failed catalogue fetch
+// (issue #214).
+const catalogFailCooldown = 30 * time.Second
+
+// failedRecently / noteCatalogFailure maintain the negative window.
+func (c *Client) failedRecently(now time.Time) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return !c.catalogFailedAt.IsZero() && now.Sub(c.catalogFailedAt) < catalogFailCooldown
+}
+
+func (c *Client) noteCatalogFailure(now time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.catalogFailedAt = now
 }
 
 func (c *Client) cachedCatalog() ([]core.Model, bool) {

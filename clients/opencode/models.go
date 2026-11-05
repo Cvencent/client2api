@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"client2api/internal/core"
 )
@@ -494,6 +495,20 @@ func (c *Client) fetchModels(ctx context.Context) ([]core.Model, error) {
 // Cache accessors.
 // ---------------------------------------------------------------------------
 
+// modelsFailCooldown is the negative window after a failed catalogue fetch
+// (issue #214): without it every bare-name request re-paid the module's full
+// models_timeout against a hung vendor -- one hung /models delayed every
+// bare-name route by the sum of all stuck budgets.  During the window
+// Models() serves the last good list (or the built-in fallback) without
+// touching the vendor.
+const modelsFailCooldown = 30 * time.Second
+
+// failedRecently reports whether a catalogue fetch failed inside the negative
+// window.  Callers hold modelsMu.
+func (c *Client) failedRecently(now time.Time) bool {
+	return !c.modelsFailedAt.IsZero() && now.Sub(c.modelsFailedAt) < modelsFailCooldown
+}
+
 // cachedModels returns the live list when it is younger than models_ttl.
 func (c *Client) cachedModels() ([]core.Model, bool) {
 	c.modelsMu.Lock()
@@ -518,12 +533,20 @@ func (c *Client) lastModels() ([]core.Model, bool) {
 	return copyModels(c.models), true
 }
 
-// storeModels records a freshly fetched list.
+// storeModels records a freshly fetched list and clears the failure window.
 func (c *Client) storeModels(models []core.Model) {
 	c.modelsMu.Lock()
 	defer c.modelsMu.Unlock()
 	c.models = copyModels(models)
 	c.modelsAt = c.now()
+	c.modelsFailedAt = time.Time{}
+}
+
+// noteModelsFailure records the failure moment for the negative window.
+func (c *Client) noteModelsFailure(now time.Time) {
+	c.modelsMu.Lock()
+	defer c.modelsMu.Unlock()
+	c.modelsFailedAt = now
 }
 
 // modelIDs renders the served ids for Status.  Status must never block or make

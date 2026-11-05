@@ -70,9 +70,10 @@ type Client struct {
 	// when the config names a tls_profile.
 	vendorClient *http.Client
 
-	modelsMu sync.Mutex
-	models   []core.Model
-	modelsAt time.Time
+	modelsMu       sync.Mutex
+	models         []core.Model
+	modelsAt       time.Time
+	modelsFailedAt time.Time
 
 	versionMu       sync.Mutex
 	version         string
@@ -203,12 +204,25 @@ func (c *Client) Models(ctx context.Context) ([]core.Model, error) {
 	if models, ok := c.cachedModels(); ok {
 		return models, nil
 	}
+	// Negative window (issue #214): a fetch that just failed serves the last
+	// good list without another vendor call.
+	if func() bool {
+		c.modelsMu.Lock()
+		defer c.modelsMu.Unlock()
+		return c.modelsFailedRecently(c.now())
+	}() {
+		if last := c.lastModels(); len(last) > 0 {
+			return last, nil
+		}
+		return fallbackModels(c.cfg), nil
+	}
 	models, err := c.fetchModels(ctx)
 	if err == nil && len(models) > 0 {
 		return models, nil
 	}
 	if err != nil {
 		c.noteError("listing models: " + c.describeError(err))
+		c.noteModelsFailure(c.now())
 	}
 	if last := c.lastModels(); len(last) > 0 {
 		return last, nil

@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/http"
 	"strings"
+	"time"
 
 	"client2api/internal/core"
 )
@@ -189,6 +190,11 @@ func (c *Client) fetchModels(ctx context.Context) ([]core.Model, error) {
 
 // --- cache ------------------------------------------------------------------
 
+// modelsFailCooldown is the negative window after a failed catalogue fetch
+// (issue #214): during it Models() serves the last good list without another
+// vendor call, so a hung /models is not re-paid on every bare-name request.
+const modelsFailCooldown = 30 * time.Second
+
 // cachedModels returns the cached catalogue when it is still fresh.
 func (c *Client) cachedModels() ([]core.Model, bool) {
 	c.modelsMu.Lock()
@@ -200,6 +206,19 @@ func (c *Client) cachedModels() ([]core.Model, bool) {
 		return nil, false
 	}
 	return copyModels(c.models), true
+}
+
+// modelsFailedRecently reports whether a catalogue fetch failed inside the
+// negative window.  Callers hold modelsMu.
+func (c *Client) modelsFailedRecently(now time.Time) bool {
+	return !c.modelsFailedAt.IsZero() && now.Sub(c.modelsFailedAt) < modelsFailCooldown
+}
+
+// noteModelsFailure records the failure moment for the negative window.
+func (c *Client) noteModelsFailure(now time.Time) {
+	c.modelsMu.Lock()
+	defer c.modelsMu.Unlock()
+	c.modelsFailedAt = now
 }
 
 // lastModels returns the cached catalogue whatever its age.  It is what a

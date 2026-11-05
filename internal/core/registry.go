@@ -22,6 +22,11 @@ var (
 
 // Register makes a module available.  It panics on a duplicate name, which can
 // only be a programming error.
+// catalogueBudget bounds one module's Models() call during a bare-name or
+// group search (issue #214).  Catalogues are metadata; the panel's own model
+// page uses the same order of magnitude for the same call.
+const catalogueBudget = 5 * time.Second
+
 func Register(name string, f Factory) {
 	if name == "" || f == nil {
 		panic("core.Register: empty name or nil factory")
@@ -930,15 +935,49 @@ func (r *Registry) ResolveCandidates(ctx context.Context, model string) ([]Candi
 
 	// Bare name, or a slashed id whose first segment is not a module: search
 	// every module's catalog for a match the platform policy still allows.
+	//
+	// Concurrent with a per-module budget (issue #214): the search used to
+	// walk the registry in order, waiting out each module's own Models
+	// timeout -- one hung catalogue delayed EVERY bare-name request (and
+	// every 404 for a typo'd name) by the sum of all stuck budgets, and
+	// concurrent requests did not merge.  Each module now runs in its own
+	// goroutine under a short per-module budget (catalogues are metadata;
+	// the panel's own model page uses 5s for the same call), results are
+	// collected first-come, and a module that misses the budget is treated
+	// as "catalogue unavailable" -- the existing fallback semantics.
+	type catalogResult struct {
+		client   Client
+		models   []Model
+		disabled bool
+	}
+	all := r.All()
+	results := make([]catalogResult, len(all))
+	var wg sync.WaitGroup
+	for i, c := range all {
+		wg.Add(1)
+		go func(i int, c Client) {
+			defer wg.Done()
+			cctx, ccancel := context.WithTimeout(ctx, catalogueBudget)
+			defer ccancel()
+			models, err := c.Models(cctx)
+			if err != nil {
+				return
+			}
+			results[i] = catalogResult{client: c, models: models}
+		}(i, c)
+	}
+	wg.Wait()
+
 	var (
 		owners   []Candidate
 		disabled []string
 	)
-	for _, c := range r.All() {
-		models, err := c.Models(ctx)
-		if err != nil {
+	for _, res := range results {
+		c := res.client
+		if c == nil {
 			continue
 		}
+		models := res.models
 		if auto {
 			matched, ok, blocked := selectCatalogModels(models, model, !strings.ContainsAny(model, "/:"), func(m Model) bool {
 				return r.ModelAllowed(c.Name(), m.ID)

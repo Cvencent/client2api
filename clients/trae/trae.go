@@ -64,10 +64,11 @@ type Client struct {
 	storeMu sync.Mutex
 	store   *accountStore
 
-	mu       sync.Mutex
-	models   []core.Model
-	modelsAt time.Time
-	lastErr  string
+	mu             sync.Mutex
+	models         []core.Model
+	modelsAt       time.Time
+	modelsFailedAt time.Time
+	lastErr        string
 
 	// logins holds the in-flight panel login sessions (weblogin.go).  The map is
 	// created lazily so a Client built by a test literal works unchanged.
@@ -159,12 +160,28 @@ func (c *Client) Name() string { return c.name }
 // Models returns the model catalogue.  The live catalogue is cached; when the
 // upstream is unreachable (or there is no account) the static SOLO list is
 // served so /v1/models never goes empty.
+// modelsFailCooldown is the negative window after a failed catalogue fetch
+// (issue #214): during it Models() serves the cached/static list without
+// another vendor call, so a hung /models is not re-paid on every bare-name
+// request.
+const modelsFailCooldown = 30 * time.Second
+
 func (c *Client) Models(ctx context.Context) ([]core.Model, error) {
 	c.mu.Lock()
 	cached, at := c.models, c.modelsAt
+	failedRecently := !c.modelsFailedAt.IsZero() && c.now().Sub(c.modelsFailedAt) < modelsFailCooldown
 	c.mu.Unlock()
 	if len(cached) > 0 && c.now().Sub(at) < defaultModelsTTL {
 		return cached, nil
+	}
+	// Negative window (issue #214): a fetch that just failed serves the static
+	// (or cached) list without another vendor call, so a hung /models is not
+	// re-paid on every bare-name request.
+	if failedRecently {
+		if len(cached) > 0 {
+			return cached, nil
+		}
+		return c.staticModels(), nil
 	}
 
 	a, ok := c.pool.Pick(nil)
@@ -178,6 +195,9 @@ func (c *Client) Models(ctx context.Context) ([]core.Model, error) {
 	if err != nil {
 		c.noteErr(err)
 		c.log("model catalogue fetch failed, using static list: %v", err)
+		c.mu.Lock()
+		c.modelsFailedAt = c.now()
+		c.mu.Unlock()
 		if len(cached) > 0 {
 			return cached, nil
 		}
