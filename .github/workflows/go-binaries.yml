@@ -300,7 +300,7 @@ jobs:
               sys.exit('release notes unexpectedly contain a changelog or compare link')
           pathlib.Path('release-notes.md').write_text(body.rstrip() + '\n', encoding='utf-8')
           PY
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           name: client2api ${{ github.ref_name }}
           prerelease: ${{ contains(github.ref_name, '-') }}
