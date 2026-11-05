@@ -206,25 +206,13 @@ func Classify(status int, body []byte) ErrKind {
 }
 
 // parseRetryAfter honours a sane Retry-After style hint.
+// parseRetryAfter delegates to the shared parser (issue #210): the local
+// copy read X-Ratelimit-Reset as "seconds from now", turning the vendor's
+// 90-second window into the retryAfterSanity cap -- and an already-reset window into the
+// same parking.  core.RetryAfterReset handles the epoch spelling, the past
+// window ("no wait") and the relative forms.
 func parseRetryAfter(h http.Header) time.Duration {
-	for _, key := range []string{"Retry-After", "Retry-After-Ms", "X-Ratelimit-Reset"} {
-		v := strings.TrimSpace(h.Get(key))
-		if v == "" {
-			continue
-		}
-		n, err := strconv.ParseInt(v, 10, 64)
-		if err != nil {
-			continue
-		}
-		d := time.Duration(n) * time.Second
-		if key == "Retry-After-Ms" {
-			d = time.Duration(n) * time.Millisecond
-		}
-		if d > 0 && d <= retryAfterSanity {
-			return d
-		}
-	}
-	return 0
+	return core.RetryAfterReset(h, retryAfterSanity)
 }
 
 // retryAfterSanity caps how much trust we place in an upstream hint.

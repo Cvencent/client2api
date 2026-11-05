@@ -24,10 +24,10 @@ func TestClassifyHTTPCarriesRetryAfter(t *testing.T) {
 	}{
 		{"seconds", map[string][]string{"Retry-After": {"60"}}, 60 * time.Second},
 		{"http date", map[string][]string{"Retry-After": {time.Now().UTC().Add(90 * time.Second).Format(http.TimeFormat)}}, 0},
-		// A large epoch value reads as "seconds", which the 2h cap clamps -- the
-		// same coarse behaviour cline's reference parser has.  A small value is
-		// the relative spelling some relays send and parses exactly.
-		{"epoch reset capped", map[string][]string{"X-Ratelimit-Reset": {strconv.FormatInt(time.Now().Add(45*time.Second).Unix(), 10)}}, 2 * time.Hour},
+		// An epoch value is a unix timestamp (issue #210): "the vendor said 45s"
+		// must read as about 45s, not as the 2h cap.  The window form is used
+		// because the parse goes through time.Until.
+		{"epoch reset reads as the remaining window", map[string][]string{"X-Ratelimit-Reset": {strconv.FormatInt(time.Now().Add(45*time.Second).Unix(), 10)}}, 45 * time.Second},
 		{"epoch reset relative", map[string][]string{"X-Ratelimit-Reset": {"45"}}, 45 * time.Second},
 		{"milliseconds", map[string][]string{"Retry-After-Ms": {"45000"}}, 45 * time.Second},
 		{"absent", nil, 0},
@@ -49,7 +49,14 @@ func TestClassifyHTTPCarriesRetryAfter(t *testing.T) {
 				if got < 60*time.Second || got > 90*time.Second {
 					t.Fatalf("RetryAfter = %v, want about 90s", got)
 				}
-			case "epoch reset capped", "epoch reset relative":
+			case "epoch reset reads as the remaining window":
+				// Epoch goes through time.Until: accept a window around 45s
+				// (issue #210 -- the old assertion pinned the 2h cap as
+				// "correct", protecting the bug instead of the behaviour).
+				if got < 30*time.Second || got > 45*time.Second {
+					t.Fatalf("RetryAfter = %v, want about 45s (the vendor's own window)", got)
+				}
+			case "epoch reset relative":
 				if got != tc.want {
 					t.Fatalf("RetryAfter = %v, want %v", got, tc.want)
 				}

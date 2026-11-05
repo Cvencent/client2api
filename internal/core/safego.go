@@ -8,7 +8,25 @@ import (
 
 // goSafeFallback is where a recovered panic goes when the caller supplied no
 // report function.  It is a variable only so a test can capture it.
+//
+// stderr alone is not a sink in the release build (issue #209): the installer
+// and CI both link with -H=windowsgui, which starts the process with INVALID
+// standard handles -- Fprint(os.Stderr) writes nowhere, so a recovered panic
+// in one of the nil-report goroutines left zero evidence on disk.  main()
+// injects the real logger through SetPanicSink; stderr stays in the list as
+// one entry rather than the only one.
 var goSafeFallback = func(msg string) { fmt.Fprint(os.Stderr, msg) }
+
+// panicSink is the extra reporter main() installs at boot.
+var panicSink func(string)
+
+// SetPanicSink wires a logger into the nil-report fallback path (issue #209).
+// Call it once at boot, after the log file exists.  The fallback still writes
+// stderr first: from a console it is free, and from windowsgui it is a no-op
+// that cannot break the sink below.
+func SetPanicSink(sink func(string)) {
+	panicSink = sink
+}
 
 // GoSafe runs fn on its own goroutine, turning a panic into a report instead of
 // letting it take the whole process down.
@@ -49,6 +67,9 @@ func Recover(what string, report func(string), fn func()) {
 		msg := fmt.Sprintf("panic in %s: %v\n%s", what, r, debug.Stack())
 		if report == nil {
 			goSafeFallback(msg)
+			if panicSink != nil {
+				panicSink(msg)
+			}
 			return
 		}
 		report(msg)

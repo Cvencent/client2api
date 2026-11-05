@@ -272,45 +272,13 @@ func cleanErrorText(s string) string {
 
 // parseRetryAfter honours the reset headers, capped at two hours so a broken or
 // hostile value cannot park an account for a week.
+// parseRetryAfter delegates to the shared parser (issue #210): the local
+// copy read X-Ratelimit-Reset as "seconds from now", turning the vendor's
+// 90-second window into the 2 * time.Hour cap -- and an already-reset window into the
+// same parking.  core.RetryAfterReset handles the epoch spelling, the past
+// window ("no wait") and the relative forms.
 func parseRetryAfter(h http.Header) time.Duration {
-	if h == nil {
-		return 0
-	}
-	const cap = 2 * time.Hour
-	for _, key := range []string{"Retry-After", "X-Ratelimit-Reset", "Retry-After-Ms"} {
-		v := strings.TrimSpace(h.Get(key))
-		if v == "" {
-			continue
-		}
-		if key == "Retry-After-Ms" {
-			if ms, err := strconv.ParseInt(v, 10, 64); err == nil && ms > 0 {
-				d := time.Duration(ms) * time.Millisecond
-				if d > cap {
-					d = cap
-				}
-				return d
-			}
-			continue
-		}
-		if secs, err := strconv.ParseInt(v, 10, 64); err == nil && secs > 0 {
-			d := time.Duration(secs) * time.Second
-			if d > cap {
-				d = cap
-			}
-			return d
-		}
-		if t, err := http.ParseTime(v); err == nil {
-			d := time.Until(t)
-			if d <= 0 {
-				continue
-			}
-			if d > cap {
-				d = cap
-			}
-			return d
-		}
-	}
-	return 0
+	return core.RetryAfterReset(h, 2*time.Hour)
 }
 
 // firstStringField returns the first present non-empty string value.

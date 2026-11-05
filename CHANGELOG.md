@@ -6,6 +6,36 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.40] - 2026-11-05
+
+### Fixed
+
+- **X-Ratelimit-Reset 的 epoch 不再被当成「还要等多少秒」（#210，P1）**：
+  五个模块（loomy/openaicompat/raccoon/cline/qwenwork）的 Retry-After 解析
+  把 epoch 秒当相对秒数乘——厂商 90 秒的限流窗口被读成调用方的 2 小时上限
+  （放大 80 倍），**已经重置的窗口**（过去的 epoch，本该立即恢复）也停 2
+  小时；trae 则把整条提示丢掉。注释自己写着 epoch，实现与注释互相矛盾。
+  现在共享 helper `core.RetryAfterReset`（判据照 codearts/workbuddy 已实测
+  正确的口径：值 > 1e6 按 unix 时刻处理、否则按相对秒；**算出的等待 ≤0 返回
+  0**——"无需等待"绝不回落成默认），六模块委托、cap 各自保留；trae 的
+  sanity 判据随 helper 一并修正。守护测试：六种形态（epoch 未来/过去/
+  相对秒/HTTP 日期/毫秒/cap）各自正确；openaicompat 那条「断言等于实现」
+  的用例改成断剩余时间。
+- **nil-report GoSafe 的 panic 证据不再写进无效句柄（#209，P1）**：发行版
+  以 `-H=windowsgui` 链接，标准句柄无效——25 处 nil-report 落点里 18 处
+  （无内层 recover）的 panic 只落 stderr = 空处，进程活着、请求断在半途、
+  磁盘零证据。`core.SetPanicSink` 让 main 把真 logger 注入兜底路径（stderr
+  保留为其中一个 sink 而非唯一）；同目录 48 处带 report 的写法证明这不是
+  「不需要日志」。守卫测试：sink 收到 nil-report panic、stderr 兜底仍先走、
+  GoSafe(…, nil, …) 名单下限 18（删条目即红——#116/#128 教训）。方向 2
+  （18 处逐个补本地 logger）未做：SSE 构造器链没有 logger 可传，穿透改动
+  面大；SetPanicSink 已修复「崩溃零证据」本体，逐处补齐留作后续。
+
+### Installer
+
+- `client2api-setup-0.7.40.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `a18bb5c7b1d8dbb52632728daf474331c0252def11297cf8b88dac622121913e`
+
 ## [0.7.39] - 2026-11-05
 
 ### Fixed

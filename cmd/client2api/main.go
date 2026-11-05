@@ -45,7 +45,7 @@ import (
 )
 
 // version is overridable with -ldflags "-X main.version=...".
-var version = "0.7.39"
+var version = "0.7.40"
 
 // restartHandoffEnv marks the replacement half of a panel restart.  It tells a
 // starting process to keep retrying the listen address instead of failing fast,
@@ -1331,6 +1331,12 @@ func run() error {
 	// handle cannot swallow the file and ring copies.
 	logSink := logfile.Fanout(logs, logFile, os.Stdout)
 	logger := log.New(logSink, "", log.LstdFlags|log.Lmsgprefix)
+	// The nil-report GoSafe fallback writes stderr, which in the release
+	// build (windowsgui) is an INVALID handle -- a recovered panic in one of
+	// the nil-report goroutines used to leave zero evidence on disk
+	// (issue #209).  Wire the real logger in as a second sink: the Fanout
+	// already survives the bad handle.
+	core.SetPanicSink(func(msg string) { logger.Print(msg) })
 	// The per-request rows are not log records -- they are written on a bare
 	// Fprintf so that they never carry a timestamp prefix and never fight the
 	// logger for the ring's lock.

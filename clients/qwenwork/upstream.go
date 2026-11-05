@@ -237,35 +237,13 @@ func newUpstreamError(status int, body string, header http.Header) *upstreamErro
 
 // parseRetryAfter honours Retry-After and X-Ratelimit-Reset, sanity-capped so a
 // hostile or broken header cannot park an account for a week.
+// parseRetryAfter delegates to the shared parser (issue #210): the local
+// copy read X-Ratelimit-Reset as "seconds from now", turning the vendor's
+// 90-second window into the 2 * time.Hour cap -- and an already-reset window into the
+// same parking.  core.RetryAfterReset handles the epoch spelling, the past
+// window ("no wait") and the relative forms.
 func parseRetryAfter(h http.Header) time.Duration {
-	if h == nil {
-		return 0
-	}
-	const cap = 2 * time.Hour
-	for _, key := range []string{"Retry-After", "X-Ratelimit-Reset", "Retry-After-Ms"} {
-		raw := strings.TrimSpace(h.Get(key))
-		if raw == "" {
-			continue
-		}
-		if key == "Retry-After-Ms" {
-			if n, err := strconv.Atoi(raw); err == nil && n > 0 {
-				return capDuration(time.Duration(n)*time.Millisecond, cap)
-			}
-			continue
-		}
-		if n, err := strconv.Atoi(raw); err == nil {
-			if n > 0 {
-				return capDuration(time.Duration(n)*time.Second, cap)
-			}
-			continue
-		}
-		if t, err := http.ParseTime(raw); err == nil {
-			if d := time.Until(t); d > 0 {
-				return capDuration(d, cap)
-			}
-		}
-	}
-	return 0
+	return core.RetryAfterReset(h, 2*time.Hour)
 }
 
 func capDuration(d, max time.Duration) time.Duration {
