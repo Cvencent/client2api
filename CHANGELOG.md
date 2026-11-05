@@ -6,6 +6,29 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.37] - 2026-11-05
+
+### Fixed
+
+- **离开「减少动效」后点击火花回来了（#205）**：`initSpark` 把偏好判断放在
+  创建层——冷启动在 reduce 下连 canvas 与监听都不建，之后关掉偏好整场缺席
+  （同批五个初始化都是监听无条件装、使用点判偏好，唯独它把两层混在一层）；
+  `onReduceChange` 为背景粒子场专门接了 `bgfStart()`，火花缺对应的补建。
+  现在「离开 reduce」分支并列补一次 `initSpark()`（幂等），与 `bgfStart()`
+  两行相邻。守护测试钉「else 分支必须同时出现 bgfStart 与 initSpark」。
+- **弹窗进场收敛为一条权威声明（#206）**：`.dlg` 上曾有四条同权重
+  `animation`（dlgSpring/dlgIn×2/uiDlgIn）分居四段，源码顺序让 10-29 最晚
+  写的弹簧从没播过——实际落地的是最普通的一段 260ms ease 淡入。现在只剩
+  权威一条（dlgSpring 过冲弹簧，注释写明「进场只有这一个来源」）；同名
+  `@keyframes dlgIn` 两份与死关键帧 `uiDlgIn` 清零；`.veil.out .dlg` 退场
+  保留。守护测试钉「`.dlg` 进场 animation 唯一且为 dlgSpring、同名/死
+  keyframes 清零」。
+
+### Installer
+
+- `client2api-setup-0.7.37.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `770ad558adb608e22bf1b041bff2cb6515821c78a76d0e771d9c3d2ff43da985`
+
 ## [0.7.36] - 2026-11-05
 
 ### Fixed

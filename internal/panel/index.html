@@ -185,7 +185,10 @@ button:not(.primary):not(.danger):hover:not(:disabled) {
   box-shadow: 0 1px 0 0 color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
-/* ⑤ 模态框：从下方 8px 处带轻微过冲弹入（Anime.js 的 spring 手感）。 */
+/* ⑤ 模态框：从下方 8px 处带轻微过冲弹入（Anime.js 的 spring 手感）。
+   .dlg 的进场 animation 只有这一个来源（issue #206）：曾有四条同权重声明
+   （dlgSpring/dlgIn×2/uiDlgIn）分居四段，源码顺序让最早那条赢得最晚——
+   弹簧写了但从没播过。另两个块只剩外观声明，不再写动画。 */
 .dlg { animation: dlgSpring 260ms cubic-bezier(.2, 1.1, .35, 1) both; }
 @keyframes dlgSpring {
   from { opacity: 0; transform: scale(.972) translateY(8px); }
@@ -1136,9 +1139,7 @@ legend { font-size: 0.75rem; color: var(--ink-3); font-weight: 600; padding-bott
   background: var(--surface); border: 1px solid var(--line); border-radius: 13px;
   width: 560px; max-width: 100%; max-height: 86vh; display: flex; flex-direction: column;
   box-shadow: 0 24px 64px -24px rgba(0,0,0,.6);
-  animation: dlgIn var(--dur-med) var(--ease-out) both;
 }
-@keyframes dlgIn { from { opacity: 0; transform: scale(.985) translateY(4px); } to { opacity: 1; transform: scale(1) translateY(0); } }
 /* 弹窗本体的退场：内容「退回去」而不是被切断（issue #32）。挂在 .veil.out
    下，只有退出中的那层弹窗播它。 */
 .veil.out .dlg { animation: dlgOut 150ms var(--ease-out) both; }
@@ -2785,9 +2786,7 @@ details.cfg summary:hover, details.adv summary:hover { color: var(--accent-text)
 .dlg {
   border: 1px solid color-mix(in srgb, white 20%, transparent); border-radius: 20px;
   background: var(--material-strong); box-shadow: var(--shadow-float);
-  animation: uiDlgIn var(--dur-page) var(--ease-smooth) both;
 }
-@keyframes uiDlgIn { from { opacity: 0; transform: translate3d(0, 10px, 0) scale(.975); } to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); } }
 .dlg header { background: color-mix(in srgb, var(--surface) 78%, transparent); border-bottom-color: var(--hairline); }
 .dlg footer { background: color-mix(in srgb, var(--surface) 72%, transparent); border-top-color: var(--hairline); }
 .dlg .tabs { border-radius: 11px; background: color-mix(in srgb, var(--surface-2) 84%, transparent); }
@@ -4257,9 +4256,7 @@ input:focus, select:focus, textarea:focus, button:focus-visible, a:focus-visible
 .dlg {
   border: 1px solid var(--hairline); border-radius: 18px; background: var(--material-strong);
   box-shadow: var(--shadow-float);
-  animation: dlgIn var(--dur-slow) var(--ease) both;
 }
-@keyframes dlgIn { from { opacity: 0; transform: translateY(8px) scale(.985); } to { opacity: 1; transform: none; } }
 .dlg header { padding: 16px 20px 13px; border-bottom: 1px solid var(--hairline); background: color-mix(in srgb, var(--surface-2) 46%, transparent); }
 .dlg header h3 { font-size: 0.9375rem; font-weight: 640; }
 .dlg footer { padding: 13px 20px; border-top: 1px solid var(--hairline); background: color-mix(in srgb, var(--surface-2) 46%, transparent); }
@@ -25644,6 +25641,11 @@ document.addEventListener("visibilitychange", () => {
           if (mql.matches) bgfStop();
           else if (typeof bgfStart === "function") bgfStart();
         }
+        // 离开 reduce 时补建火花（issue #205）：initSpark 把 motionReduce()
+        // 放在「创建」层，冷启动在 reduce 下连 canvas 与监听都不建，之后
+        // 关掉偏好整场不回来——背景粒子场有 bgfStart 对应，火花缺这一句。
+        // initSpark 幂等（SPARK.canvas 已存在就返回）。
+        if (!mql.matches && typeof initSpark === "function") initSpark();
       };
       if (mql.addEventListener) mql.addEventListener("change", onReduceChange);
       else if (mql.addListener) mql.addListener(onReduceChange);
