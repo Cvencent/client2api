@@ -6,6 +6,27 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.39] - 2026-11-05
+
+### Fixed
+
+- **5 秒轮询不再为读一个未读数字搬整本告警流水（#208）**：
+  `refreshAlertBadge` 曾打全量 `GET /panel/api/alerts`——200 条上限时
+  49.8KB/拍（占一拍八成，一天约 149MB），ETag 也救不了（unread 变化会让
+  整份 body 变）。三层修法：①徽标改走 `?count=1` 轻查询（照 logs.go 的
+  meta=1 范式，只回 `{"unread":N}` ≈ 12B，缩小 4152×）；②全量 GET 补强
+  ETag + If-None-Match 304——哈希**只对 alerts[]**（unread 算进去会让
+  标记已读后 304 永远失效），空闲拍零正文；③`MarkAllRead` 水位早退——
+  未读已 0 且水位未变时不再整份重写 63KB（曾连打 3 次每次都写）；告警
+  视图下的重复 GET 收敛（renderAlerts 自己更新徽标，refreshAll 的 badge
+  调用跳过）。守护测试：轻查询与 ETag 断言读服务端 alerts.go、水位早退
+  用行为测试（mtime 不变证明零写入）。
+
+### Installer
+
+- `client2api-setup-0.7.39.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `c94edde1e9ed4b14157a75c16d6982882010c686d1be60b563557defa1769caf`
+
 ## [0.7.38] - 2026-11-05
 
 ### Fixed

@@ -106,6 +106,12 @@ func (s *Store) Unread() int {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.unreadLocked()
+}
+
+// unreadLocked counts alerts newer than the read watermark.  Callers hold the
+// lock.
+func (s *Store) unreadLocked() int {
 	n := 0
 	for _, a := range s.alerts {
 		if s.readAt.IsZero() || a.At.After(s.readAt) {
@@ -127,6 +133,13 @@ func (s *Store) MarkAllRead() {
 		if a.At.After(mark) {
 			mark = a.At
 		}
+	}
+	// 水位早退（issue #208）：水位已到最新时 nothing to do——曾连打 3 次
+	// 每次都整份重写 63KB（alerts[]/read_at 全同，只有 saved 变）。
+	// Unread()==0 即「水位已到最新」。
+	if s.unreadLocked() == 0 && mark.Equal(s.readAt) {
+		s.mu.Unlock()
+		return
 	}
 	s.readAt = mark
 	path := s.path

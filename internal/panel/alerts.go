@@ -1,6 +1,9 @@
 package panel
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"net/http"
 
 	"client2api/internal/alerts"
@@ -29,6 +32,19 @@ func (p *panel) handleAlerts(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusMethodNotAllowed, "use GET or POST")
 		return
 	}
+	// count=1 是徽标专用的轻查询（issue #208）：5 秒一拍的
+	// refreshAlertBadge 只读 unread 一个整数，却曾把整本流水（上限 200 条
+	// ≈ 50KB，一拍的八成）每拍搬回来。照 logs.go 的 meta=1 范式。
+	if r.URL.Query().Get("count") == "1" {
+		out := struct {
+			Unread int `json:"unread"`
+		}{}
+		if p.opts.Alerts != nil {
+			out.Unread = p.opts.Alerts.Unread()
+		}
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
 	out := struct {
 		Alerts    []alerts.Alert `json:"alerts"`
 		Unread    int            `json:"unread"`
@@ -43,6 +59,20 @@ func (p *panel) handleAlerts(w http.ResponseWriter, r *http.Request) {
 		if err := p.opts.Alerts.LastError(); err != nil {
 			out.LastError = core.Redact(err.Error())
 		}
+	}
+	// 强 ETag + If-None-Match（issue #208）：只对 alerts[] 求哈希，不算
+	// unread——标记已读只改 unread，若把它算进去 304 就永远失效。
+	body, err := json.Marshal(out.Alerts)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "marshal alerts: "+err.Error())
+		return
+	}
+	sum := sha256.Sum256(body)
+	etag := `"` + hex.EncodeToString(sum[:16]) + `"`
+	w.Header().Set("ETag", etag)
+	if match := r.Header.Get("If-None-Match"); match != "" && etagMatches(match, etag) {
+		w.WriteHeader(http.StatusNotModified)
+		return
 	}
 	writeJSON(w, http.StatusOK, out)
 }

@@ -16483,7 +16483,10 @@ async function clearAlerts() {
 }
 
 async function refreshAlertBadge() {
-  const r = await api("/panel/api/alerts");
+  // count=1 只回 unread 一个整数（issue #208）：曾每 5 秒把整本告警流水
+  // （上限 200 条 ≈ 50KB，占一拍八成）搬回来只为了这个数字。全量留给
+  // renderAlerts（告警页本体），带 ETag 304。
+  const r = await api("/panel/api/alerts?count=1");
   if (r.ok) updateAlertBadge(Number((r.data && r.data.unread) || 0));
 }
 
@@ -25509,7 +25512,9 @@ async function refreshAll(loud) {
   // 的踩点处——强制同步布局把这一拍拖到六成时间花在读几何上。rAF 落完布局再读，
   // 读取本身回到 0.2ms 量级。
   scheduleScrollableCheck();
-  refreshAlertBadge().catch(() => {});
+  // 告警视图下 renderAlerts 自己更新徽标（issue #208）：同一拍曾打 4 次
+  // /panel/api/alerts 全量 GET（49.8KB×4）。轻查询（count=1）之外的重复收敛。
+  if (VIEW !== "alerts") refreshAlertBadge().catch(() => {});
   // 总览读的是 ACCTS / SNAP，必须在账号加载完之后再画一次；否则首屏会显示 0。
   // 每个渲染各自兜底（issue #207）：一格算错只少那一格，不再把同拍后面的
   // 全部渲染连同「红条一次即止」一起拖垮——曾因 renderOverview 抛
