@@ -20016,8 +20016,8 @@ function scRenderRows() {
     '<colgroup><col style="width:26%"><col style="width:210px">' +
     '<col style="width:54px"><col style="width:88px"><col style="width:70px"><col style="width:132px"></colgroup>' +
     "<thead><tr>" +
-    "<th scope=\"col\" scope=\"col\">任务</th><th scope=\"col\" scope=\"col\">时点 / 间隔 / Cron</th><th scope=\"col\" scope=\"col\">启用</th><th scope=\"col\" scope=\"col\">下一跳</th><th scope=\"col\" scope=\"col\">自定义</th>" +
-    "<th scope=\"col\" scope=\"col\">操作</th></tr></thead><tbody>" + bodyHTML + "</tbody></table></div>";
+    "<th scope=\"col\">任务</th><th scope=\"col\">时点 / 间隔 / Cron</th><th scope=\"col\">启用</th><th scope=\"col\">下一跳</th><th scope=\"col\">自定义</th>" +
+    "<th scope=\"col\">操作</th></tr></thead><tbody>" + bodyHTML + "</tbody></table></div>";
   box.querySelectorAll(".scrow").forEach(el => {
     const key = scKey(el.dataset.client, el.dataset.batch);
     SC.rows[key] = Object.assign({}, shown.filter(r => scKey(r.client, r.batch) === key)[0], { el: el });
@@ -21358,10 +21358,13 @@ async function renderCredits() {
   }
   const now = Date.now();
   $("#pkExpiry").innerHTML = renderExpiryDistribution(merged, now);
+  // caption 只能有一张、且必须在 <thead> 之前（issue #212）：曾把第二张
+  // caption 拼进 <tr> 里——HTML 解析器把它当表格第二个 caption、结束该行，
+  // 后面的 <th> 被自动生成的 <tbody> 收走，<thead> 变空行，表头整行滚出
+  // 视野且 sticky 失效。重复的 scope="col" 一并清掉。
   body.innerHTML = pkSummaryCards(merged, now) +
-    '<div class="tbl-wrap"><table class="acc md"><caption class="sr-only">全部账号任务</caption><thead><tr>' +
-    "<caption class=\"sr-only\">积分构成</caption>" +
-    "<th scope=\"col\" scope=\"col\">批次 / 名称</th><th scope=\"col\" scope=\"col\">剩余</th><th scope=\"col\" scope=\"col\">总量</th><th scope=\"col\" scope=\"col\">已用</th><th scope=\"col\" scope=\"col\">到期</th>" +
+    '<div class="tbl-wrap"><table class="acc md"><caption class="sr-only">积分构成（全部账号的批次明细）</caption><thead><tr>' +
+    '<th scope="col">批次 / 名称</th><th scope="col">剩余</th><th scope="col">总量</th><th scope="col">已用</th><th scope="col">到期</th>' +
     "</tr></thead><tbody>" + merged.map(a => crAcctRow(a, limit)).join("") + "</tbody></table></div>";
 }
 /* 展开/收起：只翻同组的 data-pk-row 行。按钮文案同步换，aria-expanded 也跟着
