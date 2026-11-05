@@ -6,6 +6,26 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.42] - 2026-11-05
+
+### Fixed
+
+- **模型详情区 40 个表单控件有了可编程名称（#213，a11y）**：视觉标签只画在
+  `td[data-field]::before` 里，读屏拿不到——20 行展开后「上下文窗口/最大输出」
+  两个语义相反的数字框都是空名「spin button」，「默认档/思考档位」的名字是
+  占位符「—」「未公开」（输入后还会消失），三个价格框共用同一句长提示彼此
+  不可分。现在 `MD_FIELD_LABELS` 一处定义（与 `::before` 同源），五个生成
+  函数（mdNumCell/mdPriceCell/mdDefaultEffortCell/mdEffortsCell/
+  mdElevateTopCell 的映射输入）给每个 input 挂 `aria-label`；三个价格框的
+  名字拆成「输入价 / 输出价 / 缓存读取价」各自可分，长提示留在 title。
+  `::before` 视觉标签保留。守护测试钉：MD_FIELD_LABELS 存在、四个生成函数
+  的输出带 aria-label、三个价格键各自入表、映射输入带名字。
+
+### Installer
+
+- `client2api-setup-0.7.42.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `8dfefa95d6e436e42a75fe213a0f2efd07d93a3b81753411d8647091b5bdcab6`
+
 ## [0.7.41] - 2026-11-05
 
 ### Fixed

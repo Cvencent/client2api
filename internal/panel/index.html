@@ -6011,7 +6011,16 @@ html:not([data-theme="light"]) body::after {
 }
 .mddgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(186px, 1fr)); gap: 14px 18px; }
 /* 字段标签：每个单元格按 data-field 显示自己的名字。放在 CSS 里而不是 HTML 里，
-   是因为这些单元格由原有构造函数生成，加标签不该动它们的结构。 */
+   是因为这些单元格由原有构造函数生成，加标签不该动它们的结构。
+   同一张表同时是 JS 侧的名字来源（issue #213）：::before 只画视觉，
+   读屏拿不到——每个 input 的 aria-label 从 MD_FIELD_LABELS 取，一处定义
+   两处复用。价格三格的名字各自可区分，不再共用同一句长提示。 */
+const MD_FIELD_LABELS = {
+  rate: "计费倍率", default_effort: "默认档", efforts: "思考档位",
+  elevate_top: "封顶对齐", context: "上下文窗口", output: "最大输出",
+  "price-input": "输入价 ¥/M", "price-output": "输出价 ¥/M", "price-cache": "缓存读取价 ¥/M",
+  owned_by: "所属",
+};
 .mddgrid td[data-field]::before {
   display: block; margin-bottom: 4px;
   font-size: 0.65625rem; letter-spacing: .04em; color: var(--ink-3);
@@ -16761,6 +16770,7 @@ function mdDefaultEffortCell(m) {
   const src = m.default_effort_source || "";
   return '<td class="mdedit" data-field="default_effort">' +
     '<input class="mdtxt mdshort" type="text" autocomplete="off" data-field="default_effort"' +
+    ' aria-label="默认档"' +
     ' value="' + esc(value) + '" data-initial="' + esc(value) + '" data-default="' + esc(def) + '" placeholder="—"' + dis + '>' +
     '<div class="mdsrc' + (src === "manual" ? " manual" : "") + '">' + esc(mdSrcText(src)) + '</div></td>';
 }
@@ -16774,6 +16784,7 @@ function mdEffortsCell(m) {
   const src = m.efforts_source || "";
   return '<td class="mdedit" data-field="efforts">' +
     '<input class="mdtxt" type="text" autocomplete="off" data-field="efforts"' +
+    ' aria-label="思考档位"' +
     ' value="' + esc(value) + '" data-initial="' + esc(value) + '" data-default="' + esc(def) + '" placeholder="未公开"' + dis + '>' +
     '<div class="mdsrc' + (src === "manual" ? " manual" : "") + '">' + esc(mdSrcText(src)) + '</div></td>';
 }
@@ -16805,6 +16816,7 @@ function mdElevateTopCell(m) {
     '<input class="mdtoggle" type="checkbox" data-field="elevate_top" data-initial="' + (on ? "1" : "0") + '" data-default="' + def + '"' + (on ? " checked" : "") + dis + '>' +
     '<span class="mdsrc' + (src === "manual" ? " manual" : "") + '">' + esc(label) + '</span></label>' +
     '<input class="mdtxt mdmap" type="text" autocomplete="off" data-field="effort_mappings"' +
+    ' aria-label="思考档位映射"' +
     ' value="' + esc(mappings) + '" data-initial="' + esc(mappings) + '" data-default="' + esc(defaults) + '"' +
     ' title="多条规则用逗号分隔，例如 high→max, max→high；自定义规则原样下发，top 表示该模型真实最高档"' +
     ' placeholder="' + esc(placeholder) + '"' + mappingDis + '></td>';
@@ -16850,8 +16862,12 @@ function mdNumCell(field, value, source, def, probe) {
   const v = value > 0 ? String(value) : "";
   const d = def > 0 ? String(def) : "";
   const hint = field === "output" ? mdProbeHint(probe) : "";
+  // aria-label（issue #213）：视觉标签在 ::before 里，读屏拿不到——
+  // 没有名字的数字框对键盘用户是「两个分不清的 spin button」。
+  const label = MD_FIELD_LABELS[field] || field;
   return '<td class="num mdedit" data-field="' + field + '">' +
     '<input class="mdnum" type="number" min="0" step="1024" inputmode="numeric" data-field="' + field + '"' +
+    ' aria-label="' + esc(label) + '"' +
     ' value="' + esc(v) + '" data-initial="' + esc(v) + '" data-default="' + esc(d) + '">' +
     '<div class="mdsrc' + (source === "manual" ? " manual" : "") + '">' + esc(mdSrcText(source)) + '</div>' + hint + "</td>";
 }
@@ -16859,8 +16875,13 @@ function mdPriceCell(field, value, source, def, configured, defaultConfigured) {
   const v = configured ? String(value == null ? 0 : value) : "";
   const d = defaultConfigured ? String(def == null ? 0 : def) : "";
   const hint = "人民币 / 百万 tokens；留空表示未公开，0 表示免费";
-  return '<td class="num mdedit" data-field="price-' + field + '">' +
-    '<input class="mdnum mdprice" type="number" min="0" step="0.000001" inputmode="decimal" data-field="price-' + field + '"' +
+  const key = "price-" + field;
+  // 三个价格框的名字各自可区分（issue #213）：曾共用同一句长提示，
+  // 读屏用户无法分辨在改哪个价。字段名做 aria-label，长提示留在 title。
+  const label = MD_FIELD_LABELS[key] || key;
+  return '<td class="num mdedit" data-field="' + key + '">' +
+    '<input class="mdnum mdprice" type="number" min="0" step="0.000001" inputmode="decimal" data-field="' + key + '"' +
+    ' aria-label="' + esc(label) + '"' +
     ' value="' + esc(v) + '" data-initial="' + esc(v) + '" data-default="' + esc(d) + '" title="' + esc(hint) + '">' +
     '<div class="mdsrc' + (source === "manual" ? " manual" : "") + '">' + esc(mdSrcText(source)) + '</div></td>';
 }
