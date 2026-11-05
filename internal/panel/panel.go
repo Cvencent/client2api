@@ -1665,7 +1665,7 @@ func (p *panel) startLogin(w http.ResponseWriter, r *http.Request, c core.Client
 		if err == nil && strings.TrimSpace(p.opts.ConfigPath) != "" {
 			_, _, serr := writeConfigKeys(p.opts.ConfigPath, map[string]any{
 				"clients": map[string]any{c.Name(): map[string]any{"proxy": body.Proxy}},
-			})
+			}, p.opts.Registry)
 			if serr != nil {
 				cancel()
 				writeErr(w, http.StatusInternalServerError, "login started, but saving clients."+c.Name()+".proxy failed: "+serr.Error())

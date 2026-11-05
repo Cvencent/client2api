@@ -74,7 +74,7 @@ func (p *panel) configWrite(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &patch) {
 		return
 	}
-	changed, merged, err := writeConfigKeys(p.opts.ConfigPath, patch)
+	changed, merged, err := writeConfigKeys(p.opts.ConfigPath, patch, p.opts.Registry)
 	if err != nil {
 		// A patch the writer refused, or a request against a process that
 		// has no config file, is the caller's problem.  A file that cannot be
@@ -150,14 +150,14 @@ func (e *configInvalidError) Unwrap() error { return e.err }
 // The patch follows the same contract as the HTTP endpoint: only the keys
 // present are touched, and nested objects merge key by key.
 func WriteConfigKeys(path string, patch map[string]any) ([]string, error) {
-	changed, _, err := writeConfigKeys(path, patch)
+	changed, _, err := writeConfigKeys(path, patch, nil)
 	return changed, err
 }
 
 // writeConfigKeys is the single read-merge-validate-write cycle.  It returns
 // the merged document as well as the changed keys so the HTTP layer can
 // render its response without reading the file a second time.
-func writeConfigKeys(path string, patch map[string]any) ([]string, map[string]any, error) {
+func writeConfigKeys(path string, patch map[string]any, reg *core.Registry) ([]string, map[string]any, error) {
 	if path == "" {
 		return nil, nil, errNoConfigPath
 	}
@@ -172,7 +172,7 @@ func writeConfigKeys(path string, patch map[string]any) ([]string, map[string]an
 		return nil, nil, fmt.Errorf("reading config: %w", err)
 	}
 	merged := mergeConfig(onDisk, patch)
-	if err := validateConfig(merged); err != nil {
+	if err := validateConfig(merged, patch, reg); err != nil {
 		return nil, nil, &configInvalidError{err: err}
 	}
 	if err := validateClientBlocks(merged); err != nil {
@@ -438,7 +438,12 @@ func validateEgressConfig(cfg map[string]any) error {
 	return nil
 }
 
-func validateModelGroups(cfg map[string]any) error {
+// validateModelGroups type-checks the document; the client-registration check
+// (issue #200) applies ONLY to entries the patch itself touches: the merged
+// document can legitimately carry groups whose members are not loaded yet
+// (built-in default groups name modules a deployment may never enable), and
+// re-validating those would deadlock every unrelated save.
+func validateModelGroups(cfg map[string]any, patch map[string]any, reg *core.Registry) error {
 	raw, ok := cfg["model_groups"]
 	if !ok || raw == nil {
 		return nil
@@ -514,6 +519,16 @@ func validateModelGroups(cfg map[string]any) error {
 			}
 			memberOwners[memberKey] = name
 			memberPlatforms[strings.ToLower(client)] = client
+			// The client half must be registered for groups THIS PATCH touches
+			// (issue #200): a typo'd member used to be broadcast by
+			// /v1/models and 404 on every call by name.  Untouched entries
+			// skip the check -- built-in defaults may name modules this
+			// deployment never loads.
+			if _, touched := patch["model_groups"]; touched {
+				if err := requireRegisteredClient(reg, name, client); err != nil {
+					return err
+				}
+			}
 		}
 
 		if prioritiesRaw, ok := group["platform_priorities"]; ok && prioritiesRaw != nil {
@@ -545,6 +560,21 @@ func validateModelGroups(cfg map[string]any) error {
 // needs a parseable port in 0-65535: saving "127.0.0.1" used to succeed, the
 // toast pointed at the restart button, and the fresh process died on
 // net.Listen while the page kept saying "connected" (issue #19).
+// requireRegisteredClient rejects a reference to a client the process does
+// not have (issue #200).  A nil registry skips the check: unit tests build
+// documents without a process, and the check is about the live process's own
+// catalogue.
+func requireRegisteredClient(reg *core.Registry, context, client string) error {
+	if reg == nil {
+		return nil
+	}
+	if _, ok := reg.Get(client); ok {
+		return nil
+	}
+	known := strings.Join(reg.Names(), ", ")
+	return fmt.Errorf("%q references client %q which is not registered (registered clients: %s)", context, client, known)
+}
+
 func validateListen(addr string) error {
 	if strings.TrimSpace(addr) == "" {
 		return nil
@@ -566,7 +596,7 @@ func validateListen(addr string) error {
 // validateConfig type-checks the document the way the process will read it.
 // Without this a typo saved from the editor would only surface as a failed
 // startup, long after the save looked successful.
-func validateConfig(cfg map[string]any) error {
+func validateConfig(cfg map[string]any, patch map[string]any, reg *core.Registry) error {
 	if v, ok := cfg["sources"]; ok && v != nil {
 		raw, err := json.Marshal(v)
 		if err != nil {
@@ -610,6 +640,19 @@ func validateConfig(cfg map[string]any) error {
 			if !strings.Contains(s, "/") {
 				return fmt.Errorf("alias %q target %q must be \"client/model\"", alias, s)
 			}
+			// The client half must be registered for aliases THIS PATCH
+			// touches (issue #200): a typo'd target answered 200 and the call
+			// then 404'd with an error that blamed the caller for the panel's
+			// own typo.  Untouched aliases skip the check -- the merged
+			// document can carry aliases written when other modules were
+			// loaded.
+			if av, touched := patch["aliases"].(map[string]any); touched {
+				if _, mine := av[alias]; mine {
+					if err := requireRegisteredClient(reg, alias, strings.SplitN(s, "/", 2)[0]); err != nil {
+						return err
+					}
+				}
+			}
 		}
 	}
 	if v, ok := cfg["exposed_models"]; ok && v != nil {
@@ -634,7 +677,7 @@ func validateConfig(cfg map[string]any) error {
 			seen[key] = struct{}{}
 		}
 	}
-	if err := validateModelGroups(cfg); err != nil {
+	if err := validateModelGroups(cfg, patch, reg); err != nil {
 		return err
 	}
 	if v, ok := cfg["disabled"]; ok && v != nil {
@@ -973,6 +1016,11 @@ func validateScheduleConfig(v any) error {
 		if !ok || f != float64(int(f)) {
 			return errors.New("schedule.balance_refresh_minutes must be a whole number")
 		}
+		// Same wrap bound as every other interval (issue #199): 10^18 minutes
+		// used to answer 200 and run the sweep every 26 seconds.
+		if int64(f) > scheduleSecondsCap/60 || time.Duration(int64(f))*time.Minute > scheduleMaxInterval {
+			return fmt.Errorf("schedule.balance_refresh_minutes is too large: the maximum is %s (30 days)", scheduleMaxInterval)
+		}
 	}
 	c, ok := m["clients"]
 	if !ok || c == nil {
@@ -1082,11 +1130,31 @@ func validateScheduleHours(name string, v any) error {
 	}
 	return nil
 }
+
+// scheduleMaxInterval bounds every interval the schedule accepts (issue #199).
+// The seconds count is multiplied into an int64-nanosecond time.Duration, and
+// anything past math.MaxInt64 nanoseconds (~292 years) silently wraps: the
+// panel answered 200 and the process ran the wrapped interval -- one reported
+// case turned "about 585 years" into a tick every 5.3 seconds.  Thirty days
+// is far beyond any real sweep cadence, so the bound costs nothing and the
+// error says the number is too big instead of "must be greater than zero"
+// (the misleading wording the negative wrap produced).
+const scheduleMaxInterval = 30 * 24 * time.Hour
+
+// scheduleSecondsCap is the largest seconds count the multiplication can hold
+// without wrapping.
+const scheduleSecondsCap = int64(^uint64(0)>>1) / int64(time.Second)
+
+// scheduleIntervalValue parses one interval, rejecting an overflow BEFORE the
+// multiplication instead of reading the wrapped result afterwards.
 func scheduleIntervalValue(prefix, stem string, om map[string]any) (time.Duration, bool, error) {
 	if raw, ok := om[stem+"_seconds"]; ok && raw != nil {
 		n, err := scheduleWholeNumber(prefix+"."+stem+"_seconds", raw)
 		if err != nil {
 			return 0, false, err
+		}
+		if int64(n) > scheduleSecondsCap || time.Duration(n)*time.Second > scheduleMaxInterval {
+			return 0, false, fmt.Errorf("%s.%s_seconds is too large: the maximum is %s (30 days)", prefix, stem, scheduleMaxInterval)
 		}
 		return time.Duration(n) * time.Second, true, nil
 	}
@@ -1094,6 +1162,9 @@ func scheduleIntervalValue(prefix, stem string, om map[string]any) (time.Duratio
 		n, err := scheduleWholeNumber(prefix+"."+stem+"_minutes", raw)
 		if err != nil {
 			return 0, false, err
+		}
+		if int64(n) > scheduleSecondsCap/60 || time.Duration(n)*time.Minute > scheduleMaxInterval {
+			return 0, false, fmt.Errorf("%s.%s_minutes is too large: the maximum is %s (30 days)", prefix, stem, scheduleMaxInterval)
 		}
 		return time.Duration(n) * time.Minute, true, nil
 	}

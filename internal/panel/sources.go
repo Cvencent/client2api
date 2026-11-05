@@ -95,7 +95,7 @@ func (p *panel) handleSource(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodDelete {
 		patch["platforms"] = map[string]any{id: nil}
 	}
-	if _, _, err := writeConfigKeys(p.opts.ConfigPath, patch); err != nil {
+	if _, _, err := writeConfigKeys(p.opts.ConfigPath, patch, p.opts.Registry); err != nil {
 		writeErr(w, 400, err.Error())
 		return
 	}

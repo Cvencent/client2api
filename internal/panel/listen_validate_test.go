@@ -14,8 +14,8 @@ func TestValidateConfigChecksTheListenAddress(t *testing.T) {
 		// legal bind even though the panel address then moves on restart.
 		"127.0.0.1:0"}
 	for _, addr := range good {
-		if err := validateConfig(map[string]any{"listen": addr}); err != nil {
-			t.Errorf("validateConfig(listen %q) = %v, want accepted", addr, err)
+		if err := validateConfig(map[string]any{"listen": addr}, nil, nil); err != nil {
+			t.Errorf("validateConfig(listen %q, nil, nil) = %v, want accepted", addr, err)
 		}
 	}
 	bad := map[string]string{
@@ -26,20 +26,20 @@ func TestValidateConfigChecksTheListenAddress(t *testing.T) {
 		" 127.0.0.1:8788": "whitespace",
 	}
 	for addr, want := range bad {
-		err := validateConfig(map[string]any{"listen": addr})
+		err := validateConfig(map[string]any{"listen": addr}, nil, nil)
 		if err == nil {
-			t.Errorf("validateConfig(listen %q) = nil, want rejected", addr)
+			t.Errorf("validateConfig(listen %q, nil, nil) = nil, want rejected", addr)
 			continue
 		}
 		if !strings.Contains(err.Error(), want) {
-			t.Errorf("validateConfig(listen %q) = %q, want it to mention %q", addr, err.Error(), want)
+			t.Errorf("validateConfig(listen %q, nil, nil) = %q, want it to mention %q", addr, err.Error(), want)
 		}
 	}
 	// Absent and nil stay legal: applyDefaults fills the built-in address.
-	if err := validateConfig(map[string]any{}); err != nil {
-		t.Errorf("validateConfig(no listen) = %v, want accepted", err)
+	if err := validateConfig(map[string]any{}, nil, nil); err != nil {
+		t.Errorf("validateConfig(no listen, nil, nil) = %v, want accepted", err)
 	}
-	if err := validateConfig(map[string]any{"listen": nil}); err != nil {
-		t.Errorf("validateConfig(listen nil) = %v, want accepted", err)
+	if err := validateConfig(map[string]any{"listen": nil}, nil, nil); err != nil {
+		t.Errorf("validateConfig(listen nil, nil, nil) = %v, want accepted", err)
 	}
 }

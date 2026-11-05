@@ -8,7 +8,7 @@ func TestValidateConfigAcceptsEgressModes(t *testing.T) {
 		{"egress": map[string]any{"enabled": true, "mode": "subscription", "url": "https://subscription.example/token"}},
 		{"egress": map[string]any{"enabled": false, "mode": "client"}},
 	} {
-		if err := validateConfig(cfg); err != nil {
+		if err := validateConfig(cfg, nil, nil); err != nil {
 			t.Fatalf("validateConfig rejected %v: %v", cfg["egress"], err)
 		}
 	}
@@ -20,7 +20,7 @@ func TestValidateConfigRejectsBadEgressValues(t *testing.T) {
 		{"egress": map[string]any{"enabled": true, "mode": "subscription"}},
 		{"egress": map[string]any{"enabled": "yes", "mode": "client", "url": "http://127.0.0.1:1"}},
 	} {
-		if err := validateConfig(cfg); err == nil {
+		if err := validateConfig(cfg, nil, nil); err == nil {
 			t.Fatalf("validateConfig accepted invalid egress block %v", cfg["egress"])
 		}
 	}

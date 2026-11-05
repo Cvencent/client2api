@@ -45,7 +45,7 @@ import (
 )
 
 // version is overridable with -ldflags "-X main.version=...".
-var version = "0.7.32"
+var version = "0.7.33"
 
 // restartHandoffEnv marks the replacement half of a panel restart.  It tells a
 // starting process to keep retrying the listen address instead of failing fast,
@@ -507,16 +507,37 @@ func (s scheduleConfig) schedClients() map[string]map[string]scheduler.Group {
 	return out
 }
 
+// scheduleIntervalCap is the file-side twin of the panel's bound (issue #199):
+// a config file can bypass the panel's 400, so the deserialized value is
+// range-checked here too instead of wrapping into an int64-nanosecond
+// time.Duration.
+const scheduleIntervalCap = 30 * 24 * time.Hour
+
 func applyScheduleInterval(group *scheduler.Group, ov scheduleOverride) {
+	// clampInterval wraps the multiplication only when the value would wrap;
+	// a wrapped interval used to become "every 5.3 seconds" for an input of
+	// "about 585 years".
+	clampInterval := func(n int64, unit time.Duration) time.Duration {
+		d := time.Duration(n) * unit
+		if d <= 0 || d > scheduleIntervalCap {
+			// Wrapped (d <= 0) or past the cap: fall back to the cap itself so
+			// the interval is always a sane, finite value.
+			return scheduleIntervalCap
+		}
+		return d
+	}
 	if ov.EverySeconds != nil {
-		group.Every = time.Duration(*ov.EverySeconds) * time.Second
+		group.Every = clampInterval(int64(*ov.EverySeconds), time.Second)
 	} else if ov.EveryMinutes != nil {
-		group.Every = time.Duration(*ov.EveryMinutes) * time.Minute
+		group.Every = clampInterval(int64(*ov.EveryMinutes), time.Minute)
 	}
 	if ov.JitterSeconds != nil {
-		group.Jitter = time.Duration(*ov.JitterSeconds) * time.Second
+		group.Jitter = clampInterval(int64(*ov.JitterSeconds), time.Second)
 	} else if ov.JitterMinutes != nil {
-		group.Jitter = time.Duration(*ov.JitterMinutes) * time.Minute
+		group.Jitter = clampInterval(int64(*ov.JitterMinutes), time.Minute)
+	}
+	if group.Jitter >= group.Every {
+		group.Jitter = 0
 	}
 }
 
