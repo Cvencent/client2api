@@ -24,7 +24,7 @@
 
 ### Installer
 
-- `client2api-setup-0.7.39.exe`（空包，不含账号凭据或本机配置）
+- `client2api-setup-0.7.39.exe`（空包，不含账号凭据或本机配置；tag 重打一次：CI 上 loomy invite 的赛跑 flake 以 #195 同款性质断言修掉）
   SHA256: `c94edde1e9ed4b14157a75c16d6982882010c686d1be60b563557defa1769caf`
 
 ## [0.7.38] - 2026-11-05
