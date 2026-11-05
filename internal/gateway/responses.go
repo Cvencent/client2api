@@ -394,6 +394,17 @@ func resolveResponsesConversationID(w *responsesRequest) string {
 //     can decrypt. Its human-readable summary is kept (it is genuinely useful
 //     context) and the ciphertext is dropped.
 func toCoreRequestFromResponses(w *responsesRequest, verify *compactionSigner) (*core.ChatRequest, error) {
+	// 同 openai.go 的形状校验（issue #215）：max_output_tokens ≤ 0 与
+	// temperature/top_p 越界在解码层拒绝，而不是透传后折成 upstream_error。
+	if w.MaxOutputTokens != nil && *w.MaxOutputTokens <= 0 {
+		return nil, fmt.Errorf("max_output_tokens=%d is not a valid output budget: pass a positive number or drop the field", *w.MaxOutputTokens)
+	}
+	if w.Temperature != nil && (*w.Temperature < 0 || *w.Temperature > 2) {
+		return nil, fmt.Errorf("temperature=%v is outside the supported range 0..2", *w.Temperature)
+	}
+	if w.TopP != nil && (*w.TopP < 0 || *w.TopP > 1) {
+		return nil, fmt.Errorf("top_p=%v is outside the supported range 0..1", *w.TopP)
+	}
 	req := &core.ChatRequest{
 		Model:          w.Model,
 		ToolChoice:     w.ToolChoice,

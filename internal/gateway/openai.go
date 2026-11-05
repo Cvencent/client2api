@@ -328,6 +328,20 @@ func toCoreRequest(w *chatRequest, raw []byte) (*core.ChatRequest, error) {
 	if w.N > 1 {
 		return nil, fmt.Errorf("n=%d is not supported: this gateway serves one choice per request; drop the field or split the call", w.N)
 	}
+	// 调用方自己的形状错误在这里拒绝（issue #215）：max_tokens ≤ 0 曾静默走完
+	// 「显式指定」分支却不写进上游请求——网关既不听调用方的也不替它定，裁剪
+	// 预算按 0 算而上游按自己的默认出字，两边对「答案能有多长」各答一套。
+	// temperature/top_p 越界曾原样透传，厂商的 400 被折成 upstream_error，
+	// 运维去看平台而真正的错在请求里。
+	if w.MaxTokens != nil && *w.MaxTokens <= 0 {
+		return nil, fmt.Errorf("max_tokens=%d is not a valid output budget: pass a positive number or drop the field", *w.MaxTokens)
+	}
+	if w.Temperature != nil && (*w.Temperature < 0 || *w.Temperature > 2) {
+		return nil, fmt.Errorf("temperature=%v is outside the supported range 0..2", *w.Temperature)
+	}
+	if w.TopP != nil && (*w.TopP < 0 || *w.TopP > 1) {
+		return nil, fmt.Errorf("top_p=%v is outside the supported range 0..1", *w.TopP)
+	}
 	req := &core.ChatRequest{
 		Model:          w.Model,
 		ToolChoice:     w.ToolChoice,
