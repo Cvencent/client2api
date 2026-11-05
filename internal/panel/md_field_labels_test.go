@@ -14,8 +14,15 @@ func TestModelDetailInputsCarryNames(t *testing.T) {
 	src := poolStatsUISource(t)
 
 	// 名字表与 CSS ::before 同源定义（一处定义两处复用）。
+	// 且必须在脚本区（issue #216）：曾整块被写进 <style>，CSS 解析器吞掉后
+	// JS 无绑定，模型页整页 ReferenceError。
 	if !strings.Contains(src, "const MD_FIELD_LABELS = {") {
 		t.Fatal("MD_FIELD_LABELS 不见了：aria-label 与视觉标签会各自漂移（issue #213）")
+	}
+	styleEnd := strings.Index(src, "</style>")
+	declAt := strings.Index(src, "const MD_FIELD_LABELS = {")
+	if styleEnd < 0 || declAt < styleEnd {
+		t.Fatalf("MD_FIELD_LABELS 不在脚本区（</style> @%d, decl @%d）：会被 CSS 解析器吞掉（issue #216）", styleEnd, declAt)
 	}
 	// 五个生成函数的 output 都带 aria-label。
 	for _, fn := range []string{"mdNumCell", "mdPriceCell", "mdDefaultEffortCell", "mdEffortsCell"} {

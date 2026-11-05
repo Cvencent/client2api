@@ -6,6 +6,26 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.44] - 2026-11-06
+
+### Fixed
+
+- **模型与档位页重新可用（#216，P1——0.7.42 引入的回归）**：#213 的修复把
+  `const MD_FIELD_LABELS = {…}` 写进了 `<style>` 元素——CSS 解析器把它当
+  无效规则丢掉，JS 里没有这个绑定，`renderModels` 拼第一行就抛
+  `ReferenceError`：模型页整页停在「正在读取模型目录…」，且全局红条
+  （`position:fixed`）常驻压住配置页的「保存配置」按钮。修法：声明挪回
+  脚本区（`mdNumCell` 之前），`<style>` 恢复纯 CSS（::before 视觉标签
+  保留）；守护测试从「文本里有」升级为**位置断言**——`const
+  MD_FIELD_LABELS` 必须出现在 `</style>` 之后（issue 给的最小改法）；
+  issue 方向 2（panelsmoke 逐视图 `go()` + `#c2aBootError` 断言）列为后续
+  增强。
+
+### Installer
+
+- `client2api-setup-0.7.44.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `fea6d6b3fb35bc137438dc260e73d9a1b59fbebfa550a16be9b80bef57cee805`
+
 ## [0.7.43] - 2026-11-05
 
 ### Fixed

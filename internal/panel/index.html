@@ -6012,15 +6012,9 @@ html:not([data-theme="light"]) body::after {
 .mddgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(186px, 1fr)); gap: 14px 18px; }
 /* 字段标签：每个单元格按 data-field 显示自己的名字。放在 CSS 里而不是 HTML 里，
    是因为这些单元格由原有构造函数生成，加标签不该动它们的结构。
-   同一张表同时是 JS 侧的名字来源（issue #213）：::before 只画视觉，
-   读屏拿不到——每个 input 的 aria-label 从 MD_FIELD_LABELS 取，一处定义
-   两处复用。价格三格的名字各自可区分，不再共用同一句长提示。 */
-const MD_FIELD_LABELS = {
-  rate: "计费倍率", default_effort: "默认档", efforts: "思考档位",
-  elevate_top: "封顶对齐", context: "上下文窗口", output: "最大输出",
-  "price-input": "输入价 ¥/M", "price-output": "输出价 ¥/M", "price-cache": "缓存读取价 ¥/M",
-  owned_by: "所属",
-};
+   读屏的名字来自各 input 的 aria-label（脚本区的 MD_FIELD_LABELS，
+   issue #213）；这条注释曾把那张 JS 表错写进 <style>，CSS 解析器把它
+   当无效规则丢掉，模型页整页挂掉（issue #216）。 */
 .mddgrid td[data-field]::before {
   display: block; margin-bottom: 4px;
   font-size: 0.65625rem; letter-spacing: .04em; color: var(--ink-3);
@@ -16858,6 +16852,15 @@ function mdProbeHint(pr) {
   }
   return '<div class="hint" title="' + esc(tip) + '">' + esc(label + stale) + "</div>";
 }
+// 字段名字表（issue #213/#216）：::before 的视觉文案与 input 的 aria-label
+// 同源。必须在脚本区——#213 的修复曾把它写进 <style> 元素，CSS 解析器吞掉
+// 后 JS 里无绑定，模型页整页 ReferenceError（issue #216）。
+const MD_FIELD_LABELS = {
+  rate: "计费倍率", default_effort: "默认档", efforts: "思考档位",
+  elevate_top: "封顶对齐", context: "上下文窗口", output: "最大输出",
+  "price-input": "输入价 ¥/M", "price-output": "输出价 ¥/M", "price-cache": "缓存读取价 ¥/M",
+  owned_by: "所属",
+};
 function mdNumCell(field, value, source, def, probe) {
   const v = value > 0 ? String(value) : "";
   const d = def > 0 ? String(def) : "";
