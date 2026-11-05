@@ -24,8 +24,11 @@ on:
       - ".github/workflows/go-binaries.yml"
   workflow_dispatch:
 
+# 按 SHA 分组（issue #211）：发版时 main 与 tag 同推一个 commit——按 ref 分组
+# 会让两个 ref 落进两个组、整条流水线并行跑两遍（runner 时 ×2，且同一 SHA
+# 两个结论）。按 SHA 同组后串行，PR 的取消语义不变。
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -234,6 +237,8 @@ jobs:
           retention-days: 7
 
   # 仅 tag 触发：校验 tag == 源码版本（-ci 演练 tag 豁免）→ 汇总资产 → 建 Release
+  # 显式名（issue #211）：main 那份运行里本 job 是「本来就不发布」的跳过，
+  # 名字写明比静默 skipped 更容易被读对。
   publish:
     needs: build
     if: startsWith(github.ref, 'refs/tags/v')

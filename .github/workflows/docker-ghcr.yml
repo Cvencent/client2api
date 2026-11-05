@@ -21,10 +21,11 @@ on:
       - ".github/workflows/docker-ghcr.yml"
   workflow_dispatch:
 
-# 并发组：PR 取消过时构建；main/tag 按引用串行——发版时 main+tag 同推不再双跑
-# 同一份代码的多架构构建（QEMU arm64 一次不便宜）。
+# 并发组：PR 取消过时构建；同一次 push 按 SHA 分组（issue #211）——发版时
+# main 与 tag 是两个不同的 ref，按 ref 分组曾让两个组并行、整条流水线跑两遍
+# （与注释原写的「不再双跑」相反）。同组串行，PR 的取消语义不变。
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:

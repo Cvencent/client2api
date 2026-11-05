@@ -6,6 +6,26 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.43] - 2026-11-05
+
+### Fixed
+
+- **发版流水线不再对同一 commit 跑两遍（#211）**：两个 workflow 的
+  `push` 同时监听 main 与 `v*` tag，而 `concurrency.group` 按 ref 分组——
+  main（`refs/heads/main`）与 tag（`refs/tags/vX.Y.Z`）落进**两个不同的组**，
+  发版的两次 push 触发两条独立运行并行跑完（每发版多 ~19 runner-分钟，
+  98 个 tag 计约 31 runner-小时），且同一 SHA 的两条运行结论可以相反
+  （loomy flake 那次 main 红 tag 绿），「这次发版过没过」变成两个答案。
+  `docker-ghcr.yml:24` 注释还写着「不再双跑」——承诺的正是它没做到的事。
+  现在 `concurrency.group` 按 **SHA** 分组：同一 commit 的两条运行落入同组
+  串行，PR 的取消语义不变；publish job 加注释写明 main 侧是「本来就不发布」
+  的跳过；失真注释改写为与新分组一致。
+
+### Installer
+
+- `client2api-setup-0.7.43.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `bdc316d4ff3acb38e3531015ce4afa00929bbdc0f0c9b89c1e4314d66ed642af`
+
 ## [0.7.42] - 2026-11-05
 
 ### Fixed
