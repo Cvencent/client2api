@@ -10394,6 +10394,9 @@ async function renderOverview() {
     // 进程级闸的全局状态条（issue #98）：WAF IP 闸开着 = 所有平台一起失败、
   // 轮转被主动暂停；降级窗口开着 = 受闸模块的系统提示词已被换成中性版。
   // 没有这一条，操作员把整站故障归因到账号或模型。
+  // bits 在函数第一行声明（issue #207）：#98 的两条 guard pills 曾插在
+  // 声明之前，闸一开整页每 5 秒抛 ReferenceError、全部 DOM 写入停摆。
+  const bits = [];
   const guardInfo = OVER && OVER.guard;
   if (guardInfo && guardInfo.waf_active) {
     const until = guardInfo.waf_until ? new Date(guardInfo.waf_until).toLocaleTimeString() : "";
@@ -10445,7 +10448,6 @@ async function renderOverview() {
   // 待处理清单：有异常就先报异常，其次报空池；都干净时才说干净。
   const attn = $("#ovAttn");
   const badTotal = cls.risk + cls.fault + cls.disabled;
-  const bits = [];
   if (badTotal) bits.push('<span class="ov-pill bad">' + badTotal + ' 个账号不可用</span>');
   if (cls.cooling) bits.push('<span class="ov-pill warn">' + cls.cooling + ' 个冷却中</span>');
   const alertN = ($("#alertBadge").hidden ? 0 : Number($("#alertBadge").textContent || 0));
@@ -25509,15 +25511,21 @@ async function refreshAll(loud) {
   scheduleScrollableCheck();
   refreshAlertBadge().catch(() => {});
   // 总览读的是 ACCTS / SNAP，必须在账号加载完之后再画一次；否则首屏会显示 0。
-  renderOverview();
-  if (VIEW === "chat" && !CHAT.busy) renderChat(true);
-  if (VIEW === "usage") renderUsage();
-  if (VIEW === "alerts") renderAlerts();
-  if (VIEW === "credits") renderCredits();
-  if (VIEW === "packages") renderClients();
-  if (VIEW === "models") renderModels(false);
-  if (VIEW === "config") renderConfig();
-  if (VIEW === "logs") renderLogs();
+  // 每个渲染各自兜底（issue #207）：一格算错只少那一格，不再把同拍后面的
+  // 全部渲染连同「红条一次即止」一起拖垮——曾因 renderOverview 抛
+  // ReferenceError，整页冻结且红条每 5 秒重弹。
+  const safeRender = (name, fn) => {
+    try { fn(); } catch (e) { panelBootError(name + ": " + (e && e.message || e)); }
+  };
+  safeRender("renderOverview", renderOverview);
+  if (VIEW === "chat" && !CHAT.busy) safeRender("renderChat", () => renderChat(true));
+  if (VIEW === "usage") safeRender("renderUsage", renderUsage);
+  if (VIEW === "alerts") safeRender("renderAlerts", renderAlerts);
+  if (VIEW === "credits") safeRender("renderCredits", renderCredits);
+  if (VIEW === "packages") safeRender("renderClients", renderClients);
+  if (VIEW === "models") safeRender("renderModels", () => renderModels(false));
+  if (VIEW === "config") safeRender("renderConfig", renderConfig);
+  if (VIEW === "logs") safeRender("renderLogs", renderLogs);
   // 数据到位后把当前页的 masthead 读数重算一遍（它读的就是上面这些）。
   mountMasthead(VIEW);
   // 3D 舞台走签名判断（issue #65）。这里原来是无条件 mountBoard3d(VIEW)：每 5 秒

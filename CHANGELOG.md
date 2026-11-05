@@ -6,6 +6,25 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.38] - 2026-11-05
+
+### Fixed
+
+- **WAF 闸/降级窗口打开时总览页不再整页冻结（#207）**：#98 的两条 guard
+  pills 曾插在 `const bits = []` 声明之前——闸一开 `renderOverview` 每拍抛
+  `ReferenceError: Cannot access 'bits' before initialization`，#ovRingPct /
+  #ovAttn / #ovKpis / #ovJump 全部停在打开闸之前那一帧，红条每 5 秒重弹；
+  降级窗口到当天 24:00，意味着最长十几个小时整页不动。两层修法：①`bits`
+  声明提升到函数第一行（guard pills 恢复可达，#98 要的解释横幅画得出来）；
+  ②`refreshAll` 的每个渲染调用过 `safeRender`——一格算错只少那一格，不再
+  把同拍后面的渲染与「红条一次即止」一起拖垮。守护测试：TDZ 顺序（bits
+  首次使用必须在声明之后）、safeRender 兜底、WAF 横幅文案在。
+
+### Installer
+
+- `client2api-setup-0.7.38.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `4b4ea334740a35a07935cb85c2a0ddf8d740feaf80151a74293584801a9947fa`
+
 ## [0.7.37] - 2026-11-05
 
 ### Fixed
