@@ -42,20 +42,26 @@ const (
 	// hammering a closed window, short enough that expiry is probed the same
 	// day.
 	wafBackoffMax = 4 * time.Hour
-	// wafBackoffWindow bounds "consecutive": judgements further apart than
-	// this do not accumulate into a streak (an isolated 3012 days ago says
-	// nothing about now).
-	wafBackoffWindow = 10 * time.Minute
+	// wafStreakFresh bounds how long a streak stays alive WITHOUT a success
+	// (issue #201).  The real retry cadence is traffic-driven -- measured
+	// gaps between WAF hits ran 20-35 minutes, so the original 10-minute
+	// "consecutive" window reset the streak on every hit and the breaker
+	// never reached its threshold on the one cadence it exists for.  The
+	// streak now means "consecutive failures since the last real 200", alive
+	// for a day: an isolated 3012 the day after a success is still a fresh
+	// story, but a run of failures across an afternoon accumulates.
+	wafStreakFresh = 24 * time.Hour
 )
 
 // wafBackoff is one account's consecutive-WAF-judgement counter with
 // exponential cooldown.  One instance per account -- the resource it protects
 // is the account's standing with the vendor's risk model.
 type wafBackoff struct {
-	mu     sync.Mutex
-	streak int
-	last   time.Time
-	until  time.Time
+	mu          sync.Mutex
+	streak      int
+	last        time.Time
+	lastSuccess time.Time
+	until       time.Time
 }
 
 func newWAFBackoff() *wafBackoff { return &wafBackoff{} }
@@ -91,6 +97,7 @@ func (b *wafBackoff) noteSuccess(now time.Time) {
 	b.mu.Lock()
 	b.streak = 0
 	b.last = time.Time{}
+	b.lastSuccess = now
 	b.until = time.Time{}
 	b.mu.Unlock()
 }
@@ -114,14 +121,17 @@ func (b *wafBackoff) noteWAF(now time.Time) time.Duration {
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	continuedProbe := false
 	if !b.until.IsZero() && now.After(b.until) {
 		// The deadline lapsed: this is the probe.  Keep the streak, clear the
 		// deadline so remaining() reads 0 from here on.
 		b.until = time.Time{}
-		continuedProbe = true
 	}
-	if !continuedProbe && !b.last.IsZero() && now.Sub(b.last) > wafBackoffWindow {
+	// The streak survives gaps between judgements (issue #201): the cadence
+	// is traffic-driven and measured gaps ran 20-35 minutes against a
+	// 10-minute window, so "consecutive" can not mean "inside a short
+	// window".  It only resets through a real 200, or by going stale --
+	// a failure a day after the last success starts a fresh story.
+	if !b.lastSuccess.IsZero() && now.Sub(b.lastSuccess) > wafStreakFresh {
 		b.streak = 0
 	}
 	b.last = now

@@ -41,15 +41,36 @@ func TestWAFBackoffEscalatesOnConsecutiveJudgements(t *testing.T) {
 	}
 }
 
-func TestWAFBackoffStreakResetsAfterTheWindow(t *testing.T) {
+// issue #201：真实重试节奏是流量驱动的（实测 20-35 分钟），「10 分钟内的连击」
+// 在这条 cadence 上永远凑不齐。streak 现在跨间隔累积，只被真 200 清零。
+func TestWAFBackoffAccumulatesAcrossRealRetryGaps(t *testing.T) {
 	b := newWAFBackoff()
 	now := time.Now()
-	b.noteWAF(now)
-	b.noteWAF(now.Add(5 * time.Minute))
-	// 第三个判决离上一个超过 10 分钟窗口：孤立的 3012 不累积。
-	got := b.noteWAF(now.Add(20 * time.Minute))
+	// 按部署实测节奏：07:50 / 08:10 / 08:45（间隔 20-35 分钟）。
+	if got := b.noteWAF(now); got != 0 {
+		t.Fatalf("hit 1 cooldown = %s, want 0", got)
+	}
+	if got := b.noteWAF(now.Add(20 * time.Minute)); got != 0 {
+		t.Fatalf("hit 2 cooldown = %s, want 0", got)
+	}
+	got := b.noteWAF(now.Add(55 * time.Minute))
+	if got != wafBackoffBase {
+		t.Fatalf("hit 3 cooldown = %s, want the base %s（真实 cadence 上的三连击必须触发熔断，issue #201）", got, wafBackoffBase)
+	}
+}
+
+// 时效边界：最近一次成功距今超过 24h 后，失败的 streak 从零开始——
+// 隔天的孤立 3012 依旧不该累计。
+func TestWAFBackoffStreakGoesStale(t *testing.T) {
+	b := newWAFBackoff()
+	now := time.Now()
+	b.noteSuccess(now)
+	b.noteWAF(now.Add(time.Hour))
+	b.noteWAF(now.Add(2 * time.Hour))
+	// 距成功 25h：stale。
+	got := b.noteWAF(now.Add(25 * time.Hour))
 	if got != 0 {
-		t.Fatalf("a judgement %s after the previous one kept the streak: cooldown = %s, want 0（孤立判决不进 streak，issue #198）", 20*time.Minute, got)
+		t.Fatalf("a failure %s after the last success kept the streak: cooldown = %s, want 0（隔天的孤立 3012 不累计，issue #201）", 25*time.Hour, got)
 	}
 }
 
