@@ -1909,7 +1909,11 @@ html { font-size: 100%; scrollbar-gutter: stable; }
    之后，百分比再怎么分都放不下「成功 / 失败 ↕」，溢出的部分会被 sticky 的邻列
    表头盖住（issue #87，实测 1280px 下 79px vs 需要 99px）。与其让它无声裁剪，
    不如给表一个下限——低于它由 .tbl-wrap 横滚（用量页的磁贴带就是这么做）。 */
-#view-accounts table.acc { min-width: 1290px; }
+/* min-width 用 em（issue #204）：字号放大到 200% 时列宽必须跟着长——
+   百分比列宽 + px 下限都是绝对长度，字号翻倍后「在途」格的墨迹直接画到
+   「用量」列上。旧值 1290px ≈ 80.6em；低于下限由 .tbl-wrap 横滚兜底。
+   全表只此一处声明（另两条 1180px/1040px 已并入）。 */
+#view-accounts table.acc { min-width: 80.6em; }
 #view-accounts table.acc .col-mark { width: 1%; }
 #view-accounts table.acc .col-account { width: 10%; }
 #view-accounts table.acc .col-state { width: 4.5%; }
@@ -2988,7 +2992,7 @@ details.cfg summary:hover, details.adv summary:hover { color: var(--accent-text)
 #view-accounts table.acc tbody tr.acc-grp td:nth-child(2) { background: color-mix(in srgb, var(--surface-2) 92%, transparent); }
 /* 13 列在窄窗口里会被压到不可读；到 1200px 以下让表格保持可读宽度，
    横向滚动留在 .tbl-wrap 内部（粘性首列此时正好派上用场）。 */
-@media (max-width: 1200px) { #view-accounts table.acc { min-width: 1040px; } }
+@media (max-width: 1200px) { #view-accounts table.acc { min-width: 65em; } }
 
 /* -- 7. Empty states & hints ---------------------------------------------
    One muted treatment everywhere a list can come back empty. */
@@ -4657,7 +4661,14 @@ input, select, textarea, .stat, .subtab {
   overflow: hidden; line-height: 1.4; overflow-wrap: anywhere;
 }
 /* 成功/失败列的两个数字用同一条基线，斜杠变淡 */
-#view-accounts table.acc td.num { font-variant-numeric: tabular-nums; }
+#view-accounts table.acc td.num {
+  font-variant-numeric: tabular-nums;
+  /* 裁剪兜底（issue #204）：字号 200% 时「在途」格的墨迹曾直接画到「用量」
+     列上（td 默认 overflow:visible + nowrap）。横滚 + em 下限是正解，这条
+     只是最后一道防线——越界内容被裁在本列内，配 title 全文不丢读数。 */
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 /* -- 9. 平台配置 / 任务中心：把长说明收进可展开的帮助 ------------------- */
 .pfgHelp, .cfghelp { max-width: 74ch; }
@@ -5428,7 +5439,6 @@ input, select, textarea, .stat, .subtab {
 /* 账号表有 11 列，压到 100% 宽时每列只剩两个字的位置，「账/测/停」被逐字
    折断、状态说明变成竖排。给它一个能读下所有列的最小宽度，由 .tbl-wrap
    横向滚动——列宽百分比和 100% 合计的约定不变，只是不再无限压缩。 */
-#view-accounts table.acc { min-width: 1180px; }
 .acc td, .acc th { word-break: normal; }
 
 /* -- 33. 折叠面板与操作菜单（权威层）-------------------------------------
@@ -8514,7 +8524,10 @@ function inflightCell(n, a) {
   // limit 的取值序：账号自己的覆盖 > 平台 client 级一份 > 没报 = ∞（issue #192）。
   const c = poolClient(n);
   const lim = x.in_flight_limit != null ? x.in_flight_limit : (c && c.in_flight_limit);
-  return esc(String(x.in_flight) + " / " + ((lim == null || lim === 0) ? "∞" : lim));
+  const text = String(x.in_flight) + " / " + ((lim == null || lim === 0) ? "∞" : lim);
+  // title 带全文（issue #204）：字号 200% 下这一格可能被裁剪，截断不能回到
+  // 「看不到全文」（#45 的先例）。
+  return '<span title="' + esc(text) + '">' + esc(text) + '</span>';
 }
 
 // 原版措辞：只有 upstash 那面镜子才叫 "Redis 镜像"，其余（本 build 只有 noop）都是本地内存。

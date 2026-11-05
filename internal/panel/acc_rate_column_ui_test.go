@@ -30,8 +30,9 @@ func TestRateColumnFitsItsHeader(t *testing.T) {
 	if rate <= prio {
 		t.Errorf("col-rate (%v%%) 不大于 col-prio (%v%%)：装 5 个汉字加箭头的列比 3 个汉字的列还窄（issue #87）", rate, prio)
 	}
-	if !strings.Contains(src, "#view-accounts table.acc { min-width: 1290px; }") {
-		t.Fatal("窄窗没有让账号表横滚：百分比放不下 nowrap 中文表头时会被无声裁掉（issue #87/#97）")
+	// 下限已换 em（issue #204）：字号放大时列宽跟着长，横滚兜底语义不变。
+	if !strings.Contains(src, "#view-accounts table.acc { min-width: 80.6em; }") {
+		t.Fatal("窄窗没有让账号表横滚：百分比放不下 nowrap 中文表头时会被无声裁掉（issue #87/#97/#204）")
 	}
 	// 可排序列头的收拢兜底：列宽吃紧时标签收缩而不是溢出到邻列。
 	if !strings.Contains(src, ".acc thead th.sortable { max-width: 100%; overflow: hidden; }") {
