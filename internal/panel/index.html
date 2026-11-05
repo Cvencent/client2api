@@ -24546,6 +24546,10 @@ window.addEventListener("keydown", ev => {
 const CHAT = {
   models: [], key: "", msgs: [], busy: false, ctrl: null,
   threads: [], current: null, editing: "", sideHidden: false,
+  // loadedFor 记录「当前 msgs 是哪一次成功读取建立的」（issue #202/#203）：
+  // 读失败不赋空数组，写路径用它与 CHAT.current 对账——不一致就先重读，
+  // 重读再失败就拒绝发送，宁可让操作员点一次刷新也不整段覆盖历史。
+  loadedFor: null,
   // msgsCache holds the transcript of each thread we have opened.  The list
   // endpoint returns summaries only (issue #127), so this is what lets the
   // sidebar search see message bodies of threads already visited, and what
@@ -24876,12 +24880,30 @@ async function chatLoadThreads(keepCurrent) {
   // the per-thread endpoint (issue #127).
   const full = cur ? await chatFetchThread(cur.id) : null;
   if (cur && CHAT.current !== cur.id) return true;  // selection moved while we waited
+  if (cur && !full) {
+    // 读失败不是空会话（issue #202）：保留内存态、聊天区画错误态。曾把
+    // CHAT.msgs 赋成空数组，与「这条会话真的没有消息」同形——下一句发出
+    // 去的 PATCH 只带那一轮，整段历史被覆盖。
+    CHAT.loadedFor = null;
+    chatDrawThreads();
+    chatDrawError("读取会话记录失败：为保护历史，这条会话暂不可发送；刷新后重试。");
+    chatSyncHead();
+    return true;
+  }
   CHAT.msgs = full ? (full.messages || []) : [];
+  CHAT.loadedFor = cur ? cur.id : null;
   CHAT.key = (cur && cur.key) || "";
   chatDrawThreads();
   chatDraw();
   chatSyncHead();
   return true;
+}
+
+// chatDrawError 把聊天区画成明确的失败态（用量页/平台页同款 state err），
+// 而不是「还没有对话」——失败与空必须不同形（issue #202）。
+function chatDrawError(message) {
+  const log = $("#chatLog");
+  if (log) log.innerHTML = '<div class="state err">' + esc(message) + "</div>";
 }
 
 function chatSyncHead() {
@@ -24932,7 +24954,10 @@ async function chatFetchThread(id) {
 async function chatOpenThread(id) {
   if (CHAT.busy) { toast("正在生成回复，先停止再切换对话", "err"); return; }
   if (CHAT.current === id) return;
-  CHAT.current = id;
+  // 指针最后提交（issue #203）：读取失败时什么都别改——界面自然停在原会话，
+  // chatSend 也就不会打错目标。曾把 CHAT.current = id 放在读正文之前，失败
+  // 只弹一句 toast，屏幕三处（标题/消息/高亮）都还是上一条，而下一条消息
+  // 会写进用户没在看的那个会话。
   const t = CHAT.threads.find(x => x.id === id);
   // The list carries summaries, so the transcript comes from the per-thread
   // endpoint (issue #127) -- unless we already have it, in which case switching
@@ -24941,11 +24966,13 @@ async function chatOpenThread(id) {
   const full = CHAT.msgsCache[id]
     ? { messages: CHAT.msgsCache[id], key: (t && t.key) || "" }
     : await chatFetchThread(id);
-  if (id !== CHAT.current) return;   // the user switched again while we waited
   if (!full) {
+    // 失败分支不改 CHAT.current、不重画：界面停留在原会话，toast 说明失败。
     toast("读取这段对话失败", "err");
     return;
   }
+  CHAT.current = id;
+  CHAT.loadedFor = id;
   CHAT.msgs = full.messages || [];
   CHAT.key = (full && full.key) || "";
   if (t && t.model) {
@@ -25210,6 +25237,21 @@ async function chatSend() {
   const turnAccount = $("#chatAccount").value || "";
   if (!(await chatEnsureThread())) return;
   const threadID = CHAT.current;
+  // 写路径的门（issue #202/#203）：只有当前 msgs 确实由一次成功的正文读取
+  // 建立时才允许整段回传落盘。不一致（冷读失败/指针与内容分叉）先重读一次；
+  // 重读再失败就拒绝发送——宁可让操作员点一次刷新，也不整段覆盖历史或把
+  // 消息写进屏幕上没在看的会话。
+  if (CHAT.loadedFor !== threadID) {
+    const fresh = await chatFetchThread(threadID);
+    if (!fresh) {
+      toast("这条会话的记录没读到，已停止发送；先刷新再试", "err");
+      return;
+    }
+    CHAT.msgs = fresh.messages || [];
+    CHAT.loadedFor = threadID;
+    CHAT.key = fresh.key || "";
+    chatDraw();
+  }
   if (!(await chatBind())) return;
 
   const sys = ($("#chatSys").value || "").trim(), stream = $("#chatStream").checked;
