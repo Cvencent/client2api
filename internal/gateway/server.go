@@ -1888,6 +1888,22 @@ func (s *server) guardStreamContextRefusal(ctx context.Context, client core.Clie
 	return promoted
 }
 
+// upstreamTerminalFor picks the terminal label for a stream that ended with a
+// module-reported error.  A module-level chat_timeout is a LOCAL verdict: the
+// vendor's stream was healthy right up until we cut it, and filing it as an
+// upstream break sent operators hunting for an outage that never happened
+// (issue #225).  The caller's own request context dying is the caller leaving
+// and keeps its existing identity; everything else stays an upstream error.
+func upstreamTerminalFor(err error, r *http.Request) string {
+	if err != nil && errors.Is(err, context.DeadlineExceeded) && r.Context().Err() == nil {
+		return "module_timeout"
+	}
+	if err != nil && errors.Is(err, context.Canceled) {
+		return "caller_canceled"
+	}
+	return "upstream_error_event"
+}
+
 func upstreamErrorShape(err error) (int, string, core.FailureKind) {
 	status := http.StatusBadGateway
 	typ := "upstream_error"
@@ -2300,9 +2316,27 @@ func (s *server) streamSSE(w http.ResponseWriter, r *http.Request, client core.C
 				return
 			}
 		case core.EventError:
-			terminal = "upstream_error_event"
+			terminal = upstreamTerminalFor(ev.Err, r)
 			if ev.Err != nil && errors.Is(ev.Err, io.ErrUnexpectedEOF) {
 				terminal = "upstream_unexpected_eof"
+			}
+			// A module-level chat_timeout is a local verdict, not a vendor
+			// break (issue #225): answer 504 with a name and stop, instead of
+			// filing the row as an upstream break the operator then hunts for.
+			if ev.Err != nil && errors.Is(ev.Err, context.DeadlineExceeded) && r.Context().Err() == nil {
+				terminal = "module_timeout"
+				stat.status = http.StatusGatewayTimeout
+				s.fail(rec, ev.Err)
+				msg := fmt.Sprintf("[%s] %s", clientName, failureReason(ev.Err))
+				b, _ := json.Marshal(apiErrorEnvelope{Error: apiError{
+					Message:     msg,
+					Type:        "upstream_error",
+					Code:        "module_timeout",
+					GatewayHint: s.gatewayHint(client, "", msg, hintCtx()),
+				}})
+				fmt.Fprintf(w, "data: %s\n\n", b)
+				flusher.Flush()
+				return
 			}
 			streamFailed = true
 			stat.status = http.StatusBadGateway

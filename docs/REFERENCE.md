@@ -163,7 +163,7 @@ HTTP 429 endpoint outages, are classified as upstream failures.
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-Current version: **0.7.50**. Full history: [CHANGELOG.md](../CHANGELOG.md).
+Current version: **0.7.51**. Full history: [CHANGELOG.md](../CHANGELOG.md).
 
 ### Request-count limits
 

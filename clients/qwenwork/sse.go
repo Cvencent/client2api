@@ -488,6 +488,14 @@ func (s *qwenStream) Close() error {
 // emit delivers one event unless the stream has been cancelled or the consumer
 // has gone away.
 func (s *qwenStream) emit(ev core.Event) bool {
+	// Non-blocking send FIRST: once the context is dead, Go would otherwise
+	// choose between the two ready cases at random, and the deadline identity
+	// this stream is about to report (issue #225) would be a coin flip.
+	select {
+	case s.ch <- ev:
+		return true
+	default:
+	}
 	select {
 	case s.ch <- ev:
 		return true
@@ -568,6 +576,14 @@ func (s *qwenStream) run() {
 
 	switch {
 	case s.ctx.Err() != nil:
+		// Same split as qoder (issue #225): a self-inflicted chat_timeout is
+		// the module's verdict and must keep its identity -- silence made the
+		// gateway read a bare EOF and file it as "unexpected_eof".  A caller
+		// cancel stays silent.
+		if errors.Is(s.ctx.Err(), context.DeadlineExceeded) {
+			s.emit(core.Event{Type: core.EventError, Err: s.ctx.Err()})
+			return
+		}
 		return
 	case fatalErr != nil:
 		s.emit(core.Event{Type: core.EventError, Err: fatalErr})

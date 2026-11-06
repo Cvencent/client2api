@@ -95,6 +95,7 @@ const (
 // not registered at all) renders with an empty form and only the "其它键" box.
 var moduleOptions = map[string][]moduleOption{
 	"autoclaw": {
+		{Key: "chat_timeout", Label: "对话超时", Kind: optText, Help: "一次对话请求的硬上限（含排队与整条流）。默认 10m；慢推理模型的长回答常跑 4~5 分钟，嫌砍得太早可以调到 15m。支持 Go duration 写法（90s、10m），留空用内置默认。"},
 		{Key: "auto_discover", Label: "自动发现本机凭据", Kind: optBool, Help: autoDiscoverHelp},
 		{Key: "credential_paths", Label: "凭据文件路径", Kind: optList, Help: "额外扫描的账号 JSON 路径，多个用逗号分隔。"},
 		{Key: "base_url", Label: "接口地址", Kind: optText, Help: "上游 API 根地址。留空用模块内置的官方地址。"},
@@ -113,6 +114,7 @@ var moduleOptions = map[string][]moduleOption{
 		{Key: "tls_protocol", Label: "HTTP 版本", Kind: optChoice, Help: tlsProtocolHelp, Choices: tlsProtocolChoices},
 	},
 	"cline": {
+		{Key: "chat_timeout", Label: "对话超时", Kind: optText, Help: "一次对话请求的硬上限（含排队与整条流）。默认 10m；慢推理模型的长回答常跑 4~5 分钟，嫌砍得太早可以调到 15m。支持 Go duration 写法（90s、10m），留空用内置默认。"},
 		{Key: "free_only", Label: "只用免费模型", Kind: optBool, Help: freeOnlyHelp},
 		{Key: "reasoning_effort", Label: "思考档位默认值", Kind: optText, Help: "请求没带思考档位时用哪个，例如 low / medium / high。留空用模块内置值。"},
 		{Key: "max_concurrency", Label: "单账号并发上限", Kind: optNumber, Help: "同一账号同时进行的请求数；留空用模块内置值。"},
@@ -120,6 +122,7 @@ var moduleOptions = map[string][]moduleOption{
 		{Key: "tls_protocol", Label: "HTTP 版本", Kind: optChoice, Help: tlsProtocolHelp, Choices: tlsProtocolChoices},
 	},
 	"codearts": {
+		{Key: "chat_timeout", Label: "对话超时", Kind: optText, Help: "一次对话请求的硬上限（含排队与整条流）。默认 30m（对齐厂商的排队窗）。支持 Go duration 写法（90s、10m），留空用内置默认。"},
 		{Key: "models", Label: "模型清单", Kind: optList, Help: "覆盖模块自带的模型列表，多个用逗号分隔。"},
 		{Key: "reasoning_effort", Label: "思考档位默认值", Kind: optText, Help: "例如 low / medium / high。留空用模块内置值。"},
 		{Key: "max_tokens", Label: "默认最大输出 tokens", Kind: optNumber, Help: "请求没写 max_tokens 时用它。留空用模块内置值。"},
@@ -140,6 +143,7 @@ var moduleOptions = map[string][]moduleOption{
 		{Key: "user_agent", Label: "User-Agent", Kind: optText, Help: "出站请求的 UA。留空用模块内置值。"},
 	},
 	"gemini": {
+		{Key: "chat_timeout", Label: "对话超时", Kind: optText, Help: "一次对话请求的硬上限（含排队与整条流）。默认 10m；慢推理模型的长回答常跑 4~5 分钟，嫌砍得太早可以调到 15m。支持 Go duration 写法（90s、10m），留空用内置默认。"},
 		{Key: "client_id", Label: "Google OAuth Client ID", Kind: optText, Help: "只在自建 OAuth 客户端时填写；留空用模块内置的 Cloud Code 客户端。"},
 		{Key: "client_secret", Label: "Google OAuth Client Secret", Kind: optText, Help: "与 Client ID 配套；留空用模块内置值。"},
 		{Key: "project", Label: "Cloud Code 项目 ID", Kind: optText, Help: "留空时先探测账号绑定的项目，再退回默认项目。"},
@@ -173,6 +177,7 @@ var moduleOptions = map[string][]moduleOption{
 		{Key: "tls_protocol", Label: "HTTP 版本", Kind: optChoice, Help: tlsProtocolHelp, Choices: tlsProtocolChoices},
 	},
 	"lobsterai": {
+		{Key: "chat_timeout", Label: "对话超时", Kind: optText, Help: "一次对话请求的硬上限（含排队与整条流）。默认 10m；慢推理模型的长回答常跑 4~5 分钟，嫌砍得太早可以调到 15m。支持 Go duration 写法（90s、10m），留空用内置默认。"},
 		{Key: "tls_profile", Label: "TLS 指纹", Kind: optChoice, Help: tlsProfileHelp, Choices: tlsProfileChoices},
 		{Key: "tls_protocol", Label: "HTTP 版本", Kind: optChoice, Help: tlsProtocolHelp, Choices: tlsProtocolChoices},
 		{Key: "include_usage", Label: "返回用量统计", Kind: optBool, Help: "打开后流式响应里会带上 token 用量。"},
@@ -181,6 +186,7 @@ var moduleOptions = map[string][]moduleOption{
 		{Key: "login_port", Label: "登录回调端口", Kind: optNumber, Help: "面板登录时本地监听的端口。留空由系统分配。"},
 	},
 	"loomy": {
+		{Key: "chat_timeout", Label: "对话超时", Kind: optText, Help: "一次对话请求的硬上限（含排队与整条流）。默认 10m；慢推理模型的长回答常跑 4~5 分钟，嫌砍得太早可以调到 15m。支持 Go duration 写法（90s、10m），留空用内置默认。"},
 		{Key: "tls_profile", Label: "TLS 指纹", Kind: optChoice, Help: tlsProfileHelp, Choices: tlsProfileChoices},
 		{Key: "tls_protocol", Label: "HTTP 版本", Kind: optChoice, Help: tlsProtocolHelp, Choices: tlsProtocolChoices},
 		{Key: "sms_token", Label: "接码平台 Token", Kind: optText, Help: "用于自动接收短信验证码。留空表示不启用接码。"},
@@ -207,6 +213,7 @@ var moduleOptions = map[string][]moduleOption{
 		{Key: "tls_protocol", Label: "HTTP 版本", Kind: optChoice, Help: tlsProtocolHelp, Choices: tlsProtocolChoices},
 	},
 	"opencode": {
+		{Key: "chat_timeout", Label: "对话超时", Kind: optText, Help: "一次对话请求的硬上限（含排队与整条流）。默认 10m；慢推理模型的长回答常跑 4~5 分钟，嫌砍得太早可以调到 15m。支持 Go duration 写法（90s、10m），留空用内置默认。"},
 		{Key: "free_only", Label: "只用免费模型", Kind: optBool, Help: freeOnlyHelp},
 		{Key: "default_realm", Label: "默认 Realm", Kind: optText, Help: "登录默认走哪个区，例如 cn / global。留空由模块自己挑。"},
 		{Key: "test_model", Label: "测试用模型", Kind: optText, Help: "账号页「测试」按钮用的模型。留空用模块内置值。"},
@@ -216,6 +223,7 @@ var moduleOptions = map[string][]moduleOption{
 		{Key: "max_in_flight", Label: "并发上限", Kind: optNumber, Help: "同时在飞的请求数上限；0 表示不限制。"},
 	},
 	"openrouter": {
+		{Key: "chat_timeout", Label: "对话超时", Kind: optText, Help: "一次对话请求的硬上限（含排队与整条流）。默认 10m；慢推理模型的长回答常跑 4~5 分钟，嫌砍得太早可以调到 15m。支持 Go duration 写法（90s、10m），留空用内置默认。"},
 		{Key: "free_only", Label: "只用免费模型", Kind: optBool, Help: freeOnlyHelp},
 		{Key: "http_referer", Label: "HTTP Referer", Kind: optText, Help: "OpenRouter 用来做排行归因，随便填个站点地址即可。"},
 		{Key: "x_title", Label: "X-Title", Kind: optText, Help: "同上，OpenRouter 面板里显示的应用名。"},
@@ -225,6 +233,7 @@ var moduleOptions = map[string][]moduleOption{
 		{Key: "test_model", Label: "测试用模型", Kind: optText, Help: "账号页「测试」按钮用的模型。留空用模块内置值。"},
 	},
 	"qoder": {
+		{Key: "chat_timeout", Label: "对话超时", Kind: optText, Help: "一次对话请求的硬上限（含排队与整条流）。默认 5m；glm-5.3-flash / deepseek 这类慢推理长回答建议 10m~15m。支持 Go duration 写法（90s、10m），留空用内置默认。"},
 		{Key: "chat_model", Label: "对话模型", Kind: optText, Help: "默认用哪个模型对话。留空用模块内置值。"},
 		{Key: "models", Label: "模型清单", Kind: optList, Help: "对外提供的模型名，多个用逗号分隔。"},
 		{Key: "browser_path", Label: "浏览器路径", Kind: optText, Help: "自动登录时启动的浏览器；留空自动查找。"},
@@ -240,6 +249,7 @@ var moduleOptions = map[string][]moduleOption{
 		{Key: "dup_retries", Label: "重复号码重试次数", Kind: optNumber, Help: "拿到已用过的号码时最多重试几次。"},
 	},
 	"qwenwork": {
+		{Key: "chat_timeout", Label: "对话超时", Kind: optText, Help: "一次对话请求的硬上限（含排队与整条流）。默认 10m；慢推理模型的长回答常跑 4~5 分钟，嫌砍得太早可以调到 15m。支持 Go duration 写法（90s、10m），留空用内置默认。"},
 		{Key: "base_url", Label: "接口地址", Kind: optText, Help: "上游 API 根地址。留空用模块内置的官方地址。"},
 		{Key: "user_agent", Label: "User-Agent", Kind: optText, Help: "出站请求的 UA。留空用模块内置值。"},
 		{Key: "max_tokens", Label: "默认最大输出 tokens", Kind: optNumber, Help: "请求没写 max_tokens 时用它。留空用模块内置值。"},

@@ -602,6 +602,14 @@ func (s *qoderStream) Close() error {
 // emit delivers one event unless the stream has been cancelled or the consumer
 // has gone away.
 func (s *qoderStream) emit(ev core.Event) bool {
+	// Non-blocking send FIRST: once the context is dead, Go would otherwise
+	// choose between the two ready cases at random, and the deadline identity
+	// this stream is about to report (issue #225) would be a coin flip.
+	select {
+	case s.ch <- ev:
+		return true
+	default:
+	}
 	select {
 	case s.ch <- ev:
 		return true
@@ -683,6 +691,18 @@ func (s *qoderStream) run() {
 
 	switch {
 	case s.ctx.Err() != nil:
+		// A dead context used to end the stream silently: the channel closed,
+		// the gateway read a bare EOF and labelled the turn "unexpected_eof",
+		// blaming the vendor for a timeout this module itself imposed
+		// (issue #225).  A caller that hung up (Canceled) still stays silent --
+		// nothing is listening and Close is the shutdown path.  A deadline,
+		// though, is this module's own chat_timeout: name it, so the gateway
+		// can label the row "module_timeout" instead of sending the operator
+		// to chase an upstream that answered fine for 10,691 frames.
+		if errors.Is(s.ctx.Err(), context.DeadlineExceeded) {
+			s.emit(core.Event{Type: core.EventError, Err: s.ctx.Err()})
+			return
+		}
 		return
 	case fatalErr != nil:
 		s.emit(core.Event{Type: core.EventError, Err: fatalErr})

@@ -6,6 +6,43 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.51] - 2026-11-06
+
+### Fixed
+
+- **模块级 `chat_timeout` 到期不再被误报成「上游流提前中断」（#225）**：qoder
+  这类模块用模块级的 `chat_timeout`（默认 5m）包住整条流；到点后流循环的收尾
+  只看「自己的 ctx 已死」就静默关闭，网关只读到一条干干净净的 EOF，于是把
+  「我们自己的超时」记成 `unexpected_eof`、文案写「上游流提前中断：没有收到
+  结束帧」——运维顺着去找厂商，而厂商其实正常吐了 10,691 帧。修复三段：
+  模块侧（qoder/qwenwork/cline 三处 run 收尾）在「deadline 到期」时以
+  EventError 带身份上报（调用方取消仍然静默）；三处流的 `emit` 改为
+  deadline 优先投递（ctx 已死时 channel 与 `ctx.Done` 双就绪的随机竞态不再
+  吞掉这最后一个事件）；网关侧 chat 流式对
+  `context.DeadlineExceeded` 且调用方仍在的 EventError 给 504 + `Code:
+  module_timeout`、终态标签 `module_timeout`（responses 流式同标签，经
+  `upstreamTerminalFor` 统一）。`failureReason` 对 deadline 的既有文案
+  「请求超时：…」照常生效，行上不再指认上游。
+- **`emit` 在 ctx 已死时的随机竞态**：`select` 在 channel 与 `ctx.Done()`
+  同时就绪时随机择一，模块自己的超时身份有一半概率被吞——deadline 事件
+  改为先试 channel 再退回 ctx。
+
+### Changed
+
+- **十个内置模块的「对话超时」进面板（#226）**：autoclaw / cline / codearts /
+  gemini / lobsterai / loomy / opencode / openrouter / qoder / qwenwork 的
+  模块配置表单此前都没有 `chat_timeout` 这一项——relay 卡有「对话超时」、
+  内置模块只能手改 JSON，#225 的止血指引「面板把 chat_timeout 调大」在面板
+  上无处落地。现在十份模块 schema（internal/panel/moduleconfig.go）各补
+  一条带默认值与慢推理提示的「对话超时」控件（支持 Go duration 写法，留空
+  用内置默认），在「平台配置」页对应平台卡的「模块配置」折叠里；改错类型
+  仍被 #79 的服务端校验当场拦下。
+
+### Installer
+
+- `client2api-setup-0.7.51.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `492da376ccafbcb3148c9e42de53cb7a2f3290785832a529811c8ff294f8affa`
+
 ## [0.7.50] - 2026-11-06
 
 ### Changed

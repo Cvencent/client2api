@@ -271,6 +271,14 @@ func (s *clineStream) Close() error {
 
 // emit delivers an event unless the caller has gone away.
 func (s *clineStream) emit(ev core.Event) bool {
+	// Non-blocking send FIRST: once the context is dead, Go would otherwise
+	// choose between the two ready cases at random, and the deadline identity
+	// this stream is about to report (issue #225) would be a coin flip.
+	select {
+	case s.ch <- ev:
+		return true
+	default:
+	}
 	select {
 	case s.ch <- ev:
 		return true
@@ -331,7 +339,7 @@ func (s *clineStream) run() {
 	})
 
 	if err != nil && !errors.Is(err, io.EOF) && s.ctx.Err() == nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		if errors.Is(err, context.Canceled) {
 			// The caller went away; nothing to report.
 		} else {
 			s.emit(core.Event{Type: core.EventError, Err: err})
@@ -339,6 +347,12 @@ func (s *clineStream) run() {
 		}
 	}
 	if s.ctx.Err() != nil {
+		// Same split as qoder (issue #225): a module-level chat_timeout is our
+		// verdict and must reach the gateway with its identity; a caller
+		// cancel stays silent.
+		if errors.Is(s.ctx.Err(), context.DeadlineExceeded) {
+			s.emit(core.Event{Type: core.EventError, Err: s.ctx.Err()})
+		}
 		return
 	}
 	if !sawData {

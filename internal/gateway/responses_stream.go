@@ -397,7 +397,10 @@ receive:
 
 	if streamErr != nil {
 		if terminal == "in_progress" {
-			terminal = "upstream_error_event"
+			// A module-level chat_timeout is the module's own verdict, not a
+			// vendor break (issue #225): the row must say so, or operators
+			// chase an upstream that answered fine.
+			terminal = upstreamTerminalFor(streamErr, r)
 		}
 		emitFailed(streamErr)
 		return
