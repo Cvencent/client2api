@@ -26,10 +26,16 @@
   `const NO_VALUE = "—"` 收口（声明置于首次使用之前，避开 const 的 TDZ），
   `fmtRate`/`fmtMs` 与账号表四格统一走它，两条矛盾注释改成同一条。
 
+- **路由实况的流水表不再整块抛 `l is not defined`（本轮实测发现，既有缺陷）**：
+  `rlRenderEvents` 里给 `traces` 生成变更签名的表达式括号错位，`l` 落到了
+  `map` 回调的作用域之外——只要有流量它就抛异常、`#rlEvents` 整块不刷新，
+  并触发全局红条。该缺陷自 `b0e0446` 起就存在（0.7.46 逐字节相同），只是空
+  流量实例不会走到那一行。已修正括号并补一条结构性守卫（`script_syntax_test`）。
+
 ### Installer
 
 - `client2api-setup-0.7.47.exe`（空包，不含账号凭据或本机配置）
-  SHA256: `88f76c95e2a9e91d009af1ec965842927c7cd44135e3fc253e4eccc42dc09db4`
+  SHA256: `39e17cd5fea5b8a3a3f28032088b66f7d9d7cd07ed9f7dbd4d8ad49a35c022aa`
 
 ## [0.7.46] - 2026-11-06
 

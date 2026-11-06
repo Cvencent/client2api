@@ -10258,7 +10258,7 @@ function rlRenderEvents(report, traces) {
   // （最多 30 行），无条件重建的代价和视觉干扰都更大。
   const sig = traces.slice(0, 30).map(t => t.at + "\u0000" + (t.failed ? "1" : "0") + "\u0000" +
     (t.total_traces != null ? t.total_traces : "") + "\u0000" +
-    ((t.lanes || []).map(l => l.account_label || l.account || l.client || "") + "\u0000" +
+    (t.lanes || []).map(l => (l.account_label || l.account || l.client || "") + "\u0000" +
       (l.failed ? "f" : "") + "\u0000" + (l.latency_ms || 0)).join(",")).join("|");
   if (!onlyChanged("rlEvents", sig)) return;
   box.innerHTML = traces.slice(0, 30).map(t => {
