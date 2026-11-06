@@ -15717,11 +15717,22 @@ function bulk(kind) {
     const keep = btn ? btn.textContent : "";
     if (btn) { btn.disabled = true; btn.textContent = "测试 0/" + list.length; }
     let done = 0, ok = 0, failed = 0;
+    // failures 在这里声明，而不是 try 块内（issue #233）：读取点在
+    // try/finally 之后、同一函数体——块作用域越界让那一句必然抛
+    // ReferenceError，整条收尾 toast 从 #157 落地起一次都没执行过。
+    const failures = [];
+    // progress writes the "测试 N/M" line to #accNote, the note row that stays
+    // visible after the #182 collapse takes the menu away (issue #234): the
+    // button is the only carrier otherwise, and it is hidden for the whole run.
+    const progress = (text) => {
+      const note = $("#accNote");
+      if (note && CUR === n) note.textContent = text;
+    };
     (async () => {
       try {
-        const failures = [];
         for (const a of list) {
           if (btn) btn.textContent = "测试 " + (done + 1) + "/" + list.length;
+          progress(platformLabel(n) + " 测试 " + (done + 1) + "/" + list.length + "（进行中）");
           const r = await api(cbase(n) + "/accounts/" + aid(a.id) + "/test", { method: "POST" });
           // 结论在 result.ok 里，不在 HTTP 状态码里（issue #157）：探测跑完
           // 但失败是 200 + ok=false，是正常结果——只看 r.ok 会把 10 个坏账号
@@ -15737,6 +15748,7 @@ function bulk(kind) {
           }
           done++;
           if (btn) btn.textContent = "测试 " + done + "/" + list.length;
+          progress(platformLabel(n) + " 测试 " + done + "/" + list.length + "（进行中）");
         }
       } finally {
         // 按钮只在发起平台仍在前台时恢复：切走之后 #btnTestAll 已经是另一
@@ -15748,12 +15760,15 @@ function bulk(kind) {
       // 失败清单随分档 toast 一起给出：单账号按钮能说的那句话，批量没理由
       // 不说（issue #157 的建议 2；至多前 3 条 + 「另有 N 个」，避免 toast
       // 撑爆）。收尾 toast 报**发起平台**的名字——切走之后那是唯一能对上
-      // 「这一批测的是谁」的锚。
+      // 「这一批测的是谁」的锚。结论同时落 #accNote（issue #234）：toast
+      // 3.6s 自动消失，note 是常驻的第二承载面。
       let tail = "";
       if (failures.length) {
         tail = "：" + failures.slice(0, 3).join("；") + (failures.length > 3 ? "（另有 " + (failures.length - 3) + " 个）" : "");
       }
-      toast(platformLabel(n) + " 测试：成功 " + ok + "，失败 " + failed + tail, failed ? "err" : "ok");
+      const verdict = platformLabel(n) + " 测试：成功 " + ok + "，失败 " + failed + tail;
+      progress(verdict);
+      toast(verdict, failed ? "err" : "ok");
     })();
   } else if (kind === "checkin") {
     if (!caps.checkin) return toast(platformLabel(CUR) + " 没有签到能力", "err");
@@ -25749,10 +25764,20 @@ async function refreshVisible() {
    error or an exception during boot leaves it unset, so a broken panel cannot
    pass the packaging gate.  panelBootError also turns later uncaught errors
    into a visible bar instead of a silently dead page. */
+let panelErrorCount = 0;
 function panelBootError(err) {
   const msg = String((err && (err.stack || err.message)) || err || "未知错误");
   try { console.error("[client2api] panel error:", msg); } catch (e) {}
-  if (document.documentElement.dataset.c2aBootError) return;
+  const existing = document.getElementById("c2aBootError");
+  if (existing) {
+    // 首错即止曾把同会话后续所有异常一起静音：红条上永远是最早那条、与当下
+    // 的故障毫无关系（issue #233）。已有红条时更新文案并累计次数——首错和
+    // 后续错误从此可区分，最新故障永远可见。
+    panelErrorCount++;
+    existing.firstChild.textContent = "控制台发生错误（本会话第 " + panelErrorCount + " 次）：" + msg.split("\n")[0];
+    return;
+  }
+  panelErrorCount = 1;
   document.documentElement.dataset.c2aBootError = "1";
   const bar = document.createElement("div");
   bar.id = "c2aBootError";

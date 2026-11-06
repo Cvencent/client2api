@@ -26,6 +26,11 @@ var (
 	// an element must be listed here -- a new one that is not would make its
 	// rows look dangling, which is the guard doing its job.
 	shellMinted = regexp.MustCompile(`(?:cfgText|cfgNum|cfgCheck|pfWBText|pfWBNum|pfWBCheck)\("([A-Za-z0-9_-]+)"`)
+	// shellAssigned is an id assigned to a freshly created element
+	// (el.id = "..."), the other minting shape: the element exists from that
+	// line on, so a later lookup is not dangling (issue #233 -- the boot-error
+	// bar is created and then re-addressed by the update path).
+	shellAssigned = regexp.MustCompile(`\.id = "([A-Za-z0-9_-]+)"`)
 	// A manual-add field is minted as "mf_" + its AccountFields key, so the
 	// id is data (mf_provider ...) rather than a literal in the markup.  The
 	// script may look one up for the fields it knows by key.
@@ -49,7 +54,7 @@ func shellDanglingIDs(src string) []string {
 	// would be circular -- every id the script looks up would count as defined
 	// by virtue of being looked up, and the guard could never fail.
 	defined := map[string]bool{}
-	for _, re := range []*regexp.Regexp{shellIDAttr, shellMinted} {
+	for _, re := range []*regexp.Regexp{shellIDAttr, shellMinted, shellAssigned} {
 		for _, m := range re.FindAllStringSubmatch(src, -1) {
 			defined[m[1]] = true
 		}
