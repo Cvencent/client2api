@@ -441,6 +441,11 @@ const loginPageTemplate = `<!DOCTYPE html>
       slideStyle: { width: 320, height: 40 },
       language: 'cn'
     });
+    // The automation reads this instead of guessing a settle delay (issue
+    // #229): initAliyunCaptcha wires its own click listener to #sendCode, and
+    // a click that lands before that wiring finishes is swallowed no matter
+    // how trusted the event is.
+    window.__captchaArmed = true;
   }
 
   function ensureCaptcha() {

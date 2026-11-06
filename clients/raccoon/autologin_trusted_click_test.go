@@ -32,6 +32,7 @@ func (p *swallowedPage) ClickTrusted(_ context.Context, _ string) (bool, error) 
 	return true, nil
 }
 func (p *swallowedPage) Fill(_ context.Context, _, _ string) (bool, error)  { return true, nil }
+func (p *swallowedPage) Screenshot(_ context.Context) ([]byte, error)       { return []byte("fake-png"), nil }
 func (p *swallowedPage) EvalBool(_ context.Context, _ string) (bool, error) { return false, nil }
 func (p *swallowedPage) EvalString(_ context.Context, _ string) (string, error) {
 	return "", nil // 状态行一动不动

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -49,11 +50,13 @@ const (
 // a test can shrink it.
 var raccoonSendWait = 20 * time.Second
 
-// raccoonSendSettle lets the page's own click-to-captcha wiring arm before
-// the driver clicks 获取验证码.  The Aliyun script attaches its listener to
-// the button, so an immediate click can be dropped the same way an SPA
-// digest race drops one.
-var raccoonSendSettle = 1500 * time.Millisecond
+// raccoonArmTimeout bounds the wait for the page's own captcha-armed signal.
+// The fixed 1.5s settle it replaces was a guess at how long the Aliyun script
+// needs to wire its listener onto #sendCode -- cold cache blows past it, and a
+// click that lands before the wiring finishes is swallowed no matter how
+// trusted the event is (issue #229, both live runs).  The page now sets
+// window.__captchaArmed when initAliyunCaptcha returns; the driver polls it.
+var raccoonArmTimeout = 15 * time.Second
 
 // raccoonRefusalRearm is how long to let the challenge widget re-arm after a
 // refusal, before the single in-place retry clicks again (issue #141).  The
@@ -83,6 +86,9 @@ type raccoonAutoPage interface {
 	// event, so the captcha-bound buttons must go through the same channel a
 	// physical pointer uses.
 	ClickTrusted(ctx context.Context, selector string) (bool, error)
+	// Screenshot captures the visible viewport (PNG) for the transcript when a
+	// click does not land -- the operator sees the page state at the miss.
+	Screenshot(ctx context.Context) ([]byte, error)
 	Fill(ctx context.Context, selector string, value string) (bool, error)
 	EvalBool(ctx context.Context, expression string) (bool, error)
 	EvalString(ctx context.Context, expression string) (string, error)
@@ -637,9 +643,11 @@ func requestRaccoonSMS(ctx context.Context, page raccoonAutoPage, logf func(stri
 	const attempts = 2
 	var lastErr error
 	for attempt := 1; attempt <= attempts; attempt++ {
-		// The Aliyun script wires its own listener to the button; give it a beat
-		// so the click cannot land before the handler is armed.
-		if !sleepRaccoon(ctx, raccoonSendSettle) {
+		// Wait for the page to say the captcha wiring is armed instead of
+		// guessing a delay (issue #229): a click on an unarmed button is
+		// swallowed silently, and no amount of re-arming fixes a shot that
+		// was never taken.
+		if !waitForRaccoonArmed(ctx, page, logf) {
 			return ctx.Err()
 		}
 		lastErr = clickAndWaitRaccoonSend(ctx, page, logf)
@@ -679,6 +687,13 @@ func clickAndWaitRaccoonSend(ctx context.Context, page raccoonAutoPage, logf fun
 	// let the caller re-arm; waiting out the full send timeout here would
 	// just relabel a dead click as a vendor outage.
 	if !waitForRaccoonClickEffect(ctx, page) {
+		logf("点击未生效：按钮没有进入发送状态（事件可能被验证组件吞掉），与厂商无关；截取现场存入 transcript")
+		if shot, serr := page.Screenshot(ctx); serr == nil && len(shot) > 0 {
+			logf("[screenshot png %d bytes]", len(shot))
+			saveRaccoonScreenshot(logf, shot)
+		} else {
+			logf("现场截屏失败：%v", serr)
+		}
 		return errors.New("点击未生效：按钮没有进入发送状态（事件可能被验证组件吞掉），与厂商无关")
 	}
 	// The status line moves through 发送中… to one of the three outcomes the
@@ -705,6 +720,57 @@ func clickAndWaitRaccoonSend(ctx context.Context, page raccoonAutoPage, logf fun
 		case <-time.After(250 * time.Millisecond):
 		}
 	}
+}
+
+// raccoonArmedExpr reads the page's captcha-armed flag; the login page sets it
+// once initAliyunCaptcha has wired the click handler (issue #229).
+const raccoonArmedExpr = `(function(){return window.__captchaArmed === true;})()`
+
+// waitForRaccoonArmed polls the page's own armed signal until it flips or the
+// deadline passes.  Clicking before the signal is a wasted attempt either way:
+// the event is swallowed, the effect probe reports the miss, and the rented
+// number burns.
+func waitForRaccoonArmed(ctx context.Context, page raccoonAutoPage, logf func(string, ...any)) bool {
+	if ok, err := page.EvalBool(ctx, raccoonArmedExpr); err == nil && ok {
+		return true
+	}
+	deadline := time.Now().Add(raccoonArmTimeout)
+	logf("等待验证组件武装（页面信号 window.__captchaArmed）…")
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(250 * time.Millisecond):
+		}
+		if ok, err := page.EvalBool(ctx, raccoonArmedExpr); err == nil && ok {
+			return true
+		}
+		if time.Now().After(deadline) {
+			logf("验证组件武装信号在 %s 内未出现，仍按原计划点击（页面可能在弹挑战）", raccoonArmTimeout)
+			return true
+		}
+	}
+}
+
+// saveRaccoonScreenshot writes the swallowed-click snapshot next to the
+// module's own log target so the operator sees the page state at the miss
+// (issue #229).  The transcript carries the byte count; the file carries the
+// pixels.
+// screenshotDir is a var so tests can redirect the evidence files.
+var screenshotDir = "data/raccoon/login-browser-shots"
+
+func saveRaccoonScreenshot(logf func(string, ...any), shot []byte) {
+	dir := screenshotDir
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		logf("截屏目录创建失败：%v", err)
+		return
+	}
+	name := filepath.Join(dir, "click-not-effective-"+time.Now().Format("20060102-150405")+".png")
+	if err := os.WriteFile(name, shot, 0o600); err != nil {
+		logf("截屏写入失败：%v", err)
+		return
+	}
+	logf("现场截屏已保存：%s", name)
 }
 
 // waitForRaccoonClickEffect reports whether the send click actually took:

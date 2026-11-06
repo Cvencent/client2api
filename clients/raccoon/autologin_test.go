@@ -93,10 +93,10 @@ func raccoonPost(url, body string) string {
 
 func shrinkRaccoonTimings(t *testing.T) {
 	t.Helper()
-	settle, sendWait := raccoonSendSettle, raccoonSendWait
-	raccoonSendSettle, raccoonSendWait = 5*time.Millisecond, 300*time.Millisecond
+	arm, sendWait := raccoonArmTimeout, raccoonSendWait
+	raccoonArmTimeout, raccoonSendWait = 5*time.Millisecond, 300*time.Millisecond
 	t.Cleanup(func() {
-		raccoonSendSettle = settle
+		raccoonArmTimeout = arm
 		raccoonSendWait = sendWait
 	})
 }
@@ -262,6 +262,7 @@ type fakeRaccoonPage struct {
 	fillCalls map[string]string
 	clicks    []string
 	status    string
+	armed     bool
 	exists    map[string]bool
 	href      string
 }
@@ -306,10 +307,20 @@ func (p *fakeRaccoonPage) Fill(_ context.Context, selector, value string) (bool,
 	return true, nil
 }
 
+func (p *fakeRaccoonPage) Screenshot(_ context.Context) ([]byte, error) {
+	return []byte("fake-png"), nil
+}
+
 // EvalBool answers the click-effect probe the way a real page does: the
 // status line carrying any text means an accepted click flipped it (the
 // probe's whole premise, issue #229).  Everything else stays false.
 func (p *fakeRaccoonPage) EvalBool(_ context.Context, expression string) (bool, error) {
+	if strings.Contains(expression, "__captchaArmed") {
+		p.mu.Lock()
+		armed := p.armed
+		p.mu.Unlock()
+		return armed, nil
+	}
 	if strings.Contains(expression, "sendCode") && strings.Contains(expression, "smsStatus") {
 		p.mu.Lock()
 		defer p.mu.Unlock()

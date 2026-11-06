@@ -6,6 +6,25 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.58] - 2026-11-06
+
+### Fixed
+
+- **raccoon 自动登录等待组件武装的信号，替代固定 1.5s 猜测（#229 重开）**：
+  ClickTrusted（isTrusted=true）落地后的实弹确认——可信点击仍被吞，吞它的
+  不是事件可信度而是验证组件当时还没武装：`raccoonSendSettle=1.5s` 的固定
+  等待在脚本冷缓存期不够，handler 未挂上时事件无论可信与否都无效果。修法：
+  登录页在 `initAliyunCaptcha` 挂好 handler 后置 `window.__captchaArmed`，
+  模块点击前轮询该信号（上限 15s、每 250ms 一查；超时按原计划点击并在
+  transcript 记明）——不再猜时长。**「点击未生效」路径截屏留证**：现场
+  PNG 落 `data/raccoon/login-browser-shots/`，transcript 记字节数，下一次
+  失败形状再变化时操作员有画面可看。
+
+### Installer
+
+- `client2api-setup-0.7.58.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `eb5912aa2b41888fbafa63c9d05c9bfd77f687780c8867b65a56a7435ec88b55`
+
 ## [0.7.57] - 2026-11-06
 
 ### Fixed

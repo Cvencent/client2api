@@ -108,6 +108,7 @@ func (f *fakeSMS) EvalString(ctx context.Context, expr string) (string, error) {
 func (f *fakeSMS) ClickTrusted(ctx context.Context, sel string) (bool, error) {
 	return f.Click(ctx, sel)
 }
+func (f *fakeSMS) Screenshot(ctx context.Context) ([]byte, error)            { return []byte("fake-png"), nil }
 func (f *fakeSMS) Fill(ctx context.Context, sel, value string) (bool, error) { return true, nil }
 func (f *fakeSMS) Exists(ctx context.Context, sel string) (bool, error)      { return true, nil }
 
@@ -155,6 +156,9 @@ func (a *alwaysRefuse) Click(ctx context.Context, sel string) (bool, error) {
 }
 func (a *alwaysRefuse) ClickTrusted(ctx context.Context, sel string) (bool, error) {
 	return a.Click(ctx, sel)
+}
+func (a *alwaysRefuse) Screenshot(ctx context.Context) ([]byte, error) {
+	return []byte("fake-png"), nil
 }
 func (a *alwaysRefuse) EvalString(ctx context.Context, expr string) (string, error) {
 	return "图形验证码校验失败，请重新完成滑块验证", nil
