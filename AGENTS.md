@@ -24,6 +24,30 @@
   `POST /panel/api/clients/<id>/import/bundle`（body 是 cockpit 数组，`expires_at` 单位
   毫秒），导入后模块自己重建账号池，不需要重启进程。
 
+## 面板 JS 改动纪律（2026-11-06 事故后新增，硬性）
+
+一次实现把 `internal/panel/index.html` 里的函数定义搬丢了：`go()` 新增调用
+`scrollCmdViewIntoView()` → 它引用 `markHScroll()` → 定义在搬块时被一起删掉，
+面板一启动就 `ReferenceError: markHScroll is not defined`、整页 boot 错误条、
+面板不可用。`go build` / `go test` 全绿，`installer/build.ps1` 的 panelsmoke
+拦住了打包（拒绝产出坏包），但**源码树一度是坏的**。
+
+规则：
+
+1. 改 `index.html` 的 JS 之后，**必须先用真浏览器（Playwright/CDP）把 13 个
+   视图逐个打开，确认控制台 0 错误、主内容区非空**，才可以进入打包/发版。
+2. 搬移/删除函数块前**和**后，都要 `grep 'function <名>'` + `grep '<名>('`
+   两处确认定义与调用点都在。只 grep 一处就动手，等于赌运气。
+3. 绝不 `gofmt -w` 一个 `.html`（它不是 Go 文件，只会打印一堆 parse 错误）。
+4. 绝不 `git checkout` / `git restore` 自己正在改的源文件——会静默丢掉整轮
+   改动；撤销局部改动请按块重写或 `git restore -p`。
+5. 新增代码要避开既有「函数体边界守卫」的窗口（例：`scrollable_check_ui_test.go`
+   把 `markScrollableTables` 的 body 截止在下一个 `window.addEventListener`）。
+6. `installer/build.ps1` 的 panelsmoke 是**最后一道门，不是第一道防线**。
+7. 浏览器验证不通过时：`git restore` 本轮自己的改动、删除本轮新增测试、**不改
+   版本号**，在相关 issue 留中文评论说明「已回退、未发版、根因、下轮要求」，
+   该轮不发版不安装。
+
 ## 构建环境
 
 每个新 shell 先设置：
