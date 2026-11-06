@@ -258,7 +258,7 @@ func (c *Client) AddAccount(ctx context.Context, spec core.AccountSpec) (core.Ac
 		return core.AccountRecord{}, fmt.Errorf("access_token is longer than %d bytes", maxTokenBytes)
 	}
 
-	label := truncateLabel(strings.TrimSpace(spec.Fields["label"]))
+	label := core.ClampLabel(spec.Fields["label"], spec.Label)
 	baseURL := strings.TrimSpace(spec.Fields["base_url"])
 	if len(baseURL) > maxURLBytes {
 		return core.AccountRecord{}, fmt.Errorf("base_url is longer than %d bytes", maxURLBytes)

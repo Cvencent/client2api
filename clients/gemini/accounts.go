@@ -80,7 +80,7 @@ func (c *Client) AddAccount(ctx context.Context, spec core.AccountSpec) (core.Ac
 		return core.AccountRecord{}, fmt.Errorf("refresh_token or access_token is required")
 	}
 	cfg := AccountConfig{
-		Label:              strings.TrimSpace(spec.Fields["label"]),
+		Label:              core.ClampLabel(spec.Fields["label"]),
 		AccessToken:        access,
 		RefreshToken:       refresh,
 		Expiry:             strings.TrimSpace(spec.Fields["expiry"]),
@@ -95,8 +95,8 @@ func (c *Client) AddAccount(ctx context.Context, spec core.AccountSpec) (core.Ac
 	if spec.ID != "" {
 		rec.ID = spec.ID
 	}
-	if spec.Label != "" {
-		rec.Label = spec.Label
+	if cl := core.ClampLabel(spec.Label); cl != "" {
+		rec.Label = cl
 	}
 	if err := c.upsertAccount(rec); err != nil {
 		return core.AccountRecord{}, err

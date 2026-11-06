@@ -7707,7 +7707,7 @@ html:not([data-theme="light"]) body::after {
           <div class="hint" id="ownKeyHelp"></div>
           <div class="row">
             <input id="ownKeyValue" type="password" spellcheck="false" autocomplete="off" style="flex:1 1 240px">
-            <input id="ownKeyLabel" type="text" placeholder="备注（可选）" style="flex:0 1 150px">
+            <input id="ownKeyLabel" type="text" maxlength="120" placeholder="备注（可选）" style="flex:0 1 150px">
             <button class="xs primary" id="btnOwnKeySave">保存并使用</button>
           </div>
           <div id="ownKeyMsg" class="state" hidden></div>
@@ -7840,7 +7840,7 @@ html:not([data-theme="light"]) body::after {
         </div>
         <div id="manFields"></div>
         <div id="manKeyLink" class="hint" hidden></div>
-        <div class="fld"><label class="lb" for="manLabel">备注（可选）</label><input id="manLabel" type="text" placeholder="给这个账号起个名字"></div>
+        <div class="fld"><label class="lb" for="manLabel">备注（可选）</label><input id="manLabel" type="text" maxlength="120" placeholder="给这个账号起个名字"></div>
         <!-- 弹窗级错误：字段级错误已经逐条挂到各自字段上（issue #120），这一条是
              「说不上是哪一栏」时的兜底，需要 role="alert" 才能被读屏播报。 -->
         <div id="manErr" class="state err" role="alert" hidden></div>

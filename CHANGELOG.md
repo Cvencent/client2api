@@ -6,6 +6,38 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.54] - 2026-11-06
+
+### Fixed
+
+- **/v1/messages 补上 #215 的参数形状校验，上游失败改用 Anthropic 信封
+  （#231）**：Anthropic 入口此前完全没接「调用方参数写错在解码层拒绝」那套
+  ——max_tokens≤0 静默从上游请求体里消失（既不听调用方也不定预算），
+  temperature/top_p 越界原样透传、厂商的 400 被折成 upstream_error 指向上游；
+  同一个参数在 /v1/chat/completions 是 400、在 /v1/messages 是 200。修法：
+  `toCoreRequestFromAnthropic` 补上与 OpenAI 入口同语义的三条校验（文案按
+  Anthropic 自己的字段拼写）。信封半边：共享路由的四个上游失败点
+  （账号池不可用 / 预备失败 / 候选失败 / 探测失败）曾无视协议钩子直接写
+  OpenAI 扁平信封，Claude Code 在任何上游层失败都拿到与解码层不同的形状；
+  现在 `routeInput` 带 `writeUpstreamErr` 钩子，/v1/messages 注入
+  `writeAnthropicUpstreamError`（同样的 client 前缀、Retry-After 与提示，
+  只是换成 `{"type":"error","error":{…}}` 信封），Chat/Responses 保持默认。
+
+- **账号 label 全模块接上 120 rune 钳制（#232）**：label 逐字进账号表、
+  逐拍进 /panel/api/overview，而无界的粘贴让每 5 秒的轮询背上一次性的固定
+  带宽成本（20 万字符 = 211 KB/拍）。既有口径早就存在（configwrite 的
+  `maxAccountNoteRunes=120`、codearts/minimaxcode 各自的 120 上限），但 17 个
+  模块的 intake 一个都没接。修法：core 层新增 `ClampLabel`/`AccountSpec.LabelOf`
+  （trim + 剥控制字符 + 120 rune 截断，一处定义），全部模块 intake 统一走它；
+  面板「添加账号」两处备注框补 `maxlength="120"`。接线完整性由
+  `TestModuleLabelIntakesAreClamped` 扫描钉住（本轮就靠它抓到漏盘的
+  lobsterai）。
+
+### Installer
+
+- `client2api-setup-0.7.54.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `e490ae09095e11b5341ddeae52cdb4f7852724b151e9e5f173dc5993320e32e4`
+
 ## [0.7.53] - 2026-11-06
 
 ### Fixed

@@ -260,7 +260,7 @@ func (c *Client) AddAccount(ctx context.Context, spec core.AccountSpec) (core.Ac
 	}
 
 	uid := strings.TrimSpace(spec.Field("uid"))
-	nickname := firstNonEmpty(spec.Field("nickname"), spec.Label)
+	nickname := spec.LabelOf("nickname")
 
 	a := &Auth{
 		AccessToken:  token,

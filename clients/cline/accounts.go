@@ -138,14 +138,14 @@ func (c *Client) AddAccount(ctx context.Context, spec core.AccountSpec) (core.Ac
 	// header is right no matter how the operator pasted the token.
 	a := account{
 		ID:           spec.Field("id"),
-		Label:        firstNonEmpty(spec.Field("label"), spec.Label),
+		Label:        spec.LabelOf("label"),
 		AccessToken:  normalizeToken(token),
 		RefreshToken: strings.TrimSpace(spec.Field("refresh_token")),
 		AccountID:    spec.Field("account_id"),
 		Email:        spec.Field("email"),
 		Nickname:     spec.Field("nickname"),
 		ExpiresAt:    parseExpiry(spec.Field("expires_at")),
-		Note:         firstNonEmpty(spec.Field("label"), spec.Label),
+		Note:         spec.LabelOf("label"),
 		Disabled:     !spec.EnabledOr(true),
 	}
 	if a.AccountID == "" {

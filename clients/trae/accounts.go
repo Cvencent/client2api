@@ -549,7 +549,7 @@ func (c *Client) AddAccount(ctx context.Context, spec core.AccountSpec) (core.Ac
 	// The spec carries the label at the top level; the form may also post it as
 	// a field.  Either way an operator-supplied name must win over the derived
 	// user id, or the panel shows a wall of numbers.
-	label := firstNonEmpty(spec.Field("label"), spec.Label)
+	label := spec.LabelOf("label")
 
 	a := &Auth{
 		AccessToken:  access,

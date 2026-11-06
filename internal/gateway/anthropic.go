@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -134,6 +135,21 @@ type anthropicTool struct {
 func toCoreRequestFromAnthropic(w *anthropicRequest) (*core.ChatRequest, error) {
 	if w == nil {
 		return nil, errors.New("empty request")
+	}
+	// The caller's own shape errors are refused here, the same three the Chat
+	// and Responses entries check (issue #215; the Anthropic entry was missed,
+	// issue #231): a non-positive max_tokens used to vanish from the upstream
+	// body -- neither listened to the caller nor set a budget -- and out-of-range
+	// sampling params used to ride to the vendor, whose 400 came back labelled
+	// upstream_error.  The names match each protocol's own field spelling.
+	if w.MaxTokens != nil && *w.MaxTokens <= 0 {
+		return nil, fmt.Errorf("max_tokens=%d is not a valid output budget: pass a positive number or drop the field", *w.MaxTokens)
+	}
+	if w.Temperature != nil && (*w.Temperature < 0 || *w.Temperature > 2) {
+		return nil, fmt.Errorf("temperature=%v is outside the supported range 0..2", *w.Temperature)
+	}
+	if w.TopP != nil && (*w.TopP < 0 || *w.TopP > 1) {
+		return nil, fmt.Errorf("top_p=%v is outside the supported range 0..1", *w.TopP)
 	}
 	req := &core.ChatRequest{
 		Model:          w.Model,
@@ -1060,7 +1076,30 @@ func (s *server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		rec:          &rec,
 		stat:         stat,
 		emitter:      anthropicEmitter{},
+		// Upstream-side failures (vendor status, exhausted pool) answer in the
+		// Anthropic envelope too (issue #231): the four failure points in the
+		// shared router used to leak OpenAI's flat shape to Claude Code.
+		writeUpstreamErr: s.writeAnthropicUpstreamError,
 	})
+}
+
+// writeAnthropicUpstreamError renders an upstream-side failure in the
+// Anthropic envelope, carrying the same facts as the OpenAI-shaped
+// writeUpstreamError: the client prefix, the Retry-After hint and the gateway
+// hint (issue #231 -- the shape was the only thing wrong with those replies).
+func (s *server) writeAnthropicUpstreamError(w http.ResponseWriter, c core.Client, ctx func() core.HintContext, err error) {
+	clientName := c.Name()
+	status, typ, kind := upstreamErrorShape(err)
+	hint := core.RetryAfterHintOf(err)
+	switch {
+	case hint > 0:
+		w.Header().Set("Retry-After", strconv.Itoa(int(hint/time.Second)+1))
+	case errors.Is(err, core.ErrBusy):
+		w.Header().Set("Retry-After", "1")
+	}
+	msg := fmt.Sprintf("[%s] %s", clientName, err.Error())
+	s.opts.Logger.Printf("chat: client %s: %v", clientName, err)
+	writeAnthropicError(w, status, typ, msg+" "+s.gatewayHint(c, kind, msg, ctx()))
 }
 
 // writeAnthropicError renders the Anthropic error envelope, which wraps the same

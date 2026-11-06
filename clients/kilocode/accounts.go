@@ -81,7 +81,7 @@ func (c *Client) AddAccount(ctx context.Context, spec core.AccountSpec) (core.Ac
 	if spec.Enabled != nil {
 		enabled = *spec.Enabled
 	}
-	label := firstNonEmpty(strings.TrimSpace(spec.Fields["label"]), strings.TrimSpace(spec.Label), "panel key")
+	label := firstNonEmpty(spec.LabelOf("label"), "panel key")
 	c.pool.upsert(accountRecord{
 		ID:      id,
 		Label:   label,

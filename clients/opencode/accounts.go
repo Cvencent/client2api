@@ -201,10 +201,7 @@ func (c *Client) AddAccount(ctx context.Context, spec core.AccountSpec) (core.Ac
 		return core.AccountRecord{}, fmt.Errorf("%w: an API key is required", core.ErrUnsupported)
 	}
 	id := accountID(keyFingerprint(key))
-	label := strings.TrimSpace(spec.Field("label"))
-	if label == "" {
-		label = spec.Label
-	}
+	label := spec.LabelOf("label")
 	rec := accountRecord{
 		ID:      id,
 		Label:   label,

@@ -520,7 +520,7 @@ func (c *Client) AddAccount(ctx context.Context, spec core.AccountSpec) (core.Ac
 	if cookie == "" {
 		return core.AccountRecord{}, errors.New("doubao: the cookie field is required")
 	}
-	label := firstNonEmpty(spec.Field("label"), spec.Label)
+	label := spec.LabelOf("label")
 	acc := &account{
 		ID:      strings.TrimSpace(spec.ID),
 		Label:   label,

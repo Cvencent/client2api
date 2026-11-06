@@ -905,6 +905,55 @@ func AsQuickConnectProvider(c Client) (QuickConnectProvider, bool) {
 	return qc, ok
 }
 
+// maxAccountLabelRunes bounds the operator's own per-account label.  The value
+// is shown verbatim in the account table and copied into every overview poll,
+// so one careless paste would otherwise bloat the config and ride every 5s
+// response forever (issue #232).  120 matches the panel's per-note bound
+// (configwrite.go maxAccountNoteRunes) and codearts' maxLabelRunes.
+const maxAccountLabelRunes = 120
+
+// ClampLabel normalises an operator-supplied account label: surrounding space
+// trimmed, control characters dropped, length capped at maxAccountLabelRunes
+// runes.  Every module intake applies it through AccountSpec.LabelOf so the
+// bound lives in exactly one place.
+func ClampLabel(parts ...string) string {
+	s := ""
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			s = p
+			break
+		}
+	}
+	if s == "" {
+		return ""
+	}
+	var b strings.Builder
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f {
+			continue
+		}
+		b.WriteRune(r)
+		if b.Len() >= maxAccountLabelRunes*4 {
+			break
+		}
+	}
+	runes := []rune(b.String())
+	if len(runes) > maxAccountLabelRunes {
+		runes = runes[:maxAccountLabelRunes]
+	}
+	return strings.TrimSpace(string(runes))
+}
+
+// LabelOf resolves the label an AccountSpec names, clamped: the spec's own
+// Label field first, then the named fields/entry, in order (issue #232).
+func (s AccountSpec) LabelOf(fieldKeys ...string) string {
+	parts := []string{s.Label}
+	for _, k := range fieldKeys {
+		parts = append(parts, s.Field(k))
+	}
+	return ClampLabel(parts...)
+}
+
 // Field reads one string out of an AccountSpec, trimming surrounding space.
 func (s AccountSpec) Field(key string) string {
 	if s.Fields == nil {

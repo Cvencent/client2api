@@ -62,6 +62,15 @@ type routeInput struct {
 	// which is what the Chat and Responses endpoints use.  The Anthropic
 	// endpoint supplies its own because Claude Code parses that shape.
 	writeProtocolError func(w http.ResponseWriter, status int, typ, msg string)
+	// writeUpstreamErr, when non-nil, renders an UPSTREAM failure (vendor 4xx/5xx,
+	// exhausted pool, module error) in the caller's wire protocol.  Nil selects
+	// the OpenAI-shaped writeUpstreamError -- right for Chat and Responses,
+	// wrong for /v1/messages, whose four failure points used to leak the flat
+	// envelope to Claude Code mid-protocol (issue #231).
+	writeUpstreamErr func(w http.ResponseWriter, c core.Client, ctx func() core.HintContext, err error)
+	// s is the owning server, so the nil-hook default can reach
+	// (*server).writeUpstreamError.  routeAndServe fills it.
+	s *server
 	// toolNames maps each namespaced tool's flattened Chat name back to the
 	// (namespace, name) pair it was declared as.  Only the Responses protocol
 	// has namespaces, so every other caller leaves it nil.
@@ -164,11 +173,28 @@ func (in routeInput) protocolError(w http.ResponseWriter, status int, typ, msg s
 	writeError(w, status, typ, msg)
 }
 
+// upstreamError renders an upstream-side failure (vendor status, exhausted
+// pool, module error) in the request's own wire protocol.  It carries the same
+// facts writeUpstreamError does -- client prefix, Retry-After, hint -- just in
+// the envelope the caller parses (issue #231).
+func (in routeInput) upstreamError(w http.ResponseWriter, c core.Client, ctx func() core.HintContext, err error) {
+	if in.writeUpstreamErr != nil {
+		in.writeUpstreamErr(w, c, ctx, err)
+		return
+	}
+	// Unset means the OpenAI-shaped default; the Anthropic entry always sets
+	// the hook, so reaching here with nil is the Chat/Responses shape.
+	in.s.writeUpstreamError(w, c, ctx, err)
+}
+
 // routeAndServe is the shared body of every completion endpoint: resolve the
 // model, honour conversation stickiness, try the candidates in order, and hand
 // the winning stream to the protocol's emitter.  Every failure writes the
 // protocol's error envelope before returning.
 func (s *server) routeAndServe(w http.ResponseWriter, r *http.Request, in routeInput) {
+	// The hook defaults to the OpenAI shape; fill the back-reference either way
+	// so routeInput.upstreamError can reach the right writer.
+	in.s = s
 	s.routeAndServeMessages(w, r, in, writeError)
 }
 
@@ -306,7 +332,7 @@ func (s *server) routeAndServeMessages(w http.ResponseWriter, r *http.Request, i
 			status, _, _ := upstreamErrorShape(unavailable)
 			in.stat.status = status
 			s.fail(in.rec, unavailable)
-			s.writeUpstreamError(w, client, hintCtx, unavailable)
+			in.upstreamError(w, client, hintCtx, unavailable)
 			return
 		}
 	}
@@ -344,7 +370,7 @@ func (s *server) routeAndServeMessages(w http.ResponseWriter, r *http.Request, i
 		status, _, _ := upstreamErrorShape(prepErr)
 		in.stat.status = status
 		s.fail(in.rec, prepErr)
-		s.writeUpstreamError(w, client, hintCtx, prepErr)
+		in.upstreamError(w, client, hintCtx, prepErr)
 		return
 	}
 	in.req = attemptReq
@@ -435,7 +461,7 @@ func (s *server) routeAndServeMessages(w http.ResponseWriter, r *http.Request, i
 		status, _, _ := upstreamErrorShape(err)
 		in.stat.status = status
 		s.fail(in.rec, err)
-		s.writeUpstreamError(w, client, hintCtx, err)
+		in.upstreamError(w, client, hintCtx, err)
 		return
 	}
 	// A success names nothing in the error path, so this is the only place the
@@ -474,7 +500,7 @@ func (s *server) routeAndServeMessages(w http.ResponseWriter, r *http.Request, i
 		status, _, _ := upstreamErrorShape(probeErr)
 		in.stat.status = status
 		s.fail(in.rec, probeErr)
-		s.writeUpstreamError(w, client, hintCtx, probeErr)
+		in.upstreamError(w, client, hintCtx, probeErr)
 		return
 	}
 	stream = withProbedFrame(stream, probe)

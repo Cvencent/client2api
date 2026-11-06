@@ -60,7 +60,7 @@ func (c *Client) AddAccount(ctx context.Context, spec core.AccountSpec) (core.Ac
 		Nickname:      strings.TrimSpace(spec.Field("nickname")),
 		Phone:         strings.TrimSpace(spec.Field("phone")),
 		DeviceID:      strings.TrimSpace(spec.Field("device_id")),
-	}, Label: strings.TrimSpace(spec.Label), Origin: originStored}
+	}, Label: core.ClampLabel(spec.Label), Origin: originStored}
 	if id := strings.TrimSpace(spec.ID); id != "" {
 		a.ID = id
 	}

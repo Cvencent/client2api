@@ -101,7 +101,7 @@ func (s *source) addAccount(ctx context.Context, spec core.AccountSpec, baseURL 
 		ID:                 id,
 		APIKey:             key,
 		AppSecret:          appSecret,
-		Label:              firstNonEmpty(spec.Label, spec.Fields["label"]),
+		Label:              spec.LabelOf("label"),
 		BaseURL:            rowBase,
 		Models:             splitModels(spec.Fields["models"]),
 		BalanceAccessToken: strings.TrimSpace(spec.Fields["balance_access_token"]),

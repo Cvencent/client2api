@@ -88,7 +88,7 @@ func (c *Client) AddAccount(ctx context.Context, spec core.AccountSpec) (core.Ac
 			Phone:          strings.TrimSpace(spec.Field("phone")),
 			DeviceID:       strings.TrimSpace(spec.Field("device_id")),
 		},
-		Label:  strings.TrimSpace(spec.Label),
+		Label:  core.ClampLabel(spec.Label),
 		Origin: originStored,
 	}
 	if id := strings.TrimSpace(spec.ID); id != "" {

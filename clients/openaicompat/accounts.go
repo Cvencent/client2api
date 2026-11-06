@@ -126,7 +126,7 @@ func (c *Client) AddAccount(ctx context.Context, spec core.AccountSpec) (core.Ac
 
 	row := storedProvider{
 		ID:      id,
-		Label:   firstNonEmpty(strings.TrimSpace(spec.Fields["label"]), strings.TrimSpace(spec.Label), id),
+		Label:   firstNonEmpty(spec.LabelOf("label"), id),
 		BaseURL: baseURL,
 		APIKey:  key,
 		Models:  splitModels(spec.Fields["models"]),

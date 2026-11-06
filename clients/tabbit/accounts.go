@@ -504,7 +504,7 @@ func (c *Client) addSidecarAccount(spec core.AccountSpec) (core.AccountRecord, e
 	if err != nil {
 		return core.AccountRecord{}, err
 	}
-	label := firstNonEmpty(spec.Field("label"), spec.Label)
+	label := spec.LabelOf("label")
 
 	ep := storedEndpoint{
 		ID:      base,
@@ -549,7 +549,7 @@ func (c *Client) addWebAccount(spec core.AccountSpec) (core.AccountRecord, error
 	ep := storedEndpoint{
 		ID:      webAccountID(claims, token),
 		Kind:    kindWebToken,
-		Label:   firstNonEmpty(spec.Field("label"), spec.Label, webCookieHost+" · "+shortUID(claims.Sub)),
+		Label:   firstNonEmpty(spec.LabelOf("label"), core.ClampLabel(webCookieHost+" · "+shortUID(claims.Sub))),
 		BaseURL: c.webBase(),
 		Token:   token,
 		WebHost: firstNonEmpty(strings.TrimSpace(spec.Field("web_host")), webCookieHost),

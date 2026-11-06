@@ -657,7 +657,7 @@ func (c *Client) AddAccount(ctx context.Context, spec core.AccountSpec) (core.Ac
 
 	acc := account{
 		storedAccount: storedAccount{
-			Label:              strings.TrimSpace(spec.Label),
+			Label:              core.ClampLabel(spec.Label),
 			Token:              token,
 			RefreshToken:       strings.TrimSpace(spec.Fields["refresh_token"]),
 			UserID:             strings.TrimSpace(spec.Fields["user_id"]),

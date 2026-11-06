@@ -124,7 +124,7 @@ func (c *Client) AddAccount(ctx context.Context, spec core.AccountSpec) (core.Ac
 		uid = tokenFingerprint(token)
 	}
 	rec := accountFromConfig(AccountConfig{
-		Label:         spec.Field("label"),
+		Label:         spec.LabelOf("label"),
 		UID:           uid,
 		UserID:        spec.Field("user_id"),
 		YID:           spec.Field("yid"),

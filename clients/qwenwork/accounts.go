@@ -146,7 +146,7 @@ func (c *Client) AddAccount(ctx context.Context, spec core.AccountSpec) (core.Ac
 		AccessToken:  token,
 		RefreshToken: spec.Field("refresh_token"),
 		ExpiresAt:    parseExpiry(spec.Field("expires_at")),
-		Note:         firstNonEmpty(spec.Field("label"), spec.Label),
+		Note:         spec.LabelOf("label"),
 		Disabled:     !spec.EnabledOr(true),
 	}
 
