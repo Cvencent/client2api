@@ -67,9 +67,12 @@ func TestParseModelCatalogue(t *testing.T) {
 	for _, m := range models {
 		ids = append(ids, m.ID)
 	}
-	want := []string{"deepseek-v4-flash", "GLM-5.2"}
+	// The dated build is a separate SKU and STAYS (issue #230); the vision
+	// variant and the nameless entry are still dropped.  A raw duplicate would
+	// also be dropped, but there is none in this fixture.
+	want := []string{"deepseek-v4-flash", "deepseek-v4-flash-0731", "GLM-5.2"}
 	if len(ids) != len(want) {
-		t.Fatalf("ids = %v, want %v (the vision variant, the nameless entry and the duplicate must all be gone)", ids, want)
+		t.Fatalf("ids = %v, want %v (the vision variant and the nameless entry must be gone; the dated SKU stays)", ids, want)
 	}
 	for i := range want {
 		if ids[i] != want[i] {
@@ -81,6 +84,43 @@ func TestParseModelCatalogue(t *testing.T) {
 	}
 	if models[0].Extra["context_length"] != 1048576 {
 		t.Errorf("context_length = %v, want the catalogue value", models[0].Extra["context_length"])
+	}
+}
+
+// A dated build (deepseek-v4.1-flash-1017) is a separate SKU the official
+// client lists on its own: the catalogue must keep it under its raw id, and a
+// missing context length must fall through to the base model's window
+// (issue #230).  A raw duplicate -- the vendor listing one id twice -- must
+// still be dropped.
+func TestDatedBuildStaysInCatalogue(t *testing.T) {
+	models := parseModelCatalogue([]modelInfo{
+		// glm-5.3-flash's table window (1048576) differs from
+		// defaultContextLength (1000000), so the fallback hop is observable.
+		{ModelID: "glm-5.3-flash", ModelName: "GLM 5.3 Flash"},
+		{ModelID: "glm-5.3-flash-1017", ModelName: "glm-5.3-flash-1017"},
+		// raw duplicate of the first entry: same id, must dedupe
+		{ModelID: "glm-5.3-flash", ModelName: "GLM 5.3 Flash"},
+	})
+	var ids []string
+	for _, m := range models {
+		ids = append(ids, m.ID)
+	}
+	if len(ids) != 2 || ids[0] != "glm-5.3-flash" || ids[1] != "glm-5.3-flash-1017" {
+		t.Fatalf("ids = %v, want the dated SKU kept under its raw id and the raw duplicate gone (issue #230)", ids)
+	}
+	dated := models[1]
+	// The id itself carries the build stamp, so no separate display_name is
+	// written (it would only repeat the id).  A DIFFERENT vendor name still
+	// lands in display_name -- covered by TestParseModelCatalogue below.
+	if _, has := dated.Extra["display_name"]; has && dated.Extra["display_name"] == dated.ID {
+		t.Errorf("display_name repeats the id: %v", dated.Extra["display_name"])
+	}
+	// No vendor context length: the window must fall through to the base
+	// model's 1048576 via the normalised id.  defaultContextLength is
+	// 1000000, so landing there instead would fail this assertion -- the hop
+	// is observable (issue #230).
+	if dated.Extra["context_length"] != 1048576 {
+		t.Errorf("context_length = %v, want the base model's 1048576 via the normalised fallback (issue #230)", dated.Extra["context_length"])
 	}
 }
 
@@ -271,11 +311,14 @@ func TestFetchCatalogueAndModelLimits(t *testing.T) {
 	if !sawCatalogue || !sawBenefit {
 		t.Fatalf("catalogue=%v benefit=%v, want both endpoints called", sawCatalogue, sawBenefit)
 	}
-	if len(models) != 1 || models[0].ID != "deepseek-v4-flash" {
-		t.Fatalf("models = %+v, want the normalised deepseek-v4-flash", models)
+	// The dated build is its own SKU: it stays under the raw id (issue #230)
+	// instead of being folded into the base model.
+	if len(models) != 1 || models[0].ID != "deepseek-v4-flash-0731" {
+		t.Fatalf("models = %+v, want the dated SKU kept under its raw id", models)
 	}
-	// The budget is what the gateway reads when the caller set no max_tokens.
-	if got, ok := c.ModelMaxOutputTokens(context.Background(), "deepseek-v4-flash"); !ok || got != maxOutputTokens {
+	// The budget is what the gateway reads when the caller set no max_tokens,
+	// keyed by the id the caller asks with.
+	if got, ok := c.ModelMaxOutputTokens(context.Background(), "deepseek-v4-flash-0731"); !ok || got != maxOutputTokens {
 		t.Errorf("ModelMaxOutputTokens = %d,%v, want %d,true", got, ok, maxOutputTokens)
 	}
 	if _, ok := c.ModelMaxOutputTokens(context.Background(), "not-a-model"); ok {

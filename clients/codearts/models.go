@@ -452,13 +452,18 @@ func parseModelCatalogueAt(entries []modelInfo, now time.Time) []core.Model {
 		if isVisionModel(raw) {
 			continue
 		}
-		id := normalizeModelID(raw)
-		if id == "" || seen[id] {
+		// The CATALOGUE is keyed by the raw id (issue #230): a dated build
+		// like deepseek-v4.1-flash-1017 is a separate SKU the official client
+		// lists on its own, and deduping by the normalised id silently
+		// swallowed it.  normalizeModelID stays a ROUTING alias -- the request
+		// path sends req.Model verbatim, so no folding happens there either.
+		// Raw duplicates (the vendor listing one id twice) still dedupe.
+		if seen[raw] {
 			continue
 		}
-		seen[id] = true
-		name := normalizeModelID(firstNonEmpty(e.ModelName, raw))
-		m := newModel(id, name, e.ContextLength, firstNonZero(e.MaxOutput, e.MaxTokens), e.Provider)
+		seen[raw] = true
+		name := firstNonEmpty(e.ModelName, raw)
+		m := newModel(raw, name, e.ContextLength, firstNonZero(e.MaxOutput, e.MaxTokens), e.Provider)
 		if list, eff, ok := multiplierFromCredits(e.Credit, e.TimeSlots, now); ok {
 			if m.Extra == nil {
 				m.Extra = map[string]any{}
@@ -502,7 +507,13 @@ func parseBenefitIDs(raw []string) []string {
 // gateway can find it through core.ModelOutputLimit.
 func newModel(id, name string, contextLength, maxOutput int, ownedBy string) core.Model {
 	if contextLength <= 0 {
+		// A dated SKU entry usually lacks its own context length; falling back
+		// through the normalised id lands it on the base model's window
+		// (issue #230).  The vendor-reported length, when present, still wins.
 		contextLength = contextWindows[id]
+		if contextLength <= 0 {
+			contextLength = contextWindows[normalizeModelID(id)]
+		}
 	}
 	if contextLength <= 0 {
 		contextLength = defaultContextLength
