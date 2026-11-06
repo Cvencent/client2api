@@ -55,14 +55,15 @@ func TestChatScrollBottomHasTheAtEndGuard(t *testing.T) {
 func TestStreamDrawsReasoningAndPending(t *testing.T) {
 	src := poolStatsUISource(t)
 
-	// 推理分支必须有重绘调用（正文分支同类处理）。
+	// 推理分支必须有重绘调用（正文分支同类处理）。#224 之后分片走
+	// chatPatchLast（只重写当前气泡），失配时它自己退回整段 chatDraw(true)。
 	i := strings.Index(src, "if (d.reasoning_content)")
 	if i < 0 {
 		t.Fatal("推理分支不在流循环里：看守失去锚点（issue #162）")
 	}
 	seg := src[i : i+320]
-	if !strings.Contains(seg, "chatDraw(true)") {
-		t.Error("推理分片不重绘：思考阶段屏幕空白，直到正文第一片才一次性出现（issue #162）")
+	if !strings.Contains(seg, "chatPatchLast()") {
+		t.Error("推理分片不重绘：思考阶段屏幕空白，直到正文第一片才一次性出现（issue #162/#224）")
 	}
 	if !strings.Contains(seg, "out.pending = false") {
 		t.Error("推理分片不解开 pending：思考阶段结束光标还闪着（issue #162）")

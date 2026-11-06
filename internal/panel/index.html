@@ -8135,6 +8135,12 @@ function errText(v) {
 async function api(path, opt) {
   opt = opt || {};
   const h = Object.assign({ "Accept": "application/json" }, opt.headers || {});
+  // 条件请求（issue #223）：调用方给 etagKey 时自动回放上次的 ETag。304 的
+  // 响应没有正文，返回 notModified:true 让调用方沿用上一份数据——三条热
+  // 轮询路径（pool/alerts/conversations）的空闲拍由全量 200 变成 0 字节。
+  // 失败照常走 200 分支重下全量（自愈），无需调用方做别的。
+  const etagKey = opt.etagKey || "";
+  if (etagKey && ETAGS[etagKey]) h["If-None-Match"] = ETAGS[etagKey];
   // FormData 必须原样交给 fetch：它自带 multipart 边界，序列化成 JSON 会
   // 让服务端只看到一个空对象。字符串 body 同理不动（调用方自己设了头）。
   if (opt.body !== undefined && typeof opt.body !== "string" && !(opt.body instanceof FormData)) {
@@ -8153,14 +8159,26 @@ async function api(path, opt) {
   if (text) { try { data = JSON.parse(text); } catch (e) { data = { raw: text }; } }
   // 条件请求需要看到 ETag：把调用方关心的几个响应头平铺出来（小写键）。
   const rawHeaders = { etag: res.headers.get("ETag") || "" };
+  if (etagKey) {
+    const et = rawHeaders.etag;
+    if (et) ETAGS[etagKey] = et;
+    else delete ETAGS[etagKey];
+  }
+  // 304 只发生在 GET 且必然带 ETag 响应头；没有正文可解析。
+  const notModified = res.status === 304;
   if (res.status === 401 || res.status === 403) { showKey(); }
   const rawErr = data && (data.error || data.message) || (res.ok ? "" : ("HTTP " + res.status));
   // 错误归一化成**字符串**。OpenAI 风格的错误体是对象
   // （{"error":{"message":"…","type":"…"}}），原来直接把对象赋给 err，
   // 拼进提示就成了「读取模型失败：[object Object]」——90 处调用方全都这样。
   const err = errText(rawErr);
-  return { status: res.status, ok: res.ok, data: data, err: err, rawHeaders: rawHeaders };
+  return { status: res.status, ok: res.ok, data: data, err: err, rawHeaders: rawHeaders, notModified: notModified };
 }
+// ETAGS: api(etagKey) 的条件请求存档（issue #223）。键是调用方自取的短名
+// （pool/alerts/chatlist），值是上次响应的 ETag；对应路径的 GET 自动带上
+// If-None-Match，304 时调用方沿用上一份数据。写路径（POST/DELETE）不经过
+// 这个通道，标记已读/清空不影响它。
+const ETAGS = {};
 const cbase = n => "/panel/api/clients/" + encodeURIComponent(n);
 const aid = id => encodeURIComponent(id);
 
@@ -8520,7 +8538,9 @@ async function loadPoolStatus() {
   // 形状是 poolIndex 认识的子集——capabilities/models/detail 这些静态块
   // 不随轮询走，一拍从 ~50KB 掉到几 KB（issue #33）。status 本体留给
   // 诊断脚本和 overview 缺席时的兜底路径。
-  const r = await api("/panel/api/pool");
+  // 条件请求（issue #223）：空闲拍服务端回 304 / 0 字节，POOL 沿用上一份。
+  const r = await api("/panel/api/pool", { etagKey: "pool" });
+  if (r.notModified) return;
   POOL = (r.ok && r.data && r.data.clients) ? poolIndex(r.data) : null;
 }
 function poolClient(n) { return (POOL && POOL.clients && POOL.clients[n]) || null; }
@@ -16484,14 +16504,16 @@ function updateAlertBadge(n) {
 
 let ALERT_ROWS = [];
 async function renderAlerts() {
-  const r = await api("/panel/api/alerts");
-  if (!r.ok) {
+  // 条件请求（issue #223）：服务端 ETag 只哈希 alerts[]（不含 unread，标记
+  // 已读不会失效），304 时沿用上一份流水照常渲染。
+  const r = await api("/panel/api/alerts", { etagKey: "alerts" });
+  if (!r.ok && !r.notModified) {
     $("#alertNote").textContent = "获取失败：" + r.err;
     $("#alertBody").innerHTML = '<div class="quietline"><i></i>' + esc(r.err) + '</div>';
     $("#alertsBox").classList.remove("quiet");
     return;
   }
-  const rows = (r.data && r.data.alerts) || [];
+  const rows = (r.data && r.data.alerts) || (r.notModified ? ALERT_ROWS : []);
   ALERT_ROWS = rows;   // 3D 舞台按平台汇总这些行
   updateAlertBadge(0);
   // 流水落地后重算一次页头（issue #49）：mountMasthead 是进页那一刻同步算的，
@@ -16502,6 +16524,8 @@ async function renderAlerts() {
   api("/panel/api/alerts", { method: "POST" }).then(function (ack) {
     if (ack && ack.ok) updateAlertBadge(0);
   }).catch(function () {});
+  // 进页即标记已读（服务端语义不变）；但 304 拍要清掉这条路径存下的 ETag 吗？
+  // 不用——ETag 只哈希 alerts[]，标记已读不改变它，下一拍照样 304。
   // 没有告警时整卡退场成一行安静状态——告警页的常态就是空的。
   $("#alertsBox").classList.toggle("quiet", !rows.length);
   // 事件流水条：时间刻度在左缘一条竖轴上，平台/模型是徽章，说明是正文，
@@ -24979,9 +25003,11 @@ function chatTitleOf(t) {
 }
 
 async function chatLoadThreads(keepCurrent) {
-  const r = await api("/panel/api/chat/conversations");
-  if (!r.ok) { toast("读取对话记录失败：" + r.err, "err"); return false; }
-  CHAT.threads = (r.data && r.data.conversations) || [];
+  // 条件请求（issue #223）：列表是摘要 + 强 ETag，每进一次页面、每完成一轮
+  // 问答都读它；没变的库回 304 / 0 字节，沿用 CHAT.threads。
+  const r = await api("/panel/api/chat/conversations", { etagKey: "chatlist" });
+  if (!r.ok && !r.notModified) { toast("读取对话记录失败：" + r.err, "err"); return false; }
+  if (!r.notModified) CHAT.threads = (r.data && r.data.conversations) || [];
   if (CHAT.current && !CHAT.threads.some(t => t.id === CHAT.current)) CHAT.current = "";
   if (!CHAT.current && keepCurrent !== false && CHAT.threads.length) CHAT.current = CHAT.threads[0].id;
   const cur = CHAT.threads.find(t => t.id === CHAT.current);
@@ -25313,6 +25339,31 @@ function chatDraw(streaming) {
   chatScrollBottom();
 }
 
+// chatPatchLast 只重写正在生成的那一条气泡（issue #224）：流式分片曾走
+// chatDraw(true) 把**全部历史**拼成 HTML 再整体赋给 #chatLog——单个分片的
+// 开销随对话长度线性增长（240 条消息实测每片 30ms，一个 300 片的长回复把
+// 9 秒主线程全花在重建同一段文本上）。这里只更新最后一条的 .bub，与
+// chatDraw 的拼装严格同构（esc + think + meta，顺序一致）；失配（元素不存在
+// /气泡数对不上）就退回整段 chatDraw(true)，保底不画错。
+function chatPatchLast() {
+  const box = $("#chatLog");
+  const nodes = box ? box.querySelectorAll(".chatmsg") : null;
+  const last = CHAT.msgs[CHAT.msgs.length - 1];
+  if (!nodes || nodes.length !== CHAT.msgs.length || !last) { chatDraw(true); return; }
+  const el = nodes[nodes.length - 1];
+  const me = last.role === "user", err = last.role === "error";
+  const who = me ? "我" : err ? "!" : "AI";
+  const cls = me ? " me" : err ? " err" : last.pending ? " pending" : "";
+  const want = "chatmsg" + cls;
+  if (el.className !== want) { chatDraw(true); return; }
+  const bub = el.querySelector(".bub");
+  if (!bub) { chatDraw(true); return; }
+  const html = esc(last.content) +
+    (last.reasoning ? '<span class="think">' + esc(last.reasoning) + "</span>" : "") +
+    (last.meta ? '<span class="meta">' + esc(last.meta) + "</span>" : "");
+  if (bub.innerHTML !== html) bub.innerHTML = html;
+}
+
 // 把这次对话钉到选中的账号：先绑一个 key，再在 chat 请求里带
 // options.conversation_id。绑不上（账号当前不可用）就如实告诉操作员，因为那样
 // 请求会被池里别的账号服务，看起来像“测过了”。
@@ -25477,11 +25528,12 @@ async function chatSend() {
           return;
         }
         const ch = (ev.choices || [])[0] || {}, d = ch.delta || {};
-        if (d.content) { if (!ttft) ttft = performance.now() - t0; if (out.pending) { out.pending = false; } out.content += chatText(d.content); chatDraw(true); chatScrollBottom(); }
+        if (d.content) { if (!ttft) ttft = performance.now() - t0; if (out.pending) { out.pending = false; } out.content += chatText(d.content); chatPatchLast(); chatScrollBottom(); }
         // 推理分片也要重绘（issue #162）：思考阶段往往比正文长得多，只累加
         // 字符串的话，deepseek/GLM 这类模型整个思考过程屏幕上是 4px 的空白——
         // chatDraw 本来就会渲染 think（:25017），缺的只是这一条调用。
-        if (d.reasoning_content) { if (out.pending) out.pending = false; out.reasoning += d.reasoning_content; if (!out.content) chatDraw(true); chatScrollBottom(); }
+        // #224：分片走 chatPatchLast 只更新这一条气泡，历史 DOM 不再每片重建。
+        if (d.reasoning_content) { if (out.pending) out.pending = false; out.reasoning += d.reasoning_content; if (!out.content) chatPatchLast(); chatScrollBottom(); }
         if (ev.usage) usage = ev.usage;
         if (ch.finish_reason) finish = ch.finish_reason;
       }
