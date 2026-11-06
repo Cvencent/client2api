@@ -1941,12 +1941,15 @@ html { font-size: 100%; scrollbar-gutter: stable; }
 /* 操作列 22.5→21：给「成功 / 失败」列让 1.5%（issue #87）；该列自身的
    144px 两列网格问题另案（issue #88）。 */
 #view-accounts table.acc .col-acts { width: 23%; }
-#view-accounts table.acc th.sortable { cursor: pointer; user-select: none; white-space: nowrap; transition: color .15s ease, background .15s ease; }
-#view-accounts table.acc th.sortable:hover { color: var(--accent-text); background: var(--surface-2); }
-#view-accounts table.acc th.sortable:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-#view-accounts table.acc th.sortable .sort-mark { display: inline-block; width: 1em; margin-left: 3px; color: var(--ink-3); transition: color .15s ease, transform .15s ease; }
-#view-accounts table.acc th.sortable.sort-on { color: var(--accent-text); }
-#view-accounts table.acc th.sortable.sort-on .sort-mark { color: var(--accent); }
+/* 排序表头的样式两张表共用（issue #227）：模型页的「上下文」列此前只拿到了
+   aria-sort，明眼用户的 sort-on/箭头/强调色都被 #view-accounts 作用域挡住。
+   选择器放宽到所有 th.sortable；账号表特有字段的列宽仍留在下面那组。 */
+th.sortable { cursor: pointer; user-select: none; white-space: nowrap; transition: color .15s ease, background .15s ease; }
+th.sortable:hover { color: var(--accent-text); background: var(--surface-2); }
+th.sortable:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+th.sortable .sort-mark { display: inline-block; width: 1em; margin-left: 3px; color: var(--ink-3); transition: color .15s ease, transform .15s ease; }
+th.sortable.sort-on { color: var(--accent-text); }
+th.sortable.sort-on .sort-mark { color: var(--accent); }
 #view-accounts table.acc .accPrio { width: 52px; min-width: 52px; padding: 4px 5px; text-align: center; }
 #view-accounts table.acc td.c-prio, #view-accounts table.acc th.c-prio { text-align: center; }
 /* 模型列：一个 chip 概括「可用 N · 限流 M」，点开看整个账号的模型明细。
@@ -7335,7 +7338,7 @@ html:not([data-theme="light"]) body::after {
         <header>
           <h3>模型能力 <span class="hint">模型由各客户端模块从上游实时拉取；拉取失败时保留上一份可用目录</span></h3>
           <span class="grow"></span>
-          <span class="note" id="mdNote">实时查询上游</span>
+          <span class="note" id="mdNote" role="status">实时查询上游</span>
           <span class="note" id="mdDirty"></span>
           <button class="xs" id="btnMdSave" disabled>保存修改</button>
           <button class="xs" id="btnModels">重新获取</button>
@@ -17199,7 +17202,15 @@ async function renderModels(refresh) {
     r = ok && MODEL_LAST ? { ok: true, data: MODEL_LAST } : { ok: false, err: "模型目录暂不可用" };
   }
   const pr = await api("/panel/api/model_probes");
-  if (!r.ok) { $("#mdNote").textContent = "获取失败：" + r.err; $("#mdBody").innerHTML = '<tr><td colspan="14" class="hint">' + esc(r.err) + '</td></tr>'; return; }
+  if (!r.ok) {
+    $("#mdNote").textContent = "获取失败：" + r.err;
+    // 只写 note 的话读屏一声不吭（issue #228）：失败是异常结论，走一次
+    // role=alert 的 toast 打断播报；成功不 toast——#mdNote 已是 role=status，
+    // 目录计数的变化会被礼貌播报，每次刷新都打断反而刷屏。
+    toast("获取模型目录失败：" + r.err, "err");
+    $("#mdBody").innerHTML = '<tr><td colspan="14" class="hint">' + esc(r.err) + '</td></tr>';
+    return;
+  }
   // 探测数据是可选增强：未配置 / 工具还没跑过 / 读取失败，都退化为无标注，
   // 绝不让它影响模型列表本身（与 /panel/api/model_probes 的空集语义一致）。
   const probes = (pr.ok && pr.data && pr.data.probes) || {};
@@ -17356,11 +17367,7 @@ async function renderModels(refresh) {
     }
     if (MD_COMBO.open) mdComboOpen(); // 建议列表开着时用新目录重画
   }
-  const mdSortHeader = $("#mdSortContext");
-  if (mdSortHeader) {
-    mdSortHeader.dataset.mdSortDir = MD_CONTEXT_SORT;
-    mdSortHeader.setAttribute("aria-sort", MD_CONTEXT_SORT === "asc" ? "ascending" : "descending");
-  }
+  syncMdSortHeader(); // aria + class + 箭头一处同步（issue #227）
   MD_KEEP_PAGE = true; // 刷新数据不动页码：每页内容换新，页码越界时 mdApply 会夹回来
   mdApply();
   $("#mdNote").textContent = n + " 个模型 · " + canRefresh + "/" + cls.length + " 支持上游刷新 · " + (r.data.refreshed_at || "").replace("T", " ").slice(0, 19) +
@@ -17371,13 +17378,26 @@ async function renderModels(refresh) {
 }
 
 let MD_CONTEXT_SORT = "desc";
+// syncMdSortHeader 把「上下文列是排序键」这一事实同时写给三种消费者：
+// 读屏（aria-sort）、键盘/鼠标用户（sort-on class + 箭头字形）、以及自动化
+// 测试（data-md-sort-dir）。此前只写后两者里的属性——箭头永远停在"未排序"
+// 的 ↕ 上，明眼用户看到的与读屏读到的相反（issue #227）。账号表的
+// syncAccSortHeader 是同一件事的既有正确答案；这列默认就是降序，所以
+// "已排序"是常态，箭头写 ↓ 而不是 ↕。
+function syncMdSortHeader() {
+  const th = $("#mdSortContext");
+  if (!th) return;
+  const on = true; // 这列是模型页唯一的排序键，恒在排序
+  th.dataset.mdSortDir = MD_CONTEXT_SORT;
+  th.setAttribute("aria-sort", MD_CONTEXT_SORT === "asc" ? "ascending" : "descending");
+  th.classList.toggle("sort-on", on);
+  const mark = th.querySelector(".sort-mark");
+  if (mark) mark.textContent = MD_CONTEXT_SORT === "asc" ? "↑" : "↓";
+}
 function mdContextSortToggle() {
   const th = $("#mdSortContext");
   MD_CONTEXT_SORT = MD_CONTEXT_SORT === "desc" ? "asc" : "desc";
-  if (th) {
-    th.dataset.mdSortDir = MD_CONTEXT_SORT;
-    th.setAttribute("aria-sort", MD_CONTEXT_SORT === "asc" ? "ascending" : "descending");
-  }
+  syncMdSortHeader();
   MD_KEEP_PAGE = true; // 排序不是筛选：留在当前页重排
   mdApply();
   // 排序后主行级联滑入（只挑主行，详情行跟着它自己的父行走）。

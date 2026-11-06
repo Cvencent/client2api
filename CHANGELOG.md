@@ -6,6 +6,32 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.52] - 2026-11-06
+
+### Fixed
+
+- **模型页「上下文」排序表头的视觉状态（#227）**：点排序行序真的变了，表头
+  却一个像素不动——`mdContextSortToggle` 与 `renderModels` 的同步处只写
+  `aria-sort` 与 `data-md-sort-dir`，后者在 CSS 里零消费；读屏读到
+  ascending/descending、明眼用户看到的永远是「未排序」的 ↕，同一张表对两种
+  用户给出相反的结论。修法照账号表 `syncAccSortHeader` 的既有形态：新增共享
+  的 `syncMdSortHeader`（aria + sort-on class + ↑/↓ 字形一处同步，默认态这列
+  恒在降序所以写 ↓），排序样式的作用域从 `#view-accounts table.acc` 放宽到
+  所有 `th.sortable`（cursor/hover/焦点环/强调色两张表共用；账号表列宽等
+  特有规则不受影响）。
+
+- **模型页「重新获取」的失败结论补上读屏通道（#228）**：成败只写进
+  `#mdNote` 这行普通文本，实测 live region 变更 0 次——读屏用户按下后听不到
+  任何东西。修法：`#mdNote` 挂 `role="status"`（目录计数的变化礼貌播报），
+  失败路径额外走一次 `role="alert"` 的 toast（异常结论打断播报）；成功不
+  toast，避免每次刷新都刷屏。20 多个同族「读失败写 note」的出口按「同类归一
+  轮」原则后续批次收敛，本轮先落最高频的模型目录路径。
+
+### Installer
+
+- `client2api-setup-0.7.52.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `ca97b568c4325b4a613858e3ce1d3d0eaacc46e0bd20283e87e7585f6ff40914`
+
 ## [0.7.51] - 2026-11-06
 
 ### Fixed
