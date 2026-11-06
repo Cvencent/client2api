@@ -6,6 +6,29 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.49] - 2026-11-06
+
+### Fixed
+
+- **「减少动效」下卡片光斑不再跟随指针（#222）**：面板每张卡片的聚光灯由
+  `initSpotlight` 的 `pointermove` 逐帧写 CSS 变量换出圆心，而它是同族里**唯一
+  不判 `motionReduce()`** 的初始化函数（initMagnet / initTilt / initRipple /
+  initPressFx / initSpark 都判）——`prefers-reduced-motion` 那条 `transition:
+  none` 关不掉圆心跟随，于是用户在「我要少动静」下仍然看到一团高对比亮光以
+  指针速度平移，覆盖全部 13 个视图的 26 处 `.box`。修法：在 `pointermove`
+  回调开头加 `if (motionReduce()) return;`（照 initMagnet 的既有写法）——
+  判定在使用点，因此也天然满足 #205 的「离开 reduce 后能自己回来」，不需要
+  重建任何东西。
+
+  守护测试用**枚举完整性**而不是文本存在性：列出所有 `function init*`，凡函数
+  体里挂 `pointermove` 的必须判偏好；新增任何指针驱动动效自动进名单，漏判即
+  红（反事实已验证：移除守卫后精确点名 `initSpotlight`）。
+
+### Installer
+
+- `client2api-setup-0.7.49.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `41b6ca1b69b6ab1856b13b6735a3dfbfadb22fd970d605e7c9b1945c38d28459`
+
 ## [0.7.48] - 2026-11-06
 
 ### Fixed

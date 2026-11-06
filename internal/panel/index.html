@@ -8907,6 +8907,11 @@ function initSpotlight() {
   if (MOTION_FX.spotInit) return;
   MOTION_FX.spotInit = true;
   window.addEventListener("pointermove", ev => {
+    // 动效偏好在使用点判（issue #222）：这层光斑的圆心是每帧写 CSS 变量换出来
+    // 的，与 CSS transition 无关——`transition:none` 关不掉它。同族的 initMagnet
+    // 就在这里挡住，initSpotlight 是全族唯一漏判的；这也天然满足 #205 的
+    // 「离开 reduce 后要能自己回来」：判定在使用点，不需要重建任何东西。
+    if (motionReduce()) return;
     const box = ev.target && ev.target.closest ? ev.target.closest(".box") : null;
     if (!box) return;
     SPOT.box = box; SPOT.x = ev.clientX; SPOT.y = ev.clientY;
