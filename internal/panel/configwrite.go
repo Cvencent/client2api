@@ -524,7 +524,15 @@ func validateModelGroups(cfg map[string]any, patch map[string]any, reg *core.Reg
 			// /v1/models and 404 on every call by name.  Untouched entries
 			// skip the check -- built-in defaults may name modules this
 			// deployment never loads.
-			if _, touched := patch["model_groups"]; touched {
+			//
+			// "Auto" is exempt: it is the gateway's own aggregate view, and
+			// the router resolves Auto members through the full isAuto branch
+			// in planGroupMembers (route_plan.go) -- a group whose only
+			// member is Auto/<model> is a stable alias that follows the
+			// aggregate as it changes (issue #235).  It used to be rejected
+			// here as an unregistered client, which stranded the pre-#200
+			// entry the user was editing and blocked the pattern outright.
+			if _, touched := patch["model_groups"]; touched && !strings.EqualFold(client, "Auto") {
 				if err := requireRegisteredClient(reg, name, client); err != nil {
 					return err
 				}

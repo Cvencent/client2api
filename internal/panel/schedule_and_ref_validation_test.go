@@ -72,6 +72,41 @@ func TestReferencesToUnregisteredClientsAreRejected(t *testing.T) {
 	if err := validateModelGroups(ok, ok, reg); err != nil {
 		t.Fatalf("a group on a real client was rejected: %v", err)
 	}
+	// Auto 成员放行（issue #235）：路由层的 planGroupMembers 有完整的
+	// isAuto 分支，只有这里的保存校验把它当未注册客户端拦下——「组名 =
+	// 稳定别名、成员指向 Auto 聚合」的用法因此无法保存。大小写不敏感，
+	// 与路由层的 EqualFold 同形。
+	autoCfg := map[string]any{
+		"model_groups": map[string]any{
+			"step-5-preview": map[string]any{
+				"members": []any{"Auto/step-5-preview"},
+			},
+		},
+	}
+	if err := validateModelGroups(autoCfg, autoCfg, reg); err != nil {
+		t.Fatalf("an Auto member was rejected: %v (issue #235: the router resolves it, only the panel save blocked it)", err)
+	}
+	autoMixed := map[string]any{
+		"model_groups": map[string]any{
+			"mixed-case-group": map[string]any{
+				"members": []any{"auto/step-5-preview"},
+			},
+		},
+	}
+	if err := validateModelGroups(autoMixed, autoMixed, reg); err != nil {
+		t.Fatalf("a lowercase Auto member was rejected: %v (issue #235: EqualFold, same as the router)", err)
+	}
+	// 反向钉：拼错的「非 Auto」名字仍被拒——放行豁免不能放宽成「都放」。
+	typo := map[string]any{
+		"model_groups": map[string]any{
+			"typo-group": map[string]any{
+				"members": []any{"Atuo/step-5-preview"},
+			},
+		},
+	}
+	if err := validateModelGroups(typo, typo, reg); err == nil {
+		t.Fatal("a typo'd client name was accepted: the exemption must cover Auto only (issue #235)")
+	}
 	// aliases：目标指向未注册客户端 → 400。
 	aliasCfg := map[string]any{
 		"aliases": map[string]any{"probe-ok": "nosuchclient/deepseek"},

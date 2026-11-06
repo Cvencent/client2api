@@ -6,6 +6,24 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.57] - 2026-11-06
+
+### Fixed
+
+- **模型组成员校验放行 Auto（#235）**：路由层的 `planGroupMembers`（route_plan.go）
+  有完整的 isAuto 分支——`Auto/<model>` 成员在路由上能正确解析（组名 = 稳定
+  别名、成员指向 Auto 聚合、并集变化自动跟随的用法），只有面板保存校验
+  （#200 引入的 `requireRegisteredClient`）把它当未注册客户端拦下，存量
+  `Auto/step-5-preview` 成员在编辑该组时被卡死。修法：模型组成员校验对
+  `strings.EqualFold(client, "Auto")` 放行（与路由层判定同形、大小写不敏感）；
+  拼错的真未注册名字仍被拒并列注册清单（反向钉保留）。platform_priorities
+  与 aliases 两处引用不豁免（Auto 不是平台）。
+
+### Installer
+
+- `client2api-setup-0.7.57.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `f399a3a0f10cc86931079f8ad2478ff84edf3b1d89ec07f86afcb0906d91b0f1`
+
 ## [0.7.56] - 2026-11-06
 
 ### Fixed
