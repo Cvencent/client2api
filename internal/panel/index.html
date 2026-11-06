@@ -858,7 +858,9 @@ input, select, textarea {
   font: inherit; color: var(--ink);
   background: color-mix(in srgb, var(--surface-2) 72%, transparent);
   border: 1px solid transparent;
-  border-bottom-color: var(--line);
+  /* 静止态的边界用 --ctl-line 而不是 --line（issue #220）：后者是装饰性
+     分隔线的档位，对输入框底色只有 1.1~1.2:1，静止态等于没有边界。 */
+  border-bottom-color: var(--ctl-line);
   border-radius: 7px 7px 3px 3px; padding: 7px 11px; width: 100%;
   transition: border-color .18s var(--ease), background-color .18s var(--ease), box-shadow .18s var(--ease);
 }
@@ -1717,7 +1719,7 @@ details.cfg summary { cursor: pointer; color: var(--ink-3); font-size: 0.78125re
 .cfgtext {
   font: inherit; font-size: 0.8125rem; color: var(--ink);
   background: color-mix(in srgb, var(--surface-2) 72%, transparent);
-  border: 1px solid transparent; border-bottom-color: var(--line);
+  border: 1px solid transparent; border-bottom-color: var(--ctl-line);
   border-radius: 7px 7px 3px 3px; padding: 7px 11px; width: 100%; min-width: 0;
   transition: border-color .18s var(--ease), background-color .18s var(--ease), box-shadow .18s var(--ease);
 }
@@ -4755,8 +4757,18 @@ input, select, textarea, .stat, .subtab {
 .stat.clickable:hover ::after, .stat.clickable:hover::after { transform: scaleX(1); }
 .stat.clickable.on { background: transparent; }
 .stat.clickable.on::after { transform: scaleX(1); }
-.stat.clickable .k::before { content: "筛选 " ; opacity: 0; font-size: 0.625rem; }
-.stat.clickable:hover .k::before, .stat.clickable.on .k::before { opacity: .7; }
+/* 「筛选」提示（issue #221）：曾用行内 ::before 占位（content 里连尾随空格
+   都用来撑宽度），且只有可点的 7 格有、另外 3 格没有——同一行标签左边缘分成
+   两档（22.8px）；选中那格还会真显示「筛选 账号总数」，与邻格读法不一致。
+   改成格子的右上角标（绝对定位，不参与布局）：10 格标签左边缘天然一致，
+   宽度也不再依赖字体。 */
+.stat.clickable { position: relative; }
+.stat.clickable::before {
+  content: "筛选"; position: absolute; top: 7px; right: 9px;
+  opacity: 0; font-size: 0.625rem; letter-spacing: .02em; color: var(--ink-3);
+  pointer-events: none; transition: opacity .16s var(--ease);
+}
+.stat.clickable:hover::before, .stat.clickable.on::before { opacity: .7; }
 
 /* -- 18. 账号池工具条：搜索之外的东西收进一个「更多」按钮 ------------ */
 #view-accounts .box > header > .xs { white-space: nowrap; }
@@ -5747,6 +5759,12 @@ details[open] > .fold > .foldbody,
   --raise: #1e222a;
   --line: rgba(255, 255, 255, .085);
   --line-soft: rgba(255, 255, 255, .05);
+  /* 控件边界单独一档（issue #220）：--line 同时承担卡片描边、表格分隔线与
+     输入框底线，而三者对对比度的要求不同——卡片/分隔线是装饰性的，
+     控件边界是「识别组件」所必需的信息（WCAG 1.4.11 要求 3:1）。曾用
+     --line 当控件底线，实测对输入框底色只有 1.14:1，静止态几乎看不见。
+     #6b6e75 对 #111318 输入底色实测 3.6:1；hover 仍走更亮的 --ink-3。 */
+  --ctl-line: #6b6e75;
   --ink: #eceef3;
   --ink-2: #b6bcc8;
   --ink-3: #7d8492;
@@ -5787,6 +5805,9 @@ details[open] > .fold > .foldbody,
   --raise: #ffffff;
   --line: rgba(16, 24, 40, .10);
   --line-soft: rgba(16, 24, 40, .06);
+  /* 控件边界独立档（issue #220）：白底输入框上需要 3:1；#82828a 实测
+     3.8:1。hover 走更深的 --ink-3（#687181，≥4.9:1）。 */
+  --ctl-line: #82828a;
   --ink: #14181f;
   --ink-2: #4a5260;
   /* #687181 是 #7a828f 同色相略降明度：压在 #fff / #f6f7f9 / #f7f8fa 三种

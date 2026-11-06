@@ -202,6 +202,12 @@ func run() error {
 			if err := timedStage("a11yTables", func() error { return assertA11yTablesAndPanels(runCtx, page) }); err != nil {
 				return err
 			}
+			// Resting control boundaries must clear WCAG 1.4.11 (issue #220):
+			// the 1px baseline is the only boundary cue, and it used to reuse
+			// the decorative --line token at ~1.1:1 in both themes.
+			if err := timedStage("controlBoundary", func() error { return assertControlBoundariesAreVisible(runCtx, page) }); err != nil {
+				return err
+			}
 			// The stats band must survive the 200% text path (issue #159):
 			// every tile carries a title, and nothing clips after the font
 			// scale-up (the wrap decision is no longer viewport-gated).
