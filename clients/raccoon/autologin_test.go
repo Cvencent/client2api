@@ -286,6 +286,19 @@ func (p *fakeRaccoonPage) Click(_ context.Context, selector string) (bool, error
 	return true, nil
 }
 
+// ClickTrusted models the CDP input-domain click: recording it, then flipping
+// the state a real page flips on an accepted click (the effect probe reads
+// it).  A test that wants a SWALLOWED click sets effect=false after wiring.
+func (p *fakeRaccoonPage) ClickTrusted(ctx context.Context, selector string) (bool, error) {
+	clicked, err := p.Click(ctx, selector)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if clicked && p.status == "" {
+		p.status = "发送中…" // the page's own handler writes this on accept
+	}
+	return clicked, err
+}
+
 func (p *fakeRaccoonPage) Fill(_ context.Context, selector, value string) (bool, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -293,7 +306,17 @@ func (p *fakeRaccoonPage) Fill(_ context.Context, selector, value string) (bool,
 	return true, nil
 }
 
-func (p *fakeRaccoonPage) EvalBool(_ context.Context, _ string) (bool, error) { return false, nil }
+// EvalBool answers the click-effect probe the way a real page does: the
+// status line carrying any text means an accepted click flipped it (the
+// probe's whole premise, issue #229).  Everything else stays false.
+func (p *fakeRaccoonPage) EvalBool(_ context.Context, expression string) (bool, error) {
+	if strings.Contains(expression, "sendCode") && strings.Contains(expression, "smsStatus") {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		return strings.TrimSpace(p.status) != "", nil
+	}
+	return false, nil
+}
 
 func (p *fakeRaccoonPage) EvalString(_ context.Context, expression string) (string, error) {
 	p.mu.Lock()

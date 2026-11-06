@@ -78,6 +78,11 @@ const (
 type raccoonAutoPage interface {
 	Exists(ctx context.Context, selector string) (bool, error)
 	Click(ctx context.Context, selector string) (bool, error)
+	// ClickTrusted clicks through the CDP input domain (isTrusted=true, issue
+	// #229): the Aliyun captcha widget swallows el.click()'s synthesised
+	// event, so the captcha-bound buttons must go through the same channel a
+	// physical pointer uses.
+	ClickTrusted(ctx context.Context, selector string) (bool, error)
 	Fill(ctx context.Context, selector string, value string) (bool, error)
 	EvalBool(ctx context.Context, expression string) (bool, error)
 	EvalString(ctx context.Context, expression string) (string, error)
@@ -608,7 +613,7 @@ func (d raccoonBrowserDriver) Drive(ctx context.Context, url, phone string, wait
 	} else if !ok {
 		return errors.New("找不到验证码输入框")
 	}
-	if ok, err := page.Click(ctx, raccoonSelLogin); err != nil {
+	if ok, err := page.ClickTrusted(ctx, raccoonSelLogin); err != nil {
 		return fmt.Errorf("点击登录失败：%w", err)
 	} else if !ok {
 		return errors.New("找不到登录按钮")
@@ -656,13 +661,25 @@ func requestRaccoonSMS(ctx context.Context, page raccoonAutoPage, logf func(stri
 }
 
 // clickAndWaitRaccoonSend clicks the send button and reads the page's verdict.
+// The click goes through the CDP input domain (issue #229): el.click() is
+// isTrusted=false and the Aliyun widget swallowed it -- CDP said "clicked",
+// the page sat still, and the run burned its wait on a button nobody pressed.
 func clickAndWaitRaccoonSend(ctx context.Context, page raccoonAutoPage, logf func(string, ...any)) error {
-	clicked, err := page.Click(ctx, raccoonSelSend)
+	clicked, err := page.ClickTrusted(ctx, raccoonSelSend)
 	if err != nil {
 		return fmt.Errorf("点击获取验证码失败：%w", err)
 	}
 	if !clicked {
 		return errors.New("找不到获取验证码按钮")
+	}
+	// 点击「发出」≠ 点击「生效」（issue #229）。The page's own handler flips
+	// the button to disabled and writes the status line on EVERY accepted
+	// click -- even a bad phone number gets 状态文字 -- so within a couple of
+	// seconds, silence means the event never reached the widget.  Say so and
+	// let the caller re-arm; waiting out the full send timeout here would
+	// just relabel a dead click as a vendor outage.
+	if !waitForRaccoonClickEffect(ctx, page) {
+		return errors.New("点击未生效：按钮没有进入发送状态（事件可能被验证组件吞掉），与厂商无关")
 	}
 	// The status line moves through 发送中… to one of the three outcomes the
 	// page can report.  "验证码已发送" is the success; anything with an error
@@ -686,6 +703,31 @@ func clickAndWaitRaccoonSend(ctx context.Context, page raccoonAutoPage, logf fun
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-time.After(250 * time.Millisecond):
+		}
+	}
+}
+
+// waitForRaccoonClickEffect reports whether the send click actually took:
+// the page flips sendBtn.disabled or writes any status text on an accepted
+// click, so two seconds of silence on BOTH is a swallowed event (issue #229).
+func waitForRaccoonClickEffect(ctx context.Context, page raccoonAutoPage) bool {
+	const effectExpr = `(function(){` +
+		`var b=document.getElementById('sendCode');` +
+		`var e=document.getElementById('smsStatus');` +
+		`var txt=e?((e.textContent||'')+''):'';` +
+		`return (b&&b.disabled===true)||(txt.trim()!=='');})()`
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if ok, err := page.EvalBool(ctx, effectExpr); err == nil && ok {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(150 * time.Millisecond):
 		}
 	}
 }

@@ -702,6 +702,65 @@ func (p *Page) Click(ctx context.Context, selector string) (bool, error) {
 	return p.EvalBool(ctx, js)
 }
 
+// ClickTrusted clicks the first element matching the selector through the CDP
+// input domain: the coordinates are resolved in the page, then
+// Input.dispatchMouseEvent synthesises the press/release pair the browser
+// itself would see from a physical pointer -- isTrusted=true, the same channel
+// a human click travels on.  el.click() synthesises a JS event whose
+// isTrusted=false, and anti-bot widgets (Alibaba's captcha among them) swallow
+// it silently: the call "succeeds", the page never reacts (issue #229).  The
+// fallback falls back to Click when the input domain cannot reach the element
+// (cross-origin frames report no usable coordinates).
+func (p *Page) ClickTrusted(ctx context.Context, selector string) (bool, error) {
+	// One evaluate returns everything the dispatch needs: the element's
+	// existence, its centre in viewport coordinates, and a document the
+	// browser would accept events on.  scrollIntoView first -- Input events
+	// land on whatever is under the point.
+	js := `(function(){var el=` + elementQueryJS(selector) + `;` +
+		`if(!el){return {ok:false};}` +
+		`el.scrollIntoView({block:'center'});` +
+		`var r=el.getBoundingClientRect();` +
+		`if(!r||r.width<=0||r.height<=0){return {ok:false};}` +
+		`return {ok:true,x:r.left+r.width/2,y:r.top+r.height/2};})()`
+	raw, err := p.Eval(ctx, js)
+	if err != nil {
+		return false, err
+	}
+	var loc struct {
+		OK bool    `json:"ok"`
+		X  float64 `json:"x"`
+		Y  float64 `json:"y"`
+	}
+	if err := json.Unmarshal(raw, &loc); err != nil || !loc.OK {
+		return false, err
+	}
+	x, y := int(loc.X), int(loc.Y)
+	for _, spec := range []struct {
+		typ      string
+		buttons  int
+		clickCnt int
+	}{
+		{"mousePressed", 1, 1},
+		{"mouseReleased", 0, 1},
+	} {
+		params := map[string]any{
+			"type":        spec.typ,
+			"x":           x,
+			"y":           y,
+			"button":      "left",
+			"buttons":     spec.buttons,
+			"clickCount":  spec.clickCnt,
+			"pointerType": "mouse",
+		}
+		if _, err := p.call(ctx, "Input.dispatchMouseEvent", params); err != nil {
+			// The input domain refused (detached frame, headless quirk):
+			// degrade to the JS click so a plain form still works.
+			return p.Click(ctx, selector)
+		}
+	}
+	return true, nil
+}
+
 // Fill sets the value of the first input matching the selector the way a human
 // typist would, which is what React-controlled inputs require: the value is
 // written through the native setter and an input event is dispatched.

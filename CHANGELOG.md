@@ -6,6 +6,17 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.55] - 2026-11-06
+
+### Fixed
+
+- **raccoon 自动登录的点击改走 CDP 输入域，并区分「点击未生效」与「厂商拒绝」（#229）**：`#sendCode` 的合成点击（`el.click()`，isTrusted=false）被阿里云无痕验证组件静默吞掉——CDP 报「点击成功」、页面零反应，模块等满发送超时后报「等待发送结果超时」，把自家的死点击说成厂商不回（操作员实盯确认按钮没被点动）。修法两半：`browser.Page` 新增 `ClickTrusted`——Runtime.evaluate 取元素中心坐标后经 `Input.dispatchMouseEvent` 派发 mousePressed/mouseReleased（CDP 输入域，isTrusted=true，与真手点击同一通道；输入域不可达时降级回合成点击）；raccoon 的 `#sendCode` 与 `#doLogin` 改走它。同时新增 2s 生效探测：页面对任何被接受的点击都会翻转按钮 disabled 或写状态行，两者皆静默 = 事件被吞，报「点击未生效…与厂商无关」并交还重武装逻辑，不再等满超时、不再把两种失败混在一个文案里。
+
+### Installer
+
+- `client2api-setup-0.7.55.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `4762b9b4d5caa27fc40c054f8f20e44776fd2beb8bb83bc4a478776e8a67ab20`
+
 ## [0.7.54] - 2026-11-06
 
 ### Fixed

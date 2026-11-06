@@ -105,9 +105,15 @@ func (f *fakeSMS) EvalString(ctx context.Context, expr string) (string, error) {
 	return f.statuses[i], nil
 }
 
+func (f *fakeSMS) ClickTrusted(ctx context.Context, sel string) (bool, error) {
+	return f.Click(ctx, sel)
+}
 func (f *fakeSMS) Fill(ctx context.Context, sel, value string) (bool, error) { return true, nil }
 func (f *fakeSMS) Exists(ctx context.Context, sel string) (bool, error)      { return true, nil }
-func (f *fakeSMS) EvalBool(ctx context.Context, expr string) (bool, error)   { return false, nil }
+
+// Effect probe PASSES: this fake models clicks that land and a vendor that
+// answers them (the refusal is the vendor's, not a swallowed event, #229).
+func (f *fakeSMS) EvalBool(ctx context.Context, expr string) (bool, error) { return true, nil }
 
 // TestASingleRefusalIsRetriedThenSucceeds 端到端：第一次被拒、第二次成功，整轮成功，
 // 且点击发生了两次。
@@ -147,12 +153,19 @@ func (a *alwaysRefuse) Click(ctx context.Context, sel string) (bool, error) {
 	a.clicks.Add(1)
 	return true, nil
 }
+func (a *alwaysRefuse) ClickTrusted(ctx context.Context, sel string) (bool, error) {
+	return a.Click(ctx, sel)
+}
 func (a *alwaysRefuse) EvalString(ctx context.Context, expr string) (string, error) {
 	return "图形验证码校验失败，请重新完成滑块验证", nil
 }
 func (a *alwaysRefuse) Fill(ctx context.Context, sel, value string) (bool, error) { return true, nil }
 func (a *alwaysRefuse) Exists(ctx context.Context, sel string) (bool, error)      { return true, nil }
-func (a *alwaysRefuse) EvalBool(ctx context.Context, expr string) (bool, error)   { return false, nil }
+
+// The effect probe must PASS here: this fake models a click that LANDED and a
+// vendor that refused afterwards -- the refusal path, not the swallowed-click
+// path (issue #229).
+func (a *alwaysRefuse) EvalBool(ctx context.Context, expr string) (bool, error) { return true, nil }
 
 var _ = errors.New
 var _ = io.Discard
