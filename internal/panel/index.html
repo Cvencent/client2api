@@ -4777,6 +4777,15 @@ input, select, textarea, .stat, .subtab {
   pointer-events: none; border-radius: 0 10px 10px 0;
   background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--surface) 92%, transparent));
 }
+/* 横向滚动容器的公共工具类（issue #218）：.cmdviews/.ustiles/.chips 能滚但把
+   「能滚」的两条线索全关（右缘硬切 + 竖轮推不动）。这里复用同一条渐隐，
+   由下方 markHScroll() 打 more-right；滚到底自动收起。 */
+.hscroll { position: relative; }
+.hscroll.more-right::after {
+  content: ""; position: absolute; top: 0; right: 0; bottom: 0; width: 34px;
+  pointer-events: none; border-radius: 0 10px 10px 0;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--surface) 92%, transparent));
+}
 /* 顶部表头里给一句「列多，可横向滚动」的说明，比纯视觉渐隐更明确。 */
 .mdscrollhint { display: inline-flex; align-items: center; gap: 5px; font-size: 0.6875rem; color: var(--ink-3); }
 .mdscrollhint::before { content: "⇆"; font-size: 0.75rem; }
@@ -6335,8 +6344,10 @@ html:not([data-theme="light"]) body::after {
 
 .view { padding: 14px 20px 72px; }
 
-/* 窄屏：顶栏换行成两行（导航一行、状态一行），不再是横向工具带。 */
-@media (max-width: 900px) {
+/* 窄屏：顶栏换行成两行（导航一行、状态一行），不再是横向工具带。
+   断点 900→1130（issue #218）：901–1129 那段「与状态胶囊同行」时频道条只剩
+   560px、当前项最多被切到视野外 217px；1130 是频道条整行放得下的实测宽度。 */
+@media (max-width: 1130px) {
   .shell { grid-template-rows: auto minmax(0, 1fr); height: auto; min-height: 100vh; overflow: visible; }
   .cmdbar { height: auto; flex-wrap: wrap; row-gap: 2px; padding: 8px 10px; position: sticky; top: 0; }
   .cmdlink { padding: 6px 9px; }
@@ -6666,7 +6677,7 @@ html:not([data-theme="light"]) body::after {
        所有 data-view 与 id 原样保留，脚本里的 setNav/renderChips 一行未改。 -->
   <nav class="cmdbar" aria-label="主导航">
     <span class="mark" aria-hidden="true">c2</span>
-    <div class="cmdviews">
+    <div class="cmdviews hscroll">
       <a href="#routelive" data-view="routelive" data-idx="01" class="cmdlink">实况<span class="navcount rl" id="navCountRouteLive" hidden></span></a>      <a href="#overview" data-view="overview" data-idx="02" class="cmdlink">总览</a>
       <span class="cmdsep" aria-hidden="true"></span>
       <a href="#accounts" data-view="accounts" data-idx="03" class="cmdlink">账号池<span class="navcount" id="navCountAccounts" hidden></span></a>
@@ -6839,7 +6850,7 @@ html:not([data-theme="light"]) body::after {
           <!-- 卡片头不写「账号池」：页头已经写了，同一个词在同一屏出现两次、
                同样字重，读者要花一次判断才发现它们是同一个东西。
                这一行让给筛选控件——它本来就被挤在右边。 -->
-          <div class="chips" id="clientChips"></div>
+          <div class="chips hscroll" id="clientChips"></div>
           <span class="grow"></span>
           <input id="accSearch" class="filt" type="search" placeholder="搜索账号 / 备注（/）" spellcheck="false" autocomplete="off">
           <label class="sel-note" for="accStateFilter">状态 <select id="accStateFilter" title="按账号汇总状态筛选">
@@ -7045,7 +7056,7 @@ html:not([data-theme="light"]) body::after {
           </label>
         </header>
         <div class="pad">
-          <div class="ustiles" id="usTiles"></div>
+          <div class="ustiles hscroll" id="usTiles" tabindex="0" aria-label="用量磁贴，可横向滚动"></div>
           <div class="uschart">
             <div class="uschart-hd">
               <span class="k">用量走势</span>
@@ -7137,7 +7148,7 @@ html:not([data-theme="light"]) body::after {
         <header>
           <h3>积分构成 <span class="hint">每个账号的积分批次明细（按剩余从多到少）</span></h3>
           <span class="grow"></span>
-          <div class="chips" id="crChips"></div>
+          <div class="chips hscroll" id="crChips"></div>
           <span class="note" id="crNote">-</span>
         </header>
         <div class="pad" id="pkExpiry"></div>
@@ -7208,7 +7219,7 @@ html:not([data-theme="light"]) body::after {
         </header>
         <div class="cfghelp" id="scState"></div>
         <div class="tblbar">
-          <div class="chips" id="scChips"></div>
+          <div class="chips hscroll" id="scChips"></div>
           <span class="grow"></span>
           <input id="scSearch" type="search" placeholder="搜索任务（/）" spellcheck="false" autocomplete="off">
           <label class="chk"><input type="checkbox" id="scOnlyOwn">只看已自定义</label>
@@ -9313,6 +9324,8 @@ function go(v) {
   setTimeout(() => { if (VIEW === v) afterViewData(v); }, 520);
   setTimeout(() => { if (VIEW === v) afterViewData(v); }, 1400);
   if (v) scheduleScrollableCheck();
+  // 频道条上的当前项滚进视野（issue #218）。星图态 shell 隐藏，没有频道条。
+  if (v && !document.body.classList.contains("atlas-on")) scrollCmdViewIntoView();
 }
 
 // fitChatHeight 让对话页的工作区正好填满「顶栏 + masthead 之下」的剩余高度。
@@ -11085,9 +11098,14 @@ function accStatOf(id) {
   return (s && typeof s === "object") ? s : null;
 }
 
+// 「没有这个事实」的全站统一写法（issue #219）：曾是三种写法并存（空白 /
+// "-" / "—"），且两处注释各自声称自己才是全站口径。抽成常量收口，放在第一个
+// 使用点之前（const 不提升，声明晚于执行会 TDZ）。
+const NO_VALUE = "—";
+
 function accRateCell(a) {
   const s = accStatOf(a.id);
-  if (!s) return '<span class="hint">-</span>';
+  if (!s) return '<span class="hint">' + NO_VALUE + '</span>';
   const req = Number(s.requests) || 0, err = Number(s.failures) || 0;
   // The gateway counts every attempt in requests and the failed ones again in
   // failures, so successes are the difference.  Clamped because a record can be
@@ -11098,7 +11116,7 @@ function accRateCell(a) {
 
 function accUsageCell(a) {
   const s = accStatOf(a.id);
-  if (!s) return '<span class="hint">-</span>';
+  if (!s) return '<span class="hint">' + NO_VALUE + '</span>';
   const req = Number(s.requests) || 0;
   const tok = Number(s.total_tokens) || 0;
   // The cell shows the two counts that fit; latency and rate ride in the
@@ -11111,20 +11129,20 @@ function accUsageCell(a) {
 
 function accLastCell(a) {
   const s = accStatOf(a.id);
-  if (!s || !s.last_success) return '<span class="hint">-</span>';
+  if (!s || !s.last_success) return '<span class="hint">' + NO_VALUE + '</span>';
   return '<span class="hint" title="' + esc(s.last_success) + '">' + esc(ago(s.last_success)) + '</span>';
 }
 
 // accExpiryCell 渲染凭据到期时间。原来这一格直接印 RFC3339 原文，一眼看不出"还有
 // 多久"；改成本地化的剩余时长，绝对时间戳挪进 title（要看原文仍然看得到）。已过期
 // 标红、一小时内标黄 —— 这两种情况操作员需要立刻注意到。模块不报 expires_at
-// （凭据根本不过期）时显示 "—"，和别处"没有这个事实"的写法一致。
+// （凭据根本不过期）时显示 NO_VALUE（"—"），与全站"没有这个事实"同一口径。
 // 注意：这两个函数只返回格子里的内容，<td> 仍然由 accRowHTML 拼 ——
 // poolstats_ui_test.go 的 accountsRowCells 数的是 accRowHTML 里 ' <td 的个数，
 // 而它必须和表头的 <th> 数相等，把 <td> 挪进来会让那个断言失衡。
 function accExpiryCell(a) {
   const raw = a.expires_at;
-  if (!raw) return '<span class="hint">—</span>';
+  if (!raw) return '<span class="hint">' + NO_VALUE + '</span>';
   const t = Date.parse(raw);
   if (!isFinite(t)) return esc(raw);
   const left = t - Date.now();
@@ -15808,15 +15826,16 @@ function usageRows(list, cols) {
 // US_COLS 是每张用量表共有的五个数字格：请求 / 失败 / 输入 / 输出 / 合计。
 const US_COLS = ["requests", "failures", "prompt_tokens", "completion_tokens", "total_tokens"];
 
-// fmtMs / fmtRate 对应参考 app.js:1226-1232 的两个性能格。本仓无值时写 "-" 而
-// 不是参考的破折号，与同页其它表格保持同一种空值写法。
+// fmtMs / fmtRate 对应参考 app.js:1226-1232 的两个性能格。空值口径全站统一为
+// NO_VALUE（issue #219）：这条注释曾声称"全站用 -"，与到期那条注释（声称全站用
+// 破折号）互相矛盾，实际代码三种写法并存。
 function fmtMs(ms) {
   ms = Number(ms || 0);
-  if (!ms) return "-";
+  if (!ms) return NO_VALUE;
   if (ms >= 1000) return (ms / 1000).toFixed(2) + "s";
   return Math.round(ms) + "ms";
 }
-function fmtRate(r) { return r ? Number(r).toFixed(1) + " tok/s" : "-"; }
+function fmtRate(r) { return r ? Number(r).toFixed(1) + " tok/s" : NO_VALUE; }
 
 // fmtTok / parsePointTime / usageChartSVG 是参考 app.js renderUsageChart 一族的移植。
 // 参考把图直接写进 host 的 innerHTML；本仓 #usChart 上面还有成功率与四行合计，所以
@@ -23395,6 +23414,36 @@ function markScrollableTables() {
   for (const [w, more] of geo) w.classList.toggle("scrollable-x", more > 4);
 }
 window.addEventListener("resize", markScrollableTables);
+// 横向滚动容器（issue #218）：.cmdviews/.ustiles/.chips 能滚但没有「能滚」的
+// 视觉线索、竖轮也推不动。markHScroll 打 .more-right 让右侧渐隐只在真能往右
+// 时出现（滚到底自动收起）；wheel 处理把竖轮转成横向（命中容器才转，不劫持
+// 页面竖向滚动）。注意：本块必须留在上面 resize 监听之后——#165 的守卫把
+// markScrollableTables 的函数体截止在下一个 window.addEventListener，
+// 放进那个窗口会同时触发「读写交替」的误报（2026-11-06 事故的教训）。
+function markHScroll() {
+  $$(".hscroll").forEach(w => {
+    const more = w.scrollWidth - w.clientWidth - w.scrollLeft;
+    w.classList.toggle("more-right", more > 4);
+  });
+}
+window.addEventListener("resize", markHScroll);
+document.addEventListener("scroll", ev => {
+  if (ev.target && ev.target.classList && ev.target.classList.contains("hscroll")) markHScroll();
+}, true);
+document.addEventListener("wheel", ev => {
+  const w = ev.target && ev.target.closest ? ev.target.closest(".hscroll") : null;
+  if (!w) return;
+  if (Math.abs(ev.deltaY) <= Math.abs(ev.deltaX)) return;
+  const before = w.scrollLeft;
+  w.scrollLeft += ev.deltaY;
+  if (w.scrollLeft !== before) ev.preventDefault();
+}, { passive: false });
+// 频道切换后把当前项滚进视野：go()/hashchange 都走 go()，调用点在 go() 尾部。
+function scrollCmdViewIntoView() {
+  const on = document.querySelector(".cmdviews .cmdlink.on");
+  if (on && on.scrollIntoView) on.scrollIntoView({ block: "nearest", inline: "nearest" });
+  markHScroll();
+}
 document.addEventListener("scroll", ev => {
   if (ev.target && ev.target.classList && ev.target.classList.contains("tbl-wrap")) markScrollableTables();
 }, true);
