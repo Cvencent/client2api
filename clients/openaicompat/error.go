@@ -116,6 +116,17 @@ var (
 		"no permission to access group", "permission to access group",
 		"无权访问分组", "无权访问该分组", "分组无权限",
 	}
+	// wireMismatchMarkers name a vendor answering with a DIFFERENT wire
+	// protocol than the one the request used: "contents is required" is
+	// Gemini's native parser refusing an OpenAI-shaped body (issue #239 --
+	// lingxiai moved gemini-3.8-flash to a group whose backend only serves
+	// the native line).  The credential is fine; the fix is on the relay's
+	// routing, so this must not park the account and the text should point
+	// the operator at the wire mismatch instead of a generic 500.
+	wireMismatchMarkers = []string{
+		"contents is required", "contents field is required",
+		"contents: required", "'contents' is required",
+	}
 	blockedMarkers = []string{
 		"flagged", "moderation", "moderated", "content policy",
 		"content_policy", "prohibited", "violates",
@@ -423,6 +434,15 @@ func (c *Client) classifyUpstream(accountID string, err error) error {
 		k = kindClient
 	}
 	msg := truncate(core.Redact(err.Error()), 300)
+	// A wire mismatch is a RELAY misroute: the credential is fine, and the
+	// same OpenAI-shaped body will land on the same native-only backend via
+	// any sibling, so failover would just repeat the 500 (issue #239).  The
+	// message names the mismatch -- the status text itself ("contents is
+	// required") gives an operator nothing actionable.
+	if containsMarker(msg, wireMismatchMarkers) {
+		return core.Fail(c.Name(), accountID, core.FailureUpstream, 0, &upstreamError{Op: "request",
+			Msg: msg + "（疑似线格式不匹配：厂商把该模型路由到了 Gemini 原生接口，OpenAI 兼容线不可用；请向厂商反馈或为该分组挂兼容接口）"})
+	}
 	return core.Fail(c.Name(), accountID, coreKindFor(k), 0, &upstreamError{Op: "request", Msg: msg})
 }
 

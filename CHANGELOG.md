@@ -6,6 +6,26 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.61] - 2026-11-07
+
+### Fixed
+
+- **openaicompat 识别线格式不匹配的厂商错误并点名（#239）**：操作员在
+  lingxiai 换 key 分组后，gemini-3.8-flash 的 OpenAI 兼容请求改答
+  `500 "contents is required"`——那是 Gemini 原生解析器的形状，说明厂商把
+  该模型路由到了原生后端；但原文对操作员完全不可行动。修法：
+  `classifyUpstream` 识别这族文本（wireMismatchMarkers），错误消息追加
+  「疑似线格式不匹配：厂商把该模型路由到了 Gemini 原生接口…请向厂商反馈或
+  为该分组挂兼容接口」。账号不标记异常（同一 key 的其它模型仍是 OpenAI
+  线）、不做平台切换（同形状请求经任何 sibling 都会落到同一个原生后端，
+  切换只会重复 500）。网关侧的 `api_format: "gemini"` 支持在厂商确认分组
+  确实只有原生线之前不建。
+
+### Installer
+
+- `client2api-setup-0.7.61.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `dbaa8b47d4e694eac8730790dd1ab19a7d9545795f9ba5cc928306bc27f4bbb8`
+
 ## [0.7.60] - 2026-11-07
 
 ### Fixed
