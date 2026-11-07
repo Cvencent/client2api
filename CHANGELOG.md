@@ -6,6 +6,26 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.60] - 2026-11-07
+
+### Fixed
+
+- **账号测试探测尊重操作员的模型策略（#238）**：openaicompat 系的测试按钮读
+  导入时的 `probe_models` 快照，操作员后来的开启/禁用（model_policy）对它
+  完全不可见——实测探到策略里明确禁用的模型，排障被引向「平台坏了」。修法：
+  core 新增可选接口 `TestAccountFilterer`，openaicompat 实现
+  `TestAccountFiltered`（probe 候选与禁用清单大小写不敏感地求反交集，禁用的
+  不进探测；全部候选被禁时回退原清单——结果可读，空跑不可读——并在
+  `TestResult.Note` 注明「探测清单已按模型策略收窄」）；panel 的测试入口查
+  `ModelPolicies.Disabled(platform, id)`，非空即走过滤版，无策略记录的账号
+  保持原路径零变化。指定单模型探测（ModelTester 通道）优先级更高，行为
+  不变。
+
+### Installer
+
+- `client2api-setup-0.7.60.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `474da515183761678bb383210675e4fbc83c59d9d49b705c58c92391476614c1`
+
 ## [0.7.59] - 2026-11-07
 
 ### Added

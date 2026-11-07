@@ -66,6 +66,10 @@ type ProviderConfig struct {
 	// serves the built-in defaults for the id (or nothing for an unknown id
 	// unless extra_models fills it).
 	Models []string `json:"models"`
+	// probeFiltered is set by withProbeFilter when the operator's model policy
+	// narrowed the probe list; probeProvider surfaces it in the result so a
+	// narrowed run reads as such.
+	probeFiltered string
 	// ProbeModels is an optional, non-catalogue hint for TestAccount.  A
 	// provider can advertise non-chat models first (for example an OCR model
 	// or an audio model), so probing the first catalogue entry is not safe.
@@ -530,6 +534,35 @@ func (p ProviderConfig) probeModelsFor(cfgExtraModels []string) []string {
 		return p.ProbeModels
 	}
 	return p.modelsFor(cfgExtraModels)
+}
+
+// withProbeFilter removes the operator's disabled models from the probe
+// candidates (issue #238): the import-time ProbeModels snapshot cannot see
+// later policy choices, and probing a model the account is forbidden to serve
+// reads as "the platform is broken".  Disabling every candidate falls back to
+// the unfiltered list -- the fallback result is readable, an empty probe is
+// not -- and probeFiltered records which mode ran.
+func (p ProviderConfig) withProbeFilter(candidates []string, disabledModels []string) ProviderConfig {
+	disabled := make(map[string]struct{}, len(disabledModels))
+	for _, m := range disabledModels {
+		disabled[strings.ToLower(strings.TrimSpace(m))] = struct{}{}
+	}
+	if len(disabled) == 0 {
+		return p
+	}
+	kept := make([]string, 0, len(candidates))
+	for _, m := range candidates {
+		if _, off := disabled[strings.ToLower(strings.TrimSpace(m))]; off {
+			continue
+		}
+		kept = append(kept, m)
+	}
+	if len(kept) == 0 || len(kept) == len(candidates) {
+		return p
+	}
+	p.probeFiltered = "probe list narrowed by model policy"
+	p.ProbeModels = kept
+	return p
 }
 
 // --- duration knobs ---------------------------------------------------------

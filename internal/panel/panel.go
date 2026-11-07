@@ -1314,6 +1314,12 @@ func (p *panel) testAccount(w http.ResponseWriter, r *http.Request, c core.Clien
 	var err error
 	if mt, ok := c.(core.ModelTester); ok && want != "" {
 		res, err = mt.TestAccountModel(ctx, id, want)
+	} else if tf, ok := core.AsTestAccountFilterer(c); ok {
+		// The probe must test what the operator allows (issue #238): the
+		// import-time snapshot the module defaults to cannot see later policy
+		// choices.  No policy record = unfiltered, same as before.
+		disabled := p.opts.ModelPolicies.Disabled(c.Name(), id)
+		res, err = tf.TestAccountFiltered(ctx, id, disabled)
 	} else {
 		res, err = am.TestAccount(ctx, id)
 	}

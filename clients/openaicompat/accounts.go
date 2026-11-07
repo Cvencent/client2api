@@ -205,6 +205,20 @@ func (c *Client) SetAccountEnabled(ctx context.Context, id string, enabled bool)
 // TestAccount runs one tiny completion through the provider's key.  A refusal
 // is a result, not an error: the panel has to show why a key is no good.
 func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, error) {
+	return c.testAccount(ctx, id, nil)
+}
+
+// TestAccountFiltered runs the same probe with the operator's disabled models
+// removed from the candidate list (issue #238): the probe tests what the
+// account is allowed to serve, not what the import snapshot happened to
+// capture.  A policy that disables every candidate falls back to the unfiltered
+// list -- a probe that tries nothing would be a worse answer than one the
+// operator can read -- and the result says so.
+func (c *Client) TestAccountFiltered(ctx context.Context, id string, disabledModels []string) (core.TestResult, error) {
+	return c.testAccount(ctx, id, disabledModels)
+}
+
+func (c *Client) testAccount(ctx context.Context, id string, disabledModels []string) (core.TestResult, error) {
 	c.ensure()
 	id = strings.TrimSpace(id)
 	rec, ok := c.pool.byID(id)
@@ -214,6 +228,9 @@ func (c *Client) TestAccount(ctx context.Context, id string) (core.TestResult, e
 	prov, ok := c.providerByID(rec.ID)
 	if !ok {
 		return core.TestResult{}, fmt.Errorf("provider %q not found", rec.ID)
+	}
+	if len(disabledModels) > 0 {
+		prov = prov.withProbeFilter(prov.probeModelsFor(c.cfg.ExtraModels), disabledModels)
 	}
 	return c.probeProvider(ctx, prov, rec), nil
 }
@@ -302,6 +319,12 @@ func (c *Client) panelRecord(id string) (core.AccountRecord, bool) {
 // metadata keep working after an upgrade without a mandatory rescan.
 func (c *Client) probeProvider(ctx context.Context, prov ProviderConfig, rec providerRecord) core.TestResult {
 	res := core.TestResult{AccountID: rec.ID}
+	if prov.probeFiltered != "" {
+		// A narrowed probe must read as one (issue #238): otherwise the
+		// operator cannot tell "tested what the policy allows" from "tested
+		// the import snapshot".
+		res.Note = "探测清单已按模型策略收窄"
+	}
 	start := c.now()
 	defer func() { res.ElapsedMS = c.now().Sub(start).Milliseconds() }()
 

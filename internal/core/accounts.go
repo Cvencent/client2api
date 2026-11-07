@@ -106,6 +106,9 @@ type TestResult struct {
 	Model     string `json:"model,omitempty"`
 	Reply     string `json:"reply,omitempty"`
 	Error     string `json:"error,omitempty"`
+	// Note carries a qualifier that does not change the verdict: a probe run
+	// with a narrowed candidate list must read as one (issue #238).
+	Note      string `json:"note,omitempty"`
 	ElapsedMS int64  `json:"elapsed_ms,omitempty"`
 }
 
@@ -451,6 +454,23 @@ type AccountModelPolicyManager interface {
 	// allowed, which is the default for an account the operator never
 	// configured.  The change must survive a restart.
 	SetAccountModelPolicy(ctx context.Context, id string, disabledModels []string, forceEnabled bool) error
+}
+
+// TestAccountFilterer is implemented by modules whose TestAccount probes from
+// a list that can drift from the operator's model policy: the panel hands the
+// account's disabled models over so the probe tests what the account is
+// actually allowed to serve (issue #238).  An empty disabled list must behave
+// exactly like TestAccount.
+type TestAccountFilterer interface {
+	Client
+	TestAccountFiltered(ctx context.Context, id string, disabledModels []string) (TestResult, error)
+}
+
+// AsTestAccountFilterer narrows a registered client to the policy-aware test
+// probe.  Modules that do not implement it keep their plain TestAccount path.
+func AsTestAccountFilterer(c Client) (TestAccountFilterer, bool) {
+	tf, ok := c.(TestAccountFilterer)
+	return tf, ok
 }
 
 // CredentialImporter lets a module pull credentials out of the vendor's own
