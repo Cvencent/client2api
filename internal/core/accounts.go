@@ -227,6 +227,11 @@ type CheckinStatus struct {
 	State   string `json:"state"` // done | unavailable
 	Message string `json:"message,omitempty"`
 	At      string `json:"at,omitempty"`
+	// Data is the vendor's per-run detail the module chose to record (campaign
+	// counts and the like).  The one-line message cannot settle a dispute with
+	// the vendor's own app -- the campaign list it reported at 06:00 can
+	// (issue #236).
+	Data map[string]any `json:"data,omitempty"`
 }
 
 // Definitive daily check-in states.

@@ -204,6 +204,7 @@ func (c *Client) RefreshModels(ctx context.Context) ([]core.Model, error) {
 	}
 
 	models := catalogue(infos)
+	core.LogNewCatalogueIDs(c.logf, "qoder", previous, models)
 	now := time.Now()
 	c.modelMu.Lock()
 	c.models = models

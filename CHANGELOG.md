@@ -6,6 +6,30 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.59] - 2026-11-07
+
+### Added
+
+- **签到明细落盘，厂商 06:00 报的活动清单可回放（#236）**：模块 `Checkin()`
+  的 `res.Data`（qoder 的 campaigns/claimable/already_claimed 计数）此前只
+  在内存里——调度器只记「done: ran=N」、checkin_state 只存 message 一行，
+  App 能领 vs 模块说没有的争议永远无法裁决。修法：`checkinStateEntry` 增加
+  `data` 字段原样落 res.Data（checkin_state.json 每账号每动作存当日明细，
+  跨重启保留），`core.CheckinStatus` 带出 `data`（面板 API 可展示）；调度器
+  的 refused/skipped 日志行拼上明细（`[campaigns=3 claimable=0
+  already_claimed=1]`），grep 即可裁决。
+
+- **厂商目录上新提示（#237）**：模块 live 目录刷新后新 id 默默进缓存，不在
+  exposed_models 白名单里就永不曝光——操作员全程无感知。core 新增
+  `LogNewCatalogueIDs`：刷新相对上次缓存的差集（大小写不敏感），有新增时打
+  一行日志列出 ids 与「如需曝光请在配置中添加」的指引；qoder 与 codearts
+  两条刷新路径接入（本轮的两个实证形状），无新增时零日志（轮询常态安静）。
+
+### Installer
+
+- `client2api-setup-0.7.59.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `34e8edef0aa7a7db2e580f76e50a586c1b44113ca336ec7dc993270b19897ebb`
+
 ## [0.7.58] - 2026-11-06
 
 ### Fixed

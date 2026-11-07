@@ -881,10 +881,18 @@ func (c *Client) RefreshModels(ctx context.Context) ([]core.Model, error) {
 	// "this channel is off" is a fact, not a missing value.
 	c.benefit = benefit
 	models = markBenefitModels(models, c.benefitIDsLocked())
+	previous := c.models
 	c.models = models
 	c.modelsAt = now
 	c.modelsRetryAt = time.Time{}
 	c.modelsMu.Unlock()
+	// Computed on the previous snapshot AFTER the swap so the log reflects the
+	// delta the operator would have missed (issue #237).
+	core.LogNewCatalogueIDs(func(format string, args ...any) {
+		if c.deps.Logf != nil {
+			c.deps.Logf(format, args...)
+		}
+	}, "codearts", previous, models)
 	c.saveModelsCache(models, benefit, now)
 	return append([]core.Model(nil), models...), nil
 }

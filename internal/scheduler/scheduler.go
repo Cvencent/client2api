@@ -1655,6 +1655,25 @@ func firstCheckinAction(actions []core.CheckinAction) string {
 	return strings.TrimSpace(actions[0].ID)
 }
 
+// checkinDetail renders the module's own per-run numbers for the log line:
+// "campaigns=3 claimable=0 already_claimed=1" settles "the vendor had nothing"
+// against "the App shows an activity" without replaying anything (issue #236).
+func checkinDetail(res core.CheckinResult) string {
+	if len(res.Data) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(res.Data))
+	for k := range res.Data {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%v", k, res.Data[k]))
+	}
+	return " [" + strings.Join(parts, " ") + "]"
+}
+
 func checkinReason(res core.CheckinResult) string {
 	for _, s := range []string{res.Message, res.Error} {
 		if s = core.Redact(strings.TrimSpace(s)); s != "" {
@@ -2016,17 +2035,18 @@ func (r *Runner) runCheckinBatchAs(ctx context.Context, c core.Client, b core.Ba
 		}
 
 		if !res.OK {
+			detail := checkinDetail(res)
 			if res.Skipped {
 				rep.Skipped++
 				reason := checkinReason(res)
 				rep.SkipReasons = appendReason(rep.SkipReasons, reason)
-				r.log("[scheduler] %s/%s account %q checkin skipped: %s", rep.Client, rep.Batch, acc, reason)
+				r.log("[scheduler] %s/%s account %q checkin skipped: %s%s", rep.Client, rep.Batch, acc, reason, detail)
 				continue
 			}
 			rep.Refused++
 			reason := checkinReason(res)
 			rep.Refusals = appendReason(rep.Refusals, reason)
-			r.log("[scheduler] %s/%s account %q checkin refused: %s", rep.Client, rep.Batch, acc, reason)
+			r.log("[scheduler] %s/%s account %q checkin refused: %s%s", rep.Client, rep.Batch, acc, reason, detail)
 		}
 	}
 	rep.Duration = r.now().Sub(rep.Started)

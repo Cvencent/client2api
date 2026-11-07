@@ -21,6 +21,12 @@ type checkinStateEntry struct {
 	State   string `json:"state"`
 	Message string `json:"message,omitempty"`
 	At      string `json:"at,omitempty"`
+	// Data carries the vendor's per-run detail (campaign/claimable counts for
+	// qoder, and anything else a module chooses to record).  Without it the
+	// campaign list the vendor reported at 06:00 is unreplayable: the App can
+	// show a claimable activity the module's campaign API never returned, and
+	// the one-line message cannot say which side lied (issue #236).
+	Data map[string]any `json:"data,omitempty"`
 }
 
 type checkinStateFile struct {
@@ -137,6 +143,7 @@ func (s *CheckinStore) Record(platform, account, action string, res core.Checkin
 		State:   state,
 		Message: message,
 		At:      at,
+		Data:    res.Data,
 	}
 	s.mu.Unlock()
 
@@ -195,7 +202,7 @@ func (s *CheckinStore) Snapshot(platform string) map[string]map[string]core.Chec
 			if out[account] == nil {
 				out[account] = map[string]core.CheckinStatus{}
 			}
-			out[account][action] = core.CheckinStatus{State: entry.State, Message: entry.Message, At: entry.At}
+			out[account][action] = core.CheckinStatus{State: entry.State, Message: entry.Message, At: entry.At, Data: entry.Data}
 		}
 	}
 	return out
