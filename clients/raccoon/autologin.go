@@ -687,14 +687,36 @@ func clickAndWaitRaccoonSend(ctx context.Context, page raccoonAutoPage, logf fun
 	// let the caller re-arm; waiting out the full send timeout here would
 	// just relabel a dead click as a vendor outage.
 	if !waitForRaccoonClickEffect(ctx, page) {
-		logf("点击未生效：按钮没有进入发送状态（事件可能被验证组件吞掉），与厂商无关；截取现场存入 transcript")
+		// 按钮没进发送状态的三种原因（issue #141 操作员两轮实盯后修正）：这是
+		// **无痕验证**——操作员手动点同一页面直接通过、全程无滑块；环境可信时
+		// 点击静默通过，环境被识别时静默挂掉。自动化窗口里两种都可能：
+		//   a) 挑战弹窗出现（环境分不足 → 升级为滑块）；
+		//   b) 什么都不出现（无痕验证静默拒绝本次点击）。
+		if waitForRaccoonCaptchaPopup(ctx, page) {
+			logf("验证挑战（滑块）已弹出：自动流程到此为止，滑块需人工拖动或环境分通过后才会发送验证码")
+			if shot, serr := page.Screenshot(ctx); serr == nil && len(shot) > 0 {
+				logf("[screenshot png %d bytes]", len(shot))
+				saveRaccoonScreenshot(logf, shot)
+			}
+			return errors.New("点击已生效：验证挑战（滑块）已弹出但未完成；滑块需人工拖动，自动化不能替拖")
+		}
+		logf("点击未生效：按钮没有进入发送状态，挑战弹窗也没有出现（无痕验证静默拒绝）；截取现场存入 transcript")
 		if shot, serr := page.Screenshot(ctx); serr == nil && len(shot) > 0 {
 			logf("[screenshot png %d bytes]", len(shot))
 			saveRaccoonScreenshot(logf, shot)
 		} else {
 			logf("现场截屏失败：%v", serr)
 		}
-		return errors.New("点击未生效：按钮没有进入发送状态（事件可能被验证组件吞掉），与厂商无关")
+		// 人工接管窗口（issue #141 操作员指正「手动点一下就获取到了」）：同一
+		// 窗口里人工点一下——能过 = 我们合成点击的通道/时序被识别（修点击），
+		// 不能过 = 自动化环境指纹判死（修环境）。这是最快的裁决实验，同时
+		// 号码在窗口内被保住，人工点到即整个流程继续走下去。
+		logf("窗口保留 %s 供人工接管：请在弹出的浏览器窗口里手动点击「获取验证码」；人工点击成功后本流程自动继续", raccoonManualTakeover)
+		if waitForRaccoonManualSend(ctx, page, logf) {
+			logf("人工点击已生效（验证码已发送），自动流程继续")
+			return nil
+		}
+		return errors.New("点击未生效且人工接管窗口内未完成发送：自动化点击通道或环境指纹被验证组件识别")
 	}
 	// The status line moves through 发送中… to one of the three outcomes the
 	// page can report.  "验证码已发送" is the success; anything with an error
@@ -722,9 +744,78 @@ func clickAndWaitRaccoonSend(ctx context.Context, page raccoonAutoPage, logf fun
 	}
 }
 
+// raccoonEffectExpr reports an accepted click: the page flips sendBtn.disabled
+// or writes status text on every accepted click, however the click arrived
+// (automated or by hand) -- the manual-takeover watcher reads the same signal.
+const raccoonEffectExpr = `(function(){` +
+	`var b=document.getElementById('sendCode');` +
+	`var e=document.getElementById('smsStatus');` +
+	`var txt=e?((e.textContent||'')+''):'';` +
+	`return (b&&b.disabled===true)||(txt.trim()!=='');})()`
+
 // raccoonArmedExpr reads the page's captcha-armed flag; the login page sets it
 // once initAliyunCaptcha has wired the click handler (issue #229).
 const raccoonArmedExpr = `(function(){return window.__captchaArmed === true;})()`
+
+// raccoonPopupExpr reports whether the Aliyun widget has rendered its
+// challenge: the #captcha-element mount gains children (popup mode attaches
+// the slider there), or a captcha-named iframe appears.  A click on an armed
+// button in popup mode shows the slider FIRST -- the button only flips after
+// the challenge is solved -- so "no button state" alone cannot distinguish a
+// swallowed click from an open challenge (issue #141 operator follow-up).
+const raccoonPopupExpr = `(function(){` +
+	`var el=document.getElementById('captcha-element');` +
+	`if(el&&el.childElementCount>0){return true;}` +
+	`var fr=document.querySelectorAll('iframe');` +
+	`for(var i=0;i<fr.length;i++){` +
+	`var tag=((fr[i].id||'')+' '+(fr[i].className||'')+' '+(fr[i].src||'')).toLowerCase();` +
+	`if(tag.indexOf('captcha')>=0){return true;}` +
+	`}` +
+	`return false;})()`
+
+// waitForRaccoonCaptchaPopup polls for the challenge UI for two seconds.
+func waitForRaccoonCaptchaPopup(ctx context.Context, page raccoonAutoPage) bool {
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if ok, err := page.EvalBool(ctx, raccoonPopupExpr); err == nil && ok {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(150 * time.Millisecond):
+		}
+	}
+}
+
+// raccoonManualTakeover is how long the browser window stays open for the
+// operator to click the button by hand after an automated click was silently
+// dropped.
+var raccoonManualTakeover = 60 * time.Second
+
+// waitForRaccoonManualSend watches the status line (and button state) for the
+// duration of the takeover window: the operator's own click, if it lands,
+// drives the page into 发送中…/验证码已发送 exactly like an automated one
+// would have.  A cancellation ends the wait immediately.
+func waitForRaccoonManualSend(ctx context.Context, page raccoonAutoPage, logf func(string, ...any)) bool {
+	deadline := time.Now().Add(raccoonManualTakeover)
+	for {
+		if ok, err := page.EvalBool(ctx, raccoonEffectExpr); err == nil && ok {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+}
 
 // waitForRaccoonArmed polls the page's own armed signal until it flips or the
 // deadline passes.  Clicking before the signal is a wasted attempt either way:
@@ -777,14 +868,9 @@ func saveRaccoonScreenshot(logf func(string, ...any), shot []byte) {
 // the page flips sendBtn.disabled or writes any status text on an accepted
 // click, so two seconds of silence on BOTH is a swallowed event (issue #229).
 func waitForRaccoonClickEffect(ctx context.Context, page raccoonAutoPage) bool {
-	const effectExpr = `(function(){` +
-		`var b=document.getElementById('sendCode');` +
-		`var e=document.getElementById('smsStatus');` +
-		`var txt=e?((e.textContent||'')+''):'';` +
-		`return (b&&b.disabled===true)||(txt.trim()!=='');})()`
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		if ok, err := page.EvalBool(ctx, effectExpr); err == nil && ok {
+		if ok, err := page.EvalBool(ctx, raccoonEffectExpr); err == nil && ok {
 			return true
 		}
 		if time.Now().After(deadline) {
