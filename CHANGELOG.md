@@ -6,6 +6,27 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.64] - 2026-11-09
+
+### Changed
+
+- **raccoon 自动点击模拟人工操作形态（#141 操作员指正「想办法模拟人工操作去
+  点」）**：环境用的就是真实 Edge + 持久 profile，那么可调的只剩「点击本身
+  像不像人」。`ClickTrusted` 升级三件事：**鼠标轨迹**——从目标附近随机起点
+  经 5~8 步 ease-out 减速移动到按钮（无痕验证采集 mousemove 序列做行为指纹，
+  瞬时传送的指针是机器形状）；**落点抖动**——在元素中央 ±20% 区域内随机落
+  点（一只手从不落在同一像素两次）；**节奏去节拍器**——move 步进 30~80ms、
+  press-release 间隔 40~120ms 随机化（等节奏是机器形状）。**环境隐身脚本**：
+  attach 后注入 `Page.addScriptToEvaluateOnNewDocument`——navigator.webdriver
+  读 undefined、补 chrome runtime 对象、languages/plugins 形状（CDP 附着的
+  浏览器仍可被这些 tell 探测）。60 秒人工接管窗保留：自动点击仍被吞时，
+  窗口留给操作员，人工点击生效流程照常继续。
+
+### Installer
+
+- `client2api-setup-0.7.64.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `98ec65d856a9a9d7528171d1b8cd84043d4b9ff72e598242a3cd85d74f911073`
+
 ## [0.7.63] - 2026-11-09
 
 ### Fixed

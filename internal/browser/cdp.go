@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
+	"math/rand"
 	"net/http"
 	"os"
 	"os/exec"
@@ -496,6 +498,20 @@ func (p *Page) attachTarget(ctx context.Context, targetID string) error {
 	if err := json.Unmarshal(res, &m); err != nil {
 		return fmt.Errorf("decode the session id: %w", err)
 	}
+	// Stealth script (issue #141): a traceless check fingerprints the browser
+	// before any click -- navigator.webdriver must read undefined, and the
+	// chrome runtime object a real profile carries must exist.  The launch
+	// line already drops --enable-automation (the only flag that sets
+	// webdriver), but a CDP-attached browser can still be probed through
+	// other tells; this runs before any page script on every future document.
+	_, _ = p.call(ctx, "Page.addScriptToEvaluateOnNewDocument", map[string]any{
+		"source": `
+Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+window.chrome = window.chrome || { runtime: {} };
+Object.defineProperty(navigator, 'languages', {get: () => ['zh-CN', 'zh', 'en']});
+Object.defineProperty(navigator, 'plugins', {get: () => [1,2,3,4,5]});
+`,
+	})
 	if m.SessionID == "" {
 		return errors.New("the browser returned an empty session id")
 	}
@@ -715,13 +731,15 @@ func (p *Page) ClickTrusted(ctx context.Context, selector string) (bool, error) 
 	// One evaluate returns everything the dispatch needs: the element's
 	// existence, its centre in viewport coordinates, and a document the
 	// browser would accept events on.  scrollIntoView first -- Input events
-	// land on whatever is under the point.
+	// land on whatever is under the point.  A point INSIDE the element rather
+	// than its exact centre: beacons fingerprint instant-teleport cursors, and
+	// a hand never lands on the same pixel twice.
 	js := `(function(){var el=` + elementQueryJS(selector) + `;` +
 		`if(!el){return {ok:false};}` +
 		`el.scrollIntoView({block:'center'});` +
 		`var r=el.getBoundingClientRect();` +
 		`if(!r||r.width<=0||r.height<=0){return {ok:false};}` +
-		`return {ok:true,x:r.left+r.width/2,y:r.top+r.height/2};})()`
+		`return {ok:true,x:r.left+r.width/2,y:r.top+r.height/2,w:r.width,h:r.height};})()`
 	raw, err := p.Eval(ctx, js)
 	if err != nil {
 		return false, err
@@ -730,11 +748,30 @@ func (p *Page) ClickTrusted(ctx context.Context, selector string) (bool, error) 
 		OK bool    `json:"ok"`
 		X  float64 `json:"x"`
 		Y  float64 `json:"y"`
+		W  float64 `json:"w"`
+		H  float64 `json:"h"`
 	}
 	if err := json.Unmarshal(raw, &loc); err != nil || !loc.OK {
 		return false, err
 	}
-	x, y := int(loc.X), int(loc.Y)
+	// A hand never lands on the same pixel twice: jitter inside the element.
+	x := int(loc.X + loc.W*jitterFraction())
+	y := int(loc.Y + loc.H*jitterFraction())
+	// Move like a hand first: several mouseMoved steps from a nearby origin
+	// toward the target (traceless checks fingerprint the move sequence, and a
+	// cursor that teleports from nowhere to the button is machine-shaped).
+	steps := mouseMovePath(x, y)
+	for _, pt := range steps {
+		if _, err := p.call(ctx, "Input.dispatchMouseEvent", map[string]any{
+			"type": "mouseMoved", "x": pt.x, "y": pt.y,
+			"button": "none", "buttons": 0, "pointerType": "mouse",
+		}); err != nil {
+			// The input domain refused (detached frame, headless quirk):
+			// degrade to the JS click so a plain form still works.
+			return p.Click(ctx, selector)
+		}
+		time.Sleep(mouseStepDelay())
+	}
 	for _, spec := range []struct {
 		typ      string
 		buttons  int
@@ -757,8 +794,56 @@ func (p *Page) ClickTrusted(ctx context.Context, selector string) (bool, error) 
 			// degrade to the JS click so a plain form still works.
 			return p.Click(ctx, selector)
 		}
+		if spec.typ == "mousePressed" {
+			// A press-release pair a hand makes is 40-120ms apart, not same-tick.
+			time.Sleep(pressReleaseDelay())
+		}
 	}
 	return true, nil
+}
+
+// mouseMovePath builds a human-ish path from a point near the target to it:
+// 5-8 steps, decreasing distance, small perpendicular wobble.  The start is
+// randomised within ~120px so two clicks never share a trace.
+func mouseMovePath(x, y int) []struct{ x, y int } {
+	type pt = struct{ x, y int }
+	// Start offset: random direction, 60-120px out.
+	ang := rand.Float64() * 2 * math.Pi
+	dist := 60 + rand.Float64()*60
+	sx := x - int(math.Cos(ang)*dist)
+	sy := y - int(math.Sin(ang)*dist)
+	n := 5 + rand.Intn(4)
+	pts := make([]pt, 0, n)
+	for i := 1; i <= n; i++ {
+		f := float64(i) / float64(n)
+		// Ease-out: a hand decelerates toward the target.
+		e := 1 - (1-f)*(1-f)
+		px := float64(sx) + (float64(x)-float64(sx))*e
+		py := float64(sy) + (float64(y)-float64(sy))*e
+		// Wobble shrinks as the cursor approaches the target.
+		wob := (1 - f) * 6
+		px += (rand.Float64() - 0.5) * wob
+		py += (rand.Float64() - 0.5) * wob
+		pts = append(pts, pt{int(px), int(py)})
+	}
+	pts = append(pts, pt{x, y})
+	return pts
+}
+
+// jitterFraction picks a point in the central band of the element, not its
+// dead centre.
+func jitterFraction() float64 {
+	return (rand.Float64() - 0.5) * 0.4 // ±20% of the dimension
+}
+
+// mouseStepDelay paces the move; a hand takes ~100-300ms to cross 100px.
+func mouseStepDelay() time.Duration {
+	return time.Duration(30+rand.Intn(50)) * time.Millisecond
+}
+
+// pressReleaseDelay paces the press-release pair.
+func pressReleaseDelay() time.Duration {
+	return time.Duration(40+rand.Intn(80)) * time.Millisecond
 }
 
 // Fill sets the value of the first input matching the selector the way a human
