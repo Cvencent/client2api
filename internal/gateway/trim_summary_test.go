@@ -184,7 +184,8 @@ func TestApplyContextBudgetOffersDroppedMiddleToBackgroundFold(t *testing.T) {
 	// 120 small turns under a tight budget drops far more than the fold
 	// threshold (50), so the offer gate opens.
 	req := foldTestRequest(120, 100)
-	fold := &trimFoldContext{store: newTrimSummaryStore()}
+	store := newTrimSummaryStore()
+	fold := &trimFoldContext{store: store}
 	// A coordinator whose summariser records the job synchronously: this pins
 	// down "the middle this trim dropped reached the fold seam" without racing
 	// the real worker.
@@ -200,7 +201,7 @@ func TestApplyContextBudgetOffersDroppedMiddleToBackgroundFold(t *testing.T) {
 			return "folded", nil
 		},
 		func(job *trimFoldJob, summary string) {},
-		nil)
+		nil, store, nil)
 	fold.folds = coord
 	fold.client = &testClient{name: "stub"}
 	fold.model = "m1"
@@ -306,7 +307,8 @@ func TestFoldFailureLeavesTheStoreEmptyAndLogs(t *testing.T) {
 			mu.Lock()
 			failedWith = err
 			mu.Unlock()
-		})
+		},
+		store, nil)
 	coord.offer(&trimFoldJob{key: "k", dropped: 60})
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
@@ -340,7 +342,7 @@ func TestFoldSuccessStoresTheSummary(t *testing.T) {
 			store.put(job.key, summary, job.dropped)
 			landed <- summary
 		},
-		nil)
+		nil, store, nil)
 	coord.offer(&trimFoldJob{key: "k", middle: []core.Message{{Role: "user", Content: "x"}}, dropped: 60})
 	select {
 	case <-landed:
@@ -372,7 +374,7 @@ func TestTrimFoldEndToEndSecondTurnPinsTheSummary(t *testing.T) {
 		func(job *trimFoldJob, summary string) {
 			s.trimSummaries.put(job.key, summary, job.dropped)
 		},
-		nil)
+		nil, s.trimSummaries, nil)
 	s.learnedWindows.put("bunny", "cn:space-bunny", 100000)
 
 	// Turn 1: far over the window; the guard trims and offers the middle.

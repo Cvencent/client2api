@@ -6,6 +6,26 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.62] - 2026-11-08
+
+### Fixed
+
+- **codearts 折叠摘要请求被 81001 拒后不再每轮重付（#240）**：大会话触发
+  中段折叠后，折叠摘要请求本身被厂商 400 拒（`81001: messages 参数非法`）
+  ——`summariseTurns` 只对 chunk body 修过形，但 fold prompt 与原会话 system
+  拼上去后，chunk 边界仍能让孤立 tool 结果站在请求前段；直接对话不带这段
+  middle 所以永远 200，失败后下一轮重付同一形状（三天 265 次、规模 63→337
+  条/次）。修法两段：修形后置到合并之后（`RepairToolPairing/Arguments` 在
+  reqMsgs 组装完成后再跑一遍，覆盖拼接边界；合并后首条仍为 tool 时垫一条
+  说明占位）；同一 fingerprint 连续失败达 2 次后进入 30 分钟退避——期间
+  该形状的折叠 offer 被跳过（请求本体不受影响，pin 路径照常应答本回合），
+  窗口经过后放行一次新尝试，成功即重置。
+
+### Installer
+
+- `client2api-setup-0.7.62.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `6fe2f377a72069bd589f0d069d70e2e904ee3cff69890353b5b97bdce3998da6`
+
 ## [0.7.61] - 2026-11-07
 
 ### Fixed

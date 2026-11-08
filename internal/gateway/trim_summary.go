@@ -96,7 +96,22 @@ type trimSummaryEntry struct {
 	summary string
 	dropped int
 	at      time.Time
+	// fails counts consecutive fold failures for this fingerprint.  A shape
+	// the vendor rejects comes back every turn at full price (issue #240:
+	// 265 failures in three days, 337 messages re-trimmed each time), so after
+	// trimFoldBackoffThreshold failures the coordinator skips the fingerprint
+	// for trimFoldBackoff and a turn arriving inside the window is answered
+	// without paying for a doomed request.
+	fails    int
+	lastFail time.Time
 }
+
+// trimFoldBackoffThreshold is how many consecutive failures of one
+// fingerprint arm the backoff.
+const trimFoldBackoffThreshold = 2
+
+// trimFoldBackoff is how long an armed backoff lasts.
+const trimFoldBackoff = 30 * time.Minute
 
 // trimSummaryStore caches folds keyed by the middle's fingerprint.  A nil store
 // is usable and simply never pins, which keeps the embedder paths honest.
@@ -127,6 +142,55 @@ func (s *trimSummaryStore) get(key string) (string, bool) {
 		return "", false
 	}
 	return e.summary, true
+}
+
+// recordFoldFailure bumps the fingerprint's consecutive-failure counter and
+// timestamps it (issue #240).
+func (s *trimSummaryStore) recordFoldFailure(key string) int {
+	if s == nil || key == "" {
+		return 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.entries[key]
+	if !ok {
+		e = trimSummaryEntry{at: time.Now()}
+	}
+	e.fails++
+	e.lastFail = time.Now()
+	s.entries[key] = e
+	return e.fails
+}
+
+// foldBackedOff reports whether this fingerprint is inside a backoff window:
+// it has failed trimFoldBackoffThreshold times in a row and the last failure is
+// recent.  A fingerprint is a shape, not a conversation, so the backoff stops
+// the same doomed request from being paid every turn (issue #240).
+func (s *trimSummaryStore) foldBackedOff(key string) (bool, int) {
+	if s == nil || key == "" {
+		return false, 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.entries[key]
+	if !ok || e.fails < trimFoldBackoffThreshold {
+		return false, e.fails
+	}
+	if time.Since(e.lastFail) > trimFoldBackoff {
+		// The window has lapsed: one fresh attempt is allowed to re-probe.
+		e.fails = 0
+		s.entries[key] = e
+		return false, 0
+	}
+	return true, e.fails
+}
+
+// trimSummariesBackedOff exposes the store's backoff state to the offer gate.
+func (c *trimFoldCoordinator) trimSummariesBackedOff(key string) (bool, int) {
+	if c == nil {
+		return false, 0
+	}
+	return c.store.foldBackedOff(key)
 }
 
 // put records a fold, evicting the oldest entry when the cache is full.
@@ -234,15 +298,23 @@ type trimFoldCoordinator struct {
 	// done / failed are the server's callbacks into its own store and logger.
 	done   func(job *trimFoldJob, summary string)
 	failed func(job *trimFoldJob, err error)
+	// logf reports the offer-side backoff skips; nil keeps the skip silent
+	// (tests).
+	logf func(format string, args ...any)
+	// store is the summary cache, which also keeps the per-fingerprint
+	// failure bookkeeping the offer gate reads.
+	store *trimSummaryStore
 
 	mu   sync.Mutex
 	next *trimFoldJob
 	wake chan struct{}
 }
 
-func newTrimFoldCoordinator(summarise foldSummariser, done func(*trimFoldJob, string), failed func(*trimFoldJob, error)) *trimFoldCoordinator {
+func newTrimFoldCoordinator(summarise foldSummariser, done func(*trimFoldJob, string), failed func(*trimFoldJob, error), store *trimSummaryStore, logf func(string, ...any)) *trimFoldCoordinator {
 	return &trimFoldCoordinator{
 		summarise: summarise,
+		logf:      logf,
+		store:     store,
 		done:      done,
 		failed:    failed,
 		wake:      make(chan struct{}, 1),
@@ -354,6 +426,15 @@ func (s *server) summariseTurns(ctx context.Context, client core.Client, model s
 	reqMsgs = append(reqMsgs, core.Message{Role: "system", Content: trimSummaryFoldPrompt})
 	reqMsgs = append(reqMsgs, system...)
 	reqMsgs = append(reqMsgs, body...)
+	// 修形后置到合并之后（issue #240）：body 单独修过形，但 fold prompt 与原
+	// 会话 system 拼上去后，chunk 边界仍可能让一条孤立 tool 结果站在请求前段
+	// ——codearts 的 81001 校验器拒的就是这个形状，而直接对话不带这段 middle
+	// 所以永远 200。合并后的第二次 repair 覆盖拼接边界；首条仍为 tool 时再垫
+	// 一条说明（校验器普遍要求首条非 tool）。
+	reqMsgs = core.RepairToolPairing(core.RepairToolArguments(reqMsgs))
+	if len(reqMsgs) > 0 && strings.EqualFold(strings.TrimSpace(reqMsgs[0].Role), "tool") {
+		reqMsgs = append([]core.Message{{Role: "user", Content: "(以下是被折叠会话前段的工具调用结果，供摘要参考)"}}, reqMsgs...)
+	}
 	req := &core.ChatRequest{
 		Model:    model,
 		Messages: reqMsgs,

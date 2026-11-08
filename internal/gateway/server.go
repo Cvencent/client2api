@@ -215,8 +215,17 @@ func NewServer(opts Options) *http.Server {
 				job.dropped, len(summary), job.client.Name(), job.model)
 		},
 		func(job *trimFoldJob, err error) {
-			s.opts.Logger.Printf("context: folding %d dropped message(s) for %s/%s failed (%v); the next turn will retry it",
-				job.dropped, job.client.Name(), job.model, err)
+			fails := s.trimSummaries.recordFoldFailure(job.key)
+			note := ""
+			if fails >= trimFoldBackoffThreshold {
+				note = fmt.Sprintf("; backed off for %s after %d consecutive failures", trimFoldBackoff, fails)
+			}
+			s.opts.Logger.Printf("context: folding %d dropped message(s) for %s/%s failed (%v); the next turn will retry it%s",
+				job.dropped, job.client.Name(), job.model, err, note)
+		},
+		s.trimSummaries,
+		func(format string, args ...any) {
+			s.opts.Logger.Printf(format, args...)
 		})
 
 	s.handler = s.routes()

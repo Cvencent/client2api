@@ -483,14 +483,24 @@ func applyContextBudgetWithFold(req *core.ChatRequest, budget int64, fold *trimF
 	// blocks and never fails the request; a fold in flight simply replaces it
 	// with the newest middle.
 	if len(middle) > 0 {
-		fold.folds.offer(&trimFoldJob{
-			key:     trimSummaryCacheKey(trimMiddleFingerprint(fold.system, middle), dropped),
-			system:  append([]core.Message(nil), fold.system...),
-			middle:  middle,
-			dropped: dropped,
-			client:  fold.client,
-			model:   fold.model,
-		})
+		key := trimSummaryCacheKey(trimMiddleFingerprint(fold.system, middle), dropped)
+		// A fingerprint the vendor keeps rejecting comes back at full price
+		// every turn (issue #240: 265 failures in three days, 337 messages
+		// re-trimmed each time).  Inside the backoff window the offer is
+		// skipped -- the request itself is unaffected, the pinned path above
+		// already answered this turn without the fold.
+		if backed, fails := fold.folds.trimSummariesBackedOff(key); backed {
+			fold.folds.logf("context: fold for %d dropped message(s) is in backoff (%d consecutive failures); skipping the offer this turn", dropped, fails)
+		} else {
+			fold.folds.offer(&trimFoldJob{
+				key:     key,
+				system:  append([]core.Message(nil), fold.system...),
+				middle:  middle,
+				dropped: dropped,
+				client:  fold.client,
+				model:   fold.model,
+			})
+		}
 	}
 	return trimReport{
 		DroppedMessages: dropped,
