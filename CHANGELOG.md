@@ -6,6 +6,25 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.73] - 2026-11-10
+
+### Fixed
+
+- **checkin/growth 的账号名单补 invalid 闸（#252）**：loomy 三条调度路径三种
+  口径——keepalive 有闸（parked/disabled 跳过）、checkin 白名单只在
+  Enabled=false 时查询（Enabled=true 的 invalid 号绕过）、growth 完全无闸；
+  invalid（vendor 拒收终态）死会话每轮烧真实上游往返且答案永远相同（夜间
+  8h：checkin refused 23 次 + growth 100002 17 次）。修法：
+  \`accountRecordsOfForBatch\` 的筛选补 \`State == "invalid"\` 闸——所有
+  batch 名单（growth/checkin/activity 等）统一拦下 vendor 拒收终态；
+  **#168 边界保留**：abnormal（可自愈）与 low_credit（签到免费且读数是自愈
+  侧门数据源）留在名单里，反向钉测试防止误拦。
+
+### Installer
+
+- \`client2api-setup-0.7.73.exe\`（空包，不含账号凭据或本机配置）
+  SHA256: `6d047fa8766f242ed9455f44ca78c852026e561e73154b2b166f722ec486f76c`
+
 ## [0.7.72] - 2026-11-10
 
 ### Fixed

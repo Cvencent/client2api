@@ -1585,6 +1585,15 @@ func accountRecordsOfForBatch(ctx context.Context, c core.Client, checkin bool) 
 		if !rec.Enabled && !(checkin && checkinAccount(rec)) {
 			continue
 		}
+		// A vendor-rejected credential (issue #252) is a terminal verdict:
+		// checkin and growth would burn a real upstream round trip on it
+		// every run and the answer is always the same 100002/expired.  The
+		// abnormal/low_credit states stay IN the list on purpose -- they are
+		// the self-heal data sources (issue #168: skipping too much leaves
+		// the self-heal no road back), and low_credit check-ins are free.
+		if rec.State == "invalid" {
+			continue
+		}
 		out = append(out, rec)
 	}
 	return out, nil
