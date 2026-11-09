@@ -1173,13 +1173,21 @@ func probeFirstFrame(stream core.Stream) ([]core.Event, error) {
 			// is, which is how the unlearned window survived this long.
 			refusal := normalizeContextRefusal(ev.Err)
 			f, ok := core.AsFailure(refusal)
-			if !ok || !core.Retryable(f.Kind) {
-				// A content-policy or unclassified refusal is the platform's
-				// answer and must be shown as such, not retried behind the
-				// caller's back.
+			if !ok {
+				// An unclassified refusal is the platform's answer and must be
+				// shown as such, not retried behind the caller's back.
 				return append(head, ev), nil
 			}
-			return nil, refusal
+			// Retryable kinds AND nextPlatform kinds both leave as errors: the
+			// caller of probeFirstFrame owns the failover decision, and the
+			// nextPlatform family (model_refused, image_refused -- issue #245)
+			// must reach it instead of being replayed to the caller.  The
+			// gateway's own bound applies there: one hop down the candidate
+			// chain, stop when it refuses too.
+			if core.Retryable(f.Kind) || core.NextPlatformOn(f.Kind) {
+				return nil, refusal
+			}
+			return append(head, ev), nil
 		case core.EventDelta:
 			if ev.Delta != "" || ev.Reasoning != "" {
 				// Real content (or an answer the caller can already watch

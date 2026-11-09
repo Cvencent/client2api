@@ -6,6 +6,27 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.66] - 2026-11-09
+
+### Fixed
+
+- **流内到达的 nextPlatform 类失败与 Chat 返回路径对称改道（#245）**：#243
+  的图片改道只接了「模块 Chat 直接返回错误」路径——同一张图被厂商包在
+  HTTP 200 流的错误帧里（openaicompat 的常见形态：200 开流、错误帧在流内）
+  到达时，probeFirstFrame 对非 Retryable verdict 原样回放事件、
+  dispatch 的流内改道判定又没有 modelRefusal 臂，改道不发生，操作员回到
+  人肉切平台。两处对称补齐：probeFirstFrame 对
+  `core.NextPlatformOn(f.Kind)` 与 Retryable 同路径返回错误（不吞改道类
+  失败）；dispatch 流内判定补上与 Chat 路径相同的
+  `!hardPlatformPin && modelRefusal` 臂。同缺口把 FailureModelRefused 的
+  流内形态一并修好。反向钉：文本 content_blocked（degrade-and-retry 语义）
+  在流内到达仍原样回放给调用方，不被改道吃掉。
+
+### Installer
+
+- `client2api-setup-0.7.66.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `1f7594aa6045db12a0027afcae640ef4a0205d5ec4e875e2e2688fccbad06fda`
+
 ## [0.7.65] - 2026-11-09
 
 ### Added

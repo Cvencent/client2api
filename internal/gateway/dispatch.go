@@ -488,7 +488,12 @@ func (s *server) routeAndServeMessages(w http.ResponseWriter, r *http.Request, i
 			ev := s.opts.Registry.NoteModelFailure(client.Name(), upstreamModel, time.Now())
 			s.publishPlatformAlert(client.Name(), upstreamModel, in.rec.Account, ev)
 		}
-		if (retryable || candidateUnavailable(probeErr)) && len(candidates) > 1 && (s.opts.Guard == nil || !s.opts.Guard.IP.Active()) {
+		// Same failover vocabulary as the Chat-return path (:429): a
+		// nextPlatform refusal arriving inside the stream must move platforms
+		// too, or the image-content hop promised by #243 only works when the
+		// vendor refuses before opening the stream (issue #245).
+		skippable := candidateUnavailable(probeErr) || (!hardPlatformPin(in.requested, candidates[0]) && modelRefusal(probeErr))
+		if (retryable || skippable) && len(candidates) > 1 && (s.opts.Guard == nil || !s.opts.Guard.IP.Active()) {
 			s.noteFailedCandidate(in.rec, client, upstreamModel, probeErr)
 			s.opts.Logger.Printf("chat: platform %s model %s failed inside stream (%v), trying the next platform", client.Name(), upstreamModel, probeErr)
 			var handled bool
