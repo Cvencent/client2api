@@ -404,7 +404,16 @@ func (c *Client) Status(ctx context.Context) core.Status {
 	case len(st.Accounts) == 0:
 		st.Detail = "no LobsterAI account yet; sign in from the panel"
 	default:
-		st.Ready = true
+		// Ready means "at least one account is selectable right now" --
+		// the same predicate pool.summary prints as "N/M accounts ready"
+		// (issue #247).  It used to mean "the pool has entries": a platform
+		// whose accounts are ALL operator-disabled reported ready=true next
+		// to its own "0/0 accounts ready" detail, and the panel's platform
+		// KPI counted it as servable while the gateway's preflight would
+		// refuse every request.
+		if c.pool.hasSelectable(now, c.cfg.maxInFlight()) {
+			st.Ready = true
+		}
 		detail := c.pool.summary(now, c.cfg.maxInFlight())
 		if live {
 			detail += "; client version " + version

@@ -6,6 +6,29 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.67] - 2026-11-09
+
+### Fixed
+
+- **lobsterai 的 `Ready` 语义对齐「至少一个账号可选」（#247）**：全部账号被
+  操作员停用的平台在 overview 里报 `ready: true`，与自己的
+  `detail: "0/0 accounts ready"` 同屏矛盾，平台页「就绪 N」KPI 虚高（路由
+  不受影响——Health.Servable 路径本就正确）。修法：`pool.hasSelectable`
+  （summary 的 "N/M accounts ready" 分子的布尔孪生）作为 Ready 判据，
+  `st.Ready` 只在至少一个账号 selectable 时置位；无账号条目时保持 false。
+
+- **zcode 模型目录对永久 404 的连击退避（#246）**：操作员 plan 没有目录
+  端点，刷新每 5 分钟重问一次 404——三天 247 行同文日志、~288 次零收益
+  上游请求。`modelCache.triedRecently` 增加：连续失败达 3 次后重试间隔从
+  TTL 拉长到 30 分钟（锚定最近一次失败时刻；窗口经过放行一次新尝试，
+  成功重置）；**瞬时失败（超时/5xx）不计入连击**，保持正常 TTL——永久性
+  （404/not-found）与可自愈的失败分开对待。
+
+### Installer
+
+- `client2api-setup-0.7.67.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `a5e3db226ec9b6a5e0b7e64aca940ee0b6e1f5cdb19b3f7b7f6187227dd1afd2`
+
 ## [0.7.66] - 2026-11-09
 
 ### Fixed

@@ -194,6 +194,20 @@ func (p *pool) ready(now time.Time, limit int) int {
 
 // selectable reports whether an account may take a request.  Callers hold the
 // lock.
+// hasSelectable reports whether at least one account would pass selectable
+// right now -- the boolean twin of summary's "N/M accounts ready" numerator
+// (issue #247).
+func (p *pool) hasSelectable(now time.Time, limit int) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, a := range p.accts {
+		if p.selectable(a, now, limit) {
+			return true
+		}
+	}
+	return false
+}
+
 func (p *pool) selectable(a *accountRecord, now time.Time, limit int) bool {
 	if !a.Enabled || a.AccessToken == "" {
 		return false

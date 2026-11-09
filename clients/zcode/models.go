@@ -80,6 +80,13 @@ type modelCache struct {
 	storedAt time.Time
 	// attemptedAt is when upstream was last asked, successfully or not.
 	attemptedAt time.Time
+	// consecutiveFailures counts the failures since the last success.  A
+	// growing count stretches the retry interval for PERMANENT refusals
+	// (issue #246).
+	consecutiveFailures int
+	// lastFailureAt anchors the stretched interval: the backoff counts from
+	// the most recent attempt, which finishRefresh records via attemptedAt.
+	lastFailureAt time.Time
 
 	// inflight is the refresh one goroutine is running right now.  A burst of
 	// concurrent callers therefore becomes ONE vendor request whose outcome
@@ -122,8 +129,45 @@ func (mc *modelCache) snapshot() []core.Model {
 func (mc *modelCache) triedRecently(now time.Time, ttl time.Duration) bool {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
-	return !mc.attemptedAt.IsZero() && now.Sub(mc.attemptedAt) < ttl
+	// The failure backoff anchors on the last FAILURE, not attemptedAt: the
+	// bookkeeping is written by noteFailure directly, and a fingerprint the
+	// vendor keeps refusing holds its stretched interval regardless of which
+	// field recorded the last attempt (issue #246).
+	if mc.consecutiveFailures >= modelsConsecutiveFailures && !mc.lastFailureAt.IsZero() && now.Sub(mc.lastFailureAt) < modelsFailureBackoff {
+		return true
+	}
+	if mc.attemptedAt.IsZero() {
+		return false
+	}
+	if now.Sub(mc.attemptedAt) < ttl {
+		return true
+	}
+	return false
 }
+
+// resetFailures clears the consecutive-failure counter after a success.
+func (mc *modelCache) resetFailures() {
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+	mc.consecutiveFailures = 0
+}
+
+// noteFailure records one failed upstream attempt; a success resets the count.
+// The kinds of failure that deserve the long backoff are the permanent ones
+// (404 not-found): transient failures (timeouts, 5xx) keep the normal TTL.
+func (mc *modelCache) noteFailure(now time.Time, permanent bool) {
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+	if permanent {
+		mc.consecutiveFailures++
+	} else {
+		mc.consecutiveFailures = 0
+	}
+	mc.lastFailureAt = now
+}
+
+const modelsConsecutiveFailures = 3
+const modelsFailureBackoff = 30 * time.Minute
 
 // beginRefresh claims the right to talk to upstream.  The claimant gets true
 // and must call finishRefresh; everyone else gets the in-flight refresh to wait
@@ -282,15 +326,35 @@ func (c *Client) refreshModels(ctx context.Context) ([]core.Model, error) {
 		if errors.Is(err, errNoModelAccount) {
 			attempted = time.Time{}
 		}
+		// A permanent refusal (404 not-found: the operator's plan has no
+		// catalogue endpoint at all) gets the stretched interval after three
+		// consecutive tries; transient failures keep the normal TTL (issue
+		// #246: a dead endpoint was re-asked every five minutes for three
+		// days).
+		c.models.noteFailure(now, isPermanentModelRefusal(err))
 		c.models.finishRefresh(ref, nil, err, attempted)
 		return nil, err
 	case len(list) == 0:
 		empty := errors.New("zcode: the vendor returned an empty model list")
+		c.models.noteFailure(now, false)
 		c.models.finishRefresh(ref, nil, empty, now)
 		return nil, empty
 	}
+	c.models.resetFailures()
 	c.models.finishRefresh(ref, list, nil, now)
 	return list, nil
+}
+
+// isPermanentModelRefusal reports whether this refresh error means "the
+// vendor will answer 404 for as long as this plan exists" -- as opposed to a
+// timeout or 5xx that may heal on its own (issue #246).
+func isPermanentModelRefusal(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "404") || strings.Contains(msg, "not found") ||
+		strings.Contains(msg, "Not Found")
 }
 
 // fetchModels tries every credential the pool could use, in the pool's own
