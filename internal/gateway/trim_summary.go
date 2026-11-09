@@ -458,15 +458,24 @@ func foldShapeSnapshot(msgs []core.Message) string {
 
 func (s *server) summariseTurns(ctx context.Context, client core.Client, model string, system, msgs []core.Message) (string, *core.Usage, error) {
 	body := core.RepairToolPairing(core.RepairToolArguments(append([]core.Message(nil), msgs...)))
-	reqMsgs := make([]core.Message, 0, len(system)+len(body)+1)
-	reqMsgs = append(reqMsgs, core.Message{Role: "system", Content: trimSummaryFoldPrompt})
-	reqMsgs = append(reqMsgs, system...)
+	// The fold prompt and the conversation's own system turns are MERGED into
+	// one system message (issue #240: the shape snapshots show every fold
+	// request opens with TWO adjacent system messages, and 81001 keeps
+	// refusing even fully-paired shapes -- the dual-system head is the one
+	// feature direct chats never carry).  Body repair follows the merge.
+	merged := make([]string, 0, len(system)+1)
+	merged = append(merged, trimSummaryFoldPrompt)
+	for _, m := range system {
+		if t := strings.TrimSpace(m.Content); t != "" {
+			merged = append(merged, t)
+		}
+	}
+	reqMsgs := make([]core.Message, 0, len(body)+1)
+	reqMsgs = append(reqMsgs, core.Message{Role: "system", Content: strings.Join(merged, "\n\n")})
 	reqMsgs = append(reqMsgs, body...)
-	// 修形后置到合并之后（issue #240）：body 单独修过形，但 fold prompt 与原
-	// 会话 system 拼上去后，chunk 边界仍可能让一条孤立 tool 结果站在请求前段
-	// ——codearts 的 81001 校验器拒的就是这个形状，而直接对话不带这段 middle
-	// 所以永远 200。合并后的第二次 repair 覆盖拼接边界；首条仍为 tool 时再垫
-	// 一条说明（校验器普遍要求首条非 tool）。
+	// 修形后置到合并之后（issue #240）：body 单独修过形，但拼接边界仍可能让
+	// 孤立 tool 结果站在请求前段。合并后的 repair 覆盖全部边界；首条仍为
+	// tool 时再垫一条说明（校验器普遍要求首条非 tool）。
 	reqMsgs = core.RepairToolPairing(core.RepairToolArguments(reqMsgs))
 	if len(reqMsgs) > 0 && strings.EqualFold(strings.TrimSpace(reqMsgs[0].Role), "tool") {
 		reqMsgs = append([]core.Message{{Role: "user", Content: "(以下是被折叠会话前段的工具调用结果，供摘要参考)"}}, reqMsgs...)
