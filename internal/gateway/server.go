@@ -1727,6 +1727,11 @@ func failureReason(err error) string {
 		label = "上游异常"
 	case core.FailureContentBlocked:
 		label = "内容被上游拦截"
+	case core.FailureImageRefused:
+		// Filter scope is per-platform (issue #243): the same image another
+		// platform may serve, so the row must read as a platform-scope
+		// refusal, not a broken request.
+		label = "图片被该平台过滤器拒绝（其它平台可能可收）"
 	case core.FailureContextWindow:
 		label = "上下文超限"
 	case core.FailureModelRefused:
@@ -1822,6 +1827,8 @@ func errorCodeFor(err error, status int) string {
 			return "rate_limit_exceeded"
 		case core.FailureContentBlocked:
 			return "content_blocked"
+		case core.FailureImageRefused:
+			return "image_refused"
 		case core.FailureContextWindow:
 			return "context_window_exceeded"
 		case core.FailureQuota:

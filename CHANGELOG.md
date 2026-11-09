@@ -6,6 +6,30 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.65] - 2026-11-09
+
+### Added
+
+- **图片内容类 400 的有界自动改道（#243）**：带图请求被 officeace 拒
+  （`image_url.url field is unsafe`）后操作员手动切平台 14 分钟才恢复——
+  同一张图 loomy 收了。内容过滤器口径是 per-platform 的，换平台不是重放
+  注定失败的载荷，而是换一个口径。core 新增 `FailureImageRefused`（决策表
+  `{nextPlatform: true}`：改平台、不换账号——同平台所有账号口径相同）；
+  openaicompat 识别这族文本（`image_url.url field is unsafe` 等）归入新
+  kind，网关标签「图片被该平台过滤器拒绝（其它平台可能可收）」、错误码
+  `image_refused`。改道边界由既有候选链驱动：下一平台也拒则停、诚实回报。
+
+- **折叠请求被拒时的消息级形状快照（#240 重开采证）**：v0.7.62 的形状修复
+  未根治 81001 拒绝，第二版盲修没有证据不行。`foldShapeSnapshot` 把每条
+  message 的 role/字节长/形状标记（tool_calls id、tool_call_id、parts 数）
+  写成紧凑一行，在「请求被拒」「流内被拒」两条失败路径落日志——**不含内容
+  本体**（凭据与隐私不进日志），只回答「校验器卡在哪条消息的哪个形状」。
+
+### Installer
+
+- `client2api-setup-0.7.65.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `17e30f722e3eafb37f162897743e9916a3813f2509cb70ef38d9df7b85375912`
+
 ## [0.7.64] - 2026-11-09
 
 ### Changed

@@ -43,6 +43,7 @@ const (
 	// next to a 10 MiB one).  Sending the same request to a sibling with a
 	// bigger ceiling is a genuine chance of serving the caller, so it must not
 	// be lumped in with the "every provider refuses this shape" 400/422 class.
+	kindImageRefused    failureKind = "image_refused"
 	kindPayloadTooLarge failureKind = "payload_too_large"
 )
 
@@ -116,6 +117,15 @@ var (
 		"no permission to access group", "permission to access group",
 		"无权访问分组", "无权访问该分组", "分组无权限",
 	}
+	// imageRefusedMarkers name an IMAGE-content refusal: the vendor's filter
+	// rejected the picture itself.  Filters disagree per platform -- the same
+	// image officeace refuses loomy serves (issue #243) -- so this maps to
+	// core.FailureImageRefused and the gateway makes ONE platform change.
+	imageRefusedMarkers = []string{
+		"image_url.url field is unsafe", "image_url is unsafe",
+		"image is unsafe", "unsafe image",
+		"image rejected", "image content rejected",
+	}
 	// wireMismatchMarkers name a vendor answering with a DIFFERENT wire
 	// protocol than the one the request used: "contents is required" is
 	// Gemini's native parser refusing an OpenAI-shaped body (issue #239 --
@@ -176,6 +186,9 @@ func ambiguousChatStatus(status int) bool {
 func classifyFailure(status int, text string) failureKind {
 	if status == 402 {
 		return kindCredit
+	}
+	if containsMarker(text, imageRefusedMarkers) {
+		return kindImageRefused
 	}
 	if containsMarker(text, blockedMarkers) {
 		return kindBlocked
@@ -266,6 +279,10 @@ func coreKindFor(k failureKind) core.FailureKind {
 		return core.FailureUpstream
 	case kindBlocked:
 		return core.FailureContentBlocked
+	case kindImageRefused:
+		// Filters disagree per platform (issue #243): one platform change is
+		// worth it, and the gateway bounds it to a single hop.
+		return core.FailureImageRefused
 	case kindPayloadTooLarge:
 		// This provider's own request-size ceiling refused the body.  A sibling
 		// account may have a larger one, and a sibling platform almost certainly

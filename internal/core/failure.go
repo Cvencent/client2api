@@ -34,6 +34,14 @@ const (
 	// would not help -- the content is what the vendor objected to -- so the
 	// gateway triggers the degraded-prompt window and retries once instead.
 	FailureContentBlocked FailureKind = "content_blocked"
+	// FailureImageRefused is an upstream IMAGE-content refusal ("image_url
+	// field is unsafe").  Content filters disagree per platform: the same
+	// image one platform rejects another accepts (issue #243, officeace
+	// refuses / loomy serves).  Unlike FailureContentBlocked (the TEXT is the
+	// objection -- degrade and retry once), an image refusal is worth ONE
+	// platform change: the next candidate may have a wider filter.  If the
+	// next platform refuses too, the gateway stops and reports honestly.
+	FailureImageRefused FailureKind = "image_refused"
 	// FailureContextWindow is an upstream refusal because the assembled prompt
 	// is larger than the model's serving limit.  Rotating accounts cannot make
 	// the same request smaller, but the gateway must preserve the 400 and emit
@@ -254,6 +262,11 @@ var failureActions = map[FailureKind]action{
 	// account is healthy, so nothing is parked -- but every account here would
 	// answer the same, so the request moves to the next platform.
 	FailureModelRefused: {nextPlatform: true, why: "model-scoped: the account is healthy, the platform cannot serve this id"},
+
+	// Image content filters disagree per platform (issue #243): one platform
+	// rejects an image another serves.  One platform change is worth it; the
+	// gateway bounds the sweep to a single hop per session.
+	FailureImageRefused: {nextPlatform: true, why: "filter scope is per-platform: the same image A rejects B serves; one hop is worth it"},
 }
 
 // actionFor returns the table row for k.  A kind the table does not know is

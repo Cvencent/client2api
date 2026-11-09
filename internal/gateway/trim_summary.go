@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"strconv"
 	"strings"
@@ -420,6 +421,41 @@ func (s *server) foldSummarise(ctx context.Context, job *trimFoldJob) (string, e
 // system turns of the original conversation lead the fold call so the
 // summariser knows the task.  It goes through the normal routing path
 // (openStream), so rotation and accounting apply here too.
+// foldShapeSnapshot renders one compact line per message: role, sizes, and the
+// shape markers a strict validator could reject on -- WITHOUT the content
+// itself, so the transcript stays free of credentials and private text while
+// still answering "which message did the validator choke on" (issue #240
+// reopen: the second blind fix needs evidence, not guesses).
+func foldShapeSnapshot(msgs []core.Message) string {
+	var b strings.Builder
+	for i, m := range msgs {
+		role := strings.TrimSpace(m.Role)
+		b.WriteString(fmt.Sprintf("[%d]%s", i, role))
+		b.WriteString(fmt.Sprintf("(len=%d", len(m.Content)))
+		if m.Reasoning != "" {
+			b.WriteString(",reason")
+		}
+		if len(m.ToolCalls) > 0 {
+			ids := make([]string, 0, len(m.ToolCalls))
+			for _, tc := range m.ToolCalls {
+				ids = append(ids, strings.TrimSpace(tc.ID))
+			}
+			b.WriteString(",calls=" + strings.Join(ids, "|"))
+		}
+		if id := strings.TrimSpace(m.ToolCallID); id != "" {
+			b.WriteString(",for=" + id)
+		}
+		if len(m.Parts) > 0 {
+			b.WriteString(fmt.Sprintf(",parts=%d", len(m.Parts)))
+		}
+		b.WriteString(")")
+		if i < len(msgs)-1 {
+			b.WriteString(" ")
+		}
+	}
+	return b.String()
+}
+
 func (s *server) summariseTurns(ctx context.Context, client core.Client, model string, system, msgs []core.Message) (string, *core.Usage, error) {
 	body := core.RepairToolPairing(core.RepairToolArguments(append([]core.Message(nil), msgs...)))
 	reqMsgs := make([]core.Message, 0, len(system)+len(body)+1)
@@ -442,6 +478,9 @@ func (s *server) summariseTurns(ctx context.Context, client core.Client, model s
 	}
 	stream, err := s.openStream(ctx, client, req)
 	if err != nil {
+		// The vendor refused the request itself: the shape snapshot is the
+		// evidence a second fix needs (issue #240 reopen).
+		s.opts.Logger.Printf("context: fold request refused before streaming; shape snapshot: %s", foldShapeSnapshot(reqMsgs))
 		return "", nil, err
 	}
 	defer stream.Close()
@@ -474,6 +513,7 @@ func (s *server) summariseTurns(ctx context.Context, client core.Client, model s
 			return text.String(), use, nil
 		case core.EventError:
 			if ev.Err != nil {
+				s.opts.Logger.Printf("context: fold stream refused by vendor; shape snapshot: %s", foldShapeSnapshot(reqMsgs))
 				return "", nil, ev.Err
 			}
 		}
