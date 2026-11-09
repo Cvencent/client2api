@@ -470,6 +470,16 @@ func (s *server) summariseTurns(ctx context.Context, client core.Client, model s
 			merged = append(merged, t)
 		}
 	}
+	// 单条消息字节上限（issue #240 第二轮实验）：63K 的单条 user / 38K 的单条
+	// tool 是被拒请求里仅剩的可疑特征——收紧到 16K 字符，超出截断并标注。若
+	// 81001 消失 → 体量实锤；仍拒 → 内容审查实锤。
+	const foldSingleMessageMaxChars = 16 * 1024
+	for i := range body {
+		if len(body[i].Content) > foldSingleMessageMaxChars {
+			body[i].Content = body[i].Content[:foldSingleMessageMaxChars] +
+				"\n\n[... 已截断：原长度 " + fmt.Sprintf("%d", len(body[i].Content)) + " 字符 ...]"
+		}
+	}
 	reqMsgs := make([]core.Message, 0, len(body)+1)
 	reqMsgs = append(reqMsgs, core.Message{Role: "system", Content: strings.Join(merged, "\n\n")})
 	reqMsgs = append(reqMsgs, body...)
