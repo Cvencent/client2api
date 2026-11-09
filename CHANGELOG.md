@@ -6,6 +6,24 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.72] - 2026-11-10
+
+### Fixed
+
+- **loomy 全池不可选的 detail 按状态分布分档（#251）**：全池不可选时 detail
+  一律说 "every account is marked abnormal"，把 48 个等回血的 low_credit
+  （经济态，夜间赠送成批复活是常态）盖成要修因/重登——操作员按指引处置
+  等回血的账号是无效操作。修法：计数器增加 low_credit；汇总分支按分布分档
+  ——存在 low_credit 时点名各桶（"N account(s) awaiting credit refill
+  (low_credit; the daily grant revives them)"，abnormal/gone 分列），只有
+  全部都是 abnormal 时才说 "every account"。反向钉：全 abnormal 池保留
+  原话术。
+
+### Installer
+
+- `client2api-setup-0.7.72.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `9cc3754450bdd8afbc1ac28014701cb8cad63fdecbef0f7475d8783113f83a07`
+
 ## [0.7.71] - 2026-11-09
 
 ### Fixed

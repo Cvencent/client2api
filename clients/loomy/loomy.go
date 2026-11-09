@@ -758,7 +758,7 @@ func (c *Client) Status(ctx context.Context) core.Status {
 
 	accounts := c.store.snapshot()
 	records := make([]core.AccountStatus, 0, len(accounts))
-	usable, gone, abnormal := 0, 0, 0
+	usable, gone, abnormal, lowCredit := 0, 0, 0, 0
 	for i := range accounts {
 		records = append(records, accountStatus(&accounts[i], now))
 		if accounts[i].selectable(now) {
@@ -769,6 +769,9 @@ func (c *Client) Status(ctx context.Context) core.Status {
 		}
 		if accounts[i].abnormal {
 			abnormal++
+		}
+		if accounts[i].lowCredit {
+			lowCredit++
 		}
 	}
 	st.Accounts = records
@@ -783,8 +786,24 @@ func (c *Client) Status(ctx context.Context) core.Status {
 		st.Detail = "the session has expired and Loomy has no refresh endpoint; log in " +
 			"again (SMS or WeChat) and import the new token"
 	case usable == 0 && abnormal > 0:
+		// 汇总话术按状态分布分档（issue #251）：low_credit 是等回血的经济态
+		// （夜间赠送成批复活是常态），abnormal 才需要修因/重登——"every
+		// account is abnormal" 把 48 个等回血的盖成要修因，操作员按指引处置
+		// 等回血的账号是无效操作。只有全部都是 abnormal 时才说 every。
 		st.Ready = false
-		st.Detail = "every account is marked abnormal after repeated failures; revive it after fixing the cause, or log in again"
+		switch {
+		case lowCredit == 0:
+			st.Detail = "every account is marked abnormal after repeated failures; revive it after fixing the cause, or log in again"
+		default:
+			detail := fmt.Sprintf("%d account(s) awaiting credit refill (low_credit; the daily grant revives them)", lowCredit)
+			if abnormal > 0 {
+				detail += fmt.Sprintf("; %d account(s) marked abnormal (fix the cause or log in again)", abnormal)
+			}
+			if gone > 0 {
+				detail += fmt.Sprintf("; %d expired", gone)
+			}
+			st.Detail = detail
+		}
 	case usable == 0:
 		st.Ready = false
 		st.Detail = "every account is parked or cooling down"
