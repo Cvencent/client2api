@@ -61,13 +61,27 @@ func (c *Client) runScheduledKeepalive(ctx context.Context, accountID string) (c
 		return res, nil
 	}
 	res.AccountID = acc.ID
+	now := time.Now()
 
 	// A credential the vendor already rejected, one the operator parked, or one
 	// with no token has nothing to keep alive: a heartbeat would only spend a
 	// call to learn what the pool already knows.
-	if acc.dead || acc.abnormal || !acc.Enabled || strings.TrimSpace(acc.AccessToken) == "" {
+	// expired joins the gate (issue #253): the local 14-day clock has already
+	// ruled the session over, so a heartbeat changes nothing -- success does
+	// not clear the clock (only a funded balance sweep does, issue #169), and
+	// failure just burns the call.  The message names the clock so the
+	// operator can tell it apart from a manual park.
+	expired := acc.expired(now)
+	if acc.dead || acc.abnormal || expired || !acc.Enabled || strings.TrimSpace(acc.AccessToken) == "" {
 		res.Skipped = true
-		res.Message = "the account is parked or disabled; skipping the keepalive heartbeat"
+		if expired {
+			// The 14-day local clock has ruled the session over: a heartbeat
+			// would change nothing (success does not clear the clock, issue
+			// #253), so say which kind of skip this is.
+			res.Message = "the session's 14-day local clock has expired; skipping the keepalive heartbeat (a funded balance sweep is what can revive it)"
+		} else {
+			res.Message = "the account is parked or disabled; skipping the keepalive heartbeat"
+		}
 		return res, nil
 	}
 

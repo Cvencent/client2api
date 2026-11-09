@@ -6,6 +6,23 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.74] - 2026-11-09
+
+### Fixed
+
+- **loomy keepalive 心跳对 expired（14 天本地钟到期）号跳过（#253）**：
+  keepalive 跳过闸的词表漏 \`acc.expired(now)\`——本地钟已判到期的号每晚照发
+  heartbeat（16 次/4 天加速），成功也不清钟（只有 funded balance sweep 能
+  复活，issue #169），失败出 refused 行，两头纯损耗。修法：闸词表补 expired
+  判据，skip 消息按原因分岔——expired 说「14 天本地钟已到期（funded balance
+  sweep 才能复活）」，parked/disabled 保持原话术，操作员一眼分清两种跳过。
+  #168 边界不破：keepalive 本就不承担自愈职责（清钟通路在 balance sweep）。
+
+### Installer
+
+- `client2api-setup-0.7.74.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `89827c03459d1a33c59bf5b30289e90194a25a3df83e1b05fd6ff564036c59ca`
+
 ## [0.7.73] - 2026-11-10
 
 ### Fixed
