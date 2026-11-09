@@ -34,6 +34,13 @@ const (
 	// would not help -- the content is what the vendor objected to -- so the
 	// gateway triggers the degraded-prompt window and retries once instead.
 	FailureContentBlocked FailureKind = "content_blocked"
+	// FailureCallerCanceled is the caller pressing Stop or walking away.
+	// It is nobody's failure: the credential is healthy, the platform did
+	// nothing wrong, and another platform cannot serve a request that no
+	// longer exists.  Modules that can tell a cancellation apart MUST use
+	// this kind instead of folding it into a rate-limit bucket, which parks
+	// a healthy credential for the operator's own action (issue #250).
+	FailureCallerCanceled FailureKind = "caller_canceled"
 	// FailureImageRefused is an upstream IMAGE-content refusal ("image_url
 	// field is unsafe").  Content filters disagree per platform: the same
 	// image one platform rejects another accepts (issue #243, officeace
@@ -262,6 +269,11 @@ var failureActions = map[FailureKind]action{
 	// account is healthy, so nothing is parked -- but every account here would
 	// answer the same, so the request moves to the next platform.
 	FailureModelRefused: {nextPlatform: true, why: "model-scoped: the account is healthy, the platform cannot serve this id"},
+
+	// The caller pressed Stop: nothing failed, nothing is throttled, and no
+	// platform can serve a request that no longer exists.  No rotate, no
+	// park, no platform hop -- the row just records why it ended.
+	FailureCallerCanceled: {},
 
 	// Image content filters disagree per platform (issue #243): one platform
 	// rejects an image another serves.  One platform change is worth it; the

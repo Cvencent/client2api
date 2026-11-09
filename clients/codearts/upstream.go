@@ -90,6 +90,19 @@ func failureKind(k errKind) core.FailureKind {
 	}
 }
 
+// failureKindForErr is the error-aware wrapper: a cancellation is nobody's
+// failure and must not reach the rate-limit fold that parks a healthy
+// credential for the operator's own Stop (issue #250).  DeadlineExceeded
+// stays on the cooldown list -- a chat_timeout we imposed IS worth cooling
+// down (the reverse nail).
+func failureKindForErr(err error) core.FailureKind {
+	if errors.Is(err, context.Canceled) {
+		return core.FailureCallerCanceled
+	}
+	k, _ := classifyErr(err)
+	return failureKind(k)
+}
+
 // Regexes the reference implementation uses to recognise failures that arrive
 // with a status code that does not describe them.  CodeArts reports a
 // concurrency-queue rejection as a 400 whose body names TM.00001041, and a

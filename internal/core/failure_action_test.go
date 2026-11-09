@@ -133,3 +133,11 @@ func TestParksAccountMarksTheVerdictsWeRemember(t *testing.T) {
 		t.Error("throttling is transient; the pool's cooldown owns it, not a parked verdict")
 	}
 }
+
+// #250：调用方取消是 nobody's failure——决策表行不得 rotate/park/hop。
+func TestCallerCanceledIsNobodySFailure(t *testing.T) {
+	a := actionFor(FailureCallerCanceled)
+	if a.rotate || a.nextPlatform || a.park {
+		t.Fatalf("caller-canceled action = %+v, want no rotate/park/hop (issue #250)", a)
+	}
+}

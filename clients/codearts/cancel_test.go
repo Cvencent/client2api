@@ -3,6 +3,7 @@ package codearts
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -94,5 +95,54 @@ func TestARealTransientFailureStillCoolsTheAccountDown(t *testing.T) {
 
 	if c.pool.ready() {
 		t.Error("a real upstream 500 left the account ready; transient failures must still cool it down")
+	}
+}
+
+// #250：流内 probe 路径的取消（vendor 在 200 开流后挂起、调用方取消）同样
+// 不得产生 FailureRateLimited——探测出口也曾走折叠表把取消折进 rate-limit。
+func TestBCancelledCallerOnTheProbePathDoesNotRateLimit(t *testing.T) {
+	f := newChatFixture(t)
+	seen := make(chan struct{})
+	// 首请求挂着直到取消（probe 阶段取消的形状：POST 成功、流没吐首帧）。
+	f.onCha = holdUntilCancelled(seen)
+	c := f.client(t, `,"max_attempts":3`)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errc := make(chan error, 1)
+	go func() {
+		_, err := c.Chat(ctx, &core.ChatRequest{
+			Model:    "deepseek-v4-flash",
+			Messages: []core.Message{{Role: "user", Content: "hi"}},
+		})
+		errc <- err
+	}()
+
+	select {
+	case <-seen:
+	case <-time.After(5 * time.Second):
+		cancel()
+		t.Fatal("the module never sent a chat request")
+	}
+	cancel()
+
+	select {
+	case err := <-errc:
+		if err == nil {
+			t.Fatal("a cancelled Chat returned no error")
+		}
+		if !strings.Contains(err.Error(), "context canceled") && !strings.Contains(err.Error(), "取消") {
+			t.Logf("cancellation surfaced as: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Chat did not return after the caller cancelled")
+	}
+
+	if !c.pool.ready() {
+		t.Errorf("a cancelled caller on the probe path parked the account (issue #250)")
+	}
+	for _, e := range c.pool.all() {
+		if e.fails != 0 {
+			t.Errorf("account %s counted %d failures for a probe-path cancellation, want 0 (issue #250)", e.id(), e.fails)
+		}
 	}
 }

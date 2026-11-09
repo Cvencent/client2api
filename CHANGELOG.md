@@ -6,6 +6,26 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.71] - 2026-11-09
+
+### Fixed
+
+- **codearts 的调用方取消不再被折进 FailureRateLimited（#250，#69/#125 家族
+  第三形态）**：调用方按 Stop 后健康账号被 park 1 分钟（10 次/3 天日志实证）
+  ——\`failureKind\` 把 \`kindTransient\`（含 \`context.Canceled\`）折进
+  rate-limit 桶，而 chat.go:202 的取消守卫只盖 POST 返回路径，重试循环与
+  流内 probe 出口仍走折叠表。修法：core 新增 \`FailureCallerCanceled\`
+  （决策表空行：不 rotate、不 park、不 hop——取消是 nobody's failure）；
+  codearts 新增 \`failureKindForErr\`（\`context.Canceled\` 单拆，**反向钉：
+  DeadlineExceeded 保留 rate-limit 折叠**——自家 chat_timeout 确实值得冷却），
+  \`classified\` 走它；流内 probe 出口补上与 POST 路径相同的取消守卫。
+  gateway 的 \`parkRateLimited\` 守卫自然拦住新 kind。
+
+### Installer
+
+- `client2api-setup-0.7.71.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `e86918ff168152a514f2c2604469395813abb3e1687c5096365a1dbd255a1d80`
+
 ## [0.7.70] - 2026-11-09
 
 ### Fixed

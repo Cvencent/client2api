@@ -262,6 +262,13 @@ func (c *Client) openStream(ctx context.Context, req *core.ChatRequest, release 
 			if msg == "" {
 				msg = probeErr.Error()
 			}
+			// A cancelled caller is not evidence about the credential (issue
+			// #250): the same guard the POST path has must cover the probe
+			// path too, or the folded FailureRateLimited parks a healthy
+			// account for the operator's own Stop.
+			if errors.Is(probeErr, context.Canceled) {
+				return nil, c.terminal(probeErr, acctID)
+			}
 			c.pool.markFailure(e, kind, msg)
 			// Tell the gateway about the attempt even though the loop may
 			// recover, so the (account, model) pair is parked and the panel can
@@ -459,7 +466,7 @@ func (c *Client) classified(err error, acctID string) error {
 	if err == nil {
 		return nil
 	}
-	kind, msg := classifyErr(err)
+	_, msg := classifyErr(err)
 	if msg == "" {
 		msg = err.Error()
 	}
@@ -469,7 +476,7 @@ func (c *Client) classified(err error, acctID string) error {
 	} else if se, ok := asStreamError(err); ok {
 		status = se.status()
 	}
-	return core.Fail("codearts", acctID, failureKind(kind), status, errors.New(core.Redact(msg)))
+	return core.Fail("codearts", acctID, failureKindForErr(err), status, errors.New(core.Redact(msg)))
 }
 
 // ---------------------------------------------------------------------------
