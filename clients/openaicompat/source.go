@@ -410,6 +410,36 @@ func (s *source) Status(ctx context.Context) core.Status {
 	if sourceLimit != nil {
 		st.Ready = false
 	}
+	// 平台级兜底 detail（issue #248）：全停用（或全不可用）时 lastErr 为空、
+	// 也没有限额行，平台级 detail 保持空串——8 个 not-ready 平台里唯一查无
+	// 原因的。与 lobsterai 的 pool.summary 口径对齐：账号状态汇总写进平台级
+	// detail，操作员不用跨三个页面找停用原因。
+	if !st.Ready && st.Detail == "" && len(st.Accounts) > 0 {
+		disabled, invalid, cooling := 0, 0, 0
+		for _, a := range st.Accounts {
+			switch a.State {
+			case "disabled":
+				disabled++
+			case "invalid":
+				invalid++
+			case "cooling":
+				cooling++
+			}
+		}
+		parts := make([]string, 0, 3)
+		if disabled > 0 {
+			parts = append(parts, fmt.Sprintf("%d 个账号已被操作员停用（可在账号池页重新启用）", disabled))
+		}
+		if invalid > 0 {
+			parts = append(parts, fmt.Sprintf("%d 个账号凭据被拒（原因见账号行）", invalid))
+		}
+		if cooling > 0 {
+			parts = append(parts, fmt.Sprintf("%d 个账号冷却中", cooling))
+		}
+		if len(parts) > 0 {
+			st.Detail = strings.Join(parts, "；")
+		}
+	}
 	return st
 }
 func (s *source) Health() core.Health {

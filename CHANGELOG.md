@@ -6,6 +6,25 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.69] - 2026-11-09
+
+### Fixed
+
+- **全停用/全不可用的 openaicompat 中转站平台级 detail 兜底（#248）**：
+  tokenrhythm 实测是 8 个 not-ready 平台里唯一 detail 为空字符串的——原因
+  （操作员停用）只写在账号行 note 上，平台级 detail 保持空串，概览页又把
+  它折叠进「还有 N 个」，操作员定位一次停用原因要跨三个页面。对照
+  lobsterai 的 pool.summary 总是给出 detail，openaicompat 的 source.Status
+  没有这个兜底。修法：source.Status 在 ready=false 且 detail 为空时汇总
+  账号状态（「N 个账号已被操作员停用（可在账号池页重新启用）」/
+  「N 个账号凭据被拒（原因见账号行）」/「N 个账号冷却中」），与账号行
+  note 的措辞一致；部分可用（有 ready 账号）时不走兜底，保持既有 detail。
+
+### Installer
+
+- `client2api-setup-0.7.69.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `33ff70ad1e6597b196bf89b8e723ff381109422db7d516e164c967c455af2ef7`
+
 ## [0.7.68] - 2026-11-09
 
 ### Fixed
