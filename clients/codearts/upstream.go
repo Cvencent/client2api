@@ -44,6 +44,13 @@ const (
 	kindRateLimit
 	kindTransient
 	kindClient
+	// kindContextWindow is the over-window refusal: the vendor's 81001 body
+	// names the input token limit ("input token limit is 1048576").  It must
+	// NOT fold into the rate-limit bucket (issue #255): the chat layer would
+	// silently rotate onto another account of the same platform, the gateway
+	// would only ever see a 200, and the window-learning / trim-retry
+	// machinery would never see the failure.
+	kindContextWindow
 )
 
 func (k errKind) String() string {
@@ -83,6 +90,11 @@ func failureKind(k errKind) core.FailureKind {
 		return core.FailureAuth
 	case kindQueue, kindRateLimit, kindTransient, kindNetwork:
 		return core.FailureRateLimited
+	case kindContextWindow:
+		// 超窗语义（issue #255）：不 rotate、不上抛成 FailureOther——
+		// FailureContextWindow 的决策表行为=不 rotate，请求按原样 400 交给
+		// gateway，学窗/trim-retry/normalizeContextRefusal 链路才看得到它。
+		return core.FailureContextWindow
 	case kindClient:
 		return core.FailureOther
 	default:
@@ -124,6 +136,9 @@ var (
 	reRateLimitCode = regexp.MustCompile(`(?i)8111\d\.429|TPM|tokens?\s+per\s+minute|rate.?limit|too many requests|429`)
 	reQuotaBody     = regexp.MustCompile(`(?i)insufficient\s+(balance|quota|credit)|quota\s+(exceeded|exhausted)|out\s+of\s+(credit|quota)|not\s+enough\s+credit|积分(已)?耗尽|积分不足|余额不足|升级套餐|TM\.00001050`)
 	reCtxBody       = regexp.MustCompile(`(?i)context\s+length|maximum\s+context|too\s+long|exceeds?\s+the\s+maximum`)
+	// reContextWindow（issue #255）：81001 主对话路径的超窗语义——「input
+	// token limit is N」。fold 路径的「messages 参数非法」不含这些词，不受影响。
+	reContextWindow = regexp.MustCompile(`(?i)input\s+token\s+limit|token\s+limit\s+is|context\s+length`)
 )
 
 // isQueueBody reports whether a 400 body describes the concurrency queue.
@@ -178,6 +193,11 @@ func classifyStatus(status int, body string) errKind {
 		return kindQuota
 	case reQuotaBody.MatchString(body):
 		return kindQuota
+	// 超窗分支（issue #255）：81001 双义——fold 路径是「messages 参数非法」
+	// （#240 实验语义，不含超窗词），主对话路径是「input token limit is N」。
+	// 只按文本语义识别，不按错误码。
+	case reContextWindow.MatchString(body):
+		return kindContextWindow
 	case status >= 500:
 		return kindTransient
 	case status >= 400:

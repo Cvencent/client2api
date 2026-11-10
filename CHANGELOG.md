@@ -6,6 +6,25 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.76] - 2026-11-10
+
+### Fixed
+
+- **codearts 的 81001 超窗语义上抛（#255，#56 家族 codearts 篇）**：主对话的
+  81001（"input token limit is 1048576"）被 classifyStatus 归为 kindClient →
+  FailureOther → 模块内静默 rotate——gateway 只看到 200，学窗/trim-retry/
+  probe 纠正全部跳过。修法：classifyStatus 在 400 分支前补超窗分支
+  （reContextWindow："input token limit" / "token limit is" / "context
+  length"）→ 新 kindContextWindow → failureKind 映射
+  core.FailureContextWindow——请求按原样 400 交给 gateway，f2e004b 的学窗/
+  trim-retry 模式随即接管。反向钉：fold 路径的 81001（"messages 参数非法"，
+  #240 实验语义）不含超窗词，不被误吞；auth/queue/quota 分支保持现序。
+
+### Installer
+
+- `client2api-setup-0.7.76.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `7453528d833fed082441a4c9ee44777313b2f7be04c94be0aa92ac89d5887f2a`
+
 ## [0.7.75] - 2026-11-10
 
 ### Fixed
