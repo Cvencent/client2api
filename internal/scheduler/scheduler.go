@@ -2009,12 +2009,9 @@ func (r *Runner) runCheckinBatchAs(ctx context.Context, c core.Client, b core.Ba
 		if ctx.Err() != nil {
 			break
 		}
-		if ranAnAccount {
-			if !r.sleep(ctx, jitter(gap)) {
-				break
-			}
-		}
-		ranAnAccount = true
+		// 先判后睡（issue #254）：action scope 与 already-settled 都是纯本地
+		// 判定，放在 gap 睡眠之前——全跳过轮（34 号全 settled）不再为每个号
+		// 白等 45 秒。gap 只给真正打上游的调用限速（#142 的线速防护不回退）。
 		if !core.CheckinActionAllowsAccount(checkinActions, "", rec) {
 			rep.Skipped++
 			rep.SkipReasons = appendReason(rep.SkipReasons, "action is not scoped to this account channel")
@@ -2027,6 +2024,12 @@ func (r *Runner) runCheckinBatchAs(ctx context.Context, c core.Client, b core.Ba
 			r.log("[scheduler] %s/%s account %q checkin skipped: already settled today", rep.Client, rep.Batch, acc)
 			continue
 		}
+		if ranAnAccount {
+			if !r.sleep(ctx, jitter(gap)) {
+				break
+			}
+		}
+		ranAnAccount = true
 		res, cerr := cp.Checkin(ctx, acc, "")
 		rep.Ran++
 		if cerr != nil {

@@ -6,6 +6,23 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.75] - 2026-11-10
+
+### Fixed
+
+- **checkin 循环先判后睡（#254）**：officeace 34 个账号全部 already-settled
+  仍白等 25m11s（每号 45s gap）——gap 的目的是给上游请求限速，但
+  action-scope 与 already-settled 是纯本地判定，放在 sleep 之后意味着全跳过
+  轮为每个号白睡一个 gap；batch 串行执行又把同窗口后续 batch 整体推迟。修
+  法：纯本地判定的 continue 分支挪到 gap 睡眠之前（先判后睡），只有真打上
+  游的号才消耗 gap。反向钉：真跑号之间的 gap 间隔保持（#142 线速防护不回
+  退，测试断言 45s ±20%）。
+
+### Installer
+
+- `client2api-setup-0.7.75.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `624827474358413e2d0ea25f6982bb399320c0da644d92ed89f60972e3a567de`
+
 ## [0.7.74] - 2026-11-09
 
 ### Fixed
