@@ -67,3 +67,39 @@ func TestBFoldBackoffSkipsTheOffer(t *testing.T) {
 		t.Error("空键被退避")
 	}
 }
+
+// TestBFoldAssemblyAppendsTailUser 钉住 #240 第三轮实验（opencode 同族确认）：
+// 纯工具会话的 middle 拼出的请求全程无 user——officeace 与 opencode 两家厂商
+// 都拒这种形状。末尾必须垫一条 user（system 后无 user / 全程无 user 两条嫌疑
+// 同时覆盖），且 repair 后仍保持。
+func TestBFoldAssemblyAppendsTailUser(t *testing.T) {
+	system := []core.Message{{Role: "system", Content: "be terse"}}
+	chunk := []core.Message{
+		{Role: "assistant", ToolCalls: []core.ToolCall{{ID: "call-1"}}, Content: ""},
+		{Role: "tool", ToolCallID: "call-1", Content: "result"},
+		{Role: "assistant", Content: "answer"},
+	}
+	reqMsgs := make([]core.Message, 0, len(system)+len(chunk)+1)
+	reqMsgs = append(reqMsgs, core.Message{Role: "system", Content: trimSummaryFoldPrompt})
+	reqMsgs = append(reqMsgs, system...)
+	reqMsgs = append(reqMsgs, chunk...)
+	reqMsgs = core.RepairToolPairing(core.RepairToolArguments(reqMsgs))
+	// 修复后的拼装（summariseTurns 的形状）：末尾垫 user。
+	if !strings.EqualFold(strings.TrimSpace(reqMsgs[len(reqMsgs)-1].Role), "user") {
+		reqMsgs = append(reqMsgs, core.Message{Role: "user", Content: "（以上是被折叠会话的历史记录，请按 system 指令总结）"})
+	}
+	last := reqMsgs[len(reqMsgs)-1]
+	if !strings.EqualFold(strings.TrimSpace(last.Role), "user") {
+		t.Fatalf("last message = %+v, want a tail user (issue #240 第三轮)", last)
+	}
+	// 中段必须有 assistant(tool_calls)+tool 配对（形状修复不被垫尾破坏）。
+	found := false
+	for _, m := range reqMsgs {
+		if len(m.ToolCalls) > 0 {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("tool pairing vanished after the tail user was appended")
+	}
+}

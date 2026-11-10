@@ -6,6 +6,25 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.77] - 2026-11-10
+
+### Fixed
+
+- **折叠请求末尾垫 user（#240 第三轮实验，opencode 同族确认）**：纯工具会话
+  的 middle 拼出的折叠请求是 system → assistant(tool_calls) → tool → … →
+  assistant，**全程无 user**——officeace 与 opencode 两家厂商都拒这种形状
+  （opencode 502 "[1214] The messages parameter is illegal" ×4，与 codearts
+  81001 同族文本）。修法：拼装末尾垫一条 user 说明任务（「以上是被折叠会话
+  的历史记录，请按 system 指令总结」），同时覆盖「system 后无 user」与
+  「全程无 user」两条嫌疑；直连对话永远有 user，垫上后形状与直连对齐。
+  下一轮实弹：垫 user 后 81001/502 消失 → 形状实锤（两家厂商校验器都要求
+  user 参与）；仍拒 → 内容审查实锤（正道转反馈厂商）。
+
+### Installer
+
+- `client2api-setup-0.7.77.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `6abc388ad117c90c0bc0496f624a255190fc85e76e839b4b19a67a01c45ba8c9`
+
 ## [0.7.76] - 2026-11-10
 
 ### Fixed

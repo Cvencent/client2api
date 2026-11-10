@@ -490,6 +490,14 @@ func (s *server) summariseTurns(ctx context.Context, client core.Client, model s
 	if len(reqMsgs) > 0 && strings.EqualFold(strings.TrimSpace(reqMsgs[0].Role), "tool") {
 		reqMsgs = append([]core.Message{{Role: "user", Content: "(以下是被折叠会话前段的工具调用结果，供摘要参考)"}}, reqMsgs...)
 	}
+	// 末尾垫一条 user（issue #240 第三轮实验，opencode 同族确认）：纯工具会话
+	// 的 middle 拼出的请求是 system → assistant(tool_calls) → tool → … →
+	// assistant，全程无 user——officeace 与 opencode 两家厂商都拒这种形状。
+	// 垫一条 user 说明任务，同时覆盖「system 后无 user」与「全程无 user」
+	// 两条嫌疑；直连对话永远有 user，垫上后形状与直连对齐。
+	if len(reqMsgs) > 0 && !strings.EqualFold(strings.TrimSpace(reqMsgs[len(reqMsgs)-1].Role), "user") {
+		reqMsgs = append(reqMsgs, core.Message{Role: "user", Content: "（以上是被折叠会话的历史记录，请按 system 指令总结）"})
+	}
 	req := &core.ChatRequest{
 		Model:    model,
 		Messages: reqMsgs,
