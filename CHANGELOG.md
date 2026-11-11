@@ -6,6 +6,24 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.79] - 2026-11-11
+
+### Fixed
+
+- **任务中心页头 KPI 恒 0（#257，#27 家族 taskscenter 篇）**：`go()` 同拍先挂
+  页头再异步拉数据，`mountMasthead` 读 `SC.data.rows` 时还是空数组——KPI 恒
+  「定时任务 0 0 已启用」，与正文「N 条规则」同屏矛盾；且 taskscenter 不在 5s
+  轮询里（refreshVisible 只放行 accounts/overview），数据到位后没有重算路径，
+  停留再久也不自愈；导航徽标「N 条定时」同样恒 0。修法：`renderSchedule()`
+  成功尾部补一次 `mountMasthead(VIEW)`（只在当前视图是任务中心时），数据到位
+  即回刷页头读数；读失败不刷（页头留旧值，正文已有「读取失败」）。反向钉：
+  SC.data.rows 为空时 KPI 显示 0 是正确的，不为消除矛盾硬编码。
+
+### Installer
+
+- `client2api-setup-0.7.79.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `31aa1066a89d22ab3e784b7fb6a787b376ff2addd133cfb388db38e9a50442cb`
+
 ## [0.7.78] - 2026-11-11
 
 ### Fixed

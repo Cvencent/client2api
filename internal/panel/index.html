@@ -20283,6 +20283,13 @@ async function renderSchedule() {
   $("#scCount").textContent = ((d.rows || []).length) + " 条规则";
   scRenderRows();
   scRenderRuns(d.runs || []);
+  // 数据到位即回刷页头读数与导航徽标（issue #257）：进页时 mountMasthead 跑在
+  // 这个异步读取之前，mastStats 读到的 SC.data.rows 还是空数组，KPI 恒「0 0
+  // 已启用」、与正文「N 条规则」同屏矛盾；taskscenter 又不在 5s 轮询里
+  // （refreshVisible 只放行 accounts/overview），数据到位后没有别的重算路径。
+  // 只在当前视图就是任务中心时回刷——scSave/scRunNow 等后台调用不碰别页页头。
+  // 读失败不刷：页头留旧值比刷新成错误态好，正文已有「读取失败」。
+  if (VIEW === "taskscenter") mountMasthead(VIEW);
   return true;
 }
 
