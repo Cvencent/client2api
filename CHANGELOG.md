@@ -6,6 +6,27 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.78] - 2026-11-11
+
+### Fixed
+
+- **折叠失败的平台级冷却（#256）**：#240 的退避按「中段指纹」记键，但增长中的
+  会话（agent loop 每轮重发全史）每轮的中段都在变——raccoon 的 dropped 序列
+  498→514→488→…→742——每轮都是新键，连续失败计数永远到不了阈值 2，退避永不
+  武装。实测 11 小时里 raccoon 每 ~1 小时重付一对 6 分钟超时（20 次 deadline
+  失败）、loomy 每小时一次 90s 读超时、opencode 每 45-75 分钟撞一次在途上限。
+  修法 = 失败分类分层：容量类失败（超时 / `platform exhausted` / 在途上限 /
+  未配置 / 传输故障）定罪**平台**，同一平台连续 2 次后折叠冷却 30 分钟，期间
+  该平台的 fold offer 一律跳过（主请求不受影响）；厂商形状/内容拒绝维持原
+  指纹级退避（#240 的证据链不动）；一次成功折叠即解除平台冷却。分类表钉在
+  `foldPlatformCooldownVerdict`（trim_summary.go），接线在 newServer 的
+  failed/done 回调与 context_guard.go 的 offer 闸。
+
+### Installer
+
+- `client2api-setup-0.7.78.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `472cbb319baefee8a754cc89ea677680c0f13a685b716be77e1aa073cfedd27c`
+
 ## [0.7.77] - 2026-11-10
 
 ### Fixed

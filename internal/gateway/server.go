@@ -211,6 +211,9 @@ func NewServer(opts Options) *http.Server {
 		s.foldSummarise,
 		func(job *trimFoldJob, summary string) {
 			s.trimSummaries.put(job.key, summary, job.dropped)
+			// A served fold is evidence the vendor is healthy again; clear any
+			// platform cooldown the wedged phase earned (issue #256).
+			s.trimSummaries.recordFoldPlatformSuccess(job.client.Name())
 			s.opts.Logger.Printf("context: folded %d dropped message(s) into a %d-char summary for %s/%s; later turns of this conversation will pin it",
 				job.dropped, len(summary), job.client.Name(), job.model)
 		},
@@ -219,6 +222,19 @@ func NewServer(opts Options) *http.Server {
 			note := ""
 			if fails >= trimFoldBackoffThreshold {
 				note = fmt.Sprintf("; backed off for %s after %d consecutive failures", trimFoldBackoff, fails)
+			}
+			// A capacity verdict (deadline, exhausted pool, in-flight ceiling)
+			// blames the platform, not this conversation's middle: a growing
+			// conversation changes its fingerprint key every turn, so the
+			// fingerprint-level counter never reaches the threshold and the
+			// same wedged platform would be paid at full price every turn
+			// (issue #256).  The platform cooldown bounds that cost; vendor
+			// shape/content refusals keep the fingerprint backoff, whose
+			// snapshot is the evidence chain (issue #240).
+			if foldPlatformCooldownVerdict(err) {
+				if pfails := s.trimSummaries.recordFoldPlatformFailure(job.client.Name()); pfails >= trimFoldPlatformCooldownThreshold {
+					note += fmt.Sprintf("; platform %s folds cooled for %s after %d consecutive capacity failures", job.client.Name(), trimFoldPlatformCooldown, pfails)
+				}
 			}
 			s.opts.Logger.Printf("context: folding %d dropped message(s) for %s/%s failed (%v); the next turn will retry it%s",
 				job.dropped, job.client.Name(), job.model, err, note)

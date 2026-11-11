@@ -5,7 +5,7 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-Current version: **0.7.77**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
+Current version: **0.7.78**. Full changelog: [CHANGELOG.md](CHANGELOG.md).
 
 client2api is a personal, local-only OpenAI-compatible gateway. It aggregates
 the accounts and API Keys **you own** on different AI coding clients and
@@ -365,7 +365,14 @@ loop that never ended.
   with its own size counted against the trim budget. A failed fold costs one log
   line and is retried on the next turn: the main request never waits for a
   summary and never changes shape because one failed -- with no cache hit the
-  trim behaves exactly as it did before.
+  trim behaves exactly as it did before. Failures are judged by what they
+  blame: vendor shape/content refusals arm a per-fingerprint backoff (2
+  consecutive failures cool that middle's key for 30 minutes), while capacity
+  verdicts -- deadlines, exhausted pools, in-flight ceilings, transport faults
+  -- cool the whole platform's folds for 30 minutes after 2 consecutive ones,
+  because a growing conversation changes its fingerprint every turn and a
+  wedged vendor times out whatever middle it is handed (issue #256). A served
+  fold clears the platform cooldown.
 - An inline base64 image is priced as an image rather than as text. `view_image`
   returns a screenshot as a `data:image/...;base64,` URL, and a single 466x466 PNG
   is tens of thousands of characters that the plain text divisor used to read as

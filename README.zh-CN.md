@@ -5,7 +5,7 @@
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-当前版本：**0.7.77**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：**0.7.78**。完整更新记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 流式断流排查：升级后系统日志新增 `stream: id=...` 终止诊断，包含协议、平台/模型、
 上游事件数、`finish_reason`、正文/推理字节数、工具调用数、completion token、
@@ -177,7 +177,7 @@ client2api 是一个**个人自用**的 OpenAI 兼容网关。它把你自己在
 - 自动压缩撞上本地 `max_in_flight_per_account` 限制时会等待背压：最多重试 3 次、间隔 200ms，真实上游错误仍立即返回。
 - 同一条消息的正文只计一次：调用方可能把同一段文字以字符串或内容数组（`input_text` / `text` 块）发出，入站解码会把数组里的文本块同时写进 `Content` 和 `Parts`，估算器过去会把两处都算上，等于把正文按双倍计。后果是裁剪阈值被提前触发：厂商实测只有约 42 万 tokens 的会话，网关按约 110 万 tokens 的估算在 1048576 的窗口上反复裁掉最早的消息，而这段历史本来能完整放下。现在只有 `Content` 为空、文本块是正文唯一副本时才计分。同一形状还让 Raccoon、Autoclaw、MiniMax Code、Doubao 和 Gemini 在上游报文里把正文发了两遍，这些模块改为优先用 `Content`，仅在其为空时回退到文本块。
 - 上下文窗口守卫会把上游拒绝里写明的真实窗口写入 `data/learned_context_windows.json` 并由 `/v1/models` 发布。若拒绝同时给出「实测 N tokens > M maximum」，而请求按估算本应放得下，网关会按实测比例裁剪并立刻重试一次，避免这类对话每次「继续」都报 400。
-- 裁剪丢掉的中段会**后台折叠成摘要并钉回窗口**（issue #164）：一次裁剪丢掉 ≥50 条消息时，被丢中段交给单个后台折叠协程（复用 Responses 压缩的分块与轮次上限，走正常路由路径），摘要按「system 轮 + 中段逐字」的指纹缓存（≤96 条、24h TTL）。同一会话下一轮再被裁剪时若指纹命中，摘要作为一条带说明头的 user 轮钉在 system 头与保留尾之间，其体积计入裁剪预算。摘要失败只写一行日志、下一轮自动重试：主请求永远不等摘要、不因摘要失败而变化，未命中缓存时行为与纯裁剪完全一致。
+- 裁剪丢掉的中段会**后台折叠成摘要并钉回窗口**（issue #164）：一次裁剪丢掉 ≥50 条消息时，被丢中段交给单个后台折叠协程（复用 Responses 压缩的分块与轮次上限，走正常路由路径），摘要按「system 轮 + 中段逐字」的指纹缓存（≤96 条、24h TTL）。同一会话下一轮再被裁剪时若指纹命中，摘要作为一条带说明头的 user 轮钉在 system 头与保留尾之间，其体积计入裁剪预算。摘要失败只写一行日志、下一轮自动重试：主请求永远不等摘要、不因摘要失败而变化，未命中缓存时行为与纯裁剪完全一致。失败按「定罪对象」分层：厂商形状/内容拒绝武装**指纹级退避**（连续 2 次冷却该中段键 30 分钟）；容量类失败——超时、账号池耗尽、在途上限、传输故障——连续 2 次冷却**整个平台的折叠** 30 分钟，因为增长中的会话每轮都换指纹、卡死的厂商给什么都超时（issue #256）。一次成功折叠即解除平台冷却。
 - 思考档位按“平台 + 模型”解析：优先级为手动配置、模块缓存目录、内置预设；
   “模型与档位”页可以查看和修改支持的档位及默认档，手动值优先于可能过期的模块缓存。
 - “封顶对齐”现在对所有平台、所有模型默认开启，包括 `Auto/<模型>` 和模型组行；面板仍可按模型手动关闭或恢复默认。

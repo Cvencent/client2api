@@ -484,13 +484,25 @@ func applyContextBudgetWithFold(req *core.ChatRequest, budget int64, fold *trimF
 	// with the newest middle.
 	if len(middle) > 0 {
 		key := trimSummaryCacheKey(trimMiddleFingerprint(fold.system, middle), dropped)
-		// A fingerprint the vendor keeps rejecting comes back at full price
-		// every turn (issue #240: 265 failures in three days, 337 messages
-		// re-trimmed each time).  Inside the backoff window the offer is
-		// skipped -- the request itself is unaffected, the pinned path above
+		// A platform inside its fold cooldown is not offered anything: capacity
+		// failures (deadlines, exhausted pools, in-flight ceilings) blame the
+		// platform, and a growing conversation changes its fingerprint every
+		// turn so the fingerprint-level backoff never arms for them (issue
+		// #256).  The main request is unaffected -- the pinned path above
 		// already answered this turn without the fold.
-		if backed, fails := fold.folds.trimSummariesBackedOff(key); backed {
-			fold.folds.logf("context: fold for %d dropped message(s) is in backoff (%d consecutive failures); skipping the offer this turn", dropped, fails)
+		if cooled, pfails := fold.folds.trimSummariesPlatformCooled(fold.client.Name()); cooled {
+			if fold.folds.logf != nil {
+				fold.folds.logf("context: fold for %d dropped message(s) skipped: platform %s is in a fold cooldown (%d consecutive capacity failures); retry after the window lapses", dropped, fold.client.Name(), pfails)
+			}
+		} else if backed, fails := fold.folds.trimSummariesBackedOff(key); backed {
+			// A fingerprint the vendor keeps rejecting comes back at full price
+			// every turn (issue #240: 265 failures in three days, 337 messages
+			// re-trimmed each time).  Inside the backoff window the offer is
+			// skipped -- the request itself is unaffected, the pinned path above
+			// already answered this turn without the fold.
+			if fold.folds.logf != nil {
+				fold.folds.logf("context: fold for %d dropped message(s) is in backoff (%d consecutive failures); skipping the offer this turn", dropped, fails)
+			}
 		} else {
 			fold.folds.offer(&trimFoldJob{
 				key:     key,

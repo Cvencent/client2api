@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -114,15 +115,44 @@ const trimFoldBackoffThreshold = 2
 // trimFoldBackoff is how long an armed backoff lasts.
 const trimFoldBackoff = 30 * time.Minute
 
+// trimFoldPlatformCooldown is how long a platform is cooled for folds after
+// capacity failures.  The per-fingerprint backoff above (issue #240) keys on
+// the middle's verbatim hash -- but a growing conversation's middle changes
+// every turn, so its key changes every turn and the counter never reaches the
+// threshold.  Capacity failures (deadlines, in-flight ceilings, exhausted
+// pools) are a PLATFORM's verdict, not a conversation's: the same wedged
+// upstream times out whatever middle it is handed (issue #256: raccoon paid a
+// 6-minute timeout pair roughly every hour for eleven hours, loomy one 90s
+// stall per hour, because each turn presented a fresh key).  Cooling the
+// platform for folds bounds that cost while leaving the main request path
+// untouched.
+const trimFoldPlatformCooldown = 30 * time.Minute
+
+// trimFoldPlatformCooldownThreshold is how many consecutive platform-verdict
+// failures arm the platform cooldown.
+const trimFoldPlatformCooldownThreshold = 2
+
 // trimSummaryStore caches folds keyed by the middle's fingerprint.  A nil store
 // is usable and simply never pins, which keeps the embedder paths honest.
 type trimSummaryStore struct {
 	mu      sync.Mutex
 	entries map[string]trimSummaryEntry
+	// platforms holds per-platform fold-cooldown bookkeeping: consecutive
+	// capacity-verdict failures and when the last one happened (issue #256).
+	// Keyed by the client name -- a fold rides the platform's own routing, so
+	// the platform is the unit the vendor's health decides.
+	platforms map[string]foldPlatformState
+}
+
+// foldPlatformState is one platform's consecutive capacity-failure count for
+// folds.
+type foldPlatformState struct {
+	fails    int
+	lastFail time.Time
 }
 
 func newTrimSummaryStore() *trimSummaryStore {
-	return &trimSummaryStore{entries: map[string]trimSummaryEntry{}}
+	return &trimSummaryStore{entries: map[string]trimSummaryEntry{}, platforms: map[string]foldPlatformState{}}
 }
 
 // get returns the summary cached for this key, if fresh.
@@ -186,12 +216,122 @@ func (s *trimSummaryStore) foldBackedOff(key string) (bool, int) {
 	return true, e.fails
 }
 
+// recordFoldPlatformFailure bumps the platform's consecutive capacity-failure
+// counter and timestamps it (issue #256).  Capacity verdicts -- deadlines,
+// in-flight ceilings, exhausted pools -- blame the platform, not the middle:
+// the same wedged upstream times out whatever conversation it is handed, and a
+// growing conversation changes its key every turn, so the fingerprint-level
+// counter never reaches the threshold.  The platform cooldown is what bounds
+// that cost.
+func (s *trimSummaryStore) recordFoldPlatformFailure(platform string) int {
+	if s == nil || platform == "" {
+		return 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.platforms[platform]
+	p.fails++
+	p.lastFail = time.Now()
+	s.platforms[platform] = p
+	return p.fails
+}
+
+// recordFoldPlatformSuccess clears the platform's consecutive-failure counter:
+// a fold that just served through this platform is evidence the vendor is
+// healthy again (issue #256).
+func (s *trimSummaryStore) recordFoldPlatformSuccess(platform string) {
+	if s == nil || platform == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.platforms, platform)
+}
+
+// foldPlatformCooled reports whether this platform is inside a fold cooldown:
+// it has produced trimFoldPlatformCooldownThreshold capacity failures in a row
+// and the last one is recent.  Inside the window the offer gate skips the fold
+// for every conversation on the platform -- the wedge is not conversation
+// specific (issue #256).
+func (s *trimSummaryStore) foldPlatformCooled(platform string) (bool, int) {
+	if s == nil || platform == "" {
+		return false, 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, ok := s.platforms[platform]
+	if !ok || p.fails < trimFoldPlatformCooldownThreshold {
+		return false, p.fails
+	}
+	if time.Since(p.lastFail) > trimFoldPlatformCooldown {
+		// The cooldown has lapsed: one fresh attempt is allowed to re-probe.
+		delete(s.platforms, platform)
+		return false, 0
+	}
+	return true, p.fails
+}
+
 // trimSummariesBackedOff exposes the store's backoff state to the offer gate.
 func (c *trimFoldCoordinator) trimSummariesBackedOff(key string) (bool, int) {
 	if c == nil {
 		return false, 0
 	}
 	return c.store.foldBackedOff(key)
+}
+
+// trimSummariesPlatformCooled exposes the store's platform-cooldown state to
+// the offer gate (issue #256).
+func (c *trimFoldCoordinator) trimSummariesPlatformCooled(platform string) (bool, int) {
+	if c == nil {
+		return false, 0
+	}
+	return c.store.foldPlatformCooled(platform)
+}
+
+// foldPlatformCooldownVerdict reports whether err is a PLATFORM capacity
+// verdict rather than a conversation-shape refusal (issue #256).  Capacity
+// failures cool the whole platform's folds; vendor content/shape refusals keep
+// the per-fingerprint backoff, because those depend on what was folded and the
+// shape snapshot is the evidence chain (issue #240).
+func foldPlatformCooldownVerdict(err error) bool {
+	if err == nil {
+		return false
+	}
+	// An exhausted pool or a saturated in-flight ceiling: the platform's own
+	// verdict, whatever middle it was handed.
+	if errors.Is(err, core.ErrPlatformExhausted) || errors.Is(err, core.ErrBusy) ||
+		errors.Is(err, core.ErrNotConfigured) {
+		return true
+	}
+	// A caller that walked away blames nobody; do not cool anything.
+	if errors.Is(err, context.Canceled) {
+		return false
+	}
+	// Deadline/stall: the platform did not answer in time.  The fold wraps its
+	// own watchdog timeout, so the deadline here may be the fold's rather than
+	// the vendor's -- either way the conversation did not cause it.
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	// A classified failure keeps the fingerprint-level backoff unless the kind
+	// itself is a platform-health verdict: transport and 5xx are the vendor's
+	// capacity, not the middle's content.
+	if f, ok := core.AsFailure(err); ok {
+		return f.Kind == core.FailureUpstream
+	}
+	// An unclassified transport fault (normalizeUnclassifiedFailure's input
+	// vocabulary) is also the platform's health.
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	for _, marker := range transportFaultMarkers {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // put records a fold, evicting the oldest entry when the cache is full.
