@@ -189,7 +189,7 @@ func TestAccountRowsDisableDefinitiveCheckinStates(t *testing.T) {
 // checkinTargetsSource 拉出「全部签到」的出队函数，连同它依赖的 accGroups、
 // checkinActionsFor 与 checkinStatusFor。它们都不引用 CUR / esc，只有 capsOf 和
 // ACCTS 是外部名字，node 侧用桩替掉。
-func checkinTargetsSource(t *testing.T) (accGroups, actionsFor, statusFor, targets string) {
+func checkinTargetsSource(t *testing.T) (accGroups, actionsFor, statusFor, settledFor, targets string) {
 	t.Helper()
 	src := poolStatsUISource(t)
 	// poolStatsFuncBody 截到行首的 "}" 之前（不含它），node 那边需要成对的括号，
@@ -197,8 +197,12 @@ func checkinTargetsSource(t *testing.T) (accGroups, actionsFor, statusFor, targe
 	accGroups = poolStatsFuncBody(t, src, "accGroups") + "\n}"
 	actionsFor = checkinActionsForSource(t, src)
 	statusFor = checkinStatusForSource(t, src)
+	// checkinTargets 只为「已完结」（done）跳过一行，判定由 checkinStatusSettled
+	// 提供（「暂不可签」当天还会重试）。隔离运行的 harness 必须把这个依赖也带上，
+	// 否则函数体一引用它就是 ReferenceError。
+	settledFor = checkinStatusSettledSource(t, src)
 	targets = poolStatsFuncBody(t, src, "checkinTargets") + "\n}"
-	return accGroups, actionsFor, statusFor, targets
+	return accGroups, actionsFor, statusFor, settledFor, targets
 }
 
 // TestCheckinTargetsRunsEachAccountOnce 用 node 跑真实的 checkinTargets。
@@ -211,8 +215,8 @@ func TestCheckinTargetsRunsEachAccountOnce(t *testing.T) {
 	if err != nil {
 		t.Skip("node is not on PATH; the batch scheduler behavior needs it to run the inline source")
 	}
-	accGroups, actionsFor, statusFor, targets := checkinTargetsSource(t)
-	blocks, err := json.Marshal([]string{accGroups, actionsFor, statusFor, targets})
+	accGroups, actionsFor, statusFor, settledFor, targets := checkinTargetsSource(t)
+	blocks, err := json.Marshal([]string{accGroups, actionsFor, statusFor, settledFor, targets})
 	if err != nil {
 		t.Fatalf("encoding the source blocks for node: %v", err)
 	}
@@ -220,12 +224,12 @@ func TestCheckinTargetsRunsEachAccountOnce(t *testing.T) {
 	prog := `const fs = require("fs");
 const out = process.argv[2];
 try {
-  const [accGroups, actionsFor, statusFor, targets] = ` + string(blocks) + `;
+  const [accGroups, actionsFor, statusFor, settledFor, targets] = ` + string(blocks) + `;
   const ACCTS = {};
   const CAPS = {};
   const capsOf = n => CAPS[n] || {};
   const load = new Function("ACCTS", "capsOf",
-    accGroups + "\n" + actionsFor + "\n" + statusFor + "\n" + targets + "\nreturn {checkinTargets, checkinActionsFor, checkinStatusFor};");
+    accGroups + "\n" + actionsFor + "\n" + statusFor + "\n" + settledFor + "\n" + targets + "\nreturn {checkinTargets, checkinActionsFor, checkinStatusFor};");
   const api = load(ACCTS, capsOf);
 
   const zcaps = { actions: [{ id: "claim", channels: ["jwt"] }] };
@@ -289,10 +293,14 @@ try {
 	if strings.Join(got.K, ",") != "kimi-a,kimi-b" {
 		t.Errorf("kimi targets = %v, want both daily rows in order", got.K)
 	}
-	// Definitive outcomes are not retried, and every queued item carries the
-	// action id so the batch can call the action the row was showing.
-	if strings.Join(got.S, ",") != "retry:daily" {
-		t.Errorf("settled targets = %v, want only the retryable row with its action id", got.S)
+	// Only a settled ("done") outcome is skipped.  An "unavailable" one is the
+	// vendor saying "nothing to claim right now", which expires within the same
+	// day (qoder's campaign resets 10:00 UTC+8), so the batch MUST queue it again
+	// -- otherwise 全部签到 silently skips an account that later became claimable.
+	// Every queued item carries the action id so the batch can call the action
+	// the row was showing.
+	if strings.Join(got.S, ",") != "unavailable:daily,retry:daily" {
+		t.Errorf("batch targets = %v, want the unavailable row retried alongside the never-tried row", got.S)
 	}
 }
 

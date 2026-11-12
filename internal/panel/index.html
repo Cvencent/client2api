@@ -14727,9 +14727,11 @@ function checkinActionsFor(a, acts, group) {
   });
 }
 
-// checkinStatusFor 读取今天这个动作的最终状态。状态按具体凭据 id 持久化，
+// checkinStatusFor 读取今天这个动作的状态。状态按具体凭据 id 持久化，
 // 但动作可能声明在账号组级别（zcode 的 JWT/API key 兄弟通道）：组里任何一行
-// 已经签过或确认不可签，整组都该显示同一个结果，避免点兄弟通道再试一次。
+// 已经有结论，整组都显示同一个结果，避免点兄弟通道再试一次。返回的可能是
+// 「已完结」（done）或「暂不可签」（unavailable），由 checkinStatusSettled 区分
+// 能否真的停止重试。
 function checkinStatusFor(a, action, group) {
   const key = String(action || "");
   const rows = (group && group.length) ? group : [a];
@@ -14740,17 +14742,37 @@ function checkinStatusFor(a, action, group) {
   return null;
 }
 
-function checkinStatusText(st) {
-  return st && st.state === "done" ? "今日已签到" : "今日不可签";
+// checkinStatusSettled 报告一个状态是否已经把今天这个动作彻底了结。
+//
+// Only "done" settles: the vendor granted the reward, so there is genuinely
+// nothing left to do today.  "unavailable" does NOT settle — it is the module
+// reporting "nothing to claim right now", which on the vendors this gateway
+// speaks (qoder's daily campaign resets 10:00 UTC+8) is a verdict that EXPIRES
+// and becomes claimable within the SAME day.  Disabling the button on it left
+// the operator with a dead control for the rest of the day after one early
+// click, with the reward silently unreachable.  This mirrors the scheduler,
+// which has always re-fired an "unavailable" window rather than settling it
+// (see checkinDoneForToday in internal/scheduler).
+function checkinStatusSettled(st) {
+  return !!(st && st.state === "done");
 }
 
-// checkinButtonHTML 是行内签到按钮的唯一渲染点。最终状态存在时按钮必须 disabled，
-// 文案直接告诉操作员今天为什么不用再点；厂商原话放进 title，方便排查 404 / 拒签。
+// checkinStatusText 是按钮上可见的文字。已完结说「今日已签到」；未完结仍显示动作
+// 自己的名字（它还是一个可以再点的动作），模块给的原因留在 title 里。
+function checkinStatusText(st, x) {
+  if (checkinStatusSettled(st)) return "今日已签到";
+  return checkinActionLabel(x);
+}
+
+// checkinButtonHTML 是行内签到按钮的唯一渲染点。已完结时按钮 disabled，文案直接
+// 告诉操作员今天为什么不用再点；「暂不可签」保持可点，因为那个判定会在当天失效
+// （见 checkinStatusSettled），操作员稍后还能再试。厂商原话放进 title。
 function checkinButtonHTML(a, x, st, primary) {
-  const label = st ? checkinStatusText(st) : checkinActionLabel(x);
+  const settled = checkinStatusSettled(st);
+  const label = st ? checkinStatusText(st, x) : checkinActionLabel(x);
   const title = [checkinActionTitle(x), st && st.message ? st.message : ""].filter(Boolean).join(" · ");
-  const cls = "xs" + (!st && primary ? " primary" : (!primary ? " chip" : ""));
-  const dis = st ? " disabled" : "";
+  const cls = "xs" + (!settled && primary ? " primary" : (!primary ? " chip" : ""));
+  const dis = settled ? " disabled" : "";
   return '<button class="' + cls + '" data-do="checkin" data-act="' + esc(x.id) + '" data-id="' + esc(a.id) + '" title="' + esc(title) + '"' + dis + '>' + esc(label) + '</button>';
 }
 // checkinTargets 把「全部签到」要跑的凭据排成一队。规则有两条：
@@ -14772,7 +14794,11 @@ function checkinTargets(n) {
     const allowed = checkinActionsFor(rows[0], acts, rows);
     if (!allowed.length) return;
     allowed.forEach(x => {
-      if (checkinStatusFor(rows[0], x.id, rows)) return;
+      // Only a settled ("done") verdict skips the batch.  An "unavailable" one is
+      // a verdict that expires within the day, so the batch must still try it --
+      // otherwise "全部签到" would silently do nothing for an account the operator
+      // just watched say "nothing to claim yet".
+      if (checkinStatusSettled(checkinStatusFor(rows[0], x.id, rows))) return;
       let picked = rows;
       const only = (x && x.channels) || [];
       if (only.length) {
