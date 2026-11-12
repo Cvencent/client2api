@@ -109,6 +109,6 @@ type testNetError struct {
 	msg string
 }
 
-func (e *testNetError) Error() string { return e.op + ": " + e.msg }
-func (e *testNetError) Timeout() bool { return false }
+func (e *testNetError) Error() string   { return e.op + ": " + e.msg }
+func (e *testNetError) Timeout() bool   { return false }
 func (e *testNetError) Temporary() bool { return false }
