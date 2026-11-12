@@ -111,6 +111,92 @@ func (u *upstream) commonParams() url.Values {
 	return q
 }
 
+// pcParams are the query parameters the *PC* client attaches.  The growth
+// (campaign / quota / check-in) endpoints key on this product identity: the
+// same path answered under the web aid is refused with 710010702 "system
+// error".  They identify the client build, not the user.
+func (u *upstream) pcParams() url.Values {
+	q := url.Values{}
+	q.Set("aid", paramPCAid)
+	q.Set("real_aid", paramPCRealAid)
+	q.Set("pkg_type", paramPCPkgType)
+	q.Set("device_platform", "web")
+	q.Set("doubao_device_platform", "web")
+	q.Set("samantha_web", "1")
+	q.Set("region", paramRegion)
+	q.Set("sys_region", paramRegion)
+	q.Set("language", "zh")
+	q.Set("use-olympus-account", "1")
+	q.Set("version_code", paramPCVersionCode)
+	q.Set("doubao_pc_version", paramPCPCVersion)
+	q.Set("pc_version", paramPCPCVersion)
+	q.Set("web_platform", paramPCWebPlatform)
+	return q
+}
+
+// apiEnvelope is the {code,msg,data} wrapper every growth response uses.  code
+// 0 (and 200, some routes) means the call itself succeeded; a non-zero code is
+// the vendor's own business error and is surfaced verbatim so a caller can tell
+// "not enabled for this account" from a transport failure.
+type apiEnvelope struct {
+	Code    json.Number     `json:"code"`
+	Msg     string          `json:"msg"`
+	Message string          `json:"message"`
+	Data    json.RawMessage `json:"data"`
+}
+
+// pcPost performs one POST as the PC client and decodes the {code,msg,data}
+// envelope into out (the raw `data` object).  A non-zero business code becomes
+// an error carrying the vendor's own message, so the pool and the panel see
+// why a call was refused rather than an empty success.
+func (u *upstream) pcPost(ctx context.Context, acc *account, path string, body any, out any) error {
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	endpoint := u.cfg.webBase() + path + "?" + u.pcParams().Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(raw))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	u.decorate(req, acc)
+	resp, err := u.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("doubao: request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	payload, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return fmt.Errorf("doubao: reading the response: %w", err)
+	}
+	if resp.StatusCode >= 400 {
+		return classifyHTTP(resp.StatusCode, payload)
+	}
+	if out == nil {
+		return nil
+	}
+	var env apiEnvelope
+	if err := json.Unmarshal(payload, &env); err != nil {
+		return fmt.Errorf("doubao: decoding the response: %w", err)
+	}
+	if code := env.Code.String(); code != "" && code != "0" && code != "200" {
+		return &upstreamError{Kind: errServer, Status: resp.StatusCode,
+			Message: firstNonEmpty(env.Message, env.Msg, "business code "+code)}
+	}
+	if len(env.Data) == 0 || string(env.Data) == "null" {
+		return errNoData
+	}
+	if err := json.Unmarshal(env.Data, out); err != nil {
+		return fmt.Errorf("doubao: decoding the response data: %w", err)
+	}
+	return nil
+}
+
+// errNoData reports a 200 whose envelope carried a null data object: the call
+// was understood but produced nothing (a campaign this account is not in).
+var errNoData = errors.New("doubao: the vendor returned no data")
+
 // getJSON performs a GET and decodes the JSON body.
 func (u *upstream) getJSON(ctx context.Context, acc *account, path string, params url.Values, out any) error {
 	q := u.commonParams()

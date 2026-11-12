@@ -6,6 +6,42 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.83] - 2026-11-13
+
+### Added
+
+- **豆包接入额度制成长中心：每日签到 + 奖励任务板。**
+  豆包把奖励体系改成了「额度」（quota grant）制，电脑端「agent explore」页
+  有一个每日签到和一批奖励任务。本版按电脑端自己的接口实现（接口与字段全部
+  从运行中的桌面客户端读出并实测）：
+  - **每日签到**（`CheckinProvider`）：读 `POST /alice/ug/campaign/v3/detail/`
+    取活动板，再 `POST /alice/ug/campaign/landing/checkin` 领当日额度；重复
+    领取（`idempotent:true`）算成功，活动板已显示「今日已签」时不再白打请求。
+  - **奖励任务板**（`TaskProvider`）：把活动里的任务与里程碑铺成任务板；
+    对已在客户端完成、等待领取的任务（状态 2）可直接领取
+    （`POST /alice/ug/campaign/item/reward/claim/`，按 `campaign_code` 领）。
+  - 未完成的工作型任务（状态 1）**需要先在电脑端做**，网关不代做——任务板逐行
+    写明原因，而不是发一个必然被拒的领取。
+  - 余额新增「活动赠送额度」计量条（`incentive_quota_section`）。
+
+### Fixed
+
+- **豆包 `aid` 用错导致接口被拒 + 模型目录陈旧。**
+  成长中心与模型菜单都只认**电脑端产品身份**（`aid=497858`）；用 web 的
+  `aid=582478` 时同一路径被拒（`710010702 system error`），且模型菜单不返回
+  v2 配置——目录因此静默塌缩成两条兜底项，看不到厂商新上的模型
+  （`person-deepseek-v4-pro-ga-260813`、`person-glm-5-3-*`、`person-kimi-k3-*`
+  等）。修法：两处都先按电脑端身份请求，web 身份作为兜底；实测目录由 2 条
+  恢复到 12 条。
+- 豆包 `TestSQLiteReaderSmoke`：客户端运行时独占锁住 Cookies 库，测试原本
+  直接 `Fatalf`；改为与导入路径一致的降级（锁住即跳过），不再在开着客户端的
+  机器上假红。
+
+### Installer
+
+- `client2api-setup-0.7.83.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `4BD9F8E95E4D0687DCD9DF70FD4F0F77FC7245A176E6DD0603271A179AF8910C`
+
 ## [0.7.82] - 2026-11-13
 
 ### Fixed

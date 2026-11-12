@@ -42,6 +42,19 @@ const (
 	// defaultBotID is the assistant id the desktop client stamps on the action
 	// bar and chat requests.  It is the public default bot, not a secret.
 	defaultBotID = "7338286299411103781"
+
+	// The PC client reports a different product identity, and the growth
+	// (campaign / quota / check-in) endpoints key on it: the very same request
+	// the web aid accepts is rejected with code 710010702 "system error" under
+	// aid 582478 and served under 497858.  Verified live against the desktop
+	// client's signed-in session (2026-11-13).  These are the values the
+	// client's own launch/core call carries.
+	paramPCAid         = "497858"
+	paramPCRealAid     = "497858"
+	paramPCPkgType     = "release_version"
+	paramPCVersionCode = "20800"
+	paramPCPCVersion   = "5.74.88"
+	paramPCWebPlatform = "browser"
 )
 
 // Endpoints the module speaks.  Every one of them was confirmed in the desktop
@@ -68,7 +81,31 @@ const (
 	// window_limit_section shape.
 	pathSubscriptionQuotaSummary = "/alice/commerce/sale/subscription/quota/summary/"
 	pathSubscriptionOverview     = "/alice/commerce/sale/subscription/overview/"
+
+	// Growth endpoints.  These are the PC client's "agent explore" reward
+	// centre: one daily check-in plus a board of chores, all paying out in
+	// "额度" (quota grants) rather than the old credit points.  Read out of the
+	// client's own bundle and confirmed live.
+	pathCampaignV3Detail = "/alice/ug/campaign/v3/detail/"
+	pathCampaignCheckin  = "/alice/ug/campaign/landing/checkin"
+	pathCampaignClaim    = "/alice/ug/campaign/item/reward/claim/"
+	pathCampaignQuotaRec = "/alice/ug/campaign/quota/records/"
+	pathCampaignV3Status = "/biz/get_campaign/v3/status/"
+	// pathMarketingCard is the "quota reset card" wallet the membership page
+	// shows beside the balance.
+	pathMarketingCard = "/alice/commerce/marketing/card/balance/"
 )
+
+// defaultCampaignGroup is the growth campaign the PC client currently serves.
+// The group code is versioned by the vendor (_v2, _v3, ...); a new group is
+// what a future build switches to, so the module keeps trying the known ones
+// in order rather than pinning one.
+const defaultCampaignGroup = "pc_incentive_task_mvp_v3"
+
+// campaignGroups are the group codes tried in order when the CN one is read.
+// _v3 is current; _v2 is the previous shape and is still served on some
+// accounts.
+var campaignGroups = []string{"pc_incentive_task_mvp_v3", "pc_incentive_task_mvp_v2"}
 
 // Defaults for every tuning knob.
 const (

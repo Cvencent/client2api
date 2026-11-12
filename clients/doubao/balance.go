@@ -3,6 +3,8 @@ package doubao
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"client2api/internal/core"
@@ -36,7 +38,10 @@ type creditReply struct {
 }
 
 // subscriptionQuotaReply is the shared envelope of the subscription summary
-// and overview endpoints. Only the rolling window meter is relevant here.
+// and overview endpoints.  Two meters matter here: the rolling package window
+// (window_limit_section) and the growth campaign's granted quota
+// (incentive_quota_section, "活动赠送额度"), which is what the reward tasks pay
+// out in.
 type subscriptionQuotaReply struct {
 	Data struct {
 		WindowLimitSection struct {
@@ -50,7 +55,27 @@ type subscriptionQuotaReply struct {
 				} `json:"window_limits"`
 			} `json:"window_limit_groups"`
 		} `json:"window_limit_section"`
+		IncentiveQuotaSection quotaSection `json:"incentive_quota_section"`
 	} `json:"data"`
+}
+
+// quotaSection is one feature group's quota windows.  total_amount/used_amount
+// are strings on the wire ("800"), so they are parsed with a dedicated reader.
+type quotaSection struct {
+	EntitlementCount  int  `json:"entitlement_count"`
+	UsageExhausted    bool `json:"usage_exhausted"`
+	WindowLimitGroups []struct {
+		FeatureGroup     string `json:"feature_group"`
+		FeatureGroupName string `json:"feature_group_name"`
+		WindowLimits     []struct {
+			WindowType  int      `json:"window_type"`
+			UsedPercent *float64 `json:"used_percent"`
+			StartTime   int64    `json:"start_time"`
+			EndTime     int64    `json:"end_time"`
+			TotalAmount string   `json:"total_amount"`
+			UsedAmount  string   `json:"used_amount"`
+		} `json:"window_limits"`
+	} `json:"window_limit_groups"`
 }
 
 // firstNumber returns the first non-nil pointer's value.
@@ -99,6 +124,63 @@ func (c *Client) AccountBalance(ctx context.Context, id string, soon time.Durati
 	return b, nil
 }
 
+// incentiveQuota is the parsed growth quota: the "额度" the reward centre grants
+// and the tasks pay out in.
+type incentiveQuota struct {
+	Remaining int64
+	Total     int64
+	Used      int64
+	UsedPct   float64
+	ResetsAt  string
+	Label     string
+}
+
+// parseIncentiveQuota pulls the activity-granted quota out of a summary reply.
+// The vendor moved the panel's main balance from credit points to this quota
+// ("额度"), so it is what the account row should lead with.
+func parseIncentiveQuota(reply subscriptionQuotaReply) (incentiveQuota, bool) {
+	sec := reply.Data.IncentiveQuotaSection
+	for _, group := range sec.WindowLimitGroups {
+		for _, w := range group.WindowLimits {
+			total := parseInt64String(w.TotalAmount)
+			if total <= 0 {
+				continue
+			}
+			used := parseInt64String(w.UsedAmount)
+			q := incentiveQuota{
+				Total:     total,
+				Used:      used,
+				Remaining: total - used,
+				Label:     firstNonEmpty(group.FeatureGroupName, "活动赠送额度"),
+			}
+			if q.Remaining < 0 {
+				q.Remaining = 0
+			}
+			if w.UsedPercent != nil {
+				q.UsedPct = *w.UsedPercent
+			}
+			if w.EndTime > 0 {
+				q.ResetsAt = time.UnixMilli(w.EndTime).In(time.FixedZone("UTC+8", 8*60*60)).Format(time.RFC3339)
+			}
+			return q, true
+		}
+	}
+	return incentiveQuota{}, false
+}
+
+// parseInt64String reads a numeric string the vendor quotes ("800").  A blank
+// or non-numeric value reads as zero.
+func parseInt64String(s string) int64 {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0
+	}
+	if f, err := strconv.ParseFloat(s, 64); err == nil {
+		return int64(f)
+	}
+	return 0
+}
+
 // membershipQuotaLines reads the package meters shown beside the credit
 // balance. Quota failures are deliberately ignored: the credit balance is the
 // primary result and must not disappear when this optional endpoint is
@@ -109,12 +191,26 @@ func (c *Client) membershipQuotaLines(ctx context.Context, acc *account) []core.
 		if err := c.up.postJSON(ctx, acc, path, map[string]any{"product_line": "membership"}, &reply); err != nil {
 			continue
 		}
-		if lines := parseMembershipQuotaLines(reply); len(lines) > 0 {
+		lines := parseMembershipQuotaLines(reply)
+		// The growth campaign's granted quota is the meter the reward centre
+		// and the task board pay into, so it belongs on the balance row too.
+		if q, ok := parseIncentiveQuota(reply); ok {
+			lines = append(lines, core.BalanceLine{
+				Label:            q.Label,
+				UsedPercent:      floatPtr(q.UsedPct),
+				RemainingPercent: floatPtr(100 - q.UsedPct),
+				ResetsAt:         q.ResetsAt,
+			})
+		}
+		if len(lines) > 0 {
 			return lines
 		}
 	}
 	return nil
 }
+
+// floatPtr is a local helper; the module has none yet.
+func floatPtr(v float64) *float64 { return &v }
 
 func parseMembershipQuotaLines(reply subscriptionQuotaReply) []core.BalanceLine {
 	var out []core.BalanceLine

@@ -62,6 +62,12 @@ type Client struct {
 	// second turn does not walk to the least-recently-used credential.
 	affinity *core.Affinity
 
+	// campMu guards campaigns, the per-account growth-campaign board (the daily
+	// check-in plus the chore list) that growth.go builds.  The panel redraws
+	// the task board on every poll, so the board is cached briefly.
+	campMu    sync.Mutex
+	campaigns map[string]*campaignBoard
+
 	// loginMu guards the in-flight web-login sessions.  A login that survived a
 	// restart is a login nobody can reason about, so sessions are memory-only.
 	loginMu sync.Mutex

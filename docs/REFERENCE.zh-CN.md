@@ -129,7 +129,7 @@ Windows 上仍可 **导入 → 探测本机凭据** 读取已经登录的桌面�
 [![build](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml/badge.svg)](https://github.com/Cvencent/client2api/actions/workflows/go-binaries.yml)
 [![release](https://img.shields.io/github/v/release/Cvencent/client2api?include_prereleases)](https://github.com/Cvencent/client2api/releases)
 
-当前版本：**0.7.82**。完整更新记录见 [CHANGELOG.md](../CHANGELOG.md)。
+当前版本：**0.7.83**。完整更新记录见 [CHANGELOG.md](../CHANGELOG.md)。
 
 ### 请求次数限额
 

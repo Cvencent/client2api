@@ -67,14 +67,55 @@ against the account it lands on.
 | Client import | read-only `Discover` / `Import` of the desktop client's signed-in profiles (`CredentialImporter`) |
 | Model menu | pulls the account's client model menu and routes each model |
 | Account management | list / add / enable / disable / test / remove |
-| Balance | credits plus the package's fixed / rolling quota meters |
+| Balance | credits plus the package's fixed / rolling quota meters and the growth campaign's granted 额度 |
+| **Daily check-in** | `POST /alice/ug/campaign/landing/checkin` (`CheckinProvider`) |
+| **Reward board** | the PC reward centre's chores and milestones (`TaskProvider`); claims a reward the operator finished in the client |
 | Health + pool stats | standard panel reporting |
 | Revive | clears a local cooldown/park |
 | Conversation stickiness | pins a conversation to the account that first served it |
 
 Not implemented, so the panel hides the control rather than offering a button
-that cannot work: check-in, the task centre, SMS / auto login, and
-package/voucher reporting.
+that cannot work: SMS / auto login and package/voucher reporting.  The reward
+board's work chores cannot be *performed* by the gateway (they need the desktop
+client), only *claimed* once done — the board says so per row.
+
+## Growth: check-in, reward board and 额度
+
+Doubao moved its reward centre to a quota ("额度") model: one daily check-in
+plus a board of chores, each paying out a quota grant.  The module speaks the
+PC client's own endpoints, read out of the running desktop client and confirmed
+live (2026-11-13):
+
+| Call | Route |
+|---|---|
+| campaign board (tasks + check-in + milestones) | `POST /alice/ug/campaign/v3/detail/` `{"campaign_group_code":"pc_incentive_task_mvp_v3"}` |
+| daily check-in | `POST /alice/ug/campaign/landing/checkin` `{"scene":"<group>"}` |
+| claim a reward | `POST /alice/ug/campaign/item/reward/claim/` `{"campaign_group_code":..,"campaign_item_code":<task code>,"task_id":""}` |
+| grant ledger | `POST /alice/ug/campaign/quota/records/` |
+| quota meters | `POST /alice/commerce/sale/subscription/quota/summary/` |
+
+Two facts are load-bearing:
+
+- **The growth endpoints key on the PC product identity (`aid=497858`).**  The
+  same request under the web aid (`582478`) is refused with `710010702 system
+  error`.  The model menu has the same split: under the PC aid the v2 conf is
+  served and lists every model the client shows, while under the web aid the
+  same account answers with no v2 conf at all (so the catalogue silently
+  collapsed to a two-entry fallback).  The module now tries the PC identity
+  first for both, keeping the web identity as a fallback.
+- **A reward is claimed by `campaign_code`,** with an empty `task_id`.
+
+`task_status` is the client's own `CampaignTaskStatus` enum:
+`0 unknown, 1 created, 2 completed, 3 rewarded, 4 in progress`.  A row is
+claimable when it is `completed` (2) — the check-in row is the exception, where
+"created" means "not checked in today" and is claimed through the check-in
+route.  A `1` work chore must be performed in the desktop client first; the
+module refuses it with that reason rather than spending a claim the vendor
+would reject.  A repeated check-in (`idempotent:true`) is a success.
+
+The campaign group code is versioned by the vendor (`_v3`, `_v2`, …); the
+module tries the known codes in order, so a vendor switch does not blank the
+board.
 
 ## Balance
 
@@ -93,6 +134,11 @@ the derived remaining percent and, when present, the reset time from
 `end_time`. A zero fixed window with no dates is the vendor's empty
 placeholder and is omitted. The quota read is optional: when it fails the
 credit balance is still shown.
+
+The same summary carries `incentive_quota_section` — the **growth campaign's
+granted 额度** ("活动赠送额度"), which is what the reward board pays into.  It is
+surfaced as an extra meter; `total_amount`/`used_amount` are numeric strings on
+the wire.
 
 ## Configuration
 

@@ -196,14 +196,33 @@ func (c *Client) pullAccountMenu(ctx context.Context, acc *account) (clientMenu,
 // account has one. A missing or switched-off menu is not an error: enabled is
 // false so the caller falls back to v1. An enabled menu is authoritative even
 // when it parses to no routes.
+//
+// The menu is served differently per product identity: under the PC aid
+// (497858) the v2 conf is present and lists every model the client shows,
+// while under the web aid the same account answers with no v2 conf at all (so
+// the module silently fell back to a two-entry v1 menu).  The PC identity is
+// therefore tried first, and the web identity is kept as a fallback for an
+// account the PC endpoint does not know.
 func (c *Client) pullV2Menu(ctx context.Context, acc *account) ([]modelRoute, bool) {
+	body := map[string]any{"language_code": "zh", "bot_id": c.chatBotID()}
+	if routes, ok := c.pullV2MenuAs(ctx, acc, true, body); ok {
+		return routes, true
+	}
+	return c.pullV2MenuAs(ctx, acc, false, body)
+}
+
+// pullV2MenuAs reads the v2 menu with one product identity.
+func (c *Client) pullV2MenuAs(ctx context.Context, acc *account, pc bool, body map[string]any) ([]modelRoute, bool) {
 	var out struct {
 		Data actionBarBrief `json:"data"`
 	}
-	if err := c.up.postJSON(ctx, acc, pathActionBarBriefList, map[string]any{
-		"language_code": "zh",
-		"bot_id":        c.chatBotID(),
-	}, &out); err != nil {
+	var err error
+	if pc {
+		err = c.up.pcPost(ctx, acc, pathActionBarBriefList, body, &out.Data)
+	} else {
+		err = c.up.postJSON(ctx, acc, pathActionBarBriefList, body, &out)
+	}
+	if err != nil {
 		return nil, false
 	}
 	for _, entry := range out.Data.EntryList {

@@ -350,3 +350,84 @@ func TestRouteForFallsBackToClientDefault(t *testing.T) {
 }
 
 var _ = core.Model{}
+
+// TestModelMenuPrefersThePcProductAid pins the fix for a stale catalogue: the
+// v2 model menu is served only under the PC product aid (497858).  Under the
+// web aid the same account answers with no v2 conf at all, so the module used
+// to fall back to a two-entry v1 menu and never saw the models the client
+// actually shows.  The PC identity must be tried first, and the web identity
+// kept as a fallback for an account the PC endpoint does not know.
+func TestModelMenuPrefersThePcProductAid(t *testing.T) {
+	var pcs, webs int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != pathActionBarBriefList {
+			http.NotFound(w, r)
+			return
+		}
+		switch r.URL.Query().Get("aid") {
+		case paramPCAid:
+			pcs++
+			_, _ = w.Write([]byte(`{"code":0,"data":{"entry_list":[{"active_switch_conf":{
+			  "use_menu_conf_v2":true,
+			  "menu_conf_v2":{"model_list":{"item_list":[
+			    {"item_id":9,"model_item_key":"9","mode_id":"3","name":"Turbo"},
+			    {"item_id":10001,"model_item_key":"person-kimi-k3-261111","mode_id":"3","name":"Kimi"}]}}}}]}}`))
+		default:
+			webs++
+			// The web aid answers with no v2 conf, exactly as the vendor does.
+			_, _ = w.Write([]byte(`{"code":0,"data":{"entry_list":[{"active_switch_conf":{"use_menu_conf_v2":false}}]}}`))
+		}
+	}))
+	defer srv.Close()
+
+	c := newWebClient(t, srv.URL)
+	acc := &account{ID: "a1", Cookie: "sessionid=abc", Enabled: true}
+	menu, err := c.pullAccountMenu(context.Background(), acc)
+	if err != nil {
+		t.Fatalf("pullAccountMenu: %v", err)
+	}
+	if pcs == 0 {
+		t.Fatal("the PC aid was never tried, so the catalogue stays stale")
+	}
+	if webs != 0 {
+		t.Fatalf("the web aid was tried %d times even though the PC aid answered", webs)
+	}
+	if _, ok := menu.resolveRoute("mode3_modelperson-kimi-k3-261111"); !ok {
+		t.Fatalf("the new KiMi model is missing from the catalogue; routes=%+v", menu.routes)
+	}
+}
+
+// TestModelMenuFallsBackToTheWebAid keeps a web-only account working: an empty
+// PC answer must not blank its catalogue.
+func TestModelMenuFallsBackToTheWebAid(t *testing.T) {
+	var webs int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != pathActionBarBriefList {
+			http.NotFound(w, r)
+			return
+		}
+		if r.URL.Query().Get("aid") == paramPCAid {
+			_, _ = w.Write([]byte(`{"code":710010202,"data":null}`))
+			return
+		}
+		webs++
+		_, _ = w.Write([]byte(`{"data":{"entry_list":[{"active_switch_conf":{
+		  "use_menu_conf_v2":true,
+		  "menu_conf_v2":{"model_list":{"item_list":[
+		    {"item_id":9,"model_item_key":"9","mode_id":"3","name":"Turbo"}]}}}}]}}`))
+	}))
+	defer srv.Close()
+
+	c := newWebClient(t, srv.URL)
+	acc := &account{ID: "a1", Cookie: "sessionid=abc", Enabled: true}
+	menu, err := c.pullAccountMenu(context.Background(), acc)
+	if err != nil {
+		t.Fatalf("pullAccountMenu: %v", err)
+	}
+	if webs == 0 {
+		t.Fatal("the web aid was never tried as a fallback")
+	}
+	if _, ok := menu.resolveRoute("mode3_model9"); !ok {
+		t.Fatalf("the web-aid catalogue did not load; routes=%+v", menu.routes)
+	}
+}
