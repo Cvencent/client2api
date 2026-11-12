@@ -6,6 +6,26 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.82] - 2026-11-13
+
+### Fixed
+
+- **loomy 无账号时「model list」报错成 30s 恒定发射器（#259）。** loomy 全部账号
+  low_credit/invalid（#244 观察对象）时 pool 为空，`fetchModels` 返回
+  `ErrNotConfigured`（状态，不是失败）；但 `refreshModelsAsync` 对失败**无条件
+  logf**——30s 的 modelsRetryInterval 限流变成恒定节拍，3 天 1477 条
+  「client is not configured (no account)」刷满日志检索面，且随 Chat 流量增长。
+  修法：后台路径与同步 `RefreshModels` 的透传语义对齐——`errors.Is(err,
+  core.ErrNotConfigured)` 时静默返回（不 logf、不 noteFailure）；真上游失败
+  照常日志。balance 路径（`cmd/client2api/main.go` ModelRefresher 轮）同样分岔：
+  NotConfigured 不进 probeLogDeduper（连每小时 3 条的残余也不留）。
+  反向钉：真上游失败（传输层拒绝）的日志行为由测试钉住不回退。
+
+### Installer
+
+- `client2api-setup-0.7.82.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `31e34294902f87970142b4ab18e03fee23469b67cf03340375c5b3e9ee757864`
+
 ## [0.7.81] - 2026-11-12
 
 ### Fixed

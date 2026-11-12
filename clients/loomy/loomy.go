@@ -322,6 +322,17 @@ func (c *Client) refreshModelsAsync() {
 
 		models, err := c.fetchModels(ctx)
 		if err != nil {
+			// "Not configured" is a state, not a failure (issue #259): the pool
+			// has no usable account, so there is nothing to refresh against and
+			// nothing will change until an account lands.  Logging it turned the
+			// async path into a 30s-cadence emitter -- 1,477 lines in three days,
+			// one per modelsRetryInterval, tracking chat traffic.  The
+			// synchronous RefreshModels passes the error through unwrapped for
+			// exactly this reason; the background path keeps the same semantics
+			// by staying silent.  A real upstream failure still logs.
+			if errors.Is(err, core.ErrNotConfigured) {
+				return
+			}
 			c.noteFailure(err)
 			c.logf("loomy: model list: %v", redactErr(err))
 			return

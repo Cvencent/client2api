@@ -45,7 +45,7 @@ import (
 )
 
 // version is overridable with -ldflags "-X main.version=...".
-var version = "0.7.81"
+var version = "0.7.82"
 
 // restartHandoffEnv marks the replacement half of a panel restart.  It tells a
 // starting process to keep retrying the listen address instead of failing fast,
@@ -1537,6 +1537,15 @@ func run() error {
 				_, err := r.RefreshModels(rctx)
 				cancel()
 				if err != nil {
+					// "Not configured" is a state, not a failure (issue #259):
+					// the module has no usable account, which will not change
+					// until an operator adds one.  Even one deduped line per
+					// hour is noise for something an operator cannot act on
+					// through the log, so this state stays out of the log
+					// entirely; a real upstream failure keeps the deduped path.
+					if errors.Is(err, core.ErrNotConfigured) {
+						continue
+					}
 					// The same probe deduper as the balance sweep: this loop
 					// runs on the same five-minute tick and used to log raw,
 					// so one dead key produced the same 401 every five minutes
