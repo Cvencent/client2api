@@ -66,6 +66,15 @@ func refreshExpiringAccountsMatching(ctx context.Context, reg *core.Registry, cl
 			if !renewableAccount(acct) {
 				continue
 			}
+			// Three consecutive refresh failures put this account on the hour
+			// clock (issue #260): a module whose renew failure never writes
+			// back a state the #48 gate could read (trae stays "ready" forever)
+			// would otherwise buy one doomed oauth round trip per sweep tick
+			// forever.  The window lapsing allows one fresh attempt, like every
+			// other backoff here.
+			if sharedRenewBackoff().blocked(c.Name(), acct.ID, now) {
+				continue
+			}
 			expiry, ok := parseAccountExpiry(acct.ExpiresAt)
 			if !ok {
 				continue
@@ -84,12 +93,15 @@ func refreshExpiringAccountsMatching(ctx context.Context, reg *core.Registry, cl
 				if msg, log := sharedProbeLogDeduper().shouldLog(c.Name(), acct.ID, err); log {
 					logf(logger, "[%s] renew %s: %s", c.Name(), core.MaskSecret(acct.ID), msg)
 				}
+				armRenewBackoff(c.Name(), acct.ID, now, logger)
 				continue
 			}
+			failed := false
 			for _, res := range results {
 				if res.OK {
 					continue
 				}
+				failed = true
 				msg := res.Error
 				if msg == "" {
 					msg = "renewal did not report success"
@@ -97,9 +109,32 @@ func refreshExpiringAccountsMatching(ctx context.Context, reg *core.Registry, cl
 				if folded, log := sharedProbeLogDeduper().shouldLog(c.Name(), res.AccountID, errors.New(msg)); log {
 					logf(logger, "[%s] renew %s: %s", c.Name(), core.MaskSecret(res.AccountID), folded)
 				}
+				armRenewBackoff(c.Name(), res.AccountID, now, logger)
+			}
+			// The per-result failure arms its own account above; a sweep where
+			// nothing failed is success evidence for every account it touched.
+			if !failed {
+				for _, res := range results {
+					if res.OK {
+						sharedRenewBackoff().recordSuccess(c.Name(), res.AccountID)
+					}
+				}
 			}
 		}
 	}
+}
+
+// armRenewBackoff records one renewal failure for the account and, when the
+// consecutive-failure threshold is just reached, says so once -- an operator
+// should see the sweep start backing off, not see it every tick (issue #260).
+// It returns whether the backoff armed on this call.
+func armRenewBackoff(client, account string, now time.Time, logger *log.Logger) bool {
+	if !sharedRenewBackoff().recordFailure(client, account, now) {
+		return false
+	}
+	logf(logger, "[%s] renew %s: failed %d consecutive times; backing off renewals for %s (issue #260)",
+		client, core.MaskSecret(account), renewBackoffThreshold, renewBackoffWindow)
+	return true
 }
 
 // renewableAccount reports whether the sweep may touch this record at all.

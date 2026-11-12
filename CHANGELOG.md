@@ -6,6 +6,27 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.84] - 2026-11-13
+
+### Fixed
+
+- **死凭据 renew 失败不回写状态 → 本地连续失败退避（#260，#48 家族第五条路径）。**
+  trae 的 `RefreshAccount` 对 refresh 终态（`ErrAuth`「re-login required」）只把错误
+  返回给调用方，模块内不做状态回写；trae 不在 chat 路由，没有任何机制纠正状态——
+  面板永远 ready、`renewableAccount` 的 `state=invalid` 闸（#48）结构性失效，每
+  5 分钟 tick 真发一次注定失败的 oauth refresh，11 天 ~900 次。修法 = 扫描侧本地
+  退避（不依赖模块配合，所有模块受益）：同一 (client, account) 连续 3 次 refresh
+  失败 → 1 小时内跳过该账号的 renew 尝试；退避武装时只写一次带计数的提示；任何
+  一次成功即清零；退避过期放行一次新探测（与其它退避的 lapse 语义一致）。
+  进程级共享表（renew_backoff.go），与 probeLogDeduper 同款生命周期（per-call 表
+  会跨 sweep 遗忘失败，即 #7 的生命周期 bug）。面板显示 ready 的误导问题本条不
+  修根（需模块层终态回写，#48 家族模块篇独立工作），但注定的敲门成本已被压住。
+
+### Installer
+
+- `client2api-setup-0.7.84.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `96d60f39914a06b4cad3c7bab8adfdbf44e27e13c14bf2c69b69a4d9605e0d62`
+
 ## [0.7.83] - 2026-11-13
 
 ### Added
