@@ -7,6 +7,12 @@
   "cosy_version": "0.4.3",
   "user_agent": "Qoder",
 
+  "global_openapi_base": "https://openapi.qoder.sh",
+  "global_gateway_base": "https://openapi.qoder.sh",
+  "global_auth_base": "https://qoder.com",
+  "global_model_server": "https://api2-v2.qoder.sh",
+  "default_realm": "cn",
+
   "request_timeout": "30s",
   "probe_timeout": "20s",
   "chat_timeout": "10m",
@@ -39,7 +45,8 @@
       "phone": "",
       "name": "",
       "expires_at": "",
-      "enabled": true
+      "enabled": true,
+      "realm": "cn"
     }
   ],
 

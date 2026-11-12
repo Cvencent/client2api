@@ -250,7 +250,7 @@ func (c *Client) taskBoardFor(ctx context.Context, acc account) ([]core.TaskInfo
 	}
 	c.taskMu.Unlock()
 
-	list, err := c.up.campaigns(ctx, acc.Token)
+	list, err := c.up.campaignsFor(ctx, acc.realmOf(), acc.Token)
 	if err != nil {
 		if !callerGone(err) {
 			c.penalise(acc.ID, err, now)
@@ -293,7 +293,7 @@ func (c *Client) forgetTaskBoard() {
 // a credential rejection the same way balance reads do.
 func (c *Client) claimCampaign(ctx context.Context, acc account, campaignID string) (core.TaskClaim, error) {
 	credit := c.cachedCampaignCredit(acc.ID, campaignID)
-	status, err := c.up.claimCampaign(ctx, acc.Token, campaignID)
+	status, err := c.up.claimCampaignFor(ctx, acc.realmOf(), acc.Token, campaignID)
 	if err != nil {
 		if !callerGone(err) {
 			c.penalise(acc.ID, err, time.Now().UTC())

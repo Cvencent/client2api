@@ -53,6 +53,13 @@ type storedAccount struct {
 	RefreshExpiresAtMS int64 `json:"refresh_expires_at_ms,omitempty"`
 	Enabled            bool  `json:"enabled"`
 
+	// Realm is the upstream family this credential belongs to: "cn" (the
+	// mainland build) or "global" (the international one).  A credential from
+	// one realm can never serve the other realm's catalogue, so this decides
+	// which models the account may be handed.  Blank means "cn", which is what
+	// every credential written before the international build existed is.
+	Realm string `json:"realm,omitempty"`
+
 	// CLIDir is the leaf name of this account's Qoder CLI config root under
 	// the module's own DataDir.  It exists because the vendor will not serve
 	// the two zero-cost models (dfmodel / qfmodel) to a device token, only to
@@ -591,12 +598,20 @@ func (c *Client) logf(format string, args ...any) {
 func (c *Client) AccountFields(ctx context.Context) []core.FieldSpec {
 	return []core.FieldSpec{
 		{
+			Key:     "realm",
+			Label:   "渠道 (realm)",
+			Type:    "select",
+			Options: []string{realmCN, realmGlobal},
+			Help: "国内版（Qoder CN，openapi.qoder.com.cn）或国际版（Qoder，openapi.qoder.sh）。" +
+				"两边的账号与模型目录互不相通，选错会导致这个令牌永远只能用到一个模型目录。",
+		},
+		{
 			Key:         "token",
 			Label:       "设备令牌 (token)",
 			Type:        "password",
 			Required:    true,
 			Placeholder: "dt-...",
-			Help: "Qoder CN 客户端的设备令牌，以 dt- 开头。在客户端里打开一次后，" +
+			Help: "对应渠道客户端的设备令牌，以 dt- 开头。在客户端里打开一次后，" +
 				"优先用上面的「浏览器登录」直接获取；也可以从客户端导入或手动粘贴。",
 		},
 		{
@@ -655,6 +670,7 @@ func (c *Client) AddAccount(ctx context.Context, spec core.AccountSpec) (core.Ac
 		return core.AccountRecord{}, errors.New("qoder: 令牌里含有空白字符，请原样粘贴")
 	}
 
+	realm := normalizeRealm(spec.Fields["realm"])
 	acc := account{
 		storedAccount: storedAccount{
 			Label:              core.ClampLabel(spec.Label),
@@ -666,6 +682,7 @@ func (c *Client) AddAccount(ctx context.Context, spec core.AccountSpec) (core.Ac
 			ExpiresAtMS:        parseExpiryMS(spec.Fields["expires_at"]),
 			RefreshExpiresAtMS: 0,
 			Enabled:            spec.EnabledOr(true),
+			Realm:              realm,
 		},
 		origin: originStored,
 	}
@@ -678,7 +695,7 @@ func (c *Client) AddAccount(ctx context.Context, spec core.AccountSpec) (core.Ac
 	}
 
 	probeCtx, cancel := context.WithTimeout(ctx, c.cfg.probeTimeout())
-	info, err := c.up.userInfo(probeCtx, acc.Token)
+	info, err := c.up.userInfoFor(probeCtx, acc.realmOf(), acc.Token)
 	cancel()
 	if err != nil {
 		if failureKind(err) == core.FailureAuth {
@@ -688,6 +705,9 @@ func (c *Client) AddAccount(ctx context.Context, spec core.AccountSpec) (core.Ac
 		acc.lastError = redactErr(err)
 	} else {
 		acc = mergeUserInfo(acc, info)
+		// mergeAccount rewrites the identity fields; the realm is the operator's
+		// choice and must survive the vendor's answer.
+		acc.Realm = realm
 		if info != nil && strings.TrimSpace(info.ID) != "" {
 			acc.ID = "qoder-" + strings.TrimSpace(info.ID)
 		}
@@ -784,7 +804,7 @@ func (c *Client) RefreshAccount(ctx context.Context, id string) ([]core.RefreshR
 			continue
 		}
 		probeCtx, cancel := context.WithTimeout(ctx, c.cfg.probeTimeout())
-		_, err := c.up.userInfo(probeCtx, acc.Token)
+		_, err := c.up.userInfoFor(probeCtx, acc.realmOf(), acc.Token)
 		cancel()
 
 		if err == nil {
@@ -854,6 +874,9 @@ func accountRecord(a *account, now time.Time) core.AccountRecord {
 		Fields: map[string]any{
 			"origin":    a.origin,
 			"removable": a.origin != originConfig,
+			// realm is what the model picker filters on: this account can only
+			// serve the catalogue of the build it signed in to.
+			"realm": a.realmOf(),
 		},
 	}
 	if a.UserID != "" {

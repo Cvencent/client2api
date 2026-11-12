@@ -31,10 +31,15 @@ import (
 // two: both paths resolve the vendor's own user id, which is what the store
 // keys on.
 
-// cliRealm and browserRealm are the two sign-in routes this module offers.
+// cliRealm and browserRealm are the two domestic sign-in routes this module
+// offers; globalRealm is the same browser grant aimed at the international
+// build.  These codes are sign-in routes, not account realms: the account's own
+// realm is recorded separately (see realm.go), because a browser grant on the
+// global page produces an account whose realm is "global".
 const (
 	cliRealm     = "cli"
 	browserRealm = "browser"
+	globalRealm  = realmGlobal
 )
 
 // cliLoginWait bounds how long StartLogin waits for the CLI to print its
@@ -157,6 +162,10 @@ func (c *Client) StartLogin(ctx context.Context) (core.LoginState, error) {
 // first when it is actually installed, because it is the route the free models
 // need; a machine without it still gets the browser grant as the default rather
 // than an error from a picker entry that cannot work.
+//
+// The third entry is the international browser grant.  It is always listed: the
+// international build needs no local install, and an operator who only has a
+// qoder.com account has no other route into the module.
 func (c *Client) LoginRealms(ctx context.Context) []core.LoginRealm {
 	_ = ctx
 	realmCLI := core.LoginRealm{
@@ -167,26 +176,33 @@ func (c *Client) LoginRealms(ctx context.Context) []core.LoginRealm {
 	}
 	realmBrowser := core.LoginRealm{
 		Code: browserRealm,
-		Name: "浏览器登录（积分/签到/其它模型）",
-		Help: "在浏览器里完成设备授权。积分查询、每日签到、任务和其余模型都依赖这份凭据。",
+		Name: "国内版浏览器登录（积分/签到/其它模型）",
+		Help: "在浏览器里完成 Qoder CN（qoder.cn）的设备授权。积分查询、每日签到、任务和国内模型目录都依赖这份凭据。",
+	}
+	realmGlobalBrowser := core.LoginRealm{
+		Code: globalRealm,
+		Name: "国际版浏览器登录",
+		Help: "在浏览器里完成 Qoder 国际版（qoder.com）的设备授权。国际版账号只能看到国际版模型目录。",
 	}
 	if _, err := findCLI(); err != nil {
 		realmCLI.Help = "本机没有找到 Qoder CN 客户端：" + realmCLI.Help
-		return []core.LoginRealm{realmBrowser, realmCLI}
+		return []core.LoginRealm{realmBrowser, realmGlobalBrowser, realmCLI}
 	}
-	return []core.LoginRealm{realmCLI, realmBrowser}
+	return []core.LoginRealm{realmCLI, realmBrowser, realmGlobalBrowser}
 }
 
 // StartLoginRealm starts one sign-in on the chosen realm.
 func (c *Client) StartLoginRealm(ctx context.Context, realm string) (core.LoginState, error) {
 	switch strings.ToLower(strings.TrimSpace(realm)) {
 	case "", browserRealm:
-		return c.startBrowserLogin(ctx)
+		return c.startBrowserLoginFor(ctx, realmCN)
 	case cliRealm:
 		return c.startCLILogin(ctx)
+	case globalRealm:
+		return c.startBrowserLoginFor(ctx, realmGlobal)
 	default:
 		return core.LoginState{}, fmt.Errorf(
-			"qoder: unknown sign-in realm %q (want %q or %q)", realm, cliRealm, browserRealm)
+			"qoder: unknown sign-in realm %q (want %q, %q or %q)", realm, cliRealm, browserRealm, globalRealm)
 	}
 }
 

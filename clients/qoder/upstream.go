@@ -50,12 +50,13 @@ func (u *upstream) log(format string, args ...any) {
 	}
 }
 
-// do performs one JSON request against the OpenAPI host.
-func (u *upstream) do(ctx context.Context, method, path string, params url.Values, token string, body []byte) ([]byte, error) {
+// do performs one JSON request against the OpenAPI host of one realm.  Both
+// realms expose the same paths, so the realm only decides the host.
+func (u *upstream) do(ctx context.Context, realm, method, path string, params url.Values, token string, body []byte) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, u.cfg.requestTimeout())
 	defer cancel()
 
-	endpoint := u.cfg.openAPIBase() + path
+	endpoint := u.cfg.openAPIBaseFor(realm) + path
 	if len(params) > 0 {
 		endpoint += "?" + params.Encode()
 	}
@@ -176,7 +177,12 @@ type campaignsResponse struct {
 
 // userInfo reads the signed-in identity.
 func (u *upstream) userInfo(ctx context.Context, token string) (*userInfo, error) {
-	payload, err := u.do(ctx, http.MethodGet, pathUserInfo, nil, token, nil)
+	return u.userInfoFor(ctx, realmCN, token)
+}
+
+// userInfoFor reads the signed-in identity on one realm's OpenAPI host.
+func (u *upstream) userInfoFor(ctx context.Context, realm, token string) (*userInfo, error) {
+	payload, err := u.do(ctx, realm, http.MethodGet, pathUserInfo, nil, token, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -189,7 +195,12 @@ func (u *upstream) userInfo(ctx context.Context, token string) (*userInfo, error
 
 // quotaUsage reads the credit ledger.
 func (u *upstream) quotaUsage(ctx context.Context, token string) (*quotaUsage, error) {
-	payload, err := u.do(ctx, http.MethodGet, pathQuota, nil, token, nil)
+	return u.quotaUsageFor(ctx, realmCN, token)
+}
+
+// quotaUsageFor reads the credit ledger on one realm's OpenAPI host.
+func (u *upstream) quotaUsageFor(ctx context.Context, realm, token string) (*quotaUsage, error) {
+	payload, err := u.do(ctx, realm, http.MethodGet, pathQuota, nil, token, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -203,7 +214,12 @@ func (u *upstream) quotaUsage(ctx context.Context, token string) (*quotaUsage, e
 // campaigns lists the vendor's running activities for one account.  This is the
 // read-only half of the daily check-in.
 func (u *upstream) campaigns(ctx context.Context, token string) (*campaignsResponse, error) {
-	payload, err := u.do(ctx, http.MethodGet, pathCampaigns, nil, token, nil)
+	return u.campaignsFor(ctx, realmCN, token)
+}
+
+// campaignsFor lists the running activities on one realm's OpenAPI host.
+func (u *upstream) campaignsFor(ctx context.Context, realm, token string) (*campaignsResponse, error) {
+	payload, err := u.do(ctx, realm, http.MethodGet, pathCampaigns, nil, token, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -219,8 +235,13 @@ func (u *upstream) campaigns(ctx context.Context, token string) (*campaignsRespo
 // The vendor answers with the campaign's new status, either at the top level or
 // under a `data` object, so both spellings are accepted.
 func (u *upstream) claimCampaign(ctx context.Context, token, campaignID string) (string, error) {
+	return u.claimCampaignFor(ctx, realmCN, token, campaignID)
+}
+
+// claimCampaignFor performs one claim on one realm's OpenAPI host.
+func (u *upstream) claimCampaignFor(ctx context.Context, realm, token, campaignID string) (string, error) {
 	path := pathCampaigns + "/" + url.PathEscape(campaignID) + "/claim"
-	payload, err := u.do(ctx, http.MethodPost, path, nil, token, nil)
+	payload, err := u.do(ctx, realm, http.MethodPost, path, nil, token, nil)
 	if err != nil {
 		return "", err
 	}
@@ -263,8 +284,12 @@ type limitedNumber struct {
 }
 
 func (u *upstream) limitedNumber(ctx context.Context, token, campaignKey string) (*limitedNumber, error) {
+	return u.limitedNumberFor(ctx, realmCN, token, campaignKey)
+}
+
+func (u *upstream) limitedNumberFor(ctx context.Context, realm, token, campaignKey string) (*limitedNumber, error) {
 	path := fmt.Sprintf(pathCampaignLimitedNumber, url.PathEscape(campaignKey))
-	payload, err := u.do(ctx, http.MethodGet, path, nil, token, nil)
+	payload, err := u.do(ctx, realm, http.MethodGet, path, nil, token, nil)
 	if err != nil {
 		return nil, err
 	}

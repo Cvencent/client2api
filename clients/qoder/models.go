@@ -152,18 +152,56 @@ func builtinModelIDs() []string {
 	return out
 }
 
+// builtinModelsFor is the fallback catalogue of one realm.  The compiled-in chat
+// group above is the domestic one; the international build publishes a
+// different set of keys, so its fallback carries those instead of pretending the
+// domestic ids exist there.
+func builtinModelsFor(realm string) []modelInfo {
+	if normalizeRealm(realm) == realmGlobal {
+		return []modelInfo{
+			{ID: "auto", DisplayName: "Auto", ContextLength: 200000, PriceFactor: floatPtr(0.5), Reasoning: true, Vision: true, Default: true},
+			{ID: "ultimate", DisplayName: "Ultimate", ContextLength: 1000000, PriceFactor: floatPtr(0.4), Reasoning: true, Vision: true, Promotion: &modelPromotion{Active: true, DiscountFactor: floatPtr(0.2), BeforePromotionPriceFactor: floatPtr(2), WindowStart: "22:00", WindowEnd: "08:00"}},
+			{ID: "fast", DisplayName: "Fast", ContextLength: 200000, PriceFactor: floatPtr(0.8), Vision: true},
+			{ID: "efficient", DisplayName: "Efficient", ContextLength: 200000, PriceFactor: floatPtr(0.3), Vision: true},
+			{ID: "qmodel_latest", DisplayName: "Qwen4-Max-Preview", ContextLength: 1000000, Reasoning: true, Vision: true},
+			{ID: "smodel", DisplayName: "Sonus", ContextLength: 180000, PriceFactor: floatPtr(8), Reasoning: true, Vision: true},
+			{ID: "cmodel", DisplayName: "Cantus", ContextLength: 180000, PriceFactor: floatPtr(4), Reasoning: true, Vision: true},
+		}
+	}
+	return builtinModels()
+}
+
+// qualifyAllPrefixes every catalogue entry with the realm that published it.
+func qualifyAll(realm string, infos []modelInfo) []modelInfo {
+	out := make([]modelInfo, 0, len(infos))
+	for _, m := range infos {
+		if !realmQualified(m.ID) {
+			m.ID = qualifyModelID(realm, m.ID)
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
 // fallbackModels is the catalogue served before the first successful vendor
 // refresh, and whenever a refresh cannot reach Qoder. An explicit config list
 // remains an operator override; otherwise the compiled-in chat group is used.
+//
+// Every id is realm-qualified, exactly like the live catalogue, so the picker
+// and the router read one spelling whether or not a fetch ever succeeded.
 func (c *Client) fallbackModels() []core.Model {
+	realm := realmCN
+	if c != nil {
+		realm = c.cfg.defaultRealm()
+	}
 	if c == nil || len(c.cfg.Models) == 0 {
-		return catalogue(builtinModels())
+		return catalogue(qualifyAll(realm, builtinModelsFor(realm)))
 	}
 	infos := make([]modelInfo, 0, len(c.cfg.Models))
 	for _, id := range c.cfg.modelIDs() {
 		infos = append(infos, modelInfo{ID: id, DisplayName: id})
 	}
-	return catalogue(infos)
+	return catalogue(qualifyAll(realm, infos))
 }
 
 // cachedModels returns a snapshot of the live catalogue. The list is immutable
@@ -251,34 +289,64 @@ func (c *Client) refreshModelsAsync() {
 	})
 }
 
-// fetchModels tries the signed catalogue route with the pool's normal account
-// order until one credential succeeds.
+// fetchModels tries the signed catalogue route once per realm present in the
+// pool, then merges the answers into one realm-qualified list.
+//
+// The two builds publish disjoint catalogues ("auto" and "qmodel_38max" are not
+// the same model), and a model id can only be served by a credential from the
+// realm that published it.  Qualifying every id with its realm is therefore what
+// lets the picker say which account can serve which model.
 func (c *Client) fetchModels(ctx context.Context) ([]modelInfo, error) {
 	candidates := c.store.candidates(nowUTC())
 	if len(candidates) == 0 {
 		return nil, core.ErrNotConfigured
 	}
+	merged := make([]modelInfo, 0, 16)
+	seen := map[string]bool{}
 	var lastErr error
-	for i := 0; i < len(candidates) && i < maxChatAttempts; i++ {
-		// A CLI-only account has no device token to sign the catalogue request
-		// with, and blaming it for the resulting 401 would park a working
-		// account.
-		if candidates[i].cliOnly() {
-			continue
+	succeeded := false
+	for _, realm := range []string{realmCN, realmGlobal} {
+		var lastRealmErr error
+		for i := 0; i < len(candidates) && i < maxChatAttempts; i++ {
+			acc := candidates[i]
+			if acc.realmOf() != realm {
+				continue
+			}
+			// A CLI-only account has no device token to sign the catalogue
+			// request with, and blaming it for the resulting 401 would park a
+			// working account.
+			if acc.cliOnly() {
+				continue
+			}
+			infos, err := c.fetchModelListFor(ctx, realm, acc)
+			if err == nil {
+				succeeded = true
+				for _, info := range infos {
+					key := qualifyModelID(realm, info.ID)
+					if seen[key] {
+						continue
+					}
+					seen[key] = true
+					info.ID = key
+					merged = append(merged, info)
+				}
+				break
+			}
+			lastRealmErr = err
+			lastErr = err
+			if callerGone(err) {
+				return nil, err
+			}
 		}
-		infos, err := c.fetchModelList(ctx, candidates[i])
-		if err == nil {
-			return infos, nil
-		}
-		lastErr = err
-		if callerGone(err) {
-			return nil, err
-		}
+		_ = lastRealmErr
 	}
-	if lastErr == nil {
-		lastErr = core.ErrNotConfigured
+	if !succeeded {
+		if lastErr == nil {
+			lastErr = core.ErrNotConfigured
+		}
+		return nil, lastErr
 	}
-	return nil, lastErr
+	return merged, nil
 }
 
 // catalogue renders model info as the core catalogue.

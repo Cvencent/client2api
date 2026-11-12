@@ -69,8 +69,34 @@ const (
 	// desktopUserDataDir is the Electron user-data directory Qoder CN writes
 	// its safeStorage key and auth blob into, relative to %APPDATA%.
 	desktopUserDataDir = "com.qodercn.app.stable"
+	// desktopUserDataDirGlobal is the same directory for the international
+	// build (Qoder, not Qoder CN).  The blob format is byte-identical, only the
+	// directory and the endpoints differ.
+	desktopUserDataDirGlobal = "com.qoder.app.stable"
 	// desktopAuthFile is the encrypted credential blob inside that directory.
 	desktopAuthFile = "auth.v1.dat"
+
+	// --- international realm ---------------------------------------------
+
+	// globalOpenAPIBase serves userinfo, the quota ledger and the campaign
+	// endpoints for the international build.  Its live authenticationContext
+	// (read out of %APPDATA%\com.qoder.app.stable\auth.v1.dat) names exactly
+	// this host.
+	globalOpenAPIBase = "https://openapi.qoder.sh"
+	// globalAuthBase is the international sign-in page.
+	globalAuthBase = "https://qoder.com"
+	// globalGatewayBase is the international inference edge.  It speaks the
+	// same COSY-signed /algo protocol as the domestic one and publishes a
+	// different catalogue, which is verified live (see the module README).
+	globalGatewayBase = "https://openapi.qoder.sh"
+	// globalModelServerBase is the clean OpenAI endpoint the international
+	// desktop worker actually streams chat from:
+	//   https://<host>/model/v1/chat/completions
+	// The vendor resolves this host through its own private HTTPDNS, so it has
+	// no public DNS record.  The operator points it at a reachable address
+	// through `global_model_server`; a blank value leaves it at the vendor's
+	// own spelling so the reason for a failure names the real host.
+	globalModelServerBase = "https://api2-v2.qoder.sh"
 )
 
 // Defaults for every tuning knob.
@@ -124,6 +150,8 @@ type accountConfig struct {
 	Name         string `json:"name"`
 	ExpiresAt    string `json:"expires_at"`
 	Enabled      *bool  `json:"enabled"`
+	// Realm is "cn" or "global"; blank means cn.
+	Realm string `json:"realm"`
 }
 
 // config is the decoded `clients.qoder` object.  An absent object and an empty
@@ -142,6 +170,25 @@ type config struct {
 	ClientType   *int   `json:"client_type"`
 	CosyVersion  string `json:"cosy_version"`
 	UserAgent    string `json:"user_agent"`
+
+	// --- international realm overrides -----------------------------------
+	//
+	// Each of these is the international counterpart of the field above.  They
+	// exist so an operator can point the module at a different host (a proxy, a
+	// reachable mirror) without touching the domestic one, and so the vendor's
+	// own defaults stay visible in the config example.
+	GlobalOpenAPIBase string `json:"global_openapi_base"`
+	GlobalAuthBase    string `json:"global_auth_base"`
+	GlobalGatewayBase string `json:"global_gateway_base"`
+	// GlobalModelServer is the clean OpenAI host the international desktop
+	// worker streams from.  The vendor resolves it through private HTTPDNS, so
+	// it must be pointed at something this host can reach; see
+	// globalModelServerBase for the reasoning.
+	GlobalModelServer string `json:"global_model_server"`
+	// DefaultRealm is the realm a model id carrying no "<realm>:" prefix
+	// prefers.  Blank means cn, which is the only realm this module served
+	// before the international build existed.
+	DefaultRealm string `json:"default_realm"`
 
 	Accounts []accountConfig `json:"accounts"`
 
@@ -215,23 +262,69 @@ type config struct {
 	Models []string `json:"models"`
 }
 
+// openAPIBase is the domestic OpenAPI host.
 func (c config) openAPIBase() string {
 	return strings.TrimRight(firstNonEmpty(c.OpenAPIBase, defaultOpenAPIBase), "/")
 }
 
-// gatewayBase is the host the model catalogue and the chat stream live on.
+// gatewayBase is the domestic host the model catalogue and the chat stream
+// live on.
 func (c config) gatewayBase() string {
 	return strings.TrimRight(firstNonEmpty(c.GatewayBase, defaultGatewayBase), "/")
+}
+
+// authBase is the domestic host the browser sign-in page lives on.
+func (c config) authBase() string {
+	return strings.TrimRight(firstNonEmpty(c.AuthBase, defaultAuthBase), "/")
+}
+
+// openAPIBaseFor resolves the OpenAPI host for one realm.  Every OpenAPI
+// endpoint this module calls (userinfo, the quota ledger, the campaign board)
+// exists on both realms under the same path, so routing is a single host swap.
+func (c config) openAPIBaseFor(realm string) string {
+	if normalizeRealm(realm) == realmGlobal {
+		return strings.TrimRight(firstNonEmpty(c.GlobalOpenAPIBase, globalOpenAPIBase), "/")
+	}
+	return c.openAPIBase()
+}
+
+// gatewayBaseFor resolves the signed /algo inference host for one realm.
+func (c config) gatewayBaseFor(realm string) string {
+	if normalizeRealm(realm) == realmGlobal {
+		return strings.TrimRight(firstNonEmpty(c.GlobalGatewayBase, globalGatewayBase), "/")
+	}
+	return c.gatewayBase()
+}
+
+// authBaseFor resolves the browser sign-in host for one realm.
+func (c config) authBaseFor(realm string) string {
+	if normalizeRealm(realm) == realmGlobal {
+		return strings.TrimRight(firstNonEmpty(c.GlobalAuthBase, globalAuthBase), "/")
+	}
+	return c.authBase()
+}
+
+// modelServerBaseFor resolves the clean OpenAI model-server host for one realm.
+//
+// Only the international realm has one: the domestic build's chat lives on the
+// signed /algo edge (see gatewayBaseFor), while the international worker streams
+// /model/v1/chat/completions from a host it resolves through private HTTPDNS.
+// A blank return for the domestic realm means "no model-server transport here".
+func (c config) modelServerBaseFor(realm string) string {
+	if normalizeRealm(realm) != realmGlobal {
+		return ""
+	}
+	return strings.TrimRight(firstNonEmpty(c.GlobalModelServer, globalModelServerBase), "/")
+}
+
+// defaultRealm resolves `default_realm`: the realm a bare model id prefers.
+func (c config) defaultRealm() string {
+	return normalizeRealm(firstNonEmpty(c.DefaultRealm, realmCN))
 }
 
 // testModel is the model a connectivity probe asks for.
 func (c config) testModel() string {
 	return firstNonEmpty(c.ChatModel, defaultTestModel)
-}
-
-// authBase is the host the browser sign-in page lives on.
-func (c config) authBase() string {
-	return strings.TrimRight(firstNonEmpty(c.AuthBase, defaultAuthBase), "/")
 }
 
 // authClientID is the OAuth client id the device flow identifies itself
@@ -428,6 +521,11 @@ func applyEnv(cfg *config) {
 	envStr(&cfg.AuthClientID, "CLIENT2API_QODER_AUTH_CLIENT_ID")
 	envStr(&cfg.CosyVersion, "CLIENT2API_QODER_COSY_VERSION")
 	envStr(&cfg.UserAgent, "CLIENT2API_QODER_USER_AGENT")
+	envStr(&cfg.GlobalOpenAPIBase, "CLIENT2API_QODER_GLOBAL_OPENAPI_BASE")
+	envStr(&cfg.GlobalAuthBase, "CLIENT2API_QODER_GLOBAL_AUTH_BASE")
+	envStr(&cfg.GlobalGatewayBase, "CLIENT2API_QODER_GLOBAL_GATEWAY_BASE")
+	envStr(&cfg.GlobalModelServer, "CLIENT2API_QODER_GLOBAL_MODEL_SERVER")
+	envStr(&cfg.DefaultRealm, "CLIENT2API_QODER_DEFAULT_REALM")
 }
 
 func envStr(dst *string, name string) {
@@ -474,6 +572,7 @@ func configuredAccounts(cfg config) []account {
 			ExpiresAtMS:        parseExpiryMS(entry.ExpiresAt),
 			RefreshExpiresAtMS: 0,
 			Enabled:            entry.Enabled == nil || *entry.Enabled,
+			Realm:              normalizeRealm(entry.Realm),
 		}})
 	}
 
@@ -485,6 +584,7 @@ func configuredAccounts(cfg config) []account {
 		Name:         strings.TrimSpace(cfg.Name),
 		ExpiresAtMS:  parseExpiryMS(cfg.ExpiresAt),
 		Enabled:      true,
+		Realm:        cfg.defaultRealm(),
 	}})
 
 	add(account{storedAccount: storedAccount{
@@ -495,6 +595,7 @@ func configuredAccounts(cfg config) []account {
 		Name:         strings.TrimSpace(os.Getenv("CLIENT2API_QODER_NAME")),
 		ExpiresAtMS:  parseExpiryMS(os.Getenv("CLIENT2API_QODER_EXPIRES_AT")),
 		Enabled:      true,
+		Realm:        normalizeRealm(os.Getenv("CLIENT2API_QODER_REALM")),
 	}})
 
 	return out

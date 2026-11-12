@@ -124,24 +124,57 @@ func (s *Store) IsDisabled(platform, account, model string) bool {
 	if platform == "" || account == "" || model == "" {
 		return false
 	}
-	// openaicompat publishes its models as "<provider>/<model>" in the request
-	// path but lists the bare "<model>" in the account record and the dialog,
-	// so the operator's blacklist holds the bare id while req.Model is
-	// qualified.  Check both spellings, but only the qualification by this very
-	// account: matching an arbitrary prefix would let one provider's blacklist
-	// gate another provider's model.
-	bare := model
-	if prefix := strings.ToLower(account) + "/"; strings.HasPrefix(model, prefix) {
-		bare = strings.TrimPrefix(model, prefix)
-	}
+	// The id on the wire is not always the id the operator saw in the dialog, so
+	// compare canonical forms rather than exact strings:
+	//
+	//   - openaicompat publishes "<provider>/<model>" on the wire but lists the
+	//     bare "<model>" in the dialog, so the blacklist holds the bare id.
+	//   - a realm-aware module (qoder, workbuddy) publishes "<realm>:<model>" and
+	//     its dialog filters the catalogue by the account's realm, showing the
+	//     BARE id.  Without stripping the realm prefix an operator unchecking a
+	//     model would leave "global:<id>" fully routable -- the blacklist would
+	//     silently do nothing.
+	//
+	// canonicalModel removes both qualifiers from EITHER side, so a blacklist
+	// written in either spelling gates the wire id in either spelling.  It is
+	// done per entry rather than once so a stored id that carries the qualifier
+	// matches a bare query and vice versa.
+	query := canonicalModel(model, account)
+
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for _, m := range s.doc.Clients[platform][account] {
-		if m == model || (bare != model && m == bare) {
+		if canonicalModel(m, account) == query {
 			return true
 		}
 	}
 	return false
+}
+
+// canonicalModel reduces a model id to the form two spellings of the same model
+// share: lower-cased, with a leading "<account>/" qualification and a leading
+// "<realm>:" qualifier removed.  Only these two known qualifiers are stripped;
+// a model id that merely contains a slash or a colon is left otherwise intact,
+// so two genuinely different models never compare equal.
+func canonicalModel(model, account string) string {
+	model = strings.ToLower(strings.TrimSpace(model))
+	if account != "" {
+		model = strings.TrimPrefix(model, strings.ToLower(strings.TrimSpace(account))+"/")
+	}
+	return realmStripped(model)
+}
+
+// realmStripped removes a leading "<realm>:" qualifier ("cn:" / "global:") from
+// a model id.  A model id that legitimately contains a colon under any other
+// prefix is left whole -- the same rule the gateway and the modules use.
+func realmStripped(model string) string {
+	for _, realm := range []string{"cn", "global"} {
+		prefix := realm + ":"
+		if strings.HasPrefix(model, prefix) {
+			return strings.TrimPrefix(model, prefix)
+		}
+	}
+	return model
 }
 
 // Set replaces one account's blacklist and persists it.  An empty list drops

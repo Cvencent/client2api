@@ -1,18 +1,29 @@
 # `qoder` client
 
-`qoder` 接入的是 **Qoder CN**（`qoder.com.cn` / `qoder.cn`）。它负责浏览器登录、账号池、积分余额、每日签到和本地凭据导入。
+`qoder` 接入的是 Qoder 的**两个版本**：国内版 **Qoder CN**（`qoder.com.cn` / `qoder.cn`）和
+国际版 **Qoder**（`qoder.com` / `qoder.sh`）。它负责浏览器登录、账号池、积分余额、每日签到、
+本地凭据导入和对话。
 
-账号有两条来源：面板里的浏览器登录（推荐，不需要装客户端），以及从桌面客户端导入的本地凭据。
+两个版本是两套独立服务：不同的凭据目录、不同的 OpenAPI 主机、**互不相通的模型目录和积分台账**。
+一个国内版账号永远看不到、也调不到国际版模型，反之亦然。所以账号带 `realm` 字段（`cn` / `global`），
+模型名带 `<realm>:` 前缀寻址 —— 和 `workbuddy` 的国内/国际双域完全同构。
 
-它同时提供对话能力，且有两条通道：
+账号有两条来源：面板里的浏览器登录（推荐，不需要装客户端；国内版/国际版各一个入口），以及从对应版本
+桌面客户端导入的本地凭据（两个客户端都装着时，导入列表会同时列出两份）。
 
-- **普通模型**走推理网关 `gateway.qoder.com.cn`。它要求逐请求的 COSY 签名；本模块在
+它同时提供对话能力，且按 realm 分成两条通道：
+
+- **国内版普通模型**走推理网关 `gateway.qoder.com.cn`。它要求逐请求的 COSY 签名；本模块在
   `cosy.go` 里实现了这套签名（AES 加密 + RSA 签名 + MD5 摘要），所以模型目录、对话流都能直接调用，
   不需要客户端常驻。
-- **两个免费模型**（`dfmodel` = DeepSeek-Flash、`qfmodel` = Qwen3.8-Flash）走**本机 Qoder CN 自带的
+- **国内版两个免费模型**（`dfmodel` = DeepSeek-Flash、`qfmodel` = Qwen3.8-Flash）走**本机 Qoder CN 自带的
   agent CLI**。厂商的推理边缘只把这两个零倍率模型放行给官方运行时，第三方请求（无论签名多忠实）都会得到
   `400 [FAIL]node:oa_qwen-plus-main msg:Execution failed: null`，所以这两个模型由本模块驱动厂商自己
-  发布的 CLI（`@qoder-ai/qoder-cn-agent-sdk`，stream-json 协议）完成，其余 12 个模型不受影响。
+  发布的 CLI（`@qoder-ai/qoder-cn-agent-sdk`，stream-json 协议）完成，其余模型不受影响。
+- **国际版模型**走干净的 OpenAI 端点 `https://<model host>/model/v1/chat/completions`
+  （Bearer 设备令牌，无 COSY 签名）。**这个主机由厂商的私有 HTTPDNS 解析，没有公网 DNS 记录**，
+  所以配置项 `global_model_server` 是必填的落地点：能解析到它的机器填默认值即可，否则填一个可达地址。
+  详见下文「国际版」。
 
 ## 能力
 
@@ -34,6 +45,8 @@
 | 对话 | 支持 | `POST /algo/api/v2/service/pro/sse/agent_chat_generation`，模型由 `x-model-key` 请求头指定 |
 | 免费模型对话 | 支持（需本机 CLI） | `dfmodel` / `qfmodel` 由本机 Qoder CN 的官方 CLI 驱动，见下文「免费模型与本机 CLI」 |
 | 仅 CLI 登录 | 支持 | 一次「本机 CLI 登录」即可同时获得全部模型、积分余额与每日签到，无需桌面客户端 |
+| 国际版渠道 | 支持 | 账号带 `realm: global`，走 `openapi.qoder.sh` 与独立的模型目录；见下文「国际版」 |
+| 双版本导入 | 支持 | 两个客户端都装着时，导入列表同时列出 `com.qodercn.app.stable` 和 `com.qoder.app.stable` 两份凭据 |
 
 ## 指定模型：必须发 x-model-key
 
@@ -59,6 +72,38 @@
 1. 打开并登录 Qoder CN 桌面客户端。
 2. 在账号页选择 `qoder`，切到“导入凭据”。
 3. 点击“从 Qoder CN 导入”。模块会读取 `%APPDATA%\com.qodercn.app.stable\auth.v1.dat`。
+
+国际版客户端的凭据在 `%APPDATA%\com.qoder.app.stable\auth.v1.dat`，格式与国内版逐字节相同，
+导入时按目录自动判定 realm。手动粘贴时用添加表单的「渠道」下拉选 `global`。
+
+## 国际版
+
+国际版（Qoder，`qoder.com`）和国内版是两套独立服务，实测对照：
+
+| 项 | 国内版 | 国际版 |
+| --- | --- | --- |
+| OpenAPI | `openapi.qoder.com.cn` | `openapi.qoder.sh` |
+| 登录页 | `qoder.cn` | `qoder.com` |
+| 客户端数据目录 | `com.qodercn.app.stable` | `com.qoder.app.stable` |
+| 模型目录 | `qmodel_38max` / `qfmodel` / `kmodel` … | `auto` / `ultimate` / `fast` / `efficient` / `smodel` / `cmodel` … |
+| 余额 / 签到 | `/api/v2/quota/usage`、`/sash/api/v1/me/campaigns` | 同路径，换主机即可用 |
+
+账号、余额、签到、任务板和模型目录在两边都走同一批路径，区别只在主机。模型 id 用 `<realm>:`
+前缀区分（`cn:auto`、`global:efficient`），一个账号只会被派到它自己 realm 的模型上。
+
+**对话**是唯一不同构的一环，这一点必须说清楚：
+
+- 国际版的 `/algo` 边缘存在，也接受本模块的 COSY 签名（模型目录就是这么读的），但它对聊天请求返回
+  `[FAIL]node:agent_router msg:None flow nodes found for router agent_router` —— 它要的是 agent-flow
+  信封，不是裸 completion。
+- 国际版桌面端真正的对话走干净的 OpenAI 端点：
+  `https://<model host>/model/v1/chat/completions`（Bearer 设备令牌，无 COSY 签名）。
+  `<model host>` 在厂商的 agent worker 里是 `api2-v2.qoder.sh`，由**阿里 HTTPDNS 私有解析**，
+  **没有公网 DNS 记录**（阿里 DNS / Google DNS 均 NXDOMAIN）。
+- 因此 `global_model_server` 是必须能落地的配置：域名能解析的机器保持默认值；解析不了的机器
+  要填一个可达地址，否则国际版账号的对话会报「连接 xxx 失败」，并在错误里点名该主机。
+
+国际版没有 `dfmodel` / `qfmodel` 那两个零成本模型，也没有本机 CLI 通道；这两个是 CN 特有的。
 
 浏览器登录走的是 Qoder CN 自己的设备授权：面板把浏览器带到 `qoder.cn/users/sign-in`，授权完成后用 `GET /api/v1/deviceToken/poll` 取回同一个设备令牌。机器标识保存在数据目录下的 `machine-id`，所以重启后仍是同一台设备；账号 ID 取厂商用户 ID（`qoder-<user_id>`），同一个人重新登录会就地覆盖，不会多出一条。
 
@@ -177,6 +222,11 @@ CLI 自己会续期令牌，所以余额和签到在每次读取前会重新取�
       "client_type": 10,
       "cosy_version": "0.4.3",
       "user_agent": "Qoder",
+      "global_openapi_base": "https://openapi.qoder.sh",
+      "global_gateway_base": "https://openapi.qoder.sh",
+      "global_auth_base": "https://qoder.com",
+      "global_model_server": "https://api2-v2.qoder.sh",
+      "default_realm": "cn",
       "request_timeout": "30s",
       "probe_timeout": "20s",
       "chat_timeout": "10m",
@@ -206,7 +256,8 @@ CLI 自己会续期令牌，所以余额和签到在每次读取前会重新取�
           "phone": "",
           "name": "",
           "expires_at": "",
-          "enabled": true
+          "enabled": true,
+          "realm": "cn"
         }
       ]
     }
@@ -228,9 +279,16 @@ CLI 自己会续期令牌，所以余额和签到在每次读取前会重新取�
 | `CLIENT2API_QODER_NAME` | 显示名 |
 | `CLIENT2API_QODER_EXPIRES_AT` | 过期时间 |
 | `CLIENT2API_QODER_USER_DATA_DIR` | 覆盖 Qoder CN 的 Electron 用户目录 |
+| `CLIENT2API_QODER_GLOBAL_USER_DATA_DIR` | 覆盖国际版 Qoder 的 Electron 用户目录 |
 | `CLIENT2API_QODER_OPENAPI_BASE` | 覆盖 OpenAPI 根地址 |
 | `CLIENT2API_QODER_GATEWAY_BASE` | 覆盖推理网关根地址 |
 | `CLIENT2API_QODER_AUTH_BASE` | 覆盖浏览器登录页根地址 |
+| `CLIENT2API_QODER_GLOBAL_OPENAPI_BASE` | 覆盖国际版 OpenAPI 根地址 |
+| `CLIENT2API_QODER_GLOBAL_GATEWAY_BASE` | 覆盖国际版推理边缘根地址 |
+| `CLIENT2API_QODER_GLOBAL_AUTH_BASE` | 覆盖国际版登录页根地址 |
+| `CLIENT2API_QODER_GLOBAL_MODEL_SERVER` | 覆盖国际版模型服务器地址（厂商 HTTPDNS 主机不可达时用） |
+| `CLIENT2API_QODER_DEFAULT_REALM` | 覆盖裸模型 ID 的默认 realm（`cn` / `global`） |
+| `CLIENT2API_QODER_REALM` | 环境变量凭据所属 realm |
 | `CLIENT2API_QODER_AUTH_CLIENT_ID` | 覆盖设备授权 OAuth client id |
 | `CLIENT2API_QODER_MACHINE_ID` | 覆盖持久化的设备标识（UUID） |
 | `CLIENT2API_QODER_COSY_VERSION` | 覆盖客户端版本头 |
@@ -242,8 +300,11 @@ CLI 自己会续期令牌，所以余额和签到在每次读取前会重新取�
 
 | 文件 | 内容 |
 | --- | --- |
-| `accounts.json` | 账号和凭据、导入来源路径 |
+| `accounts.json` | 账号和凭据、导入来源路径、`realm` |
 | `state.json` | 冷却、失败次数和最近错误，不含令牌 |
+
+`realm` 决定这个账号能被派到哪一边的模型上：`cn` 只服务国内版目录，`global` 只服务国际版目录。
+老数据里没有这个字段的账号按 `cn` 处理。
 
 换新令牌时会清空该账号旧的冷却和失效状态。相同令牌重新导入时保留运行时状态，避免重复导入把厂商已经拒绝的账号伪装成可用。
 
@@ -252,7 +313,12 @@ CLI 自己会续期令牌，所以余额和签到在每次读取前会重新取�
 ## 已知限制
 
 - `models` 配置会覆盖厂商在线目录，作为运营侧的显式白名单使用；留空时以在线目录为准。
+  配了裸 ID 时按 `default_realm` 归类；要覆盖两边就写带前缀的 ID（`cn:x` / `global:y`）。
 - 本地凭据解密只支持 Windows，且必须是当前 Windows 用户加密的 DPAPI 数据。
+- **国际版对话依赖 `global_model_server` 可解析**：厂商的模型主机 `api2-v2.qoder.sh` 只在它的
+  私有 HTTPDNS 里有记录，公网 DNS 查不到。账号、余额、签到、任务、模型目录不受影响（这些走
+  `openapi.qoder.sh`），只有对话需要这个地址能落地。
+- 国际版的 `/algo` 聊天路由存在但不接受裸 completion 信封，所以本模块不走它；见「国际版」一节。
 - 厂商活动规则可能变化；签到接口返回的新状态如果不在已知范围内，会按失败报告，而不是强行当作成功。
 - 免费模型（`dfmodel` / `qfmodel`）依赖本机安装的 Qoder CN 客户端；没有安装时这两个模型会报
   「需要本机安装 Qoder CN 客户端」，其余模型不受影响。

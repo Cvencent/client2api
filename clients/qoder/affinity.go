@@ -70,9 +70,41 @@ func (c *Client) usableFor(model string) func(accountID string) bool {
 // The fallback is the pool's own order, so a request with no conversation key
 // degenerates exactly into the behaviour that existed before this file.
 func (c *Client) orderedCandidates(req *core.ChatRequest, model string) []account {
-	candidates := c.store.candidates(nowUTC())
+	return c.orderedCandidatesFor(req, model, routeModel(model, realmCN))
+}
+
+// orderedCandidatesFor is orderedCandidates with the pool filtered down to the
+// realms a resolved model route allows.
+//
+// The realm filter is what makes the two catalogues honest: a credential from
+// one build can never serve the other build's models, so handing it the call
+// could only produce an "unsupported model" refusal and park a working account.
+// A route whose preference list contains "" (a bare model name) lets every realm
+// in, which is the single-realm behaviour that predates the split.
+func (c *Client) orderedCandidatesFor(req *core.ChatRequest, model string, route modelRoute) []account {
+	if c == nil || c.store == nil {
+		return nil
+	}
+	allowed := allowedRealms(route)
+	pool := c.store.candidates(nowUTC())
+	candidates := make([]account, 0, len(pool))
+	for _, acc := range pool {
+		if allowed != nil && !allowed[acc.realmOf()] {
+			continue
+		}
+		candidates = append(candidates, acc)
+	}
 	if len(candidates) == 0 {
 		return candidates
+	}
+	// A soft route (a bare model name) names a preferred realm in its first
+	// entry.  The pool's own order is priority-then-LRU and knows nothing about
+	// realms, so without this a bare "auto" could be handed a global credential
+	// first on a domestic default.  A stable partition puts the preferred realm
+	// in front while keeping the pool's order inside each group.
+	if len(route.realms) > 1 {
+		preferred := normalizeRealm(route.realms[0])
+		candidates = stablePartitionByRealm(candidates, preferred)
 	}
 	key := conversationKey(req)
 	if key == "" || c.affinity == nil {
@@ -91,6 +123,42 @@ func (c *Client) orderedCandidates(req *core.ChatRequest, model string) []accoun
 		}
 	}
 	return candidates
+}
+
+// allowedRealms turns a modelRoute's preference list into a set of realms the
+// picker may use.  A nil result means "every realm", which is what an empty
+// preference entry ("") stands for.
+func allowedRealms(route modelRoute) map[string]bool {
+	set := map[string]bool{}
+	for _, realm := range route.realms {
+		if strings.TrimSpace(realm) == "" {
+			return nil
+		}
+		set[normalizeRealm(realm)] = true
+	}
+	if len(set) == 0 {
+		return nil
+	}
+	return set
+}
+
+// stablePartitionByRealm moves every account of one realm to the front,
+// preserving the pool's order inside both groups.  It is the ordering half of a
+// soft route: the preferred realm is tried first, the other realms stay behind
+// it as a fallback rather than being dropped.
+func stablePartitionByRealm(accounts []account, realm string) []account {
+	out := make([]account, 0, len(accounts))
+	for _, acc := range accounts {
+		if acc.realmOf() == realm {
+			out = append(out, acc)
+		}
+	}
+	for _, acc := range accounts {
+		if acc.realmOf() != realm {
+			out = append(out, acc)
+		}
+	}
+	return out
 }
 
 // bindServedConversation records the account that actually received a slot.

@@ -81,22 +81,35 @@ func (c *Client) forgetSession(id string) {
 // pool cannot grow it without bound.
 const maxCosySessions = 256
 
-// gatewayURL renders the absolute URL of one gateway path.
+// gatewayURL renders the absolute URL of one gateway path on the domestic
+// inference edge.
 func (c *Client) gatewayURL(path string) string {
-	return c.cfg.gatewayBase() + path
+	return c.gatewayURLFor(realmCN, path)
 }
 
-// signedRequest performs one signed gateway request and returns the raw
-// response.  The caller owns the body.  method is GET or POST; body is the
+// gatewayURLFor renders one gateway path on a given realm's inference edge.  The
+// route names and the COSY signature are identical on both builds; only the
+// host differs, and each realm's host only accepts its own credentials.
+func (c *Client) gatewayURLFor(realm, path string) string {
+	return c.cfg.gatewayBaseFor(realm) + path
+}
+
+// signedRequest performs one signed gateway request against the domestic edge.
+func (c *Client) signedRequest(ctx context.Context, method, path, body, accept, modelKey string, acc account) (*http.Response, error) {
+	return c.signedRequestFor(ctx, realmCN, method, path, body, accept, modelKey, acc)
+}
+
+// signedRequestFor performs one signed gateway request against one realm's
+// inference edge.  The caller owns the body.  method is GET or POST; body is the
 // exact byte string that is both signed and sent.  modelKey scopes a chat call
 // to one catalogue entry via the x-model-key header; empty omits it, which is
 // what the catalogue read wants.
-func (c *Client) signedRequest(ctx context.Context, method, path, body, accept, modelKey string, acc account) (*http.Response, error) {
+func (c *Client) signedRequestFor(ctx context.Context, realm, method, path, body, accept, modelKey string, acc account) (*http.Response, error) {
 	sess, err := c.gatewaySession(acc)
 	if err != nil {
 		return nil, err
 	}
-	rawURL := c.gatewayURL(path)
+	rawURL := c.gatewayURLFor(realm, path)
 	hdrs, err := sess.headers(cosyRequest{
 		UID:         acc.UserID,
 		Body:        body,
@@ -146,7 +159,14 @@ func (c *Client) gatewayHTTP() *http.Client {
 
 // fetchModelList reads the vendor's catalogue with one account's signature.
 func (c *Client) fetchModelList(ctx context.Context, acc account) ([]modelInfo, error) {
-	resp, err := c.signedRequest(ctx, http.MethodGet, pathModelList, "", "application/json", "", acc)
+	return c.fetchModelListFor(ctx, acc.realmOf(), acc)
+}
+
+// fetchModelListFor reads one realm's catalogue with an account from that
+// realm.  The route is identical on both builds; only the host and the
+// credential differ, and a credential only ever opens its own realm.
+func (c *Client) fetchModelListFor(ctx context.Context, realm string, acc account) ([]modelInfo, error) {
+	resp, err := c.signedRequestFor(ctx, realm, http.MethodGet, pathModelList, "", "application/json", "", acc)
 	if err != nil {
 		return nil, err
 	}
@@ -166,14 +186,20 @@ func (c *Client) fetchModelList(ctx context.Context, acc account) ([]modelInfo, 
 	return list.chatModels(), nil
 }
 
-// openChat issues one signed chat request.  A non-2xx response is drained and
-// turned into an error; on success the caller owns the response body.
+// openChat issues one signed chat request against the domestic edge.
 //
 // modelKey is sent as x-model-key: the vendor's gateway picks and bills the
 // model from that header, so a call made without it answers with the account's
 // default model regardless of the body's "model" field.
 func (c *Client) openChat(ctx context.Context, acc account, body, modelKey string) (*http.Response, error) {
-	resp, err := c.signedRequest(ctx, http.MethodPost, pathChat, body, "text/event-stream", modelKey, acc)
+	return c.openChatFor(ctx, realmCN, acc, body, modelKey)
+}
+
+// openChatFor issues one signed chat request against one realm's edge.  A
+// non-2xx response is drained and turned into an error; on success the caller
+// owns the response body.
+func (c *Client) openChatFor(ctx context.Context, realm string, acc account, body, modelKey string) (*http.Response, error) {
+	resp, err := c.signedRequestFor(ctx, realm, http.MethodPost, pathChat, body, "text/event-stream", modelKey, acc)
 	if err != nil {
 		return nil, err
 	}

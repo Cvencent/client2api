@@ -78,6 +78,10 @@ type loginSession struct {
 	nonce     string
 	url       string
 	expiresAt time.Time
+	// realm is the upstream family this sign-in targets.  The browser grant's
+	// sign-in page and its token poll both live on realm-specific hosts, so the
+	// whole session has to remember which one it was started against.
+	realm string
 
 	mu        sync.Mutex
 	state     string
@@ -110,6 +114,7 @@ func (s *loginSession) snapshot() core.LoginState {
 		URL:       s.url,
 		Message:   core.Redact(message),
 		AccountID: s.accountID,
+		Realm:     s.realm,
 	}
 }
 
@@ -179,13 +184,21 @@ func (s *loginSession) endPoll() {
 // vendor.  The exported entry point is StartLoginRealm in clilogin.go, which
 // dispatches between this route and the local CLI.
 func (c *Client) startBrowserLogin(ctx context.Context) (core.LoginState, error) {
+	return c.startBrowserLoginFor(ctx, realmCN)
+}
+
+// startBrowserLoginFor is startBrowserLogin pinned to one realm.  The realm
+// decides the sign-in host and the token-poll host; the PKCE machinery is
+// identical on both builds.
+func (c *Client) startBrowserLoginFor(ctx context.Context, realm string) (core.LoginState, error) {
 	verifier := randomPKCEVerifier()
 	nonce := newUUID()
 	sess := &loginSession{
 		id:        "qoder-login-" + nonce,
 		verifier:  verifier,
 		nonce:     nonce,
-		url:       c.deviceLoginURL(pkceS256(verifier), nonce),
+		realm:     normalizeRealm(realm),
+		url:       c.deviceLoginURLFor(realm, pkceS256(verifier), nonce),
 		expiresAt: time.Now().Add(loginSessionTTL),
 		state:     core.LoginPending,
 		message:   "在浏览器里打开登录链接并完成登录；完成后回到面板，稍等片刻即可看到账号。",
@@ -216,7 +229,7 @@ func (c *Client) pollBrowserLogin(ctx context.Context, sessionID string) (core.L
 	}
 	defer sess.endPoll()
 
-	tok, pending, err := c.pollDeviceToken(ctx, sess.nonce, sess.verifier)
+	tok, pending, err := c.pollDeviceTokenFor(ctx, sess.realm, sess.nonce, sess.verifier)
 	switch {
 	case err != nil:
 		sess.fail("查询登录结果失败：" + redactErr(err) + "；请重新发起登录。")
@@ -226,7 +239,7 @@ func (c *Client) pollBrowserLogin(ctx context.Context, sessionID string) (core.L
 		return sess.snapshot(), nil
 	}
 
-	acc, err := c.accountFromDeviceToken(ctx, tok)
+	acc, err := c.accountFromDeviceTokenFor(ctx, sess.realm, tok)
 	if err != nil {
 		sess.fail(redactErr(err))
 		return sess.snapshot(), nil
@@ -284,13 +297,23 @@ func (c *Client) loginByID(id string) *loginSession {
 // URL construction
 // ---------------------------------------------------------------------------
 
-// deviceLoginURL renders the two nested URLs the desktop client opens.  The
-// auth base is parsed rather than string-joined so an operator override with a
-// port or a sub-path still produces a valid URL.
+// deviceLoginURL renders the two nested URLs the desktop client opens on the
+// domestic realm.
 func (c *Client) deviceLoginURL(challenge, nonce string) string {
-	base, err := url.Parse(c.cfg.authBase())
+	return c.deviceLoginURLFor(realmCN, challenge, nonce)
+}
+
+// deviceLoginURLFor renders the two nested URLs for one realm.  The auth base is
+// parsed rather than string-joined so an operator override with a port or a
+// sub-path still produces a valid URL.
+func (c *Client) deviceLoginURLFor(realm, challenge, nonce string) string {
+	base, err := url.Parse(c.cfg.authBaseFor(realm))
 	if err != nil || base.Scheme == "" || base.Host == "" {
-		base = &url.URL{Scheme: "https", Host: "qoder.cn"}
+		fallback := "qoder.cn"
+		if normalizeRealm(realm) == realmGlobal {
+			fallback = "qoder.com"
+		}
+		base = &url.URL{Scheme: "https", Host: fallback}
 	}
 
 	device := url.URL{Scheme: base.Scheme, Host: base.Host, Path: authDevicePath}
@@ -356,6 +379,12 @@ func (c *Client) machineIDPath() string {
 // pollDeviceToken performs one poll.  pending means "the browser has not
 // confirmed yet" and is a normal answer (the vendor uses HTTP 404 for it).
 func (c *Client) pollDeviceToken(ctx context.Context, nonce, verifier string) (*deviceToken, bool, error) {
+	return c.pollDeviceTokenFor(ctx, realmCN, nonce, verifier)
+}
+
+// pollDeviceTokenFor polls one realm's device-token route.  Both builds expose
+// the same path; only the OpenAPI host differs.
+func (c *Client) pollDeviceTokenFor(ctx context.Context, realm, nonce, verifier string) (*deviceToken, bool, error) {
 	params := url.Values{}
 	params.Set("nonce", nonce)
 	params.Set("verifier", verifier)
@@ -364,7 +393,7 @@ func (c *Client) pollDeviceToken(ctx context.Context, nonce, verifier string) (*
 	ctx, cancel := context.WithTimeout(ctx, c.cfg.requestTimeout())
 	defer cancel()
 
-	endpoint := c.cfg.openAPIBase() + pathDevicePoll + "?" + params.Encode()
+	endpoint := c.cfg.openAPIBaseFor(realm) + pathDevicePoll + "?" + params.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, false, fmt.Errorf("qoder: building the device poll request: %w", err)
@@ -410,19 +439,28 @@ func (c *Client) pollDeviceToken(ctx context.Context, nonce, verifier string) (*
 // reusing the same userinfo probe and identity merge a pasted token goes
 // through so the two paths cannot drift.
 func (c *Client) accountFromDeviceToken(ctx context.Context, tok *deviceToken) (account, error) {
+	return c.accountFromDeviceTokenFor(ctx, realmCN, tok)
+}
+
+// accountFromDeviceTokenFor turns one realm's device grant into a stored
+// account.  The realm is recorded on the row and used for the identity probe:
+// a token only opens the build that minted it.
+func (c *Client) accountFromDeviceTokenFor(ctx context.Context, realm string, tok *deviceToken) (account, error) {
 	if tok == nil {
 		return account{}, errors.New("qoder: device grant carried no token")
 	}
+	realm = normalizeRealm(realm)
 	acc := account{storedAccount: storedAccount{
 		Token:              strings.TrimSpace(tok.Token),
 		RefreshToken:       strings.TrimSpace(tok.RefreshToken),
 		ExpiresAtMS:        tokenExpiryMS(tok.ExpiresAt, tok.ExpiresIn),
 		RefreshExpiresAtMS: tokenExpiryMS(tok.RefreshTokenExpiresAt, tok.RefreshTokenExpiresIn),
 		Enabled:            true,
+		Realm:              realm,
 	}, origin: originStored}
 
 	probeCtx, cancel := context.WithTimeout(ctx, c.cfg.probeTimeout())
-	info, err := c.up.userInfo(probeCtx, acc.Token)
+	info, err := c.up.userInfoFor(probeCtx, realm, acc.Token)
 	cancel()
 	if err != nil {
 		if failureKind(err) == core.FailureAuth {
@@ -433,6 +471,9 @@ func (c *Client) accountFromDeviceToken(ctx context.Context, tok *deviceToken) (
 		c.logf("qoder: could not read userinfo after browser login: %s", redactErr(err))
 	} else {
 		acc = mergeAccount(acc, info)
+		// mergeAccount rewrites the identity fields; the realm is what the
+		// sign-in page was, and must not be overwritten by the vendor's answer.
+		acc.Realm = realm
 	}
 
 	acc.ID = defaultAccountID(acc)

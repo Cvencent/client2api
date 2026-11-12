@@ -43,7 +43,7 @@ func (c *Client) AccountBalance(ctx context.Context, id string, soon time.Durati
 		// transport -- and penalising it here would park a working account.
 		return core.Balance{}, errors.New("qoder: 该账号是本机 CLI 登录，仅提供免费模型，没有积分台账")
 	}
-	usage, err := c.up.quotaUsage(ctx, acc.Token)
+	usage, err := c.up.quotaUsageFor(ctx, acc.realmOf(), acc.Token)
 	if err != nil {
 		// A balance read is one more piece of evidence about the credential, so
 		// a rejection here parks the account -- unless the caller walked away,
@@ -81,7 +81,7 @@ func (c *Client) AccountPackages(ctx context.Context, id string) (core.PackageRe
 	}
 	acc = c.ensureFreshCLIToken(ctx, acc)
 
-	usage, err := c.up.quotaUsage(ctx, acc.Token)
+	usage, err := c.up.quotaUsageFor(ctx, acc.realmOf(), acc.Token)
 	if err != nil {
 		if !callerGone(err) {
 			c.penalise(id, err, time.Now().UTC())

@@ -6,6 +6,42 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.80] - 2026-11-12
+
+### Added
+
+- **Qoder 接入国际版渠道（国内版 / 国际版双域，与 WorkBuddy 同构）。** Qoder 的
+  国内版（Qoder CN，`qoder.com.cn` / `qoder.cn`）与国际版（Qoder，`qoder.com` /
+  `qoder.sh`）是两套独立服务：不同的凭据目录、不同的 OpenAPI 主机、**互不相通的
+  模型目录和积分台账**——一个国内版账号永远看不到、也调不到国际版模型。本版接入
+  国际版：
+  - 账号带 `realm` 字段（`cn` / `global`）；模型名以 `<realm>:` 前缀寻址
+    （`cn:auto`、`global:efficient`），一个账号只会被派到它自己 realm 的目录上。
+  - 凭据导入同时列出两个客户端：`%APPDATA%\com.qodercn.app.stable\auth.v1.dat`
+    与 `%APPDATA%\com.qoder.app.stable\auth.v1.dat`（两者格式逐字节相同，按目录
+    判定 realm）。
+  - 登录面板新增「国际版浏览器登录」入口（`qoder.com` 设备授权 + PKCE，与国内版
+    同一套机制）；添加表单新增「渠道」下拉。
+  - 余额、签到、任务板、模型目录按账号自身 realm 选主机（两边路径相同）。
+  - 模型目录按 realm 限定并合并两域；账号行显示渠道标签，模型选择器按 realm 过滤。
+  - **国际版对话走干净的 OpenAI 端点** `https://<model host>/model/v1/chat/completions`
+    （Bearer 设备令牌，无 COSY 签名）。该主机由厂商私有 HTTPDNS 解析、无公网 DNS
+    记录，故新增配置项 `global_model_server`：域名可达时用默认值，否则填一个可达
+    地址；拨号失败时错误会点名该主机并在 60s 冷却后重试（不会把账号标记为失效）。
+
+### Fixed
+
+- **realm 前缀让「关闭模型」黑名单静默失效（影响所有带 `<realm>:` 前缀的平台）。**
+  面板账号弹层按账号 realm 过滤目录、显示**裸名**（`auto`），而网关按**带前缀**的
+  上游 id（`global:auto`）查询账号模型策略；两侧 id 对不上，操作员取消勾选后该模型
+  仍可路由。`internal/modelpolicy` 现在对 id 做规范化比较（剥掉开头的 `<账号>/`
+  与 `<realm>:` 限定），黑名单两种写法都能命中。WorkBuddy 因自带策略实现未受影响。
+
+### Installer
+
+- `client2api-setup-0.7.80.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `582C6B0ED969AD9AC48D43A3FFB7316BB9B52EF382571DD3D10F19EA11611003`
+
 ## [0.7.79] - 2026-11-11
 
 ### Fixed

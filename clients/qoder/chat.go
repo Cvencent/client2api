@@ -25,18 +25,34 @@ import (
 // different client.
 const chatClientType = "5"
 
-// mapGatewayModel normalises a model id that arrived through the gateway.  The
-// routing prefix is already stripped by the registry; what is left is trimmed
-// and matched case-insensitively against the catalogue, because the vendor's
+// mapGatewayModel normalises a model id that arrived through the gateway: it is
+// trimmed and its casing is matched against the catalogue, because the vendor's
 // keys are lower-case and a caller typing "Auto" means the same thing.
+//
+// It deliberately preserves the SHAPE the caller used.  A realm-qualified name
+// stays qualified (the caller pinned a realm), and a bare name stays bare --
+// mapping "auto" onto a catalogue entry's "cn:auto" would silently turn a soft
+// preference into a hard domestic route, which strands an international-only
+// installation with no candidate at all.  routeModel is what decides a bare
+// name's realm, and it must see a bare name to do that.
 func (c *Client) mapGatewayModel(model string) string {
 	model = strings.TrimSpace(model)
 	if model == "" {
 		return ""
 	}
+	if realmQualified(model) {
+		if _, bare := resolveModelRealm(model); bare == "" {
+			return ""
+		}
+		return model
+	}
+	// Casing only: return the catalogue's spelling of the SAME bare id.
 	for _, m := range c.modelCatalogue() {
 		if strings.EqualFold(m.ID, model) {
 			return m.ID
+		}
+		if _, bare := resolveModelRealm(m.ID); bare != "" && strings.EqualFold(bare, model) {
+			return bare
 		}
 	}
 	return model
@@ -242,11 +258,18 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 	if model == "" {
 		return nil, core.ErrUnsupported
 	}
-	if cliModel(model) {
-		return c.chatViaCLI(ctx, req, model, "")
+	// Resolve the realm before anything else reads the model name.  The prefix
+	// is this gateway's addressing scheme, not something the vendor knows, so it
+	// has to come off the wire body; the bare id is what goes upstream.
+	route := routeModel(model, c.cfg.defaultRealm())
+	if route.bare == "" {
+		return nil, core.ErrUnsupported
+	}
+	if len(route.realms) == 1 && route.realms[0] == realmCN && cliModel(route.bare) {
+		return c.chatViaCLI(ctx, req, route.bare, "")
 	}
 
-	candidates := c.orderedCandidates(req, model)
+	candidates := c.orderedCandidatesFor(req, model, route)
 	if len(candidates) == 0 {
 		return nil, core.ErrNotConfigured
 	}
@@ -292,7 +315,7 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 		// even when the stream never produces a frame.
 		core.NoteServedBy(req, acc.ID)
 
-		body, err := chatBody(req, model)
+		body, err := chatBody(req, route.bare)
 		if err != nil {
 			req.ReleaseAccountSlot()
 			c.inFlight.Add(-1)
@@ -300,7 +323,7 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 			return nil, err
 		}
 		issued++
-		resp, err := c.openChat(chatCtx, acc, body, model)
+		resp, err := c.chatOpener(acc.realmOf())(chatCtx, acc, body, route.bare)
 		if err != nil {
 			req.ReleaseAccountSlot()
 			c.inFlight.Add(-1)
@@ -338,7 +361,8 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 // is asked.  The prompt is one word because the probe is billed like any other
 // request.
 func (c *Client) probeChat(ctx context.Context, acc account) (string, error) {
-	model := c.cfg.testModel()
+	realm := acc.realmOf()
+	model := c.probeModelFor(realm)
 	if acc.cliOnly() {
 		// A CLI-only account has no device token, so the signed probe route
 		// would only return 401 and park a working account.  Its test goes
@@ -356,7 +380,7 @@ func (c *Client) probeChat(ctx context.Context, acc account) (string, error) {
 	// A free model is only reachable through the CLI bridge, so the probe has
 	// to use the same transport a caller would.  Otherwise the panel's "测试"
 	// button would report a failure for an account that serves fine.
-	if cliModel(model) {
+	if realm == realmCN && cliModel(model) {
 		stream, err := c.chatViaCLI(ctx, req, model, acc.ID)
 		if err != nil {
 			return "", err
@@ -367,7 +391,7 @@ func (c *Client) probeChat(ctx context.Context, acc account) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	resp, err := c.openChat(ctx, acc, body, model)
+	resp, err := c.chatOpener(realm)(ctx, acc, body, model)
 	if err != nil {
 		return "", err
 	}
@@ -404,6 +428,79 @@ func (c *Client) probeChat(ctx context.Context, acc account) (string, error) {
 		return "", fmt.Errorf("qoder: %s answered without any text", model)
 	}
 	return reply.String(), nil
+}
+
+// probeModelFor picks the model a connectivity probe asks for on one realm.
+//
+// The configured chat_model is honoured when it names an id this realm actually
+// publishes; otherwise the realm's own first catalogue entry is used, because a
+// model key from the other build answers "Unsupported model" and would make a
+// working account look broken.
+func (c *Client) probeModelFor(realm string) string {
+	want := strings.TrimSpace(c.cfg.testModel())
+	if route := routeModel(want, realm); realmQualified(want) {
+		if _, allowed := allowedRealms(route)[normalizeRealm(realm)]; allowed {
+			return route.bare
+		}
+		return c.firstModelFor(realm, "")
+	}
+	if !realmQualified(want) {
+		if c.realmPublishes(realm, want) || !c.hasRealmCatalogue(realm) {
+			return want
+		}
+		return c.firstModelFor(realm, "")
+	}
+	return c.firstModelFor(realm, "")
+}
+
+// firstModelFor returns the first catalogue entry of one realm, or fallback when
+// the realm has no catalogue of its own.
+func (c *Client) firstModelFor(realm, fallback string) string {
+	for _, m := range c.modelCatalogue() {
+		r, bare := resolveModelRealm(m.ID)
+		if normalizeRealm(r) == normalizeRealm(realm) && bare != "" {
+			if fallback == "" || bare == fallback {
+				return bare
+			}
+		}
+	}
+	if fallback != "" {
+		return fallback
+	}
+	for _, m := range c.modelCatalogue() {
+		if r, bare := resolveModelRealm(m.ID); bare != "" && normalizeRealm(r) == normalizeRealm(realm) {
+			return bare
+		}
+	}
+	if normalizeRealm(realm) == realmGlobal {
+		return "auto"
+	}
+	return defaultTestModel
+}
+
+// hasRealmCatalogue reports whether the live catalogue carries any qualified id
+// for this realm.  An unqualified catalogue is the single-realm fallback, where
+// the configured test model is still the right answer.
+func (c *Client) hasRealmCatalogue(realm string) bool {
+	want := normalizeRealm(realm)
+	for _, m := range c.modelCatalogue() {
+		if r, bare := resolveModelRealm(m.ID); bare != "" && normalizeRealm(r) == want {
+			return true
+		}
+	}
+	return false
+}
+
+// realmPublishes reports whether one realm's catalogue contains a bare id.
+func (c *Client) realmPublishes(realm, id string) bool {
+	want := normalizeRealm(realm)
+	for _, m := range c.modelCatalogue() {
+		r, bare := resolveModelRealm(m.ID)
+		if bare != "" && normalizeRealm(r) == want && strings.EqualFold(bare, id) {
+			return true
+		}
+	}
+	return false
 }
 
 func intPtr(n int) *int { return &n }

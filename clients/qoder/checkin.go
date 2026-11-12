@@ -76,7 +76,7 @@ func (c *Client) Checkin(ctx context.Context, id, action string) (core.CheckinRe
 	}
 
 	start := time.Now()
-	list, err := c.up.campaigns(ctx, acc.Token)
+	list, err := c.up.campaignsFor(ctx, acc.realmOf(), acc.Token)
 	res.ElapsedMS = time.Since(start).Milliseconds()
 	if err != nil {
 		res.Error = redactErr(err)
@@ -110,7 +110,7 @@ func (c *Client) Checkin(ctx context.Context, id, action string) (core.CheckinRe
 	total := 0.0
 	var failures []string
 	for _, cmp := range claimable {
-		status, claimErr := c.up.claimCampaign(ctx, acc.Token, cmp.CampaignID)
+		status, claimErr := c.up.claimCampaignFor(ctx, acc.realmOf(), acc.Token, cmp.CampaignID)
 		if claimErr != nil {
 			failed++
 			if failureKind(claimErr) == core.FailureAuth {
