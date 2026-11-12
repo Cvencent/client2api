@@ -31,8 +31,11 @@ func TestReportCountsRefusalsWithoutCallingThemFailures(t *testing.T) {
 }
 
 // TestAllRefusedNoteOnlyFiresWhenNothingSucceeded 钉住提示的触发条件：只有
-// 「每一跑都被拒、且零成功、零失败、零跳过」时才加尾巴。任何一条成功、或存在
-// 真的失败/跳过，都说明这一批并非「vendor 已经不要这个任务了」。
+// 「每一跑都被拒、且零成功、零失败」时才加尾巴。任何一条成功、或存在真的失败，
+// 都说明这一批并非「vendor 已经不要这个任务了」。设计性跳过（如 workbuddy
+// 国际域的号不参加活动）不算成功迹象——issue #258：`ran=6 refused=4 skipped=2
+// failed=0` 与纯全拒同样是零收益跑，原版要求 skipped==0 让这种混合形态连续
+// 三天以「干净」面具漏网。
 func TestAllRefusedNoteOnlyFiresWhenNothingSucceeded(t *testing.T) {
 	cases := []struct {
 		name string
@@ -42,9 +45,9 @@ func TestAllRefusedNoteOnlyFiresWhenNothingSucceeded(t *testing.T) {
 		{"全拒（报告里的形状）", Report{Ran: 21, Refused: 21}, true},
 		{"有成功", Report{Ran: 20, Refused: 19}, false},
 		{"有真失败", Report{Ran: 21, Refused: 18, Failed: 3}, false},
-		{"有跳过", Report{Ran: 21, Refused: 20, Skipped: 1}, false},
 		{"什么都没跑", Report{}, false},
 		{"只跑了少数几条且全拒（仍算，但要提示）", Report{Ran: 2, Refused: 2}, true},
+		{"全拒+设计性跳过（#258 activity 形状）", Report{Ran: 6, Refused: 4, Skipped: 2}, true},
 	}
 	for _, c := range cases {
 		got := allRefusedNote(c.rep)
@@ -58,6 +61,17 @@ func TestAllRefusedNoteOnlyFiresWhenNothingSucceeded(t *testing.T) {
 		if !strings.Contains(note, want) {
 			t.Errorf("提示尾巴缺少 %q：%q（issue #64）", want, note)
 		}
+	}
+	// 混合形态的尾巴要点名 skipped 数——读者必须能一眼分清纯全拒与「跳过+全拒」。
+	mixed := allRefusedNote(Report{Ran: 6, Refused: 4, Skipped: 2})
+	for _, want := range []string{"4", "0 succeeded", "2 skipped"} {
+		if !strings.Contains(mixed, want) {
+			t.Errorf("混合形态的提示尾巴缺少 %q：%q（issue #258）", want, mixed)
+		}
+	}
+	// 纯全拒的尾巴不带 skipped 字样（没有跳过就不提跳过）。
+	if strings.Contains(note, "skipped") {
+		t.Errorf("纯全拒的尾巴不该提 skipped：%q", note)
 	}
 }
 

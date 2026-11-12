@@ -1888,8 +1888,23 @@ func (r *Runner) Config() Config {
 // reading `refused=21 skipped=0 failed=0` looks like a clean run, and eight
 // nights of that hid a chore the vendor no longer offers.  When every attempt
 // was refused and none succeeded, the line says so in words.
+//
+// Ran counts ATTEMPTS (it is bumped before the refused/skipped verdict), so
+// "zero succeeded" is `Refused+Skipped == Ran` with no transport failures.
+//
+// Issue #258 widened the trigger: the first version also required
+// `Skipped == 0`, but workbuddy/activity refuses 4 of 6 accounts while the 2
+// international-realm accounts are *designed* to skip — a mixed
+// `ran=6 refused=4 skipped=2 failed=0` line is the same zero-yield run wearing
+// one more counter, and it passed the original gate unnoticed for three days.
+// A skip is a deliberate no-op, not a sign of success: zero succeeded is what
+// the note is about, and the wording names the skips so the reader can tell the
+// two shapes apart.
 func allRefusedNote(rep Report) string {
-	if rep.Refused > 0 && rep.Ran == rep.Refused && rep.Failed == 0 && rep.Skipped == 0 {
+	if rep.Refused > 0 && rep.Failed == 0 && rep.Refused+rep.Skipped == rep.Ran {
+		if rep.Skipped > 0 {
+			return fmt.Sprintf("  << ALL %d ATTEMPTS REFUSED, 0 succeeded (%d skipped by design) — check whether the vendor still offers this chore", rep.Refused, rep.Skipped)
+		}
 		return fmt.Sprintf("  << ALL %d ATTEMPTS REFUSED, 0 succeeded — check whether the vendor still offers this chore", rep.Refused)
 	}
 	return ""

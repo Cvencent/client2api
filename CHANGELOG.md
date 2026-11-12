@@ -36,11 +36,21 @@
   上游 id（`global:auto`）查询账号模型策略；两侧 id 对不上，操作员取消勾选后该模型
   仍可路由。`internal/modelpolicy` 现在对 id 做规范化比较（剥掉开头的 `<账号>/`
   与 `<realm>:` 限定），黑名单两种写法都能命中。WorkBuddy 因自带策略实现未受影响。
+- **全拒自查行漏接设计性跳过的混合形态（#258，#64 家族）。** #64 的
+  `<< ALL N ATTEMPTS REFUSED, 0 succeeded` 自查行触发条件要求 `skipped == 0`，
+  但 workbuddy/activity 的实际形状是 `ran=6 refused=4 skipped=2 failed=0`——
+  2 个国际域账号**按设计跳过**活动上报，这个子句让零收益全拒连续三天以
+  「干净完成」面具漏网（11/10-12 每天同刻 4/6 全拒，done 行 failed=0）。
+  修法：触发条件改为「有拒绝、零传输失败、拒绝+跳过==尝试数」（Ran 计的是
+  尝试数，零成功 = refused+skipped==ran）；混合形态的提示尾巴点名 skipped 数
+  （`(%d skipped by design)`），读者一眼分清纯全拒与「跳过+全拒」。
+  反向钉：#64 原测试的「有跳过 → false」用例语义反转为「跳过+全拒 → true
+  且文案带 skipped 数」；纯全拒文案不变。
 
 ### Installer
 
 - `client2api-setup-0.7.80.exe`（空包，不含账号凭据或本机配置）
-  SHA256: `582C6B0ED969AD9AC48D43A3FFB7316BB9B52EF382571DD3D10F19EA11611003`
+  SHA256: `1682eb01afc216ed5b549db3276d05fb8f6a47d6784eccf45aae1590ca23ce53`
 
 ## [0.7.79] - 2026-11-11
 
