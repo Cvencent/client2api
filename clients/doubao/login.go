@@ -53,7 +53,11 @@ type loginSession struct {
 	// browser is the controlled browser once it has launched.  Nil until
 	// StartLogin succeeds, and closed when the session ends.
 	browser loginBrowser
-	closed  sync.Once
+	// handedOff records that a controlled window was actually opened, so the
+	// waiting message can distinguish "the window never appeared" from "the
+	// window is open but still signed out".
+	handedOff bool
+	closed    sync.Once
 }
 
 var _ core.LoginProvider = (*Client)(nil)
@@ -77,7 +81,10 @@ func (c *Client) StartLogin(ctx context.Context) (core.LoginState, error) {
 			truncate(core.Redact(err.Error()), 200))
 	} else {
 		s.browser = br
-		s.message = "已打开豆包登录页。请在弹出的浏览器窗口里扫码或输入手机号完成登录，完成后回到本面板等待即可。"
+		s.handedOff = true
+		s.message = "已打开一个独立的豆包登录窗口（新窗口，标题栏是「豆包」）。" +
+			"请在这个新窗口里扫码或输入手机号完成登录——用你自己平时那个浏览器登录不算，" +
+			"模块只读它自己开的这个窗口。登录后回到本面板等待即可。"
 	}
 	c.putLogin(s)
 	return loginStateOf(s), nil
@@ -120,7 +127,10 @@ func (c *Client) PollLogin(ctx context.Context, sessionID string) (core.LoginSta
 		return c.keepWaiting(id, "仍在等待登录完成（读取浏览器 Cookie 失败："+truncate(core.Redact(err.Error()), 160)+"）")
 	}
 	if !hasSessionCookie(cookieHeader) {
-		return c.keepWaiting(id, "仍在等待登录完成：还没有检测到豆包会话 Cookie。")
+		// Say what was actually seen.  "还没有检测到会话 Cookie" alone cannot
+		// tell "the window was never opened" from "it opened but was signed in
+		// somewhere else", and both look identical to the operator.
+		return c.keepWaiting(id, waitingForLoginMessage(cookieHeader, s.handedOff))
 	}
 
 	acc := &account{Cookie: cookieHeader, Label: "web login", Enabled: true, Source: "login"}
@@ -146,6 +156,51 @@ func (c *Client) PollLogin(ctx context.Context, sessionID string) (core.LoginSta
 	})
 	c.closeLoginBrowser(s)
 	return st, nil
+}
+
+// waitingForLoginMessage renders the poll message for a window that has no
+// session cookie yet.
+//
+// The terse "还没有检测到会话 Cookie" cannot tell apart the three states an
+// operator actually hits, and each has a different remedy:
+//
+//   - no window was handed off (launch failed) -> use manual paste;
+//   - the window is open but shows no cookie at all -> it is still loading, or
+//     the operator is signing in somewhere else;
+//   - the window has anonymous cookies (ttwid/s_v_web_id) but no sessionid ->
+//     the page is up and the operator simply has not finished signing in THERE.
+//
+// So it names the cookie count and, when the jar is non-empty, says plainly
+// that the sign-in has to happen in this window.
+func waitingForLoginMessage(cookieHeader string, handedOff bool) string {
+	if !handedOff {
+		return "登录窗口没有打开。请用账号页的「手动添加」粘贴一个已登录豆包的浏览器的 Cookie。"
+	}
+	n := cookieCount(cookieHeader)
+	switch {
+	case n == 0:
+		return "仍在等待登录完成：登录窗口还没有产生任何 Cookie（可能还在加载）。请稍等，或确认新窗口是否被其它窗口挡住了。"
+	default:
+		return fmt.Sprintf(
+			"仍在等待登录完成：登录窗口当前有 %d 个匿名 Cookie，但**还没有 sessionid**，说明这个窗口里还没登录。"+
+				"请在那个人独立的豆包窗口里完成登录（不是你自己平时用的浏览器）；登录成功后本面板会在几秒内自动完成。",
+			n)
+	}
+}
+
+// cookieCount counts the pairs in a rendered Cookie header.
+func cookieCount(cookieHeader string) int {
+	s := strings.TrimSpace(cookieHeader)
+	if s == "" {
+		return 0
+	}
+	n := 1
+	for _, r := range s {
+		if r == ';' {
+			n++
+		}
+	}
+	return n
 }
 
 // CancelLogin implements core.LoginProvider.  Idempotent.

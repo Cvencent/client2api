@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"client2api/internal/browser"
@@ -15,10 +16,16 @@ import (
 type fakeBrowser struct {
 	cookies []browser.Cookie
 	closed  bool
+	raised  bool
 }
 
 func (f *fakeBrowser) Cookies(ctx context.Context, urls []string) ([]browser.Cookie, error) {
 	return f.cookies, nil
+}
+
+func (f *fakeBrowser) BringToFront(ctx context.Context) error {
+	f.raised = true
+	return nil
 }
 
 func (f *fakeBrowser) Close() { f.closed = true }
@@ -143,6 +150,39 @@ func TestStartLoginHandlesLaunchFailure(t *testing.T) {
 	}
 	if st.Message == "" {
 		t.Fatalf("no message explaining the fallback")
+	}
+}
+
+// TestStartLoginRaisesTheControlledWindow pins the fix for "我打开了链接却看不到
+// 窗口": the hand-off window must be brought to the front, or it lands behind
+// the operator's other windows and reads as "nothing happened".
+func TestStartLoginRaisesTheControlledWindow(t *testing.T) {
+	fake := &fakeBrowser{}
+	withFakeLaunch(t, fake, nil)
+	c := newWebClient(t, "http://127.0.0.1:1")
+	if _, err := c.StartLogin(context.Background()); err != nil {
+		t.Fatalf("StartLogin: %v", err)
+	}
+	if !fake.raised {
+		t.Fatal("the controlled login window was not raised to the front")
+	}
+}
+
+// TestWaitingMessageNamesTheMissingSessionCookie pins the diagnostic: the poll
+// message must say WHICH cookie is missing, not just "still waiting".
+func TestWaitingMessageNamesTheMissingSessionCookie(t *testing.T) {
+	anonymous := "ttwid=abc; s_v_web_id=xyz; passport_csrf_token=tok"
+	msg := waitingForLoginMessage(anonymous, true)
+	if !strings.Contains(msg, "sessionid") {
+		t.Fatalf("message does not name the missing sessionid: %q", msg)
+	}
+	if !strings.Contains(msg, "3") {
+		t.Fatalf("message does not report the cookie count: %q", msg)
+	}
+	// No window handed off: the message must send the operator to manual paste.
+	noWindow := waitingForLoginMessage("", false)
+	if !strings.Contains(noWindow, "手动添加") {
+		t.Fatalf("no-window message does not point at manual paste: %q", noWindow)
 	}
 }
 

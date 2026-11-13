@@ -18,6 +18,8 @@ import (
 // report its cookies and be closed.  In production it is a *browser.Browser.
 type loginBrowser interface {
 	Cookies(ctx context.Context, urls []string) ([]browser.Cookie, error)
+	// BringToFront raises the window so the operator can find it.
+	BringToFront(ctx context.Context) error
 	Close()
 }
 
@@ -38,6 +40,13 @@ func (c *cdpBrowser) Cookies(ctx context.Context, urls []string) ([]browser.Cook
 	return c.b.Page().Cookies(ctx, urls)
 }
 
+func (c *cdpBrowser) BringToFront(ctx context.Context) error {
+	if c.b == nil || c.b.Page() == nil {
+		return nil
+	}
+	return c.b.Page().BringToFront(ctx)
+}
+
 func (c *cdpBrowser) Close() {
 	if c.b != nil {
 		c.b.Close()
@@ -47,6 +56,10 @@ func (c *cdpBrowser) Close() {
 // launchLoginBrowser starts a visible browser on the Doubao sign-in page.  The
 // profile is throwaway, so a login never touches the operator's own browser
 // profile or sessions.
+//
+// The window is raised after launch: a hand-off is useless if the window lands
+// silently behind the operator's other windows, which is exactly what "我打开了
+// 链接却没看到窗口" means in practice.
 func launchLoginBrowser(ctx context.Context, cfg config, pageURL, profileRoot string) (loginBrowser, error) {
 	lctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
@@ -57,7 +70,18 @@ func launchLoginBrowser(ctx context.Context, cfg config, pageURL, profileRoot st
 		StartURL:    pageURL,
 		Timeout:     browser.DefaultLaunchTimeout,
 	}
-	return launchBrowser(lctx, opts)
+	br, err := launchBrowser(lctx, opts)
+	if err != nil {
+		return nil, err
+	}
+	if !cfg.browserHeadless() {
+		// Best-effort: a headless or otherwise unfocusable target is not a
+		// reason to fail the hand-off.
+		focusCtx, fcancel := context.WithTimeout(ctx, 10*time.Second)
+		_ = br.BringToFront(focusCtx)
+		fcancel()
+	}
+	return br, nil
 }
 
 // captureSessionCookies reads the Doubao cookies out of the controlled browser

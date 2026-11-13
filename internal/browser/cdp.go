@@ -686,6 +686,17 @@ func (p *Page) EvalBool(ctx context.Context, expression string) (bool, error) {
 	return v, nil
 }
 
+// BringToFront raises the page's window and focuses it.
+//
+// A login hand-off needs this: the window is launched without focus, so it
+// lands behind whatever the operator already has open (a chat client, an
+// editor) and reads as "no window appeared".  Best-effort by design -- an
+// unsupported or headless target returns an error the caller may ignore.
+func (p *Page) BringToFront(ctx context.Context) error {
+	_, err := p.call(ctx, "Page.bringToFront", nil)
+	return err
+}
+
 // Navigate points the page at a URL and waits for the load to settle.  If the
 // renderer dies on the way there, the session is re-attached once and the
 // navigation is retried.

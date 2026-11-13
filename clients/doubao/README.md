@@ -13,13 +13,20 @@ HttpOnly, so no page script can read them and the vendor never hands them out
 over an API. There are therefore three ways to get one in:
 
 1. **Web login (preferred).** The account page's "web login" button launches a
-   throwaway Chromium profile (Edge or Chrome) on `https://www.doubao.com`.
-   Scan the QR code or enter a phone number in that window; the module reads the
-   session cookies back over CDP, verifies them against the account and profile
-   endpoints, and stores them. The browser is closed once the login succeeds.
+   throwaway Chromium profile (Edge or Chrome) on `https://www.doubao.com`, and
+   raises that window to the front so it is not lost behind other windows.
+   **Sign in inside that window** — scan the QR code or enter a phone number
+   there. Signing in on your own browser does not work: the session cookies are
+   HttpOnly and the module can only read them from the browser it drives. The
+   module reads the cookies back over CDP, verifies them against the account and
+   profile endpoints, and stores them; the browser is closed once the login
+   succeeds. While it waits, the panel reports how many cookies the window
+   currently has and whether the `sessionid` is still missing, so "still waiting"
+   never hides a window that was never signed in.
 2. **Paste a cookie.** Copy the Cookie request header from a signed-in
    `www.doubao.com` tab and paste it into the account form's 会话 Cookie field.
-   Use this when no Chromium-family browser is installed.
+   Use this when no Chromium-family browser is installed, or when the hand-off
+   window cannot be found.
 3. **Import from the desktop client.** The panel's 导入凭据 tab reads the
    already-signed-in Doubao desktop client directly. The client is an ordinary
    Chromium shell, so the module opens its `Cookies` database read-only, unwraps
