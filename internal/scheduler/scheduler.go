@@ -1541,9 +1541,12 @@ func (r *Runner) runBatchAs(ctx context.Context, clientName, batchName, trigger 
 }
 
 // accountsOf resolves the account IDs a batch runs over.  A client with no
-// account manager (or one that holds no records) gets the single default
-// account "" -- core.TaskProvider documents that as "whichever account you
-// would use anyway".  When the manager does hold records, only the enabled
+// account manager gets the single default account "" -- core.TaskProvider
+// documents that as "whichever account you would use anyway".  A manager that
+// holds no records gets an empty list instead (issue #261): "" is the
+// "whatever the module resolves by itself" sentinel, not a real account, and
+// running it against a module that manages real accounts is one guaranteed
+// failure per batch.  When the manager does hold records, only the enabled
 // ones run; deciding all of them off means running nothing.
 //
 // Check-in is the one deliberate exception.  An exhausted account is exactly
@@ -1568,6 +1571,37 @@ func accountsOfForBatch(ctx context.Context, c core.Client, checkin bool) ([]str
 	return ids, nil
 }
 
+// poolEmptyField marks the "" placeholder as "the module manages accounts and
+// currently holds none" (issue #261).  Executors check it instead of spending
+// a guaranteed-failing upstream call on the sentinel id.
+const poolEmptyField = "batch_pool_empty"
+
+// poolEmptyPlaceholder reports whether rec is the "" sentinel and was placed
+// because the module's own account list was empty, not because the module has
+// no account manager.
+func poolEmptyPlaceholder(rec core.AccountRecord) bool {
+	if rec.ID != "" || rec.Fields == nil {
+		return false
+	}
+	b, ok := rec.Fields[poolEmptyField].(bool)
+	return ok && b
+}
+
+// accountRecordsOfForBatch resolves the records a batch runs over.
+//
+// A client with no account manager gets the placeholder {ID: ""}: that is the
+// "whichever account the module resolves by itself" sentinel both the
+// TaskProvider and the CheckinProvider contracts accept.  A manager that
+// holds no records keeps the placeholder too, but on the checkin path it is
+// marked poolEmpty (issue #261): the synthetic checkin batch would otherwise
+// call Checkin(ctx, "", "") on a module that manages real accounts -- one
+// guaranteed "unknown account" per day plus a report saying accounts=1 when
+// the truth is accounts=0.  The task path keeps the plain placeholder: its
+// contract explicitly documents "" as "pick one yourself", and a module is
+// free to answer it (doubao's RunTask resolves one; a fixture's does too).  A
+// listing failure keeps the plain placeholder on both paths: it is not
+// evidence the pool is empty, and the caller's fallback ("run the default and
+// say so") stays intact.
 func accountRecordsOfForBatch(ctx context.Context, c core.Client, checkin bool) ([]core.AccountRecord, error) {
 	am, ok := core.AsAccountManager(c)
 	if !ok {
@@ -1578,6 +1612,9 @@ func accountRecordsOfForBatch(ctx context.Context, c core.Client, checkin bool) 
 		return []core.AccountRecord{{ID: "", Enabled: true}}, err
 	}
 	if len(recs) == 0 {
+		if checkin {
+			return []core.AccountRecord{{ID: "", Enabled: true, Fields: map[string]any{poolEmptyField: true}}}, nil
+		}
 		return []core.AccountRecord{{ID: "", Enabled: true}}, nil
 	}
 	out := make([]core.AccountRecord, 0, len(recs))
@@ -2023,6 +2060,15 @@ func (r *Runner) runCheckinBatchAs(ctx context.Context, c core.Client, b core.Ba
 		acc := rec.ID
 		if ctx.Err() != nil {
 			break
+		}
+		// The empty-pool placeholder is not an account (issue #261): calling
+		// the module with "" is one guaranteed "unknown account" per day.  A
+		// skip reason, not a failure, keeps the report honest.
+		if poolEmptyPlaceholder(rec) {
+			rep.Skipped++
+			rep.SkipReasons = appendReason(rep.SkipReasons, "the module manages no accounts")
+			r.log("[scheduler] %s/%s account %q checkin skipped: the module manages no accounts", rep.Client, rep.Batch, acc)
+			continue
 		}
 		// 先判后睡（issue #254）：action scope 与 already-settled 都是纯本地
 		// 判定，放在 gap 睡眠之前——全跳过轮（34 号全 settled）不再为每个号

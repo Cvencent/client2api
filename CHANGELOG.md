@@ -10,6 +10,19 @@
 
 ### Fixed
 
+- **空池占位让合成签到批次每天必败一条 + accounts=1 假计数（#261）。**
+  `accountRecordsOfForBatch` 把「无账号管理」「列举失败」「空池」三条语义全靠
+  同一个占位 `{ID: ""}` 表达：空池的占位被合成 checkin 批次直接消费，调
+  `Checkin(ctx, "", "")` → doubao 返回「unknown account ""」，每天签到窗口一条
+  必败日志 + `accounts=1 failed=1` 假计数（报告说 1 个账号失败，实际 0 个账号）。
+  修法：占位保留（三条语义都不改形状），但**checkin 模式的空池占位**带
+  `poolEmpty` 标记（`Fields["batch_pool_empty"]`）区分来源；合成 checkin 执行器
+  识别标记后落成 skip（原因「the module manages no accounts」），不花上游调用。
+  任务路径不动——`RunTask("")` 的「模块自己挑」合同是 TaskProvider 文档明确语义
+  （fixture 与 doubao.RunTask 的 accountFor 都真实现它）。反向钉四条：checkin
+  空池带标记、无账号管理/列举失败两分支不带标记、任务路径默认账号照跑、
+  合成 checkin 对空池落 skip 不落 failed。
+
 - **豆包网页登录：受控窗口不置顶 + 等待提示不说清卡在哪（「一直等待 Cookie」）。**
   网页登录靠模块自己拉起的一个独立 Edge 窗口，操作员必须**在那个窗口里**登录；
   但窗口启动时不置顶，很容易被豆包客户端/编辑器盖住，看起来像「没弹出来」；
@@ -26,7 +39,7 @@
 ### Installer
 
 - `client2api-setup-0.7.85.exe`（空包，不含账号凭据或本机配置）
-  SHA256: `B43CC9183EEBD3A6096C2D491BE1AF6E1A94C678B3F74B90E235AFB41606CCFF`
+  SHA256: `e704584c05147be3d4f98adb566d7fadfb813134f8d5c825e2b2756e1b610589`
 
 ## [0.7.84] - 2026-11-13
 
