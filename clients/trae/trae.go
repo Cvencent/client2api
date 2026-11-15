@@ -14,6 +14,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -68,7 +69,11 @@ type Client struct {
 	models         []core.Model
 	modelsAt       time.Time
 	modelsFailedAt time.Time
-	lastErr        string
+	// modelsAuthFailed marks the last catalogue failure as a terminal
+	// credential rejection (issue #262): it selects the long cooldown, and
+	// any success (or a non-terminal failure) clears it.
+	modelsAuthFailed bool
+	lastErr          string
 
 	// logins holds the in-flight panel login sessions (weblogin.go).  The map is
 	// created lazily so a Client built by a test literal works unchanged.
@@ -164,20 +169,35 @@ func (c *Client) Name() string { return c.name }
 // (issue #214): during it Models() serves the cached/static list without
 // another vendor call, so a hung /models is not re-paid on every bare-name
 // request.
-const modelsFailCooldown = 30 * time.Second
+// modelsAuthFailCooldown is the longer window for a TERMINAL-credential
+// failure (ErrAuth/ErrSessionDead, issue #262): dead credentials do not
+// recover by re-fetching, so every 30s re-knock bought one guaranteed 401
+// while both accounts sat dead.  30 minutes matches the renew backoff's
+// cadence (issue #260) and keeps /v1/models on the static list, which is
+// exactly what the fallback was designed for.
+const (
+	modelsFailCooldown      = 30 * time.Second
+	modelsAuthFailCooldown  = 30 * time.Minute
+)
 
 func (c *Client) Models(ctx context.Context) ([]core.Model, error) {
 	c.mu.Lock()
 	cached, at := c.models, c.modelsAt
-	failedRecently := !c.modelsFailedAt.IsZero() && c.now().Sub(c.modelsFailedAt) < modelsFailCooldown
+	failedAt := c.modelsFailedAt
+	authFailed := c.modelsAuthFailed
 	c.mu.Unlock()
 	if len(cached) > 0 && c.now().Sub(at) < defaultModelsTTL {
 		return cached, nil
 	}
-	// Negative window (issue #214): a fetch that just failed serves the static
-	// (or cached) list without another vendor call, so a hung /models is not
-	// re-paid on every bare-name request.
-	if failedRecently {
+	// Negative windows (issue #214, and the auth-failure one issue #262): a
+	// fetch that failed recently serves the static (or cached) list without
+	// another vendor call.  A terminal-credential failure waits the long
+	// window -- dead credentials do not recover by re-fetching.
+	cooldown := modelsFailCooldown
+	if authFailed {
+		cooldown = modelsAuthFailCooldown
+	}
+	if !failedAt.IsZero() && c.now().Sub(failedAt) < cooldown {
 		if len(cached) > 0 {
 			return cached, nil
 		}
@@ -194,9 +214,21 @@ func (c *Client) Models(ctx context.Context) ([]core.Model, error) {
 	models, err := c.fetchModels(rctx, a)
 	if err != nil {
 		c.noteErr(err)
-		c.log("model catalogue fetch failed, using static list: %v", err)
+		// A terminal-credential failure is a state, not a failure (issue
+		// #259/#262): dead credentials do not recover by re-fetching, so
+		// "model catalogue fetch failed" is not written -- the operator can
+		// see the dead credential in the panel, and one 401 line per 30s
+		// said nothing new.  Other failures keep the log line.
+		terminal := isTerminalCredentialError(err)
+		if !terminal {
+			c.log("model catalogue fetch failed, using static list: %v", err)
+		}
 		c.mu.Lock()
 		c.modelsFailedAt = c.now()
+		c.modelsAuthFailed = c.modelsAuthFailed || terminal
+		if !terminal {
+			c.modelsAuthFailed = false
+		}
 		c.mu.Unlock()
 		if len(cached) > 0 {
 			return cached, nil
@@ -206,6 +238,7 @@ func (c *Client) Models(ctx context.Context) ([]core.Model, error) {
 	c.pool.MarkSuccess(a)
 	c.mu.Lock()
 	c.models, c.modelsAt = models, c.now()
+	c.modelsAuthFailed = false
 	c.mu.Unlock()
 	return models, nil
 }
@@ -502,6 +535,20 @@ func (c *Client) noteErr(err error) {
 	c.mu.Lock()
 	c.lastErr = err.Error()
 	c.mu.Unlock()
+}
+
+// isTerminalCredentialError reports whether err is an upstream rejection of
+// the credential itself (issue #262): ErrAuth (1001/4010, "re-login
+// required") or ErrSessionDead (401).  Those are states, not failures --
+// dead credentials do not recover by re-fetching the catalogue -- so the
+// model refresh treats them the way #259 treats loomy's NotConfigured: no
+// log line, and the long cooldown before the next attempt.
+func isTerminalCredentialError(err error) bool {
+	var e *Error
+	if !errors.As(err, &e) {
+		return false
+	}
+	return e.Kind == ErrAuth || e.Kind == ErrSessionDead
 }
 
 func (c *Client) lastErrText() string {

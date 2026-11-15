@@ -6,6 +6,59 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.87] - 2026-11-15
+
+### Fixed
+
+- **trae 双号凭据死后模型目录刷新成 30s 级发射器（#262，#259 同族）。**
+  双账号凭据终态死（refresh 400 / session_dead 401）后，chat 流量的模型解析密集
+  触发目录刷新——#214 的 30s 冷却太短，每小时 15-20 条真出网 401 持续 1.5h+。
+  修法两处：
+  1. **终态凭据失败静默**：`Models()` 失败分支检查 `*Error` 的 Kind ∈
+     {ErrAuth, ErrSessionDead}（与 `credentialDead` 同口径）——凭据死是状态不是
+     失败，不写 "model catalogue fetch failed" 日志（同 #259 loomy 的
+     NotConfigured 口径）；
+  2. **冷却分档**：普通失败维持 30s（#214 语义不变，网络抖动仍快速恢复）；
+     终态凭据失败用 `modelsAuthFailCooldown = 30min`（与 #260 renew 退避同节奏），
+     静态列表兜底本来就是设计语义。
+  反向钉：非终态失败仍写日志、走短冷却；一次成功即清 auth 标记恢复短冷却。
+
+### Installer
+
+- `client2api-setup-0.7.87.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `dcc87f91b9595844320fdb93fee1fcffb2a0fe42da08255a14547203429bb3af`
+
+## [0.7.86] - 2026-11-13
+
+### Fixed
+
+- **Qoder 每日签到领取不到（国际版尤其）：活动接口是设备指纹门控的。**
+  操作员在 Qoder 客户端「权益中心」看到当天 100 Credits 可领，点面板的领取却什么也
+  没领到。真因（2026-11-13 实测复现）：`GET /sash/api/v1/me/campaigns` 与 `claim`
+  路由**都**要 `Cosy-MachineToken` + `Cosy-MachineType`（UMID 机器指纹对）。只带
+  `Authorization` 时厂商返回一份精简活动列表——长期活动（含每日 100）全部缺席，只剩
+  一次性试用包；而此时就算拿到 campaignId 去 `claim`，也会被
+  `CAMPAIGN_CLAIM_PRECONDITION_FAILED`（409）拒绝。修法：模块用**厂商自带的**
+  `resources/umid/runtime-info.exe`（随安装分发，参数 `0`=国服、`4`=国际版）取指纹，
+  仅给活动类请求（列表/领取/limited-number）加上这三个头；结果按 (数据目录, realm)
+  缓存 1 小时，不每次画面板都起进程。取不到指纹不阻断请求（照旧发出去、按厂商原答
+  处理，日志留一条 `no device fingerprint`）。实测：同一把 CCW 国际版令牌，加指纹
+  后 4 个活动全部可见，`act-20261109-708`（100 Credits、ALL_MODELS、30 天）领成功，
+  `grantId` 落账。
+
+- **签到误报「今天的奖励已经领取过了」。**
+  `splitCampaigns` 把任何 `CLAIM_BENEFIT` + `CLAIMED` 都算成「今天的每日奖励已领」。
+  厂商的试用包（Sonus Trial Pack 2000、500 Credits 升级券）也是 `CLAIM_BENEFIT`，
+  窗口 7 天、长期 `CLAIMED`，于是每次签到都报「今天已领取」而每日 100 从未领过。
+  修法：只有窗口 ≤ 2 天的 `CLAIMED` 才算今天的每日奖励；无窗口（厂商 stub 条目）按
+  每日处理。反向钉：7 天试用包不计入、只领过试用包时签到落 skip 而不是「今天已领」。
+
+### Installer
+
+- `client2api-setup-0.7.86.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `27bb1c1fbce4882e33c01d23c8f2d3078970d53da879ee8912a86a2e9f943e03`
+
+
 ## [0.7.85] - 2026-11-13
 
 ### Fixed
