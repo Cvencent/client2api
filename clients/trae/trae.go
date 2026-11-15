@@ -176,8 +176,8 @@ func (c *Client) Name() string { return c.name }
 // cadence (issue #260) and keeps /v1/models on the static list, which is
 // exactly what the fallback was designed for.
 const (
-	modelsFailCooldown      = 30 * time.Second
-	modelsAuthFailCooldown  = 30 * time.Minute
+	modelsFailCooldown     = 30 * time.Second
+	modelsAuthFailCooldown = 30 * time.Minute
 )
 
 func (c *Client) Models(ctx context.Context) ([]core.Model, error) {
