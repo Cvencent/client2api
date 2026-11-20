@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"client2api/internal/core"
 	"client2api/internal/modelpark"
@@ -155,6 +156,37 @@ func TestFailureReasonNamesAParkedModel(t *testing.T) {
 		t.Fatalf("failureReason(park refusal) = %q, should not read as local backpressure", got)
 	}
 }
+
+func TestFailureReasonNamesAnAccountCooldown(t *testing.T) {
+	until := time.Date(2026, 11, 19, 11, 59, 30, 0, time.Local)
+	// A module parks a credential and reports it as ErrBusy: the routing rule
+	// for that sentinel is right, but the row must not read as contention --
+	// the operator's only action here is to wait, not to raise a ceiling.
+	got := failureReason(&coolingRefusal{until: until})
+	if !strings.Contains(got, "账号冷却中") {
+		t.Fatalf("failureReason(cooling) = %q, want it to name the account cooldown", got)
+	}
+	if !strings.Contains(got, until.Format(time.RFC3339)) {
+		t.Fatalf("failureReason(cooling) = %q, want it to say when the park lapses", got)
+	}
+	if strings.Contains(got, "本地并发已满") {
+		t.Fatalf("failureReason(cooling) = %q, should not read as local backpressure", got)
+	}
+	// Plain backpressure keeps its own label: an in-flight ceiling is not a park.
+	if got := failureReason(core.ErrBusy); !strings.Contains(got, "本地并发已满") {
+		t.Fatalf("failureReason(ErrBusy) = %q, want the in-flight-ceiling label", got)
+	}
+}
+
+// coolingRefusal stands in for openaicompat's coolingError: an ErrBusy that
+// knows the instant its park lapses.
+type coolingRefusal struct{ until time.Time }
+
+func (e *coolingRefusal) Error() string {
+	return "relay has a key for model \"m\" but it is cooling down"
+}
+func (e *coolingRefusal) Is(target error) bool    { return target == core.ErrBusy }
+func (e *coolingRefusal) CoolingUntil() time.Time { return e.until }
 
 func TestFailureReasonNamesAnExhaustedPlatform(t *testing.T) {
 	got := failureReason(core.ErrPlatformExhausted)

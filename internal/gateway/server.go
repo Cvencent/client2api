@@ -1703,6 +1703,14 @@ func failureReason(err error) string {
 		return "模型已被账号策略关闭：" + core.Redact(err.Error())
 	case IsModelParkRefusal(err):
 		return "模型限流冷却中：" + core.Redact(err.Error())
+	case !core.CoolingUntilOf(err).IsZero():
+		// A module parked a credential for a known window and reports it as
+		// ErrBusy, because that sentinel's routing rule -- skip the platform,
+		// answer 429, do not spend a retry -- is right for a park too.  The
+		// explanation is not: "本地并发已满" describes contention, and it sent an
+		// operator hunting for a ceiling while the only thing wrong was one key
+		// cooling down after an upstream 502.  Name the state and its end.
+		return "账号冷却中（至 " + core.CoolingUntilOf(err).Format(time.RFC3339) + "）：" + core.Redact(err.Error())
 	case errors.Is(err, core.ErrBusy):
 		return "本地并发已满：" + core.Redact(err.Error())
 	case errors.Is(err, core.ErrNotConfigured):
@@ -1727,6 +1735,15 @@ func failureReason(err error) string {
 	}
 	f, ok := core.AsFailure(err)
 	if !ok {
+		// A platform that accepted the connection and then answered nothing is
+		// not a pool problem: the accounts are fine, the vendor (or a prompt too
+		// large to prefill inside the deadline) is the cause, and the operator's
+		// next move is the opposite of "add more accounts".  Name the stall
+		// before the exhausted sentinel joined with it, or the row would read
+		// "the platform has no usable account" with a full pool.
+		if errors.Is(err, core.ErrUpstreamSilent) {
+			return "平台上游超时未响应（与账号池无关）：" + core.Redact(err.Error())
+		}
 		// A module that walked its whole pool without producing a classified
 		// refusal says only "platform exhausted".  Name it in the operator's
 		// language instead of echoing the sentinel's English text.

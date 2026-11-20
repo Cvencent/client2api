@@ -195,6 +195,37 @@ func RetryAfterHintOf(err error) time.Duration {
 	return 0
 }
 
+// CoolingUntil is the optional capability behind CoolingUntilOf: an ErrBusy
+// whose cause is a parked credential with a known window, rather than a request
+// refused by a full in-flight ceiling.
+//
+// Both states are backpressure on the wire and both are matched with
+// errors.Is(err, core.ErrBusy) -- the routing rule "skip this platform, answer
+// 429, do not spend a retry" is correct for each.  What differs is what the
+// operator can do about it, so the explanation layer must be able to tell them
+// apart.  Without this capability every ErrBusy read "本地并发已满", which sent
+// an operator looking for contention on a platform whose only problem was one
+// key parked for ten seconds after an upstream 502.
+type CoolingUntil interface {
+	CoolingUntil() time.Time
+}
+
+// CoolingUntilOf returns the instant err's park lapses, or the zero time when
+// err is not a cooldown.  Zero means "not a park", never "parked forever".
+func CoolingUntilOf(err error) time.Time {
+	for err != nil {
+		if c, ok := err.(CoolingUntil); ok {
+			return c.CoolingUntil()
+		}
+		u, ok := err.(interface{ Unwrap() error })
+		if !ok {
+			return time.Time{}
+		}
+		err = u.Unwrap()
+	}
+	return time.Time{}
+}
+
 // action is what the gateway does with one classified refusal.
 //
 // It answers two independent questions that used to be answered in two places

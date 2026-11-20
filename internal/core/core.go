@@ -56,6 +56,19 @@ var ErrBusy = errors.New("client is at its in-flight limit")
 // the module's to add, because only the module knows how far it walked.
 var ErrPlatformExhausted = errors.New("platform exhausted")
 
+// ErrUpstreamSilent reports that the vendor accepted the connection and then
+// answered nothing within the module's own first-byte deadline.
+//
+// It is joined with ErrPlatformExhausted, because the routing decision is the
+// same: re-entering the module would queue into the same silent upstream, so
+// the request belongs on the next platform.  The *reason* is not the same, and
+// the two point at opposite operator actions.  "The pool is empty" means log in
+// more accounts; "the vendor never answered" means the platform is wedged, or
+// the prompt is so large that prefill outlasted the deadline -- signing in more
+// accounts would change nothing.  The gateway gives this sentinel its own
+// sentence so a stalled upstream never reads as a pool failure.
+var ErrUpstreamSilent = errors.New("upstream answered nothing within the first-byte deadline")
+
 // ---------------------------------------------------------------------------
 // Canonical request types.  These are deliberately vendor-neutral: the gateway
 // translates the OpenAI wire format into them, and each module translates them
