@@ -121,7 +121,7 @@ func (f *fakeSMS) EvalBool(ctx context.Context, expr string) (bool, error) { ret
 func TestASingleRefusalIsRetriedThenSucceeds(t *testing.T) {
 	page := &fakeSMS{failFirst: true}
 	logs := 0
-	err := requestRaccoonSMS(context.Background(), page, func(string, ...any) { logs++ })
+	err := requestRaccoonSMS(context.Background(), page, func(string, ...any) { logs++ }, nil)
 	if err != nil {
 		t.Fatalf("第一次拒绝后没有重试成功：%v（这正是 issue #63 的症状）", err)
 	}
@@ -134,9 +134,11 @@ func TestASingleRefusalIsRetriedThenSucceeds(t *testing.T) {
 }
 
 // TestTwoRefusalsAreReported 钉住上界：连续两次被拒就如实上报，不无限重试。
+// 拒绝文案用非挑战形状（号码被占用）：挑战缺失形状（"图形验证码校验失败"）
+// 走 #266 熔断，第一次就停，不进重试。
 func TestTwoRefusalsAreReported(t *testing.T) {
-	page := &alwaysRefuse{}
-	err := requestRaccoonSMS(context.Background(), page, func(string, ...any) {})
+	page := &alwaysRefuse{text: "手机号已被占用，请更换号码后重试", challengeRendered: true}
+	err := requestRaccoonSMS(context.Background(), page, func(string, ...any) {}, nil)
 	if err == nil {
 		t.Fatal("两次都拒绝却报成功")
 	}
@@ -148,7 +150,32 @@ func TestTwoRefusalsAreReported(t *testing.T) {
 	}
 }
 
-type alwaysRefuse struct{ clicks atomic.Int32 }
+// TestChallengeMissingRefusalTripsTheBreakerOnTheFirstHit 钉住 #266：挑战缺失
+// 形状的拒绝（厂商 400「图形验证码校验失败」且滑块从未渲染）第一次命中就停
+// ——不再原地重试第二次点击，断路器被武装。
+func TestChallengeMissingRefusalTripsTheBreakerOnTheFirstHit(t *testing.T) {
+	page := &alwaysRefuse{text: "图形验证码校验失败，请重新完成滑块验证"}
+	tripped := false
+	err := requestRaccoonSMS(context.Background(), page, func(string, ...any) {}, func() { tripped = true })
+	if err == nil {
+		t.Fatal("挑战缺失拒绝却报成功")
+	}
+	if !strings.Contains(err.Error(), "图形验证码校验失败") {
+		t.Fatalf("错误没有透传 vendor 的原话：%v", err)
+	}
+	if got := page.clicks.Load(); got != 1 {
+		t.Fatalf("点击 %d 次，期望 1 次：挑战缺失形状第一次命中就熔断，不重试（issue #266）", got)
+	}
+	if !tripped {
+		t.Fatal("断路器没有被武装（issue #266）")
+	}
+}
+
+type alwaysRefuse struct {
+	clicks            atomic.Int32
+	text              string
+	challengeRendered bool
+}
 
 func (a *alwaysRefuse) Click(ctx context.Context, sel string) (bool, error) {
 	a.clicks.Add(1)
@@ -161,15 +188,23 @@ func (a *alwaysRefuse) Screenshot(ctx context.Context) ([]byte, error) {
 	return []byte("fake-png"), nil
 }
 func (a *alwaysRefuse) EvalString(ctx context.Context, expr string) (string, error) {
-	return "图形验证码校验失败，请重新完成滑块验证", nil
+	return a.text, nil
 }
 func (a *alwaysRefuse) Fill(ctx context.Context, sel, value string) (bool, error) { return true, nil }
 func (a *alwaysRefuse) Exists(ctx context.Context, sel string) (bool, error)      { return true, nil }
 
 // The effect probe must PASS here: this fake models a click that LANDED and a
 // vendor that refused afterwards -- the refusal path, not the swallowed-click
-// path (issue #229).
-func (a *alwaysRefuse) EvalBool(ctx context.Context, expr string) (bool, error) { return true, nil }
+// path (issue #229).  The popup probe answers challengeRendered: true when the
+// test models a slider that actually appeared (the #63 recoverable), false for
+// the #266 "no challenge ever rendered" shape.
+func (a *alwaysRefuse) EvalBool(ctx context.Context, expr string) (bool, error) {
+	if strings.Contains(expr, "captcha-element") {
+		return a.challengeRendered, nil
+	}
+	// Effect probe PASSES: the click landed (issue #229 refusal path).
+	return true, nil
+}
 
 var _ = errors.New
 var _ = io.Discard

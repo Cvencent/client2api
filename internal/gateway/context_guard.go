@@ -1348,6 +1348,36 @@ func (s *server) prepareCandidateAttempt(ctx context.Context, candidate core.Can
 	}
 	limit := req.ContextWindowLimit
 
+	// An explicit max_tokens that pushes "input + output" past the window is a
+	// refusal this gateway can already compute (issue #265): the vendor judges
+	// the SUM, the budget below still caps the output reserve so a big
+	// max_tokens does not shrink the caller's own input budget (promptOutputCap),
+	// and the result is an in-stream 400 after the first byte has been paid --
+	// once per candidate platform, since the same arithmetic holds everywhere.
+	// Answering before the wire with the vendor's own refusal shape (same kind,
+	// same 400, same code) keeps the caller's compaction contract intact and
+	// costs zero round trips.  An INJECTED max_tokens is exempt: it comes from
+	// this gateway's own catalogue, and the vendor serves such requests fine --
+	// only the caller's own explicit decision can be judged against up front.
+	// The estimator only prices the INPUT half, so the verdict carries a small
+	// margin (2% of the window) instead of a bare inequality: a request whose
+	// overflow fits inside the estimator's slop still goes to the vendor.
+	if maxTokensExplicit && maxOutput > promptOutputCap {
+		if window := s.requestContextWindow(ctx, client, model, limit); window > 0 {
+			estimate := int64(estimateRequestTokens(req))
+			overflow := estimate + int64(maxOutput) - window
+			if overflow > window/50 {
+				if rec != nil {
+					rec.ContextWindow = window
+				}
+				s.opts.Logger.Printf(
+					"context: refusing %s/%s before the wire: input about %d + explicit max_tokens %d = %d, over the %d-token window (issue #265)",
+					client.Name(), model, estimate, maxOutput, estimate+int64(maxOutput), window)
+				return nil, contextWindowRefusal(client, model, window, estimate+int64(maxOutput))
+			}
+		}
+	}
+
 	report, trimmed := s.guardRequestContext(ctx, req, client, model, requestedModel, maxOutput, rec)
 	if report.Impossible {
 		window := s.requestContextWindow(ctx, client, model, limit)

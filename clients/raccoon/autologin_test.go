@@ -30,7 +30,7 @@ type fakeRaccoonDriver struct {
 	driveErr error
 }
 
-func (d *fakeRaccoonDriver) Drive(ctx context.Context, url, phone string, waitCode func(context.Context) (string, error), logf func(string, ...any)) error {
+func (d *fakeRaccoonDriver) Drive(ctx context.Context, url, phone string, waitCode func(context.Context) (string, error), logf func(string, ...any), tripped func()) error {
 	d.mu.Lock()
 	d.url = url
 	d.phone = phone
@@ -351,7 +351,7 @@ func TestRaccoonRequestSMSTurnsTheStatusLineIntoTheVerdict(t *testing.T) {
 	var logs []string
 	if err := requestRaccoonSMS(context.Background(), page, func(format string, args ...any) {
 		logs = append(logs, fmt.Sprintf(format, args...))
-	}); err != nil {
+	}, nil); err != nil {
 		t.Fatalf("requestRaccoonSMS: %v", err)
 	}
 	if page.fillCalls[raccoonSelPhone] != "" {
@@ -366,9 +366,13 @@ func TestRaccoonRequestSMSPassesThroughAVendorRefusal(t *testing.T) {
 	shrinkRaccoonTimings(t)
 	page := newFakeRaccoonPage()
 	page.status = "图形验证码校验失败，请重新完成滑块验证"
-	err := requestRaccoonSMS(context.Background(), page, func(string, ...any) {})
+	tripped := false
+	err := requestRaccoonSMS(context.Background(), page, func(string, ...any) {}, func() { tripped = true })
 	if err == nil {
 		t.Fatal("the send reported success though the vendor refused")
+	}
+	if !tripped {
+		t.Fatal("the challenge-missing refusal must arm the day breaker (issue #266)")
 	}
 	if !strings.Contains(err.Error(), "图形验证码校验失败") {
 		t.Fatalf("err = %v, want the vendor's own wording carried through", err)

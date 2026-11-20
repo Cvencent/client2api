@@ -97,6 +97,15 @@ type Client struct {
 	autoJobs map[string]*raccoonAutoJob
 	// autoDriver is injectable so tests never launch a real browser.
 	autoDriver raccoonAutoDriver
+
+	// challengeMu guards the challenge-missing breaker below.  The breaker is
+	// the #266 stop for the 2026-11-20 burn: the vendor answered every send
+	// with "图形验证码校验失败" while no challenge ever rendered, five rented
+	// numbers in a row.  When that shape appears, automatic runs stop until
+	// the day rolls over -- the vendor's answer is deterministic, so retrying
+	// inside the day only burns more numbers.
+	challengeMu       sync.Mutex
+	challengeBlockDay string
 }
 
 // New builds the module. A malformed config is logged and replaced with

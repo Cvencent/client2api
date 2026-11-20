@@ -96,7 +96,9 @@ type raccoonAutoPage interface {
 
 // raccoonAutoDriver is the browser half of one auto-login.
 type raccoonAutoDriver interface {
-	Drive(ctx context.Context, url, phone string, waitCode func(context.Context) (string, error), logf func(string, ...any)) error
+	// tripped is the challenge-missing breaker arm (issue #266): non-nil when
+	// the run may arm it, nil in contexts that only read.
+	Drive(ctx context.Context, url, phone string, waitCode func(context.Context) (string, error), logf func(string, ...any), tripped func()) error
 }
 
 // raccoonAutoJob is one in-flight auto-login.  Every field is read under mu
@@ -256,6 +258,16 @@ func (c *Client) StartAutoLogin(ctx context.Context, req core.AutoLoginRequest) 
 	}
 	if c.deps.DataDir == "" {
 		return core.AutoLoginJob{}, errors.New("raccoon: no data directory: a credential could not be stored")
+	}
+	// The challenge-missing breaker (issue #266): once the vendor has answered
+	// a send with the captcha refusal while no challenge rendered, every later
+	// automatic run in the same day faces the same deterministic verdict.
+	// Refusing here -- before AcquirePhone rents anything -- is what turns the
+	// 2026-11-20 five-number burn into a single-number stop.  The panel's own
+	// batch loop may keep re-asking; each ask now fails in milliseconds
+	// without a number or a browser.
+	if c.trippedChallengeBreaker() {
+		return core.AutoLoginJob{}, errors.New("raccoon: 当日自动登录已熔断：厂商对挑战缺失形状的发送已给出确定性拒绝（图形验证码校验失败且挑战从未渲染），今日不再烧号重试；明日自动恢复，或人工在面板登录页手动验证")
 	}
 	if c.autoDriver == nil && browser.FindBrowser("") == "" {
 		return core.AutoLoginJob{}, errors.New("raccoon: no Chromium-family browser found; install Microsoft Edge or Google Chrome")
@@ -433,7 +445,7 @@ func (c *Client) autoLogin(ctx context.Context, job *raccoonAutoJob, req core.Au
 	if err := driver.Drive(ctx, job.url, num.Phone, func(waitCtx context.Context) (string, error) {
 		job.setStep("sms")
 		return c.waitAutoSMSCode(waitCtx, job, opts, num.Phone)
-	}, job.logf); err != nil {
+	}, job.logf, c.tripChallengeBreaker); err != nil {
 		return fmt.Errorf("浏览器登录失败：%w", err)
 	}
 
@@ -528,7 +540,7 @@ func raccoonLoginProfileRoot(dataDir string) string {
 	return filepath.Join(dataDir, raccoonBrowserProfileName)
 }
 
-func (d raccoonBrowserDriver) Drive(ctx context.Context, url, phone string, waitCode func(context.Context) (string, error), logf func(string, ...any)) error {
+func (d raccoonBrowserDriver) Drive(ctx context.Context, url, phone string, waitCode func(context.Context) (string, error), logf func(string, ...any), tripped func()) error {
 	if strings.TrimSpace(url) == "" {
 		return errors.New("the login page URL is empty")
 	}
@@ -601,7 +613,7 @@ func (d raccoonBrowserDriver) Drive(ctx context.Context, url, phone string, wait
 	}
 	logf("已填写手机号")
 
-	if err := requestRaccoonSMS(ctx, page, logf); err != nil {
+	if err := requestRaccoonSMS(ctx, page, logf, tripped); err != nil {
 		return err
 	}
 
@@ -628,11 +640,44 @@ func (d raccoonBrowserDriver) Drive(ctx context.Context, url, phone string, wait
 	return waitRaccoonLoginOutcome(ctx, page, logf)
 }
 
+// challengeRefusalMarker is the vendor's wording for "the captcha token you
+// carried was rejected".  In the #266 shape the challenge never rendered, the
+// token was minted anyway by the armed widget, and the vendor answered this
+// exact sentence on every send -- a deterministic verdict, not a transient.
+const challengeRefusalMarker = "图形验证码校验失败"
+
+// trippedChallengeBreaker reports whether automatic logins are stopped for the
+// rest of the local day, and what day the trip belongs to (so a job that
+// straddles midnight sees the block lift).
+func (c *Client) trippedChallengeBreaker() bool {
+	if c == nil {
+		return false
+	}
+	c.challengeMu.Lock()
+	defer c.challengeMu.Unlock()
+	return c.challengeBlockDay == c.now().Format("2006-01-02")
+}
+
+// tripChallengeBreaker arms the stop for the rest of the local day (issue
+// #266).  The first challenge-missing refusal is the evidence; a second click
+// in the same environment is not a retry, it is another rented number for the
+// same deterministic answer.
+func (c *Client) tripChallengeBreaker() {
+	if c == nil {
+		return
+	}
+	c.challengeMu.Lock()
+	defer c.challengeMu.Unlock()
+	c.challengeBlockDay = c.now().Format("2006-01-02")
+}
+
 // requestRaccoonSMS clicks 获取验证码 and does not return until the page's
 // status line confirms the send went through.  The Aliyun traceless captcha
 // handshake runs inside that click, so a bare click returning true means
-// nothing — the status line is the only honest signal.
-func requestRaccoonSMS(ctx context.Context, page raccoonAutoPage, logf func(string, ...any)) error {
+// nothing — the status line is the only honest signal.  tripped is the run's
+// breaker arm (issue #266): the first challenge-missing refusal calls it, and
+// StartAutoLogin refuses every later run until the day rolls over.
+func requestRaccoonSMS(ctx context.Context, page raccoonAutoPage, logf func(string, ...any), tripped func()) error {
 	logf("正在请求发送验证码（页面内无痕验证）…")
 	// One retry, in place (issue #63).  A refusal naming the challenge
 	// ("图形验证码校验失败，请重新完成滑块验证") is recoverable: the widget re-arms and
@@ -640,6 +685,12 @@ func requestRaccoonSMS(ctx context.Context, page raccoonAutoPage, logf func(stri
 	// the run and released the rented number, which turned a stale challenge
 	// into a lost attempt.  A second refusal is reported as-is -- clicking again
 	// at a vendor that keeps saying no only burns more numbers.
+	//
+	// #266 splits that rule: the marker sentence arriving WITHOUT a challenge
+	// ever having rendered is the deterministic "this environment is not being
+	// offered the challenge" verdict, not a stale widget.  The first one trips
+	// the day breaker and comes straight back -- the in-place retry would only
+	// click again into the same answer.
 	const attempts = 2
 	var lastErr error
 	for attempt := 1; attempt <= attempts; attempt++ {
@@ -653,6 +704,18 @@ func requestRaccoonSMS(ctx context.Context, page raccoonAutoPage, logf func(stri
 		lastErr = clickAndWaitRaccoonSend(ctx, page, logf)
 		if lastErr == nil {
 			return nil
+		}
+		// The challenge-missing verdict (issue #266): the vendor refused the
+		// send's captcha token and no challenge UI ever rendered.  The FIRST
+		// one arms the day breaker and comes straight back -- the in-place
+		// retry would only click again into the same deterministic answer.
+		var missing challengeMissingError
+		if errors.As(lastErr, &missing) {
+			logf("厂商拒绝发送且挑战从未渲染（%v）：当日自动登录已熔断，不再点击或换号重试（issue #266）", lastErr)
+			if tripped != nil {
+				tripped()
+			}
+			return lastErr
 		}
 		if attempt < attempts {
 			// Give the widget time to re-arm before the retry (issue #141): a
@@ -722,7 +785,11 @@ func clickAndWaitRaccoonSend(ctx context.Context, page raccoonAutoPage, logf fun
 	// page can report.  "验证码已发送" is the success; anything with an error
 	// tone is the vendor's refusal, passed through verbatim.
 	deadline := time.Now().Add(raccoonSendWait)
+	sawChallenge := false
 	for {
+		if !sawChallenge {
+			sawChallenge, _ = page.EvalBool(ctx, raccoonPopupExpr)
+		}
 		text, err := page.EvalString(ctx, raccoonStatusTextExpr)
 		if err == nil {
 			if strings.Contains(text, "验证码已发送") {
@@ -730,7 +797,17 @@ func clickAndWaitRaccoonSend(ctx context.Context, page raccoonAutoPage, logf fun
 				return nil
 			}
 			if strings.TrimSpace(text) != "" && !strings.Contains(text, "发送中") {
-				return fmt.Errorf("发送验证码失败：%s", strings.TrimSpace(text))
+				refusal := fmt.Errorf("发送验证码失败：%s", strings.TrimSpace(text))
+				// The challenge-missing shape (issue #266): the vendor's
+				// captcha refusal is only the deterministic "no challenge is
+				// being offered here" verdict when NO challenge UI ever
+				// rendered during this attempt.  The same sentence also ends
+				// a rendered-and-expired slider (the #63 recoverable), and
+				// that one keeps its in-place retry -- the widget re-arms.
+				if strings.Contains(refusal.Error(), challengeRefusalMarker) && !sawChallenge {
+					return challengeMissingError{refusal}
+				}
+				return refusal
 			}
 		}
 		if time.Now().After(deadline) {
@@ -743,6 +820,15 @@ func clickAndWaitRaccoonSend(ctx context.Context, page raccoonAutoPage, logf fun
 		}
 	}
 }
+
+// challengeMissingError marks the #266 verdict: the vendor refused the send's
+// captcha token and no challenge UI ever rendered for this attempt.  The
+// caller arms the day breaker instead of retrying -- the answer is
+// deterministic, so a second click buys another burned number, not a token.
+type challengeMissingError struct{ err error }
+
+func (e challengeMissingError) Error() string { return e.err.Error() }
+func (e challengeMissingError) Unwrap() error { return e.err }
 
 // raccoonEffectExpr reports an accepted click: the page flips sendBtn.disabled
 // or writes status text on every accepted click, however the click arrived
@@ -797,13 +883,21 @@ func waitForRaccoonCaptchaPopup(ctx context.Context, page raccoonAutoPage) bool 
 var raccoonManualTakeover = 60 * time.Second
 
 // waitForRaccoonManualSend watches the status line (and button state) for the
-// duration of the takeover window: the operator's own click, if it lands,
-// drives the page into 发送中…/验证码已发送 exactly like an automated one
-// would have.  A cancellation ends the wait immediately.
+// duration of the takeover window: the operator's own click, if it lands and
+// the vendor ACCEPTS it, drives the page into 发送中…→验证码已发送 exactly like
+// an automated one would have.  A cancellation ends the wait immediately.
+//
+// The verdict has to be the SUCCESS wording, not just "the status moved"
+// (issue #266): the vendor's own refusal also writes status text -- the
+// 2026-11-20 burn shows the run reading 图形验证码校验失败 off the line and
+// announcing 人工点击已生效（验证码已发送）, then waiting out the SMS window for
+// a message the vendor had already refused to send.  Reading the refusal as a
+// success cost the rest of the takeover window on every attempt.
 func waitForRaccoonManualSend(ctx context.Context, page raccoonAutoPage, logf func(string, ...any)) bool {
 	deadline := time.Now().Add(raccoonManualTakeover)
 	for {
-		if ok, err := page.EvalBool(ctx, raccoonEffectExpr); err == nil && ok {
+		text, err := page.EvalString(ctx, raccoonStatusTextExpr)
+		if err == nil && strings.Contains(text, "验证码已发送") {
 			return true
 		}
 		if time.Now().After(deadline) {

@@ -29,7 +29,7 @@ func TestAArmedGateBlocksTheClickUntilThePageSignals(t *testing.T) {
 	page.exists[raccoonSelSmsTab] = true
 	done := make(chan error, 1)
 	go func() {
-		done <- requestRaccoonSMS(context.Background(), page, func(string, ...any) {})
+		done <- requestRaccoonSMS(context.Background(), page, func(string, ...any) {}, nil)
 	}()
 	time.Sleep(80 * time.Millisecond)
 	if n := len(page.clicks); n != 0 {
