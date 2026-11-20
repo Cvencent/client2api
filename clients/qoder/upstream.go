@@ -35,6 +35,14 @@ type upstream struct {
 	cfg  config
 	http *http.Client
 	logf func(format string, args ...any)
+
+	// machine mints the device fingerprint the campaign routes are gated on.
+	// Nil means "no fingerprint available": requests are then sent exactly as
+	// before, which is the degraded shape the vendor answers with a stub
+	// campaign list.  New wires it; a hand-built Client in a test leaves it nil.
+	machine func(ctx context.Context, realm string) (machineIdentity, error)
+	// machineID is the device's own stable uuid (Cosy-MachineId).
+	machineID func() string
 }
 
 func newUpstream(cfg config, shared *http.Client, logf func(format string, args ...any)) *upstream {
@@ -43,6 +51,9 @@ func newUpstream(cfg config, shared *http.Client, logf func(format string, args 
 	}
 	return &upstream{cfg: cfg, http: shared, logf: logf}
 }
+
+// machineOS is the Cosy-MachineOS value the desktop client sends.
+const machineOS = "x86_64_win32"
 
 func (u *upstream) log(format string, args ...any) {
 	if u.logf != nil {
@@ -53,6 +64,27 @@ func (u *upstream) log(format string, args ...any) {
 // do performs one JSON request against the OpenAPI host of one realm.  Both
 // realms expose the same paths, so the realm only decides the host.
 func (u *upstream) do(ctx context.Context, realm, method, path string, params url.Values, token string, body []byte) ([]byte, error) {
+	return u.doWith(ctx, realm, method, path, params, token, body, nil)
+}
+
+// doGated is do plus the device fingerprint.  Only the campaign routes need it:
+// the vendor gates their real content -- the daily claim included -- on the
+// UMID pair, and answers without it with a stub list.  Asking for the identity
+// is best-effort, so a host with no install still reaches the vendor and gets the
+// same answer it always did rather than a local construction failure.
+func (u *upstream) doGated(ctx context.Context, realm, method, path string, params url.Values, token string, body []byte) ([]byte, error) {
+	var id *machineIdentity
+	if u.machine != nil {
+		if got, err := u.machine(ctx, realm); err == nil && got.present() {
+			id = &got
+		} else if err != nil && u.logf != nil {
+			u.logf("qoder: no device fingerprint for %s: %v", realm, err)
+		}
+	}
+	return u.doWith(ctx, realm, method, path, params, token, body, id)
+}
+
+func (u *upstream) doWith(ctx context.Context, realm, method, path string, params url.Values, token string, body []byte, id *machineIdentity) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, u.cfg.requestTimeout())
 	defer cancel()
 
@@ -69,7 +101,7 @@ func (u *upstream) do(ctx context.Context, realm, method, path string, params ur
 	if err != nil {
 		return nil, fmt.Errorf("qoder: %s %s: %w", method, path, err)
 	}
-	u.decorate(req, token)
+	u.decorate(req, token, id)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -97,11 +129,29 @@ func (u *upstream) do(ctx context.Context, realm, method, path string, params ur
 // decorate installs the headers every Qoder OpenAPI call carries.  The
 // Cosy-* headers are the desktop client's own client-identity headers: the
 // endpoints answer a request without them with a 4xx rather than data.
-func (u *upstream) decorate(req *http.Request, token string) {
+//
+// id, when non-nil, adds the UMID fingerprint.  The vendor's own middleware only
+// sends Cosy-MachineId on a request that marks the identity as required, and the
+// campaign list is the one route in this module that does, so it is passed
+// explicitly rather than unconditionally.
+func (u *upstream) decorate(req *http.Request, token string, id *machineIdentity) {
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", u.cfg.userAgent())
 	req.Header.Set("Cosy-ClientType", strconv.Itoa(u.cfg.clientType()))
 	req.Header.Set("Cosy-Version", u.cfg.cosyVersion())
+	if id != nil {
+		req.Header.Set("Cosy-MachineOS", machineOS)
+		req.Header.Set("Cosy-MachineToken", id.Token)
+		req.Header.Set("Cosy-MachineType", id.Type)
+		if id.Code != "" {
+			req.Header.Set("Cosy-MachineCode", id.Code)
+		}
+		if u.machineID != nil {
+			if mid := strings.TrimSpace(u.machineID()); mid != "" {
+				req.Header.Set("Cosy-MachineId", mid)
+			}
+		}
+	}
 	if strings.TrimSpace(token) != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
@@ -218,8 +268,11 @@ func (u *upstream) campaigns(ctx context.Context, token string) (*campaignsRespo
 }
 
 // campaignsFor lists the running activities on one realm's OpenAPI host.
+//
+// This is the gated variant: without the device fingerprint the vendor returns a
+// stub list that omits every long-running campaign, including the daily claim.
 func (u *upstream) campaignsFor(ctx context.Context, realm, token string) (*campaignsResponse, error) {
-	payload, err := u.do(ctx, realm, http.MethodGet, pathCampaigns, nil, token, nil)
+	payload, err := u.doGated(ctx, realm, http.MethodGet, pathCampaigns, nil, token, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -238,10 +291,12 @@ func (u *upstream) claimCampaign(ctx context.Context, token, campaignID string) 
 	return u.claimCampaignFor(ctx, realmCN, token, campaignID)
 }
 
-// claimCampaignFor performs one claim on one realm's OpenAPI host.
+// claimCampaignFor performs one claim on one realm's OpenAPI host.  The claim is
+// gated the same way the list is: without the fingerprint the vendor answers
+// CAMPAIGN_CLAIM_PRECONDITION_FAILED (409) even for a campaign it just showed.
 func (u *upstream) claimCampaignFor(ctx context.Context, realm, token, campaignID string) (string, error) {
 	path := pathCampaigns + "/" + url.PathEscape(campaignID) + "/claim"
-	payload, err := u.do(ctx, realm, http.MethodPost, path, nil, token, nil)
+	payload, err := u.doGated(ctx, realm, http.MethodPost, path, nil, token, nil)
 	if err != nil {
 		return "", err
 	}
@@ -289,7 +344,7 @@ func (u *upstream) limitedNumber(ctx context.Context, token, campaignKey string)
 
 func (u *upstream) limitedNumberFor(ctx context.Context, realm, token, campaignKey string) (*limitedNumber, error) {
 	path := fmt.Sprintf(pathCampaignLimitedNumber, url.PathEscape(campaignKey))
-	payload, err := u.do(ctx, realm, http.MethodGet, path, nil, token, nil)
+	payload, err := u.doGated(ctx, realm, http.MethodGet, path, nil, token, nil)
 	if err != nil {
 		return nil, err
 	}

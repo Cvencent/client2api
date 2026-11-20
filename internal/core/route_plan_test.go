@@ -408,3 +408,91 @@ func TestResolveStaticCatalogHardPinBeatsGroupMembership(t *testing.T) {
 		t.Fatalf("group steps = %d, want 2", len(grouped.Steps))
 	}
 }
+
+// A platform can contribute more than one candidate to a group chain, and the
+// preview must show every one of them.  This is the RZOL case: the operator
+// listed the platform's `-1017` id as an explicit member, while the group's
+// leading Auto member expands to the same platform's bare id.  The runtime
+// keeps both (its dedupe key is client+model, not client), so a preview that
+// showed only one row would hide a candidate the router really tries -- and
+// would make the operator's own explicit member appear to have been dropped.
+func TestResolveStaticCatalogKeepsEveryCandidateFromOnePlatform(t *testing.T) {
+	r := registryWith(t,
+		&countingClient{name: "rzol", models: []Model{
+			{ID: "Deepseek-v4.1-flash"},
+			{ID: "Deepseek-v4.1-flash-1017"},
+		}},
+		&countingClient{name: "officeace", models: []Model{{ID: "deepseek-v4.1-flash"}}},
+	)
+	r.SetPlatformConfigs(map[string]PlatformConfig{
+		"rzol":      {Priority: -100, ModelPriorities: map[string]int{"Deepseek-v4.1-flash": -18}},
+		"officeace": {Priority: 3, ModelPriorities: map[string]int{"deepseek-v4.1-flash": -16}},
+	})
+	r.SetModelGroups(map[string]ModelGroup{
+		"deepseek-v4.1-flash": {
+			Members: []ModelGroupMember{
+				{Client: "Auto", Model: "deepseek-v4.1-flash"},
+				{Client: "officeace", Model: "deepseek-v4.1-flash"},
+				{Client: "rzol", Model: "Deepseek-v4.1-flash-1017"},
+			},
+		},
+	})
+
+	steps, _ := planPlatforms(t, r, "deepseek-v4.1-flash")
+
+	var rzol []RoutePlanStep
+	for _, s := range steps {
+		if s.Platform == "rzol" {
+			rzol = append(rzol, s)
+		}
+	}
+	if len(rzol) != 2 {
+		t.Fatalf("rzol steps = %+v, want both models (the explicit -1017 member and the Auto-expanded bare id)", rzol)
+	}
+	got := map[string]bool{}
+	for _, s := range rzol {
+		got[s.ModelID] = true
+	}
+	if !got["Deepseek-v4.1-flash"] || !got["Deepseek-v4.1-flash-1017"] {
+		t.Fatalf("rzol models = %v, want the bare id and -1017", got)
+	}
+	// The -1017 member has no per-model override, so it carries the platform's
+	// own priority; the bare id has one, so it shows the more specific number.
+	for _, s := range rzol {
+		switch s.ModelID {
+		case "Deepseek-v4.1-flash":
+			if s.Priority != -18 || s.Source != RoutePlanSourceModel {
+				t.Errorf("bare id step = %+v, want the -18 model override", s)
+			}
+		case "Deepseek-v4.1-flash-1017":
+			if s.Priority != -100 || s.Source != RoutePlanSourceBase {
+				t.Errorf("-1017 step = %+v, want the platform's own -100", s)
+			}
+		}
+	}
+	// Positions stay 1-based and contiguous across both rows of one platform.
+	for i, s := range steps {
+		if s.Position != i+1 {
+			t.Errorf("step %d position = %d, want %d", i, s.Position, i+1)
+		}
+	}
+}
+
+// An Auto/ request expands a platform's namespace-equivalent ids the same way
+// the runtime does: when the bare id is absent but several realm-prefixed ids
+// canonicalize to it, every one is a candidate and the preview must show them
+// all instead of collapsing the platform to its first match.
+func TestResolveStaticCatalogAutoExpandsEquivalentSiblings(t *testing.T) {
+	r := registryWith(t, &countingClient{name: "cline", models: []Model{
+		{ID: "cline-free/deepseek-v4.1-flash"},
+		{ID: "deepseek/deepseek-v4.1-flash"},
+	}})
+
+	steps, _ := planPlatforms(t, r, "Auto/deepseek-v4.1-flash")
+	if len(steps) != 2 {
+		t.Fatalf("steps = %+v, want both equivalent ids on one platform", steps)
+	}
+	if steps[0].Platform != "cline" || steps[1].Platform != "cline" {
+		t.Fatalf("chain = %v, want two cline rows", steps)
+	}
+}

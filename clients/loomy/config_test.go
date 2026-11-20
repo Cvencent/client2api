@@ -96,6 +96,40 @@ func TestDurationFieldAcceptsStringsAndSeconds(t *testing.T) {
 	}
 }
 
+// The header deadline has to grow with the prompt it is waiting on: the vendor
+// cannot emit a response header before it has prefilled the request, and a
+// 613k-token conversation needs minutes of it.  The configured value stays the
+// floor, and the cap keeps a header wait from eating the stream's budget.
+func TestFirstByteTimeoutWidensWithThePrompt(t *testing.T) {
+	cfg := config{FirstByteTimeout: "60s"}
+	floor := cfg.firstByteTimeout()
+	if floor != time.Minute {
+		t.Fatalf("floor = %s, want the configured 1m", floor)
+	}
+	// Nothing to prefill, and a small prompt, both stay on the floor.
+	for _, bytes := range []int{0, -1, 2_000} {
+		if got := cfg.firstByteTimeoutFor(bytes); got != floor {
+			t.Errorf("firstByteTimeoutFor(%d) = %s, want the floor %s", bytes, got, floor)
+		}
+	}
+	// ~2.1 MB of JSON is around 618k tokens, i.e. 205 s of prefill at the 3k/s
+	// budget: the gate must cover it.
+	if got, want := cfg.firstByteTimeoutFor(2_100_000), floor+205*time.Second; got != want {
+		t.Errorf("firstByteTimeoutFor(2.1MB) = %s, want %s", got, want)
+	}
+	// The cap is half of chat_timeout (10m by default), so a monstrous body
+	// still leaves the rest of the stream its budget.
+	if got, want := cfg.firstByteTimeoutFor(30_000_000), defaultChatTimeout/2; got != want {
+		t.Errorf("firstByteTimeoutFor(30MB) = %s, want the %s cap", got, want)
+	}
+	// A configured floor above the cap is never lowered by it: the operator
+	// asked for patience, and the cap is only a default.
+	patient := config{FirstByteTimeout: "4m", ChatTimeout: "2m"}
+	if got := patient.firstByteTimeoutFor(30_000_000); got != 4*time.Minute {
+		t.Errorf("firstByteTimeoutFor with a 4m floor = %s, want the 4m floor kept", got)
+	}
+}
+
 func TestConfigDefaults(t *testing.T) {
 	var cfg config
 	cases := []struct {

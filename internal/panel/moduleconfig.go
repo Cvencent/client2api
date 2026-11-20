@@ -187,6 +187,7 @@ var moduleOptions = map[string][]moduleOption{
 	},
 	"loomy": {
 		{Key: "chat_timeout", Label: "对话超时", Kind: optText, Help: "一次对话请求的硬上限（含排队与整条流）。默认 10m；慢推理模型的长回答常跑 4~5 分钟，嫌砍得太早可以调到 15m。支持 Go duration 写法（90s、10m），留空用内置默认。"},
+		{Key: "first_byte_timeout", Label: "首字节超时", Kind: optText, Help: "等上游返回响应头的上限，默认 60s。这是小请求的地板：prompt 越大，模块会按体积自动放宽（最多放到对话超时的一半），所以几十万 token 的长会话不会被误判成卡死。支持 Go duration 写法（90s、4m），留空用内置默认。"},
 		{Key: "tls_profile", Label: "TLS 指纹", Kind: optChoice, Help: tlsProfileHelp, Choices: tlsProfileChoices},
 		{Key: "tls_protocol", Label: "HTTP 版本", Kind: optChoice, Help: tlsProtocolHelp, Choices: tlsProtocolChoices},
 		{Key: "sms_token", Label: "接码平台 Token", Kind: optText, Help: "用于自动接收短信验证码。留空表示不启用接码。"},

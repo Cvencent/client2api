@@ -80,10 +80,18 @@ const (
 	// The live vendor answers within a few seconds (measured 2-3 s for every
 	// chat model), but a cold queue or a busy model takes longer than that,
 	// and a deadline that fires early spends a real answer on a platform
-	// failover.  60 s keeps that margin: a stall still gets one same-account
-	// retry, and only after the second one does the module declare the
-	// platform wedged and hand the request to the next platform.
+	// failover.  60 s keeps that margin: a small request that stalls still gets
+	// one same-account retry, and only after the second one does the module
+	// declare the platform wedged and hand the request to the next platform.
+	// Large prompts get a wider deadline from firstByteTimeoutFor, and a
+	// widened deadline is not retried -- see the stall branch in Chat.
 	defaultFirstByteTimeout = 60 * time.Second
+	// firstBytePrefillTokensPerSecond is how much prompt one second of the
+	// vendor's prefill is assumed to cover when a request widens the header
+	// deadline.  Derived from the observed answer, not from a spec: a 613k-token
+	// conversation got its first header byte from a sibling platform after
+	// 170 s, i.e. roughly 3.6k tokens/s, so 3k is the conservative side.
+	firstBytePrefillTokensPerSecond = 3000
 	// defaultModelsTTL is how long a fetched catalogue is trusted before a
 	// background refresh is kicked off.
 	defaultModelsTTL = 30 * time.Minute
@@ -244,6 +252,38 @@ func (c config) cooldown() time.Duration {
 }
 func (c config) authCooldown() time.Duration {
 	return durationOr(string(c.AuthCooldown), defaultAuthCooldown)
+}
+
+// firstByteTimeoutFor is the header deadline for one request, widened by the
+// prompt that request has to prefill.
+//
+// firstByteTimeout() describes a small request: the vendor answers in 2-3 s,
+// so 60 s already covers a cold queue.  It says nothing about a conversation
+// carrying hundreds of thousands of tokens, which has minutes of prefill to do
+// before the first response header can exist.  A fixed deadline fires on
+// requests that were about to answer: on 2026-11-20 a 613k-token prompt stalled
+// loomy at 60 s while the same conversation was served by another platform
+// after 170 s of first-byte wait.
+//
+// So the configured value stays the floor and prefill is added on top, capped
+// at half of chat_timeout so a header wait can never eat the whole stream
+// budget.  promptBytes is the JSON body about to be sent; the gateway's own 3.4
+// characters per token is close enough for a deadline -- an estimate that is
+// off by 2x costs patience, not correctness.
+func (c config) firstByteTimeoutFor(promptBytes int) time.Duration {
+	base := c.firstByteTimeout()
+	if promptBytes <= 0 {
+		return base
+	}
+	tokens := promptBytes * 10 / 34
+	gate := base + time.Duration(tokens/firstBytePrefillTokensPerSecond)*time.Second
+	if limit := c.chatTimeout() / 2; gate > limit {
+		gate = limit
+	}
+	if gate < base {
+		return base
+	}
+	return gate
 }
 
 func (c config) maxAttempts() int {

@@ -45,6 +45,26 @@ func TestModuleOptionsAreWellFormed(t *testing.T) {
 	}
 }
 
+// TestLoomyExposesTheFirstByteDeadline pins the control the 2026-11-20 stall
+// needed: the key exists in loomy's config struct, but without a row here an
+// operator could only reach it through the raw JSON box, and a save of the
+// options form would never show that it is set at all.
+func TestLoomyExposesTheFirstByteDeadline(t *testing.T) {
+	for _, o := range moduleOptions["loomy"] {
+		if o.Key != "first_byte_timeout" {
+			continue
+		}
+		if o.Kind != optText {
+			t.Fatalf("loomy first_byte_timeout kind = %q, want a text field (duration string)", o.Kind)
+		}
+		if strings.TrimSpace(o.Label) == "" || strings.TrimSpace(o.Help) == "" {
+			t.Fatalf("loomy first_byte_timeout = %+v, want a label and help text", o)
+		}
+		return
+	}
+	t.Fatal("moduleOptions[loomy] has no first_byte_timeout control")
+}
+
 // TestModuleOptionKeysExistInModuleSource is the typo guard.  The authority on
 // what a module reads is the module's own struct tags, so every key the panel
 // claims to describe has to appear as a json tag somewhere in that module's

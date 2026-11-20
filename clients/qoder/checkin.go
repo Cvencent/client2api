@@ -41,6 +41,13 @@ func (c *Client) CheckinActions(ctx context.Context) []core.CheckinAction {
 	}}
 }
 
+// dailyWindowMax is the longest campaign window still treated as a daily claim.
+// The vendor's daily reward is republished every day with a window just under a
+// day; the one-off trial packs ("Sonus Trial Pack", the 500-credit upgrade
+// coupon) run for a week.  Two days leaves room for clock skew without letting a
+// multi-day pack through.
+const dailyWindowMax = 48 * time.Hour
+
 // Checkin performs the daily claim.  An upstream refusal is a result with OK
 // false; only an unknown account is a Go error.
 func (c *Client) Checkin(ctx context.Context, id, action string) (core.CheckinResult, error) {
@@ -158,8 +165,15 @@ func (c *Client) Checkin(ctx context.Context, id, action string) (core.CheckinRe
 }
 
 // splitCampaigns separates the campaigns this module may claim from the count
-// of launch activities it has already collected.  A campaign of another action
-// type (the vendor also publishes VIEW_DETAILS campaigns) is never claimed.
+// of daily rewards it has already collected.  A campaign of another action type
+// (the vendor also publishes VIEW_DETAILS campaigns) is never claimed.
+//
+// The "already claimed" count deliberately covers only the daily window.  A
+// one-off trial pack is also a CLAIM_BENEFIT campaign and stays CLAIMED for the
+// whole week it runs; counting it made every check-in report "今天的奖励已经领取
+// 过了" while the real daily reward had never been touched, which is exactly the
+// misreport the operator hit (2026-11-13).  Anything longer than dailyWindowMax is
+// therefore not evidence about today.
 func splitCampaigns(list *campaignsResponse) ([]campaign, int) {
 	if list == nil {
 		return nil, 0
@@ -174,8 +188,22 @@ func splitCampaigns(list *campaignsResponse) ([]campaign, int) {
 		case campaignStatusClaim:
 			claimable = append(claimable, cmp)
 		case campaignStatusClaimed:
+			if !isDailyCampaign(cmp) {
+				continue
+			}
 			claimed++
 		}
 	}
 	return claimable, claimed
+}
+
+// isDailyCampaign reports whether a campaign's window is short enough to be the
+// daily reward rather than a multi-day pack.  A campaign with no window at all is
+// treated as daily: the vendor's stub entries omit the dates, and refusing them
+// would turn a real "you already collected it" into silence.
+func isDailyCampaign(cmp campaign) bool {
+	if cmp.StartAt <= 0 || cmp.EndAt <= 0 {
+		return true
+	}
+	return cmp.EndAt-cmp.StartAt <= int64(dailyWindowMax/time.Second)
 }

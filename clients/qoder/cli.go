@@ -74,6 +74,8 @@ func cliModel(model string) bool {
 
 // cliInstall is one usable Qoder CN installation.
 type cliInstall struct {
+	// Root is the install directory the exe and worker live under.
+	Root string
 	// Exe is the Electron binary.  With ELECTRON_RUN_AS_NODE=1 it acts as a
 	// Node interpreter, so no separate Node install is required.
 	Exe string
@@ -169,7 +171,7 @@ func probeInstall(root string) (cliInstall, bool) {
 	if !fileExists(worker) {
 		return cliInstall{}, false
 	}
-	return cliInstall{Exe: exe, Worker: worker, Version: readInstallVersion(root)}, true
+	return cliInstall{Root: root, Exe: exe, Worker: worker, Version: readInstallVersion(root)}, true
 }
 
 // readInstallVersion reads the SDK version from the install's own metadata.  A

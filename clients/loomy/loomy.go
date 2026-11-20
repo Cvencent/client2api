@@ -470,6 +470,10 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 	if err != nil {
 		return nil, err
 	}
+	// A body big enough to widen the header deadline is also big enough that a
+	// second identical wait cannot be worth it: the prefill has already been
+	// paid once, and one more gate only delays the platform failover.
+	widenedFirstByte := c.up.cfg.firstByteTimeoutFor(len(body)) > c.up.cfg.firstByteTimeout()
 
 	now := time.Now().UTC()
 	candidates := c.orderedCandidates(&local, local.Model)
@@ -544,7 +548,11 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 			// means the platform is not answering anybody.  The credential
 			// is not penalised (it did nothing wrong), but the request stops
 			// burning candidates here.
-			if stalled >= 2 {
+			//
+			// A widened deadline is not retried at all: it already waited for
+			// one full prefill, and paying for another only delays the platform
+			// failover without changing the answer.
+			if stalled >= 2 || widenedFirstByte {
 				break
 			}
 			if err := waitForChatRetry(ctx, chatRetryDelay); err != nil {
@@ -668,7 +676,13 @@ func (c *Client) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 	// (re-entering this module would only re-queue into the same silent
 	// upstream) and hand the request to the next platform in the candidate
 	// list, which is where a working model gets served.
-	if isHeaderStall(lastErr) || isTransportFailure(lastErr) {
+	//
+	// A stall also carries ErrUpstreamSilent: routing is identical, but the
+	// operator's reason is not.  Without it the row read "the platform has no
+	// usable account" over 33 ready accounts -- the ticket that led here.
+	if isHeaderStall(lastErr) {
+		lastErr = errors.Join(core.ErrPlatformExhausted, core.ErrUpstreamSilent, lastErr)
+	} else if isTransportFailure(lastErr) {
 		lastErr = errors.Join(core.ErrPlatformExhausted, lastErr)
 	}
 	// Hand the gateway a classified failure when this module can name one, so

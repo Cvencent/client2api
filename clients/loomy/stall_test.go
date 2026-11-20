@@ -40,6 +40,12 @@ func TestChatStopsRotationAfterTwoHeaderStalls(t *testing.T) {
 	if !errors.Is(err, core.ErrPlatformExhausted) {
 		t.Fatalf("err = %v, want ErrPlatformExhausted so the gateway fails over", err)
 	}
+	// The pool was never the problem, so the reason the gateway prints must not
+	// claim it was: this sentinel is what turns the row into "the upstream never
+	// answered" instead of "no usable account".
+	if !errors.Is(err, core.ErrUpstreamSilent) {
+		t.Fatalf("err = %v, want ErrUpstreamSilent so the row names the stall", err)
+	}
 	if !strings.Contains(err.Error(), "no response within") {
 		t.Fatalf("err = %v, want the first-byte stall report", err)
 	}
@@ -57,6 +63,46 @@ func TestChatStopsRotationAfterTwoHeaderStalls(t *testing.T) {
 		if acc.failures != 0 || acc.cooldownStage != 0 {
 			t.Fatalf("the stall was charged to %s: failures=%d stage=%d", id, acc.failures, acc.cooldownStage)
 		}
+	}
+}
+
+// A large prompt widens the header deadline instead of stalling on the fixed
+// floor: the vendor needs minutes of prefill before a response header can
+// exist.  A widened deadline is not retried -- one full prefill was already
+// paid, and a second identical wait only delays the platform failover.
+//
+// 2026-11-20: a 613k-token conversation was reported as "the platform has no
+// usable account" while 33 accounts were ready, because the fixed 60 s gate
+// fired twice inside what was really a long prefill.
+func TestChatDoesNotRetryAWidenedHeaderStall(t *testing.T) {
+	withChatRetryDelay(t, time.Millisecond)
+	rt := &stubTransport{}
+	wedge := &stallTransport{inner: rt}
+	c := newTestClient(t, `{"first_byte_timeout":"30ms"}`, wedge)
+	seedAccount(t, c, "loomy-1", testToken, 0)
+	seedAccount(t, c, "loomy-2", testTokenTwo, 0)
+
+	// ~12k bytes is ~3.5k tokens, so the deadline is 30 ms plus a full second
+	// of prefill budget: clearly wider than the floor the config asks for.
+	big := strings.Repeat("x", 12_000)
+	start := time.Now()
+	_, err := c.Chat(context.Background(), &core.ChatRequest{
+		Model:    "deepseek-v4.1-flash",
+		Messages: []core.Message{{Role: "user", Content: big}},
+	})
+	if err == nil {
+		t.Fatal("Chat reported success against a wedged platform")
+	}
+	if !errors.Is(err, core.ErrPlatformExhausted) || !errors.Is(err, core.ErrUpstreamSilent) {
+		t.Fatalf("err = %v, want platform-exhausted joined with upstream-silent", err)
+	}
+	// The widened gate really was waited out...
+	if elapsed := time.Since(start); elapsed < 900*time.Millisecond {
+		t.Fatalf("stall returned after %s, want the widened deadline (>= 1s)", elapsed)
+	}
+	// ...and paid for exactly once.
+	if got := atomic.LoadInt32(&wedge.chatOpens); got != 1 {
+		t.Fatalf("chat opens = %d, want 1 (a widened stall is not retried)", got)
 	}
 }
 

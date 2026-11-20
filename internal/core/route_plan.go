@@ -134,17 +134,16 @@ func (r *Registry) ResolveStaticCatalogAt(model string, catalogs map[string][]Mo
 		}
 
 		if inGroup {
-			step, ok := r.planGroupMember(group, groupKey, name, models, model, now)
-			if !ok {
+			memberSteps, memberBlocked, inChain := r.planGroupMembers(group, groupKey, name, models, model, now)
+			if !inChain {
 				continue
 			}
-			if step == nil {
-				// The member named a concrete model this platform lists but
+			if memberBlocked {
+				// A member named a concrete model this platform lists but
 				// blacklists; record it for the "disabled everywhere" error.
 				blocked = append(blocked, name)
-				continue
 			}
-			steps = append(steps, *step)
+			steps = append(steps, memberSteps...)
 			continue
 		}
 
@@ -153,41 +152,40 @@ func (r *Registry) ResolveStaticCatalogAt(model string, catalogs map[string][]Mo
 		// the search uses the part after the slash, exactly like the runtime's
 		// resolveQualifiedCandidate.  A slashed id never falls back to
 		// namespace equivalents, matching the runtime's allowEquivalent rule.
+		//
+		// An Auto/ request expands one platform's namespace-equivalent ids the
+		// same way the runtime does, so a platform that lists both a bare id
+		// and a realm-prefixed sibling shows every candidate the router would
+		// really try, not only the first one.
 		search := model
 		if hardPin != "" {
 			search = rest
 		}
-		m, ok, wasBlocked := selectCatalogModel(models, search, !strings.ContainsAny(search, "/:"), func(m Model) bool {
-			return r.ModelAllowed(name, m.ID)
-		})
-		if !ok {
+		allowed := func(m Model) bool { return r.ModelAllowed(name, m.ID) }
+		allowEquivalent := !strings.ContainsAny(search, "/:")
+		var (
+			matched    []Model
+			found      bool
+			wasBlocked bool
+		)
+		if auto {
+			matched, found, wasBlocked = selectCatalogModels(models, search, allowEquivalent, allowed)
+		} else {
+			var one Model
+			one, found, wasBlocked = selectCatalogModel(models, search, allowEquivalent, allowed)
+			if found {
+				matched = []Model{one}
+			}
+		}
+		if !found {
 			if wasBlocked {
 				blocked = append(blocked, name)
 			}
 			continue
 		}
-		step := RoutePlanStep{
-			Platform:   name,
-			ModelID:    m.ID,
-			Free:       modelFree(m),
-			Priority:   r.priorityAt(name, now),
-			Source:     RoutePlanSourceBase,
-			SourceName: "平台优先级",
+		for _, m := range matched {
+			steps = append(steps, r.catalogStep(name, m, now))
 		}
-		step.ContextLength, step.ContextSource = routePlanContext(m)
-		if priority, ok := r.modelPriorityAt(name, m.ID); ok {
-			// The per-model override is the most specific rung, so it wins
-			// over both the base priority and a matching schedule window.
-			step.Priority = priority
-			step.Source = RoutePlanSourceModel
-			step.SourceName = "模型优先级"
-			step.ScheduleHit = ""
-		} else if hitName, hit := r.scheduleWindowSource(name, now); hit {
-			step.Source = RoutePlanSourceSchedule
-			step.SourceName = "分时规则"
-			step.ScheduleHit = hitName
-		}
-		steps = append(steps, step)
 	}
 
 	sort.SliceStable(steps, func(i, j int) bool {
@@ -224,8 +222,25 @@ func (r *Registry) ResolveStaticCatalogAt(model string, catalogs map[string][]Mo
 // configured member that names this platform (an Auto member names every
 // platform) wins, mirroring the runtime's dedupe order.  ok=false means the
 // platform is not part of the group's chain; a nil step with ok=true means
-// the member matched but the platform blacklists the model.
-func (r *Registry) planGroupMember(group ModelGroup, groupKey, name string, models []Model, requested string, now time.Time) (*RoutePlanStep, bool) {
+// planGroupMembers resolves one platform's slice of a model group.  It
+// returns every candidate the platform contributes, in the runtime's order,
+// because a single platform can legitimately contribute more than one: an Auto
+// member expands to each namespace-equivalent id the catalogue publishes, and
+// a later explicit member adds a different concrete model.  The runtime keeps
+// both -- its dedupe key is (client, model), not client alone -- so the preview
+// must too, or it silently hides a candidate the router would really try.
+//
+// inChain reports whether any member named this platform at all; blocked is
+// true only when a member matched but the platform blacklists every match and
+// no other member produced a step, which is the case worth reporting as
+// "disabled everywhere".
+func (r *Registry) planGroupMembers(group ModelGroup, groupKey, name string, models []Model, requested string, now time.Time) ([]RoutePlanStep, bool, bool) {
+	var (
+		steps      []RoutePlanStep
+		seen       = make(map[string]struct{}, len(group.Members))
+		matchedAny bool
+		blockedAny bool
+	)
 	for _, member := range group.Members {
 		client := strings.TrimSpace(member.Client)
 		isAuto := strings.EqualFold(client, "Auto")
@@ -233,76 +248,124 @@ func (r *Registry) planGroupMember(group ModelGroup, groupKey, name string, mode
 			continue
 		}
 		allowEquivalent := isAuto && !strings.ContainsAny(member.Model, "/:")
-		m, ok, wasBlocked := selectCatalogModel(models, member.Model, allowEquivalent, func(m Model) bool {
-			return r.ModelAllowed(name, m.ID)
-		})
-		if !ok {
-			if wasBlocked {
-				return nil, true
-			}
-			continue
-		}
-
-		step := RoutePlanStep{
-			Platform: name,
-			ModelID:  m.ID,
-			Free:     modelFree(m),
-			Group:    groupKey,
-		}
-		step.ContextLength, step.ContextSource = routePlanContext(m)
-		// A per-model override is the most specific rung, so it decides the
-		// number this chain shows regardless of how the platform entered the
-		// group.  Checking it first also keeps a direct member from being
-		// mislabelled as an Auto-pool row.
-		if priority, found := r.modelPriorityAt(name, m.ID); found {
-			step.Priority = priority
-			step.Source = RoutePlanSourceModel
-			step.SourceName = "模型优先级"
-			// Preferred means "the caller spelled this member out", and it
-			// sorts ahead of priority.  An Auto member's model name is the
-			// bare model being requested, so marking it preferred here would
-			// pin every platform the pool expands to above the operator's
-			// ordering and make the drag appear to do nothing.  The runtime
-			// passes preferred=false for exactly the same reason.
-			if !isAuto {
-				step.Preferred = memberMatchesRequest(member, requested)
-			}
-			return &step, true
-		}
+		allowed := func(m Model) bool { return r.ModelAllowed(name, m.ID) }
+		var matched []Model
 		if isAuto {
-			// The Auto member expands to every platform that serves the model.
-			// The runtime sorts the pool members by each platform's own
-			// priority (a group-set Auto priority only positions the whole
-			// pool), so the plan shows the platform priority as the effective
-			// intra-pool order and marks every step auto_pool.
-			step.Priority = r.priorityAt(name, now)
-			step.Source = RoutePlanSourceAutoPool
-			step.SourceName = "Auto 池"
-			step.AutoPool = true
-			return &step, true
+			ms, ok, wasBlocked := selectCatalogModels(models, member.Model, allowEquivalent, allowed)
+			if !ok {
+				blockedAny = blockedAny || wasBlocked
+				continue
+			}
+			matched = ms
+		} else {
+			m, ok, wasBlocked := selectCatalogModel(models, member.Model, false, allowed)
+			if !ok {
+				blockedAny = blockedAny || wasBlocked
+				continue
+			}
+			matched = []Model{m}
 		}
-		step.Preferred = memberMatchesRequest(member, requested)
-		// A direct member falls back through the group value, then its own
-		// time window, then the platform's base priority.  The base case has
-		// to be stated explicitly: leaving the Auto-pool scaffolding in place
-		// would report "auto_pool" for a platform that is not in that pool.
-		step.Priority = r.priorityAt(name, now)
-		step.Source = RoutePlanSourceBase
-		step.SourceName = "平台优先级"
-		if p, found := modelGroupPriority(group, name); found {
-			step.Priority = p
-			step.Source = RoutePlanSourceGroup
-			step.SourceName = "模型路由组"
-			return &step, true
+		matchedAny = true
+		for _, m := range matched {
+			key := strings.ToLower(strings.TrimSpace(m.ID))
+			if _, dup := seen[key]; dup {
+				continue
+			}
+			seen[key] = struct{}{}
+			steps = append(steps, r.groupMemberStep(group, groupKey, name, member, isAuto, m, requested, now))
 		}
-		if hitName, hit := r.scheduleWindowSource(name, now); hit {
-			step.Source = RoutePlanSourceSchedule
-			step.SourceName = "分时规则"
-			step.ScheduleHit = hitName
-		}
-		return &step, true
 	}
-	return nil, false
+	inChain := matchedAny || blockedAny
+	return steps, blockedAny && len(steps) == 0, inChain
+}
+
+// groupMemberStep builds one group-member step for a concrete catalogue entry.
+// The rungs are ordered most-specific first, exactly as the runtime ranks them.
+func (r *Registry) groupMemberStep(group ModelGroup, groupKey, name string, member ModelGroupMember, isAuto bool, m Model, requested string, now time.Time) RoutePlanStep {
+	step := RoutePlanStep{
+		Platform: name,
+		ModelID:  m.ID,
+		Free:     modelFree(m),
+		Group:    groupKey,
+	}
+	step.ContextLength, step.ContextSource = routePlanContext(m)
+	// A per-model override is the most specific rung, so it decides the number
+	// this chain shows regardless of how the platform entered the group.
+	// Checking it first also keeps a direct member from being mislabelled as an
+	// Auto-pool row.
+	if priority, found := r.modelPriorityAt(name, m.ID); found {
+		step.Priority = priority
+		step.Source = RoutePlanSourceModel
+		step.SourceName = "模型优先级"
+		// Preferred means "the caller spelled this member out", and it sorts
+		// ahead of priority.  An Auto member's model name is the bare model
+		// being requested, so marking it preferred here would pin every
+		// platform the pool expands to above the operator's ordering and make
+		// the drag appear to do nothing.  The runtime passes preferred=false
+		// for exactly the same reason.
+		if !isAuto {
+			step.Preferred = memberMatchesRequest(member, requested)
+		}
+		return step
+	}
+	if isAuto {
+		// The Auto member expands to every platform that serves the model.
+		// The runtime sorts the pool members by each platform's own priority
+		// (a group-set Auto priority only positions the whole pool), so the
+		// plan shows the platform priority as the effective intra-pool order
+		// and marks every step auto_pool.
+		step.Priority = r.priorityAt(name, now)
+		step.Source = RoutePlanSourceAutoPool
+		step.SourceName = "Auto 池"
+		step.AutoPool = true
+		return step
+	}
+	step.Preferred = memberMatchesRequest(member, requested)
+	// A direct member falls back through the group value, then its own time
+	// window, then the platform's base priority.  The base case has to be
+	// stated explicitly: leaving the Auto-pool scaffolding in place would
+	// report "auto_pool" for a platform that is not in that pool.
+	step.Priority = r.priorityAt(name, now)
+	step.Source = RoutePlanSourceBase
+	step.SourceName = "平台优先级"
+	if p, found := modelGroupPriority(group, name); found {
+		step.Priority = p
+		step.Source = RoutePlanSourceGroup
+		step.SourceName = "模型路由组"
+		return step
+	}
+	if hitName, hit := r.scheduleWindowSource(name, now); hit {
+		step.Source = RoutePlanSourceSchedule
+		step.SourceName = "分时规则"
+		step.ScheduleHit = hitName
+	}
+	return step
+}
+
+// catalogStep builds a non-group step: a bare id, an Auto/ request, or a hard
+// pin.  The per-model override is the most specific rung, so it wins over both
+// the base priority and a matching schedule window.
+func (r *Registry) catalogStep(name string, m Model, now time.Time) RoutePlanStep {
+	step := RoutePlanStep{
+		Platform:   name,
+		ModelID:    m.ID,
+		Free:       modelFree(m),
+		Priority:   r.priorityAt(name, now),
+		Source:     RoutePlanSourceBase,
+		SourceName: "平台优先级",
+	}
+	step.ContextLength, step.ContextSource = routePlanContext(m)
+	if priority, ok := r.modelPriorityAt(name, m.ID); ok {
+		step.Priority = priority
+		step.Source = RoutePlanSourceModel
+		step.SourceName = "模型优先级"
+		step.ScheduleHit = ""
+	} else if hitName, hit := r.scheduleWindowSource(name, now); hit {
+		step.Source = RoutePlanSourceSchedule
+		step.SourceName = "分时规则"
+		step.ScheduleHit = hitName
+	}
+	return step
 }
 
 // routePlanContext reads the context window a panel catalogue item carries.

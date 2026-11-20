@@ -453,7 +453,15 @@ and terminating cleanly on `io.EOF`. It carries
 * an **idle timeout** (`idle_timeout`, default 2 min) that aborts a stream which
   has stopped producing frames, and
 * a **first-byte timeout** (`first_byte_timeout`, default 1 min) around the
-  initial response, reported as `"loomy: chat: no response within 1m0s"`.
+  initial response, reported as `"loomy: chat: no response within 1m0s"`. The
+  configured value is the **floor**, not the whole deadline: it is widened by
+  the prompt the request has to prefill (roughly 3k tokens/s, capped at half of
+  `chat_timeout`), because a 600k-token conversation needs minutes of prefill
+  before any response header can exist. A stall inside a widened deadline is
+  **not** retried on the same account — the prefill was already paid once — and
+  it reaches the gateway joined with `core.ErrUpstreamSilent`, so the request row
+  reads "the upstream did not answer in time", never "the platform has no usable
+  account".
 
 `Close()` is idempotent: it stops the timers, cancels the request context and
 closes the body exactly once, so a gateway that closes a stream twice cannot

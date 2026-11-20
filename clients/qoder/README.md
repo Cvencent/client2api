@@ -156,6 +156,31 @@ POST /sash/api/v1/me/campaigns/{campaignId}/claim
 
 已经领取过的目标不会再次 POST。每日签到通常在 `10:00`（UTC+8）刷新，奖励 Credits 的有效期由厂商决定。
 
+### 设备指纹（必需）
+
+活动接口是**设备指纹门控**的：只带 `Authorization` 的请求会拿到一份「精简版」活动列表——长期活动
+（包括每日 100 Credits）全部缺席，只有一次性试用包可见。没有指纹时：
+
+- 列表看不到当天可领的每日活动，签到只能报「没有可领取」或误报「今天已领取过」；
+- 就算拿到 campaignId，`claim` 也会被厂商以 `CAMPAIGN_CLAIM_PRECONDITION_FAILED`（409）拒绝。
+
+真因是缺了 `Cosy-MachineToken` + `Cosy-MachineType`（UMID 机器指纹对）。模块用**厂商自带的**
+`resources/umid/runtime-info.exe` 取指纹——它随每个 Qoder 安装一起分发，参数 `0` 是国服、`4` 是国际版：
+
+- 查找顺序：`CLIENT2API_QODER_UMID_PATH` → CLI 已解析的安装根 → 常见安装目录（`Qoder CN` / `Qoder`）→
+  CLI 自己解出来的 `.bin/umid-*/runtime-info.exe`；
+- 结果按 (数据目录, realm) 缓存 1 小时，不会每次画面板都起进程；
+- 取不到指纹不阻断请求：照常发出去、按厂商原本的回答处理，只是能力等同修复前。日志里会有一条
+  `qoder: no device fingerprint for <realm>`。
+
+因此**每日签到和活动任务需要在能取到指纹的机器上跑**（装了 Qoder 客户端、或 CLI 曾下载过该二进制）。
+
+### 「今天已领取」的判定
+
+只有窗口不超过 2 天的 `CLAIMED` 活动才算「今天的每日奖励已领」。厂商的试用包（Sonus Trial Pack、
+500 Credits 升级券）也是 `CLAIM_BENEFIT`，但窗口是 7 天且一直显示 `CLAIMED`；把它算进来会让每次签到都
+报「今天的奖励已经领取过了」，而真正的每日奖励其实从未领过。
+
 ## 免费模型与本机 CLI
 
 ### 一次 CLI 登录就够（推荐）

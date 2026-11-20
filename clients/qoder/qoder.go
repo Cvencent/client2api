@@ -170,6 +170,10 @@ func New(deps core.Deps) (core.Client, error) {
 	}
 
 	c.up = newUpstream(cfg, deps.HTTPClient, deps.Logf)
+	// The campaign routes are gated on the device fingerprint; wiring the
+	// provider here keeps every other OpenAPI call on the plain shape.
+	c.up.machine = c.machineIdentityFor
+	c.up.machineID = c.machineID
 	c.cli = newCLIPool()
 	return c, nil
 }

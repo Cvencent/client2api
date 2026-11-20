@@ -175,11 +175,16 @@ func (u *upstream) openChatStream(ctx context.Context, token string, body []byte
 	// context has to stay alive for the whole stream while a stalled connection
 	// must fail fast, so the first-byte deadline is a timer that is stopped as
 	// soon as the response headers arrive.
+	//
+	// The deadline is derived from the body that is about to be sent: a large
+	// prompt has minutes of prefill to pay before any header can exist, and a
+	// fixed gate would kill it mid-prefill (see firstByteTimeoutFor).
+	firstByte := u.cfg.firstByteTimeoutFor(len(body))
 	streamCtx, cancel := context.WithTimeout(ctx, u.cfg.chatTimeout())
 	firstCtx, firstCancel := context.WithCancel(streamCtx)
 
 	var firstByteFired atomic.Bool
-	timer := time.AfterFunc(u.cfg.firstByteTimeout(), func() {
+	timer := time.AfterFunc(firstByte, func() {
 		firstByteFired.Store(true)
 		firstCancel()
 	})
@@ -190,7 +195,7 @@ func (u *upstream) openChatStream(ctx context.Context, token string, body []byte
 		firstCancel()
 		cancel()
 		if firstByteFired.Load() {
-			return nil, fmt.Errorf("loomy: chat: no response within %s", u.cfg.firstByteTimeout())
+			return nil, fmt.Errorf("loomy: chat: no response within %s", firstByte)
 		}
 		return nil, err
 	}
@@ -202,7 +207,7 @@ func (u *upstream) openChatStream(ctx context.Context, token string, body []byte
 		_ = resp.Body.Close()
 		firstCancel()
 		cancel()
-		return nil, fmt.Errorf("loomy: chat: no response within %s", u.cfg.firstByteTimeout())
+		return nil, fmt.Errorf("loomy: chat: no response within %s", firstByte)
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
