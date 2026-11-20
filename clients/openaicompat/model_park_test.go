@@ -209,6 +209,9 @@ func TestThePairParkPublishesAndLapses(t *testing.T) {
 
 	// 窗口内连续三次 noteModelRefusal：第一次 10min，第二次 20min，第三次封顶
 	// 30min（ladder 的单元语义，不走 Chat——Chat 在窗口内根本不再出网）。
+	// 判读用区间而不是等值：s.now() 是 time.Now，noteModelRefusal 记账用的
+	// now 和这里读出的 now 隔着一次真实时钟读取，几个微秒的漂移会把等值判据
+	// 变成 9m59.999997s（CI 实测）。
 	steps := []time.Duration{modelParkBase, 2 * modelParkBase, modelParkMax}
 	for i, want := range steps {
 		s.noteModelRefusal(acctID, doomed)
@@ -216,8 +219,8 @@ func TestThePairParkPublishesAndLapses(t *testing.T) {
 		rec := s.modelCool[modelParkKey{id: acctID, model: doomed}]
 		s.mu.Unlock()
 		ttl := rec.until.Sub(s.now())
-		if ttl != want {
-			t.Fatalf("refusal %d: park ttl = %v, want %v (ladder base 10min, cap 30min)", i+1, ttl, want)
+		if ttl <= 0 || ttl > want {
+			t.Fatalf("refusal %d: park ttl = %v, want (0, %v] (ladder base 10min, cap 30min)", i+1, ttl, want)
 		}
 	}
 
