@@ -42,6 +42,15 @@ type source struct {
 	// It is separate from Disabled, which is the operator's switch, and it is
 	// runtime-only so a reload never resurrects a rejected credential.
 	invalid map[string]bool
+	// modelCool parks one (account, model) pair after the vendor answered that
+	// it cannot serve the model at all -- a group-permission 403 ("No
+	// permission to access group …") is the live shape (issue #264).  The
+	// account is healthy and serves every other model, so parking IT would take
+	// good capacity out of rotation; parking the PAIR is what stops every
+	// request for that id from paying a doomed round trip first.  The park
+	// backs off geometrically and is runtime-only: a model scan, a restart or a
+	// served request clears it.
+	modelCool map[modelParkKey]modelParkRecord
 	// balanceProbe is the negative cache for the "auto" balance protocol: a
 	// relay that answers none of the four billing probes is remembered here so
 	// the next sweep skips it instead of repeating four failures.
@@ -96,6 +105,7 @@ func newSource(name string, cfg core.SourceConfig, deps core.Deps) (*source, err
 		cooling:    map[string]time.Time{},
 		preconsume: map[string]preconsumeWallet{},
 		invalid:    map[string]bool{},
+		modelCool:  map[modelParkKey]modelParkRecord{},
 		lastUsed:   map[string]uint64{},
 		limits:     limits,
 		affinity:   core.NewAffinity(0),
@@ -365,6 +375,11 @@ func (s *source) Status(ctx context.Context) core.Status {
 		for _, m := range models {
 			if !allowed[m.ID] {
 				parks = append(parks, map[string]any{"model": m.ID, "kind": "unsupported"})
+			} else if rec, parked := s.modelCool[modelParkKey{id: a.ID, model: m.ID}]; parked && now.Before(rec.until) {
+				// The pair park (issue #264) outranks the display-only
+				// unsupported entry only when it is live: it is a timed window,
+				// so the panel can time it like any rate_limit park.
+				parks = append(parks, map[string]any{"model": m.ID, "kind": "rate_limit", "until": rec.until.UTC().Format(time.RFC3339), "reason": rec.reason})
 			} else if until := s.cooling[a.ID]; now.Before(until) {
 				parks = append(parks, map[string]any{"model": m.ID, "kind": "rate_limit", "until": until.UTC().Format(time.RFC3339)})
 			} else if limitBlock != nil {
@@ -468,6 +483,7 @@ func (s *source) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 	tried := map[string]bool{}
 	var last error
 	cooling := false
+	modelParked := false
 	var limitBlock *requestLimitBlock
 	conversationKey := core.ConversationKeyOf(req)
 	bound, _ := s.affinity.Resolve(conversationKey, s.usableFor(req.Model))
@@ -506,6 +522,16 @@ func (s *source) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 			}
 			for _, m := range p.Models {
 				if m == req.Model {
+					if s.modelParkedLocked(p.ID, req.Model, now) {
+						// A pair park is the vendor's own answer that this key
+						// cannot serve this model at all (issue #264): re-asking
+						// inside the window only re-pays the 403.  The skip is
+						// recorded separately from the account-level cooling so
+						// the tail can answer a model-scoped refusal instead of
+						// backpressure.
+						modelParked = true
+						break
+					}
 					if now.Before(s.cooling[p.ID]) {
 						cooling = true
 						break
@@ -589,6 +615,7 @@ func (s *source) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 				delete(s.cooling, p.ID)
 				delete(s.invalid, p.ID)
 				s.mu.Unlock()
+				s.clearModelPark(p.ID, req.Model)
 				return &sourceStream{Stream: retry, source: s, id: p.ID, key: p.APIKey, base: prov.BaseURL}, nil
 			} else if ctx.Err() != nil {
 				// The caller walked away during the retry; report that instead
@@ -602,16 +629,27 @@ func (s *source) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 		attempts++
 		if err == nil {
 			// A served request is direct evidence that the key works, so it
-			// retires both the rate-limit park and the rejected-key verdict.
+			// retires both the rate-limit park and the rejected-key verdict --
+			// and the pair park (issue #264): a served turn falsifies the
+			// "this key cannot serve this model" verdict, and the ladder must
+			// not survive its own falsification.
 			s.mu.Lock()
 			delete(s.cooling, p.ID)
 			delete(s.invalid, p.ID)
 			s.mu.Unlock()
+			s.clearModelPark(p.ID, req.Model)
 			return &sourceStream{Stream: stream, source: s, id: p.ID, key: p.APIKey, base: prov.BaseURL}, nil
 		}
 		req.ReleaseAccountSlot()
 		last = err
 		s.noteFailure(p.ID, p.APIKey, prov.BaseURL, err)
+		if core.FailureKindOf(err) == core.FailureModelRefused {
+			// A model-scoped refusal ("No permission to access group …", a
+			// missing model id): the credential is fine, so noteFailure parked
+			// nothing -- but every future request for this id would pay the
+			// same doomed round trip.  Park the PAIR instead (issue #264).
+			s.noteModelRefusal(p.ID, req.Model)
+		}
 		if attempts >= maxRotate || !retryableChatError(err) {
 			break
 		}
@@ -638,7 +676,56 @@ func (s *source) Chat(ctx context.Context, req *core.ChatRequest) (core.Stream, 
 			untilAt: s.coolingUntilInstant(req.Model, s.now(), s.cooling),
 		}
 	}
+	if modelParked {
+		// Every key that advertises this model is pair-parked (issue #264).
+		// FailureModelRefused is the shape the gateway already fails over on
+		// (core.NextPlatformOn), so a bare-name request moves to the next
+		// platform WITHOUT a round trip that can only repeat the vendor's own
+		// verdict; an explicit platform request reaches the caller honestly
+		// (hardPlatformPin keeps it).  The account is healthy and stays ready
+		// -- only this id is turned away until the window lapses.
+		until, ok := s.soonestModelPark(req.Model)
+		note := fmt.Sprintf("%s refuses model %q for every configured key (%s); the pair is parked and will be re-asked after the window lapses",
+			s.name, req.Model, modelParkReason)
+		if ok {
+			note = fmt.Sprintf("%s; the earliest park lapses at %s", note, until.Format(time.RFC3339))
+		}
+		return nil, core.Fail(s.name, "", core.FailureModelRefused, 0, fmt.Errorf("%s", note))
+	}
 	return nil, fmt.Errorf("%w: %s has no ready API key for model %q; scan models first", core.ErrNotConfigured, s.name, req.Model)
+}
+
+// soonestModelPark reports when the earliest live pair park that covers model
+// lapses, so the refusal can tell an operator (and the next request) when the
+// vendor will be asked again.  ok=false when nothing is parked.
+func (s *source) soonestModelPark(model string) (time.Time, bool) {
+	now := s.now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var soonest time.Time
+	for _, p := range s.rows {
+		if p.Disabled || s.invalid[p.ID] {
+			continue
+		}
+		serves := false
+		for _, m := range p.Models {
+			if m == model {
+				serves = true
+				break
+			}
+		}
+		if !serves {
+			continue
+		}
+		rec, ok := s.modelCool[modelParkKey{id: p.ID, model: model}]
+		if !ok || !now.Before(rec.until) {
+			continue
+		}
+		if soonest.IsZero() || rec.until.Before(soonest) {
+			soonest = rec.until
+		}
+	}
+	return soonest, !soonest.IsZero()
 }
 
 // coolingError says a platform has a key for the model but parked it, and when
@@ -688,6 +775,18 @@ func (e *coolingError) RetryAfterHint() time.Duration {
 // module's own callers match on.
 func (e *coolingError) Is(target error) bool {
 	return target == core.ErrBusy
+}
+
+// CoolingUntil carries the park's instant to the gateway's explanation layer
+// (core.CoolingUntilOf), so the usage row says "账号冷却中" with the time
+// instead of the generic backpressure label.  Both are ErrBusy for routing; the
+// operator action they imply is not the same, and the label was the only place
+// that distinction was missing.
+func (e *coolingError) CoolingUntil() time.Time {
+	if e == nil {
+		return time.Time{}
+	}
+	return e.untilAt
 }
 
 func (s *source) accountLimitBlocked(id string, now time.Time) *requestLimitBlock {
@@ -856,6 +955,92 @@ func (s *source) parkLocked(id string, kind core.FailureKind, refusal ...string)
 		return
 	}
 	delete(s.cooling, id)
+}
+
+// --- per-(account, model) park -----------------------------------------------
+
+// modelParkKey names one parked (account, model) pair.  The account stays
+// healthy for every other model; only this id is turned away.
+type modelParkKey struct {
+	id, model string
+}
+
+// modelParkRecord is one live pair park: when it lapses, how many consecutive
+// refusals have said the same thing (the backoff ladder), and the fixed
+// operator-facing reason (the vendor's own text is never kept -- it can echo
+// request material).
+type modelParkRecord struct {
+	until  time.Time
+	hits   int
+	reason string
+}
+
+// The pair-park ladder.  modelParkBase is long enough that one lapse does not
+// re-ask the vendor every minute, and short enough that an operator fixing the
+// group/key on the vendor side is noticed within the first window.  Consecutive
+// refusals double it, capped at modelParkMax -- the same shape the gateway's
+// own rate-limit park ladder and workbuddy's 11102 park use, because the
+// answer is deterministic and no vendor hint ever dates it.
+const (
+	modelParkBase = 10 * time.Minute
+	modelParkMax  = 30 * time.Minute
+)
+
+// modelParkReason labels the pair park.  Fixed text: the vendor's refusal can
+// carry a request id the redaction layer would keep alive on the panel.
+const modelParkReason = "vendor refuses this model for this key (group permission)"
+
+// noteModelRefusal records one model-scoped refusal and parks the
+// (account, model) pair.  Called from the chat failure path AFTER noteFailure:
+// a pair park must not overwrite or extend the account-level verdicts, which
+// this refusal deliberately did not touch.
+func (s *source) noteModelRefusal(id, model string) {
+	if s == nil || id == "" || model == "" {
+		return
+	}
+	now := s.now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.modelCool == nil {
+		s.modelCool = map[modelParkKey]modelParkRecord{}
+	}
+	k := modelParkKey{id: id, model: model}
+	hits := 1
+	if prev, ok := s.modelCool[k]; ok && !prev.until.IsZero() && now.Before(prev.until) {
+		hits = prev.hits + 1
+	}
+	shift := hits - 1
+	if shift > 8 {
+		shift = 8
+	}
+	ttl := modelParkBase << shift
+	if ttl <= 0 || ttl > modelParkMax {
+		ttl = modelParkMax
+	}
+	s.modelCool[k] = modelParkRecord{until: now.Add(ttl), hits: hits, reason: modelParkReason}
+	if s.deps.Logf != nil {
+		s.deps.Logf("openaicompat/%s: model %s parked on account %s for %v (%s, hit %d)",
+			s.name, model, core.MaskSecret(id), ttl.Round(time.Second), modelParkReason, hits)
+	}
+}
+
+// clearModelPark retires the pair park after the vendor served the model: the
+// refusal has been falsified, so the backoff ladder must not survive it.  The
+// caller holds no lock.
+func (s *source) clearModelPark(id, model string) {
+	if s == nil || id == "" || model == "" {
+		return
+	}
+	s.mu.Lock()
+	delete(s.modelCool, modelParkKey{id: id, model: model})
+	s.mu.Unlock()
+}
+
+// modelParked reports whether the (account, model) pair is inside its park
+// right now.  The caller holds s.mu.
+func (s *source) modelParkedLocked(id, model string, now time.Time) bool {
+	rec, ok := s.modelCool[modelParkKey{id: id, model: model}]
+	return ok && !rec.until.IsZero() && now.Before(rec.until)
 }
 
 // preconsumeWallet remembers what the vendor said the wallet holds, and how

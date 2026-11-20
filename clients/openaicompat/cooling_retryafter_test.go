@@ -3,6 +3,8 @@ package openaicompat
 import (
 	"testing"
 	"time"
+
+	"client2api/internal/core"
 )
 
 // ---------------------------------------------------------------------------
@@ -56,6 +58,26 @@ func TestCoolingErrorCarriesTheRealRemainingWait(t *testing.T) {
 // TestCoolingUntilInstantPicksTheSoonestParkedKey 钉住时刻的来源：同一模型
 // 多把钥匙都在冷却时，取**最早**解封的那把——调用方等的是「第一个能用」，
 // 不是「全部解封」。
+func TestCoolingErrorCarriesTheInstantToTheExplanationLayer(t *testing.T) {
+	until := time.Now().Add(10 * time.Second)
+	e := &coolingError{source: "molly", model: "gemini-3.8-flash", untilAt: until}
+
+	// The gateway's explanation layer needs the instant, not just the sentinel:
+	// core.ErrBusy alone reads as "in-flight ceiling full", which is the wrong
+	// operator action for a parked key.
+	if got := core.CoolingUntilOf(e); !got.Equal(until) {
+		t.Fatalf("CoolingUntilOf(cooling) = %s，期望 %s", got, until)
+	}
+	var nilCooling *coolingError
+	if got := core.CoolingUntilOf(nilCooling); !got.IsZero() {
+		t.Fatalf("nil receiver 的 CoolingUntilOf = %s，期望零值", got)
+	}
+	// Plain backpressure carries no instant: it must keep the contention label.
+	if got := core.CoolingUntilOf(core.ErrBusy); !got.IsZero() {
+		t.Fatalf("CoolingUntilOf(ErrBusy) = %s，期望零值", got)
+	}
+}
+
 func TestCoolingUntilInstantPicksTheSoonestParkedKey(t *testing.T) {
 	now := time.Now()
 	s := &source{

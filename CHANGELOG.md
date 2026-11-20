@@ -6,6 +6,29 @@
 以后每次上传新的安装包，都必须先在这里写明该版本做了什么，再创建同版本的 Git tag
 和 GitHub Release。
 
+## [0.7.88] - 2026-11-20
+
+### Fixed
+
+- **openaicompat 系 403 分组无权限白撞：引入 (账号,模型) 短停（#264）。**
+  rzol 的 Deepseek-v4.1-flash-1017 挂在无权限分组上，每个请求都先吃一次
+  403「No permission to access group …」再切平台；403 分组权限按既有设计不打死
+  账号（分类正确、无任何记忆），账号恒 ready、问题永不自愈。修法：
+  1. **拒绝时停对不停号**：chat 失败路径识别 `FailureModelRefused` 后，把
+     (账号, 模型) 对停进新的 `modelCool` 表——凭据健康，只有这个 id 被拒；
+  2. **窗口内零上游调用**：候选挑选跳过该对；全部候选都停时直接回
+     `FailureModelRefused`（网关按既有语义切下一平台，不再白付一次往返），
+     显式平台请求仍如实送达调用方；
+  3. **退避梯**：10min 基础、连续拒绝翻倍、30min 封顶（确定性拒绝，无厂商
+     提示可循，与 workbuddy 11102 park 同构）；一次成功即清（厂商改口径的
+     第一笔请求就恢复）；
+  4. **面板可见**：该对的 timed park 发布进账号行的 `model_cooldowns`。
+
+### Installer
+
+- `client2api-setup-0.7.88.exe`（空包，不含账号凭据或本机配置）
+  SHA256: `7b4006681997cbe4d6f4858db3419a4dc17bc7cb84c86f80cefd43ca8daefc44`
+
 ## [0.7.87] - 2026-11-15
 
 ### Fixed
