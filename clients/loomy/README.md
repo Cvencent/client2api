@@ -220,6 +220,20 @@ session, so the AccessKey grants no access to any user's data.
 2026-09-26, so a caller can always discover ids without an account. A live
 `GET /api/v1/models` (cached for `models_ttl`, default 30 min) replaces it.
 
+**The vendor does not publish one catalogue.** Accounts in different
+entitlement groups see different lists — measured on 2026-11-20: 13 live
+accounts saw the six-model chat list, while 19 others saw only the two
+`spark-x2.6-low` / `spark-x2.6-4b` rows. A refresh that took the first
+answering account's word made the cached catalogue silently flip between the
+two shapes whenever the first responder happened to sit in the narrow group,
+and `/v1/models` plus the panel's model page shrank with it. The refresh now
+samples up to `modelsSampleAccounts` (5) accounts in pool order and **merges
+the answers by model id** (first spelling wins), stopping early once two
+consecutive answers contribute nothing new. A probe that fails is display-only
+maintenance: it never cools or parks the credential, and a partial union beats
+an empty catalogue. Chat is unaffected either way — `resolveModelID` passes an
+unrecognised id to the vendor verbatim.
+
 `Models()` **never blocks and never fails**: the refresh runs in the background
 (`core.GoSafe`), throttled to one attempt per 30 s, because the registry calls
 `Models` on every module for a bare model name.
@@ -613,6 +627,7 @@ below, because that difference caught a bug the stubs could not.
 | `keepalive_test.go` | the scheduled session heartbeat: it posts the session to the account service (not the business host), a `100002`/`020002` answer cools without permanently parking the account, a transport hiccup does not cool it, and a parked account is skipped without a call |
 | `phonecode_test.go` | the operator-owned phone flow: the vendor texts the submitted number, the code is redeemed against the challenge's message id and stored, a malformed number spends no SMS, and unknown or expired challenges are refused |
 | `models_test.go` | the multiplier/display-name rules, both remote catalogue shapes, `isChat`, the fallback table and `ResolveModelID` |
+| `model_sample_union_test.go` | the entitlement-group union: a narrow first responder cannot shrink the catalogue, the stable-run early stop, the `modelsSampleAccounts` cap, partial results when later probes fail, the single-account path and the merged cache behind `Models()` |
 | `envelope_test.go` | the live code-less `/models` envelope: a code-less payload is a success, a failed envelope is still a failure, a non-JSON body is still rejected |
 | `cancel_test.go` | a cancelled caller must not park the account or burn the other candidates, while the module's *own* timeout still cools it down |
 | `server_test.go` | the same paths against a **real** `httptest` server: the HTTP client, URL joining, header writing and live SSE framing |

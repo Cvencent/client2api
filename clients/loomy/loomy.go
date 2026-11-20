@@ -55,6 +55,17 @@ const (
 	// modelsRetryInterval throttles background catalogue refreshes, so a
 	// failing upstream cannot be hammered once per /v1/models call.
 	modelsRetryInterval = 30 * time.Second
+
+	// modelsSampleAccounts caps how many accounts one catalogue refresh asks.
+	// The vendor does not publish one catalogue: accounts in different
+	// entitlement groups see different lists (measured 2026-11-20 -- 13 live
+	// accounts saw the 6-model chat list, 19 saw only the two spark-x2.6 rows),
+	// so a single-account answer hides models other accounts can serve and the
+	// catalogue silently shrinks whenever the first responder happens to be a
+	// narrow one.  The refresh samples accounts until two consecutive answers
+	// stop contributing new ids (or the cap runs out); each probe is one cheap
+	// GET, so the cap keeps the worst case bounded at a handful of requests.
+	modelsSampleAccounts = 5
 )
 
 // Client implements core.Client for loomy, plus the optional interfaces listed
@@ -341,43 +352,81 @@ func (c *Client) refreshModelsAsync() {
 	})
 }
 
-// fetchModels asks the vendor for the live catalogue, trying accounts in the
-// order the pool wants them tried.
+// fetchModels asks the vendor for the live catalogue.  It samples the pool's
+// accounts in the order the pool wants them tried and MERGES the answers by
+// model id: the vendor hands different entitlement groups different lists, so
+// the union is the catalogue this gateway can actually route.  Every error path
+// still treats the endpoint as display-only maintenance -- never evidence
+// against a credential.
 func (c *Client) fetchModels(ctx context.Context) ([]core.Model, error) {
 	candidates := c.store.candidates(time.Now().UTC())
 	if len(candidates) == 0 {
 		return nil, core.ErrNotConfigured
 	}
 
-	attempts := c.cfg.maxAttempts()
+	// The merge is keyed by model id, first spelling wins: a model id is the
+	// vendor's own identity, and two accounts that both list it are describing
+	// one model, not two.
+	byID := map[string]remoteModel{}
+	var order []string
 	var lastErr error
-	for i, acc := range candidates {
-		if i >= attempts {
+	// stableRuns counts consecutive answers that added nothing -- once the
+	// sample has stopped growing, further accounts would very likely repeat
+	// the same group rather than reveal a new one.
+	stableRuns := 0
+	asked := 0
+	for _, acc := range candidates {
+		if asked >= modelsSampleAccounts || stableRuns >= 2 {
 			break
 		}
+		asked++
 		models, err := c.up.modelList(ctx, acc.AccessToken)
-		if err == nil {
-			if len(models) == 0 {
-				lastErr = errors.New("loomy: the vendor returned an empty model list")
+		if err != nil {
+			lastErr = err
+			// A model-list refresh is display-only catalogue maintenance, not
+			// chat-path evidence.  Report the failure to the caller and try the
+			// next candidate, but never cool or park a credential because the
+			// catalogue endpoint had a bad moment.  A caller that walked away is
+			// likewise not evidence about the credential, so stop retrying it.
+			if callerGone(err) {
+				break
+			}
+			continue
+		}
+		if len(models) == 0 {
+			lastErr = errors.New("loomy: the vendor returned an empty model list")
+			continue
+		}
+		c.store.reset(acc.ID, time.Now().UTC())
+
+		grew := false
+		for _, m := range models {
+			if _, seen := byID[m.ID]; seen {
 				continue
 			}
-			c.store.reset(acc.ID, time.Now().UTC())
-			return coreModels(models, false), nil
+			byID[m.ID] = m
+			order = append(order, m.ID)
+			grew = true
 		}
-		lastErr = err
-		// A model-list refresh is display-only catalogue maintenance, not
-		// chat-path evidence.  Report the failure to the caller and try the
-		// next candidate, but never cool or park a credential because the
-		// catalogue endpoint had a bad moment.  A caller that walked away is
-		// likewise not evidence about the credential, so stop retrying it.
-		if callerGone(err) {
-			break
+		if grew {
+			stableRuns = 0
+		} else {
+			stableRuns++
 		}
 	}
-	if lastErr == nil {
-		lastErr = core.ErrNotConfigured
+
+	if len(order) == 0 {
+		if lastErr == nil {
+			lastErr = core.ErrNotConfigured
+		}
+		return nil, lastErr
 	}
-	return nil, lastErr
+
+	merged := make([]remoteModel, 0, len(order))
+	for _, id := range order {
+		merged = append(merged, byID[id])
+	}
+	return coreModels(merged, false), nil
 }
 
 func (c *Client) storeModels(models []core.Model) {
